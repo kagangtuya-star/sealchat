@@ -166,6 +166,7 @@ import BridgeStatusPanel from './components/BridgeStatusPanel.vue';
 import CharacterCardPanel from './components/CharacterCardPanel.vue';
 import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
+import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
@@ -217,6 +218,7 @@ const dice3dSettingsVisible = ref(false);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
+const channelCharacterSnapshotStore = useChannelCharacterSnapshotStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -748,6 +750,45 @@ const selectCharacterVariantForTheater = async (payload: TheaterCharacterVariant
   return { ok: true as const };
 };
 
+const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  if (!channelId || !identityId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '人物卡参数无效' } };
+  }
+  await channelCharacterSnapshotStore.initializeChannel(channelId);
+  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  if (!snapshot) {
+    await channelCharacterSnapshotStore.refreshChannel(channelId);
+    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  }
+  const card = snapshot?.data.card;
+  if (!snapshot || !card) {
+    return { ok: false as const, error: { code: 'CARD_UNAVAILABLE', message: '该角色没有可查看的人物卡快照' } };
+  }
+  const windowId = characterSheetStore.openSheet({
+    id: `snapshot:${channelId}:${identityId}`,
+    name: card.name,
+    sheetType: card.sheetType,
+    attrs: card.attrs,
+    channelId,
+    userId: snapshot.userId,
+  }, channelId, {
+    name: card.name,
+    type: card.sheetType,
+    attrs: card.attrs,
+    avatarUrl: snapshot.data.identity.avatarAttachmentId || undefined,
+    templateText: card.templateText,
+  }, {
+    templateText: card.templateText,
+    readOnly: true,
+    worldId: chat.currentWorldId || undefined,
+    placement: 'right',
+  });
+  characterSheetStore.setMode(windowId, 'view');
+  return { ok: true as const };
+};
+
 defineExpose({
   openPanelForShell,
   refreshPresenceForShell,
@@ -762,6 +803,7 @@ defineExpose({
   getCharactersForTheater,
   selectCharacterForTheater,
   selectCharacterVariantForTheater,
+  openCharacterCardForTheater,
 });
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({

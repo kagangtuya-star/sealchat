@@ -88,6 +88,7 @@ import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
+import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import type { TheaterPresentation } from '@/types/theaterPresentation'
@@ -130,6 +131,7 @@ const emit = defineEmits<{
   pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
+  openCharacterCard: [identityId: string]
   toggleChat: []
   resetLayout: []
   exitTheater: []
@@ -5650,6 +5652,11 @@ onBeforeUnmount(() => {
           :viewport-height="viewportSize.height"
           :entrance-playbacks="textEntrancePlaybacks"
           :hidden-object-ids="pendingTextEntranceIds"
+        />
+        <TheaterCharacterStatsOverlay
+          :world-id="worldId"
+          :channel-id="channelId"
+          @open-character-card="emit('openCharacterCard', $event)"
         />
         <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
         <TheaterEffectOverlay

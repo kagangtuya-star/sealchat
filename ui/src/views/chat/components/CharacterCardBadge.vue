@@ -49,14 +49,13 @@ const template = computed(() => {
 });
 
 const resolvedAttrs = computed<Record<string, any> | undefined>(() => {
-  if (badgeEntry.value?.attrs) return badgeEntry.value.attrs;
   const channelId = chatStore.curChannel?.id || '';
   const activeIdentityId = chatStore.getActiveIdentityId(channelId);
-  const activeBoundCardId = props.identityId ? (cardStore.getBoundCardId(props.identityId) || '') : '';
-  if (channelId && activeIdentityId && props.identityId === activeIdentityId && activeBoundCardId) {
-    return cardStore.activeCards[channelId]?.attrs;
+  if (channelId && activeIdentityId && props.identityId === activeIdentityId) {
+    const activeAttrs = cardStore.activeCards[channelId]?.attrs;
+    if (activeAttrs) return activeAttrs;
   }
-  return undefined;
+  return badgeEntry.value?.attrs;
 });
 
 const renderedContent = computed(() => {

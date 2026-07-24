@@ -18,6 +18,8 @@ import {
   type ChatMessageSendPayload,
   type ChatMessageSendResult,
   type InitializedPayload,
+  type OpenCharacterCardPayload,
+  type OpenCharacterCardResult,
   type ReadyPayload,
   type SelectCharacterPayload,
   type SelectCharacterResult,
@@ -60,6 +62,7 @@ const CHAT_BRIDGE_PERMISSIONS = [
   'chat.character.read',
   'chat.character.select',
   'chat.character.variant.select',
+  'chat.character.card.open',
 ] as const
 
 const sameStageAction = (left: StageAction, right: StageAction) => {
@@ -223,6 +226,14 @@ export class TheaterHostBridge {
     })
   }
 
+  openCharacterCard(identityId: string) {
+    return this.stageClient.request<OpenCharacterCardPayload, OpenCharacterCardResult>(
+      'chat',
+      'chat.character.card.open',
+      { identityId },
+    )
+  }
+
   private registerHandlers() {
     this.hostClient.onSystem<ReadyPayload>('system.ready', (payload, message) => {
       if (message.source !== 'chat' || payload.endpoint !== 'chat') return
@@ -346,7 +357,9 @@ export class TheaterHostBridge {
               ? 'chat.character.select'
               : message.name === 'chat.character.variant.select'
                 ? 'chat.character.variant.select'
-                : ''
+                : message.name === 'chat.character.card.open'
+                  ? 'chat.character.card.open'
+                  : ''
       if (!requiredPermission || !this.options.permissions.includes(requiredPermission)) {
         this.rejectStageCommand(message, 'PERMISSION_DENIED', `Missing permission: ${requiredPermission || message.name}`)
         return

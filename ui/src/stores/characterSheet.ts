@@ -5119,6 +5119,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       templateText?: string;
       readOnly?: boolean;
       worldId?: string;
+      placement?: 'right';
     }
   ): string => {
     restoreWindows();
@@ -5170,6 +5171,13 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
           existing.isMinimized = false;
         }
 
+        if (templateMeta?.placement === 'right') {
+          existing.positionX = (typeof window !== 'undefined' ? window.innerWidth : 1200)
+            - Math.max(MIN_WIDTH, existing.width || DEFAULT_WIDTH)
+            - VIEWPORT_PADDING;
+          existing.positionY = VIEWPORT_PADDING;
+        }
+
         const clampedPos = clampWindowCoords(
           existing.positionX,
           existing.positionY,
@@ -5193,8 +5201,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     const windowId = generateWindowId();
     const offset = activeWindowIds.value.length * 30;
 
+    const preferredInitialX = templateMeta?.placement === 'right'
+      ? (typeof window !== 'undefined' ? window.innerWidth : 1200) - DEFAULT_WIDTH - VIEWPORT_PADDING
+      : VIEWPORT_PADDING + offset;
     const clampedInitialPos = clampWindowCoords(
-      VIEWPORT_PADDING + offset,
+      preferredInitialX,
       VIEWPORT_PADDING + offset,
       DEFAULT_WIDTH,
       DEFAULT_HEIGHT,

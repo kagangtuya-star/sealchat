@@ -368,6 +368,31 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		}
 	}()
 
+	// Persistent character snapshots use client-owned data. Probe active clients once per minute;
+	// unchanged content hashes require no response and therefore no database write.
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			channelUsersMap.Range(func(channelID string, users *utils.SyncSet[string]) bool {
+				if strings.TrimSpace(channelID) == "" || users == nil || users.Len() == 0 {
+					return true
+				}
+				items, err := service.CharacterSnapshotProbeList(channelID)
+				if err != nil {
+					return true
+				}
+				ctx := &ChatContext{ChannelUsersMap: channelUsersMap, UserId2ConnInfo: userId2ConnInfo}
+				ctx.BroadcastEventInChannel(channelID, &protocol.Event{
+					Type:                   protocol.EventCharacterSnapshotProbe,
+					Channel:                &protocol.Channel{ID: channelID},
+					CharacterSnapshotProbe: &protocol.CharacterSnapshotProbePayload{ChannelID: channelID, Items: items, ProbedAt: time.Now().UnixMilli()},
+				})
+				return true
+			})
+		}
+	}()
+
 	guestAllowedAPIs := map[string]struct{}{
 		"channel.list":               {},
 		"channel.favorite.list":      {},
@@ -1194,6 +1219,27 @@ func websocketWorks(app *fiber.App, webUrl string) {
 						solved = true
 					case "character.online.card.snapshot":
 						apiWrap(ctx, msg, apiCharacterOnlineCardSnapshot)
+						solved = true
+					case "character.snapshot.list":
+						apiWrap(ctx, msg, apiCharacterSnapshotList)
+						solved = true
+					case "character.snapshot.upsert":
+						apiWrap(ctx, msg, apiCharacterSnapshotUpsert)
+						solved = true
+					case "character.snapshot.clear":
+						apiWrap(ctx, msg, apiCharacterSnapshotClear)
+						solved = true
+					case "character.snapshot.settings.get":
+						apiWrap(ctx, msg, apiCharacterSnapshotSettingsGet)
+						solved = true
+					case "character.snapshot.settings.update":
+						apiWrap(ctx, msg, apiCharacterSnapshotSettingsUpdate)
+						solved = true
+					case "character.snapshot.preference.get":
+						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceGet)
+						solved = true
+					case "character.snapshot.preference.update":
+						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceUpdate)
 						solved = true
 					case "character.remark.broadcast":
 						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)

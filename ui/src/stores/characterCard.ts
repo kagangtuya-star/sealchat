@@ -6,10 +6,8 @@ import { useDisplayStore } from './display';
 import { useCharacterCardTemplateStore } from './characterCardTemplate';
 import { useCharacterSheetStore } from './characterSheet';
 import {
-  extractTemplateKeys,
   getWorldCardTemplate,
   hasRenderableBadgeData,
-  resolveTemplateValue,
 } from '@/utils/characterCardTemplate';
 import {
   clearNarratorBadgeCacheEntries,
@@ -18,6 +16,7 @@ import {
   type CharacterCardNarratorSettings,
 } from '@/utils/characterCardNarratorSettings';
 import { cleanupDeletedCharacterCardState } from './characterCardDeleteCleanup';
+import { useChannelCharacterSnapshotStore } from './channelCharacterSnapshot';
 import {
   buildBotNicknameSyncCommand,
   resolveBotNicknameSyncName,
@@ -148,6 +147,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const displayStore = useDisplayStore();
   const templateStore = useCharacterCardTemplateStore();
   const sheetStore = useCharacterSheetStore();
+  const snapshotStore = useChannelCharacterSnapshotStore();
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
   let loadedNarratorSettingsKey = '';
@@ -637,44 +637,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const broadcastOnlineActiveCard = async (channelId: string) => {
     if (!channelId) return;
-    await chatStore.ensureConnectionReady();
-    if (!displayStore.settings.onlineCharacterCardsEnabled) {
-      await chatStore.sendAPI('character.online.card.broadcast', {
-        channel_id: channelId,
-        action: 'clear',
-      });
-      return;
-    }
-    const active = activeCards.value[channelId];
-    const identityId = chatStore.getActiveIdentityId(channelId);
-    if (!active || !identityId) {
-      await chatStore.sendAPI('character.online.card.broadcast', {
-        channel_id: channelId,
-        action: 'clear',
-      });
-      return;
-    }
-    await chatStore.sendAPI('character.online.card.broadcast', {
-      channel_id: channelId,
-      identity_id: identityId,
-      card: {
-        name: active.name,
-        sheetType: active.type,
-        attrs: active.attrs || {},
-        templateText: active.templateText || '',
-      },
-      action: 'update',
-    });
+    await snapshotStore.syncLocalSnapshot(channelId);
   };
 
   const clearOnlineActiveCard = async (channelId: string) => {
     if (!channelId) return;
-    await chatStore.ensureConnectionReady();
     try {
-      await chatStore.sendAPI('character.online.card.broadcast', {
-        channel_id: channelId,
-        action: 'clear',
-      });
+      await snapshotStore.syncLocalSnapshot(channelId);
     } catch (e) {
       console.warn('[CharacterCard] Failed to clear online active card', e);
     }
@@ -826,6 +795,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     chatEvent.on('channel-identity-updated' as any, (payload?: { channelId?: string; removedId?: string; replacedId?: string }) => {
       const channelId = String(payload?.channelId || '').trim();
       const removedId = String(payload?.removedId || payload?.replacedId || '').trim();
+      if (channelId) {
+        snapshotStore.scheduleLocalSync(channelId);
+      }
       if (!channelId || !removedId) {
         return;
       }
@@ -1484,94 +1456,33 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (shouldSkipCharacterApi(channelId, 'requestBadgeSnapshot')) {
       return;
     }
-    loadBadgeCache(channelId);
-    await chatStore.ensureConnectionReady();
     try {
-      await chatStore.sendAPI('character.badge.snapshot', { channel_id: channelId });
+      await snapshotStore.initializeChannel(channelId);
+      await snapshotStore.refreshChannel(channelId);
     } catch (e) {
       console.warn('Failed to request badge snapshot', e);
     }
   };
 
-  const requestOnlineCardSnapshot = async (channelId: string, options?: { requestPeers?: boolean }) => {
+  const requestOnlineCardSnapshot = async (channelId: string, _options?: { requestPeers?: boolean }) => {
     if (!channelId) return;
     setOnlineCardsLoading(channelId, true);
-    await chatStore.ensureConnectionReady();
     try {
-      if (options?.requestPeers !== false) {
-        await chatStore.sendAPI('character.online.card.request', { channel_id: channelId });
-      }
-      await chatStore.sendAPI('character.online.card.snapshot', { channel_id: channelId });
+      await snapshotStore.initializeChannel(channelId);
+      await snapshotStore.refreshChannel(channelId);
     } catch (e) {
       setOnlineCardsLoading(channelId, false);
       console.warn('[CharacterCard] Failed to request online character cards', e);
     }
   };
 
-  const broadcastActiveBadge = async (channelId: string, identityId?: string, action: 'update' | 'clear' = 'update') => {
+  const broadcastActiveBadge = async (channelId: string, _identityId?: string, _action: 'update' | 'clear' = 'update') => {
     if (!channelId) return;
     if (shouldSkipCharacterApi(channelId, 'broadcastActiveBadge')) {
       return;
     }
-    const resolvedIdentityId = identityId || chatStore.getActiveIdentityId(channelId);
-    if (!resolvedIdentityId) return;
-    if (isNarratorIdentity(channelId, resolvedIdentityId)) {
-      action = 'clear';
-      applyNarratorBadgeCleanup(channelId, [resolvedIdentityId]);
-    }
-    await chatStore.ensureConnectionReady();
-    if (!displayStore.settings.characterCardBadgeEnabled) {
-      action = 'clear';
-    }
-    if (action === 'clear') {
-      try {
-        await chatStore.sendAPI('character.badge.broadcast', {
-          channel_id: channelId,
-          identity_id: resolvedIdentityId,
-          action: 'clear',
-        });
-      } catch (e) {
-        console.warn('Failed to clear badge', e);
-      }
-      return;
-    }
-    const attrsSource = activeCards.value[channelId]?.attrs;
-    if (!attrsSource) {
-      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
-      return;
-    }
-    const worldId = chatStore.currentWorldId || '';
-    const template = resolveBadgeTemplate(worldId);
-    if (!template) {
-      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
-      return;
-    }
-    if (!hasRenderableBadgeData(template, attrsSource)) {
-      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
-      return;
-    }
-    const keys = extractTemplateKeys(template);
-    const filteredAttrs: Record<string, any> = {};
-    if (keys.length > 0) {
-      for (const key of keys) {
-        const value = resolveTemplateValue(attrsSource, key);
-        if (value !== undefined && value !== null && value !== '') {
-          filteredAttrs[key] = value;
-        }
-      }
-      if (Object.keys(filteredAttrs).length === 0) {
-        await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
-        return;
-      }
-    }
     try {
-      await chatStore.sendAPI('character.badge.broadcast', {
-        channel_id: channelId,
-        identity_id: resolvedIdentityId,
-        template,
-        attrs: keys.length > 0 ? filteredAttrs : {},
-        action: 'update',
-      });
+      await snapshotStore.syncLocalSnapshot(channelId);
     } catch (e) {
       console.warn('Failed to broadcast badge', e);
     }
@@ -1580,6 +1491,21 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const getBadgeByIdentity = (channelId: string, identityId: string) => {
     if (!channelId || !identityId) return null;
     if (isNarratorIdentity(channelId, identityId)) return null;
+    const snapshot = snapshotStore.getSnapshot(channelId, identityId);
+    if (snapshot) {
+      if (!snapshot.data.badgeEnabled) return null;
+      const template = String(snapshot.badgeTemplate || '').trim();
+      const attrs = snapshot.data.badgeAttrs || {};
+      if (template && hasRenderableBadgeData(template, attrs)) {
+        return {
+          identityId,
+          channelId,
+          template,
+          attrs,
+          updatedAt: Math.floor((snapshot.sourceUpdatedAt || snapshot.lastSeenAt || Date.now()) / 1000),
+        };
+      }
+    }
     return badgeCacheByChannel.value[channelId]?.[identityId] || null;
   };
 
@@ -1594,6 +1520,54 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     { immediate: true },
   );
 
+  snapshotStore.setLocalSnapshotProvider((channelId) => {
+    const identity = chatStore.getActiveIdentity(channelId);
+    if (!identity?.id) return null;
+    const active = activeCards.value[channelId];
+    const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
+    const cardId = getActiveCardId(channelId);
+    const cardMeta = cardId ? cardList.value.find(card => card.id === cardId) : undefined;
+    const rawSourceUpdatedAt = Number(cardMeta?.updatedAt || 0);
+    const sourceUpdatedAt = rawSourceUpdatedAt > 0 && rawSourceUpdatedAt < 1_000_000_000_000
+      ? rawSourceUpdatedAt * 1000
+      : rawSourceUpdatedAt;
+    const displayName = String(variant?.displayName || identity.displayName || '').trim();
+    const color = String(variant?.color || identity.color || '').trim();
+    const avatarAttachmentId = String(variant?.avatarAttachmentId || identity.avatarAttachmentId || '').trim();
+    const avatarDecorations = Array.isArray((variant as any)?.appearance?.avatarDecorations)
+      ? (variant as any).appearance.avatarDecorations
+      : Array.isArray(identity.avatarDecorations)
+        ? identity.avatarDecorations
+        : [];
+    const includeCard = displayStore.settings.onlineCharacterCardsEnabled && !!active;
+    const includeBadge = displayStore.settings.characterCardBadgeEnabled && !!active && !isNarratorIdentity(channelId, identity.id);
+    return {
+      identityId: identity.id,
+      sourceType: 'client',
+      sourceCardId: cardId,
+      sourceUpdatedAt,
+      data: {
+        identity: {
+          id: identity.id,
+          userId: String(identity.userId || getUserId()),
+          displayName,
+          color,
+          avatarAttachmentId,
+          avatarDecorations,
+        },
+        ...(includeCard && active ? {
+          card: {
+            name: active.name,
+            sheetType: active.type,
+            attrs: active.attrs || {},
+            ...(active.templateText ? { templateText: active.templateText } : {}),
+          },
+        } : {}),
+        badgeEnabled: includeBadge,
+        badgeAttrs: includeBadge ? active?.attrs || {} : {},
+      },
+    };
+  });
   ensureBadgeGateway();
 
   return {

@@ -1,10 +1,14 @@
 import DOMPurify from 'dompurify';
+import { resolveCharacterCardValueContainer } from './characterCardValueMiddleware';
 
 export const DEFAULT_CARD_TEMPLATE = 'HP{生命值} SAN{理智} 闪避{闪避}';
 
 const TEMPLATE_STORAGE_KEY_PREFIX = 'sealchat_card_template_';
 const UNSAFE_TEMPLATE_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
 const MAX_ADAPTIVE_TEMPLATE_SEARCH_NODES = 10_000;
+const MAX_TEMPLATE_EXPRESSION_LENGTH = 512;
+const MAX_TEMPLATE_EXPRESSION_DEPTH = 32;
+const NUMERIC_TEMPLATE_LITERAL_PATTERN = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
 
 type TemplateValueLookup =
   | { found: true; value: unknown }
@@ -15,10 +19,11 @@ function isObjectLike(value: unknown): value is Record<string, unknown> {
 }
 
 function readOwnEnumerableValue(source: unknown, key: string): TemplateValueLookup {
-  if (!isObjectLike(source) || !Object.prototype.propertyIsEnumerable.call(source, key)) {
+  const container = resolveCharacterCardValueContainer(source);
+  if (!isObjectLike(container) || !Object.prototype.propertyIsEnumerable.call(container, key)) {
     return { found: false };
   }
-  return { found: true, value: source[key] };
+  return { found: true, value: (container as Record<string, unknown>)[key] };
 }
 
 function isSafeTemplatePathSegment(segment: string): boolean {
@@ -59,14 +64,16 @@ function findAdaptiveTemplateValue(data: Record<string, any>, key: string): unkn
     const current = pending.pop()!;
     scanned += 1;
     if (current.key === key) return current.value;
-    if (!isObjectLike(current.value) || visited.has(current.value)) continue;
+    const container = resolveCharacterCardValueContainer(current.value);
+    if (!isObjectLike(container) || visited.has(container)) continue;
 
-    visited.add(current.value);
-    const childKeys = Object.keys(current.value);
+    visited.add(container);
+    const record = container as Record<string, unknown>;
+    const childKeys = Object.keys(container);
     for (let index = childKeys.length - 1; index >= 0; index -= 1) {
       const childKey = childKeys[index];
       if (isSafeTemplatePathSegment(childKey)) {
-        pending.push({ key: childKey, value: current.value[childKey] });
+        pending.push({ key: childKey, value: record[childKey] });
       }
     }
   }
@@ -74,19 +81,121 @@ function findAdaptiveTemplateValue(data: Record<string, any>, key: string): unkn
   return undefined;
 }
 
-/**
- * Resolve a badge placeholder from character attributes.
- * Exact root keys win. Dotted placeholders use an explicit path; unresolved
- * single-key placeholders fall back to a deterministic depth-first JSON search.
- */
-export function resolveTemplateValue(data: Record<string, any>, rawKey: string): unknown {
-  const key = String(rawKey).trim();
-  if (!key || !isSafeTemplatePathSegment(key)) return undefined;
-
+function resolvePlainTemplateValue(data: Record<string, any>, key: string): unknown {
   const direct = readOwnEnumerableValue(data, key);
   if (direct.found) return direct.value;
   if (key.includes('.')) return resolveExplicitTemplatePath(data, key);
   return findAdaptiveTemplateValue(data, key);
+}
+
+function resolveTemplateExpression(data: Record<string, any>, expression: string): number | undefined {
+  if (!expression || expression.length > MAX_TEMPLATE_EXPRESSION_LENGTH) return undefined;
+  let index = 0;
+  let depth = 0;
+
+  const skipWhitespace = () => {
+    while (/\s/.test(expression[index] || '')) index += 1;
+  };
+
+  const parsePrimary = (): number | undefined => {
+    skipWhitespace();
+    if (expression[index] === '(') {
+      if (depth >= MAX_TEMPLATE_EXPRESSION_DEPTH) return undefined;
+      index += 1;
+      depth += 1;
+      const value = parseAddSubtract();
+      depth -= 1;
+      skipWhitespace();
+      if (expression[index] !== ')') return undefined;
+      index += 1;
+      return value;
+    }
+
+    const numberMatch = expression.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)/);
+    if (numberMatch) {
+      index += numberMatch[0].length;
+      const value = Number(numberMatch[0]);
+      return Number.isFinite(value) ? value : undefined;
+    }
+
+    const start = index;
+    while (index < expression.length && !/[+\-*/()\s]/.test(expression[index])) index += 1;
+    if (start === index) return undefined;
+    const raw = resolvePlainTemplateValue(data, expression.slice(start, index));
+    if (raw === null || raw === undefined || raw === '') return undefined;
+    const value = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    return Number.isFinite(value) ? value : undefined;
+  };
+
+  const parseUnary = (): number | undefined => {
+    skipWhitespace();
+    if (expression[index] !== '+' && expression[index] !== '-') return parsePrimary();
+    const operator = expression[index];
+    index += 1;
+    const value = parseUnary();
+    return value === undefined ? undefined : operator === '-' ? -value : value;
+  };
+
+  const parseMultiplyDivide = (): number | undefined => {
+    let value = parseUnary();
+    if (value === undefined) return undefined;
+    while (true) {
+      skipWhitespace();
+      const operator = expression[index];
+      if (operator !== '*' && operator !== '/') return value;
+      index += 1;
+      const right = parseUnary();
+      if (right === undefined || (operator === '/' && right === 0)) return undefined;
+      value = operator === '*' ? value * right : value / right;
+      if (!Number.isFinite(value)) return undefined;
+    }
+  };
+
+  const parseAddSubtract = (): number | undefined => {
+    let value = parseMultiplyDivide();
+    if (value === undefined) return undefined;
+    while (true) {
+      skipWhitespace();
+      const operator = expression[index];
+      if (operator !== '+' && operator !== '-') return value;
+      index += 1;
+      const right = parseMultiplyDivide();
+      if (right === undefined) return undefined;
+      value = operator === '+' ? value + right : value - right;
+      if (!Number.isFinite(value)) return undefined;
+    }
+  };
+
+  const value = parseAddSubtract();
+  skipWhitespace();
+  return value !== undefined && index === expression.length ? value : undefined;
+}
+
+/**
+ * Resolve a badge placeholder from character attributes.
+ * Exact root keys win. Dotted placeholders use an explicit path; unresolved
+ * single-key placeholders fall back to a deterministic depth-first JSON search.
+ * Unresolved keys may be arithmetic expressions containing numeric values.
+ */
+export function resolveTemplateValue(data: Record<string, any>, rawKey: string): unknown {
+  const input = String(rawKey).trim();
+  const wrapped = input.match(/^\{([^{}]+)\}$/);
+  const key = String(wrapped?.[1] ?? input).trim();
+  if (!key || !isSafeTemplatePathSegment(key)) return undefined;
+
+  const direct = readOwnEnumerableValue(data, key);
+  if (direct.found) return direct.value;
+
+  // Numeric literals and arithmetic must win over adaptive nested-key lookup.
+  // Character data can legitimately contain nested keys such as "0" and "1".
+  if (NUMERIC_TEMPLATE_LITERAL_PATTERN.test(key) || /[+\-*/()]/.test(key)) {
+    const expressionValue = resolveTemplateExpression(data, key);
+    if (expressionValue !== undefined) return expressionValue;
+  }
+
+  return key.includes('.')
+    ? resolveExplicitTemplatePath(data, key)
+    : findAdaptiveTemplateValue(data, key);
 }
 
 const escapeHtmlText = (input: unknown): string => String(input)

@@ -2948,6 +2948,10 @@ export const useChatStore = defineStore({
       if (scopeKey === channelId && options?.syncIcOocFromRole !== false) {
         this.autoSwitchIcOocOnRoleChange(channelId, identityId, options?.persist !== false);
       }
+      if (scopeKey === channelId) {
+        const identity = (this.channelIdentities[scopeKey] || []).find(item => item.id === identityId);
+        chatEvent.emit('channel-identity-updated', { channelId, identity } as any);
+      }
     },
 
     setActiveIdentityVariant(
@@ -2971,6 +2975,10 @@ export const useChatStore = defineStore({
       };
       if (options?.persist !== false) {
         writeChannelIdentityVariantToStorage(scopeKey, identityId, variantId || '');
+      }
+      if (scopeKey === channelId) {
+        const identity = (this.channelIdentities[scopeKey] || []).find(item => item.id === identityId);
+        chatEvent.emit('channel-identity-updated', { channelId, identity } as any);
       }
     },
 

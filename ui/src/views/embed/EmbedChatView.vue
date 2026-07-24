@@ -24,6 +24,8 @@ import {
   type ChatMessageSendPayload,
   type ChatMessageSendResult,
   type InitializePayload,
+  type OpenCharacterCardPayload,
+  type OpenCharacterCardResult,
   type SelectCharacterPayload,
   type SelectCharacterResult,
   type SelectCharacterVariantPayload,
@@ -427,6 +429,22 @@ const startTheaterBridge = async () => {
       return { ok: false, error: { code: 'SNAPSHOT_UNAVAILABLE', message: '差分已切换，但角色快照生成失败' } };
     }
     return { ok: true, snapshot };
+  });
+  client.onCommand<OpenCharacterCardPayload, OpenCharacterCardResult>('chat.character.card.open', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.character.card.open 仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.character.card.open')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.character.card.open' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const handler = chatViewRef.value?.openCharacterCardForTheater;
+    if (typeof handler !== 'function') {
+      return { ok: false, error: { code: 'CHAT_UNAVAILABLE', message: '人物卡预览流程尚未就绪' } };
+    }
+    return handler(payload);
   });
   await client.connect();
   if (generation !== theaterBridgeGeneration || initialWorldId.value.trim() !== worldId || initialChannelId.value.trim() !== channelId) {

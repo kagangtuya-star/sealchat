@@ -428,6 +428,12 @@ const (
 	EventCharacterOnlineCardRequested EventName = "character-online-card-requested"
 	EventCharacterOnlineCardUpdated   EventName = "character-online-card-updated"
 	EventCharacterOnlineCardSnapshot  EventName = "character-online-card-snapshot"
+	// Persistent Character Snapshot Events
+	EventCharacterSnapshotUpdated           EventName = "character-snapshot-updated"
+	EventCharacterSnapshotList              EventName = "character-snapshot-list"
+	EventCharacterSnapshotProbe             EventName = "character-snapshot-probe"
+	EventCharacterSnapshotSettingsUpdated   EventName = "character-snapshot-settings-updated"
+	EventCharacterSnapshotPreferenceUpdated EventName = "character-snapshot-preference-updated"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
@@ -512,6 +518,11 @@ type Event struct {
 	OnlineCharacterCardRequest  *OnlineCharacterCardRequestPayload  `json:"onlineCharacterCardRequest,omitempty"`
 	OnlineCharacterCard         *OnlineCharacterCardEventPayload    `json:"onlineCharacterCard,omitempty"`
 	OnlineCharacterCardSnapshot *OnlineCharacterCardSnapshotPayload `json:"onlineCharacterCardSnapshot,omitempty"`
+	CharacterSnapshot           *CharacterSnapshotEventPayload      `json:"characterSnapshot,omitempty"`
+	CharacterSnapshotList       *CharacterSnapshotListPayload       `json:"characterSnapshotList,omitempty"`
+	CharacterSnapshotProbe      *CharacterSnapshotProbePayload      `json:"characterSnapshotProbe,omitempty"`
+	CharacterSnapshotSettings   *CharacterSnapshotSettingsPayload   `json:"characterSnapshotSettings,omitempty"`
+	CharacterSnapshotPreference *CharacterSnapshotPreferencePayload `json:"characterSnapshotPreference,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
@@ -737,6 +748,87 @@ type OnlineCharacterCardEventPayload struct {
 // OnlineCharacterCardSnapshotPayload 在线成员人物卡快照载荷
 type OnlineCharacterCardSnapshotPayload struct {
 	Items []*OnlineCharacterCardItem `json:"items,omitempty"`
+}
+
+type CharacterSnapshotIdentity struct {
+	ID                 string               `json:"id"`
+	UserID             string               `json:"userId"`
+	DisplayName        string               `json:"displayName,omitempty"`
+	Color              string               `json:"color,omitempty"`
+	AvatarAttachmentID string               `json:"avatarAttachmentId,omitempty"`
+	AvatarDecorations  AvatarDecorationList `json:"avatarDecorations,omitempty"`
+}
+
+type CharacterSnapshotCard struct {
+	Name         string         `json:"name,omitempty"`
+	SheetType    string         `json:"sheetType,omitempty"`
+	Attrs        map[string]any `json:"attrs,omitempty"`
+	TemplateText string         `json:"templateText,omitempty"`
+}
+
+type CharacterSnapshotData struct {
+	Identity     CharacterSnapshotIdentity `json:"identity"`
+	Card         *CharacterSnapshotCard    `json:"card,omitempty"`
+	BadgeEnabled bool                      `json:"badgeEnabled,omitempty"`
+	BadgeAttrs   map[string]any            `json:"badgeAttrs,omitempty"`
+}
+
+type CharacterSnapshotItem struct {
+	ChannelID                  string                `json:"channelId"`
+	IdentityID                 string                `json:"identityId"`
+	UserID                     string                `json:"userId"`
+	SourceType                 string                `json:"sourceType"`
+	SourceCardID               string                `json:"sourceCardId,omitempty"`
+	Data                       CharacterSnapshotData `json:"data"`
+	BadgeTemplate              string                `json:"badgeTemplate,omitempty"`
+	TheaterOverlayTemplateJSON string                `json:"theaterOverlayTemplateJson,omitempty"`
+	ContentHash                string                `json:"contentHash"`
+	ServerRevision             int64                 `json:"serverRevision"`
+	SourceUpdatedAt            int64                 `json:"sourceUpdatedAt,omitempty"`
+	LastSeenAt                 int64                 `json:"lastSeenAt"`
+}
+
+type CharacterSnapshotEventPayload struct {
+	Item   *CharacterSnapshotItem `json:"item,omitempty"`
+	Action string                 `json:"action"` // update/clear
+}
+
+type CharacterSnapshotListPayload struct {
+	ChannelID string                   `json:"channelId"`
+	Items     []*CharacterSnapshotItem `json:"items"`
+}
+
+type CharacterSnapshotProbeItem struct {
+	UserID         string `json:"userId"`
+	IdentityID     string `json:"identityId"`
+	ContentHash    string `json:"contentHash"`
+	ServerRevision int64  `json:"serverRevision"`
+}
+
+type CharacterSnapshotProbePayload struct {
+	ChannelID string                        `json:"channelId"`
+	Items     []*CharacterSnapshotProbeItem `json:"items"`
+	ProbedAt  int64                         `json:"probedAt"`
+}
+
+type CharacterSnapshotSettingsPayload struct {
+	ChannelID                  string `json:"channelId"`
+	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
+	SchemaVersion              int    `json:"schemaVersion"`
+	ServerRevision             int64  `json:"serverRevision"`
+	UpdatedBy                  string `json:"updatedBy,omitempty"`
+}
+
+type CharacterSnapshotPreferencePayload struct {
+	ChannelID                  string `json:"channelId"`
+	UserID                     string `json:"userId"`
+	BadgeTemplateMode          string `json:"badgeTemplateMode"`
+	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode"`
+	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
+	SchemaVersion              int    `json:"schemaVersion"`
+	ServerRevision             int64  `json:"serverRevision"`
 }
 
 // CharacterRemarkEventPayload 角色备注事件载荷

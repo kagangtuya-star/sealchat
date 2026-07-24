@@ -30,6 +30,7 @@ export const THEATER_CHAT_CAPABILITIES = [
   'chat.character.subscribe',
   'chat.character.select',
   'chat.character.variant.select',
+  'chat.character.card.open',
   'chat.character.updated',
   'chat.character.selected',
   'chat.character.appearance.updated',
@@ -570,11 +571,20 @@ export const selectCharacterVariantPayloadSchema = z.strictObject({
   variantId: nonEmptyIdSchema.nullable(),
 })
 
+export const openCharacterCardPayloadSchema = z.strictObject({
+  identityId: nonEmptyIdSchema,
+})
+
 export const selectCharacterResultSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     snapshot: chatCharactersSnapshotPayloadSchema,
   }),
+  bridgeErrorResultSchema,
+])
+
+export const openCharacterCardResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true) }),
   bridgeErrorResultSchema,
 ])
 
@@ -614,6 +624,8 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['result:chat.character.select.result', selectCharacterResultSchema],
   ['command:chat.character.variant.select', selectCharacterVariantPayloadSchema],
   ['result:chat.character.variant.select.result', selectCharacterResultSchema],
+  ['command:chat.character.card.open', openCharacterCardPayloadSchema],
+  ['result:chat.character.card.open.result', openCharacterCardResultSchema],
   ['event:chat.character.updated', chatCharactersSnapshotPayloadSchema],
   ['event:chat.character.selected', characterSelectedPayloadSchema],
   ['event:chat.character.appearance.updated', characterAppearanceUpdatedPayloadSchema],
@@ -649,6 +661,8 @@ export type ChatCharacterReadResult = z.infer<typeof chatCharacterReadResultSche
 export type SelectCharacterPayload = z.infer<typeof selectCharacterPayloadSchema>
 export type SelectCharacterVariantPayload = z.infer<typeof selectCharacterVariantPayloadSchema>
 export type SelectCharacterResult = z.infer<typeof selectCharacterResultSchema>
+export type OpenCharacterCardPayload = z.infer<typeof openCharacterCardPayloadSchema>
+export type OpenCharacterCardResult = z.infer<typeof openCharacterCardResultSchema>
 export type CharacterSelectedPayload = z.infer<typeof characterSelectedPayloadSchema>
 export type CharacterAppearanceUpdatedPayload = z.infer<typeof characterAppearanceUpdatedPayloadSchema>
 export type CharacterVariantSelectedPayload = z.infer<typeof characterVariantSelectedPayloadSchema>

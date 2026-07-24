@@ -183,6 +183,17 @@ const selectChatCharacterVariant = async (payload: { identityId: string, variant
   }
 }
 
+const openCharacterCard = async (identityId: string) => {
+  chatHidden.value = false
+  if (isNarrow.value) mobileTab.value = 'chat'
+  try {
+    const result = await theaterBridge?.openCharacterCard(identityId)
+    if (result && !result.ok) message.warning(result.error.message)
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '打开人物卡失败')
+  }
+}
+
 const requestTheaterPreload = async (sceneIds: string[]) => {
   try {
     await theaterSync?.requestPreload(sceneIds)
@@ -510,6 +521,7 @@ function handleDice3DMessage(event: MessageEvent) {
           @update-scene-dialogue-enabled="sceneDialogueEnabled = $event"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"
+          @open-character-card="openCharacterCard"
           @toggle-chat="toggleChat"
           @reset-layout="resetLayout"
           @exit-theater="exitTheater"

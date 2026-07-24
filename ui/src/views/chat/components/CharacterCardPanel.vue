@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh, ChevronDown, ChevronRight, Settings } from '@vicons/tabler';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, NColorPicker, useMessage } from 'naive-ui';
+import { Plus, Trash, Edit, Link, Eye, Upload, Download, X, Refresh, ChevronDown, ChevronRight, Settings, GripVertical } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard, type OnlineCharacterCardItem } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
@@ -11,10 +11,15 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useUtilsStore } from '@/stores/utils';
 import {
+  useChannelCharacterSnapshotStore,
+  type CharacterSnapshotNumericSource,
+  type TheaterCharacterOverlayTemplate,
+} from '@/stores/channelCharacterSnapshot';
+import {
   filterAliveNarratorIdentityIds,
   resolveCharacterCardNarratorCountBadge,
 } from '@/utils/characterCardNarratorSettings';
-import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
+import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, resolveTemplateValue, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import AvatarVue from '@/components/avatar.vue';
 import AvatarEditor from '@/components/AvatarEditor.vue';
@@ -39,6 +44,7 @@ const chatStore = useChatStore();
 const displayStore = useDisplayStore();
 const userStore = useUserStore();
 const utilsStore = useUtilsStore();
+const snapshotStore = useChannelCharacterSnapshotStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 const updateViewportWidth = () => {
@@ -150,24 +156,28 @@ const onlineCharacterCardsEnabled = computed({
 const onlineCharacterCards = computed(() => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return [];
-  return Object.values(cardStore.onlineCardsByChannel[channelId] || {})
-    .filter(item => item.userId !== userStore.info?.id && item.card?.name)
+  return snapshotStore.getChannelItems(channelId)
+    .filter(item => item.userId !== userStore.info?.id && item.data.card?.name)
+    .map<OnlineCharacterCardItem>(item => ({
+      userId: item.userId,
+      userNick: item.data.identity.displayName,
+      identityId: item.identityId,
+      identityName: item.data.identity.displayName,
+      identityColor: item.data.identity.color,
+      identityAvatar: item.data.identity.avatarAttachmentId,
+      card: item.data.card!,
+      updatedAt: Math.floor((item.sourceUpdatedAt || item.lastSeenAt || 0) > 1_000_000_000_000
+        ? (item.sourceUpdatedAt || item.lastSeenAt || 0) / 1000
+        : (item.sourceUpdatedAt || item.lastSeenAt || 0)),
+    }))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 });
 
 const onlineCharacterCardsLoading = computed(() => (
-  !!cardStore.onlineCardsLoadingByChannel[resolvedChannelId.value]
+  !!snapshotStore.loadingByChannel[resolvedChannelId.value]
 ));
 
-let onlineCharacterCardsRefreshTimer: ReturnType<typeof setInterval> | null = null;
 const lastOnlineCharacterCardsRefreshAt = ref(0);
-
-const stopOnlineCharacterCardsRefresh = () => {
-  if (onlineCharacterCardsRefreshTimer) {
-    clearInterval(onlineCharacterCardsRefreshTimer);
-    onlineCharacterCardsRefreshTimer = null;
-  }
-};
 
 const refreshOnlineCharacterCards = async (manual = false) => {
   const channelId = resolvedChannelId.value;
@@ -179,12 +189,8 @@ const refreshOnlineCharacterCards = async (manual = false) => {
 };
 
 const syncOnlineCharacterCardsRefresh = () => {
-  stopOnlineCharacterCardsRefresh();
   if (!props.visible || !resolvedChannelId.value || !onlineCharacterCardsEnabled.value) return;
   void refreshOnlineCharacterCards(false);
-  onlineCharacterCardsRefreshTimer = setInterval(() => {
-    void refreshOnlineCharacterCards(false);
-  }, 45_000);
 };
 
 const formatOnlineCardUpdatedAt = (updatedAt?: number) => {
@@ -195,7 +201,7 @@ const formatOnlineCardUpdatedAt = (updatedAt?: number) => {
 };
 
 const onlinePreviewCard = (item: OnlineCharacterCardItem): CharacterCard => ({
-  id: `online:${item.userId}:${item.identityId}`,
+  id: `snapshot:${resolvedChannelId.value}:${item.identityId}`,
   name: item.card.name,
   sheetType: item.card.sheetType,
   attrs: item.card.attrs,
@@ -216,6 +222,7 @@ const openOnlineCharacterCardPreview = (item: OnlineCharacterCardItem) => {
     templateText: item.card.templateText || undefined,
     readOnly: true,
     worldId: currentWorldId.value || undefined,
+    placement: 'right',
   });
   if (isMobile.value) {
     handleClose();
@@ -302,14 +309,228 @@ const autoSyncBotNicknameEnabled = computed({
 });
 
 const badgeTemplate = ref('');
+const channelSnapshotTemplateManageAllowed = ref(false);
+const theaterOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
+const theaterOverlaySettingsExpanded = ref(false);
+const personalBadgeTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
+const personalBadgeTemplate = ref('');
+const personalOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
+const personalOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
+const snapshotTemplateSaving = ref(false);
+const overlayTemplateEditorVisible = ref(false);
+const overlayTemplateEditorTarget = ref<'channel' | 'personal'>('channel');
+const draggingOverlayItemId = ref('');
+const overlayTemplateImportInput = ref<HTMLInputElement | null>(null);
+const overlayTemplateEditorPreferredColumns = ref(2);
+let nextOverlayItemSerial = 1;
+
+interface OverlayEditorSource {
+  value: string;
+  kind: 'path' | 'literal';
+}
+
+interface OverlayEditorItem {
+  id: string;
+  name: string;
+  current: OverlayEditorSource;
+  min: OverlayEditorSource;
+  max: OverlayEditorSource;
+  barColor: string;
+  textColor: string;
+}
+
+const overlayTemplateEditorItems = ref<OverlayEditorItem[]>([]);
+const templateModeOptions = [
+  { label: '继承频道', value: 'inherit' },
+  { label: '个人模板', value: 'custom' },
+  { label: '关闭', value: 'off' },
+];
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
+const theaterOverlaySettingsToggleIcon = computed(() => (
+  theaterOverlaySettingsExpanded.value ? ChevronDown : ChevronRight
+));
+const activeCharacterCardAttrs = computed<Record<string, any>>(() => {
+  const channelId = resolvedChannelId.value;
+  return channelId ? cardStore.activeCards[channelId]?.attrs || {} : {};
+});
 const canSyncBadgeTemplate = computed(() => {
   const worldId = currentWorldId.value;
   if (!worldId) return false;
   const detail = chatStore.worldDetailMap[worldId];
   const role = detail?.memberRole;
-  return role === 'owner' || role === 'admin';
+  return role === 'owner' || role === 'admin' || channelSnapshotTemplateManageAllowed.value;
 });
+
+const toggleTheaterOverlaySettingsExpanded = () => {
+  theaterOverlaySettingsExpanded.value = !theaterOverlaySettingsExpanded.value;
+};
+
+const sourceToEditorSource = (source?: CharacterSnapshotNumericSource): OverlayEditorSource => {
+  if (!source || typeof source !== 'object') return { value: '', kind: 'path' };
+  return 'value' in source
+    ? { value: String(source.value), kind: 'literal' }
+    : { value: source.path || '', kind: 'path' };
+};
+
+const editorSourceToTemplateSource = (source: OverlayEditorSource): CharacterSnapshotNumericSource | undefined => {
+  const value = source.value.trim();
+  if (!value) return undefined;
+  if (source.kind === 'literal') {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? { value: numericValue } : undefined;
+  }
+  return { path: value };
+};
+
+const createOverlayEditorItem = (): OverlayEditorItem => ({
+  id: `stat_${Date.now()}_${nextOverlayItemSerial++}`,
+  name: '',
+  current: { value: '', kind: 'path' },
+  min: { value: '', kind: 'path' },
+  max: { value: '', kind: 'path' },
+  barColor: '#5b8ff9',
+  textColor: '#f8fafc',
+});
+
+const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[]; preferredColumns: number } | null => {
+  try {
+    const value = JSON.parse(raw) as TheaterCharacterOverlayTemplate;
+    if (value?.version !== 1 || !Array.isArray(value.items)) return null;
+    const preferredColumns = Number(value.preferredColumns || 2);
+    return {
+      preferredColumns: Number.isFinite(preferredColumns)
+        ? Math.min(4, Math.max(1, preferredColumns))
+        : 2,
+      items: value.items
+        .filter(item => item && typeof item === 'object')
+        .map((item, index) => ({
+          id: String(item.id || `stat_${Date.now()}_${index + 1}`),
+          name: String(item.name || ''),
+          current: sourceToEditorSource(item.current),
+          min: sourceToEditorSource(item.min),
+          max: sourceToEditorSource(item.max),
+          barColor: item.barColor || '#5b8ff9',
+          textColor: item.textColor || '#f8fafc',
+        })),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const openOverlayTemplateEditor = (target: 'channel' | 'personal') => {
+  overlayTemplateEditorTarget.value = target;
+  const raw = target === 'channel' ? theaterOverlayTemplateJson.value : personalOverlayTemplateJson.value;
+  const draft = parseOverlayTemplateForEditor(raw);
+  overlayTemplateEditorItems.value = draft?.items || [];
+  overlayTemplateEditorPreferredColumns.value = draft?.preferredColumns || 2;
+  overlayTemplateEditorVisible.value = true;
+};
+
+const exportOverlayTemplate = () => {
+  const content = serializeOverlayTemplateEditor();
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `sealchat-theater-overlay-${overlayTemplateEditorTarget.value}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const triggerOverlayTemplateImport = () => {
+  if (!overlayTemplateImportInput.value) return;
+  overlayTemplateImportInput.value.value = '';
+  overlayTemplateImportInput.value.click();
+};
+
+const importOverlayTemplate = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  if (file.size > 1024 * 1024) {
+    message.error('模板文件不能超过 1 MB');
+    return;
+  }
+  try {
+    const draft = parseOverlayTemplateForEditor(await file.text());
+    if (!draft) throw new Error('模板格式无效');
+    overlayTemplateEditorItems.value = draft.items;
+    overlayTemplateEditorPreferredColumns.value = draft.preferredColumns;
+    message.success('模板已导入，保存后生效');
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '模板导入失败');
+  }
+};
+
+const addOverlayTemplateEditorItem = () => {
+  overlayTemplateEditorItems.value.push(createOverlayEditorItem());
+};
+
+const removeOverlayTemplateEditorItem = (id: string) => {
+  overlayTemplateEditorItems.value = overlayTemplateEditorItems.value.filter(item => item.id !== id);
+};
+
+const beginOverlayTemplateItemDrag = (id: string, event: DragEvent) => {
+  draggingOverlayItemId.value = id;
+  event.dataTransfer?.setData('text/plain', id);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+};
+
+const reorderOverlayTemplateEditorItem = (targetId: string) => {
+  const sourceId = draggingOverlayItemId.value;
+  draggingOverlayItemId.value = '';
+  if (!sourceId || sourceId === targetId) return;
+  const items = [...overlayTemplateEditorItems.value];
+  const sourceIndex = items.findIndex(item => item.id === sourceId);
+  const targetIndex = items.findIndex(item => item.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [source] = items.splice(sourceIndex, 1);
+  items.splice(targetIndex, 0, source);
+  overlayTemplateEditorItems.value = items;
+};
+
+const resolveOverlayEditorSource = (source: OverlayEditorSource): number | null => {
+  const raw = source.kind === 'literal'
+    ? source.value
+    : resolveTemplateValue(activeCharacterCardAttrs.value, source.value);
+  if (raw === null || raw === undefined || raw === '') return null;
+  const numericValue = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  return Number.isFinite(numericValue) ? numericValue : null;
+};
+
+const formatOverlayEditorCurrentValue = (source: OverlayEditorSource) => {
+  const value = resolveOverlayEditorSource(source);
+  return value === null ? '未找到' : String(value);
+};
+
+const overlayTemplatePreviewItems = computed(() => overlayTemplateEditorItems.value
+  .map(item => {
+    const current = resolveOverlayEditorSource(item.current);
+    const max = resolveOverlayEditorSource(item.max);
+    const min = resolveOverlayEditorSource(item.min) ?? 0;
+    if (current === null || max === null || max <= min) return null;
+    const percent = Math.min(100, Math.max(0, ((current - min) / (max - min)) * 100));
+    return { ...item, current, max, percent };
+  })
+  .filter((item): item is OverlayEditorItem & { current: number; max: number; percent: number } => !!item));
+
+const serializeOverlayTemplateEditor = () => JSON.stringify({
+  version: 1,
+  preferredColumns: overlayTemplateEditorPreferredColumns.value,
+  items: overlayTemplateEditorItems.value
+    .map(item => ({
+      id: item.id,
+      name: item.name.trim(),
+      current: editorSourceToTemplateSource(item.current),
+      min: editorSourceToTemplateSource(item.min),
+      max: editorSourceToTemplateSource(item.max),
+      barColor: item.barColor,
+      textColor: item.textColor,
+    }))
+    .filter(item => item.name && item.current),
+}, null, 2);
 
 const syncBadgeTemplate = () => {
   const worldId = currentWorldId.value;
@@ -319,6 +540,41 @@ const syncBadgeTemplate = () => {
   }
   const stored = displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId];
   badgeTemplate.value = stored ?? getWorldCardTemplate(worldId);
+};
+
+const formatTemplateJson = (value?: string) => {
+  try {
+    return JSON.stringify(JSON.parse(String(value || '')), null, 2);
+  } catch {
+    return String(value || '');
+  }
+};
+
+const syncSnapshotTemplateDrafts = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  try {
+    channelSnapshotTemplateManageAllowed.value = await chatStore.hasChannelPermission(
+      channelId,
+      'func_channel_manage_info',
+      userStore.info.id,
+    );
+  } catch {
+    channelSnapshotTemplateManageAllowed.value = false;
+  }
+  await snapshotStore.initializeChannel(channelId);
+  const settings = snapshotStore.settingsByChannel[channelId];
+  const preference = snapshotStore.preferenceByChannel[channelId];
+  if (settings) {
+    badgeTemplate.value = settings.badgeTemplate || badgeTemplate.value || DEFAULT_CARD_TEMPLATE;
+    theaterOverlayTemplateJson.value = formatTemplateJson(settings.theaterOverlayTemplateJson);
+  }
+  if (preference) {
+    personalBadgeTemplateMode.value = preference.badgeTemplateMode || 'inherit';
+    personalBadgeTemplate.value = preference.badgeTemplate || '';
+    personalOverlayTemplateMode.value = preference.theaterOverlayTemplateMode || 'inherit';
+    personalOverlayTemplateJson.value = formatTemplateJson(preference.theaterOverlayTemplateJson);
+  }
 };
 
 const persistBadgeTemplate = () => {
@@ -341,20 +597,87 @@ const resetBadgeTemplate = () => {
 };
 
 const syncBadgeTemplateToWorld = async () => {
-  const worldId = currentWorldId.value;
-  if (!worldId) return;
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
   const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
   badgeTemplate.value = normalized;
   persistBadgeTemplate();
+  snapshotTemplateSaving.value = true;
   try {
-    await chatStore.worldUpdate(worldId, { characterCardBadgeTemplate: normalized });
-    message.success('模板已同步');
+    await snapshotStore.updateSettings(channelId, {
+      badgeTemplate: normalized,
+      theaterOverlayTemplateJson: theaterOverlayTemplateJson.value,
+    });
+    await snapshotStore.refreshChannel(channelId);
+    message.success('频道人物卡模板已同步');
   } catch (e: any) {
-    message.error(e?.response?.data?.message || '模板同步失败');
+    message.error(e?.response?.err || e?.message || '模板同步失败');
+  } finally {
+    snapshotTemplateSaving.value = false;
+  }
+};
+
+const savePersonalSnapshotTemplates = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  snapshotTemplateSaving.value = true;
+  try {
+    await snapshotStore.updatePreference(channelId, {
+      badgeTemplateMode: personalBadgeTemplateMode.value,
+      badgeTemplate: personalBadgeTemplate.value,
+      theaterOverlayTemplateMode: personalOverlayTemplateMode.value,
+      theaterOverlayTemplateJson: personalOverlayTemplateJson.value,
+    });
+    await snapshotStore.syncLocalSnapshot(channelId, true);
+    message.success('个人人物卡模板已保存');
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '个人模板保存失败');
+  } finally {
+    snapshotTemplateSaving.value = false;
+  }
+};
+
+const saveOverlayTemplateEditor = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return false;
+  const templateJson = serializeOverlayTemplateEditor();
+  snapshotTemplateSaving.value = true;
+  try {
+    if (overlayTemplateEditorTarget.value === 'channel') {
+      const normalizedBadgeTemplate = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
+      badgeTemplate.value = normalizedBadgeTemplate;
+      persistBadgeTemplate();
+      await snapshotStore.updateSettings(channelId, {
+        badgeTemplate: normalizedBadgeTemplate,
+        theaterOverlayTemplateJson: templateJson,
+      });
+      theaterOverlayTemplateJson.value = templateJson;
+      await snapshotStore.refreshChannel(channelId);
+      message.success('小剧场数据浮层模板已保存');
+    } else {
+      personalOverlayTemplateJson.value = templateJson;
+      await snapshotStore.updatePreference(channelId, {
+        badgeTemplateMode: personalBadgeTemplateMode.value,
+        badgeTemplate: personalBadgeTemplate.value,
+        theaterOverlayTemplateMode: personalOverlayTemplateMode.value,
+        theaterOverlayTemplateJson: templateJson,
+      });
+      await snapshotStore.syncLocalSnapshot(channelId, true);
+      message.success('个人小剧场浮层模板已保存');
+    }
+    overlayTemplateEditorVisible.value = false;
+    return true;
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '模板保存失败');
+    return false;
+  } finally {
+    snapshotTemplateSaving.value = false;
   }
 };
 
 const loadPanelData = async (channelId: string) => {
+  await snapshotStore.initializeChannel(channelId);
+  await syncSnapshotTemplateDrafts();
   await cardStore.loadCards(channelId);
   await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
   await templateStore.loadBindings(channelId);
@@ -455,6 +778,7 @@ watch(
   ([visible]) => {
     if (visible) {
       syncBadgeTemplate();
+      void syncSnapshotTemplateDrafts();
     }
   },
   { immediate: true },
@@ -490,10 +814,10 @@ watch(onlineCharacterCardsEnabled, (enabled, prevEnabled) => {
     return;
   }
   if (!enabled) {
-    stopOnlineCharacterCardsRefresh();
     void cardStore.clearOnlineActiveCard(channelId);
     return;
   }
+  void cardStore.broadcastOnlineActiveCard(channelId);
   void refreshOnlineCharacterCards(false);
 });
 
@@ -536,7 +860,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  stopOnlineCharacterCardsRefresh();
   if (typeof window === 'undefined') return;
   window.removeEventListener('resize', updateViewportWidth);
 });
@@ -1461,8 +1784,8 @@ const openEditPanel = async (card: CharacterCard) => {
             </div>
             <div class="settings-row">
               <div>
-                <p class="settings-title">显示在线成员人物卡</p>
-                <p class="settings-desc">可以查看在线成员当前使用的人物卡信息</p>
+                <p class="settings-title">共享频道人物卡快照</p>
+                <p class="settings-desc">为人物卡预览、角色徽章和小剧场数据浮层提供统一数据</p>
               </div>
               <n-switch v-model:value="onlineCharacterCardsEnabled">
                 <template #checked>已启用</template>
@@ -1540,7 +1863,70 @@ const openEditPanel = async (card: CharacterCard) => {
                   tertiary
                   :disabled="characterApiDisabled"
                   @click="syncBadgeTemplateToWorld"
-                >模板同步</n-button>
+                >同步频道模板</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
+              <div>
+                <p class="settings-title">个人徽章模板</p>
+                <p class="settings-desc">只影响自己快照向其他成员展示的徽章。</p>
+              </div>
+              <div class="settings-template-input">
+                <n-select v-model:value="personalBadgeTemplateMode" size="small" :options="templateModeOptions" />
+                <n-input
+                  v-if="personalBadgeTemplateMode === 'custom'"
+                  v-model:value="personalBadgeTemplate"
+                  size="small"
+                  placeholder="HP{生命值} SAN{理智}"
+                />
+                <n-button size="small" type="primary" :loading="snapshotTemplateSaving" @click="savePersonalSnapshotTemplates">保存个人模板</n-button>
+              </div>
+            </div>
+          </div>
+        </n-collapse-transition>
+      </div>
+
+      <div class="character-card-settings">
+        <button
+          type="button"
+          class="settings-group-toggle"
+          :aria-expanded="theaterOverlaySettingsExpanded"
+          @click="toggleTheaterOverlaySettingsExpanded"
+        >
+          <span class="settings-group-toggle__title-wrap">
+            <n-icon size="18" class="settings-group-toggle__icon">
+              <component :is="theaterOverlaySettingsToggleIcon" />
+            </n-icon>
+            <span class="settings-group-toggle__title">小剧场数据浮窗设置</span>
+          </span>
+          <span class="settings-group-toggle__state">{{ theaterOverlaySettingsExpanded ? '收起' : '展开' }}</span>
+        </button>
+        <n-collapse-transition :show="theaterOverlaySettingsExpanded">
+          <div class="character-card-settings__body">
+            <div class="settings-row">
+              <p class="settings-title">小剧场数据浮层模板</p>
+              <n-button
+                size="small"
+                :disabled="!canSyncBadgeTemplate || snapshotTemplateSaving"
+                @click="openOverlayTemplateEditor('channel')"
+              >
+                <template #icon><n-icon :component="Edit" /></template>
+                编辑
+              </n-button>
+            </div>
+            <div class="settings-row settings-row--template">
+              <p class="settings-title">个人小剧场浮层模板</p>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="templateModeOptions" />
+                <n-button
+                  v-if="personalOverlayTemplateMode === 'custom'"
+                  size="small"
+                  @click="openOverlayTemplateEditor('personal')"
+                >
+                  <template #icon><n-icon :component="Edit" /></template>
+                  编辑
+                </n-button>
+                <n-button size="small" type="primary" :loading="snapshotTemplateSaving" @click="savePersonalSnapshotTemplates">保存</n-button>
               </div>
             </div>
           </div>
@@ -1558,7 +1944,7 @@ const openEditPanel = async (card: CharacterCard) => {
             <n-icon size="18" class="settings-group-toggle__icon">
               <component :is="onlineCharacterCardsToggleIcon" />
             </n-icon>
-            <span class="settings-group-toggle__title">在线成员人物卡</span>
+            <span class="settings-group-toggle__title">频道人物卡快照</span>
           </span>
           <span class="settings-group-toggle__state">{{ onlineCharacterCardsExpanded ? '收起' : '展开' }}</span>
         </button>
@@ -1566,7 +1952,7 @@ const openEditPanel = async (card: CharacterCard) => {
           <div class="character-card-settings__body">
             <div class="online-character-cards__header">
               <div>
-                <p class="settings-desc">仅显示当前频道其他在线成员当前启用的人物卡</p>
+                <p class="settings-desc">显示频道成员最近同步的当前人物卡；数据库快照不会反写拥有者前端。</p>
               </div>
               <n-button
                 tertiary
@@ -1822,6 +2208,108 @@ const openEditPanel = async (card: CharacterCard) => {
         </div>
       </n-form-item>
     </n-form>
+  </n-modal>
+
+  <n-modal
+    v-model:show="overlayTemplateEditorVisible"
+    preset="card"
+    title="编辑小剧场数据浮层"
+    style="width: min(980px, 94vw);"
+    :bordered="false"
+  >
+    <div class="overlay-template-editor">
+      <div class="overlay-template-editor__toolbar">
+        <input
+          ref="overlayTemplateImportInput"
+          class="overlay-template-editor__file-input"
+          type="file"
+          accept="application/json,.json"
+          @change="importOverlayTemplate"
+        />
+        <n-button size="small" @click="triggerOverlayTemplateImport">
+          <template #icon><n-icon :component="Upload" /></template>
+          导入
+        </n-button>
+        <n-button size="small" @click="exportOverlayTemplate">
+          <template #icon><n-icon :component="Download" /></template>
+          导出
+        </n-button>
+        <n-button type="primary" size="small" @click="addOverlayTemplateEditorItem">
+          <template #icon><n-icon :component="Plus" /></template>
+          新增
+        </n-button>
+      </div>
+      <div class="overlay-template-editor__header" aria-hidden="true">
+        <span />
+        <span>数据名字</span>
+        <span>当前值</span>
+        <span>最小值</span>
+        <span>最大值</span>
+        <span>文本颜色</span>
+        <span>数据条颜色</span>
+        <span />
+      </div>
+      <div
+        v-for="item in overlayTemplateEditorItems"
+        :key="item.id"
+        class="overlay-template-editor__row"
+        :class="{ 'overlay-template-editor__row--dragging': draggingOverlayItemId === item.id }"
+        @dragover.prevent
+        @drop="reorderOverlayTemplateEditorItem(item.id)"
+      >
+        <button
+          type="button"
+          class="overlay-template-editor__drag-handle"
+          title="拖动排序"
+          aria-label="拖动排序"
+          draggable="true"
+          @dragstart="beginOverlayTemplateItemDrag(item.id, $event)"
+          @dragend="draggingOverlayItemId = ''"
+        >
+          <n-icon :component="GripVertical" />
+        </button>
+        <n-input v-model:value="item.name" size="small" placeholder="生命值" />
+        <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
+          <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+        </n-input>
+        <n-input v-model:value="item.min.value" size="small" placeholder="0" />
+        <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
+        <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
+        <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
+        <n-button
+          quaternary
+          circle
+          size="small"
+          type="error"
+          title="删除"
+          aria-label="删除"
+          @click="removeOverlayTemplateEditorItem(item.id)"
+        >
+          <template #icon><n-icon :component="Trash" /></template>
+        </n-button>
+      </div>
+      <n-empty v-if="!overlayTemplateEditorItems.length" size="small" description="暂无数据项" class="overlay-template-editor__empty" />
+
+      <div class="overlay-template-preview">
+        <span class="overlay-template-preview__label">预览</span>
+        <div v-if="overlayTemplatePreviewItems.length" class="overlay-template-preview__stats">
+          <div v-for="item in overlayTemplatePreviewItems" :key="item.id" class="overlay-template-preview__stat">
+            <div class="overlay-template-preview__stat-line" :style="{ color: item.textColor }">
+              <span>{{ item.name }}</span>
+              <span>{{ item.current }}/{{ item.max }}</span>
+            </div>
+            <div class="overlay-template-preview__bar">
+              <span :style="{ width: `${item.percent}%`, backgroundColor: item.barColor }" />
+            </div>
+          </div>
+        </div>
+        <span v-else class="overlay-template-preview__empty">暂无可预览数据</span>
+      </div>
+      <div class="overlay-template-editor__actions">
+        <n-button @click="overlayTemplateEditorVisible = false">取消</n-button>
+        <n-button type="primary" :loading="snapshotTemplateSaving" @click="saveOverlayTemplateEditor">保存</n-button>
+      </div>
+    </div>
   </n-modal>
 
   <!-- Template Manager Modal -->
@@ -2187,6 +2675,133 @@ const openEditPanel = async (card: CharacterCard) => {
   min-width: 210px;
 }
 
+.settings-template-input--inline {
+  min-width: 250px;
+}
+
+.overlay-template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.overlay-template-editor__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.overlay-template-editor__file-input {
+  display: none;
+}
+
+.overlay-template-editor__header,
+.overlay-template-editor__row {
+  display: grid;
+  grid-template-columns: 28px minmax(90px, 1.15fr) minmax(110px, 1.25fr) minmax(72px, 0.8fr) minmax(90px, 1fr) 70px 70px 30px;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.overlay-template-editor__header {
+  padding: 0 0.25rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.74rem;
+}
+
+.overlay-template-editor__row {
+  padding: 0.45rem 0.25rem;
+  border-top: 1px solid var(--sc-border-color);
+  transition: background-color 0.16s ease;
+}
+
+.overlay-template-editor__row--dragging {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.overlay-template-editor__drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sc-text-secondary);
+  cursor: grab;
+}
+
+.overlay-template-editor__drag-handle:active {
+  cursor: grabbing;
+}
+
+.overlay-template-editor__resolved-value {
+  max-width: 58px;
+  overflow: hidden;
+  color: var(--sc-text-secondary);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlay-template-editor__empty {
+  padding: 1.5rem 0;
+}
+
+.overlay-template-preview {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--sc-border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #1e1e24) 86%, black);
+}
+
+.overlay-template-preview__label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.74rem;
+}
+
+.overlay-template-preview__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem 0.8rem;
+}
+
+.overlay-template-preview__stat-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.24rem;
+  font-size: 0.76rem;
+}
+
+.overlay-template-preview__bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.overlay-template-preview__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.overlay-template-preview__empty {
+  color: var(--sc-text-secondary);
+  font-size: 0.8rem;
+}
+
+.overlay-template-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .narrator-settings {
   display: flex;
   flex-direction: column;
@@ -2483,6 +3098,58 @@ const openEditPanel = async (card: CharacterCard) => {
   .settings-template-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .overlay-template-editor__header {
+    display: none;
+  }
+
+  .overlay-template-editor__row {
+    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 30px;
+  }
+
+  .overlay-template-editor__row > :nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .overlay-template-editor__row > :nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .overlay-template-editor__row > :nth-child(3) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .overlay-template-editor__row > :nth-child(4) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .overlay-template-editor__row > :nth-child(5) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .overlay-template-editor__row > :nth-child(6) {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .overlay-template-editor__row > :nth-child(7) {
+    grid-column: 3;
+    grid-row: 3;
+  }
+
+  .overlay-template-editor__row > :nth-child(8) {
+    grid-column: 4;
+    grid-row: 1 / span 3;
+  }
+
+  .overlay-template-preview__stats {
+    grid-template-columns: 1fr;
   }
 
   .online-character-cards__header {
