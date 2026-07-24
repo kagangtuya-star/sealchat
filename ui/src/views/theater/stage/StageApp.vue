@@ -870,6 +870,18 @@ const sceneEditMode = ref(false)
 const editingSceneId = ref<string | null>(null)
 const editingSceneName = ref('')
 const editingSceneSwitchText = ref('')
+const sceneListRef = ref<HTMLDivElement | null>(null)
+const draggedSceneId = ref<string | null>(null)
+type SceneDropPlacement = 'before' | 'after'
+const sceneDropTarget = ref<{ id: string, placement: SceneDropPlacement } | null>(null)
+let sceneDragSession: {
+  sceneId: string
+  pointerId: number
+  clientX: number
+  clientY: number
+  ghost: HTMLElement
+} | null = null
+let sceneDragFrame: number | null = null
 
 const beginSceneEdit = (scene: StageScene) => {
   if (!canEditAllObjects.value) return
@@ -921,6 +933,95 @@ const saveSceneDetails = () => {
   }
   props.store.updateSceneDetails(sceneId, name, editingSceneSwitchText.value)
   closeSceneEditor()
+}
+
+const setSceneDropTarget = (target: typeof sceneDropTarget.value) => {
+  if (sceneDropTarget.value?.id === target?.id && sceneDropTarget.value?.placement === target?.placement) return
+  sceneDropTarget.value = target
+}
+
+const updateSceneDropTarget = (clientX: number, clientY: number) => {
+  const session = sceneDragSession
+  const list = sceneListRef.value
+  if (!session || !list) return
+  const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+  const row = element?.closest<HTMLElement>('.theater-scene-row')
+  const targetId = row?.dataset.sceneId
+  if (!row || !targetId || !list.contains(row) || targetId === session.sceneId) {
+    setSceneDropTarget(null)
+    return
+  }
+  const rect = row.getBoundingClientRect()
+  setSceneDropTarget({ id: targetId, placement: clientY < rect.top + rect.height / 2 ? 'before' : 'after' })
+}
+
+const runSceneDragFrame = () => {
+  sceneDragFrame = null
+  const session = sceneDragSession
+  if (!session) return
+  session.ghost.style.transform = `translate3d(${session.clientX + 12}px, ${session.clientY + 12}px, 0)`
+  updateSceneDropTarget(session.clientX, session.clientY)
+  const list = sceneListRef.value
+  if (!list) return
+  const rect = list.getBoundingClientRect()
+  const edge = Math.min(44, rect.height / 4)
+  const topDistance = session.clientY - rect.top
+  const bottomDistance = rect.bottom - session.clientY
+  const speed = topDistance >= 0 && topDistance < edge
+    ? -Math.ceil((edge - topDistance) / 4)
+    : bottomDistance >= 0 && bottomDistance < edge
+      ? Math.ceil((edge - bottomDistance) / 4)
+      : 0
+  if (speed) {
+    list.scrollTop += speed
+    sceneDragFrame = window.requestAnimationFrame(runSceneDragFrame)
+  }
+}
+
+const scheduleSceneDragFrame = () => {
+  if (sceneDragFrame === null) sceneDragFrame = window.requestAnimationFrame(runSceneDragFrame)
+}
+
+const startScenePointerDrag = (event: PointerEvent, sceneId: string) => {
+  if (!canEditAllObjects.value || !sceneEditMode.value || event.button !== 0 || sceneDragSession) return
+  const grip = event.currentTarget as HTMLElement
+  const row = grip.closest<HTMLElement>('.theater-scene-row')
+  if (!row) return
+  event.preventDefault()
+  grip.setPointerCapture(event.pointerId)
+  const rect = row.getBoundingClientRect()
+  const ghost = row.cloneNode(true) as HTMLElement
+  ghost.classList.add('is-drag-preview')
+  ghost.setAttribute('aria-hidden', 'true')
+  ghost.style.width = `${rect.width}px`
+  document.body.appendChild(ghost)
+  sceneDragSession = { sceneId, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, ghost }
+  draggedSceneId.value = sceneId
+  setSceneDropTarget(null)
+  scheduleSceneDragFrame()
+}
+
+const moveScenePointerDrag = (event: PointerEvent) => {
+  if (!sceneDragSession || event.pointerId !== sceneDragSession.pointerId) return
+  sceneDragSession.clientX = event.clientX
+  sceneDragSession.clientY = event.clientY
+  scheduleSceneDragFrame()
+}
+
+const finishScenePointerDrag = (event: PointerEvent, cancelled = false) => {
+  const session = sceneDragSession
+  if (!session || event.pointerId !== session.pointerId) return
+  if (!cancelled) updateSceneDropTarget(event.clientX, event.clientY)
+  const dropTarget = sceneDropTarget.value
+  sceneDragSession = null
+  const grip = event.currentTarget as HTMLElement
+  if (grip.hasPointerCapture(event.pointerId)) grip.releasePointerCapture(event.pointerId)
+  if (sceneDragFrame !== null) window.cancelAnimationFrame(sceneDragFrame)
+  sceneDragFrame = null
+  session.ghost.remove()
+  draggedSceneId.value = null
+  setSceneDropTarget(null)
+  if (!cancelled && dropTarget) props.store.reorderScenes(session.sceneId, dropTarget.id, dropTarget.placement)
 }
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -5222,9 +5323,12 @@ watch(theaterAudioMasterVolume, (volume) => {
 
 onBeforeUnmount(() => {
   if (layerDragFrame !== null) window.cancelAnimationFrame(layerDragFrame)
+  if (sceneDragFrame !== null) window.cancelAnimationFrame(sceneDragFrame)
   clearLayerExpandTimer()
   layerDragSession?.ghost.remove()
   layerDragSession = null
+  sceneDragSession?.ghost.remove()
+  sceneDragSession = null
   stopPackagePolling()
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
@@ -5528,13 +5632,35 @@ onBeforeUnmount(() => {
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
-        <div
-          v-for="scene in store.scenes.value"
-          :key="scene.id"
-          class="theater-scene-row"
-          :class="{ 'has-preload-pulse': scenePreloadPulse[scene.id] }"
-        >
-          <n-popover
+        <div ref="sceneListRef" class="theater-scene-list">
+          <div
+            v-for="scene in store.scenes.value"
+            :key="scene.id"
+            class="theater-scene-row"
+            :class="{
+              'has-preload-pulse': scenePreloadPulse[scene.id],
+              'is-edit-mode': sceneEditMode,
+              'is-dragging': draggedSceneId === scene.id,
+              'is-drop-before': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'before',
+              'is-drop-after': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'after',
+            }"
+            :data-scene-id="scene.id"
+          >
+            <span
+              v-if="sceneEditMode && canEditAllObjects"
+              class="theater-scene-row__grip"
+              aria-label="拖动调整场景顺序"
+              role="button"
+              tabindex="0"
+              @pointerdown.stop="startScenePointerDrag($event, scene.id)"
+              @pointermove.stop="moveScenePointerDrag"
+              @pointerup.stop="finishScenePointerDrag($event)"
+              @pointercancel.stop="finishScenePointerDrag($event, true)"
+              @lostpointercapture.stop="finishScenePointerDrag($event, true)"
+            >
+              <n-icon><GripVertical /></n-icon>
+            </span>
+            <n-popover
             :show="sceneEditMode && editingSceneId === scene.id"
             trigger="manual"
             placement="right-start"
@@ -5568,14 +5694,15 @@ onBeforeUnmount(() => {
                 <n-button size="small" type="primary" :disabled="!editingSceneName.trim()" @click="saveSceneDetails">保存</n-button>
               </div>
             </div>
-          </n-popover>
-          <div v-if="canSwitchScene && !sceneEditMode" class="theater-scene-row__actions">
-            <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
-              <template #trigger>
-                <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
-              </template>
-              在所有设备预加载此场景
-            </n-tooltip>
+            </n-popover>
+            <div v-if="canSwitchScene && !sceneEditMode" class="theater-scene-row__actions">
+              <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
+                <template #trigger>
+                  <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
+                </template>
+                在所有设备预加载此场景
+              </n-tooltip>
+            </div>
           </div>
         </div>
         <div v-if="canSwitchScene" class="theater-scene-actions">
@@ -6345,7 +6472,8 @@ onBeforeUnmount(() => {
   resize: both; max-width: 100%; max-height: 100%; animation: theater-panel-in .16s ease-out;
 }
 @keyframes theater-panel-in { from { opacity: 0; transform: translateY(-4px); } }
-.theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 6px; padding: 6px; overflow-y: auto; }
+.theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 0; padding: 0; overflow: hidden; }
+.theater-scene-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 6px; }
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
@@ -6359,6 +6487,7 @@ onBeforeUnmount(() => {
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
 .theater-scene-row { position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; }
+.theater-scene-row.is-edit-mode { grid-template-columns: 16px minmax(0, 1fr); }
 .theater-scene-row__actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .theater-scene-row__actions {
   position: absolute; right: 0; padding-left: 6px; opacity: 0; pointer-events: none;
@@ -6366,6 +6495,19 @@ onBeforeUnmount(() => {
 }
 .theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
 .theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
+.theater-scene-row.is-dragging { opacity: .36; }
+.theater-scene-row.is-drag-preview {
+  position: fixed; z-index: 10000; top: 0; left: 0; pointer-events: none; opacity: .92;
+  border: 1px solid color-mix(in srgb, var(--theater-accent, #38bdf8) 58%, transparent); border-radius: 5px;
+  background: var(--theater-panel); box-shadow: 0 10px 24px rgba(0, 0, 0, .26); will-change: transform;
+}
+.theater-scene-row.is-drop-before::before, .theater-scene-row.is-drop-after::after {
+  position: absolute; z-index: 1; right: 5px; left: 5px; height: 2px; border-radius: 1px; background: #38bdf8; content: '';
+}
+.theater-scene-row.is-drop-before::before { top: 0; }
+.theater-scene-row.is-drop-after::after { bottom: 0; }
+.theater-scene-row__grip { width: 16px; height: 100%; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; touch-action: none; user-select: none; }
+.theater-scene-row__grip:active { cursor: grabbing; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
@@ -6383,7 +6525,7 @@ onBeforeUnmount(() => {
   68% { transform: translateY(1px) scale(.96); }
 }
 @media (prefers-reduced-motion: reduce) { .theater-scene-preload.is-ready-pulse { animation: none; } }
-.theater-scene-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; margin-top: auto; }
+.theater-scene-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 1px; padding: 6px; border-top: 1px solid var(--theater-border); background: var(--theater-panel); }
 .theater-scene-dialogue-toggle { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-scene-editor { display: grid; gap: 10px; }
 .theater-scene-editor strong { font-size: 13px; }

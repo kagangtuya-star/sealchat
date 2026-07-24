@@ -446,6 +446,18 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
   const mutations: TheaterMutation[] = []
   const beforeObjects = allObjects(before)
   const afterObjects = allObjects(after)
+  const sharedSceneIDs = Object.keys(after.scenes).filter((sceneID) => Boolean(before.scenes[sceneID]))
+  const scenesHaveSameMembership = sharedSceneIDs.length === Object.keys(before.scenes).length
+    && sharedSceneIDs.length === Object.keys(after.scenes).length
+  const sceneOrderChanged = scenesHaveSameMembership && sharedSceneIDs.some((sceneID) => (
+    after.scenes[sceneID].order !== before.scenes[sceneID].order
+  ))
+
+  if (sceneOrderChanged) mutations.push({
+    type: 'scene.reorder',
+    permission: 'stage.object.edit',
+    payload: { sceneIds: Object.values(after.scenes).sort((left, right) => left.order - right.order).map((scene) => scene.id) },
+  })
 
   Object.values(after.scenes)
     .filter((scene) => !before.scenes[scene.id])
@@ -462,7 +474,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     const fields: JsonObject = {}
     if (scene.name !== previous.name) fields.name = scene.name
     if (scene.switchText !== previous.switchText) fields.switchText = scene.switchText
-    if (scene.order !== previous.order) fields.order = scene.order
+    if (!sceneOrderChanged && scene.order !== previous.order) fields.order = scene.order
     if (scene.locked !== previous.locked) fields.locked = scene.locked
     if (!same(scene.state, previous.state)) fields.state = scene.state
     if (Object.keys(fields).length) mutations.push({

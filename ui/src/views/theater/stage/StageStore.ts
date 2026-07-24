@@ -363,6 +363,7 @@ export interface TheaterStageStore {
   duplicateScene: () => void
   removeScene: () => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
+  reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
   addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
     drawing: StageDrawing,
@@ -628,9 +629,25 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
+  const reorderScenes = (sceneId: string, targetId: string, placement: 'before' | 'after') => {
+    if (sceneId === targetId) return false
+    const ordered = [...scenes.value]
+    const sourceIndex = ordered.findIndex((scene) => scene.id === sceneId)
+    const targetIndex = ordered.findIndex((scene) => scene.id === targetId)
+    if (sourceIndex < 0 || targetIndex < 0) return false
+
+    const [scene] = ordered.splice(sourceIndex, 1)
+    const insertionIndex = ordered.findIndex((item) => item.id === targetId) + (placement === 'after' ? 1 : 0)
+    if (insertionIndex < 0) return false
+    ordered.splice(insertionIndex, 0, scene)
+    if (ordered.every((item, index) => item.order === index)) return false
+    ordered.forEach((item, index) => { item.order = index })
+    return true
+  }
+
   const addScene = () => {
     saveLiveState()
-    const order = scenes.value.length
+    const order = scenes.value.reduce((highest, item) => Math.max(highest, item.order), -1) + 1
     const scene = createScene(`场景 ${order + 1}`, order, '#172033')
     state.scenes[scene.id] = scene
     state.activeSceneId = scene.id
@@ -661,7 +678,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       ...clone(source),
       id: uid('scene'),
       name: `${source.name} 副本`,
-      order: scenes.value.length,
+      order: scenes.value.reduce((highest, item) => Math.max(highest, item.order), -1) + 1,
       state: { ...clone(source.state), sceneObjects: objects },
     }
     state.scenes[scene.id] = scene
@@ -1278,6 +1295,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setObjectFlag,
     selectScene,
     updateSceneDetails,
+    reorderScenes,
     addScene,
     duplicateScene,
     removeScene,

@@ -35,6 +35,10 @@ type theaterSceneUpdatePayload struct {
 	Fields  map[string]any `json:"fields"`
 }
 
+type theaterSceneReorderPayload struct {
+	SceneIDs []string `json:"sceneIds"`
+}
+
 type theaterSceneDeletePayload struct {
 	SceneID         string `json:"sceneId"`
 	FallbackSceneID string `json:"fallbackSceneId"`
@@ -130,6 +134,8 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 		target = &theaterSceneCreatePayload{}
 	case TheaterMutationSceneUpdate:
 		target = &theaterSceneUpdatePayload{}
+	case TheaterMutationSceneReorder:
+		target = &theaterSceneReorderPayload{}
 	case TheaterMutationSceneDelete:
 		target = &theaterSceneDeletePayload{}
 	case TheaterMutationSceneApply:
@@ -195,6 +201,21 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 			return err
 		}
 		return validateSceneFields(payload.Fields)
+	case *theaterSceneReorderPayload:
+		if len(payload.SceneIDs) == 0 || len(payload.SceneIDs) > theaterMaxScenes {
+			return theaterPayloadError("sceneIds 数量无效")
+		}
+		seen := make(map[string]bool, len(payload.SceneIDs))
+		for _, sceneID := range payload.SceneIDs {
+			if err := validateTheaterID(sceneID, "sceneId"); err != nil {
+				return err
+			}
+			if seen[sceneID] {
+				return theaterPayloadError("sceneIds 不能重复")
+			}
+			seen[sceneID] = true
+		}
+		return nil
 	case *theaterSceneDeletePayload:
 		return validateTheaterID(payload.SceneID, "sceneId")
 	case *theaterSceneApplyPayload:

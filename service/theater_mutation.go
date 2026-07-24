@@ -297,6 +297,8 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 		return applyTheaterSceneCreate(tx, room, actorID, payload)
 	case *theaterSceneUpdatePayload:
 		return applyTheaterSceneUpdate(tx, room, actorID, payload)
+	case *theaterSceneReorderPayload:
+		return applyTheaterSceneReorder(tx, room, actorID, payload)
 	case *theaterSceneDeletePayload:
 		return applyTheaterSceneDelete(tx, room, payload)
 	case *theaterSceneApplyPayload:
@@ -404,6 +406,39 @@ func applyTheaterSceneUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 		}
 	}
 	return tx.Model(scene).Updates(updates).Error
+}
+
+func applyTheaterSceneReorder(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterSceneReorderPayload) error {
+	var scenes []model.TheaterSceneModel
+	if err := tx.Where("room_id = ?", room.ID).Find(&scenes).Error; err != nil {
+		return err
+	}
+	if len(scenes) != len(payload.SceneIDs) {
+		return theaterPayloadError("sceneIds 必须包含当前全部场景")
+	}
+	byID := make(map[string]*model.TheaterSceneModel, len(scenes))
+	for index := range scenes {
+		byID[scenes[index].ID] = &scenes[index]
+	}
+	for _, sceneID := range payload.SceneIDs {
+		scene := byID[sceneID]
+		if scene == nil {
+			return theaterPayloadError("sceneIds 包含未知场景")
+		}
+		if scene.Locked && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) && !IsWorldAdmin(room.WorldID, actorID) {
+			return newTheaterError(TheaterErrorPermissionDenied, "场景已锁定", 403, nil)
+		}
+	}
+	for order, sceneID := range payload.SceneIDs {
+		if err := tx.Model(byID[sceneID]).Updates(map[string]any{
+			"sort_order": order,
+			"updated_by": actorID,
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyTheaterSceneDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload *theaterSceneDeletePayload) error {

@@ -8,6 +8,7 @@ import (
 const (
 	TheaterMutationSceneCreate        = "scene.create"
 	TheaterMutationSceneUpdate        = "scene.update"
+	TheaterMutationSceneReorder       = "scene.reorder"
 	TheaterMutationSceneDelete        = "scene.delete"
 	TheaterMutationSceneApply         = "scene.apply"
 	TheaterMutationObjectCreate       = "object.create"

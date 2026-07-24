@@ -396,6 +396,46 @@ func TestWorldTheaterMemberActionUsesComponentGrant(t *testing.T) {
 	}
 }
 
+func TestWorldTheaterSceneReorderIsAtomic(t *testing.T) {
+	actorID, worldID, _ := initWorldTheaterServiceTest(t)
+	for index, sceneID := range []string{"scene-one", "scene-two", "scene-three"} {
+		if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+			MutationID: fmt.Sprintf("scene-%d", index), WorldID: worldID, ExpectedRevision: int64(index), Type: TheaterMutationSceneCreate,
+			Payload: worldTheaterPayload(t, map[string]any{"sceneId": sceneID, "name": sceneID, "order": index, "state": map[string]any{}}),
+		}, TheaterRequestMeta{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "reorder-scenes", WorldID: worldID, ExpectedRevision: 3, Type: TheaterMutationSceneReorder,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneIds": []string{"scene-three", "scene-one", "scene-two"}}),
+	}, TheaterRequestMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Revision != 4 {
+		t.Fatalf("revision = %d", result.Revision)
+	}
+
+	var room model.TheaterRoomModel
+	if err := model.GetDB().Where("world_id = ? AND channel_id = ?", worldID, "").First(&room).Error; err != nil {
+		t.Fatal(err)
+	}
+	var scenes []model.TheaterSceneModel
+	if err := model.GetDB().Where("room_id = ?", room.ID).Order("sort_order asc").Find(&scenes).Error; err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(scenes))
+	for index, scene := range scenes {
+		got[index] = scene.ID
+	}
+	want := []string{"scene-three", "scene-one", "scene-two"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("scene order = %v, want %v", got, want)
+	}
+}
+
 func TestMergeTheaterRoomsToWorld(t *testing.T) {
 	actorID, worldID, firstChannelID := initWorldTheaterServiceTest(t)
 	secondChannelID := "channel-" + utils.NewIDWithLength(8)
