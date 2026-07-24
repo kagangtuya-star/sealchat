@@ -773,6 +773,12 @@ export class TheaterSyncClient {
     }
   }
 
+  async flushPendingChanges() {
+    await this.waitForSaving()
+    await this.flushNow()
+    await this.waitForSaving()
+  }
+
   async requestPreload(sceneIds: string[]) {
     const normalized = [...new Set(sceneIds.map((sceneId) => sceneId.trim()).filter(Boolean))]
     if (!normalized.length) return

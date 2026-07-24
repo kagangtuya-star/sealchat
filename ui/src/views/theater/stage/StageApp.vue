@@ -123,6 +123,7 @@ const props = defineProps<{
     previewText: string
   } | null
   sceneDialogueEnabled: boolean
+  syncBeforeOrganizerWrite: () => Promise<void>
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
@@ -175,6 +176,7 @@ const theaterAudioLoading = ref(false)
 const theaterAudioUploading = ref(false)
 const theaterAudioError = ref('')
 const theaterPanelOrganizer = ref<TheaterPanelOrganizerSnapshot>(emptyTheaterPanelOrganizer())
+const duplicatingScene = ref(false)
 const theaterAudioPlayers = new Map<string, Howl>()
 const theaterAudioBaseVolumes = new Map<string, number>()
 const theaterAudioRetryIds = new Map<string, number>()
@@ -466,6 +468,43 @@ const reorderTheaterPanelItems = async (domain: TheaterPanelDomain, folderId: st
     await fetchTheaterPanelOrganizer()
   } catch (error) {
     stageMessage.error(theaterAudioErrorMessage(error, '整理项目失败'))
+  }
+}
+
+const duplicateScene = async () => {
+  if (duplicatingScene.value) return
+  duplicatingScene.value = true
+  const sourceItems = new Map(theaterPanelOrganizer.value.items
+    .filter((item) => item.domain === 'effect')
+    .map((item) => [item.targetId, item]))
+  const result = props.store.duplicateScene()
+  const copiedItems = [...result.objectIdMap.entries()].flatMap(([sourceId, targetId]) => {
+    const source = sourceItems.get(sourceId)
+    return source ? [{ ...source, id: `pending-${targetId}`, targetId }] : []
+  })
+  theaterPanelOrganizer.value.items.push(...copiedItems)
+  try {
+    await props.syncBeforeOrganizerWrite()
+    const byFolder = new Map<string, typeof copiedItems>()
+    copiedItems.forEach((item) => {
+      const items = byFolder.get(item.folderId || '') || []
+      items.push(item)
+      byFolder.set(item.folderId || '', items)
+    })
+    await Promise.all([...byFolder.entries()].map(([folderId, items]) => api.put(
+      theaterPanelOrganizerPath('item-order'),
+      {
+        domain: 'effect',
+        folderId,
+        targetIds: items.sort((left, right) => left.sortOrder - right.sortOrder).map((item) => item.targetId),
+      },
+    )))
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    await fetchTheaterPanelOrganizer()
+    stageMessage.error(theaterAudioErrorMessage(error, '复制场景特效文件夹失败'))
+  } finally {
+    duplicatingScene.value = false
   }
 }
 
@@ -5728,7 +5767,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-if="canSwitchScene" class="theater-scene-actions">
-          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode" @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
+          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode || duplicatingScene" :loading="duplicatingScene" @click="duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
           <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode || store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
           <n-button v-if="canEditAllObjects" size="tiny" quaternary :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
           <label class="theater-scene-dialogue-toggle">

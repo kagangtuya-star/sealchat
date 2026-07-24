@@ -1,5 +1,5 @@
 import { toRaw } from 'vue'
-import type { StageObject, StageObjectScope } from '../shared/stage-types'
+import type { StageAction, StageObject, StageObjectScope } from '../shared/stage-types'
 
 export interface StageClipboardBundle {
   version: 2
@@ -72,6 +72,40 @@ export const cloneStageData = <T>(value: T): T => (
 const clone = cloneStageData
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
+
+export const cloneStageActionsForCopy = (
+  actions: readonly StageAction[],
+  makeId: (prefix: string) => string,
+  objectIdMap: ReadonlyMap<string, string>,
+  sceneIdMap: ReadonlyMap<string, string> = new Map(),
+): StageAction[] => actions.map((action) => {
+  const copiedAction = clone(action)
+  copiedAction.id = makeId('action')
+  if (copiedAction.type === 'scene.apply' && sceneIdMap.has(copiedAction.payload.sceneId)) {
+    copiedAction.payload.sceneId = sceneIdMap.get(copiedAction.payload.sceneId)!
+  }
+  if (copiedAction.type === 'object.toggle' && objectIdMap.has(copiedAction.payload.objectId)) {
+    copiedAction.payload.objectId = objectIdMap.get(copiedAction.payload.objectId)!
+  }
+  if (copiedAction.type === 'effect.play' && objectIdMap.has(copiedAction.payload.effectId)) {
+    copiedAction.payload.effectId = objectIdMap.get(copiedAction.payload.effectId)!
+  }
+  if (copiedAction.type === 'action.sequence') {
+    copiedAction.payload.steps.forEach((step) => {
+      if (step.sceneId && sceneIdMap.has(step.sceneId)) step.sceneId = sceneIdMap.get(step.sceneId)!
+      if (step.action.type === 'scene.apply' && sceneIdMap.has(step.action.payload.sceneId)) {
+        step.action.payload.sceneId = sceneIdMap.get(step.action.payload.sceneId)!
+      }
+      if (step.action.type === 'object.toggle' && objectIdMap.has(step.action.payload.objectId)) {
+        step.action.payload.objectId = objectIdMap.get(step.action.payload.objectId)!
+      }
+      if (step.action.type === 'effect.play' && objectIdMap.has(step.action.payload.effectId)) {
+        step.action.payload.effectId = objectIdMap.get(step.action.payload.effectId)!
+      }
+    })
+  }
+  return copiedAction
+})
 
 const diffRecord = (
   target: StageObjectPatch['target'],
@@ -208,27 +242,7 @@ export const instantiateClipboardBundle = (
     object.parentId = rootIds.has(source.id)
       ? rootParentIds.get(source.id) || null
       : source.parentId ? idMap.get(source.parentId) || null : null
-    object.actions = object.actions.map((action) => {
-      const copiedAction = clone(action)
-      copiedAction.id = makeId('action')
-      if (copiedAction.type === 'object.toggle' && idMap.has(copiedAction.payload.objectId)) {
-        copiedAction.payload.objectId = idMap.get(copiedAction.payload.objectId)!
-      }
-      if (copiedAction.type === 'effect.play' && idMap.has(copiedAction.payload.effectId)) {
-        copiedAction.payload.effectId = idMap.get(copiedAction.payload.effectId)!
-      }
-      if (copiedAction.type === 'action.sequence') {
-        copiedAction.payload.steps.forEach((step) => {
-          if (step.action.type === 'object.toggle' && idMap.has(step.action.payload.objectId)) {
-            step.action.payload.objectId = idMap.get(step.action.payload.objectId)!
-          }
-          if (step.action.type === 'effect.play' && idMap.has(step.action.payload.effectId)) {
-            step.action.payload.effectId = idMap.get(step.action.payload.effectId)!
-          }
-        })
-      }
-      return copiedAction
-    })
+    object.actions = cloneStageActionsForCopy(object.actions, makeId, idMap)
     if (rootIds.has(source.id)) {
       object.name = `${object.name} 副本`
       object.transform.x += offset

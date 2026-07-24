@@ -21,6 +21,7 @@ import {
 import { normalizeStageSequenceAction } from '../shared/stage-actions'
 import {
   applyObjectHistoryEntry,
+  cloneStageActionsForCopy,
   cloneStageData,
   collectObjectSubtree,
   createObjectHistoryEntry,
@@ -360,7 +361,7 @@ export interface TheaterStageStore {
   setObjectFlag: (objectId: string, key: StageObjectQuickFlag, value: boolean) => boolean
   selectScene: (sceneId: string) => void
   addScene: () => void
-  duplicateScene: () => void
+  duplicateScene: () => { sceneId: string, objectIdMap: ReadonlyMap<string, string> }
   removeScene: () => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
@@ -658,6 +659,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const duplicateScene = () => {
     saveLiveState()
     const source = activeScene.value
+    const sceneId = uid('scene')
     const idMap = new Map<string, string>()
     Object.keys(source.state.sceneObjects).forEach((id) => idMap.set(id, uid('object')))
     const objects = Object.values(source.state.sceneObjects).reduce<Record<string, StageObject>>((result, object) => {
@@ -676,15 +678,20 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     }, {})
     const scene: StageScene = {
       ...clone(source),
-      id: uid('scene'),
+      id: sceneId,
       name: `${source.name} 副本`,
       order: scenes.value.reduce((highest, item) => Math.max(highest, item.order), -1) + 1,
       state: { ...clone(source.state), sceneObjects: objects },
     }
     state.scenes[scene.id] = scene
+    const sceneIdMap = new Map([[source.id, scene.id]])
+    Object.values(scene.state.sceneObjects).forEach((object) => {
+      object.actions = cloneStageActionsForCopy(object.actions, uid, idMap, sceneIdMap)
+    })
     state.activeSceneId = scene.id
     state.liveState = clone(scene.state)
     clearSelection()
+    return { sceneId, objectIdMap: idMap }
   }
 
   const removeScene = () => {

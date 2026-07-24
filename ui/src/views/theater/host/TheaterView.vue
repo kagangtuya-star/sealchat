@@ -361,6 +361,10 @@ const startTheaterSync = async () => {
   }
 }
 
+const flushTheaterSync = async () => {
+  await theaterSync?.flushPendingChanges()
+}
+
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
   const data = event.data as Record<string, unknown> | null
@@ -498,6 +502,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
           :scene-dialogue-enabled="sceneDialogueEnabled"
+          :sync-before-organizer-write="flushTheaterSync"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
