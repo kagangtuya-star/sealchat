@@ -428,7 +428,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.theater-character-overlay-root { position: absolute; inset: 0; z-index: 7; pointer-events: none; overflow: hidden; }
+.theater-character-overlay-root { position: absolute; inset: 0; z-index: 9500; pointer-events: none; overflow: hidden; }
 .theater-character-overlay { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; min-width: 240px; min-height: 180px; overflow: hidden; pointer-events: auto; color: #fff; background: transparent; outline: 1px solid transparent; outline-offset: -1px; transition: outline-color .14s ease; }
 .theater-character-overlay.is-chrome-visible, .theater-character-overlay:focus-within { outline-color: rgba(255, 255, 255, .34); }
 .theater-character-overlay__handle { flex: 0 0 20px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; color: transparent; background: transparent; font-size: 10px; letter-spacing: .06em; cursor: move; touch-action: none; user-select: none; transition: color .14s ease, background-color .14s ease; }

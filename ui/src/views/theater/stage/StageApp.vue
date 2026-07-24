@@ -1275,7 +1275,7 @@ const panelStyle = (id: PanelId) => {
     top: `${layout.y}px`,
     width: `${layout.width}px`,
     height: `${layout.height}px`,
-    zIndex: frontPanelId.value === id ? '11' : '10',
+    zIndex: frontPanelId.value === id ? '10001' : '10000',
   }
 }
 
@@ -1417,13 +1417,19 @@ const actionId = () => {
 let stage: Konva.Stage | null = null
 let backgroundLayer: Konva.Layer | null = null
 let worldLayer: Konva.Layer | null = null
+let worldOverlayLayer: Konva.Layer | null = null
 let foregroundLayer: Konva.Layer | null = null
 let interactionLayer: Konva.Layer | null = null
 let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
+let worldOverlayCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
+const objectRootLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group }>()
+const rootStackingOrder = ref<Record<string, number>>({})
+const OBJECT_ROOT_LAYER_Z_BASE = 100
+const WORLD_OVERLAY_LAYER_Z = 8990
 let sceneMorphRoot: Konva.Group | null = null
 let drawingDraftRoot: Konva.Group | null = null
 let pointerTraceRoot: Konva.Group | null = null
@@ -1481,7 +1487,7 @@ const clearPointerTrace = (traceId: string) => {
   visual.group.destroy()
   pointerTraceVisuals.delete(traceId)
   localPointerTraceIds.delete(traceId)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
 }
 
 const keepPointerTrace = (traceId: string) => {
@@ -1525,7 +1531,7 @@ const appendPointerTraceVisual = (trace: StagePointerTrace) => {
     visual.line.points([...visual.line.points(), ...trace.points])
   }
   keepPointerTrace(trace.traceId)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
 }
 
 const appendPointerTrace = (trace: StagePointerTrace) => {
@@ -1613,6 +1619,18 @@ let selectionGroupDrag: {
   nodes: Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>
 } | null = null
 let batchTransformRootIds: string[] | null = null
+
+const drawWorldLayers = (immediate = false) => {
+  if (immediate) {
+    worldLayer?.draw()
+    objectRootLayers.forEach(({ layer }) => layer.draw())
+    worldOverlayLayer?.draw()
+    return
+  }
+  worldLayer?.batchDraw()
+  objectRootLayers.forEach(({ layer }) => layer.batchDraw())
+  worldOverlayLayer?.batchDraw()
+}
 
 interface SurfaceSlot {
   group: Konva.Group
@@ -1755,11 +1773,11 @@ const playObjectTransition = (object: StageObject, node: Konva.Group, direction:
     easing: Konva.Easings.EaseOut,
     ...attrs,
     onFinish: () => finishObjectTransition(object, node),
-    onUpdate: () => worldLayer?.batchDraw(),
+    onUpdate: () => drawWorldLayers(),
   })
   objectEntranceTweens.set(object.id, tween)
   node.visible(true)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   tween.play()
 }
 
@@ -2254,12 +2272,16 @@ const applyCamera = () => {
   // Background fills viewport independently; world and foreground follow camera.
   backgroundCameraGroup?.position({ x: 0, y: 0 })
   backgroundCameraGroup?.scale({ x: 1, y: 1 })
-  for (const group of [worldCameraGroup, foregroundCameraGroup]) {
+  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup]) {
     group?.position(position)
     group?.scale(scale)
   }
+  objectRootLayers.forEach(({ camera }) => {
+    camera.position(position)
+    camera.scale(scale)
+  })
   backgroundLayer?.batchDraw()
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   foregroundLayer?.batchDraw()
   interactionLayer?.batchDraw()
 }
@@ -2443,8 +2465,14 @@ const syncMediaAnimation = () => {
     mediaAnimation?.stop()
     return
   }
-  if (!mediaAnimation && backgroundLayer && worldLayer && foregroundLayer) {
-    mediaAnimation = new Konva.Animation(() => {}, [backgroundLayer, worldLayer, foregroundLayer])
+  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer) {
+    mediaAnimation = new Konva.Animation(() => {}, [
+      backgroundLayer,
+      worldLayer,
+      ...[...objectRootLayers.values()].map(({ layer }) => layer),
+      worldOverlayLayer,
+      foregroundLayer,
+    ])
   }
   mediaAnimation?.start()
 }
@@ -2771,7 +2799,7 @@ interface SceneMorphSnapshot {
   matches: Map<string, SceneMorphItem>
   targetAttrs: Map<string, SceneMorphVisual>
   backgroundGhost: Konva.Group | null
-  textGhost: HTMLElement | null
+  textGhosts: HTMLElement[]
   started: boolean
 }
 
@@ -2894,13 +2922,13 @@ const finishSceneMorph = () => {
     snapshot.targetAttrs.forEach((attrs, objectId) => objectNodes.get(objectId)?.setAttrs(attrs))
     snapshot.previous.forEach((item) => item.ghost?.destroy())
     snapshot.backgroundGhost?.destroy()
-    snapshot.textGhost?.remove()
+    snapshot.textGhosts.forEach((ghost) => ghost.remove())
   }
   sceneMorphSnapshot = null
   sceneMorphTextHidden.value = false
   sceneMorphTextAnimating.value = false
   backgroundLayer?.batchDraw()
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   foregroundLayer?.batchDraw()
   if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
 }
@@ -2956,12 +2984,12 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string) => {
     backgroundLayer?.add(backgroundGhost)
   }
 
-  const textOverlay = viewportRef.value?.querySelector<HTMLElement>('.theater-text-overlay')
-  const textGhost = textOverlay?.cloneNode(true) as HTMLElement | undefined
-  if (textGhost) {
-    textGhost.style.pointerEvents = 'none'
-    viewportRef.value?.append(textGhost)
-  }
+  const textGhosts = Array.from(viewportRef.value?.querySelectorAll<HTMLElement>('.theater-text-overlay') || [])
+    .map((overlay) => overlay.cloneNode(true) as HTMLElement)
+  textGhosts.forEach((ghost) => {
+    ghost.style.pointerEvents = 'none'
+    viewportRef.value?.append(ghost)
+  })
   sceneMorphTextHidden.value = true
   sceneMorphSnapshot = {
     sceneId,
@@ -2969,7 +2997,7 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string) => {
     matches: new Map(),
     targetAttrs: new Map(),
     backgroundGhost,
-    textGhost: textGhost || null,
+    textGhosts,
     started: false,
   }
 }
@@ -3014,7 +3042,7 @@ const primeSceneMorphTargets = () => {
       : { opacity: 0 })
   })
   backgroundLayer?.batchDraw()
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   foregroundLayer?.batchDraw()
 }
 
@@ -3073,10 +3101,12 @@ const startSceneMorph = (sceneId: string) => {
   if (snapshot.backgroundGhost) tweenSceneMorphNode(snapshot.backgroundGhost, { opacity: 0 }, duration)
   sceneMorphTextAnimating.value = true
   sceneMorphTextHidden.value = false
-  snapshot.textGhost?.animate([{ opacity: 1 }, { opacity: 0 }], {
-    duration: sceneTransitionDurationMs.value,
-    easing: 'ease-in-out',
-    fill: 'forwards',
+  snapshot.textGhosts.forEach((ghost) => {
+    ghost.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: sceneTransitionDurationMs.value,
+      easing: 'ease-in-out',
+      fill: 'forwards',
+    })
   })
   sceneTransitionTimer = window.setTimeout(finishSceneMorph, sceneTransitionDurationMs.value + 50)
 }
@@ -3155,7 +3185,7 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
     batch.ready = true
     backgroundLayer?.draw()
     foregroundLayer?.draw()
-    worldLayer?.draw()
+    drawWorldLayers(true)
     startSceneMorph(batch.sceneId)
     if (!sceneMorphSnapshot) playPendingSceneEntrances(batch.sceneId)
   })
@@ -3588,7 +3618,7 @@ const syncField = () => {
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
   rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   foregroundLayer?.batchDraw()
 }
 
@@ -3768,13 +3798,13 @@ const renderDrawingDraft = () => {
   const group = new Konva.Group({ x: result.preview.x, y: result.preview.y, listening: false })
   group.add(createDrawingNode(result.drawing, result.preview.width, result.preview.height))
   drawingDraftRoot.add(group)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
 }
 
 const cancelDrawingSession = () => {
   drawingSession = null
   drawingDraftRoot?.destroyChildren()
-  worldLayer?.batchDraw()
+  drawWorldLayers()
 }
 
 const releaseObjectMedia = (wrapper: Konva.Group) => {
@@ -4244,6 +4274,55 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
 const canvasStageObjects = () => Object.fromEntries(Object.entries(props.store.activeObjects.value)
   .filter(([, object]) => !isTheaterEffectObject(object)))
 
+const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
+  if (!stage || !worldCameraGroup) return
+  const roots = Object.values(objects)
+    .filter((object) => !object.parentId || !objects[object.parentId])
+    .sort(compareStageLayersBottomToTop)
+  const rootIds = new Set(roots.map((object) => object.id))
+  let changed = false
+
+  objectRootLayers.forEach((entry, objectId) => {
+    if (rootIds.has(objectId)) return
+    entry.layer.destroy()
+    objectRootLayers.delete(objectId)
+    changed = true
+  })
+
+  const stackingOrder: Record<string, number> = {}
+  roots.forEach((object, index) => {
+    const canvasZIndex = OBJECT_ROOT_LAYER_Z_BASE + index * 2
+    stackingOrder[object.id] = canvasZIndex + 1
+    let entry = objectRootLayers.get(object.id)
+    if (!entry) {
+      const layer = new Konva.Layer()
+      const camera = new Konva.Group()
+      layer.add(camera)
+      stage!.add(layer)
+      entry = { layer, camera }
+      objectRootLayers.set(object.id, entry)
+      changed = true
+    }
+    entry.camera.position(worldCameraGroup.position())
+    entry.camera.scale(worldCameraGroup.scale())
+    entry.layer.getCanvas()._canvas.style.zIndex = String(canvasZIndex)
+    const node = objectNodes.get(object.id)
+    if (node && node.getParent() !== entry.camera) node.moveTo(entry.camera)
+  })
+  backgroundLayer?.moveToTop()
+  worldLayer?.moveToTop()
+  roots.forEach((object) => objectRootLayers.get(object.id)?.layer.moveToTop())
+  worldOverlayLayer?.moveToTop()
+  foregroundLayer?.moveToTop()
+  interactionLayer?.moveToTop()
+  rootStackingOrder.value = stackingOrder
+  if (changed) {
+    mediaAnimation?.stop()
+    mediaAnimation = null
+    syncMediaAnimation()
+  }
+}
+
 const syncGroupControls = (objects: Record<string, StageObject>) => {
   const selectedId = props.store.state.selectedObjectId
   const groupControls: Array<{
@@ -4304,8 +4383,9 @@ const syncLayerHierarchy = () => {
     if (object && node) updateObjectNode(node, object)
   })
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+  syncObjectRootLayers(objects)
   syncGroupControls(objects)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   nextTick(updateTransformer)
 }
 
@@ -4331,8 +4411,9 @@ const syncObjects = () => {
     updateObjectNode(node, object)
   }
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+  syncObjectRootLayers(objects)
   syncGroupControls(objects)
-  worldLayer?.batchDraw()
+  drawWorldLayers()
   primeSceneMorphTargets()
   nextTick(updateTransformer)
 }
@@ -5079,10 +5160,12 @@ onMounted(() => {
   stage = new Konva.Stage({ container: containerRef.value, width: 1, height: 1 })
   backgroundLayer = new Konva.Layer({ listening: false })
   worldLayer = new Konva.Layer()
+  worldOverlayLayer = new Konva.Layer({ listening: false })
   foregroundLayer = new Konva.Layer({ listening: false })
   interactionLayer = new Konva.Layer()
   backgroundCameraGroup = new Konva.Group()
   worldCameraGroup = new Konva.Group()
+  worldOverlayCameraGroup = new Konva.Group()
   foregroundCameraGroup = new Konva.Group()
   gridGroup = new Konva.Group({ listening: false })
   objectRoot = new Konva.Group()
@@ -5231,16 +5314,20 @@ onMounted(() => {
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
   sceneMorphRoot = new Konva.Group({ listening: false })
-  worldCameraGroup.add(gridGroup, objectRoot, sceneMorphRoot, drawingDraftRoot, pointerTraceRoot)
+  worldCameraGroup.add(gridGroup, objectRoot)
+  worldOverlayCameraGroup.add(sceneMorphRoot, drawingDraftRoot, pointerTraceRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
+  worldOverlayLayer.add(worldOverlayCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
-  stage.add(backgroundLayer, worldLayer, foregroundLayer, interactionLayer)
+  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
-  worldLayer.getCanvas()._canvas.style.zIndex = '1'
-  foregroundLayer.getCanvas()._canvas.style.zIndex = '3'
-  interactionLayer.getCanvas()._canvas.style.zIndex = '4'
+  worldLayer.getCanvas()._canvas.style.zIndex = '10'
+  worldOverlayLayer.getCanvas()._canvas.style.zIndex = String(WORLD_OVERLAY_LAYER_Z)
+  foregroundLayer.getCanvas()._canvas.style.zIndex = '9000'
+  interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
+  worldOverlayLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   stage.on('wheel', handleWheel)
@@ -5443,6 +5530,10 @@ onBeforeUnmount(() => {
   props.store.setBulkSelectionMode(false)
   stage?.destroy()
   stage = null
+  objectRootLayers.clear()
+  rootStackingOrder.value = {}
+  worldOverlayLayer = null
+  worldOverlayCameraGroup = null
   drawingDraftRoot = null
   pointerTraceRoot = null
   sceneMorphRoot = null
@@ -5663,6 +5754,7 @@ onBeforeUnmount(() => {
           :viewport-height="viewportSize.height"
           :entrance-playbacks="textEntrancePlaybacks"
           :hidden-object-ids="pendingTextEntranceIds"
+          :stacking-order="rootStackingOrder"
         />
         <TheaterCharacterStatsOverlay
           :world-id="worldId"
@@ -6453,7 +6545,7 @@ onBeforeUnmount(() => {
 }
 .theater-image-input { display: none; }
 .theater-stage-toolbar {
-  position: absolute; z-index: 20; top: 0; right: 0; left: 0; box-sizing: border-box;
+  position: absolute; z-index: 10000; top: 0; right: 0; left: 0; box-sizing: border-box;
   height: 46px; display: flex; align-items: center; gap: 7px; padding: 0 8px;
   overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid transparent;
   background: transparent; box-shadow: none; scrollbar-width: none;
@@ -6529,7 +6621,7 @@ onBeforeUnmount(() => {
 .theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-active) {
   transition: opacity var(--theater-scene-transition-duration, 400ms) ease-in-out;
 }
-.theater-appearance-preview-layer { position: absolute; z-index: 8; inset: 0; overflow: hidden; }
+.theater-appearance-preview-layer { position: absolute; z-index: 9500; inset: 0; overflow: hidden; }
 .theater-appearance-preview-layer :deep(.theater-preview) { min-height: 0; background: transparent; }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-viewport.is-viewing :deep(canvas) { cursor: grab !important; }
@@ -6537,7 +6629,7 @@ onBeforeUnmount(() => {
 .theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
 .theater-selection-quick-bar {
-  position: absolute; z-index: 20; display: inline-flex; gap: 2px; padding: 3px;
+  position: absolute; z-index: 10000; display: inline-flex; gap: 2px; padding: 3px;
   border: 1px solid var(--theater-border); border-radius: 6px; background: rgba(24, 24, 27, .92);
   box-shadow: 0 6px 16px rgba(0, 0, 0, .28); transform: translateX(-50%); pointer-events: auto;
 }
@@ -6545,7 +6637,7 @@ onBeforeUnmount(() => {
 .theater-selection-quick-bar :deep(.n-button.is-active:not(:disabled)) { color: #fff; background: var(--theater-accent); border-color: var(--theater-accent); }
 .theater-selection-quick-bar :deep(.n-button.is-mixed:not(:disabled)) { color: #fbbf24; }
 .theater-floating-panel {
-  position: absolute; z-index: 10; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  position: absolute; z-index: 10000; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   border: 1px solid var(--theater-border); border-radius: 7px; background: var(--theater-panel);
   box-shadow: 0 14px 34px rgba(0, 0, 0, .2); backdrop-filter: blur(8px) saturate(110%); -webkit-backdrop-filter: blur(8px) saturate(110%);
   resize: both; max-width: 100%; max-height: 100%; animation: theater-panel-in .16s ease-out;

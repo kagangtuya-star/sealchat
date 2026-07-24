@@ -250,7 +250,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 </template>
 
 <style scoped>
-.theater-effect-overlay { position: absolute; z-index: 9; inset: 0; overflow: hidden; pointer-events: none; }
+.theater-effect-overlay { position: absolute; z-index: 9500; inset: 0; overflow: hidden; pointer-events: none; }
 .theater-effect-design-stage { position: absolute; top: 50%; left: 50%; transform-origin: center; }
 .theater-effect-object { position: absolute; transform-origin: center; contain: layout paint style; pointer-events: none; }
 .theater-effect-object.is-editor { opacity: .78; }

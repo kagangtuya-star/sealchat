@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .theater-dialogue-overlay {
   position: absolute;
-  z-index: 5;
+  z-index: 9500;
   inset: 0;
   overflow: hidden;
   pointer-events: none;

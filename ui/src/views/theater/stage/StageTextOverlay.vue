@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useAttrs } from 'vue'
 import type { CameraState, StageEntrancePlayback, StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop } from './stage-layer-order'
 import StageTextVisualObject from './StageTextVisualObject.vue'
+
+defineOptions({ inheritAttrs: false })
 
 const props = defineProps<{
   objects: Record<string, StageObject>
@@ -11,8 +13,10 @@ const props = defineProps<{
   viewportHeight: number
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: string[]
+  stackingOrder: Record<string, number>
 }>()
 
+const attrs = useAttrs()
 const hiddenObjectIds = computed(() => new Set(props.hiddenObjectIds))
 const roots = computed(() => Object.values(props.objects)
   .filter((object) => (
@@ -21,30 +25,53 @@ const roots = computed(() => Object.values(props.objects)
   ))
   .sort(compareStageLayersBottomToTop))
 
+const hasTextDescendant = (object: StageObject, visited = new Set<string>()): boolean => {
+  if (object.type === 'text') return true
+  if (visited.has(object.id)) return false
+  visited.add(object.id)
+  return Object.values(props.objects).some((child) => (
+    child.parentId === object.id && hasTextDescendant(child, visited)
+  ))
+}
+
+const textRoots = computed(() => roots.value.filter((object) => hasTextDescendant(object)))
+
 const cameraStyle = computed(() => ({
   transform: `translate(${props.viewportWidth / 2 + props.camera.x}px, ${props.viewportHeight / 2 + props.camera.y}px) scale(${props.camera.zoom})`,
 }))
+
+const rootStyle = (object: StageObject) => ({
+  zIndex: String(props.stackingOrder[object.id] ?? 101),
+})
 </script>
 
 <template>
-  <div class="theater-text-overlay">
-    <div class="theater-text-overlay__camera" :style="cameraStyle">
-      <StageTextVisualObject
-        v-for="object in roots"
-        :key="`${object.id}:${props.entrancePlaybacks[object.id]?.token || 0}`"
-        :object="object"
-        :objects="props.objects"
-        :entrance-playbacks="props.entrancePlaybacks"
-        :hidden-object-ids="hiddenObjectIds"
-      />
+  <div class="theater-text-overlay-stack">
+    <div
+      v-for="object in textRoots"
+      :key="object.id"
+      class="theater-text-overlay"
+      :class="attrs.class"
+      :style="[attrs.style, rootStyle(object)]"
+    >
+      <div class="theater-text-overlay__camera" :style="cameraStyle">
+        <StageTextVisualObject
+          :key="`${object.id}:${props.entrancePlaybacks[object.id]?.token || 0}`"
+          :object="object"
+          :objects="props.objects"
+          :entrance-playbacks="props.entrancePlaybacks"
+          :hidden-object-ids="hiddenObjectIds"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.theater-text-overlay-stack { display: contents; }
+
 .theater-text-overlay {
   position: absolute;
-  z-index: 2;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
