@@ -1273,6 +1273,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     );
     if (!channelId || !preset) return;
     try {
+      // Clear old effective template first so switching card systems cannot retain stale stat definitions.
+      await snapshotStore.updatePreference(channelId, {
+        badgeTemplateMode: 'off',
+        badgeTemplate: '',
+        theaterOverlayTemplateMode: 'off',
+        theaterOverlayTemplateJson: '',
+      });
       await snapshotStore.updatePreference(channelId, {
         badgeTemplateMode: 'custom',
         badgeTemplate: CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset],

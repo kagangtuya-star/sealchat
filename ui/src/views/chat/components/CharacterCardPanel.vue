@@ -518,9 +518,12 @@ const overlayTemplatePreviewItems = computed(() => overlayTemplateEditorItems.va
     const current = resolveOverlayEditorSource(item.current);
     const hasMax = item.max.value.trim() !== '';
     const max = hasMax ? resolveOverlayEditorSource(item.max) : null;
-    const min = resolveOverlayEditorSource(item.min) ?? 0;
-    if (current === null || (hasMax && (max === null || max <= min))) return null;
-    const percent = max === null ? 100 : Math.min(100, Math.max(0, ((current - min) / (max - min)) * 100));
+    const min = resolveOverlayEditorSource(item.min);
+    if (current === null) return null;
+    if (max === null) return { ...item, current, max: null, percent: 100 };
+    const rangeMin = min ?? 0;
+    if (max <= rangeMin) return { ...item, current, max: null, percent: 100 };
+    const percent = Math.min(100, Math.max(0, ((current - rangeMin) / (max - rangeMin)) * 100));
     return { ...item, current, max, percent };
   })
   .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number } => !!item));
