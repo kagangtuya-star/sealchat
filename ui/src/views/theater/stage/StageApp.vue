@@ -6645,7 +6645,8 @@ onBeforeUnmount(() => {
 @keyframes theater-panel-in { from { opacity: 0; transform: translateY(-4px); } }
 .theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 0; padding: 0; overflow: hidden; }
 .theater-scene-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 6px; }
-.theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
+.theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow: hidden; }
+.theater-object-inspector > .theater-inspector { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
 .theater-asset-panel { min-width: min(320px, 100%); min-height: min(280px, 100%); }
