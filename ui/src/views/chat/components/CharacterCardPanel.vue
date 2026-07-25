@@ -1549,6 +1549,12 @@ const avatarEditorVisible = ref(false);
 const avatarEditorFile = ref<File | null>(null);
 const avatarEditorTarget = ref<'existing-card' | 'new-card' | ''>('');
 const avatarUploading = ref(false);
+const avatarRemoveVisibleCardId = ref('');
+
+const revealAvatarRemoveOnMobile = (card: CharacterCard) => {
+  if (!isMobile.value || !getCardAvatarBinding(card)) return;
+  avatarRemoveVisibleCardId.value = avatarRemoveVisibleCardId.value === card.id ? '' : card.id;
+};
 
 const handleAvatarUploadTrigger = (card: CharacterCard) => {
   avatarEditingCard.value = card;
@@ -1631,6 +1637,7 @@ const handleAvatarRemove = async (card: CharacterCard) => {
       : '';
     syncSheetAvatar(card, activeFallback);
     syncActiveCardAvatarSnapshot(channelId, card.id);
+    avatarRemoveVisibleCardId.value = '';
     message.success('头像已移除');
   } catch (e: any) {
     message.error(e?.response?.data?.error || e?.message || '头像移除失败');
@@ -2101,12 +2108,14 @@ defineExpose({ openCardById });
                 </template>
                 <template #header-extra>
                   <n-button
-                    text
-                    size="small"
+                    secondary
+                    size="tiny"
                     title="预览"
+                    aria-label="查看人物卡"
                     @click="openOnlineCharacterCardPreview(item)"
                   >
                     <template #icon><n-icon :component="Eye" /></template>
+                    查看
                   </n-button>
                 </template>
                 <div class="card-main-content">
@@ -2129,7 +2138,7 @@ defineExpose({ openCardById });
           size="small"
           clearable
           :disabled="characterApiDisabled"
-          placeholder="搜索人物卡（名称/规则/属性）"
+          placeholder="搜索人物卡 (名称/规则/属性) 单击查看即可切换人物卡"
         />
       </div>
 
@@ -2150,84 +2159,32 @@ defineExpose({ openCardById });
         >
           <template #header>
             <div class="card-header-main">
-              <AvatarVue :size="34" :src="resolveCardAvatarToken(card)" />
+              <div
+                class="card-avatar-control"
+                :class="{ 'card-avatar-control--remove-visible': avatarRemoveVisibleCardId === card.id }"
+                @click="revealAvatarRemoveOnMobile(card)"
+              >
+                <AvatarVue :size="34" :src="resolveCardAvatarToken(card)" />
+                <n-button
+                  v-if="getCardAvatarBinding(card)"
+                  class="card-avatar-remove"
+                  quaternary
+                  circle
+                  size="tiny"
+                  type="error"
+                  title="移除头像"
+                  aria-label="移除头像"
+                  :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
+                  @click.stop="handleAvatarRemove(card)"
+                >
+                  <template #icon><n-icon :component="X" /></template>
+                </n-button>
+              </div>
               <span class="card-name">{{ card.name }}</span>
               <span v-if="isCurrentActiveCard(card)" class="card-state-badge card-state-badge--active">使用中</span>
               <span v-else-if="isCurrentBoundCard(card)" class="card-state-badge">当前角色</span>
               <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
             </div>
-          </template>
-          <template #header-extra>
-            <n-button
-              v-if="!isCurrentActiveCard(card)"
-              text
-              size="small"
-              title="切换并查看"
-              :loading="cardSwitchingId === card.id"
-              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
-              @click="openPreview(card)"
-            >
-              <template #icon><n-icon :component="Refresh" /></template>
-            </n-button>
-            <n-button
-              quaternary
-              circle
-              size="small"
-              title="上传头像"
-              aria-label="上传头像"
-              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
-              @click="handleAvatarUploadTrigger(card)"
-            >
-              <template #icon><n-icon :component="Upload" /></template>
-            </n-button>
-            <n-button
-              v-if="getCardAvatarBinding(card)"
-              quaternary
-              circle
-              size="small"
-              type="error"
-              title="移除头像"
-              aria-label="移除头像"
-              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
-              @click="handleAvatarRemove(card)"
-            >
-              <template #icon><n-icon :component="X" /></template>
-            </n-button>
-            <n-button
-              text
-              size="small"
-              title="预览"
-              :loading="cardSwitchingId === card.id"
-              :disabled="cardSwitchingId.length > 0 && cardSwitchingId !== card.id"
-              @click="openPreview(card)"
-            >
-              <template #icon><n-icon :component="Eye" /></template>
-            </n-button>
-            <n-button
-              text
-              size="small"
-              :disabled="characterApiDisabled || (cardSwitchingId.length > 0 && cardSwitchingId !== card.id)"
-              :loading="cardSwitchingId === card.id"
-              @click="openEditPanel(card)"
-            >
-              <template #icon><n-icon :component="Edit" /></template>
-            </n-button>
-            <n-button
-              text
-              size="small"
-              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
-              @click="openBindModal(card)"
-            >
-              <template #icon><n-icon :component="Link" /></template>
-            </n-button>
-            <n-popconfirm @positive-click="handleDeleteCard(card)">
-              <template #trigger>
-                <n-button text size="small" type="error" :disabled="characterApiDisabled || cardSwitchingId.length > 0">
-                  <template #icon><n-icon :component="Trash" /></template>
-                </n-button>
-              </template>
-              删除前将从所有群解绑此人物卡，确定删除？
-            </n-popconfirm>
           </template>
           <div class="card-main-content">
             <div v-if="getCardAttrEntries(card.attrs).length > 0" class="card-attrs">
@@ -2256,6 +2213,66 @@ defineExpose({ openCardById });
                   {{ identity.displayName }}
                 </n-tag>
               </div>
+            </div>
+
+            <div class="card-actions" aria-label="人物卡操作">
+              <n-button
+                secondary
+                size="tiny"
+                title="上传头像"
+                :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
+                @click="handleAvatarUploadTrigger(card)"
+              >
+                <template #icon><n-icon :component="Upload" /></template>
+                头像
+              </n-button>
+              <n-button
+                secondary
+                size="tiny"
+                title="预览"
+                :loading="cardSwitchingId === card.id"
+                :disabled="cardSwitchingId.length > 0 && cardSwitchingId !== card.id"
+                @click="openPreview(card)"
+              >
+                <template #icon><n-icon :component="Eye" /></template>
+                查看
+              </n-button>
+              <n-button
+                secondary
+                size="tiny"
+                title="编辑"
+                :disabled="characterApiDisabled || (cardSwitchingId.length > 0 && cardSwitchingId !== card.id)"
+                :loading="cardSwitchingId === card.id"
+                @click="openEditPanel(card)"
+              >
+                <template #icon><n-icon :component="Edit" /></template>
+                编辑
+              </n-button>
+              <n-button
+                secondary
+                size="tiny"
+                title="绑定身份"
+                :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+                @click="openBindModal(card)"
+              >
+                <template #icon><n-icon :component="Link" /></template>
+                绑定
+              </n-button>
+              <n-popconfirm @positive-click="handleDeleteCard(card)">
+                <template #trigger>
+                  <n-button
+                    secondary
+                    size="tiny"
+                    type="error"
+                    title="删除"
+                    :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+                  >
+                    <template #icon><n-icon :component="Trash" /></template>
+                    删除
+                  </n-button>
+                </template>
+                删除前将从所有群解绑此人物卡，确定删除？
+              </n-popconfirm>
             </div>
           </div>
         </n-card>
@@ -3045,20 +3062,53 @@ defineExpose({ openCardById });
 
   .card-header-main {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.4rem;
     min-width: 0;
-    overflow: hidden;
+  }
+
+  .card-avatar-control {
+    position: relative;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+  }
+
+  .card-avatar-remove {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    z-index: 1;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    padding: 0;
+    color: #fff !important;
+    background: var(--n-error-color, #d03050) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .card-avatar-remove :deep(.n-button__icon) {
+    font-size: 11px;
+  }
+
+  .card-avatar-control:hover .card-avatar-remove,
+  .card-avatar-control--remove-visible .card-avatar-remove {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .card-name {
+    flex: 1 1 auto;
     font-weight: 600;
     font-size: 0.92rem;
     min-width: 0;
     line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .card-state-badge {
@@ -3084,6 +3134,36 @@ defineExpose({ openCardById });
     flex-direction: column;
     gap: 0.45rem;
     min-width: 0;
+  }
+
+  .card-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--sc-border-color);
+  }
+
+  .card-actions :deep(.n-button) {
+    height: 26px;
+    min-height: 26px;
+    padding: 0 0.42rem;
+  }
+
+  &.character-card-item--online {
+    position: relative;
+
+    :deep(.n-card-header__extra) {
+      position: absolute;
+      top: 50%;
+      right: 0.75rem;
+      transform: translateY(-50%);
+    }
+
+    .card-header-main {
+      padding-right: 4.25rem;
+    }
   }
 
   .online-card-title-group {
@@ -3208,6 +3288,11 @@ defineExpose({ openCardById });
 
   .character-card-header__actions {
     gap: 0.35rem;
+  }
+
+  .card-avatar-control--remove-visible .card-avatar-remove {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .settings-row {
