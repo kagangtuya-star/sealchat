@@ -59,7 +59,7 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	}
 	_, channel, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, permission)
 	delegatedObjectEdit := false
-	if err != nil && authorization == theaterMutationAuthorizationDirect && command.Type == TheaterMutationObjectUpdate {
+	if err != nil && authorization == theaterMutationAuthorizationDirect && (command.Type == TheaterMutationObjectUpdate || command.Type == TheaterMutationObjectBatchUpdate) {
 		if _, delegatedChannel, delegatedErr := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionObjectEditDelegated); delegatedErr == nil {
 			channel = delegatedChannel
 			delegatedObjectEdit = true
@@ -117,8 +117,17 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			return nil
 		}
 		if delegatedObjectEdit {
-			if err := validateDelegatedTheaterObjectUpdate(tx, current.ID, decoded.(*theaterObjectUpdatePayload)); err != nil {
-				return err
+			switch payload := decoded.(type) {
+			case *theaterObjectUpdatePayload:
+				if err := validateDelegatedTheaterObjectUpdate(tx, current.ID, payload); err != nil {
+					return err
+				}
+			case *theaterObjectBatchUpdatePayload:
+				for index := range payload.Updates {
+					if err := validateDelegatedTheaterObjectUpdate(tx, current.ID, &payload.Updates[index]); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		nextRevision := current.Revision + 1

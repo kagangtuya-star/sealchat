@@ -568,12 +568,21 @@ const delegatedLockedObjectFields = new Set(['locked', 'aspectRatioLocked', 'con
 
 const canApplyMutation = (mutation: TheaterMutation, permissions: string[], baseDocument: TheaterDocument) => {
   if (permissions.includes(mutation.permission)) return true
-  if (mutation.type !== 'object.update' || !permissions.includes('stage.object.edit.delegated')) return false
-  const objectId = typeof mutation.payload.objectId === 'string' ? mutation.payload.objectId : ''
-  const object = allObjects(baseDocument)[objectId]
-  const fields = asObject(mutation.payload.fields)
-  if (!object?.editable || !Object.keys(fields).every((field) => delegatedObjectFields.has(field))) return false
-  return !object.locked || Object.keys(fields).every((field) => delegatedLockedObjectFields.has(field))
+  if (!permissions.includes('stage.object.edit.delegated')) return false
+  const objects = allObjects(baseDocument)
+  const updates = mutation.type === 'object.update'
+    ? [mutation.payload]
+    : mutation.type === 'object.batchUpdate' && Array.isArray(mutation.payload.updates)
+      ? mutation.payload.updates
+      : []
+  if (!updates.length) return false
+  return updates.every((update) => {
+    const objectId = typeof update?.objectId === 'string' ? update.objectId : ''
+    const object = objects[objectId]
+    const fields = asObject(update?.fields)
+    if (!object?.editable || !Object.keys(fields).every((field) => delegatedObjectFields.has(field))) return false
+    return !object.locked || Object.keys(fields).every((field) => delegatedLockedObjectFields.has(field))
+  })
 }
 
 const errorMessage = (error: unknown) => {
@@ -880,16 +889,23 @@ export class TheaterSyncClient {
       this.options.onPermissionsChange?.([...this.permissions])
       if (!force && this.hasLoaded && nextRevision === this.revision) return
       const remoteDocument = normalizeDocument(data.snapshot || {})
+      const currentWorkspace = this.hasLoaded ? this.options.store.getSnapshot() : null
+      const currentDocument = currentWorkspace ? documentFromWorkspace(currentWorkspace) : null
+      const hasPendingLocalChanges = Boolean(
+        currentDocument && diffDocuments(this.baseDocument, currentDocument).length,
+      )
       const nextDocument = localChange
         ? rebaseDocument(localChange.base, localChange.desired, remoteDocument)
-        : remoteDocument
+        : hasPendingLocalChanges
+          ? rebaseDocument(this.baseDocument, currentDocument!, remoteDocument)
+          : remoteDocument
       this.revision = nextRevision
       this.baseDocument = remoteDocument
       this.applyingRemote = true
       try {
         const selectedIds = [...this.options.store.selection.selectedIds]
         const primaryId = this.options.store.state.selectedObjectId
-        const current = this.hasLoaded ? this.options.store.getSnapshot() : null
+        const current = currentWorkspace
         const workspace = workspaceFromDocument(nextDocument)
         if (current) {
           workspace.camera = current.camera
