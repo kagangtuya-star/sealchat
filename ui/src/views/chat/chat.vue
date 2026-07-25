@@ -71,7 +71,6 @@ import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array
 import { triggerBlobDownload } from '@/utils/download';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import dayjs from 'dayjs';
-import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
@@ -17392,21 +17391,6 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
 
-      <!-- 左下，快捷指令栏 -->
-      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage && !isMobileWideInput">
-        <n-button
-          circle
-          quaternary
-          size="small"
-          aria-label="切换频道列表"
-          @click="emit('drawer-show')"
-        >
-          <template #icon>
-            <n-icon :component="IconNumber"></n-icon>
-          </template>
-        </n-button>
-      </div>
-
       <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; left: 1rem" v-if="chat.curReplyTo">
         <div class="reply-banner__main">
           <span class="reply-banner__badge">回复中</span>
@@ -20370,28 +20354,6 @@ onBeforeUnmount(() => {
     var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) * 0.43
   );
 }
-
-.channel-switch-trigger {
-  position: fixed;
-  top: 5.5rem;
-  left: 0.5rem;
-  z-index: 40;
-  pointer-events: auto;
-  background-color: var(--sc-chip-bg);
-  border: 1px solid var(--sc-border-mute);
-  border-radius: 999px;
-}
-
-.channel-switch-trigger .n-button {
-  color: var(--sc-text-primary);
-}
-
-@media (min-width: 1024px) {
-  .channel-switch-trigger {
-    display: none;
-  }
-}
-
 
 .typing-preview-item {
   margin-top: 0.75rem;
