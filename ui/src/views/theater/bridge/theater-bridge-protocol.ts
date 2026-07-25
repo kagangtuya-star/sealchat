@@ -3,7 +3,11 @@ import {
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
 } from '../../../types/theaterPresentation'
-import { isSafeStageImageUrl } from '../shared/stage-types'
+import {
+  STAGE_ACTION_DELAY_STEP_MS,
+  STAGE_ACTION_MAX_DELAY_MS,
+  isSafeStageImageUrl,
+} from '../shared/stage-types'
 
 export const THEATER_BRIDGE_PROTOCOL = 'sealchat.theater' as const
 export const THEATER_BRIDGE_VERSION = '1.0' as const
@@ -223,9 +227,15 @@ const validateCharacterSnapshot = (
 
 export const chatCharactersSnapshotPayloadSchema = chatCharacterSnapshotBaseSchema.superRefine(validateCharacterSnapshot)
 
+const stageActionScheduleSchema = z.strictObject({
+  delayMs: z.number().int().min(0).max(STAGE_ACTION_MAX_DELAY_MS).multipleOf(STAGE_ACTION_DELAY_STEP_MS),
+  durationMs: z.number().int().min(0).max(STAGE_ACTION_MAX_DELAY_MS).multipleOf(STAGE_ACTION_DELAY_STEP_MS).optional(),
+}).optional().default({ delayMs: 0 }).transform(({ delayMs }) => ({ delayMs }))
+
 const chatSendActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('chat.send'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({
     content: z.string().min(1).max(10_000),
     channelId: nonEmptyIdSchema.optional(),
@@ -236,6 +246,7 @@ const chatSendActionSchema = z.strictObject({
 const chatInsertActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('chat.insert'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({
     content: z.string().min(1).max(10_000),
   }),
@@ -244,18 +255,21 @@ const chatInsertActionSchema = z.strictObject({
 const sceneApplyActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('scene.apply'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({ sceneId: nonEmptyIdSchema }),
 })
 
 const effectPlayActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('effect.play'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({ effectId: nonEmptyIdSchema }),
 })
 
 const objectToggleActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('object.toggle'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({ objectId: nonEmptyIdSchema }),
 })
 
@@ -268,16 +282,17 @@ const stageAtomicActionSchema = z.discriminatedUnion('type', [
 ])
 
 const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
-  chatSendActionSchema.omit({ id: true }),
-  chatInsertActionSchema.omit({ id: true }),
-  sceneApplyActionSchema.omit({ id: true }),
-  effectPlayActionSchema.omit({ id: true }),
-  objectToggleActionSchema.omit({ id: true }),
+  chatSendActionSchema.omit({ id: true, schedule: true }),
+  chatInsertActionSchema.omit({ id: true, schedule: true }),
+  sceneApplyActionSchema.omit({ id: true, schedule: true }),
+  effectPlayActionSchema.omit({ id: true, schedule: true }),
+  objectToggleActionSchema.omit({ id: true, schedule: true }),
 ])
 
 const stageSequenceActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('action.sequence'),
+  schedule: stageActionScheduleSchema,
   payload: z.strictObject({
     version: z.literal(1),
     name: z.string().max(128),

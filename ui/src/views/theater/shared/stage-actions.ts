@@ -6,6 +6,7 @@ import type {
   StageSequenceStep,
   StageSequenceTiming,
 } from './stage-types'
+import { createDefaultStageActionSchedule, normalizeStageActionSchedule } from './stage-types'
 
 export const STAGE_SEQUENCE_MAX_STEPS = 32
 export const STAGE_SEQUENCE_MAX_DELAY_MS = 60_000
@@ -41,6 +42,7 @@ export const createStageSequenceStep = (sceneId: string, objectId = ''): StageSe
 export const createStageSequenceAction = (sceneId: string, objectId = ''): StageSequenceAction => ({
   id: id('action'),
   type: 'action.sequence',
+  schedule: createDefaultStageActionSchedule(),
   payload: {
     version: 1,
     name: '点击动作组合',
@@ -105,7 +107,7 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
 
 export const normalizeStageSequenceAction = (value: unknown): StageSequenceAction | null => {
   if (!value || typeof value !== 'object') return null
-  const action = value as { id?: unknown, type?: unknown, payload?: Record<string, unknown> }
+  const action = value as { id?: unknown, type?: unknown, schedule?: unknown, payload?: Record<string, unknown> }
   const actionId = typeof action.id === 'string' ? action.id.trim() : ''
   if (!actionId || action.type !== 'action.sequence' || !action.payload || action.payload.version !== 1) return null
   const rawSteps = Array.isArray(action.payload.steps) ? action.payload.steps : []
@@ -128,6 +130,7 @@ export const normalizeStageSequenceAction = (value: unknown): StageSequenceActio
   return {
     id: actionId,
     type: 'action.sequence',
+    schedule: normalizeStageActionSchedule(action.schedule),
     payload: {
       version: 1,
       name: typeof action.payload.name === 'string'
@@ -140,5 +143,6 @@ export const normalizeStageSequenceAction = (value: unknown): StageSequenceActio
 
 export const sequenceStepAction = (step: StageSequenceStep): StageAtomicAction => ({
   id: step.id,
+  schedule: createDefaultStageActionSchedule(),
   ...step.action,
 } as StageAtomicAction)

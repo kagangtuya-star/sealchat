@@ -27,7 +27,31 @@ export interface StageDrawing {
   smoothing?: number
 }
 
-export type StageAtomicAction =
+export const STAGE_ACTION_MAX_DELAY_MS = 10_000
+export const STAGE_ACTION_DELAY_STEP_MS = 100
+
+export interface StageActionSchedule {
+  delayMs: number
+}
+
+export const createDefaultStageActionSchedule = (): StageActionSchedule => ({
+  delayMs: 0,
+})
+
+const normalizeStageActionScheduleValue = (value: unknown) => {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 0
+  const clamped = Math.min(STAGE_ACTION_MAX_DELAY_MS, Math.max(0, numeric))
+  return Math.round(clamped / STAGE_ACTION_DELAY_STEP_MS) * STAGE_ACTION_DELAY_STEP_MS
+}
+
+export const normalizeStageActionSchedule = (input: unknown): StageActionSchedule => {
+  const value = input && typeof input === 'object' ? input as Partial<StageActionSchedule> : {}
+  return {
+    delayMs: normalizeStageActionScheduleValue(value.delayMs),
+  }
+}
+
+type StageAtomicActionData =
   | {
     id: string
     type: 'chat.send'
@@ -66,8 +90,12 @@ export type StageAtomicAction =
     }
   }
 
-export type StageAtomicActionDescriptor = StageAtomicAction extends infer Action
-  ? Action extends StageAtomicAction ? Omit<Action, 'id'> : never
+export type StageAtomicAction = StageAtomicActionData & {
+  schedule: StageActionSchedule
+}
+
+export type StageAtomicActionDescriptor = StageAtomicActionData extends infer Action
+  ? Action extends StageAtomicActionData ? Omit<Action, 'id'> : never
   : never
 
 export type StageSequenceTiming =
@@ -85,6 +113,7 @@ export interface StageSequenceStep {
 export interface StageSequenceAction {
   id: string
   type: 'action.sequence'
+  schedule: StageActionSchedule
   payload: {
     version: 1
     name: string

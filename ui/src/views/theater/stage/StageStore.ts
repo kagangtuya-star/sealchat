@@ -4,8 +4,10 @@ import {
   isStageActionTarget,
   isSafeStageImageUrl,
   normalizeStageEntranceConfig,
+  normalizeStageActionSchedule,
   normalizeStageSurfaceStyle,
   type StageAction,
+  type StageActionSchedule,
   type StageDrawing,
   type StageImageRef,
   type StageLiveState,
@@ -198,15 +200,17 @@ const normalizeActions = (input: unknown): StageAction[] => {
   if (!Array.isArray(input)) return []
   return input.reduce<StageAction[]>((result, value) => {
     if (!value || typeof value !== 'object') return result
-    const action = value as Partial<StageAction> & { payload?: Record<string, unknown> }
+    const action = value as Partial<StageAction> & { schedule?: unknown, payload?: Record<string, unknown> }
     const id = typeof action.id === 'string' ? action.id.trim() : ''
     if (!id || !action.payload || typeof action.payload !== 'object') return result
+    const schedule = normalizeStageActionSchedule(action.schedule)
     if (action.type === 'chat.send') {
       const content = typeof action.payload.content === 'string' ? action.payload.content : ''
       if (!content || content.length > 10_000) return result
       result.push({
         id,
         type: action.type,
+        schedule,
         payload: {
           content,
           ...(typeof action.payload.channelId === 'string' && action.payload.channelId.trim()
@@ -219,16 +223,16 @@ const normalizeActions = (input: unknown): StageAction[] => {
       })
     } else if (action.type === 'chat.insert') {
       const content = typeof action.payload.content === 'string' ? action.payload.content : ''
-      if (content && content.length <= 10_000) result.push({ id, type: action.type, payload: { content } })
+      if (content && content.length <= 10_000) result.push({ id, type: action.type, schedule, payload: { content } })
     } else if (action.type === 'scene.apply') {
       const sceneId = typeof action.payload.sceneId === 'string' ? action.payload.sceneId.trim() : ''
-      if (sceneId) result.push({ id, type: action.type, payload: { sceneId } })
+      if (sceneId) result.push({ id, type: action.type, schedule, payload: { sceneId } })
     } else if (action.type === 'effect.play') {
       const effectId = typeof action.payload.effectId === 'string' ? action.payload.effectId.trim() : ''
-      if (effectId) result.push({ id, type: action.type, payload: { effectId } })
+      if (effectId) result.push({ id, type: action.type, schedule, payload: { effectId } })
     } else if (action.type === 'object.toggle') {
       const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
-      if (objectId) result.push({ id, type: action.type, payload: { objectId } })
+      if (objectId) result.push({ id, type: action.type, schedule, payload: { objectId } })
     } else if (action.type === 'action.sequence') {
       const sequence = normalizeStageSequenceAction(value)
       if (sequence) result.push(sequence)
@@ -422,6 +426,8 @@ export interface TheaterStageStore {
   ) => boolean
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
+  setObjectActionSchedule: (objectId: string, actionId: string, patch: Partial<StageActionSchedule>) => boolean
+  moveObjectAction: (objectId: string, actionId: string, targetIndex: number) => boolean
   toggleObject: (objectId: string) => boolean
   setEffectScope: (objectId: string, scope: StageObjectScope) => boolean
   isSceneFixedObject: (objectId: string) => boolean
@@ -1265,8 +1271,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
     if (!object || !isStageActionTarget(object.type)) return false
+    const normalizedAction = normalizeActions([action])[0]
+    if (!normalizedAction) return false
     const enableDrawingInteraction = object.type === 'drawing' && object.actions.length === 0
-    object.actions.push(clone(action))
+    object.actions.push(clone(normalizedAction))
     if (enableDrawingInteraction) object.interactive = true
     return true
   })
@@ -1277,6 +1285,32 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const index = object.actions.findIndex((action) => action.id === actionId)
     if (index < 0) return false
     object.actions.splice(index, 1)
+    return true
+  })
+
+  const setObjectActionSchedule = (
+    objectId: string,
+    actionId: string,
+    patch: Partial<StageActionSchedule>,
+  ) => runObjectEdit('修改对象动作时序', () => {
+    const action = getObject(objectId)?.actions.find((item) => item.id === actionId)
+    if (!action) return false
+    const currentSchedule = normalizeStageActionSchedule(action.schedule)
+    const schedule = normalizeStageActionSchedule({ ...currentSchedule, ...patch })
+    if (schedule.delayMs === currentSchedule.delayMs) return false
+    action.schedule = schedule
+    return true
+  })
+
+  const moveObjectAction = (objectId: string, actionId: string, targetIndex: number) => runObjectEdit('调整对象动作顺序', () => {
+    const actions = getObject(objectId)?.actions
+    if (!actions || !Number.isFinite(targetIndex)) return false
+    const sourceIndex = actions.findIndex((action) => action.id === actionId)
+    if (sourceIndex < 0) return false
+    const boundedTarget = Math.max(0, Math.min(Math.round(targetIndex), actions.length - 1))
+    if (boundedTarget === sourceIndex) return false
+    const [action] = actions.splice(sourceIndex, 1)
+    actions.splice(boundedTarget, 0, action)
     return true
   })
 
@@ -1366,6 +1400,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setObjectImage,
     addObjectAction,
     removeObjectAction,
+    setObjectActionSchedule,
+    moveObjectAction,
     toggleObject,
     setEffectScope,
     isSceneFixedObject,

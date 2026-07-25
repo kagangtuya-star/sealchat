@@ -49,7 +49,10 @@ import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import {
   WORLD_UNIT_PX,
+  STAGE_ACTION_DELAY_STEP_MS,
+  STAGE_ACTION_MAX_DELAY_MS,
   STAGE_ENTRANCE_MAX_DURATION_MS,
+  createDefaultStageActionSchedule,
   normalizeStageEntranceConfig,
   type StageEntranceConfig,
   type StageEntrancePlayback,
@@ -2228,16 +2231,103 @@ const addAction = (type: StageAction['type']) => {
     return
   }
   const action: StageAction = type === 'chat.send'
-    ? { id: actionId(), type, payload: { content: '舞台消息' } }
+    ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台消息' } }
     : type === 'chat.insert'
-      ? { id: actionId(), type, payload: { content: '舞台台词' } }
+      ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台台词' } }
       : type === 'scene.apply'
-        ? { id: actionId(), type, payload: { sceneId: props.store.state.activeSceneId } }
+        ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { sceneId: props.store.state.activeSceneId } }
         : type === 'effect.play'
-          ? { id: actionId(), type, payload: { effectId: effectActionOptions.value[0]?.value || '' } }
-          : { id: actionId(), type, payload: { objectId: object.id } }
+          ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { effectId: effectActionOptions.value[0]?.value || '' } }
+          : { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { objectId: object.id } }
   if (action.type === 'effect.play' && !action.payload.effectId) return
   props.store.addObjectAction(object.id, action)
+}
+
+const actionDelaySeconds = (milliseconds: number | undefined) => (
+  typeof milliseconds === 'number' && Number.isFinite(milliseconds) ? milliseconds / 1_000 : 0
+)
+const updateActionDelaySeconds = (actionId: string, value: number | null) => {
+  const object = selectedObject.value
+  if (!object) return
+  props.store.setObjectActionSchedule(object.id, actionId, { delayMs: (value ?? 0) * 1_000 })
+}
+
+const actionRowElements = new Map<string, HTMLElement>()
+const draggingActionId = ref('')
+const actionDropIndex = ref(-1)
+let actionDragFrame: number | null = null
+let actionDragY = 0
+let actionDragSession: { pointerId: number, objectId: string, actionId: string } | null = null
+
+const setActionRowElement = (actionId: string, element: Element | null) => {
+  if (element instanceof HTMLElement) actionRowElements.set(actionId, element)
+  else actionRowElements.delete(actionId)
+}
+
+const updateActionDropIndex = () => {
+  actionDragFrame = null
+  if (!actionDragSession) return
+  const object = props.store.activeObjects.value[actionDragSession.objectId]
+  if (!object) return
+  const rows = object.actions
+    .map((action) => actionRowElements.get(action.id))
+    .filter((element): element is HTMLElement => Boolean(element))
+  let index = rows.length
+  for (let current = 0; current < rows.length; current += 1) {
+    const rect = rows[current].getBoundingClientRect()
+    if (actionDragY < rect.top + rect.height / 2) {
+      index = current
+      break
+    }
+  }
+  actionDropIndex.value = index
+}
+
+const startActionPointerDrag = (event: PointerEvent, actionId: string) => {
+  const object = selectedObject.value
+  if (!object || event.button !== 0 || actionDragSession) return
+  const handle = event.currentTarget as HTMLElement
+  event.preventDefault()
+  handle.setPointerCapture(event.pointerId)
+  actionDragSession = { pointerId: event.pointerId, objectId: object.id, actionId }
+  draggingActionId.value = actionId
+  actionDragY = event.clientY
+  updateActionDropIndex()
+}
+
+const moveActionPointerDrag = (event: PointerEvent) => {
+  if (!actionDragSession || actionDragSession.pointerId !== event.pointerId) return
+  actionDragY = event.clientY
+  if (actionDragFrame === null) actionDragFrame = window.requestAnimationFrame(updateActionDropIndex)
+}
+
+const finishActionPointerDrag = (event: PointerEvent, cancelled = false) => {
+  const session = actionDragSession
+  if (!session || session.pointerId !== event.pointerId) return
+  if (actionDragFrame !== null) {
+    window.cancelAnimationFrame(actionDragFrame)
+    updateActionDropIndex()
+  }
+  const targetIndex = actionDropIndex.value
+  const handle = event.currentTarget as HTMLElement
+  actionDragSession = null
+  draggingActionId.value = ''
+  actionDropIndex.value = -1
+  if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId)
+  if (cancelled || targetIndex < 0) return
+  const object = props.store.activeObjects.value[session.objectId]
+  const sourceIndex = object?.actions.findIndex((action) => action.id === session.actionId) ?? -1
+  if (sourceIndex < 0) return
+  const adjustedIndex = targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
+  props.store.moveObjectAction(session.objectId, session.actionId, adjustedIndex)
+}
+
+const moveActionByKeyboard = (actionId: string, offset: -1 | 1) => {
+  const object = selectedObject.value
+  if (!object) return
+  const sourceIndex = object.actions.findIndex((action) => action.id === actionId)
+  if (sourceIndex < 0) return
+  props.store.moveObjectAction(object.id, actionId, sourceIndex + offset)
 }
 
 const triggerObjectActions = (object: StageObject) => {
@@ -5503,6 +5593,10 @@ watch(theaterAudioMasterVolume, (volume) => {
 })
 
 onBeforeUnmount(() => {
+  if (actionDragFrame !== null) window.cancelAnimationFrame(actionDragFrame)
+  actionDragFrame = null
+  actionDragSession = null
+  actionRowElements.clear()
   if (layerDragFrame !== null) window.cancelAnimationFrame(layerDragFrame)
   if (sceneDragFrame !== null) window.cancelAnimationFrame(sceneDragFrame)
   clearLayerExpandTimer()
@@ -6143,14 +6237,57 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" @click="addAction('object.toggle')">显隐</n-button>
                 <n-button size="tiny" @click="addAction('action.sequence')">组合</n-button>
               </div>
-              <div v-for="action in selectedObject.actions" :key="action.id" class="theater-action-row">
+              <div
+                v-for="(action, actionIndex) in selectedObject.actions"
+                :key="action.id"
+                :ref="element => setActionRowElement(action.id, element as Element | null)"
+                class="theater-action-row"
+                :class="{
+                  'is-dragging': draggingActionId === action.id,
+                  'is-drop-before': draggingActionId && actionDropIndex === actionIndex,
+                  'is-drop-after': draggingActionId && actionDropIndex === selectedObject.actions.length && actionIndex === selectedObject.actions.length - 1,
+                }"
+              >
+                <button
+                  type="button"
+                  class="theater-action-row__handle"
+                  title="拖动排序"
+                  aria-label="拖动调整动作顺序"
+                  @pointerdown.stop="startActionPointerDrag($event, action.id)"
+                  @pointermove.stop="moveActionPointerDrag"
+                  @pointerup.stop="finishActionPointerDrag($event)"
+                  @pointercancel.stop="finishActionPointerDrag($event, true)"
+                  @lostpointercapture.stop="finishActionPointerDrag($event, true)"
+                  @keydown.alt.up.prevent="moveActionByKeyboard(action.id, -1)"
+                  @keydown.alt.down.prevent="moveActionByKeyboard(action.id, 1)"
+                ><n-icon><GripVertical /></n-icon></button>
                 <small>{{ action.type }} {{ stageActionDescriptions[action.type] }}</small>
-                <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
-                <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                <n-button v-else size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
-                <n-button text type="error" size="tiny" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)">删除</n-button>
+                <div
+                  class="theater-action-row__controls"
+                  :class="{ 'is-sequential': selectedObject.metadata.actionExecutionMode === 'sequential' }"
+                >
+                  <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" class="theater-action-row__target" size="tiny" maxlength="10000" />
+                  <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" class="theater-action-row__target" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" class="theater-action-row__target" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-button v-else class="theater-action-row__target" size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
+                  <n-input-number
+                    v-if="selectedObject.metadata.actionExecutionMode === 'sequential'"
+                    :value="actionDelaySeconds(action.schedule?.delayMs)"
+                    class="theater-action-row__timing"
+                    size="tiny"
+                    :min="0"
+                    :max="STAGE_ACTION_MAX_DELAY_MS / 1_000"
+                    :step="STAGE_ACTION_DELAY_STEP_MS / 1_000"
+                    :precision="1"
+                    :show-button="false"
+                    placeholder="间隔"
+                    title="间隔时延"
+                    aria-label="动作间隔时延（秒）"
+                    @update:value="updateActionDelaySeconds(action.id, $event)"
+                  ><template #suffix>s</template></n-input-number>
+                  <n-button text type="error" size="tiny" aria-label="删除动作" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)"><n-icon><Trash /></n-icon></n-button>
+                </div>
               </div>
             </template>
             <template v-if="canEditAllObjects">
@@ -6838,8 +6975,19 @@ onBeforeUnmount(() => {
 .theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
 .theater-inspector-actions, .theater-action-add { display: flex; flex-wrap: wrap; gap: 4px; }
 .theater-action-execution-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
-.theater-action-row { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
-.theater-action-row small { color: var(--sc-text-secondary, #b5b5c5); font-size: 9px; }
+.theater-action-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
+.theater-action-row.is-dragging { opacity: .42; }
+.theater-action-row.is-drop-before::before, .theater-action-row.is-drop-after::after { position: absolute; right: 4px; left: 4px; z-index: 1; height: 2px; content: ''; background: var(--theater-accent, #60a5fa); box-shadow: 0 0 7px color-mix(in srgb, var(--theater-accent, #60a5fa) 65%, transparent); }
+.theater-action-row.is-drop-before::before { top: -2px; }
+.theater-action-row.is-drop-after::after { bottom: -2px; }
+.theater-action-row__handle { grid-row: 1 / span 2; align-self: stretch; width: 18px; display: grid; place-items: center; padding: 0; border: 0; color: var(--sc-fg-muted, #71717a); background: transparent; cursor: grab; touch-action: none; }
+.theater-action-row__handle:active { cursor: grabbing; }
+.theater-action-row__handle:focus-visible { outline: 2px solid var(--theater-accent); outline-offset: 1px; }
+.theater-action-row small { min-width: 0; margin-bottom: 4px; overflow: hidden; color: var(--sc-text-secondary, #b5b5c5); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.theater-action-row__controls { min-width: 0; display: grid; grid-template-columns: minmax(72px, 1fr) 24px; align-items: center; gap: 4px; }
+.theater-action-row__controls.is-sequential { grid-template-columns: minmax(72px, 1fr) 62px 24px; }
+.theater-action-row__target, .theater-action-row__timing { min-width: 0; width: 100%; }
+.theater-action-row__timing :deep(.n-input__input-el) { padding-right: 0; }
 @media (max-width: 1100px) {
   .theater-stage-toolbar { gap: 5px; padding: 0 6px; }
   .theater-stage-character-bridge { width: 176px; flex-basis: 176px; }

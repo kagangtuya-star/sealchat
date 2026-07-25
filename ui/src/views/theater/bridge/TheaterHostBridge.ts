@@ -1,5 +1,5 @@
 import type { TheaterStageStore } from '../stage/StageStore'
-import { isStageActionTarget } from '../shared/stage-types'
+import { isStageActionTarget, normalizeStageActionSchedule } from '../shared/stage-types'
 import { sequenceStepAction } from '../shared/stage-actions'
 import { runStageActionSequence } from '../stage/theater-action-sequence-runtime'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
@@ -67,6 +67,9 @@ const CHAT_BRIDGE_PERMISSIONS = [
 
 const sameStageAction = (left: StageAction, right: StageAction) => {
   if (left.id !== right.id || left.type !== right.type) return false
+  const leftSchedule = normalizeStageActionSchedule(left.schedule)
+  const rightSchedule = normalizeStageActionSchedule(right.schedule)
+  if (leftSchedule.delayMs !== rightSchedule.delayMs) return false
   switch (left.type) {
     case 'chat.send':
       return right.type === 'chat.send'
@@ -112,6 +115,7 @@ export class TheaterHostBridge {
   private readonly runningSequenceActions = new Set<string>()
   private readonly sequentialActionExecutions = new Map<string, Promise<void>>()
   private readonly parallelActionExecutions = new Map<string, StageActionTriggeredPayload[]>()
+  private readonly actionScheduleTimers = new Map<number, () => void>()
   private sequenceGeneration = 0
   private characterSnapshot: ChatCharactersSnapshotPayload = {
     revision: 0,
@@ -171,6 +175,11 @@ export class TheaterHostBridge {
     this.runningSequenceActions.clear()
     this.sequentialActionExecutions.clear()
     this.parallelActionExecutions.clear()
+    this.actionScheduleTimers.forEach((finish, timer) => {
+      window.clearTimeout(timer)
+      finish()
+    })
+    this.actionScheduleTimers.clear()
     this.setChatOnline(false)
     this.pendingChatMessages = []
     this.routerUnsubscribers.forEach((unsubscribe) => unsubscribe())
@@ -402,7 +411,11 @@ export class TheaterHostBridge {
     }
     const key = payload.execution.id
     const previous = this.sequentialActionExecutions.get(key) || Promise.resolve()
-    const current = previous.catch(() => undefined).then(() => this.executeStageActionTriggered(payload))
+    const generation = this.sequenceGeneration
+    const current = previous.catch(() => undefined).then(async () => {
+      if (!this.started || generation !== this.sequenceGeneration) return
+      await this.executeSequentialStageAction(payload, generation)
+    })
     this.sequentialActionExecutions.set(key, current)
     try {
       await current
@@ -428,6 +441,31 @@ export class TheaterHostBridge {
       return
     }
     await Promise.all(ordered.map((payload) => this.executeStageActionTriggered(payload)))
+  }
+
+  private async executeSequentialStageAction(
+    payload: StageActionTriggeredPayload,
+    generation: number,
+  ) {
+    const schedule = normalizeStageActionSchedule(payload.action.schedule)
+    await this.executeStageActionTriggered(payload)
+    if (
+      payload.execution
+      && payload.execution.index < payload.execution.total - 1
+    ) await this.waitForActionSchedule(schedule.delayMs, generation)
+  }
+
+  private waitForActionSchedule(delayMs: number, generation: number) {
+    if (delayMs <= 0 || !this.started || generation !== this.sequenceGeneration) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      let timer = 0
+      const finish = () => {
+        this.actionScheduleTimers.delete(timer)
+        resolve()
+      }
+      timer = window.setTimeout(finish, delayMs)
+      this.actionScheduleTimers.set(timer, finish)
+    })
   }
 
   private async executeStageActionTriggered(payload: StageActionTriggeredPayload) {

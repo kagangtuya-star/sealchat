@@ -12,14 +12,16 @@ import (
 )
 
 const (
-	theaterMaxSnapshotBytes = 4 << 20
-	theaterMaxPayloadBytes  = 128 << 10
-	theaterMaxScenes        = 200
-	theaterMaxObjects       = 5000
-	theaterMaxSceneObjects  = 2000
-	theaterMaxBatchUpdates  = 200
-	theaterMaxActions       = 32
-	theaterMaxSwitchText    = 10_000
+	theaterMaxSnapshotBytes  = 4 << 20
+	theaterMaxPayloadBytes   = 128 << 10
+	theaterMaxScenes         = 200
+	theaterMaxObjects        = 5000
+	theaterMaxSceneObjects   = 2000
+	theaterMaxBatchUpdates   = 200
+	theaterMaxActions        = 32
+	theaterMaxActionDelayMS  = 10_000
+	theaterActionDelayStepMS = 100
+	theaterMaxSwitchText     = 10_000
 )
 
 type theaterSceneCreatePayload struct {
@@ -662,6 +664,9 @@ func validateTheaterActions(raw json.RawMessage) error {
 		if err := validateTheaterID(action.ID, "action.id"); err != nil {
 			return err
 		}
+		if err := validateTheaterActionSchedule(action.Schedule); err != nil {
+			return err
+		}
 		if _, ok := seen[action.ID]; ok {
 			return theaterPayloadError("action.id 重复")
 		}
@@ -710,6 +715,9 @@ func validateTheaterActions(raw json.RawMessage) error {
 				if err := validateTheaterAtomicAction(step.Action); err != nil {
 					return err
 				}
+				if step.Action.Schedule != nil {
+					return theaterPayloadError("action.sequence step.action 不能包含 schedule")
+				}
 				if strings.TrimSpace(step.Action.ID) != "" {
 					return theaterPayloadError("action.sequence step.action 不能包含 id")
 				}
@@ -719,6 +727,22 @@ func validateTheaterActions(raw json.RawMessage) error {
 		if err := validateTheaterAtomicAction(action); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateTheaterActionSchedule(schedule *theaterStoredActionSchedule) error {
+	if schedule == nil {
+		return nil
+	}
+	if schedule.LegacyDurationMS != nil {
+		durationMS := *schedule.LegacyDurationMS
+		if durationMS < 0 || durationMS > theaterMaxActionDelayMS || durationMS%theaterActionDelayStepMS != 0 {
+			return theaterPayloadError("action.schedule durationMs 无效")
+		}
+	}
+	if schedule.DelayMS < 0 || schedule.DelayMS > theaterMaxActionDelayMS || schedule.DelayMS%theaterActionDelayStepMS != 0 {
+		return theaterPayloadError("action.schedule delayMs 无效")
 	}
 	return nil
 }

@@ -9,9 +9,15 @@ import (
 )
 
 type theaterStoredAction struct {
-	ID      string          `json:"id"`
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
+	ID       string                       `json:"id"`
+	Type     string                       `json:"type"`
+	Schedule *theaterStoredActionSchedule `json:"schedule,omitempty"`
+	Payload  json.RawMessage              `json:"payload"`
+}
+
+type theaterStoredActionSchedule struct {
+	LegacyDurationMS *int `json:"durationMs,omitempty"`
+	DelayMS          int  `json:"delayMs"`
 }
 
 type theaterStoredSequenceStep struct {
