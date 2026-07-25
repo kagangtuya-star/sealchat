@@ -92,14 +92,27 @@ const asObject = (value: unknown): JsonObject => value && typeof value === 'obje
   ? value as JsonObject
   : {}
 const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Number(value) : fallback
-const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
+const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const same = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => same(value, right[index]))
+  }
+  if (!isRecord(left) || !isRecord(right)) return false
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && same(left[key], right[key]))
+}
 const mutationId = (prefix: string) => `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const objectBatchUpdateLimit = 200
 const normalizeSwitchText = (value: unknown) => typeof value === 'string'
   ? Array.from(value).slice(0, 10_000).join('')
   : ''
-
-const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
 const mergeThreeWay = (base: unknown, local: unknown, remote: unknown): unknown => {
   if (same(local, base)) return clone(remote)
@@ -585,6 +598,30 @@ const canApplyMutation = (mutation: TheaterMutation, permissions: string[], base
   })
 }
 
+const filterDelegatedMutation = (mutation: TheaterMutation, baseDocument: TheaterDocument): TheaterMutation | null => {
+  if (mutation.type !== 'object.update' && mutation.type !== 'object.batchUpdate') return null
+  const objects = allObjects(baseDocument)
+  const rawUpdates = mutation.type === 'object.update'
+    ? [mutation.payload]
+    : Array.isArray(mutation.payload.updates) ? mutation.payload.updates : []
+  const updates = rawUpdates.flatMap((update) => {
+    const objectId = typeof update?.objectId === 'string' ? update.objectId : ''
+    const object = objects[objectId]
+    if (!object?.editable) return []
+    const fields = asObject(update?.fields)
+    const filtered = Object.fromEntries(Object.entries(fields).filter(([field]) => (
+      delegatedObjectFields.has(field)
+      && (!object.locked || delegatedLockedObjectFields.has(field))
+    )))
+    return Object.keys(filtered).length ? [{ objectId, fields: filtered }] : []
+  })
+  if (!updates.length) return null
+  if (mutation.type === 'object.update' || updates.length === 1) {
+    return { type: 'object.update', permission: mutation.permission, payload: updates[0] }
+  }
+  return { type: 'object.batchUpdate', permission: mutation.permission, payload: { updates } }
+}
+
 const errorMessage = (error: unknown) => {
   const value = error as any
   return value?.response?.data?.error?.message || value?.message || '小剧场同步失败'
@@ -968,7 +1005,13 @@ export class TheaterSyncClient {
     }
     const desired = documentFromWorkspace(this.options.store.getSnapshot())
     const baseAtFlush = clone(this.baseDocument)
-    const mutations = diffDocuments(this.baseDocument, desired)
+    let mutations = diffDocuments(this.baseDocument, desired)
+    if (this.permissions.includes('stage.object.edit.delegated') && !this.permissions.includes('stage.object.edit')) {
+      mutations = mutations.flatMap((mutation) => {
+        const filtered = filterDelegatedMutation(mutation, this.baseDocument)
+        return filtered ? [filtered] : []
+      })
+    }
     if (!mutations.length) {
       const shouldReload = this.pendingRemoteRevision > this.revision
       this.pendingRemoteRevision = 0
@@ -976,7 +1019,11 @@ export class TheaterSyncClient {
       return
     }
     const denied = mutations.find((mutation) => !canApplyMutation(mutation, this.permissions, this.baseDocument))
-    if (denied) {
+    // The member snapshot can lag behind local state normalization. Delegated
+    // edits must reach the server, which validates current object settings and
+    // permitted fields transactionally.
+    if (denied && !this.permissions.includes('stage.object.edit.delegated')) {
+      this.options.onError?.('当前账号没有修改该小剧场组件的权限')
       await this.reload(true, undefined, true)
       return
     }
@@ -1002,7 +1049,7 @@ export class TheaterSyncClient {
       if (!this.started) return
       const conflict = isRevisionConflict(error)
       const permissionDenied = isPermissionDenied(error)
-      if (!conflict && !permissionDenied) this.options.onError?.(errorMessage(error))
+      if (!conflict) this.options.onError?.(errorMessage(error))
       if (conflict) {
         this.flushAgain = false
         if (this.flushTimer) clearTimeout(this.flushTimer)
