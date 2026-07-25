@@ -6543,6 +6543,9 @@ onBeforeUnmount(() => {
 :global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option:hover) {
   background-color: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)) !important;
 }
+:global(body:has(.theater-stage-app) .v-binder-follower-container) {
+  z-index: 10002 !important;
+}
 .theater-image-input { display: none; }
 .theater-stage-toolbar {
   position: absolute; z-index: 10000; top: 0; right: 0; left: 0; box-sizing: border-box;
@@ -6669,7 +6672,7 @@ onBeforeUnmount(() => {
 .theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
 .theater-scene-row.is-dragging { opacity: .36; }
 .theater-scene-row.is-drag-preview {
-  position: fixed; z-index: 10000; top: 0; left: 0; pointer-events: none; opacity: .92;
+  position: fixed; z-index: 10003; top: 0; left: 0; pointer-events: none; opacity: .92;
   border: 1px solid color-mix(in srgb, var(--theater-accent, #38bdf8) 58%, transparent); border-radius: 5px;
   background: var(--theater-panel); box-shadow: 0 10px 24px rgba(0, 0, 0, .26); will-change: transform;
 }
@@ -6762,7 +6765,7 @@ onBeforeUnmount(() => {
 .theater-layer-row.is-filter-context:not(.is-active) { opacity: .66; }
 .theater-layer-row.is-dragging { opacity: .36; }
 .theater-layer-row.is-drag-preview {
-  position: fixed; z-index: 10000; top: 0; left: 0; pointer-events: none; opacity: .92;
+  position: fixed; z-index: 10003; top: 0; left: 0; pointer-events: none; opacity: .92;
   border: 1px solid color-mix(in srgb, var(--theater-accent, #38bdf8) 58%, transparent); border-radius: 5px;
   background: var(--sc-bg-panel, #26262b); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); will-change: transform;
 }
