@@ -802,7 +802,7 @@ export class TheaterSyncClient {
         response = await this.postActionBatch(first, payloads)
       } catch (error) {
         if (isPermissionDenied(error)) {
-          await this.reload(true, undefined, true)
+          await this.reload(true, undefined, true, false)
           return true
         }
         if (!isRevisionConflict(error)) throw error
@@ -858,7 +858,7 @@ export class TheaterSyncClient {
       response = await this.postAction(payload)
     } catch (error) {
       if (isPermissionDenied(error)) {
-        await this.reload(true, undefined, true)
+        await this.reload(true, undefined, true, false)
         return true
       }
       if (!isRevisionConflict(error)) throw error
@@ -867,7 +867,7 @@ export class TheaterSyncClient {
         response = await this.postAction(payload)
       } catch (retryError) {
         if (isPermissionDenied(retryError)) {
-          await this.reload(true, undefined, true)
+          await this.reload(true, undefined, true, false)
           return true
         }
         throw retryError
@@ -914,7 +914,12 @@ export class TheaterSyncClient {
     while (this.saving) await new Promise((resolve) => setTimeout(resolve, 20))
   }
 
-  private async reload(force = false, localChange?: { base: TheaterDocument, desired: TheaterDocument }, silent = false) {
+  private async reload(
+    force = false,
+    localChange?: { base: TheaterDocument, desired: TheaterDocument },
+    silent = false,
+    preserveLocalChanges = true,
+  ) {
     if (!this.started) return
     try {
       const response = await api.get<TheaterSnapshotResponse>(this.theaterBase())
@@ -933,7 +938,7 @@ export class TheaterSyncClient {
       )
       const nextDocument = localChange
         ? rebaseDocument(localChange.base, localChange.desired, remoteDocument)
-        : hasPendingLocalChanges
+        : hasPendingLocalChanges && preserveLocalChanges
           ? rebaseDocument(this.baseDocument, currentDocument!, remoteDocument)
           : remoteDocument
       this.revision = nextRevision
@@ -1024,7 +1029,7 @@ export class TheaterSyncClient {
     // permitted fields transactionally.
     if (denied && !this.permissions.includes('stage.object.edit.delegated')) {
       this.options.onError?.('当前账号没有修改该小剧场组件的权限')
-      await this.reload(true, undefined, true)
+      await this.reload(true, undefined, true, false)
       return
     }
     this.saving = true
@@ -1062,7 +1067,7 @@ export class TheaterSyncClient {
           this.options.onError?.('舞台状态持续冲突，本地修改已保留，请稍后重试')
         }
       } else {
-        await this.reload(true, undefined, permissionDenied)
+        await this.reload(true, undefined, permissionDenied, !permissionDenied)
       }
     } finally {
       this.saving = false
