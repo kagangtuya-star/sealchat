@@ -66,8 +66,7 @@ const upload = async (event: Event) => {
 </template>
 
 <style scoped>
-.texture-grid { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.texture-grid { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .texture-item { min-width: 0; }.texture-item__preview { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; padding: 0; border: 1px dashed var(--sc-border-muted, rgba(148,163,184,.32)); border-radius: 9px; color: var(--sc-text-secondary); background: color-mix(in srgb, var(--sc-bg-input, #111827) 92%, transparent); cursor: pointer; }.texture-item__preview:hover { border-color: #36ad92; }.texture-item__preview img { width: 100%; height: 100%; object-fit: cover; }.texture-item__preview span { display: flex; flex-direction: column; gap: 4px; font-weight: 700; }.texture-item__preview small { font-size: 9px; font-weight: 400; }.texture-item__preview i { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; background: rgba(15,23,42,.72); font-size: 10px; font-style: normal; }
 .texture-item__actions { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px 0; font-size: 11px; }
-@media (max-width: 520px) { .texture-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

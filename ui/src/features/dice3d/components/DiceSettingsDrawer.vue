@@ -476,24 +476,26 @@ const save = async () => {
 			  </div>
 			  <n-divider>BOT 骰点匹配</n-divider>
 			  <n-form-item label="规则测试文本"><n-input v-model:value="ruleTestText" /></n-form-item>
-			  <n-card v-for="(rule, index) in config.botRules" :key="rule.id" size="small" :title="rule.name || `规则 ${index + 1}`" style="margin-bottom: 12px">
-				<template #header-extra><n-button text type="error" @click="config.botRules.splice(index, 1)">删除</n-button></template>
-				<n-grid :cols="2" :x-gap="12">
-				  <n-form-item-gi label="名称"><n-input v-model:value="rule.name" /></n-form-item-gi>
-				  <n-form-item-gi label="优先级"><n-input-number v-model:value="rule.priority" /></n-form-item-gi>
-				</n-grid>
-				<n-form-item label="启用"><n-switch v-model:value="rule.enabled" /></n-form-item>
-				<n-form-item label="频道 ID（逗号分隔）"><n-input :value="rule.channelIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'channelIds', $event)" /></n-form-item>
-				<n-form-item label="BOT 用户 ID（逗号分隔）"><n-input :value="rule.botUserIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'botUserIds', $event)" /></n-form-item>
-				<n-form-item label="正则"><n-input v-model:value="rule.pattern" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" /></n-form-item>
-				<n-grid :cols="2" :x-gap="12">
-				  <n-form-item-gi label="数量捕获组"><n-input v-model:value="rule.countGroup" /></n-form-item-gi>
-				  <n-form-item-gi label="骰面捕获组"><n-input v-model:value="rule.sidesGroup" /></n-form-item-gi>
-				  <n-form-item-gi label="结果捕获组"><n-input v-model:value="rule.valuesGroup" /></n-form-item-gi>
-				  <n-form-item-gi label="结果分隔正则"><n-input v-model:value="rule.valueSeparatorPattern" /></n-form-item-gi>
-				</n-grid>
-				<n-alert type="info" :show-icon="false">测试：{{ testBotRule(rule) }}</n-alert>
-			  </n-card>
+				  <n-collapse v-for="(rule, index) in config.botRules" :key="rule.id" class="dice-bot-rule">
+					<n-collapse-item :name="rule.id" :title="rule.name || `规则 ${index + 1}`">
+					  <template #header-extra><n-button text type="error" @click.stop="config.botRules.splice(index, 1)">删除</n-button></template>
+					  <n-grid :cols="2" :x-gap="12">
+						  <n-form-item-gi label="名称"><n-input v-model:value="rule.name" /></n-form-item-gi>
+						  <n-form-item-gi label="优先级"><n-input-number v-model:value="rule.priority" /></n-form-item-gi>
+					  </n-grid>
+					  <n-form-item label="启用"><n-switch v-model:value="rule.enabled" /></n-form-item>
+					  <n-form-item label="频道 ID（逗号分隔）"><n-input :value="rule.channelIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'channelIds', $event)" /></n-form-item>
+					  <n-form-item label="BOT 用户 ID（逗号分隔）"><n-input :value="rule.botUserIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'botUserIds', $event)" /></n-form-item>
+					  <n-form-item label="正则"><n-input v-model:value="rule.pattern" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" /></n-form-item>
+					  <n-grid :cols="2" :x-gap="12">
+						  <n-form-item-gi label="数量捕获组"><n-input v-model:value="rule.countGroup" /></n-form-item-gi>
+						  <n-form-item-gi label="骰面捕获组"><n-input v-model:value="rule.sidesGroup" /></n-form-item-gi>
+						  <n-form-item-gi label="结果捕获组"><n-input v-model:value="rule.valuesGroup" /></n-form-item-gi>
+						  <n-form-item-gi label="结果分隔正则"><n-input v-model:value="rule.valueSeparatorPattern" /></n-form-item-gi>
+					  </n-grid>
+					  <n-alert type="info" :show-icon="false">测试：{{ testBotRule(rule) }}</n-alert>
+					</n-collapse-item>
+				  </n-collapse>
 			  <n-button dashed block @click="addBotRule">增加 BOT 匹配规则</n-button>
             </n-form>
           </n-tab-pane>
@@ -516,5 +518,10 @@ const save = async () => {
 .dice-audio-preview { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .dice-style-toolbar { width: 100%; display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; }
 .dice-surface-panel { margin-bottom: 14px; padding: 12px; border: 1px solid var(--sc-border-muted, rgba(148,163,184,.22)); border-radius: 11px; background: color-mix(in srgb, var(--sc-bg-surface, #18181b) 96%, transparent); }
+.dice-bot-rule { margin-bottom: 10px; border: 1px solid var(--sc-border-muted, rgba(148,163,184,.22)); border-radius: 8px; overflow: hidden; }
+.dice-bot-rule :deep(.n-collapse-item) { border: 0; }
+.dice-bot-rule :deep(.n-collapse-item__header) { min-height: 44px; padding: 0 12px; }
+.dice-bot-rule :deep(.n-collapse-item__content-wrapper) { border-top: 1px solid var(--sc-border-muted, rgba(148,163,184,.16)); }
+.dice-bot-rule :deep(.n-collapse-item__content-inner) { padding: 12px 12px 0; }
 @media (max-width: 560px) { .dice-style-toolbar { grid-template-columns: 1fr 1fr; }.dice-style-toolbar :deep(.n-select) { grid-column: 1 / -1; } }
 </style>
