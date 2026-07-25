@@ -20,7 +20,13 @@ func archiveTheaterRoomsByWorld(tx *gorm.DB, worldID string) error {
 	if tx == nil || strings.TrimSpace(worldID) == "" {
 		return nil
 	}
-	return tx.Model(&model.TheaterRoomModel{}).Where("world_id = ?", worldID).Updates(map[string]any{"status": "archived", "updated_at": time.Now()}).Error
+	now := time.Now()
+	if err := tx.Model(&model.TheaterRoomModel{}).Where("world_id = ?", worldID).Updates(map[string]any{"status": "archived", "updated_at": now}).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.TheaterSourceArchiveModel{}).Where("world_id = ?", worldID).Updates(map[string]any{
+		"status": model.TheaterSourceArchiveStatusDeleting, "cleanup_after": now.Add(theaterResourceDeleteGrace),
+	}).Error
 }
 
 func queueTheaterResourcesByWorld(tx *gorm.DB, worldID string) error {

@@ -287,6 +287,7 @@ func theaterModels() []any {
 		&TheaterResourceHoldModel{},
 		&TheaterAppearanceAssetModel{},
 		&TheaterPackageJobModel{},
+		&TheaterSourceArchiveModel{},
 		&TheaterMutationModel{},
 		&TheaterAuditLogModel{},
 	}

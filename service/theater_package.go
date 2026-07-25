@@ -406,7 +406,7 @@ func cleanupExpiredTheaterPackageJobs() error {
 		}
 		_ = model.GetDB().Delete(&model.TheaterPackageJobModel{}, "id = ?", job.ID).Error
 	}
-	return nil
+	return cleanupExpiredCCFOLIASourceArchives(now)
 }
 
 func sanitizeTheaterPackageFilename(value string) string {

@@ -343,8 +343,11 @@ func validateTheaterSharedSnapshot(snapshot TheaterSharedSnapshot) error {
 			return theaterPayloadError("scene map key 与 id 不一致")
 		}
 		var state map[string]any
-		if err := json.Unmarshal(scene.State, &state); err != nil || validateSceneState(state) != nil {
-			return theaterPayloadError("scene state 无效")
+		if err := json.Unmarshal(scene.State, &state); err != nil {
+			return theaterPayloadError("scene state JSON 无效")
+		}
+		if err := validateSceneState(state); err != nil {
+			return err
 		}
 		if err := validateTheaterSwitchText(scene.SwitchText); err != nil {
 			return err

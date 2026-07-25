@@ -38,3 +38,22 @@ type TheaterPackageJobModel struct {
 }
 
 func (*TheaterPackageJobModel) TableName() string { return "theater_package_jobs" }
+
+const (
+	TheaterSourceArchiveStatusActive   = "active"
+	TheaterSourceArchiveStatusDeleting = "deleting"
+)
+
+type TheaterSourceArchiveModel struct {
+	StringPKBaseModel
+	WorldID      string     `json:"worldId" gorm:"size:100;not null;index"`
+	RoomID       string     `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_source_archive_room_hash,priority:1"`
+	SourceFormat string     `json:"sourceFormat" gorm:"size:32;not null"`
+	SHA256       string     `json:"sha256" gorm:"size:64;not null;uniqueIndex:udx_theater_source_archive_room_hash,priority:2;index"`
+	SizeBytes    int64      `json:"sizeBytes" gorm:"not null"`
+	Truncated    bool       `json:"truncated" gorm:"not null;default:false"`
+	Status       string     `json:"status" gorm:"size:16;not null;index"`
+	CleanupAfter *time.Time `json:"cleanupAfter,omitempty" gorm:"index"`
+}
+
+func (*TheaterSourceArchiveModel) TableName() string { return "theater_source_archives" }

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -33,12 +35,14 @@ const (
 )
 
 var ccfoliaAssetNamePattern = regexp.MustCompile(`^([0-9a-f]{64})\.(png|gif|jpe?g|webp)$`)
+var ccfoliaSourceHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type ccfoliaBackup struct {
 	Meta      ccfoliaMeta                          `json:"meta"`
 	Entities  ccfoliaEntities                      `json:"entities"`
 	Resources map[string]ccfoliaResourceDescriptor `json:"resources"`
 	Unknown   map[string]json.RawMessage           `json:"-"`
+	SourceRaw json.RawMessage                      `json:"-"`
 }
 
 func (item *ccfoliaBackup) UnmarshalJSON(data []byte) error {
@@ -294,6 +298,12 @@ type ccfoliaConversion struct {
 	Summary  TheaterPackageSummary
 }
 
+type ccfoliaSourceArchive struct {
+	SHA256    string
+	SizeBytes int64
+	Truncated bool
+}
+
 func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel) (TheaterPackageSummary, error) {
 	var summary TheaterPackageSummary
 	if job == nil || strings.TrimSpace(job.InputFilePath) == "" {
@@ -358,6 +368,17 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 	if err := validateTheaterPackageImportLimits(room.ID, conversion.Snapshot); err != nil {
 		return summary, err
 	}
+	sourceArchive := newCCFOLIASourceArchive(backup.SourceRaw)
+	archiveCreated, err := persistCCFOLIASourceArchive(backup.SourceRaw, sourceArchive)
+	if err != nil {
+		return summary, err
+	}
+	archiveCommitted := false
+	defer func() {
+		if archiveCreated && !archiveCommitted {
+			removeUnreferencedCCFOLIASourceArchive(sourceArchive.SHA256)
+		}
+	}()
 
 	remap := theaterPackageRemap{resources: map[string]string{}}
 	for sourceRef, target := range targets {
@@ -392,6 +413,20 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 		}
 		var current model.TheaterRoomModel
 		if err := tx.Where("id = ?", room.ID).First(&current).Error; err != nil {
+			return err
+		}
+		archiveRow := model.TheaterSourceArchiveModel{
+			WorldID: current.WorldID, RoomID: current.ID,
+			SourceFormat: "ccfolia-" + ccfoliaBackupVersion, SHA256: sourceArchive.SHA256,
+			SizeBytes: sourceArchive.SizeBytes, Truncated: sourceArchive.Truncated, Status: model.TheaterSourceArchiveStatusActive,
+		}
+		if err := tx.Where("room_id = ? AND sha256 = ?", current.ID, sourceArchive.SHA256).FirstOrCreate(&archiveRow).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&archiveRow).Updates(map[string]any{
+			"size_bytes": sourceArchive.SizeBytes, "truncated": sourceArchive.Truncated,
+			"status": model.TheaterSourceArchiveStatusActive, "cleanup_after": nil,
+		}).Error; err != nil {
 			return err
 		}
 		currentSnapshot, currentHash, err := buildTheaterSnapshot(tx, &current, true)
@@ -507,6 +542,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 		existing, _, err := existingTheaterPackageImport(room.ID, mutationID)
 		return existing, err
 	}
+	archiveCommitted = true
 	cleanupAttachments = false
 	if createdMutation {
 		EnqueueTheaterMutation(mutationID)
@@ -637,6 +673,7 @@ func loadCCFOLIABackup(root string) (ccfoliaBackup, error) {
 	if backup.Resources == nil {
 		return backup, fmt.Errorf("CCFOLIA resources 缺失")
 	}
+	backup.SourceRaw = append(backup.SourceRaw[:0], raw...)
 	return backup, nil
 }
 
@@ -917,7 +954,8 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 	}
 
 	currentSceneID := utils.NewID()
-	currentState, currentObjects, stateWarnings, err := ccfoliaRoomState(backup, worldID, currentSceneID, targets, sceneNameIDs)
+	sourceArchive := newCCFOLIASourceArchive(backup.SourceRaw)
+	currentState, currentObjects, stateWarnings, err := ccfoliaRoomState(backup, sourceArchive, worldID, currentSceneID, targets, sceneNameIDs)
 	if err != nil {
 		return ccfoliaConversion{}, err
 	}
@@ -940,7 +978,7 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 	}
 	for index, entry := range sceneEntries {
 		targetID := sceneTargetIDs[entry.SourceID]
-		state, objects, sceneWarnings, err := ccfoliaSceneState(entry.SourceID, entry.Scene, worldID, targetID, targets, sceneNameIDs)
+		state, objects, sceneWarnings, err := ccfoliaSceneState(entry.SourceID, entry.Scene, sourceArchive, worldID, targetID, targets, sceneNameIDs)
 		if err != nil {
 			return ccfoliaConversion{}, err
 		}
@@ -973,15 +1011,12 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 	return ccfoliaConversion{Snapshot: snapshot, Summary: summary}, nil
 }
 
-func ccfoliaRoomState(backup ccfoliaBackup, worldID, sceneID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (json.RawMessage, map[string]TheaterObjectSnapshot, []string, error) {
+func ccfoliaRoomState(backup ccfoliaBackup, sourceArchive ccfoliaSourceArchive, worldID, sceneID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (json.RawMessage, map[string]TheaterObjectSnapshot, []string, error) {
 	room := backup.Entities.Room
 	metadata := map[string]any{
 		"sourceType": "current", "sourceVersion": backup.Meta.Version,
-		"sourceRaw": ccfoliaRawWithout(room.Raw, "markers"),
-		"metaRaw":   string(backup.Meta.Raw), "unknownTopLevel": ccfoliaRawMapStrings(backup.Unknown),
-		"unsupportedEntities": ccfoliaRawMapStrings(backup.Entities.Unsupported),
-		"resourceDescriptors": ccfoliaResourceRawMap(backup.Resources),
 	}
+	addCCFOLIASourceArchiveMetadata(metadata, sourceArchive)
 	state, warnings, err := ccfoliaStageState(room.BackgroundURL, room.ForegroundURL, room.FieldWidth, room.FieldHeight, room.FieldObjectFit, room.BackgroundColor, room.DisplayGrid, room.GridSize, room.AlignWithGrid, room.EnableCrossfade, room.CrossfadeDuration, ccfoliaRoomCanvasBounds(backup), metadata, worldID, targets)
 	if err != nil {
 		return nil, nil, warnings, err
@@ -990,8 +1025,9 @@ func ccfoliaRoomState(backup ccfoliaBackup, worldID, sceneID string, targets map
 	return state, objects, append(warnings, objectWarnings...), err
 }
 
-func ccfoliaSceneState(sourceID string, scene ccfoliaScene, worldID, sceneID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (json.RawMessage, map[string]TheaterObjectSnapshot, []string, error) {
-	metadata := map[string]any{"sourceType": "scene", "sourceSceneId": sourceID, "sourceOrder": scene.Order, "sourceRaw": ccfoliaRawWithout(scene.Raw, "markers")}
+func ccfoliaSceneState(sourceID string, scene ccfoliaScene, sourceArchive ccfoliaSourceArchive, worldID, sceneID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (json.RawMessage, map[string]TheaterObjectSnapshot, []string, error) {
+	metadata := map[string]any{"sourceType": "scene", "sourceSceneId": sourceID, "sourceOrder": scene.Order}
+	addCCFOLIASourceArchiveMetadata(metadata, sourceArchive)
 	state, warnings, err := ccfoliaStageState(scene.BackgroundURL, scene.ForegroundURL, scene.FieldWidth, scene.FieldHeight, scene.FieldObjectFit, "", scene.DisplayGrid, scene.GridSize, false, false, 0, ccfoliaMarkerCanvasBounds(scene.Markers), metadata, worldID, targets)
 	if err != nil {
 		return nil, nil, warnings, err
@@ -1376,22 +1412,6 @@ func ccfoliaUnsupportedEntityNames(values map[string]json.RawMessage) []string {
 	return result
 }
 
-func ccfoliaRawMapStrings(values map[string]json.RawMessage) map[string]string {
-	result := make(map[string]string, len(values))
-	for key, raw := range values {
-		result[key] = string(raw)
-	}
-	return result
-}
-
-func ccfoliaResourceRawMap(values map[string]ccfoliaResourceDescriptor) map[string]string {
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = string(value.Raw)
-	}
-	return result
-}
-
 func ccfoliaAssetReferences(backup ccfoliaBackup) map[string][]string {
 	result := map[string][]string{}
 	add := func(ref *string, path string) {
@@ -1431,19 +1451,172 @@ func ccfoliaUniqueWarnings(values []string) []string {
 	return result
 }
 
-func ccfoliaRawWithout(raw json.RawMessage, fields ...string) string {
-	var value map[string]json.RawMessage
-	if json.Unmarshal(raw, &value) != nil {
-		return string(raw)
+func newCCFOLIASourceArchive(raw []byte) ccfoliaSourceArchive {
+	if len(raw) == 0 {
+		return ccfoliaSourceArchive{}
 	}
-	for _, field := range fields {
-		delete(value, field)
+	hash := sha256.Sum256(raw)
+	return ccfoliaSourceArchive{SHA256: hex.EncodeToString(hash[:]), SizeBytes: int64(len(raw))}
+}
+
+func addCCFOLIASourceArchiveMetadata(metadata map[string]any, archive ccfoliaSourceArchive) {
+	if archive.SHA256 == "" {
+		return
 	}
-	result, err := json.Marshal(value)
+	metadata["sourceRawExternal"] = true
+	metadata["sourceRawSha256"] = archive.SHA256
+	metadata["sourceRawBytes"] = archive.SizeBytes
+	metadata["sourceRawTruncated"] = archive.Truncated
+}
+
+func ccfoliaSourceArchivePath(hash string) string {
+	return filepath.Join(theaterPackageStorageDir(), "ccfolia-source", hash[:2], hash+".json")
+}
+
+func persistCCFOLIASourceArchive(raw []byte, archive ccfoliaSourceArchive) (bool, error) {
+	if archive.SHA256 == "" || len(raw) == 0 {
+		return false, fmt.Errorf("CCFOLIA 原始数据为空")
+	}
+	target := ccfoliaSourceArchivePath(archive.SHA256)
+	if err := verifyCCFOLIASourceArchive(target, archive); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return false, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".ccfolia-source-*")
 	if err != nil {
-		return string(raw)
+		return false, err
 	}
-	return string(result)
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return false, err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		_ = temporary.Close()
+		return false, err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return false, err
+	}
+	if err := temporary.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(temporaryPath, target); err != nil {
+		return false, err
+	}
+	if err := verifyCCFOLIASourceArchive(target, archive); err != nil {
+		_ = os.Remove(target)
+		return false, err
+	}
+	return true, nil
+}
+
+func verifyCCFOLIASourceArchive(path string, archive ccfoliaSourceArchive) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() != archive.SizeBytes {
+		return fmt.Errorf("CCFOLIA 原始数据文件大小不一致")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	actual := newCCFOLIASourceArchive(raw)
+	if actual.SHA256 != archive.SHA256 {
+		return fmt.Errorf("CCFOLIA 原始数据文件哈希不一致")
+	}
+	return nil
+}
+
+func removeUnreferencedCCFOLIASourceArchive(hash string) {
+	if !ccfoliaSourceHashPattern.MatchString(hash) {
+		return
+	}
+	var references int64
+	if err := model.GetDB().Model(&model.TheaterSourceArchiveModel{}).Where("sha256 = ?", hash).Count(&references).Error; err != nil || references > 0 {
+		return
+	}
+	_ = os.Remove(ccfoliaSourceArchivePath(hash))
+}
+
+func cleanupExpiredCCFOLIASourceArchives(now time.Time) error {
+	var archives []model.TheaterSourceArchiveModel
+	if err := model.GetDB().Where("status = ? AND cleanup_after IS NOT NULL AND cleanup_after <= ?", model.TheaterSourceArchiveStatusDeleting, now).Limit(200).Find(&archives).Error; err != nil {
+		return err
+	}
+	for _, archive := range archives {
+		if !ccfoliaSourceHashPattern.MatchString(archive.SHA256) {
+			return fmt.Errorf("CCFOLIA 原始数据哈希无效: %s", archive.ID)
+		}
+		var otherReferences int64
+		if err := model.GetDB().Model(&model.TheaterSourceArchiveModel{}).Where("sha256 = ? AND id <> ?", archive.SHA256, archive.ID).Count(&otherReferences).Error; err != nil {
+			return err
+		}
+		if otherReferences == 0 {
+			if err := os.Remove(ccfoliaSourceArchivePath(archive.SHA256)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if err := model.GetDB().Unscoped().Delete(&archive).Error; err != nil {
+			return err
+		}
+	}
+	return cleanupOrphanedCCFOLIASourceArchives(now)
+}
+
+func cleanupOrphanedCCFOLIASourceArchives(now time.Time) error {
+	root := filepath.Join(theaterPackageStorageDir(), "ccfolia-source")
+	prefixes, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cutoff := now.Add(-theaterResourceDeleteGrace)
+	for _, prefix := range prefixes {
+		if !prefix.IsDir() || len(prefix.Name()) != 2 {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(root, prefix.Name()))
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+				continue
+			}
+			hash := strings.TrimSuffix(file.Name(), ".json")
+			if !ccfoliaSourceHashPattern.MatchString(hash) || !strings.HasPrefix(hash, prefix.Name()) {
+				continue
+			}
+			info, err := file.Info()
+			if err != nil {
+				return err
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			var references int64
+			if err := model.GetDB().Model(&model.TheaterSourceArchiveModel{}).Where("sha256 = ?", hash).Count(&references).Error; err != nil {
+				return err
+			}
+			if references == 0 {
+				if err := os.Remove(filepath.Join(root, prefix.Name(), file.Name())); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func ccfoliaName(value, fallback string) string {
