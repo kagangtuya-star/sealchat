@@ -63,6 +63,26 @@ func decodeTheaterBody(c *fiber.Ctx, target any, limit int) error {
 	return nil
 }
 
+func TheaterActivate(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		ActivationCode string `json:"activationCode"`
+	}
+	if err := decodeTheaterBody(c, &body, 4<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	configuredCode := ""
+	if appConfig != nil {
+		configuredCode = appConfig.TheaterActivationCode
+	}
+	activated, err := service.ActivateWorldTheater(user.ID, c.Params("worldId"), strings.TrimSpace(body.ActivationCode), configuredCode)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "activated": activated, "requestId": requestID})
+}
+
 func TheaterSnapshotGet(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)

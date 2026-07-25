@@ -27,6 +27,7 @@ const model = ref<ServerConfig>({
   imageCompress: true,
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
+  theaterActivationCode: '',
   emailNotification: { enabled: false },
   audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 },
 })
@@ -233,6 +234,7 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
   payload.imageCompress = model.value.imageCompress;
   payload.imageCompressQuality = model.value.imageCompressQuality;
   payload.builtInSealBotEnable = model.value.builtInSealBotEnable;
+  payload.theaterActivationCode = (model.value.theaterActivationCode || '').trim();
   payload.keywordMaxLength = model.value.keywordMaxLength;
   payload.emailNotification = {
     ...(payload.emailNotification || {}),
@@ -592,6 +594,9 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
+      </n-form-item>
+      <n-form-item label="小剧场激活码" feedback="留空不限制；填写后，每个世界首次进入小剧场需验证一次。">
+        <n-input v-model:value="model.theaterActivationCode" type="password" show-password-on="click" placeholder="留空不限制" />
       </n-form-item>
       <n-form-item v-if="model.audio" label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
         <n-switch v-model:value="model.audio.allowWorldAudioWorkbench" />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWindowSize } from '@vueuse/core'
 import { NButton, NIcon, useMessage } from 'naive-ui'
@@ -20,6 +20,7 @@ import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/c
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import { useDisplayStore } from '@/stores/display'
+import { activateWorldTheater, isTheaterActivationRequired } from '@/services/theaterActivation'
 import {
   installTheaterBridgeDebugConsoleCommand,
   isTheaterBridgeDebugEnabled,
@@ -94,6 +95,11 @@ const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
 let theaterBridge: TheaterHostBridge | null = null
 let theaterSync: TheaterSyncClient | null = null
 let theaterSyncGeneration = 0
+const theaterActivationVisible = ref(false)
+const theaterActivationCode = ref('')
+const theaterActivationError = ref('')
+const theaterActivationSubmitting = ref(false)
+let resolveTheaterActivation: ((activated: boolean) => void) | null = null
 
 audioStudio.setPlaybackAuthority(false)
 
@@ -165,6 +171,50 @@ const exitTheater = async () => {
     name: 'world-channel',
     params: { worldId: worldId.value, channelId: channelId.value },
   })
+}
+
+const dismissTheaterActivation = (activated: boolean) => {
+  theaterActivationVisible.value = false
+  const resolve = resolveTheaterActivation
+  resolveTheaterActivation = null
+  resolve?.(activated)
+}
+
+const requestTheaterActivation = () => new Promise<boolean>((resolve) => {
+  theaterActivationCode.value = ''
+  theaterActivationError.value = ''
+  resolveTheaterActivation = resolve
+  theaterActivationVisible.value = true
+})
+
+const submitTheaterActivation = async () => {
+  const activationCode = theaterActivationCode.value.trim()
+  if (!activationCode) {
+    theaterActivationError.value = '请输入激活码'
+    return
+  }
+  theaterActivationSubmitting.value = true
+  theaterActivationError.value = ''
+  try {
+    await activateWorldTheater(worldId.value, activationCode)
+    dismissTheaterActivation(true)
+  } catch (error) {
+    theaterActivationError.value = isTheaterActivationRequired(error)
+      ? '激活码错误，请重试'
+      : (error instanceof Error ? error.message : '小剧场激活失败')
+  } finally {
+    theaterActivationSubmitting.value = false
+  }
+}
+
+const ensureTheaterActivation = async () => {
+  try {
+    await activateWorldTheater(worldId.value)
+    return true
+  } catch (error) {
+    if (!isTheaterActivationRequired(error)) throw error
+  }
+  return requestTheaterActivation()
 }
 
 const selectChatCharacter = async (identityId: string) => {
@@ -448,17 +498,20 @@ const sendAppearancePreviewPhase = (phase: 'start' | 'end') => {
   }, window.location.origin)
 }
 
-onBeforeMount(startTheaterBridge)
-
 onMounted(async () => {
-  window.addEventListener('message', handleTheaterContext)
-	window.addEventListener('message', handleDice3DMessage)
   if (!worldId.value || !channelId.value) {
     message.warning('请先进入频道')
     await router.replace({ name: 'home' })
     return
   }
   try {
+    if (!await ensureTheaterActivation()) {
+      await exitTheater()
+      return
+    }
+    startTheaterBridge()
+    window.addEventListener('message', handleTheaterContext)
+	window.addEventListener('message', handleDice3DMessage)
     await startTheaterSync()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
@@ -486,6 +539,31 @@ function handleDice3DMessage(event: MessageEvent) {
 
 <template>
   <main class="theater-host">
+    <n-modal
+      v-model:show="theaterActivationVisible"
+      preset="dialog"
+      title="激活小剧场"
+      :mask-closable="false"
+      :close-on-esc="false"
+      :closable="false"
+    >
+      <n-form-item label="激活码" :validation-status="theaterActivationError ? 'error' : undefined" :feedback="theaterActivationError">
+        <n-input
+          v-model:value="theaterActivationCode"
+          type="password"
+          show-password-on="click"
+          placeholder="请输入激活码"
+          :disabled="theaterActivationSubmitting"
+          @keyup.enter="submitTheaterActivation"
+        />
+      </n-form-item>
+      <template #action>
+        <n-space justify="end">
+          <n-button :disabled="theaterActivationSubmitting" @click="dismissTheaterActivation(false)">取消</n-button>
+          <n-button type="primary" :loading="theaterActivationSubmitting" @click="submitTheaterActivation">确定</n-button>
+        </n-space>
+      </template>
+    </n-modal>
     <div
       ref="layoutRef"
       class="theater-host-layout"

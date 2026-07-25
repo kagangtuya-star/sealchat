@@ -8,6 +8,7 @@ const (
 	TheaterErrorChannelNotFound         = "CHANNEL_NOT_FOUND"
 	TheaterErrorChannelWorldMismatch    = "CHANNEL_WORLD_MISMATCH"
 	TheaterErrorPermissionDenied        = "STAGE_PERMISSION_DENIED"
+	TheaterErrorActivationRequired      = "THEATER_ACTIVATION_REQUIRED"
 	TheaterErrorNotFound                = "STAGE_NOT_FOUND"
 	TheaterErrorRevisionConflict        = "STAGE_REVISION_CONFLICT"
 	TheaterErrorMutationIDReused        = "MUTATION_ID_REUSED"

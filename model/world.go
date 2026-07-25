@@ -47,6 +47,7 @@ type WorldModel struct {
 	CharacterCardBadgeTemplate            string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
 	CursorThemeJSON                       string  `json:"-" gorm:"type:text"`
 	TheaterPresentationTemplateJSON       string  `json:"-" gorm:"type:text"`
+	TheaterActivated                      bool    `json:"-" gorm:"default:false"`
 	StickyNoteDefaultAppearanceJSON       string  `json:"-" gorm:"type:text"`
 	Dice3DConfigJSON                      string  `json:"-" gorm:"column:dice_3d_config_json;type:text"`
 	IsSystemDefault                       bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个

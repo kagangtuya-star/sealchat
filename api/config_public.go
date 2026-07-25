@@ -48,6 +48,7 @@ func ConfigGetHandler(c *fiber.Ctx) error {
 		ret.ServeAt = ""
 	} else if appConfig != nil {
 		ret.RegisterInviteCode = appConfig.RegisterInviteCode
+		ret.TheaterActivationCode = appConfig.TheaterActivationCode
 	}
 	ffmpegAvailable := false
 	if svc := service.GetAudioService(); svc != nil {

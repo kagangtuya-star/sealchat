@@ -442,6 +442,7 @@ type AppConfig struct {
 	DSN                       string                    `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
 	BuiltInSealBotEnable      bool                      `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
 	BotIncomingParenAsOOC     bool                      `json:"botIncomingParenAsOoc" yaml:"botIncomingParenAsOoc"`
+	TheaterActivationCode     string                    `json:"theaterActivationCode" yaml:"theaterActivationCode"`
 	Version                   int                       `json:"version" yaml:"version"`
 	GalleryQuotaMB            int64                     `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig           `json:"logUpload" yaml:"logUpload"`
@@ -1724,6 +1725,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("keywordMaxLength", config.KeywordMaxLength)
 		_ = k.Set("builtInSealBotEnable", config.BuiltInSealBotEnable)
 		_ = k.Set("botIncomingParenAsOoc", config.BotIncomingParenAsOOC)
+		_ = k.Set("theaterActivationCode", strings.TrimSpace(config.TheaterActivationCode))
 		_ = k.Set("galleryQuotaMB", config.GalleryQuotaMB)
 		_ = k.Set("imageBaseUrl", config.ImageBaseURL)
 		_ = k.Set("logUpload.enabled", config.LogUpload.Enabled)

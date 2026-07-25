@@ -72,6 +72,7 @@ func bindTheaterAudioRoutes(router fiber.Router, base string) {
 }
 
 func BindWorldTheaterRoutes(router fiber.Router) {
+	router.Post("/worlds/:worldId/theater/activate", TheaterActivate)
 	bindTheaterRoutes(router, "/worlds/:worldId/theater")
 }
 

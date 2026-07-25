@@ -22,6 +22,7 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 	}
 	ret.RegisterInviteRequired = strings.TrimSpace(cfg.RegisterInviteCode) != ""
 	ret.RegisterInviteCode = ""
+	ret.TheaterActivationCode = ""
 
 	// log upload token
 	ret.LogUpload.Token = ""

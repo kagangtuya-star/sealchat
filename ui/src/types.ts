@@ -671,6 +671,7 @@ export interface ServerConfig {
   keywordMaxLength?: number;
   builtInSealBotEnable: boolean;
   botIncomingParenAsOoc?: boolean;
+  theaterActivationCode?: string;
   logUpload?: LogUploadConfig;
   captcha?: CaptchaConfig;
   emailNotification?: {
