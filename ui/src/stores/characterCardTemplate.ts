@@ -141,6 +141,20 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     return templates.value.find(item => !item.readonly && item.isSheetDefault && normalizeSheetType(item.sheetType) === normalized) || null;
   };
 
+  const getBuiltinTemplateBySheetType = (sheetType?: string) => {
+    const normalized = normalizeSheetType(sheetType);
+    if (!normalized) return null;
+    const builtinNames = new Set(BUILTIN_CHARACTER_CARD_TEMPLATES
+      .filter(item => normalizeSheetType(item.sheetType) === normalized)
+      .map(item => item.name));
+    if (builtinNames.size === 0) return null;
+    return templates.value.find(item => (
+      !item.readonly
+      && builtinNames.has(item.name)
+      && normalizeSheetType(item.sheetType) === normalized
+    )) || null;
+  };
+
   const getGlobalDefaultTemplate = () => {
     return templates.value.find(item => item.isGlobalDefault && !item.readonly) || null;
   };
@@ -530,6 +544,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     getBinding,
     getTemplatesBySheetType,
     getSheetDefaultTemplate,
+    getBuiltinTemplateBySheetType,
     getGlobalDefaultTemplate,
     resolveDefaultTemplate,
     resolveCardTemplate,

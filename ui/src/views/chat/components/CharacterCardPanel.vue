@@ -1056,6 +1056,11 @@ const setTemplateSheetType = (value: string) => {
     templateSheetTypeCustom.value = '';
     return;
   }
+  if (lower === 'shinobigami' || normalized === '忍神') {
+    templateSheetTypePreset.value = 'shinobigami';
+    templateSheetTypeCustom.value = '';
+    return;
+  }
   if (normalized) {
     templateSheetTypePreset.value = 'custom';
     templateSheetTypeCustom.value = normalized;
@@ -1231,6 +1236,7 @@ const DETACHED_TEMPLATE_VALUE = '__detached__';
 const sheetTypeOptions = [
   { label: 'COC7', value: 'coc7' },
   { label: 'DND5', value: 'dnd5e' },
+  { label: '忍神', value: 'shinobigami' },
   { label: '自定义', value: 'custom' },
 ];
 
@@ -1260,6 +1266,11 @@ const selectDefaultNewCardTemplate = () => {
   const sheetDefault = templateStore.getSheetDefaultTemplate(newCardSheetType.value);
   if (sheetDefault?.id) {
     newCardTemplateId.value = sheetDefault.id;
+    return;
+  }
+  const builtinTemplate = templateStore.getBuiltinTemplateBySheetType(newCardSheetType.value);
+  if (builtinTemplate?.id) {
+    newCardTemplateId.value = builtinTemplate.id;
     return;
   }
   const globalDefault = templateStore.getGlobalDefaultTemplate();
