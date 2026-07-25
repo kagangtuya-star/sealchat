@@ -1440,6 +1440,13 @@ const syncSheetAvatar = (card: CharacterCard, fallbackAvatarUrl = '') => {
   sheetStore.updateCardAvatar(card.id, resolveCardAvatarToken(card, fallbackAvatarUrl) || undefined);
 };
 
+const syncActiveCardAvatarSnapshot = (channelId: string, cardId: string) => {
+  if (cardStore.getActiveCardId(channelId) !== cardId) return;
+  void snapshotStore.syncLocalSnapshot(channelId, true).catch((error) => {
+    console.warn('Failed to sync character card avatar snapshot', error);
+  });
+};
+
 const handleUnbind = async (identityId: string) => {
   if (!ensureCharacterApiEnabled()) return;
   if (!resolvedChannelId.value) return;
@@ -1594,6 +1601,7 @@ const handleAvatarEditorSave = async (file: File) => {
       avatarAttachmentId: uploadResult.attachmentId,
     });
     syncSheetAvatar(card);
+    syncActiveCardAvatarSnapshot(channelId, card.id);
     message.success('头像已更新');
     handleAvatarEditorCancel();
   } catch (e: any) {
@@ -1612,6 +1620,7 @@ const handleAvatarRemove = async (card: CharacterCard) => {
       ? (cardStore.activeCards[channelId]?.avatarUrl || '')
       : '';
     syncSheetAvatar(card, activeFallback);
+    syncActiveCardAvatarSnapshot(channelId, card.id);
     message.success('头像已移除');
   } catch (e: any) {
     message.error(e?.response?.data?.error || e?.message || '头像移除失败');

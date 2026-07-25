@@ -760,10 +760,11 @@ type CharacterSnapshotIdentity struct {
 }
 
 type CharacterSnapshotCard struct {
-	Name         string         `json:"name,omitempty"`
-	SheetType    string         `json:"sheetType,omitempty"`
-	Attrs        map[string]any `json:"attrs,omitempty"`
-	TemplateText string         `json:"templateText,omitempty"`
+	Name               string         `json:"name,omitempty"`
+	SheetType          string         `json:"sheetType,omitempty"`
+	AvatarAttachmentID string         `json:"avatarAttachmentId,omitempty"`
+	Attrs              map[string]any `json:"attrs,omitempty"`
+	TemplateText       string         `json:"templateText,omitempty"`
 }
 
 type CharacterSnapshotData struct {

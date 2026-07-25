@@ -16,6 +16,7 @@ import {
   type CharacterCardNarratorSettings,
 } from '@/utils/characterCardNarratorSettings';
 import { cleanupDeletedCharacterCardState } from './characterCardDeleteCleanup';
+import { useCharacterCardAvatarStore } from './characterCardAvatar';
 import { useChannelCharacterSnapshotStore } from './channelCharacterSnapshot';
 import {
   buildBotNicknameSyncCommand,
@@ -147,6 +148,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const displayStore = useDisplayStore();
   const templateStore = useCharacterCardTemplateStore();
   const sheetStore = useCharacterSheetStore();
+  const avatarStore = useCharacterCardAvatarStore();
   const snapshotStore = useChannelCharacterSnapshotStore();
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
@@ -1520,13 +1522,21 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     { immediate: true },
   );
 
-  snapshotStore.setLocalSnapshotProvider((channelId) => {
+  snapshotStore.setLocalSnapshotProvider(async (channelId) => {
+    try {
+      await avatarStore.ensureBindingsLoaded(channelId);
+    } catch (error) {
+      console.warn('[CharacterCard] Failed to load card avatar bindings for snapshot', error);
+    }
     const identity = chatStore.getActiveIdentity(channelId);
     if (!identity?.id) return null;
     const active = activeCards.value[channelId];
     const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
     const cardId = getActiveCardId(channelId);
     const cardMeta = cardId ? cardList.value.find(card => card.id === cardId) : undefined;
+    const cardAvatarAttachmentId = cardId
+      ? avatarStore.resolveCardAvatar(cardId, channelId, active?.avatarUrl)
+      : '';
     const rawSourceUpdatedAt = Number(cardMeta?.updatedAt || 0);
     const sourceUpdatedAt = rawSourceUpdatedAt > 0 && rawSourceUpdatedAt < 1_000_000_000_000
       ? rawSourceUpdatedAt * 1000
@@ -1559,6 +1569,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           card: {
             name: active.name,
             sheetType: active.type,
+            avatarAttachmentId: cardAvatarAttachmentId,
             attrs: active.attrs || {},
             ...(active.templateText ? { templateText: active.templateText } : {}),
           },

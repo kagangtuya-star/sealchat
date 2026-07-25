@@ -158,8 +158,12 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 	if data.Card != nil {
 		data.Card.Name = strings.TrimSpace(data.Card.Name)
 		data.Card.SheetType = strings.TrimSpace(data.Card.SheetType)
+		data.Card.AvatarAttachmentID = strings.TrimSpace(data.Card.AvatarAttachmentID)
 		if utf8.RuneCountInString(data.Card.Name) > 128 || utf8.RuneCountInString(data.Card.SheetType) > 64 {
 			return nil, errors.New("人物卡名称或类型过长")
+		}
+		if utf8.RuneCountInString(data.Card.AvatarAttachmentID) > 256 {
+			return nil, errors.New("人物卡头像引用过长")
 		}
 		if len(data.Card.TemplateText) > 512*1024 {
 			return nil, errors.New("人物卡模板快照过大")

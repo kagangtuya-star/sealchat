@@ -35,6 +35,7 @@ export interface ChannelCharacterSnapshotIdentity {
 export interface ChannelCharacterSnapshotCard {
   name: string;
   sheetType: string;
+  avatarAttachmentId?: string;
   attrs: Record<string, any>;
   templateText?: string;
 }
@@ -104,6 +105,7 @@ const normalizeItem = (value: any): ChannelCharacterSnapshotItem | null => {
     ? {
       name: String(value.data.card.name || ''),
       sheetType: String(value.data.card.sheetType || ''),
+      avatarAttachmentId: String(value.data.card.avatarAttachmentId || ''),
       attrs: value.data.card.attrs && typeof value.data.card.attrs === 'object' ? value.data.card.attrs : {},
       ...(value.data.card.templateText ? { templateText: String(value.data.card.templateText) } : {}),
     }

@@ -276,7 +276,7 @@ const characters = computed<ResolvedCharacter[]>(() => snapshotStore.getChannelI
     return {
       item,
       name: item.data.identity.displayName || item.data.card.name || item.identityId,
-      avatarUrl: resolveAttachmentUrl(item.data.identity.avatarAttachmentId || ''),
+      avatarUrl: resolveAttachmentUrl(item.data.card?.avatarAttachmentId || item.data.identity.avatarAttachmentId || ''),
       preferredColumns: clamp(Math.round(template.preferredColumns || 2), 1, 4),
       stats,
     };
