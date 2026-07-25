@@ -34,7 +34,7 @@ interface ResolvedStat {
   name: string;
   current: number;
   max: number | null;
-  min: number;
+  min: number | null;
   barColor: string;
   textColor: string;
   fillLeft: number;
@@ -233,8 +233,8 @@ const resolveNumericSource = (source: CharacterSnapshotNumericSource | undefined
 const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<string, any>): ResolvedStat | null => {
   const current = resolveNumericSource(template.current, attrs);
   const max = resolveNumericSource(template.max, attrs);
-  const min = resolveNumericSource(template.min, attrs) ?? 0;
-  if (current === null || !Number.isFinite(min) || (template.max !== undefined && (max === null || max <= min))) return null;
+  const min = resolveNumericSource(template.min, attrs);
+  if (current === null) return null;
   if (max === null) {
     return {
       id: template.id,
@@ -249,9 +249,24 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
       zeroLeft: 0,
     };
   }
-  const range = max - min;
-  const currentRatio = clamp((current - min) / range, 0, 1);
-  const zeroRatio = clamp((0 - min) / range, 0, 1);
+  const rangeMin = min ?? 0;
+  if (max <= rangeMin) {
+    return {
+      id: template.id,
+      name: template.name,
+      current,
+      max: null,
+      min,
+      barColor: template.barColor || '#ffffff',
+      textColor: template.textColor || '#ffffff',
+      fillLeft: 0,
+      fillWidth: 100,
+      zeroLeft: 0,
+    };
+  }
+  const range = max - rangeMin;
+  const currentRatio = clamp((current - rangeMin) / range, 0, 1);
+  const zeroRatio = clamp((0 - rangeMin) / range, 0, 1);
   return {
     id: template.id,
     name: template.name,
@@ -398,7 +413,7 @@ onBeforeUnmount(() => {
                     class="theater-character-stat__fill"
                     :style="{ left: `${stat.fillLeft}%`, width: `${stat.fillWidth}%`, backgroundColor: stat.barColor }"
                   />
-                  <span v-if="stat.min < 0 && stat.max > 0" class="theater-character-stat__zero" :style="{ left: `${stat.zeroLeft}%` }" />
+                  <span v-if="stat.min !== null && stat.min < 0 && stat.max !== null && stat.max > 0" class="theater-character-stat__zero" :style="{ left: `${stat.zeroLeft}%` }" />
                   <span class="theater-character-stat__name">{{ stat.name }}</span>
                   <span class="theater-character-stat__value">{{ stat.max === null ? stat.current : `${stat.current}/${stat.max}` }}</span>
                 </div>
