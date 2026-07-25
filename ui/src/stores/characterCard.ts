@@ -1566,6 +1566,16 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     const identity = chatStore.getActiveIdentity(channelId);
     if (!identity?.id) return null;
+    const isOocIdentity = chatStore.getIdentityIcOocMode(channelId, identity.id) === 'ooc';
+    const ownUserId = String(identity.userId || getUserId());
+    const retainedIdentity = isOocIdentity
+      ? snapshotStore.getChannelItems(channelId).find((item) => (
+        item.userId === ownUserId && chatStore.getIdentityIcOocMode(channelId, item.identityId) !== 'ooc'
+      ))
+      : null;
+    if (isOocIdentity && !retainedIdentity) return undefined;
+    const snapshotIdentityId = retainedIdentity?.identityId || identity.id;
+    const snapshotIdentity = retainedIdentity?.data.identity;
     const active = activeCards.value[channelId];
     const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
     const cardId = getActiveCardId(channelId);
@@ -1577,25 +1587,27 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const sourceUpdatedAt = rawSourceUpdatedAt > 0 && rawSourceUpdatedAt < 1_000_000_000_000
       ? rawSourceUpdatedAt * 1000
       : rawSourceUpdatedAt;
-    const displayName = String(variant?.displayName || identity.displayName || '').trim();
-    const color = String(variant?.color || identity.color || '').trim();
-    const avatarAttachmentId = String(variant?.avatarAttachmentId || identity.avatarAttachmentId || '').trim();
-    const avatarDecorations = Array.isArray((variant as any)?.appearance?.avatarDecorations)
-      ? (variant as any).appearance.avatarDecorations
-      : Array.isArray(identity.avatarDecorations)
-        ? identity.avatarDecorations
-        : [];
+    const displayName = String(snapshotIdentity?.displayName || variant?.displayName || identity.displayName || '').trim();
+    const color = String(snapshotIdentity?.color || variant?.color || identity.color || '').trim();
+    const avatarAttachmentId = String(snapshotIdentity?.avatarAttachmentId || variant?.avatarAttachmentId || identity.avatarAttachmentId || '').trim();
+    const avatarDecorations = Array.isArray(snapshotIdentity?.avatarDecorations)
+      ? snapshotIdentity.avatarDecorations
+      : Array.isArray((variant as any)?.appearance?.avatarDecorations)
+        ? (variant as any).appearance.avatarDecorations
+        : Array.isArray(identity.avatarDecorations)
+          ? identity.avatarDecorations
+          : [];
     const includeCard = displayStore.settings.onlineCharacterCardsEnabled && !!active;
-    const includeBadge = displayStore.settings.characterCardBadgeEnabled && !!active && !isNarratorIdentity(channelId, identity.id);
+    const includeBadge = displayStore.settings.characterCardBadgeEnabled && !!active && !isNarratorIdentity(channelId, snapshotIdentityId);
     return {
-      identityId: identity.id,
+      identityId: snapshotIdentityId,
       sourceType: 'client',
       sourceCardId: cardId,
       sourceUpdatedAt,
       data: {
         identity: {
-          id: identity.id,
-          userId: String(identity.userId || getUserId()),
+          id: snapshotIdentityId,
+          userId: ownUserId,
           displayName,
           color,
           avatarAttachmentId,

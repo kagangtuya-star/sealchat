@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { Minus } from '@vicons/tabler';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { resolveTemplateValue } from '@/utils/characterCardTemplate';
+import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import {
   useChannelCharacterSnapshotStore,
@@ -51,12 +52,17 @@ interface ResolvedCharacter {
 }
 
 const rootRef = ref<HTMLElement | null>(null);
+const chatStore = useChatStore();
 const userStore = useUserStore();
 const snapshotStore = useChannelCharacterSnapshotStore();
 const layout = reactive<OverlayLayout>({ x: 12, y: 54, width: 300, height: 280 });
 const controlsVisible = ref(false);
 const minimized = ref(false);
 const minimizedEdge = ref<MinimizedEdge>('left');
+const slotOrderByUser = ref<Record<string, number>>({});
+const stableCharactersByUser = ref<Record<string, ResolvedCharacter>>({});
+const overlayReady = ref(false);
+let nextSlotOrder = 0;
 let resizeObserver: ResizeObserver | null = null;
 let interaction: {
   mode: 'drag' | 'resize';
@@ -81,6 +87,15 @@ const storageKey = () => [
   props.worldId,
   props.channelId,
   viewportClass(),
+].join(':');
+
+const slotStorageKey = () => [
+  'sealchat',
+  'theater-character-overlay-slots',
+  'v1',
+  String(userStore.info?.id || 'guest'),
+  props.worldId,
+  props.channelId,
 ].join(':');
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -158,6 +173,40 @@ const restoreLayout = () => {
   minimized.value = false;
   minimizedEdge.value = 'left';
   setLayout(defaultLayout());
+};
+
+const restoreSlotOrder = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(slotStorageKey()) || 'null');
+    const order = value?.order && typeof value.order === 'object' ? value.order : {};
+    const next: Record<string, number> = {};
+    Object.entries(order).forEach(([userId, slot]) => {
+      if (userId && Number.isFinite(slot) && Number(slot) >= 0) next[userId] = Number(slot);
+    });
+    slotOrderByUser.value = next;
+    nextSlotOrder = Math.max(0, ...Object.values(next).map(slot => slot + 1));
+  } catch {
+    slotOrderByUser.value = {};
+    nextSlotOrder = 0;
+  }
+};
+
+const persistSlotOrder = () => {
+  try {
+    localStorage.setItem(slotStorageKey(), JSON.stringify({ order: slotOrderByUser.value }));
+  } catch {
+    // Slot order remains stable for current session.
+  }
+};
+
+const ensureSlotOrder = (userId: string) => {
+  const current = slotOrderByUser.value[userId];
+  if (Number.isFinite(current)) return current;
+  const order = nextSlotOrder;
+  nextSlotOrder += 1;
+  slotOrderByUser.value = { ...slotOrderByUser.value, [userId]: order };
+  persistSlotOrder();
+  return order;
 };
 
 const showControls = () => {
@@ -281,40 +330,63 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
   };
 };
 
-const characters = computed<ResolvedCharacter[]>(() => snapshotStore.getChannelItems(props.channelId)
-  .map((item) => {
-    const template = snapshotStore.getOverlayTemplateForSnapshot(item);
-    const attrs = item.data.card?.attrs || {};
-    if (!template || !item.data.card) return null;
-    const stats = template.items.map(stat => resolveStat(stat, attrs)).filter((stat): stat is ResolvedStat => !!stat);
-    if (!stats.length) return null;
-    return {
-      item,
-      name: item.data.identity.displayName || item.data.card.name || item.identityId,
-      avatarUrl: resolveAttachmentUrl(item.data.card?.avatarAttachmentId || item.data.identity.avatarAttachmentId || ''),
-      preferredColumns: clamp(Math.round(template.preferredColumns || 2), 1, 4),
-      stats,
-    };
-  })
-  .filter((item): item is ResolvedCharacter => !!item)
-  .sort((a, b) => b.item.serverRevision - a.item.serverRevision));
+const snapshotItems = computed(() => snapshotStore.getChannelItems(props.channelId));
+
+const resolveCharacter = (item: ChannelCharacterSnapshotItem): ResolvedCharacter | null => {
+  const template = snapshotStore.getOverlayTemplateForSnapshot(item);
+  const attrs = item.data.card?.attrs || {};
+  if (!template || !item.data.card) return null;
+  const stats = template.items.map(stat => resolveStat(stat, attrs)).filter((stat): stat is ResolvedStat => !!stat);
+  if (!stats.length) return null;
+  return {
+    item,
+    name: item.data.identity.displayName || item.data.card.name || item.identityId,
+    avatarUrl: resolveAttachmentUrl(item.data.card?.avatarAttachmentId || item.data.identity.avatarAttachmentId || ''),
+    preferredColumns: clamp(Math.round(template.preferredColumns || 2), 1, 4),
+    stats,
+  };
+};
+
+const resolvedCharacters = computed(() => snapshotItems.value
+  .map(resolveCharacter)
+  .filter((item): item is ResolvedCharacter => !!item));
+
+const reconcileCharacters = () => {
+  if (!overlayReady.value) return;
+  const activeUserIds = new Set(snapshotItems.value.map(item => String(item.userId || '').trim()).filter(Boolean));
+  const next = { ...stableCharactersByUser.value };
+  const latestByUser = new Map<string, ResolvedCharacter>();
+  resolvedCharacters.value.forEach((character) => {
+    const userId = String(character.item.userId || '').trim();
+    const current = latestByUser.get(userId);
+    if (userId && (!current || current.item.serverRevision <= character.item.serverRevision)) {
+      latestByUser.set(userId, character);
+    }
+  });
+  latestByUser.forEach((character, userId) => {
+    ensureSlotOrder(userId);
+    next[userId] = character;
+  });
+  Object.keys(next).forEach((userId) => {
+    if (!activeUserIds.has(userId)) delete next[userId];
+  });
+  stableCharactersByUser.value = next;
+};
+
+const characters = computed<ResolvedCharacter[]>(() => Object.values(stableCharactersByUser.value)
+  .sort((a, b) => {
+    const aAdmin = chatStore.isChannelAdmin(props.channelId, a.item.userId) ? 0 : 1;
+    const bAdmin = chatStore.isChannelAdmin(props.channelId, b.item.userId) ? 0 : 1;
+    if (aAdmin !== bAdmin) return aAdmin - bAdmin;
+    return (slotOrderByUser.value[a.item.userId] ?? Number.MAX_SAFE_INTEGER)
+      - (slotOrderByUser.value[b.item.userId] ?? Number.MAX_SAFE_INTEGER);
+  }));
 
 const columnCount = computed(() => {
-  const count = characters.value.length;
-  if (count <= 1 || layout.width < 440) return 1;
-  const widthLimit = layout.width < 760 ? 2 : layout.width < 1080 ? 3 : 4;
-  const preferred = clamp(characters.value[0]?.preferredColumns || 2, 1, Math.min(widthLimit, count));
-  const availableHeight = Math.max(0, layout.height - 28);
-  for (let columns = preferred; columns <= Math.min(widthLimit, count); columns += 1) {
-    let estimatedHeight = 0;
-    for (let index = 0; index < count; index += columns) {
-      const row = characters.value.slice(index, index + columns);
-      estimatedHeight += Math.max(...row.map(character => Math.max(56, 6 + Math.ceil(character.stats.length / 2) * 22)));
-      if (index + columns < count) estimatedHeight += 8;
-    }
-    if (estimatedHeight <= availableHeight) return columns;
-  }
-  return Math.min(widthLimit, count);
+  if (layout.width < 440) return 1;
+  if (layout.width < 760) return 2;
+  if (layout.width < 1080) return 3;
+  return 4;
 });
 
 const minimizedLayout = (): OverlayLayout => {
@@ -345,10 +417,22 @@ const onViewportResize = () => {
 };
 
 watch(() => [props.worldId, props.channelId], async () => {
+  overlayReady.value = false;
+  stableCharactersByUser.value = {};
+  restoreSlotOrder();
   await snapshotStore.initializeChannel(props.channelId);
+  try {
+    await chatStore.ensureChannelPermissionCache(props.channelId);
+  } catch (error) {
+    console.warn('[TheaterCharacterOverlay] Failed to load channel admin map', error);
+  }
   await nextTick();
   restoreLayout();
+  overlayReady.value = true;
+  reconcileCharacters();
 }, { immediate: true });
+
+watch([snapshotItems, resolvedCharacters], reconcileCharacters, { immediate: true });
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(onViewportResize);
@@ -396,7 +480,7 @@ onBeforeUnmount(() => {
           <span>{{ characters.length }}</span>
         </header>
         <div class="theater-character-overlay__content">
-          <article v-for="character in characters" :key="character.item.identityId" class="theater-character-stat-card">
+          <article v-for="character in characters" :key="character.item.userId" class="theater-character-stat-card">
             <button
               type="button"
               class="theater-character-stat-card__avatar"

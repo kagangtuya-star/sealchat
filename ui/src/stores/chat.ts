@@ -2982,6 +2982,25 @@ export const useChatStore = defineStore({
       }
     },
 
+    getIdentityIcOocMode(channelId: string, identityId: string): 'ic' | 'ooc' | null {
+      if (!channelId || !identityId) return null;
+      const identities = this.channelIdentities[channelId] || [];
+      const targetIdentity = identities.find((identity) => identity.id === identityId);
+      const temporaryMode = targetIdentity?.isTemporary
+        ? String(targetIdentity.icOocOnActivate || '').trim().toLowerCase()
+        : '';
+      if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
+        return temporaryMode;
+      }
+
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      const isIcRole = config.icRoleId === identityId;
+      const isOocRole = config.oocRoleId === identityId;
+      if (isIcRole && !isOocRole) return 'ic';
+      if (isOocRole && !isIcRole) return 'ooc';
+      return null;
+    },
+
     /**
      * 切换角色时的反向自动切换场内外
      * 如果角色存在唯一的场内外映射（仅映射到IC或仅映射到OOC），则自动切换模式
@@ -2992,39 +3011,11 @@ export const useChatStore = defineStore({
       if (!display.settings.autoSwitchRoleOnIcOocToggle) {
         return;
       }
-      if (!channelId || !newRoleId) {
-        return;
-      }
+      const targetMode = this.getIdentityIcOocMode(channelId, newRoleId);
 
-      const identities = this.channelIdentities[channelId] || [];
-      const targetIdentity = identities.find((identity) => identity.id === newRoleId);
-      const temporaryMode = targetIdentity?.isTemporary
-        ? String(targetIdentity.icOocOnActivate || '').trim().toLowerCase()
-        : '';
-      if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
-        if (this.icMode !== temporaryMode) {
-          this.setIcMode(temporaryMode, channelId, undefined, { persist });
-        }
-        return;
+      if (targetMode && this.icMode !== targetMode) {
+        this.setIcMode(targetMode, channelId, undefined, { persist });
       }
-
-      const config = this.getChannelIcOocRoleConfig(channelId);
-      const isIcRole = config.icRoleId === newRoleId;
-      const isOocRole = config.oocRoleId === newRoleId;
-
-      // 只有唯一映射时才自动切换
-      if (isIcRole && !isOocRole) {
-        // 角色仅映射到 IC，自动切换到 IC 模式
-        if (this.icMode !== 'ic') {
-          this.setIcMode('ic', channelId, undefined, { persist });
-        }
-      } else if (isOocRole && !isIcRole) {
-        // 角色仅映射到 OOC，自动切换到 OOC 模式
-        if (this.icMode !== 'ooc') {
-          this.setIcMode('ooc', channelId, undefined, { persist });
-        }
-      }
-      // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
     },
 
     upsertChannelIdentity(identity: ChannelIdentity, targetUserId?: string | null) {

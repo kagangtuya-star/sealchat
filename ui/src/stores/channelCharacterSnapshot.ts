@@ -88,7 +88,8 @@ export interface LocalCharacterSnapshotInput {
   data: ChannelCharacterSnapshotItem['data'];
 }
 
-type LocalSnapshotProvider = (channelId: string) => LocalCharacterSnapshotInput | null | Promise<LocalCharacterSnapshotInput | null>;
+// `undefined` preserves the published snapshot without writing or clearing it.
+type LocalSnapshotProvider = (channelId: string) => LocalCharacterSnapshotInput | null | undefined | Promise<LocalCharacterSnapshotInput | null | undefined>;
 
 const defaultOverlayTemplate: TheaterCharacterOverlayTemplate = {
   version: 1,
@@ -333,6 +334,7 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
     channelId = String(channelId || '').trim();
     if (!channelId || !localSnapshotProvider) return null;
     const input = await localSnapshotProvider(channelId);
+    if (input === undefined) return null;
     if (!input?.identityId) {
       const ownUserId = String(userStore.info?.id || '');
       const previousIdentityId = lastSyncedIdentityId.get(channelId)
