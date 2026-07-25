@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 
@@ -22,6 +23,7 @@ type CharacterCardTemplateInput struct {
 	DefaultBadgeTemplate string
 	IsGlobalDefault      bool
 	IsSheetDefault       bool
+	IsBuiltin            bool
 }
 
 type CharacterCardTemplateUpdateInput struct {
@@ -52,6 +54,8 @@ type CharacterCardTemplateView struct {
 	SharedByUserID         string `json:"sharedByUserId,omitempty"`
 	SharedByNickname       string `json:"sharedByNickname,omitempty"`
 }
+
+var characterCardTemplateCreateMu sync.Mutex
 
 func normalizeCharacterCardTemplateInput(input *CharacterCardTemplateInput) error {
 	if input == nil {
@@ -203,6 +207,21 @@ func CharacterCardTemplateGet(userID string, templateID string) (*model.Characte
 func CharacterCardTemplateCreate(userID string, input *CharacterCardTemplateInput) (*model.CharacterCardTemplateModel, error) {
 	if err := normalizeCharacterCardTemplateInput(input); err != nil {
 		return nil, err
+	}
+	if input.IsBuiltin {
+		characterCardTemplateCreateMu.Lock()
+		defer characterCardTemplateCreateMu.Unlock()
+		var existing model.CharacterCardTemplateModel
+		err := model.GetDB().Where("user_id = ?", userID).
+			Where("name = ?", input.Name).
+			Where("sheet_type = ?", input.SheetType).
+			Order("created_at asc").First(&existing).Error
+		if err == nil {
+			return &existing, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 	}
 	item := &model.CharacterCardTemplateModel{
 		UserID:               userID,

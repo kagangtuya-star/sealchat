@@ -46,6 +46,7 @@ interface TemplatePayload {
   defaultBadgeTemplate?: string;
   isGlobalDefault?: boolean;
   isSheetDefault?: boolean;
+  isBuiltin?: boolean;
 }
 
 interface TemplateQueryOptions {
@@ -113,6 +114,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const migrating = ref(false);
   const loadedWorldId = ref('');
   const builtinTemplatesEnsured = ref(false);
+  let builtinTemplatesEnsurePromise: Promise<void> | null = null;
 
   const templates = computed(() => Object.values(templateMap.value));
 
@@ -197,8 +199,19 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       });
       const items = Array.isArray(resp.data?.items) ? resp.data.items as CharacterCardTemplate[] : [];
       const nextMap: Record<string, CharacterCardTemplate> = {};
+      const builtinKeys = new Set<string>();
       items.forEach(item => {
         if (item?.id) {
+          const builtin = BUILTIN_CHARACTER_CARD_TEMPLATES.find(candidate => (
+            item.name === candidate.name
+            && normalizeSheetType(item.sheetType) === normalizeSheetType(candidate.sheetType)
+            && !item.readonly
+          ));
+          if (builtin) {
+            const key = `${builtin.name}::${normalizeSheetType(builtin.sheetType)}`;
+            if (builtinKeys.has(key)) return;
+            builtinKeys.add(key);
+          }
           nextMap[item.id] = item;
         }
       });
@@ -217,41 +230,51 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const ensureBuiltinTemplates = async (items: CharacterCardTemplate[]) => {
     if (builtinTemplatesEnsured.value) return;
     if (!userStore.info?.id) return;
-    let ensured = true;
-    for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
-      const matchingTemplates = items.filter(item => (
-        !item.readonly
-        && item.name === builtin.name
-        && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
-      ));
-      if (matchingTemplates.length) {
-        for (const template of matchingTemplates) {
-          if (template.content.trim() === builtin.content) continue;
-          const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, {
-            content: builtin.content,
-          });
-          const updated = resp.data?.item as CharacterCardTemplate | undefined;
-          if (!updated?.id) {
-            ensured = false;
-            continue;
-          }
-          templateMap.value = { ...templateMap.value, [updated.id]: updated };
-        }
-        continue;
-      }
-      const created = await createTemplate({
-        name: builtin.name,
-        sheetType: builtin.sheetType,
-        content: builtin.content,
-      });
-      if (!created?.id) {
-        ensured = false;
-      }
-    }
+    if (builtinTemplatesEnsurePromise) return builtinTemplatesEnsurePromise;
 
-    if (ensured) {
-      builtinTemplatesEnsured.value = true;
-    }
+    const ensurePromise = (async () => {
+      let ensured = true;
+      for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
+        const matchingTemplates = items.filter(item => (
+          !item.readonly
+          && item.name === builtin.name
+          && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
+        ));
+        if (matchingTemplates.length) {
+          for (const template of matchingTemplates) {
+            if (template.content.trim() === builtin.content) continue;
+            const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, {
+              content: builtin.content,
+            });
+            const updated = resp.data?.item as CharacterCardTemplate | undefined;
+            if (!updated?.id) {
+              ensured = false;
+              continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(templateMap.value, updated.id)) {
+              templateMap.value = { ...templateMap.value, [updated.id]: updated };
+            }
+          }
+          continue;
+        }
+        const created = await createTemplate({
+          name: builtin.name,
+          sheetType: builtin.sheetType,
+          content: builtin.content,
+          isBuiltin: true,
+        });
+        if (!created?.id) {
+          ensured = false;
+        }
+      }
+
+      if (ensured) builtinTemplatesEnsured.value = true;
+    })().finally(() => {
+      builtinTemplatesEnsurePromise = null;
+    });
+
+    builtinTemplatesEnsurePromise = ensurePromise;
+    return ensurePromise;
   };
 
   const ensureTemplatesLoaded = async (options?: TemplateQueryOptions) => {
