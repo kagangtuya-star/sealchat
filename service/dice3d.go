@@ -22,6 +22,8 @@ var (
 )
 
 const (
+	builtInDice3DAudioAssetID = "builtin:dice-audio"
+
 	// 旧版仅匹配 [2d6=1+2] 且 count 必填
 	legacyDefaultDice3DBotPattern = `(?i)\[(?P<count>\d+)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
 	// 方括号等号式：[2d6=1+2] / [1d6=4]
@@ -107,8 +109,16 @@ func migrateDice3DBotRules(rules []protocol.Dice3DBotRule) []protocol.Dice3DBotR
 		}
 		out = append(out, rule)
 	}
-	if hasSealFamily && !hasAnnot {
-		out = append([]protocol.Dice3DBotRule{defaultDice3DBotRules()[0]}, out...)
+	if hasSealFamily {
+		defaults := defaultDice3DBotRules()
+		missing := make([]protocol.Dice3DBotRule, 0, 2)
+		if !hasAnnot {
+			missing = append(missing, defaults[0])
+		}
+		if !hasModified {
+			missing = append(missing, defaults[1])
+		}
+		out = append(missing, out...)
 	}
 	return out
 }
@@ -138,7 +148,7 @@ func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 			MaxDice:     60,
 			Interactive: true,
 		},
-		Audio:    protocol.Dice3DAudioConfig{Enabled: true, Volume: 0.65},
+		Audio:    protocol.Dice3DAudioConfig{Enabled: true, Volume: 0.65, SoundAssetID: builtInDice3DAudioAssetID},
 		BotRules: defaultDice3DBotRules(),
 	}
 }
@@ -191,6 +201,9 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	value.Motion.MaxDice = dice3DClampInt(value.Motion.MaxDice, 1, 100, defaults.Motion.MaxDice)
 	value.Audio.Volume = dice3DClampFloat(value.Audio.Volume, 0, 1, defaults.Audio.Volume)
 	value.Audio.SoundAssetID = strings.TrimSpace(value.Audio.SoundAssetID)
+	if value.Audio.SoundAssetID == "" {
+		value.Audio.SoundAssetID = defaults.Audio.SoundAssetID
+	}
 	if len(value.Audio.SoundAssetID) > 200 {
 		return value, fmt.Errorf("%w: 音效附件 ID 过长", ErrDice3DConfigInvalid)
 	}

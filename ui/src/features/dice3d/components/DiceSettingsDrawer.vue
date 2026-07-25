@@ -7,7 +7,7 @@ import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { loadDice3DSettings, saveDice3DProfile, saveDice3DWorldSettings } from '../api'
-import { diceAudio } from '../diceAudio'
+import { BUILTIN_DICE_AUDIO_ASSET_ID, diceAudio } from '../diceAudio'
 import { downloadDiceSkinTemplate, importDiceSkinPackage } from '../diceSkinTransfer'
 import { dice3dRuntime } from '../runtime'
 import DiceSurfaceSelector from './DiceSurfaceSelector.vue'
@@ -53,6 +53,7 @@ const setProfile = (value: Dice3DMemberProfile) => {
 
 const setLoadedSettings = (result: Awaited<ReturnType<typeof loadDice3DSettings>>) => {
   config.value = cloneSettingsValue(result.config)
+  config.value.audio.soundAssetId ||= BUILTIN_DICE_AUDIO_ASSET_ID
   const loadedProfile = cloneSettingsValue(result.profile)
   if (result.revision === 0) loadedProfile.skin = cloneSettingsValue(result.config.defaultSkin)
   setProfile(loadedProfile)
@@ -443,7 +444,7 @@ const save = async () => {
 			  <n-form-item label="投掷音效">
 				<div class="dice-audio-field">
 				  <n-switch v-model:value="config.audio.enabled" />
-				  <span class="dice-audio-field__hint">{{ config.audio.enabled ? '已开启；需上传自定义文件才会发声' : '已关闭，投掷时不播放音效' }}</span>
+					  <span class="dice-audio-field__hint">{{ config.audio.enabled ? '已开启；默认使用内置音效，可上传文件替换' : '已关闭，投掷时不播放音效' }}</span>
 				</div>
 			  </n-form-item>
 			  <n-form-item label="音量">
@@ -456,11 +457,12 @@ const save = async () => {
 				/>
 				<p v-if="!config.audio.enabled" class="dice-audio-field__hint">已禁用：请先开启投掷音效</p>
 			  </n-form-item>
-			  <n-form-item label="自定义投掷音效文件">
-				<DiceAttachmentPicker
-				  v-model="config.audio.soundAssetId"
-				  :world-id="worldId"
-				  accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/aac,audio/flac,.mp3,.ogg,.wav,.webm,.aac,.flac,.m4a"
+				  <n-form-item label="默认投掷音效文件">
+					  <DiceAttachmentPicker
+					  v-model="config.audio.soundAssetId"
+					  :world-id="worldId"
+					  :clear-value="BUILTIN_DICE_AUDIO_ASSET_ID"
+					  accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/aac,audio/flac,.mp3,.ogg,.wav,.webm,.aac,.flac,.m4a"
 				  :disabled="!config.audio.enabled"
 				  disabled-reason="已禁用：请先开启投掷音效"
 				/>

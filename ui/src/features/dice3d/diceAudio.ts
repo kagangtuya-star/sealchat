@@ -1,4 +1,7 @@
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
+import defaultDiceAudioUrl from '@/assets/dice-audio.ogg'
+
+export const BUILTIN_DICE_AUDIO_ASSET_ID = 'builtin:dice-audio'
 
 export type DiceAudioConfigLike = {
   enabled?: boolean
@@ -118,6 +121,7 @@ class DiceAudioService {
   resolveUrl(assetId: string) {
     const id = normalizeAssetId(assetId)
     if (!id) return ''
+    if (id === BUILTIN_DICE_AUDIO_ASSET_ID) return defaultDiceAudioUrl
     if (/^(?:https?:|data:|blob:)/i.test(id)) return id
     if (id.startsWith('//')) {
       return `${typeof window !== 'undefined' ? window.location.protocol : 'https:'}${id}`

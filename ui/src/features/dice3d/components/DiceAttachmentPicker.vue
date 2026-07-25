@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{
   platform?: boolean
   accept?: string
   kind?: 'audio' | 'image'
+  clearValue?: string
   disabled?: boolean
   disabledReason?: string
 }>(), {
@@ -25,7 +26,9 @@ const message = useMessage()
 const utils = useUtilsStore()
 const inputRef = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
-const url = computed(() => resolveAttachmentUrl(props.modelValue || ''))
+const url = computed(() => props.kind === 'audio'
+  ? diceAudio.resolveUrl(props.modelValue || '')
+  : resolveAttachmentUrl(props.modelValue || ''))
 
 const allowedAudioMimes = ['audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/aac', 'audio/flac', 'audio/mp4']
 const allowedAudioExt = /\.(mp3|ogg|wav|webm|aac|flac|m4a)$/i
@@ -89,7 +92,7 @@ const upload = async (event: Event) => {
 const clear = () => {
   if (props.disabled) return
   if (props.modelValue) diceAudio.invalidate(props.modelValue)
-  emit('update:modelValue', '')
+  emit('update:modelValue', props.clearValue || '')
 }
 </script>
 
@@ -102,7 +105,7 @@ const clear = () => {
     <n-button size="small" secondary :loading="uploading" :disabled="disabled" @click="inputRef?.click()">
       {{ modelValue ? '更换文件' : '点击上传' }}
     </n-button>
-    <n-button v-if="modelValue" size="small" quaternary type="error" :disabled="disabled" @click="clear">清除</n-button>
+    <n-button v-if="modelValue && modelValue !== clearValue" size="small" quaternary type="error" :disabled="disabled" @click="clear">恢复默认</n-button>
     <p v-if="disabled && disabledReason" class="asset-picker__hint">{{ disabledReason }}</p>
     <p v-else-if="kind === 'audio' && !modelValue" class="asset-picker__hint">无默认音效；上传后才会在投掷时播放</p>
   </div>

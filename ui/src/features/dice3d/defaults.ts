@@ -1,4 +1,5 @@
 import type { Dice3DWorldConfig } from '@/types'
+import { BUILTIN_DICE_AUDIO_ASSET_ID } from './diceAudio'
 
 export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
   version: 1,
@@ -14,7 +15,7 @@ export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
     speed: 1, throwForce: 1, wallBounce: 0.48, entryEdge: 'random',
     lingerMs: 8000, maxDice: 60, interactive: true,
   },
-  audio: { enabled: true, volume: 0.65 },
+  audio: { enabled: true, volume: 0.65, soundAssetId: BUILTIN_DICE_AUDIO_ASSET_ID },
   botRules: [
     {
       id: 'seal-annot', name: '海豹注解式', enabled: true,
