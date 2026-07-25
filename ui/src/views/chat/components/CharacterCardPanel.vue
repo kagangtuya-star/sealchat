@@ -16,6 +16,11 @@ import {
   type TheaterCharacterOverlayTemplate,
 } from '@/stores/channelCharacterSnapshot';
 import {
+  CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
+  CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
+  getCharacterSnapshotTemplatePreset,
+} from '@/utils/characterSnapshotTemplatePresets';
+import {
   filterAliveNarratorIdentityIds,
   resolveCharacterCardNarratorCountBadge,
 } from '@/utils/characterCardNarratorSettings';
@@ -339,30 +344,8 @@ interface OverlayEditorItem {
   textColor: string;
 }
 
-const overlayTemplatePresets: Record<'shinobigami' | 'coc', TheaterCharacterOverlayTemplate> = {
-  shinobigami: {
-    version: 1,
-    preferredColumns: 2,
-    items: [
-      { id: 'stat_1784894687587_3', name: '器術', current: { path: '1-$忍神.damageSwitches.器术' }, min: { path: '0' }, max: { path: '1' }, barColor: '#e26b0a', textColor: '#f8fafc' },
-      { id: 'stat_1784905856482_1', name: '体術', current: { path: '1-$忍神.damageSwitches.体术' }, max: { path: '1' }, barColor: '#76933c', textColor: '#f8fafc' },
-      { id: 'stat_1784905861076_2', name: '忍術', current: { path: '1-$忍神.damageSwitches.忍术' }, max: { path: '1' }, barColor: '#c00000', textColor: '#f8fafc' },
-      { id: 'stat_1784905870297_3', name: '謀術', current: { path: '1-$忍神.damageSwitches.谋术' }, max: { path: '1' }, barColor: '#948a54', textColor: '#f8fafc' },
-      { id: 'stat_1784905871219_4', name: '戦術', current: { path: '1-$忍神.damageSwitches.战术' }, max: { path: '1' }, barColor: '#16365c', textColor: '#f8fafc' },
-      { id: 'stat_1784905872110_5', name: '妖術', current: { path: '1-$忍神.damageSwitches.妖术' }, max: { path: '1' }, barColor: '#60497a', textColor: '#f8fafc' },
-    ],
-  },
-  coc: {
-    version: 1,
-    preferredColumns: 2,
-    items: [
-      { id: 'stat_1784894687587_3', name: 'HP', current: { path: '生命值' }, min: { path: '0' }, max: { path: '生命值上限' }, barColor: '#B73F42', textColor: '#f8fafc' },
-      { id: 'stat_1784905872110_5', name: 'MP', current: { path: '魔法值' }, max: { path: '意志/5' }, barColor: '#436C85', textColor: '#f8fafc' },
-      { id: 'stat_1784912214206_2', name: 'SAN', current: { path: '理智' }, max: { path: '意志' }, barColor: '#DE9960', textColor: '#f8fafc' },
-      { id: 'stat_1784912230676_3', name: '幸运', current: { path: '幸运' }, barColor: '#82B29B', textColor: '#f8fafc' },
-    ],
-  },
-};
+const overlayTemplatePresets = CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS;
+const badgeTemplatePresets = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS;
 
 const overlayTemplateEditorItems = ref<OverlayEditorItem[]>([]);
 const templateModeOptions = [
@@ -701,45 +684,48 @@ const saveOverlayTemplateEditor = async () => {
   }
 };
 
-const applyOverlayTemplatePreset = async (target: 'channel' | 'personal', preset: keyof typeof overlayTemplatePresets) => {
+const applySnapshotTemplatePreset = async (target: 'channel' | 'personal', preset: keyof typeof overlayTemplatePresets) => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return;
   const templateJson = JSON.stringify(overlayTemplatePresets[preset], null, 2);
+  const badgeTemplatePreset = badgeTemplatePresets[preset];
   snapshotTemplateSaving.value = true;
   try {
     if (target === 'channel') {
-      const normalizedBadgeTemplate = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
-      badgeTemplate.value = normalizedBadgeTemplate;
+      badgeTemplate.value = badgeTemplatePreset;
       persistBadgeTemplate();
       await snapshotStore.updateSettings(channelId, {
-        badgeTemplate: normalizedBadgeTemplate,
+        badgeTemplate: badgeTemplatePreset,
         theaterOverlayTemplateJson: templateJson,
       });
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
-      message.success('小剧场数据浮层模板已覆写');
     } else {
+      personalBadgeTemplateMode.value = 'custom';
+      personalBadgeTemplate.value = badgeTemplatePreset;
       personalOverlayTemplateMode.value = 'custom';
       personalOverlayTemplateJson.value = templateJson;
       await snapshotStore.updatePreference(channelId, {
-        badgeTemplateMode: personalBadgeTemplateMode.value,
-        badgeTemplate: personalBadgeTemplate.value,
+        badgeTemplateMode: 'custom',
+        badgeTemplate: badgeTemplatePreset,
         theaterOverlayTemplateMode: 'custom',
         theaterOverlayTemplateJson: templateJson,
       });
       await snapshotStore.syncLocalSnapshot(channelId, true);
-      message.success('个人小剧场浮层模板已覆写');
     }
-  } catch (e: any) {
-    message.error(e?.response?.err || e?.message || '模板覆写失败');
   } finally {
     snapshotTemplateSaving.value = false;
   }
 };
 
-const applyDefaultOverlayTemplatePreset = (preset: keyof typeof overlayTemplatePresets) => (
-  applyOverlayTemplatePreset(canSyncBadgeTemplate.value ? 'channel' : 'personal', preset)
-);
+const applyDefaultSnapshotTemplatePreset = async (preset: keyof typeof overlayTemplatePresets) => {
+  try {
+    await applySnapshotTemplatePreset(canSyncBadgeTemplate.value ? 'channel' : 'personal', preset);
+    message.success(`已启用 ${preset === 'coc' ? 'COC' : '忍神'} 默认人物卡模板`);
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '默认模板启用失败');
+  }
+};
 
 const loadPanelData = async (channelId: string) => {
   await snapshotStore.initializeChannel(channelId);
@@ -1320,6 +1306,16 @@ const handleCreateCard = async () => {
       throw new Error('人物卡创建失败');
     }
     const setupTasks: Array<{ label: string; task: Promise<unknown> }> = [];
+    const snapshotTemplatePreset = getCharacterSnapshotTemplatePreset(sheetType);
+    if (snapshotTemplatePreset) {
+      setupTasks.push({
+        label: '默认快照模板启用',
+        task: applySnapshotTemplatePreset(
+          canSyncBadgeTemplate.value ? 'channel' : 'personal',
+          snapshotTemplatePreset,
+        ),
+      });
+    }
     if (newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE) {
       setupTasks.push({
         label: '模板应用',
@@ -1969,6 +1965,13 @@ defineExpose({ openCardById });
               </div>
             </div>
             <div class="settings-row settings-row--template">
+              <p class="settings-title">启用默认模板</p>
+              <div class="overlay-template-presets">
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('coc')">COC</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
               <div>
                 <p class="settings-title">个人徽章模板</p>
                 <p class="settings-desc">只影响自己快照向其他成员展示的徽章。</p>
@@ -2019,8 +2022,8 @@ defineExpose({ openCardById });
             <div class="settings-row settings-row--template">
               <p class="settings-title">启用默认模板</p>
               <div class="overlay-template-presets">
-                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultOverlayTemplatePreset('shinobigami')">忍神</n-button>
-                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultOverlayTemplatePreset('coc')">COC</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('coc')">COC</n-button>
               </div>
             </div>
             <div class="settings-row settings-row--template">

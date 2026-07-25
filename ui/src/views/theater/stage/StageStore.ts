@@ -1219,7 +1219,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!object || (object.type !== 'image' && object.type !== 'effect')) return false
     if (!url.trim()) {
       object.image = undefined
-      if (object.type === 'effect') {
+      if (object.type === 'image') {
+        const { image: _image, ...content } = object.content
+        object.content = content
+      } else {
         const config = normalizeTheaterEffectConfig(object.content?.effect)
         config.media = null
         object.content = { ...object.content, effect: config }
@@ -1242,7 +1245,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       && dimensions.height > 0,
     )
     object.image = image
-    if (effectConfig) {
+    if (object.type === 'image') {
+      object.content = { ...object.content, image }
+    } else if (effectConfig) {
       effectConfig.media = image
       if (initializeMediaFrame && dimensions) {
         object.transform = {
