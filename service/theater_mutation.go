@@ -132,7 +132,8 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		}
 		current.Revision = nextRevision
 		current.UpdatedBy = actorID
-		if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit); err != nil {
+		actionVisibilityBatch := authorization == theaterMutationAuthorizationAction && command.Type == TheaterMutationObjectBatchUpdate
+		if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit, actionVisibilityBatch); err != nil {
 			return err
 		}
 		if err := recalculateTheaterResourceReferences(tx, current.ID); err != nil {
@@ -352,10 +353,10 @@ func createTheaterAudit(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 }
 
 func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any) error {
-	return applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, room, actorID, mutationType, decoded, false)
+	return applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, room, actorID, mutationType, decoded, false, false)
 }
 
-func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any, delegatedObjectEdit bool) error {
+func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any, delegatedObjectEdit, actionVisibilityBatch bool) error {
 	switch payload := decoded.(type) {
 	case *theaterSceneCreatePayload:
 		return applyTheaterSceneCreate(tx, room, actorID, payload)
@@ -383,7 +384,7 @@ func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model
 			if _, ok := payload.Updates[i].Fields["sceneId"]; ok {
 				scopeChanged = true
 			}
-			if err := applyTheaterObjectUpdateWithDelegatedObjectEdit(tx, room, actorID, &payload.Updates[i], delegatedObjectEdit); err != nil {
+			if err := applyTheaterObjectUpdateWithDelegatedObjectEdit(tx, room, actorID, &payload.Updates[i], delegatedObjectEdit || actionVisibilityBatch); err != nil {
 				return err
 			}
 		}
