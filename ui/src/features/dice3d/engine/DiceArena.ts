@@ -84,7 +84,7 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 
 export class DiceArena {
   private readonly scene = new THREE.Scene()
-  private readonly camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
+  private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
 	private readonly renderer: THREE.WebGLRenderer
 	private readonly raycaster = new THREE.Raycaster()
 	private readonly pointer = new THREE.Vector2()
@@ -115,10 +115,10 @@ export class DiceArena {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
 			// 垂直俯视保持桌面坐标与屏幕拖拽方向一致。
 		this.camera.up.set(0, 0, -1)
-		this.camera.position.set(0, 14, 0)
+		this.camera.position.set(0, 12.1, 0)
 		this.camera.lookAt(0, 0, 0)
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x293241, 2.4))
-    const light = new THREE.DirectionalLight(0xffffff, 3.2)
+	    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x293241, 1.35))
+	    const light = new THREE.DirectionalLight(0xffffff, 3.8)
     light.position.set(-4, 10, 5)
 		light.castShadow = true
 		this.scene.add(light)
@@ -144,7 +144,7 @@ export class DiceArena {
 		this.renderer.setSize(this.width, this.height, false)
 		this.camera.aspect = this.width / this.height
 		const portraitScale = this.camera.aspect < 1 ? Math.min(1 / this.camera.aspect, 1.8) : 1
-		this.camera.position.set(0, 14 * portraitScale, 0)
+		this.camera.position.set(0, 12.1 * portraitScale, 0)
 		this.camera.lookAt(0, 0, 0)
 		this.camera.updateProjectionMatrix()
 			if (this.activeThrowDice.length > 0) this.boundaryDirty = true
@@ -269,9 +269,11 @@ export class DiceArena {
 			const resource = DICE_GEOMETRY_RESOURCES[resourceKey]
 		const material = this.materialFor(resource, payload.appearance)
 		const mesh = new THREE.Mesh(resource.geometry, material)
-			const edgeMaterial = new THREE.LineBasicMaterial({
-				color: payload.appearance.outlineColor || payload.appearance.edgeColor || '#20242b',
-			})
+				const edgeMaterial = new THREE.LineBasicMaterial({
+					color: payload.appearance.outlineColor || payload.appearance.edgeColor || '#7796C2',
+					transparent: true,
+					opacity: 0.58,
+				})
 		const edges = new THREE.LineSegments(resource.edgeGeometry, edgeMaterial)
 		edges.raycast = () => undefined
 		mesh.add(edges)

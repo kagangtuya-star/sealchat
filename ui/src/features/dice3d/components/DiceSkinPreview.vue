@@ -19,7 +19,7 @@ let renderer: THREE.WebGLRenderer | null = null
 let frame = 0
 let observer: ResizeObserver | null = null
 const scene = new THREE.Scene()
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100)
 const diceGroups: THREE.Group[] = []
 const disposableTextures: THREE.Texture[] = []
 const disposableMaterials: THREE.Material[] = []
@@ -31,14 +31,14 @@ const clearDice = () => {
 }
 
 const layoutDice = () => {
-  const width = camera.right - camera.left
-  const height = camera.top - camera.bottom
+  const height = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.position.z
+  const width = height * camera.aspect
   diceGroups.forEach((group, index) => {
     const column = index % 4
     const row = Math.floor(index / 4)
     group.position.set(
-      camera.left + (column + 0.5) * width / 4,
-      camera.top - (row + 0.5) * height / 2,
+      -width / 2 + (column + 0.5) * width / 4,
+      height / 2 - (row + 0.5) * height / 2,
       0,
     )
   })
@@ -67,9 +67,21 @@ const rebuild = () => {
       metalness: props.skin.metalness ?? 0.05,
       flatShading: true,
     })
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: props.skin.outlineColor || props.skin.edgeColor || '#AFC2DC' })
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: props.skin.outlineColor || props.skin.edgeColor || '#7796C2',
+      transparent: true,
+      opacity: 0.58,
+    })
+    const hasBevelFaces = resource.geometry.groups.some(group => group.materialIndex === 1)
+    const bevelMaterial = hasBevelFaces ? new THREE.MeshStandardMaterial({
+      color: props.skin.edgeColor || '#C5D1E2',
+      roughness: 0.66,
+      metalness: 0.08,
+      flatShading: true,
+    }) : null
     disposableMaterials.push(faceMaterial, edgeMaterial)
-    const mesh = new THREE.Mesh(resource.geometry, faceMaterial)
+    if (bevelMaterial) disposableMaterials.push(bevelMaterial)
+    const mesh = new THREE.Mesh(resource.geometry, bevelMaterial ? [faceMaterial, bevelMaterial] : faceMaterial)
     const edges = new THREE.LineSegments(resource.edgeGeometry, edgeMaterial)
     const group = new THREE.Group()
     const scale = (0.82 / resource.radius) * Math.max(0.72, Math.min(1.28, props.skin.scale || 1))
@@ -88,12 +100,7 @@ const resize = () => {
   const { width, height } = hostRef.value.getBoundingClientRect()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.setSize(Math.max(1, width), Math.max(1, height), false)
-  const halfHeight = 2.9
-  const halfWidth = halfHeight * width / Math.max(1, height)
-  camera.left = -halfWidth
-  camera.right = halfWidth
-  camera.top = halfHeight
-  camera.bottom = -halfHeight
+  camera.aspect = width / Math.max(1, height)
   camera.updateProjectionMatrix()
   layoutDice()
 }
@@ -115,8 +122,8 @@ onMounted(() => {
     renderer = new THREE.WebGLRenderer({ canvas: canvasRef.value, alpha: true, antialias: true })
     renderer.setClearColor(0x000000, 0)
     camera.position.set(0, 0, 10.8)
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x243247, 2.8))
-    const light = new THREE.DirectionalLight(0xffffff, 3.6)
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x243247, 1.35))
+    const light = new THREE.DirectionalLight(0xffffff, 3.8)
     light.position.set(-3, 6, 7)
     scene.add(light)
     observer = new ResizeObserver(resize)

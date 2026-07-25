@@ -293,7 +293,8 @@ const createD6 = () => {
 		new THREE.Vector3(-h, -h, -h), new THREE.Vector3(h, -h, -h), new THREE.Vector3(h, h, -h), new THREE.Vector3(-h, h, -h),
 		new THREE.Vector3(-h, -h, h), new THREE.Vector3(h, -h, h), new THREE.Vector3(h, h, h), new THREE.Vector3(-h, h, h),
 	]
-	return buildDefinition('d6', vertices, [[3, 2, 6, 7], [4, 5, 1, 0], [4, 7, 6, 5], [1, 2, 3, 0], [5, 6, 2, 1], [0, 3, 7, 4]])
+	const faces = [[3, 2, 6, 7], [4, 5, 1, 0], [4, 7, 6, 5], [1, 2, 3, 0], [5, 6, 2, 1], [0, 3, 7, 4]]
+	return createBeveledDefinition('d6', vertices, faces, 0.085)
 }
 
 const createD10 = () => {
@@ -336,7 +337,7 @@ const DEFINITIONS: Record<StandardDiceType, DiceDefinition> = {
 	d8: platonic('d8', new THREE.OctahedronGeometry(0.70, 0), 0.14),
 	d10: createD10(),
 	d12: platonic('d12', new THREE.DodecahedronGeometry(0.67, 0)),
-	d20: platonic('d20', new THREE.IcosahedronGeometry(0.66, 0)),
+	d20: platonic('d20', new THREE.IcosahedronGeometry(0.66, 0), 0.075),
 }
 
 const configureD4 = () => {
@@ -400,9 +401,10 @@ const buildGeometry = (definition: DiceDefinition, atlasType: DiceAtlasType, off
 const resource = (type: StandardDiceType, atlasType: DiceAtlasType = type, offset = 0): DiceGeometryResource => {
 	const definition = DEFINITIONS[type]
 	const geometry = buildGeometry(definition, atlasType, offset)
+	const beveled = type === 'd6' || type === 'd8' || type === 'd10' || type === 'd20'
 	return {
 		geometry,
-		edgeGeometry: new THREE.EdgesGeometry(geometry, type === 'd2' ? 18 : 7),
+		edgeGeometry: new THREE.EdgesGeometry(geometry, type === 'd2' ? 18 : beveled ? 180 : 7),
 		colliderVertices: new Float32Array(definition.vertices.flatMap(vertex => [vertex.x, vertex.y, vertex.z])),
 		registryType: type,
 		atlasType,
@@ -463,12 +465,10 @@ export const createDiceAtlasCanvas = (type: DiceAtlasType, skin: Dice3DSkin) => 
 		polygonPath(context, face.uvPoints, x, y, cell)
 		context.fillStyle = skin.faceBackground || '#E8F1FF'
 		context.fill()
-		context.strokeStyle = skin.edgeColor || '#6F9FE3'
-		context.lineWidth = 7
+		context.strokeStyle = skin.edgeColor || '#C5D1E2'
+		context.lineWidth = 2.5
 		context.stroke()
 		context.fillStyle = skin.faceForeground || '#1B2942'
-		context.strokeStyle = 'rgba(0,0,0,.24)'
-		context.lineWidth = 5
 		if (type === 'd4') {
 			face.vertexValues?.forEach((value, vertexIndex) => {
 				const point = face.uvPoints[vertexIndex]
@@ -477,8 +477,7 @@ export const createDiceAtlasCanvas = (type: DiceAtlasType, skin: Dice3DSkin) => 
 				context.save()
 				context.translate(px, py)
 				context.rotate(Math.atan2(py - (y + cell / 2), px - (x + cell / 2)) + Math.PI / 2)
-				context.font = '800 42px system-ui, sans-serif'
-				context.strokeText(String(value), 0, 0)
+				context.font = '700 34px system-ui, sans-serif'
 				context.fillText(String(value), 0, 0)
 				context.restore()
 			})
@@ -486,10 +485,9 @@ export const createDiceAtlasCanvas = (type: DiceAtlasType, skin: Dice3DSkin) => 
 		}
 		const label = DEFAULT_LABELS[type][index]
 		const kite = type === 'd10' || type === 'd100'
-		const size = kite ? (label.length > 1 ? 54 : 70) : label.length > 1 ? 64 : 84
-		context.font = `800 ${size}px system-ui, sans-serif`
-		context.strokeText(label, x + cell / 2, y + cell / 2 + (kite ? 4 : 2), cell * (kite ? 0.48 : 0.64))
-		context.fillText(label, x + cell / 2, y + cell / 2 + (kite ? 4 : 2), cell * (kite ? 0.48 : 0.64))
+		const size = kite ? (label.length > 1 ? 42 : 54) : label.length > 1 ? 48 : 63
+		context.font = `700 ${size}px system-ui, sans-serif`
+		context.fillText(label, x + cell / 2, y + cell / 2 + (kite ? 3 : 1), cell * (kite ? 0.42 : 0.5))
 	}
 	return canvas
 }
