@@ -67,7 +67,7 @@ const rebuild = () => {
       metalness: props.skin.metalness ?? 0.05,
       flatShading: true,
     })
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: props.skin.outlineColor || props.skin.edgeColor || '#d1d5db' })
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: props.skin.outlineColor || props.skin.edgeColor || '#AFC2DC' })
     disposableMaterials.push(faceMaterial, edgeMaterial)
     const mesh = new THREE.Mesh(resource.geometry, faceMaterial)
     const edges = new THREE.LineSegments(resource.edgeGeometry, edgeMaterial)

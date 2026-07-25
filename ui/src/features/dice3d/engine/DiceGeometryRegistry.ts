@@ -461,12 +461,12 @@ export const createDiceAtlasCanvas = (type: DiceAtlasType, skin: Dice3DSkin) => 
 		const y = Math.floor(index / meta.columns) * cell
 		const face = polygons[index]
 		polygonPath(context, face.uvPoints, x, y, cell)
-		context.fillStyle = skin.faceBackground || '#f5f6fa'
+		context.fillStyle = skin.faceBackground || '#E8F1FF'
 		context.fill()
-		context.strokeStyle = skin.edgeColor || '#d1d5db'
+		context.strokeStyle = skin.edgeColor || '#6F9FE3'
 		context.lineWidth = 7
 		context.stroke()
-		context.fillStyle = skin.faceForeground || '#111827'
+		context.fillStyle = skin.faceForeground || '#1B2942'
 		context.strokeStyle = 'rgba(0,0,0,.24)'
 		context.lineWidth = 5
 		if (type === 'd4') {

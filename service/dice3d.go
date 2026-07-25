@@ -22,7 +22,14 @@ var (
 )
 
 const (
-	builtInDice3DAudioAssetID = "builtin:dice-audio"
+	builtInDice3DAudioAssetID   = "builtin:dice-audio"
+	defaultDice3DFaceBackground = "#E8F1FF"
+	defaultDice3DFaceForeground = "#1B2942"
+	defaultDice3DEdgeColor      = "#6F9FE3"
+	defaultDice3DOutlineColor   = "#AFC2DC"
+	legacyDice3DFaceBackground  = "#f5f6fa"
+	legacyDice3DFaceForeground  = "#111827"
+	legacyDice3DEdgeColor       = "#d1d5db"
 
 	// 旧版仅匹配 [2d6=1+2] 且 count 必填
 	legacyDefaultDice3DBotPattern = `(?i)\[(?P<count>\d+)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
@@ -131,13 +138,13 @@ func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 		SurfaceMode:     "auto",
 		CustomSurface:   protocol.Dice3DCustomSurface{X: 0.1, Y: 0.1, Width: 0.8, Height: 0.8},
 		DefaultSkin: protocol.Dice3DSkin{
-			FaceBackground: "#f5f6fa",
-			FaceForeground: "#111827",
-			EdgeColor:      "#d1d5db",
-			OutlineColor:   "#d1d5db",
+			FaceBackground: defaultDice3DFaceBackground,
+			FaceForeground: defaultDice3DFaceForeground,
+			EdgeColor:      defaultDice3DEdgeColor,
+			OutlineColor:   defaultDice3DOutlineColor,
 			Roughness:      0.72,
 			Metalness:      0.05,
-			Scale:          1,
+			Scale:          0.6,
 		},
 		Motion: protocol.Dice3DMotionConfig{
 			Speed:       1,
@@ -176,6 +183,7 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	if invalidSkinField != "" {
 		return value, fmt.Errorf("%w: defaultSkin.%s", ErrDice3DConfigInvalid, invalidSkinField)
 	}
+	value.DefaultSkin = upgradeLegacyDefaultDice3DSkin(value.DefaultSkin)
 	value.CustomSurface.X = dice3DClampFloat(value.CustomSurface.X, 0, 1, defaults.CustomSurface.X)
 	value.CustomSurface.Y = dice3DClampFloat(value.CustomSurface.Y, 0, 1, defaults.CustomSurface.Y)
 	value.CustomSurface.Width = dice3DClampFloat(value.CustomSurface.Width, 0.1, 1, defaults.CustomSurface.Width)
@@ -720,6 +728,23 @@ func normalizeDice3DSkin(value, defaults protocol.Dice3DSkin) (protocol.Dice3DSk
 	}
 	value.Textures = textures
 	return value, ""
+}
+
+func upgradeLegacyDefaultDice3DSkin(skin protocol.Dice3DSkin) protocol.Dice3DSkin {
+	if skin.FaceBackground != legacyDice3DFaceBackground ||
+		skin.FaceForeground != legacyDice3DFaceForeground ||
+		skin.EdgeColor != legacyDice3DEdgeColor ||
+		skin.OutlineColor != legacyDice3DEdgeColor {
+		return skin
+	}
+	skin.FaceBackground = defaultDice3DFaceBackground
+	skin.FaceForeground = defaultDice3DFaceForeground
+	skin.EdgeColor = defaultDice3DEdgeColor
+	skin.OutlineColor = defaultDice3DOutlineColor
+	if skin.Scale == 1 {
+		skin.Scale = 0.6
+	}
+	return skin
 }
 
 func normalizeDice3DColor(value, fallback string) (string, bool) {

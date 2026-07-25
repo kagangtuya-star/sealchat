@@ -20,13 +20,13 @@ export interface DiceSkinImportResult {
 }
 
 const defaultSkin = (): Dice3DSkin => ({
-  faceBackground: '#f5f6fa',
-  faceForeground: '#111827',
-  edgeColor: '#d1d5db',
-  outlineColor: '#d1d5db',
+  faceBackground: '#E8F1FF',
+  faceForeground: '#1B2942',
+  edgeColor: '#6F9FE3',
+  outlineColor: '#AFC2DC',
   roughness: 0.72,
   metalness: 0.05,
-  scale: 1,
+  scale: 0.6,
   textures: {},
 })
 
