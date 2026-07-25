@@ -6571,6 +6571,9 @@ onBeforeUnmount(() => {
 :global(body:has(.theater-stage-app) .v-binder-follower-container) {
   z-index: 10002 !important;
 }
+:global(body:has(.theater-stage-app) .n-modal-container) {
+  z-index: 10004 !important;
+}
 .theater-image-input { display: none; }
 .theater-stage-toolbar {
   position: absolute; z-index: 10000; top: 0; right: 0; left: 0; box-sizing: border-box;
