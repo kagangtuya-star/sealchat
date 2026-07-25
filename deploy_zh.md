@@ -569,6 +569,7 @@ storage:
     attachmentsEnabled: true
     audioEnabled: true
     fontsEnabled: true
+    theaterEnabled: true
     endpoint: https://s3.example.com
     region: ""
     bucket: your-bucket-name
@@ -583,6 +584,7 @@ storage:
 - `storage.s3.attachmentsEnabled`：是否将**附件/图片**写入 S3。
 - `storage.s3.audioEnabled`：是否将**音频**写入 S3。
 - `storage.s3.fontsEnabled`：是否将**平台字体原文件、字体分片与 manifest** 写入 S3；关闭后回退到本地 `storage.local.fontDir`。
+- `storage.s3.theaterEnabled`：是否将**小剧场视觉与音频资源**写入 S3；省略时，视觉资源继承 `attachmentsEnabled`，音频资源继承 `audioEnabled`。
 - `storage.s3.endpoint`：对象存储服务地址（通常为区域根域名或 MinIO 地址）。
 - `storage.s3.bucket`：桶名（部分服务商要求包含 appid/租户后缀）。
 - `storage.s3.pathStyle`：是否强制 path-style（`/bucket/key`）。不同服务商要求不同（见下文 COS）。
@@ -633,10 +635,10 @@ COS 常见报错：`The bucket you are attempting to access must be addressed us
 
 管理端提供“迁移到 S3”：
 
-- 支持选择迁移类型：**图片附件** / **音频**
+- 支持选择迁移类型：**图片附件** / **音频** / **小剧场资源**；小剧场音频归入音频迁移
 - 建议先执行“模拟运行（dryRun）”观察待迁移数量与错误原因
 - “删除源文件”建议谨慎开启：图片迁移会在确认上传成功且 URL 可访问后才删除本地源文件
-- 注意：迁移只迁移数据，不会自动修改 `storage.s3.attachmentsEnabled/audioEnabled` 开关
+- 注意：迁移只迁移数据，不会自动修改 `storage.s3.attachmentsEnabled/audioEnabled/theaterEnabled` 开关
 
 ## 其他说明
 

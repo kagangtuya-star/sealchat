@@ -92,6 +92,24 @@ func (m *Manager) ActiveBackendForFont() BackendType {
 	})
 }
 
+func (m *Manager) ActiveBackendForTheaterAttachment() BackendType {
+	if m == nil || m.cfg.S3.TheaterEnabled == nil {
+		return m.ActiveBackendForAttachment()
+	}
+	return m.activeBackendWithToggle(func(s3 utils.S3StorageConfig) bool {
+		return *s3.TheaterEnabled
+	})
+}
+
+func (m *Manager) ActiveBackendForTheaterAudio() BackendType {
+	if m == nil || m.cfg.S3.TheaterEnabled == nil {
+		return m.ActiveBackendForAudio()
+	}
+	return m.activeBackendWithToggle(func(s3 utils.S3StorageConfig) bool {
+		return *s3.TheaterEnabled
+	})
+}
+
 func (m *Manager) activeBackendWithToggle(enabled func(utils.S3StorageConfig) bool) BackendType {
 	if m == nil {
 		return BackendLocal
@@ -133,11 +151,18 @@ func (m *Manager) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 }
 
 func (m *Manager) UploadAttachment(ctx context.Context, input UploadInput) (*UploadResult, error) {
+	return m.uploadWithFallback(ctx, m.ActiveBackendForAttachment(), input)
+}
+
+func (m *Manager) UploadTheaterAttachment(ctx context.Context, input UploadInput) (*UploadResult, error) {
+	return m.uploadWithFallback(ctx, m.ActiveBackendForTheaterAttachment(), input)
+}
+
+func (m *Manager) uploadWithFallback(ctx context.Context, target BackendType, input UploadInput) (*UploadResult, error) {
 	if strings.TrimSpace(input.ObjectKey) == "" {
 		return nil, fmt.Errorf("objectKey 不能为空")
 	}
 	input.ContentType = normalizeContentType(input.ContentType, input.ObjectKey)
-	target := m.ActiveBackendForAttachment()
 	if target == BackendS3 && m.remote != nil {
 		result, err := m.remote.upload(ctx, input)
 		if err == nil {

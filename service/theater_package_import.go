@@ -676,7 +676,7 @@ func importTheaterPackageAttachment(tx *gorm.DB, root string, item TheaterPackag
 		}
 	}
 	path := theaterPackageAbsolutePath(root, item.Path)
-	location, err := PersistAttachmentFileForceNew(hash, item.Size, path, item.MimeType, item.Filename)
+	location, err := PersistTheaterAttachmentFileForceNew(hash, item.Size, path, item.MimeType, item.Filename)
 	if err != nil {
 		return "", err
 	}

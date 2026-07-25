@@ -156,7 +156,7 @@ func persistTheaterDerivedVariant(resource *model.TheaterResourceModel, name, pa
 		return model.TheaterResourceVariantModel{}, err
 	}
 	hash := sha256.Sum256(data)
-	location, err := PersistAttachmentFile(hash[:], int64(len(data)), path, mimeType)
+	location, err := PersistTheaterAttachmentFile(hash[:], int64(len(data)), path, mimeType)
 	if err != nil {
 		return model.TheaterResourceVariantModel{}, err
 	}

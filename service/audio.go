@@ -52,14 +52,15 @@ type localAudioStorage struct {
 }
 
 type AudioUploadOptions struct {
-	Name        string
-	FolderID    *string
-	Tags        []string
-	Description string
-	Visibility  model.AudioAssetVisibility
-	CreatedBy   string
-	Scope       model.AudioAssetScope
-	WorldID     *string
+	Name              string
+	FolderID          *string
+	Tags              []string
+	Description       string
+	Visibility        model.AudioAssetVisibility
+	CreatedBy         string
+	Scope             model.AudioAssetScope
+	WorldID           *string
+	UseTheaterStorage bool
 }
 
 func InitAudioService(cfg utils.AudioConfig, store *storage.Manager) error {
@@ -428,7 +429,7 @@ func (svc *audioService) importFromPath(filePath string, opts AudioUploadOptions
 
 func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string, opts AudioUploadOptions) (*model.AudioAsset, error) {
 	asset := svc.newAssetRecord(originalName, opts)
-	if svc.shouldUseObjectStore() {
+	if svc.shouldUseObjectStore(opts) {
 		if remote, err := svc.persistWithObjectStore(asset, tempPath, mimeType, originalName); err == nil {
 			return remote, nil
 		} else {
@@ -476,8 +477,14 @@ func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOpt
 	return asset
 }
 
-func (svc *audioService) shouldUseObjectStore() bool {
-	return svc.objectStore != nil && svc.objectStore.ActiveBackendForAudio() == storage.BackendS3
+func (svc *audioService) shouldUseObjectStore(opts AudioUploadOptions) bool {
+	if svc.objectStore == nil {
+		return false
+	}
+	if opts.UseTheaterStorage {
+		return svc.objectStore.ActiveBackendForTheaterAudio() == storage.BackendS3
+	}
+	return svc.objectStore.ActiveBackendForAudio() == storage.BackendS3
 }
 
 func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mimeType string) (*model.AudioAsset, error) {

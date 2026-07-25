@@ -143,6 +143,7 @@
       attachmentsEnabled: true   # 附件/图片是否存入 S3
       audioEnabled: true         # 音频是否存入 S3
       fontsEnabled: true         # 平台字体原文件/分片/manifest 是否存入 S3
+      theaterEnabled: true       # 小剧场视觉与音频资源是否存入 S3；省略时继承对应分类开关
       endpoint: https://cos.ap-region.myqcloud.com
       region: ap-region
       bucket: your-bucket-name

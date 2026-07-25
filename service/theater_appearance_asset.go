@@ -182,7 +182,7 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 		return nil, newTheaterError(TheaterMediaErrorUnsupported, "不支持演出资源格式", 415, nil)
 	}
 	hashBytes := hasher.Sum(nil)
-	location, err := PersistAttachmentFile(hashBytes, written, tempPath, mimeType)
+	location, err := PersistTheaterAttachmentFile(hashBytes, written, tempPath, mimeType)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func persistTheaterAppearanceOutput(asset *model.TheaterAppearanceAssetModel, ou
 		return "", err
 	}
 	hash := sha256.Sum256(data)
-	location, err := PersistAttachmentFile(hash[:], int64(len(data)), output.Path, output.MimeType)
+	location, err := PersistTheaterAttachmentFile(hash[:], int64(len(data)), output.Path, output.MimeType)
 	if err != nil {
 		return "", err
 	}

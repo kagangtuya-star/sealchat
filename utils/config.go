@@ -186,6 +186,7 @@ type S3StorageConfig struct {
 	AttachmentsEnabled *bool  `json:"attachmentsEnabled" yaml:"attachmentsEnabled"`
 	AudioEnabled       *bool  `json:"audioEnabled" yaml:"audioEnabled"`
 	FontsEnabled       *bool  `json:"fontsEnabled" yaml:"fontsEnabled"`
+	TheaterEnabled     *bool  `json:"theaterEnabled" yaml:"theaterEnabled"`
 	Endpoint           string `json:"endpoint" yaml:"endpoint"`
 	Region             string `json:"region" yaml:"region"`
 	Bucket             string `json:"bucket" yaml:"bucket"`
@@ -1813,6 +1814,9 @@ func WriteConfig(config *AppConfig) {
 		}
 		if config.Storage.S3.FontsEnabled != nil {
 			_ = k.Set("storage.s3.fontsEnabled", *config.Storage.S3.FontsEnabled)
+		}
+		if config.Storage.S3.TheaterEnabled != nil {
+			_ = k.Set("storage.s3.theaterEnabled", *config.Storage.S3.TheaterEnabled)
 		}
 		_ = k.Set("storage.s3.endpoint", config.Storage.S3.Endpoint)
 		_ = k.Set("storage.s3.region", config.Storage.S3.Region)

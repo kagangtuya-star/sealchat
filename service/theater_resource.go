@@ -222,7 +222,7 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 		public, err := theaterResourcePublicFromModel(model.GetDB(), duplicate)
 		return &TheaterResourceUploadResult{Resource: public, Deduplicated: true}, err
 	}
-	location, err := PersistAttachmentFile(hashBytes, written, tempPath, mimeType)
+	location, err := PersistTheaterAttachmentFile(hashBytes, written, tempPath, mimeType)
 	if err != nil {
 		return nil, err
 	}

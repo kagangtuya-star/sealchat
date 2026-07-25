@@ -91,13 +91,14 @@ func CreateTheaterAudioAsset(actorID, worldID, channelID string, file *multipart
 	}
 	worldID = strings.TrimSpace(worldID)
 	asset, err := AudioCreateAssetFromUpload(file, AudioUploadOptions{
-		Name:        theaterAudioAssetName(world.Name, requestedName, file.Filename),
-		Tags:        []string{theaterFeatureAudioTag, theaterChannelAudioTag(channelID)},
-		Description: "小剧场特性音频",
-		Visibility:  model.AudioVisibilityRestricted,
-		CreatedBy:   actorID,
-		Scope:       model.AudioScopeWorld,
-		WorldID:     &worldID,
+		Name:              theaterAudioAssetName(world.Name, requestedName, file.Filename),
+		Tags:              []string{theaterFeatureAudioTag, theaterChannelAudioTag(channelID)},
+		Description:       "小剧场特性音频",
+		Visibility:        model.AudioVisibilityRestricted,
+		CreatedBy:         actorID,
+		Scope:             model.AudioScopeWorld,
+		WorldID:           &worldID,
+		UseTheaterStorage: true,
 	})
 	if err == nil {
 		return asset, nil
