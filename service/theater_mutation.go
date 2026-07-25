@@ -145,6 +145,12 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit, actionVisibilityBatch); err != nil {
 			return err
 		}
+		if command.Type == TheaterMutationObjectToggle {
+			normalizedPayload, err = json.Marshal(decoded)
+			if err != nil {
+				return err
+			}
+		}
 		if err := recalculateTheaterResourceReferences(tx, current.ID); err != nil {
 			return err
 		}
@@ -829,6 +835,7 @@ func applyTheaterObjectToggle(tx *gorm.DB, room *model.TheaterRoomModel, payload
 	if payload.Visible != nil {
 		visible = *payload.Visible
 	}
+	payload.Visible = &visible
 	return tx.Model(object).Update("visible", visible).Error
 }
 

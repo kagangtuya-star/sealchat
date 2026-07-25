@@ -440,15 +440,16 @@ const (
 	// Quick Login Events
 	EventQuickLoginRequested EventName = "quick-login-requested"
 	// Theater Events
-	EventTheaterSnapshot           EventName = "theater.snapshot"
-	EventTheaterMutationApplied    EventName = "theater.mutation.applied"
-	EventTheaterMutationRejected   EventName = "theater.mutation.rejected"
-	EventTheaterResourceProcessing EventName = "theater.resource.processing"
-	EventTheaterResourceReady      EventName = "theater.resource.ready"
-	EventTheaterResourceFailed     EventName = "theater.resource.failed"
-	EventTheaterPreloadRequested   EventName = "theater.preload.requested"
-	EventTheaterPointerTrace       EventName = "theater.pointer.trace"
-	EventTheaterEffectTriggered    EventName = "theater.effect.triggered"
+	EventTheaterSnapshot            EventName = "theater.snapshot"
+	EventTheaterMutationApplied     EventName = "theater.mutation.applied"
+	EventTheaterMutationRejected    EventName = "theater.mutation.rejected"
+	EventTheaterResourceProcessing  EventName = "theater.resource.processing"
+	EventTheaterResourceReady       EventName = "theater.resource.ready"
+	EventTheaterResourceFailed      EventName = "theater.resource.failed"
+	EventTheaterPreloadRequested    EventName = "theater.preload.requested"
+	EventTheaterPointerTrace        EventName = "theater.pointer.trace"
+	EventTheaterEffectTriggered     EventName = "theater.effect.triggered"
+	EventTheaterVisibilityTriggered EventName = "theater.visibility.triggered"
 )
 
 type TheaterEventPayload struct {

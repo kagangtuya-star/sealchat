@@ -402,6 +402,9 @@ const startTheaterSync = async () => {
     onEffectTriggered: (effectId, triggerId) => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.playEffect(effectId, triggerId)
     },
+    onVisibilityTriggered: (changes, triggerId) => {
+      if (isCurrent() && theaterSync === client) stageAppRef.value?.playVisibilityTransitions(changes, triggerId)
+    },
     onError: (error) => {
       if (isCurrent() && theaterSync === client) message.warning(error)
     },

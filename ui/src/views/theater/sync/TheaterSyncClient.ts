@@ -72,6 +72,32 @@ interface TheaterMutation {
   permission: 'stage.object.edit' | 'stage.scene.switch'
 }
 
+export interface TheaterVisibilityChange {
+  objectId: string
+  visible: boolean
+}
+
+const visibilityChangesFromMutation = (input: unknown): TheaterVisibilityChange[] => {
+  const mutation = asObject(input)
+  const payload = asObject(mutation.payload)
+  const changes: TheaterVisibilityChange[] = []
+  const append = (objectIdValue: unknown, visibleValue: unknown) => {
+    const objectId = typeof objectIdValue === 'string' ? objectIdValue.trim() : ''
+    if (objectId && typeof visibleValue === 'boolean') changes.push({ objectId, visible: visibleValue })
+  }
+  if (mutation.type === 'object.toggle') {
+    append(payload.objectId, payload.visible)
+  } else if (mutation.type === 'object.update') {
+    append(payload.objectId, asObject(payload.fields).visible)
+  } else if (mutation.type === 'object.batchUpdate' && Array.isArray(payload.updates)) {
+    payload.updates.forEach((item) => {
+      const update = asObject(item)
+      append(update.objectId, asObject(update.fields).visible)
+    })
+  }
+  return changes
+}
+
 interface TheaterSyncOptions {
   worldId: string
   channelId: string
@@ -84,6 +110,7 @@ interface TheaterSyncOptions {
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onPointerTrace?: (trace: StagePointerTrace) => void
   onEffectTriggered?: (effectId: string, triggerId: string) => void
+  onVisibilityTriggered?: (changes: TheaterVisibilityChange[], triggerId: string) => void
   onError?: (message: string) => void
 }
 
@@ -718,6 +745,23 @@ export class TheaterSyncClient {
     this.options.onEffectTriggered?.(effectId, triggerId)
   }
 
+  private readonly onVisibilityTriggered = (event: any) => {
+    const theater = event?.theater
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    const payload = asObject(theater.payload)
+    const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
+    const changes = Array.isArray(payload.changes)
+      ? payload.changes.reduce<TheaterVisibilityChange[]>((result, item) => {
+          const value = asObject(item)
+          const objectId = typeof value.objectId === 'string' ? value.objectId.trim() : ''
+          if (objectId && typeof value.visible === 'boolean') result.push({ objectId, visible: value.visible })
+          return result
+        }, [])
+      : []
+    if (!triggerId || !changes.length) return
+    this.options.onVisibilityTriggered?.(changes, triggerId)
+  }
+
   private readonly onGatewayConnected = () => {
     void this.subscribe()
   }
@@ -733,6 +777,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.on('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.on('theater.effect.triggered' as any, this.onEffectTriggered)
+    chatEvent.on('theater.visibility.triggered' as any, this.onVisibilityTriggered)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
     if (!this.started) return
@@ -763,6 +808,7 @@ export class TheaterSyncClient {
     chatEvent.off('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.off('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.off('theater.effect.triggered' as any, this.onEffectTriggered)
+    chatEvent.off('theater.visibility.triggered' as any, this.onVisibilityTriggered)
     chatEvent.off('connected' as any, this.onGatewayConnected)
     try {
       await this.options.sendGatewayAPI('theater.unsubscribe', {})
@@ -812,6 +858,7 @@ export class TheaterSyncClient {
       if (response.data?.result?.mutation?.revision !== undefined) {
         this.revision = finite(response.data.result.mutation.revision, this.revision)
       }
+      this.notifyMutationVisibility(response.data?.result?.mutation)
       await this.reload(true)
       return true
     } finally {
@@ -875,7 +922,10 @@ export class TheaterSyncClient {
     }
     const result = response.data?.result
     if (result?.mutation?.revision !== undefined) this.revision = finite(result.mutation.revision, this.revision)
-    if (result?.kind === 'mutation') await this.reload(true)
+    if (result?.kind === 'mutation') {
+      this.notifyMutationVisibility(result.mutation)
+      await this.reload(true)
+    }
     if (result?.kind === 'local') {
       const action = stageActionSchema.safeParse({
         ...payload.action,
@@ -895,6 +945,13 @@ export class TheaterSyncClient {
       inputChannelId: this.options.inputChannelId || this.options.channelId,
       expectedRevision: this.revision,
     })
+  }
+
+  private notifyMutationVisibility(mutation: unknown) {
+    const value = asObject(mutation)
+    const triggerId = typeof value.mutationId === 'string' ? value.mutationId.trim() : ''
+    const changes = visibilityChangesFromMutation(value)
+    if (triggerId && changes.length) this.options.onVisibilityTriggered?.(changes, triggerId)
   }
 
   private postActionBatch(first: StageActionTriggeredPayload, payloads: readonly StageActionTriggeredPayload[]) {

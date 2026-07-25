@@ -48,6 +48,52 @@ func initWorldTheaterServiceTest(t *testing.T) (string, string, string) {
 	return actorID, worldID, channelID
 }
 
+func TestWorldTheaterObjectToggleResolvesVisibilityInMutation(t *testing.T) {
+	ownerID, worldID, _ := initWorldTheaterServiceTest(t)
+	if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
+		MutationID: "visibility-scene", WorldID: worldID, Type: TheaterMutationSceneCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene", "name": "Scene", "order": 1, "state": map[string]any{}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	for index, object := range []map[string]any{
+		{
+			"id": "target", "kind": "text", "name": "Target", "x": 0, "y": 0, "width": 10, "height": 10,
+			"rotation": 0, "z": 0, "orderKey": "a", "visible": true, "content": map[string]any{}, "metadata": map[string]any{},
+		},
+		{
+			"id": "button", "kind": "button", "name": "Toggle", "x": 0, "y": 0, "width": 10, "height": 10,
+			"rotation": 0, "z": 1, "orderKey": "b", "visible": true, "interactive": true,
+			"content": map[string]any{}, "metadata": map[string]any{}, "actions": []map[string]any{{
+				"id": "toggle", "type": TheaterMutationObjectToggle, "payload": map[string]any{"objectId": "target"},
+			}},
+		},
+	} {
+		if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
+			MutationID: fmt.Sprintf("visibility-object-%d", index), WorldID: worldID, ExpectedRevision: int64(index + 1), Type: TheaterMutationObjectCreate,
+			Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene", "object": object}),
+		}, TheaterRequestMeta{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := TriggerTheaterAction(context.Background(), ownerID, TheaterActionCommand{
+		ActionRequestID: "visibility-toggle", WorldID: worldID, ObjectID: "button", ActionID: "toggle", ExpectedRevision: 3,
+	}, TheaterRequestMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mutation == nil {
+		t.Fatalf("missing mutation result: %#v", result)
+	}
+	var payload theaterObjectTogglePayload
+	if err := json.Unmarshal(result.Mutation.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Visible == nil || *payload.Visible {
+		t.Fatalf("resolved visibility missing: %s", result.Mutation.Payload)
+	}
+}
+
 func worldTheaterPayload(t *testing.T, value any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(value)

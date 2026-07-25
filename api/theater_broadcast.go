@@ -262,6 +262,59 @@ func publishTheaterEffectTriggered(worldID, channelID string, effect *service.Th
 	return nil
 }
 
+type theaterVisibilityChange struct {
+	ObjectID string `json:"objectId"`
+	Visible  bool   `json:"visible"`
+}
+
+func theaterMutationVisibilityChanges(mutation model.TheaterMutationModel) []theaterVisibilityChange {
+	changes := make([]theaterVisibilityChange, 0, 8)
+	switch mutation.Type {
+	case service.TheaterMutationObjectToggle:
+		var payload struct {
+			ObjectID string `json:"objectId"`
+			Visible  *bool  `json:"visible"`
+		}
+		if json.Unmarshal([]byte(mutation.PayloadJSON), &payload) == nil && strings.TrimSpace(payload.ObjectID) != "" && payload.Visible != nil {
+			changes = append(changes, theaterVisibilityChange{ObjectID: strings.TrimSpace(payload.ObjectID), Visible: *payload.Visible})
+		}
+	case service.TheaterMutationObjectUpdate:
+		var payload struct {
+			ObjectID string         `json:"objectId"`
+			Fields   map[string]any `json:"fields"`
+		}
+		if json.Unmarshal([]byte(mutation.PayloadJSON), &payload) == nil {
+			if visible, changesVisibility := payload.Fields["visible"].(bool); changesVisibility && strings.TrimSpace(payload.ObjectID) != "" {
+				changes = append(changes, theaterVisibilityChange{ObjectID: strings.TrimSpace(payload.ObjectID), Visible: visible})
+			}
+		}
+	case service.TheaterMutationObjectBatchUpdate:
+		var payload struct {
+			Updates []struct {
+				ObjectID string         `json:"objectId"`
+				Fields   map[string]any `json:"fields"`
+			} `json:"updates"`
+		}
+		if json.Unmarshal([]byte(mutation.PayloadJSON), &payload) == nil {
+			for _, update := range payload.Updates {
+				if visible, changesVisibility := update.Fields["visible"].(bool); changesVisibility && strings.TrimSpace(update.ObjectID) != "" {
+					changes = append(changes, theaterVisibilityChange{ObjectID: strings.TrimSpace(update.ObjectID), Visible: visible})
+				}
+			}
+		}
+	}
+	seen := make(map[string]struct{}, len(changes))
+	result := make([]theaterVisibilityChange, 0, len(changes))
+	for _, change := range changes {
+		if _, exists := seen[change.ObjectID]; exists {
+			continue
+		}
+		seen[change.ObjectID] = struct{}{}
+		result = append(result, change)
+	}
+	return result
+}
+
 func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, mutation model.TheaterMutationModel) error {
 	if mutation.Status == "rejected" {
 		return publishRejectedTheaterMutation(mutation)
@@ -281,6 +334,14 @@ func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, muta
 		"checksum": result.Checksum,
 	}
 	event := theaterGatewayEvent(protocol.EventTheaterMutationApplied, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, mutation.ID, payload)
+	visibilityChanges := theaterMutationVisibilityChanges(mutation)
+	var visibilityEvent protocol.GatewayPayloadStructure
+	if len(visibilityChanges) > 0 {
+		visibilityEvent = theaterGatewayEvent(protocol.EventTheaterVisibilityTriggered, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, mutation.ID+":visibility", map[string]any{
+			"triggerId": mutation.MutationID,
+			"changes":   visibilityChanges,
+		})
+	}
 	managementMutation := mutation.Type == service.TheaterMutationAdminRestore || mutation.Type == service.TheaterMutationAdminReplace || mutation.Type == service.TheaterMutationAdminPackageImport
 	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
@@ -295,6 +356,9 @@ func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, muta
 				return true
 			}
 			gap := theaterSnapshotEventForConnection(info, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, model.TheaterSchemaVersion, result.Checksum, "gap")
+			if len(visibilityChanges) > 0 {
+				queue.Enqueue(visibilityEvent, gap)
+			}
 			if !service.CanReceiveFullTheaterState(userID, mutation.WorldID, mutation.ChannelID) {
 				queue.Enqueue(theaterSnapshotEventForConnection(info, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, model.TheaterSchemaVersion, result.Checksum, "mutation"), gap)
 				return true

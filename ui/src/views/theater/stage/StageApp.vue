@@ -87,7 +87,7 @@ import {
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
 import StageCopyToolbar from './StageCopyToolbar.vue'
 import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
-import type { StageCopyMode } from './stage-editing'
+import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
@@ -1683,7 +1683,17 @@ const entranceConfigFor = (object: StageObject): StageEntranceConfig => normaliz
 
 const textEntrancePlaybacks = reactive<Record<string, StageEntrancePlayback>>({})
 const textEntranceTimers = new Map<string, number>()
+const departingStageObjects = reactive<Record<string, StageObject>>({})
+const networkVisibilityTargets = new Map<string, boolean>()
+const playedVisibilityTriggerIds = new Set<string>()
+const playedVisibilityTriggerOrder: string[] = []
 let textEntranceToken = 0
+
+const finishDepartingObject = (objectId: string) => {
+  if (!departingStageObjects[objectId]) return
+  delete departingStageObjects[objectId]
+  void nextTick(() => syncObjects())
+}
 
 const playTextTransition = (object: StageObject, direction: 'enter' | 'exit', force = false) => {
   if (object.type !== 'text' || (direction === 'enter' && !object.visible)) return
@@ -1694,10 +1704,14 @@ const playTextTransition = (object: StageObject, direction: 'enter' | 'exit', fo
   const token = ++textEntranceToken
   textEntrancePlaybacks[object.id] = { ...config, direction, token }
   textEntranceTimers.delete(object.id)
-  if (direction === 'enter') return
+  if (direction === 'enter') {
+    finishDepartingObject(object.id)
+    return
+  }
   const timer = window.setTimeout(() => {
     textEntranceTimers.delete(object.id)
     if (textEntrancePlaybacks[object.id]?.token === token) delete textEntrancePlaybacks[object.id]
+    finishDepartingObject(object.id)
   }, config.durationMs)
   textEntranceTimers.set(object.id, timer)
 }
@@ -1731,6 +1745,7 @@ const playObjectTransition = (object: StageObject, node: Konva.Group, direction:
   }
   pendingObjectEntrances.delete(object.id)
   finishObjectTransition(object, node)
+  if (direction === 'enter') finishDepartingObject(object.id)
   if (config.preset === 'none') {
     node.visible(object.visible)
     return
@@ -1779,7 +1794,10 @@ const playObjectTransition = (object: StageObject, node: Konva.Group, direction:
     duration,
     easing: Konva.Easings.EaseOut,
     ...attrs,
-    onFinish: () => finishObjectTransition(object, node),
+    onFinish: () => {
+      finishObjectTransition(object, node)
+      finishDepartingObject(object.id)
+    },
     onUpdate: () => drawWorldLayers(),
   })
   objectEntranceTweens.set(object.id, tween)
@@ -1803,6 +1821,40 @@ const playStageObjectTransition = (
 const playStageObjectEntrance = (object: StageObject, node: Konva.Group, force = false) => (
   playStageObjectTransition(object, node, 'enter', force)
 )
+
+const playVisibilityTransitions = (changes: Array<{ objectId: string, visible: boolean }>, triggerId: string) => {
+  const normalizedTriggerId = triggerId.trim()
+  if (!normalizedTriggerId || playedVisibilityTriggerIds.has(normalizedTriggerId)) return
+  playedVisibilityTriggerIds.add(normalizedTriggerId)
+  playedVisibilityTriggerOrder.push(normalizedTriggerId)
+  if (playedVisibilityTriggerOrder.length > 256) {
+    playedVisibilityTriggerIds.delete(playedVisibilityTriggerOrder.shift()!)
+  }
+  changes.forEach(({ objectId, visible }) => {
+    const object = props.store.activeObjects.value[objectId]
+    if (visible && object && departingStageObjects[objectId]) {
+      networkVisibilityTargets.delete(objectId)
+      const node = objectNodes.get(objectId)
+      if (object.type === 'text') playTextTransition(object, 'enter')
+      else if (node) playStageObjectTransition(object, node, 'enter')
+      return
+    }
+    if (!object || object.visible === visible) return
+    if (visible) {
+      networkVisibilityTargets.set(objectId, true)
+      return
+    }
+    if (!supportsStageEntrance(object) || entranceConfigFor(object).preset === 'none') return
+    const node = objectNodes.get(objectId)
+    if (object.type !== 'text' && !node) return
+    networkVisibilityTargets.set(objectId, false)
+    const departing = cloneStageData(object)
+    departing.visible = false
+    departingStageObjects[objectId] = departing
+    if (object.type === 'text') playTextTransition(departing, 'exit')
+    else playStageObjectTransition(departing, node!, 'exit')
+  })
+}
 
 const selectedEntranceConfig = computed(() => {
   const object = selectedObject.value
@@ -1887,7 +1939,12 @@ const updateEffectMediaTransform = (patch: { x: number, y: number }) => {
   setTheaterEffectConfig(object, config)
 }
 const endEffectMediaTransform = () => props.store.commitObjectEdit()
-const stageObjects = props.store.activeObjects
+const stageObjects = computed<Record<string, StageObject>>(() => ({
+  ...Object.fromEntries(Object.entries(props.store.activeObjects.value).filter(([objectId, object]) => (
+    networkVisibilityTargets.get(objectId) !== false || !object.visible || Boolean(departingStageObjects[objectId])
+  ))),
+  ...departingStageObjects,
+}))
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
@@ -3317,7 +3374,7 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
 
 const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effectId, triggerId)
 
-defineExpose({ preloadScenes, appendPointerTrace, playEffect })
+defineExpose({ preloadScenes, appendPointerTrace, playEffect, playVisibilityTransitions })
 
 const setImageFit = (
   node: Konva.Image,
@@ -4386,7 +4443,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   }
 }
 
-const canvasStageObjects = () => Object.fromEntries(Object.entries(props.store.activeObjects.value)
+const canvasStageObjects = () => Object.fromEntries(Object.entries(stageObjects.value)
   .filter(([, object]) => !isTheaterEffectObject(object)))
 
 const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
@@ -5471,10 +5528,18 @@ watch(
   () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
   (next, previous) => {
     if (!props.syncReady) return
+    networkVisibilityTargets.forEach((visible, objectId) => {
+      if (!visible && next[objectId] === undefined) networkVisibilityTargets.delete(objectId)
+    })
     Object.entries(next).forEach(([objectId, visible]) => {
       const object = props.store.activeObjects.value[objectId]
       const previousVisible = previous?.[objectId]
       if (object?.type !== 'text' || previousVisible === visible || pendingSceneEntrances) return
+      const networkTarget = networkVisibilityTargets.get(objectId)
+      if (networkTarget === visible) {
+        networkVisibilityTargets.delete(objectId)
+        if (!visible && departingStageObjects[objectId]) return
+      }
       if (visible) playTextTransition(object, 'enter')
       else if (previousVisible === true) playTextTransition(object, 'exit')
     })
@@ -5484,6 +5549,11 @@ watch(
         const node = objectNodes.get(objectId)
         const previousVisible = previous?.[objectId]
         if (!object || object.type === 'text' || !node || previousVisible === visible || pendingSceneEntrances) return
+        const networkTarget = networkVisibilityTargets.get(objectId)
+        if (networkTarget === visible) {
+          networkVisibilityTargets.delete(objectId)
+          if (!visible && departingStageObjects[objectId]) return
+        }
         if (visible) playStageObjectEntrance(object, node)
         else if (previousVisible === true) playStageObjectTransition(object, node, 'exit')
       })
@@ -5646,6 +5716,10 @@ onBeforeUnmount(() => {
   textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
   textEntranceTimers.clear()
   Object.keys(textEntrancePlaybacks).forEach((objectId) => delete textEntrancePlaybacks[objectId])
+  Object.keys(departingStageObjects).forEach((objectId) => delete departingStageObjects[objectId])
+  networkVisibilityTargets.clear()
+  playedVisibilityTriggerIds.clear()
+  playedVisibilityTriggerOrder.length = 0
   objectNodes.clear()
   imageLoadVersions.clear()
   stageMediaBlobCache.clear()
