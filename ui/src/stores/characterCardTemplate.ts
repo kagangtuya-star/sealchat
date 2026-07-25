@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import cocTemplateHtml from '../../../doc/template/sealchat-default-template-v3-coc7th.html?raw';
 import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
 import { api } from './_config';
 import { useUserStore } from './user';
@@ -74,6 +75,11 @@ const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
 const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd']);
 const BUILTIN_CHARACTER_CARD_TEMPLATES = [
+  {
+    name: 'coc默认',
+    sheetType: 'coc7',
+    content: cocTemplateHtml.trim(),
+  },
   {
     name: '忍神人物卡模板',
     sheetType: '忍神',
