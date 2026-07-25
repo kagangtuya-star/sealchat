@@ -797,11 +797,15 @@ const canDragObject = (object: StageObject | null | undefined) => Boolean(
   && !object.locked
   && canEditObject(object),
 )
+const hasConfiguredObjectAction = (object: StageObject) => object.actions.some(
+  action => stageActionSchema.safeParse(action).success,
+)
 const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   object
   && canTriggerActions.value
   && object.visible
   && object.interactive
+  && hasConfiguredObjectAction(object)
   && isStageActionTarget(object.type),
 )
 
@@ -2261,6 +2265,25 @@ const triggerObjectActions = (object: StageObject) => {
     })
   })
 }
+
+const objectNodeIntersectsStagePoint = (node: Konva.Group, point: Konva.Vector2d) => {
+  if (!stage || !node.isVisible()) return false
+  const bounds = node.getClientRect({ relativeTo: stage, skipShadow: true })
+  if (
+    point.x < bounds.x
+    || point.y < bounds.y
+    || point.x > bounds.x + bounds.width
+    || point.y > bounds.y + bounds.height
+  ) return false
+  return node.find<Konva.Shape>('Shape').some(shape => shape.intersects(point))
+}
+
+const resolveObjectActionTarget = (point: Konva.Vector2d) => [...objectNodes.entries()]
+  .map(([objectId, node]) => ({ object: getObject(objectId), node }))
+  .filter((entry): entry is { object: StageObject, node: Konva.Group } => canInteractObject(entry.object))
+  .sort((left, right) => right.node.getAbsoluteZIndex() - left.node.getAbsoluteZIndex())
+  .find(({ node }) => objectNodeIntersectsStagePoint(node, point))
+  ?.object || null
 
 const applyCamera = () => {
   if (!stage) return
@@ -4005,7 +4028,9 @@ const createObjectNode = (object: StageObject) => {
         selectObject(selectionId, additive)
       }
     }
-    if (current) triggerObjectActions(current)
+    const pointer = stage?.getPointerPosition()
+    const actionTarget = pointer ? resolveObjectActionTarget(pointer) : null
+    if (actionTarget) triggerObjectActions(actionTarget)
   })
   wrapper.on('contextmenu', (event) => {
     if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
