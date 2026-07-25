@@ -109,6 +109,10 @@ export class TheaterEffectRuntime {
     this.emit()
   }
 
+  invalidateCurrentMessage = () => {
+    this.currentMessage = null
+  }
+
   reconcile = () => {
     const validIds = new Set(this.options.getObjects().filter(isTheaterEffectObject).map((object) => object.id))
     this.active.filter((item) => !validIds.has(item.effectId)).forEach((item) => this.stop(item.effectId))

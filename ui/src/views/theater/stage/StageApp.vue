@@ -5463,7 +5463,10 @@ onMounted(() => {
   if (canManageResources.value) void fetchTheaterAudioAssets()
 })
 
-watch(() => props.store.state.activeSceneId, (sceneId) => beginSceneMediaBatch(sceneId), { flush: 'sync' })
+watch(() => props.store.state.activeSceneId, (sceneId) => {
+  effectRuntime.invalidateCurrentMessage()
+  beginSceneMediaBatch(sceneId)
+}, { flush: 'sync' })
 watch(
   () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
   (next, previous) => {
