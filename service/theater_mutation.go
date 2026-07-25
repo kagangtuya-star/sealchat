@@ -294,7 +294,7 @@ func validateDelegatedTheaterObjectJSONField(object *model.TheaterObjectModel, r
 	}
 	delete(beforeRest, allowedKey)
 	delete(afterRest, allowedKey)
-	if !reflect.DeepEqual(beforeRest, afterRest) || beforeHasAllowed && !afterHasAllowed {
+	if !reflect.DeepEqual(beforeRest, afterRest) || beforeHasAllowed && !afterHasAllowed && allowedKey != "image" {
 		return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改图片组件"+field+"的其他字段", 403, map[string]any{"field": field})
 	}
 	if !beforeHasAllowed && !afterHasAllowed {
