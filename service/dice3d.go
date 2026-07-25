@@ -30,6 +30,8 @@ const (
 	looseDice3DBotPattern = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
 	// 海豹注解式：2[1d6] / 6[1d8] / 15[d20]（多骰复合结果的可靠面值来源）
 	annotDice3DBotPattern = `(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`
+	// 海豹修正式：d20+3=18+3=21 / 2d6-1=3+5-1=7
+	modifiedDice3DBotPattern = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)(?:[+-]\d+)+=(?P<values>\d+(?:\+\d+)*)(?:[+-]\d+)+=\d+(?:\]|\b)`
 	// 裸式 NdS=vals：1d100=42 / 2d6=3+5；解析时会丢弃「点数后紧跟 [」的误匹配
 	bareDice3DBotPattern = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
 	// ResultDetail 等内部解析仍复用裸式（带误匹配过滤）
@@ -48,6 +50,17 @@ func defaultDice3DBotRules() []protocol.Dice3DBotRule {
 			ValuesGroup:           "values",
 			ValueSeparatorPattern: `\+`,
 			Priority:              10,
+		},
+		{
+			ID:                    "seal-modified",
+			Name:                  "海豹修正式",
+			Enabled:               true,
+			Pattern:               modifiedDice3DBotPattern,
+			CountGroup:            "count",
+			SidesGroup:            "sides",
+			ValuesGroup:           "values",
+			ValueSeparatorPattern: `\+`,
+			Priority:              5,
 		},
 		{
 			ID:                    "seal-standard",
@@ -74,15 +87,19 @@ func isObsoleteSealDice3DBotPattern(pattern string) bool {
 
 func migrateDice3DBotRules(rules []protocol.Dice3DBotRule) []protocol.Dice3DBotRule {
 	hasAnnot := false
+	hasModified := false
 	hasSealFamily := false
-	out := make([]protocol.Dice3DBotRule, 0, len(rules)+1)
+	out := make([]protocol.Dice3DBotRule, 0, len(rules)+2)
 	for _, rule := range rules {
 		if rule.ID == "seal-annot" || rule.Pattern == annotDice3DBotPattern {
 			hasAnnot = true
 		}
-		if rule.ID == "seal-standard" || rule.ID == "seal-annot" ||
+		if rule.ID == "seal-modified" || rule.Pattern == modifiedDice3DBotPattern {
+			hasModified = true
+		}
+		if rule.ID == "seal-standard" || rule.ID == "seal-annot" || rule.ID == "seal-modified" ||
 			isObsoleteSealDice3DBotPattern(rule.Pattern) ||
-			rule.Pattern == bareDice3DBotPattern || rule.Pattern == annotDice3DBotPattern {
+			rule.Pattern == bareDice3DBotPattern || rule.Pattern == annotDice3DBotPattern || rule.Pattern == modifiedDice3DBotPattern {
 			hasSealFamily = true
 		}
 		if isObsoleteSealDice3DBotPattern(rule.Pattern) {

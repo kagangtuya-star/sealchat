@@ -24,6 +24,13 @@ export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
       valueSeparatorPattern: String.raw`\+`, priority: 10,
     },
     {
+      id: 'seal-modified', name: '海豹修正式', enabled: true,
+      // d20+3=18+3=21 / 2d6-1=3+5-1=7
+      pattern: String.raw`(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)(?:[+-]\d+)+=(?P<values>\d+(?:\+\d+)*)(?:[+-]\d+)+=\d+(?:\]|\b)`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 5,
+    },
+    {
       id: 'seal-standard', name: '海豹标准', enabled: true,
       // 1d100=42 / [2d6=1+2]；后端会丢弃「点数后紧跟 [」的误匹配
       pattern: String.raw`(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`,
