@@ -24,11 +24,11 @@ concurrency:
 env:
   PACKAGE_OWNER: ${{ github.repository_owner }}
   PACKAGE_NAME: sealchat
-  KEEP_COUNT: "50"
+  KEEP_COUNT: "100"
 
 jobs:
   cleanup:
-    name: Keep latest 50 versions
+    name: Keep latest 100 versions
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
