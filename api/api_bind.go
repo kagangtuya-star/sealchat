@@ -915,11 +915,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
-		var payload struct {
-			utils.AppConfig
-			AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
-		}
-		err := ctx.BodyParser(&payload)
+		newConfig, err := mergeConfigPatchForWrite(appConfig, ctx.Body())
 		if err != nil {
 			return err
 		}
@@ -934,11 +930,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return unmarshalErr
 		}
 
-		newConfig := payload.AppConfig
 		if rawPayload.Audio != nil && rawPayload.Audio.AllowWorldAudioWorkbench != nil {
 			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.Audio.AllowWorldAudioWorkbench
-		} else if payload.AllowWorldAudioWorkbench != nil {
-			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
+		} else if rawPayload.AllowWorldAudioWorkbench != nil {
+			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.AllowWorldAudioWorkbench
 		}
 		newConfig.ThemeManagement = utils.NormalizeThemeManagementConfig(newConfig.ThemeManagement)
 		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
@@ -961,7 +956,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
 
-		appConfig = mergeConfigForWrite(appConfig, &newConfig)
+		appConfig = newConfig
 		utils.WriteConfig(appConfig)
 		service.ConfirmCursorThemeAttachments(newConfig.CursorTheme)
 		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
