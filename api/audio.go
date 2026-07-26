@@ -35,6 +35,7 @@ func AudioAssetList(c *fiber.Ctx) error {
 		Page:              c.QueryInt("page", 1),
 		PageSize:          c.QueryInt("pageSize", 200),
 		Tags:              queryStringSlice(c, "tags[]", "tags"),
+		ExcludeTags:       []string{service.TheaterFeatureAudioTag},
 		CreatorIDs:        queryStringSlice(c, "creatorIds[]", "creatorIds"),
 		SortBy:            strings.TrimSpace(c.Query("sortBy")),
 		SortOrder:         strings.TrimSpace(c.Query("sortOrder")),

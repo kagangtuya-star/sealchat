@@ -22,6 +22,7 @@ import (
 type AudioAssetFilters struct {
 	Query             string
 	Tags              []string
+	ExcludeTags       []string
 	FolderID          *string
 	CreatorIDs        []string
 	DurationMin       float64
@@ -529,6 +530,15 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 					continue
 				}
 				q = q.Where("tags LIKE ?", fmt.Sprintf("%%\"%s\"%%", trimmed))
+			}
+		}
+		if len(filters.ExcludeTags) > 0 {
+			for _, tag := range filters.ExcludeTags {
+				trimmed := strings.TrimSpace(tag)
+				if trimmed == "" {
+					continue
+				}
+				q = q.Where("(tags IS NULL OR tags NOT LIKE ?)", fmt.Sprintf("%%\"%s\"%%", trimmed))
 			}
 		}
 		if filters.FolderID != nil {

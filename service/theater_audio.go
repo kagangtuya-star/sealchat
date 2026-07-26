@@ -12,7 +12,9 @@ import (
 	"sealchat/model"
 )
 
-const theaterFeatureAudioTag = "theater-feature-audio"
+const TheaterFeatureAudioTag = "theater-feature-audio"
+
+const theaterFeatureAudioTag = TheaterFeatureAudioTag
 
 type TheaterAudioAssetListResult struct {
 	Items []*model.AudioAsset `json:"items"`
