@@ -587,18 +587,59 @@ func mediaRefsContainAsset(refs []protocol.TheaterMediaRef, assetID string) bool
 	return false
 }
 
-func MarkTheaterAppearanceAssetOrphans(ctx context.Context) error {
-	var assets []model.TheaterAppearanceAssetModel
-	if err := model.GetDB().Where("deleted_at IS NULL").Find(&assets).Error; err != nil {
-		return err
+func theaterMediaRefAssetIDs(refs []protocol.TheaterMediaRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if assetID := strings.TrimSpace(ref.AssetID); assetID != "" {
+			ids = append(ids, assetID)
+		}
 	}
-	for _, asset := range assets {
+	return ids
+}
+
+func theaterPresentationAssetIDs(presentation *protocol.TheaterPresentation) []string {
+	if presentation == nil {
+		return nil
+	}
+	return theaterMediaRefAssetIDs(theaterPresentationMediaRefs(*presentation))
+}
+
+func theaterPresentationPatchAssetIDs(patch *protocol.TheaterPresentationPatch) []string {
+	if patch == nil {
+		return nil
+	}
+	refs := make([]protocol.TheaterMediaRef, 0)
+	if patch.Portrait.Set && patch.Portrait.Value != nil {
+		refs = append(refs, patch.Portrait.Value.Media)
+	}
+	if patch.PortraitDecorations.Set && patch.PortraitDecorations.Value != nil {
+		for _, layer := range *patch.PortraitDecorations.Value {
+			refs = append(refs, layer.Media)
+		}
+	}
+	if patch.Dialogue.Set && patch.Dialogue.Value != nil && patch.Dialogue.Value.Frame != nil {
+		refs = append(refs, patch.Dialogue.Value.Frame.Media)
+	}
+	return theaterMediaRefAssetIDs(refs)
+}
+
+func reconcileTheaterAppearanceAssetOrphans(ctx context.Context, assetIDs []string) error {
+	seen := make(map[string]struct{}, len(assetIDs))
+	for _, rawAssetID := range assetIDs {
+		assetID := strings.TrimSpace(rawAssetID)
+		if assetID == "" {
+			continue
+		}
+		if _, exists := seen[assetID]; exists {
+			continue
+		}
+		seen[assetID] = struct{}{}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		inUse, err := TheaterAppearanceAssetInUse(model.GetDB(), asset.ID)
+		inUse, err := TheaterAppearanceAssetInUse(model.GetDB(), assetID)
 		if err != nil {
 			return err
 		}
@@ -607,11 +648,19 @@ func MarkTheaterAppearanceAssetOrphans(ctx context.Context) error {
 			now := time.Now()
 			updates["orphaned_at"] = &now
 		}
-		if err := model.GetDB().Model(&model.TheaterAppearanceAssetModel{}).Where("id = ?", asset.ID).Updates(updates).Error; err != nil {
-			return fmt.Errorf("mark appearance asset %s orphan: %w", asset.ID, err)
+		if err := model.GetDB().Model(&model.TheaterAppearanceAssetModel{}).Where("id = ?", assetID).Updates(updates).Error; err != nil {
+			return fmt.Errorf("mark appearance asset %s orphan: %w", assetID, err)
 		}
 	}
 	return nil
+}
+
+func MarkTheaterAppearanceAssetOrphans(ctx context.Context) error {
+	var assetIDs []string
+	if err := model.GetDB().Model(&model.TheaterAppearanceAssetModel{}).Where("deleted_at IS NULL").Pluck("id", &assetIDs).Error; err != nil {
+		return err
+	}
+	return reconcileTheaterAppearanceAssetOrphans(ctx, assetIDs)
 }
 
 func runTheaterAppearanceOrphanScanner(ctx context.Context) {

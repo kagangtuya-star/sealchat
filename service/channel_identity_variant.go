@@ -281,7 +281,7 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err := model.ChannelIdentityVariantUpsert(item); err != nil {
 		return nil, err
 	}
-	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), theaterPresentationPatchAssetIDs(input.TheaterPresentation)); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -312,6 +312,10 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	item, err := ChannelIdentityVariantGetForUser(ownerUserID, input.ChannelID, variantID)
 	if err != nil {
 		return nil, err
+	}
+	affectedAssetIDs := []string{}
+	if patch, exists := variantTheaterPresentationPatch(item); exists {
+		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
 	}
 	identity, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID)
 	if err != nil {
@@ -364,7 +368,10 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return nil, err
 	}
-	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+	if patch, exists := variantTheaterPresentationPatch(updated); exists {
+		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+	}
+	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
 		return nil, err
 	}
 	return updated, nil
@@ -379,10 +386,14 @@ func ChannelIdentityVariantDeleteWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return err
 	}
+	affectedAssetIDs := []string{}
+	if patch, exists := variantTheaterPresentationPatch(item); exists {
+		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+	}
 	if err := model.ChannelIdentityVariantDelete(item.ID); err != nil {
 		return err
 	}
-	return MarkTheaterAppearanceAssetOrphans(context.Background())
+	return reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs)
 }
 
 func ChannelIdentityVariantReorder(userID string, channelID string, identityID string, ids []string) error {

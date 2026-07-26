@@ -299,6 +299,7 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return nil, err
 	}
+	affectedAssetIDs := theaterPresentationAssetIDs(identity.TheaterPresentation)
 	if strings.TrimSpace(operatorUserID) == "" {
 		operatorUserID = ownerUserID
 	}
@@ -370,7 +371,8 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 			return nil, err
 		}
 	}
-	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+	affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(updated.TheaterPresentation)...)
+	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
 		return nil, err
 	}
 	return updated, nil
@@ -390,6 +392,10 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 	}
 	if !identity.IsTemporary {
 		return nil, errors.New("仅临时身份支持替换式编辑")
+	}
+	affectedAssetIDs, err := channelIdentityReferencedTheaterAssetIDs(identity)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(operatorUserID) == "" {
 		operatorUserID = ownerUserID
@@ -546,7 +552,8 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 	if err != nil {
 		return nil, err
 	}
-	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+	affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(result.Item.TheaterPresentation)...)
+	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -558,6 +565,10 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 
 func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, channelID string, identityID string) error {
 	identity, err := model.ChannelIdentityValidateOwnership(identityID, ownerUserID, channelID)
+	if err != nil {
+		return err
+	}
+	affectedAssetIDs, err := channelIdentityReferencedTheaterAssetIDs(identity)
 	if err != nil {
 		return err
 	}
@@ -587,7 +598,24 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 			}
 		}
 	}
-	return MarkTheaterAppearanceAssetOrphans(context.Background())
+	return reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs)
+}
+
+func channelIdentityReferencedTheaterAssetIDs(identity *model.ChannelIdentityModel) ([]string, error) {
+	if identity == nil {
+		return nil, nil
+	}
+	assetIDs := theaterPresentationAssetIDs(identity.TheaterPresentation)
+	variants, err := model.ChannelIdentityVariantListByIdentityID(identity.ChannelID, identity.UserID, identity.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, variant := range variants {
+		if patch, exists := variantTheaterPresentationPatch(variant); exists {
+			assetIDs = append(assetIDs, theaterPresentationPatchAssetIDs(patch)...)
+		}
+	}
+	return assetIDs, nil
 }
 
 func ChannelIdentityResolve(userID string, channelID string, identityID string) (*model.ChannelIdentityModel, error) {
