@@ -1,0 +1,170 @@
+name: Cleanup old GHCR versions
+
+on:
+  # 每月 1 日 UTC 03:23，即北京时间 11:23
+  schedule:
+    - cron: "23 3 1 * *"
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "仅预览，不实际删除"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cleanup-ghcr-sealchat
+  cancel-in-progress: false
+
+env:
+  PACKAGE_OWNER: ${{ github.repository_owner }}
+  PACKAGE_NAME: sealchat
+  KEEP_COUNT: "50"
+
+jobs:
+  cleanup:
+    name: Keep latest 50 versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: List and delete old package versions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+
+          echo "Package owner: ${PACKAGE_OWNER}"
+          echo "Package name: ${PACKAGE_NAME}"
+          echo "Keep count: ${KEEP_COUNT}"
+          echo "Dry run: ${DRY_RUN}"
+
+          # 自动判断 Package 属于个人账户还是组织账户
+          OWNER_TYPE="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/users/${PACKAGE_OWNER}" \
+              --jq '.type'
+          )"
+
+          if [[ "${OWNER_TYPE}" == "Organization" ]]; then
+            API_BASE="/orgs/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          else
+            API_BASE="/users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          fi
+
+          echo "Owner type: ${OWNER_TYPE}"
+          echo "API endpoint: ${API_BASE}"
+
+          # 获取全部分页。输出结构为：每一页对应一个数组。
+          gh api \
+            --paginate \
+            --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${API_BASE}?per_page=100" \
+            > package-version-pages.json
+
+          # 合并分页，并按创建时间从新到旧排序。
+          jq '
+            [.[][]]
+            | sort_by(.created_at)
+            | reverse
+          ' package-version-pages.json > package-versions.json
+
+          TOTAL_COUNT="$(jq 'length' package-versions.json)"
+
+          if (( TOTAL_COUNT > KEEP_COUNT )); then
+            DELETE_COUNT=$((TOTAL_COUNT - KEEP_COUNT))
+          else
+            DELETE_COUNT=0
+          fi
+
+          echo
+          echo "Total versions: ${TOTAL_COUNT}"
+          echo "Versions to keep: $((TOTAL_COUNT < KEEP_COUNT ? TOTAL_COUNT : KEEP_COUNT))"
+          echo "Versions to delete: ${DELETE_COUNT}"
+          echo
+
+          {
+            echo "## GHCR 清理结果"
+            echo
+            echo "- Package：\`ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}\`"
+            echo "- 当前版本总数：${TOTAL_COUNT}"
+            echo "- 保留最近版本：$((TOTAL_COUNT < KEEP_COUNT ? TOTAL_COUNT : KEEP_COUNT))"
+            echo "- 待删除旧版本：${DELETE_COUNT}"
+            echo "- 模式：$([[ \"${DRY_RUN}\" == \"true\" ]] && echo 'Dry run' || echo '实际删除')"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if (( DELETE_COUNT == 0 )); then
+            echo "版本数量未超过 ${KEEP_COUNT}，不需要清理。"
+            exit 0
+          fi
+
+          # 排除排序后的前 KEEP_COUNT 个版本，生成删除清单。
+          jq -r \
+            --argjson keep "${KEEP_COUNT}" \
+            '
+              .[$keep:][]
+              | [
+                  (.id | tostring),
+                  .created_at,
+                  .name,
+                  ((.metadata.container.tags // []) | join(","))
+                ]
+              | @tsv
+            ' package-versions.json > versions-to-delete.tsv
+
+          echo "待删除版本："
+          echo
+
+          {
+            echo "### 版本明细"
+            echo
+            echo "| 操作 | 创建时间 | 标签 | Digest | Version ID |"
+            echo "|---|---|---|---|---|"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          while IFS=$'\t' read -r VERSION_ID CREATED_AT DIGEST TAGS; do
+            if [[ -z "${TAGS}" ]]; then
+              TAGS="untagged"
+            fi
+
+            if [[ "${DRY_RUN}" == "true" ]]; then
+              ACTION_TEXT="预览"
+              echo "[预览] id=${VERSION_ID} created=${CREATED_AT} tags=${TAGS} digest=${DIGEST}"
+            else
+              ACTION_TEXT="删除"
+
+              echo "[删除] id=${VERSION_ID} created=${CREATED_AT} tags=${TAGS} digest=${DIGEST}"
+
+              gh api \
+                --method DELETE \
+                --silent \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "${API_BASE}/${VERSION_ID}"
+            fi
+
+            SHORT_DIGEST="${DIGEST:0:24}"
+
+            echo "| ${ACTION_TEXT} | ${CREATED_AT} | \`${TAGS}\` | \`${SHORT_DIGEST}\` | \`${VERSION_ID}\` |" \
+              >> "${GITHUB_STEP_SUMMARY}"
+
+          done < versions-to-delete.tsv
+
+          echo
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "预览完成，没有删除任何版本。"
+          else
+            echo "清理完成，共删除 ${DELETE_COUNT} 个版本。"
+          fi
