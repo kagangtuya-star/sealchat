@@ -3111,7 +3111,9 @@ const captureSceneTransitionOverlay = () => {
   overlay.append(snapshot)
   const textOverlay = viewportRef.value.querySelector<HTMLElement>('.theater-scene-visual .theater-text-overlay')
   if (textOverlay) overlay.append(textOverlay.cloneNode(true))
-  viewportRef.value.append(overlay)
+  // Keep previous scene beneath incoming scene. Its exit animation becomes a true
+  // backdrop instead of flattening local objects above target scene layers.
+  viewportRef.value.insertBefore(overlay, sceneVisualRef.value)
   return overlay
 }
 
@@ -3141,28 +3143,9 @@ const clearSceneCompositeTransition = () => {
   resetSceneVisualStyle()
 }
 
-const stageObjectTransitionKey = (object: StageObject) => {
-  const value = object.metadata?.transitionKey
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
-}
-
-const stageObjectFallbackKey = (object: StageObject) => `${object.type}\u0000${object.name.trim().toLocaleLowerCase()}`
-
 const stageTextVisualElement = (objectId: string) => Array.from(
   sceneVisualRef.value?.querySelectorAll<HTMLElement>('[data-stage-object-id]') || [],
 ).find((element) => element.dataset.stageObjectId === objectId) || null
-
-const uniqueObjectIndex = (objects: StageObject[], key: (object: StageObject) => string) => {
-  const grouped = new Map<string, StageObject[]>()
-  objects.forEach((object) => {
-    const value = key(object)
-    if (!value) return
-    grouped.set(value, [...(grouped.get(value) || []), object])
-  })
-  return new Map(Array.from(grouped.entries())
-    .filter(([, entries]) => entries.length === 1)
-    .map(([value, entries]) => [value, entries[0]]))
-}
 
 const queueSceneEntrances = (sceneId: string, includePersistent = false) => {
   const scene = props.store.state.scenes[sceneId]
@@ -3210,42 +3193,6 @@ const playPendingSceneEntrances = (sceneId: string) => {
     }
     playStageObjectEntrance(object, node)
   })
-}
-
-const matchSceneMorphObjects = (previous: Map<string, SceneMorphItem>, next: StageObject[]) => {
-  const matches = new Map<string, SceneMorphItem>()
-  const used = new Set<string>()
-  const previousObjects = Array.from(previous.values()).map((item) => item.object)
-  const previousTransitionKeys = uniqueObjectIndex(previousObjects, stageObjectTransitionKey)
-  const nextTransitionKeys = uniqueObjectIndex(next, stageObjectTransitionKey)
-
-  next.forEach((object) => {
-    const key = stageObjectTransitionKey(object)
-    if (!key || nextTransitionKeys.get(key)?.id !== object.id) return
-    const candidate = previousTransitionKeys.get(key)
-    if (!candidate || used.has(candidate.id)) return
-    matches.set(object.id, previous.get(candidate.id)!)
-    used.add(candidate.id)
-  })
-  next.forEach((object) => {
-    if (matches.has(object.id) || used.has(object.id) || !previous.has(object.id)) return
-    matches.set(object.id, previous.get(object.id)!)
-    used.add(object.id)
-  })
-
-  const unmatchedPrevious = previousObjects.filter((object) => !used.has(object.id))
-  const unmatchedNext = next.filter((object) => !matches.has(object.id))
-  const previousFallback = uniqueObjectIndex(unmatchedPrevious, stageObjectFallbackKey)
-  const nextFallback = uniqueObjectIndex(unmatchedNext, stageObjectFallbackKey)
-  unmatchedNext.forEach((object) => {
-    const key = stageObjectFallbackKey(object)
-    if (nextFallback.get(key)?.id !== object.id) return
-    const candidate = previousFallback.get(key)
-    if (!candidate || used.has(candidate.id)) return
-    matches.set(object.id, previous.get(candidate.id)!)
-    used.add(candidate.id)
-  })
-  return matches
 }
 
 const finishSceneMorph = () => {
@@ -3320,11 +3267,16 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSce
       const node = objectNodes.get(object.id)
       if (!node) return
       const root = !object.parentId || !previousSceneObjects[object.parentId]
-      const ghost = root ? node.clone({ listening: false }) as Konva.Group : null
+      // Scene-local ghosts remain hidden; the full-scene transition overlay preserves
+      // their stacking without lifting individual objects into morph layer.
+      const ghost = root ? node.clone({ listening: false, visible: false }) as Konva.Group : null
       if (ghost) sceneMorphRoot!.add(ghost)
       const textElement = root ? stageTextVisualElement(object.id) : null
       const textGhost = textElement ? textElement.cloneNode(true) as HTMLElement : null
-      if (textGhost) sceneMorphTextCamera?.append(textGhost)
+      if (textGhost) {
+        textGhost.style.visibility = 'hidden'
+        sceneMorphTextCamera?.append(textGhost)
+      }
       previous.set(object.id, {
         object: { ...object, transform: { ...object.transform }, metadata: { ...object.metadata } },
         visual: {
@@ -3367,7 +3319,9 @@ const primeSceneMorphTargets = () => {
   if (!snapshot || snapshot.started || snapshot.sceneId !== props.store.state.activeSceneId) return
   const sceneObjects = Object.values(props.store.state.liveState.sceneObjects)
     .filter((object) => !isTheaterEffectObject(object))
-  snapshot.matches = matchSceneMorphObjects(snapshot.previous, sceneObjects)
+  // Scene-local objects must not enter the global morph overlay. Scene-fixed
+  // objects remain mounted separately and therefore need no shared-element clone.
+  snapshot.matches.clear()
   snapshot.targetAttrs.clear()
   snapshot.targetGhosts.forEach((ghost) => ghost.destroy())
   snapshot.targetGhosts.clear()
@@ -3406,6 +3360,8 @@ const primeSceneMorphTargets = () => {
       snapshot.matches.delete(object.id)
       return
     }
+    previous.ghost.visible(true)
+    previous.textGhost?.style.removeProperty('visibility')
     const targetGhost = node.clone({ listening: false }) as Konva.Group
     targetGhost.setAttrs({
       x: previous.visual.x,
@@ -7318,7 +7274,7 @@ onBeforeUnmount(() => {
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
 .theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
-.theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
+.theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }
 .theater-scene-morph-overlay { position: absolute; z-index: 2; inset: 0; overflow: hidden; pointer-events: none; }
 .theater-scene-morph-overlay :deep(.konvajs-content), .theater-scene-morph-overlay :deep(canvas) { position: absolute !important; inset: 0; pointer-events: none !important; }
