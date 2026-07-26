@@ -50,8 +50,10 @@ export interface TheaterEffectConfig {
   keywords: string[]
   targetActorName: string | null
   durationMs: number
+  fadeOut: boolean
   cooldownMs: number
   media: StageImageRef | null
+  mediaLoopCount?: number
   audio: TheaterEffectAudioRef | null
   builtin: TheaterEffectBuiltinConfig
 }
@@ -77,6 +79,7 @@ export const createDefaultTheaterEffectConfig = (kind: TheaterEffectKind = 'buil
   keywords: [],
   targetActorName: null,
   durationMs: 3500,
+  fadeOut: false,
   cooldownMs: 0,
   media: null,
   audio: null,
@@ -119,6 +122,11 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
   const media = value.media && typeof value.media === 'object' && typeof value.media.url === 'string'
     ? value.media as StageImageRef
     : null
+  const mediaLoopCount = typeof value.mediaLoopCount === 'number'
+    && Number.isInteger(value.mediaLoopCount)
+    && value.mediaLoopCount > 0
+    ? Math.min(65_535, value.mediaLoopCount)
+    : undefined
   const rawAudio = value.audio && typeof value.audio === 'object'
     ? value.audio as Partial<TheaterEffectAudioRef>
     : null
@@ -138,8 +146,10 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
       ? value.targetActorName.trim().slice(0, 512)
       : null,
     durationMs: Math.round(finiteRange(value.durationMs, fallback.durationMs, 300, 30_000)),
+    fadeOut: value.fadeOut === true,
     cooldownMs: Math.round(finiteRange(value.cooldownMs, fallback.cooldownMs, 0, 300_000)),
     media,
+    ...(mediaLoopCount ? { mediaLoopCount } : {}),
     audio,
     builtin: {
       theme,

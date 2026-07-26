@@ -49,6 +49,7 @@ const objectStyle = (playback: TheaterEffectPlayback) => {
     height: `${transform.height}px`,
     transform: `rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
     zIndex: String(100 + Math.round(transform.z * 10 + transform.order)),
+    '--effect-duration': `${playback.config.durationMs}ms`,
   }
 }
 
@@ -71,6 +72,22 @@ const mediaUrl = (playback: TheaterEffectPlayback) => {
 const mediaIsVideo = (playback: TheaterEffectPlayback) => (
   (playback.config.media || playback.object.image)?.mimeType?.startsWith('video/') === true
 )
+
+const mediaLoopCount = (playback: TheaterEffectPlayback) => playback.config.mediaLoopCount ?? null
+
+const completedVideoLoops = new WeakMap<HTMLVideoElement, number>()
+
+const handleVideoEnded = (event: Event, playback: TheaterEffectPlayback) => {
+  const video = event.currentTarget
+  if (!(video instanceof HTMLVideoElement)) return
+  const loopCount = mediaLoopCount(playback)
+  if (loopCount === null) return
+  const completed = (completedVideoLoops.get(video) || 0) + 1
+  completedVideoLoops.set(video, completed)
+  if (completed >= loopCount) return
+  video.currentTime = 0
+  void video.play().catch(() => {})
+}
 
 const selectedPlayback = computed<TheaterEffectPlayback | null>(() => {
   const object = props.selectedObject
@@ -175,6 +192,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
           'is-selected': playback.effectId === selectedObject?.id,
           'is-media-edit': editingTarget === 'media',
           'has-media': Boolean(mediaUrl(playback)),
+          'is-fade-out': playback.config.fadeOut && !playback.instanceId.startsWith('editor:'),
         }"
         :style="objectStyle(playback)"
         @pointerdown="beginGesture($event, 'move')"
@@ -190,7 +208,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
           @pointerup="endGesture"
           @pointercancel="endGesture"
         >
-          <video v-if="mediaUrl(playback) && mediaIsVideo(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" autoplay loop muted playsinline />
+          <video v-if="mediaUrl(playback) && mediaIsVideo(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" autoplay :loop="mediaLoopCount(playback) === null" muted playsinline @ended="handleVideoEnded($event, playback)" />
           <img v-else-if="mediaUrl(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" alt="" draggable="false">
           <span v-else-if="editing && playback.effectId === selectedObject?.id">未设置媒体</span>
         </div>
@@ -223,7 +241,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
             @pointerup="endGesture"
             @pointercancel="endGesture"
           >
-            <video v-if="mediaUrl(playback) && mediaIsVideo(playback)" :src="mediaUrl(playback)!" autoplay loop muted playsinline />
+            <video v-if="mediaUrl(playback) && mediaIsVideo(playback)" :src="mediaUrl(playback)!" autoplay :loop="mediaLoopCount(playback) === null" muted playsinline @ended="handleVideoEnded($event, playback)" />
             <img v-else-if="mediaUrl(playback)" :src="mediaUrl(playback)!" alt="" draggable="false">
           </div>
           <div class="theater-effect-cutin__content">
@@ -253,6 +271,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 .theater-effect-overlay { position: absolute; z-index: 9500; inset: 0; overflow: hidden; pointer-events: none; }
 .theater-effect-design-stage { position: absolute; top: 50%; left: 50%; transform-origin: center; }
 .theater-effect-object { position: absolute; transform-origin: center; contain: layout paint style; pointer-events: none; }
+.theater-effect-object.is-fade-out { animation: effect-fade-out var(--effect-duration) ease-out both; }
 .theater-effect-object.is-editor { opacity: .78; }
 .theater-effect-object.is-editor .theater-effect-cutin,
 .theater-effect-object.is-editor .theater-effect-cutin * { animation-delay: var(--effect-preview-delay) !important; animation-play-state: paused !important; }
@@ -294,6 +313,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 @keyframes effect-glitch-title { 0%, 100% { opacity: 0; transform: translateX(-10%); } 12%, 18%, 24%, 86% { opacity: 1; transform: translateX(0); } 15%, 21% { transform: translateX(12px); } }
 @keyframes effect-cleave { 0%, 18% { transform: rotate(-12deg) scaleX(0); } 28%, 80% { transform: rotate(-12deg) scaleX(1); } 100% { opacity: 0; transform: rotate(-12deg) scaleX(1); } }
 @keyframes effect-eclipse { 0%, 100% { opacity: 0; transform: scale(0); } 18%, 82% { opacity: 1; transform: scale(1); } }
+@keyframes effect-fade-out { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes effect-shake { 0%, 100% { transform: none; } 20% { transform: translate(var(--effect-shake), calc(0px - var(--effect-shake))); } 40% { transform: translate(calc(0px - var(--effect-shake)), var(--effect-shake)); } 60% { transform: translate(var(--effect-shake), var(--effect-shake)); } 80% { transform: translate(calc(0px - var(--effect-shake)), calc(0px - var(--effect-shake))); } }
 @media (prefers-reduced-motion: reduce) {
   .theater-effect-cutin *, .theater-effect-cutin::before, .theater-effect-cutin::after { animation-duration: 180ms !important; animation-iteration-count: 1 !important; }

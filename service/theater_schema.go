@@ -515,7 +515,7 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 	if !ok {
 		return theaterPayloadError("effect 配置缺失")
 	}
-	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "cooldownMs": true, "media": true, "audio": true, "builtin": true}
+	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "fadeOut": true, "cooldownMs": true, "media": true, "mediaLoopCount": true, "audio": true, "builtin": true}
 	for key := range effect {
 		if !allowed[key] {
 			return theaterPayloadError("effect 包含禁止字段: " + key)
@@ -555,6 +555,17 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		value, valid := theaterNumericValue(effect[name])
 		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
 			return theaterPayloadError("effect." + name + " 无效")
+		}
+	}
+	if fadeOut, exists := effect["fadeOut"]; exists {
+		if _, ok := fadeOut.(bool); !ok {
+			return theaterPayloadError("effect.fadeOut 无效")
+		}
+	}
+	if loopCount, exists := effect["mediaLoopCount"]; exists {
+		value, valid := theaterNumericValue(loopCount)
+		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < 1 || value > 65_535 || math.Trunc(value) != value {
+			return theaterPayloadError("effect.mediaLoopCount 无效")
 		}
 	}
 	if audio, exists := effect["audio"]; exists && audio != nil {

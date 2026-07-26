@@ -93,6 +93,7 @@ const selectedEffect = computed(() => {
 })
 const config = computed(() => selectedEffect.value ? theaterEffectConfigFromObject(selectedEffect.value) : null)
 const hasMedia = computed(() => Boolean(config.value?.media || selectedEffect.value?.image))
+const hasAnimatedMedia = computed(() => (config.value?.media || selectedEffect.value?.image)?.animated === true)
 const keywordDraft = ref('')
 const targetActorNameDraft = ref('')
 const audioInputRef = ref<HTMLInputElement | null>(null)
@@ -504,6 +505,7 @@ const handleAudioInput = (event: Event) => {
 
       <label>持续时间</label>
       <n-input-number :value="config.durationMs" :min="300" :max="30000" :step="100" @update:value="value => value !== null && editConfig('修改特效时长', next => { next.durationMs = value })" />
+      <n-checkbox class="theater-effect-editor__option" :checked="config.fadeOut" @update:checked="value => editConfig('修改特效渐变', next => { next.fadeOut = value })">结束时渐变不可见</n-checkbox>
 
       <label>冷却时间</label>
       <n-input-number :value="config.cooldownMs" :min="0" :max="300000" :step="500" @update:value="value => value !== null && editConfig('修改特效冷却', next => { next.cooldownMs = value })" />
@@ -515,6 +517,20 @@ const handleAudioInput = (event: Event) => {
           {{ hasMedia ? '图片' : '上传' }}
         </n-button>
       </div>
+
+      <template v-if="hasAnimatedMedia">
+        <label>触发时循环次数</label>
+        <n-input-number
+          :value="config.mediaLoopCount ?? null"
+          :min="1"
+          :max="65535"
+          :step="1"
+          :precision="0"
+          clearable
+          placeholder="无限播放"
+          @update:value="value => editConfig('修改特效循环次数', next => { if (value === null) delete next.mediaLoopCount; else next.mediaLoopCount = Math.min(65535, Math.max(1, Math.round(value))) })"
+        />
+      </template>
 
       <label>音效</label>
       <div class="theater-effect-audio-row">
@@ -574,7 +590,7 @@ const handleAudioInput = (event: Event) => {
 
         <label>媒体旋转</label>
         <n-input-number :value="config.builtin.mediaTransform.rotation" :min="-360" :max="360" @update:value="value => value !== null && editConfig('修改特效媒体', next => { next.builtin.mediaTransform.rotation = value })" />
-        <n-checkbox :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
+        <n-checkbox class="theater-effect-editor__option" :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
       </template>
 
       <template v-if="config.kind === 'media'">
@@ -582,7 +598,7 @@ const handleAudioInput = (event: Event) => {
         <n-slider :value="config.builtin.mediaTransform.scale" :min="0.1" :max="5" :step="0.05" @update:value="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.scale = value })" />
         <label>媒体旋转</label>
         <n-input-number :value="config.builtin.mediaTransform.rotation" :min="-360" :max="360" @update:value="value => value !== null && editConfig('修改特效媒体', next => { next.builtin.mediaTransform.rotation = value })" />
-        <n-checkbox :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
+        <n-checkbox class="theater-effect-editor__option" :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
       </template>
 
       <label>生效范围</label>
@@ -639,6 +655,7 @@ const handleAudioInput = (event: Event) => {
 .theater-effect-empty { padding: 22px; color: var(--sc-text-secondary); text-align: center; }
 .theater-effect-editor { min-height: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 8px; overflow: auto; padding: 10px; }
 .theater-effect-editor > label { color: var(--sc-text-secondary); font-size: 12px; }
+.theater-effect-editor__option { grid-column: 1 / -1; min-width: 0; }
 .theater-effect-media-row, .theater-effect-actions { display: flex; gap: 5px; }
 .theater-effect-audio-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
 .theater-effect-audio-input { display: none; }

@@ -1233,6 +1233,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       } else {
         const config = normalizeTheaterEffectConfig(object.content?.effect)
         config.media = null
+        delete config.mediaLoopCount
         object.content = { ...object.content, effect: config }
       }
       return true
@@ -1257,6 +1258,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       object.content = { ...object.content, image }
     } else if (effectConfig) {
       effectConfig.media = image
+      if (image.animated && image.loopCount) effectConfig.mediaLoopCount = image.loopCount
+      else delete effectConfig.mediaLoopCount
       if (initializeMediaFrame && dimensions) {
         object.transform = {
           ...object.transform,
