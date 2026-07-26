@@ -379,6 +379,21 @@ const stageSurfaceStyleSchema = z.strictObject({
   }),
 })
 
+const sceneTransitionTypeSchema = z.enum(['none', 'fade', 'slide', 'dissolve', 'zoom', 'mask', 'flip', 'blur', 'rotate', 'curtain'])
+const sceneTransitionPhaseSchema = z.strictObject({
+  type: sceneTransitionTypeSchema,
+  durationMs: z.number().int().min(20).max(5_000),
+})
+const sceneTransitionSchema = z.strictObject({
+  curtain: z.boolean(),
+  enter: sceneTransitionPhaseSchema,
+  exit: sceneTransitionPhaseSchema,
+})
+const legacySceneTransitionSchema = z.strictObject({
+  type: z.enum(['none', 'crossfade']),
+  durationMs: z.number().int().min(0).max(60_000).optional(),
+})
+
 const stageSceneStateSchema = z.strictObject({
   background: stageImageRefSchema.nullable(),
   foreground: stageImageRefSchema.nullable(),
@@ -394,10 +409,7 @@ const stageSceneStateSchema = z.strictObject({
   gridSize: z.number().finite().positive(),
   alignWithGrid: z.boolean(),
   sceneObjects: z.record(z.string(), stageObjectSchema),
-  transition: z.strictObject({
-    type: z.enum(['none', 'crossfade']),
-    durationMs: z.number().int().min(0).max(60_000),
-  }),
+  transition: sceneTransitionSchema,
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -468,10 +480,7 @@ export const stageSceneReadResultSchema = z.union([
 
 export const applyScenePayloadSchema = z.strictObject({
   sceneId: nonEmptyIdSchema,
-  transition: z.strictObject({
-    type: z.enum(['none', 'crossfade']),
-    durationMs: z.number().int().min(0).max(60_000).optional(),
-  }).optional(),
+  transition: z.union([sceneTransitionSchema, legacySceneTransitionSchema]).optional(),
 })
 
 export const applySceneResultSchema = z.union([
@@ -485,10 +494,7 @@ export const applySceneResultSchema = z.union([
 export const sceneAppliedPayloadSchema = z.strictObject({
   sceneId: nonEmptyIdSchema,
   previousSceneId: nonEmptyIdSchema.nullable(),
-  transition: z.strictObject({
-    type: z.enum(['none', 'crossfade']),
-    durationMs: z.number().int().min(0).max(60_000).optional(),
-  }).optional(),
+  transition: z.union([sceneTransitionSchema, legacySceneTransitionSchema]).optional(),
 })
 
 export const stageActionTriggeredPayloadSchema = z.strictObject({

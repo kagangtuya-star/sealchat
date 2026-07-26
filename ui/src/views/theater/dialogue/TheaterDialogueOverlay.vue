@@ -16,6 +16,7 @@ import {
 } from './theater-dialogue-runtime'
 import '@/components/theater-presentation/theaterComposition.css'
 import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCache'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 
 const props = defineProps<{
   runtime: TheaterDialogueRuntime
@@ -161,7 +162,7 @@ const skip = () => {
   props.runtime.skip()
 }
 
-const updateReducedMotion = () => props.runtime.setReducedMotion(Boolean(motionQuery?.matches))
+const updateReducedMotion = () => props.runtime.setReducedMotion(resolveTheaterReducedMotion().effectiveReducedMotion)
 
 onMounted(() => {
   unsubscribe = props.runtime.subscribe((value) => { snapshot.value = value })

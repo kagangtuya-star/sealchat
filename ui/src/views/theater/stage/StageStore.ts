@@ -1,9 +1,11 @@
 import { computed, reactive, watch, type ComputedRef } from 'vue'
 import {
   createDefaultStageSurfaceStyle,
+  createDefaultStageSceneTransition,
   isStageActionTarget,
   isSafeStageImageUrl,
   normalizeStageEntranceConfig,
+  normalizeStageSceneTransition,
   normalizeStageActionSchedule,
   normalizeStageSurfaceStyle,
   type StageAction,
@@ -16,6 +18,7 @@ import {
   type StageObjectTransform,
   type StageObjectType,
   type StageScene,
+  type StageSceneTransition,
   type StageSurfaceStylePatch,
   type StageSurfaceTarget,
   type StageWorkspaceState,
@@ -147,7 +150,7 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
   gridSize: 1,
   alignWithGrid: false,
   sceneObjects,
-  transition: { type: 'none', durationMs: 0 },
+  transition: createDefaultStageSceneTransition(),
 })
 
 const createScene = (name: string, order: number, color: string): StageScene => {
@@ -346,12 +349,7 @@ const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallback
   gridSize: typeof input?.gridSize === 'number' && input.gridSize > 0 ? input.gridSize : 1,
   alignWithGrid: input?.alignWithGrid === true,
   sceneObjects: normalizeObjects(input?.sceneObjects),
-  transition: {
-    type: input?.transition?.type === 'crossfade' ? 'crossfade' : 'none',
-    durationMs: typeof input?.transition?.durationMs === 'number' && input.transition.durationMs >= 0
-      ? input.transition.durationMs
-      : 0,
-  },
+  transition: normalizeStageSceneTransition(input?.transition),
   serverState: input?.serverState && typeof input.serverState === 'object' ? input.serverState : {},
 })
 
@@ -374,6 +372,7 @@ export interface TheaterStageStore {
   duplicateScene: () => { sceneId: string, objectIdMap: ReadonlyMap<string, string> }
   removeScene: () => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
+  updateSceneTransition: (sceneId: string, transition: StageSceneTransition) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
   addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
@@ -640,6 +639,15 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (scene.name === nextName && scene.switchText === switchText) return false
     scene.name = nextName
     scene.switchText = switchText
+    return true
+  }
+
+  const updateSceneTransition = (sceneId: string, transition: StageSceneTransition) => {
+    const scene = state.scenes[sceneId]
+    if (!scene) return false
+    const normalized = normalizeStageSceneTransition(transition)
+    scene.state.transition = normalized
+    if (sceneId === state.activeSceneId) state.liveState.transition = clone(normalized)
     return true
   }
 
@@ -1371,6 +1379,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setObjectFlag,
     selectScene,
     updateSceneDetails,
+    updateSceneTransition,
     reorderScenes,
     addScene,
     duplicateScene,

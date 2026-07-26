@@ -52,6 +52,14 @@ type theaterSceneApplyPayload struct {
 }
 
 type theaterTransitionPayload struct {
+	Type       string                         `json:"type,omitempty"`
+	DurationMS *int64                         `json:"durationMs,omitempty"`
+	Curtain    *bool                          `json:"curtain,omitempty"`
+	Enter      *theaterTransitionPhasePayload `json:"enter,omitempty"`
+	Exit       *theaterTransitionPhasePayload `json:"exit,omitempty"`
+}
+
+type theaterTransitionPhasePayload struct {
 	Type       string `json:"type"`
 	DurationMS int64  `json:"durationMs"`
 }
@@ -225,11 +233,24 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 			return err
 		}
 		if payload.Transition != nil {
-			if payload.Transition.Type != "none" && payload.Transition.Type != "crossfade" {
-				return theaterPayloadError("transition.type 无效")
-			}
-			if payload.Transition.DurationMS < 0 || payload.Transition.DurationMS > 60000 {
-				return theaterPayloadError("transition.durationMs 超限")
+			transition := payload.Transition
+			if transition.Enter != nil || transition.Exit != nil {
+				if transition.Enter == nil || transition.Exit == nil || transition.Curtain == nil || transition.Type != "" || transition.DurationMS != nil {
+					return theaterPayloadError("transition 结构无效")
+				}
+				if err := validateTheaterTransitionPhase(transition.Enter, "transition.enter"); err != nil {
+					return err
+				}
+				if err := validateTheaterTransitionPhase(transition.Exit, "transition.exit"); err != nil {
+					return err
+				}
+			} else {
+				if transition.Curtain != nil || (transition.Type != "none" && transition.Type != "crossfade") {
+					return theaterPayloadError("transition.type 无效")
+				}
+				if transition.DurationMS != nil && (*transition.DurationMS < 0 || *transition.DurationMS > 60000) {
+					return theaterPayloadError("transition.durationMs 超限")
+				}
 			}
 		}
 	case *theaterObjectCreatePayload:
@@ -284,6 +305,20 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 		if payload.TargetType != "room" && strings.TrimSpace(payload.TargetID) == "" {
 			return theaterPayloadError("targetId 必填")
 		}
+	}
+	return nil
+}
+
+func validateTheaterTransitionPhase(phase *theaterTransitionPhasePayload, field string) error {
+	allowed := map[string]bool{
+		"none": true, "fade": true, "slide": true, "dissolve": true, "zoom": true,
+		"mask": true, "flip": true, "blur": true, "rotate": true, "curtain": true,
+	}
+	if phase == nil || !allowed[phase.Type] {
+		return theaterPayloadError(field + ".type 无效")
+	}
+	if phase.DurationMS < 20 || phase.DurationMS > 5000 {
+		return theaterPayloadError(field + ".durationMs 超限")
 	}
 	return nil
 }

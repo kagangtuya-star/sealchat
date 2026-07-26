@@ -165,6 +165,70 @@ export interface StageImageRef {
   loopCount?: number
 }
 
+export const stageSceneTransitionTypes = [
+  'none',
+  'fade',
+  'slide',
+  'dissolve',
+  'zoom',
+  'mask',
+  'flip',
+  'blur',
+  'rotate',
+  'curtain',
+] as const
+export type StageSceneTransitionType = typeof stageSceneTransitionTypes[number]
+
+export interface StageSceneTransitionPhase {
+  type: StageSceneTransitionType
+  durationMs: number
+}
+
+export interface StageSceneTransition {
+  curtain: boolean
+  enter: StageSceneTransitionPhase
+  exit: StageSceneTransitionPhase
+}
+
+export const STAGE_SCENE_TRANSITION_MIN_DURATION_MS = 20
+export const STAGE_SCENE_TRANSITION_MAX_DURATION_MS = 5_000
+
+export const createDefaultStageSceneTransition = (): StageSceneTransition => ({
+  curtain: true,
+  enter: { type: 'none', durationMs: 400 },
+  exit: { type: 'none', durationMs: 400 },
+})
+
+const normalizeStageSceneTransitionPhase = (input: unknown, fallback: StageSceneTransitionPhase): StageSceneTransitionPhase => {
+  const value = input && typeof input === 'object' ? input as Partial<StageSceneTransitionPhase> : {}
+  const durationMs = typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
+    ? Math.round(Math.min(STAGE_SCENE_TRANSITION_MAX_DURATION_MS, Math.max(STAGE_SCENE_TRANSITION_MIN_DURATION_MS, value.durationMs)))
+    : fallback.durationMs
+  return {
+    type: stageSceneTransitionTypes.includes(value.type as StageSceneTransitionType)
+      ? value.type as StageSceneTransitionType
+      : fallback.type,
+    durationMs,
+  }
+}
+
+export const normalizeStageSceneTransition = (input: unknown): StageSceneTransition => {
+  const fallback = createDefaultStageSceneTransition()
+  const value = input && typeof input === 'object'
+    ? input as Partial<StageSceneTransition> & { type?: string, durationMs?: number }
+    : {}
+  if (value.type === 'crossfade') {
+    const phase = normalizeStageSceneTransitionPhase({ type: 'fade', durationMs: value.durationMs }, fallback.enter)
+    return { curtain: value.curtain !== false, enter: phase, exit: { ...phase } }
+  }
+  if (value.type === 'none') return fallback
+  return {
+    curtain: value.curtain !== false,
+    enter: normalizeStageSceneTransitionPhase(value.enter, fallback.enter),
+    exit: normalizeStageSceneTransitionPhase(value.exit, fallback.exit),
+  }
+}
+
 export const stageEntrancePresets = ['none', 'fade', 'slide', 'zoom', 'mask'] as const
 export type StageEntrancePreset = typeof stageEntrancePresets[number]
 
@@ -308,10 +372,7 @@ export interface StageLiveState {
   gridSize: number
   alignWithGrid: boolean
   sceneObjects: Record<string, StageObject>
-  transition: {
-    type: 'none' | 'crossfade'
-    durationMs: number
-  }
+  transition: StageSceneTransition
   serverState?: Record<string, unknown>
 }
 

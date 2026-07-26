@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
@@ -204,7 +204,6 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
   const raw = asObject(value)
   const grid = asObject(raw.grid)
   const surfaceStyles = asObject(raw.surfaceStyles)
-  const transition = asObject(raw.transition)
   const legacyFit: StageSurfaceFit = grid.objectFit === 'fill' || grid.objectFit === 'contain' ? grid.objectFit : 'cover'
   return {
     background: imageRef(raw.background),
@@ -221,10 +220,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
     gridSize: Math.max(0.01, finite(grid.size, 1)),
     alignWithGrid: grid.align === true,
     sceneObjects: objects,
-    transition: {
-      type: transition.type === 'crossfade' ? 'crossfade' : 'none',
-      durationMs: Math.max(0, finite(transition.durationMs, 0)),
-    },
+    transition: normalizeStageSceneTransition(raw.transition),
     serverState: clone(raw),
   }
 }

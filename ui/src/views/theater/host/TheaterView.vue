@@ -621,7 +621,7 @@ function handleDice3DMessage(event: MessageEvent) {
         v-if="!isNarrow && !chatHidden"
         class="theater-host-divider"
         role="separator"
-        aria-label="调整幕布与聊天宽度"
+        aria-label="调整舞台与聊天宽度"
         @pointerdown="handleDividerDown"
         @pointermove="handleDividerMove"
         @pointerup="stopDivider"
@@ -656,7 +656,7 @@ function handleDice3DMessage(event: MessageEvent) {
 </template>
 
 <style scoped>
-.theater-host { height: 100vh; width: 100vw; overflow: hidden; color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-page, #141418); }
+.theater-host { position: relative; height: 100vh; width: 100vw; overflow: hidden; color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-page, #141418); }
 .theater-host-layout { width: 100%; height: 100%; display: flex; overflow: hidden; }
 .theater-host-stage, .theater-host-chat { min-width: 0; height: 100%; overflow: hidden; }
 .theater-host-stage { position: relative; }

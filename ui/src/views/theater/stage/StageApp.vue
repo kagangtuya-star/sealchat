@@ -54,6 +54,8 @@ import {
   STAGE_ENTRANCE_MAX_DURATION_MS,
   createDefaultStageActionSchedule,
   normalizeStageEntranceConfig,
+  normalizeStageSceneTransition,
+  stageSceneTransitionTypes,
   type StageEntranceConfig,
   type StageEntrancePlayback,
   type StageEntrancePreset,
@@ -69,6 +71,9 @@ import {
   type StagePointerTrace,
   type StagePointerTraceInput,
   type StageScene,
+  type StageSceneTransition,
+  type StageSceneTransitionPhase,
+  type StageSceneTransitionType,
   type StageSurfaceFit,
   type StageSurfaceStyle,
   type StageSurfaceTarget,
@@ -78,6 +83,7 @@ import { syncStageObjectHierarchy } from './stage-layering'
 import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
+import { stageSceneTransitionKeyframes, stageSceneTransitionOptions } from './stage-scene-transition'
 import {
   resolveTheaterStageMediaLocation,
   theaterResourceContentPath,
@@ -93,6 +99,7 @@ import StageTextOverlay from './StageTextOverlay.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
@@ -159,6 +166,7 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
+const sceneVisualRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
 const selectionQuickBar = reactive({ visible: false, left: 0, top: 0 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
@@ -931,6 +939,22 @@ const sceneEditMode = ref(false)
 const editingSceneId = ref<string | null>(null)
 const editingSceneName = ref('')
 const editingSceneSwitchText = ref('')
+const editingSceneTransition = ref<StageSceneTransition>(normalizeStageSceneTransition(null))
+const sceneTransitionTypeOptions = stageSceneTransitionTypes.map((type) => ({
+  value: type,
+  label: ({
+    none: '无',
+    fade: '淡入淡出',
+    slide: '滑动',
+    dissolve: '溶解',
+    zoom: '缩放',
+    mask: '遮罩',
+    flip: '翻转',
+    blur: '模糊',
+    rotate: '旋转',
+    curtain: '黑幕开合',
+  } satisfies Record<StageSceneTransitionType, string>)[type],
+}))
 const sceneListRef = ref<HTMLDivElement | null>(null)
 const draggedSceneId = ref<string | null>(null)
 type SceneDropPlacement = 'before' | 'after'
@@ -949,12 +973,38 @@ const beginSceneEdit = (scene: StageScene) => {
   editingSceneId.value = scene.id
   editingSceneName.value = scene.name
   editingSceneSwitchText.value = scene.switchText
+  editingSceneTransition.value = normalizeStageSceneTransition(scene.state.transition)
 }
 
 const closeSceneEditor = () => {
   editingSceneId.value = null
   editingSceneName.value = ''
   editingSceneSwitchText.value = ''
+  editingSceneTransition.value = normalizeStageSceneTransition(null)
+}
+
+const updateEditingSceneTransition = (
+  direction: 'enter' | 'exit',
+  patch: Partial<StageSceneTransitionPhase>,
+) => {
+  const current = editingSceneTransition.value
+  if (patch.type === 'curtain') {
+    editingSceneTransition.value = {
+      curtain: current.curtain,
+      enter: { ...current.enter, type: 'curtain' },
+      exit: { ...current.exit, type: 'curtain' },
+    }
+    return
+  }
+  const phase = { ...current[direction], ...patch }
+  editingSceneTransition.value = direction === 'enter'
+    ? { curtain: current.curtain, enter: phase, exit: { ...current.exit } }
+    : { curtain: current.curtain, enter: { ...current.enter }, exit: phase }
+}
+
+const updateEditingSceneTransitionDuration = (direction: 'enter' | 'exit', value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return
+  updateEditingSceneTransition(direction, { durationMs: value })
 }
 
 const toggleSceneEditMode = () => {
@@ -993,6 +1043,12 @@ const saveSceneDetails = () => {
     return
   }
   props.store.updateSceneDetails(sceneId, name, editingSceneSwitchText.value)
+  console.info('[TheaterTransition][Stage] config.save', {
+    at: Math.round(performance.now()),
+    sceneId,
+    transition: editingSceneTransition.value,
+  })
+  props.store.updateSceneTransition(sceneId, editingSceneTransition.value)
   closeSceneEditor()
 }
 
@@ -2717,7 +2773,7 @@ const releaseStageMedia = (source: StageMediaSource | null | undefined) => {
   activeAnimatedMedia.delete(source)
   if (isVideoSource(source)) {
     source.pause()
-    source.onloadedmetadata = null
+    source.onloadeddata = null
     source.onerror = null
     source.onended = null
     videoLoopStates.delete(source)
@@ -2812,8 +2868,10 @@ const loadStageMedia = (
     source.autoplay = false
     source.playsInline = true
     source.preload = 'auto'
-    source.onloadedmetadata = () => {
-      theaterMediaDebug('video loadedmetadata', { width: source.videoWidth, height: source.videoHeight, url: location.url })
+    source.onloadeddata = () => {
+      source.pause()
+      source.currentTime = 0
+      theaterMediaDebug('video loadeddata', { width: source.videoWidth, height: source.videoHeight, url: location.url })
       stageMediaRequestControllers.delete(source)
       onReady(source)
     }
@@ -2824,8 +2882,11 @@ const loadStageMedia = (
   } else {
     source.onload = () => {
       theaterMediaDebug('image load', { width: source.naturalWidth, height: source.naturalHeight, url: location.url })
-      stageMediaRequestControllers.delete(source)
-      onReady(source)
+      void source.decode().catch(() => undefined).then(() => {
+        if (controller.signal.aborted) return
+        stageMediaRequestControllers.delete(source)
+        onReady(source)
+      })
     }
     source.onerror = () => {
       theaterMediaDebug('image error', { url: location.url })
@@ -2937,13 +2998,13 @@ interface SceneMediaBatch {
   expected: Map<string, string>
   settled: Set<string>
   reveals: Array<() => void>
+  activations: Array<() => void>
   released: boolean
   ready: boolean
   timeout: number | null
 }
 
 let sceneMediaBatch: SceneMediaBatch | null = null
-const sceneTransitionDurationMs = ref(400)
 let sceneTransitionTimer: number | null = null
 
 interface SceneMorphVisual {
@@ -2980,6 +3041,87 @@ let pendingSceneEntrances: { sceneId: string, objectIds: Set<string> } | null = 
 const pendingTextEntranceIds = ref<string[]>([])
 const sceneMorphTextHidden = ref(false)
 const sceneMorphTextAnimating = ref(false)
+
+interface SceneCompositeTransition {
+  sceneId: string
+  overlay: HTMLDivElement | null
+  curtainOverlay: HTMLDivElement | null
+  enter: StageSceneTransitionPhase
+  exit: StageSceneTransitionPhase
+  animations: Animation[]
+  generation: number
+  started: boolean
+}
+
+let sceneCompositeTransition: SceneCompositeTransition | null = null
+let sceneTransitionGeneration = 0
+
+const sceneTransitionLog = (event: string, detail: Record<string, unknown> = {}) => {
+  console.info(`[TheaterTransition][Stage] ${event}`, {
+    at: Math.round(performance.now()),
+    activeSceneId: props.store.state.activeSceneId,
+    ...detail,
+  })
+}
+
+const resetSceneVisualStyle = () => {
+  const visual = sceneVisualRef.value
+  if (!visual) return
+  visual.style.removeProperty('visibility')
+  visual.style.removeProperty('opacity')
+  visual.style.removeProperty('transform')
+  visual.style.removeProperty('filter')
+  visual.style.removeProperty('clip-path')
+}
+
+const captureSceneTransitionOverlay = () => {
+  if (!stage || !viewportRef.value) return null
+  const interactionWasVisible = interactionLayer?.visible() !== false
+  interactionLayer?.hide()
+  interactionLayer?.draw()
+  const snapshot = stage.toCanvas({
+    width: stage.width(),
+    height: stage.height(),
+    pixelRatio: Math.min(2, window.devicePixelRatio || 1),
+  })
+  if (interactionWasVisible) interactionLayer?.show()
+  interactionLayer?.draw()
+  snapshot.style.width = '100%'
+  snapshot.style.height = '100%'
+  const overlay = document.createElement('div')
+  overlay.className = 'theater-scene-transition-overlay'
+  overlay.append(snapshot)
+  const textOverlay = viewportRef.value.querySelector<HTMLElement>('.theater-scene-visual .theater-text-overlay')
+  if (textOverlay) overlay.append(textOverlay.cloneNode(true))
+  viewportRef.value.append(overlay)
+  return overlay
+}
+
+const createSceneCurtainOverlay = () => {
+  if (!viewportRef.value) return null
+  const overlay = document.createElement('div')
+  overlay.className = 'theater-scene-curtain-overlay'
+  const left = document.createElement('i')
+  left.className = 'theater-scene-curtain-panel is-left'
+  const right = document.createElement('i')
+  right.className = 'theater-scene-curtain-panel is-right'
+  overlay.append(left, right)
+  viewportRef.value.append(overlay)
+  return overlay
+}
+
+const clearSceneCompositeTransition = () => {
+  const transition = sceneCompositeTransition
+  if (!transition) {
+    resetSceneVisualStyle()
+    return
+  }
+  transition.animations.forEach((animation) => animation.cancel())
+  transition.overlay?.remove()
+  transition.curtainOverlay?.remove()
+  sceneCompositeTransition = null
+  resetSceneVisualStyle()
+}
 
 const stageObjectTransitionKey = (object: StageObject) => {
   const value = object.metadata?.transitionKey
@@ -3040,6 +3182,10 @@ const playPendingSceneEntrances = (sceneId: string) => {
       finishObjectTransition(object, node)
       return
     }
+    if (object.type === 'image' && object.image) {
+      const source = node.findOne<Konva.Image>('.theater-object-image')?.image() as StageMediaSource | undefined
+      if (source) activateStageMedia(source, object.image)
+    }
     playStageObjectEntrance(object, node)
   })
 }
@@ -3088,6 +3234,7 @@ const finishSceneMorph = () => {
   sceneMorphTweens.forEach((tween) => tween.destroy())
   sceneMorphTweens = []
   const snapshot = sceneMorphSnapshot
+  const composite = sceneCompositeTransition
   if (snapshot) {
     snapshot.targetAttrs.forEach((attrs, objectId) => objectNodes.get(objectId)?.setAttrs(attrs))
     snapshot.previous.forEach((item) => item.ghost?.destroy())
@@ -3097,79 +3244,39 @@ const finishSceneMorph = () => {
   sceneMorphSnapshot = null
   sceneMorphTextHidden.value = false
   sceneMorphTextAnimating.value = false
+  clearSceneCompositeTransition()
   backgroundLayer?.batchDraw()
   drawWorldLayers()
   foregroundLayer?.batchDraw()
   if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
+  else if (composite?.started) playPendingSceneEntrances(composite.sceneId)
 }
 
-const prepareSceneMorph = (captureCurrent: boolean, sceneId: string) => {
+const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSceneId = '') => {
   finishSceneMorph()
-  const transition = props.store.state.scenes[sceneId]?.state.transition
-  sceneTransitionDurationMs.value = transition?.type === 'crossfade' && transition.durationMs > 0
-    ? Math.min(2_000, Math.max(150, transition.durationMs))
-    : 400
-  if (!captureCurrent || !sceneMorphRoot) return
-
-  const previous = new Map<string, SceneMorphItem>()
-  const sceneObjects = props.store.state.liveState.sceneObjects
-  Object.values(sceneObjects).forEach((object) => {
-    if (isTheaterEffectObject(object)) return
-    const node = objectNodes.get(object.id)
-    if (!node) return
-    const root = !object.parentId || !sceneObjects[object.parentId]
-    const ghost = root ? node.clone({ listening: false }) as Konva.Group : null
-    if (ghost) sceneMorphRoot!.add(ghost)
-    previous.set(object.id, {
-      object: { ...object, transform: { ...object.transform }, metadata: { ...object.metadata } },
-      visual: {
-        x: node.x(),
-        y: node.y(),
-        rotation: node.rotation(),
-        scaleX: node.scaleX(),
-        scaleY: node.scaleY(),
-        opacity: node.opacity(),
-        width: Math.max(0.5, object.transform.width),
-        height: Math.max(0.5, object.transform.height),
-      },
-      ghost,
-    })
-  })
-
-  let backgroundGhost: Konva.Group | null = null
-  backgroundLayer?.draw()
-  const backgroundCanvas = backgroundLayer?.getCanvas()._canvas
-  if (backgroundCanvas && stage) {
-    const snapshotCanvas = document.createElement('canvas')
-    snapshotCanvas.width = backgroundCanvas.width
-    snapshotCanvas.height = backgroundCanvas.height
-    snapshotCanvas.getContext('2d')?.drawImage(backgroundCanvas, 0, 0)
-    backgroundGhost = new Konva.Group({ listening: false })
-    backgroundGhost.add(new Konva.Image({
-      image: snapshotCanvas,
-      width: stage.width(),
-      height: stage.height(),
-      listening: false,
-    }))
-    backgroundLayer?.add(backgroundGhost)
-  }
-
-  const textGhosts = Array.from(viewportRef.value?.querySelectorAll<HTMLElement>('.theater-text-overlay') || [])
-    .map((overlay) => overlay.cloneNode(true) as HTMLElement)
-  textGhosts.forEach((ghost) => {
-    ghost.style.pointerEvents = 'none'
-    viewportRef.value?.append(ghost)
-  })
-  sceneMorphTextHidden.value = true
-  sceneMorphSnapshot = {
+  const nextTransition = normalizeStageSceneTransition(props.store.state.scenes[sceneId]?.state.transition)
+  const previousTransition = normalizeStageSceneTransition(props.store.state.scenes[previousSceneId]?.state.transition)
+  const generation = ++sceneTransitionGeneration
+  const usesCurtain = captureCurrent && (nextTransition.enter.type === 'curtain' || previousTransition.exit.type === 'curtain')
+  sceneTransitionLog('morph.prepare', { captureCurrent, sceneId, previousSceneId, generation, nextTransition, previousTransition })
+  sceneCompositeTransition = {
     sceneId,
-    previous,
-    matches: new Map(),
-    targetAttrs: new Map(),
-    backgroundGhost,
-    textGhosts,
+    overlay: captureCurrent ? captureSceneTransitionOverlay() : null,
+    curtainOverlay: usesCurtain ? createSceneCurtainOverlay() : null,
+    enter: nextTransition.enter,
+    exit: previousTransition.exit,
+    animations: [],
+    generation,
     started: false,
   }
+  sceneTransitionLog('morph.prepared', {
+    sceneId,
+    generation,
+    hasOverlay: Boolean(sceneCompositeTransition.overlay),
+    hasCurtainOverlay: Boolean(sceneCompositeTransition.curtainOverlay),
+    hasVisual: Boolean(sceneVisualRef.value),
+  })
+  if (captureCurrent && sceneVisualRef.value) sceneVisualRef.value.style.visibility = 'hidden'
 }
 
 const primeSceneMorphTargets = () => {
@@ -3216,87 +3323,148 @@ const primeSceneMorphTargets = () => {
   foregroundLayer?.batchDraw()
 }
 
-const tweenSceneMorphNode = (node: Konva.Node, attrs: Record<string, number>, duration: number) => {
-  const tween = new Konva.Tween({
-    node,
-    duration,
-    easing: Konva.Easings.EaseInOut,
-    ...attrs,
-  })
-  sceneMorphTweens.push(tween)
-  tween.play()
-}
-
 const startSceneMorph = (sceneId: string) => {
-  const snapshot = sceneMorphSnapshot
-  if (!snapshot || snapshot.sceneId !== sceneId || snapshot.started) return
-  primeSceneMorphTargets()
-  snapshot.started = true
-  const duration = sceneTransitionDurationMs.value / 1_000
-  const matchedPrevious = new Set(snapshot.matches.values())
-  snapshot.targetAttrs.forEach((target, objectId) => {
-    const node = objectNodes.get(objectId)
-    if (!node) return
-    const previous = snapshot.matches.get(objectId)
-    const coversScene = target.width >= props.store.state.liveState.fieldWidth * 0.9
-      && target.height >= props.store.state.liveState.fieldHeight * 0.9
-    if (previous || coversScene) node.opacity(1)
-    tweenSceneMorphNode(node, {
-      x: target.x,
-      y: target.y,
-      rotation: target.rotation,
-      scaleX: target.scaleX,
-      scaleY: target.scaleY,
-      opacity: target.opacity,
-    }, previous ? duration : duration * 0.6)
-    if (!previous?.ghost) return
-    tweenSceneMorphNode(previous.ghost, {
-      x: target.x,
-      y: target.y,
-      rotation: target.rotation,
-      scaleX: target.scaleX * target.width / previous.visual.width,
-      scaleY: target.scaleY * target.height / previous.visual.height,
-      opacity: 0,
-    }, duration)
+  const transition = sceneCompositeTransition
+  const visual = sceneVisualRef.value
+  sceneTransitionLog('morph.start.request', {
+    sceneId,
+    transitionSceneId: transition?.sceneId,
+    started: transition?.started,
+    hasVisual: Boolean(visual),
+    scope: 'stage',
   })
-  snapshot.previous.forEach((item) => {
-    if (!item.ghost || matchedPrevious.has(item)) return
-    const timer = window.setTimeout(() => {
-      sceneMorphDelayTimers = sceneMorphDelayTimers.filter((value) => value !== timer)
-      if (sceneMorphSnapshot !== snapshot) return
-      tweenSceneMorphNode(item.ghost!, { opacity: 0 }, duration * 0.6)
-    }, sceneTransitionDurationMs.value * 0.4)
-    sceneMorphDelayTimers.push(timer)
+  if (!transition || transition.sceneId !== sceneId || transition.started || !visual) {
+    sceneTransitionLog('morph.start.skipped', { sceneId })
+    return
+  }
+  transition.started = true
+  const batch = sceneMediaBatch
+  if (batch?.sceneId === sceneId) batch.activations.splice(0).forEach((activate) => activate())
+  const reducedMotion = resolveTheaterReducedMotion()
+  const curtainOverlay = transition.curtainOverlay
+  const curtainPanels = curtainOverlay
+    ? Array.from(curtainOverlay.querySelectorAll<HTMLElement>('.theater-scene-curtain-panel'))
+    : []
+  const usesCurtain = curtainPanels.length === 2
+  const enterFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.enter, 'enter')
+  const exitFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.exit, 'exit')
+  sceneTransitionLog('morph.animate', {
+    sceneId,
+    generation: transition.generation,
+    scope: 'stage',
+    ...reducedMotion,
+    enter: transition.enter,
+    exit: transition.exit,
+    enterFrameCount: enterFrames.length,
+    exitFrameCount: exitFrames.length,
+    hasOverlay: Boolean(transition.overlay),
+    usesCurtain,
   })
-  if (snapshot.backgroundGhost) tweenSceneMorphNode(snapshot.backgroundGhost, { opacity: 0 }, duration)
-  sceneMorphTextAnimating.value = true
-  sceneMorphTextHidden.value = false
-  snapshot.textGhosts.forEach((ghost) => {
-    ghost.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: sceneTransitionDurationMs.value,
-      easing: 'ease-in-out',
+  if (usesCurtain && !reducedMotion.effectiveReducedMotion) {
+    const closeDurationMs = transition.exit.durationMs
+    const openDurationMs = transition.enter.durationMs
+    const closeAnimations = curtainPanels.map((panel) => panel.animate([
+      { transform: panel.classList.contains('is-left') ? 'translateX(-100%)' : 'translateX(100%)' },
+      { transform: 'translateX(0)' },
+    ], {
+      duration: closeDurationMs,
+      easing: 'cubic-bezier(.22, 1, .36, 1)',
       fill: 'forwards',
+    }))
+    transition.animations.push(...closeAnimations)
+    const generation = transition.generation
+    void Promise.all(closeAnimations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
+      if (sceneCompositeTransition?.generation !== generation || sceneCompositeTransition !== transition) return
+      sceneTransitionLog('curtain.closed', { sceneId, generation, closeDurationMs })
+      transition.overlay?.remove()
+      transition.overlay = null
+      visual.style.visibility = 'visible'
+      backgroundLayer?.draw()
+      foregroundLayer?.draw()
+      drawWorldLayers(true)
+      const openAnimations = curtainPanels.map((panel) => panel.animate([
+        { transform: 'translateX(0)' },
+        { transform: panel.classList.contains('is-left') ? 'translateX(-100%)' : 'translateX(100%)' },
+      ], {
+        duration: openDurationMs,
+        easing: 'cubic-bezier(.65, 0, .35, 1)',
+        fill: 'forwards',
+      }))
+      transition.animations.push(...openAnimations)
+      void Promise.all(openAnimations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
+        if (sceneCompositeTransition?.generation !== generation || sceneCompositeTransition !== transition) return
+        sceneTransitionLog('curtain.opened', { sceneId, generation, openDurationMs })
+        finishSceneMorph()
+      })
     })
+    sceneTransitionTimer = window.setTimeout(() => {
+      if (sceneCompositeTransition?.generation === generation) {
+        sceneTransitionLog('curtain.timeout', { sceneId, generation })
+        finishSceneMorph()
+      }
+    }, closeDurationMs + openDurationMs + 200)
+    return
+  }
+  if (enterFrames.length) transition.animations.push(visual.animate(enterFrames, stageSceneTransitionOptions(transition.enter)))
+  if (transition.overlay && exitFrames.length) {
+    transition.animations.push(transition.overlay.animate(exitFrames, stageSceneTransitionOptions(transition.exit)))
+  } else {
+    transition.overlay?.remove()
+    transition.overlay = null
+  }
+  visual.style.visibility = 'visible'
+  backgroundLayer?.draw()
+  foregroundLayer?.draw()
+  drawWorldLayers(true)
+  if (!transition.animations.length) {
+    sceneTransitionLog('morph.no-animations', { sceneId, generation: transition.generation })
+    requestAnimationFrame(() => {
+      if (sceneCompositeTransition === transition) finishSceneMorph()
+    })
+    return
+  }
+  const generation = transition.generation
+  void Promise.all(transition.animations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
+    if (sceneCompositeTransition?.generation === generation) {
+      sceneTransitionLog('morph.animations.finished', { sceneId, generation })
+      finishSceneMorph()
+    }
   })
-  sceneTransitionTimer = window.setTimeout(finishSceneMorph, sceneTransitionDurationMs.value + 50)
+  sceneTransitionTimer = window.setTimeout(() => {
+    if (sceneCompositeTransition?.generation === generation) {
+      sceneTransitionLog('morph.timeout', { sceneId, generation })
+      finishSceneMorph()
+    }
+  }, Math.max(transition.enter.durationMs, transition.exit.durationMs) + 150)
 }
 
-const beginSceneMediaBatch = (sceneId: string, captureCurrent = true) => {
+let preparedSceneId = ''
+
+const beginSceneMediaBatch = (sceneId: string, captureCurrent = true, previousSceneId = '') => {
+  if (sceneId === preparedSceneId) {
+    sceneTransitionLog('media-batch.skipped.duplicate', { sceneId, captureCurrent, previousSceneId })
+    playPendingSceneEntrances(sceneId)
+    return
+  }
+  preparedSceneId = sceneId
+  sceneTransitionLog('media-batch.begin', { sceneId, captureCurrent, previousSceneId })
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
   pendingSceneEntrances = null
   pendingTextEntranceIds.value = []
-  prepareSceneMorph(captureCurrent, sceneId)
+  prepareSceneMorph(captureCurrent, sceneId, previousSceneId)
   queueSceneEntrances(sceneId, !captureCurrent)
   sceneMediaBatch = {
     sceneId,
     expected: new Map(collectSceneMediaItems(sceneId).map((item) => [item.key, item.location.url])),
     settled: new Set(),
     reveals: [],
+    activations: [],
     released: false,
     ready: false,
     timeout: null,
   }
   const batch = sceneMediaBatch
+  sceneTransitionLog('media-batch.expected', { sceneId, expectedCount: batch.expected.size })
   if (!batch.expected.size) {
     releaseSceneMediaBatch(batch)
     return
@@ -3345,6 +3513,7 @@ const activateStageMedia = (source: StageMediaSource, imageRef: StageImageRef) =
 
 const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
   if (batch.released) return
+  sceneTransitionLog('media-batch.release', { sceneId: batch.sceneId, expectedCount: batch.expected.size, settledCount: batch.settled.size })
   batch.released = true
   if (batch.timeout !== null) window.clearTimeout(batch.timeout)
   batch.timeout = null
@@ -3356,18 +3525,21 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
     backgroundLayer?.draw()
     foregroundLayer?.draw()
     drawWorldLayers(true)
-    startSceneMorph(batch.sceneId)
-    if (!sceneMorphSnapshot) playPendingSceneEntrances(batch.sceneId)
+    requestAnimationFrame(() => {
+      if (sceneMediaBatch === batch) startSceneMorph(batch.sceneId)
+    })
   })
 }
 
-const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
+const settleSceneMedia = (key: string, url: string, reveal?: () => void, activate?: () => void) => {
   const batch = sceneMediaBatch
   if (!batch || batch.sceneId !== props.store.state.activeSceneId || batch.expected.get(key) !== url || batch.released) {
     reveal?.()
+    if (reveal) activate?.()
     return
   }
   if (reveal) batch.reveals.push(reveal)
+  if (activate) batch.activations.push(activate)
   batch.settled.add(key)
   if (batch.settled.size >= batch.expected.size) releaseSceneMediaBatch(batch)
 }
@@ -3639,7 +3811,7 @@ const updateSurfaceSlot = (
     slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
     slot.group.getLayer()?.batchDraw()
-    settleSceneMedia(mediaKey, resolved)
+    settleSceneMedia(mediaKey, resolved, undefined, () => activateStageMedia(slot.source!, imageRef))
     return
   }
   if (slot.url === resolved && !slot.ready) {
@@ -3671,7 +3843,6 @@ const updateSurfaceSlot = (
       slot.source = loadedSource
       slot.ready = true
       applyStyle(style)
-      activateStageMedia(loadedSource, imageRef)
       theaterMediaDebug('surface ready', {
         resourceId: imageRef.resourceId,
         width: stageMediaDimensions(loadedSource).width,
@@ -3724,7 +3895,7 @@ const updateSurfaceSlot = (
           }
         })
       }
-    })
+    }, () => activateStageMedia(loadedSource, imageRef))
   }, (errorMessage) => {
     if (slot.version !== version || slot.url !== resolved) return
     settleSceneMedia(mediaKey, resolved)
@@ -4324,7 +4495,9 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   if (wrapper.getAttr('stageImageUrl') === resolved && currentSource) {
     if (isVideoSource(currentSource)) configureVideoLoop(currentSource, object.image)
     setImageFit(image, currentSource, width, height, objectImageFit(object))
-    settleSceneMedia(`object:${object.id}`, resolved)
+    settleSceneMedia(`object:${object.id}`, resolved, undefined, () => {
+      if (!hasPendingSceneEntrance(object.id)) activateStageMedia(currentSource, object.image!)
+    })
     return
   }
   if (wrapper.getAttr('stageImageUrl') === resolved) return
@@ -4349,7 +4522,6 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
         return
       }
       image.image(loadedSource)
-      activateStageMedia(loadedSource, object.image!)
       setImageFit(
         image,
         loadedSource,
@@ -4366,6 +4538,8 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
       label.visible(false)
       if (pendingObjectEntrances.has(object.id)) playObjectEntrance(object, wrapper)
       wrapper.getLayer()?.batchDraw()
+    }, () => {
+      if (!hasPendingSceneEntrance(object.id)) activateStageMedia(loadedSource, object.image!)
     })
   }, (errorMessage) => {
     if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) return
@@ -5520,9 +5694,9 @@ onMounted(() => {
   if (canManageResources.value) void fetchTheaterAudioAssets()
 })
 
-watch(() => props.store.state.activeSceneId, (sceneId) => {
+watch(() => props.store.state.activeSceneId, (sceneId, previousSceneId) => {
   effectRuntime.invalidateCurrentMessage()
-  beginSceneMediaBatch(sceneId)
+  beginSceneMediaBatch(sceneId, true, previousSceneId)
 }, { flush: 'sync' })
 watch(
   () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
@@ -5925,7 +6099,18 @@ onBeforeUnmount(() => {
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
       >
-        <div ref="containerRef" class="theater-stage-canvas" />
+        <div ref="sceneVisualRef" class="theater-scene-visual">
+          <div ref="containerRef" class="theater-stage-canvas" />
+          <StageTextOverlay
+            :objects="stageObjects"
+            :camera="store.state.camera"
+            :viewport-width="viewportSize.width"
+            :viewport-height="viewportSize.height"
+            :entrance-playbacks="textEntrancePlaybacks"
+            :hidden-object-ids="pendingTextEntranceIds"
+            :stacking-order="rootStackingOrder"
+          />
+        </div>
         <div
           v-if="isBatchSelection && selectionQuickBar.visible"
           class="theater-selection-quick-bar"
@@ -5938,20 +6123,6 @@ onBeforeUnmount(() => {
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('editable'), 'is-mixed': batchBooleanIndeterminate('editable') }" :disabled="!batchBooleanObjects('editable').length" aria-label="批量设置可编辑" @click.stop="toggleBatchQuickFlag('editable')"><template #icon><n-icon><Edit /></n-icon></template></n-button></template>{{ batchBooleanChecked('editable') ? '取消可编辑' : '设为可编辑' }}</n-tooltip>
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('interactive'), 'is-mixed': batchBooleanIndeterminate('interactive') }" :disabled="!batchBooleanObjects('interactive').length" aria-label="批量设置可交互" @click.stop="toggleBatchQuickFlag('interactive')"><template #icon><n-icon><component :is="batchBooleanChecked('interactive') ? Bolt : BoltOff" /></n-icon></template></n-button></template>{{ batchBooleanChecked('interactive') ? '取消可交互' : '设为可交互' }}</n-tooltip>
         </div>
-        <StageTextOverlay
-          :class="{
-            'is-scene-morph-hidden': sceneMorphTextHidden,
-            'is-scene-morph-active': sceneMorphTextAnimating,
-          }"
-          :style="{ '--theater-scene-transition-duration': `${sceneTransitionDurationMs}ms` }"
-          :objects="stageObjects"
-          :camera="store.state.camera"
-          :viewport-width="viewportSize.width"
-          :viewport-height="viewportSize.height"
-          :entrance-playbacks="textEntrancePlaybacks"
-          :hidden-object-ids="pendingTextEntranceIds"
-          :stacking-order="rootStackingOrder"
-        />
         <TheaterCharacterStatsOverlay
           :world-id="worldId"
           :channel-id="channelId"
@@ -6056,6 +6227,48 @@ onBeforeUnmount(() => {
                 <span>场景切换文本</span>
                 <n-input v-model:value="editingSceneSwitchText" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }" maxlength="10000" show-count />
               </label>
+              <div class="theater-scene-editor__transition">
+                <span>退出动画</span>
+                <n-select
+                  :value="editingSceneTransition.exit.type"
+                  :options="sceneTransitionTypeOptions"
+                  size="small"
+                  :menu-props="theaterSecondaryMenuProps"
+                  @update:value="updateEditingSceneTransition('exit', { type: $event })"
+                />
+                <n-input-number
+                  :value="editingSceneTransition.exit.durationMs"
+                  :min="20"
+                  :max="5000"
+                  :show-button="false"
+                  :precision="0"
+                  size="small"
+                  @update:value="updateEditingSceneTransitionDuration('exit', $event)"
+                ><template #suffix>ms</template></n-input-number>
+              </div>
+              <div class="theater-scene-editor__transition">
+                <span>进入动画</span>
+                <n-select
+                  :value="editingSceneTransition.enter.type"
+                  :options="sceneTransitionTypeOptions"
+                  size="small"
+                  :menu-props="theaterSecondaryMenuProps"
+                  @update:value="updateEditingSceneTransition('enter', { type: $event })"
+                />
+                <n-input-number
+                  :value="editingSceneTransition.enter.durationMs"
+                  :min="20"
+                  :max="5000"
+                  :show-button="false"
+                  :precision="0"
+                  size="small"
+                  @update:value="updateEditingSceneTransitionDuration('enter', $event)"
+                ><template #suffix>ms</template></n-input-number>
+              </div>
+              <small
+                v-if="editingSceneTransition.enter.type === 'curtain' || editingSceneTransition.exit.type === 'curtain'"
+                class="theater-scene-editor__transition-hint"
+              ></small>
               <div class="theater-scene-editor__actions">
                 <n-button size="small" @click="closeSceneEditor">取消</n-button>
                 <n-button size="small" type="primary" :disabled="!editingSceneName.trim()" @click="saveSceneDetails">保存</n-button>
@@ -6861,11 +7074,14 @@ onBeforeUnmount(() => {
 .theater-stage-reset-camera { flex: 0 0 auto; }
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
-.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: #343435; touch-action: none; }
-.theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-hidden) { opacity: 0; }
-.theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-active) {
-  transition: opacity var(--theater-scene-transition-duration, 400ms) ease-in-out;
-}
+.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
+.theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
+.theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
+.theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }
+.theater-stage-viewport :global(.theater-scene-curtain-overlay) { position: absolute; z-index: 2; inset: 0; display: flex; overflow: hidden; pointer-events: none; }
+.theater-stage-viewport :global(.theater-scene-curtain-panel) { width: 50%; height: 100%; display: block; background: #000; will-change: transform; }
+.theater-stage-viewport :global(.theater-scene-curtain-panel.is-left) { transform: translateX(-100%); }
+.theater-stage-viewport :global(.theater-scene-curtain-panel.is-right) { transform: translateX(100%); }
 .theater-appearance-preview-layer { position: absolute; z-index: 9500; inset: 0; overflow: hidden; }
 .theater-appearance-preview-layer :deep(.theater-preview) { min-height: 0; background: transparent; }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
@@ -6947,6 +7163,8 @@ onBeforeUnmount(() => {
 .theater-scene-editor { display: grid; gap: 10px; }
 .theater-scene-editor strong { font-size: 13px; }
 .theater-scene-editor label { display: grid; gap: 5px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-editor__transition { display: grid; grid-template-columns: 58px minmax(0, 1fr) 104px; align-items: center; gap: 6px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-editor__transition-hint { color: var(--sc-fg-muted, #71717a); font-size: 10px; line-height: 1.4; }
 .theater-scene-editor__actions { display: flex; justify-content: flex-end; gap: 6px; }
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }
