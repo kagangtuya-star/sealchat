@@ -113,7 +113,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="theater-text-visual-object" :class="entranceClass" :style="style">
+  <div class="theater-text-visual-object" :class="entranceClass" :style="style" :data-stage-object-id="props.object.id">
     <div
       v-if="props.object.type === 'text'"
       ref="contentRef"

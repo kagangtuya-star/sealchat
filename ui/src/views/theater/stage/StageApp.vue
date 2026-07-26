@@ -167,6 +167,7 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
 const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const sceneVisualRef = ref<HTMLDivElement | null>(null)
+const sceneMorphContainerRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
 const selectionQuickBar = reactive({ visible: false, left: 0, top: 0 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
@@ -1494,6 +1495,10 @@ const rootStackingOrder = ref<Record<string, number>>({})
 const OBJECT_ROOT_LAYER_Z_BASE = 100
 const WORLD_OVERLAY_LAYER_Z = 8990
 let sceneMorphRoot: Konva.Group | null = null
+let sceneMorphStage: Konva.Stage | null = null
+let sceneMorphLayer: Konva.Layer | null = null
+let sceneMorphCameraGroup: Konva.Group | null = null
+let sceneMorphTextCamera: HTMLDivElement | null = null
 let drawingDraftRoot: Konva.Group | null = null
 let pointerTraceRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
@@ -2498,9 +2503,12 @@ const applyCamera = () => {
   // Background fills viewport independently; world and foreground follow camera.
   backgroundCameraGroup?.position({ x: 0, y: 0 })
   backgroundCameraGroup?.scale({ x: 1, y: 1 })
-  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup]) {
+  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup, sceneMorphCameraGroup]) {
     group?.position(position)
     group?.scale(scale)
+  }
+  if (sceneMorphTextCamera) {
+    sceneMorphTextCamera.style.transform = `translate(${position.x}px, ${position.y}px) scale(${scale.x})`
   }
   objectRootLayers.forEach(({ camera }) => {
     camera.position(position)
@@ -2510,6 +2518,7 @@ const applyCamera = () => {
   drawWorldLayers()
   foregroundLayer?.batchDraw()
   interactionLayer?.batchDraw()
+  sceneMorphLayer?.batchDraw()
 }
 
 const selectedMovementNodes = () => selectedMovementRootIds()
@@ -3014,6 +3023,7 @@ interface SceneMorphVisual {
   scaleX: number
   scaleY: number
   opacity: number
+  visible: boolean
   width: number
   height: number
 }
@@ -3022,6 +3032,7 @@ interface SceneMorphItem {
   object: StageObject
   visual: SceneMorphVisual
   ghost: Konva.Group | null
+  textGhost: HTMLElement | null
 }
 
 interface SceneMorphSnapshot {
@@ -3029,9 +3040,15 @@ interface SceneMorphSnapshot {
   previous: Map<string, SceneMorphItem>
   matches: Map<string, SceneMorphItem>
   targetAttrs: Map<string, SceneMorphVisual>
+  targetGhosts: Map<string, Konva.Group>
+  targetTextGhosts: Map<string, HTMLElement>
+  targetTextElements: Map<string, HTMLElement>
+  animations: Animation[]
   backgroundGhost: Konva.Group | null
   textGhosts: HTMLElement[]
+  generation: number
   started: boolean
+  completed: boolean
 }
 
 let sceneMorphSnapshot: SceneMorphSnapshot | null = null
@@ -3051,6 +3068,7 @@ interface SceneCompositeTransition {
   animations: Animation[]
   generation: number
   started: boolean
+  completed: boolean
 }
 
 let sceneCompositeTransition: SceneCompositeTransition | null = null
@@ -3129,6 +3147,10 @@ const stageObjectTransitionKey = (object: StageObject) => {
 }
 
 const stageObjectFallbackKey = (object: StageObject) => `${object.type}\u0000${object.name.trim().toLocaleLowerCase()}`
+
+const stageTextVisualElement = (objectId: string) => Array.from(
+  sceneVisualRef.value?.querySelectorAll<HTMLElement>('[data-stage-object-id]') || [],
+).find((element) => element.dataset.stageObjectId === objectId) || null
 
 const uniqueObjectIndex = (objects: StageObject[], key: (object: StageObject) => string) => {
   const grouped = new Map<string, StageObject[]>()
@@ -3236,8 +3258,11 @@ const finishSceneMorph = () => {
   const snapshot = sceneMorphSnapshot
   const composite = sceneCompositeTransition
   if (snapshot) {
+    snapshot.animations.forEach((animation) => animation.cancel())
     snapshot.targetAttrs.forEach((attrs, objectId) => objectNodes.get(objectId)?.setAttrs(attrs))
+    snapshot.targetTextElements.forEach((element) => element.style.removeProperty('visibility'))
     snapshot.previous.forEach((item) => item.ghost?.destroy())
+    snapshot.targetGhosts.forEach((ghost) => ghost.destroy())
     snapshot.backgroundGhost?.destroy()
     snapshot.textGhosts.forEach((ghost) => ghost.remove())
   }
@@ -3248,8 +3273,17 @@ const finishSceneMorph = () => {
   backgroundLayer?.batchDraw()
   drawWorldLayers()
   foregroundLayer?.batchDraw()
+  sceneMorphLayer?.batchDraw()
   if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
   else if (composite?.started) playPendingSceneEntrances(composite.sceneId)
+}
+
+const finishSceneTransitionWhenReady = () => {
+  const transition = sceneCompositeTransition
+  if (!transition?.completed) return
+  const snapshot = sceneMorphSnapshot
+  if (snapshot?.generation === transition.generation && !snapshot.completed) return
+  finishSceneMorph()
 }
 
 const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSceneId = '') => {
@@ -3268,6 +3302,7 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSce
     animations: [],
     generation,
     started: false,
+    completed: false,
   }
   sceneTransitionLog('morph.prepared', {
     sceneId,
@@ -3276,6 +3311,54 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSce
     hasCurtainOverlay: Boolean(sceneCompositeTransition.curtainOverlay),
     hasVisual: Boolean(sceneVisualRef.value),
   })
+  if (captureCurrent && sceneMorphRoot) {
+    const previousSceneObjects = props.store.state.scenes[previousSceneId]?.state.sceneObjects
+      || props.store.state.liveState.sceneObjects
+    const previous = new Map<string, SceneMorphItem>()
+    Object.values(previousSceneObjects).forEach((object) => {
+      if (isTheaterEffectObject(object)) return
+      const node = objectNodes.get(object.id)
+      if (!node) return
+      const root = !object.parentId || !previousSceneObjects[object.parentId]
+      const ghost = root ? node.clone({ listening: false }) as Konva.Group : null
+      if (ghost) sceneMorphRoot!.add(ghost)
+      const textElement = root ? stageTextVisualElement(object.id) : null
+      const textGhost = textElement ? textElement.cloneNode(true) as HTMLElement : null
+      if (textGhost) sceneMorphTextCamera?.append(textGhost)
+      previous.set(object.id, {
+        object: { ...object, transform: { ...object.transform }, metadata: { ...object.metadata } },
+        visual: {
+          x: node.x(),
+          y: node.y(),
+          rotation: node.rotation(),
+          scaleX: node.scaleX(),
+          scaleY: node.scaleY(),
+          opacity: node.opacity(),
+          visible: node.visible(),
+          width: Math.max(0.5, object.transform.width),
+          height: Math.max(0.5, object.transform.height),
+        },
+        ghost,
+        textGhost,
+      })
+    })
+    sceneMorphSnapshot = {
+      sceneId,
+      previous,
+      matches: new Map(),
+      targetAttrs: new Map(),
+      targetGhosts: new Map(),
+      targetTextGhosts: new Map(),
+      targetTextElements: new Map(),
+      animations: [],
+      backgroundGhost: null,
+      textGhosts: Array.from(previous.values()).flatMap((item) => item.textGhost ? [item.textGhost] : []),
+      generation,
+      started: false,
+      completed: false,
+    }
+    sceneMorphLayer?.draw()
+  }
   if (captureCurrent && sceneVisualRef.value) sceneVisualRef.value.style.visibility = 'hidden'
 }
 
@@ -3286,6 +3369,14 @@ const primeSceneMorphTargets = () => {
     .filter((object) => !isTheaterEffectObject(object))
   snapshot.matches = matchSceneMorphObjects(snapshot.previous, sceneObjects)
   snapshot.targetAttrs.clear()
+  snapshot.targetGhosts.forEach((ghost) => ghost.destroy())
+  snapshot.targetGhosts.clear()
+  const previousTargetTextGhosts = new Set(snapshot.targetTextGhosts.values())
+  snapshot.targetTextGhosts.forEach((ghost) => ghost.remove())
+  snapshot.textGhosts = snapshot.textGhosts.filter((ghost) => !previousTargetTextGhosts.has(ghost))
+  snapshot.targetTextGhosts.clear()
+  snapshot.targetTextElements.forEach((element) => element.style.removeProperty('visibility'))
+  snapshot.targetTextElements.clear()
   sceneObjects.forEach((object) => {
     if (object.parentId && props.store.state.liveState.sceneObjects[object.parentId]) return
     const node = objectNodes.get(object.id)
@@ -3295,6 +3386,10 @@ const primeSceneMorphTargets = () => {
       node.setAttrs({ visible: false, opacity: 1 })
       return
     }
+    if (!object.visible) {
+      snapshot.matches.delete(object.id)
+      return
+    }
     const target: SceneMorphVisual = {
       x: object.transform.x * WORLD_UNIT_PX,
       y: object.transform.y * WORLD_UNIT_PX,
@@ -3302,25 +3397,144 @@ const primeSceneMorphTargets = () => {
       scaleX: object.transform.scaleX,
       scaleY: object.transform.scaleY,
       opacity: 1,
+      visible: object.visible,
       width: Math.max(0.5, object.transform.width),
       height: Math.max(0.5, object.transform.height),
     }
-    snapshot.targetAttrs.set(object.id, target)
     const previous = snapshot.matches.get(object.id)
-    node.setAttrs(previous
-      ? {
-          x: previous.visual.x,
-          y: previous.visual.y,
-          rotation: previous.visual.rotation,
-          scaleX: previous.visual.scaleX * previous.visual.width / target.width,
-          scaleY: previous.visual.scaleY * previous.visual.height / target.height,
-          opacity: 0,
-        }
-      : { opacity: 0 })
+    if (!previous?.ghost) {
+      snapshot.matches.delete(object.id)
+      return
+    }
+    const targetGhost = node.clone({ listening: false }) as Konva.Group
+    targetGhost.setAttrs({
+      x: previous.visual.x,
+      y: previous.visual.y,
+      rotation: previous.visual.rotation,
+      scaleX: previous.visual.scaleX * previous.visual.width / target.width,
+      scaleY: previous.visual.scaleY * previous.visual.height / target.height,
+      opacity: 0,
+      visible: true,
+    })
+    sceneMorphRoot?.add(targetGhost)
+    snapshot.targetGhosts.set(object.id, targetGhost)
+    const targetTextElement = previous.textGhost ? stageTextVisualElement(object.id) : null
+    if (targetTextElement && sceneMorphTextCamera) {
+      const targetTextGhost = targetTextElement.cloneNode(true) as HTMLElement
+      sceneMorphTextCamera.append(targetTextGhost)
+      targetTextElement.style.visibility = 'hidden'
+      snapshot.targetTextGhosts.set(object.id, targetTextGhost)
+      snapshot.targetTextElements.set(object.id, targetTextElement)
+      snapshot.textGhosts.push(targetTextGhost)
+    }
+    snapshot.targetAttrs.set(object.id, target)
+    node.visible(false)
   })
   backgroundLayer?.batchDraw()
   drawWorldLayers()
   foregroundLayer?.batchDraw()
+  sceneMorphLayer?.batchDraw()
+}
+
+const tweenSceneMorphNode = (node: Konva.Node, attrs: Record<string, number>, duration: number) => {
+  const tween = new Konva.Tween({
+    node,
+    duration,
+    easing: Konva.Easings.EaseInOut,
+    ...attrs,
+  })
+  sceneMorphTweens.push(tween)
+  tween.play()
+}
+
+const sceneMorphTextFrame = (object: StageObject, opacity: number): Keyframe => ({
+  left: `${object.transform.x * WORLD_UNIT_PX}px`,
+  top: `${object.transform.y * WORLD_UNIT_PX}px`,
+  width: `${Math.max(0.5, object.transform.width) * WORLD_UNIT_PX}px`,
+  height: `${Math.max(0.5, object.transform.height) * WORLD_UNIT_PX}px`,
+  transform: `translate(-50%, -50%) rotate(${object.transform.rotation}deg) scale(${object.transform.scaleX}, ${object.transform.scaleY})`,
+  opacity,
+})
+
+const startSharedElementMorph = (sceneId: string, durationMs: number, reducedMotion: boolean) => {
+  const snapshot = sceneMorphSnapshot
+  if (!snapshot || snapshot.sceneId !== sceneId || snapshot.started) return
+  snapshot.started = true
+  if (reducedMotion) {
+    snapshot.previous.forEach((item) => {
+      item.ghost?.hide()
+      if (item.textGhost) item.textGhost.style.visibility = 'hidden'
+    })
+    snapshot.completed = true
+    sceneMorphLayer?.draw()
+    finishSceneTransitionWhenReady()
+    return
+  }
+  snapshot.started = false
+  primeSceneMorphTargets()
+  snapshot.started = true
+  const duration = Math.max(20, durationMs) / 1_000
+  const matchedPrevious = new Set(snapshot.matches.values())
+  snapshot.previous.forEach((item) => {
+    if (matchedPrevious.has(item)) return
+    item.ghost?.destroy()
+    item.ghost = null
+    item.textGhost?.remove()
+    item.textGhost = null
+  })
+  snapshot.targetAttrs.forEach((target, objectId) => {
+    const previous = snapshot.matches.get(objectId)
+    const targetGhost = snapshot.targetGhosts.get(objectId)
+    if (!previous?.ghost || !targetGhost) return
+    tweenSceneMorphNode(previous.ghost, {
+      x: target.x,
+      y: target.y,
+      rotation: target.rotation,
+      scaleX: target.scaleX * target.width / previous.visual.width,
+      scaleY: target.scaleY * target.height / previous.visual.height,
+      opacity: 0,
+    }, duration)
+    tweenSceneMorphNode(targetGhost, {
+      x: target.x,
+      y: target.y,
+      rotation: target.rotation,
+      scaleX: target.scaleX,
+      scaleY: target.scaleY,
+      opacity: target.opacity,
+    }, duration)
+    const targetObject = props.store.state.liveState.sceneObjects[objectId]
+    const targetTextGhost = snapshot.targetTextGhosts.get(objectId)
+    if (previous.textGhost && targetTextGhost && targetObject) {
+      const options: KeyframeAnimationOptions = {
+        duration: Math.max(20, durationMs),
+        easing: 'ease-in-out',
+        fill: 'both',
+      }
+      snapshot.animations.push(
+        previous.textGhost.animate([
+          sceneMorphTextFrame(previous.object, previous.visual.opacity),
+          sceneMorphTextFrame(targetObject, 0),
+        ], options),
+        targetTextGhost.animate([
+          sceneMorphTextFrame(previous.object, 0),
+          sceneMorphTextFrame(targetObject, 1),
+        ], options),
+      )
+    }
+  })
+  if (!snapshot.targetAttrs.size) {
+    snapshot.completed = true
+    sceneMorphLayer?.draw()
+    finishSceneTransitionWhenReady()
+    return
+  }
+  const timer = window.setTimeout(() => {
+    sceneMorphDelayTimers = sceneMorphDelayTimers.filter((value) => value !== timer)
+    if (sceneMorphSnapshot !== snapshot) return
+    snapshot.completed = true
+    finishSceneTransitionWhenReady()
+  }, Math.max(20, durationMs) + 20)
+  sceneMorphDelayTimers.push(timer)
 }
 
 const startSceneMorph = (sceneId: string) => {
@@ -3346,6 +3560,7 @@ const startSceneMorph = (sceneId: string) => {
     ? Array.from(curtainOverlay.querySelectorAll<HTMLElement>('.theater-scene-curtain-panel'))
     : []
   const usesCurtain = curtainPanels.length === 2
+  const morphDurationMs = Math.max(transition.enter.durationMs, transition.exit.durationMs)
   const enterFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.enter, 'enter')
   const exitFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.exit, 'exit')
   sceneTransitionLog('morph.animate', {
@@ -3382,6 +3597,7 @@ const startSceneMorph = (sceneId: string) => {
       backgroundLayer?.draw()
       foregroundLayer?.draw()
       drawWorldLayers(true)
+      startSharedElementMorph(sceneId, openDurationMs, false)
       const openAnimations = curtainPanels.map((panel) => panel.animate([
         { transform: 'translateX(0)' },
         { transform: panel.classList.contains('is-left') ? 'translateX(-100%)' : 'translateX(100%)' },
@@ -3394,7 +3610,8 @@ const startSceneMorph = (sceneId: string) => {
       void Promise.all(openAnimations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
         if (sceneCompositeTransition?.generation !== generation || sceneCompositeTransition !== transition) return
         sceneTransitionLog('curtain.opened', { sceneId, generation, openDurationMs })
-        finishSceneMorph()
+        transition.completed = true
+        finishSceneTransitionWhenReady()
       })
     })
     sceneTransitionTimer = window.setTimeout(() => {
@@ -3405,6 +3622,7 @@ const startSceneMorph = (sceneId: string) => {
     }, closeDurationMs + openDurationMs + 200)
     return
   }
+  startSharedElementMorph(sceneId, morphDurationMs, reducedMotion.effectiveReducedMotion)
   if (enterFrames.length) transition.animations.push(visual.animate(enterFrames, stageSceneTransitionOptions(transition.enter)))
   if (transition.overlay && exitFrames.length) {
     transition.animations.push(transition.overlay.animate(exitFrames, stageSceneTransitionOptions(transition.exit)))
@@ -3418,16 +3636,23 @@ const startSceneMorph = (sceneId: string) => {
   drawWorldLayers(true)
   if (!transition.animations.length) {
     sceneTransitionLog('morph.no-animations', { sceneId, generation: transition.generation })
+    const generation = transition.generation
     requestAnimationFrame(() => {
-      if (sceneCompositeTransition === transition) finishSceneMorph()
+      if (sceneCompositeTransition !== transition) return
+      transition.completed = true
+      finishSceneTransitionWhenReady()
     })
+    sceneTransitionTimer = window.setTimeout(() => {
+      if (sceneCompositeTransition?.generation === generation) finishSceneMorph()
+    }, morphDurationMs + 150)
     return
   }
   const generation = transition.generation
   void Promise.all(transition.animations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
     if (sceneCompositeTransition?.generation === generation) {
       sceneTransitionLog('morph.animations.finished', { sceneId, generation })
-      finishSceneMorph()
+      transition.completed = true
+      finishSceneTransitionWhenReady()
     }
   })
   sceneTransitionTimer = window.setTimeout(() => {
@@ -4775,6 +5000,7 @@ const resizeStage = () => {
   ) return
   viewportSize.value = nextViewportSize
   stage.size(viewportSize.value)
+  sceneMorphStage?.size(viewportSize.value)
   syncField()
   clampOpenPanels()
   applyCamera()
@@ -5486,7 +5712,7 @@ const finishLayerPointerDrag = (event: PointerEvent, cancelled = false) => {
 }
 
 onMounted(() => {
-  if (!containerRef.value) return
+  if (!containerRef.value || !sceneMorphContainerRef.value) return
   document.addEventListener('pointerdown', unlockTheaterAudio, true)
   document.addEventListener('touchstart', unlockTheaterAudio, { passive: true, capture: true })
   document.addEventListener('keydown', unlockTheaterAudio, true)
@@ -5504,6 +5730,16 @@ onMounted(() => {
     })
   })
   stage = new Konva.Stage({ container: containerRef.value, width: 1, height: 1 })
+  sceneMorphStage = new Konva.Stage({ container: sceneMorphContainerRef.value, width: 1, height: 1, listening: false })
+  sceneMorphLayer = new Konva.Layer({ listening: false })
+  sceneMorphCameraGroup = new Konva.Group({ listening: false })
+  sceneMorphRoot = new Konva.Group({ listening: false })
+  sceneMorphCameraGroup.add(sceneMorphRoot)
+  sceneMorphLayer.add(sceneMorphCameraGroup)
+  sceneMorphStage.add(sceneMorphLayer)
+  sceneMorphTextCamera = document.createElement('div')
+  sceneMorphTextCamera.className = 'theater-scene-morph-text-camera'
+  sceneMorphContainerRef.value.append(sceneMorphTextCamera)
   backgroundLayer = new Konva.Layer({ listening: false })
   worldLayer = new Konva.Layer()
   worldOverlayLayer = new Konva.Layer({ listening: false })
@@ -5659,9 +5895,8 @@ onMounted(() => {
   })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
-  sceneMorphRoot = new Konva.Group({ listening: false })
   worldCameraGroup.add(gridGroup, objectRoot)
-  worldOverlayCameraGroup.add(sceneMorphRoot, drawingDraftRoot, pointerTraceRoot)
+  worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   worldOverlayLayer.add(worldOverlayCameraGroup)
@@ -5898,6 +6133,10 @@ onBeforeUnmount(() => {
   imageLoadVersions.clear()
   stageMediaBlobCache.clear()
   props.store.setBulkSelectionMode(false)
+  sceneMorphTextCamera?.remove()
+  sceneMorphTextCamera = null
+  sceneMorphStage?.destroy()
+  sceneMorphStage = null
   stage?.destroy()
   stage = null
   objectRootLayers.clear()
@@ -5907,6 +6146,8 @@ onBeforeUnmount(() => {
   drawingDraftRoot = null
   pointerTraceRoot = null
   sceneMorphRoot = null
+  sceneMorphLayer = null
+  sceneMorphCameraGroup = null
 })
 </script>
 
@@ -6111,6 +6352,7 @@ onBeforeUnmount(() => {
             :stacking-order="rootStackingOrder"
           />
         </div>
+        <div ref="sceneMorphContainerRef" class="theater-scene-morph-overlay" />
         <div
           v-if="isBatchSelection && selectionQuickBar.visible"
           class="theater-selection-quick-bar"
@@ -7078,7 +7320,10 @@ onBeforeUnmount(() => {
 .theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }
-.theater-stage-viewport :global(.theater-scene-curtain-overlay) { position: absolute; z-index: 2; inset: 0; display: flex; overflow: hidden; pointer-events: none; }
+.theater-scene-morph-overlay { position: absolute; z-index: 2; inset: 0; overflow: hidden; pointer-events: none; }
+.theater-scene-morph-overlay :deep(.konvajs-content), .theater-scene-morph-overlay :deep(canvas) { position: absolute !important; inset: 0; pointer-events: none !important; }
+.theater-scene-morph-overlay :global(.theater-scene-morph-text-camera) { position: absolute; top: 0; left: 0; width: 0; height: 0; transform-origin: 0 0; pointer-events: none; }
+.theater-stage-viewport :global(.theater-scene-curtain-overlay) { position: absolute; z-index: 3; inset: 0; display: flex; overflow: hidden; pointer-events: none; }
 .theater-stage-viewport :global(.theater-scene-curtain-panel) { width: 50%; height: 100%; display: block; background: #000; will-change: transform; }
 .theater-stage-viewport :global(.theater-scene-curtain-panel.is-left) { transform: translateX(-100%); }
 .theater-stage-viewport :global(.theater-scene-curtain-panel.is-right) { transform: translateX(100%); }
