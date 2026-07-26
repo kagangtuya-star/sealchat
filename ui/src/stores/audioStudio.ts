@@ -121,6 +121,7 @@ interface AudioStudioState {
   lastAppliedCapturedAtByScope: Record<string, number>;
   lastSnapshotFetchedAtByScope: Record<string, number>;
   channelSwitchSeq: number;
+  playbackContextGeneration: number;
 }
 
 interface PlaybackSyncPayload {
@@ -520,6 +521,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     lastAppliedCapturedAtByScope: {},
     lastSnapshotFetchedAtByScope: {},
     channelSwitchSeq: 0,
+    playbackContextGeneration: 0,
   }),
 
   getters: {
@@ -868,6 +870,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     setCurrentWorld(worldId: string | null) {
       const changed = this.currentWorldId !== worldId;
+      if (changed) {
+        // 世界是音频播放状态的硬边界。先失效旧请求并释放本地播放器，
+        // 再等待新频道触发新世界快照，绝不能复用旧世界频道拉取状态。
+        this.playbackContextGeneration += 1;
+        this.channelSwitchSeq += 1;
+        if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+          window.clearTimeout(this.pendingSyncHandle);
+          this.pendingSyncHandle = null;
+        }
+        this.pendingCommitPayload = null;
+        this.clearRetrySyncTimer();
+        this.syncRetryAttempt = 0;
+        this.currentChannelId = null;
+        this.resetLocalPlaybackRuntime();
+      }
       this.currentWorldId = worldId;
       if (changed) {
         // 世界切换时先回到默认值；若服务端有显式配置，后续快照会覆盖。
@@ -899,9 +916,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         void this.fetchFolders();
         void this.fetchTrackSelectableAssets();
         void this.fetchAssets({ pagination: { page: 1 } });
-      }
-      if (this.hasPlaybackAuthority && this.worldPlaybackEnabled && this.currentChannelId) {
-        void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
       }
     },
 
@@ -1013,6 +1027,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.hasPlaybackAuthority) return;
       const normalizedChannelId = String(channelId || '').trim();
       if (!normalizedChannelId) return;
+      const contextGeneration = this.playbackContextGeneration;
+      const contextWorldId = this.currentWorldId;
       const scopeKey = this.getScopeKey(normalizedChannelId, this.worldPlaybackEnabled);
       const now = Date.now();
       const lastFetchedAt = this.lastSnapshotFetchedAtByScope[scopeKey] || 0;
@@ -1025,6 +1041,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       };
       try {
         const resp = await api.get('/api/v1/audio/state', { params: { channelId: normalizedChannelId } });
+        if (
+          contextGeneration !== this.playbackContextGeneration
+          || contextWorldId !== this.currentWorldId
+          || normalizedChannelId !== this.currentChannelId
+        ) {
+          return;
+        }
         await this.applyRemotePlayback(resp.data?.state || null, {
           source: 'pull',
           reason: options?.reason || 'snapshot',
@@ -1043,6 +1066,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async applyRemotePlayback(payload: AudioPlaybackStatePayload | null, options?: RemotePlaybackApplyOptions) {
       if (!this.hasPlaybackAuthority) {
+        return;
+      }
+      if (payload && !this.isPayloadInCurrentPlaybackContext(payload)) {
         return;
       }
       const source = options?.source || 'push';
@@ -1270,6 +1296,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (hasRevisionGap && payload?.channelId) {
         void this.fetchPlaybackState(payload.channelId, { force: true, reason: 'revision-gap' });
       }
+    },
+
+    isPayloadInCurrentPlaybackContext(payload: AudioPlaybackStatePayload) {
+      const scopeType = String(payload.scopeType || '').trim();
+      const scopeId = String(payload.scopeId || '').trim();
+      if (scopeType === 'world') {
+        return !!scopeId && scopeId === String(this.currentWorldId || '').trim();
+      }
+      if (scopeType === 'channel') {
+        return !!payload.channelId && payload.channelId === this.currentChannelId;
+      }
+      // 后端已为所有播放状态提供 scope；无 scope 消息不能跨上下文应用。
+      return false;
     },
 
     tryResumeRemotePlayback() {
