@@ -781,7 +781,9 @@ const handleIFormButtonClick = () => {
 watch(
   () => chat.curChannel?.id,
   (channelId) => {
-    audioStudio.setActiveChannel(channelId || null);
+    if (route.path !== '/embed') {
+      void audioStudio.setActiveChannel(channelId || null);
+    }
     if (isObserver.value) {
       void loadObserverRoleOptions(channelId || '');
     }
@@ -804,7 +806,9 @@ watch(
 watch(
   () => chat.currentWorldId,
   (worldId) => {
-    audioStudio.setCurrentWorld(worldId || null);
+    if (route.path !== '/embed') {
+      audioStudio.setCurrentWorld(worldId || null);
+    }
   },
   { immediate: true },
 );
