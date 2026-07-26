@@ -15,6 +15,7 @@ import {
   type TheaterDialogueMessage,
   type TheaterDialogueQueueState,
 } from '../bridge/theater-dialogue-queue'
+import { logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
 
 export const THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND = 10
 export const THEATER_DIALOGUE_HOLD_MS = 900
@@ -127,10 +128,15 @@ export class TheaterDialogueRuntime {
     const next = reduceTheaterDialogueQueue(this.queue, { type: 'created', message: structuredClone(message) })
     if (next === this.queue) return
     this.queue = next
+    this.debug('created', {
+      messageId: message.messageId,
+      textLength: getTheaterDialogueTextLength(message),
+      hasPerformanceContent: hasTheaterDialoguePerformanceContent(message),
+    })
     if (this.queue.current?.message.messageId !== previousCurrentId) this.startCurrent()
     else {
       this.emit()
-      if (this.phase === 'hold') this.scheduleAdvance()
+      if (this.phase === 'hold') this.scheduleAfterHold()
     }
   }
 
@@ -154,19 +160,25 @@ export class TheaterDialogueRuntime {
     else this.emit()
   }
 
-  completeCurrent = () => {
+  completeCurrent = (messageId?: string) => {
     if (this.disposed || !this.queue.current) return
+    if (messageId && this.queue.current.message.messageId !== messageId) {
+      this.debug('complete.ignored-stale', { messageId, currentMessageId: this.queue.current.message.messageId })
+      return
+    }
+    this.debug('complete', { messageId: this.queue.current.message.messageId })
     this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'complete-current' })
     this.phase = 'hold'
     this.clearTimer()
     this.emit()
-    this.scheduleAdvance()
+    this.scheduleAfterHold()
   }
 
   skip = () => {
     if (this.disposed) return
     const previousCurrentId = this.queue.current?.message.messageId
     const wasTyping = isTheaterDialogueTyping(this.queue.current)
+    this.debug('skip', { messageId: previousCurrentId, wasTyping, waitingCount: this.queue.waiting.length })
     this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'skip' })
     if (!this.queue.current) {
       this.phase = 'idle'
@@ -182,7 +194,7 @@ export class TheaterDialogueRuntime {
       this.phase = 'hold'
       this.clearTimer()
       this.emit()
-      this.scheduleAdvance()
+      this.scheduleAfterHold()
       return
     }
     this.emit()
@@ -239,6 +251,7 @@ export class TheaterDialogueRuntime {
       ...this.queue,
       current: { ...this.queue.current, revealedCharacters: 0 },
     }
+    this.debug('start', { messageId: this.queue.current.message.messageId })
     this.armCurrent()
   }
 
@@ -251,14 +264,18 @@ export class TheaterDialogueRuntime {
       return
     }
     if (!isTheaterDialogueTyping(current)) {
+      this.debug('hold', { messageId: current.message.messageId, reason: 'already-complete' })
       this.phase = 'hold'
       this.emit()
-      this.scheduleAdvance()
+      this.scheduleAfterHold()
       return
     }
     this.phase = 'typing'
     this.emit()
-    if (hasTheaterDialoguePerformanceContent(current.message)) return
+    if (hasTheaterDialoguePerformanceContent(current.message)) {
+      this.debug('playback.delegated', { messageId: current.message.messageId })
+      return
+    }
     const length = getTheaterDialogueTextLength(current.message)
     const interval = getTheaterDialogueTypingDuration(
       length,
@@ -279,14 +296,18 @@ export class TheaterDialogueRuntime {
       else {
         this.phase = 'hold'
         this.emit()
-        this.scheduleAdvance()
+        this.scheduleAfterHold()
       }
     }, interval + punctuationPause)
   }
 
-  private scheduleAdvance() {
+  private scheduleAfterHold() {
     if (!this.queue.current || this.queue.waiting.length === 0 || this.timer !== null) return
+    const messageId = this.queue.current.message.messageId
+    this.debug('hold.scheduled', { messageId, delayMs: THEATER_DIALOGUE_HOLD_MS, waitingCount: this.queue.waiting.length })
     this.schedule(() => {
+      if (this.queue.current?.message.messageId !== messageId) return
+      this.debug('hold.elapsed', { messageId, waitingCount: this.queue.waiting.length })
       this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'advance' })
       this.startCurrent()
     }, THEATER_DIALOGUE_HOLD_MS)
@@ -311,5 +332,15 @@ export class TheaterDialogueRuntime {
     if (this.disposed) return
     const snapshot = this.getSnapshot()
     this.listeners.forEach((listener) => listener(snapshot))
+  }
+
+  private debug(event: string, detail?: Record<string, unknown>) {
+    logTheaterDialogueDebug(event, {
+      phase: this.phase,
+      currentMessageId: this.queue.current?.message.messageId || null,
+      revealedCharacters: this.queue.current?.revealedCharacters ?? null,
+      waitingCount: this.queue.waiting.length,
+      ...detail,
+    })
   }
 }

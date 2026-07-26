@@ -17,6 +17,7 @@ import {
 import '@/components/theater-presentation/theaterComposition.css'
 import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCache'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import { isTheaterBridgeDebugEnabled, logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
 
 const props = defineProps<{
   runtime: TheaterDialogueRuntime
@@ -153,13 +154,29 @@ const frameStyle = computed<CSSProperties | undefined>(() => frame.value
 
 const completeCurrent = () => {
   if (!typing.value) return
+  const messageId = message.value?.messageId
+  if (!messageId) return
   richTextRef.value?.skip()
-  props.runtime.completeCurrent()
+  props.runtime.completeCurrent(messageId)
 }
 
 const skip = () => {
   richTextRef.value?.skip()
   props.runtime.skip()
+}
+
+const handleRichPlaybackState = (state: { completed: boolean }) => {
+  const messageId = message.value?.messageId
+  logTheaterDialogueDebug('overlay.player-state', { messageId: messageId || null, typing: typing.value, ...state })
+  if (!state.completed || !typing.value || !messageId) return
+  props.runtime.completeCurrent(messageId)
+}
+
+const handleRichPlaybackCompleted = () => {
+  const messageId = message.value?.messageId
+  logTheaterDialogueDebug('overlay.player-completed', { messageId: messageId || null, typing: typing.value })
+  if (!typing.value || !messageId) return
+  props.runtime.completeCurrent(messageId)
 }
 
 const updateReducedMotion = () => props.runtime.setReducedMotion(resolveTheaterReducedMotion().effectiveReducedMotion)
@@ -272,9 +289,11 @@ onBeforeUnmount(() => {
                 class="theater-dialogue-rich-text"
                 :content="richContent"
                 :autoplay="useRichPlayback && typing"
+                :debug-playback="isTheaterBridgeDebugEnabled()"
                 :characters-per-second="presentation.dialogue.charactersPerSecond"
                 :attachment-resolver="resolveAttachmentUrl"
-                @state-change="state => { if (state.completed && typing) props.runtime.completeCurrent() }"
+                @state-change="handleRichPlaybackState"
+                @completed="handleRichPlaybackCompleted"
               />
               <span v-else>{{ revealedText }}</span>
             </div>

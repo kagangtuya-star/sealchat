@@ -32,6 +32,11 @@ export const setTheaterBridgeDebugEnabled = (value: boolean) => {
   return enabled
 }
 
+export const logTheaterDialogueDebug = (event: string, detail?: Record<string, unknown>) => {
+  if (!enabled) return
+  console.info(`[theater-dialogue] ${event}`, detail || {})
+}
+
 export const installTheaterBridgeDebugConsoleCommand = () => {
   if (installed || typeof window === 'undefined') return
   installed = true

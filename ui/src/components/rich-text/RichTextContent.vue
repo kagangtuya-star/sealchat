@@ -10,6 +10,7 @@ import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 const props = withDefaults(defineProps<{
   content: string
   autoplay?: boolean
+  debugPlayback?: boolean
   charactersPerSecond?: number
   baseUrl?: string
   imageClass?: string
@@ -18,6 +19,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   content: '',
   autoplay: false,
+  debugPlayback: false,
   baseUrl: '',
   imageClass: 'rich-text-content__image',
   linkClass: 'rich-text-content__link',
@@ -27,6 +29,7 @@ const rootRef = ref<HTMLElement | null>(null)
 const twinLayerRef = ref<InstanceType<typeof TwinLayerMessage> | null>(null)
 const emit = defineEmits<{
   (event: 'state-change', value: { waiting: boolean; playing: boolean; completed: boolean }): void
+  (event: 'completed'): void
 }>()
 const rich = computed(() => isTipTapJson(props.content))
 const performance = computed(() => {
@@ -73,12 +76,14 @@ defineExpose({
       ref="twinLayerRef"
       :content="props.content"
       :autoplay="props.autoplay"
+      :debug-playback="props.debugPlayback"
       :characters-per-second="props.charactersPerSecond"
       :base-url="resolvedBaseUrl"
       :image-class="props.imageClass"
       :link-class="props.linkClass"
       :attachment-resolver="props.attachmentResolver"
       @state-change="emit('state-change', $event)"
+      @completed="emit('completed')"
     />
     <div v-else-if="rich" class="rich-text-content__body" v-html="html"></div>
     <div v-else class="rich-text-content__plain">{{ props.content }}</div>
