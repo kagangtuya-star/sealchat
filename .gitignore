@@ -14,6 +14,8 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 *_test.go
+!api/channel_images_test.go
+!model/message_attachment_test.go
 !service/theater_world_scope_test.go
 !service/theater_package_test.go
 *.test.ts

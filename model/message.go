@@ -101,6 +101,10 @@ func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+func (m *MessageModel) AfterCreate(tx *gorm.DB) error {
+	return ReplaceMessageImageAttachments(tx, m.ID, m.Content)
+}
+
 func MessageUpdate(id string, values map[string]any) error {
 	if len(values) == 0 {
 		return nil
@@ -157,7 +161,17 @@ func MessageUpdate(id string, values map[string]any) error {
 			values["sender_theater_presentation"] = string(encoded)
 		}
 	}
-	return db.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error; err != nil {
+			return err
+		}
+		content, changed := values["content"]
+		if !changed {
+			return nil
+		}
+		contentText, _ := content.(string)
+		return ReplaceMessageImageAttachments(tx, id, contentText)
+	})
 }
 
 func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.Message {

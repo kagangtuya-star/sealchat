@@ -186,7 +186,11 @@ func ChannelMessageImageLayoutsSave(c *fiber.Ctx) error {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有权限调整该消息的图片尺寸"})
 	}
 
-	availableAttachmentIDs := extractImageAttachmentIDs(msg.Content)
+	attachmentIDsByMessage, err := model.MessageImageAttachmentIDsByMessageIDs(model.GetDB(), []string{msg.ID})
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "读取消息附件失败"})
+	}
+	availableAttachmentIDs := attachmentIDsByMessage[msg.ID]
 	availableSet := map[string]struct{}{}
 	for _, id := range availableAttachmentIDs {
 		if normalized := normalizeLayoutAttachmentID(id); normalized != "" {
