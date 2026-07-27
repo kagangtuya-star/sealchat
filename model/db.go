@@ -245,11 +245,19 @@ func ensureChatHistoryIndexes() error {
 		return nil
 	}
 	if IsSQLite() {
-		return db.Exec(`
-CREATE INDEX IF NOT EXISTS idx_msg_live_cursor
-ON messages(channel_id, display_order DESC, created_at DESC, id DESC)
-WHERE is_deleted = 0 AND is_archived = 0
-`).Error
+		statements := []string{`
+	CREATE INDEX IF NOT EXISTS idx_msg_live_cursor
+	ON messages(channel_id, display_order DESC, created_at DESC, id DESC)
+	WHERE is_deleted = 0 AND is_archived = 0
+	`, `
+	CREATE INDEX IF NOT EXISTS idx_messages_channel_created_at
+	ON messages(channel_id, created_at)
+	`}
+		for _, statement := range statements {
+			if err := db.Exec(statement).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
