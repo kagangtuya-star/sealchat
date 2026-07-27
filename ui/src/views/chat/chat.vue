@@ -463,6 +463,7 @@ type ExternalPanelKey =
   | 'identity'
   | 'gallery'
   | 'display'
+  | 'dice3d'
   | 'favorites'
   | 'character-remark'
   | 'channel-images'
@@ -493,6 +494,9 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       return;
     case 'display':
       displaySettingsVisible.value = true;
+      return;
+    case 'dice3d':
+      openDice3DSettings();
       return;
     case 'favorites':
       channelFavoritesVisible.value = true;

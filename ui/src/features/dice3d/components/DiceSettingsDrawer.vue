@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 
 import type { Dice3DBotRule, Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types'
@@ -19,6 +20,7 @@ const DiceSkinPreview = defineAsyncComponent(() => import('./DiceSkinPreview.vue
 const props = defineProps<{ show: boolean, worldId: string, canManageWorld?: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void, (event: 'profile-saved', profile: Dice3DMemberProfile): void }>()
 const message = useMessage()
+const route = useRoute()
 const display = useDisplayStore()
 const utils = useUtilsStore()
 const dice3dLocalEnabled = computed({
@@ -37,6 +39,7 @@ const importingSkin = ref(false)
 const worldPresetId = ref<string | null>(null)
 const personalPresetId = ref<string | null>(null)
 let loadedPersonalSkin = ''
+const isTheaterEmbedMode = computed(() => route.path === '/embed' && route.query.mode === 'theater')
 const activeSkin = computed(() => {
   if (tab.value === 'world') return config.value?.defaultSkin
   return profile.value?.useOverride ? profile.value.skin : config.value?.defaultSkin
@@ -235,7 +238,7 @@ const testFullDiceSet = () => {
 		customSurface: cloneSettingsValue(config.value.customSurface),
 		createdAt: now,
 	}
-	if (!dice3dRuntime.forwardToTheater(payload)) dice3dRuntime.play(payload)
+	if (!isTheaterEmbedMode.value || !dice3dRuntime.forwardToTheater(payload)) dice3dRuntime.play(payload)
 }
 
 const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', raw: string) => {
