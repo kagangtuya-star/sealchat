@@ -1666,8 +1666,7 @@ defineExpose({
       ref="editorRef"
       :class="classList"
       :data-placeholder="placeholder"
-      contenteditable
-      :disabled="disabled"
+      :contenteditable="!disabled"
       @beforeinput="handleBeforeInput"
       @input="handleInput"
       @paste="handlePaste"

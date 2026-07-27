@@ -260,7 +260,7 @@ body,
   input[type='tel']:not(:disabled),
   input[type='number']:not(:disabled),
   textarea:not(:disabled),
-  [contenteditable='true']
+  [contenteditable]:not([contenteditable='false'])
 ) {
   cursor: var(--sc-cursor-text, text) !important;
 }
