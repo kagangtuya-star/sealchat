@@ -77,8 +77,13 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		sortOrder = "desc"
 	}
 
+	db := model.GetDB()
+	if err := model.BackfillMessageImageAttachmentsForChannel(db, channelID); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "初始化频道图片索引失败"})
+	}
+
 	resp, err := queryChannelImages(
-		model.GetDB(),
+		db,
 		user.ID,
 		channelID,
 		icModeFilter,

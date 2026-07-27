@@ -127,9 +127,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
-	db.AutoMigrate(&MessageAttachmentModel{}, &MessageAttachmentBackfillState{})
+	db.AutoMigrate(&MessageAttachmentModel{}, &ChannelMessageAttachmentBackfillState{})
 	db.AutoMigrate(&MessageVisibleCharCountBackfillState{})
-	StartMessageVisibleCharCountBackfillWorker()
 	db.AutoMigrate(&MessageWhisperRecipientModel{})
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
@@ -200,8 +199,6 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
 		log.Printf("初始化未读提醒索引失败: %v", err)
 	}
-	StartMessageAttachmentBackfillWorker()
-
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").
 		Update("default_dice_expr", "d20").Error; err != nil {

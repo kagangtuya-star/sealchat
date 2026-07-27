@@ -1,8 +1,8 @@
 package model
 
 import (
-	"log"
 	"regexp"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -12,7 +12,6 @@ import (
 const (
 	MessageAttachmentKindImage = "image"
 	messageAttachmentBatchSize = 200
-	messageAttachmentStateID   = "message-attachment-backfill"
 )
 
 var (
@@ -32,15 +31,17 @@ func (*MessageAttachmentModel) TableName() string {
 	return "message_attachments"
 }
 
-type MessageAttachmentBackfillState struct {
+type ChannelMessageAttachmentBackfillState struct {
 	StringPKBaseModel
 	LastID      string     `json:"last_id" gorm:"size:100"`
 	CompletedAt *time.Time `json:"completed_at"`
 }
 
-func (*MessageAttachmentBackfillState) TableName() string {
-	return "message_attachment_backfill_state"
+func (*ChannelMessageAttachmentBackfillState) TableName() string {
+	return "channel_message_attachment_backfill_states"
 }
+
+var channelMessageAttachmentBackfillMu sync.Mutex
 
 func ExtractMessageImageAttachmentIDs(content string) []string {
 	if content == "" {
@@ -116,32 +117,23 @@ func MessageImageAttachmentIDsByMessageIDs(conn *gorm.DB, messageIDs []string) (
 	return result, nil
 }
 
-func StartMessageAttachmentBackfillWorker() {
-	conn := db
-	if conn == nil {
-		return
-	}
-	go func() {
-		if err := backfillMessageAttachments(conn); err != nil {
-			log.Printf("回填消息附件关联失败: %v", err)
-		}
-	}()
-}
-
-func backfillMessageAttachments(conn *gorm.DB) error {
-	if conn == nil {
+func BackfillMessageImageAttachmentsForChannel(conn *gorm.DB, channelID string) error {
+	if conn == nil || channelID == "" {
 		return nil
 	}
+	channelMessageAttachmentBackfillMu.Lock()
+	defer channelMessageAttachmentBackfillMu.Unlock()
+
 	now := time.Now()
-	if err := conn.Clauses(clause.OnConflict{DoNothing: true}).Create(&MessageAttachmentBackfillState{
-		StringPKBaseModel: StringPKBaseModel{ID: messageAttachmentStateID, CreatedAt: now, UpdatedAt: now},
+	if err := conn.Clauses(clause.OnConflict{DoNothing: true}).Create(&ChannelMessageAttachmentBackfillState{
+		StringPKBaseModel: StringPKBaseModel{ID: channelID, CreatedAt: now, UpdatedAt: now},
 	}).Error; err != nil {
 		return err
 	}
 
 	for {
-		var state MessageAttachmentBackfillState
-		if err := conn.Where("id = ?", messageAttachmentStateID).Limit(1).Find(&state).Error; err != nil {
+		var state ChannelMessageAttachmentBackfillState
+		if err := conn.Where("id = ?", channelID).Limit(1).Find(&state).Error; err != nil {
 			return err
 		}
 		if state.CompletedAt != nil {
@@ -149,7 +141,7 @@ func backfillMessageAttachments(conn *gorm.DB) error {
 		}
 
 		var messages []MessageModel
-		query := conn.Select("id, content").Where("content <> ''")
+		query := conn.Select("id, content").Where("channel_id = ? AND content <> ''", channelID)
 		if state.LastID != "" {
 			query = query.Where("id > ?", state.LastID)
 		}
@@ -158,8 +150,8 @@ func backfillMessageAttachments(conn *gorm.DB) error {
 		}
 		if len(messages) == 0 {
 			finishedAt := time.Now()
-			return conn.Model(&MessageAttachmentBackfillState{}).
-				Where("id = ?", messageAttachmentStateID).
+			return conn.Model(&ChannelMessageAttachmentBackfillState{}).
+				Where("id = ?", channelID).
 				Updates(map[string]any{"completed_at": finishedAt, "updated_at": finishedAt}).Error
 		}
 
@@ -169,8 +161,8 @@ func backfillMessageAttachments(conn *gorm.DB) error {
 			}
 		}
 		lastID := messages[len(messages)-1].ID
-		if err := conn.Model(&MessageAttachmentBackfillState{}).
-			Where("id = ?", messageAttachmentStateID).
+		if err := conn.Model(&ChannelMessageAttachmentBackfillState{}).
+			Where("id = ?", channelID).
 			Updates(map[string]any{"last_id": lastID, "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
