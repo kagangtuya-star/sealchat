@@ -42,7 +42,8 @@ import DiceSettingsDrawer from '@/features/dice3d/components/DiceSettingsDrawer.
 import DiceDock from '@/features/dice3d/components/DiceDock.vue';
 import { loadDice3DSettings, saveDice3DProfile } from '@/features/dice3d/api';
 import { dice3dRuntime } from '@/features/dice3d/runtime';
-import type { Dice3DMemberProfile } from '@/types';
+import { resolveDice3DPlaybackPayload } from '@/features/dice3d/playbackProfile';
+import type { Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -214,6 +215,7 @@ const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
 const dice3dSettingsVisible = ref(false);
+const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
@@ -365,25 +367,44 @@ const canManageDice3DWorld = computed(() => {
   return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
 });
 
-const refreshDice3DProfile = async () => {
+const refreshDice3DSettings = async () => {
   const worldId = String(chat.currentWorldId || '').trim();
   if (!worldId || chat.observerMode) {
+    dice3dConfig.value = null;
     dice3dProfile.value = null;
     return;
   }
   try {
     const settings = await loadDice3DSettings(worldId);
+    if (worldId !== String(chat.currentWorldId || '').trim()) return;
+    dice3dConfig.value = settings.config;
     dice3dProfile.value = settings.profile;
   } catch {
+    if (worldId !== String(chat.currentWorldId || '').trim()) return;
+    dice3dConfig.value = null;
     dice3dProfile.value = null;
   }
 };
 
-watch(() => chat.currentWorldId, () => void refreshDice3DProfile(), { immediate: true });
+watch(() => chat.currentWorldId, () => void refreshDice3DSettings(), { immediate: true });
 
 const handleDice3DProfileSaved = (profile: Dice3DMemberProfile) => {
   dice3dProfile.value = profile;
 };
+
+const handleDice3DSettingsUpdated = (event?: Event) => {
+  const rawArgv = (event as any)?.argv || {};
+  const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, unknown>;
+  const worldId = String(options.worldId || '').trim();
+  if (!worldId || worldId !== String(chat.currentWorldId || '').trim()) return;
+
+  const eventUserId = String(options.userId || '').trim();
+  if (event?.type === 'world-member-dice3d-updated' && eventUserId && eventUserId !== String(user.info.id || '').trim()) return;
+  void refreshDice3DSettings();
+};
+
+chatEvent.on('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+chatEvent.on('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
 
 const handleDice3DDockMove = async (position: { x: number, y: number }) => {
   const worldId = String(chat.currentWorldId || '').trim();
@@ -14159,7 +14180,12 @@ const handleMessageCreated = (e?: Event) => {
   const currentChannelId = String(chat.curChannel?.id || '').trim();
   const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
 	if (isCurrentChannelMessage && (incoming as any).diceVisual) {
-		const payload = (incoming as any).diceVisual;
+		const payload = resolveDice3DPlaybackPayload(
+			(incoming as any).diceVisual as DiceVisualPayload,
+			String(user.info.id || '').trim(),
+			dice3dConfig.value,
+			dice3dProfile.value,
+		);
 		if (!isTheaterEmbedMode.value || !dice3dRuntime.forwardToTheater(payload)) {
 			dice3dRuntime.play(payload);
 		}
@@ -16324,6 +16350,8 @@ onBeforeUnmount(() => {
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   chatEvent.off('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
   chatEvent.off('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
+  chatEvent.off('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+  chatEvent.off('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
   revokeIdentityObjectURL();
   revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
