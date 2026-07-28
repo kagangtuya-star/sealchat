@@ -369,8 +369,8 @@ export interface TheaterStageStore {
   setObjectFlag: (objectId: string, key: StageObjectQuickFlag, value: boolean) => boolean
   selectScene: (sceneId: string) => void
   addScene: () => void
-  duplicateScene: () => { sceneId: string, objectIdMap: ReadonlyMap<string, string> }
-  removeScene: () => void
+  duplicateScene: (sourceSceneId?: string, activateDuplicate?: boolean) => { sceneId: string, objectIdMap: ReadonlyMap<string, string> }
+  removeScene: (sceneId?: string) => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
   updateSceneTransition: (sceneId: string, transition: StageSceneTransition) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
@@ -677,9 +677,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     clearSelection()
   }
 
-  const duplicateScene = () => {
+  const duplicateScene = (sourceSceneId = state.activeSceneId, activateDuplicate = true) => {
     saveLiveState()
-    const source = activeScene.value
+    const source = state.scenes[sourceSceneId] || activeScene.value
     const sceneId = uid('scene')
     const idMap = new Map<string, string>()
     Object.keys(source.state.sceneObjects).forEach((id) => idMap.set(id, uid('object')))
@@ -709,16 +709,21 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     Object.values(scene.state.sceneObjects).forEach((object) => {
       object.actions = cloneStageActionsForCopy(object.actions, uid, idMap, sceneIdMap)
     })
-    state.activeSceneId = scene.id
-    state.liveState = clone(scene.state)
-    clearSelection()
+    if (activateDuplicate) {
+      state.activeSceneId = scene.id
+      state.liveState = clone(scene.state)
+      clearSelection()
+    }
     return { sceneId, objectIdMap: idMap }
   }
 
-  const removeScene = () => {
+  const removeScene = (sceneId = state.activeSceneId) => {
     if (scenes.value.length <= 1) return
-    const currentIndex = scenes.value.findIndex((scene) => scene.id === state.activeSceneId)
-    delete state.scenes[state.activeSceneId]
+    const currentIndex = scenes.value.findIndex((scene) => scene.id === sceneId)
+    if (currentIndex < 0) return
+    const wasActive = sceneId === state.activeSceneId
+    delete state.scenes[sceneId]
+    if (!wasActive) return
     const remaining = scenes.value
     const next = remaining[Math.max(0, currentIndex - 1)] || remaining[0]
     state.activeSceneId = next.id

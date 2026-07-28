@@ -488,13 +488,13 @@ const reorderTheaterPanelItems = async (domain: TheaterPanelDomain, folderId: st
   }
 }
 
-const duplicateScene = async () => {
+const duplicateScene = async (sourceSceneId?: string, activateDuplicate = true) => {
   if (duplicatingScene.value) return
   duplicatingScene.value = true
   const sourceItems = new Map(theaterPanelOrganizer.value.items
     .filter((item) => item.domain === 'effect')
     .map((item) => [item.targetId, item]))
-  const result = props.store.duplicateScene()
+  const result = props.store.duplicateScene(sourceSceneId, activateDuplicate)
   const copiedItems = [...result.objectIdMap.entries()].flatMap(([sourceId, targetId]) => {
     const source = sourceItems.get(sourceId)
     return source ? [{ ...source, id: `pending-${targetId}`, targetId }] : []
@@ -936,6 +936,99 @@ const removeActiveSceneWithConfirm = () => {
   confirmDelete('删除场景', `确定删除场景“${scene.name}”？场景内组件也会一并删除。`, () => props.store.removeScene())
 }
 
+type SceneBatchMode = 'copy' | 'delete'
+const sceneBatchMode = ref<SceneBatchMode | null>(null)
+const sceneBatchSelectedIds = ref<string[]>([])
+let sceneBatchLongPressTimer: number | null = null
+let sceneBatchLongPressTriggered = false
+
+const clearSceneBatchLongPress = () => {
+  if (sceneBatchLongPressTimer !== null) window.clearTimeout(sceneBatchLongPressTimer)
+  sceneBatchLongPressTimer = null
+}
+
+const exitSceneBatchMode = () => {
+  clearSceneBatchLongPress()
+  sceneBatchMode.value = null
+  sceneBatchSelectedIds.value = []
+}
+
+const enterSceneBatchMode = (mode: SceneBatchMode) => {
+  closeSceneEditor()
+  sceneEditMode.value = false
+  sceneBatchMode.value = mode
+  sceneBatchSelectedIds.value = []
+}
+
+const isSceneBatchSelected = (sceneId: string) => sceneBatchSelectedIds.value.includes(sceneId)
+
+const setSceneBatchSelected = (sceneId: string, selected: boolean) => {
+  const selectedIds = new Set(sceneBatchSelectedIds.value)
+  if (selected) selectedIds.add(sceneId)
+  else selectedIds.delete(sceneId)
+  sceneBatchSelectedIds.value = [...selectedIds]
+}
+
+const toggleSceneBatchSelected = (sceneId: string) => setSceneBatchSelected(sceneId, !isSceneBatchSelected(sceneId))
+
+const startSceneBatchLongPress = (event: PointerEvent, mode: SceneBatchMode) => {
+  if (!canEditAllObjects.value || sceneEditMode.value || event.button !== 0) return
+  clearSceneBatchLongPress()
+  sceneBatchLongPressTriggered = false
+  sceneBatchLongPressTimer = window.setTimeout(() => {
+    sceneBatchLongPressTimer = null
+    sceneBatchLongPressTriggered = true
+    enterSceneBatchMode(mode)
+  }, 550)
+}
+
+const finishSceneBatchLongPress = () => clearSceneBatchLongPress()
+
+const duplicateSelectedScenes = async () => {
+  const sceneIds = sceneBatchSelectedIds.value.filter((sceneId) => Boolean(props.store.state.scenes[sceneId]))
+  if (!sceneIds.length) {
+    stageMessage.warning('请先选择要复制的场景')
+    return
+  }
+  for (const sceneId of sceneIds) await duplicateScene(sceneId, false)
+  stageMessage.success(`已复制 ${sceneIds.length} 个场景`)
+  exitSceneBatchMode()
+}
+
+const removeSelectedScenesWithConfirm = () => {
+  const sceneIds = sceneBatchSelectedIds.value.filter((sceneId) => Boolean(props.store.state.scenes[sceneId]))
+  if (!sceneIds.length) {
+    stageMessage.warning('请先选择要删除的场景')
+    return
+  }
+  if (sceneIds.length >= props.store.scenes.value.length) {
+    stageMessage.warning('至少保留一个场景，请取消选择一项')
+    return
+  }
+  confirmDelete('批量删除场景', `确定逐一删除选中的 ${sceneIds.length} 个场景？场景内组件也会一并删除。`, () => {
+    sceneIds.forEach((sceneId) => props.store.removeScene(sceneId))
+    exitSceneBatchMode()
+  })
+}
+
+const handleSceneActionClick = (mode: SceneBatchMode) => {
+  if (sceneBatchLongPressTriggered) {
+    sceneBatchLongPressTriggered = false
+    return
+  }
+  if (sceneBatchMode.value === mode) {
+    if (mode === 'copy') void duplicateSelectedScenes()
+    else removeSelectedScenesWithConfirm()
+    return
+  }
+  if (sceneBatchMode.value) {
+    enterSceneBatchMode(mode)
+    return
+  }
+  if (mode === 'copy') void duplicateScene()
+  else removeActiveSceneWithConfirm()
+}
+
 const sceneEditMode = ref(false)
 const editingSceneId = ref<string | null>(null)
 const editingSceneName = ref('')
@@ -1009,17 +1102,23 @@ const updateEditingSceneTransitionDuration = (direction: 'enter' | 'exit', value
 }
 
 const toggleSceneEditMode = () => {
+  if (!sceneEditMode.value) exitSceneBatchMode()
   sceneEditMode.value = !sceneEditMode.value
   closeSceneEditor()
 }
 
 watch(scenePanelOpen, (open) => {
   if (open) return
+  exitSceneBatchMode()
   sceneEditMode.value = false
   closeSceneEditor()
 })
 
 const handleSceneClick = (scene: StageScene) => {
+  if (sceneBatchMode.value) {
+    toggleSceneBatchSelected(scene.id)
+    return
+  }
   if (sceneEditMode.value) {
     beginSceneEdit(scene)
     return
@@ -6061,6 +6160,7 @@ watch(() => [props.syncReady, ...props.permissions], () => {
   const object = selectedId ? props.store.activeObjects.value[selectedId] : null
   if (object && !canEditObject(object)) props.store.clearSelection()
   if (!canEditAllObjects.value && props.store.selection.bulkMode) props.store.setBulkSelectionMode(false)
+  if (!canEditAllObjects.value) exitSceneBatchMode()
   if (!canEditAllObjects.value) quickDeleteActive.value = false
   if (!canOpenPanel('scene')) scenePanelOpen.value = false
   if (!canOpenPanel('inspector')) inspectorPanelOpen.value = false
@@ -6463,12 +6563,21 @@ onBeforeUnmount(() => {
             :class="{
               'has-preload-pulse': scenePreloadPulse[scene.id],
               'is-edit-mode': sceneEditMode,
+              'is-batch-mode': sceneBatchMode,
               'is-dragging': draggedSceneId === scene.id,
               'is-drop-before': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'before',
               'is-drop-after': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'after',
             }"
             :data-scene-id="scene.id"
           >
+            <n-checkbox
+              v-if="sceneBatchMode && canEditAllObjects"
+              class="theater-scene-row__select"
+              :checked="isSceneBatchSelected(scene.id)"
+              :aria-label="`选择场景 ${scene.name}`"
+              @click.stop
+              @update:checked="setSceneBatchSelected(scene.id, $event)"
+            />
             <span
               v-if="sceneEditMode && canEditAllObjects"
               class="theater-scene-row__grip"
@@ -6495,8 +6604,9 @@ onBeforeUnmount(() => {
             <template #trigger>
               <button
                 class="theater-scene-card"
-                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id }"
-                :disabled="sceneEditMode ? !canEditAllObjects : !canSwitchScene"
+                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id, 'is-selected': isSceneBatchSelected(scene.id) }"
+                :aria-pressed="sceneBatchMode ? isSceneBatchSelected(scene.id) : undefined"
+                :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canSwitchScene"
                 @click="handleSceneClick(scene)"
               >
                 <span class="theater-scene-card__title">{{ scene.name }}</span>
@@ -6560,7 +6670,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             </n-popover>
-            <div v-if="canSwitchScene && !sceneEditMode" class="theater-scene-row__actions">
+            <div v-if="canSwitchScene && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
               <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
                 <template #trigger>
                   <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
@@ -6571,9 +6681,20 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-if="canSwitchScene" class="theater-scene-actions">
-          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode || duplicatingScene" :loading="duplicatingScene" @click="duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
-          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode || store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
-          <n-button v-if="canEditAllObjects" size="tiny" quaternary :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
+          <n-tooltip v-if="canEditAllObjects" trigger="hover">
+            <template #trigger>
+              <n-button size="tiny" quaternary :type="sceneBatchMode === 'copy' ? 'error' : 'default'" :disabled="sceneEditMode || duplicatingScene" :loading="duplicatingScene" @pointerdown="startSceneBatchLongPress($event, 'copy')" @pointerup="finishSceneBatchLongPress" @pointercancel="finishSceneBatchLongPress" @click="handleSceneActionClick('copy')"><template #icon><n-icon><Copy /></n-icon></template>{{ sceneBatchMode === 'copy' ? `复制 ${sceneBatchSelectedIds.length || ''}` : '复制' }}</n-button>
+            </template>
+            长按进入批量复制；批量模式下再次点击复制选中场景
+          </n-tooltip>
+          <n-tooltip v-if="canEditAllObjects" trigger="hover">
+            <template #trigger>
+              <n-button size="tiny" quaternary :type="sceneBatchMode === 'delete' ? 'error' : 'default'" :disabled="sceneEditMode || store.scenes.value.length <= 1" @pointerdown="startSceneBatchLongPress($event, 'delete')" @pointerup="finishSceneBatchLongPress" @pointercancel="finishSceneBatchLongPress" @click="handleSceneActionClick('delete')"><template #icon><n-icon><Trash /></n-icon></template>{{ sceneBatchMode === 'delete' ? `删除 ${sceneBatchSelectedIds.length || ''}` : '删除' }}</n-button>
+            </template>
+            长按进入批量删除；批量模式下再次点击删除选中场景
+          </n-tooltip>
+          <n-button v-if="sceneBatchMode" size="tiny" quaternary @click="exitSceneBatchMode"><template #icon><n-icon><X /></n-icon></template>取消</n-button>
+          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="Boolean(sceneBatchMode)" :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
           <label class="theater-scene-dialogue-toggle">
             <span>台词</span>
             <n-switch size="small" :value="sceneDialogueEnabled" @update:value="emit('updateSceneDialogueEnabled', $event)" />
@@ -7408,7 +7529,8 @@ onBeforeUnmount(() => {
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
 .theater-scene-row { position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; }
-.theater-scene-row.is-edit-mode { grid-template-columns: 16px minmax(0, 1fr); }
+.theater-scene-row.is-edit-mode, .theater-scene-row.is-batch-mode { grid-template-columns: 16px minmax(0, 1fr); }
+.theater-scene-row__select { width: 16px; display: grid; place-items: center; justify-self: center; }
 .theater-scene-row__actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .theater-scene-row__actions {
   position: absolute; right: 0; padding-left: 6px; opacity: 0; pointer-events: none;
@@ -7436,6 +7558,7 @@ onBeforeUnmount(() => {
 }
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
+.theater-scene-card.is-selected { border-color: color-mix(in srgb, #ef4444 74%, transparent); background: color-mix(in srgb, #ef4444 16%, transparent); }
 .theater-scene-card.is-editing { outline: 1px solid var(--theater-accent); outline-offset: -2px; }
 .theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theater-scene-preload { width: 28px; height: 28px; padding: 0; }
