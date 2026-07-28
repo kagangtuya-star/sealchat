@@ -34,8 +34,8 @@ func theaterAudioAssetName(worldName, requestedName, filename string) string {
 		name = "未命名素材"
 	}
 	name = strings.ReplaceAll(strings.ReplaceAll(name, "\r", " "), "\n", " ")
-	prefix := strings.TrimSpace(worldName) + "-特性音频-"
-	maximum := 255 - utf8.RuneCountInString(prefix)
+	suffix := "-" + strings.TrimSpace(worldName)
+	maximum := 255 - utf8.RuneCountInString(suffix)
 	if maximum < 1 {
 		maximum = 1
 	}
@@ -43,7 +43,7 @@ func theaterAudioAssetName(worldName, requestedName, filename string) string {
 	if len(runes) > maximum {
 		name = string(runes[:maximum])
 	}
-	return prefix + name
+	return name + suffix
 }
 
 func hasAudioTag(asset *model.AudioAsset, target string) bool {

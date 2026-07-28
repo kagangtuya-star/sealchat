@@ -141,7 +141,7 @@ func TestValidateTheaterEffectContent(t *testing.T) {
 }
 
 func TestTheaterAudioAssetName(t *testing.T) {
-	if got := theaterAudioAssetName("迷雾世界", "", "thunder.mp3"); got != "迷雾世界-特性音频-thunder" {
+	if got := theaterAudioAssetName("迷雾世界", "", "thunder.mp3"); got != "thunder-迷雾世界" {
 		t.Fatalf("unexpected theater audio name: %q", got)
 	}
 	if got := theaterChannelAudioTag(" channel-1 "); got != "theater-channel:channel-1" {
