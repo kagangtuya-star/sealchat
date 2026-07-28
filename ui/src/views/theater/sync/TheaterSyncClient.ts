@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
@@ -278,6 +278,9 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
     drawing,
     ...(typeof content.text === 'string' ? { text: content.text } : {}),
     ...(imageRef(content.image) ? { image: imageRef(content.image)! } : {}),
+    ...(kind === 'image' && normalizeStageImageAnnotation(content.annotation)
+      ? { annotation: normalizeStageImageAnnotation(content.annotation)! }
+      : {}),
     content,
     ownerUserId: typeof value.ownerUserId === 'string' ? value.ownerUserId : null,
     characterIdentityId: typeof value.characterIdentityId === 'string' ? value.characterIdentityId : null,
@@ -288,40 +291,45 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
   }
 }
 
-const objectForServer = (object: StageObject, sceneId: string | null): TheaterObjectSnapshot => ({
-  id: object.id,
-  sceneId,
-  parentId: object.parentId,
-  kind: object.type,
-  name: object.name,
-  x: object.transform.x,
-  y: object.transform.y,
-  width: object.transform.width,
-  height: object.transform.height,
-  rotation: object.transform.rotation,
-  scaleX: object.transform.scaleX,
-  scaleY: object.transform.scaleY,
-  z: object.transform.z,
-  orderKey: String(object.transform.order),
-  visible: object.visible,
-  locked: object.locked,
-  aspectRatioLocked: object.aspectRatioLocked,
-  interactive: object.type === 'group' ? false : object.interactive,
-  editable: object.type === 'group' ? false : object.editable,
-  ownerUserId: object.ownerUserId || null,
-  characterIdentityId: object.characterIdentityId || null,
-  content: {
-    ...asObject(object.content),
-    ...(object.type === 'image' && !Object.prototype.hasOwnProperty.call(asObject(object.content), 'fill')
-      ? {}
-      : { fill: object.fill }),
-    ...(object.text === undefined ? {} : { text: object.text }),
-    ...(object.image === undefined ? {} : { image: object.image }),
-    ...(object.drawing === undefined ? {} : { drawing: object.drawing }),
-  },
-  actions: object.type === 'group' ? [] : clone(object.actions),
-  metadata: clone(object.metadata),
-})
+const objectForServer = (object: StageObject, sceneId: string | null): TheaterObjectSnapshot => {
+  const content = { ...asObject(object.content) }
+  if (object.type === 'image' && object.annotation) content.annotation = clone(object.annotation)
+  else delete content.annotation
+  return {
+    id: object.id,
+    sceneId,
+    parentId: object.parentId,
+    kind: object.type,
+    name: object.name,
+    x: object.transform.x,
+    y: object.transform.y,
+    width: object.transform.width,
+    height: object.transform.height,
+    rotation: object.transform.rotation,
+    scaleX: object.transform.scaleX,
+    scaleY: object.transform.scaleY,
+    z: object.transform.z,
+    orderKey: String(object.transform.order),
+    visible: object.visible,
+    locked: object.locked,
+    aspectRatioLocked: object.aspectRatioLocked,
+    interactive: object.type === 'group' ? false : object.interactive,
+    editable: object.type === 'group' ? false : object.editable,
+    ownerUserId: object.ownerUserId || null,
+    characterIdentityId: object.characterIdentityId || null,
+    content: {
+      ...content,
+      ...(object.type === 'image' && !Object.prototype.hasOwnProperty.call(asObject(object.content), 'fill')
+        ? {}
+        : { fill: object.fill }),
+      ...(object.text === undefined ? {} : { text: object.text }),
+      ...(object.image === undefined ? {} : { image: object.image }),
+      ...(object.drawing === undefined ? {} : { drawing: object.drawing }),
+    },
+    actions: object.type === 'group' ? [] : clone(object.actions),
+    metadata: clone(object.metadata),
+  }
+}
 
 const normalizeObjectSnapshots = (
   objects: Record<string, TheaterObjectSnapshot> | undefined,

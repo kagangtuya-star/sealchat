@@ -118,6 +118,20 @@ const stageImageRefSchema = z.strictObject({
   animated: z.boolean().optional(),
 })
 
+const stageImageAnnotationSchema = z.strictObject({
+  version: z.literal(1),
+  enabled: z.boolean(),
+  text: z.string().max(2_000),
+  style: z.enum(['card', 'bubble', 'tag', 'floating', 'footer']),
+  placement: z.enum(['auto', 'top', 'right', 'bottom', 'left']),
+  fontSize: z.number().int().min(10).max(36),
+  textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  backgroundOpacity: z.number().finite().min(0).max(1),
+  maxWidth: z.number().int().min(120).max(480),
+  delayMs: z.number().int().min(0).max(1_000),
+})
+
 const characterDecorationSchema = z.strictObject({
   id: nonEmptyIdSchema,
   resource: stageImageRefSchema,
@@ -349,6 +363,7 @@ const stageObjectSchema = z.strictObject({
   drawing: stageDrawingSchema.optional(),
   text: z.string().max(100_000).optional(),
   image: stageImageRefSchema.optional(),
+  annotation: stageImageAnnotationSchema.optional(),
   content: z.record(z.string(), z.unknown()).optional(),
   ownerUserId: nonEmptyIdSchema.nullable().optional(),
   characterIdentityId: nonEmptyIdSchema.nullable().optional(),

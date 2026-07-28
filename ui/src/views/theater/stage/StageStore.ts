@@ -4,6 +4,7 @@ import {
   createDefaultStageSceneTransition,
   isStageActionTarget,
   isSafeStageImageUrl,
+  normalizeStageImageAnnotation,
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   normalizeStageActionSchedule,
@@ -306,6 +307,9 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     fill: input.type === 'text' ? '#ffffff' : typeof input.fill === 'string' ? input.fill : '#60a5fa',
     drawing,
     image: normalizeImageRef(input.image) || undefined,
+    annotation: input.type === 'image'
+      ? normalizeStageImageAnnotation(input.annotation || input.content?.annotation)
+      : undefined,
     content: input.type === 'effect'
       ? {
           ...(input.content && typeof input.content === 'object' ? input.content : {}),

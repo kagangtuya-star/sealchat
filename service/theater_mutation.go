@@ -265,13 +265,13 @@ func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *t
 	}
 	if content, ok := payload.Fields["content"]; ok {
 		if object.Kind == "image" {
-			if err := validateDelegatedTheaterObjectJSONField(object, object.ContentJSON, content, "image", "content"); err != nil {
+			if err := validateDelegatedTheaterObjectJSONField(object, object.ContentJSON, content, map[string]bool{"image": true, "annotation": true}, "content"); err != nil {
 				return err
 			}
 		}
 	}
 	if metadata, ok := payload.Fields["metadata"]; ok {
-		if err := validateDelegatedTheaterObjectJSONField(object, object.MetadataJSON, metadata, "entrance", "metadata"); err != nil {
+		if err := validateDelegatedTheaterObjectJSONField(object, object.MetadataJSON, metadata, map[string]bool{"entrance": true}, "metadata"); err != nil {
 			return err
 		}
 	}
@@ -283,7 +283,7 @@ var delegatedTheaterObjectTransformFields = map[string]bool{
 	"scale": true, "scaleX": true, "scaleY": true,
 }
 
-func validateDelegatedTheaterObjectJSONField(object *model.TheaterObjectModel, raw string, value any, allowedKey, field string) error {
+func validateDelegatedTheaterObjectJSONField(object *model.TheaterObjectModel, raw string, value any, allowedKeys map[string]bool, field string) error {
 	if object.Kind != "image" {
 		return newTheaterError(TheaterErrorPermissionDenied, "成员只能修改图片组件"+field, 403, map[string]any{"field": field})
 	}
@@ -297,22 +297,28 @@ func validateDelegatedTheaterObjectJSONField(object *model.TheaterObjectModel, r
 	if !ok {
 		return theaterPayloadError("object " + field + " 无效")
 	}
-	_, beforeHasAllowed := before[allowedKey]
-	_, afterHasAllowed := after[allowedKey]
 	beforeRest := make(map[string]any, len(before))
+	beforeAllowed := make(map[string]any, len(allowedKeys))
 	for key, item := range before {
-		beforeRest[key] = item
+		if allowedKeys[key] {
+			beforeAllowed[key] = item
+		} else {
+			beforeRest[key] = item
+		}
 	}
 	afterRest := make(map[string]any, len(after))
+	afterAllowed := make(map[string]any, len(allowedKeys))
 	for key, item := range after {
-		afterRest[key] = item
+		if allowedKeys[key] {
+			afterAllowed[key] = item
+		} else {
+			afterRest[key] = item
+		}
 	}
-	delete(beforeRest, allowedKey)
-	delete(afterRest, allowedKey)
-	if !reflect.DeepEqual(beforeRest, afterRest) || beforeHasAllowed && !afterHasAllowed && allowedKey != "image" {
+	if !reflect.DeepEqual(beforeRest, afterRest) {
 		return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改图片组件"+field+"的其他字段", 403, map[string]any{"field": field})
 	}
-	if !beforeHasAllowed && !afterHasAllowed {
+	if reflect.DeepEqual(beforeAllowed, afterAllowed) {
 		return newTheaterError(TheaterErrorPermissionDenied, "成员未修改允许字段", 403, map[string]any{"field": field})
 	}
 	return nil
@@ -743,6 +749,11 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 			raw, _ := json.Marshal(value)
 			if object.Kind == "effect" {
 				if err := validateTheaterEffectContent(raw); err != nil {
+					return err
+				}
+			}
+			if object.Kind == "image" {
+				if err := validateTheaterImageAnnotationContent(raw); err != nil {
 					return err
 				}
 			}

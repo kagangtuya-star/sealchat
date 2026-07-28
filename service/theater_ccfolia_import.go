@@ -1283,7 +1283,11 @@ func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[stri
 		if err != nil {
 			return nil, warnings, fmt.Errorf("CCFOLIA item %s: %w", entry.SourceID, err)
 		}
-		content, _ := json.Marshal(map[string]any{"image": imageRef, "text": item.Memo})
+		contentValue := map[string]any{"image": imageRef, "text": item.Memo}
+		if memo := strings.TrimSpace(item.Memo); memo != "" {
+			contentValue["annotation"] = defaultTheaterImageAnnotation(memo)
+		}
+		content, _ := json.Marshal(contentValue)
 		actionMetadata, actionWarnings := ccfoliaActions(item.ClickAction, sceneNameIDs)
 		actions := actionMetadata.Actions
 		warnings = append(warnings, actionWarnings...)

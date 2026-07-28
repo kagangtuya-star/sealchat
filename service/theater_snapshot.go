@@ -147,10 +147,29 @@ func projectTheaterObjectsForMember(objects map[string]TheaterObjectSnapshot) ma
 				object.Name = "组件"
 			}
 		}
+		if !object.Interactive && !object.Editable {
+			object.Content = redactTheaterImageAnnotation(object.Content)
+		}
 		object.Actions = redactTheaterActionsForMember(object.Actions)
 		result[objectID] = object
 	}
 	return result
+}
+
+func redactTheaterImageAnnotation(raw json.RawMessage) json.RawMessage {
+	var content map[string]any
+	if json.Unmarshal(raw, &content) != nil {
+		return raw
+	}
+	if _, exists := content["annotation"]; !exists {
+		return raw
+	}
+	delete(content, "annotation")
+	redacted, err := json.Marshal(content)
+	if err != nil {
+		return raw
+	}
+	return redacted
 }
 
 func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {

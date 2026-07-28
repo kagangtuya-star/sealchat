@@ -53,6 +53,8 @@ import {
   STAGE_ACTION_MAX_DELAY_MS,
   STAGE_ENTRANCE_MAX_DURATION_MS,
   createDefaultStageActionSchedule,
+  createDefaultStageImageAnnotation,
+  normalizeStageImageAnnotation,
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   stageSceneTransitionTypes,
@@ -66,6 +68,7 @@ import {
   type StageDrawingStyle,
   type StageDrawingTool,
   type StageImageRef,
+  type StageImageAnnotation,
   type StageObject,
   type StageObjectFit,
   type StagePointerTrace,
@@ -96,6 +99,7 @@ import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
+import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
@@ -177,6 +181,20 @@ const resourceError = ref('')
 const resourceUploading = ref(false)
 const scenePanelOpen = ref(false)
 const inspectorPanelOpen = ref(false)
+const imageAnnotationEditorObjectId = ref<string | null>(null)
+const imageAnnotationEditorVisible = ref(false)
+const imageAnnotationOverlayRef = ref<HTMLDivElement | null>(null)
+const imageAnnotationOverlay = reactive({
+  visible: false,
+  objectId: '',
+  left: 0,
+  top: 0,
+  pointerX: 0,
+  pointerY: 0,
+  annotation: createDefaultStageImageAnnotation(),
+})
+let imageAnnotationTimer: number | null = null
+let imageAnnotationPendingObjectId = ''
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
@@ -820,6 +838,135 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && hasConfiguredObjectAction(object)
   && isStageActionTarget(object.type),
 )
+
+const imageAnnotationForObject = (object: StageObject | null | undefined) => (
+  object?.type === 'image' ? normalizeStageImageAnnotation(object.annotation || object.content?.annotation) : undefined
+)
+const canShowImageAnnotation = (object: StageObject | null | undefined) => {
+  const annotation = imageAnnotationForObject(object)
+  return Boolean(object?.visible && object.interactive && annotation?.enabled && annotation.text.trim())
+}
+const imageAnnotationEditorObject = computed(() => {
+  const object = imageAnnotationEditorObjectId.value
+    ? props.store.activeObjects.value[imageAnnotationEditorObjectId.value]
+    : null
+  return object?.type === 'image' ? object : null
+})
+const imageAnnotationOverlayStyle = computed(() => ({
+  left: `${imageAnnotationOverlay.left}px`,
+  top: `${imageAnnotationOverlay.top}px`,
+  color: imageAnnotationOverlay.annotation.textColor,
+  background: annotationRgba(
+    imageAnnotationOverlay.annotation.backgroundColor,
+    imageAnnotationOverlay.annotation.backgroundOpacity,
+  ),
+  fontSize: `${imageAnnotationOverlay.annotation.fontSize}px`,
+  maxWidth: `${Math.max(80, Math.min(imageAnnotationOverlay.annotation.maxWidth, viewportSize.value.width - 16))}px`,
+}))
+
+const annotationRgba = (color: string, opacity: number) => {
+  const value = color.replace('#', '')
+  const red = Number.parseInt(value.slice(0, 2), 16)
+  const green = Number.parseInt(value.slice(2, 4), 16)
+  const blue = Number.parseInt(value.slice(4, 6), 16)
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`
+}
+
+const clearImageAnnotationTimer = () => {
+  if (imageAnnotationTimer !== null) window.clearTimeout(imageAnnotationTimer)
+  imageAnnotationTimer = null
+  imageAnnotationPendingObjectId = ''
+}
+
+const hideImageAnnotation = (objectId?: string) => {
+  clearImageAnnotationTimer()
+  if (objectId && imageAnnotationOverlay.objectId !== objectId) return
+  imageAnnotationOverlay.visible = false
+  imageAnnotationOverlay.objectId = ''
+}
+
+const positionImageAnnotation = async () => {
+  await nextTick()
+  if (!imageAnnotationOverlay.visible || !viewportRef.value || !imageAnnotationOverlayRef.value) return
+  const viewport = viewportRef.value.getBoundingClientRect()
+  const overlay = imageAnnotationOverlayRef.value.getBoundingClientRect()
+  const gap = 12
+  const x = imageAnnotationOverlay.pointerX
+  const y = imageAnnotationOverlay.pointerY
+  const placement = imageAnnotationOverlay.annotation.placement
+  let resolved = placement
+  if (resolved === 'auto') {
+    if (x + gap + overlay.width <= viewport.width) resolved = 'right'
+    else if (x - gap - overlay.width >= 0) resolved = 'left'
+    else if (y + gap + overlay.height <= viewport.height) resolved = 'bottom'
+    else resolved = 'top'
+  }
+  let left = x + gap
+  let top = y - overlay.height / 2
+  if (resolved === 'left') left = x - gap - overlay.width
+  else if (resolved === 'top') {
+    left = x - overlay.width / 2
+    top = y - gap - overlay.height
+  } else if (resolved === 'bottom') {
+    left = x - overlay.width / 2
+    top = y + gap
+  }
+  imageAnnotationOverlay.left = Math.max(8, Math.min(viewport.width - overlay.width - 8, left))
+  imageAnnotationOverlay.top = Math.max(8, Math.min(viewport.height - overlay.height - 8, top))
+}
+
+const updateImageAnnotationHover = (objectId: string, event: Konva.KonvaEventObject<MouseEvent | PointerEvent>) => {
+  const object = getObject(objectId)
+  if (!canShowImageAnnotation(object) || !viewportRef.value) {
+    hideImageAnnotation(objectId)
+    return
+  }
+  const annotation = imageAnnotationForObject(object)!
+  const viewport = viewportRef.value.getBoundingClientRect()
+  const updatePointer = () => {
+    imageAnnotationOverlay.pointerX = event.evt.clientX - viewport.left
+    imageAnnotationOverlay.pointerY = event.evt.clientY - viewport.top
+  }
+  updatePointer()
+  if (imageAnnotationOverlay.visible && imageAnnotationOverlay.objectId === objectId) {
+    void positionImageAnnotation()
+    return
+  }
+  if (imageAnnotationTimer !== null && imageAnnotationPendingObjectId === objectId) return
+  clearImageAnnotationTimer()
+  imageAnnotationPendingObjectId = objectId
+  imageAnnotationTimer = window.setTimeout(() => {
+    imageAnnotationTimer = null
+    imageAnnotationPendingObjectId = ''
+    if (!canShowImageAnnotation(getObject(objectId))) return
+    imageAnnotationOverlay.objectId = objectId
+    imageAnnotationOverlay.annotation = annotation
+    imageAnnotationOverlay.visible = true
+    void positionImageAnnotation()
+  }, annotation.delayMs)
+}
+
+const openImageAnnotationEditor = (objectId: string) => {
+  const object = getObject(objectId)
+  if (object?.type !== 'image' || !canEditObject(object)) return
+  hideImageAnnotation()
+  imageAnnotationEditorObjectId.value = objectId
+  imageAnnotationEditorVisible.value = true
+}
+
+const closeImageAnnotationEditor = () => {
+  imageAnnotationEditorVisible.value = false
+  imageAnnotationEditorObjectId.value = null
+}
+
+const saveImageAnnotation = (annotation: StageImageAnnotation) => {
+  const object = imageAnnotationEditorObject.value
+  if (!object || !canEditObject(object)) return
+  props.store.beginObjectEdit('修改图片标注')
+  object.annotation = normalizeStageImageAnnotation(annotation)
+  props.store.commitObjectEdit()
+  closeImageAnnotationEditor()
+}
 
 type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
 
@@ -4945,7 +5092,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       ? true
       : (!viewToolActive.value && Boolean(editableCanvasSelectionTarget(object.id)))
         || (viewToolActive.value && canDragObject(object))
-        || canInteractObject(object),
+        || canInteractObject(object)
+        || canShowImageAnnotation(object),
   })
   if (object.type === 'drawing') {
     return
@@ -5159,6 +5307,15 @@ const stageObjectIdFromTarget = (target: Konva.Node) => {
     node = node.getParent()
   }
   return null
+}
+
+const handleStageImageAnnotationHover = (event: Konva.KonvaEventObject<PointerEvent>) => {
+  const objectId = stageObjectIdFromTarget(event.target)
+  if (!objectId || !canShowImageAnnotation(getObject(objectId))) {
+    hideImageAnnotation()
+    return
+  }
+  updateImageAnnotationHover(objectId, event)
 }
 
 const beginPanCandidate = (event: Konva.KonvaEventObject<PointerEvent>, objectId: string | null) => {
@@ -6031,7 +6188,9 @@ onMounted(() => {
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
   stage.on('pointermove', movePan)
+  stage.on('pointermove', handleStageImageAnnotationHover)
   stage.on('pointerup pointercancel', stopPan)
+  stage.on('pointerleave', () => hideImageAnnotation())
   stage.on('contextmenu', (event) => event.evt.preventDefault())
   resizeObserver = new ResizeObserver(resizeStage)
   resizeObserver.observe(viewportRef.value!)
@@ -6047,6 +6206,8 @@ onMounted(() => {
 })
 
 watch(() => props.store.state.activeSceneId, (sceneId, previousSceneId) => {
+  hideImageAnnotation()
+  closeImageAnnotationEditor()
   effectRuntime.invalidateCurrentMessage()
   beginSceneMediaBatch(sceneId, true, previousSceneId)
 }, { flush: 'sync' })
@@ -6193,6 +6354,7 @@ watch(theaterAudioMasterVolume, (volume) => {
 })
 
 onBeforeUnmount(() => {
+  hideImageAnnotation()
   if (actionDragFrame !== null) window.cancelAnimationFrame(actionDragFrame)
   actionDragFrame = null
   actionDragSession = null
@@ -6468,6 +6630,13 @@ onBeforeUnmount(() => {
             :hidden-object-ids="pendingTextEntranceIds"
             :stacking-order="rootStackingOrder"
           />
+          <div
+            v-if="imageAnnotationOverlay.visible"
+            ref="imageAnnotationOverlayRef"
+            class="theater-image-annotation"
+            :class="`is-${imageAnnotationOverlay.annotation.style}`"
+            :style="imageAnnotationOverlayStyle"
+          >{{ imageAnnotationOverlay.annotation.text }}</div>
           <div ref="sceneMorphContainerRef" class="theater-scene-morph-overlay" />
         </div>
         <div
@@ -6772,6 +6941,13 @@ onBeforeUnmount(() => {
                   编辑图片
                 </n-tooltip>
                 <n-button size="small" quaternary type="error" :disabled="!selectedObject.image" @click="clearImage({ kind: 'object', objectId: selectedObject.id })">清除</n-button>
+              </div>
+              <label>图片标注</label>
+              <div class="theater-image-annotation-entry-row">
+                <n-button class="theater-image-annotation-entry" size="small" secondary @click="openImageAnnotationEditor(selectedObject.id)">
+                  <template #icon><n-icon><Settings /></n-icon></template>
+                  设置悬停文字标注
+                </n-button>
               </div>
             </template>
             <template v-if="selectedObject.type === 'image' && selectedObjectSupportsEntrance && canEditObject(selectedObject)">
@@ -7322,6 +7498,14 @@ onBeforeUnmount(() => {
       @cancel="closeImageEditor"
       @confirm="saveEditedImage"
     />
+    <StageImageAnnotationEditor
+      v-if="imageAnnotationEditorObject"
+      :show="imageAnnotationEditorVisible"
+      :value="imageAnnotationForObject(imageAnnotationEditorObject)"
+      :object-name="imageAnnotationEditorObject.name"
+      @close="closeImageAnnotationEditor"
+      @save="saveImageAnnotation"
+    />
     <TheaterActionSequenceEditor
       v-model:show="sequenceEditorVisible"
       :component-name="selectedObject?.name || ''"
@@ -7472,6 +7656,17 @@ onBeforeUnmount(() => {
 .theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
 .theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
+.theater-image-annotation {
+  position: absolute; z-index: 10001; box-sizing: border-box; padding: 9px 11px; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; line-height: 1.45; pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .34); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.theater-image-annotation.is-bubble { border-radius: 12px; }
+.theater-image-annotation.is-tag { padding: 5px 8px; border-radius: 4px; font-weight: 650; line-height: 1.25; }
+.theater-image-annotation.is-floating { border-color: rgba(255, 255, 255, .16); border-radius: 6px; }
+.theater-image-annotation.is-footer { padding: 7px 10px; border-radius: 3px; }
+.theater-image-annotation-entry-row { min-width: 0; padding-right: 3px; }
+.theater-image-annotation-entry { box-sizing: border-box; width: 100%; max-width: 100%; justify-content: flex-start; }
 .theater-selection-quick-bar {
   position: absolute; z-index: 10000; display: inline-flex; gap: 2px; padding: 3px;
   border: 1px solid var(--theater-border); border-radius: 6px; background: rgba(24, 24, 27, .92);

@@ -165,6 +165,73 @@ export interface StageImageRef {
   loopCount?: number
 }
 
+export const stageImageAnnotationStyles = ['card', 'bubble', 'tag', 'floating', 'footer'] as const
+export type StageImageAnnotationStyle = typeof stageImageAnnotationStyles[number]
+export const stageImageAnnotationPlacements = ['auto', 'top', 'right', 'bottom', 'left'] as const
+export type StageImageAnnotationPlacement = typeof stageImageAnnotationPlacements[number]
+
+export interface StageImageAnnotation {
+  version: 1
+  enabled: boolean
+  text: string
+  style: StageImageAnnotationStyle
+  placement: StageImageAnnotationPlacement
+  fontSize: number
+  textColor: string
+  backgroundColor: string
+  backgroundOpacity: number
+  maxWidth: number
+  delayMs: number
+}
+
+export const createDefaultStageImageAnnotation = (): StageImageAnnotation => ({
+  version: 1,
+  enabled: true,
+  text: '',
+  style: 'floating',
+  placement: 'auto',
+  fontSize: 14,
+  textColor: '#ffffff',
+  backgroundColor: '#111827',
+  backgroundOpacity: 0.65,
+  maxWidth: 300,
+  delayMs: 100,
+})
+
+const stageAnnotationColorPattern = /^#[0-9a-fA-F]{6}$/
+
+export const normalizeStageImageAnnotation = (input: unknown): StageImageAnnotation | undefined => {
+  if (!input || typeof input !== 'object') return undefined
+  const value = input as Partial<StageImageAnnotation>
+  const fallback = createDefaultStageImageAnnotation()
+  const numeric = (candidate: unknown, defaultValue: number, min: number, max: number) => (
+    typeof candidate === 'number' && Number.isFinite(candidate)
+      ? Math.min(max, Math.max(min, candidate))
+      : defaultValue
+  )
+  return {
+    version: 1,
+    enabled: value.enabled !== false,
+    text: typeof value.text === 'string' ? value.text.slice(0, 2_000) : '',
+    style: stageImageAnnotationStyles.includes(value.style as StageImageAnnotationStyle)
+      ? value.style as StageImageAnnotationStyle
+      : fallback.style,
+    placement: stageImageAnnotationPlacements.includes(value.placement as StageImageAnnotationPlacement)
+      ? value.placement as StageImageAnnotationPlacement
+      : fallback.placement,
+    fontSize: Math.round(numeric(value.fontSize, fallback.fontSize, 10, 36)),
+    textColor: typeof value.textColor === 'string' && stageAnnotationColorPattern.test(value.textColor)
+      ? value.textColor.toLowerCase()
+      : fallback.textColor,
+    backgroundColor: typeof value.backgroundColor === 'string' && stageAnnotationColorPattern.test(value.backgroundColor)
+      ? value.backgroundColor.toLowerCase()
+      : fallback.backgroundColor,
+    backgroundOpacity: numeric(value.backgroundOpacity, fallback.backgroundOpacity, 0, 1),
+    maxWidth: Math.round(numeric(value.maxWidth, fallback.maxWidth, 120, 480)),
+    delayMs: Math.round(numeric(value.delayMs, fallback.delayMs, 0, 1_000)),
+  }
+}
+
 export const stageSceneTransitionTypes = [
   'none',
   'fade',
@@ -353,6 +420,7 @@ export interface StageObject {
   drawing?: StageDrawing
   text?: string
   image?: StageImageRef
+  annotation?: StageImageAnnotation
   content?: Record<string, unknown>
   ownerUserId?: string | null
   characterIdentityId?: string | null

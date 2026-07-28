@@ -8,8 +8,23 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"strings"
 )
+
+var theaterImageAnnotationColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func defaultTheaterImageAnnotation(text string) map[string]any {
+	runes := []rune(text)
+	if len(runes) > 2_000 {
+		text = string(runes[:2_000])
+	}
+	return map[string]any{
+		"version": 1, "enabled": true, "text": text, "style": "floating", "placement": "auto",
+		"fontSize": 14, "textColor": "#ffffff", "backgroundColor": "#111827",
+		"backgroundOpacity": 0.65, "maxWidth": 300, "delayMs": 100,
+	}
+}
 
 const (
 	theaterMaxSnapshotBytes  = 4 << 20
@@ -501,6 +516,81 @@ func validateObjectInput(object *theaterObjectInput) error {
 		}
 		if err := validateTheaterEffectContent(object.Content); err != nil {
 			return err
+		}
+	}
+	if object.Kind == "image" {
+		if err := validateTheaterImageAnnotationContent(object.Content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTheaterImageAnnotationContent(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var content map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&content) != nil {
+		return theaterPayloadError("image content 无效")
+	}
+	value, exists := content["annotation"]
+	if !exists {
+		return nil
+	}
+	annotation, ok := value.(map[string]any)
+	if !ok {
+		return theaterPayloadError("image annotation 无效")
+	}
+	allowed := map[string]bool{
+		"version": true, "enabled": true, "text": true, "style": true, "placement": true,
+		"fontSize": true, "textColor": true, "backgroundColor": true,
+		"backgroundOpacity": true, "maxWidth": true, "delayMs": true,
+	}
+	for key := range annotation {
+		if !allowed[key] {
+			return theaterPayloadError("image annotation 包含禁止字段: " + key)
+		}
+	}
+	if len(annotation) != len(allowed) {
+		return theaterPayloadError("image annotation 字段不完整")
+	}
+	version, valid := theaterNumericValue(annotation["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("image annotation.version 无效")
+	}
+	if _, ok := annotation["enabled"].(bool); !ok {
+		return theaterPayloadError("image annotation.enabled 无效")
+	}
+	text, ok := annotation["text"].(string)
+	if !ok || len([]rune(text)) > 2_000 {
+		return theaterPayloadError("image annotation.text 无效")
+	}
+	style, ok := annotation["style"].(string)
+	if !ok || !map[string]bool{"card": true, "bubble": true, "tag": true, "floating": true, "footer": true}[style] {
+		return theaterPayloadError("image annotation.style 无效")
+	}
+	placement, ok := annotation["placement"].(string)
+	if !ok || !map[string]bool{"auto": true, "top": true, "right": true, "bottom": true, "left": true}[placement] {
+		return theaterPayloadError("image annotation.placement 无效")
+	}
+	for _, name := range []string{"textColor", "backgroundColor"} {
+		color, ok := annotation[name].(string)
+		if !ok || !theaterImageAnnotationColorPattern.MatchString(color) {
+			return theaterPayloadError("image annotation." + name + " 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{
+		"fontSize": {10, 36}, "backgroundOpacity": {0, 1}, "maxWidth": {120, 480}, "delayMs": {0, 1_000},
+	} {
+		number, valid := theaterNumericValue(annotation[name])
+		if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < bounds[0] || number > bounds[1] {
+			return theaterPayloadError("image annotation." + name + " 无效")
+		}
+		if name != "backgroundOpacity" && math.Trunc(number) != number {
+			return theaterPayloadError("image annotation." + name + " 必须为整数")
 		}
 	}
 	return nil
