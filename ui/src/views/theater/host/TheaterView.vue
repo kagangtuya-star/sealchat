@@ -400,7 +400,8 @@ const startTheaterSync = async () => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.appendPointerTrace(trace)
     },
     onEffectTriggered: (effectId, triggerId) => {
-      if (isCurrent() && theaterSync === client) stageAppRef.value?.playEffect(effectId, triggerId)
+      if (isCurrent() && theaterSync === client) return stageAppRef.value?.playEffect(effectId, triggerId) === true
+      return false
     },
     onVisibilityTriggered: (changes, triggerId) => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.playVisibilityTransitions(changes, triggerId)

@@ -109,7 +109,7 @@ interface TheaterSyncOptions {
   onSyncingChange?: (syncing: boolean) => void
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onPointerTrace?: (trace: StagePointerTrace) => void
-  onEffectTriggered?: (effectId: string, triggerId: string) => void
+  onEffectTriggered?: (effectId: string, triggerId: string, sceneId?: string) => boolean | void
   onVisibilityTriggered?: (changes: TheaterVisibilityChange[], triggerId: string) => void
   onError?: (message: string) => void
 }
@@ -684,10 +684,10 @@ export class TheaterSyncClient {
   private flushAgain = false
   private pendingRemoteRevision = 0
   private hasLoaded = false
-  // State mutations must retain revision order. Message and composer actions do
-  // not mutate the theater document, so keeping them out of this queue lets a
-  // single click start all of its effects together.
+  // Scene changes, visibility mutations, and effect triggers retain request
+  // order so a scene-local effect cannot race ahead of its scene switch.
   private mutationActionQueue: Promise<void> = Promise.resolve()
+  private pendingEffectTriggers = new Map<string, { effectId: string, sceneId: string, revision: number, expiresAt: number }>()
   private consecutiveConflicts = 0
 
   private theaterBase() {
@@ -745,8 +745,26 @@ export class TheaterSyncClient {
     const payload = asObject(theater.payload)
     const effectId = typeof payload.effectId === 'string' ? payload.effectId.trim() : ''
     const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
+    const sceneId = typeof payload.sceneId === 'string' ? payload.sceneId.trim() : ''
     if (!effectId || !triggerId) return
-    this.options.onEffectTriggered?.(effectId, triggerId)
+    if (this.options.onEffectTriggered?.(effectId, triggerId, sceneId) === false) {
+      if (this.pendingEffectTriggers.size >= 256) this.pendingEffectTriggers.delete(this.pendingEffectTriggers.keys().next().value || '')
+      this.pendingEffectTriggers.set(triggerId, { effectId, sceneId, revision: finite(theater.revision, 0), expiresAt: Date.now() + 15_000 })
+      void this.reload(true)
+    }
+  }
+
+  private flushPendingEffectTriggers() {
+    const now = Date.now()
+    for (const [triggerId, pending] of this.pendingEffectTriggers) {
+      if (pending.expiresAt <= now) {
+        this.pendingEffectTriggers.delete(triggerId)
+        continue
+      }
+      if (pending.revision > this.revision) continue
+      if (pending.sceneId && pending.sceneId !== this.options.store.state.activeSceneId) continue
+      if (this.options.onEffectTriggered?.(pending.effectId, triggerId, pending.sceneId) !== false) this.pendingEffectTriggers.delete(triggerId)
+    }
   }
 
   private readonly onVisibilityTriggered = (event: any) => {
@@ -806,6 +824,7 @@ export class TheaterSyncClient {
     if (this.reconcileTimer) clearInterval(this.reconcileTimer)
     this.flushTimer = null
     this.reconcileTimer = null
+    this.pendingEffectTriggers.clear()
     chatEvent.off('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
@@ -822,7 +841,7 @@ export class TheaterSyncClient {
   }
 
   async triggerAction(payload: StageActionTriggeredPayload) {
-    if (payload.action.type !== 'scene.apply' && payload.action.type !== 'object.toggle') {
+    if (payload.action.type !== 'scene.apply' && payload.action.type !== 'object.toggle' && payload.action.type !== 'effect.play') {
       return this.triggerActionNow(payload)
     }
     const previous = this.mutationActionQueue
@@ -990,7 +1009,10 @@ export class TheaterSyncClient {
       this.schemaVersion = finite(data.schemaVersion, 1)
       this.permissions = Array.isArray(data.permissions) ? data.permissions.filter((item): item is string => typeof item === 'string') : []
       this.options.onPermissionsChange?.([...this.permissions])
-      if (!force && this.hasLoaded && nextRevision === this.revision) return
+      if (!force && this.hasLoaded && nextRevision === this.revision) {
+        this.flushPendingEffectTriggers()
+        return
+      }
       const remoteDocument = normalizeDocument(data.snapshot || {})
       const currentWorkspace = this.hasLoaded ? this.options.store.getSnapshot() : null
       const currentDocument = currentWorkspace ? documentFromWorkspace(currentWorkspace) : null
@@ -1028,6 +1050,7 @@ export class TheaterSyncClient {
         this.applyingRemote = false
       }
       this.hasLoaded = true
+      this.flushPendingEffectTriggers()
     } catch (error) {
       if (!this.started) return
       if (!silent) {

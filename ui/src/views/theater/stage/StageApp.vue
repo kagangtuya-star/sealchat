@@ -242,17 +242,18 @@ let packagePollGeneration = 0
 
 type TheaterPackageJob = {
   id: string
-  type: 'export' | 'import' | 'import_ccfolia'
+  type: 'export' | 'export_effects' | 'import' | 'import_ccfolia'
   status: 'pending' | 'running' | 'done' | 'failed'
   progress: number
   outputFileName?: string
   errorMessage?: string
-  summary?: { scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
+  summary?: { packageKind?: 'theater' | 'effects', effects?: number, scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
 }
 
 const canManagePackages = computed(() => props.syncReady && props.permissions.includes('stage.admin.restore'))
 const packageMenuOptions = computed<DropdownOption[]>(() => [
   { label: packageBusy.value ? '任务处理中…' : '导出小剧场 ZIP', key: 'export', disabled: packageBusy.value },
+  { label: '导出特效包 ZIP', key: 'export-effects', disabled: packageBusy.value },
   { label: '导入小剧场 ZIP', key: 'import', disabled: packageBusy.value },
   { label: '导入 CCFOLIA ZIP', key: 'import-ccfolia', disabled: packageBusy.value },
 ])
@@ -308,16 +309,16 @@ const downloadTheaterPackage = (job: TheaterPackageJob) => {
   anchor.remove()
 }
 
-const exportTheaterPackage = async () => {
+const exportTheaterPackage = async (kind: 'theater' | 'effects' = 'theater') => {
   packageBusy.value = true
   try {
-    const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath('export'), { inputChannelId: props.channelId })
-    packageMessage.info('小剧场导出任务已启动')
+    const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath(kind === 'effects' ? 'export/effects' : 'export'), { inputChannelId: props.channelId })
+    packageMessage.info(kind === 'effects' ? '特效包导出任务已启动' : '小剧场导出任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     downloadTheaterPackage(job)
-    packageMessage.success('小剧场 ZIP 已生成')
+    packageMessage.success(kind === 'effects' ? '特效包 ZIP 已生成' : '小剧场 ZIP 已生成')
   } catch (error) {
-    packageMessage.error(theaterAudioErrorMessage(error, '小剧场导出失败'))
+    packageMessage.error(theaterAudioErrorMessage(error, kind === 'effects' ? '特效包导出失败' : '小剧场导出失败'))
   } finally {
     packageBusy.value = false
   }
@@ -333,14 +334,17 @@ const importTheaterPackageFile = async (file: File) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
     })
-    packageMessage.info('小剧场导入任务已启动')
+    packageMessage.info('ZIP 导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     await fetchTheaterAudioAssets()
+    await fetchTheaterPanelOrganizer()
     const warnings = job.summary?.warnings?.filter(Boolean) || []
-    packageMessage.success(`已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
+    packageMessage.success(job.summary?.packageKind === 'effects'
+      ? `已导入 ${job.summary?.effects ?? job.summary?.objects ?? 0} 个特效`
+      : `已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
   } catch (error) {
-    packageMessage.error(theaterAudioErrorMessage(error, '小剧场导入失败'))
+    packageMessage.error(theaterAudioErrorMessage(error, 'ZIP 导入失败'))
   } finally {
     packageBusy.value = false
   }
@@ -352,8 +356,8 @@ const handlePackageInput = (event: Event) => {
   input.value = ''
   if (!file) return
   packageDialog.warning({
-    title: '追加导入小剧场',
-    content: `将“${file.name}”作为副本追加到当前世界。现有场景不会被覆盖。`,
+    title: '导入小剧场或特效包',
+    content: `将“${file.name}”导入当前世界。小剧场包追加场景；特效包导入全部特效，其中原场景特效放入当前场景。现有场景不会被覆盖。`,
     positiveText: '开始导入',
     negativeText: '取消',
     onPositiveClick: () => { void importTheaterPackageFile(file) },
@@ -399,6 +403,7 @@ const handleCCFOLIAInput = (event: Event) => {
 const handlePackageMenuSelect = (key: string | number) => {
   if (!canManagePackages.value || packageBusy.value) return
   if (key === 'export') void exportTheaterPackage()
+  if (key === 'export-effects') void exportTheaterPackage('effects')
   if (key === 'import') packageInputRef.value?.click()
   if (key === 'import-ccfolia') ccfoliaInputRef.value?.click()
 }

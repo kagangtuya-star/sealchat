@@ -119,7 +119,7 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 		objects:   map[string]string{"object-parent": "parent-new", "object-child": "child-new"},
 		resources: map[string]string{"resource-old": "resource-new"},
 		audio:     map[string]string{"audio-old": "audio-new"}, appearance: map[string]string{}, attachments: map[string]string{"attachment-old": "attachment-new"},
-		sourceWorldID: "world-old", sourceChannelID: "channel-old", worldID: "world-new", channelID: "channel-new",
+		sourceWorldID: "world-old", sourceChannelID: "channel-old", worldID: "world-new", channelID: "channel-new", resourceChannelID: "channel-new",
 	}
 	result, warnings, err := remapTheaterPackageSnapshot(snapshot, remap)
 	if err != nil {

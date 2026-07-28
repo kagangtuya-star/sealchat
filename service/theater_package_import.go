@@ -21,16 +21,17 @@ import (
 )
 
 type theaterPackageRemap struct {
-	scenes          map[string]string
-	objects         map[string]string
-	resources       map[string]string
-	audio           map[string]string
-	appearance      map[string]string
-	attachments     map[string]string
-	sourceWorldID   string
-	sourceChannelID string
-	worldID         string
-	channelID       string
+	scenes            map[string]string
+	objects           map[string]string
+	resources         map[string]string
+	audio             map[string]string
+	appearance        map[string]string
+	attachments       map[string]string
+	sourceWorldID     string
+	sourceChannelID   string
+	worldID           string
+	channelID         string
+	resourceChannelID string
 }
 
 func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel) (TheaterPackageSummary, error) {
@@ -64,13 +65,27 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 	if err != nil {
 		return summary, err
 	}
-	if manifest.PackageVersion != theaterPackageVersion || manifest.SchemaVersion != model.TheaterSchemaVersion {
+	packageKind := strings.TrimSpace(manifest.PackageKind)
+	if packageKind == "" && manifest.PackageVersion == 1 {
+		packageKind = TheaterPackageKindTheater
+	}
+	if manifest.PackageVersion < theaterPackageMinimumVersion || manifest.PackageVersion > theaterPackageVersion || manifest.SchemaVersion != model.TheaterSchemaVersion {
 		return summary, newTheaterError(TheaterErrorSchemaUnsupported, "舞台包版本不受支持", 409, map[string]any{
 			"packageVersion": manifest.PackageVersion, "schemaVersion": manifest.SchemaVersion,
 		})
 	}
+	if packageKind != TheaterPackageKindTheater && packageKind != TheaterPackageKindEffects {
+		return summary, newTheaterError(TheaterErrorSchemaUnsupported, "舞台包类型不受支持", 409, map[string]any{"packageKind": packageKind})
+	}
+	if packageKind == TheaterPackageKindEffects && manifest.PackageVersion < 2 {
+		return summary, newTheaterError(TheaterErrorSchemaUnsupported, "特效包版本不受支持", 409, map[string]any{"packageVersion": manifest.PackageVersion})
+	}
+	manifest.PackageKind = packageKind
 	if err := validateTheaterPackageManifestEntities(manifest); err != nil {
 		return summary, err
+	}
+	if packageKind == TheaterPackageKindEffects {
+		return importTheaterEffectsPackage(ctx, job, room, extractDir, manifest)
 	}
 
 	var snapshot TheaterSharedSnapshot
@@ -97,7 +112,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		scenes: map[string]string{}, objects: map[string]string{}, resources: map[string]string{},
 		audio: map[string]string{}, appearance: map[string]string{}, attachments: map[string]string{},
 		sourceWorldID: manifest.SourceWorldID, sourceChannelID: manifest.SourceInputChannelID,
-		worldID: job.TargetWorldID, channelID: job.InputChannelID,
+		worldID: job.TargetWorldID, channelID: job.InputChannelID, resourceChannelID: room.ChannelID,
 	}
 	for id := range snapshot.Scenes {
 		remap.scenes[id] = utils.NewID()
@@ -170,6 +185,8 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		return summary, err
 	}
 	summary = summarizeTheaterSnapshot(remappedSnapshot)
+	summary.PackageKind = TheaterPackageKindTheater
+	summary.Effects = len(theaterSnapshotEffectIDs(remappedSnapshot))
 	summary.Resources = len(manifest.Resources)
 	summary.AudioAssets = len(manifest.Audio)
 	summary.AppearanceAssets = len(manifest.AppearanceAssets)
@@ -265,6 +282,9 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 			}
 		}
 		if err := createTheaterPackageObjects(tx, &current, job.ActorUserID, nil, remappedSnapshot.PersistentObjects); err != nil {
+			return err
+		}
+		if err := importTheaterPackageEffectOrganizer(tx, extractDir, &current, job.ActorUserID, manifest, remap); err != nil {
 			return err
 		}
 		if err := recalculateTheaterResourceReferences(tx, current.ID); err != nil {
@@ -433,6 +453,9 @@ func loadAndValidateTheaterPackage(root string) (TheaterPackageManifest, error) 
 		return manifest, fmt.Errorf("manifest.json 无效: %w", err)
 	}
 	files := []TheaterPackageFile{manifest.Document}
+	if manifest.EffectOrganizer != nil {
+		files = append(files, *manifest.EffectOrganizer)
+	}
 	if manifest.WorldPresentation != nil {
 		files = append(files, *manifest.WorldPresentation)
 	}
@@ -815,7 +838,7 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 					case "sceneId":
 						knownReference = true
 						mapped = remap.scenes[text]
-					case "objectId", "parentId":
+					case "objectId", "parentId", "effectId":
 						knownReference = true
 						mapped = remap.objects[text]
 					case "resourceId", "posterResourceId":
@@ -892,8 +915,8 @@ func canonicalizeImportedTheaterResourceURL(value map[string]any, remap theaterP
 	}
 	variant := importedTheaterResourceVariant(value["url"])
 	base := "/api/v1/worlds/" + url.PathEscape(remap.worldID)
-	if remap.channelID != "" {
-		base += "/channels/" + url.PathEscape(remap.channelID)
+	if remap.resourceChannelID != "" {
+		base += "/channels/" + url.PathEscape(remap.resourceChannelID)
 	}
 	base += "/theater/resources/" + url.PathEscape(resourceID)
 	if variant != "" {

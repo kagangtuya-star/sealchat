@@ -21,11 +21,17 @@ import (
 )
 
 const (
-	theaterPackageVersion          = 1
+	theaterPackageVersion          = 2
+	theaterPackageMinimumVersion   = 1
 	theaterPackageMaxArchiveBytes  = int64(2 << 30)
 	theaterPackageMaxExpandedBytes = int64(4 << 30)
 	theaterPackageMaxFiles         = 10_000
 	theaterPackageRetention        = 7 * 24 * time.Hour
+)
+
+const (
+	TheaterPackageKindTheater = "theater"
+	TheaterPackageKindEffects = "effects"
 )
 
 func TheaterPackageRequestBodyLimit() int {
@@ -107,6 +113,7 @@ type TheaterPackageAppearanceAsset struct {
 
 type TheaterPackageManifest struct {
 	PackageVersion       int                             `json:"packageVersion"`
+	PackageKind          string                          `json:"packageKind,omitempty"`
 	SchemaVersion        int                             `json:"schemaVersion"`
 	PackageID            string                          `json:"packageId"`
 	CreatedAt            time.Time                       `json:"createdAt"`
@@ -115,13 +122,45 @@ type TheaterPackageManifest struct {
 	SourceRevision       int64                           `json:"sourceRevision"`
 	SourceInputChannelID string                          `json:"sourceInputChannelId,omitempty"`
 	Document             TheaterPackageFile              `json:"document"`
+	EffectOrganizer      *TheaterPackageFile             `json:"effectOrganizer,omitempty"`
 	WorldPresentation    *TheaterPackageFile             `json:"worldPresentation,omitempty"`
 	Resources            []TheaterPackageResource        `json:"resources"`
 	Audio                []TheaterPackageAudio           `json:"audio"`
 	AppearanceAssets     []TheaterPackageAppearanceAsset `json:"appearanceAssets,omitempty"`
 }
 
+type TheaterPackageEffectEntry struct {
+	Scope           string                `json:"scope"`
+	SourceSceneID   string                `json:"sourceSceneId,omitempty"`
+	SourceSceneName string                `json:"sourceSceneName,omitempty"`
+	Object          TheaterObjectSnapshot `json:"object"`
+}
+
+type TheaterPackageEffectsDocument struct {
+	Version int                         `json:"version"`
+	Effects []TheaterPackageEffectEntry `json:"effects"`
+}
+
+type TheaterPackageEffectFolder struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int64  `json:"sortOrder"`
+}
+
+type TheaterPackageEffectItem struct {
+	TargetID  string `json:"targetId"`
+	FolderID  string `json:"folderId,omitempty"`
+	SortOrder int64  `json:"sortOrder"`
+}
+
+type TheaterPackageEffectOrganizer struct {
+	Folders []TheaterPackageEffectFolder `json:"folders"`
+	Items   []TheaterPackageEffectItem   `json:"items"`
+}
+
 type TheaterPackageSummary struct {
+	PackageKind               string   `json:"packageKind,omitempty"`
+	Effects                   int      `json:"effects,omitempty"`
 	Scenes                    int      `json:"scenes"`
 	Objects                   int      `json:"objects"`
 	PersistentObjects         int      `json:"persistentObjects"`
@@ -234,6 +273,8 @@ func processTheaterPackageJob(ctx context.Context, job *model.TheaterPackageJobM
 	switch job.Type {
 	case model.TheaterPackageJobTypeExport:
 		summary, err = exportTheaterPackage(ctx, job)
+	case model.TheaterPackageJobTypeExportEffects:
+		summary, err = exportTheaterEffectPackage(ctx, job)
 	case model.TheaterPackageJobTypeImport:
 		summary, err = importTheaterPackage(ctx, job)
 	case model.TheaterPackageJobTypeImportCCFOLIA:
@@ -282,6 +323,14 @@ func failTheaterPackageJob(jobID, code string, cause error) error {
 }
 
 func CreateTheaterPackageExportJob(actorID, worldID, inputChannelID string) (*model.TheaterPackageJobModel, error) {
+	return createTheaterPackageExportJob(model.TheaterPackageJobTypeExport, actorID, worldID, inputChannelID)
+}
+
+func CreateTheaterEffectPackageExportJob(actorID, worldID, inputChannelID string) (*model.TheaterPackageJobModel, error) {
+	return createTheaterPackageExportJob(model.TheaterPackageJobTypeExportEffects, actorID, worldID, inputChannelID)
+}
+
+func createTheaterPackageExportJob(jobType, actorID, worldID, inputChannelID string) (*model.TheaterPackageJobModel, error) {
 	if _, _, err := requireTheaterPermission(actorID, worldID, "", TheaterPermissionAdminRestore); err != nil {
 		return nil, err
 	}
@@ -291,7 +340,7 @@ func CreateTheaterPackageExportJob(actorID, worldID, inputChannelID string) (*mo
 		}
 	}
 	job := &model.TheaterPackageJobModel{
-		Type: model.TheaterPackageJobTypeExport, Status: model.TheaterPackageJobStatusPending,
+		Type: jobType, Status: model.TheaterPackageJobStatusPending,
 		ActorUserID: actorID, SourceWorldID: strings.TrimSpace(worldID), InputChannelID: strings.TrimSpace(inputChannelID),
 	}
 	return job, model.GetDB().Create(job).Error

@@ -4,6 +4,7 @@ import "time"
 
 const (
 	TheaterPackageJobTypeExport        = "export"
+	TheaterPackageJobTypeExportEffects = "export_effects"
 	TheaterPackageJobTypeImport        = "import"
 	TheaterPackageJobTypeImportCCFOLIA = "import_ccfolia"
 
@@ -13,7 +14,7 @@ const (
 	TheaterPackageJobStatusFailed  = "failed"
 )
 
-// TheaterPackageJobModel records durable full-stage export and import work.
+// TheaterPackageJobModel records durable theater and effect package work.
 type TheaterPackageJobModel struct {
 	StringPKBaseModel
 	Type           string     `json:"type" gorm:"size:16;not null;index:idx_theater_package_job_status_created,priority:2"`

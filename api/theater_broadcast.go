@@ -243,6 +243,7 @@ func publishTheaterEffectTriggered(worldID, channelID string, effect *service.Th
 	event := theaterGatewayEvent(protocol.EventTheaterEffectTriggered, worldID, channelID, room.ID, effect.Revision, effect.TriggerID, map[string]any{
 		"triggerId": effect.TriggerID,
 		"effectId":  effect.EffectID,
+		"sceneId":   effect.SceneID,
 	})
 	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {

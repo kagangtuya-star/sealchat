@@ -105,6 +105,7 @@ func bindTheaterRoutes(router fiber.Router, base string) {
 	router.Post(base+"/admin/restore", TheaterAdminRestore)
 	router.Put(base+"/admin/snapshot", TheaterAdminReplace)
 	router.Post(base+"/packages/export", TheaterPackageExportCreate)
+	router.Post(base+"/packages/export/effects", TheaterEffectPackageExportCreate)
 	router.Post(base+"/packages/import", TheaterPackageImportCreate)
 	router.Post(base+"/packages/import/ccfolia", TheaterPackageCCFOLIAImportCreate)
 	router.Get(base+"/packages/jobs/:jobId", TheaterPackageJobGet)

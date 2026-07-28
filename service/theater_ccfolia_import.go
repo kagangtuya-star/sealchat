@@ -380,7 +380,10 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 		}
 	}()
 
-	remap := theaterPackageRemap{resources: map[string]string{}}
+	remap := theaterPackageRemap{
+		resources: map[string]string{},
+		worldID:   room.WorldID, resourceChannelID: room.ChannelID,
+	}
 	for sourceRef, target := range targets {
 		remap.resources[sourceRef] = target.ResourceID
 	}

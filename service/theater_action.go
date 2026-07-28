@@ -63,6 +63,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		return nil, theaterPayloadError("对象 actions 无效")
 	}
 	var selected *theaterStoredAction
+	var selectedSceneID *string
 	for index := range actions {
 		if actions[index].ID == command.ActionID {
 			selected = &actions[index]
@@ -85,6 +86,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		for index := range sequence.Steps {
 			if sequence.Steps[index].ID == stepID {
 				selected = &sequence.Steps[index].Action
+				selectedSceneID = sequence.Steps[index].SceneID
 				break
 			}
 		}
@@ -122,11 +124,14 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		if target.Kind != "effect" || (target.SceneID != "" && target.SceneID != room.ActiveSceneID) {
 			return nil, newTheaterError(TheaterErrorNotFound, "可播放特效不存在", 404, nil)
 		}
+		if selectedSceneID != nil && strings.TrimSpace(*selectedSceneID) != "" && target.SceneID != "" && target.SceneID != strings.TrimSpace(*selectedSceneID) {
+			return nil, newTheaterError(TheaterErrorNotFound, "特效不属于动作声明场景", 404, nil)
+		}
 		if !target.Visible {
 			return nil, newTheaterError(TheaterErrorNotFound, "特效未启用", 404, nil)
 		}
 		return &TheaterActionResult{Kind: "effect", Effect: &TheaterEffectActionResult{
-			TriggerID: mutationID, EffectID: target.ID, RoomID: room.ID, Revision: room.Revision,
+			TriggerID: mutationID, EffectID: target.ID, SceneID: target.SceneID, RoomID: room.ID, Revision: room.Revision,
 		}}, nil
 	case TheaterMutationObjectToggle:
 		var payload theaterObjectTogglePayload

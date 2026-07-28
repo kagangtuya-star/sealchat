@@ -13,6 +13,14 @@ import (
 )
 
 func TheaterPackageExportCreate(c *fiber.Ctx) error {
+	return createTheaterPackageExport(c, service.CreateTheaterPackageExportJob)
+}
+
+func TheaterEffectPackageExportCreate(c *fiber.Ctx) error {
+	return createTheaterPackageExport(c, service.CreateTheaterEffectPackageExportJob)
+}
+
+func createTheaterPackageExport(c *fiber.Ctx, create func(string, string, string) (*model.TheaterPackageJobModel, error)) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
 	var body struct {
@@ -26,7 +34,7 @@ func TheaterPackageExportCreate(c *fiber.Ctx) error {
 	if body.InputChannelID == "" {
 		body.InputChannelID = c.Params("channelId")
 	}
-	job, err := service.CreateTheaterPackageExportJob(user.ID, c.Params("worldId"), body.InputChannelID)
+	job, err := create(user.ID, c.Params("worldId"), body.InputChannelID)
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
@@ -84,7 +92,7 @@ func TheaterPackageDownload(c *fiber.Ctx) error {
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
-	if !theaterPackageJobMatchesWorld(job, c.Params("worldId")) || job.Type != model.TheaterPackageJobTypeExport || job.Status != model.TheaterPackageJobStatusDone || strings.TrimSpace(job.OutputFilePath) == "" {
+	if !theaterPackageJobMatchesWorld(job, c.Params("worldId")) || (job.Type != model.TheaterPackageJobTypeExport && job.Type != model.TheaterPackageJobTypeExportEffects) || job.Status != model.TheaterPackageJobStatusDone || strings.TrimSpace(job.OutputFilePath) == "" {
 		return theaterErrorResponse(c, requestID, &service.TheaterError{Code: service.TheaterErrorNotFound, Message: "导出文件不存在", HTTPStatus: fiber.StatusNotFound})
 	}
 	if _, err := os.Stat(job.OutputFilePath); err != nil {

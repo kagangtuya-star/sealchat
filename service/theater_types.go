@@ -213,6 +213,7 @@ type TheaterActionResult struct {
 type TheaterEffectActionResult struct {
 	TriggerID string `json:"triggerId"`
 	EffectID  string `json:"effectId"`
+	SceneID   string `json:"sceneId,omitempty"`
 	RoomID    string `json:"roomId"`
 	Revision  int64  `json:"revision"`
 }
