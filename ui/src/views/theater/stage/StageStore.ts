@@ -1356,10 +1356,14 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const replaceState = (next: StageWorkspaceState) => {
     transaction = null
     const value = clone(next)
-    state.activeSceneId = value.activeSceneId
-    state.liveState = value.liveState
+    // Remote member snapshots contain only the incoming active scene. Install
+    // scene metadata before changing activeSceneId, while keeping the outgoing
+    // liveState mounted long enough for the synchronous transition watcher to
+    // capture its visual state and build the incoming media readiness batch.
     state.scenes = value.scenes
     state.persistentObjects = value.persistentObjects
+    state.activeSceneId = value.activeSceneId
+    state.liveState = value.liveState
     state.camera = value.camera
     reconcileGroupScopes()
     setSelectedObjectIds(value.selectedObjectId ? [value.selectedObjectId] : [], value.selectedObjectId)

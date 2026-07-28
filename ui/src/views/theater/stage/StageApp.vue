@@ -1143,11 +1143,6 @@ const saveSceneDetails = () => {
     return
   }
   props.store.updateSceneDetails(sceneId, name, editingSceneSwitchText.value)
-  console.info('[TheaterTransition][Stage] config.save', {
-    at: Math.round(performance.now()),
-    sceneId,
-    transition: editingSceneTransition.value,
-  })
   props.store.updateSceneTransition(sceneId, editingSceneTransition.value)
   closeSceneEditor()
 }
@@ -3175,14 +3170,6 @@ interface SceneCompositeTransition {
 let sceneCompositeTransition: SceneCompositeTransition | null = null
 let sceneTransitionGeneration = 0
 
-const sceneTransitionLog = (event: string, detail: Record<string, unknown> = {}) => {
-  console.info(`[TheaterTransition][Stage] ${event}`, {
-    at: Math.round(performance.now()),
-    activeSceneId: props.store.state.activeSceneId,
-    ...detail,
-  })
-}
-
 const resetSceneVisualStyle = () => {
   const visual = sceneVisualRef.value
   if (!visual) return
@@ -3285,6 +3272,25 @@ const stageObjectTransitionKey = (object: StageObject) => {
   return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
+const stageObjectVisualFallbackKey = (object: StageObject) => {
+  if (object.image) {
+    const resourceId = object.image.resourceId?.trim()
+    const url = object.image.url?.trim()
+    const identity = resourceId || url
+    return identity ? `${object.type}\u0000media\u0000${identity}` : ''
+  }
+  if (object.type === 'text' && typeof object.text === 'string') {
+    return `${object.type}\u0000text\u0000${object.text}`
+  }
+  if (object.type === 'drawing' && object.drawing) {
+    return `${object.type}\u0000drawing\u0000${JSON.stringify(object.drawing)}`
+  }
+  if (object.type === 'button' && typeof object.text === 'string') {
+    return `${object.type}\u0000button\u0000${object.text}\u0000${object.fill}`
+  }
+  return ''
+}
+
 const stageObjectFallbackKey = (object: StageObject) => `${object.type}\u0000${object.name.trim().toLocaleLowerCase()}`
 
 const uniqueObjectIndex = (objects: StageObject[], key: (object: StageObject) => string) => {
@@ -3320,18 +3326,26 @@ const matchSceneMorphObjects = (previous: Map<string, SceneMorphItem>, next: Sta
     used.add(object.id)
   })
 
-  const unmatchedPrevious = previousObjects.filter((object) => !used.has(object.id))
-  const unmatchedNext = next.filter((object) => !matches.has(object.id))
-  const previousFallback = uniqueObjectIndex(unmatchedPrevious, stageObjectFallbackKey)
-  const nextFallback = uniqueObjectIndex(unmatchedNext, stageObjectFallbackKey)
-  unmatchedNext.forEach((object) => {
-    const key = stageObjectFallbackKey(object)
-    if (nextFallback.get(key)?.id !== object.id) return
-    const candidate = previousFallback.get(key)
-    if (!candidate || used.has(candidate.id)) return
-    matches.set(object.id, previous.get(candidate.id)!)
-    used.add(candidate.id)
-  })
+  const matchUniqueFallback = (keyFor: (object: StageObject) => string) => {
+    const unmatchedPrevious = previousObjects.filter((object) => !used.has(object.id))
+    const unmatchedNext = next.filter((object) => !matches.has(object.id))
+    const previousFallback = uniqueObjectIndex(unmatchedPrevious, keyFor)
+    const nextFallback = uniqueObjectIndex(unmatchedNext, keyFor)
+    unmatchedNext.forEach((object) => {
+      const key = keyFor(object)
+      if (!key || nextFallback.get(key)?.id !== object.id) return
+      const candidate = previousFallback.get(key)
+      if (!candidate || used.has(candidate.id)) return
+      matches.set(object.id, previous.get(candidate.id)!)
+      used.add(candidate.id)
+    })
+  }
+
+  // Legacy and imported scenes may predate transitionKey. Match only visual
+  // identities that are unique in both scenes, avoiding arbitrary pairings when
+  // the same resource or content is used by multiple components.
+  matchUniqueFallback(stageObjectVisualFallbackKey)
+  matchUniqueFallback(stageObjectFallbackKey)
   return matches
 }
 
@@ -3431,7 +3445,6 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSce
   const previousTransition = normalizeStageSceneTransition(props.store.state.scenes[previousSceneId]?.state.transition)
   const generation = ++sceneTransitionGeneration
   const usesCurtain = captureCurrent && (nextTransition.enter.type === 'curtain' || previousTransition.exit.type === 'curtain')
-  sceneTransitionLog('morph.prepare', { captureCurrent, sceneId, previousSceneId, generation, nextTransition, previousTransition })
   sceneCompositeTransition = {
     sceneId,
     overlay: captureCurrent ? captureSceneTransitionOverlay() : null,
@@ -3443,13 +3456,6 @@ const prepareSceneMorph = (captureCurrent: boolean, sceneId: string, previousSce
     started: false,
     completed: false,
   }
-  sceneTransitionLog('morph.prepared', {
-    sceneId,
-    generation,
-    hasOverlay: Boolean(sceneCompositeTransition.overlay),
-    hasCurtainOverlay: Boolean(sceneCompositeTransition.curtainOverlay),
-    hasVisual: Boolean(sceneVisualRef.value),
-  })
   if (captureCurrent && sceneMorphStage) {
     const previousSceneObjects = props.store.state.scenes[previousSceneId]?.state.sceneObjects
       || props.store.state.liveState.sceneObjects
@@ -3692,17 +3698,7 @@ const startSharedElementMorph = (sceneId: string, durationMs: number, reducedMot
 const startSceneMorph = (sceneId: string) => {
   const transition = sceneCompositeTransition
   const visual = sceneVisualRef.value
-  sceneTransitionLog('morph.start.request', {
-    sceneId,
-    transitionSceneId: transition?.sceneId,
-    started: transition?.started,
-    hasVisual: Boolean(visual),
-    scope: 'stage',
-  })
-  if (!transition || transition.sceneId !== sceneId || transition.started || !visual) {
-    sceneTransitionLog('morph.start.skipped', { sceneId })
-    return
-  }
+  if (!transition || transition.sceneId !== sceneId || transition.started || !visual) return
   transition.started = true
   const batch = sceneMediaBatch
   if (batch?.sceneId === sceneId) batch.activations.splice(0).forEach((activate) => activate())
@@ -3715,18 +3711,6 @@ const startSceneMorph = (sceneId: string) => {
   const morphDurationMs = Math.max(transition.enter.durationMs, transition.exit.durationMs)
   const enterFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.enter, 'enter')
   const exitFrames = reducedMotion.effectiveReducedMotion ? [] : stageSceneTransitionKeyframes(transition.exit, 'exit')
-  sceneTransitionLog('morph.animate', {
-    sceneId,
-    generation: transition.generation,
-    scope: 'stage',
-    ...reducedMotion,
-    enter: transition.enter,
-    exit: transition.exit,
-    enterFrameCount: enterFrames.length,
-    exitFrameCount: exitFrames.length,
-    hasOverlay: Boolean(transition.overlay),
-    usesCurtain,
-  })
   if (usesCurtain && !reducedMotion.effectiveReducedMotion) {
     const closeDurationMs = transition.exit.durationMs
     const openDurationMs = transition.enter.durationMs
@@ -3742,7 +3726,6 @@ const startSceneMorph = (sceneId: string) => {
     const generation = transition.generation
     void Promise.all(closeAnimations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
       if (sceneCompositeTransition?.generation !== generation || sceneCompositeTransition !== transition) return
-      sceneTransitionLog('curtain.closed', { sceneId, generation, closeDurationMs })
       transition.overlay?.remove()
       transition.overlay = null
       visual.style.visibility = 'visible'
@@ -3761,14 +3744,12 @@ const startSceneMorph = (sceneId: string) => {
       transition.animations.push(...openAnimations)
       void Promise.all(openAnimations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
         if (sceneCompositeTransition?.generation !== generation || sceneCompositeTransition !== transition) return
-        sceneTransitionLog('curtain.opened', { sceneId, generation, openDurationMs })
         transition.completed = true
         finishSceneTransitionWhenReady()
       })
     })
     sceneTransitionTimer = window.setTimeout(() => {
       if (sceneCompositeTransition?.generation === generation) {
-        sceneTransitionLog('curtain.timeout', { sceneId, generation })
         finishSceneMorph()
       }
     }, closeDurationMs + openDurationMs + 200)
@@ -3787,7 +3768,6 @@ const startSceneMorph = (sceneId: string) => {
   foregroundLayer?.draw()
   drawWorldLayers(true)
   if (!transition.animations.length) {
-    sceneTransitionLog('morph.no-animations', { sceneId, generation: transition.generation })
     const generation = transition.generation
     requestAnimationFrame(() => {
       if (sceneCompositeTransition !== transition) return
@@ -3802,14 +3782,12 @@ const startSceneMorph = (sceneId: string) => {
   const generation = transition.generation
   void Promise.all(transition.animations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
     if (sceneCompositeTransition?.generation === generation) {
-      sceneTransitionLog('morph.animations.finished', { sceneId, generation })
       transition.completed = true
       finishSceneTransitionWhenReady()
     }
   })
   sceneTransitionTimer = window.setTimeout(() => {
     if (sceneCompositeTransition?.generation === generation) {
-      sceneTransitionLog('morph.timeout', { sceneId, generation })
       finishSceneMorph()
     }
   }, Math.max(transition.enter.durationMs, transition.exit.durationMs) + 150)
@@ -3819,12 +3797,10 @@ let preparedSceneId = ''
 
 const beginSceneMediaBatch = (sceneId: string, captureCurrent = true, previousSceneId = '') => {
   if (sceneId === preparedSceneId) {
-    sceneTransitionLog('media-batch.skipped.duplicate', { sceneId, captureCurrent, previousSceneId })
     playPendingSceneEntrances(sceneId)
     return
   }
   preparedSceneId = sceneId
-  sceneTransitionLog('media-batch.begin', { sceneId, captureCurrent, previousSceneId })
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
   pendingSceneEntrances = null
   pendingTextEntranceIds.value = []
@@ -3841,7 +3817,6 @@ const beginSceneMediaBatch = (sceneId: string, captureCurrent = true, previousSc
     timeout: null,
   }
   const batch = sceneMediaBatch
-  sceneTransitionLog('media-batch.expected', { sceneId, expectedCount: batch.expected.size })
   if (!batch.expected.size) {
     releaseSceneMediaBatch(batch)
     return
@@ -3890,7 +3865,6 @@ const activateStageMedia = (source: StageMediaSource, imageRef: StageImageRef) =
 
 const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
   if (batch.released) return
-  sceneTransitionLog('media-batch.release', { sceneId: batch.sceneId, expectedCount: batch.expected.size, settledCount: batch.settled.size })
   batch.released = true
   if (batch.timeout !== null) window.clearTimeout(batch.timeout)
   batch.timeout = null
