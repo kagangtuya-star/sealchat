@@ -24,11 +24,11 @@ concurrency:
 env:
   PACKAGE_OWNER: ${{ github.repository_owner }}
   PACKAGE_NAME: sealchat
-  KEEP_COUNT: "100"
+  KEEP_DEV_COUNT: "100"
 
 jobs:
   cleanup:
-    name: Keep latest 100 versions
+    name: Keep latest 100 dev versions
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -43,7 +43,7 @@ jobs:
 
           echo "Package owner: ${PACKAGE_OWNER}"
           echo "Package name: ${PACKAGE_NAME}"
-          echo "Keep count: ${KEEP_COUNT}"
+          echo "Keep dev count: ${KEEP_DEV_COUNT}"
           echo "Dry run: ${DRY_RUN}"
 
           # 自动判断 Package 属于个人账户还是组织账户
@@ -73,24 +73,32 @@ jobs:
             "${API_BASE}?per_page=100" \
             > package-version-pages.json
 
-          # 合并分页，并按创建时间从新到旧排序。
+          # 仅保留开发构建版本。开发构建以持久 dev-* 标签标识；
+          # 显式排除 latest，防止生产镜像被删除。
           jq '
             [.[][]]
+            | map(
+                (.metadata.container.tags // []) as $tags
+                | select(
+                    ($tags | any(startswith("dev-")))
+                    and ($tags | index("latest") | not)
+                  )
+              )
             | sort_by(.created_at)
             | reverse
           ' package-version-pages.json > package-versions.json
 
           TOTAL_COUNT="$(jq 'length' package-versions.json)"
 
-          if (( TOTAL_COUNT > KEEP_COUNT )); then
-            DELETE_COUNT=$((TOTAL_COUNT - KEEP_COUNT))
+          if (( TOTAL_COUNT > KEEP_DEV_COUNT )); then
+            DELETE_COUNT=$((TOTAL_COUNT - KEEP_DEV_COUNT))
           else
             DELETE_COUNT=0
           fi
 
           echo
           echo "Total versions: ${TOTAL_COUNT}"
-          echo "Versions to keep: $((TOTAL_COUNT < KEEP_COUNT ? TOTAL_COUNT : KEEP_COUNT))"
+          echo "Dev versions to keep: $((TOTAL_COUNT < KEEP_DEV_COUNT ? TOTAL_COUNT : KEEP_DEV_COUNT))"
           echo "Versions to delete: ${DELETE_COUNT}"
           echo
 
@@ -98,21 +106,21 @@ jobs:
             echo "## GHCR 清理结果"
             echo
             echo "- Package：\`ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}\`"
-            echo "- 当前版本总数：${TOTAL_COUNT}"
-            echo "- 保留最近版本：$((TOTAL_COUNT < KEEP_COUNT ? TOTAL_COUNT : KEEP_COUNT))"
-            echo "- 待删除旧版本：${DELETE_COUNT}"
+            echo "- 当前开发版本总数：${TOTAL_COUNT}"
+            echo "- 保留最近开发版本：$((TOTAL_COUNT < KEEP_DEV_COUNT ? TOTAL_COUNT : KEEP_DEV_COUNT))"
+            echo "- 待删除旧开发版本：${DELETE_COUNT}"
             echo "- 模式：$([[ \"${DRY_RUN}\" == \"true\" ]] && echo 'Dry run' || echo '实际删除')"
             echo
           } >> "${GITHUB_STEP_SUMMARY}"
 
           if (( DELETE_COUNT == 0 )); then
-            echo "版本数量未超过 ${KEEP_COUNT}，不需要清理。"
+            echo "开发版本数量未超过 ${KEEP_DEV_COUNT}，不需要清理。"
             exit 0
           fi
 
-          # 排除排序后的前 KEEP_COUNT 个版本，生成删除清单。
+          # 排除排序后的前 KEEP_DEV_COUNT 个开发版本，生成删除清单。
           jq -r \
-            --argjson keep "${KEEP_COUNT}" \
+            --argjson keep "${KEEP_DEV_COUNT}" \
             '
               .[$keep:][]
               | [
