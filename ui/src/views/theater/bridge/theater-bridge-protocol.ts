@@ -28,6 +28,8 @@ export const THEATER_STAGE_CAPABILITIES = [
 
 export const THEATER_CHAT_CAPABILITIES = [
   'stage.scene.applied',
+  'chat.audio.playback.snapshot.read',
+  'chat.audio.playback.snapshot.apply',
   'chat.message.send',
   'chat.composer.insert',
   'chat.character.read',
@@ -409,6 +411,26 @@ const stageAudioRefSchema = z.strictObject({
   name: z.string().max(512),
   volume: z.number().finite().min(0).max(1),
 })
+const stageMusicAssetRefSchema = z.strictObject({
+  assetId: z.string().trim().min(1).max(256),
+  name: z.string().max(128),
+})
+const stageMusicTrackSnapshotSchema = z.strictObject({
+  type: z.enum(['music', 'ambience', 'sfx']),
+  asset: stageMusicAssetRefSchema.nullable(),
+  volume: z.number().finite().min(0).max(1),
+  fadeIn: z.number().int().min(0).max(60_000),
+  fadeOut: z.number().int().min(0).max(60_000),
+  loopEnabled: z.boolean(),
+  playbackRate: z.number().finite().min(0.25).max(4),
+  playlistMode: z.enum(['single', 'sequential', 'shuffle']).nullable(),
+  playlist: z.array(stageMusicAssetRefSchema).max(64),
+  playlistIndex: z.number().int().min(0).max(63),
+})
+export const stageMusicSnapshotSchema = z.strictObject({
+  version: z.literal(1),
+  tracks: z.array(stageMusicTrackSnapshotSchema).length(3),
+})
 const legacySceneTransitionSchema = z.strictObject({
   type: z.enum(['none', 'crossfade']),
   durationMs: z.number().int().min(0).max(60_000).optional(),
@@ -431,6 +453,7 @@ const stageSceneStateSchema = z.strictObject({
   sceneObjects: z.record(z.string(), stageObjectSchema),
   transition: sceneTransitionSchema,
   switchAudio: stageAudioRefSchema.nullable(),
+  musicSnapshot: stageMusicSnapshotSchema.nullable(),
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -475,6 +498,10 @@ export const initializePayloadSchema = z.strictObject({
   }),
 })
 
+export const permissionsUpdatedPayloadSchema = z.strictObject({
+  permissions: z.array(capabilitySchema).max(256),
+})
+
 export const initializedPayloadSchema = z.strictObject({
   endpoint: z.enum(['stage', 'chat']),
   selectedVersion: z.literal(THEATER_BRIDGE_VERSION),
@@ -517,6 +544,21 @@ export const sceneAppliedPayloadSchema = z.strictObject({
   previousSceneId: nonEmptyIdSchema.nullable(),
   transition: z.union([sceneTransitionSchema, legacySceneTransitionSchema]).optional(),
 })
+
+export const audioPlaybackSnapshotReadPayloadSchema = z.strictObject({})
+export const audioPlaybackSnapshotReadResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), snapshot: stageMusicSnapshotSchema.nullable() }),
+  bridgeErrorResultSchema,
+])
+export const audioPlaybackSnapshotApplyPayloadSchema = z.strictObject({
+  sceneId: nonEmptyIdSchema,
+  sceneName: z.string().max(512),
+  snapshot: stageMusicSnapshotSchema,
+})
+export const audioPlaybackSnapshotApplyResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true) }),
+  bridgeErrorResultSchema,
+])
 
 export const stageActionTriggeredPayloadSchema = z.strictObject({
   objectId: nonEmptyIdSchema,
@@ -649,12 +691,17 @@ export const characterVariantSelectedPayloadSchema = z.strictObject({
 const payloadSchemas = new Map<string, z.ZodType>([
   ['system:system.ready', readyPayloadSchema],
   ['system:system.initialize', initializePayloadSchema],
+  ['system:system.permissions.updated', permissionsUpdatedPayloadSchema],
   ['system:system.initialized', initializedPayloadSchema],
   ['command:stage.scene.read', stageSceneReadPayloadSchema],
   ['result:stage.scene.read.result', stageSceneReadResultSchema],
   ['command:stage.scene.apply', applyScenePayloadSchema],
   ['result:stage.scene.apply.result', applySceneResultSchema],
   ['event:stage.scene.applied', sceneAppliedPayloadSchema],
+  ['command:chat.audio.playback.snapshot.read', audioPlaybackSnapshotReadPayloadSchema],
+  ['result:chat.audio.playback.snapshot.read.result', audioPlaybackSnapshotReadResultSchema],
+  ['command:chat.audio.playback.snapshot.apply', audioPlaybackSnapshotApplyPayloadSchema],
+  ['result:chat.audio.playback.snapshot.apply.result', audioPlaybackSnapshotApplyResultSchema],
   ['event:stage.action.triggered', stageActionTriggeredPayloadSchema],
   ['command:chat.message.send', chatMessageSendPayloadSchema],
   ['result:chat.message.send.result', chatMessageSendResultSchema],
@@ -681,12 +728,17 @@ export type BridgeEndpoint = z.infer<typeof bridgeEndpointSchema>
 export type BridgeKind = z.infer<typeof bridgeKindSchema>
 export type ReadyPayload = z.infer<typeof readyPayloadSchema>
 export type InitializePayload = z.infer<typeof initializePayloadSchema>
+export type PermissionsUpdatedPayload = z.infer<typeof permissionsUpdatedPayloadSchema>
 export type InitializedPayload = z.infer<typeof initializedPayloadSchema>
 export type BridgeErrorResult = z.infer<typeof bridgeErrorResultSchema>
 export type StageSceneReadResult = z.infer<typeof stageSceneReadResultSchema>
 export type ApplyScenePayload = z.infer<typeof applyScenePayloadSchema>
 export type ApplySceneResult = z.infer<typeof applySceneResultSchema>
 export type SceneAppliedPayload = z.infer<typeof sceneAppliedPayloadSchema>
+export type StageMusicSnapshotPayload = z.infer<typeof stageMusicSnapshotSchema>
+export type AudioPlaybackSnapshotReadResult = z.infer<typeof audioPlaybackSnapshotReadResultSchema>
+export type AudioPlaybackSnapshotApplyPayload = z.infer<typeof audioPlaybackSnapshotApplyPayloadSchema>
+export type AudioPlaybackSnapshotApplyResult = z.infer<typeof audioPlaybackSnapshotApplyResultSchema>
 export type StageAction = z.infer<typeof stageActionSchema>
 export type StageActionTriggeredPayload = z.infer<typeof stageActionTriggeredPayloadSchema>
 export type ChatMessageSendPayload = z.infer<typeof chatMessageSendPayloadSchema>

@@ -17,6 +17,9 @@ import { TheaterBridgeClient } from '@/views/theater/bridge/TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
   THEATER_CHAT_CAPABILITIES,
+  type AudioPlaybackSnapshotApplyPayload,
+  type AudioPlaybackSnapshotApplyResult,
+  type AudioPlaybackSnapshotReadResult,
   type ChatCharacterReadResult,
   type ChatCharactersSnapshotPayload,
   type ChatComposerInsertPayload,
@@ -26,6 +29,7 @@ import {
   type InitializePayload,
   type OpenCharacterCardPayload,
   type OpenCharacterCardResult,
+  type PermissionsUpdatedPayload,
   type SelectCharacterPayload,
   type SelectCharacterResult,
   type SelectCharacterVariantPayload,
@@ -342,8 +346,37 @@ const startTheaterBridge = async () => {
         });
     }, 0);
   });
+  client.onSystem<PermissionsUpdatedPayload>('system.permissions.updated', (payload, message) => {
+    if (message.source !== 'host' || message.target !== 'chat') return;
+    theaterGrantedPermissions = new Set(payload.permissions);
+  });
   client.onEvent<SceneAppliedPayload>('stage.scene.applied', (payload) => {
     if (debug()) console.debug('[theater-bridge:chat] stage.scene.applied', payload);
+  });
+  client.onCommand<Record<string, never>, AudioPlaybackSnapshotReadResult>('chat.audio.playback.snapshot.read', async (_payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: '音乐快照读取仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.audio.playback.snapshot.read')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.audio.playback.snapshot.read' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    return { ok: true, snapshot: await audioStudio.captureStageMusicSnapshot() };
+  });
+  client.onCommand<AudioPlaybackSnapshotApplyPayload, AudioPlaybackSnapshotApplyResult>('chat.audio.playback.snapshot.apply', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: '音乐快照应用仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.audio.playback.snapshot.apply')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.audio.playback.snapshot.apply' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    await audioStudio.applyStageMusicSnapshot(payload.snapshot);
+    return { ok: true };
   });
   client.onCommand<ChatMessageSendPayload, ChatMessageSendResult>('chat.message.send', async (payload, bridgeMessage) => {
     if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {

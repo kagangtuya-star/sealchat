@@ -13,7 +13,7 @@ import { mergeTheaterBridgePermissions, TheaterHostBridge } from '../bridge/Thea
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
-import type { StagePointerTraceInput } from '../shared/stage-types'
+import { stageMusicSnapshotHasContent, type StagePointerTraceInput } from '../shared/stage-types'
 import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
@@ -294,10 +294,61 @@ const broadcastSceneAudio = async (sceneId: string) => {
   }
 }
 
+const applySceneMusic = async (sceneId: string) => {
+  const scene = stageStore.state.scenes[sceneId]
+  const snapshot = scene?.state.musicSnapshot
+  if (!scene || !stageMusicSnapshotHasContent(snapshot) || !theaterBridge) return
+  try {
+    const result = await theaterBridge.applyChatAudioPlaybackSnapshot({
+      sceneId,
+      sceneName: scene.name,
+      snapshot: snapshot!,
+    })
+    if (!result.ok) message.warning(`场景已切换，音乐应用失败：${result.error.message}`)
+  } catch (error) {
+    message.warning(`场景已切换，音乐应用失败：${error instanceof Error ? error.message : '未知错误'}`)
+  }
+}
+
+const runSceneSwitchSideEffects = async (sceneId: string) => {
+  await Promise.all([
+    sendSceneDialogue(sceneId),
+    broadcastSceneAudio(sceneId),
+    applySceneMusic(sceneId),
+  ])
+}
+
+const recordSceneMusic = async (sceneId: string) => {
+  try {
+    const result = await theaterBridge?.readChatAudioPlaybackSnapshot()
+    if (!result) throw new Error('聊天桥尚未就绪')
+    if (!result.ok) throw new Error(result.error.message)
+    const scene = stageStore.state.scenes[sceneId]
+    if (!scene) throw new Error('场景不存在')
+    if (new TextEncoder().encode(JSON.stringify(result.snapshot)).byteLength > (48 << 10)) {
+      throw new Error('当前播放列表过大，超过场景 64 KiB 限制')
+    }
+    stageStore.updateSceneMusicSnapshot(sceneId, result.snapshot)
+    await flushTheaterSync()
+    message.success(result.snapshot ? '已记录场景音乐' : '音乐工作台为空，已清空场景音乐')
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '记录场景音乐失败')
+  }
+}
+
+const clearSceneMusic = async (sceneId: string) => {
+  stageStore.updateSceneMusicSnapshot(sceneId, null)
+  try {
+    await flushTheaterSync()
+    message.success('已清空场景音乐，当前播放不受影响')
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '清空场景音乐失败')
+  }
+}
+
 const requestSceneSwitch = (sceneId: string) => {
   if (!stageStore.applyScene(sceneId)) return
-  void sendSceneDialogue(sceneId)
-  void broadcastSceneAudio(sceneId)
+  void runSceneSwitchSideEffects(sceneId)
 }
 
 watch(width, () => { splitRatio.value = normalizeRatio(splitRatio.value) })
@@ -325,7 +376,9 @@ const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
 
 const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
   const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
-  return mergeTheaterBridgePermissions(stagePermissions, memberRole === 'owner' || memberRole === 'admin')
+  const canControlMusic = (memberRole === 'owner' || memberRole === 'admin')
+    || (stagePermissions.includes('stage.scene.switch') && stagePermissions.includes('stage.object.edit'))
+  return mergeTheaterBridgePermissions(stagePermissions, canControlMusic)
 }
 
 const startTheaterBridge = () => {
@@ -356,16 +409,14 @@ const startTheaterBridge = () => {
     onChatMessageUpdated: dialogueRuntime.updated,
     onChatMessageRemoved: ({ messageId }) => dialogueRuntime.removed(messageId),
     onSceneApplied: (sceneId) => {
-      void sendSceneDialogue(sceneId)
-      void broadcastSceneAudio(sceneId)
+      void runSceneSwitchSideEffects(sceneId)
     },
     triggerStageAction: async (payload) => {
       if (!theaterSync) return false
       try {
         const handled = await theaterSync.triggerAction(payload)
         if (handled === true && payload.action.type === 'scene.apply') {
-          await sendSceneDialogue(stageStore.state.activeSceneId)
-          await broadcastSceneAudio(stageStore.state.activeSceneId)
+          await runSceneSwitchSideEffects(stageStore.state.activeSceneId)
         }
         return handled
       } catch (error) {
@@ -379,7 +430,7 @@ const startTheaterBridge = () => {
       try {
         const handled = await theaterSync.triggerActionBatch(payloads)
         if (handled === true && payloads.some((payload) => payload.action.type === 'scene.apply')) {
-          await broadcastSceneAudio(stageStore.state.activeSceneId)
+          await runSceneSwitchSideEffects(stageStore.state.activeSceneId)
         }
         return handled
       } catch (error) {
@@ -640,6 +691,8 @@ function handleDice3DMessage(event: MessageEvent) {
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @scene-switch-requested="requestSceneSwitch"
+          @scene-music-record-requested="recordSceneMusic"
+          @scene-music-clear-requested="clearSceneMusic"
           @update-scene-dialogue-enabled="sceneDialogueEnabled = $event"
           @update-scene-audio-enabled="sceneAudioEnabled = $event"
           @select-character="selectChatCharacter"

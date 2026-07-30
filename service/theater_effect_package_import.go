@@ -97,7 +97,7 @@ func importTheaterEffectsPackage(ctx context.Context, job *model.TheaterPackageJ
 	for index, item := range manifest.Audio {
 		worldID := job.TargetWorldID
 		asset, err := AudioCreateAssetFromImport(theaterPackageAbsolutePath(extractDir, item.File.Path), AudioUploadOptions{
-			Name: item.Name, Tags: remapTheaterAudioTags(item.Tags, job.InputChannelID), Description: item.Description,
+			Name: theaterPackageAudioImportName(item), Tags: remapTheaterAudioTags(item.Tags, job.InputChannelID, false), Description: item.Description,
 			Visibility: item.Visibility, CreatedBy: job.ActorUserID, Scope: model.AudioScopeWorld, WorldID: &worldID,
 		})
 		if err != nil {

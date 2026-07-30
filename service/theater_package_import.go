@@ -140,6 +140,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 	}
 
 	createdAudio := make([]*model.AudioAsset, 0, len(manifest.Audio))
+	musicAssetIDs := theaterMusicSnapshotAssetIDs(snapshot)
 	persistedAttachments := make([]AttachmentLocation, 0)
 	cleanupAudio := true
 	cleanupAttachments := true
@@ -166,10 +167,11 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 	}()
 	for index, item := range manifest.Audio {
 		path := theaterPackageAbsolutePath(extractDir, item.File.Path)
-		tags := remapTheaterAudioTags(item.Tags, job.InputChannelID)
+		_, workbenchAsset := musicAssetIDs[item.ID]
+		tags := remapTheaterAudioTags(item.Tags, job.InputChannelID, workbenchAsset)
 		worldID := job.TargetWorldID
 		asset, err := AudioCreateAssetFromImport(path, AudioUploadOptions{
-			Name: item.Name, Tags: tags, Description: item.Description, Visibility: item.Visibility,
+			Name: theaterPackageAudioImportName(item), Tags: tags, Description: item.Description, Visibility: item.Visibility,
 			CreatedBy: job.ActorUserID, Scope: model.AudioScopeWorld, WorldID: &worldID,
 		})
 		if err != nil {
@@ -1038,22 +1040,61 @@ func existingTheaterPackageImport(roomID, mutationID string) (TheaterPackageSumm
 	return payload.Summary, true, nil
 }
 
-func remapTheaterAudioTags(tags []string, channelID string) []string {
+func theaterMusicSnapshotAssetIDs(snapshot TheaterSharedSnapshot) map[string]struct{} {
+	result := map[string]struct{}{}
+	collect := func(raw json.RawMessage) {
+		var state map[string]any
+		if json.Unmarshal(raw, &state) != nil {
+			return
+		}
+		musicSnapshot, ok := state["musicSnapshot"]
+		if !ok || musicSnapshot == nil {
+			return
+		}
+		for assetID := range collectJSONFieldStrings(musicSnapshot, "assetId") {
+			result[assetID] = struct{}{}
+		}
+	}
+	collect(snapshot.LiveState)
+	for _, scene := range snapshot.Scenes {
+		collect(scene.State)
+	}
+	return result
+}
+
+func theaterPackageAudioImportName(item TheaterPackageAudio) string {
+	if name := strings.TrimSpace(item.Name); name != "" {
+		return name
+	}
+	filename := strings.TrimSpace(item.File.Filename)
+	if filename == "" {
+		filename = filepath.Base(strings.TrimSpace(item.File.Path))
+	}
+	if name := strings.TrimSpace(strings.TrimSuffix(filename, filepath.Ext(filename))); name != "" && name != "." {
+		return name
+	}
+	return "未命名音频"
+}
+
+func remapTheaterAudioTags(tags []string, channelID string, workbenchAsset bool) []string {
 	result := make([]string, 0, len(tags)+1)
 	hasFeature := false
 	for _, tag := range tags {
 		if strings.HasPrefix(tag, "theater-channel:") {
-			if channelID != "" {
+			if !workbenchAsset && channelID != "" {
 				result = append(result, theaterChannelAudioTag(channelID))
 			}
 			continue
 		}
 		if tag == theaterFeatureAudioTag {
+			if workbenchAsset {
+				continue
+			}
 			hasFeature = true
 		}
 		result = append(result, tag)
 	}
-	if !hasFeature {
+	if !workbenchAsset && !hasFeature {
 		result = append(result, theaterFeatureAudioTag)
 	}
 	return result

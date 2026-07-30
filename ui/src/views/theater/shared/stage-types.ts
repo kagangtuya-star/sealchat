@@ -13,6 +13,83 @@ export interface StageAudioRef {
   volume: number
 }
 
+export type StageMusicTrackType = 'music' | 'ambience' | 'sfx'
+export type StageMusicPlaylistMode = 'single' | 'sequential' | 'shuffle'
+
+export interface StageMusicAssetRef {
+  assetId: string
+  name: string
+}
+
+export interface StageMusicTrackSnapshot {
+  type: StageMusicTrackType
+  asset: StageMusicAssetRef | null
+  volume: number
+  fadeIn: number
+  fadeOut: number
+  loopEnabled: boolean
+  playbackRate: number
+  playlistMode: StageMusicPlaylistMode | null
+  playlist: StageMusicAssetRef[]
+  playlistIndex: number
+}
+
+export interface StageMusicSnapshot {
+  version: 1
+  tracks: StageMusicTrackSnapshot[]
+}
+
+const stageMusicTrackTypes: StageMusicTrackType[] = ['music', 'ambience', 'sfx']
+const stageMusicPlaylistModes: StageMusicPlaylistMode[] = ['single', 'sequential', 'shuffle']
+
+const normalizeStageMusicAssetRef = (input: unknown): StageMusicAssetRef | null => {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Partial<StageMusicAssetRef>
+  const assetId = typeof value.assetId === 'string' ? value.assetId.trim().slice(0, 256) : ''
+  if (!assetId) return null
+  return {
+    assetId,
+    name: typeof value.name === 'string' ? Array.from(value.name).slice(0, 128).join('') : '',
+  }
+}
+
+export const normalizeStageMusicSnapshot = (input: unknown): StageMusicSnapshot | null => {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Partial<StageMusicSnapshot>
+  if (value.version !== 1 || !Array.isArray(value.tracks)) return null
+  const tracks = stageMusicTrackTypes.map((type) => {
+    const raw = value.tracks!.find((track) => track && typeof track === 'object' && (track as StageMusicTrackSnapshot).type === type)
+    const track = raw && typeof raw === 'object' ? raw as Partial<StageMusicTrackSnapshot> : {}
+    const playlist = Array.isArray(track.playlist)
+      ? track.playlist.map(normalizeStageMusicAssetRef).filter((asset): asset is StageMusicAssetRef => Boolean(asset)).slice(0, 64)
+      : []
+    const playlistIndex = typeof track.playlistIndex === 'number' && Number.isFinite(track.playlistIndex)
+      ? Math.max(0, Math.min(Math.round(track.playlistIndex), Math.max(0, playlist.length - 1)))
+      : 0
+    return {
+      type,
+      asset: normalizeStageMusicAssetRef(track.asset),
+      volume: typeof track.volume === 'number' && Number.isFinite(track.volume) ? Math.min(1, Math.max(0, track.volume)) : 0.8,
+      fadeIn: typeof track.fadeIn === 'number' && Number.isFinite(track.fadeIn) ? Math.min(60_000, Math.max(0, Math.round(track.fadeIn))) : 2_000,
+      fadeOut: typeof track.fadeOut === 'number' && Number.isFinite(track.fadeOut) ? Math.min(60_000, Math.max(0, Math.round(track.fadeOut))) : 2_000,
+      loopEnabled: track.loopEnabled !== false,
+      playbackRate: typeof track.playbackRate === 'number' && Number.isFinite(track.playbackRate)
+        ? Math.min(4, Math.max(0.25, track.playbackRate))
+        : 1,
+      playlistMode: stageMusicPlaylistModes.includes(track.playlistMode as StageMusicPlaylistMode)
+        ? track.playlistMode as StageMusicPlaylistMode
+        : null,
+      playlist,
+      playlistIndex,
+    }
+  })
+  return tracks.some((track) => track.asset || track.playlist.length) ? { version: 1, tracks } : null
+}
+
+export const stageMusicSnapshotHasContent = (snapshot: StageMusicSnapshot | null | undefined) => (
+  Boolean(snapshot?.tracks.some((track) => track.asset || track.playlist.length))
+)
+
 export const normalizeStageAudioRef = (input: unknown): StageAudioRef | null => {
   if (!input || typeof input !== 'object') return null
   const value = input as Partial<StageAudioRef>
@@ -463,6 +540,7 @@ export interface StageLiveState {
   sceneObjects: Record<string, StageObject>
   transition: StageSceneTransition
   switchAudio: StageAudioRef | null
+  musicSnapshot: StageMusicSnapshot | null
   serverState?: Record<string, unknown>
 }
 

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	theaterPackageVersion          = 2
+	theaterPackageVersion          = 3
 	theaterPackageMinimumVersion   = 1
 	theaterPackageMaxArchiveBytes  = int64(2 << 30)
 	theaterPackageMaxExpandedBytes = int64(4 << 30)

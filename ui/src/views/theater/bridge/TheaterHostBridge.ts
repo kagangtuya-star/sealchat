@@ -10,6 +10,9 @@ import {
   createTheaterBridgeMessage,
   isNewerCharacterSnapshot,
   type ApplyScenePayload,
+  type AudioPlaybackSnapshotApplyPayload,
+  type AudioPlaybackSnapshotApplyResult,
+  type AudioPlaybackSnapshotReadResult,
   type BridgeErrorResult,
   type ChatCharacterReadResult,
   type ChatCharactersSnapshotPayload,
@@ -65,6 +68,17 @@ const CHAT_BRIDGE_PERMISSIONS = [
   'chat.character.card.open',
 ] as const
 
+const CHAT_COMMAND_PERMISSIONS: Record<string, string> = {
+  'chat.message.send': 'chat.message.send',
+  'chat.composer.insert': 'chat.composer.insert',
+  'chat.character.read': 'chat.character.read',
+  'chat.character.select': 'chat.character.select',
+  'chat.character.variant.select': 'chat.character.variant.select',
+  'chat.character.card.open': 'chat.character.card.open',
+  'chat.audio.playback.snapshot.read': 'chat.audio.playback.snapshot.read',
+  'chat.audio.playback.snapshot.apply': 'chat.audio.playback.snapshot.apply',
+}
+
 const sameStageAction = (left: StageAction, right: StageAction) => {
   if (left.id !== right.id || left.type !== right.type) return false
   const leftSchedule = normalizeStageActionSchedule(left.schedule)
@@ -93,7 +107,11 @@ export const mergeTheaterBridgePermissions = (
   stagePermissions: readonly string[],
   canControlStage = false,
 ): string[] => [...new Set([
-  ...(canControlStage ? ['stage.control'] : []),
+  ...(canControlStage ? [
+    'stage.control',
+    'chat.audio.playback.snapshot.read',
+    'chat.audio.playback.snapshot.apply',
+  ] : []),
   ...stagePermissions,
   ...CHAT_BRIDGE_PERMISSIONS,
 ])]
@@ -166,6 +184,7 @@ export class TheaterHostBridge {
   setPermissions(permissions: readonly string[]) {
     const target = this.options.permissions as string[]
     target.splice(0, target.length, ...new Set(permissions))
+    if (this.started && this.chatOnline) this.sendPermissionsUpdate()
   }
 
   stop() {
@@ -209,6 +228,22 @@ export class TheaterHostBridge {
     return this.stageClient.request<ChatMessageSendPayload, ChatMessageSendResult>(
       'chat',
       'chat.message.send',
+      payload,
+    )
+  }
+
+  readChatAudioPlaybackSnapshot() {
+    return this.stageClient.request<Record<string, never>, AudioPlaybackSnapshotReadResult>(
+      'chat',
+      'chat.audio.playback.snapshot.read',
+      {},
+    )
+  }
+
+  applyChatAudioPlaybackSnapshot(payload: AudioPlaybackSnapshotApplyPayload) {
+    return this.stageClient.request<AudioPlaybackSnapshotApplyPayload, AudioPlaybackSnapshotApplyResult>(
+      'chat',
+      'chat.audio.playback.snapshot.apply',
       payload,
     )
   }
@@ -356,19 +391,7 @@ export class TheaterHostBridge {
         this.rejectStageCommand(message, 'CAPABILITY_UNAVAILABLE', `Chat capability unavailable: ${message.name}`)
         return
       }
-      const requiredPermission = message.name === 'chat.message.send'
-        ? 'chat.message.send'
-        : message.name === 'chat.composer.insert'
-          ? 'chat.composer.insert'
-          : message.name === 'chat.character.read'
-            ? 'chat.character.read'
-            : message.name === 'chat.character.select'
-              ? 'chat.character.select'
-              : message.name === 'chat.character.variant.select'
-                ? 'chat.character.variant.select'
-                : message.name === 'chat.character.card.open'
-                  ? 'chat.character.card.open'
-                  : ''
+      const requiredPermission = CHAT_COMMAND_PERMISSIONS[message.name] || ''
       if (!requiredPermission || !this.options.permissions.includes(requiredPermission)) {
         this.rejectStageCommand(message, 'PERMISSION_DENIED', `Missing permission: ${requiredPermission || message.name}`)
         return
@@ -632,8 +655,19 @@ export class TheaterHostBridge {
     this.options.onChatOnlineChange?.(online)
     this.debug(online ? 'chat online' : 'chat offline')
     if (online) {
+      this.sendPermissionsUpdate()
       this.flushChatQueue()
       void this.refreshCharacterSnapshot()
+    }
+  }
+
+  private sendPermissionsUpdate() {
+    try {
+      this.hostClient.sendSystem('chat', 'system.permissions.updated', {
+        permissions: [...this.options.permissions],
+      })
+    } catch (error) {
+      this.debug('chat permissions update failed', error)
     }
   }
 

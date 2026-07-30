@@ -362,7 +362,7 @@ func validateTheaterSwitchText(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "resources": true, "ccfolia": true}
+	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "musicSnapshot": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
 		if !allowed[key] {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
@@ -381,9 +381,104 @@ func validateSceneState(state map[string]any) error {
 			return err
 		}
 	}
+	if snapshot, ok := state["musicSnapshot"]; ok {
+		if err := validateTheaterMusicSnapshot(snapshot); err != nil {
+			return err
+		}
+	}
 	raw, _ := json.Marshal(state)
 	if len(raw) > 64<<10 {
 		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterMusicSnapshot(input any) error {
+	if input == nil {
+		return nil
+	}
+	snapshot, ok := input.(map[string]any)
+	if !ok || len(snapshot) != 2 {
+		return theaterPayloadError("scene.musicSnapshot 无效")
+	}
+	version, valid := theaterNumericValue(snapshot["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("scene.musicSnapshot.version 无效")
+	}
+	tracks, ok := snapshot["tracks"].([]any)
+	if !ok || len(tracks) != 3 {
+		return theaterPayloadError("scene.musicSnapshot.tracks 无效")
+	}
+	seen := map[string]bool{}
+	for index, rawTrack := range tracks {
+		track, ok := rawTrack.(map[string]any)
+		if !ok {
+			return theaterPayloadError("scene.musicSnapshot.track 无效")
+		}
+		allowed := map[string]bool{"type": true, "asset": true, "volume": true, "fadeIn": true, "fadeOut": true, "loopEnabled": true, "playbackRate": true, "playlistMode": true, "playlist": true, "playlistIndex": true}
+		if len(track) != len(allowed) {
+			return theaterPayloadError("scene.musicSnapshot.track 字段不完整")
+		}
+		for key := range track {
+			if !allowed[key] {
+				return theaterPayloadError("scene.musicSnapshot.track 包含禁止字段: " + key)
+			}
+		}
+		trackType, ok := track["type"].(string)
+		if !ok || !map[string]bool{"music": true, "ambience": true, "sfx": true}[trackType] || seen[trackType] {
+			return theaterPayloadError("scene.musicSnapshot.track.type 无效")
+		}
+		seen[trackType] = true
+		if err := validateTheaterMusicAssetRef(track["asset"], fmt.Sprintf("scene.musicSnapshot.tracks[%d].asset", index)); err != nil {
+			return err
+		}
+		for field, bounds := range map[string][2]float64{"volume": {0, 1}, "fadeIn": {0, 60_000}, "fadeOut": {0, 60_000}, "playbackRate": {0.25, 4}} {
+			value, valid := theaterNumericValue(track[field])
+			if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
+				return theaterPayloadError("scene.musicSnapshot.track." + field + " 无效")
+			}
+		}
+		if _, ok := track["loopEnabled"].(bool); !ok {
+			return theaterPayloadError("scene.musicSnapshot.track.loopEnabled 无效")
+		}
+		if mode := track["playlistMode"]; mode != nil {
+			text, ok := mode.(string)
+			if !ok || !map[string]bool{"single": true, "sequential": true, "shuffle": true}[text] {
+				return theaterPayloadError("scene.musicSnapshot.track.playlistMode 无效")
+			}
+		}
+		playlist, ok := track["playlist"].([]any)
+		if !ok || len(playlist) > 64 {
+			return theaterPayloadError("scene.musicSnapshot.track.playlist 无效")
+		}
+		for itemIndex, item := range playlist {
+			if err := validateTheaterMusicAssetRef(item, fmt.Sprintf("scene.musicSnapshot.tracks[%d].playlist[%d]", index, itemIndex)); err != nil {
+				return err
+			}
+		}
+		playlistIndex, valid := theaterNumericValue(track["playlistIndex"])
+		if !valid || math.Trunc(playlistIndex) != playlistIndex || playlistIndex < 0 || (len(playlist) > 0 && playlistIndex >= float64(len(playlist))) || (len(playlist) == 0 && playlistIndex != 0) {
+			return theaterPayloadError("scene.musicSnapshot.track.playlistIndex 无效")
+		}
+	}
+	return nil
+}
+
+func validateTheaterMusicAssetRef(input any, field string) error {
+	if input == nil {
+		return nil
+	}
+	asset, ok := input.(map[string]any)
+	if !ok || len(asset) != 2 {
+		return theaterPayloadError(field + " 无效")
+	}
+	assetID, ok := asset["assetId"].(string)
+	if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
+		return theaterPayloadError(field + ".assetId 无效")
+	}
+	name, ok := asset["name"].(string)
+	if !ok || len([]rune(name)) > 128 {
+		return theaterPayloadError(field + ".name 无效")
 	}
 	return nil
 }

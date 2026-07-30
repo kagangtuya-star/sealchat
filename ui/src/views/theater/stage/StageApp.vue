@@ -58,6 +58,7 @@ import {
   createDefaultStageImageAnnotation,
   normalizeStageImageAnnotation,
   normalizeStageAudioRef,
+  normalizeStageMusicSnapshot,
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   stageSceneTransitionTypes,
@@ -73,6 +74,8 @@ import {
   type StageDrawingTool,
   type StageImageRef,
   type StageImageAnnotation,
+  type StageMusicPlaylistMode,
+  type StageMusicTrackType,
   type StageObject,
   type StageObjectFit,
   type StagePointerTrace,
@@ -161,6 +164,8 @@ const emit = defineEmits<{
   appearancePreviewPhase: [phase: 'start' | 'end']
   preloadRequested: [sceneIds: string[]]
   sceneSwitchRequested: [sceneId: string]
+  sceneMusicRecordRequested: [sceneId: string]
+  sceneMusicClearRequested: [sceneId: string]
   updateSceneDialogueEnabled: [enabled: boolean]
   updateSceneAudioEnabled: [enabled: boolean]
 }>()
@@ -833,6 +838,10 @@ const canManageResources = computed(() => canUploadResources.value || canDeleteR
 const referencedTheaterAudioAssetIds = computed(() => [...new Set([
   ...Object.values(props.store.state.scenes).flatMap((scene) => [
     scene.state.switchAudio?.assetId,
+    ...(scene.state.musicSnapshot?.tracks.flatMap((track) => [
+      track.asset?.assetId,
+      ...track.playlist.map((asset) => asset.assetId),
+    ]) || []),
     ...Object.values(scene.state.sceneObjects)
       .filter(isTheaterEffectObject)
       .map((object) => theaterEffectConfigFromObject(object).audio?.assetId),
@@ -1210,6 +1219,27 @@ const editingSceneName = ref('')
 const editingSceneSwitchText = ref('')
 const editingSceneSwitchAudio = ref<StageAudioRef | null>(null)
 const editingSceneTransition = ref<StageSceneTransition>(normalizeStageSceneTransition(null))
+const sceneMusicPreviewVisible = ref(false)
+const editingSceneMusicSnapshot = computed(() => normalizeStageMusicSnapshot(
+  editingSceneId.value ? props.store.state.scenes[editingSceneId.value]?.state.musicSnapshot : null,
+))
+const sceneMusicTrackLabels: Record<StageMusicTrackType, string> = {
+  music: '音乐',
+  ambience: '环境',
+  sfx: '音效',
+}
+const sceneMusicPlaylistModeLabels: Record<StageMusicPlaylistMode, string> = {
+  single: '单曲',
+  sequential: '顺序',
+  shuffle: '随机',
+}
+const sceneMusicSummary = computed(() => {
+  const snapshot = editingSceneMusicSnapshot.value
+  if (!snapshot) return '未记录'
+  const itemCount = snapshot.tracks.reduce((total, track) => total + Math.max(track.playlist.length, track.asset ? 1 : 0), 0)
+  const trackCount = snapshot.tracks.filter((track) => track.asset || track.playlist.length).length
+  return `已记录 · ${trackCount}轨 · ${itemCount}首`
+})
 const sceneSwitchAudioOptions = computed(() => {
   const options = theaterAudioAssets.value
     .filter((asset) => !asset.transcodeStatus || asset.transcodeStatus === 'ready')
@@ -1255,6 +1285,7 @@ const beginSceneEdit = (scene: StageScene) => {
   editingSceneSwitchText.value = scene.switchText
   editingSceneSwitchAudio.value = normalizeStageAudioRef(scene.state.switchAudio)
   editingSceneTransition.value = normalizeStageSceneTransition(scene.state.transition)
+  sceneMusicPreviewVisible.value = false
 }
 
 const closeSceneEditor = () => {
@@ -1263,6 +1294,7 @@ const closeSceneEditor = () => {
   editingSceneSwitchText.value = ''
   editingSceneSwitchAudio.value = null
   editingSceneTransition.value = normalizeStageSceneTransition(null)
+  sceneMusicPreviewVisible.value = false
 }
 
 const updateEditingSceneTransition = (
@@ -6853,6 +6885,41 @@ onBeforeUnmount(() => {
                   </n-button>
                 </div>
               </label>
+              <label>
+                <span>场景音乐</span>
+                <div class="theater-scene-editor__music">
+                  <span class="theater-scene-editor__music-summary">{{ sceneMusicSummary }}</span>
+                  <n-popover
+                    :show="sceneMusicPreviewVisible && Boolean(editingSceneMusicSnapshot)"
+                    trigger="manual"
+                    placement="right-start"
+                    :show-arrow="false"
+                    class="theater-scene-music-popover"
+                  >
+                    <template #trigger>
+                      <n-button size="tiny" :disabled="!editingSceneMusicSnapshot" @click="sceneMusicPreviewVisible = !sceneMusicPreviewVisible">查看</n-button>
+                    </template>
+                    <div v-if="editingSceneMusicSnapshot" class="theater-scene-music-preview">
+                      <strong>场景音乐播放列表</strong>
+                      <section v-for="track in editingSceneMusicSnapshot.tracks" :key="track.type">
+                        <header>
+                          <span>{{ sceneMusicTrackLabels[track.type] }}</span>
+                          <small>{{ track.playlistMode ? sceneMusicPlaylistModeLabels[track.playlistMode] : '单曲' }} · 音量 {{ Math.round(track.volume * 100) }}%</small>
+                        </header>
+                        <div class="theater-scene-music-preview__current">当前：{{ track.asset?.name || '未设置' }}</div>
+                        <ol v-if="track.playlist.length">
+                          <li v-for="(asset, index) in track.playlist" :key="`${track.type}-${asset.assetId}-${index}`" :class="{ 'is-current': index === track.playlistIndex }">
+                            {{ asset.name || asset.assetId }}
+                          </li>
+                        </ol>
+                        <small v-else>无播放列表</small>
+                      </section>
+                    </div>
+                  </n-popover>
+                  <n-button size="tiny" :disabled="!chatBridgeOnline" @click="editingSceneId && emit('sceneMusicRecordRequested', editingSceneId)">记录</n-button>
+                  <n-button size="tiny" :disabled="!editingSceneMusicSnapshot" @click="editingSceneId && emit('sceneMusicClearRequested', editingSceneId)">清空</n-button>
+                </div>
+              </label>
               <div class="theater-scene-editor__transition">
                 <span>退出动画</span>
                 <n-select
@@ -7844,6 +7911,17 @@ onBeforeUnmount(() => {
 .theater-scene-editor strong { font-size: 13px; }
 .theater-scene-editor label { display: grid; gap: 5px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-scene-editor__audio { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; }
+.theater-scene-editor__music { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 5px; }
+.theater-scene-editor__music-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 8px; border: 1px solid var(--theater-border); border-radius: 4px; color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-panel) 78%, transparent); }
+:global(.theater-scene-music-popover) { background: rgba(28, 31, 40, .86) !important; backdrop-filter: blur(14px); border: 1px solid rgba(255, 255, 255, .12); }
+.theater-scene-music-preview { width: 300px; max-height: min(520px, calc(100vh - 32px)); overflow: auto; display: grid; gap: 10px; color: var(--sc-text-primary, #f4f4f5); }
+.theater-scene-music-preview > strong { font-size: 13px; }
+.theater-scene-music-preview section { display: grid; gap: 5px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, .1); }
+.theater-scene-music-preview header { display: flex; justify-content: space-between; gap: 8px; }
+.theater-scene-music-preview header small, .theater-scene-music-preview section > small { color: var(--sc-text-secondary, #b5b5c5); }
+.theater-scene-music-preview__current { font-size: 12px; }
+.theater-scene-music-preview ol { max-height: 150px; overflow: auto; margin: 0; padding-left: 22px; font-size: 11px; color: var(--sc-text-secondary, #b5b5c5); }
+.theater-scene-music-preview li.is-current { color: var(--sc-primary, #63a8ff); }
 .theater-scene-editor__transition { display: grid; grid-template-columns: 58px minmax(0, 1fr) 104px; align-items: center; gap: 6px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-scene-editor__transition-hint { color: var(--sc-fg-muted, #71717a); font-size: 10px; line-height: 1.4; }
 .theater-scene-editor__actions { display: flex; justify-content: flex-end; gap: 6px; }

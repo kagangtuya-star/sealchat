@@ -476,17 +476,29 @@ func exportAttachmentToPackage(stagingDir, relativePath, attachmentID string) (T
 }
 
 func theaterPackageAudioAssets(worldID, channelID string, referenced map[string]struct{}) ([]model.AudioAsset, error) {
-	var assets []model.AudioAsset
-	if err := model.GetDB().Where("world_id = ? AND deleted_at IS NULL", worldID).Find(&assets).Error; err != nil {
+	selected := map[string]model.AudioAsset{}
+	if len(referenced) > 0 {
+		var referencedAssets []model.AudioAsset
+		if err := model.GetDB().Where("id IN ? AND deleted_at IS NULL AND (world_id = ? OR scope = ?)", mapKeys(referenced), worldID, model.AudioScopeCommon).Find(&referencedAssets).Error; err != nil {
+			return nil, err
+		}
+		for _, asset := range referencedAssets {
+			selected[asset.ID] = asset
+		}
+	}
+	var worldAssets []model.AudioAsset
+	if err := model.GetDB().Where("world_id = ? AND deleted_at IS NULL", worldID).Find(&worldAssets).Error; err != nil {
 		return nil, err
 	}
-	result := make([]model.AudioAsset, 0)
 	channelTag := theaterChannelAudioTag(channelID)
-	for _, asset := range assets {
-		_, isReferenced := referenced[asset.ID]
-		if isReferenced || hasAudioTag(&asset, theaterFeatureAudioTag) || (channelID != "" && hasAudioTag(&asset, channelTag)) {
-			result = append(result, asset)
+	for _, asset := range worldAssets {
+		if hasAudioTag(&asset, theaterFeatureAudioTag) || (channelID != "" && hasAudioTag(&asset, channelTag)) {
+			selected[asset.ID] = asset
 		}
+	}
+	result := make([]model.AudioAsset, 0, len(selected))
+	for _, asset := range selected {
+		result = append(result, asset)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
