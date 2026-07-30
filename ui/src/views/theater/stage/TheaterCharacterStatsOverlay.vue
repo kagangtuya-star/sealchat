@@ -28,7 +28,7 @@ interface OverlayLayout {
   height: number;
 }
 
-type MinimizedEdge = 'left' | 'right' | 'top' | 'bottom';
+type MinimizedEdge = 'left' | 'right' | 'bottom';
 
 interface ResolvedStat {
   id: string;
@@ -161,9 +161,12 @@ const restoreLayout = () => {
         width: value.width * viewportWidth,
         height: value.height * viewportHeight,
       });
-      minimized.value = value.minimized === true;
-      if (['left', 'right', 'top', 'bottom'].includes(value.minimizedEdge)) {
+      minimized.value = value.minimized === true && value.minimizedEdge !== 'top';
+      if (['left', 'right', 'bottom'].includes(value.minimizedEdge)) {
         minimizedEdge.value = value.minimizedEdge;
+      } else if (value.minimized === true && value.minimizedEdge === 'top') {
+        setLayout({ ...layout, y: 0 });
+        persistLayout();
       }
       return;
     }
@@ -221,12 +224,18 @@ const minimize = () => {
   const parent = rootRef.value?.parentElement;
   const viewportWidth = Math.max(1, parent?.clientWidth || window.innerWidth || 1);
   const viewportHeight = Math.max(1, parent?.clientHeight || window.innerHeight || 1);
+  const topDistance = layout.y;
   const distances: Array<[MinimizedEdge, number]> = [
     ['left', layout.x],
     ['right', viewportWidth - (layout.x + layout.width)],
-    ['top', layout.y],
     ['bottom', viewportHeight - (layout.y + layout.height)],
   ];
+  if (topDistance <= Math.min(...distances.map(([, distance]) => distance))) {
+    setLayout({ ...layout, y: 0 });
+    minimized.value = false;
+    persistLayout();
+    return;
+  }
   minimizedEdge.value = distances.reduce((closest, edge) => edge[1] < closest[1] ? edge : closest)[0];
   minimized.value = true;
   controlsVisible.value = false;
@@ -396,7 +405,6 @@ const minimizedLayout = (): OverlayLayout => {
   const tabWidth = 16;
   const tabLength = 54;
   if (minimizedEdge.value === 'right') return { x: viewportWidth - tabWidth, y: clamp(layout.y, 0, Math.max(0, viewportHeight - tabLength)), width: tabWidth, height: tabLength };
-  if (minimizedEdge.value === 'top') return { x: clamp(layout.x, 0, Math.max(0, viewportWidth - tabLength)), y: 0, width: tabLength, height: tabWidth };
   if (minimizedEdge.value === 'bottom') return { x: clamp(layout.x, 0, Math.max(0, viewportWidth - tabLength)), y: viewportHeight - tabWidth, width: tabLength, height: tabWidth };
   return { x: 0, y: clamp(layout.y, 0, Math.max(0, viewportHeight - tabLength)), width: tabWidth, height: tabLength };
 };
@@ -492,7 +500,14 @@ onBeforeUnmount(() => {
             </button>
             <div class="theater-character-stat-card__stats">
               <div v-for="stat in character.stats" :key="stat.id" class="theater-character-stat">
-                <div class="theater-character-stat__bar" :style="{ color: stat.textColor }">
+                <div
+                  class="theater-character-stat__bar"
+                  :style="{ color: stat.textColor }"
+                  @pointerdown="beginInteraction('drag', $event)"
+                  @pointermove="moveInteraction"
+                  @pointerup="endInteraction"
+                  @pointercancel="endInteraction"
+                >
                   <span
                     class="theater-character-stat__fill"
                     :style="{ left: `${stat.fillLeft}%`, width: `${stat.fillWidth}%`, backgroundColor: stat.barColor }"
@@ -541,7 +556,7 @@ onBeforeUnmount(() => {
 .theater-character-stat { min-width: 0; }
 .theater-character-stat__name, .theater-character-stat__value { position: absolute; z-index: 1; display: grid; align-items: center; overflow: hidden; font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 13px; text-shadow: 0 1px 2px #000; white-space: nowrap; }
 .theater-character-stat__name { inset: 0 auto 0 4px; max-width: calc(100% - 38px); text-overflow: ellipsis; }
-.theater-character-stat__bar { position: relative; height: 16px; overflow: hidden; border: 1px solid transparent; border-radius: 2px; background: rgba(0, 0, 0, .26); }
+.theater-character-stat__bar { position: relative; height: 16px; overflow: hidden; border: 1px solid transparent; border-radius: 2px; background: rgba(0, 0, 0, .26); cursor: move; touch-action: none; }
 .theater-character-stat__fill { position: absolute; top: 0; bottom: 0; opacity: .46; }
 .theater-character-stat__zero { position: absolute; top: 0; bottom: 0; width: 1px; background: currentColor; opacity: .75; }
 .theater-character-stat__value { inset: 0 4px 0 auto; place-items: center end; }
@@ -555,7 +570,6 @@ onBeforeUnmount(() => {
 .theater-character-overlay__minimized-tab:hover, .theater-character-overlay__minimized-tab:focus-visible { background: rgba(255, 255, 255, .2); outline: 1px solid rgba(255, 255, 255, .42); outline-offset: -1px; }
 .is-minimized-left .theater-character-overlay__minimized-tab, .is-minimized-right .theater-character-overlay__minimized-tab { border-radius: 0 3px 3px 0; }
 .is-minimized-right .theater-character-overlay__minimized-tab { border-radius: 3px 0 0 3px; }
-.is-minimized-top .theater-character-overlay__minimized-tab { border-radius: 0 0 3px 3px; }
 .is-minimized-bottom .theater-character-overlay__minimized-tab { border-radius: 3px 3px 0 0; }
 @media (max-width: 640px) {
   .theater-character-overlay__content { gap: 5px; padding: 5px; }
