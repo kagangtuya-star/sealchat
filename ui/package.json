@@ -10,7 +10,7 @@
     "build-export-viewer": "run-s build-viewer sync-viewer",
     "preview": "vite preview",
     "build-only": "vite build",
-    "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false"
+    "type-check": "node --max-old-space-size=8192 ./node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p tsconfig.app.json --composite false"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
