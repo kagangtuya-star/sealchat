@@ -1835,10 +1835,7 @@ defineExpose({
 }
 
 :deep(.hybrid-input__caret-anchor) {
-  display: inline-block;
-  width: 0;
-  overflow: hidden;
-  vertical-align: middle;
+  display: inline;
   white-space: pre;
 }
 
