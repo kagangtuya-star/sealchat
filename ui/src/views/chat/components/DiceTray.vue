@@ -1,5 +1,5 @@
 <template>
-  <div class="dice-tray">
+  <div class="dice-tray" :class="{ 'dice-tray--floating': floating }">
     <div class="dice-tray__header">
       <div class="dice-tray__header-main">
         <span>默认骰：<strong>{{ currentDefaultDice }}</strong></span>
@@ -13,6 +13,19 @@
           <n-icon :component="CloseIcon" size="12" />
         </n-button>
       </div>
+      <button
+        v-if="floating"
+        type="button"
+        class="dice-tray__minimize"
+        title="最小化掷骰面板"
+        aria-label="最小化掷骰面板"
+        @pointerdown.stop
+        @click="emit('minimize')"
+      >
+        <span></span>
+        最小化
+        <span></span>
+      </button>
     </div>
     <div class="dice-tray__body">
       <div class="dice-tray__column dice-tray__column--quick">
@@ -260,11 +273,13 @@ const props = withDefaults(defineProps<{
   canEditDefault?: boolean
   builtInDiceEnabled?: boolean
   botFeatureEnabled?: boolean
+  floating?: boolean
 }>(), {
   defaultDice: 'd20',
   canEditDefault: false,
   builtInDiceEnabled: true,
   botFeatureEnabled: false,
+  floating: false,
 });
 
 const emit = defineEmits<{
@@ -272,6 +287,7 @@ const emit = defineEmits<{
   (event: 'roll', expr: string): void
   (event: 'update-default', expr: string): void
   (event: 'close'): void
+  (event: 'minimize'): void
 }>();
 
 const chat = useChatStore();
@@ -780,12 +796,62 @@ const handleSaveDefault = () => {
   color: var(--sc-fg-primary, #111);
 }
 
+.dice-tray--floating {
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
+  overflow: auto;
+  border: 0;
+  box-shadow: none;
+}
+
 .dice-tray__header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
   font-size: 13px;
+}
+
+.dice-tray--floating .dice-tray__header {
+  min-height: 26px;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.dice-tray__minimize {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 82px;
+  height: 23px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.14);
+  color: var(--sc-fg-muted, #64748b);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dice-tray__minimize span {
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.dice-tray__minimize:hover {
+  background: rgba(37, 99, 235, 0.14);
+  color: var(--sc-accent, #2563eb);
 }
 
 .dice-tray__header-main {
