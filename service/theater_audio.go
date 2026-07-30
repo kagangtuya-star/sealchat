@@ -140,7 +140,7 @@ func DeleteTheaterAudioAsset(actorID, worldID, channelID, assetID string) error 
 		return err
 	}
 	if referenced {
-		return newTheaterError(TheaterErrorResourceInUse, "音频素材仍被小剧场特效引用", 409, nil)
+		return newTheaterError(TheaterErrorResourceInUse, "音频素材仍被小剧场场景或特效引用", 409, nil)
 	}
 	if err := AudioSafeDeleteAsset(asset.ID, false); err != nil {
 		return err
@@ -160,6 +160,22 @@ func theaterAudioAssetReferenced(worldID, assetID string) (bool, error) {
 	pattern := "%\"assetId\":\"" + strings.ReplaceAll(assetID, "%", "\\%") + "\"%"
 	if err := model.GetDB().Model(&model.TheaterObjectModel{}).
 		Where("room_id IN ? AND content_json LIKE ?", roomIDs, pattern).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return true, nil
+	}
+	if err := model.GetDB().Model(&model.TheaterSceneModel{}).
+		Where("room_id IN ? AND state_json LIKE ?", roomIDs, pattern).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return true, nil
+	}
+	if err := model.GetDB().Model(&model.TheaterRoomModel{}).
+		Where("id IN ? AND state_json LIKE ?", roomIDs, pattern).
 		Count(&count).Error; err != nil {
 		return false, err
 	}

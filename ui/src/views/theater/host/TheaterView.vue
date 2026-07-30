@@ -77,6 +77,15 @@ const readSceneDialogueEnabled = () => {
   }
 }
 const sceneDialogueEnabled = ref(typeof window !== 'undefined' && readSceneDialogueEnabled())
+const sceneAudioStorageKey = 'sealchat.theater.scene-switch-audio.enabled.v1'
+const readSceneAudioEnabled = () => {
+  try {
+    return window.localStorage.getItem(sceneAudioStorageKey) === '1'
+  } catch {
+    return false
+  }
+}
+const sceneAudioEnabled = ref(typeof window !== 'undefined' && readSceneAudioEnabled())
 type AppearancePreviewState = {
   previewId: string
   draft: TheaterPresentation
@@ -274,15 +283,34 @@ const sendSceneDialogue = async (sceneId: string) => {
   }
 }
 
+const broadcastSceneAudio = async (sceneId: string) => {
+  const audio = stageStore.state.scenes[sceneId]?.state.switchAudio
+  if (!sceneAudioEnabled.value || !audio || !theaterSync) return
+  try {
+    await theaterSync.flushPendingChanges()
+    await theaterSync.requestSceneAudio(sceneId)
+  } catch (error) {
+    message.warning(`场景已切换，音效同步失败：${error instanceof Error ? error.message : '未知错误'}`)
+  }
+}
+
 const requestSceneSwitch = (sceneId: string) => {
   if (!stageStore.applyScene(sceneId)) return
   void sendSceneDialogue(sceneId)
+  void broadcastSceneAudio(sceneId)
 }
 
 watch(width, () => { splitRatio.value = normalizeRatio(splitRatio.value) })
 watch(sceneDialogueEnabled, (enabled) => {
   try {
     window.localStorage.setItem(sceneDialogueStorageKey, enabled ? '1' : '0')
+  } catch {
+    // The setting remains active for this page when storage is unavailable.
+  }
+})
+watch(sceneAudioEnabled, (enabled) => {
+  try {
+    window.localStorage.setItem(sceneAudioStorageKey, enabled ? '1' : '0')
   } catch {
     // The setting remains active for this page when storage is unavailable.
   }
@@ -327,13 +355,17 @@ const startTheaterBridge = () => {
     onChatMessageCreated: dialogueRuntime.created,
     onChatMessageUpdated: dialogueRuntime.updated,
     onChatMessageRemoved: ({ messageId }) => dialogueRuntime.removed(messageId),
-    onSceneApplied: (sceneId) => { void sendSceneDialogue(sceneId) },
+    onSceneApplied: (sceneId) => {
+      void sendSceneDialogue(sceneId)
+      void broadcastSceneAudio(sceneId)
+    },
     triggerStageAction: async (payload) => {
       if (!theaterSync) return false
       try {
         const handled = await theaterSync.triggerAction(payload)
         if (handled === true && payload.action.type === 'scene.apply') {
           await sendSceneDialogue(stageStore.state.activeSceneId)
+          await broadcastSceneAudio(stageStore.state.activeSceneId)
         }
         return handled
       } catch (error) {
@@ -345,7 +377,11 @@ const startTheaterBridge = () => {
     triggerStageActionBatch: async (payloads) => {
       if (!theaterSync) return false
       try {
-        return await theaterSync.triggerActionBatch(payloads)
+        const handled = await theaterSync.triggerActionBatch(payloads)
+        if (handled === true && payloads.some((payload) => payload.action.type === 'scene.apply')) {
+          await broadcastSceneAudio(stageStore.state.activeSceneId)
+        }
+        return handled
       } catch (error) {
         message.warning(theaterActionErrorMessage(error, '舞台动作批量执行失败'))
         return true
@@ -402,6 +438,9 @@ const startTheaterSync = async () => {
     onEffectTriggered: (effectId, triggerId) => {
       if (isCurrent() && theaterSync === client) return stageAppRef.value?.playEffect(effectId, triggerId) === true
       return false
+    },
+    onSceneAudioTriggered: (assetId, volume, triggerId) => {
+      if (isCurrent() && theaterSync === client) stageAppRef.value?.playSceneAudio(assetId, volume, triggerId)
     },
     onVisibilityTriggered: (changes, triggerId) => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.playVisibilityTransitions(changes, triggerId)
@@ -595,12 +634,14 @@ function handleDice3DMessage(event: MessageEvent) {
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
           :scene-dialogue-enabled="sceneDialogueEnabled"
+          :scene-audio-enabled="sceneAudioEnabled"
           :sync-before-organizer-write="flushTheaterSync"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @scene-switch-requested="requestSceneSwitch"
           @update-scene-dialogue-enabled="sceneDialogueEnabled = $event"
+          @update-scene-audio-enabled="sceneAudioEnabled = $event"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"
           @open-character-card="openCharacterCard"

@@ -7,6 +7,27 @@ export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' 
 export type StageDrawingTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon'
 export type StageDrawingDash = 'solid' | 'dashed' | 'dotted'
 
+export interface StageAudioRef {
+  assetId: string
+  name: string
+  volume: number
+}
+
+export const normalizeStageAudioRef = (input: unknown): StageAudioRef | null => {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Partial<StageAudioRef>
+  const assetId = typeof value.assetId === 'string' ? value.assetId.trim().slice(0, 256) : ''
+  if (!assetId) return null
+  const volume = typeof value.volume === 'number' && Number.isFinite(value.volume)
+    ? Math.min(1, Math.max(0, value.volume))
+    : 1
+  return {
+    assetId,
+    name: typeof value.name === 'string' ? Array.from(value.name).slice(0, 512).join('') : '',
+    volume,
+  }
+}
+
 export const isStageActionTarget = (type: StageObjectType) => (
   type === 'drawing' || type === 'text' || type === 'image' || type === 'button'
 )
@@ -441,6 +462,7 @@ export interface StageLiveState {
   alignWithGrid: boolean
   sceneObjects: Record<string, StageObject>
   transition: StageSceneTransition
+  switchAudio: StageAudioRef | null
   serverState?: Record<string, unknown>
 }
 

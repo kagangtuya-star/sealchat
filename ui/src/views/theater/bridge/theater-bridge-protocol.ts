@@ -404,6 +404,11 @@ const sceneTransitionSchema = z.strictObject({
   enter: sceneTransitionPhaseSchema,
   exit: sceneTransitionPhaseSchema,
 })
+const stageAudioRefSchema = z.strictObject({
+  assetId: z.string().trim().min(1).max(256),
+  name: z.string().max(512),
+  volume: z.number().finite().min(0).max(1),
+})
 const legacySceneTransitionSchema = z.strictObject({
   type: z.enum(['none', 'crossfade']),
   durationMs: z.number().int().min(0).max(60_000).optional(),
@@ -425,6 +430,7 @@ const stageSceneStateSchema = z.strictObject({
   alignWithGrid: z.boolean(),
   sceneObjects: z.record(z.string(), stageObjectSchema),
   transition: sceneTransitionSchema,
+  switchAudio: stageAudioRefSchema.nullable(),
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 

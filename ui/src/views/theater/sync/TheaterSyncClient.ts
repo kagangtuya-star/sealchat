@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
@@ -110,6 +110,7 @@ interface TheaterSyncOptions {
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onPointerTrace?: (trace: StagePointerTrace) => void
   onEffectTriggered?: (effectId: string, triggerId: string, sceneId?: string) => boolean | void
+  onSceneAudioTriggered?: (assetId: string, volume: number, triggerId: string, sceneId: string) => void
   onVisibilityTriggered?: (changes: TheaterVisibilityChange[], triggerId: string) => void
   onError?: (message: string) => void
 }
@@ -221,6 +222,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
     alignWithGrid: grid.align === true,
     sceneObjects: objects,
     transition: normalizeStageSceneTransition(raw.transition),
+    switchAudio: normalizeStageAudioRef(raw.switchAudio),
     serverState: clone(raw),
   }
 }
@@ -240,6 +242,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
     align: state.alignWithGrid,
   },
   transition: state.transition,
+  switchAudio: state.switchAudio,
 })
 
 const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
@@ -688,6 +691,7 @@ export class TheaterSyncClient {
   // order so a scene-local effect cannot race ahead of its scene switch.
   private mutationActionQueue: Promise<void> = Promise.resolve()
   private pendingEffectTriggers = new Map<string, { effectId: string, sceneId: string, revision: number, expiresAt: number }>()
+  private pendingSceneAudioTriggers = new Map<string, { assetId: string, volume: number, sceneId: string, revision: number, expiresAt: number }>()
   private consecutiveConflicts = 0
 
   private theaterBase() {
@@ -754,6 +758,27 @@ export class TheaterSyncClient {
     }
   }
 
+  private readonly onSceneAudioTriggered = (event: any) => {
+    const theater = event?.theater
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    const payload = asObject(theater.payload)
+    const assetId = typeof payload.assetId === 'string' ? payload.assetId.trim() : ''
+    const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
+    const sceneId = typeof payload.sceneId === 'string' ? payload.sceneId.trim() : ''
+    const volume = typeof payload.volume === 'number' && Number.isFinite(payload.volume)
+      ? Math.min(1, Math.max(0, payload.volume))
+      : -1
+    if (!assetId || !triggerId || !sceneId || volume < 0) return
+    const revision = finite(theater.revision, 0)
+    if (revision > this.revision || sceneId !== this.options.store.state.activeSceneId) {
+      if (this.pendingSceneAudioTriggers.size >= 64) this.pendingSceneAudioTriggers.delete(this.pendingSceneAudioTriggers.keys().next().value || '')
+      this.pendingSceneAudioTriggers.set(triggerId, { assetId, volume, sceneId, revision, expiresAt: Date.now() + 15_000 })
+      void this.reload(true)
+      return
+    }
+    this.options.onSceneAudioTriggered?.(assetId, volume, triggerId, sceneId)
+  }
+
   private flushPendingEffectTriggers() {
     const now = Date.now()
     for (const [triggerId, pending] of this.pendingEffectTriggers) {
@@ -764,6 +789,19 @@ export class TheaterSyncClient {
       if (pending.revision > this.revision) continue
       if (pending.sceneId && pending.sceneId !== this.options.store.state.activeSceneId) continue
       if (this.options.onEffectTriggered?.(pending.effectId, triggerId, pending.sceneId) !== false) this.pendingEffectTriggers.delete(triggerId)
+    }
+  }
+
+  private flushPendingSceneAudioTriggers() {
+    const now = Date.now()
+    for (const [triggerId, pending] of this.pendingSceneAudioTriggers) {
+      if (pending.expiresAt <= now) {
+        this.pendingSceneAudioTriggers.delete(triggerId)
+        continue
+      }
+      if (pending.revision > this.revision || pending.sceneId !== this.options.store.state.activeSceneId) continue
+      this.options.onSceneAudioTriggered?.(pending.assetId, pending.volume, triggerId, pending.sceneId)
+      this.pendingSceneAudioTriggers.delete(triggerId)
     }
   }
 
@@ -799,6 +837,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.on('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.on('theater.effect.triggered' as any, this.onEffectTriggered)
+    chatEvent.on('theater.scene.audio.triggered' as any, this.onSceneAudioTriggered)
     chatEvent.on('theater.visibility.triggered' as any, this.onVisibilityTriggered)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
@@ -825,12 +864,14 @@ export class TheaterSyncClient {
     this.flushTimer = null
     this.reconcileTimer = null
     this.pendingEffectTriggers.clear()
+    this.pendingSceneAudioTriggers.clear()
     chatEvent.off('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
     chatEvent.off('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.off('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.off('theater.effect.triggered' as any, this.onEffectTriggered)
+    chatEvent.off('theater.scene.audio.triggered' as any, this.onSceneAudioTriggered)
     chatEvent.off('theater.visibility.triggered' as any, this.onVisibilityTriggered)
     chatEvent.off('connected' as any, this.onGatewayConnected)
     try {
@@ -903,6 +944,17 @@ export class TheaterSyncClient {
       channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
       requestId: mutationId('preload'),
       sceneIds: normalized,
+    })
+  }
+
+  async requestSceneAudio(sceneId: string) {
+    const normalizedSceneId = sceneId.trim()
+    if (!normalizedSceneId) return
+    await this.options.sendGatewayAPI('theater.scene.audio', {
+      worldId: this.options.worldId,
+      channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
+      sceneId: normalizedSceneId,
+      triggerId: mutationId('scene-audio'),
     })
   }
 
@@ -1011,6 +1063,7 @@ export class TheaterSyncClient {
       this.options.onPermissionsChange?.([...this.permissions])
       if (!force && this.hasLoaded && nextRevision === this.revision) {
         this.flushPendingEffectTriggers()
+        this.flushPendingSceneAudioTriggers()
         return
       }
       const remoteDocument = normalizeDocument(data.snapshot || {})
@@ -1051,6 +1104,7 @@ export class TheaterSyncClient {
       }
       this.hasLoaded = true
       this.flushPendingEffectTriggers()
+      this.flushPendingSceneAudioTriggers()
     } catch (error) {
       if (!this.started) return
       if (!silent) {

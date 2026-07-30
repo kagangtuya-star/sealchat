@@ -6,11 +6,13 @@ import {
   isSafeStageImageUrl,
   normalizeStageImageAnnotation,
   normalizeStageEntranceConfig,
+  normalizeStageAudioRef,
   normalizeStageSceneTransition,
   normalizeStageActionSchedule,
   normalizeStageSurfaceStyle,
   type StageAction,
   type StageActionSchedule,
+  type StageAudioRef,
   type StageDrawing,
   type StageImageRef,
   type StageLiveState,
@@ -152,6 +154,7 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
   alignWithGrid: false,
   sceneObjects,
   transition: createDefaultStageSceneTransition(),
+  switchAudio: null,
 })
 
 const createScene = (name: string, order: number, color: string): StageScene => {
@@ -354,6 +357,9 @@ const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallback
   alignWithGrid: input?.alignWithGrid === true,
   sceneObjects: normalizeObjects(input?.sceneObjects),
   transition: normalizeStageSceneTransition(input?.transition),
+  switchAudio: normalizeStageAudioRef(input && Object.prototype.hasOwnProperty.call(input, 'switchAudio')
+    ? input.switchAudio
+    : input?.serverState?.switchAudio),
   serverState: input?.serverState && typeof input.serverState === 'object' ? input.serverState : {},
 })
 
@@ -377,6 +383,7 @@ export interface TheaterStageStore {
   removeScene: (sceneId?: string) => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
   updateSceneTransition: (sceneId: string, transition: StageSceneTransition) => boolean
+  updateSceneSwitchAudio: (sceneId: string, audio: StageAudioRef | null) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
   addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
@@ -652,6 +659,16 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const normalized = normalizeStageSceneTransition(transition)
     scene.state.transition = normalized
     if (sceneId === state.activeSceneId) state.liveState.transition = clone(normalized)
+    return true
+  }
+
+  const updateSceneSwitchAudio = (sceneId: string, audio: StageAudioRef | null) => {
+    const scene = state.scenes[sceneId]
+    if (!scene) return false
+    const normalized = normalizeStageAudioRef(audio)
+    if (JSON.stringify(scene.state.switchAudio) === JSON.stringify(normalized)) return false
+    scene.state.switchAudio = normalized
+    if (sceneId === state.activeSceneId) state.liveState.switchAudio = clone(normalized)
     return true
   }
 
@@ -1396,6 +1413,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     selectScene,
     updateSceneDetails,
     updateSceneTransition,
+    updateSceneSwitchAudio,
     reorderScenes,
     addScene,
     duplicateScene,

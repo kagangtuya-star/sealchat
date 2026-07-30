@@ -24,6 +24,13 @@ type theaterPreloadRequest struct {
 	SceneIDs  []string `json:"sceneIds"`
 }
 
+type theaterSceneAudioRequest struct {
+	WorldID   string `json:"worldId"`
+	ChannelID string `json:"channelId"`
+	SceneID   string `json:"sceneId"`
+	TriggerID string `json:"triggerId"`
+}
+
 type theaterPointerTraceRequest struct {
 	WorldID        string    `json:"worldId"`
 	ChannelID      string    `json:"channelId"`
@@ -244,6 +251,88 @@ func apiTheaterPreloadWs(ctx *ChatContext, msg []byte) {
 			return true
 		})
 	}
+}
+
+func apiTheaterSceneAudioWs(ctx *ChatContext, msg []byte) {
+	var envelope struct {
+		Data theaterSceneAudioRequest `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	request := envelope.Data
+	request.WorldID = strings.TrimSpace(request.WorldID)
+	request.ChannelID = strings.TrimSpace(request.ChannelID)
+	request.SceneID = strings.TrimSpace(request.SceneID)
+	request.TriggerID = strings.TrimSpace(request.TriggerID)
+	if ctx == nil || ctx.User == nil || ctx.ConnInfo == nil || request.WorldID == "" || request.SceneID == "" || request.TriggerID == "" || len(request.SceneID) > 128 || len(request.TriggerID) > 128 {
+		writeTheaterWSResponse(ctx, nil, errors.New("invalid theater scene audio request"))
+		return
+	}
+	if !service.CanSwitchTheaterScene(ctx.User.ID, request.WorldID, request.ChannelID) {
+		writeTheaterWSResponse(ctx, nil, errors.New("missing permission: stage.scene.switch"))
+		return
+	}
+	subscription, _ := ctx.ConnInfo.theaterState()
+	if subscription == nil || subscription.WorldID != request.WorldID || subscription.ChannelID != request.ChannelID {
+		writeTheaterWSResponse(ctx, nil, errors.New("theater scene audio scope does not match subscription"))
+		return
+	}
+	room, err := model.TheaterRoomFindByScope(request.WorldID, request.ChannelID)
+	if err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	if room.ActiveSceneID != request.SceneID {
+		writeTheaterWSResponse(ctx, nil, errors.New("theater scene audio requires active scene"))
+		return
+	}
+	var scene model.TheaterSceneModel
+	if err := model.GetDB().Where("room_id = ? AND id = ?", room.ID, request.SceneID).First(&scene).Error; err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	var state struct {
+		SwitchAudio *struct {
+			AssetID string  `json:"assetId"`
+			Volume  float64 `json:"volume"`
+		} `json:"switchAudio"`
+	}
+	if json.Unmarshal([]byte(scene.StateJSON), &state) != nil || state.SwitchAudio == nil {
+		writeTheaterWSResponse(ctx, nil, errors.New("active theater scene has no switch audio"))
+		return
+	}
+	assetID := strings.TrimSpace(state.SwitchAudio.AssetID)
+	if assetID == "" || len(assetID) > 256 || state.SwitchAudio.Volume < 0 || state.SwitchAudio.Volume > 1 {
+		writeTheaterWSResponse(ctx, nil, errors.New("active theater scene switch audio is invalid"))
+		return
+	}
+	event := theaterGatewayEvent(protocol.EventTheaterSceneAudioTriggered, request.WorldID, request.ChannelID, room.ID, room.Revision, request.TriggerID, map[string]any{
+		"sceneId":   request.SceneID,
+		"triggerId": request.TriggerID,
+		"assetId":   assetID,
+		"volume":    state.SwitchAudio.Volume,
+	})
+	writeTheaterWSResponse(ctx, map[string]any{"triggerId": request.TriggerID, "accepted": true}, nil)
+	if userId2ConnInfoGlobal == nil {
+		return
+	}
+	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if !canConnectionViewTheater(userID, info, request.WorldID, request.ChannelID) {
+				return true
+			}
+			targetSubscription, queue := info.theaterState()
+			if targetSubscription == nil || queue == nil || targetSubscription.WorldID != request.WorldID || targetSubscription.ChannelID != request.ChannelID {
+				return true
+			}
+			gap := theaterSnapshotEventForConnection(info, request.WorldID, request.ChannelID, room.ID, room.Revision, room.SchemaVersion, room.StateHash, "gap")
+			queue.Enqueue(event, gap)
+			return true
+		})
+		return true
+	})
 }
 
 func apiTheaterPointerWs(ctx *ChatContext, msg []byte) {

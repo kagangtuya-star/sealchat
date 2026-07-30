@@ -449,6 +449,7 @@ const (
 	EventTheaterPreloadRequested    EventName = "theater.preload.requested"
 	EventTheaterPointerTrace        EventName = "theater.pointer.trace"
 	EventTheaterEffectTriggered     EventName = "theater.effect.triggered"
+	EventTheaterSceneAudioTriggered EventName = "theater.scene.audio.triggered"
 	EventTheaterVisibilityTriggered EventName = "theater.visibility.triggered"
 )
 

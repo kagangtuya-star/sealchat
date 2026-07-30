@@ -1013,6 +1013,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "theater.preload":
 						apiTheaterPreloadWs(ctx, msg)
 						solved = true
+					case "theater.scene.audio":
+						apiTheaterSceneAudioWs(ctx, msg)
+						solved = true
 					case "theater.pointer":
 						apiTheaterPointerWs(ctx, msg)
 						solved = true

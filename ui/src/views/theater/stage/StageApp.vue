@@ -35,12 +35,14 @@ import {
   Pencil,
   Pin,
   Plus,
+  PlayerPlay,
   Search,
   Select,
   Settings,
   Stars,
   Stack2,
   Trash,
+  Upload,
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
@@ -55,6 +57,7 @@ import {
   createDefaultStageActionSchedule,
   createDefaultStageImageAnnotation,
   normalizeStageImageAnnotation,
+  normalizeStageAudioRef,
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   stageSceneTransitionTypes,
@@ -64,6 +67,7 @@ import {
   isStageActionTarget,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageAudioRef,
   type StageDrawing,
   type StageDrawingStyle,
   type StageDrawingTool,
@@ -141,6 +145,7 @@ const props = defineProps<{
     previewText: string
   } | null
   sceneDialogueEnabled: boolean
+  sceneAudioEnabled: boolean
   syncBeforeOrganizerWrite: () => Promise<void>
 }>()
 const emit = defineEmits<{
@@ -157,6 +162,7 @@ const emit = defineEmits<{
   preloadRequested: [sceneIds: string[]]
   sceneSwitchRequested: [sceneId: string]
   updateSceneDialogueEnabled: [enabled: boolean]
+  updateSceneAudioEnabled: [enabled: boolean]
 }>()
 
 const stageActionDescriptions: Record<StageAction['type'], string> = {
@@ -175,6 +181,7 @@ const sceneMorphContainerRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
 const selectionQuickBar = reactive({ visible: false, left: 0, top: 0 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
+const sceneAudioInputRef = ref<HTMLInputElement | null>(null)
 const packageInputRef = ref<HTMLInputElement | null>(null)
 const ccfoliaInputRef = ref<HTMLInputElement | null>(null)
 const resourceError = ref('')
@@ -567,8 +574,8 @@ const fetchTheaterAudioAssets = async () => {
   }
 }
 
-const uploadTheaterAudio = async (file: File, targetEffectId = '') => {
-  if (!canUploadResources.value) return
+const uploadTheaterAudio = async (file: File, targetEffectId = ''): Promise<AudioAsset | null> => {
+  if (!canUploadResources.value) return null
   theaterAudioUploading.value = true
   theaterAudioError.value = ''
   try {
@@ -585,8 +592,10 @@ const uploadTheaterAudio = async (file: File, targetEffectId = '') => {
       props.store.commitObjectEdit()
     }
     await fetchTheaterAudioAssets()
+    return asset || null
   } catch (error) {
     theaterAudioError.value = theaterAudioErrorMessage(error, '上传音频素材失败')
+    return null
   } finally {
     theaterAudioUploading.value = false
   }
@@ -664,6 +673,13 @@ const playTheaterAudioAsset = async (assetId: string, volume: number, key: strin
 }
 
 const previewTheaterAudio = (asset: AudioAsset) => playTheaterAudioAsset(asset.id, 1, 'preview')
+let lastSceneAudioTriggerId = ''
+const playSceneAudio = (assetId: string, volume: number, triggerId: string) => {
+  if (!assetId || !triggerId || triggerId === lastSceneAudioTriggerId) return false
+  lastSceneAudioTriggerId = triggerId
+  void playTheaterAudioAsset(assetId, volume, 'scene-switch')
+  return true
+}
 const deleteTheaterAudio = async (asset: AudioAsset) => {
   if (!canDeleteResources.value || !window.confirm(`删除音频素材“${asset.name}”？`)) return
   theaterAudioError.value = ''
@@ -814,10 +830,17 @@ const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
 const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
 const canDeleteResources = computed(() => hasPermission('stage.resource.delete'))
 const canManageResources = computed(() => canUploadResources.value || canDeleteResources.value)
-const referencedTheaterAudioAssetIds = computed(() => [...new Set(Object.values(props.store.activeObjects.value)
-  .filter(isTheaterEffectObject)
-  .map((object) => theaterEffectConfigFromObject(object).audio?.assetId)
-  .filter((assetId): assetId is string => Boolean(assetId)))])
+const referencedTheaterAudioAssetIds = computed(() => [...new Set([
+  ...Object.values(props.store.state.scenes).flatMap((scene) => [
+    scene.state.switchAudio?.assetId,
+    ...Object.values(scene.state.sceneObjects)
+      .filter(isTheaterEffectObject)
+      .map((object) => theaterEffectConfigFromObject(object).audio?.assetId),
+  ]),
+  ...Object.values(props.store.state.persistentObjects)
+    .filter(isTheaterEffectObject)
+    .map((object) => theaterEffectConfigFromObject(object).audio?.assetId),
+].filter((assetId): assetId is string => Boolean(assetId)))])
 const effectActionOptions = computed(() => Object.values(props.store.activeObjects.value)
   .filter(isTheaterEffectObject)
   .sort(compareStageLayersBottomToTop)
@@ -1185,7 +1208,18 @@ const sceneEditMode = ref(false)
 const editingSceneId = ref<string | null>(null)
 const editingSceneName = ref('')
 const editingSceneSwitchText = ref('')
+const editingSceneSwitchAudio = ref<StageAudioRef | null>(null)
 const editingSceneTransition = ref<StageSceneTransition>(normalizeStageSceneTransition(null))
+const sceneSwitchAudioOptions = computed(() => {
+  const options = theaterAudioAssets.value
+    .filter((asset) => !asset.transcodeStatus || asset.transcodeStatus === 'ready')
+    .map((asset) => ({ label: asset.name, value: asset.id }))
+  const selected = editingSceneSwitchAudio.value
+  if (selected && !options.some((option) => option.value === selected.assetId)) {
+    options.unshift({ label: selected.name || selected.assetId, value: selected.assetId })
+  }
+  return options
+})
 const sceneTransitionTypeOptions = stageSceneTransitionTypes.map((type) => ({
   value: type,
   label: ({
@@ -1219,6 +1253,7 @@ const beginSceneEdit = (scene: StageScene) => {
   editingSceneId.value = scene.id
   editingSceneName.value = scene.name
   editingSceneSwitchText.value = scene.switchText
+  editingSceneSwitchAudio.value = normalizeStageAudioRef(scene.state.switchAudio)
   editingSceneTransition.value = normalizeStageSceneTransition(scene.state.transition)
 }
 
@@ -1226,6 +1261,7 @@ const closeSceneEditor = () => {
   editingSceneId.value = null
   editingSceneName.value = ''
   editingSceneSwitchText.value = ''
+  editingSceneSwitchAudio.value = null
   editingSceneTransition.value = normalizeStageSceneTransition(null)
 }
 
@@ -1251,6 +1287,29 @@ const updateEditingSceneTransition = (
 const updateEditingSceneTransitionDuration = (direction: 'enter' | 'exit', value: number | null) => {
   if (value === null || !Number.isFinite(value)) return
   updateEditingSceneTransition(direction, { durationMs: value })
+}
+
+const updateEditingSceneSwitchAudio = (assetId: string | null) => {
+  const asset = theaterAudioAssets.value.find((item) => item.id === assetId)
+  editingSceneSwitchAudio.value = asset
+    ? { assetId: asset.id, name: asset.name, volume: editingSceneSwitchAudio.value?.volume ?? 1 }
+    : null
+}
+
+const requestSceneAudioUpload = () => sceneAudioInputRef.value?.click()
+
+const handleSceneAudioInput = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const asset = await uploadTheaterAudio(file)
+  if (asset) editingSceneSwitchAudio.value = { assetId: asset.id, name: asset.name, volume: 1 }
+}
+
+const previewEditingSceneSwitchAudio = () => {
+  const audio = editingSceneSwitchAudio.value
+  if (audio) void playTheaterAudioAsset(audio.assetId, audio.volume, 'preview')
 }
 
 const toggleSceneEditMode = () => {
@@ -1296,6 +1355,7 @@ const saveSceneDetails = () => {
   }
   props.store.updateSceneDetails(sceneId, name, editingSceneSwitchText.value)
   props.store.updateSceneTransition(sceneId, editingSceneTransition.value)
+  props.store.updateSceneSwitchAudio(sceneId, editingSceneSwitchAudio.value)
   closeSceneEditor()
 }
 
@@ -4049,7 +4109,7 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void, activat
 
 const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effectId, triggerId)
 
-defineExpose({ preloadScenes, appendPointerTrace, playEffect, playVisibilityTransitions })
+defineExpose({ preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions })
 
 const setImageFit = (
   node: Konva.Image,
@@ -6438,6 +6498,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/apng,image/jpeg,image/webp,image/gif,video/webm,.apng,.webm" @change="handleImageInput">
+    <input ref="sceneAudioInputRef" class="theater-image-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleSceneAudioInput">
     <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
     <input ref="ccfoliaInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handleCCFOLIAInput">
     <header
@@ -6768,7 +6829,29 @@ onBeforeUnmount(() => {
               </label>
               <label>
                 <span>场景切换文本</span>
-                <n-input v-model:value="editingSceneSwitchText" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }" maxlength="10000" show-count />
+                <n-input v-model:value="editingSceneSwitchText" type="textarea" :autosize="{ minRows: 4, maxRows: 10 }" maxlength="10000" show-count />
+              </label>
+              <label>
+                <span>场景切换音效</span>
+                <div class="theater-scene-editor__audio">
+                  <n-select
+                    :value="editingSceneSwitchAudio?.assetId || null"
+                    :options="sceneSwitchAudioOptions"
+                    :loading="theaterAudioLoading"
+                    size="small"
+                    clearable
+                    filterable
+                    placeholder="从频道素材选择"
+                    :menu-props="theaterSecondaryMenuProps"
+                    @update:value="updateEditingSceneSwitchAudio"
+                  />
+                  <n-button size="small" secondary :disabled="!canUploadResources" :loading="theaterAudioUploading" aria-label="上传场景切换音效" @click="requestSceneAudioUpload">
+                    <template #icon><n-icon><Upload /></n-icon></template>
+                  </n-button>
+                  <n-button size="small" secondary :disabled="!editingSceneSwitchAudio" aria-label="试听场景切换音效" @click="previewEditingSceneSwitchAudio">
+                    <template #icon><n-icon><PlayerPlay /></n-icon></template>
+                  </n-button>
+                </div>
               </label>
               <div class="theater-scene-editor__transition">
                 <span>退出动画</span>
@@ -6843,10 +6926,21 @@ onBeforeUnmount(() => {
           </n-tooltip>
           <n-button v-if="sceneBatchMode" size="tiny" quaternary @click="exitSceneBatchMode"><template #icon><n-icon><X /></n-icon></template>取消</n-button>
           <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="Boolean(sceneBatchMode)" :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
-          <label class="theater-scene-dialogue-toggle">
-            <span>台词</span>
-            <n-switch size="small" :value="sceneDialogueEnabled" @update:value="emit('updateSceneDialogueEnabled', $event)" />
-          </label>
+          <div class="theater-scene-playback-toggles">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <label class="theater-scene-playback-toggle">
+                  <span>音效</span>
+                  <n-switch size="small" :value="sceneAudioEnabled" @update:value="emit('updateSceneAudioEnabled', $event)" />
+                </label>
+              </template>
+              切换场景时向所有在线舞台播放已配置音效
+            </n-tooltip>
+            <label class="theater-scene-playback-toggle">
+              <span>台词</span>
+              <n-switch size="small" :value="sceneDialogueEnabled" @update:value="emit('updateSceneDialogueEnabled', $event)" />
+            </label>
+          </div>
         </div>
       </aside>
 
@@ -7744,10 +7838,12 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) { .theater-scene-preload.is-ready-pulse { animation: none; } }
 .theater-scene-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 1px; padding: 6px; border-top: 1px solid var(--theater-border); background: var(--theater-panel); }
-.theater-scene-dialogue-toggle { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-playback-toggles { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.theater-scene-playback-toggle { display: flex; align-items: center; gap: 5px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-scene-editor { display: grid; gap: 10px; }
 .theater-scene-editor strong { font-size: 13px; }
 .theater-scene-editor label { display: grid; gap: 5px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-editor__audio { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; }
 .theater-scene-editor__transition { display: grid; grid-template-columns: 58px minmax(0, 1fr) 104px; align-items: center; gap: 6px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-scene-editor__transition-hint { color: var(--sc-fg-muted, #71717a); font-size: 10px; line-height: 1.4; }
 .theater-scene-editor__actions { display: flex; justify-content: flex-end; gap: 6px; }

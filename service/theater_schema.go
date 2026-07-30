@@ -362,7 +362,7 @@ func validateTheaterSwitchText(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true, "ccfolia": true}
+	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
 		if !allowed[key] {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
@@ -376,9 +376,42 @@ func validateSceneState(state map[string]any) error {
 			return err
 		}
 	}
+	if audio, ok := state["switchAudio"]; ok {
+		if err := validateTheaterAudioRef(audio, "scene.switchAudio"); err != nil {
+			return err
+		}
+	}
 	raw, _ := json.Marshal(state)
 	if len(raw) > 64<<10 {
 		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterAudioRef(audio any, field string) error {
+	if audio == nil {
+		return nil
+	}
+	value, ok := audio.(map[string]any)
+	if !ok {
+		return theaterPayloadError(field + " 无效")
+	}
+	for key := range value {
+		if key != "assetId" && key != "name" && key != "volume" {
+			return theaterPayloadError(field + " 包含禁止字段: " + key)
+		}
+	}
+	assetID, ok := value["assetId"].(string)
+	if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
+		return theaterPayloadError(field + ".assetId 无效")
+	}
+	name, ok := value["name"].(string)
+	if !ok || len([]rune(name)) > 512 {
+		return theaterPayloadError(field + ".name 无效")
+	}
+	volume, valid := theaterNumericValue(value["volume"])
+	if !valid || math.IsNaN(volume) || math.IsInf(volume, 0) || volume < 0 || volume > 1 {
+		return theaterPayloadError(field + ".volume 无效")
 	}
 	return nil
 }
@@ -659,26 +692,8 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		}
 	}
 	if audio, exists := effect["audio"]; exists && audio != nil {
-		value, ok := audio.(map[string]any)
-		if !ok {
-			return theaterPayloadError("effect.audio 无效")
-		}
-		for key := range value {
-			if key != "assetId" && key != "name" && key != "volume" {
-				return theaterPayloadError("effect.audio 包含禁止字段: " + key)
-			}
-		}
-		assetID, ok := value["assetId"].(string)
-		if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
-			return theaterPayloadError("effect.audio.assetId 无效")
-		}
-		name, ok := value["name"].(string)
-		if !ok || len([]rune(name)) > 512 {
-			return theaterPayloadError("effect.audio.name 无效")
-		}
-		volume, valid := theaterNumericValue(value["volume"])
-		if !valid || volume < 0 || volume > 1 {
-			return theaterPayloadError("effect.audio.volume 无效")
+		if err := validateTheaterAudioRef(audio, "effect.audio"); err != nil {
+			return err
 		}
 	}
 	builtin, ok := effect["builtin"].(map[string]any)

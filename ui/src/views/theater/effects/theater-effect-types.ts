@@ -1,4 +1,4 @@
-import type { StageImageRef, StageObject } from '../shared/stage-types'
+import { normalizeStageAudioRef, type StageAudioRef, type StageImageRef, type StageObject } from '../shared/stage-types'
 
 export const THEATER_EFFECT_DESIGN_WIDTH = 1920
 export const THEATER_EFFECT_DESIGN_HEIGHT = 1080
@@ -38,11 +38,7 @@ export interface TheaterEffectBuiltinConfig {
   mediaTransform: TheaterEffectMediaTransform
 }
 
-export interface TheaterEffectAudioRef {
-  assetId: string
-  name: string
-  volume: number
-}
+export type TheaterEffectAudioRef = StageAudioRef
 
 export interface TheaterEffectConfig {
   version: 1
@@ -127,16 +123,7 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
     && value.mediaLoopCount > 0
     ? Math.min(65_535, value.mediaLoopCount)
     : undefined
-  const rawAudio = value.audio && typeof value.audio === 'object'
-    ? value.audio as Partial<TheaterEffectAudioRef>
-    : null
-  const audio = rawAudio && typeof rawAudio.assetId === 'string' && rawAudio.assetId.trim()
-    ? {
-        assetId: rawAudio.assetId.trim().slice(0, 256),
-        name: text(rawAudio.name, '', 512),
-        volume: finiteRange(rawAudio.volume, 1, 0, 1),
-      }
-    : null
+  const audio = normalizeStageAudioRef(value.audio)
 
   return {
     version: 1,
