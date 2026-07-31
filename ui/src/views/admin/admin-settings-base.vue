@@ -468,7 +468,7 @@ const handleFaviconFileChange = async (event: Event) => {
   faviconUploading.value = true
   try {
     const result = await uploadImageAttachment(file, {
-      channelId: 'platform-favicon',
+      channelId: null,
       skipCompression: true,
     })
     faviconAttachmentId.value = (result.attachmentId || '').replace(/^id:/, '')

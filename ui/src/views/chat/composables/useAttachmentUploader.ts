@@ -5,7 +5,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { useImageCompressor } from '@/composables/useImageCompressor';
 
 interface UploadImageOptions {
-  channelId?: string;
+  channelId?: string | null;
   targetUserId?: string | null;
   rootId?: string;
   rootIdType?: string;
@@ -23,7 +23,9 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   const user = useUserStore();
   const chat = useChatStore();
   const utils = useUtilsStore();
-  const channelId = options?.channelId || chat.curChannel?.id || '';
+  const channelId = options?.channelId === undefined
+    ? chat.curChannel?.id || ''
+    : options.channelId || '';
 
   // Check file size before uploading
   const sizeLimit = utils.fileSizeLimit;

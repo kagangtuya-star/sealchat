@@ -146,7 +146,7 @@ const handleDiceSkinImport = async (event: Event) => {
   try {
     const imported = await importDiceSkinPackage(file, async assetFile => {
       const uploaded = await uploadImageAttachment(assetFile, {
-        channelId: 'platform-dice3d-skin', rootId: 'platform', rootIdType: 'platform_dice3d_skin', confirm: true, skipCompression: true,
+        channelId: null, rootId: 'platform', rootIdType: 'platform_dice3d_skin', confirm: true, skipCompression: true,
       })
       return uploaded.attachmentId
     })
@@ -361,7 +361,7 @@ const handleLoginBgFileChange = async (event: Event) => {
   try {
     const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080 })
     const result = await uploadImageAttachment(compressed, {
-      channelId: 'login-background',
+      channelId: null,
       skipCompression: true,
     })
     let attachId = result.attachmentId || ''
