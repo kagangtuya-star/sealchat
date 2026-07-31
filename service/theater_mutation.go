@@ -78,6 +78,12 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	if err != nil {
 		return nil, err
 	}
+	if command.Type == TheaterMutationRoomConstructionSet && !IsWorldAdmin(command.WorldID, actorID) {
+		return nil, newTheaterError(TheaterErrorPermissionDenied, "只有世界管理员可以设置施工模式", 403, nil)
+	}
+	if command.Type == TheaterMutationSceneApply && room.ConstructionSceneID != "" && !IsWorldAdmin(command.WorldID, actorID) {
+		return nil, newTheaterError(TheaterErrorPermissionDenied, "施工模式期间只有世界管理员可以切换场景", 403, nil)
+	}
 
 	var result *TheaterMutationResult
 	var outcomeErr error
@@ -389,6 +395,8 @@ func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model
 		return applyTheaterSceneDelete(tx, room, payload)
 	case *theaterSceneApplyPayload:
 		return applyTheaterSceneApply(tx, room, payload)
+	case *theaterRoomConstructionSetPayload:
+		return applyTheaterRoomConstructionSet(tx, room, payload)
 	case *theaterObjectCreatePayload:
 		return applyTheaterObjectCreate(tx, room, actorID, payload)
 	case *theaterObjectUpdatePayload:
@@ -550,6 +558,12 @@ func applyTheaterSceneDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload 
 			return err
 		}
 	}
+	if room.ConstructionSceneID == payload.SceneID {
+		room.ConstructionSceneID = ""
+		if err := tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Update("construction_scene_id", "").Error; err != nil {
+			return err
+		}
+	}
 	objectIDs := tx.Model(&model.TheaterObjectModel{}).Select("id").Where("room_id = ? AND scene_id = ?", room.ID, payload.SceneID)
 	if err := tx.Unscoped().Where("room_id = ? AND domain = ? AND target_id IN (?)", room.ID, TheaterPanelDomainEffect, objectIDs).Delete(&model.TheaterPanelItemModel{}).Error; err != nil {
 		return err
@@ -566,6 +580,20 @@ func applyTheaterSceneApply(tx *gorm.DB, room *model.TheaterRoomModel, payload *
 	}
 	room.ActiveSceneID = payload.SceneID
 	return tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Update("active_scene_id", payload.SceneID).Error
+}
+
+func applyTheaterRoomConstructionSet(tx *gorm.DB, room *model.TheaterRoomModel, payload *theaterRoomConstructionSetPayload) error {
+	sceneID := ""
+	if payload.SceneID != nil {
+		sceneID = strings.TrimSpace(*payload.SceneID)
+	}
+	if sceneID != "" {
+		if _, err := loadTheaterScene(tx, room.ID, sceneID); err != nil {
+			return err
+		}
+	}
+	room.ConstructionSceneID = sceneID
+	return tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Update("construction_scene_id", sceneID).Error
 }
 
 func applyTheaterObjectCreate(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterObjectCreatePayload) error {

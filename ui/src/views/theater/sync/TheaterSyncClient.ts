@@ -58,12 +58,17 @@ interface TheaterSnapshotResponse {
   revision: number
   schemaVersion: number
   permissions: string[]
+  constructionSceneId?: string | null
   snapshot: {
     activeSceneId?: string | null
     liveState?: JsonObject
     scenes?: Record<string, TheaterSceneSnapshot>
     persistentObjects?: Record<string, TheaterObjectSnapshot>
   }
+}
+
+export interface TheaterRuntimeState {
+  constructionSceneId: string | null
 }
 
 interface TheaterMutation {
@@ -106,6 +111,7 @@ interface TheaterSyncOptions {
   store: TheaterStageStore
   sendGatewayAPI: (apiName: string, data: Record<string, unknown>) => Promise<any>
   onPermissionsChange?: (permissions: string[]) => void
+  onRuntimeStateChange?: (state: TheaterRuntimeState) => void
   onSyncingChange?: (syncing: boolean) => void
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onPointerTrace?: (trace: StagePointerTrace) => void
@@ -960,6 +966,29 @@ export class TheaterSyncClient {
     })
   }
 
+  async setConstructionScene(sceneId: string | null) {
+    await this.flushPendingChanges()
+    const normalizedSceneId = sceneId?.trim() || null
+    const post = () => api.post(`${this.theaterBase()}/mutations`, {
+      mutationId: mutationId('construction'),
+      worldId: this.options.worldId,
+      channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
+      expectedRevision: this.revision,
+      type: 'room.construction.set',
+      payload: { sceneId: normalizedSceneId },
+    })
+    let response
+    try {
+      response = await post()
+    } catch (error) {
+      if (!isRevisionConflict(error)) throw error
+      await this.reload(true)
+      response = await post()
+    }
+    this.revision = finite(response.data?.revision, this.revision + 1)
+    await this.reload(true)
+  }
+
   async publishPointerTrace(trace: StagePointerTraceInput) {
     await this.options.sendGatewayAPI('theater.pointer', {
       worldId: this.options.worldId,
@@ -1063,6 +1092,11 @@ export class TheaterSyncClient {
       this.schemaVersion = finite(data.schemaVersion, 1)
       this.permissions = Array.isArray(data.permissions) ? data.permissions.filter((item): item is string => typeof item === 'string') : []
       this.options.onPermissionsChange?.([...this.permissions])
+      this.options.onRuntimeStateChange?.({
+        constructionSceneId: typeof data.constructionSceneId === 'string' && data.constructionSceneId.trim()
+          ? data.constructionSceneId.trim()
+          : null,
+      })
       if (!force && this.hasLoaded && nextRevision === this.revision) {
         this.flushPendingEffectTriggers()
         this.flushPendingSceneAudioTriggers()

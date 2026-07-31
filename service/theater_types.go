@@ -6,23 +6,24 @@ import (
 )
 
 const (
-	TheaterMutationSceneCreate        = "scene.create"
-	TheaterMutationSceneUpdate        = "scene.update"
-	TheaterMutationSceneReorder       = "scene.reorder"
-	TheaterMutationSceneDelete        = "scene.delete"
-	TheaterMutationSceneApply         = "scene.apply"
-	TheaterMutationObjectCreate       = "object.create"
-	TheaterMutationObjectUpdate       = "object.update"
-	TheaterMutationObjectBatchUpdate  = "object.batchUpdate"
-	TheaterMutationObjectDelete       = "object.delete"
-	TheaterMutationObjectToggle       = "object.toggle"
-	TheaterMutationCharacterBind      = "character.bind"
-	TheaterMutationCharacterUpdate    = "character.update"
-	TheaterMutationResourceAttach     = "resource.attach"
-	TheaterMutationResourceDetach     = "resource.detach"
-	TheaterMutationAdminRestore       = "admin.snapshot.restore"
-	TheaterMutationAdminReplace       = "admin.snapshot.replace"
-	TheaterMutationAdminPackageImport = "admin.package.import"
+	TheaterMutationSceneCreate         = "scene.create"
+	TheaterMutationSceneUpdate         = "scene.update"
+	TheaterMutationSceneReorder        = "scene.reorder"
+	TheaterMutationSceneDelete         = "scene.delete"
+	TheaterMutationSceneApply          = "scene.apply"
+	TheaterMutationRoomConstructionSet = "room.construction.set"
+	TheaterMutationObjectCreate        = "object.create"
+	TheaterMutationObjectUpdate        = "object.update"
+	TheaterMutationObjectBatchUpdate   = "object.batchUpdate"
+	TheaterMutationObjectDelete        = "object.delete"
+	TheaterMutationObjectToggle        = "object.toggle"
+	TheaterMutationCharacterBind       = "character.bind"
+	TheaterMutationCharacterUpdate     = "character.update"
+	TheaterMutationResourceAttach      = "resource.attach"
+	TheaterMutationResourceDetach      = "resource.detach"
+	TheaterMutationAdminRestore        = "admin.snapshot.restore"
+	TheaterMutationAdminReplace        = "admin.snapshot.replace"
+	TheaterMutationAdminPackageImport  = "admin.package.import"
 )
 
 const (
@@ -118,16 +119,17 @@ type TheaterSharedSnapshot struct {
 }
 
 type TheaterSnapshotResult struct {
-	RoomID        string                `json:"roomId"`
-	WorldID       string                `json:"worldId"`
-	ChannelID     string                `json:"channelId"`
-	Revision      int64                 `json:"revision"`
-	SchemaVersion int                   `json:"schemaVersion"`
-	Checksum      string                `json:"checksum"`
-	Unchanged     bool                  `json:"unchanged,omitempty"`
-	Snapshot      TheaterSharedSnapshot `json:"snapshot"`
-	Limits        map[string]int64      `json:"limits"`
-	Permissions   []string              `json:"permissions"`
+	RoomID              string                `json:"roomId"`
+	WorldID             string                `json:"worldId"`
+	ChannelID           string                `json:"channelId"`
+	Revision            int64                 `json:"revision"`
+	SchemaVersion       int                   `json:"schemaVersion"`
+	Checksum            string                `json:"checksum"`
+	Unchanged           bool                  `json:"unchanged,omitempty"`
+	Snapshot            TheaterSharedSnapshot `json:"snapshot"`
+	Limits              map[string]int64      `json:"limits"`
+	Permissions         []string              `json:"permissions"`
+	ConstructionSceneID *string               `json:"constructionSceneId"`
 }
 
 type TheaterEvent struct {

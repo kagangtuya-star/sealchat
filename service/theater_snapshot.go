@@ -18,17 +18,17 @@ func GetTheaterSnapshot(_ context.Context, actorID, worldID, channelID string, o
 	if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionView); err != nil {
 		return nil, err
 	}
-	return getTheaterSnapshot(actorID, worldID, channelID, options, listTheaterPermissions(actorID, worldID, channelID))
+	return getTheaterSnapshot(actorID, worldID, channelID, options, listTheaterPermissions(actorID, worldID, channelID), IsWorldAdmin(worldID, actorID))
 }
 
 func GetTheaterSnapshotForObserver(_ context.Context, observerWorldID, channelID string, options TheaterSnapshotOptions) (*TheaterSnapshotResult, error) {
 	if err := canObserverAccessTheaterScope(channelID, observerWorldID); err != nil {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 旁观权限", 403, nil)
 	}
-	return getTheaterSnapshot("observer", observerWorldID, channelID, options, []string{TheaterPermissionView})
+	return getTheaterSnapshot("observer", observerWorldID, channelID, options, []string{TheaterPermissionView}, false)
 }
 
-func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnapshotOptions, permissions []string) (*TheaterSnapshotResult, error) {
+func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnapshotOptions, permissions []string, isWorldAdmin bool) (*TheaterSnapshotResult, error) {
 	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
 	if err != nil {
 		return nil, err
@@ -37,8 +37,27 @@ func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnaps
 	if err != nil {
 		return nil, err
 	}
+	constructionSceneID := strings.TrimSpace(room.ConstructionSceneID)
+	if _, exists := snapshot.Scenes[constructionSceneID]; !exists {
+		constructionSceneID = ""
+	}
+	constructionViewApplied := constructionSceneID != "" && !isWorldAdmin
+	if constructionViewApplied {
+		scene := snapshot.Scenes[constructionSceneID]
+		snapshot.ActiveSceneID = &constructionSceneID
+		snapshot.LiveState = scene.State
+	}
 	if !theaterPermissionsAllowFullState(permissions) {
 		snapshot, checksum = projectTheaterSnapshotForMember(snapshot)
+	} else if constructionViewApplied {
+		_, checksum, err = canonicalTheaterJSON(snapshot)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var constructionSceneIDPointer *string
+	if constructionSceneID != "" {
+		constructionSceneIDPointer = &constructionSceneID
 	}
 	result := &TheaterSnapshotResult{
 		RoomID:        room.ID,
@@ -54,7 +73,8 @@ func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnaps
 			"scenes":        theaterMaxScenes,
 			"objects":       theaterMaxObjects,
 		},
-		Permissions: permissions,
+		Permissions:         permissions,
+		ConstructionSceneID: constructionSceneIDPointer,
 	}
 	if options.IfRevision != nil && *options.IfRevision == room.Revision {
 		result.Unchanged = true
@@ -391,7 +411,10 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 	}
 	room.ActiveSceneID = derefString(snapshot.ActiveSceneID)
 	room.StateJSON = defaultJSON(snapshot.LiveState, `{}`)
-	if err := tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Updates(map[string]any{"active_scene_id": room.ActiveSceneID, "state_json": room.StateJSON, "schema_version": model.TheaterSchemaVersion}).Error; err != nil {
+	if _, exists := snapshot.Scenes[room.ConstructionSceneID]; !exists {
+		room.ConstructionSceneID = ""
+	}
+	if err := tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Updates(map[string]any{"active_scene_id": room.ActiveSceneID, "construction_scene_id": room.ConstructionSceneID, "state_json": room.StateJSON, "schema_version": model.TheaterSchemaVersion}).Error; err != nil {
 		return err
 	}
 	for id, scene := range snapshot.Scenes {

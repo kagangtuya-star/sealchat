@@ -18,17 +18,18 @@ const (
 
 type TheaterRoomModel struct {
 	StringPKBaseModel
-	WorldID       string `json:"worldId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:1"`
-	ChannelID     string `json:"channelId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:2"`
-	ScopeType     string `json:"scopeType" gorm:"size:16;not null;default:channel;index"`
-	Revision      int64  `json:"revision" gorm:"not null;default:0"`
-	SchemaVersion int    `json:"schemaVersion" gorm:"not null;default:1"`
-	ActiveSceneID string `json:"activeSceneId,omitempty" gorm:"size:100;index"`
-	Status        string `json:"status" gorm:"size:16;not null;default:active;index"`
-	StateHash     string `json:"stateHash" gorm:"size:64"`
-	StateJSON     string `json:"stateJson" gorm:"not null"`
-	CreatedBy     string `json:"createdBy" gorm:"size:100;index"`
-	UpdatedBy     string `json:"updatedBy" gorm:"size:100"`
+	WorldID             string `json:"worldId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:1"`
+	ChannelID           string `json:"channelId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:2"`
+	ScopeType           string `json:"scopeType" gorm:"size:16;not null;default:channel;index"`
+	Revision            int64  `json:"revision" gorm:"not null;default:0"`
+	SchemaVersion       int    `json:"schemaVersion" gorm:"not null;default:1"`
+	ActiveSceneID       string `json:"activeSceneId,omitempty" gorm:"size:100;index"`
+	ConstructionSceneID string `json:"constructionSceneId,omitempty" gorm:"size:100;index"`
+	Status              string `json:"status" gorm:"size:16;not null;default:active;index"`
+	StateHash           string `json:"stateHash" gorm:"size:64"`
+	StateJSON           string `json:"stateJson" gorm:"not null"`
+	CreatedBy           string `json:"createdBy" gorm:"size:100;index"`
+	UpdatedBy           string `json:"updatedBy" gorm:"size:100"`
 }
 
 func (*TheaterRoomModel) TableName() string { return "theater_rooms" }

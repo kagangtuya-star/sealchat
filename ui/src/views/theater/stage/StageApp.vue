@@ -138,6 +138,7 @@ const props = defineProps<{
   syncReady: boolean
   syncing: boolean
   permissions: string[]
+  constructionSceneId: string | null
   dialogueRuntime: TheaterDialogueRuntime
   appearancePreview: {
     previewId: string
@@ -164,6 +165,7 @@ const emit = defineEmits<{
   appearancePreviewPhase: [phase: 'start' | 'end']
   preloadRequested: [sceneIds: string[]]
   sceneSwitchRequested: [sceneId: string]
+  constructionSceneChangeRequested: [sceneId: string | null]
   sceneMusicRecordRequested: [sceneId: string]
   sceneMusicClearRequested: [sceneId: string]
   updateSceneDialogueEnabled: [enabled: boolean]
@@ -1120,9 +1122,10 @@ const removeActiveSceneWithConfirm = () => {
   confirmDelete('删除场景', `确定删除场景“${scene.name}”？场景内组件也会一并删除。`, () => props.store.removeScene())
 }
 
-type SceneBatchMode = 'copy' | 'delete'
+type SceneBatchMode = 'copy' | 'delete' | 'construction'
 const sceneBatchMode = ref<SceneBatchMode | null>(null)
 const sceneBatchSelectedIds = ref<string[]>([])
+const lastConstructionSceneId = ref<string | null>(null)
 let sceneBatchLongPressTimer: number | null = null
 let sceneBatchLongPressTriggered = false
 
@@ -1141,12 +1144,20 @@ const enterSceneBatchMode = (mode: SceneBatchMode) => {
   closeSceneEditor()
   sceneEditMode.value = false
   sceneBatchMode.value = mode
-  sceneBatchSelectedIds.value = []
+  const constructionSceneId = props.constructionSceneId || lastConstructionSceneId.value
+  sceneBatchSelectedIds.value = mode === 'construction' && constructionSceneId && props.store.state.scenes[constructionSceneId]
+    ? [constructionSceneId]
+    : []
 }
 
 const isSceneBatchSelected = (sceneId: string) => sceneBatchSelectedIds.value.includes(sceneId)
 
 const setSceneBatchSelected = (sceneId: string, selected: boolean) => {
+  if (sceneBatchMode.value === 'construction') {
+    sceneBatchSelectedIds.value = selected ? [sceneId] : []
+    if (selected) lastConstructionSceneId.value = sceneId
+    return
+  }
   const selectedIds = new Set(sceneBatchSelectedIds.value)
   if (selected) selectedIds.add(sceneId)
   else selectedIds.delete(sceneId)
@@ -1195,6 +1206,13 @@ const removeSelectedScenesWithConfirm = () => {
   })
 }
 
+const applyConstructionScene = () => {
+  const sceneId = sceneBatchSelectedIds.value[0] || null
+  if (sceneId) lastConstructionSceneId.value = sceneId
+  emit('constructionSceneChangeRequested', sceneId)
+  exitSceneBatchMode()
+}
+
 const handleSceneActionClick = (mode: SceneBatchMode) => {
   if (sceneBatchLongPressTriggered) {
     sceneBatchLongPressTriggered = false
@@ -1202,7 +1220,8 @@ const handleSceneActionClick = (mode: SceneBatchMode) => {
   }
   if (sceneBatchMode.value === mode) {
     if (mode === 'copy') void duplicateSelectedScenes()
-    else removeSelectedScenesWithConfirm()
+    else if (mode === 'delete') removeSelectedScenesWithConfirm()
+    else applyConstructionScene()
     return
   }
   if (sceneBatchMode.value) {
@@ -1210,7 +1229,8 @@ const handleSceneActionClick = (mode: SceneBatchMode) => {
     return
   }
   if (mode === 'copy') void duplicateScene()
-  else removeActiveSceneWithConfirm()
+  else if (mode === 'delete') removeActiveSceneWithConfirm()
+  else enterSceneBatchMode('construction')
 }
 
 const sceneEditMode = ref(false)
@@ -6845,12 +6865,13 @@ onBeforeUnmount(() => {
             <template #trigger>
               <button
                 class="theater-scene-card"
-                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id, 'is-selected': isSceneBatchSelected(scene.id) }"
+                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id, 'is-selected': isSceneBatchSelected(scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(scene.id) }"
                 :aria-pressed="sceneBatchMode ? isSceneBatchSelected(scene.id) : undefined"
                 :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canSwitchScene"
                 @click="handleSceneClick(scene)"
               >
                 <span class="theater-scene-card__title">{{ scene.name }}</span>
+                <n-icon v-if="constructionSceneId === scene.id" class="theater-scene-card__construction" aria-label="施工模式锁定场景"><Lock /></n-icon>
               </button>
             </template>
             <div class="theater-scene-editor">
@@ -6978,7 +6999,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-        <div v-if="canSwitchScene" class="theater-scene-actions">
+        <div v-if="canSwitchScene || canEditAllObjects" class="theater-scene-actions">
           <n-tooltip v-if="canEditAllObjects" trigger="hover">
             <template #trigger>
               <n-button size="tiny" quaternary :type="sceneBatchMode === 'copy' ? 'error' : 'default'" :disabled="sceneEditMode || duplicatingScene" :loading="duplicatingScene" @pointerdown="startSceneBatchLongPress($event, 'copy')" @pointerup="finishSceneBatchLongPress" @pointercancel="finishSceneBatchLongPress" @click="handleSceneActionClick('copy')"><template #icon><n-icon><Copy /></n-icon></template>{{ sceneBatchMode === 'copy' ? `复制 ${sceneBatchSelectedIds.length || ''}` : '复制' }}</n-button>
@@ -6991,8 +7012,25 @@ onBeforeUnmount(() => {
             </template>
             长按进入批量删除；批量模式下再次点击删除选中场景
           </n-tooltip>
-          <n-button v-if="sceneBatchMode" size="tiny" quaternary @click="exitSceneBatchMode"><template #icon><n-icon><X /></n-icon></template>取消</n-button>
+          <n-button v-if="sceneBatchMode && sceneBatchMode !== 'construction'" size="tiny" quaternary @click="exitSceneBatchMode"><template #icon><n-icon><X /></n-icon></template>取消</n-button>
           <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="Boolean(sceneBatchMode)" :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
+          <n-tooltip v-if="canEditAllObjects" trigger="hover">
+            <template #trigger>
+              <n-button
+                size="tiny"
+                quaternary
+                :type="constructionSceneId || sceneBatchMode === 'construction' ? 'primary' : 'default'"
+                :disabled="sceneEditMode || Boolean(sceneBatchMode && sceneBatchMode !== 'construction')"
+                :aria-pressed="Boolean(constructionSceneId)"
+                aria-label="施工模式（锁定场景）"
+                @click="handleSceneActionClick('construction')"
+              >
+                <template #icon><n-icon><Lock /></n-icon></template>
+                {{ sceneBatchMode === 'construction' && constructionSceneId && !sceneBatchSelectedIds.length ? '解除' : '锁定' }}
+              </n-button>
+            </template>
+            施工模式：选择锁定场景后，除管理员外，其他成员进入小剧场时将不再跟随场景切换。
+          </n-tooltip>
           <div class="theater-scene-playback-toggles">
             <n-tooltip trigger="hover">
               <template #trigger>
@@ -7891,9 +7929,11 @@ onBeforeUnmount(() => {
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
   transition: color .14s ease, border-color .14s ease, background .14s ease;
 }
+.theater-scene-card__construction { flex: 0 0 auto; margin-left: auto; color: var(--theater-accent, #38bdf8); font-size: 13px; }
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
 .theater-scene-card.is-selected { border-color: color-mix(in srgb, #ef4444 74%, transparent); background: color-mix(in srgb, #ef4444 16%, transparent); }
+.theater-scene-card.is-construction-selected { border-color: color-mix(in srgb, var(--theater-accent) 74%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
 .theater-scene-card.is-editing { outline: 1px solid var(--theater-accent); outline-offset: -2px; }
 .theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theater-scene-preload { width: 28px; height: 28px; padding: 0; }

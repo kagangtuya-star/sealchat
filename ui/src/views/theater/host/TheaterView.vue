@@ -60,6 +60,13 @@ const chatBridgeOnline = ref(false)
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
 const theaterPermissions = ref<string[]>([])
+const constructionSceneId = ref<string | null>(null)
+const isWorldAdmin = computed(() => {
+  const detail = chat.worldDetailMap[worldId.value]
+  const role = detail?.memberRole
+  const ownerId = detail?.world?.ownerId || chat.worldMap[worldId.value]?.ownerId
+  return role === 'owner' || role === 'admin' || String(ownerId || '') === String(user.info?.id || '')
+})
 
 const theaterActionErrorMessage = (error: unknown, fallback: string) => {
   const responseMessage = (error as { response?: { data?: { error?: { message?: unknown } } } })
@@ -347,8 +354,20 @@ const clearSceneMusic = async (sceneId: string) => {
 }
 
 const requestSceneSwitch = (sceneId: string) => {
+  if (constructionSceneId.value && !isWorldAdmin.value && sceneId !== constructionSceneId.value) return
   if (!stageStore.applyScene(sceneId)) return
   void runSceneSwitchSideEffects(sceneId)
+}
+
+const canFollowSceneSwitch = () => !constructionSceneId.value || isWorldAdmin.value
+
+const setConstructionScene = async (sceneId: string | null) => {
+  try {
+    await theaterSync?.setConstructionScene(sceneId)
+    message.success(sceneId ? '施工模式已设定' : '施工模式已关闭')
+  } catch (error) {
+    message.warning(theaterActionErrorMessage(error, '施工模式设置失败'))
+  }
 }
 
 watch(width, () => { splitRatio.value = normalizeRatio(splitRatio.value) })
@@ -415,7 +434,7 @@ const startTheaterBridge = () => {
       if (!theaterSync) return false
       try {
         const handled = await theaterSync.triggerAction(payload)
-        if (handled === true && payload.action.type === 'scene.apply') {
+        if (handled === true && payload.action.type === 'scene.apply' && canFollowSceneSwitch()) {
           await runSceneSwitchSideEffects(stageStore.state.activeSceneId)
         }
         return handled
@@ -429,7 +448,7 @@ const startTheaterBridge = () => {
       if (!theaterSync) return false
       try {
         const handled = await theaterSync.triggerActionBatch(payloads)
-        if (handled === true && payloads.some((payload) => payload.action.type === 'scene.apply')) {
+        if (handled === true && payloads.some((payload) => payload.action.type === 'scene.apply') && canFollowSceneSwitch()) {
           await runSceneSwitchSideEffects(stageStore.state.activeSceneId)
         }
         return handled
@@ -454,11 +473,14 @@ const startTheaterSync = async () => {
   theaterSyncReady.value = false
   theaterSyncing.value = false
   theaterPermissions.value = []
+  constructionSceneId.value = null
   await previousClient?.stop()
   const isCurrent = () => generation === theaterSyncGeneration
   if (!isCurrent() || !targetWorldId || !targetChannelId) return
   if (chat.currentWorldId !== targetWorldId) chat.setCurrentWorld(targetWorldId)
   await chat.tryInit()
+  if (!isCurrent()) return
+  await chat.worldDetail(targetWorldId)
   if (!isCurrent()) return
   if (chat.curChannel?.id !== targetChannelId) {
     const switched = await chat.channelSwitchTo(targetChannelId)
@@ -476,6 +498,10 @@ const startTheaterSync = async () => {
       if (!isCurrent() || theaterSync !== client) return
       theaterPermissions.value = permissions
       theaterBridge?.setPermissions(resolveBridgePermissions(permissions))
+    },
+    onRuntimeStateChange: (state) => {
+      if (!isCurrent() || theaterSync !== client) return
+      constructionSceneId.value = state.constructionSceneId
     },
     onSyncingChange: (syncing) => {
       if (isCurrent() && theaterSync === client) theaterSyncing.value = syncing
@@ -682,6 +708,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
           :permissions="theaterPermissions"
+          :construction-scene-id="constructionSceneId"
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
           :scene-dialogue-enabled="sceneDialogueEnabled"
@@ -691,6 +718,7 @@ function handleDice3DMessage(event: MessageEvent) {
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @scene-switch-requested="requestSceneSwitch"
+          @construction-scene-change-requested="setConstructionScene"
           @scene-music-record-requested="recordSceneMusic"
           @scene-music-clear-requested="clearSceneMusic"
           @update-scene-dialogue-enabled="sceneDialogueEnabled = $event"

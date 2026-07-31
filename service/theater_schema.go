@@ -66,6 +66,10 @@ type theaterSceneApplyPayload struct {
 	Transition *theaterTransitionPayload `json:"transition,omitempty"`
 }
 
+type theaterRoomConstructionSetPayload struct {
+	SceneID *string `json:"sceneId"`
+}
+
 type theaterTransitionPayload struct {
 	Type       string                         `json:"type,omitempty"`
 	DurationMS *int64                         `json:"durationMs,omitempty"`
@@ -165,6 +169,8 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 		target = &theaterSceneDeletePayload{}
 	case TheaterMutationSceneApply:
 		target = &theaterSceneApplyPayload{}
+	case TheaterMutationRoomConstructionSet:
+		target = &theaterRoomConstructionSetPayload{}
 	case TheaterMutationObjectCreate:
 		target = &theaterObjectCreatePayload{}
 	case TheaterMutationObjectUpdate, TheaterMutationCharacterUpdate:
@@ -268,6 +274,11 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 				}
 			}
 		}
+	case *theaterRoomConstructionSetPayload:
+		if payload.SceneID == nil || strings.TrimSpace(*payload.SceneID) == "" {
+			return nil
+		}
+		return validateTheaterID(strings.TrimSpace(*payload.SceneID), "sceneId")
 	case *theaterObjectCreatePayload:
 		return validateObjectInput(&payload.Object)
 	case *theaterObjectUpdatePayload:
