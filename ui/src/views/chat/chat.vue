@@ -5371,8 +5371,8 @@ const handlePromoteIdentityToSharedUpdate = async (checked: boolean) => {
   }
   const confirmed = await dialogAskConfirm(
     dialog,
-    '提升为跨频道角色',
-    '提升后，昵称、颜色、头像、头像装饰及差分配置会在全部副本间同步，小剧场演出与差分演出会在同一世界内同步。当前版本不支持拆分。确定继续吗？',
+    '提升为跨频道角色（实验性）',
+    '这是实验性功能。提升后，昵称、颜色、头像、头像装饰、差分配置角色卡会在全部频道间同步，小剧场演出与差分演出会在同一世界内同步。这可能出现bug且不支持降级（你可以在用户群提出反馈）。确定继续吗？',
   );
   identityForm.promoteToShared = confirmed;
 };
@@ -18454,8 +18454,8 @@ onBeforeUnmount(() => {
             @update:checked="handlePromoteIdentityToSharedUpdate"
           >
             提升为跨频道角色
+            <n-tag size="small" type="warning">实验性</n-tag>
           </n-checkbox>
-          <n-text depth="3">同步昵称、颜色、头像、头像装饰及全部差分；基础与差分小剧场演出按世界同步。默认身份、角色排序、文件夹、IC/OOC 映射和人物卡保持频道独立。</n-text>
         </div>
       </n-form-item>
       <n-form-item v-if="!isManagingBotIdentity && (identityForm.isTemporary || isEditingTemporaryIdentity)" label="切换到此角色时">
