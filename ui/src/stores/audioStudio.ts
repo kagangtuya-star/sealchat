@@ -11,6 +11,7 @@ import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embedde
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
+import { normalizeStageMusicSnapshot, type StageMusicSnapshot } from '@/views/theater/shared/stage-types';
 import type {
   AudioAsset,
   AudioAssetBatchDeleteSummary,
@@ -121,6 +122,7 @@ interface AudioStudioState {
   lastAppliedCapturedAtByScope: Record<string, number>;
   lastSnapshotFetchedAtByScope: Record<string, number>;
   channelSwitchSeq: number;
+  playbackContextGeneration: number;
 }
 
 interface PlaybackSyncPayload {
@@ -345,6 +347,7 @@ function buildFolderPathLookup(folders: AudioFolder[]): Record<string, string> {
 interface TrackMutationOptions {
   force?: boolean;
   initialSeek?: number;
+  deferLoad?: boolean;
 }
 
 interface PaginationState {
@@ -520,6 +523,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     lastAppliedCapturedAtByScope: {},
     lastSnapshotFetchedAtByScope: {},
     channelSwitchSeq: 0,
+    playbackContextGeneration: 0,
   }),
 
   getters: {
@@ -868,6 +872,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     setCurrentWorld(worldId: string | null) {
       const changed = this.currentWorldId !== worldId;
+      if (changed) {
+        // 世界是音频播放状态的硬边界。先失效旧请求并释放本地播放器，
+        // 再等待新频道触发新世界快照，绝不能复用旧世界频道拉取状态。
+        this.playbackContextGeneration += 1;
+        this.channelSwitchSeq += 1;
+        if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+          window.clearTimeout(this.pendingSyncHandle);
+          this.pendingSyncHandle = null;
+        }
+        this.pendingCommitPayload = null;
+        this.clearRetrySyncTimer();
+        this.syncRetryAttempt = 0;
+        this.currentChannelId = null;
+        this.resetLocalPlaybackRuntime();
+      }
       this.currentWorldId = worldId;
       if (changed) {
         // 世界切换时先回到默认值；若服务端有显式配置，后续快照会覆盖。
@@ -899,9 +918,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         void this.fetchFolders();
         void this.fetchTrackSelectableAssets();
         void this.fetchAssets({ pagination: { page: 1 } });
-      }
-      if (this.hasPlaybackAuthority && this.worldPlaybackEnabled && this.currentChannelId) {
-        void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
       }
     },
 
@@ -1013,6 +1029,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.hasPlaybackAuthority) return;
       const normalizedChannelId = String(channelId || '').trim();
       if (!normalizedChannelId) return;
+      const contextGeneration = this.playbackContextGeneration;
+      const contextWorldId = this.currentWorldId;
       const scopeKey = this.getScopeKey(normalizedChannelId, this.worldPlaybackEnabled);
       const now = Date.now();
       const lastFetchedAt = this.lastSnapshotFetchedAtByScope[scopeKey] || 0;
@@ -1025,6 +1043,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       };
       try {
         const resp = await api.get('/api/v1/audio/state', { params: { channelId: normalizedChannelId } });
+        if (
+          contextGeneration !== this.playbackContextGeneration
+          || contextWorldId !== this.currentWorldId
+          || normalizedChannelId !== this.currentChannelId
+        ) {
+          return;
+        }
         await this.applyRemotePlayback(resp.data?.state || null, {
           source: 'pull',
           reason: options?.reason || 'snapshot',
@@ -1043,6 +1068,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async applyRemotePlayback(payload: AudioPlaybackStatePayload | null, options?: RemotePlaybackApplyOptions) {
       if (!this.hasPlaybackAuthority) {
+        return;
+      }
+      if (payload && !this.isPayloadInCurrentPlaybackContext(payload)) {
         return;
       }
       const source = options?.source || 'push';
@@ -1270,6 +1298,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (hasRevisionGap && payload?.channelId) {
         void this.fetchPlaybackState(payload.channelId, { force: true, reason: 'revision-gap' });
       }
+    },
+
+    isPayloadInCurrentPlaybackContext(payload: AudioPlaybackStatePayload) {
+      const scopeType = String(payload.scopeType || '').trim();
+      const scopeId = String(payload.scopeId || '').trim();
+      if (scopeType === 'world') {
+        return !!scopeId && scopeId === String(this.currentWorldId || '').trim();
+      }
+      if (scopeType === 'channel') {
+        return !!payload.channelId && payload.channelId === this.currentChannelId;
+      }
+      // 后端已为所有播放状态提供 scope；无 scope 消息不能跨上下文应用。
+      return false;
     },
 
     tryResumeRemotePlayback() {
@@ -1923,6 +1964,86 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    async captureStageMusicSnapshot(): Promise<StageMusicSnapshot | null> {
+      if (!this.canManage) throw new Error('无权限读取音乐工作台');
+      const serialized = serializeRuntimeTracks(this.tracks);
+      if (serialized.some((track) => (track.playlistAssetIds?.length || 0) > 64)) {
+        throw new Error('单轨播放列表不能超过 64 首');
+      }
+      const assetLookup = new Map<string, AudioAsset>();
+      const remember = (asset: AudioAsset | null | undefined) => {
+        if (asset?.id) assetLookup.set(asset.id, asset);
+      };
+      this.assets.forEach(remember);
+      this.trackSelectableAssets.forEach(remember);
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        remember(this.tracks[type]?.asset);
+        this.tracks[type]?.playlistAssets?.forEach(remember);
+      });
+      const referencedIds = [...new Set(serialized.flatMap((track) => [
+        track.assetId,
+        ...(track.playlistAssetIds || []),
+      ]).filter((id): id is string => Boolean(id)))];
+      await Promise.all(referencedIds.map(async (assetId) => {
+        if (!assetLookup.has(assetId)) assetLookup.set(assetId, await this.fetchSingleAsset(assetId));
+      }));
+      return normalizeStageMusicSnapshot({
+        version: 1,
+        tracks: serialized.map((track) => ({
+          type: track.type,
+          asset: track.assetId ? { assetId: track.assetId, name: assetLookup.get(track.assetId)?.name || track.assetId } : null,
+          volume: track.volume,
+          fadeIn: track.fadeIn,
+          fadeOut: track.fadeOut,
+          loopEnabled: track.loopEnabled !== false,
+          playbackRate: track.playbackRate || 1,
+          playlistMode: track.playlistMode || null,
+          playlist: (track.playlistAssetIds || []).map((assetId) => ({
+            assetId,
+            name: assetLookup.get(assetId)?.name || assetId,
+          })),
+          playlistIndex: track.playlistIndex || 0,
+        })),
+      });
+    },
+
+    async applyStageMusicSnapshot(snapshot: StageMusicSnapshot) {
+      if (!this.canManage) throw new Error('无权限控制音乐工作台');
+      const normalized = normalizeStageMusicSnapshot(snapshot);
+      if (!normalized) return;
+      const referencedAssetIds = [...new Set(normalized.tracks.flatMap((track) => [
+        track.asset?.assetId,
+        ...track.playlist.map((asset) => asset.assetId),
+      ]).filter((assetId): assetId is string => Boolean(assetId)))];
+      await Promise.allSettled(referencedAssetIds.map((assetId) => (
+        this.assets.some((asset) => asset.id === assetId)
+          ? Promise.resolve()
+          : this.fetchSingleAsset(assetId)
+      )));
+      this.currentSceneId = null;
+      this.isPlaying = true;
+      normalized.tracks.forEach((track) => {
+        this.assignTrack(track.type, {
+          type: track.type,
+          assetId: track.asset?.assetId || null,
+          volume: track.volume,
+          fadeIn: track.fadeIn,
+          fadeOut: track.fadeOut,
+          loopEnabled: track.loopEnabled,
+          playbackRate: track.playbackRate,
+          playlistFolderId: null,
+          playlistMode: track.playlistMode,
+          playlistAssetIds: track.playlist.map((asset) => asset.assetId),
+          playlistIndex: track.playlistIndex,
+        }, { force: true, deferLoad: true });
+      });
+      await Promise.all(normalized.tracks.map((track) => (
+        track.asset ? this.loadTrackAsset(track.type, track.asset.assetId, { force: true }) : Promise.resolve()
+      )));
+      await this.playAll();
+      await this.commitPlaybackSync({ persist: true, syncReason: 'theater-scene-music' });
+    },
+
     assignTrack(type: AudioTrackType, payload: AudioSceneTrack, options?: TrackMutationOptions) {
       if (!options?.force && !this.canManage) {
         return;
@@ -1938,7 +2059,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         status: payload.assetId ? 'loading' : 'idle',
         pendingSeek: options?.initialSeek ?? null,
       };
-      if (payload.assetId) {
+      if (payload.assetId && !options?.deferLoad) {
         this.loadTrackAsset(type, payload.assetId, options);
       }
       if (!options?.force) {
@@ -1987,11 +2108,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       try {
         track.status = 'loading';
         const asset = this.assets.find((item) => item.id === assetId) || (await this.fetchSingleAsset(assetId));
+        if (this.tracks[type] !== track) return;
         track.asset = asset;
         track.assetId = asset.id;
         syncTrackPlaylistIndex(track, asset.id);
         track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
-        track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
+        const howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
+        if (this.tracks[type] !== track) {
+          howl.unload();
+          return;
+        }
+        track.howl = howl;
         track.status = 'ready';
         if (shouldAutoplayLoadedTrack(this.isPlaying, !!track.muted) && track.howl && !track.howl.playing()) {
           track.howl.play();
@@ -2009,7 +2136,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async fetchSingleAsset(assetId: string) {
       const resp = await api.get(`/api/v1/audio/assets/${assetId}`);
       const asset = normalizeAudioAsset(resp.data as AudioAsset);
-      this.assets = [...this.assets.filter((item) => item.id !== asset.id), asset];
+      this.upsertAssetLocally(asset);
       await audioDb.assets.put(toCachedMeta(asset));
       return asset;
     },

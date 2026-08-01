@@ -29,7 +29,7 @@ import BattleReportDrawer from './components/BattleReportDrawer.vue'
 import ChatImportDialog from './components/ChatImportDialog.vue'
 import ChatImportProgress from './components/ChatImportProgress.vue'
 import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
-import DiceTray from './components/DiceTray.vue'
+import DiceTrayFloatingWindow from './components/DiceTrayFloatingWindow.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
 import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
@@ -37,6 +37,13 @@ import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
+import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue';
+import DiceSettingsDrawer from '@/features/dice3d/components/DiceSettingsDrawer.vue';
+import DiceDock from '@/features/dice3d/components/DiceDock.vue';
+import { loadDice3DSettings, saveDice3DProfile } from '@/features/dice3d/api';
+import { dice3dRuntime } from '@/features/dice3d/runtime';
+import { resolveDice3DPlaybackPayload } from '@/features/dice3d/playbackProfile';
+import type { Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -54,8 +61,6 @@ import { useObservable } from "@vueuse/rxjs";
 import { db, getSrc, type Thumb } from '@/models';
 import { throttle } from 'lodash-es';
 import AvatarVue from '@/components/avatar.vue';
-import { Howl, Howler } from 'howler';
-import SoundMessageCreated from '@/assets/message.mp3';
 import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
@@ -67,12 +72,16 @@ import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array
 import { triggerBlobDownload } from '@/utils/download';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import dayjs from 'dayjs';
-import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
+import {
+  clearTheaterAppearanceEditIntent,
+  consumeTheaterAppearanceEditIntent,
+  writeTheaterAppearanceEditIntent,
+} from '@/utils/theaterAppearanceEditIntent';
 import { useI18n } from 'vue-i18n';
 import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -89,7 +98,6 @@ import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/char
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
-import { shouldPlayMessageSound } from '@/utils/messageSoundMode';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -113,10 +121,28 @@ import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
+import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
+import {
+  applyWorldTheaterPresentationTemplate,
+  createDefaultTheaterPresentation,
+  mergeWorldTheaterPresentationTemplate,
+  resolveTheaterPresentation,
+  type TheaterPresentation,
+  type TheaterPresentationPatch,
+  type WorldTheaterPresentationTemplate,
+  type WorldTheaterPresentationTemplateSection,
+} from '@/types/theaterPresentation'
 import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
 import {
+  cloneChannelIdentityTheaterPresentation,
+  cloneChannelIdentityTheaterPresentationPatch,
+  resolveChannelIdentityVariantTheaterPatch,
+} from '@/utils/channelIdentityTheaterPresentation'
+import {
   buildIdentityAssetKey,
+  normalizeIdentityExportFileForImport,
+  resolveIdentityExportVariantTheaterPresentation,
   remapDecorationsForImport,
   resolveIdentityMatchByName,
   resolveIdentityAssetFetchUrl,
@@ -140,11 +166,14 @@ import BridgeStatusPanel from './components/BridgeStatusPanel.vue';
 import CharacterCardPanel from './components/CharacterCardPanel.vue';
 import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
+import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { buildMessageCursor } from '@/utils/messageCursor';
+import { buildRoleSnapshot } from '@/bridge/sealchatBridgeSerializer';
+import type { BridgeRoleSnapshot } from '@/bridge/sealchatBridgeProtocol';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
 import {
   buildInputHistorySignature,
@@ -158,6 +187,12 @@ import { shouldMergeNeighborMessages } from './messageMerge';
 import { useRobustInfiniteScroll } from '@/composables/useRobustInfiniteScroll';
 import { shouldResetMentionOptionsOnSearchStart, sortMentionableMembersByMode } from './mentionOptionOrdering';
 import { resolveInterjectTargetMode, shouldAllowInterject } from './interjectFlow';
+import {
+  hasTheaterComposerDraft,
+  shouldResolveTheaterIdentityShortcut,
+  validateTheaterCharacter,
+  validateTheaterVariant,
+} from './theater-chat-guards';
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
@@ -179,8 +214,12 @@ const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
+const dice3dSettingsVisible = ref(false);
+const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
+const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
+const channelCharacterSnapshotStore = useChannelCharacterSnapshotStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -192,7 +231,18 @@ const isEditingCurrentChannel = computed(() => {
 });
 
 const isEmbedMode = computed(() => route.path === '/embed');
+const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+const routeWorldId = computed(() => typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '');
+const theaterEntryEnabled = computed(() => {
+  if (['/embed', '/split', '/theater'].includes(route.path)) return false;
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  return !!worldId
+    && !!chat.curChannel?.id
+    && String(chat.currentWorldId || '').trim() === worldId
+    && (!channelWorldId || channelWorldId === worldId);
+});
 
 let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const ST_REFRESH_DELAY = 1000;
@@ -246,6 +296,20 @@ const openSplitView = async () => {
   await openSplitRoute(worldId, worldId, currentChannelId, '');
 };
 
+const openTheaterView = async () => {
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
+    return;
+  }
+  await router.push({
+    name: 'theater',
+    query: { worldId, channelId },
+  });
+};
+
 const openIcOocSplitView = async (side: 'left' | 'right') => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
@@ -291,6 +355,66 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
 
 const toggleStickyNotes = () => {
   stickyNoteStore.toggleVisible();
+};
+
+const openDice3DSettings = () => {
+  dice3dSettingsVisible.value = true;
+};
+
+const canManageDice3DWorld = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const role = worldId ? chat.worldDetailMap[worldId]?.memberRole : '';
+  return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
+});
+
+const refreshDice3DSettings = async () => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || chat.observerMode) {
+    dice3dConfig.value = null;
+    dice3dProfile.value = null;
+    return;
+  }
+  try {
+    const settings = await loadDice3DSettings(worldId);
+    if (worldId !== String(chat.currentWorldId || '').trim()) return;
+    dice3dConfig.value = settings.config;
+    dice3dProfile.value = settings.profile;
+  } catch {
+    if (worldId !== String(chat.currentWorldId || '').trim()) return;
+    dice3dConfig.value = null;
+    dice3dProfile.value = null;
+  }
+};
+
+watch(() => chat.currentWorldId, () => void refreshDice3DSettings(), { immediate: true });
+
+const handleDice3DProfileSaved = (profile: Dice3DMemberProfile) => {
+  dice3dProfile.value = profile;
+};
+
+const handleDice3DSettingsUpdated = (event?: Event) => {
+  const rawArgv = (event as any)?.argv || {};
+  const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, unknown>;
+  const worldId = String(options.worldId || '').trim();
+  if (!worldId || worldId !== String(chat.currentWorldId || '').trim()) return;
+
+  const eventUserId = String(options.userId || '').trim();
+  if (event?.type === 'world-member-dice3d-updated' && eventUserId && eventUserId !== String(user.info.id || '').trim()) return;
+  void refreshDice3DSettings();
+};
+
+chatEvent.on('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+chatEvent.on('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+
+const handleDice3DDockMove = async (position: { x: number, y: number }) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || !dice3dProfile.value) return;
+  dice3dProfile.value = { ...dice3dProfile.value, dockCorner: 'free', dockX: position.x, dockY: position.y };
+  try {
+    await saveDice3DProfile(worldId, dice3dProfile.value);
+  } catch {
+    // 位置保留在本次会话；下次成功保存配置时同步。
+  }
 };
 
 const resolveIFormEmbedLinkBase = () => {
@@ -339,6 +463,7 @@ type ExternalPanelKey =
   | 'identity'
   | 'gallery'
   | 'display'
+  | 'dice3d'
   | 'favorites'
   | 'character-remark'
   | 'channel-images'
@@ -369,6 +494,9 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       return;
     case 'display':
       displaySettingsVisible.value = true;
+      return;
+    case 'dice3d':
+      openDice3DSettings();
       return;
     case 'favorites':
       channelFavoritesVisible.value = true;
@@ -480,6 +608,224 @@ const refreshPresenceForShell = async (silent = true) => {
   }
 };
 
+interface TheaterMessageSendRequest {
+  content: string;
+  channelId?: string;
+  characterId?: string;
+  preserveComposer?: boolean;
+}
+
+interface TheaterComposerInsertRequest {
+  content: string;
+}
+
+interface TheaterCharacterSnapshotRequest {
+  revision: number;
+  updatedAt: number;
+}
+
+interface TheaterCharacterSelectRequest {
+  identityId: string;
+}
+
+interface TheaterCharacterVariantSelectRequest {
+  identityId: string;
+  variantId: string | null;
+}
+
+const sendMessageForTheater = async (payload: TheaterMessageSendRequest) => {
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (!currentChannelId || (payload.channelId && payload.channelId !== currentChannelId)) {
+    return { ok: false as const, error: { code: 'CHANNEL_MISMATCH', message: '聊天频道与小剧场上下文不一致' } };
+  }
+  if (spectatorInputDisabled.value) {
+    return { ok: false as const, error: { code: 'PERMISSION_DENIED', message: '当前频道不允许发送消息' } };
+  }
+  if (!payload.preserveComposer && isEditing.value) {
+    return { ok: false as const, error: { code: 'COMPOSER_BUSY', message: '正在编辑消息，无法执行舞台发送' } };
+  }
+  if (chat.connectState !== 'connected') {
+    return { ok: false as const, error: { code: 'CHAT_DISCONNECTED', message: '聊天尚未连接' } };
+  }
+  if (!payload.preserveComposer && hasTheaterComposerDraft({
+    meaningfulText: isContentMeaningful(inputMode.value, textToSend.value),
+    inlineImageCount: inlineImages.size,
+  })) {
+    return { ok: false as const, error: { code: 'COMPOSER_BUSY', message: '输入框已有草稿，未覆盖现有内容' } };
+  }
+
+  let identityIdOverride: string | undefined;
+  if (payload.characterId) {
+    const identities = await chat.loadChannelIdentities(currentChannelId, false);
+    const characterError = validateTheaterCharacter(identities, payload.characterId);
+    if (characterError) return characterError;
+    identityIdOverride = payload.characterId;
+  }
+
+  if (payload.preserveComposer) {
+    try {
+      const sent = await chat.messageCreate(
+        payload.content,
+        undefined,
+        undefined,
+        undefined,
+        identityIdOverride,
+        undefined,
+        [],
+      );
+      return sent
+        ? { ok: true as const, messageId: String(sent.id || '') }
+        : { ok: false as const, error: { code: 'MESSAGE_SEND_REJECTED', message: '聊天发送流程拒绝了消息' } };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: { code: 'MESSAGE_SEND_FAILED', message: error instanceof Error ? error.message : '消息发送失败' },
+      };
+    }
+  }
+
+  textToSend.value = payload.content;
+  const outcome = await performSend({
+    identityIdOverride,
+    mode: isTipTapJson(payload.content) ? 'rich' : 'plain',
+  });
+  return outcome || {
+    ok: false as const,
+    error: { code: 'MESSAGE_SEND_REJECTED', message: '聊天发送流程拒绝了消息' },
+  };
+};
+
+const insertComposerForTheater = (payload: TheaterComposerInsertRequest) => {
+  if (spectatorInputDisabled.value) {
+    return { ok: false as const, error: { code: 'PERMISSION_DENIED', message: '当前频道不允许编辑消息草稿' } };
+  }
+  insertComposerText(payload.content);
+  return { ok: true as const };
+};
+
+const getCharactersForTheater = async (
+  request: TheaterCharacterSnapshotRequest,
+): Promise<BridgeRoleSnapshot[]> => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId) return [];
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  await chat.loadChannelIdentityVariants(channelId, false);
+  const activeIdentityId = chat.getActiveIdentityId(channelId);
+  return identities.map((identity) => {
+    const selectedVariant = chat.getActiveIdentityVariant(channelId, identity.id);
+    const activeVariant = selectedVariant?.enabled === false ? null : selectedVariant;
+    return buildRoleSnapshot({
+      identity,
+      variant: activeVariant,
+      variants: chat.getIdentityVariants(channelId, identity.id),
+      resolvedAppearance: resolveIdentityAppearancePreview(identity, activeVariant),
+      isActive: identity.id === activeIdentityId,
+      revision: request.revision,
+      updatedAt: request.updatedAt,
+      resolveAttachmentUrl,
+    });
+  });
+};
+
+const selectCharacterForTheater = async (payload: TheaterCharacterSelectRequest) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  if (!channelId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '角色参数无效' } };
+  }
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  const characterError = validateTheaterCharacter(identities, identityId);
+  if (characterError) return characterError;
+  try {
+    const syncResult = await characterCardStore.syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: true });
+    if (!syncResult.ok) {
+      return { ok: false as const, error: { code: 'CHARACTER_CARD_SYNC_FAILED', message: '角色卡同步失败，未切换聊天角色' } };
+    }
+  } catch (error) {
+    console.warn('[theater-bridge] character card sync failed', error);
+    return { ok: false as const, error: { code: 'CHARACTER_CARD_SYNC_FAILED', message: '角色卡同步失败，未切换聊天角色' } };
+  }
+  chat.setActiveIdentity(channelId, identityId);
+  emitTypingPreview();
+  return { ok: true as const };
+};
+
+const selectCharacterVariantForTheater = async (payload: TheaterCharacterVariantSelectRequest) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  const variantId = String(payload.variantId || '').trim();
+  if (!channelId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '角色参数无效' } };
+  }
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  const characterError = validateTheaterCharacter(identities, identityId);
+  if (characterError) return characterError;
+  const variantsByIdentity = await chat.loadChannelIdentityVariants(channelId, false);
+  const variants = variantsByIdentity[identityId] || [];
+  const variantError = validateTheaterVariant({
+    activeIdentityId: chat.getActiveIdentityId(channelId),
+    identityId,
+    variantId,
+    variants,
+  });
+  if (variantError) return variantError;
+  chat.setActiveIdentityVariant(channelId, identityId, variantId);
+  emitTypingPreview();
+  return { ok: true as const };
+};
+
+const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  if (!channelId || !identityId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '人物卡参数无效' } };
+  }
+  await channelCharacterSnapshotStore.initializeChannel(channelId);
+  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  if (!snapshot) {
+    await channelCharacterSnapshotStore.refreshChannel(channelId);
+    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  }
+  const card = snapshot?.data.card;
+  if (!snapshot || !card) {
+    return { ok: false as const, error: { code: 'CARD_UNAVAILABLE', message: '该角色没有可查看的人物卡快照' } };
+  }
+  const isOwnCard = String(snapshot.userId || '') === String(user.info?.id || '');
+  const sourceCardId = String(snapshot.sourceCardId || '').trim();
+  if (isOwnCard) {
+    try {
+      const opened = sourceCardId
+        ? await characterCardPanelRef.value?.openCardById(sourceCardId, 'view')
+        : false;
+      if (opened) return { ok: true as const };
+    } catch (error) {
+      console.warn('[theater-bridge] failed to open editable character card', error);
+    }
+    message.warning('未能定位当前人物卡，已打开只读快照');
+  }
+  const windowId = characterSheetStore.openSheet({
+    id: `snapshot:${channelId}:${identityId}`,
+    name: card.name,
+    sheetType: card.sheetType,
+    attrs: card.attrs,
+    channelId,
+    userId: snapshot.userId,
+  }, channelId, {
+    name: card.name,
+    type: card.sheetType,
+    attrs: card.attrs,
+    avatarUrl: snapshot.data.identity.avatarAttachmentId || undefined,
+    templateText: card.templateText,
+  }, {
+    templateText: card.templateText,
+    readOnly: true,
+    worldId: chat.currentWorldId || undefined,
+    placement: 'right',
+  });
+  characterSheetStore.setMode(windowId, 'view');
+  return { ok: true as const };
+};
+
 defineExpose({
   openPanelForShell,
   refreshPresenceForShell,
@@ -489,6 +835,12 @@ defineExpose({
   setCharacterCardVisible,
   getStickyNoteVisible,
   getCharacterCardVisible,
+  sendMessageForTheater,
+  insertComposerForTheater,
+  getCharactersForTheater,
+  selectCharacterForTheater,
+  selectCharacterVariantForTheater,
+  openCharacterCardForTheater,
 });
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
@@ -596,43 +948,35 @@ const channelBackgroundOverlayStyle = computed(() => {
   };
 });
 
-const diceTrayDesktopVisible = ref(false);
-const diceTrayMobileVisible = ref(false);
+const diceTrayWindowRef = ref<{
+  toggle: () => void;
+  hide: () => void;
+  minimize: () => void;
+  restore: () => void;
+} | null>(null);
 const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
 const botOptionsLoading = ref(false);
 const botOptionsFetched = ref(false);
-const isMobileUa = typeof navigator !== 'undefined'
+const isActualMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
+const isMobileUa = isActualMobileUa
+  || (route.path === '/embed' && route.query.viewport === 'mobile');
 const hasTouchPoints = typeof navigator !== 'undefined'
   ? (navigator.maxTouchPoints || 0) > 0
   : false;
 const chatRootContainerRef = ref<HTMLElement | null>(null);
-const DICE_TRAY_EDGE_OVERLAY_CLASS = 'dice-tray-popover-edge';
-const DICE_TRAY_RIGHT_OFFSET_TUNE_PX = -10;
 const isCoarsePointerDevice = typeof window !== 'undefined'
   ? window.matchMedia('(pointer: coarse)').matches
   : false;
-const isDiceTrayEdgeAnchored = computed(() => isMobileUa && isCoarsePointerDevice);
-const closeAllDiceTrays = () => {
-  diceTrayDesktopVisible.value = false;
-  diceTrayMobileVisible.value = false;
-};
-const setCurrentDiceTrayVisible = (visible: boolean) => {
-  if (isDiceTrayEdgeAnchored.value) {
-    diceTrayMobileVisible.value = visible;
-    if (visible) {
-      diceTrayDesktopVisible.value = false;
-    }
-  } else {
-    diceTrayDesktopVisible.value = visible;
-    if (visible) {
-      diceTrayMobileVisible.value = false;
-    }
-  }
-};
+const diceTrayStorageScope = computed(() => {
+  if (!isEmbedMode.value) return 'main';
+  if (isTheaterEmbedMode.value) return 'embed:theater';
+  const paneId = typeof route.query.paneId === 'string' ? route.query.paneId.trim() : '';
+  return `embed:${paneId || 'standalone'}`;
+});
 const channelBotSelection = ref('');
 const channelBotsLoading = ref(false);
 const syncingChannelBot = ref(false);
@@ -750,6 +1094,9 @@ const avatarReissueLoading = ref(false);
 const avatarReissueResultText = ref('');
 const emailNotificationDrawerVisible = ref(false);
 const characterCardPanelVisible = ref(false);
+const characterCardPanelRef = ref<{
+  openCardById: (cardId: string, mode?: 'view' | 'edit') => Promise<boolean>;
+} | null>(null);
 const characterCardAvailable = computed(() => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId) return false;
@@ -875,13 +1222,13 @@ watch(
 const toggleDiceTray = () => {
   if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
-    closeAllDiceTrays();
     return;
   }
-  if (isDiceTrayEdgeAnchored.value) {
-    setCurrentDiceTrayVisible(!diceTrayMobileVisible.value);
-  } else {
-    setCurrentDiceTrayVisible(!diceTrayDesktopVisible.value);
+  diceTrayWindowRef.value?.toggle();
+};
+const handleDiceTrayModeChange = (mode: 'hidden' | 'expanded' | 'minimized') => {
+  if (mode !== 'expanded') {
+    diceSettingsVisible.value = false;
   }
 };
 watch(
@@ -893,9 +1240,6 @@ watch(
     } else {
       channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
       channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
-    }
-    if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
-      closeAllDiceTrays();
     }
   },
   { immediate: true },
@@ -911,146 +1255,19 @@ watch(canManageChannelFeatures, (canManage) => {
   }
 });
 watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
-	if (!enabled && !effectiveBotFeatureEnabled.value && !diceSettingsVisible.value) {
-		closeAllDiceTrays();
-	}
-});
-watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
-	if (!enabled && !effectiveBuiltInDiceEnabled.value && !diceSettingsVisible.value) {
-		closeAllDiceTrays();
-	}
-});
-
-const markDiceTrayMobileWrapper = (enabled: boolean) => {
-  if (typeof document === 'undefined') return;
-  if (!isDiceTrayEdgeAnchored.value) {
-    const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
-    followers.forEach((el) => {
-      if (!el) return;
-      if (!el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS) && !el.querySelector('.dice-tray')) return;
-      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
-      el.style.removeProperty('--dice-tray-right-offset');
-      el.style.removeProperty('--dice-tray-left-offset');
-      el.style.removeProperty('position');
-      el.style.removeProperty('left');
-      el.style.removeProperty('right');
-      el.style.removeProperty('transform');
-      el.style.removeProperty('box-sizing');
-      el.style.removeProperty('width');
-      el.style.removeProperty('max-width');
-      el.style.removeProperty('border');
-      el.style.removeProperty('box-shadow');
-      el.style.removeProperty('background');
-      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
-      if (popoverContent) {
-        popoverContent.style.removeProperty('padding');
-        popoverContent.style.removeProperty('border');
-        popoverContent.style.removeProperty('box-shadow');
-        popoverContent.style.removeProperty('background');
-      }
-    });
-    return;
-  }
-  const shouldAnchorRightEdge = enabled && isDiceTrayEdgeAnchored.value;
-  const rootRect = chatRootContainerRef.value?.getBoundingClientRect();
-  const rawRightOffset = rootRect ? Math.max(0, window.innerWidth - rootRect.right) : 0;
-  const rightOffset = Math.max(0, rawRightOffset + DICE_TRAY_RIGHT_OFFSET_TUNE_PX);
-  const leftOffset = rootRect ? Math.max(0, rootRect.left) : 0;
-  const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
-  followers.forEach((el) => {
-    if (!el) return;
-    const hasDiceTray = !!el.querySelector('.dice-tray');
-    const tracked = hasDiceTray || el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS);
-    if (!tracked) return;
-
-    if (shouldAnchorRightEdge && hasDiceTray) {
-      const availableWidth = Math.max(0, window.innerWidth - leftOffset - rightOffset);
-      const targetWidth = Math.min(420, availableWidth);
-
-      el.classList.add(DICE_TRAY_EDGE_OVERLAY_CLASS);
-      el.style.setProperty('--dice-tray-right-offset', `${rightOffset}px`);
-      el.style.setProperty('--dice-tray-left-offset', `${leftOffset}px`);
-      el.style.setProperty('position', 'fixed', 'important');
-      el.style.setProperty('left', 'auto', 'important');
-      el.style.setProperty('right', `${rightOffset}px`, 'important');
-      el.style.setProperty('transform', 'none', 'important');
-      el.style.setProperty('box-sizing', 'border-box');
-      el.style.setProperty('width', `${targetWidth}px`, 'important');
-      el.style.setProperty('max-width', `${availableWidth}px`, 'important');
-      el.style.setProperty('border', 'none', 'important');
-      el.style.setProperty('box-shadow', 'none', 'important');
-      el.style.setProperty('background', 'transparent', 'important');
-
-      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
-      if (popoverContent) {
-        popoverContent.style.setProperty('padding', '0', 'important');
-        popoverContent.style.setProperty('border', 'none', 'important');
-        popoverContent.style.setProperty('box-shadow', 'none', 'important');
-        popoverContent.style.setProperty('background', 'transparent', 'important');
-      }
-    } else {
-      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
-      el.style.removeProperty('--dice-tray-right-offset');
-      el.style.removeProperty('--dice-tray-left-offset');
-      el.style.removeProperty('position');
-      el.style.removeProperty('left');
-      el.style.removeProperty('right');
-      el.style.removeProperty('transform');
-      el.style.removeProperty('box-sizing');
-      el.style.removeProperty('width');
-      el.style.removeProperty('max-width');
-      el.style.removeProperty('border');
-      el.style.removeProperty('box-shadow');
-      el.style.removeProperty('background');
-
-      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
-      if (popoverContent) {
-        popoverContent.style.removeProperty('padding');
-        popoverContent.style.removeProperty('border');
-        popoverContent.style.removeProperty('box-shadow');
-        popoverContent.style.removeProperty('background');
-      }
-    }
-  });
-};
-
-watch(
-  () => diceTrayMobileVisible.value,
-  (visible) => {
-    if (!isDiceTrayEdgeAnchored.value) {
-      markDiceTrayMobileWrapper(false);
-      return;
-    }
-    if (visible) {
-      nextTick(() => {
-        markDiceTrayMobileWrapper(true);
-        requestAnimationFrame(() => {
-          markDiceTrayMobileWrapper(true);
-        });
-        window.setTimeout(() => {
-          markDiceTrayMobileWrapper(true);
-        }, 32);
-      });
-    } else {
-      markDiceTrayMobileWrapper(false);
-    }
-  },
-);
-watch(
-  () => [diceTrayDesktopVisible.value, diceTrayMobileVisible.value] as const,
-  ([desktopVisible, mobileVisible]) => {
-    const visible = desktopVisible || mobileVisible;
-  if (!visible) {
+  if (!enabled && !effectiveBotFeatureEnabled.value) {
     diceSettingsVisible.value = false;
   }
-  },
-);
+});
+watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
+  if (!enabled && !effectiveBuiltInDiceEnabled.value) {
+    diceSettingsVisible.value = false;
+  }
+});
 watch(diceSettingsVisible, (visible) => {
   if (visible) {
     ensureBotOptionsLoaded();
     refreshChannelBotSelection();
-  } else if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
-    closeAllDiceTrays();
   }
 });
 
@@ -1058,7 +1275,6 @@ const handleGlobalOverlayToggle = (payload?: { source?: string; open?: boolean }
   if (!payload?.open) {
     return;
   }
-  closeAllDiceTrays();
   diceSettingsVisible.value = false;
   if (payload.source !== 'emoji-panel') {
     emojiPopoverShow.value = false;
@@ -1345,10 +1561,13 @@ watch(
 );
 
 // 新增状态
-const showActionRibbon = ref(false);
+const showActionRibbon = ref(isTheaterEmbedMode.value);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const exportDialogBatchMode = ref(false);
+const exportManagerRefreshVersion = ref(0);
+const exportManagerRevealVersion = ref(0);
 const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
@@ -3028,6 +3247,7 @@ type IdentityAppearancePreview = {
   color: string;
   avatarAttachmentId: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  theaterPresentation?: TheaterPresentation | null;
   isTemporary: boolean;
 };
 
@@ -3197,6 +3417,11 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
   if (!identity) {
     return null;
   }
+  const variantTheaterPresentation = variant?.theaterPresentation !== undefined
+    ? variant.theaterPresentation
+    : variant?.appearance?.theaterPresentation
+  const hasTheaterPresentation = Boolean(identity.theaterPresentation)
+    || variantTheaterPresentation !== undefined
   return {
     identityId: identity.id,
     variantId: variant?.id || '',
@@ -3204,6 +3429,14 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
     color: variant?.color || identity.color || '',
     avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
     avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
+    theaterPresentation: hasTheaterPresentation
+      ? resolveTheaterPresentation(
+          identity.theaterPresentation,
+          variantTheaterPresentation && typeof variantTheaterPresentation === 'object'
+            ? variantTheaterPresentation as TheaterPresentationPatch
+            : null,
+        )
+      : null,
     isTemporary: Boolean(identity.isTemporary),
   };
 };
@@ -3212,13 +3445,31 @@ const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
+const theaterPresentationEditorVisible = ref(false);
+const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
+const worldTheaterTemplateSaving = ref(false);
+const currentWorldTheaterTemplate = computed<WorldTheaterPresentationTemplate>(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) return {};
+  return chat.worldDetailMap[worldId]?.world?.theaterPresentationTemplate
+    || chat.worldMap[worldId]?.theaterPresentationTemplate
+    || {};
+});
+const canSetWorldTheaterTemplate = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) return false;
+  const role = chat.worldDetailMap[worldId]?.memberRole;
+  return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
+});
 const identityForm = reactive({
   displayName: '',
   color: '',
   avatarAttachmentId: '',
   avatarDecorations: [] as AvatarDecoration[],
+  theaterPresentation: null as TheaterPresentation | null,
   isDefault: false,
   isTemporary: false,
+  botAppearanceMode: '' as '' | 'inherit' | 'custom',
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
@@ -3242,6 +3493,7 @@ const identityVariantForm = reactive({
   avatarAttachmentId: '',
   displayName: '',
   color: '',
+  theaterPresentation: {} as TheaterPresentationPatch,
   enabled: true,
 });
 const identityVariantColorDraft = ref('');
@@ -3252,12 +3504,22 @@ const identityVariantAvatarEditorFile = ref<File | null>(null);
 const identityManageTargetUserId = ref('');
 const identityManageTargetLabel = ref('');
 const identityManageTargetRoleLabel = ref('');
+const identityManageTargetAvatar = ref('');
+const identityManageTargetKind = ref<'self' | 'user' | 'bot'>('self');
 const identityManageCandidateModalVisible = ref(false);
 const identityManageCandidateKeyword = ref('');
 const identityManageCandidates = ref<ChannelIdentityManageCandidate[]>([]);
 const identityManageCandidatesLoading = ref(false);
 const identityManageCandidateSelectedUserId = ref<string | null>(null);
+const identityManageBotModalVisible = ref(false);
+const identityManageBots = ref<UserInfo[]>([]);
+const identityManageBotsLoading = ref(false);
+const identityManageBotSelectedUserId = ref<string | null>(null);
 const currentIdentityTargetUserId = computed(() => identityManageTargetUserId.value || user.info.id || '');
+const isManagingBotIdentity = computed(() => identityManageTargetKind.value === 'bot');
+const botBaseAppearanceInherited = computed(() => (
+  isManagingBotIdentity.value && identityForm.botAppearanceMode !== 'custom'
+));
 const isManagingOtherUserIdentity = computed(() => (
   !!identityManageTargetUserId.value && identityManageTargetUserId.value !== (user.info.id || '')
 ));
@@ -3268,7 +3530,12 @@ const currentManagedIdentityLabel = computed(() => {
   return identityManageTargetLabel.value || identityManageTargetUserId.value;
 });
 const currentChannelIdentities = computed(() => (
-  chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+  isManagingBotIdentity.value
+    ? chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value).filter(item => item.isDefault).slice(0, 1)
+    : chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const managedIdentityFallbackAvatar = computed(() => (
+  resolveAttachmentUrl(identityManageTargetAvatar.value) || user.info.avatar || ''
 ));
 const currentEditingIdentityVariants = computed(() => {
   const channelId = chat.curChannel?.id || '';
@@ -3289,6 +3556,9 @@ const identityFolderMembership = computed<Record<string, string[]>>(() => (
 ));
 const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
 const identityDialogTitle = computed(() => {
+  if (isManagingBotIdentity.value) {
+    return '编辑 BOT 频道外观';
+  }
   if (identityDialogMode.value === 'create') {
     return '创建频道角色';
   }
@@ -3733,9 +4003,13 @@ const resetIdentityManageTarget = () => {
   identityManageTargetUserId.value = '';
   identityManageTargetLabel.value = '';
   identityManageTargetRoleLabel.value = '';
+  identityManageTargetAvatar.value = '';
+  identityManageTargetKind.value = 'self';
   identityManageCandidateSelectedUserId.value = null;
   identityManageCandidateKeyword.value = '';
   identityManageCandidates.value = [];
+  identityManageBotSelectedUserId.value = null;
+  identityManageBots.value = [];
 };
 
 const loadIdentityManageCandidates = async (keyword = '') => {
@@ -3775,6 +4049,54 @@ const openIdentityManageUserDialog = async () => {
   }
 };
 
+const openIdentityManageBotDialog = async () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!canManageChannelFeatures.value) {
+    message.warning('你没有设置当前频道 BOT 外观的权限');
+    return;
+  }
+  identityManageBotModalVisible.value = true;
+  identityManageBotsLoading.value = true;
+  identityManageBotSelectedUserId.value = isManagingBotIdentity.value ? currentIdentityTargetUserId.value : null;
+  try {
+    const resp = await chat.channelMemberListAll(channelId, 200);
+    const roleId = `ch-${channelId}-bot`;
+    const found = (resp?.data?.items || [])
+      .filter(item => item.roleId === roleId && Boolean(item.user?.id))
+      .map(item => item.user!);
+    identityManageBots.value = Array.from(new Map(found.map(item => [item.id, item])).values());
+    if (identityManageBots.value.length === 1) {
+      identityManageBotSelectedUserId.value = identityManageBots.value[0].id;
+    }
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || '加载频道 BOT 失败');
+  } finally {
+    identityManageBotsLoading.value = false;
+  }
+};
+
+const confirmIdentityManageBot = async () => {
+  const channelId = chat.curChannel?.id || '';
+  const targetUserId = identityManageBotSelectedUserId.value || '';
+  if (!channelId || !targetUserId) {
+    message.warning('请选择 BOT');
+    return;
+  }
+  const selected = identityManageBots.value.find(item => item.id === targetUserId);
+  identityManageTargetUserId.value = targetUserId;
+  identityManageTargetLabel.value = selected?.nick || selected?.username || targetUserId;
+  identityManageTargetRoleLabel.value = 'BOT';
+  identityManageTargetAvatar.value = selected?.avatar || '';
+  identityManageTargetKind.value = 'bot';
+  identityManageBotModalVisible.value = false;
+  await chat.loadChannelIdentities(channelId, true, targetUserId);
+  identityManageVisible.value = true;
+};
+
 const confirmIdentityManageUser = async () => {
   if (!chat.curChannel?.id) {
     return;
@@ -3788,6 +4110,8 @@ const confirmIdentityManageUser = async () => {
   identityManageTargetUserId.value = targetUserId === (user.info.id || '') ? '' : targetUserId;
   identityManageTargetLabel.value = selected?.nickname || selected?.username || targetUserId;
   identityManageTargetRoleLabel.value = selected?.roleLabel || '';
+  identityManageTargetAvatar.value = selected?.avatar || '';
+  identityManageTargetKind.value = targetUserId === (user.info.id || '') ? 'self' : 'user';
   identityManageCandidateModalVisible.value = false;
   await chat.loadChannelIdentities(chat.curChannel.id, true, identityManageTargetUserId.value || undefined);
   identityManageVisible.value = true;
@@ -3877,12 +4201,13 @@ const maybePromptIdentitySync = async () => {
   await openIdentitySyncDialog();
 };
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v4';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v5';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
   'sealchat.channel-identity/v1',
   'sealchat.channel-identity/v2',
   'sealchat.channel-identity/v3',
   'sealchat.channel-identity/v4',
+  'sealchat.channel-identity/v5',
 ];
 
 interface IdentityAssetExportIssueState {
@@ -3890,6 +4215,9 @@ interface IdentityAssetExportIssueState {
 }
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
+
+// Theater settings come from Vue reactive state; structuredClone rejects Proxy values.
+const cloneIdentityMigrationValue = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const downloadAttachmentAsPayload = async (
   attachmentId: string,
@@ -3983,6 +4311,24 @@ const registerIdentityAsset = async (
   return assetKey;
 };
 
+const mapTheaterPresentationForExport = async (
+  input: Record<string, any> | null | undefined,
+  _assetMap: Map<string, IdentityAssetPayload>,
+  _fallbackPrefix: string,
+  _issueState?: IdentityAssetExportIssueState,
+) => {
+  if (!input) return null;
+  return cloneIdentityMigrationValue(input);
+};
+
+const remapTheaterPresentationForImport = async (
+  input: Record<string, any> | null | undefined,
+  options: { channelId: string; identityId: string; variantId?: string | null; targetUserId?: string | null; assetIdMap: Map<string, string>; mediaCache?: Map<string, any> },
+) => {
+  void options;
+  return input == null ? input ?? null : cloneIdentityMigrationValue(input);
+};
+
 const mapDecorationsForExport = async (
   decorations: AvatarDecoration[] | null | undefined,
   assetMap: Map<string, IdentityAssetPayload>,
@@ -4004,11 +4350,20 @@ const mapDecorationsForExport = async (
       `${fallbackPrefix}-fallback`,
       issueState,
     );
-    result.push({
+    if (item.resourceAttachmentId && !resourceAssetKey) {
+      throw new Error(`头像装饰资源无法导出: ${fallbackPrefix}`);
+    }
+    if (item.fallbackAttachmentId && !fallbackAssetKey) {
+      throw new Error(`头像装饰兜底资源无法导出: ${fallbackPrefix}`);
+    }
+    const exported: IdentityExportDecorationItem = {
       ...item,
       resourceAssetKey: resourceAssetKey || undefined,
       fallbackAssetKey: fallbackAssetKey || undefined,
-    });
+    };
+    delete exported.resourceAttachmentId;
+    delete exported.fallbackAttachmentId;
+    result.push(exported);
   }
   return result;
 };
@@ -4025,7 +4380,7 @@ const normalizeExportItemDecorations = (item: IdentityExportItem) => {
 
 const importAttachmentFromRemoteUrl = async (
   avatar: IdentityAvatarPayload,
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ): Promise<string> => {
   const transferUrl = resolveIdentityAssetTransferUrl(avatar);
   if (!transferUrl) {
@@ -4036,13 +4391,14 @@ const importAttachmentFromRemoteUrl = async (
     filename: avatar.filename,
     contentType: avatar.mimeType,
     channelId: options?.channelId || chat.curChannel?.id,
+    targetUserId: options?.targetUserId || undefined,
   });
   return normalizeAttachmentId(resp.data?.file?.id || '');
 };
 
 const ensureImportAttachment = async (
   avatar?: IdentityAvatarPayload | null,
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ): Promise<string> => {
   if (!avatar) {
     return '';
@@ -4053,6 +4409,8 @@ const ensureImportAttachment = async (
         hash: avatar.hash,
         size: avatar.size,
         extra: 'channel-identity-avatar',
+        channelId: options?.channelId || chat.curChannel?.id,
+        targetUserId: options?.targetUserId || undefined,
       });
       const quickId = quickResp.data?.file?.id;
       if (quickId) {
@@ -4081,7 +4439,10 @@ const ensureImportAttachment = async (
   }
 
   if (!avatar.hash || !avatar.data || !avatar.size) {
-    return normalizeAttachmentId(avatar.attachmentId || '');
+    if (avatar.attachmentId) {
+      throw new Error('角色素材仅含源附件 ID，无法安全导入到目标频道');
+    }
+    throw new Error('角色素材缺少可重建数据');
   }
 
   try {
@@ -4089,7 +4450,11 @@ const ensureImportAttachment = async (
     const blob = new Blob([bytes], { type: avatar.mimeType || 'application/octet-stream' });
     const fileName = avatar.filename || `identity-avatar-${avatar.hash.slice(0, 8)}`;
     const file = new File([blob], fileName, { type: avatar.mimeType || 'application/octet-stream' });
-    const uploadResult = await uploadImageAttachment(file, { channelId: options?.channelId || chat.curChannel?.id });
+    const uploadResult = await uploadImageAttachment(file, {
+      channelId: options?.channelId || chat.curChannel?.id,
+      targetUserId: options?.targetUserId,
+      skipCompression: true,
+    });
     return normalizeAttachmentId(uploadResult.attachmentId);
   } catch (error) {
     console.error('上传身份头像失败', error);
@@ -4099,7 +4464,7 @@ const ensureImportAttachment = async (
 
 const ensureImportAssets = async (
   assets?: IdentityAssetPayload[],
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ) => {
   const result = new Map<string, string>();
   for (const asset of assets || []) {
@@ -4119,6 +4484,8 @@ const ensureImportAssets = async (
     }, options);
     if (attachmentId) {
       result.set(asset.assetKey, attachmentId);
+    } else {
+      throw new Error(`角色素材无法重建: ${asset.assetKey}`);
     }
   }
   return result;
@@ -4152,10 +4519,19 @@ const buildIdentityExportSnapshot = async (options: {
       `${safeFilename(displayName || 'identity')}.png`,
       issueState,
     );
+    if (identity.avatarAttachmentId && !avatarAssetKey) {
+      throw new Error(`角色头像无法导出: ${displayName || identity.id}`);
+    }
     const avatarDecorations = await mapDecorationsForExport(
       cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
       assetMap,
       safeFilename(displayName || identity.id || 'identity-decoration'),
+      issueState,
+    );
+    const theaterPresentation = await mapTheaterPresentationForExport(
+      identity.theaterPresentation as Record<string, any> | null | undefined,
+      assetMap,
+      safeFilename(displayName || identity.id || 'identity-theater'),
       issueState,
     );
     items.push({
@@ -4167,6 +4543,7 @@ const buildIdentityExportSnapshot = async (options: {
       folderIds: folderIds.length ? [...folderIds] : undefined,
       avatarAssetKey: avatarAssetKey || undefined,
       avatarDecorations,
+      theaterPresentation,
     });
 
     const identityVariants = (options.variantsByIdentity[identity.id] || [])
@@ -4179,6 +4556,15 @@ const buildIdentityExportSnapshot = async (options: {
         `${safeFilename(variant.keyword || variant.displayName || displayName || 'variant')}.png`,
         issueState,
       );
+      if (variant.avatarAttachmentId && !avatarVariantAssetKey) {
+        throw new Error(`差分头像无法导出: ${variant.keyword || variant.id}`);
+      }
+      const theaterPresentation = await mapTheaterPresentationForExport(
+        resolveIdentityExportVariantTheaterPresentation(variant),
+        assetMap,
+        safeFilename(variant.keyword || variant.id || 'variant-theater'),
+        issueState,
+      );
       variants.push({
         sourceId: variant.id,
         identitySourceId: identity.id,
@@ -4189,6 +4575,7 @@ const buildIdentityExportSnapshot = async (options: {
         displayName: variant.displayName,
         color: variant.color,
         appearance: variant.appearance || {},
+        theaterPresentation,
         sortOrder: variant.sortOrder,
         enabled: variant.enabled !== false,
       });
@@ -4222,13 +4609,6 @@ const buildIdentityExportSnapshot = async (options: {
     } as IdentityExportFile,
     missingAssetCount: issueState.missingAssets,
   };
-};
-
-const clearIdentityVariants = async (channelId: string, identityId: string, targetUserId?: string | null) => {
-  const variants = chat.getIdentityVariants(channelId, identityId, targetUserId).slice();
-  for (const variant of variants) {
-    await chat.channelIdentityVariantDelete(channelId, variant.id, targetUserId);
-  }
 };
 
 const buildIdentityMigrationSnapshotFromChannel = async (
@@ -4333,15 +4713,36 @@ const importIdentityMigrationSnapshot = async (
   const targetChannelId = options.targetChannelId;
   const targetUserId = options.targetUserId;
   const items = payload.items || [];
-  const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId });
+  const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId, targetUserId });
+  const theaterMediaCache = new Map<string, any>();
   const folderIdMap = new Map<string, string>();
+
+  for (const item of items) {
+    if (item.avatarAssetKey && !assetIdMap.has(item.avatarAssetKey)) {
+      throw new Error(`角色头像资源文件缺失: ${item.avatarAssetKey}`);
+    }
+    if (item.avatar && !item.avatar.data && !resolveIdentityAssetTransferUrl(item.avatar)) {
+      throw new Error(`旧版角色头像缺少可重建数据: ${item.displayName || item.sourceId}`);
+    }
+    remapDecorationsForImport(normalizeExportItemDecorations(item), assetIdMap);
+  }
+  for (const variant of payload.variants || []) {
+    if (variant.avatarAssetKey && !assetIdMap.has(variant.avatarAssetKey)) {
+      throw new Error(`差分头像资源文件缺失: ${variant.avatarAssetKey}`);
+    }
+  }
+
+  const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, targetUserId);
+  await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
+  const targetFolders = chat.getScopedChannelIdentityFolders(targetChannelId, targetUserId);
 
   if (Array.isArray(payload.folders) && payload.folders.length) {
     const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     for (const folder of sortedFolders) {
       if (!folder?.name) continue;
       try {
-        const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, targetUserId);
+        const existing = targetFolders.find(item => String(item.name || '').trim().toLowerCase() === String(folder.name || '').trim().toLowerCase());
+        const created = existing || await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, targetUserId);
         if (folder.sourceId) {
           folderIdMap.set(folder.sourceId, created.id);
         }
@@ -4354,8 +4755,6 @@ const importIdentityMigrationSnapshot = async (
     }
   }
 
-  const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, targetUserId);
-  await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
   const targetList = Array.isArray(targetIdentities) ? [...targetIdentities] : [];
   const duplicateTargetNames = new Set<string>();
   const seenTargetNames = new Set<string>();
@@ -4377,6 +4776,7 @@ const importIdentityMigrationSnapshot = async (
   let mappingChanged = false;
   const identityIdMap = new Map<string, string>();
   const overwriteIdentityIds = new Set<string>();
+  const overwriteIdentitySnapshots = new Map<string, ChannelIdentity>();
 
   for (const item of items) {
     const displayName = String(item.displayName || '').trim();
@@ -4390,17 +4790,26 @@ const importIdentityMigrationSnapshot = async (
       .filter((id): id is string => !!id);
     const avatarId = item.avatarAssetKey
       ? (assetIdMap.get(item.avatarAssetKey) || '')
-      : await ensureImportAttachment(item.avatar, { channelId: targetChannelId });
+      : await ensureImportAttachment(item.avatar, { channelId: targetChannelId, targetUserId });
     const avatarDecorations = remapDecorationsForImport(normalizeExportItemDecorations(item), assetIdMap) as AvatarDecoration[];
 
     try {
       if (matchedIdentity && options.mode === 'append') {
-        identityIdMap.set(item.sourceId, matchedIdentity.id);
         skippedCount += 1;
         continue;
       }
 
       if (matchedIdentity && options.mode === 'overwrite') {
+        overwriteIdentitySnapshots.set(item.sourceId, cloneIdentityMigrationValue(matchedIdentity));
+        const theaterPresentation = item.theaterPresentation === undefined
+          ? undefined
+          : await remapTheaterPresentationForImport(item.theaterPresentation, {
+              channelId: targetChannelId,
+              identityId: matchedIdentity.id,
+              targetUserId,
+              assetIdMap,
+              mediaCache: theaterMediaCache,
+            });
         const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
           channelId: targetChannelId,
           targetUserId: targetUserId || undefined,
@@ -4408,6 +4817,8 @@ const importIdentityMigrationSnapshot = async (
           color: item.color || '',
           avatarAttachmentId: avatarId,
           avatarDecorations,
+          theaterPresentation: theaterPresentation as any,
+          skipTheaterAssetValidation: true,
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -4431,6 +4842,28 @@ const importIdentityMigrationSnapshot = async (
         isDefault: !!item.isDefault,
         folderIds: mappedFolderIds,
       });
+      if (item.theaterPresentation !== undefined) {
+        const theaterPresentation = await remapTheaterPresentationForImport(item.theaterPresentation, {
+          channelId: targetChannelId,
+          identityId: created.id,
+          targetUserId,
+          assetIdMap,
+          mediaCache: theaterMediaCache,
+        });
+        await chat.channelIdentityUpdate(created.id, {
+          channelId: targetChannelId,
+          targetUserId: targetUserId || undefined,
+          displayName,
+          color: item.color || '',
+          avatarAttachmentId: avatarId,
+          avatarDecorations,
+          theaterPresentation: theaterPresentation as any,
+          skipTheaterAssetValidation: true,
+          isDefault: !!item.isDefault,
+          folderIds: mappedFolderIds,
+        });
+        created.theaterPresentation = theaterPresentation as any;
+      }
       identityIdMap.set(item.sourceId, created.id);
       targetList.push(created);
       createdCount += 1;
@@ -4451,31 +4884,29 @@ const importIdentityMigrationSnapshot = async (
     variantsByIdentity.set(sourceIdentityId, list);
   }
 
-  const clearedVariantIdentityIds = new Set<string>();
-  if (options.mode === 'overwrite') {
-    for (const targetIdentityId of overwriteIdentityIds) {
-      if (!targetIdentityId || clearedVariantIdentityIds.has(targetIdentityId)) {
-        continue;
-      }
-      await clearIdentityVariants(targetChannelId, targetIdentityId, targetUserId);
-      clearedVariantIdentityIds.add(targetIdentityId);
-    }
-  }
-  for (const [sourceIdentityId, variants] of variantsByIdentity.entries()) {
+  const sourceIdentityIds = new Set<string>(items.map(item => String(item.sourceId || '')).filter(Boolean));
+  for (const sourceIdentityId of sourceIdentityIds) {
+    const variants = variantsByIdentity.get(sourceIdentityId) || [];
     const targetIdentityId = identityIdMap.get(sourceIdentityId);
     if (!targetIdentityId) {
       continue;
     }
 
     const sortedVariants = variants.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    for (const variant of sortedVariants) {
-      try {
-        await chat.channelIdentityVariantCreate({
+    const overwriteExisting = options.mode === 'overwrite' && overwriteIdentityIds.has(targetIdentityId);
+    const oldVariants = overwriteExisting
+      ? chat.getIdentityVariants(targetChannelId, targetIdentityId, targetUserId).slice()
+      : [];
+    const stagedVariants: Array<{ item: IdentityExportVariantItem; id: string; temporaryKeyword: string }> = [];
+    try {
+      for (const variant of sortedVariants) {
+        const temporaryKeyword = overwriteExisting ? `import-${nanoid(16)}` : variant.keyword;
+        const created = await chat.channelIdentityVariantCreate({
           channelId: targetChannelId,
           targetUserId: targetUserId || undefined,
           identityId: targetIdentityId,
           selectorEmoji: variant.selectorEmoji,
-          keyword: variant.keyword,
+          keyword: temporaryKeyword,
           note: variant.note || '',
           avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
           displayName: variant.displayName || '',
@@ -4483,9 +4914,88 @@ const importIdentityMigrationSnapshot = async (
           appearance: variant.appearance || {},
           enabled: variant.enabled !== false,
         });
-      } catch (error) {
-        failedCount += 1;
-        console.warn('导入单个差分失败', error);
+        stagedVariants.push({ item: variant, id: created.id, temporaryKeyword });
+        if (variant.theaterPresentation !== undefined) {
+          const theaterPresentation = await remapTheaterPresentationForImport(variant.theaterPresentation, {
+            channelId: targetChannelId,
+            identityId: targetIdentityId,
+            variantId: created.id,
+            targetUserId,
+            assetIdMap,
+            mediaCache: theaterMediaCache,
+          });
+          await chat.channelIdentityVariantUpdate(created.id, {
+            channelId: targetChannelId,
+            targetUserId: targetUserId || undefined,
+            identityId: targetIdentityId,
+            selectorEmoji: variant.selectorEmoji,
+            keyword: temporaryKeyword,
+            note: variant.note || '',
+            avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
+            displayName: variant.displayName || '',
+            color: variant.color || '',
+            appearance: variant.appearance || {},
+            theaterPresentation: theaterPresentation as any,
+            skipTheaterAssetValidation: true,
+            enabled: variant.enabled !== false,
+          });
+        }
+      }
+
+      if (overwriteExisting) {
+        for (const oldVariant of oldVariants) {
+          await chat.channelIdentityVariantDelete(targetChannelId, oldVariant.id, targetUserId);
+        }
+        for (const staged of stagedVariants) {
+          const variant = staged.item;
+          await chat.channelIdentityVariantUpdate(staged.id, {
+            channelId: targetChannelId,
+            targetUserId: targetUserId || undefined,
+            identityId: targetIdentityId,
+            selectorEmoji: variant.selectorEmoji,
+            keyword: variant.keyword,
+            note: variant.note || '',
+            avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
+            displayName: variant.displayName || '',
+            color: variant.color || '',
+            appearance: variant.appearance || {},
+            enabled: variant.enabled !== false,
+          });
+        }
+      }
+    } catch (error) {
+      failedCount += Math.max(1, sortedVariants.length);
+      console.warn('导入角色差分失败', error);
+      for (const staged of stagedVariants) {
+        try {
+          await chat.channelIdentityVariantDelete(targetChannelId, staged.id, targetUserId);
+        } catch (cleanupError) {
+          console.warn('清理暂存差分失败', cleanupError);
+        }
+      }
+      if (overwriteExisting && oldVariants.every(old => chat.getIdentityVariants(targetChannelId, targetIdentityId, targetUserId).some(item => item.id === old.id))) {
+        const snapshot = overwriteIdentitySnapshots.get(sourceIdentityId);
+        if (snapshot) {
+          try {
+            await chat.channelIdentityUpdate(snapshot.id, {
+              channelId: targetChannelId,
+              targetUserId: targetUserId || undefined,
+              displayName: snapshot.displayName,
+              color: snapshot.color || '',
+              avatarAttachmentId: snapshot.avatarAttachmentId || '',
+              avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations, snapshot.avatarDecoration),
+              theaterPresentation: snapshot.theaterPresentation,
+              isDefault: !!snapshot.isDefault,
+              isTemporary: !!snapshot.isTemporary,
+              icOocOnActivate: snapshot.icOocOnActivate || '',
+              folderIds: snapshot.folderIds || [],
+            });
+            updatedCount = Math.max(0, updatedCount - 1);
+            identityIdMap.delete(sourceIdentityId);
+          } catch (restoreError) {
+            console.warn('恢复覆盖前角色失败', restoreError);
+          }
+        }
       }
     }
   }
@@ -4540,27 +5050,40 @@ const handleIdentityImportChange = async (event: globalThis.Event) => {
 
   try {
     const text = await file.text();
-    const payload = JSON.parse(text) as IdentityExportFile;
-    if (!IDENTITY_EXPORT_COMPATIBLE_VERSIONS.includes(payload.version)) {
-      throw new Error('无法识别的导入文件版本');
-    }
+    const payload = normalizeIdentityExportFileForImport(
+      JSON.parse(text) as IdentityExportFile,
+      IDENTITY_EXPORT_COMPATIBLE_VERSIONS,
+    );
     const items = payload.items || [];
     if (!items.length) {
       message.warning('导入文件中没有可用的频道角色');
       return;
     }
-    const confirmed = await dialogAskConfirm(dialog, {
-      title: '导入频道角色',
-      content: `检测到 ${items.length} 个角色配置，确定导入到当前频道吗？`,
+    const importMode = await new Promise<'append' | 'overwrite' | null>((resolve) => {
+      let settled = false;
+      const settle = (value: 'append' | 'overwrite' | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      dialog.warning({
+        title: '导入频道角色',
+        content: `检测到 ${items.length} 个角色配置。追加会完整跳过同名角色；覆盖会替换同名角色及其差分。`,
+        positiveText: '覆盖同名角色',
+        negativeText: '追加新角色',
+        onPositiveClick: () => settle('overwrite'),
+        onNegativeClick: () => settle('append'),
+        onClose: () => settle(null),
+      });
     });
-    if (!confirmed) {
+    if (!importMode) {
       return;
     }
 
     identityImporting.value = true;
     const result = await importIdentityMigrationSnapshot(payload, {
       targetChannelId: chat.curChannel.id,
-      mode: 'append',
+      mode: importMode,
       targetUserId: currentIdentityTargetUserId.value,
     });
     const importedCount = result.createdCount + result.updatedCount;
@@ -4809,19 +5332,157 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityColorDraft.value = identityForm.color;
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.avatarDecorations = cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration);
+  identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(identity?.theaterPresentation);
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.isTemporary = Boolean(identity?.isTemporary);
+  identityForm.botAppearanceMode = isManagingBotIdentity.value
+    ? (identity?.botAppearanceMode === 'custom' ? 'custom' : 'inherit')
+    : '';
   identityForm.icOocOnActivate = identity?.isTemporary
     ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
     : '';
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
-  identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+  identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
 
 const openIdentityDecorationEditor = () => {
   identityDecorationEditorVisible.value = true;
+};
+
+const askEnterTheaterForAppearanceEdit = () => new Promise<boolean>((resolve) => {
+  let settled = false;
+  const settle = (value: boolean) => {
+    if (settled) return;
+    settled = true;
+    resolve(value);
+  };
+  dialog.warning({
+    title: '提示',
+    content: '编辑必须在小剧场模式进行，是否进入小剧场？',
+    positiveText: '进入',
+    negativeText: '取消',
+    onPositiveClick: () => settle(true),
+    onNegativeClick: () => settle(false),
+    onClose: () => settle(false),
+  });
+});
+
+const enterTheaterForAppearanceEdit = async (mode: 'base' | 'variant') => {
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  const identityId = String(editingIdentity.value?.id || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
+    return false;
+  }
+  if (!identityId) {
+    message.warning('请先保存频道角色后再编辑演出外观');
+    return false;
+  }
+  writeTheaterAppearanceEditIntent({
+    channelId,
+    identityId,
+    mode,
+    variantId: mode === 'variant' ? String(editingIdentityVariant.value?.id || '').trim() || undefined : undefined,
+    targetUserId: identityManageTargetUserId.value || undefined,
+    targetKind: identityManageTargetKind.value,
+    targetLabel: identityManageTargetLabel.value || undefined,
+    targetAvatar: identityManageTargetAvatar.value || undefined,
+  });
+  identityDialogVisible.value = false;
+  identityVariantDialogVisible.value = false;
+  identityManageVisible.value = false;
+  theaterPresentationEditorVisible.value = false;
+  try {
+    await router.push({
+      name: 'theater',
+      query: { worldId, channelId },
+    });
+    return true;
+  } catch (error) {
+    clearTheaterAppearanceEditIntent();
+    message.error(error instanceof Error ? error.message : '进入小剧场失败');
+    return false;
+  }
+};
+
+const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
+  if (isTheaterEmbedMode.value) return true;
+  const confirmed = await askEnterTheaterForAppearanceEdit();
+  if (!confirmed) return false;
+  await enterTheaterForAppearanceEdit(mode);
+  return false;
+};
+
+const openIdentityTheaterPresentationEditor = async () => {
+  if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
+  theaterPresentationEditorMode.value = 'base';
+  theaterPresentationEditorVisible.value = true;
+};
+
+const openIdentityVariantTheaterPresentationEditor = async () => {
+  if (!(await ensureTheaterModeForAppearanceEdit('variant'))) return;
+  theaterPresentationEditorMode.value = 'variant';
+  theaterPresentationEditorVisible.value = true;
+};
+
+const handleTheaterPresentationApply = async (value: TheaterPresentation | TheaterPresentationPatch) => {
+  if (theaterPresentationEditorMode.value === 'variant') {
+    identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
+    if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
+      await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+    }
+    return;
+  }
+  identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
+  await submitIdentityForm({ closeDialog: false, successMessage: false });
+};
+
+const handleSetWorldTheaterTemplate = async (
+  sections: WorldTheaterPresentationTemplateSection[],
+  presentation: TheaterPresentation,
+) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || !canSetWorldTheaterTemplate.value || worldTheaterTemplateSaving.value) return;
+  worldTheaterTemplateSaving.value = true;
+  try {
+    const template = mergeWorldTheaterPresentationTemplate(currentWorldTheaterTemplate.value, presentation, sections);
+    await chat.worldTheaterPresentationTemplateSet(worldId, template);
+    // 后端会级联刷新仍使用旧默认的角色；强制重载当前频道角色列表以同步 UI。
+    const channelId = String(chat.curChannel?.id || '').trim();
+    if (channelId) {
+      await chat.loadChannelIdentities(channelId, true, currentIdentityTargetUserId.value || undefined);
+      if (editingIdentity.value?.id) {
+        const refreshed = chat.getScopedChannelIdentities(channelId, currentIdentityTargetUserId.value)
+          .find((item) => item.id === editingIdentity.value?.id);
+        if (refreshed) {
+          editingIdentity.value = refreshed;
+          identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(refreshed.theaterPresentation);
+        }
+      }
+    }
+    message.success('世界默认演出外观已更新');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '更新世界默认演出外观失败');
+  } finally {
+    worldTheaterTemplateSaving.value = false;
+  }
+};
+
+const handleIdentityDecorationEditorShow = async (show: boolean) => {
+  if (show) {
+    identityDecorationEditorVisible.value = true;
+    return;
+  }
+  if (!identityDecorationEditorVisible.value || identitySubmitting.value) {
+    return;
+  }
+  if (await submitIdentityForm({ closeDialog: false, successMessage: false })) {
+    identityDecorationEditorVisible.value = false;
+  }
 };
 
 const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
@@ -4848,11 +5509,17 @@ const openIdentityCreate = async () => {
   editingIdentity.value = null;
   identityDialogMode.value = 'create';
   resetIdentityForm(null);
+  if (Object.keys(currentWorldTheaterTemplate.value).length) {
+    identityForm.theaterPresentation = applyWorldTheaterPresentationTemplate(
+      createDefaultTheaterPresentation(),
+      currentWorldTheaterTemplate.value,
+    );
+  }
   if (!identityForm.displayName) {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
   // Load character cards for the channel
-  if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+  if (!isManagingBotIdentity.value && !characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
     await characterCardStore.loadCards(chat.curChannel.id);
   }
   identityForm.characterCardId = '';
@@ -4867,10 +5534,10 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   // Load character cards for the channel
   if (chat.curChannel?.id) {
     await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
-    if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+    if (!isManagingBotIdentity.value && !characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
-    identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+    identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
     identityOriginalCardId.value = identityForm.characterCardId;
   }
   identityDialogVisible.value = true;
@@ -4902,6 +5569,7 @@ const openIdentityManager = async () => {
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
   identityDecorationEditorVisible.value = false;
+  theaterPresentationEditorVisible.value = false;
   identityVariantDialogVisible.value = false;
   identityVariantEmojiPickerVisible.value = false;
 };
@@ -4968,6 +5636,7 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
   identityVariantForm.displayName = variant?.displayName || '';
   identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantForm.theaterPresentation = resolveChannelIdentityVariantTheaterPatch(variant);
   identityVariantColorDraft.value = identityVariantForm.color;
   identityVariantForm.enabled = variant?.enabled !== false;
   identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
@@ -4998,6 +5667,64 @@ const openIdentityVariantEdit = (variant: ChannelIdentityVariant) => {
   resetIdentityVariantForm(variant);
   identityVariantDialogVisible.value = true;
 };
+
+let theaterAppearanceEditResumeRunning = false;
+const resumeTheaterAppearanceEditIntent = async () => {
+  if (theaterAppearanceEditResumeRunning || !isTheaterEmbedMode.value) return;
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId) return;
+  const intent = consumeTheaterAppearanceEditIntent(channelId);
+  if (!intent) return;
+  theaterAppearanceEditResumeRunning = true;
+  try {
+    if (intent.targetUserId && intent.targetKind && intent.targetKind !== 'self') {
+      identityManageTargetUserId.value = intent.targetUserId;
+      identityManageTargetKind.value = intent.targetKind;
+      identityManageTargetLabel.value = intent.targetLabel || intent.targetUserId;
+      identityManageTargetAvatar.value = intent.targetAvatar || '';
+      identityManageTargetRoleLabel.value = intent.targetKind === 'bot' ? 'BOT' : '';
+    } else {
+      resetIdentityManageTarget();
+    }
+    await chat.loadChannelIdentities(channelId, true, currentIdentityTargetUserId.value);
+    const identity = chat.getScopedChannelIdentities(channelId, currentIdentityTargetUserId.value)
+      .find((item) => String(item.id || '') === intent.identityId);
+    if (!identity) {
+      message.warning('目标角色不存在，已取消自动进入编辑');
+      return;
+    }
+    await openIdentityEdit(identity);
+    if (intent.mode === 'variant') {
+      await chat.loadChannelIdentityVariants(channelId, true, currentIdentityTargetUserId.value);
+      const variants = chat.getIdentityVariants(channelId, intent.identityId, currentIdentityTargetUserId.value);
+      const variant = variants.find((item) => String(item.id || '') === String(intent.variantId || ''));
+      if (!variant) {
+        message.warning('目标差分不存在，已打开角色编辑');
+        return;
+      }
+      openIdentityVariantEdit(variant);
+      theaterPresentationEditorMode.value = 'variant';
+    } else {
+      theaterPresentationEditorMode.value = 'base';
+    }
+    await nextTick();
+    theaterPresentationEditorVisible.value = true;
+  } catch (error) {
+    console.warn('[theater-appearance-edit] resume failed', error);
+    message.warning('自动进入演出外观编辑失败，请手动打开');
+  } finally {
+    theaterAppearanceEditResumeRunning = false;
+  }
+};
+
+watch(
+  () => [isTheaterEmbedMode.value, String(chat.curChannel?.id || '')] as const,
+  ([theaterMode, channelId]) => {
+    if (!theaterMode || !channelId) return;
+    void resumeTheaterAppearanceEditIntent();
+  },
+  { immediate: true },
+);
 
 const handleIdentityVariantAvatarTrigger = () => {
   identityVariantAvatarInputRef.value?.click();
@@ -5051,10 +5778,14 @@ const handleIdentityVariantSelectorEmoji = (emoji: string) => {
   identityVariantEmojiPickerVisible.value = false;
 };
 
-const submitIdentityVariantForm = async () => {
+const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
+  const { closeDialog = true, successMessage = true } = options;
+  if (identityVariantSubmitting.value) {
+    return false;
+  }
   if (!chat.curChannel?.id || !editingIdentity.value?.id) {
     message.warning('请先选择频道角色');
-    return;
+    return false;
   }
   const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
   const keyword = String(identityVariantForm.keyword || '').trim();
@@ -5063,14 +5794,14 @@ const submitIdentityVariantForm = async () => {
   const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
   if (!selectorEmoji) {
     message.warning('请选择差分表情');
-    return;
+    return false;
   }
   if (!keyword) {
     message.warning('请输入切换关键词');
-    return;
+    return false;
   }
   if (!commitIdentityVariantColorDraft(true)) {
-    return;
+    return false;
   }
   identityVariantSubmitting.value = true;
   try {
@@ -5097,19 +5828,34 @@ const submitIdentityVariantForm = async () => {
       displayName: String(identityVariantForm.displayName || '').trim(),
       color: normalizedColor,
       appearance: {},
+      theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
       enabled: identityVariantForm.enabled,
     };
+    let savedVariant: ChannelIdentityVariant | null = null;
     if (identityVariantDialogMode.value === 'create') {
-      await chat.channelIdentityVariantCreate(payload);
-      message.success('头像差分已创建');
+      savedVariant = await chat.channelIdentityVariantCreate(payload);
+      if (successMessage) {
+        message.success('头像差分已创建');
+      }
     } else if (editingIdentityVariant.value?.id) {
-      await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
-      message.success('头像差分已更新');
+      savedVariant = await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
+      if (successMessage) {
+        message.success('头像差分已更新');
+      }
     }
-    identityVariantDialogVisible.value = false;
+    if (!closeDialog && savedVariant) {
+      editingIdentityVariant.value = savedVariant;
+      identityVariantDialogMode.value = 'edit';
+      resetIdentityVariantForm(savedVariant);
+    }
+    if (closeDialog) {
+      identityVariantDialogVisible.value = false;
+    }
+    return true;
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || error?.message || '保存差分失败，请稍后重试';
     message.error(errMsg);
+    return false;
   } finally {
     identityVariantSubmitting.value = false;
   }
@@ -5139,17 +5885,21 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
   }
 };
 
-const submitIdentityForm = async () => {
+const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
+  const { closeDialog = true, successMessage = true } = options;
+  if (identitySubmitting.value) {
+    return false;
+  }
   if (!chat.curChannel?.id) {
     message.warning('请先选择频道');
-    return;
+    return false;
   }
   if (!identityForm.displayName.trim()) {
     message.warning('频道昵称不能为空');
-    return;
+    return false;
   }
   if (!commitIdentityColorDraft(true)) {
-    return;
+    return false;
   }
   const normalizedColor = identityForm.color;
   identitySubmitting.value = true;
@@ -5161,8 +5911,12 @@ const submitIdentityForm = async () => {
     avatarAttachmentId: identityForm.avatarAttachmentId,
     avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
       .filter(item => item.enabled && item.resourceAttachmentId),
+    theaterPresentation: identityForm.theaterPresentation
+      ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+      : null,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
+    botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
   };
@@ -5203,8 +5957,10 @@ const submitIdentityForm = async () => {
       payload.avatarAttachmentId = identityForm.avatarAttachmentId;
       identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
     }
+    let savedIdentity: ChannelIdentity | null = null;
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
+      savedIdentity = createdIdentity;
       // Handle character card binding for new identity
       if (createdIdentity?.id && chat.curChannel?.id) {
         if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
@@ -5221,11 +5977,14 @@ const submitIdentityForm = async () => {
           }
         }
       }
-      message.success('频道角色已创建');
+      if (successMessage) {
+        message.success('频道角色已创建');
+      }
     } else if (editingIdentity.value) {
       if (editingIdentity.value.isTemporary) {
         const replacedIdentity = await chat.channelIdentityReplaceTemporary(editingIdentity.value.id, payload);
-        if (replacedIdentity?.id && chat.curChannel?.id) {
+        savedIdentity = replacedIdentity;
+        if (replacedIdentity?.id && chat.curChannel?.id && effectiveBotFeatureEnabled.value) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
@@ -5240,11 +5999,13 @@ const submitIdentityForm = async () => {
             }
           }
         }
-        message.success('临时频道角色已替换，新身份已生效');
+        if (successMessage) {
+          message.success('临时频道角色已替换，新身份已生效');
+        }
       } else {
-        await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+        savedIdentity = await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
         // Handle character card binding changes for existing identity
-        if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        if (!isManagingBotIdentity.value && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
@@ -5259,11 +6020,20 @@ const submitIdentityForm = async () => {
             }
           }
         }
-        message.success('频道角色已更新');
+        if (successMessage) {
+          message.success('频道角色已更新');
+        }
       }
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
-    identityDialogVisible.value = false;
+    if (!closeDialog && savedIdentity) {
+      editingIdentity.value = savedIdentity;
+      identityDialogMode.value = 'edit';
+      resetIdentityForm(savedIdentity);
+    }
+    if (closeDialog) {
+      identityDialogVisible.value = false;
+    }
 
     // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
     if (wasCreating && display.settings.autoSwitchRoleOnIcOocToggle) {
@@ -5275,9 +6045,11 @@ const submitIdentityForm = async () => {
         }, 300);
       }
     }
+    return true;
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '保存失败，请稍后重试';
     message.error(errMsg);
+    return false;
   } finally {
     identitySubmitting.value = false;
   }
@@ -5620,23 +6392,58 @@ const showCloudUploadDialog = (payload: CloudUploadResult) => {
   });
 };
 
-const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; format?: string }) => {
+const showBatchCloudUploadDialog = (items: CloudUploadResult[]) => {
+  const links = items.filter(item => !!item?.url);
+  if (!links.length) {
+    message.warning('云端染色返回异常，未提供链接');
+    return;
+  }
+  dialog.success({
+    title: `云端日志已上传（${links.length} 个）`,
+    positiveText: '知道了',
+    content: () => (
+      <div class="cloud-upload-result">
+        {links.map((item, index) => (
+          <p key={`${item.url}-${index}`}>
+            {item.name || item.file_name || `频道 ${index + 1}`}：
+            <a href={item.url} target="_blank" rel="noopener">{item.url}</a>
+          </p>
+        ))}
+      </div>
+    ),
+  });
+};
+
+const refreshExportManager = (opts?: { revealLatestTask?: boolean }) => {
+  exportManagerRefreshVersion.value += 1;
+  if (opts?.revealLatestTask) {
+    exportManagerRevealVersion.value += 1;
+  }
+};
+
+const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; batchUpload?: boolean; format?: string }) => {
   const maxAttempts = 30;
   const interval = 2000;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       const status = await chat.getExportTaskStatus(taskId);
       if (status.status === 'done') {
+        refreshExportManager();
         message.success('导出完成，正在下载文件');
         const { blob, fileName } = await chat.downloadExportResult(taskId, status.file_name);
         triggerBlobDownload(blob, fileName);
         if (opts?.autoUpload) {
           try {
-            const uploadResp = await chat.uploadExportTask(taskId);
-            if (uploadResp?.url) {
-              showCloudUploadDialog(uploadResp);
+            if (opts.batchUpload) {
+              const uploadResp = await chat.uploadBatchExportTask(taskId);
+              showBatchCloudUploadDialog(uploadResp?.items || []);
             } else {
-              message.warning('云端染色返回结果异常，未提供链接');
+              const uploadResp = await chat.uploadExportTask(taskId);
+              if (uploadResp?.url) {
+                showCloudUploadDialog(uploadResp);
+              } else {
+                message.warning('云端染色返回结果异常，未提供链接');
+              }
             }
           } catch (error: any) {
             const errMsg = error?.response?.data?.error || (error as Error)?.message || '未知错误';
@@ -5646,6 +6453,7 @@ const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; for
         return;
       }
       if (status.status === 'failed') {
+        refreshExportManager();
         message.error(status.message || '导出任务失败');
         return;
       }
@@ -5691,6 +6499,7 @@ const handleExportMessages = async (params: {
   autoUpload: boolean;
   maxExportMessages: number;
   maxExportConcurrency: number;
+  channelIds?: string[];
 }) => {
   if (!chat.curChannel?.id) {
     message.error('请选择需要导出的频道');
@@ -5733,11 +6542,16 @@ const handleExportMessages = async (params: {
       maxConcurrency,
       displaySettings: displayOptions,
     };
-    const result = await chat.createExportTask(payload);
-    message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);
+    const channelIds = Array.from(new Set((params.channelIds || []).map(id => String(id || '').trim()).filter(Boolean)));
+    const isBatchExport = channelIds.length > 0;
+    const result = isBatchExport
+      ? await chat.createBatchExportTask({ ...payload, channelIds })
+      : await chat.createExportTask(payload);
+    message.info(`${isBatchExport ? '批量导出' : '导出'}任务已创建（#${result.task_id}），正在生成文件…`);
+    refreshExportManager({ revealLatestTask: true });
     exportDialogVisible.value = false;
     const shouldAutoUpload = Boolean(params.autoUpload && params.format === 'json' && canUseCloudUpload.value);
-    void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, format: params.format });
+    void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, batchUpload: isBatchExport, format: params.format });
   } catch (error: any) {
     console.error('导出失败', error);
     const errMsg = error?.response?.data?.error || (error as Error)?.message || '导出失败';
@@ -10381,7 +11195,6 @@ const handleHistoryPopoverShow = (show: boolean) => {
 const closeInputExtraOverlays = () => {
   emojiPopoverShow.value = false;
   historyPopoverVisible.value = false;
-  closeAllDiceTrays();
   diceSettingsVisible.value = false;
 };
 
@@ -10804,6 +11617,27 @@ const insertDiceExpression = (expr: string) => {
   const cursor = selection.start + expr.length;
   nextTick(() => {
     setInputSelection(cursor, cursor);
+  });
+};
+
+const insertComposerText = (content: string) => {
+  if (!content) return;
+  if (inputMode.value === 'rich') {
+    const editor = textInputRef.value?.getEditor?.();
+    if (editor) {
+      const { from, to } = editor.state.selection;
+      editor.view.dispatch(editor.state.tr.insertText(content, from, to).scrollIntoView());
+      editor.chain().focus().run();
+      return;
+    }
+  }
+  const selection = getInputSelection();
+  const draft = textToSend.value;
+  textToSend.value = draft.slice(0, selection.start) + content + draft.slice(selection.end);
+  const cursor = selection.start + content.length;
+  nextTick(() => {
+    setInputSelection(cursor, cursor);
+    ensureInputFocus();
   });
 };
 
@@ -12376,7 +13210,17 @@ const retrySendMessage = async (target?: Message) => {
   }
 };
 
-const send = throttle(async () => {
+const isChannelDefaultDiceCommandResponse = (messageData: unknown): messageData is Record<string, unknown> => (
+  !!messageData
+  && typeof messageData === 'object'
+  && String((messageData as Record<string, unknown>).id || '').startsWith('channel-default-dice-command:')
+);
+
+const performSend = async (options?: {
+  identityIdOverride?: string
+  identityVariantIdOverride?: string
+  mode?: 'plain' | 'rich'
+}) => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
     return;
@@ -12389,11 +13233,11 @@ const send = throttle(async () => {
     message.error('尚未连接，请稍等');
     return;
   }
-  const sendMode = inputMode.value;
+  const sendMode = options?.mode || inputMode.value;
   const sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
   let draft = textToSend.value;
-  let identityIdOverride: string | undefined;
-  let identityVariantIdOverride: string | undefined;
+  let identityIdOverride = options?.identityIdOverride;
+  let identityVariantIdOverride = options?.identityVariantIdOverride;
   const activeReeditSource = (() => {
     const source = reeditRevokedSource.value;
     if (!source) {
@@ -12406,18 +13250,25 @@ const send = throttle(async () => {
   })();
 
   const identityQuickSwitchTrigger = display.settings.identityQuickSwitchTrigger || '/';
+  const identityQuickSwitchChannelId = String(chat.curChannel?.id || '');
 
   // 仅纯文本模式支持 `触发字符 + 角色名` 或 `触发字符 + 角色名 内容` 快捷切换
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityQuickSwitchTrigger)) {
-    const identities = chat.channelIdentities[chat.curChannel.id] || [];
+  if (shouldResolveTheaterIdentityShortcut({
+    identityIdOverride,
+    inputMode: sendMode,
+    channelId: identityQuickSwitchChannelId,
+    draft,
+    trigger: identityQuickSwitchTrigger,
+  })) {
+    const identities = chat.channelIdentities[identityQuickSwitchChannelId] || [];
     const shortcutResult = resolveIdentityShortcutMatch(draft, identities, identityQuickSwitchTrigger);
     if (shortcutResult?.ambiguous) {
       message.warning('匹配到多个同长度角色，请输入更长名称');
       return;
     }
     if (shortcutResult?.matched) {
-      chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
-      await characterCardStore.syncCardForIdentity(chat.curChannel.id, shortcutResult.matched.id, {
+      chat.setActiveIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id);
+      await characterCardStore.syncCardForIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id, {
         preserveWhenUnbound: true,
       });
       draft = shortcutResult.restContent;
@@ -12432,7 +13283,7 @@ const send = throttle(async () => {
   }
 
   const identityVariantQuickSwitchTrigger = display.settings.identityVariantQuickSwitchTrigger || '=';
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
+  if (sendMode === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
     const activeIdentityId = identityIdOverride || chat.getActiveIdentityId(chat.curChannel.id);
     const variants = chat.getIdentityVariants(chat.curChannel.id, activeIdentityId);
     const shortcutResult = resolveIdentityVariantShortcutMatch(draft, variants, identityVariantQuickSwitchTrigger);
@@ -12580,6 +13431,9 @@ const send = throttle(async () => {
   rows.value.push(tmpMsg);
   sortRowsByDisplayOrder();
   instantMessages.add(tmpMsg);
+  let sendOutcome:
+    | { ok: true; messageId: string }
+    | { ok: false; error: { code: string; message: string } };
 
   try {
     let finalContent: string;
@@ -12631,6 +13485,23 @@ const send = throttle(async () => {
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
+    }
+    if (isChannelDefaultDiceCommandResponse(newMsg)) {
+      setMessageSendStatus(tmpMsg as any, 'sent');
+      instantMessages.delete(tmpMsg);
+      const index = rows.value.findIndex(item => item.id === tmpMsg.id);
+      if (index !== -1) {
+        rows.value.splice(index, 1);
+      }
+      resetInlineImages();
+      pendingInlineSelection = null;
+      textToSend.value = '';
+      syncSessionDraftSnapshot();
+      clearInputModeCache();
+      ensureInputFocus();
+      message.success(`默认骰已设为 ${String(newMsg.content || '')}`);
+      sendOutcome = { ok: true, messageId: String(newMsg.id) };
+      return sendOutcome;
     }
     for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
       (tmpMsg as any)[k] = v;
@@ -12687,6 +13558,7 @@ const send = throttle(async () => {
       ensureInputFocus();
     }
     handleInterjectSendSuccess(tmpMsg, interjectFirstEditSnapshot);
+    sendOutcome = { ok: true, messageId: String(tmpMsg.id || clientId) };
   } catch (e) {
     const reason = resolveMessageSendFailureReason(e);
     message.error(`发送失败：${reason}`);
@@ -12703,12 +13575,16 @@ const send = throttle(async () => {
       setMessageSendStatus(tmpMsg as any, 'failed', reason);
     }
     handleInterjectSendFailure();
+    sendOutcome = { ok: false, error: { code: 'MESSAGE_SEND_FAILED', message: reason } };
   }
 
   if (wasAtBottom && !insertPlacement) {
     toBottom();
   }
-}, 500);
+  return sendOutcome;
+};
+
+const send = throttle(() => performSend(), 500);
 
 const handleDiceInsert = (expr: string) => {
   insertDiceExpression(expr.trim() ? `${expr.trim()} ` : expr);
@@ -13022,6 +13898,7 @@ const scrollToBottom = () => {
 const emit = defineEmits(['drawer-show'])
 
 let firstLoad = false;
+let disposeChatMessageHandlers: (() => void) | null = null;
 const handleChannelSwitchEvent = (e: any) => {
   if (!firstLoad) return;
   const payload = (e as any)?.argv || {};
@@ -13074,14 +13951,6 @@ const handleChannelContextCleared = () => {
   showButton.value = false;
 };
 
-const currentWorldChannelTree = computed(() => {
-  const worldId = String(chat.currentWorldId || '').trim();
-  if (!worldId) {
-    return [] as SChannel[];
-  }
-  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
-});
-
 onMounted(async () => {
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -13094,11 +13963,6 @@ onMounted(async () => {
     window.addEventListener('pageshow', handleForegroundResume);
     window.addEventListener('online', handleForegroundResume);
   }
-
-  const sound = new Howl({
-    src: [SoundMessageCreated],
-    html5: true
-  });
 
   chatEvent.off('message-deleted', '*');
   chatEvent.on('message-deleted', (e?: Event) => {
@@ -13134,8 +13998,7 @@ onMounted(async () => {
     }
   });
 
-chatEvent.off('message-removed', '*');
-chatEvent.on('message-removed', (e?: Event) => {
+const handleMessageRemoved = (e?: Event) => {
   const targetId = e?.message?.id;
     if (!targetId) {
       return;
@@ -13168,10 +14031,9 @@ chatEvent.on('message-removed', (e?: Event) => {
         archivedMessagesRaw.value.splice(index, 1);
       }
     }
-  });
+  };
 
-chatEvent.off('message-created', '*');
-chatEvent.on('message-created', (e?: Event) => {
+const handleMessageCreated = (e?: Event) => {
   if (!e?.message) {
     return;
   }
@@ -13179,22 +14041,22 @@ chatEvent.on('message-created', (e?: Event) => {
   const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || (incoming as any)?.channel_id || '').trim();
   const currentChannelId = String(chat.curChannel?.id || '').trim();
   const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
+	if (isCurrentChannelMessage && (incoming as any).diceVisual) {
+		const payload = resolveDice3DPlaybackPayload(
+			(incoming as any).diceVisual as DiceVisualPayload,
+			String(user.info.id || '').trim(),
+			dice3dConfig.value,
+			dice3dProfile.value,
+		);
+		if (!isTheaterEmbedMode.value || !dice3dRuntime.forwardToTheater(payload)) {
+			dice3dRuntime.play(payload);
+		}
+	}
   const isSelf = incoming.user?.id === user.info.id;
   const content = incoming.content || '';
   const currentUserId = user.info.id;
   const mentionIds = !isSelf ? collectMentionIdsFromContent(content) : new Set<string>();
   const isMentioned = !isSelf && (mentionIds.has(currentUserId) || mentionIds.has('all'));
-  if (!isSelf && shouldPlayMessageSound({
-    mode: display.settings.messageSoundMode,
-    isSelf,
-    isAppFocused: chat.isAppFocused,
-    messageChannelId: incomingChannelId,
-    currentChannelId,
-    currentWorldChannels: currentWorldChannelTree.value,
-    embedNotifyOwnerEnabled: pushStore.embedNotifyOwnerEnabled,
-  })) {
-    sound.play();
-  }
   if (!isCurrentChannelMessage) {
     if (incomingChannelId && isMentioned) {
       chat.setChannelMentionState(incomingChannelId, true);
@@ -13318,7 +14180,7 @@ chatEvent.on('message-created', (e?: Event) => {
       scrollToBottom();
     });
   }
-});
+};
 
 chatEvent.off('channel-image-layout-updated' as any, '*');
 chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
@@ -13333,8 +14195,7 @@ chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
   channelImageLayout.applyRealtimeUpdate(payload);
 });
 
-chatEvent.off('message-updated', '*');
-chatEvent.on('message-updated', (e?: Event) => {
+const handleMessageUpdated = (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
@@ -13376,7 +14237,34 @@ chatEvent.on('message-updated', (e?: Event) => {
     syncSessionDraftSnapshot();
     ensureInputFocus();
   }
-});
+};
+
+const chatViewMessageHandlers = {
+  created: handleMessageCreated,
+  updated: handleMessageUpdated,
+  removed: handleMessageRemoved,
+};
+// 只替换聊天视图自己的监听器，避免清空小剧场桥接监听，并兼容 HMR。
+const chatEventWithMessageOwner = chatEvent as typeof chatEvent & {
+  __chatViewMessageHandlers?: typeof chatViewMessageHandlers
+};
+const previousChatViewMessageHandlers = chatEventWithMessageOwner.__chatViewMessageHandlers;
+if (previousChatViewMessageHandlers) {
+  chatEvent.off('message-created', previousChatViewMessageHandlers.created);
+  chatEvent.off('message-updated', previousChatViewMessageHandlers.updated);
+  chatEvent.off('message-removed', previousChatViewMessageHandlers.removed);
+}
+chatEventWithMessageOwner.__chatViewMessageHandlers = chatViewMessageHandlers;
+chatEvent.on('message-created', chatViewMessageHandlers.created);
+chatEvent.on('message-updated', chatViewMessageHandlers.updated);
+chatEvent.on('message-removed', chatViewMessageHandlers.removed);
+disposeChatMessageHandlers = () => {
+  if (chatEventWithMessageOwner.__chatViewMessageHandlers !== chatViewMessageHandlers) return;
+  chatEvent.off('message-created', chatViewMessageHandlers.created);
+  chatEvent.off('message-updated', chatViewMessageHandlers.updated);
+  chatEvent.off('message-removed', chatViewMessageHandlers.removed);
+  delete chatEventWithMessageOwner.__chatViewMessageHandlers;
+};
 
 chatEvent.off('message-reordered', '*');
 chatEvent.on('message-reordered', (e?: Event) => {
@@ -13718,6 +14606,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 })
 
 onBeforeUnmount(() => {
+  disposeChatMessageHandlers?.();
+  disposeChatMessageHandlers = null;
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleVisibilityResume);
   }
@@ -14406,7 +15296,7 @@ const keyDown = function (e: KeyboardEvent) {
   }
 
   // 移动端不触发桌面快捷键
-  if (isMobileUa) {
+  if (isActualMobileUa) {
     return;
   }
 
@@ -15322,13 +16212,14 @@ onBeforeUnmount(() => {
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   chatEvent.off('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
   chatEvent.off('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
+  chatEvent.off('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+  chatEvent.off('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
   revokeIdentityObjectURL();
   revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
   sendStatusDelayTimers.forEach((timer) => window.clearTimeout(timer));
   sendStatusDelayTimers.clear();
-  markDiceTrayMobileWrapper(false);
 });
 </script>
 
@@ -15343,7 +16234,7 @@ onBeforeUnmount(() => {
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <div v-if="showActionRibbon && !isEmbedMode" class="chat-top-toolbar-stack">
+      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode)" class="chat-top-toolbar-stack">
         <ChatActionRibbon
           :filters="chat.filterState"
           :roles="ribbonRoleOptions"
@@ -15361,10 +16252,14 @@ onBeforeUnmount(() => {
           :import-active="importDialogVisible"
           :split-enabled="splitEntryEnabled"
           :split-active="false"
+          :theater-enabled="theaterEntryEnabled"
+          :theater-active="false"
           :ic-ooc-split-enabled="splitEntryEnabled"
           :ic-ooc-split-active="false"
           :sticky-note-enabled="true"
           :sticky-note-active="stickyNoteStore.uiVisible"
+		  :dice3d-enabled="!chat.observerMode"
+		  :dice3d-active="dice3dSettingsVisible"
           :webhook-enabled="webhookManageAllowed"
           :webhook-active="webhookDrawerVisible"
           :bridge-status-active="bridgeStatusDrawerVisible"
@@ -15384,8 +16279,10 @@ onBeforeUnmount(() => {
           @open-channel-images="openChannelImagesPanel"
           @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
+          @open-theater="openTheaterView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
+		  @open-dice3d="openDice3DSettings"
           @open-webhook="webhookDrawerVisible = true"
           @open-bridge-status="bridgeStatusDrawerVisible = true"
           @open-email-notification="emailNotificationDrawerVisible = true"
@@ -15855,70 +16752,25 @@ onBeforeUnmount(() => {
             </n-tooltip>
           </div>
           <div class="chat-input-actions__cell">
-            <n-popover
-              trigger="manual"
-              :placement="isDiceTrayEdgeAnchored ? 'top-end' : 'top'"
-              :show="isDiceTrayEdgeAnchored ? diceTrayMobileVisible : diceTrayDesktopVisible"
-              :show-arrow="false"
-              :overlay-class="isDiceTrayEdgeAnchored ? DICE_TRAY_EDGE_OVERLAY_CLASS : undefined"
-            >
+            <n-tooltip trigger="hover">
               <template #trigger>
-                <n-tooltip trigger="hover">
-                  <template #trigger>
-                    <n-button
-                      class="chat-dice-button"
-                      quaternary
-                      circle
-                      :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating"
-                      @click="toggleDiceTray"
-                    >
-                      <template #icon>
-                        <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
-                          <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
-                          <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
-                        </svg>
-                      </template>
-                    </n-button>
+                <n-button
+                  class="chat-dice-button"
+                  quaternary
+                  circle
+                  :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating"
+                  @click="toggleDiceTray"
+                >
+                  <template #icon>
+                    <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
+                      <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
+                      <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
+                    </svg>
                   </template>
-                  掷骰
-                </n-tooltip>
+                </n-button>
               </template>
-              <DiceTray
-                :default-dice="defaultDiceExpr"
-                :can-edit-default="canEditDefaultDice"
-                :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
-                :bot-feature-enabled="effectiveBotFeatureEnabled"
-                @insert="handleDiceInsert"
-                @roll="handleDiceRollNow"
-                @update-default="handleDiceDefaultUpdate"
-                @close="isDiceTrayEdgeAnchored ? (diceTrayMobileVisible = false) : (diceTrayDesktopVisible = false)"
-              >
-                <template #header-actions>
-                  <ChatDiceModeControl
-                    :visible="diceSettingsVisible"
-                    :show-status="showDiceModeStatus"
-                    :show-settings="showDiceModeSettings"
-                    :is-mobile="isMobileUa"
-                    :mode-label="diceModeLabel"
-                    :mode-tooltip="diceModeTooltip"
-                    :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                    :bot-feature-enabled="channelFeatures.botFeatureEnabled"
-                    :dice-feature-updating="diceFeatureUpdating"
-                    :channel-bot-selection="channelBotSelection"
-                    :bot-select-options="botSelectOptions"
-                    :bot-options-loading="botOptionsLoading"
-                    :channel-bots-loading="channelBotsLoading"
-                    :syncing-channel-bot="syncingChannelBot"
-                    :has-bot-options="hasBotOptions"
-                    @update:visible="diceSettingsVisible = $event"
-                    @toggle-built-in="handleDiceFeatureToggle"
-                    @toggle-bot="handleBotFeatureToggle"
-                    @select-bot="handleBotSelectionChange"
-                    @open-channel-member-settings="openChannelMemberSettings"
-                  />
-                </template>
-              </DiceTray>
-            </n-popover>
+              掷骰
+            </n-tooltip>
           </div>
         </div>
       </div>
@@ -16379,21 +17231,6 @@ onBeforeUnmount(() => {
             <n-icon>
               <ArrowBarToDown />
             </n-icon>
-          </template>
-        </n-button>
-      </div>
-
-      <!-- 左下，快捷指令栏 -->
-      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage && !isMobileWideInput">
-        <n-button
-          circle
-          quaternary
-          size="small"
-          aria-label="切换频道列表"
-          @click="emit('drawer-show')"
-        >
-          <template #icon>
-            <n-icon :component="IconNumber"></n-icon>
           </template>
         </n-button>
       </div>
@@ -16999,64 +17836,19 @@ onBeforeUnmount(() => {
                   </n-tooltip>
                 </div>
                 <div class="chat-input-actions__cell" v-if="showDiceTrayTrigger">
-                  <n-popover
-                    trigger="manual"
-                    :placement="isDiceTrayEdgeAnchored ? 'top-end' : 'top'"
-                    :show="isDiceTrayEdgeAnchored ? diceTrayMobileVisible : diceTrayDesktopVisible"
-                    :show-arrow="false"
-                    :overlay-class="isDiceTrayEdgeAnchored ? DICE_TRAY_EDGE_OVERLAY_CLASS : undefined"
-                  >
+                  <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-tooltip trigger="hover">
-                        <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
-                            <template #icon>
-                              <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
-                                <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
-                                <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
-                              </svg>
-                            </template>
-                          </n-button>
+                      <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                        <template #icon>
+                          <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
+                            <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
+                            <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
+                          </svg>
                         </template>
-                        掷骰
-                      </n-tooltip>
+                      </n-button>
                     </template>
-                    <DiceTray
-                      :default-dice="defaultDiceExpr"
-                      :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
-                      :bot-feature-enabled="effectiveBotFeatureEnabled"
-                      @insert="handleDiceInsert"
-                      @roll="handleDiceRollNow"
-                      @update-default="handleDiceDefaultUpdate"
-                      @close="isDiceTrayEdgeAnchored ? (diceTrayMobileVisible = false) : (diceTrayDesktopVisible = false)"
-                    >
-                      <template #header-actions>
-                        <ChatDiceModeControl
-                          :visible="diceSettingsVisible"
-                          :show-status="showDiceModeStatus"
-                          :show-settings="showDiceModeSettings"
-                          :is-mobile="isMobileUa"
-                          :mode-label="diceModeLabel"
-                          :mode-tooltip="diceModeTooltip"
-                          :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                          :bot-feature-enabled="channelFeatures.botFeatureEnabled"
-                          :dice-feature-updating="diceFeatureUpdating"
-                          :channel-bot-selection="channelBotSelection"
-                          :bot-select-options="botSelectOptions"
-                          :bot-options-loading="botOptionsLoading"
-                          :channel-bots-loading="channelBotsLoading"
-                          :syncing-channel-bot="syncingChannelBot"
-                          :has-bot-options="hasBotOptions"
-                          @update:visible="diceSettingsVisible = $event"
-                          @toggle-built-in="handleDiceFeatureToggle"
-                          @toggle-bot="handleBotFeatureToggle"
-                          @select-bot="handleBotSelectionChange"
-                          @open-channel-member-settings="openChannelMemberSettings"
-                        />
-                      </template>
-                    </DiceTray>
-                  </n-popover>
+                    掷骰
+                  </n-tooltip>
                 </div>
               </div>
             </div>
@@ -17379,7 +18171,7 @@ onBeforeUnmount(() => {
     @cancel-relocate="handleCancelMultiSelectRelocate"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
-  <CharacterCardPanel v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
+  <CharacterCardPanel ref="characterCardPanelRef" v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
   <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
@@ -17422,8 +18214,20 @@ onBeforeUnmount(() => {
       </div>
     </template>
     <n-form label-width="90px" label-placement="left" class="identity-dialog__form">
+      <n-form-item v-if="isManagingBotIdentity" label="全局资料">
+        <div class="flex flex-col gap-1">
+          <n-switch
+            :value="identityForm.botAppearanceMode !== 'custom'"
+            @update:value="identityForm.botAppearanceMode = $event ? 'inherit' : 'custom'"
+          >
+            <template #checked>跟随 BOT 全局资料</template>
+            <template #unchecked>使用频道自定义资料</template>
+          </n-switch>
+          <n-text depth="3">仅控制昵称、颜色、头像；头像装饰与小剧场演出始终按当前频道保存。</n-text>
+        </div>
+      </n-form-item>
       <n-form-item label="频道昵称">
-        <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
+        <n-input v-model:value="identityForm.displayName" :disabled="botBaseAppearanceInherited" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
       </n-form-item>
       <n-form-item label="昵称颜色">
         <div class="identity-color-field">
@@ -17433,6 +18237,7 @@ onBeforeUnmount(() => {
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            :disabled="botBaseAppearanceInherited"
             @update:value="handleIdentityColorPickerUpdate"
           />
           <n-input
@@ -17440,10 +18245,11 @@ onBeforeUnmount(() => {
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
+            :disabled="botBaseAppearanceInherited"
             @blur="handleIdentityColorBlur"
             @keyup.enter="handleIdentityColorBlur"
           />
-          <n-button tertiary size="small" @click="clearIdentityColor">清除</n-button>
+          <n-button tertiary size="small" :disabled="botBaseAppearanceInherited" @click="clearIdentityColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item label="频道头像">
@@ -17451,13 +18257,13 @@ onBeforeUnmount(() => {
           <AvatarVue
             :size="48"
             :border="false"
-            :src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :src="identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
             :use-text-fallback="identityForm.isTemporary"
             :fallback-text="identityForm.displayName"
           />
           <n-space>
-            <n-button size="small" type="primary" @click="handleIdentityAvatarTrigger">上传头像</n-button>
-            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
+            <n-button size="small" type="primary" :disabled="botBaseAppearanceInherited" @click="handleIdentityAvatarTrigger">上传头像</n-button>
+            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary :disabled="botBaseAppearanceInherited" @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
       </n-form-item>
@@ -17475,7 +18281,17 @@ onBeforeUnmount(() => {
           </n-text>
         </div>
       </n-form-item>
-      <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
+      <n-form-item label="小剧场演出">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityTheaterPresentationEditor">编辑演出外观</n-button>
+            <n-tag v-if="identityForm.theaterPresentation" size="small" type="success">已配置</n-tag>
+            <n-text v-else depth="3">未配置</n-text>
+          </n-space>
+          <n-text depth="3">仅用于小剧场消息演出，不影响频道消息头像。</n-text>
+        </div>
+      </n-form-item>
+      <n-form-item v-if="!isEditingTemporaryIdentity && !isManagingBotIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
           :options="characterCardSelectOptions"
@@ -17483,12 +18299,12 @@ onBeforeUnmount(() => {
           clearable
         />
       </n-form-item>
-      <n-form-item v-if="!isEditingTemporaryIdentity" class="identity-dialog__check-item">
+      <n-form-item v-if="!isEditingTemporaryIdentity && !isManagingBotIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
-      <n-form-item v-if="identityForm.isTemporary || isEditingTemporaryIdentity" label="切换到此角色时">
+      <n-form-item v-if="!isManagingBotIdentity && (identityForm.isTemporary || isEditingTemporaryIdentity)" label="切换到此角色时">
         <div class="identity-mini-mode-switch">
           <n-button-group size="small">
             <n-button
@@ -17507,7 +18323,7 @@ onBeforeUnmount(() => {
           <span class="identity-mini-mode-switch__hint">切换到这个临时角色时，自动切到{{ temporaryIdentityActivateModeLabel }}</span>
         </div>
       </n-form-item>
-      <n-form-item v-if="identityDialogMode === 'create'" class="identity-dialog__check-item">
+      <n-form-item v-if="identityDialogMode === 'create' && !isManagingBotIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isTemporary">
           创建为临时 NPC 角色
         </n-checkbox>
@@ -17518,7 +18334,9 @@ onBeforeUnmount(() => {
           <div class="identity-variant-section__header">
             <div>
               <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
-              <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
+              <div class="identity-variant-section__hint">
+                {{ isManagingBotIdentity ? 'BOT 需在消息中指定身份差分后生效。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
+              </div>
             </div>
             <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
           </div>
@@ -17543,7 +18361,7 @@ onBeforeUnmount(() => {
               <AvatarVue
                 :size="40"
                 :border="false"
-                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : user.info.avatar)"
+                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
                 :use-text-fallback="identityForm.isTemporary"
                 :fallback-text="variant.displayName || identityForm.displayName"
               />
@@ -17584,7 +18402,8 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <n-modal
-    v-model:show="identityDecorationEditorVisible"
+    :show="identityDecorationEditorVisible"
+    @update:show="handleIdentityDecorationEditorShow"
     preset="card"
     title="编辑频道角色头像装饰"
     style="max-width: 760px;"
@@ -17592,14 +18411,14 @@ onBeforeUnmount(() => {
   >
     <AvatarDecorationEditor
       v-model="identityForm.avatarDecorations"
-      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
       :fallback-text="identityForm.displayName"
       :preview-name="identityForm.displayName || '频道角色预览'"
       :upload-channel-id="chat.curChannel?.id"
     />
     <template #footer>
       <n-space justify="end">
-        <n-button @click="identityDecorationEditorVisible = false">完成</n-button>
+        <n-button :loading="identitySubmitting" @click="handleIdentityDecorationEditorShow(false)">完成</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -17657,7 +18476,7 @@ onBeforeUnmount(() => {
           <AvatarVue
             :size="48"
             :border="false"
-            :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
             :use-text-fallback="identityForm.isTemporary"
             :fallback-text="identityVariantForm.displayName || identityForm.displayName"
           />
@@ -17702,6 +18521,16 @@ onBeforeUnmount(() => {
           <n-button tertiary size="small" @click="clearIdentityVariantColor">清除</n-button>
         </div>
       </n-form-item>
+      <n-form-item label="小剧场演出">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityVariantTheaterPresentationEditor">编辑差分演出</n-button>
+            <n-tag v-if="Object.keys(identityVariantForm.theaterPresentation).length" size="small" type="success">已设置差分</n-tag>
+            <n-text v-else depth="3">全部继承</n-text>
+          </n-space>
+          <n-text depth="3">各部分可独立选择继承、自定义或清除。</n-text>
+        </div>
+      </n-form-item>
       <n-form-item>
         <n-checkbox v-model:checked="identityVariantForm.enabled">
           启用该差分
@@ -17715,6 +18544,23 @@ onBeforeUnmount(() => {
       </n-space>
     </template>
   </n-modal>
+  <TheaterPresentationEditorModal
+    v-model:show="theaterPresentationEditorVisible"
+    :mode="theaterPresentationEditorMode"
+    :presentation="identityForm.theaterPresentation"
+    :base="identityForm.theaterPresentation"
+    :patch="identityVariantForm.theaterPresentation"
+    :channel-id="chat.curChannel?.id || ''"
+    :identity-id="editingIdentity?.id || ''"
+    :variant-id="theaterPresentationEditorMode === 'variant' ? (editingIdentityVariant?.id || '') : ''"
+    :target-user-id="currentIdentityTargetUserId"
+    :preview-name="identityForm.displayName || '角色名'"
+    :world-template="currentWorldTheaterTemplate"
+    :can-set-world-template="canSetWorldTheaterTemplate && !isManagingBotIdentity"
+    :world-template-saving="worldTheaterTemplateSaving"
+    @apply="handleTheaterPresentationApply"
+    @set-world-template="handleSetWorldTheaterTemplate"
+  />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"
     mode="all"
@@ -17777,7 +18623,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <n-space>
-            <n-tooltip trigger="hover">
+            <n-tooltip v-if="!isManagingBotIdentity" trigger="hover">
               <template #trigger>
                 <n-button
                   quaternary
@@ -17792,7 +18638,7 @@ onBeforeUnmount(() => {
               </template>
               导出当前频道角色
             </n-tooltip>
-            <n-tooltip trigger="hover">
+            <n-tooltip v-if="!isManagingBotIdentity" trigger="hover">
               <template #trigger>
                 <n-button
                   quaternary
@@ -17808,6 +18654,18 @@ onBeforeUnmount(() => {
               导入角色配置
             </n-tooltip>
             <n-button
+              v-if="canManageChannelFeatures && !isManagingBotIdentity"
+              text
+              size="small"
+              @click="openIdentityManageBotDialog"
+            >
+              <template #icon>
+                <n-icon :component="Settings" size="14" />
+              </template>
+              设置 BOT
+            </n-button>
+            <n-button
+              v-if="!isManagingBotIdentity"
               text
               size="small"
               @click="icOocRoleConfigPanelVisible = true"
@@ -17818,6 +18676,7 @@ onBeforeUnmount(() => {
               场内场外映射
             </n-button>
             <n-button
+              v-if="!isManagingBotIdentity"
               text
               size="small"
               :disabled="identitySyncing"
@@ -17829,7 +18688,7 @@ onBeforeUnmount(() => {
               从其他频道同步
             </n-button>
             <n-button
-              v-if="canManageOtherUserIdentities"
+              v-if="canManageOtherUserIdentities && !isManagingBotIdentity"
               text
               size="small"
               @click="openIdentityManageUserDialog"
@@ -17846,13 +18705,13 @@ onBeforeUnmount(() => {
               type="warning"
               @click="exitIdentityManageUserMode"
             >
-              退出代管
+              {{ isManagingBotIdentity ? '退出 BOT 设置' : '退出代管' }}
             </n-button>
           </n-space>
         </div>
       </template>
-      <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager">
-        <div class="identity-manager__sidebar">
+      <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager" :class="{ 'identity-manager--bot': isManagingBotIdentity }">
+        <div v-if="!isManagingBotIdentity" class="identity-manager__sidebar">
           <div class="identity-folder-header">
             <div class="identity-folder-header__title">
               <n-icon :component="Folders" size="16" />
@@ -17897,7 +18756,7 @@ onBeforeUnmount(() => {
           </n-scrollbar>
         </div>
         <div class="identity-manager__content">
-          <div class="identity-manager__toolbar">
+          <div v-if="!isManagingBotIdentity" class="identity-manager__toolbar">
             <n-checkbox :checked="isAllIdentitySelected" :indeterminate="!!identitySelection.length && !isAllIdentitySelected" @update:checked="toggleSelectAll">
               全选
             </n-checkbox>
@@ -17926,6 +18785,7 @@ onBeforeUnmount(() => {
               :class="{ 'is-selected': identitySelection.includes(identity.id) }"
             >
               <n-checkbox
+                v-if="!isManagingBotIdentity"
                 class="identity-list__item-check"
                 :checked="identitySelection.includes(identity.id)"
                 @update:checked="val => handleIdentitySelection(identity.id, val)"
@@ -17933,7 +18793,7 @@ onBeforeUnmount(() => {
               <AvatarVue
                 :size="40"
                 :border="false"
-                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || (identity.isTemporary ? '' : user.info.avatar)"
+                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || (identity.isTemporary ? '' : managedIdentityFallbackAvatar)"
                 :use-text-fallback="identity.isTemporary"
                 :fallback-text="identity.displayName"
               />
@@ -17951,30 +18811,30 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
                 <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id, currentIdentityTargetUserId).length }} 个</div>
-                <div class="identity-list__folders">
+                <div v-if="!isManagingBotIdentity" class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
                 </div>
               </div>
               <div class="identity-list__actions">
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
-                <n-button text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+                <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
               </div>
             </div>
           </div>
           <n-empty v-else description="该分组暂无角色">
-            <template #extra>
+            <template v-if="!isManagingBotIdentity" #extra>
               <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
             </template>
           </n-empty>
         </div>
       </div>
       <n-empty v-else description="暂无频道角色">
-        <template #extra>
+        <template v-if="!isManagingBotIdentity" #extra>
           <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
         </template>
       </n-empty>
-      <template #footer>
+      <template v-if="!isManagingBotIdentity" #footer>
         <n-button type="primary" block @click="openIdentityCreate">创建新角色</n-button>
       </template>
     </n-drawer-content>
@@ -18021,6 +18881,41 @@ onBeforeUnmount(() => {
         <n-button type="primary" :disabled="!identityManageCandidateSelectedUserId" @click="confirmIdentityManageUser">确认</n-button>
       </n-space>
     </div>
+  </n-modal>
+  <n-modal
+    v-model:show="identityManageBotModalVisible"
+    preset="card"
+    title="设置 BOT"
+    :style="{ width: 'min(560px, 92vw)' }"
+  >
+    <n-spin :show="identityManageBotsLoading">
+      <div class="space-y-2" style="max-height: 360px; overflow: auto;">
+        <div
+          v-for="item in identityManageBots"
+          :key="item.id"
+          class="identity-manage-candidate"
+          :class="{ 'is-active': identityManageBotSelectedUserId === item.id }"
+          @click="identityManageBotSelectedUserId = item.id"
+        >
+          <AvatarVue :size="40" :border="false" :src="resolveAttachmentUrl(item.avatar) || ''" :fallback-text="item.nick || item.username || item.id" />
+          <div class="identity-manage-candidate__meta">
+            <div class="identity-manage-candidate__name">
+              {{ item.nick || item.username || item.id }}
+              <n-tag size="small" type="info">BOT</n-tag>
+            </div>
+            <div class="identity-manage-candidate__sub">{{ item.username || item.id }}</div>
+          </div>
+          <n-radio :checked="identityManageBotSelectedUserId === item.id" />
+        </div>
+        <n-empty v-if="!identityManageBotsLoading && !identityManageBots.length" description="当前频道未绑定 BOT" />
+      </div>
+    </n-spin>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="identityManageBotModalVisible = false">取消</n-button>
+        <n-button type="primary" :disabled="!identityManageBotSelectedUserId" @click="confirmIdentityManageBot">确认</n-button>
+      </n-space>
+    </template>
   </n-modal>
   <n-modal
     v-model:show="folderDialogVisible"
@@ -18109,11 +19004,15 @@ onBeforeUnmount(() => {
   <ExportManagerModal
     v-model:visible="exportManagerVisible"
     :channel-id="chat.curChannel?.id"
-    @request-export="exportDialogVisible = true"
+    :refresh-version="exportManagerRefreshVersion"
+    :reveal-latest-task-version="exportManagerRevealVersion"
+    @request-export="exportDialogBatchMode = false; exportDialogVisible = true"
+    @request-batch-export="exportDialogBatchMode = true; exportDialogVisible = true"
   />
   <ExportDialog
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
+    :batch-mode="exportDialogBatchMode"
     :battle-summary-enabled="showBattleSummary"
     @export="handleExportMessages"
     @request-battle-summary="openBattleSummary"
@@ -18151,6 +19050,44 @@ onBeforeUnmount(() => {
     :job-id="importJobId"
     @complete="() => { chat.fetchMessages(chat.curChannel?.id); }"
   />
+  <DiceTrayFloatingWindow
+    ref="diceTrayWindowRef"
+    :available="showDiceTrayTrigger"
+    :storage-scope="diceTrayStorageScope"
+    :default-dice="defaultDiceExpr"
+    :can-edit-default="canEditDefaultDice"
+    :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+    :bot-feature-enabled="effectiveBotFeatureEnabled"
+    @insert="handleDiceInsert"
+    @roll="handleDiceRollNow"
+    @update-default="handleDiceDefaultUpdate"
+    @mode-change="handleDiceTrayModeChange"
+  >
+    <template #header-actions="{ isMobile: diceTrayIsMobile }">
+      <ChatDiceModeControl
+        :visible="diceSettingsVisible"
+        :show-status="showDiceModeStatus"
+        :show-settings="showDiceModeSettings"
+        :is-mobile="diceTrayIsMobile"
+        :mode-label="diceModeLabel"
+        :mode-tooltip="diceModeTooltip"
+        :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
+        :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+        :dice-feature-updating="diceFeatureUpdating"
+        :channel-bot-selection="channelBotSelection"
+        :bot-select-options="botSelectOptions"
+        :bot-options-loading="botOptionsLoading"
+        :channel-bots-loading="channelBotsLoading"
+        :syncing-channel-bot="syncingChannelBot"
+        :has-bot-options="hasBotOptions"
+        @update:visible="diceSettingsVisible = $event"
+        @toggle-built-in="handleDiceFeatureToggle"
+        @toggle-bot="handleBotFeatureToggle"
+        @select-bot="handleBotSelectionChange"
+        @open-channel-member-settings="openChannelMemberSettings"
+      />
+    </template>
+  </DiceTrayFloatingWindow>
   <IFormFloatingWindows />
   <IFormDrawer />
 
@@ -18188,6 +19125,24 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel.id"
   />
 
+	<DiceOverlayLoader v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled" :surface-element="messagesListRef" />
+	<DiceDock
+		v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled"
+		:enabled="dice3dProfile?.dockEnabled === true"
+			:x="dice3dProfile?.dockX"
+			:y="dice3dProfile?.dockY"
+			:corner="dice3dProfile?.dockCorner"
+			:stacks="dice3dProfile?.dockStacks"
+		@roll="handleDiceRollNow"
+		@move="handleDice3DDockMove"
+	/>
+	<DiceSettingsDrawer
+		v-model:show="dice3dSettingsVisible"
+		:world-id="chat.currentWorldId"
+		:can-manage-world="canManageDice3DWorld"
+		@profile-saved="handleDice3DProfileSaved"
+	/>
+
   <!-- 人物卡预览窗口 -->
   <CharacterSheetManager />
 </template>
@@ -18196,6 +19151,22 @@ onBeforeUnmount(() => {
 /* 频道背景层样式 */
 .chat-root-container {
   position: relative;
+}
+
+.chat-root-container--embed {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-root-container--embed > .chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+}
+
+.chat-root-container--embed > .edit-area {
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 .chat-root-container--embed .chat-input-area {
@@ -19220,28 +20191,6 @@ onBeforeUnmount(() => {
     var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) * 0.43
   );
 }
-
-.channel-switch-trigger {
-  position: fixed;
-  top: 5.5rem;
-  left: 0.5rem;
-  z-index: 40;
-  pointer-events: auto;
-  background-color: var(--sc-chip-bg);
-  border: 1px solid var(--sc-border-mute);
-  border-radius: 999px;
-}
-
-.channel-switch-trigger .n-button {
-  color: var(--sc-text-primary);
-}
-
-@media (min-width: 1024px) {
-  .channel-switch-trigger {
-    display: none;
-  }
-}
-
 
 .typing-preview-item {
   margin-top: 0.75rem;
@@ -21583,6 +22532,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.identity-manager.identity-manager--bot {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .identity-manager__sidebar {
   border-right: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.2));
   padding-right: 0.75rem;
@@ -22175,37 +23128,6 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
-:global(.dice-tray-popover-edge) {
-  width: min(420px, calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px))) !important;
-  max-width: calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px));
-  left: auto !important;
-  right: var(--dice-tray-right-offset, 0px) !important;
-  position: fixed !important;
-  transform: none !important;
-  box-sizing: border-box;
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-}
-
-:global(.dice-tray-popover-edge .dice-tray) {
-  width: 100%;
-  min-width: 0;
-}
-
-:global(.dice-tray-popover-edge .dice-tray__body) {
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-:global(.dice-tray-popover-edge .dice-tray__column--quick) {
-  flex: 1;
-}
-
-:global(.dice-tray-popover-edge .dice-tray__history) {
-  max-height: 45vh;
-  overflow-y: auto;
-}
 .identity-variant-dialog :deep(.n-card),
 .identity-dialog :deep(.n-card) {
   background: var(--sc-bg-elevated, #ffffff);

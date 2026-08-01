@@ -16,6 +16,7 @@ type characterCardTemplatePayload struct {
 	DefaultBadgeTemplate *string `json:"defaultBadgeTemplate"`
 	IsGlobalDefault      *bool   `json:"isGlobalDefault"`
 	IsSheetDefault       *bool   `json:"isSheetDefault"`
+	IsBuiltin            bool    `json:"isBuiltin"`
 }
 
 type characterCardTemplateSetDefaultPayload struct {
@@ -88,6 +89,7 @@ func CharacterCardTemplateCreate(c *fiber.Ctx) error {
 		DefaultBadgeTemplate: defaultBadgeTemplate,
 		IsGlobalDefault:      isGlobalDefault,
 		IsSheetDefault:       isSheetDefault,
+		IsBuiltin:            payload.IsBuiltin,
 	})
 	if err != nil {
 		status, msg := mapCharacterCardTemplateError(err)

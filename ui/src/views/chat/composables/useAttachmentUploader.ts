@@ -5,7 +5,11 @@ import { useUtilsStore } from '@/stores/utils';
 import { useImageCompressor } from '@/composables/useImageCompressor';
 
 interface UploadImageOptions {
-  channelId?: string;
+  channelId?: string | null;
+  targetUserId?: string | null;
+  rootId?: string;
+  rootIdType?: string;
+  confirm?: boolean;
   /** Skip image compression (e.g., already compressed by AvatarEditor) */
   skipCompression?: boolean;
 }
@@ -19,7 +23,9 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   const user = useUserStore();
   const chat = useChatStore();
   const utils = useUtilsStore();
-  const channelId = options?.channelId || chat.curChannel?.id || '';
+  const channelId = options?.channelId === undefined
+    ? chat.curChannel?.id || ''
+    : options.channelId || '';
 
   // Check file size before uploading
   const sizeLimit = utils.fileSizeLimit;
@@ -44,15 +50,25 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   if (channelId) {
     headers.ChannelId = channelId;
   }
+  if (options?.targetUserId) {
+    headers.TargetUserId = options.targetUserId;
+  }
+  if (options?.rootId) formData.append('rootId', options.rootId);
+  if (options?.rootIdType) formData.append('rootIdType', options.rootIdType);
 
   let resp;
   try {
-    resp = await api.post('/api/v1/attachment-upload', formData, { headers });
+    // 相对路径，避免 baseURL 含子路径时绝对路径丢前缀
+    resp = await api.post('api/v1/attachment-upload', formData, { headers });
   } catch (error: any) {
-    // Extract backend error message from response
-    const backendMessage = error?.response?.data?.message;
+    const data = error?.response?.data;
+    const backendMessage = data?.message || data?.error;
     if (backendMessage) {
       throw new Error(backendMessage);
+    }
+    const status = error?.response?.status;
+    if (status === 404) {
+      throw new Error('上传接口不可用或频道无效，请刷新后重试');
     }
     throw new Error('上传失败，请稍后重试');
   }
@@ -82,6 +98,15 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
       throw new Error('服务端未返回附件ID，已停止兼容旧数据，请升级后端接口');
     }
     throw new Error('上传失败，请稍后重试');
+  }
+
+  if (options?.confirm) {
+    await api.post('api/v1/attachment-confirm', {
+      ids: [rawId],
+      isTemp: false,
+      rootId: options.rootId || '',
+      rootIdType: options.rootIdType || '',
+    });
   }
 
   const attachmentRef = `id:${rawId}`;

@@ -27,14 +27,14 @@ interface DisplaySettingsTransferManifest {
   bundledFont?: BundledFontManifest | null
 }
 
-interface ZipEntry {
+export interface ZipEntry {
   name: string
   data: Uint8Array
   comment?: string
   lastModified?: Date
 }
 
-interface ParsedZipEntry {
+export interface ParsedZipEntry {
   name: string
   data: Uint8Array
 }
@@ -149,7 +149,7 @@ const concatUint8Arrays = (parts: Uint8Array[]): Uint8Array => {
   return merged
 }
 
-const createZip = (entries: ZipEntry[]): Uint8Array => {
+export const createZip = (entries: ZipEntry[]): Uint8Array => {
   const localParts: Uint8Array[] = []
   const centralParts: Uint8Array[] = []
   let offset = 0
@@ -244,7 +244,7 @@ const inflateDeflateRaw = async (bytes: Uint8Array): Promise<Uint8Array> => {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-const parseZip = async (bytes: Uint8Array): Promise<Map<string, ParsedZipEntry>> => {
+export const parseZip = async (bytes: Uint8Array): Promise<Map<string, ParsedZipEntry>> => {
   const eocdOffset = findEndOfCentralDirectory(bytes)
   if (eocdOffset < 0) {
     throw new Error('ZIP 文件结构无效')
@@ -473,7 +473,7 @@ const applyBundledFontToSettings = async (
   return { importedFont: true, warnings }
 }
 
-const isZipBytes = (bytes: Uint8Array) =>
+export const isZipBytes = (bytes: Uint8Array) =>
   bytes.length >= 4
   && bytes[0] === 0x50
   && bytes[1] === 0x4b

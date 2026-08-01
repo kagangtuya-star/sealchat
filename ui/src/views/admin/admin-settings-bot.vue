@@ -584,7 +584,7 @@ const handleAvatarEditorSave = async (file: File) => {
   avatarEditorFile.value = null;
   setAvatarPreview(file);
   try {
-    const result = await uploadImageAttachment(file, { channelId: 'bot-avatar', skipCompression: true });
+    const result = await uploadImageAttachment(file, { skipCompression: true });
     if (!result.attachmentId) {
       throw new Error('上传失败');
     }

@@ -9,6 +9,7 @@ import {
   Heartbeat as BridgeStatusIcon,
   Link as LinkIcon,
   LayoutBoardSplit as SplitIcon,
+  Presentation as TheaterIcon,
   MoodSmile as EmojiIcon,
   Palette,
   Photo as PhotoIcon,
@@ -17,6 +18,7 @@ import {
   Users as UsersIcon,
   Id as CharacterCardIcon,
   Message2 as CharacterRemarkIcon,
+	Dice as Dice3DIcon,
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
@@ -49,10 +51,14 @@ interface Props {
   importActive?: boolean
   splitEnabled?: boolean
   splitActive?: boolean
+  theaterEnabled?: boolean
+  theaterActive?: boolean
   icOocSplitEnabled?: boolean
   icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
   stickyNoteActive?: boolean
+	dice3dEnabled?: boolean
+	dice3dActive?: boolean
   webhookEnabled?: boolean
   webhookActive?: boolean
   bridgeStatusActive?: boolean
@@ -75,8 +81,10 @@ interface Emits {
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
   (e: 'open-split'): void
+  (e: 'open-theater'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
+	(e: 'open-dice3d'): void
   (e: 'open-webhook'): void
   (e: 'open-bridge-status'): void
   (e: 'open-email-notification'): void
@@ -105,6 +113,7 @@ interface ActionButton {
   activeKey: keyof Props
   template?: 'default' | 'split-dual'
   disabled?: () => boolean
+  disabledReason?: string
 }
 
 const SPLIT_DUAL_MORE_LEFT_KEY = 'ic-ooc-split:left'
@@ -140,7 +149,19 @@ const allActionButtons = computed<ActionButton[]>(() => {
   // 消息归档 always at the end
   buttons.push({ key: 'archive', label: '消息归档', icon: ArchiveIcon, emitEvent: 'open-archive', activeKey: 'archiveActive' })
 
-  // 分屏入口（置于“消息归档”之后）
+  // 小剧场入口紧邻且位于分屏之前
+  if (props.theaterEnabled !== undefined) {
+    buttons.push({
+      key: 'theater',
+      label: '小剧场',
+      icon: TheaterIcon,
+      emitEvent: 'open-theater',
+      activeKey: 'theaterActive',
+      disabled: () => props.theaterEnabled === false,
+      disabledReason: '请先进入频道',
+    })
+  }
+
   if (props.splitEnabled !== false) {
     buttons.push({ key: 'split', label: '分屏', icon: SplitIcon, emitEvent: 'open-split', activeKey: 'splitActive' })
   }
@@ -160,6 +181,10 @@ const allActionButtons = computed<ActionButton[]>(() => {
   if (props.stickyNoteEnabled !== false) {
     buttons.push({ key: 'sticky-note', label: '便签', icon: DocumentTextOutline, emitEvent: 'toggle-sticky-note', activeKey: 'stickyNoteActive' })
   }
+
+	if (props.dice3dEnabled !== false) {
+		buttons.push({ key: 'dice3d', label: '3D 骰子', icon: Dice3DIcon, emitEvent: 'open-dice3d', activeKey: 'dice3dActive' })
+	}
 
   // Webhook 授权管理入口（通常在分屏模式下启用）
   if (props.webhookEnabled) {
@@ -533,6 +558,7 @@ const cycleIcFilter = () => {
               class="ribbon-action-button"
               :class="{ 'is-active': props[button.activeKey] }"
               :disabled="button.disabled?.() === true"
+              :title="button.disabled?.() === true ? button.disabledReason : undefined"
               @click="handleButtonClick(button)"
             >
               <template #icon>
@@ -715,6 +741,7 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-action-button {
+  cursor: var(--sc-cursor-pointer, pointer) !important;
   transition: background-color 0.2s ease, color 0.2s ease;
   border-radius: 999px;
   padding: 0 0.85rem;
@@ -727,6 +754,14 @@ const cycleIcFilter = () => {
   gap: 0.35rem;
   background-color: transparent;
   flex-shrink: 0;
+}
+
+.ribbon-action-button :deep(*) {
+  cursor: inherit !important;
+}
+
+.ribbon-action-button.n-button--disabled {
+  cursor: var(--sc-cursor-not-allowed, not-allowed) !important;
 }
 
 .ribbon-dual-split {

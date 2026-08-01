@@ -35,6 +35,7 @@ func AudioAssetList(c *fiber.Ctx) error {
 		Page:              c.QueryInt("page", 1),
 		PageSize:          c.QueryInt("pageSize", 200),
 		Tags:              queryStringSlice(c, "tags[]", "tags"),
+		ExcludeTags:       []string{service.TheaterFeatureAudioTag},
 		CreatorIDs:        queryStringSlice(c, "creatorIds[]", "creatorIds"),
 		SortBy:            strings.TrimSpace(c.Query("sortBy")),
 		SortOrder:         strings.TrimSpace(c.Query("sortOrder")),
@@ -933,7 +934,8 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	if variant.StorageType == model.StorageS3 {
 		target := strings.TrimSpace(variant.ObjectKey)
 		if manager := service.GetStorageManager(); manager != nil && target != "" && !strings.HasPrefix(strings.ToLower(target), "http") {
-			if resolved := manager.PublicURL(storage.BackendS3, variant.ObjectKey); resolved != "" {
+			resolved := manager.ResolveReadURL(c.Context(), storage.BackendS3, variant.ObjectKey)
+			if resolved != "" {
 				target = resolved
 			}
 		}
@@ -1762,12 +1764,20 @@ func streamFileWithRange(c *fiber.Ctx, file *os.File, size int64, contentType st
 	c.Set(fiber.HeaderContentType, contentType)
 	if rangeHeader == "" {
 		c.Set("Content-Length", strconv.FormatInt(size, 10))
-		err := c.SendStream(file)
-		_ = file.Close()
-		return err
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer file.Close()
+			if _, err := io.CopyN(w, file, size); err != nil && err != io.EOF {
+				fmt.Printf("audio stream copy error: %v\n", err)
+			}
+			if err := w.Flush(); err != nil {
+				fmt.Printf("audio stream flush error: %v\n", err)
+			}
+		})
+		return nil
 	}
 	start, end, err := parseRange(rangeHeader, size)
 	if err != nil {
+		_ = file.Close()
 		return wrapErrorStatus(c, fiber.StatusRequestedRangeNotSatisfiable, err, "无效的 Range 请求")
 	}
 	length := end - start + 1

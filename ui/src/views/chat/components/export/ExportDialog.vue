@@ -5,6 +5,7 @@ import { Settings } from '@vicons/ionicons5'
 import { useUtilsStore } from '@/stores/utils'
 import { useDisplayStore } from '@/stores/display'
 import { useChatStore } from '@/stores/chat'
+import type { SChannel } from '@/types'
 import {
   applyCalendarActiveDayHighlights,
   buildPanelMonthActiveDayMap,
@@ -28,6 +29,7 @@ interface ExportParams {
   autoUpload: boolean
   maxExportMessages: number
   maxExportConcurrency: number
+  channelIds?: string[]
 }
 
 interface ExportColorProfileEntry {
@@ -40,6 +42,7 @@ interface Props {
   visible: boolean
   channelId?: string
   battleSummaryEnabled?: boolean
+  batchMode?: boolean
 }
 
 interface Emits {
@@ -120,6 +123,7 @@ const utils = useUtilsStore()
 const display = useDisplayStore()
 const chat = useChatStore()
 const loading = ref(false)
+const selectedBatchChannelIds = ref<string[]>([])
 const textColorizeBBCodeProfileMap = ref<Record<string, ExportColorProfileEntry>>({})
 const colorProfileVisible = ref(false)
 const colorProfileLoading = ref(false)
@@ -188,6 +192,30 @@ const cloudUploadDefaultName = '频道名_时间范围（例如：新的_2025110
 const isSealFormatter = computed(() => form.format === 'json')
 const showZipOptions = computed(() => form.format === 'html')
 const showColorProfileTrigger = computed(() => form.format === 'txt')
+const batchChannelOptions = computed(() => {
+  const options: Array<{ label: string; value: string }> = []
+  const visit = (channels: SChannel[], prefix = '') => {
+    channels.forEach((channel) => {
+      const name = String(channel.name || channel.id || '').trim()
+      if (channel.id && name) {
+        options.push({ label: `${prefix}${name}`, value: channel.id })
+      }
+      if (channel.children?.length) {
+        visit(channel.children, `${prefix}　`)
+      }
+    })
+  }
+  visit(chat.channelTree || [])
+  return options
+})
+const allBatchChannelIds = computed(() => batchChannelOptions.value.map(item => item.value))
+const isAllBatchChannelsSelected = computed(() => {
+  const selected = new Set(selectedBatchChannelIds.value)
+  return allBatchChannelIds.value.length > 0 && allBatchChannelIds.value.every(id => selected.has(id))
+})
+const toggleAllBatchChannels = (checked: boolean) => {
+  selectedBatchChannelIds.value = checked ? [...allBatchChannelIds.value] : []
+}
 const colorProfileCount = computed(() => Object.values(textColorizeBBCodeProfileMap.value)
   .filter(item => !!(item?.color || item?.name)).length)
 const filteredColorProfileRows = computed(() => {
@@ -681,6 +709,9 @@ watch(
   (visible) => {
     if (visible) {
       syncExportSettingsFromStore()
+      if (props.batchMode && selectedBatchChannelIds.value.length === 0 && props.channelId) {
+        selectedBatchChannelIds.value = [props.channelId]
+      }
       void loadSavedColorProfiles(props.channelId)
       syncCalendarHighlightsAfterViewportChange()
     } else {
@@ -796,6 +827,11 @@ const handleExport = async () => {
     return
   }
 
+  if (props.batchMode && selectedBatchChannelIds.value.length === 0) {
+    message.error('请选择至少一个频道')
+    return
+  }
+
   const isHtmlExport = showZipOptions.value
   const normalizedSliceLimit = isHtmlExport
     ? clampHtmlSliceLimit(form.maxExportMessages)
@@ -836,6 +872,7 @@ const handleExport = async () => {
     }
     emit('export', {
       ...form,
+      channelIds: props.batchMode ? [...selectedBatchChannelIds.value] : undefined,
       textColorizeBBCodeMap: colorMap,
       textColorizeBBCodeNameMap: nameMap,
       displayName: form.displayName?.trim() || undefined,
@@ -902,7 +939,7 @@ onBeforeUnmount(() => {
     :show="visible"
     @update:show="emit('update:visible', $event)"
     preset="card"
-    title="导出聊天记录"
+    :title="props.batchMode ? '批量导出聊天记录' : '导出聊天记录'"
     class="export-dialog"
     :auto-focus="false"
   >
@@ -911,7 +948,8 @@ onBeforeUnmount(() => {
         <template #header>
           导出说明
         </template>
-        <p>提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。</p>
+        <p v-if="props.batchMode">每个频道按当前参数并行导出，完成后汇总为一个 ZIP 文件下载。</p>
+        <p v-else>提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。</p>
         <p v-if="cloudUploadEnabled" class="cloud-tip">
           云端染色已开放：JSON 导出可一键上传到 SealDice 云端，生成 docx/BBcode 渲染结果。
         </p>
@@ -942,6 +980,27 @@ onBeforeUnmount(() => {
         <template #feedback>
           留空将使用默认文件名；下载时会统一命名为“文件名-任务ID-时间戳”，并自动补齐当前格式扩展名。
         </template>
+      </n-form-item>
+
+      <n-form-item v-if="props.batchMode" label="导出频道">
+        <n-space vertical style="width: 100%">
+          <n-select
+            v-model:value="selectedBatchChannelIds"
+            multiple
+            filterable
+            clearable
+            :options="batchChannelOptions"
+            placeholder="选择一个或多个频道"
+          />
+          <n-checkbox
+            :checked="isAllBatchChannelsSelected"
+            :disabled="!allBatchChannelIds.length"
+            @update:checked="toggleAllBatchChannels"
+          >
+            全选全部 {{ allBatchChannelIds.length }} 个频道
+          </n-checkbox>
+        </n-space>
+        <template #feedback>所选频道会按相同参数并行生成，并在一个 ZIP 文件中按频道分别存放。</template>
       </n-form-item>
 
       <n-form-item v-if="showZipOptions" label="ZIP 分片">
@@ -1055,6 +1114,14 @@ onBeforeUnmount(() => {
                   @click.stop="openColorProfilePanel"
                 >
                   <n-icon :component="Settings" />
+                </n-button>
+                <n-button
+                  text
+                  size="tiny"
+                  :disabled="!props.channelId"
+                  @click.stop="openColorProfilePanel"
+                >
+                  BBcode角色染色设置
                 </n-button>
               </n-space>
             </template>

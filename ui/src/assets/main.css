@@ -195,6 +195,76 @@ body {
   overflow: hidden;
 }
 
+html,
+body,
+#app {
+  cursor: var(--sc-cursor-default, default);
+}
+
+:where(
+  a[href],
+  button:not(:disabled),
+  .n-button:not(.n-button--disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='link'],
+  [role='menuitem'],
+  [role='option'],
+  [role='switch'],
+  [role='tab'],
+  summary,
+  label[for],
+  select:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='button']:not(:disabled),
+  input[type='submit']:not(:disabled),
+  input[type='reset']:not(:disabled)
+) {
+  cursor: var(--sc-cursor-pointer, pointer) !important;
+}
+
+:where(
+  a[href],
+  button:not(:disabled),
+  .n-button:not(.n-button--disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='link'],
+  [role='menuitem'],
+  [role='option'],
+  [role='switch'],
+  [role='tab'],
+  summary,
+  label[for]
+) :where(*) {
+  cursor: inherit !important;
+}
+
+:where(
+  button:disabled,
+  .n-button.n-button--disabled,
+  [aria-disabled='true'],
+  input:disabled,
+  select:disabled,
+  textarea:disabled
+) {
+  cursor: var(--sc-cursor-not-allowed, not-allowed) !important;
+}
+
+:where(
+  input:not([type]):not(:disabled),
+  input[type='text']:not(:disabled),
+  input[type='search']:not(:disabled),
+  input[type='email']:not(:disabled),
+  input[type='password']:not(:disabled),
+  input[type='url']:not(:disabled),
+  input[type='tel']:not(:disabled),
+  input[type='number']:not(:disabled),
+  textarea:not(:disabled),
+  [contenteditable]:not([contenteditable='false'])
+) {
+  cursor: var(--sc-cursor-text, text) !important;
+}
+
 body {
   background-color: var(--sc-bg-page);
   color: var(--sc-text-primary);

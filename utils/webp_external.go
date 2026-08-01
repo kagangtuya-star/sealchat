@@ -76,6 +76,10 @@ func EncodeImageToWebPWithCWebP(img image.Image, quality int) ([]byte, error) {
 }
 
 func EncodeGIFToWebPWithGIF2WebP(gifData []byte, quality int) ([]byte, error) {
+	return EncodeGIFToWebPWithGIF2WebPResize(gifData, quality, 0, 0)
+}
+
+func EncodeGIFToWebPWithGIF2WebPResize(gifData []byte, quality, width, height int) ([]byte, error) {
 	if len(gifData) == 0 {
 		return nil, errors.New("empty gif data")
 	}
@@ -113,9 +117,11 @@ func EncodeGIFToWebPWithGIF2WebP(gifData []byte, quality int) ([]byte, error) {
 		"-quiet",
 		"-metadata", "none",
 		"-q", strconv.Itoa(quality),
-		inPath,
-		"-o", outPath,
 	}
+	if width > 0 && height > 0 {
+		args = append(args, "-resize", strconv.Itoa(width), strconv.Itoa(height))
+	}
+	args = append(args, inPath, "-o", outPath)
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(context.Background(), gif2webpPath, args...)

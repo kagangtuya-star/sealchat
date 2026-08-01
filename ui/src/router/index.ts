@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/embed/EmbedChatView.vue'),
     },
     {
+      path: '/theater',
+      name: 'theater',
+      component: () => import('@/views/theater/host/TheaterView.vue'),
+    },
+    {
       path: '/user/signin',
       name: 'user-signin',
       component: UserSigninVue

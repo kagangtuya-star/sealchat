@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from './_config';
+import { useChatStore } from './chat';
 import type { BattleReport, BattleReportDisplayChannel, BattleReportPayload } from '@/types';
 
 interface BattleReportListResponse {
@@ -97,7 +98,15 @@ export const useBattleReportStore = defineStore('battleReport', {
     async get(reportId: string) {
       this.loading = true;
       try {
-        const resp = await api.get<BattleReportItemResponse>(`api/v1/battle-reports/${reportId}`);
+        const chat = useChatStore();
+        const observerSlug = chat.observerMode ? String(chat.observerSlug || '').trim() : '';
+        const channelId = String(chat.curChannel?.id || '').trim();
+        const endpoint = observerSlug && channelId
+          ? `api/v1/public/ob/channels/${channelId}/battle-reports/${reportId}`
+          : `api/v1/battle-reports/${reportId}`;
+        const resp = await api.get<BattleReportItemResponse>(endpoint, {
+          params: observerSlug ? { ob_slug: observerSlug } : undefined,
+        });
         const item = resp.data?.item;
         this.upsertItem(item);
         return item;

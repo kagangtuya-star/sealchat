@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, Event, GuildMember } from '@satorijs/protocol'
 import type { APIChannelCreateResp, APIChannelListResp, APIMessage, AvatarDecoration, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIcOocRoleConfig, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityManageCandidatesResponse, ChannelIdentityVariant, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { TheaterPresentation, TheaterPresentationPatch, WorldTheaterPresentationTemplate } from '@/types/theaterPresentation';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -956,6 +957,15 @@ const ensureChannelIdentityGateway = () => {
     }
     const targetUserId = normalizeIdentityScopeUserId(options.targetUserId);
     const chat = useChatStore();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('sealchat:theater-appearance-invalidated', {
+        detail: { channelId, targetUserId },
+      }));
+    }
+    const currentUserId = normalizeIdentityScopeUserId(useUserStore().info?.id);
+    if (targetUserId && targetUserId !== currentUserId) {
+      return;
+    }
     const scopeKey = chat.resolveChannelIdentityScopeKey(channelId, targetUserId);
     if (!scopeKey) {
       return;
@@ -1361,9 +1371,7 @@ export const useChatStore = defineStore({
         ? observerSlug.trim()
         : this.observerSlug;
       const cachedChannelId = readObserverSessionChannel(normalizedObserverSlug, normalizedWorldId);
-      const effectiveChannelId = normalizedObserverSlug
-        ? (cachedChannelId || normalizedChannelId)
-        : (normalizedChannelId || cachedChannelId);
+      const effectiveChannelId = normalizedChannelId || cachedChannelId;
       const wasObserver = this.observerMode;
       const prevWorldId = this.observerWorldId;
       const prevObserverSlug = this.observerSlug;
@@ -1371,6 +1379,9 @@ export const useChatStore = defineStore({
       this.observerWorldId = normalizedWorldId;
       this.observerChannelId = effectiveChannelId;
       this.observerSlug = normalizedObserverSlug;
+      if (!wasObserver || prevObserverSlug !== normalizedObserverSlug) {
+        this.setFilterState({ icFilter: 'ic', showArchived: false, roleIds: [] });
+      }
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
         if (!this.joinedWorldIds.includes(normalizedWorldId)) {
@@ -1426,7 +1437,8 @@ export const useChatStore = defineStore({
           targetChannel = readObserverSessionChannel(this.observerSlug, worldId);
         }
         const world = this.worldMap[worldId];
-        const fallbackChannel = world?.defaultChannelId || findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
+        const firstChannelId = findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
+        const fallbackChannel = firstChannelId || world?.defaultChannelId || '';
         if (!targetChannel) {
           targetChannel = fallbackChannel;
         }
@@ -1575,7 +1587,7 @@ export const useChatStore = defineStore({
               this.connectReady(epoch);
             } else if (msg.op === 0) {
               // Opcode.EVENT
-              const e = msg as Event;
+              const e = (msg.body || msg) as Event;
               this.eventDispatch(e);
             } else if (msg.op === 2) {
               this.handlePong();
@@ -2174,11 +2186,25 @@ export const useChatStore = defineStore({
       channelDefaultBotId?: string;
       channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
+      cursorTheme?: import('@/services/cursor/cursorTypes').CursorThemeConfig;
+      stickyNoteDefaultAppearance?: unknown;
     }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
         this.worldDetailMap[worldId] = resp.data;
+      }
+      return resp.data;
+    },
+
+    async worldTheaterPresentationTemplateSet(worldId: string, template: WorldTheaterPresentationTemplate) {
+      const resp = await api.put(`/api/v1/worlds/${worldId}/theater-presentation-template`, template);
+      if (resp.data?.world) {
+        this.worldMap[worldId] = resp.data.world;
+        this.worldDetailMap[worldId] = {
+          ...(this.worldDetailMap[worldId] || {}),
+          world: resp.data.world,
+        };
       }
       return resp.data;
     },
@@ -2922,6 +2948,10 @@ export const useChatStore = defineStore({
       if (scopeKey === channelId && options?.syncIcOocFromRole !== false) {
         this.autoSwitchIcOocOnRoleChange(channelId, identityId, options?.persist !== false);
       }
+      if (scopeKey === channelId) {
+        const identity = (this.channelIdentities[scopeKey] || []).find(item => item.id === identityId);
+        chatEvent.emit('channel-identity-updated', { channelId, identity } as any);
+      }
     },
 
     setActiveIdentityVariant(
@@ -2946,6 +2976,29 @@ export const useChatStore = defineStore({
       if (options?.persist !== false) {
         writeChannelIdentityVariantToStorage(scopeKey, identityId, variantId || '');
       }
+      if (scopeKey === channelId) {
+        const identity = (this.channelIdentities[scopeKey] || []).find(item => item.id === identityId);
+        chatEvent.emit('channel-identity-updated', { channelId, identity } as any);
+      }
+    },
+
+    getIdentityIcOocMode(channelId: string, identityId: string): 'ic' | 'ooc' | null {
+      if (!channelId || !identityId) return null;
+      const identities = this.channelIdentities[channelId] || [];
+      const targetIdentity = identities.find((identity) => identity.id === identityId);
+      const temporaryMode = targetIdentity?.isTemporary
+        ? String(targetIdentity.icOocOnActivate || '').trim().toLowerCase()
+        : '';
+      if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
+        return temporaryMode;
+      }
+
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      const isIcRole = config.icRoleId === identityId;
+      const isOocRole = config.oocRoleId === identityId;
+      if (isIcRole && !isOocRole) return 'ic';
+      if (isOocRole && !isIcRole) return 'ooc';
+      return null;
     },
 
     /**
@@ -2958,39 +3011,11 @@ export const useChatStore = defineStore({
       if (!display.settings.autoSwitchRoleOnIcOocToggle) {
         return;
       }
-      if (!channelId || !newRoleId) {
-        return;
-      }
+      const targetMode = this.getIdentityIcOocMode(channelId, newRoleId);
 
-      const identities = this.channelIdentities[channelId] || [];
-      const targetIdentity = identities.find((identity) => identity.id === newRoleId);
-      const temporaryMode = targetIdentity?.isTemporary
-        ? String(targetIdentity.icOocOnActivate || '').trim().toLowerCase()
-        : '';
-      if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
-        if (this.icMode !== temporaryMode) {
-          this.setIcMode(temporaryMode, channelId, undefined, { persist });
-        }
-        return;
+      if (targetMode && this.icMode !== targetMode) {
+        this.setIcMode(targetMode, channelId, undefined, { persist });
       }
-
-      const config = this.getChannelIcOocRoleConfig(channelId);
-      const isIcRole = config.icRoleId === newRoleId;
-      const isOocRole = config.oocRoleId === newRoleId;
-
-      // 只有唯一映射时才自动切换
-      if (isIcRole && !isOocRole) {
-        // 角色仅映射到 IC，自动切换到 IC 模式
-        if (this.icMode !== 'ic') {
-          this.setIcMode('ic', channelId, undefined, { persist });
-        }
-      } else if (isOocRole && !isIcRole) {
-        // 角色仅映射到 OOC，自动切换到 OOC 模式
-        if (this.icMode !== 'ooc') {
-          this.setIcMode('ooc', channelId, undefined, { persist });
-        }
-      }
-      // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
     },
 
     upsertChannelIdentity(identity: ChannelIdentity, targetUserId?: string | null) {
@@ -3276,6 +3301,8 @@ export const useChatStore = defineStore({
       displayName?: string;
       color?: string;
       appearance?: Record<string, any>;
+      theaterPresentation?: TheaterPresentationPatch | null;
+      skipTheaterAssetValidation?: boolean;
       enabled: boolean;
     }) {
       const resp = await api.post<{ item: ChannelIdentityVariant }>('api/v1/channel-identity-variants', payload);
@@ -3294,6 +3321,8 @@ export const useChatStore = defineStore({
       displayName?: string;
       color?: string;
       appearance?: Record<string, any>;
+      theaterPresentation?: TheaterPresentationPatch | null;
+      skipTheaterAssetValidation?: boolean;
       enabled: boolean;
     }) {
       const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}`, payload);
@@ -3327,7 +3356,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
@@ -3335,14 +3364,14 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
       return identity;
     },
 
-    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity; removedId?: string; oldIdentityId?: string }>(`api/v1/channel-identities/${identityId}/replace-temporary`, payload);
       const identity = resp.data.item;
       const removedId = resp.data.removedId || resp.data.oldIdentityId || identityId;
@@ -6006,6 +6035,23 @@ export const useChatStore = defineStore({
       return payload;
     },
 
+    async archiveMessagesBefore(messageId: string) {
+      const channelId = this.curChannel?.id;
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!channelId || !normalizedMessageId) {
+        throw new Error('归档失败：缺少频道或目标消息');
+      }
+      const resp = await this.sendAPI('message.archive.before', {
+        channel_id: channelId,
+        message_id: normalizedMessageId,
+      });
+      const archivedCount = resp?.data?.archived_count;
+      if (typeof archivedCount !== 'number') {
+        throw new Error('归档失败：服务端未返回有效结果');
+      }
+      return archivedCount;
+    },
+
     async unarchiveMessages(messageIds: string[]) {
       if (!this.curChannel?.id || messageIds.length === 0) return;
       const resp = await this.sendAPI('message.unarchive', {
@@ -6129,6 +6175,59 @@ export const useChatStore = defineStore({
       };
     },
 
+    async createBatchExportTask(params: {
+      channelId: string;
+      channelIds: string[];
+      format: string;
+      timeRange?: [number, number];
+      includeOoc?: boolean;
+      includeArchived?: boolean;
+      includeImages?: boolean;
+      includeDiceCommands?: boolean;
+      withoutTimestamp?: boolean;
+      mergeMessages?: boolean;
+      textColorizeBBCode?: boolean;
+      sliceLimit?: number;
+      maxConcurrency?: number;
+      displaySettings?: DisplaySettings;
+      displayName?: string;
+      textColorizeBBCodeMap?: Record<string, string>;
+      textColorizeBBCodeNameMap?: Record<string, string>;
+    }) {
+      const payload: Record<string, any> = {
+        channel_id: params.channelId,
+        channel_ids: params.channelIds,
+        format: params.format,
+        include_ooc: params.includeOoc ?? true,
+        include_archived: params.includeArchived ?? false,
+        include_images: params.includeImages ?? true,
+        include_dice_commands: params.includeDiceCommands ?? true,
+        without_timestamp: params.withoutTimestamp ?? false,
+        merge_messages: params.mergeMessages ?? true,
+      };
+      if (params.displayName) payload.display_name = params.displayName;
+      if (params.timeRange?.length === 2) payload.time_range = params.timeRange;
+      if (params.sliceLimit) payload.slice_limit = params.sliceLimit;
+      if (params.maxConcurrency) payload.max_concurrency = params.maxConcurrency;
+      if (params.displaySettings) payload.display_settings = params.displaySettings;
+      if (params.textColorizeBBCode) {
+        payload.text_bbcode_colorize = true;
+        if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
+          payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
+        if (params.textColorizeBBCodeNameMap && Object.keys(params.textColorizeBBCodeNameMap).length > 0) {
+          payload.text_bbcode_name_map = params.textColorizeBBCodeNameMap;
+        }
+      }
+      const resp = await api.post('api/v1/chat/export/batch', payload);
+      return resp.data as {
+        task_id: string;
+        status: string;
+        message?: string;
+        requested_at?: number;
+      };
+    },
+
     async getExportTaskStatus(taskId: string) {
       const resp = await api.get(`api/v1/chat/export/${taskId}`);
       return resp.data as {
@@ -6211,6 +6310,18 @@ export const useChatStore = defineStore({
         name?: string;
         file_name?: string;
         uploaded_at?: number;
+      };
+    },
+
+    async uploadBatchExportTask(taskId: string) {
+      const resp = await api.post(`api/v1/chat/export/${taskId}/upload-batch`);
+      return resp.data as {
+        items: Array<{
+          url: string;
+          name?: string;
+          file_name?: string;
+          uploaded_at?: number;
+        }>;
       };
     },
 

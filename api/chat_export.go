@@ -24,6 +24,7 @@ import (
 
 type chatExportRequest struct {
 	ChannelID           string            `json:"channel_id"`
+	ChannelIDs          []string          `json:"channel_ids"`
 	Format              string            `json:"format"`
 	DisplayName         string            `json:"display_name"`
 	TimeRange           []int64           `json:"time_range"`
@@ -72,6 +73,10 @@ type chatExportUploadResponse struct {
 	Name       string `json:"name,omitempty"`
 	FileName   string `json:"file_name,omitempty"`
 	UploadedAt int64  `json:"uploaded_at,omitempty"`
+}
+
+type chatExportBatchUploadResponse struct {
+	Items []chatExportUploadResponse `json:"items"`
 }
 
 type chatExportDeleteResponse struct {
@@ -320,6 +325,111 @@ func ChatExportCreate(c *fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
+func ChatExportBatchCreate(c *fiber.Ctx) error {
+	var req chatExportRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求体解析失败"})
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "未认证"})
+	}
+	resp, err := execChatExportBatchCreate(user.ID, &req)
+	if err != nil {
+		return c.Status(mapExportError(err)).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(resp)
+}
+
+func execChatExportBatchCreate(userID string, req *chatExportRequest) (*chatExportResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("请求参数不能为空")
+	}
+	anchorChannelID := strings.TrimSpace(req.ChannelID)
+	if err := validateExportChannel(userID, anchorChannelID); err != nil {
+		return nil, err
+	}
+	channelIDs := make([]string, 0, len(req.ChannelIDs))
+	seen := make(map[string]struct{}, len(req.ChannelIDs))
+	for _, channelID := range req.ChannelIDs {
+		channelID = strings.TrimSpace(channelID)
+		if channelID == "" {
+			continue
+		}
+		if _, exists := seen[channelID]; exists {
+			continue
+		}
+		if err := validateExportChannel(userID, channelID); err != nil {
+			return nil, err
+		}
+		seen[channelID] = struct{}{}
+		channelIDs = append(channelIDs, channelID)
+	}
+	if len(channelIDs) == 0 {
+		return nil, fmt.Errorf("至少选择一个频道")
+	}
+
+	format := strings.TrimSpace(req.Format)
+	if format == "" {
+		format = "txt"
+	}
+	start, end := parseTimeRange(req.TimeRange)
+	includeOOC := req.IncludeOOC == nil || *req.IncludeOOC
+	includeArchived := req.IncludeArchived != nil && *req.IncludeArchived
+	includeImages := req.IncludeImages == nil || *req.IncludeImages
+	includeDiceCommand := req.IncludeDiceCommand == nil || *req.IncludeDiceCommand
+	withoutTimestamp := req.WithoutTimestamp != nil && *req.WithoutTimestamp
+	mergeMessages := req.MergeMessages == nil || *req.MergeMessages
+	textColorizeBBCode := req.TextColorizeBBCode != nil && *req.TextColorizeBBCode && strings.EqualFold(format, "txt")
+	textColorizeMap := map[string]string{}
+	textColorizeNameMap := map[string]string{}
+	if textColorizeBBCode {
+		var err error
+		textColorizeMap, err = normalizeExportColorMap(req.TextColorizeMap)
+		if err != nil {
+			return nil, err
+		}
+		textColorizeNameMap, err = normalizeExportNameMap(req.TextColorizeNameMap)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sliceLimit := service.NormalizeExportSliceLimit(req.SliceLimit)
+	maxConcurrency := service.NormalizeExportConcurrency(req.MaxConcurrency)
+	job, err := service.CreateBatchMessageExportJob(&service.ExportJobOptions{
+		UserID:                    userID,
+		ChannelID:                 anchorChannelID,
+		Format:                    format,
+		DisplayName:               req.DisplayName,
+		IncludeOOC:                includeOOC,
+		IncludeArchived:           includeArchived,
+		IncludeImages:             includeImages,
+		IncludeDiceCommand:        includeDiceCommand,
+		WithoutTimestamp:          withoutTimestamp,
+		MergeMessages:             mergeMessages,
+		TextColorizeBBCode:        textColorizeBBCode,
+		TextColorizeBBCodeMap:     textColorizeMap,
+		TextColorizeBBCodeNameMap: textColorizeNameMap,
+		StartTime:                 start,
+		EndTime:                   end,
+		DisplaySettings:           normalizeDisplaySettings(req.DisplaySettings),
+		SliceLimit:                sliceLimit,
+		MaxConcurrency:            maxConcurrency,
+	}, channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	return &chatExportResponse{
+		TaskID:         job.ID,
+		Status:         job.Status,
+		DisplayName:    job.DisplayName,
+		Message:        "批量导出任务已创建，请稍后下载。",
+		RequestedAt:    job.CreatedAt.UnixMilli(),
+		SliceLimit:     sliceLimit,
+		MaxConcurrency: maxConcurrency,
+	}, nil
+}
+
 func ChatExportList(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
@@ -457,6 +567,48 @@ func ChatExportUpload(c *fiber.Ctx) error {
 		resp.UploadedAt = result.UploadedAt.UnixMilli()
 	}
 	return c.JSON(resp)
+}
+
+func ChatExportBatchUpload(c *fiber.Ctx) error {
+	if appConfig == nil || !appConfig.LogUpload.Enabled || len(utils.NormalizeLogUploadEndpoints(appConfig.LogUpload.Endpoint, appConfig.LogUpload.Endpoints)) == 0 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "未启用云端日志上传"})
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "未认证"})
+	}
+	job, err := service.GetMessageExportJob(strings.TrimSpace(c.Params("taskId")))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "任务不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if job.UserID != user.ID {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
+	}
+	results, err := service.UploadBatchExportLogs(job, service.LogUploadOptions{
+		Endpoint:       appConfig.LogUpload.Endpoint,
+		Endpoints:      appConfig.LogUpload.Endpoints,
+		Token:          appConfig.LogUpload.Token,
+		UniformID:      appConfig.LogUpload.UniformID,
+		Client:         appConfig.LogUpload.Client,
+		Version:        appConfig.LogUpload.Version,
+		TimeoutSeconds: appConfig.LogUpload.TimeoutSeconds,
+	})
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	items := make([]chatExportUploadResponse, 0, len(results))
+	for _, result := range results {
+		items = append(items, chatExportUploadResponse{
+			URL:        result.URL,
+			Name:       result.Name,
+			FileName:   result.FileName,
+			UploadedAt: result.UploadedAt.UnixMilli(),
+		})
+	}
+	return c.JSON(chatExportBatchUploadResponse{Items: items})
 }
 
 func ChatExportRetry(c *fiber.Ctx) error {

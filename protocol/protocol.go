@@ -108,14 +108,15 @@ type AvatarDecorationSettings struct {
 }
 
 type ChannelIdentity struct {
-	ID                 string               `json:"id"`
-	DisplayName        string               `json:"displayName"`
-	Color              string               `json:"color"`
-	AvatarAttachmentID string               `json:"avatarAttachmentId"`
-	AvatarDecoration   *AvatarDecoration    `json:"avatarDecoration,omitempty"`
-	AvatarDecorations  AvatarDecorationList `json:"avatarDecorations,omitempty"`
-	IsDefault          bool                 `json:"isDefault"`
-	IsTemporary        bool                 `json:"isTemporary"`
+	ID                  string               `json:"id"`
+	DisplayName         string               `json:"displayName"`
+	Color               string               `json:"color"`
+	AvatarAttachmentID  string               `json:"avatarAttachmentId"`
+	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	IsDefault           bool                 `json:"isDefault"`
+	IsTemporary         bool                 `json:"isTemporary"`
 }
 
 type CharacterCard struct {
@@ -158,53 +159,55 @@ const (
 )
 
 type Message struct {
-	ID               string           `json:"id"`
-	MessageID        string           // Deprecated
-	Channel          *Channel         `json:"channel"`
-	Guild            *Guild           `json:"guild"`
-	User             *User            `json:"user"`
-	Identity         *MessageIdentity `json:"identity,omitempty"`
-	SenderRoleID     string           `json:"senderRoleId,omitempty"`
-	Member           *GuildMember     `json:"member"`
-	Content          string           `json:"content"`
-	WidgetData       string           `json:"widgetData,omitempty"`
-	Elements         []*Element       `json:"elements"`
-	Timestamp        int64            `json:"timestamp"`
-	Quote            *Message         `json:"quote"`
-	CreatedAt        int64            `json:"createdAt"`
-	UpdatedAt        int64            `json:"updatedAt"`
-	DisplayOrder     float64          `json:"displayOrder"`
-	IcMode           string           `json:"icMode"`
-	IsWhisper        bool             `json:"isWhisper"`
-	WhisperTo        *User            `json:"whisperTo"`
-	WhisperToIds     []*User          `json:"whisperToIds,omitempty"`
-	IsEdited         bool             `json:"isEdited"`
-	EditCount        int              `json:"editCount"`
-	EditedByUserId   string           `json:"editedByUserId,omitempty"`
-	EditedByUserName string           `json:"editedByUserName,omitempty"`
-	IsArchived       bool             `json:"isArchived"`
-	ArchivedAt       int64            `json:"archivedAt"`
-	ArchivedBy       string           `json:"archivedBy"`
-	ArchiveReason    string           `json:"archiveReason"`
-	IsPinned         bool             `json:"isPinned"`
-	PinnedAt         int64            `json:"pinnedAt"`
-	PinnedBy         string           `json:"pinnedBy"`
-	IsDeleted        bool             `json:"isDeleted"`
-	DeletedAt        int64            `json:"deletedAt"`
-	DeletedBy        string           `json:"deletedBy"`
-	ClientID         string           `json:"clientId,omitempty"`
-	WhisperMeta      *WhisperMeta     `json:"whisperMeta,omitempty"`
+	ID               string             `json:"id"`
+	MessageID        string             // Deprecated
+	Channel          *Channel           `json:"channel"`
+	Guild            *Guild             `json:"guild"`
+	User             *User              `json:"user"`
+	Identity         *MessageIdentity   `json:"identity,omitempty"`
+	SenderRoleID     string             `json:"senderRoleId,omitempty"`
+	Member           *GuildMember       `json:"member"`
+	Content          string             `json:"content"`
+	WidgetData       string             `json:"widgetData,omitempty"`
+	Elements         []*Element         `json:"elements"`
+	Timestamp        int64              `json:"timestamp"`
+	Quote            *Message           `json:"quote"`
+	CreatedAt        int64              `json:"createdAt"`
+	UpdatedAt        int64              `json:"updatedAt"`
+	DisplayOrder     float64            `json:"displayOrder"`
+	IcMode           string             `json:"icMode"`
+	IsWhisper        bool               `json:"isWhisper"`
+	WhisperTo        *User              `json:"whisperTo"`
+	WhisperToIds     []*User            `json:"whisperToIds,omitempty"`
+	IsEdited         bool               `json:"isEdited"`
+	EditCount        int                `json:"editCount"`
+	EditedByUserId   string             `json:"editedByUserId,omitempty"`
+	EditedByUserName string             `json:"editedByUserName,omitempty"`
+	IsArchived       bool               `json:"isArchived"`
+	ArchivedAt       int64              `json:"archivedAt"`
+	ArchivedBy       string             `json:"archivedBy"`
+	ArchiveReason    string             `json:"archiveReason"`
+	IsPinned         bool               `json:"isPinned"`
+	PinnedAt         int64              `json:"pinnedAt"`
+	PinnedBy         string             `json:"pinnedBy"`
+	IsDeleted        bool               `json:"isDeleted"`
+	DeletedAt        int64              `json:"deletedAt"`
+	DeletedBy        string             `json:"deletedBy"`
+	ClientID         string             `json:"clientId,omitempty"`
+	WhisperMeta      *WhisperMeta       `json:"whisperMeta,omitempty"`
+	DiceVisual       *DiceVisualPayload `json:"diceVisual,omitempty"`
 }
 
 type MessageIdentity struct {
-	ID                string               `json:"id"`
-	VariantID         string               `json:"variantId,omitempty"`
-	DisplayName       string               `json:"displayName"`
-	Color             string               `json:"color"`
-	AvatarAttachment  string               `json:"avatarAttachment"`
-	AvatarDecoration  *AvatarDecoration    `json:"avatarDecoration,omitempty"`
-	AvatarDecorations AvatarDecorationList `json:"avatarDecorations,omitempty"`
-	IsTemporary       bool                 `json:"isTemporary"`
+	ID                  string               `json:"id"`
+	VariantID           string               `json:"variantId,omitempty"`
+	DisplayName         string               `json:"displayName"`
+	Color               string               `json:"color"`
+	AvatarAttachment    string               `json:"avatarAttachment"`
+	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	IsTemporary         bool                 `json:"isTemporary"`
 }
 
 type ChannelPresence struct {
@@ -406,6 +409,8 @@ const (
 	EventExternalGlossariesUpdated      EventName = "external-glossaries-updated"
 	EventWorldExternalGlossariesUpdated EventName = "world-external-glossaries-updated"
 	EventWorldUpdated                   EventName = "world-updated"
+	EventWorldDice3DUpdated             EventName = "world-dice3d-updated"
+	EventWorldMemberDice3DUpdated       EventName = "world-member-dice3d-updated"
 	EventLobbyAnnouncementUpdated       EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
@@ -423,12 +428,40 @@ const (
 	EventCharacterOnlineCardRequested EventName = "character-online-card-requested"
 	EventCharacterOnlineCardUpdated   EventName = "character-online-card-updated"
 	EventCharacterOnlineCardSnapshot  EventName = "character-online-card-snapshot"
+	// Persistent Character Snapshot Events
+	EventCharacterSnapshotUpdated           EventName = "character-snapshot-updated"
+	EventCharacterSnapshotList              EventName = "character-snapshot-list"
+	EventCharacterSnapshotProbe             EventName = "character-snapshot-probe"
+	EventCharacterSnapshotSettingsUpdated   EventName = "character-snapshot-settings-updated"
+	EventCharacterSnapshotPreferenceUpdated EventName = "character-snapshot-preference-updated"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
 	// Quick Login Events
 	EventQuickLoginRequested EventName = "quick-login-requested"
+	// Theater Events
+	EventTheaterSnapshot            EventName = "theater.snapshot"
+	EventTheaterMutationApplied     EventName = "theater.mutation.applied"
+	EventTheaterMutationRejected    EventName = "theater.mutation.rejected"
+	EventTheaterResourceProcessing  EventName = "theater.resource.processing"
+	EventTheaterResourceReady       EventName = "theater.resource.ready"
+	EventTheaterResourceFailed      EventName = "theater.resource.failed"
+	EventTheaterPreloadRequested    EventName = "theater.preload.requested"
+	EventTheaterPointerTrace        EventName = "theater.pointer.trace"
+	EventTheaterEffectTriggered     EventName = "theater.effect.triggered"
+	EventTheaterSceneAudioTriggered EventName = "theater.scene.audio.triggered"
+	EventTheaterVisibilityTriggered EventName = "theater.visibility.triggered"
 )
+
+type TheaterEventPayload struct {
+	WorldID   string `json:"worldId"`
+	ChannelID string `json:"channelId"`
+	RoomID    string `json:"roomId"`
+	Revision  int64  `json:"revision"`
+	EventID   string `json:"eventId"`
+	Timestamp int64  `json:"timestamp"`
+	Payload   any    `json:"payload"`
+}
 
 type QuickLoginRequestedPayload struct {
 	RequestID        string `json:"requestId"`
@@ -487,9 +520,15 @@ type Event struct {
 	OnlineCharacterCardRequest  *OnlineCharacterCardRequestPayload  `json:"onlineCharacterCardRequest,omitempty"`
 	OnlineCharacterCard         *OnlineCharacterCardEventPayload    `json:"onlineCharacterCard,omitempty"`
 	OnlineCharacterCardSnapshot *OnlineCharacterCardSnapshotPayload `json:"onlineCharacterCardSnapshot,omitempty"`
+	CharacterSnapshot           *CharacterSnapshotEventPayload      `json:"characterSnapshot,omitempty"`
+	CharacterSnapshotList       *CharacterSnapshotListPayload       `json:"characterSnapshotList,omitempty"`
+	CharacterSnapshotProbe      *CharacterSnapshotProbePayload      `json:"characterSnapshotProbe,omitempty"`
+	CharacterSnapshotSettings   *CharacterSnapshotSettingsPayload   `json:"characterSnapshotSettings,omitempty"`
+	CharacterSnapshotPreference *CharacterSnapshotPreferencePayload `json:"characterSnapshotPreference,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
+	Theater                     *TheaterEventPayload                `json:"theater,omitempty"`
 	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
 	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`
@@ -583,6 +622,7 @@ type StickyNote struct {
 	Content     string                 `json:"content"`
 	ContentText string                 `json:"contentText"`
 	Color       string                 `json:"color"`
+	Appearance  *StickyNoteAppearance  `json:"appearance,omitempty"`
 	CreatorID   string                 `json:"creatorId"`
 	IsPublic    bool                   `json:"isPublic"`
 	IsPinned    bool                   `json:"isPinned"`
@@ -710,6 +750,88 @@ type OnlineCharacterCardEventPayload struct {
 // OnlineCharacterCardSnapshotPayload 在线成员人物卡快照载荷
 type OnlineCharacterCardSnapshotPayload struct {
 	Items []*OnlineCharacterCardItem `json:"items,omitempty"`
+}
+
+type CharacterSnapshotIdentity struct {
+	ID                 string               `json:"id"`
+	UserID             string               `json:"userId"`
+	DisplayName        string               `json:"displayName,omitempty"`
+	Color              string               `json:"color,omitempty"`
+	AvatarAttachmentID string               `json:"avatarAttachmentId,omitempty"`
+	AvatarDecorations  AvatarDecorationList `json:"avatarDecorations,omitempty"`
+}
+
+type CharacterSnapshotCard struct {
+	Name               string         `json:"name,omitempty"`
+	SheetType          string         `json:"sheetType,omitempty"`
+	AvatarAttachmentID string         `json:"avatarAttachmentId,omitempty"`
+	Attrs              map[string]any `json:"attrs,omitempty"`
+	TemplateText       string         `json:"templateText,omitempty"`
+}
+
+type CharacterSnapshotData struct {
+	Identity     CharacterSnapshotIdentity `json:"identity"`
+	Card         *CharacterSnapshotCard    `json:"card,omitempty"`
+	BadgeEnabled bool                      `json:"badgeEnabled,omitempty"`
+	BadgeAttrs   map[string]any            `json:"badgeAttrs,omitempty"`
+}
+
+type CharacterSnapshotItem struct {
+	ChannelID                  string                `json:"channelId"`
+	IdentityID                 string                `json:"identityId"`
+	UserID                     string                `json:"userId"`
+	SourceType                 string                `json:"sourceType"`
+	SourceCardID               string                `json:"sourceCardId,omitempty"`
+	Data                       CharacterSnapshotData `json:"data"`
+	BadgeTemplate              string                `json:"badgeTemplate,omitempty"`
+	TheaterOverlayTemplateJSON string                `json:"theaterOverlayTemplateJson,omitempty"`
+	ContentHash                string                `json:"contentHash"`
+	ServerRevision             int64                 `json:"serverRevision"`
+	SourceUpdatedAt            int64                 `json:"sourceUpdatedAt,omitempty"`
+	LastSeenAt                 int64                 `json:"lastSeenAt"`
+}
+
+type CharacterSnapshotEventPayload struct {
+	Item   *CharacterSnapshotItem `json:"item,omitempty"`
+	Action string                 `json:"action"` // update/clear
+}
+
+type CharacterSnapshotListPayload struct {
+	ChannelID string                   `json:"channelId"`
+	Items     []*CharacterSnapshotItem `json:"items"`
+}
+
+type CharacterSnapshotProbeItem struct {
+	UserID         string `json:"userId"`
+	IdentityID     string `json:"identityId"`
+	ContentHash    string `json:"contentHash"`
+	ServerRevision int64  `json:"serverRevision"`
+}
+
+type CharacterSnapshotProbePayload struct {
+	ChannelID string                        `json:"channelId"`
+	Items     []*CharacterSnapshotProbeItem `json:"items"`
+	ProbedAt  int64                         `json:"probedAt"`
+}
+
+type CharacterSnapshotSettingsPayload struct {
+	ChannelID                  string `json:"channelId"`
+	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
+	SchemaVersion              int    `json:"schemaVersion"`
+	ServerRevision             int64  `json:"serverRevision"`
+	UpdatedBy                  string `json:"updatedBy,omitempty"`
+}
+
+type CharacterSnapshotPreferencePayload struct {
+	ChannelID                  string `json:"channelId"`
+	UserID                     string `json:"userId"`
+	BadgeTemplateMode          string `json:"badgeTemplateMode"`
+	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode"`
+	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
+	SchemaVersion              int    `json:"schemaVersion"`
+	ServerRevision             int64  `json:"serverRevision"`
 }
 
 // CharacterRemarkEventPayload 角色备注事件载荷

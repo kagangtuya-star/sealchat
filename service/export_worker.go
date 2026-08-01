@@ -1,7 +1,10 @@
 package service
 
 import (
+	"archive/zip"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -100,6 +103,14 @@ func acquireNextExportJob() (*model.MessageExportJobModel, error) {
 }
 
 func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerConfig) error {
+	extraOptions := parseExportExtraOptions(job.ExtraOptions)
+	if len(extraOptions.BatchChannelIDs) > 0 {
+		if err := processBatchExportJob(job, cfg, extraOptions); err != nil {
+			_ = markJobFailed(job, err)
+			return err
+		}
+		return nil
+	}
 	channelName := resolveChannelName(job.ChannelID)
 	messages, err := loadMessagesForExport(job)
 	if err != nil {
@@ -107,7 +118,6 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 		return err
 	}
 
-	extraOptions := parseExportExtraOptions(job.ExtraOptions)
 	if strings.EqualFold(job.Format, "html") {
 		if err := processViewerExportJob(job, channelName, messages, cfg, extraOptions); err != nil {
 			_ = markJobFailed(job, err)
@@ -159,6 +169,145 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 	}
 
 	return markJobDone(job, filePath, fileName)
+}
+
+type batchExportEntry struct {
+	name string
+	path string
+}
+
+func processBatchExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerConfig, extra *exportExtraOptions) error {
+	format, ok := normalizeExportFormat(extra.BatchFormat)
+	if !ok {
+		return fmt.Errorf("批量导出格式无效: %s", extra.BatchFormat)
+	}
+	if err := os.MkdirAll(cfg.StorageDir, 0755); err != nil {
+		return err
+	}
+	tempDir, err := os.MkdirTemp(cfg.StorageDir, "batch-export-*")
+	if err != nil {
+		return fmt.Errorf("创建批量导出临时目录失败: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	entries := make([]batchExportEntry, len(extra.BatchChannelIDs))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	concurrency := NormalizeExportConcurrency(extra.MaxConcurrency)
+	if strings.EqualFold(format, "html") && concurrency > 2 {
+		concurrency = 2
+	}
+	sem := make(chan struct{}, concurrency)
+	for index, channelID := range extra.BatchChannelIDs {
+		wg.Add(1)
+		go func(index int, channelID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			entry, err := buildBatchExportEntry(job, channelID, format, cfg, tempDir, index)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			entries[index] = entry
+		}(index, channelID)
+	}
+	wg.Wait()
+	close(errCh)
+	if err, ok := <-errCh; ok {
+		return err
+	}
+
+	fileName := BuildExportResultFileName(job.DisplayName, job.ID, "zip", time.Now())
+	filePath := filepath.Join(cfg.StorageDir, fmt.Sprintf("%s.zip", job.ID))
+	if err := writeBatchExportArchive(filePath, entries); err != nil {
+		return err
+	}
+	return markJobDone(job, filePath, fileName)
+}
+
+func buildBatchExportEntry(parent *model.MessageExportJobModel, channelID, format string, cfg MessageExportWorkerConfig, tempDir string, index int) (batchExportEntry, error) {
+	child := *parent
+	child.ID = fmt.Sprintf("%s-%d", parent.ID, index+1)
+	child.ChannelID = channelID
+	child.Format = format
+	childExtra := parseExportExtraOptions(parent.ExtraOptions)
+	childExtra.BatchChannelIDs = nil
+	childExtra.BatchFormat = ""
+	encodedExtra, err := json.Marshal(childExtra)
+	if err != nil {
+		return batchExportEntry{}, err
+	}
+	child.ExtraOptions = string(encodedExtra)
+	channelName := resolveChannelName(channelID)
+	channelDir := filepath.Join(tempDir, fmt.Sprintf("%03d-%s", index+1, sanitizeFileName(channelName)))
+	if err := os.MkdirAll(channelDir, 0755); err != nil {
+		return batchExportEntry{}, err
+	}
+	childCfg := cfg
+	childCfg.StorageDir = channelDir
+	if err := processExportJob(&child, childCfg); err != nil {
+		return batchExportEntry{}, fmt.Errorf("频道 %s 导出失败: %w", channelName, err)
+	}
+	files, err := os.ReadDir(channelDir)
+	if err != nil {
+		return batchExportEntry{}, err
+	}
+	if len(files) != 1 {
+		return batchExportEntry{}, fmt.Errorf("频道 %s 导出文件异常", channelName)
+	}
+	path := filepath.Join(channelDir, files[0].Name())
+	entryName := fmt.Sprintf("%03d-%s.%s", index+1, sanitizeFileName(channelName), format)
+	if strings.EqualFold(format, "html") {
+		entryName = fmt.Sprintf("%03d-%s", index+1, files[0].Name())
+	}
+	return batchExportEntry{
+		name: entryName,
+		path: path,
+	}, nil
+}
+
+func writeBatchExportArchive(filePath string, entries []batchExportEntry) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("创建批量 ZIP 文件失败: %w", err)
+	}
+	defer file.Close()
+	writer := zip.NewWriter(file)
+	defer writer.Close()
+	for _, entry := range entries {
+		input, err := os.Open(entry.path)
+		if err != nil {
+			return err
+		}
+		info, err := input.Stat()
+		if err != nil {
+			_ = input.Close()
+			return err
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			_ = input.Close()
+			return err
+		}
+		header.Name = entry.name
+		header.Method = zip.Deflate
+		output, err := writer.CreateHeader(header)
+		if err == nil {
+			_, err = io.Copy(output, input)
+		}
+		closeErr := input.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
 }
 
 func markJobFailed(job *model.MessageExportJobModel, cause error) error {

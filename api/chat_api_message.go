@@ -1662,11 +1662,13 @@ func apiMessagePinList(ctx *ChatContext, data *struct {
 	}, nil
 }
 
-func apiMessageArchive(ctx *ChatContext, data *struct {
+type messageArchivePayload struct {
 	ChannelID  string   `json:"channel_id"`
 	MessageIDs []string `json:"message_ids"`
 	Reason     string   `json:"reason"`
-}) (any, error) {
+}
+
+func apiMessageArchive(ctx *ChatContext, data *messageArchivePayload) (any, error) {
 	if strings.TrimSpace(data.ChannelID) == "" {
 		return nil, fmt.Errorf("channel_id 不能为空")
 	}
@@ -1742,6 +1744,70 @@ func apiMessageArchive(ctx *ChatContext, data *struct {
 		MessageIDs []string `json:"message_ids"`
 		Archived   bool     `json:"archived"`
 	}{MessageIDs: lo.Uniq(ids), Archived: true}, nil
+}
+
+type messageArchiveBeforePayload struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}
+
+func apiMessageArchiveBefore(ctx *ChatContext, data *messageArchiveBeforePayload) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	messageID := strings.TrimSpace(data.MessageID)
+	if channelID == "" || messageID == "" {
+		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	}
+
+	channel, targets, err := loadArchiveContext(channelID, []string{messageID})
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("目标消息不存在或已删除")
+	}
+	target := targets[0]
+
+	operatorID := ctx.User.ID
+	hasArchivePerm := pm.CanWithChannelRole(operatorID, channelID,
+		pm.PermFuncChannelMessageArchive,
+		pm.PermFuncChannelManageInfo,
+	)
+	operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+	if !hasArchivePerm || operatorRank < channelMemberRoleRankAdmin {
+		return nil, fmt.Errorf("无权限批量归档更早消息")
+	}
+
+	var ids []string
+	err = model.GetDB().
+		Model(&model.MessageModel{}).
+		Where("channel_id = ? AND is_deleted = ? AND is_archived = ?", channelID, false, false).
+		Where(
+			"(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+			target.DisplayOrder,
+			target.DisplayOrder,
+			target.CreatedAt,
+			target.DisplayOrder,
+			target.CreatedAt,
+			target.ID,
+		).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		_, err = apiMessageArchive(ctx, &messageArchivePayload{
+			ChannelID:  channelID,
+			MessageIDs: ids,
+			Reason:     "归档目标消息之前的所有消息",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &struct {
+		ArchivedCount int `json:"archived_count"`
+	}{ArchivedCount: len(ids)}, nil
 }
 
 func apiMessageUnarchive(ctx *ChatContext, data *struct {
@@ -1964,6 +2030,26 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	if !ctx.User.IsBot {
+		if defaultDiceExpr, matched := parseConfiguredChannelDefaultDiceSetCommand(content); matched {
+			if _, err := updateChannelDefaultDice(ctx, channel.ID, defaultDiceExpr); err != nil {
+				return nil, err
+			}
+			if !service.IsBotFeatureEffectivelyEnabled(channel) {
+				now := time.Now()
+				return &protocol.Message{
+					ID:        channelDefaultDiceCommandMessageIDPrefix + utils.NewID(),
+					Channel:   channelData,
+					Content:   defaultDiceExpr,
+					User:      ctx.User.ToProtocolType(),
+					ClientID:  trimmedClientID,
+					Timestamp: now.Unix(),
+					CreatedAt: now.UnixMilli(),
+					UpdatedAt: now.UnixMilli(),
+				}, nil
+			}
+		}
+	}
 	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
 	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
 	if effectiveBotFeatureEnabled {
@@ -2274,6 +2360,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.SenderIdentityColor = appearance.Color
 			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
 			m.SenderIdentityDecorations = appearance.AvatarDecorations
+			m.SenderTheaterPresentation = appearance.TheaterPresentation
 			if appearance.DisplayName != "" {
 				m.SenderMemberName = appearance.DisplayName
 			}
@@ -2319,6 +2406,34 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	rows := createResult.RowsAffected
 
 	if rows > 0 {
+		if renderResult != nil {
+			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
+				return nil, err
+			}
+		}
+		var diceRolls []*model.MessageDiceRollModel
+		if renderResult != nil {
+			diceRolls = renderResult.Rolls
+		}
+		if len(diceRolls) > 0 || ctx.User.IsBot {
+			diceActorUserID := resolveDiceVisualActorUserID(ctx.User.ID, ctx.User.IsBot, botMsgContext)
+			payload, payloadErr := service.BuildDiceVisualPayload(
+				m.ID, channel.WorldID, data.ChannelID, diceActorUserID, content, diceRolls, ctx.User.IsBot, m.CreatedAt,
+			)
+			if payloadErr != nil {
+				log.Printf("构建 3D 骰子事件失败 message=%s err=%v", m.ID, payloadErr)
+			} else if payload != nil {
+				raw, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					log.Printf("序列化 3D 骰子事件失败 message=%s err=%v", m.ID, marshalErr)
+				} else {
+					m.DiceVisualJSON = string(raw)
+					if updateErr := db.Model(&m).Update("dice_visual_json", m.DiceVisualJSON).Error; updateErr != nil {
+						return nil, updateErr
+					}
+				}
+			}
+		}
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
@@ -2397,11 +2512,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
 		notifyAppMessageCreated(m.ID)
-		if renderResult != nil {
-			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
-				return nil, err
-			}
-		}
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -2679,7 +2789,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, sender_theater_presentation, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() && !hasCursor && data.Type != "time" {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
@@ -2921,7 +3031,6 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	identityChanged := false
 	var resolvedIdentityProto *protocol.ChannelIdentity
 	if (data.IdentityID != nil || data.IdentityVariantID != nil) && isAuthor {
-		identityChanged = true
 		rawIdentityID := strings.TrimSpace(msg.SenderIdentityID)
 		if data.IdentityID != nil {
 			rawIdentityID = strings.TrimSpace(*data.IdentityID)
@@ -2943,48 +3052,60 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		}
 		appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 		if identity != nil {
-			msg.SenderIdentityID = identity.ID
-			msg.SenderRoleID = identity.ID
-			msg.SenderIdentityIsTemporary = identity.IsTemporary
+			nextVariantID := ""
 			if appearance != nil {
-				msg.SenderIdentityVariantID = appearance.VariantID
-				msg.SenderIdentityName = appearance.DisplayName
-				msg.SenderIdentityColor = appearance.Color
-				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
-				msg.SenderIdentityDecorations = appearance.AvatarDecorations
+				nextVariantID = appearance.VariantID
 			}
-			resolvedIdentityProto = identity.ToProtocolType()
-			if resolvedIdentityProto != nil && appearance != nil {
-				resolvedIdentityProto.DisplayName = appearance.DisplayName
-				resolvedIdentityProto.Color = appearance.Color
-				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
-				resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
-				if len(appearance.AvatarDecorations) > 0 {
-					first := appearance.AvatarDecorations[0]
-					resolvedIdentityProto.AvatarDecoration = &first
-				} else {
-					resolvedIdentityProto.AvatarDecoration = nil
+			identityChanged = identity.ID != msg.SenderIdentityID || nextVariantID != msg.SenderIdentityVariantID
+			if identityChanged {
+				msg.SenderIdentityID = identity.ID
+				msg.SenderRoleID = identity.ID
+				msg.SenderIdentityIsTemporary = identity.IsTemporary
+				msg.SenderIdentityVariantID = nextVariantID
+				if appearance != nil {
+					msg.SenderIdentityName = appearance.DisplayName
+					msg.SenderIdentityColor = appearance.Color
+					msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+					msg.SenderIdentityDecorations = appearance.AvatarDecorations
+					msg.SenderTheaterPresentation = appearance.TheaterPresentation
+				}
+				resolvedIdentityProto = identity.ToProtocolType()
+				if resolvedIdentityProto != nil && appearance != nil {
+					resolvedIdentityProto.DisplayName = appearance.DisplayName
+					resolvedIdentityProto.Color = appearance.Color
+					resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+					resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
+					if len(appearance.AvatarDecorations) > 0 {
+						first := appearance.AvatarDecorations[0]
+						resolvedIdentityProto.AvatarDecoration = &first
+					} else {
+						resolvedIdentityProto.AvatarDecoration = nil
+					}
+				}
+				if appearance != nil && appearance.DisplayName != "" {
+					msg.SenderMemberName = appearance.DisplayName
 				}
 			}
-			if appearance != nil && appearance.DisplayName != "" {
-				msg.SenderMemberName = appearance.DisplayName
-			}
 		} else {
-			msg.SenderIdentityID = ""
-			msg.SenderIdentityVariantID = ""
-			msg.SenderIdentityName = ""
-			msg.SenderIdentityColor = ""
-			msg.SenderIdentityAvatarID = ""
-			msg.SenderIdentityDecorations = nil
-			msg.SenderIdentityIsTemporary = false
-			msg.SenderRoleID = ""
-			resolvedIdentityProto = nil
-			if authorMember != nil && authorMember.Nickname != "" {
-				msg.SenderMemberName = authorMember.Nickname
-			} else if authorUser != nil && authorUser.Nickname != "" {
-				msg.SenderMemberName = authorUser.Nickname
-			} else if authorUser != nil {
-				msg.SenderMemberName = authorUser.Username
+			identityChanged = msg.SenderIdentityID != "" || msg.SenderIdentityVariantID != ""
+			if identityChanged {
+				msg.SenderIdentityID = ""
+				msg.SenderIdentityVariantID = ""
+				msg.SenderIdentityName = ""
+				msg.SenderIdentityColor = ""
+				msg.SenderIdentityAvatarID = ""
+				msg.SenderIdentityDecorations = nil
+				msg.SenderTheaterPresentation = nil
+				msg.SenderIdentityIsTemporary = false
+				msg.SenderRoleID = ""
+				resolvedIdentityProto = nil
+				if authorMember != nil && authorMember.Nickname != "" {
+					msg.SenderMemberName = authorMember.Nickname
+				} else if authorUser != nil && authorUser.Nickname != "" {
+					msg.SenderMemberName = authorUser.Nickname
+				} else if authorUser != nil {
+					msg.SenderMemberName = authorUser.Username
+				}
 			}
 		}
 	}
@@ -3185,6 +3306,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
 		updates["sender_identity_decoration"] = msg.SenderIdentityDecorations
+		updates["sender_theater_presentation"] = msg.SenderTheaterPresentation
 		updates["sender_identity_is_temporary"] = msg.SenderIdentityIsTemporary
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
@@ -4032,6 +4154,15 @@ func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.Mess
 	return msgContext
 }
 
+func resolveDiceVisualActorUserID(messageAuthorID string, isBot bool, messageContext *protocol.MessageContext) string {
+	if isBot && messageContext != nil {
+		if senderUserID := strings.TrimSpace(messageContext.SenderUserID); senderUserID != "" {
+			return senderUserID
+		}
+	}
+	return strings.TrimSpace(messageAuthorID)
+}
+
 func resolveBotWhisperRecipients(ctx *ChatContext, channelId, senderID string) []string {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
 		return nil
@@ -4132,6 +4263,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	if len(content) >= 2 && (content[0] == '/' || content[0] == '.') && content[1] == 'x' {
 		vm := ds.NewVM()
 		var botText string
+		var botRollDetail string
 		expr := strings.TrimSpace(content[2:])
 
 		if expr == "" {
@@ -4149,6 +4281,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 		if err != nil {
 			botText = "出错:" + err.Error()
 		} else {
+			botRollDetail = vm.GetDetailText()
 			sb := strings.Builder{}
 			sb.WriteString(fmt.Sprintf("算式: %s\n", expr))
 			sb.WriteString(fmt.Sprintf("过程: %s\n", vm.GetDetailText()))
@@ -4180,6 +4313,31 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			m.WhisperTarget = ctx.User
 		}
 		model.GetDB().Create(&m)
+		if botRollDetail != "" && channelData != nil && channelData.WorldID != "" {
+			payload, payloadErr := service.BuildDiceVisualPayload(
+				m.ID,
+				channelData.WorldID,
+				data.ChannelID,
+				ctx.User.ID,
+				botText,
+				[]*model.MessageDiceRollModel{{ResultDetail: botRollDetail}},
+				false,
+				m.CreatedAt,
+			)
+			if payloadErr != nil {
+				log.Printf("构建内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, payloadErr)
+			} else if payload != nil {
+				raw, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					log.Printf("序列化内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, marshalErr)
+				} else {
+					m.DiceVisualJSON = string(raw)
+					if updateErr := model.GetDB().Model(&m).Update("dice_visual_json", m.DiceVisualJSON).Error; updateErr != nil {
+						log.Printf("保存内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, updateErr)
+					}
+				}
+			}
+		}
 
 		userData := &protocol.User{
 			ID:     "BOT:1000",

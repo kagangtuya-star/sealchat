@@ -1063,6 +1063,8 @@ watch(
               :split-active="false"
               :sticky-note-enabled="activePaneHasChannel"
               :sticky-note-active="activePaneStickyNoteActive"
+              :dice3d-enabled="activePaneHasChannel"
+              :dice3d-active="false"
               :character-card-enabled="activePaneHasChannel"
               :character-card-active="activePaneCharacterCardActive"
               @update:filters="setFilters"
@@ -1076,6 +1078,7 @@ watch(
               @open-favorites="openPanel('favorites')"
               @open-channel-images="openPanel('channel-images')"
               @toggle-sticky-note="toggleStickyNoteForActivePane"
+              @open-dice3d="openPanel('dice3d')"
               @open-character-card="openCharacterCardForActivePane"
             />
           </div>

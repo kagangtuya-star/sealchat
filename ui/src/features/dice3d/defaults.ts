@@ -1,0 +1,42 @@
+import type { Dice3DWorldConfig } from '@/types'
+import { BUILTIN_DICE_AUDIO_ASSET_ID } from './diceAudio'
+
+export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
+  version: 1,
+  platformStyleId: '',
+  enabled: true,
+  surfaceMode: 'auto',
+  customSurface: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
+  defaultSkin: {
+    faceBackground: '#E8F1FF', faceForeground: '#1B2942', edgeColor: '#C5D1E2', outlineColor: '#7796C2',
+    roughness: 0.72, metalness: 0.05, scale: 0.6, textures: {},
+  },
+  motion: {
+    speed: 1, throwForce: 1, wallBounce: 0.48, entryEdge: 'random',
+    lingerMs: 8000, maxDice: 60, interactive: true,
+  },
+  audio: { enabled: true, volume: 0.65, soundAssetId: BUILTIN_DICE_AUDIO_ASSET_ID },
+  botRules: [
+    {
+      id: 'seal-annot', name: '海豹注解式', enabled: true,
+      // 2[1d6] / 6[1d8]：复合掷骰结果的可靠面值来源
+      pattern: String.raw`(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 10,
+    },
+    {
+      id: 'seal-modified', name: '海豹修正式', enabled: true,
+      // d20+3=18+3=21 / 2d6-1=3+5-1=7
+      pattern: String.raw`(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)(?:[+-]\d+)+=(?P<values>\d+(?:\+\d+)*)(?:[+-]\d+)+=\d+(?:\]|\b)`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 5,
+    },
+    {
+      id: 'seal-standard', name: '海豹标准', enabled: true,
+      // 1d100=42 / [2d6=1+2]；后端会丢弃「点数后紧跟 [」的误匹配
+      pattern: String.raw`(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 0,
+    },
+  ],
+})

@@ -192,9 +192,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 	if strings.TrimSpace(att.ObjectKey) != "" {
 		if path, err := service.ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
 			if _, err := os.Stat(path); err == nil {
-				setAttachmentCacheHeaders(c, &att)
-				setAttachmentContentType(c, &att)
-				return c.SendFile(path)
+				return serveLocalAttachment(c, path, &att)
 			}
 		}
 	}
@@ -213,9 +211,34 @@ func AttachmentGet(c *fiber.Ctx) error {
 		}
 		return wrapError(c, err, "读取附件失败")
 	}
-	setAttachmentCacheHeaders(c, &att)
-	setAttachmentContentType(c, &att)
-	return c.SendFile(fullPath)
+	return serveLocalAttachment(c, fullPath, &att)
+}
+
+func serveLocalAttachment(c *fiber.Ctx, path string, att *model.AttachmentModel) error {
+	setAttachmentCacheHeaders(c, att)
+	setAttachmentContentType(c, att)
+	mimeType := strings.TrimSpace(att.MimeType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	if !strings.HasPrefix(mimeType, "video/") && !strings.HasPrefix(mimeType, "audio/") {
+		return c.SendFile(path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	c.Set("Accept-Ranges", "bytes")
+	if c.Get(fiber.HeaderRange) != "" {
+		return streamFileWithRange(c, file, stat.Size(), mimeType)
+	}
+	_ = file.Close()
+	return c.SendFile(path)
 }
 
 func AttachmentMeta(c *fiber.Ctx) error {
@@ -236,7 +259,7 @@ func AttachmentMeta(c *fiber.Ctx) error {
 		})
 	}
 
-	publicURL := service.AttachmentPublicURL(&att)
+	publicURL := service.AttachmentReadURL(c.Context(), &att)
 	return c.JSON(fiber.Map{
 		"message": "ok",
 		"item": fiber.Map{
@@ -256,10 +279,11 @@ func AttachmentMeta(c *fiber.Ctx) error {
 
 func AttachmentImportFromURL(c *fiber.Ctx) error {
 	var body struct {
-		URL         string `json:"url"`
-		Filename    string `json:"filename"`
-		ContentType string `json:"contentType"`
-		ChannelID   string `json:"channelId"`
+		URL          string `json:"url"`
+		Filename     string `json:"filename"`
+		ContentType  string `json:"contentType"`
+		ChannelID    string `json:"channelId"`
+		TargetUserID string `json:"targetUserId"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return wrapError(c, err, "请求参数错误")
@@ -273,11 +297,24 @@ func AttachmentImportFromURL(c *fiber.Ctx) error {
 	if appConfig != nil && appConfig.ImageSizeLimit > 0 {
 		maxSize = appConfig.ImageSizeLimit * 1024
 	}
+	ownerUserID := user.ID
+	body.ChannelID = strings.TrimSpace(body.ChannelID)
+	body.TargetUserID = strings.TrimSpace(body.TargetUserID)
+	if body.TargetUserID != "" && body.ChannelID == "" {
+		return wrapError(c, nil, "委托导入缺少频道ID")
+	}
+	if body.ChannelID != "" {
+		actor, actorErr := service.ResolveChannelIdentityActor(body.ChannelID, user.ID, body.TargetUserID)
+		if actorErr != nil {
+			return handleChannelIdentityActorErr(c, actorErr)
+		}
+		ownerUserID = actor.TargetUserID
+	}
 	item, err := service.ImportAttachmentFromURL(service.RemoteAttachmentImportInput{
 		URL:          body.URL,
 		Filename:     body.Filename,
 		ContentType:  body.ContentType,
-		UserID:       user.ID,
+		UserID:       ownerUserID,
 		ChannelID:    body.ChannelID,
 		MaxSizeBytes: maxSize,
 	})
@@ -364,7 +401,7 @@ func redirectAttachmentToRemote(c *fiber.Ctx, att *model.AttachmentModel) bool {
 	if att == nil {
 		return false
 	}
-	target := service.AttachmentPublicURL(att)
+	target := service.AttachmentReadURL(c.Context(), att)
 	if target == "" {
 		return false
 	}

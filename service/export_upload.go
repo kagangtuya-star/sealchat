@@ -1,6 +1,7 @@
 package service
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/zlib"
 	"encoding/json"
@@ -121,6 +122,68 @@ func UploadExportLog(job *model.MessageExportJobModel, opts LogUploadOptions) (*
 		FileName:   job.FileName,
 		UploadedAt: now,
 	}, nil
+}
+
+// UploadBatchExportLogs 上传批量 ZIP 中的每个 JSON 导出，并返回每个文件的链接。
+func UploadBatchExportLogs(job *model.MessageExportJobModel, opts LogUploadOptions) ([]LogUploadResult, error) {
+	if job == nil || job.Status != model.MessageExportStatusDone || strings.TrimSpace(job.FilePath) == "" {
+		return nil, fmt.Errorf("导出任务尚未完成，无法上传")
+	}
+	extra := parseExportExtraOptions(job.ExtraOptions)
+	if len(extra.BatchChannelIDs) == 0 || !strings.EqualFold(extra.BatchFormat, "json") {
+		return nil, fmt.Errorf("该任务不是可上传的批量 JSON 导出")
+	}
+	archive, err := zip.OpenReader(job.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("打开批量导出文件失败: %w", err)
+	}
+	defer archive.Close()
+
+	results := make([]LogUploadResult, 0, len(archive.File))
+	for _, entry := range archive.File {
+		if entry.FileInfo().IsDir() || !strings.EqualFold(filepath.Ext(entry.Name), ".json") {
+			continue
+		}
+		input, err := entry.Open()
+		if err != nil {
+			return nil, err
+		}
+		tempFile, err := os.CreateTemp(filepath.Dir(job.FilePath), "batch-upload-*.json")
+		if err != nil {
+			_ = input.Close()
+			return nil, err
+		}
+		_, copyErr := io.Copy(tempFile, input)
+		closeErr := tempFile.Close()
+		_ = input.Close()
+		if copyErr != nil {
+			_ = os.Remove(tempFile.Name())
+			return nil, copyErr
+		}
+		if closeErr != nil {
+			_ = os.Remove(tempFile.Name())
+			return nil, closeErr
+		}
+
+		child := &model.MessageExportJobModel{
+			Format:   "json",
+			Status:   model.MessageExportStatusDone,
+			FilePath: tempFile.Name(),
+			FileName: filepath.Base(entry.Name),
+		}
+		childOpts := opts
+		childOpts.Name = strings.TrimSuffix(filepath.Base(entry.Name), filepath.Ext(entry.Name))
+		result, uploadErr := UploadExportLog(child, childOpts)
+		_ = os.Remove(tempFile.Name())
+		if uploadErr != nil {
+			return nil, fmt.Errorf("上传 %s 失败: %w", entry.Name, uploadErr)
+		}
+		results = append(results, *result)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("批量导出中没有 JSON 文件")
+	}
+	return results, nil
 }
 
 type preparedLogUploadPayload struct {

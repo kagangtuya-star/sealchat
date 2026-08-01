@@ -48,6 +48,9 @@ func ChannelIdentityFolderCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 外观不支持角色文件夹"})
+	}
 	folder, err := service.ChannelIdentityFolderCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityFolderInput{
 		ChannelID: payload.ChannelID,
 		Name:      payload.Name,
@@ -81,6 +84,9 @@ func ChannelIdentityFolderUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 外观不支持角色文件夹"})
+	}
 	folder, err := service.ChannelIdentityFolderUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, folderID, &service.ChannelIdentityFolderInput{
 		ChannelID: payload.ChannelID,
 		Name:      payload.Name,
@@ -110,6 +116,9 @@ func ChannelIdentityFolderDelete(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 外观不支持角色文件夹"})
 	}
 	if err := service.ChannelIdentityFolderDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, folderID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -145,6 +154,9 @@ func ChannelIdentityFolderToggleFavorite(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 外观不支持角色文件夹"})
+	}
 	favorites, err := service.ChannelIdentityFolderToggleFavoriteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, folderID, payload.Favorite)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -177,6 +189,9 @@ func ChannelIdentityFolderAssign(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 外观不支持角色文件夹"})
 	}
 	membership, err := service.ChannelIdentityFolderAssignWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityIDs, payload.FolderIDs, payload.Mode)
 	if err != nil {

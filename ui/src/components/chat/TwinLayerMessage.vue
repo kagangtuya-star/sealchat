@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import { tiptapJsonToHtml } from '@/utils/tiptap-render';
 import { hasPerformanceContent, parsePerformanceInstructions } from '@/utils/tiptap-performance-parser';
@@ -9,6 +9,8 @@ import type { TwinLayerPlaybackChar } from './twinLayerPlayback';
 const props = withDefaults(defineProps<{
   content: string
   autoplay?: boolean
+  debugPlayback?: boolean
+  charactersPerSecond?: number
   baseUrl?: string
   imageClass?: string
   linkClass?: string
@@ -16,6 +18,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   content: '',
   autoplay: false,
+  debugPlayback: false,
   baseUrl: '',
   imageClass: 'inline-image',
   linkClass: 'text-blue-500',
@@ -23,16 +26,23 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (event: 'state-change', value: { waiting: boolean; playing: boolean; completed: boolean }): void
+  (event: 'completed'): void
 }>();
 
 const hostRef = ref<HTMLElement | null>(null);
-const playback = ref<ReturnType<typeof createTwinLayerPlayback> | null>(null);
+// Playback callbacks compare the original engine by identity; deep refs proxy it and drop every state update.
+const playback = shallowRef<ReturnType<typeof createTwinLayerPlayback> | null>(null);
 const visibleText = ref('');
 const waiting = ref(false);
 const playing = ref(false);
 const completed = ref(false);
 const overlayTextRef = ref<HTMLElement | null>(null);
 const mounted = ref(false);
+
+const debug = (event: string, detail?: Record<string, unknown>) => {
+  if (!props.debugPlayback) return;
+  console.info(`[theater-dialogue] player.${event}`, detail || {});
+};
 
 const parsedDoc = computed(() => {
   if (!props.content) {
@@ -262,14 +272,8 @@ const renderFinalOverlay = () => {
   syncDom();
 };
 
-const refreshState = () => {
-  const engine = playback.value;
-  if (!engine) {
-    waiting.value = false;
-    playing.value = false;
-    completed.value = false;
-    return;
-  }
+const refreshState = (engine = playback.value) => {
+  if (!engine || engine !== playback.value) return;
   waiting.value = engine.isWaiting();
   playing.value = engine.getState() === 'playing';
   completed.value = engine.getState() === 'completed';
@@ -280,6 +284,13 @@ const refreshState = () => {
     playing: playing.value,
     completed: completed.value,
   });
+  debug('state', {
+    state: engine.getState(),
+    waiting: waiting.value,
+    playing: playing.value,
+    completed: completed.value,
+    visibleLength: Array.from(visibleText.value).length,
+  });
 };
 
 const startPlayback = async () => {
@@ -288,30 +299,45 @@ const startPlayback = async () => {
     syncDom();
     return;
   }
-  const engine = createTwinLayerPlayback(instructions.value, {
+  let engine!: ReturnType<typeof createTwinLayerPlayback>;
+  engine = createTwinLayerPlayback(instructions.value, {
+    charactersPerSecond: props.charactersPerSecond,
     onChar: (entry) => {
       appendChar(entry);
     },
     onBreak: appendBreak,
-    onStateChange: refreshState,
+    onStateChange: () => refreshState(engine),
   });
   playback.value = engine;
+  debug('start', { instructionCount: instructions.value.length });
   await engine.play();
-  refreshState();
+  if (engine === playback.value && engine.getState() === 'completed') {
+    debug('completed');
+    emit('completed');
+  }
+  refreshState(engine);
+};
+
+const disposePlayback = () => {
+  const engine = playback.value;
+  playback.value = null;
+  engine?.dispose();
 };
 
 const replay = async () => {
-  playback.value?.dispose();
-  playback.value = null;
+  disposePlayback();
   clearOverlayDom();
   syncDom();
   await startPlayback();
 };
 
 const skip = () => {
+  debug('skip');
   playback.value?.skip();
   refreshState();
 };
+
+defineExpose({ skip, replay });
 
 const handleOverlayClick = () => {
   if (waiting.value) {
@@ -321,8 +347,7 @@ const handleOverlayClick = () => {
 
 const renderCurrentContent = () => {
   if (!props.autoplay) {
-    playback.value?.dispose();
-    playback.value = null;
+    disposePlayback();
     renderFinalOverlay();
     return;
   }
@@ -336,13 +361,17 @@ watch(() => [props.content, props.autoplay], () => {
   void nextTick(renderCurrentContent);
 });
 
+watch(() => props.charactersPerSecond, (charactersPerSecond) => {
+  playback.value?.setCharactersPerSecond(charactersPerSecond);
+});
+
 onMounted(() => {
   mounted.value = true;
   void nextTick(renderCurrentContent);
 });
 
 onBeforeUnmount(() => {
-  playback.value?.dispose();
+  disposePlayback();
 });
 </script>
 

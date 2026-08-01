@@ -416,20 +416,27 @@ func apiChannelDefaultDiceUpdate(ctx *ChatContext, data *struct {
 	ChannelID       string `json:"channel_id"`
 	DefaultDiceExpr string `json:"default_dice_expr"`
 }) (any, error) {
-	if data.ChannelID == "" {
+	return updateChannelDefaultDice(ctx, data.ChannelID, data.DefaultDiceExpr)
+}
+
+func updateChannelDefaultDice(ctx *ChatContext, channelID string, defaultDiceExpr string) (any, error) {
+	if ctx == nil || ctx.User == nil {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	if channelID == "" {
 		return nil, fmt.Errorf("频道ID不能为空")
 	}
-	if !pm.CanWithChannelRole(ctx.User.ID, data.ChannelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
+	if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
 		return nil, fmt.Errorf("您没有权限修改默认骰")
 	}
-	channel, err := model.ChannelGet(data.ChannelID)
+	channel, err := model.ChannelGet(channelID)
 	if err != nil {
 		return nil, err
 	}
 	if channel.ID == "" {
 		return nil, fmt.Errorf("频道不存在")
 	}
-	normalized, err := service.NormalizeDefaultDiceExpr(data.DefaultDiceExpr)
+	normalized, err := service.NormalizeDefaultDiceExpr(defaultDiceExpr)
 	if err != nil {
 		return nil, err
 	}

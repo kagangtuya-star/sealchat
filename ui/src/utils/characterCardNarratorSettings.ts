@@ -78,6 +78,28 @@ export const clearNarratorBadgeCacheEntries = <
   };
 };
 
+export const filterAliveNarratorIdentityIds = (
+  identityIds: string[] | undefined,
+  aliveIdentityIds: Iterable<string> | undefined,
+) => {
+  if (!Array.isArray(identityIds) || identityIds.length === 0) {
+    return [];
+  }
+  const alive = new Set(
+    Array.from(aliveIdentityIds || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean),
+  );
+  if (alive.size === 0) {
+    return [];
+  }
+  return Array.from(new Set(
+    identityIds
+      .map((id) => String(id || '').trim())
+      .filter((id) => id && alive.has(id)),
+  ));
+};
+
 export const resolveCharacterCardNarratorCountBadge = (identityIds: string[]) => {
   const count = Array.isArray(identityIds) ? identityIds.length : 0;
   return count > 0 ? String(count) : '';

@@ -91,6 +91,9 @@ type ConnInfo struct {
 	BotCharacterSupport          BotCharacterSupportState
 	BotCharacterProbeOn          bool
 	BotCharacterProbeFail        int
+	theaterMu                    sync.RWMutex
+	theaterSubscription          *theaterSubscription
+	theaterQueue                 *theaterWriteQueue
 }
 
 type BotHiddenDicePending struct {
@@ -365,6 +368,31 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		}
 	}()
 
+	// Persistent character snapshots use client-owned data. Probe active clients once per minute;
+	// unchanged content hashes require no response and therefore no database write.
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			channelUsersMap.Range(func(channelID string, users *utils.SyncSet[string]) bool {
+				if strings.TrimSpace(channelID) == "" || users == nil || users.Len() == 0 {
+					return true
+				}
+				items, err := service.CharacterSnapshotProbeList(channelID)
+				if err != nil {
+					return true
+				}
+				ctx := &ChatContext{ChannelUsersMap: channelUsersMap, UserId2ConnInfo: userId2ConnInfo}
+				ctx.BroadcastEventInChannel(channelID, &protocol.Event{
+					Type:                   protocol.EventCharacterSnapshotProbe,
+					Channel:                &protocol.Channel{ID: channelID},
+					CharacterSnapshotProbe: &protocol.CharacterSnapshotProbePayload{ChannelID: channelID, Items: items, ProbedAt: time.Now().UnixMilli()},
+				})
+				return true
+			})
+		}
+	}()
+
 	guestAllowedAPIs := map[string]struct{}{
 		"channel.list":               {},
 		"channel.favorite.list":      {},
@@ -374,6 +402,8 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		"message.list":               {},
 		"message.get":                {},
 		"message.context":            {},
+		"theater.subscribe":          {},
+		"theater.unsubscribe":        {},
 	}
 
 	normalizeRemoteAddr := func(addr string) string {
@@ -974,6 +1004,21 @@ func websocketWorks(app *fiber.App, webUrl string) {
 
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
+					case "theater.subscribe":
+						apiTheaterSubscribeWs(ctx, msg)
+						solved = true
+					case "theater.unsubscribe":
+						apiTheaterUnsubscribeWs(ctx, msg)
+						solved = true
+					case "theater.preload":
+						apiTheaterPreloadWs(ctx, msg)
+						solved = true
+					case "theater.scene.audio":
+						apiTheaterSceneAudioWs(ctx, msg)
+						solved = true
+					case "theater.pointer":
+						apiTheaterPointerWs(ctx, msg)
+						solved = true
 					// Sticky Note APIs
 					case "sticky-note.update":
 						apiWrap(ctx, msg, apiStickyNoteUpdateWs)
@@ -1086,6 +1131,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "message.archive":
 						apiWrap(ctx, msg, apiMessageArchive)
 						solved = true
+					case "message.archive.before":
+						apiWrap(ctx, msg, apiMessageArchiveBefore)
+						solved = true
 					case "message.unarchive":
 						apiWrap(ctx, msg, apiMessageUnarchive)
 						solved = true
@@ -1175,6 +1223,27 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "character.online.card.snapshot":
 						apiWrap(ctx, msg, apiCharacterOnlineCardSnapshot)
 						solved = true
+					case "character.snapshot.list":
+						apiWrap(ctx, msg, apiCharacterSnapshotList)
+						solved = true
+					case "character.snapshot.upsert":
+						apiWrap(ctx, msg, apiCharacterSnapshotUpsert)
+						solved = true
+					case "character.snapshot.clear":
+						apiWrap(ctx, msg, apiCharacterSnapshotClear)
+						solved = true
+					case "character.snapshot.settings.get":
+						apiWrap(ctx, msg, apiCharacterSnapshotSettingsGet)
+						solved = true
+					case "character.snapshot.settings.update":
+						apiWrap(ctx, msg, apiCharacterSnapshotSettingsUpdate)
+						solved = true
+					case "character.snapshot.preference.get":
+						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceGet)
+						solved = true
+					case "character.snapshot.preference.update":
+						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceUpdate)
+						solved = true
 					case "character.remark.broadcast":
 						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)
 						solved = true
@@ -1247,6 +1316,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		}
 
 		// 连接断开时删除该 conn 在所有用户映射中的残留，避免历史脏数据泄漏。
+		if curConnInfo != nil {
+			curConnInfo.closeTheaterQueue()
+		}
 		affectedUserIDs := map[string]struct{}{}
 		affectedChannelIDs := map[string]struct{}{}
 		if curConnInfo != nil && curConnInfo.ChannelId != "" {

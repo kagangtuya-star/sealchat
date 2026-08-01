@@ -1,0 +1,1100 @@
+package service
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"regexp"
+	"strings"
+)
+
+var theaterImageAnnotationColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func defaultTheaterImageAnnotation(text string) map[string]any {
+	runes := []rune(text)
+	if len(runes) > 2_000 {
+		text = string(runes[:2_000])
+	}
+	return map[string]any{
+		"version": 1, "enabled": true, "text": text, "style": "floating", "placement": "auto",
+		"fontSize": 14, "textColor": "#ffffff", "backgroundColor": "#111827",
+		"backgroundOpacity": 0.65, "maxWidth": 300, "delayMs": 100,
+	}
+}
+
+const (
+	theaterMaxSnapshotBytes  = 4 << 20
+	theaterMaxPayloadBytes   = 128 << 10
+	theaterMaxScenes         = 200
+	theaterMaxObjects        = 5000
+	theaterMaxSceneObjects   = 2000
+	theaterMaxBatchUpdates   = 200
+	theaterMaxActions        = 32
+	theaterMaxActionDelayMS  = 10_000
+	theaterActionDelayStepMS = 100
+	theaterMaxSwitchText     = 10_000
+)
+
+type theaterSceneCreatePayload struct {
+	SceneID    string         `json:"sceneId"`
+	Name       string         `json:"name"`
+	SwitchText string         `json:"switchText"`
+	Order      int64          `json:"order"`
+	State      map[string]any `json:"state"`
+}
+
+type theaterSceneUpdatePayload struct {
+	SceneID string         `json:"sceneId"`
+	Fields  map[string]any `json:"fields"`
+}
+
+type theaterSceneReorderPayload struct {
+	SceneIDs []string `json:"sceneIds"`
+}
+
+type theaterSceneDeletePayload struct {
+	SceneID         string `json:"sceneId"`
+	FallbackSceneID string `json:"fallbackSceneId"`
+}
+
+type theaterSceneApplyPayload struct {
+	SceneID    string                    `json:"sceneId"`
+	Transition *theaterTransitionPayload `json:"transition,omitempty"`
+}
+
+type theaterRoomConstructionSetPayload struct {
+	SceneID *string `json:"sceneId"`
+}
+
+type theaterTransitionPayload struct {
+	Type       string                         `json:"type,omitempty"`
+	DurationMS *int64                         `json:"durationMs,omitempty"`
+	Curtain    *bool                          `json:"curtain,omitempty"`
+	Enter      *theaterTransitionPhasePayload `json:"enter,omitempty"`
+	Exit       *theaterTransitionPhasePayload `json:"exit,omitempty"`
+}
+
+type theaterTransitionPhasePayload struct {
+	Type       string `json:"type"`
+	DurationMS int64  `json:"durationMs"`
+}
+
+type theaterObjectInput struct {
+	ID                  string          `json:"id"`
+	ParentID            *string         `json:"parentId"`
+	Kind                string          `json:"kind"`
+	Name                string          `json:"name"`
+	X                   float64         `json:"x"`
+	Y                   float64         `json:"y"`
+	Width               float64         `json:"width"`
+	Height              float64         `json:"height"`
+	Rotation            float64         `json:"rotation"`
+	Scale               *float64        `json:"scale,omitempty"`
+	ScaleX              *float64        `json:"scaleX,omitempty"`
+	ScaleY              *float64        `json:"scaleY,omitempty"`
+	Z                   float64         `json:"z"`
+	OrderKey            string          `json:"orderKey"`
+	Visible             *bool           `json:"visible"`
+	Locked              bool            `json:"locked"`
+	AspectRatioLocked   *bool           `json:"aspectRatioLocked"`
+	Interactive         bool            `json:"interactive"`
+	Editable            bool            `json:"editable"`
+	OwnerUserID         *string         `json:"ownerUserId"`
+	CharacterIdentityID *string         `json:"characterIdentityId"`
+	Content             json.RawMessage `json:"content"`
+	Actions             json.RawMessage `json:"actions"`
+	Metadata            json.RawMessage `json:"metadata"`
+}
+
+type theaterObjectCreatePayload struct {
+	SceneID *string            `json:"sceneId"`
+	Object  theaterObjectInput `json:"object"`
+}
+
+type theaterObjectUpdatePayload struct {
+	ObjectID string         `json:"objectId"`
+	Fields   map[string]any `json:"fields"`
+}
+
+type theaterObjectBatchUpdatePayload struct {
+	Updates []theaterObjectUpdatePayload `json:"updates"`
+}
+
+type theaterObjectDeletePayload struct {
+	ObjectID string `json:"objectId"`
+	Cascade  bool   `json:"cascade"`
+}
+
+type theaterObjectTogglePayload struct {
+	ObjectID string `json:"objectId"`
+	Visible  *bool  `json:"visible,omitempty"`
+}
+
+type theaterEffectPlayPayload struct {
+	EffectID string `json:"effectId"`
+}
+
+type theaterCharacterBindPayload struct {
+	SceneID     *string            `json:"sceneId"`
+	Object      theaterObjectInput `json:"object"`
+	IdentityID  string             `json:"identityId"`
+	OwnerUserID string             `json:"ownerUserId"`
+}
+
+type theaterResourceReferencePayload struct {
+	ResourceID string          `json:"resourceId"`
+	TargetType string          `json:"targetType"`
+	TargetID   string          `json:"targetId"`
+	Slot       string          `json:"slot"`
+	Config     json.RawMessage `json:"config,omitempty"`
+}
+
+func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.RawMessage, error) {
+	if len(raw) == 0 || len(raw) > theaterMaxPayloadBytes {
+		return nil, nil, newTheaterError(TheaterErrorPayloadInvalid, "mutation payload 大小无效", 400, nil)
+	}
+	var target any
+	switch mutationType {
+	case TheaterMutationSceneCreate:
+		target = &theaterSceneCreatePayload{}
+	case TheaterMutationSceneUpdate:
+		target = &theaterSceneUpdatePayload{}
+	case TheaterMutationSceneReorder:
+		target = &theaterSceneReorderPayload{}
+	case TheaterMutationSceneDelete:
+		target = &theaterSceneDeletePayload{}
+	case TheaterMutationSceneApply:
+		target = &theaterSceneApplyPayload{}
+	case TheaterMutationRoomConstructionSet:
+		target = &theaterRoomConstructionSetPayload{}
+	case TheaterMutationObjectCreate:
+		target = &theaterObjectCreatePayload{}
+	case TheaterMutationObjectUpdate, TheaterMutationCharacterUpdate:
+		target = &theaterObjectUpdatePayload{}
+	case TheaterMutationObjectBatchUpdate:
+		target = &theaterObjectBatchUpdatePayload{}
+	case TheaterMutationObjectDelete:
+		target = &theaterObjectDeletePayload{}
+	case TheaterMutationObjectToggle:
+		target = &theaterObjectTogglePayload{}
+	case TheaterMutationCharacterBind:
+		target = &theaterCharacterBindPayload{}
+	case TheaterMutationResourceAttach, TheaterMutationResourceDetach:
+		target = &theaterResourceReferencePayload{}
+	default:
+		return nil, nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "不支持 mutation type", 400, map[string]any{"type": mutationType})
+	}
+	if err := decodeStrictJSON(raw, target); err != nil {
+		return nil, nil, newTheaterError(TheaterErrorPayloadInvalid, err.Error(), 400, nil)
+	}
+	if err := validateDecodedTheaterPayload(mutationType, target); err != nil {
+		return nil, nil, err
+	}
+	normalized, err := json.Marshal(target)
+	if err != nil {
+		return nil, nil, newTheaterError(TheaterErrorInternal, "规范化 mutation 失败", 500, nil)
+	}
+	return target, normalized, nil
+}
+
+func decodeStrictJSON(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("JSON schema 无效: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("JSON 只能包含一个值")
+	}
+	return nil
+}
+
+func validateDecodedTheaterPayload(mutationType string, decoded any) error {
+	switch payload := decoded.(type) {
+	case *theaterSceneCreatePayload:
+		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
+			return err
+		}
+		if err := validateTheaterName(payload.Name); err != nil {
+			return err
+		}
+		if err := validateTheaterSwitchText(payload.SwitchText); err != nil {
+			return err
+		}
+		return validateSceneState(payload.State)
+	case *theaterSceneUpdatePayload:
+		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
+			return err
+		}
+		return validateSceneFields(payload.Fields)
+	case *theaterSceneReorderPayload:
+		if len(payload.SceneIDs) == 0 || len(payload.SceneIDs) > theaterMaxScenes {
+			return theaterPayloadError("sceneIds 数量无效")
+		}
+		seen := make(map[string]bool, len(payload.SceneIDs))
+		for _, sceneID := range payload.SceneIDs {
+			if err := validateTheaterID(sceneID, "sceneId"); err != nil {
+				return err
+			}
+			if seen[sceneID] {
+				return theaterPayloadError("sceneIds 不能重复")
+			}
+			seen[sceneID] = true
+		}
+		return nil
+	case *theaterSceneDeletePayload:
+		return validateTheaterID(payload.SceneID, "sceneId")
+	case *theaterSceneApplyPayload:
+		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
+			return err
+		}
+		if payload.Transition != nil {
+			transition := payload.Transition
+			if transition.Enter != nil || transition.Exit != nil {
+				if transition.Enter == nil || transition.Exit == nil || transition.Curtain == nil || transition.Type != "" || transition.DurationMS != nil {
+					return theaterPayloadError("transition 结构无效")
+				}
+				if err := validateTheaterTransitionPhase(transition.Enter, "transition.enter"); err != nil {
+					return err
+				}
+				if err := validateTheaterTransitionPhase(transition.Exit, "transition.exit"); err != nil {
+					return err
+				}
+			} else {
+				if transition.Curtain != nil || (transition.Type != "none" && transition.Type != "crossfade") {
+					return theaterPayloadError("transition.type 无效")
+				}
+				if transition.DurationMS != nil && (*transition.DurationMS < 0 || *transition.DurationMS > 60000) {
+					return theaterPayloadError("transition.durationMs 超限")
+				}
+			}
+		}
+	case *theaterRoomConstructionSetPayload:
+		if payload.SceneID == nil || strings.TrimSpace(*payload.SceneID) == "" {
+			return nil
+		}
+		return validateTheaterID(strings.TrimSpace(*payload.SceneID), "sceneId")
+	case *theaterObjectCreatePayload:
+		return validateObjectInput(&payload.Object)
+	case *theaterObjectUpdatePayload:
+		if err := validateTheaterID(payload.ObjectID, "objectId"); err != nil {
+			return err
+		}
+		return validateObjectFields(payload.Fields, mutationType == TheaterMutationCharacterUpdate)
+	case *theaterObjectBatchUpdatePayload:
+		if len(payload.Updates) == 0 || len(payload.Updates) > theaterMaxBatchUpdates {
+			return theaterPayloadError("updates 数量无效")
+		}
+		seen := make(map[string]bool, len(payload.Updates))
+		for i := range payload.Updates {
+			update := &payload.Updates[i]
+			if err := validateTheaterID(update.ObjectID, "updates.objectId"); err != nil {
+				return err
+			}
+			if seen[update.ObjectID] {
+				return theaterPayloadError("updates 包含重复 objectId")
+			}
+			seen[update.ObjectID] = true
+			if err := validateObjectFields(update.Fields, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *theaterObjectDeletePayload:
+		return validateTheaterID(payload.ObjectID, "objectId")
+	case *theaterObjectTogglePayload:
+		return validateTheaterID(payload.ObjectID, "objectId")
+	case *theaterCharacterBindPayload:
+		if strings.TrimSpace(payload.IdentityID) == "" || strings.TrimSpace(payload.OwnerUserID) == "" {
+			return theaterPayloadError("identityId 和 ownerUserId 必填")
+		}
+		payload.Object.Kind = "character"
+		payload.Object.CharacterIdentityID = &payload.IdentityID
+		payload.Object.OwnerUserID = &payload.OwnerUserID
+		return validateObjectInput(&payload.Object)
+	case *theaterResourceReferencePayload:
+		if err := validateTheaterID(payload.ResourceID, "resourceId"); err != nil {
+			return err
+		}
+		if payload.TargetType != "room" && payload.TargetType != "scene" && payload.TargetType != "object" {
+			return theaterPayloadError("targetType 无效")
+		}
+		allowedSlots := map[string]bool{"background": true, "foreground": true, "image": true, "animatedImage": true, "video": true, "poster": true, "decoration": true}
+		if !allowedSlots[payload.Slot] {
+			return theaterPayloadError("slot 无效")
+		}
+		if payload.TargetType != "room" && strings.TrimSpace(payload.TargetID) == "" {
+			return theaterPayloadError("targetId 必填")
+		}
+	}
+	return nil
+}
+
+func validateTheaterTransitionPhase(phase *theaterTransitionPhasePayload, field string) error {
+	allowed := map[string]bool{
+		"none": true, "fade": true, "slide": true, "dissolve": true, "zoom": true,
+		"mask": true, "flip": true, "blur": true, "rotate": true, "curtain": true,
+	}
+	if phase == nil || !allowed[phase.Type] {
+		return theaterPayloadError(field + ".type 无效")
+	}
+	if phase.DurationMS < 20 || phase.DurationMS > 5000 {
+		return theaterPayloadError(field + ".durationMs 超限")
+	}
+	return nil
+}
+
+func validateTheaterID(value, field string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return theaterPayloadError(field + " 无效")
+	}
+	return nil
+}
+
+func validateTheaterName(value string) error {
+	length := len([]rune(strings.TrimSpace(value)))
+	if length < 1 || length > 512 {
+		return theaterPayloadError("name 长度无效")
+	}
+	return nil
+}
+
+func validateTheaterSwitchText(value string) error {
+	if len([]rune(value)) > theaterMaxSwitchText {
+		return theaterPayloadError("switchText 长度无效")
+	}
+	return nil
+}
+
+func validateSceneState(state map[string]any) error {
+	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "musicSnapshot": true, "resources": true, "ccfolia": true}
+	for key, value := range state {
+		if !allowed[key] {
+			return theaterPayloadError("scene state 包含禁止字段: " + key)
+		}
+		if err := rejectUnsafeTheaterJSON(value); err != nil {
+			return err
+		}
+	}
+	if styles, ok := state["surfaceStyles"]; ok {
+		if err := validateTheaterSurfaceStyles(styles); err != nil {
+			return err
+		}
+	}
+	if audio, ok := state["switchAudio"]; ok {
+		if err := validateTheaterAudioRef(audio, "scene.switchAudio"); err != nil {
+			return err
+		}
+	}
+	if snapshot, ok := state["musicSnapshot"]; ok {
+		if err := validateTheaterMusicSnapshot(snapshot); err != nil {
+			return err
+		}
+	}
+	raw, _ := json.Marshal(state)
+	if len(raw) > 64<<10 {
+		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterMusicSnapshot(input any) error {
+	if input == nil {
+		return nil
+	}
+	snapshot, ok := input.(map[string]any)
+	if !ok || len(snapshot) != 2 {
+		return theaterPayloadError("scene.musicSnapshot 无效")
+	}
+	version, valid := theaterNumericValue(snapshot["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("scene.musicSnapshot.version 无效")
+	}
+	tracks, ok := snapshot["tracks"].([]any)
+	if !ok || len(tracks) != 3 {
+		return theaterPayloadError("scene.musicSnapshot.tracks 无效")
+	}
+	seen := map[string]bool{}
+	for index, rawTrack := range tracks {
+		track, ok := rawTrack.(map[string]any)
+		if !ok {
+			return theaterPayloadError("scene.musicSnapshot.track 无效")
+		}
+		allowed := map[string]bool{"type": true, "asset": true, "volume": true, "fadeIn": true, "fadeOut": true, "loopEnabled": true, "playbackRate": true, "playlistMode": true, "playlist": true, "playlistIndex": true}
+		if len(track) != len(allowed) {
+			return theaterPayloadError("scene.musicSnapshot.track 字段不完整")
+		}
+		for key := range track {
+			if !allowed[key] {
+				return theaterPayloadError("scene.musicSnapshot.track 包含禁止字段: " + key)
+			}
+		}
+		trackType, ok := track["type"].(string)
+		if !ok || !map[string]bool{"music": true, "ambience": true, "sfx": true}[trackType] || seen[trackType] {
+			return theaterPayloadError("scene.musicSnapshot.track.type 无效")
+		}
+		seen[trackType] = true
+		if err := validateTheaterMusicAssetRef(track["asset"], fmt.Sprintf("scene.musicSnapshot.tracks[%d].asset", index)); err != nil {
+			return err
+		}
+		for field, bounds := range map[string][2]float64{"volume": {0, 1}, "fadeIn": {0, 60_000}, "fadeOut": {0, 60_000}, "playbackRate": {0.25, 4}} {
+			value, valid := theaterNumericValue(track[field])
+			if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
+				return theaterPayloadError("scene.musicSnapshot.track." + field + " 无效")
+			}
+		}
+		if _, ok := track["loopEnabled"].(bool); !ok {
+			return theaterPayloadError("scene.musicSnapshot.track.loopEnabled 无效")
+		}
+		if mode := track["playlistMode"]; mode != nil {
+			text, ok := mode.(string)
+			if !ok || !map[string]bool{"single": true, "sequential": true, "shuffle": true}[text] {
+				return theaterPayloadError("scene.musicSnapshot.track.playlistMode 无效")
+			}
+		}
+		playlist, ok := track["playlist"].([]any)
+		if !ok || len(playlist) > 64 {
+			return theaterPayloadError("scene.musicSnapshot.track.playlist 无效")
+		}
+		for itemIndex, item := range playlist {
+			if err := validateTheaterMusicAssetRef(item, fmt.Sprintf("scene.musicSnapshot.tracks[%d].playlist[%d]", index, itemIndex)); err != nil {
+				return err
+			}
+		}
+		playlistIndex, valid := theaterNumericValue(track["playlistIndex"])
+		if !valid || math.Trunc(playlistIndex) != playlistIndex || playlistIndex < 0 || (len(playlist) > 0 && playlistIndex >= float64(len(playlist))) || (len(playlist) == 0 && playlistIndex != 0) {
+			return theaterPayloadError("scene.musicSnapshot.track.playlistIndex 无效")
+		}
+	}
+	return nil
+}
+
+func validateTheaterMusicAssetRef(input any, field string) error {
+	if input == nil {
+		return nil
+	}
+	asset, ok := input.(map[string]any)
+	if !ok || len(asset) != 2 {
+		return theaterPayloadError(field + " 无效")
+	}
+	assetID, ok := asset["assetId"].(string)
+	if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
+		return theaterPayloadError(field + ".assetId 无效")
+	}
+	name, ok := asset["name"].(string)
+	if !ok || len([]rune(name)) > 128 {
+		return theaterPayloadError(field + ".name 无效")
+	}
+	return nil
+}
+
+func validateTheaterAudioRef(audio any, field string) error {
+	if audio == nil {
+		return nil
+	}
+	value, ok := audio.(map[string]any)
+	if !ok {
+		return theaterPayloadError(field + " 无效")
+	}
+	for key := range value {
+		if key != "assetId" && key != "name" && key != "volume" {
+			return theaterPayloadError(field + " 包含禁止字段: " + key)
+		}
+	}
+	assetID, ok := value["assetId"].(string)
+	if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
+		return theaterPayloadError(field + ".assetId 无效")
+	}
+	name, ok := value["name"].(string)
+	if !ok || len([]rune(name)) > 512 {
+		return theaterPayloadError(field + ".name 无效")
+	}
+	volume, valid := theaterNumericValue(value["volume"])
+	if !valid || math.IsNaN(volume) || math.IsInf(volume, 0) || volume < 0 || volume > 1 {
+		return theaterPayloadError(field + ".volume 无效")
+	}
+	return nil
+}
+
+func validateTheaterSurfaceStyles(value any) error {
+	styles, ok := value.(map[string]any)
+	if !ok {
+		return theaterPayloadError("surfaceStyles 无效")
+	}
+	if len(styles) != 2 {
+		return theaterPayloadError("surfaceStyles 图层无效")
+	}
+	for _, target := range []string{"background", "foreground"} {
+		style, ok := styles[target].(map[string]any)
+		if !ok {
+			return theaterPayloadError("surfaceStyles." + target + " 无效")
+		}
+		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true}
+		for key := range style {
+			if !allowed[key] {
+				return theaterPayloadError("surfaceStyles." + target + " 包含禁止字段: " + key)
+			}
+		}
+		for name, bounds := range map[string][2]float64{"brightness": {0, 2}, "blurPx": {0, 40}, "opacity": {0, 1}} {
+			number, valid := theaterNumericValue(style[name])
+			if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < bounds[0] || number > bounds[1] {
+				return theaterPayloadError("surfaceStyles." + target + "." + name + " 无效")
+			}
+		}
+		if zoom, present := style["zoom"]; present {
+			number, valid := theaterNumericValue(zoom)
+			if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < 0.1 || number > 5 {
+				return theaterPayloadError("surfaceStyles." + target + ".zoom 无效")
+			}
+		}
+		fit, ok := style["fit"].(string)
+		if !ok || !map[string]bool{"fill": true, "cover": true, "contain": true, "tile": true, "center": true}[fit] {
+			return theaterPayloadError("surfaceStyles." + target + ".fit 无效")
+		}
+		overlay, ok := style["overlay"].(map[string]any)
+		if !ok || len(overlay) != 3 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay 无效")
+		}
+		if _, ok := overlay["enabled"].(bool); !ok {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.enabled 无效")
+		}
+		color, ok := overlay["color"].(string)
+		if !ok || strings.TrimSpace(color) == "" || len(color) > 64 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.color 无效")
+		}
+		opacity, valid := theaterNumericValue(overlay["opacity"])
+		if !valid || math.IsNaN(opacity) || math.IsInf(opacity, 0) || opacity < 0 || opacity > 1 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.opacity 无效")
+		}
+	}
+	return nil
+}
+
+func validateSceneFields(fields map[string]any) error {
+	if len(fields) == 0 {
+		return theaterPayloadError("fields 不能为空")
+	}
+	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "state": true}
+	for key := range fields {
+		if !allowed[key] {
+			return theaterPayloadError("scene fields 包含禁止字段: " + key)
+		}
+	}
+	if name, ok := fields["name"].(string); ok {
+		if err := validateTheaterName(name); err != nil {
+			return err
+		}
+	}
+	if value, present := fields["switchText"]; present {
+		switchText, ok := value.(string)
+		if !ok {
+			return theaterPayloadError("switchText 无效")
+		}
+		if err := validateTheaterSwitchText(switchText); err != nil {
+			return err
+		}
+	}
+	if state, ok := fields["state"].(map[string]any); ok {
+		return validateSceneState(state)
+	}
+	return rejectUnsafeTheaterJSON(fields)
+}
+
+func validateObjectInput(object *theaterObjectInput) error {
+	if err := validateTheaterID(object.ID, "object.id"); err != nil {
+		return err
+	}
+	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true, "effect": true}
+	if !allowedKinds[object.Kind] {
+		return theaterPayloadError("object.kind 无效")
+	}
+	for _, value := range []float64{object.X, object.Y, object.Width, object.Height, object.Rotation, object.Z} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return theaterPayloadError("object transform 必须为有限数")
+		}
+	}
+	for name, scale := range map[string]*float64{"scale": object.Scale, "scaleX": object.ScaleX, "scaleY": object.ScaleY} {
+		if scale != nil && (math.IsNaN(*scale) || math.IsInf(*scale, 0) || *scale < 0.01 || *scale > 100) {
+			return theaterPayloadError("object " + name + " 无效")
+		}
+	}
+	if object.Width < 0 || object.Height < 0 || object.Width > 1000000 || object.Height > 1000000 {
+		return theaterPayloadError("object 尺寸无效")
+	}
+	if len(object.Name) > 512 || len(object.OrderKey) > 128 {
+		return theaterPayloadError("object 字符串超限")
+	}
+	if len(object.Content)+len(object.Actions)+len(object.Metadata) > 64<<10 {
+		return theaterPayloadError("object JSON 超过 64 KiB")
+	}
+	for _, raw := range []json.RawMessage{object.Content, object.Metadata} {
+		if len(raw) > 0 {
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return theaterPayloadError("object JSON 无效")
+			}
+			if err := rejectUnsafeTheaterJSON(value); err != nil {
+				return err
+			}
+		}
+	}
+	if len(object.Actions) > 0 {
+		if err := validateTheaterActions(object.Actions); err != nil {
+			return err
+		}
+	}
+	if object.Kind == "effect" {
+		if object.ParentID != nil && strings.TrimSpace(*object.ParentID) != "" {
+			return theaterPayloadError("effect 不能设置 parent")
+		}
+		if err := validateTheaterEffectContent(object.Content); err != nil {
+			return err
+		}
+	}
+	if object.Kind == "image" {
+		if err := validateTheaterImageAnnotationContent(object.Content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTheaterImageAnnotationContent(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var content map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&content) != nil {
+		return theaterPayloadError("image content 无效")
+	}
+	value, exists := content["annotation"]
+	if !exists {
+		return nil
+	}
+	annotation, ok := value.(map[string]any)
+	if !ok {
+		return theaterPayloadError("image annotation 无效")
+	}
+	allowed := map[string]bool{
+		"version": true, "enabled": true, "text": true, "style": true, "placement": true,
+		"fontSize": true, "textColor": true, "backgroundColor": true,
+		"backgroundOpacity": true, "maxWidth": true, "delayMs": true,
+	}
+	for key := range annotation {
+		if !allowed[key] {
+			return theaterPayloadError("image annotation 包含禁止字段: " + key)
+		}
+	}
+	if len(annotation) != len(allowed) {
+		return theaterPayloadError("image annotation 字段不完整")
+	}
+	version, valid := theaterNumericValue(annotation["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("image annotation.version 无效")
+	}
+	if _, ok := annotation["enabled"].(bool); !ok {
+		return theaterPayloadError("image annotation.enabled 无效")
+	}
+	text, ok := annotation["text"].(string)
+	if !ok || len([]rune(text)) > 2_000 {
+		return theaterPayloadError("image annotation.text 无效")
+	}
+	style, ok := annotation["style"].(string)
+	if !ok || !map[string]bool{"card": true, "bubble": true, "tag": true, "floating": true, "footer": true}[style] {
+		return theaterPayloadError("image annotation.style 无效")
+	}
+	placement, ok := annotation["placement"].(string)
+	if !ok || !map[string]bool{"auto": true, "top": true, "right": true, "bottom": true, "left": true}[placement] {
+		return theaterPayloadError("image annotation.placement 无效")
+	}
+	for _, name := range []string{"textColor", "backgroundColor"} {
+		color, ok := annotation[name].(string)
+		if !ok || !theaterImageAnnotationColorPattern.MatchString(color) {
+			return theaterPayloadError("image annotation." + name + " 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{
+		"fontSize": {10, 36}, "backgroundOpacity": {0, 1}, "maxWidth": {120, 480}, "delayMs": {0, 1_000},
+	} {
+		number, valid := theaterNumericValue(annotation[name])
+		if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < bounds[0] || number > bounds[1] {
+			return theaterPayloadError("image annotation." + name + " 无效")
+		}
+		if name != "backgroundOpacity" && math.Trunc(number) != number {
+			return theaterPayloadError("image annotation." + name + " 必须为整数")
+		}
+	}
+	return nil
+}
+
+func validateTheaterEffectContent(raw json.RawMessage) error {
+	var content map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &content) != nil {
+		return theaterPayloadError("effect content 无效")
+	}
+	effect, ok := content["effect"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect 配置缺失")
+	}
+	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "fadeOut": true, "cooldownMs": true, "media": true, "mediaLoopCount": true, "audio": true, "builtin": true}
+	for key := range effect {
+		if !allowed[key] {
+			return theaterPayloadError("effect 包含禁止字段: " + key)
+		}
+	}
+	version, valid := theaterNumericValue(effect["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("effect.version 无效")
+	}
+	kind, ok := effect["kind"].(string)
+	if !ok || (kind != "media" && kind != "builtin") {
+		return theaterPayloadError("effect.kind 无效")
+	}
+	keywords, ok := effect["keywords"].([]any)
+	if !ok || len(keywords) > 32 {
+		return theaterPayloadError("effect.keywords 无效")
+	}
+	for _, keyword := range keywords {
+		value, ok := keyword.(string)
+		if !ok || strings.TrimSpace(value) == "" || len([]rune(value)) > 128 {
+			return theaterPayloadError("effect.keyword 无效")
+		}
+	}
+	if target, exists := effect["targetUserId"]; exists && target != nil {
+		value, ok := target.(string)
+		if !ok || len(value) > 256 {
+			return theaterPayloadError("effect.targetUserId 无效")
+		}
+	}
+	if target, exists := effect["targetActorName"]; exists && target != nil {
+		value, ok := target.(string)
+		if !ok || len([]rune(value)) > 512 {
+			return theaterPayloadError("effect.targetActorName 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{"durationMs": {300, 30000}, "cooldownMs": {0, 300000}} {
+		value, valid := theaterNumericValue(effect[name])
+		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect." + name + " 无效")
+		}
+	}
+	if fadeOut, exists := effect["fadeOut"]; exists {
+		if _, ok := fadeOut.(bool); !ok {
+			return theaterPayloadError("effect.fadeOut 无效")
+		}
+	}
+	if loopCount, exists := effect["mediaLoopCount"]; exists {
+		value, valid := theaterNumericValue(loopCount)
+		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < 1 || value > 65_535 || math.Trunc(value) != value {
+			return theaterPayloadError("effect.mediaLoopCount 无效")
+		}
+	}
+	if audio, exists := effect["audio"]; exists && audio != nil {
+		if err := validateTheaterAudioRef(audio, "effect.audio"); err != nil {
+			return err
+		}
+	}
+	builtin, ok := effect["builtin"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect.builtin 无效")
+	}
+	theme, ok := builtin["theme"].(string)
+	allowedThemes := map[string]bool{"brush": true, "cyber": true, "cinematic": true, "impact": true, "glitch": true, "neon": true, "cleave": true, "eclipse": true}
+	if !ok || !allowedThemes[theme] {
+		return theaterPayloadError("effect.builtin.theme 无效")
+	}
+	format, ok := builtin["format"].(string)
+	if !ok || (format != "popout" && format != "boxed") {
+		return theaterPayloadError("effect.builtin.format 无效")
+	}
+	for _, name := range []string{"text", "subText"} {
+		value, ok := builtin[name].(string)
+		if !ok || len([]rune(value)) > 512 {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	for _, name := range []string{"accentColor", "mainTextColor", "subTextColor"} {
+		value, ok := builtin[name].(string)
+		if !ok || strings.TrimSpace(value) == "" || len(value) > 64 {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{"dimIntensity": {0, 100}, "shakeIntensity": {0, 10}} {
+		value, valid := theaterNumericValue(builtin[name])
+		if !valid || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	mediaTransform, ok := builtin["mediaTransform"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect.builtin.mediaTransform 无效")
+	}
+	for name, bounds := range map[string][2]float64{"x": {-1920, 1920}, "y": {-1080, 1080}, "scale": {0.1, 5}, "rotation": {-360, 360}} {
+		value, valid := theaterNumericValue(mediaTransform[name])
+		if !valid || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect.builtin.mediaTransform." + name + " 无效")
+		}
+	}
+	if _, ok := mediaTransform["mirror"].(bool); !ok {
+		return theaterPayloadError("effect.builtin.mediaTransform.mirror 无效")
+	}
+	return nil
+}
+
+func validateObjectFields(fields map[string]any, characterOnly bool) error {
+	if len(fields) == 0 {
+		return theaterPayloadError("fields 不能为空")
+	}
+	allowed := map[string]bool{"sceneId": true, "parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "visible": true, "locked": true, "aspectRatioLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
+	if characterOnly {
+		allowed = map[string]bool{"x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "content": true, "metadata": true}
+	}
+	for key := range fields {
+		if !allowed[key] {
+			return theaterPayloadError("object fields 包含禁止字段: " + key)
+		}
+	}
+	if value, ok := fields["sceneId"]; ok {
+		sceneID, valid := value.(string)
+		if !valid {
+			return theaterPayloadError("object sceneId 无效")
+		}
+		if sceneID = strings.TrimSpace(sceneID); sceneID != "" {
+			if err := validateTheaterID(sceneID, "sceneId"); err != nil {
+				return err
+			}
+		}
+	}
+	for _, name := range []string{"scale", "scaleX", "scaleY"} {
+		if value, ok := fields[name]; ok {
+			scale, valid := theaterNumericValue(value)
+			if !valid || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0.01 || scale > 100 {
+				return theaterPayloadError("object " + name + " 无效")
+			}
+		}
+	}
+	if actions, ok := fields["actions"]; ok {
+		raw, err := json.Marshal(actions)
+		if err != nil {
+			return theaterPayloadError("object actions 无效")
+		}
+		if err := validateTheaterActions(raw); err != nil {
+			return err
+		}
+	}
+	return rejectUnsafeTheaterJSON(fields)
+}
+
+func theaterNumericValue(value any) (float64, bool) {
+	switch number := value.(type) {
+	case json.Number:
+		parsed, err := number.Float64()
+		return parsed, err == nil
+	case float64:
+		return number, true
+	case float32:
+		return float64(number), true
+	case int:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	default:
+		return 0, false
+	}
+}
+
+func validateTheaterActions(raw json.RawMessage) error {
+	var actions []theaterStoredAction
+	if err := decodeStrictJSON(raw, &actions); err != nil || len(actions) > theaterMaxActions {
+		return theaterPayloadError("object actions 无效")
+	}
+	seen := map[string]struct{}{}
+	for _, action := range actions {
+		if err := validateTheaterID(action.ID, "action.id"); err != nil {
+			return err
+		}
+		if err := validateTheaterActionSchedule(action.Schedule); err != nil {
+			return err
+		}
+		if _, ok := seen[action.ID]; ok {
+			return theaterPayloadError("action.id 重复")
+		}
+		seen[action.ID] = struct{}{}
+		if action.Type == "action.sequence" {
+			var sequence theaterStoredSequencePayload
+			if err := decodeStrictJSON(action.Payload, &sequence); err != nil || sequence.Version != 1 || len(sequence.Steps) > theaterMaxActions {
+				return theaterPayloadError("action.sequence payload 无效")
+			}
+			if len(sequence.Name) > 128 {
+				return theaterPayloadError("action.sequence name 无效")
+			}
+			stepIDs := map[string]struct{}{}
+			for _, step := range sequence.Steps {
+				if err := validateTheaterID(step.ID, "action.sequence step.id"); err != nil {
+					return err
+				}
+				if _, ok := stepIDs[step.ID]; ok {
+					return theaterPayloadError("action.sequence step.id 重复")
+				}
+				stepIDs[step.ID] = struct{}{}
+				if step.SceneID != nil {
+					if err := validateTheaterID(strings.TrimSpace(*step.SceneID), "action.sequence sceneId"); err != nil {
+						return err
+					}
+				}
+				var timing struct {
+					Mode    string `json:"mode"`
+					DelayMS *int   `json:"delayMs,omitempty"`
+				}
+				if err := decodeStrictJSON(step.Timing, &timing); err != nil {
+					return theaterPayloadError("action.sequence timing 无效")
+				}
+				switch timing.Mode {
+				case "after", "sync":
+					if timing.DelayMS != nil {
+						return theaterPayloadError("action.sequence timing 无效")
+					}
+				case "delay":
+					if timing.DelayMS == nil || *timing.DelayMS < 0 || *timing.DelayMS > 60_000 {
+						return theaterPayloadError("action.sequence delayMs 无效")
+					}
+				default:
+					return theaterPayloadError("action.sequence timing.mode 无效")
+				}
+				if err := validateTheaterAtomicAction(step.Action); err != nil {
+					return err
+				}
+				if step.Action.Schedule != nil {
+					return theaterPayloadError("action.sequence step.action 不能包含 schedule")
+				}
+				if strings.TrimSpace(step.Action.ID) != "" {
+					return theaterPayloadError("action.sequence step.action 不能包含 id")
+				}
+			}
+			continue
+		}
+		if err := validateTheaterAtomicAction(action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTheaterActionSchedule(schedule *theaterStoredActionSchedule) error {
+	if schedule == nil {
+		return nil
+	}
+	if schedule.LegacyDurationMS != nil {
+		durationMS := *schedule.LegacyDurationMS
+		if durationMS < 0 || durationMS > theaterMaxActionDelayMS || durationMS%theaterActionDelayStepMS != 0 {
+			return theaterPayloadError("action.schedule durationMs 无效")
+		}
+	}
+	if schedule.DelayMS < 0 || schedule.DelayMS > theaterMaxActionDelayMS || schedule.DelayMS%theaterActionDelayStepMS != 0 {
+		return theaterPayloadError("action.schedule delayMs 无效")
+	}
+	return nil
+}
+
+func validateTheaterAtomicAction(action theaterStoredAction) error {
+	switch action.Type {
+	case TheaterMutationSceneApply:
+		var payload theaterSceneApplyPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil || strings.TrimSpace(payload.SceneID) == "" {
+			return theaterPayloadError("scene.apply action payload 无效")
+		}
+	case "effect.play":
+		var payload theaterEffectPlayPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+			return theaterPayloadError("effect.play action payload 无效")
+		}
+		if err := validateTheaterID(strings.TrimSpace(payload.EffectID), "effect.play effectId"); err != nil {
+			return err
+		}
+	case TheaterMutationObjectToggle:
+		var payload theaterObjectTogglePayload
+		if len(action.Payload) > 0 {
+			if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+				return theaterPayloadError("object.toggle action payload 无效")
+			}
+		}
+		if strings.TrimSpace(payload.ObjectID) == "" {
+			return theaterPayloadError("object.toggle action payload 无效")
+		}
+	case "chat.send":
+		var payload theaterChatSendPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+			return theaterPayloadError("chat.send action payload 无效")
+		}
+		if _, err := normalizeTheaterChatSendPayload(payload); err != nil {
+			return err
+		}
+	case "chat.insert":
+		var payload any
+		if err := json.Unmarshal(action.Payload, &payload); err != nil {
+			return theaterPayloadError("chat.insert action payload 无效")
+		}
+		if err := rejectUnsafeTheaterJSON(payload); err != nil {
+			return err
+		}
+	default:
+		return theaterPayloadError("action.type 无效")
+	}
+	return nil
+}
+
+func rejectUnsafeTheaterJSON(value any) error {
+	switch current := value.(type) {
+	case map[string]any:
+		for key, child := range current {
+			lower := strings.ToLower(key)
+			if lower == "camera" || lower == "selectedobjectid" || lower == "script" || lower == "code" || lower == "resolvedappearance" || lower == "chatmessages" {
+				return theaterPayloadError("包含禁止字段: " + key)
+			}
+			if err := rejectUnsafeTheaterJSON(child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range current {
+			if err := rejectUnsafeTheaterJSON(child); err != nil {
+				return err
+			}
+		}
+	case float64:
+		if math.IsNaN(current) || math.IsInf(current, 0) {
+			return theaterPayloadError("JSON 数字必须有限")
+		}
+	case string:
+		lower := strings.ToLower(strings.TrimSpace(current))
+		if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "file:") || strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "blob:") {
+			return theaterPayloadError("禁止不可信 URL 协议")
+		}
+	}
+	return nil
+}
+
+func theaterPayloadError(message string) *TheaterError {
+	return newTheaterError(TheaterErrorPayloadInvalid, message, 400, nil)
+}
+
+func theaterJSONHash(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func canonicalTheaterJSON(value any) ([]byte, string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, "", err
+	}
+	return raw, theaterJSONHash(raw), nil
+}

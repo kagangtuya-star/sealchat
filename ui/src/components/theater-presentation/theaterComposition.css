@@ -1,0 +1,17 @@
+.theater-composition-host {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  container-type: size;
+}
+
+.theater-composition {
+  position: relative;
+  width: min(100cqw, 177.777778cqh);
+  height: min(100cqh, 56.25cqw);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  font-size: clamp(12px, min(0.833333cqw, 1.481481cqh), 16px);
+}

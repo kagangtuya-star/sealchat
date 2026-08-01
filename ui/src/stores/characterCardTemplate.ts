@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import cocTemplateHtml from '../../../doc/template/sealchat-default-template-v3-coc7th.html?raw';
 import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
 import { api } from './_config';
 import { useUserStore } from './user';
@@ -46,6 +47,7 @@ interface TemplatePayload {
   defaultBadgeTemplate?: string;
   isGlobalDefault?: boolean;
   isSheetDefault?: boolean;
+  isBuiltin?: boolean;
 }
 
 interface TemplateQueryOptions {
@@ -73,6 +75,11 @@ const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
 const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd']);
 const BUILTIN_CHARACTER_CARD_TEMPLATES = [
+  {
+    name: 'coc默认',
+    sheetType: 'coc7',
+    content: cocTemplateHtml.trim(),
+  },
   {
     name: '忍神人物卡模板',
     sheetType: '忍神',
@@ -113,6 +120,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const migrating = ref(false);
   const loadedWorldId = ref('');
   const builtinTemplatesEnsured = ref(false);
+  let builtinTemplatesEnsurePromise: Promise<void> | null = null;
 
   const templates = computed(() => Object.values(templateMap.value));
 
@@ -139,6 +147,20 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     const normalized = normalizeSheetType(sheetType);
     if (!normalized) return null;
     return templates.value.find(item => !item.readonly && item.isSheetDefault && normalizeSheetType(item.sheetType) === normalized) || null;
+  };
+
+  const getBuiltinTemplateBySheetType = (sheetType?: string) => {
+    const normalized = normalizeSheetType(sheetType);
+    if (!normalized) return null;
+    const builtinNames = new Set(BUILTIN_CHARACTER_CARD_TEMPLATES
+      .filter(item => normalizeSheetType(item.sheetType) === normalized)
+      .map(item => item.name));
+    if (builtinNames.size === 0) return null;
+    return templates.value.find(item => (
+      !item.readonly
+      && builtinNames.has(item.name)
+      && normalizeSheetType(item.sheetType) === normalized
+    )) || null;
   };
 
   const getGlobalDefaultTemplate = () => {
@@ -183,8 +205,19 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       });
       const items = Array.isArray(resp.data?.items) ? resp.data.items as CharacterCardTemplate[] : [];
       const nextMap: Record<string, CharacterCardTemplate> = {};
+      const builtinKeys = new Set<string>();
       items.forEach(item => {
         if (item?.id) {
+          const builtin = BUILTIN_CHARACTER_CARD_TEMPLATES.find(candidate => (
+            item.name === candidate.name
+            && normalizeSheetType(item.sheetType) === normalizeSheetType(candidate.sheetType)
+            && !item.readonly
+          ));
+          if (builtin) {
+            const key = `${builtin.name}::${normalizeSheetType(builtin.sheetType)}`;
+            if (builtinKeys.has(key)) return;
+            builtinKeys.add(key);
+          }
           nextMap[item.id] = item;
         }
       });
@@ -203,34 +236,51 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const ensureBuiltinTemplates = async (items: CharacterCardTemplate[]) => {
     if (builtinTemplatesEnsured.value) return;
     if (!userStore.info?.id) return;
-    const contentIndex = new Map<string, CharacterCardTemplate>();
-    items.forEach(item => {
-      const idxKey = `${normalizeSheetType(item.sheetType)}::${item.content.trim()}`;
-      if (!contentIndex.has(idxKey)) {
-        contentIndex.set(idxKey, item);
+    if (builtinTemplatesEnsurePromise) return builtinTemplatesEnsurePromise;
+
+    const ensurePromise = (async () => {
+      let ensured = true;
+      for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
+        const matchingTemplates = items.filter(item => (
+          !item.readonly
+          && item.name === builtin.name
+          && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
+        ));
+        if (matchingTemplates.length) {
+          for (const template of matchingTemplates) {
+            if (template.content.trim() === builtin.content) continue;
+            const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, {
+              content: builtin.content,
+            });
+            const updated = resp.data?.item as CharacterCardTemplate | undefined;
+            if (!updated?.id) {
+              ensured = false;
+              continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(templateMap.value, updated.id)) {
+              templateMap.value = { ...templateMap.value, [updated.id]: updated };
+            }
+          }
+          continue;
+        }
+        const created = await createTemplate({
+          name: builtin.name,
+          sheetType: builtin.sheetType,
+          content: builtin.content,
+          isBuiltin: true,
+        });
+        if (!created?.id) {
+          ensured = false;
+        }
       }
+
+      if (ensured) builtinTemplatesEnsured.value = true;
+    })().finally(() => {
+      builtinTemplatesEnsurePromise = null;
     });
 
-    let missing = false;
-    for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
-      const idxKey = `${normalizeSheetType(builtin.sheetType)}::${builtin.content}`;
-      if (contentIndex.has(idxKey)) {
-        continue;
-      }
-      missing = true;
-      const created = await createTemplate({
-        name: builtin.name,
-        sheetType: builtin.sheetType,
-        content: builtin.content,
-      });
-      if (created?.id) {
-        contentIndex.set(idxKey, created);
-      }
-    }
-
-    if (!missing || BUILTIN_CHARACTER_CARD_TEMPLATES.every(item => contentIndex.has(`${normalizeSheetType(item.sheetType)}::${item.content}`))) {
-      builtinTemplatesEnsured.value = true;
-    }
+    builtinTemplatesEnsurePromise = ensurePromise;
+    return ensurePromise;
   };
 
   const ensureTemplatesLoaded = async (options?: TemplateQueryOptions) => {
@@ -523,6 +573,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     getBinding,
     getTemplatesBySheetType,
     getSheetDefaultTemplate,
+    getBuiltinTemplateBySheetType,
     getGlobalDefaultTemplate,
     resolveDefaultTemplate,
     resolveCardTemplate,

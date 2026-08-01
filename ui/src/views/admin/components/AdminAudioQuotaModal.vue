@@ -215,7 +215,7 @@ function handlePageSizeChange(nextPageSize: number) {
 
 function rowProps(row: AdminAudioQuotaItem) {
   return {
-    style: 'cursor: pointer;',
+    style: 'cursor: var(--sc-cursor-pointer, pointer);',
     onClick: () => {
       void loadDetail(row.userId);
     },

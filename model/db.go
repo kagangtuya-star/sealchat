@@ -127,8 +127,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
+	db.AutoMigrate(&MessageAttachmentModel{}, &ChannelMessageAttachmentBackfillState{})
 	db.AutoMigrate(&MessageVisibleCharCountBackfillState{})
-	StartMessageVisibleCharCountBackfillWorker()
 	db.AutoMigrate(&MessageWhisperRecipientModel{})
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
@@ -139,6 +139,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&AppNotificationInstanceModel{}, &AppNotificationDeviceModel{}, &AppNotificationPreferenceModel{})
 	db.AutoMigrate(&MemberModel{})
 	db.AutoMigrate(&AttachmentModel{})
+	if err := autoMigrateTheaterModels(db); err != nil {
+		panic(fmt.Sprintf("初始化 Theater 数据表失败: %v", err))
+	}
 	db.AutoMigrate(&ChannelAttachmentImageLayoutModel{})
 	db.AutoMigrate(&MentionModel{})
 	db.AutoMigrate(&TimelineModel{})
@@ -150,12 +153,16 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
 	db.AutoMigrate(&ChannelIdentityVariantModel{})
+	if err := cleanupUnsupportedTheaterPresentations(db); err != nil {
+		log.Printf("cleanup unsupported theater presentations failed: %v", err)
+	}
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
 	db.AutoMigrate(&CharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&WorldCharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
+	db.AutoMigrate(&ChannelCharacterSnapshotSettingsModel{}, &ChannelCharacterSnapshotPreferenceModel{}, &ChannelCharacterSnapshotModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioImportJobModel{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
@@ -169,7 +176,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&BattleReportModel{}, &BattleReportDisplayChannelModel{}, &BattleReportDisplayEmbedModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
 	db.AutoMigrate(&WorldIFormBindingModel{})
-	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldArchiveModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
+	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldMemberDice3DProfileModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldArchiveModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
 	db.AutoMigrate(&ExternalGlossaryLibraryModel{}, &ExternalGlossaryTermModel{}, &ExternalGlossaryCategoryModel{}, &WorldExternalGlossaryBindingModel{})
 	db.AutoMigrate(&AnnouncementModel{}, &AnnouncementUserStateModel{})
 	db.AutoMigrate(&ServiceMetricSample{})
@@ -192,7 +199,6 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
 		log.Printf("初始化未读提醒索引失败: %v", err)
 	}
-
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").
 		Update("default_dice_expr", "d20").Error; err != nil {
@@ -238,11 +244,19 @@ func ensureChatHistoryIndexes() error {
 		return nil
 	}
 	if IsSQLite() {
-		return db.Exec(`
-CREATE INDEX IF NOT EXISTS idx_msg_live_cursor
-ON messages(channel_id, display_order DESC, created_at DESC, id DESC)
-WHERE is_deleted = 0 AND is_archived = 0
-`).Error
+		statements := []string{`
+	CREATE INDEX IF NOT EXISTS idx_msg_live_cursor
+	ON messages(channel_id, display_order DESC, created_at DESC, id DESC)
+	WHERE is_deleted = 0 AND is_archived = 0
+	`, `
+	CREATE INDEX IF NOT EXISTS idx_messages_channel_created_at
+	ON messages(channel_id, created_at)
+	`}
+		for _, statement := range statements {
+			if err := db.Exec(statement).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

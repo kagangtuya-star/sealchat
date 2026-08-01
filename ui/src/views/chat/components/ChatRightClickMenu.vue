@@ -299,6 +299,10 @@ const canSetMessageInsertTarget = computed(() => (
   && !!insertTargetMessageId.value
   && !isArchivedMessage.value
 ));
+const canArchiveMessagesBefore = computed(() => (
+  !!insertTargetMessageId.value
+  && viewerIsAdmin.value
+));
 const isPinnedMessage = computed(() => {
   const raw: any = menuMessage.value.raw;
   if (!raw) {
@@ -772,6 +776,41 @@ const clickToggleMessageInsertTarget = () => {
   chat.messageMenu.show = false;
 };
 
+const clickArchiveMessagesBefore = () => {
+  if (!canArchiveMessagesBefore.value) {
+    return;
+  }
+  const targetMessageId = insertTargetMessageId.value;
+  if (!targetMessageId) {
+    return;
+  }
+  chat.messageMenu.show = false;
+  dialog.warning({
+    title: '归档更早消息',
+    content: '将归档当前消息之前的所有未归档消息，不包含当前消息。确定继续？',
+    positiveText: '归档',
+    negativeText: '取消',
+    iconPlacement: 'top',
+    contentStyle: {
+      color: themeVars.value.textColor2,
+    },
+    maskClosable: false,
+    onPositiveClick: async () => {
+      try {
+        const archivedCount = await chat.archiveMessagesBefore(targetMessageId);
+        if (archivedCount === 0) {
+          message.info('当前消息之前没有需要归档的消息');
+          return;
+        }
+        message.success(`已归档 ${archivedCount} 条消息`);
+      } catch (error) {
+        const errMsg = (error as Error)?.message || '归档失败';
+        message.error(errMsg);
+      }
+    },
+  });
+};
+
 </script>
 
 <template>
@@ -799,6 +838,13 @@ const clickToggleMessageInsertTarget = () => {
     <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
+    <context-menu-group label="更多">
+      <context-menu-item
+        label="归档该消息前的所有消息"
+        :disabled="!canArchiveMessagesBefore"
+        @click="clickArchiveMessagesBefore"
+      />
+    </context-menu-group>
   </context-menu>
 
   <EmojiPickerModal

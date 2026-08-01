@@ -1616,7 +1616,8 @@
         open: false,
         skill: '',
         targetValue: 0,
-        modifier: ''
+        modifier: '',
+        fumbleValue: ''
       },
       editorDialog: {
         open: false,
@@ -2199,14 +2200,22 @@
       return numeric > 0 ? ('+' + String(numeric)) : String(numeric);
     }
 
-    function buildShinobiRollExpression(skill, targetValue, modifier, plotValue) {
+    function normalizeRollFumbleValue(value) {
+      var text = String(value == null ? '' : value).trim();
+      if (!text) return '';
+      var numeric = Number(text);
+      if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) return '';
+      return String(numeric);
+    }
+
+    function buildShinobiRollExpression(skill, targetValue, modifier, fumbleValue) {
       var parts = ['.sbg'];
       var normalizedModifier = normalizeRollModifier(modifier);
       if (normalizedModifier) parts.push(normalizedModifier);
       parts.push(skill);
       parts.push(String(targetValue));
-      var plotRollValue = getPlotRollValue(plotValue);
-      if (plotRollValue) parts.push(plotRollValue);
+      var normalizedFumbleValue = normalizeRollFumbleValue(fumbleValue);
+      if (normalizedFumbleValue) parts.push(normalizedFumbleValue);
       return parts.join(' ');
     }
 
@@ -2394,10 +2403,12 @@
     }
 
     function openRollDialog(skill, targetValue) {
+      var meta = normalizeMeta(state.meta || state.attrs[SHINOBI_META_KEY]);
       state.rollDialog.open = true;
       state.rollDialog.skill = skill;
       state.rollDialog.targetValue = targetValue;
       state.rollDialog.modifier = '';
+      state.rollDialog.fumbleValue = getPlotRollValue(meta.plotValue);
       render();
     }
 
@@ -2413,7 +2424,7 @@
         state.rollDialog.skill,
         state.rollDialog.targetValue,
         state.rollDialog.modifier,
-        meta.plotValue
+        state.rollDialog.fumbleValue
       );
       sealchat.roll(expression, getRollLabel(state.rollDialog.skill, meta), {});
       closeRollDialog();
@@ -2427,7 +2438,7 @@
         state.rollDialog.skill,
         state.rollDialog.targetValue,
         state.rollDialog.modifier,
-        meta.plotValue
+        state.rollDialog.fumbleValue
       );
     }
 
@@ -2672,8 +2683,8 @@
         html += '          </div>';
         if (hasPlotValue(plotValue)) {
           html += '          <div class="roll-field-col">';
-          html += '            <div class="field-label">当前谋位</div>';
-          html += '            <div class="formula-preview">' + escapeHtml(getPlotRollValue(plotValue)) + '</div>';
+          html += '            <div class="field-label">当前大失败值</div>';
+          html += '            <input id="rollFumbleValueInput" class="field-input" type="number" step="1" value="' + escapeHtml(state.rollDialog.fumbleValue) + '">';
           html += '          </div>';
         }
         html += '        </div>';
@@ -2689,7 +2700,7 @@
         html += '          <button class="mini-btn" data-action="set-roll-modifier" data-modifier="">无修正</button>';
         html += '        </div>';
         html += '        <div class="field-label">最终发送</div>';
-        html += '        <div id="rollExpressionPreview" class="formula-preview">' + escapeHtml(buildShinobiRollExpression(state.rollDialog.skill, state.rollDialog.targetValue, state.rollDialog.modifier, plotValue)) + '</div>';
+        html += '        <div id="rollExpressionPreview" class="formula-preview">' + escapeHtml(buildShinobiRollExpression(state.rollDialog.skill, state.rollDialog.targetValue, state.rollDialog.modifier, state.rollDialog.fumbleValue)) + '</div>';
         html += '        <div class="field-label">点击发送会进行掷骰</div>';
       html += '      </div>';
         html += '      <div class="dialog__footer">';
@@ -2735,6 +2746,9 @@
         state.editorDialog.value = target.value;
       } else if (target && target.id === 'rollModifierInput') {
         state.rollDialog.modifier = target.value;
+        syncRollExpressionPreview();
+      } else if (target && target.id === 'rollFumbleValueInput') {
+        state.rollDialog.fumbleValue = target.value;
         syncRollExpressionPreview();
       } else if (target && target.id === 'toolInlineNameInput') {
         state.toolInlineEditor.type = target.value;

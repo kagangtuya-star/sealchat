@@ -1,3 +1,5 @@
+import type { TheaterPresentation, TheaterPresentationPatch } from '../types/theaterPresentation'
+
 export interface SealChatBridgeHandshakeRequest {
   type: 'sealchat.bridge.handshake'
   version: 1
@@ -35,6 +37,49 @@ export interface BridgeRoleSnapshot {
   activeVariantDisplayName?: string
   activeVariantColor?: string
   activeVariantAvatarUrl?: string
+  isActive: boolean
+  revision: number
+  updatedAt: number
+  baseAppearance: BridgeCharacterAppearance
+  variants: BridgeCharacterVariant[]
+  resolvedAppearance: BridgeCharacterAppearance
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeImageRef {
+  resourceId: string
+  url: string
+  alt?: string
+}
+
+export interface BridgeCharacterDecoration {
+  id: string
+  resource: BridgeImageRef
+  enabled: boolean
+  zIndex: number
+  settings: Record<string, unknown>
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeCharacterAppearance {
+  displayName: string
+  color: string
+  avatar: BridgeImageRef | null
+  decorations: BridgeCharacterDecoration[]
+  theaterPresentation?: TheaterPresentation | null
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeCharacterVariant {
+  variantId: string
+  keyword: string
+  selectorEmoji: string
+  note: string
+  enabled: boolean
+  appearancePatch: Omit<Partial<BridgeCharacterAppearance>, 'theaterPresentation'> & {
+    theaterPresentation?: TheaterPresentationPatch | null
+  }
+  extensions: Record<string, unknown>
 }
 
 export interface SealChatBridgeRolesSnapshot {

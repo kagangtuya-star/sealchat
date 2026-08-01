@@ -111,6 +111,7 @@ func Init() {
 	ensureChannelIFormPerms(chRoles)
 	ensureChannelMessagePinPerms(chRoles)
 	ensureObserverWhisperReadPerms(chRoles)
+	ensureChannelTheaterPerms(chRoles)
 
 	if num == 0 {
 		// 目前system roles表还未实用，每次创建是设计的一部分而不是bug
@@ -177,6 +178,25 @@ func ensureObserverWhisperReadPerms(chRoles []*model.ChannelRoleModel) {
 			continue
 		}
 		ensureRoleHasPermissions(role.ID, targetPerms)
+	}
+}
+
+func ensureChannelTheaterPerms(chRoles []*model.ChannelRoleModel) {
+	all := TheaterChannelPermissions()
+	viewer := []gorbac.Permission{PermFuncChannelTheaterView}
+	member := []gorbac.Permission{PermFuncChannelTheaterView, PermFuncChannelTheaterObjectEditDelegated, PermFuncChannelTheaterActionTrigger}
+	for _, role := range chRoles {
+		if role == nil {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(role.ID, "-owner"), strings.HasSuffix(role.ID, "-admin"):
+			ensureRoleHasPermissions(role.ID, all)
+		case strings.HasSuffix(role.ID, "-member"):
+			ensureRoleHasPermissions(role.ID, member)
+		case strings.HasSuffix(role.ID, "-ob"), strings.HasSuffix(role.ID, "-spectator"):
+			ensureRoleHasPermissions(role.ID, viewer)
+		}
 	}
 }
 

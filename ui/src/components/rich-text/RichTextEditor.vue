@@ -24,6 +24,8 @@ const props = withDefaults(defineProps<{
   editorStyle?: Record<string, string>
   minHeight?: string
   defaultIFormEmbedLink?: string
+  performancePopoverPlacement?: 'bottom' | 'left-start' | 'right-start'
+  performancePopoverContentClass?: string
 }>(), {
   modelValue: '',
   placeholder: '',
@@ -37,6 +39,8 @@ const props = withDefaults(defineProps<{
   editorStyle: () => ({}),
   minHeight: '',
   defaultIFormEmbedLink: '',
+  performancePopoverPlacement: 'bottom',
+  performancePopoverContentClass: '',
 });
 
 const emit = defineEmits<{
@@ -184,6 +188,8 @@ defineExpose({
       :mention-render-label="props.mentionRenderLabel"
       :input-class="chatInputClass"
       :default-i-form-embed-link="props.defaultIFormEmbedLink"
+      :performance-popover-placement="props.performancePopoverPlacement"
+      :performance-popover-content-class="props.performancePopoverContentClass"
       @update:model-value="updateValue"
       @focus="emit('focus')"
       @blur="emit('blur')"

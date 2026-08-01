@@ -21,8 +21,10 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/spf13/afero"
+	"github.com/valyala/fasthttp"
 
 	"sealchat/model"
+	"sealchat/service"
 	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
@@ -397,6 +399,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		EnableTrustedProxyCheck: enableTrustedProxyCheck,
 		TrustedProxies:          trustedProxies,
 	})
+	app.Server().HeaderReceived = func(header *fasthttp.RequestHeader) fasthttp.RequestConfig {
+		requestURI := string(header.RequestURI())
+		if strings.Contains(requestURI, "/api/v1/worlds/") && strings.Contains(requestURI, "/theater/packages/import") {
+			return fasthttp.RequestConfig{MaxRequestBodySize: service.TheaterPackageRequestBodyLimit()}
+		}
+		return fasthttp.RequestConfig{MaxRequestBodySize: bodyLimit}
+	}
 	app.Use(certificateHTTPRedirectMiddleware(config))
 	app.Use(corsConfig)
 	app.Use(recover.New())
@@ -429,6 +438,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
 	v1.Get("/public/ob/channels/:channelId/messages/search/refine", ChannelMessageSearchRefineObserver)
+	v1.Get("/public/ob/channels/:channelId/sticky-notes", ObserverStickyNoteList)
+	v1.Get("/public/ob/channels/:channelId/sticky-note-folders", ObserverStickyNoteFolderList)
+	v1.Get("/public/ob/channels/:channelId/battle-reports/:reportId", ObserverBattleReportGet)
+	v1.Get("/public/ob/channels/:channelId/iforms", ObserverChannelIFormList)
+	BindTheaterObserverRoutes(v1)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/effective", EffectiveWorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
@@ -519,6 +533,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/attachments-list", AttachmentList)
 
 	v1Auth.Post("/attachment-upload", AttachmentUploadTempFile)
+	v1Auth.Post("/cursor-assets", CursorAssetUploadHandler)
 	v1Auth.Post("/attachment-upload-quick", AttachmentUploadQuick)
 	v1Auth.Post("/attachment-import-from-url", AttachmentImportFromURL)
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
@@ -526,12 +541,19 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/attachment/:id/meta", AttachmentMeta)
 
 	v1Auth.Get("/channel-identities", ChannelIdentityList)
+	v1Auth.Get("/channel-identities/:id", ChannelIdentityGet)
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Post("/channel-identities/:id/replace-temporary", ChannelIdentityReplaceTemporary)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
+	v1Auth.Post("/worlds/:worldId/theater-presentations/resolve", WorldTheaterPresentationsResolve)
 	v1Auth.Post("/channels/:channelId/channel-identity-avatar-reissue", ChannelIdentityAvatarReissue)
+	v1Auth.Post("/channels/:channelId/theater-appearance-assets", TheaterAppearanceAssetUpload)
+	v1Auth.Post("/channels/:channelId/theater-appearance-assets/import", TheaterAppearanceAssetImport)
+	v1Auth.Get("/channels/:channelId/theater-appearance-assets/:assetId", TheaterAppearanceAssetGet)
+	v1Auth.Delete("/channels/:channelId/theater-appearance-assets/:assetId", TheaterAppearanceAssetDelete)
 	v1Auth.Get("/channel-identity-variants", ChannelIdentityVariantList)
+	v1Auth.Get("/channel-identity-variants/:id", ChannelIdentityVariantGet)
 	v1Auth.Post("/channel-identity-variants", ChannelIdentityVariantCreate)
 	v1Auth.Put("/channel-identity-variants/:id", ChannelIdentityVariantUpdate)
 	v1Auth.Delete("/channel-identity-variants/:id", ChannelIdentityVariantDelete)
@@ -590,6 +612,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
+	BindWorldTheaterRoutes(v1Auth)
+	BindTheaterAudioRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")
@@ -689,6 +713,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
 	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
+	worldGroup.Get("/:worldId/dice3d", WorldDice3DConfigGet)
+	worldGroup.Put("/:worldId/dice3d", WorldDice3DConfigPut)
+	worldGroup.Get("/:worldId/dice3d/profile", WorldDice3DProfileGet)
+	worldGroup.Put("/:worldId/dice3d/profile", WorldDice3DProfilePut)
+	worldGroup.Put("/:worldId/theater-presentation-template", WorldTheaterPresentationTemplateSet)
 	worldGroup.Delete("/:worldId", WorldDeleteHandler)
 	worldGroup.Post("/:worldId/join", WorldJoinHandler)
 	worldGroup.Post("/:worldId/leave", WorldLeaveHandler)
@@ -753,12 +782,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Patch("/battle-reports/:reportId", BattleReportUpdate)
 	v1Auth.Delete("/battle-reports/:reportId", BattleReportDelete)
 	v1Auth.Post("/chat/export", ChatExportCreate)
+	v1Auth.Post("/chat/export/batch", ChatExportBatchCreate)
 	v1Auth.Get("/chat/export", ChatExportList)
 	v1Auth.Get("/chat/export/:taskId", ChatExportGet)
 	v1Auth.Delete("/chat/export/:taskId", ChatExportDelete)
 	v1Auth.Post("/chat/export/:taskId/retry", ChatExportRetry)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
+	v1Auth.Post("/chat/export/:taskId/upload-batch", ChatExportBatchUpload)
 	// 聊天记录导入
 	chatImport := v1Auth.Group("/channels/:channelId/import")
 	chatImport.Get("/templates", ChatImportTemplates)
@@ -884,11 +915,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
-		var payload struct {
-			utils.AppConfig
-			AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
-		}
-		err := ctx.BodyParser(&payload)
+		newConfig, err := mergeConfigPatchForWrite(appConfig, ctx.Body())
 		if err != nil {
 			return err
 		}
@@ -903,14 +930,25 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return unmarshalErr
 		}
 
-		newConfig := payload.AppConfig
 		if rawPayload.Audio != nil && rawPayload.Audio.AllowWorldAudioWorkbench != nil {
 			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.Audio.AllowWorldAudioWorkbench
-		} else if payload.AllowWorldAudioWorkbench != nil {
-			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
+		} else if rawPayload.AllowWorldAudioWorkbench != nil {
+			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.AllowWorldAudioWorkbench
 		}
 		newConfig.ThemeManagement = utils.NormalizeThemeManagementConfig(newConfig.ThemeManagement)
 		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
+		normalizedDice3DStyles, validateErr := service.NormalizePlatformDice3DStyles(newConfig.ThemeManagement)
+		if validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
+		newConfig.ThemeManagement = normalizedDice3DStyles
+		newConfig.CursorTheme = utils.NormalizeCursorThemeConfig(newConfig.CursorTheme, false)
+		if validateErr := utils.ValidateCursorThemeConfig(newConfig.CursorTheme, false); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
+		if validateErr := service.ValidateCursorThemeAttachments(newConfig.CursorTheme, "", ""); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
 		newConfig.UITextReplace = utils.NormalizeUITextReplaceConfig(newConfig.UITextReplace)
@@ -918,8 +956,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
 
-		appConfig = mergeConfigForWrite(appConfig, &newConfig)
+		appConfig = newConfig
 		utils.WriteConfig(appConfig)
+		service.ConfirmCursorThemeAttachments(newConfig.CursorTheme)
 		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
 			_ = manager.Reconfigure(perfprofiler.ConfigFromApp(appConfig.PerformanceProfiler))
 		}

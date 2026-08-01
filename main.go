@@ -171,6 +171,9 @@ func main() {
 	defer cancel()
 
 	model.DBInit(config)
+	if err := service.MergeAllTheaterRoomsToWorld(); err != nil {
+		log.Printf("合并世界级 Theater 数据失败: %v", err)
+	}
 	if configInit.ShouldSync {
 		syncConfigToDB(config, configInit.SyncSource)
 	}
@@ -218,6 +221,7 @@ func main() {
 	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
 		fatalWithStartupLock("初始化音频子系统失败: %v", err)
 	}
+	service.InitTheaterMediaService(config.TheaterMedia, service.ResolveMediaToolchain(&config.Audio))
 
 	// 输出 FFmpeg 检测结果
 	if svc := service.GetAudioService(); svc != nil {
@@ -243,6 +247,7 @@ func main() {
 		HTMLPageSizeMax:     config.Export.HTMLPageSizeMax,
 		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
+	service.StartTheaterPackageWorker(ctx, config.Export.StorageDir)
 
 	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
 	service.StartDigestPushWorker()
@@ -318,6 +323,9 @@ func main() {
 		}
 	}
 	go autoSave()
+	service.SetTheaterEventPublisher(api.LocalTheaterEventPublisher{})
+	service.SetTheaterChatSender(api.LocalTheaterChatSender{})
+	service.StartTheaterOutboxWorker(ctx)
 
 	if err := api.Init(config, embedDirStatic); err != nil {
 		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)

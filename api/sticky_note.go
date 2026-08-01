@@ -12,10 +12,22 @@ import (
 
 	"sealchat/model"
 	"sealchat/protocol"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
 const stickyNoteEditingLockTTL = 10 * time.Second
+
+func encodeStickyNoteAppearance(value *protocol.StickyNoteAppearance, worldID, actorID string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	if err := service.ValidateStickyNoteAppearanceForWorld(worldID, actorID, value); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(value)
+	return string(raw), err
+}
 
 // ========== REST API ==========
 
@@ -339,19 +351,20 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	}
 
 	var req struct {
-		Title      string `json:"title"`
-		Content    string `json:"content"`
-		Color      string `json:"color"`
-		NoteType   string `json:"noteType"`
-		TypeData   string `json:"typeData"`
-		Visibility string `json:"visibility"`
-		ViewerIDs  string `json:"viewerIds"`
-		EditorIDs  string `json:"editorIds"`
-		FolderID   string `json:"folderId"`
-		DefaultX   int    `json:"defaultX"`
-		DefaultY   int    `json:"defaultY"`
-		DefaultW   int    `json:"defaultW"`
-		DefaultH   int    `json:"defaultH"`
+		Title      string                         `json:"title"`
+		Content    string                         `json:"content"`
+		Color      string                         `json:"color"`
+		Appearance *protocol.StickyNoteAppearance `json:"appearance"`
+		NoteType   string                         `json:"noteType"`
+		TypeData   string                         `json:"typeData"`
+		Visibility string                         `json:"visibility"`
+		ViewerIDs  string                         `json:"viewerIds"`
+		EditorIDs  string                         `json:"editorIds"`
+		FolderID   string                         `json:"folderId"`
+		DefaultX   int                            `json:"defaultX"`
+		DefaultY   int                            `json:"defaultY"`
+		DefaultW   int                            `json:"defaultW"`
+		DefaultH   int                            `json:"defaultH"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -380,26 +393,37 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	if req.Visibility == "" {
 		req.Visibility = "all"
 	}
+	appearanceJSON, err := encodeStickyNoteAppearance(req.Appearance, channel.WorldID, user.ID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	if appearanceJSON == "" && channel.WorldID != "" {
+		var world model.WorldModel
+		if model.GetDB().Where("id = ?", channel.WorldID).Limit(1).Find(&world).Error == nil {
+			appearanceJSON = world.StickyNoteDefaultAppearanceJSON
+		}
+	}
 
 	note := &model.StickyNoteModel{
-		ChannelID:   channelID,
-		WorldID:     channel.WorldID,
-		FolderID:    req.FolderID,
-		Title:       req.Title,
-		Content:     req.Content,
-		ContentText: req.Content,
-		Color:       req.Color,
-		CreatorID:   user.ID,
-		IsPublic:    true,
-		NoteType:    model.StickyNoteType(req.NoteType),
-		TypeData:    req.TypeData,
-		Visibility:  model.StickyNoteVisibility(req.Visibility),
-		ViewerIDs:   req.ViewerIDs,
-		EditorIDs:   req.EditorIDs,
-		DefaultX:    req.DefaultX,
-		DefaultY:    req.DefaultY,
-		DefaultW:    req.DefaultW,
-		DefaultH:    req.DefaultH,
+		ChannelID:      channelID,
+		WorldID:        channel.WorldID,
+		FolderID:       req.FolderID,
+		Title:          req.Title,
+		Content:        req.Content,
+		ContentText:    req.Content,
+		Color:          req.Color,
+		AppearanceJSON: appearanceJSON,
+		CreatorID:      user.ID,
+		IsPublic:       true,
+		NoteType:       model.StickyNoteType(req.NoteType),
+		TypeData:       req.TypeData,
+		Visibility:     model.StickyNoteVisibility(req.Visibility),
+		ViewerIDs:      req.ViewerIDs,
+		EditorIDs:      req.EditorIDs,
+		DefaultX:       req.DefaultX,
+		DefaultY:       req.DefaultY,
+		DefaultW:       req.DefaultW,
+		DefaultH:       req.DefaultH,
 	}
 	note.ID = utils.NewID()
 
@@ -763,22 +787,23 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	}
 
 	var req struct {
-		Title         *string `json:"title"`
-		Content       *string `json:"content"`
-		ContentText   *string `json:"contentText"`
-		Color         *string `json:"color"`
-		IsPinned      *bool   `json:"isPinned"`
-		NoteType      *string `json:"noteType"`
-		TypeData      *string `json:"typeData"`
-		Visibility    *string `json:"visibility"`
-		ViewerIDs     *string `json:"viewerIds"`
-		EditorIDs     *string `json:"editorIds"`
-		FolderID      *string `json:"folderId"`
-		DefaultX      *int    `json:"defaultX"`
-		DefaultY      *int    `json:"defaultY"`
-		DefaultW      *int    `json:"defaultW"`
-		DefaultH      *int    `json:"defaultH"`
-		LockSessionID *string `json:"lockSessionId"`
+		Title         *string                        `json:"title"`
+		Content       *string                        `json:"content"`
+		ContentText   *string                        `json:"contentText"`
+		Color         *string                        `json:"color"`
+		Appearance    *protocol.StickyNoteAppearance `json:"appearance"`
+		IsPinned      *bool                          `json:"isPinned"`
+		NoteType      *string                        `json:"noteType"`
+		TypeData      *string                        `json:"typeData"`
+		Visibility    *string                        `json:"visibility"`
+		ViewerIDs     *string                        `json:"viewerIds"`
+		EditorIDs     *string                        `json:"editorIds"`
+		FolderID      *string                        `json:"folderId"`
+		DefaultX      *int                           `json:"defaultX"`
+		DefaultY      *int                           `json:"defaultY"`
+		DefaultW      *int                           `json:"defaultW"`
+		DefaultH      *int                           `json:"defaultH"`
+		LockSessionID *string                        `json:"lockSessionId"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -820,6 +845,13 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	}
 	if req.Color != nil {
 		updates["color"] = *req.Color
+	}
+	if req.Appearance != nil {
+		appearanceJSON, err := encodeStickyNoteAppearance(req.Appearance, note.WorldID, user.ID)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		updates["appearance_json"] = appearanceJSON
 	}
 	if req.IsPinned != nil {
 		updates["is_pinned"] = *req.IsPinned

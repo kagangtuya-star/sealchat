@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -105,6 +106,96 @@ func createMessageUpdateWhisperTestMember(t *testing.T, channelID, userID string
 	}
 	if err := model.GetDB().Create(member).Error; err != nil {
 		t.Fatalf("create member %s failed: %v", userID, err)
+	}
+}
+
+func TestAPIMessageUpdateKeepsFrozenTheaterPresentationForUnchangedIdentity(t *testing.T) {
+	initMessageUpdateWhisperTestDB(t)
+
+	author := createMessageUpdateWhisperTestUser(t, "theater-author")
+	world := &model.WorldModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "theater-world"},
+		Name:              "World",
+		Status:            "active",
+		OwnerID:           author.ID,
+	}
+	if err := model.GetDB().Create(world).Error; err != nil {
+		t.Fatal(err)
+	}
+	channel := &model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "theater-channel"},
+		WorldID:           world.ID,
+		Name:              "Channel",
+		PermType:          "public",
+		Status:            "active",
+	}
+	if err := model.GetDB().Create(channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	createMessageUpdateWhisperTestMember(t, channel.ID, author.ID)
+
+	currentPresentation := protocol.DefaultTheaterPresentation()
+	currentPresentation.Dialogue.NameGap = 0.42
+	identity := &model.ChannelIdentityModel{
+		StringPKBaseModel:   model.StringPKBaseModel{ID: "theater-identity"},
+		ChannelID:           channel.ID,
+		UserID:              author.ID,
+		DisplayName:         "Identity",
+		TheaterPresentation: &currentPresentation,
+	}
+	if err := model.GetDB().Create(identity).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	frozenPresentation := protocol.DefaultTheaterPresentation()
+	frozenPresentation.Dialogue.NameGap = 0.12
+	message := &model.MessageModel{
+		StringPKBaseModel:         model.StringPKBaseModel{ID: "theater-message"},
+		ChannelID:                 channel.ID,
+		UserID:                    author.ID,
+		MemberID:                  "mem-" + author.ID,
+		Content:                   "before",
+		ICMode:                    "ic",
+		SenderIdentityID:          identity.ID,
+		SenderRoleID:              identity.ID,
+		SenderTheaterPresentation: &frozenPresentation,
+	}
+	if err := model.GetDB().Create(message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	identityID := identity.ID
+	variantID := ""
+	ctx := &ChatContext{
+		User:            author,
+		ChannelUsersMap: &utils.SyncMap[string, *utils.SyncSet[string]]{},
+		UserId2ConnInfo: &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{},
+	}
+	if _, err := apiMessageUpdate(ctx, &struct {
+		ChannelID         string   `json:"channel_id"`
+		MessageID         string   `json:"message_id"`
+		Content           string   `json:"content"`
+		WhisperToIds      []string `json:"whisper_to_ids"`
+		ICMode            string   `json:"ic_mode"`
+		IdentityID        *string  `json:"identity_id"`
+		IdentityVariantID *string  `json:"identity_variant_id"`
+	}{
+		ChannelID:         channel.ID,
+		MessageID:         message.ID,
+		Content:           "after",
+		ICMode:            "ic",
+		IdentityID:        &identityID,
+		IdentityVariantID: &variantID,
+	}); err != nil {
+		t.Fatalf("apiMessageUpdate failed: %v", err)
+	}
+
+	var stored model.MessageModel
+	if err := model.GetDB().Where("id = ?", message.ID).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.SenderTheaterPresentation == nil || stored.SenderTheaterPresentation.Dialogue.NameGap != frozenPresentation.Dialogue.NameGap {
+		t.Fatalf("frozen presentation replaced: %#v", stored.SenderTheaterPresentation)
 	}
 }
 

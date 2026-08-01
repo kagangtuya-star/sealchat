@@ -2,11 +2,9 @@ package api
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/samber/lo"
 	"gorm.io/gorm"
 
 	"sealchat/model"
@@ -33,16 +31,6 @@ type channelImagesResponse struct {
 	PageSize int                `json:"page_size"`
 	HasMore  bool               `json:"has_more"`
 }
-
-// Regex patterns for extracting image attachment IDs from message content
-var (
-	// Match id:xxx format (e.g., id:abc123)
-	attachmentIDPattern = regexp.MustCompile(`id:([a-zA-Z0-9_-]+)`)
-	// Match <img> tags with src="id:xxx" or src='id:xxx'
-	imgSrcPattern = regexp.MustCompile(`<img[^>]+src=["']id:([a-zA-Z0-9_-]+)["'][^>]*>`)
-	// Match image elements like <image ... id:xxx/>
-	satoriImagePattern = regexp.MustCompile(`<image[^>]+src=["']id:([a-zA-Z0-9_-]+)["'][^>]*>`)
-)
 
 // ChannelImagesList returns paginated images from channel messages
 func ChannelImagesList(c *fiber.Ctx) error {
@@ -90,16 +78,37 @@ func ChannelImagesList(c *fiber.Ctx) error {
 	}
 
 	db := model.GetDB()
+	if err := model.BackfillMessageImageAttachmentsForChannel(db, channelID); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "初始化频道图片索引失败"})
+	}
 
-	// Build base query for messages with images
-	// We look for messages that likely contain images (have id: pattern in content)
+	resp, err := queryChannelImages(
+		db,
+		user.ID,
+		channelID,
+		icModeFilter,
+		sortOrder,
+		page,
+		pageSize,
+		canUserReadAllWhispersInChannel(user.ID, channelID),
+	)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "查询失败"})
+	}
+	return c.JSON(resp)
+}
+
+func queryChannelImages(db *gorm.DB, userID, channelID, icModeFilter, sortOrder string, page, pageSize int, canReadAllWhispers bool) (*channelImagesResponse, error) {
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
 			Where("channel_id = ?", channelID).
 			Where("is_revoked = ?", false).
 			Where("is_deleted = ?", false).
-			Where("content LIKE ?", "%id:%") // Only get messages that might have images
-		q = applyWhisperVisibilityFilter(q, user.ID, channelID)
+			Where(`EXISTS (
+				SELECT 1 FROM message_attachments ma
+				WHERE ma.message_id = messages.id AND ma.kind = ?
+			)`, model.MessageAttachmentKindImage)
+		q = applyWhisperVisibilityFilterWithReadAll(q, userID, canReadAllWhispers)
 		switch icModeFilter {
 		case "ic":
 			q = q.Where("(ic_mode = ? OR ic_mode = '' OR ic_mode IS NULL)", "ic")
@@ -112,9 +121,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 	// Count total
 	var total int64
 	if err := baseQuery().Count(&total).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"message": "查询失败",
-		})
+		return nil, err
 	}
 
 	// Fetch messages
@@ -124,7 +131,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		orderSuffix = " ASC"
 	}
 	var messages []*model.MessageModel
-	err = baseQuery().
+	err := baseQuery().
 		Order("display_order"+orderSuffix).
 		Order("created_at"+orderSuffix).
 		Offset(offset).
@@ -134,9 +141,15 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		}).
 		Find(&messages).Error
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"message": "查询失败",
-		})
+		return nil, err
+	}
+	messageIDs := make([]string, 0, len(messages))
+	for _, message := range messages {
+		messageIDs = append(messageIDs, message.ID)
+	}
+	attachmentIDsByMessage, err := model.MessageImageAttachmentIDsByMessageIDs(db, messageIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Extract images from messages
@@ -148,7 +161,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 			break
 		}
 
-		attachmentIDs := extractImageAttachmentIDs(msg.Content)
+		attachmentIDs := attachmentIDsByMessage[msg.ID]
 		if len(attachmentIDs) == 0 {
 			continue
 		}
@@ -192,7 +205,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		}
 	}
 
-	resp := channelImagesResponse{
+	resp := &channelImagesResponse{
 		Items:    items,
 		Total:    total,
 		Page:     page,
@@ -200,46 +213,5 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		HasMore:  int64(page*pageSize) < total,
 	}
 
-	return c.JSON(resp)
-}
-
-// extractImageAttachmentIDs extracts attachment IDs from message content
-func extractImageAttachmentIDs(content string) []string {
-	if content == "" {
-		return nil
-	}
-
-	var ids []string
-	seen := make(map[string]bool)
-
-	// Extract from <img src="id:xxx"> format
-	matches := imgSrcPattern.FindAllStringSubmatch(content, -1)
-	for _, match := range matches {
-		if len(match) > 1 && !seen[match[1]] {
-			ids = append(ids, match[1])
-			seen[match[1]] = true
-		}
-	}
-
-	// Extract from <image src="id:xxx"> format (Satori)
-	matches = satoriImagePattern.FindAllStringSubmatch(content, -1)
-	for _, match := range matches {
-		if len(match) > 1 && !seen[match[1]] {
-			ids = append(ids, match[1])
-			seen[match[1]] = true
-		}
-	}
-
-	// Fallback: extract from id:xxx pattern if no structured format found
-	if len(ids) == 0 {
-		matches = attachmentIDPattern.FindAllStringSubmatch(content, -1)
-		for _, match := range matches {
-			if len(match) > 1 && !seen[match[1]] {
-				ids = append(ids, match[1])
-				seen[match[1]] = true
-			}
-		}
-	}
-
-	return lo.Uniq(ids)
+	return resp, nil
 }

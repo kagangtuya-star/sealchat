@@ -12,7 +12,8 @@ import (
 
 func S3MigrationPreview(c *fiber.Ctx) error {
 	kind := service.S3MigrationKind(strings.TrimSpace(c.Query("type")))
-	stats, err := service.GetS3MigrationPreview(kind)
+	target := service.StorageMigrationTarget(strings.TrimSpace(c.Query("target", string(service.StorageMigrationTargetS3))))
+	stats, err := service.GetStorageMigrationPreview(kind, target)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, service.ErrS3MigrationBadRequest) {
@@ -25,6 +26,7 @@ func S3MigrationPreview(c *fiber.Ctx) error {
 
 type S3MigrationExecuteRequest struct {
 	Type         string `json:"type"`
+	Target       string `json:"target"`
 	BatchSize    int    `json:"batchSize"`
 	DryRun       bool   `json:"dryRun"`
 	DeleteSource bool   `json:"deleteSource"`
@@ -37,7 +39,8 @@ func S3MigrationExecute(c *fiber.Ctx) error {
 		req.DryRun = false
 	}
 	kind := service.S3MigrationKind(strings.TrimSpace(req.Type))
-	stats, results, err := service.ExecuteS3Migration(kind, req.BatchSize, req.DryRun, req.DeleteSource)
+	target := service.StorageMigrationTarget(strings.TrimSpace(req.Target))
+	stats, results, err := service.ExecuteStorageMigration(kind, target, req.BatchSize, req.DryRun, req.DeleteSource)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, service.ErrS3MigrationBadRequest) || errors.Is(err, service.ErrS3MigrationS3NotReady) {

@@ -82,6 +82,20 @@ func GetBattleReport(reportID string, userID string) (*model.BattleReportModel, 
 	return report, nil
 }
 
+func GetBattleReportForObserver(reportID, observerWorldID string) (*model.BattleReportModel, error) {
+	report, err := loadBattleReport(reportID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(report.WorldID) != strings.TrimSpace(observerWorldID) {
+		return nil, ErrWorldPermission
+	}
+	if _, err := CanObserverAccessChannel(report.ChannelID, observerWorldID); err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
 func CreateBattleReport(channelID string, userID string, input BattleReportInput) (*model.BattleReportModel, error) {
 	channelID = strings.TrimSpace(channelID)
 	userID = strings.TrimSpace(userID)

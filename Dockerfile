@@ -3,6 +3,7 @@
 FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS ui-builder
 WORKDIR /src/ui
 COPY ui/ ./
+COPY doc/template/ /src/doc/template/
 RUN --mount=type=cache,target=/root/.cache/yarn \
   if [ -f dist/index.html ]; then echo "Using prebuilt ui/dist from build context"; else corepack enable && yarn install --network-timeout 600000 && yarn build-only; fi
 

@@ -11,8 +11,12 @@ import { useDisplayStore } from '@/stores/display'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
+import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
+import { installMessageSoundNotifier } from '@/services/messageSoundNotifier'
 
 const display = useDisplayStore()
+useCursorThemeRuntime()
+let disposeMessageSoundNotifier: (() => void) | null = null
 const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
 
 const naiveTheme = computed<GlobalTheme | null>(() => (display.palette === 'night' ? darkTheme : null))
@@ -69,10 +73,13 @@ const handleContextMenu = (e: MouseEvent) => {
 
 onMounted(() => {
   document.addEventListener('contextmenu', handleContextMenu)
+  disposeMessageSoundNotifier = installMessageSoundNotifier()
 })
 
 onUnmounted(() => {
   document.removeEventListener('contextmenu', handleContextMenu)
+  disposeMessageSoundNotifier?.()
+  disposeMessageSoundNotifier = null
 })
 </script>
 

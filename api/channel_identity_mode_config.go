@@ -61,6 +61,9 @@ func ChannelIdentityModeConfigUpsert(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "BOT 外观不支持场内场外映射"})
+	}
 
 	icRoleID := normalizeOptionalID(body.ICRoleID)
 	oocRoleID := normalizeOptionalID(body.OOCRoleID)

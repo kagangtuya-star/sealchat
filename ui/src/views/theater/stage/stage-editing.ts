@@ -1,0 +1,264 @@
+import { toRaw } from 'vue'
+import type { StageAction, StageObject, StageObjectScope } from '../shared/stage-types'
+
+export interface StageClipboardBundle {
+  version: 2
+  copyMode: StageCopyMode
+  sourceSceneId: string
+  roots: StageClipboardRoot[]
+  objects: StageClipboardObject[]
+}
+
+export type StageCopyMode = 'in-place' | 'offset'
+
+export interface StageClipboardRoot {
+  id: string
+  scope: StageObjectScope
+}
+
+export interface StageClipboardObject {
+  scope: StageObjectScope
+  object: StageObject
+}
+
+export interface StageObjectCollectionsSnapshot {
+  sceneId: string
+  sceneObjects: Record<string, StageObject>
+  persistentObjects: Record<string, StageObject>
+}
+
+export interface StageObjectPatch {
+  target: StageObjectScope
+  path: string[]
+  beforeExists: boolean
+  before?: unknown
+  afterExists: boolean
+  after?: unknown
+}
+
+export interface StageSelectionSnapshot {
+  selectedIds: string[]
+  primaryId: string | null
+}
+
+export interface StageObjectHistoryEntry {
+  label: string
+  sceneId: string
+  patches: StageObjectPatch[]
+  selectionBefore: StageSelectionSnapshot
+  selectionAfter: StageSelectionSnapshot
+}
+
+const unwrapCloneable = (value: unknown, seen: WeakMap<object, unknown>): unknown => {
+  const raw = toRaw(value)
+  if (!raw || typeof raw !== 'object') return raw
+  const existing = seen.get(raw)
+  if (existing) return existing
+  if (Array.isArray(raw)) {
+    const result: unknown[] = []
+    seen.set(raw, result)
+    raw.forEach((item) => result.push(unwrapCloneable(item, seen)))
+    return result
+  }
+  const result: Record<string, unknown> = {}
+  seen.set(raw, result)
+  Object.entries(raw).forEach(([key, item]) => {
+    result[key] = unwrapCloneable(item, seen)
+  })
+  return result
+}
+
+export const cloneStageData = <T>(value: T): T => (
+  structuredClone(unwrapCloneable(value, new WeakMap())) as T
+)
+
+const clone = cloneStageData
+const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
+const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
+
+export const cloneStageActionsForCopy = (
+  actions: readonly StageAction[],
+  makeId: (prefix: string) => string,
+  objectIdMap: ReadonlyMap<string, string>,
+  sceneIdMap: ReadonlyMap<string, string> = new Map(),
+): StageAction[] => actions.map((action) => {
+  const copiedAction = clone(action)
+  copiedAction.id = makeId('action')
+  if (copiedAction.type === 'scene.apply' && sceneIdMap.has(copiedAction.payload.sceneId)) {
+    copiedAction.payload.sceneId = sceneIdMap.get(copiedAction.payload.sceneId)!
+  }
+  if (copiedAction.type === 'object.toggle' && objectIdMap.has(copiedAction.payload.objectId)) {
+    copiedAction.payload.objectId = objectIdMap.get(copiedAction.payload.objectId)!
+  }
+  if (copiedAction.type === 'effect.play' && objectIdMap.has(copiedAction.payload.effectId)) {
+    copiedAction.payload.effectId = objectIdMap.get(copiedAction.payload.effectId)!
+  }
+  if (copiedAction.type === 'action.sequence') {
+    copiedAction.payload.steps.forEach((step) => {
+      if (step.sceneId && sceneIdMap.has(step.sceneId)) step.sceneId = sceneIdMap.get(step.sceneId)!
+      if (step.action.type === 'scene.apply' && sceneIdMap.has(step.action.payload.sceneId)) {
+        step.action.payload.sceneId = sceneIdMap.get(step.action.payload.sceneId)!
+      }
+      if (step.action.type === 'object.toggle' && objectIdMap.has(step.action.payload.objectId)) {
+        step.action.payload.objectId = objectIdMap.get(step.action.payload.objectId)!
+      }
+      if (step.action.type === 'effect.play' && objectIdMap.has(step.action.payload.effectId)) {
+        step.action.payload.effectId = objectIdMap.get(step.action.payload.effectId)!
+      }
+    })
+  }
+  return copiedAction
+})
+
+const diffRecord = (
+  target: StageObjectPatch['target'],
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  path: string[],
+  result: StageObjectPatch[],
+) => {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  keys.forEach((key) => {
+    const beforeExists = own(before, key)
+    const afterExists = own(after, key)
+    const beforeValue = before[key]
+    const afterValue = after[key]
+    const nextPath = [...path, key]
+    if (!beforeExists || !afterExists) {
+      result.push({
+        target,
+        path: nextPath,
+        beforeExists,
+        ...(beforeExists ? { before: clone(beforeValue) } : {}),
+        afterExists,
+        ...(afterExists ? { after: clone(afterValue) } : {}),
+      })
+      return
+    }
+    if (same(beforeValue, afterValue)) return
+    if (
+      beforeValue && afterValue
+      && typeof beforeValue === 'object' && typeof afterValue === 'object'
+      && !Array.isArray(beforeValue) && !Array.isArray(afterValue)
+    ) {
+      diffRecord(
+        target,
+        beforeValue as Record<string, unknown>,
+        afterValue as Record<string, unknown>,
+        nextPath,
+        result,
+      )
+      return
+    }
+    result.push({
+      target,
+      path: nextPath,
+      beforeExists: true,
+      before: clone(beforeValue),
+      afterExists: true,
+      after: clone(afterValue),
+    })
+  })
+}
+
+export const createObjectHistoryEntry = (
+  label: string,
+  before: StageObjectCollectionsSnapshot,
+  after: StageObjectCollectionsSnapshot,
+  selectionBefore: StageSelectionSnapshot,
+  selectionAfter: StageSelectionSnapshot,
+): StageObjectHistoryEntry | null => {
+  if (before.sceneId !== after.sceneId) return null
+  const patches: StageObjectPatch[] = []
+  diffRecord('scene', before.sceneObjects, after.sceneObjects, [], patches)
+  diffRecord('scene-fixed', before.persistentObjects, after.persistentObjects, [], patches)
+  return patches.length ? {
+    label,
+    sceneId: before.sceneId,
+    patches,
+    selectionBefore,
+    selectionAfter,
+  } : null
+}
+
+const resolveParent = (root: Record<string, unknown>, path: string[], create: boolean) => {
+  let current = root
+  for (const key of path.slice(0, -1)) {
+    const next = current[key]
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      if (!create) return null
+      current[key] = {}
+    }
+    current = current[key] as Record<string, unknown>
+  }
+  return current
+}
+
+export const applyObjectHistoryEntry = (
+  entry: StageObjectHistoryEntry,
+  direction: 'undo' | 'redo',
+  sceneObjects: Record<string, StageObject>,
+  persistentObjects: Record<string, StageObject>,
+) => {
+  const patches = direction === 'undo' ? [...entry.patches].reverse() : entry.patches
+  patches.forEach((patch) => {
+    const root = (patch.target === 'scene' ? sceneObjects : persistentObjects) as Record<string, unknown>
+    const exists = direction === 'undo' ? patch.beforeExists : patch.afterExists
+    const value = direction === 'undo' ? patch.before : patch.after
+    const parent = resolveParent(root, patch.path, exists)
+    if (!parent) return
+    const key = patch.path[patch.path.length - 1]
+    if (exists) parent[key] = clone(value)
+    else delete parent[key]
+  })
+}
+
+export const collectObjectSubtree = (
+  collection: Record<string, StageObject>,
+  rootId: string,
+): StageObject[] => {
+  const result: StageObject[] = []
+  const visit = (id: string) => {
+    const object = collection[id]
+    if (!object) return
+    result.push(clone(object))
+    Object.values(collection)
+      .filter((candidate) => candidate.parentId === id)
+      .forEach((candidate) => visit(candidate.id))
+  }
+  visit(rootId)
+  return result
+}
+
+export const instantiateClipboardBundle = (
+  bundle: StageClipboardBundle,
+  makeId: (prefix: string) => string,
+  offset: number,
+  rootParentIds: ReadonlyMap<string, string | null>,
+) => {
+  const idMap = new Map(bundle.objects.map(({ object }) => [object.id, makeId('object')]))
+  const rootIds = new Set(bundle.roots.map((root) => root.id))
+  const objects = bundle.objects.map(({ scope, object: source }) => {
+    const object = clone(source)
+    object.id = idMap.get(source.id)!
+    object.metadata = { ...object.metadata, transitionKey: object.id }
+    object.parentId = rootIds.has(source.id)
+      ? rootParentIds.get(source.id) || null
+      : source.parentId ? idMap.get(source.parentId) || null : null
+    object.actions = cloneStageActionsForCopy(object.actions, makeId, idMap)
+    if (rootIds.has(source.id)) {
+      object.name = `${object.name} 副本`
+      object.transform.x += offset
+      object.transform.y += offset
+    }
+    return { scope, object }
+  })
+  return {
+    roots: bundle.roots.map((root) => ({
+      sourceId: root.id,
+      id: idMap.get(root.id)!,
+      scope: root.scope,
+    })),
+    objects,
+  }
+}

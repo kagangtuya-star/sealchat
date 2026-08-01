@@ -10,11 +10,14 @@ import { useDisplayStore } from '@/stores/display';
 interface Props {
   visible: boolean;
   channelId?: string;
+  refreshVersion?: number;
+  revealLatestTaskVersion?: number;
 }
 
 interface Emits {
   (e: 'update:visible', visible: boolean): void;
   (e: 'request-export'): void;
+  (e: 'request-batch-export'): void;
 }
 
 const props = defineProps<Props>();
@@ -340,6 +343,10 @@ const handleCreateExport = () => {
   emit('request-export');
 };
 
+const handleCreateBatchExport = () => {
+  emit('request-batch-export');
+};
+
 const resetState = () => {
   page.value = 1;
   pageSize.value = 5;
@@ -369,6 +376,28 @@ watch(
       total.value = 0;
       totalSize.value = 0;
     }
+  },
+);
+
+watch(
+  () => props.refreshVersion,
+  () => {
+    if (!props.visible || !props.channelId) {
+      return;
+    }
+    fetchTasks();
+  },
+);
+
+watch(
+  () => props.revealLatestTaskVersion,
+  () => {
+    if (!props.visible || !props.channelId) {
+      return;
+    }
+    statusFilter.value = 'all';
+    page.value = 1;
+    fetchTasks();
   },
 );
 </script>
@@ -417,6 +446,9 @@ watch(
           />
           <n-space class="filter-actions" align="center" justify="end">
             <n-button size="small" tertiary @click="handleRefresh" :loading="loading">刷新</n-button>
+            <n-button size="small" :disabled="!props.channelId" @click="handleCreateBatchExport">
+              批量导出
+            </n-button>
             <n-button size="small" type="primary" :disabled="!props.channelId" @click="handleCreateExport">
               新建导出
             </n-button>

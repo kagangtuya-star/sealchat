@@ -12,17 +12,20 @@ import (
 )
 
 type channelIdentityPayload struct {
-	ChannelID          string                        `json:"channelId"`
-	TargetUserID       string                        `json:"targetUserId"`
-	DisplayName        string                        `json:"displayName"`
-	Color              string                        `json:"color"`
-	AvatarAttachmentID string                        `json:"avatarAttachmentId"`
-	AvatarDecoration   *protocol.AvatarDecoration    `json:"avatarDecoration"`
-	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations"`
-	IsDefault          bool                          `json:"isDefault"`
-	IsTemporary        bool                          `json:"isTemporary"`
-	ICOOCOnActivate    string                        `json:"icOocOnActivate"`
-	FolderIDs          []string                      `json:"folderIds"`
+	ChannelID                  string                               `json:"channelId"`
+	TargetUserID               string                               `json:"targetUserId"`
+	DisplayName                string                               `json:"displayName"`
+	Color                      string                               `json:"color"`
+	AvatarAttachmentID         string                               `json:"avatarAttachmentId"`
+	AvatarDecoration           *protocol.AvatarDecoration           `json:"avatarDecoration"`
+	AvatarDecorations          protocol.AvatarDecorationList        `json:"avatarDecorations"`
+	IsDefault                  bool                                 `json:"isDefault"`
+	IsTemporary                bool                                 `json:"isTemporary"`
+	BotAppearanceMode          string                               `json:"botAppearanceMode"`
+	ICOOCOnActivate            string                               `json:"icOocOnActivate"`
+	FolderIDs                  []string                             `json:"folderIds"`
+	TheaterPresentation        protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
+	SkipTheaterAssetValidation bool                                 `json:"skipTheaterAssetValidation"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -35,6 +38,11 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		if err := service.EnsureBotChannelIdentity(ctx.TargetUserID, channelID); err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 	result, err := service.ChannelIdentityListByUser(channelID, ctx.TargetUserID)
 	if err != nil {
@@ -63,6 +71,22 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	})
 }
 
+func ChannelIdentityGet(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Query("channelId"))
+	if channelID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
+	}
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := model.ChannelIdentityValidateOwnership(strings.TrimSpace(c.Params("id")), ctx.TargetUserID, channelID)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"item": item})
+}
+
 func ChannelIdentityCreate(c *fiber.Ctx) error {
 	payload := channelIdentityPayload{}
 	if err := c.BodyParser(&payload); err != nil {
@@ -79,16 +103,22 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 仅允许编辑默认频道外观"})
+	}
 	item, err := service.ChannelIdentityCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityInput{
-		ChannelID:          payload.ChannelID,
-		DisplayName:        payload.DisplayName,
-		Color:              payload.Color,
-		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
-		IsDefault:          payload.IsDefault,
-		IsTemporary:        payload.IsTemporary,
-		ICOOCOnActivate:    payload.ICOOCOnActivate,
-		FolderIDs:          payload.FolderIDs,
+		ChannelID:                  payload.ChannelID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:                  payload.IsDefault,
+		IsTemporary:                payload.IsTemporary,
+		ICOOCOnActivate:            payload.ICOOCOnActivate,
+		FolderIDs:                  payload.FolderIDs,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -129,16 +159,28 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		if _, ownershipErr := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, identityID); ownershipErr != nil {
+			return handleChannelIdentityActorErr(c, ownershipErr)
+		}
+		payload.IsDefault = true
+		payload.IsTemporary = false
+		payload.FolderIDs = nil
+	}
 	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
-		ChannelID:          payload.ChannelID,
-		DisplayName:        payload.DisplayName,
-		Color:              payload.Color,
-		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
-		IsDefault:          payload.IsDefault,
-		IsTemporary:        payload.IsTemporary,
-		ICOOCOnActivate:    payload.ICOOCOnActivate,
-		FolderIDs:          payload.FolderIDs,
+		ChannelID:                  payload.ChannelID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:                  payload.IsDefault,
+		IsTemporary:                payload.IsTemporary,
+		BotAppearanceMode:          payload.BotAppearanceMode,
+		ICOOCOnActivate:            payload.ICOOCOnActivate,
+		FolderIDs:                  payload.FolderIDs,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -172,6 +214,9 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "不能删除 BOT 默认频道外观"})
 	}
 	if err := service.ChannelIdentityDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, identityID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -211,15 +256,20 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 不支持临时频道角色"})
+	}
 	result, err := service.ChannelIdentityReplaceTemporaryWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
-		ChannelID:          payload.ChannelID,
-		DisplayName:        payload.DisplayName,
-		Color:              payload.Color,
-		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
-		IsDefault:          payload.IsDefault,
-		ICOOCOnActivate:    payload.ICOOCOnActivate,
-		FolderIDs:          payload.FolderIDs,
+		ChannelID:              payload.ChannelID,
+		DisplayName:            payload.DisplayName,
+		Color:                  payload.Color,
+		AvatarAttachmentID:     payload.AvatarAttachmentID,
+		AvatarDecorations:      resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:              payload.IsDefault,
+		ICOOCOnActivate:        payload.ICOOCOnActivate,
+		FolderIDs:              payload.FolderIDs,
+		TheaterPresentation:    payload.TheaterPresentation.Value,
+		TheaterPresentationSet: payload.TheaterPresentation.Set,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{

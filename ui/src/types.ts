@@ -1,4 +1,5 @@
 import type { User, Message, Guild, GuildMember, Opcode, GatewayPayloadStructure, Channel } from '@satorijs/protocol'
+import type { TheaterPresentation, TheaterPresentationPatch } from '@/types/theaterPresentation'
 
 export interface WhisperMeta {
   senderMemberId?: string;
@@ -27,6 +28,7 @@ declare module '@satorijs/protocol' {
     pinnedAt?: number;
     pinnedBy?: string;
     isDeleted?: boolean;
+    diceVisual?: DiceVisualPayload;
     deletedAt?: number;
     deletedBy?: string;
     reactions?: MessageReaction[];
@@ -42,6 +44,109 @@ declare module '@satorijs/protocol' {
     characterApiEnabled?: boolean;
     characterApiReason?: string;
   }
+}
+
+export interface Dice3DSkin {
+  faceBackground: string;
+  faceForeground: string;
+  edgeColor: string;
+  outlineColor: string;
+  roughness: number;
+  metalness: number;
+  scale: number;
+  textures?: Record<string, string>;
+}
+
+export interface Dice3DMotionConfig {
+  speed: number;
+  throwForce: number;
+  wallBounce: number;
+  entryEdge: 'random' | 'top' | 'right' | 'bottom' | 'left';
+  lingerMs: number;
+  maxDice: number;
+  interactive: boolean;
+}
+
+export interface Dice3DAudioConfig {
+  enabled: boolean;
+  volume: number;
+  soundAssetId?: string;
+}
+
+export interface Dice3DCustomSurface {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Dice3DDockStack {
+  id: string;
+  label: string;
+  expression: string;
+  color?: string;
+}
+
+export interface Dice3DBotRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  channelIds?: string[];
+  botUserIds?: string[];
+  pattern: string;
+  countGroup: string;
+  sidesGroup: string;
+  valuesGroup: string;
+  valueSeparatorPattern: string;
+  priority: number;
+}
+
+export interface Dice3DWorldConfig {
+  version: number;
+  platformStyleId?: string;
+  enabled: boolean;
+  surfaceMode: 'auto' | 'chat' | 'theater' | 'fullscreen' | 'custom';
+  customSurface: Dice3DCustomSurface;
+  defaultSkin: Dice3DSkin;
+  motion: Dice3DMotionConfig;
+  audio: Dice3DAudioConfig;
+  botRules: Dice3DBotRule[];
+}
+
+export interface Dice3DMemberProfile {
+  version: number;
+  useOverride: boolean;
+  skin: Dice3DSkin;
+  audio?: Dice3DAudioConfig;
+  dockEnabled: boolean;
+  dockCorner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'free';
+  dockX: number;
+  dockY: number;
+  dockStacks: Dice3DDockStack[];
+}
+
+export interface Dice3DStylePreset {
+  id: string;
+  name: string;
+  config: Dice3DWorldConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DiceVisualPayload {
+  version: number;
+  rollId: string;
+  messageId: string;
+  channelId: string;
+  actorUserId: string;
+  seed: number;
+  groups: Array<{ type: string; results: number[] }>;
+  appearance: Dice3DSkin;
+  motion: Dice3DMotionConfig;
+  audio: Dice3DAudioConfig;
+  surfaceMode: Dice3DWorldConfig['surfaceMode'];
+  customSurface: Dice3DCustomSurface;
+  createdAt: number;
 }
 
 export type BotWhisperForwardRuleType = 'legacy_hidden_dice' | 'keyword' | 'regex' | 'all';
@@ -287,6 +392,27 @@ export interface BackupInfo {
 export interface ThemeManagementConfig {
   platformThemes?: PlatformTheme[];
   defaultPlatformThemeId?: string;
+  platformDice3DStyles?: Dice3DStylePreset[];
+  defaultPlatformDice3DStyleId?: string;
+}
+
+export type CursorSlot = 'default' | 'pointer' | 'text' | 'grab' | 'grabbing' | 'not-allowed';
+export type CursorMode = 'inherit' | 'browser' | 'custom';
+
+export interface CursorAssetConfig {
+  mode: CursorMode;
+  attachmentId?: string;
+  hotspotX?: number;
+  hotspotY?: number;
+  width?: number;
+  height?: number;
+  size?: number;
+  animated?: boolean;
+}
+
+export interface CursorThemeConfig {
+  version: 1;
+  slots: Partial<Record<CursorSlot, CursorAssetConfig>>;
 }
 
 export interface UITextReplaceRule {
@@ -545,6 +671,7 @@ export interface ServerConfig {
   keywordMaxLength?: number;
   builtInSealBotEnable: boolean;
   botIncomingParenAsOoc?: boolean;
+  theaterActivationCode?: string;
   logUpload?: LogUploadConfig;
   captcha?: CaptchaConfig;
   emailNotification?: {
@@ -562,6 +689,7 @@ export interface ServerConfig {
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
   themeManagement?: ThemeManagementConfig;
+  cursorTheme?: CursorThemeConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
   ai?: AIConfig;
@@ -845,9 +973,11 @@ export interface ChannelIdentity {
   characterCardId?: string;
   isDefault: boolean;
   isTemporary: boolean;
+  botAppearanceMode?: 'inherit' | 'custom' | '';
   icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];
+  theaterPresentation?: TheaterPresentation | null;
 }
 
 export interface ChannelIdentityVariant {
@@ -862,6 +992,7 @@ export interface ChannelIdentityVariant {
   displayName?: string;
   color?: string;
   appearance?: Record<string, any>;
+  theaterPresentation?: TheaterPresentationPatch | null;
   sortOrder: number;
   enabled: boolean;
   createdAt?: string;
@@ -920,5 +1051,6 @@ export interface MessageIdentity {
   avatarAttachment?: string;
   avatarDecoration?: AvatarDecoration | null;
   avatarDecorations?: AvatarDecoration[] | null;
+  theaterPresentation?: TheaterPresentation | null;
   isTemporary?: boolean;
 }

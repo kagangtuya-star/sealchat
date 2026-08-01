@@ -1,6 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 
 	"sealchat/utils"
@@ -22,6 +26,7 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 	}
 	ret.RegisterInviteRequired = strings.TrimSpace(cfg.RegisterInviteCode) != ""
 	ret.RegisterInviteCode = ""
+	ret.TheaterActivationCode = ""
 
 	// log upload token
 	ret.LogUpload.Token = ""
@@ -107,6 +112,9 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	if strings.TrimSpace(out.Certificate.ZeroSSLEABMACKey) == "" {
 		out.Certificate.ZeroSSLEABMACKey = current.Certificate.ZeroSSLEABMACKey
 	}
+	if len(out.AI.Providers) == 0 && len(current.AI.Providers) > 0 {
+		out.AI.Providers = append([]utils.AIProviderConfig(nil), current.AI.Providers...)
+	}
 	if len(out.AI.Providers) > 0 && len(current.AI.Providers) > 0 {
 		currentKeys := make(map[string]string, len(current.AI.Providers))
 		for _, provider := range current.AI.Providers {
@@ -127,4 +135,70 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 
 	return &out
+}
+
+// mergeConfigPatchForWrite applies only JSON fields present in the request.
+// This keeps server-only and newly added configuration fields when older
+// clients submit a partial AppConfig snapshot.
+func mergeConfigPatchForWrite(current *utils.AppConfig, raw []byte) (*utils.AppConfig, error) {
+	if current == nil {
+		current = &utils.AppConfig{}
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if payload == nil {
+		return nil, fmt.Errorf("配置请求体必须为对象")
+	}
+
+	out := *current
+	if err := applyJSONConfigPatch(reflect.ValueOf(&out).Elem(), payload); err != nil {
+		return nil, err
+	}
+	return mergeConfigForWrite(current, &out), nil
+}
+
+func applyJSONConfigPatch(dst reflect.Value, payload map[string]json.RawMessage) error {
+	typ := dst.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		fieldType := typ.Field(i)
+		field := dst.Field(i)
+		if !field.CanSet() {
+			continue
+		}
+
+		name := fieldType.Tag.Get("json")
+		if comma := strings.IndexByte(name, ','); comma >= 0 {
+			name = name[:comma]
+		}
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = fieldType.Name
+		}
+
+		rawValue, ok := payload[name]
+		if !ok {
+			continue
+		}
+
+		if field.Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {
+				if err := applyJSONConfigPatch(field, nested); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+
+		field.Set(reflect.Zero(field.Type()))
+		if err := json.Unmarshal(rawValue, field.Addr().Interface()); err != nil {
+			return fmt.Errorf("配置字段 %s 无效: %w", name, err)
+		}
+	}
+	return nil
 }

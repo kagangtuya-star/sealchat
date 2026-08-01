@@ -28,8 +28,19 @@ func PersistAttachmentFile(hash []byte, size int64, tempPath string, contentType
 	if manager == nil {
 		return nil, errors.New("存储服务未初始化")
 	}
+	return persistAttachmentFile(manager.ActiveBackendForAttachment(), manager.UploadAttachment, hash, size, tempPath, contentType)
+}
+
+func PersistTheaterAttachmentFile(hash []byte, size int64, tempPath string, contentType string) (*AttachmentLocation, error) {
+	manager := GetStorageManager()
+	if manager == nil {
+		return nil, errors.New("存储服务未初始化")
+	}
+	return persistAttachmentFile(manager.ActiveBackendForTheaterAttachment(), manager.UploadTheaterAttachment, hash, size, tempPath, contentType)
+}
+
+func persistAttachmentFile(targetBackend storage.BackendType, upload func(context.Context, storage.UploadInput) (*storage.UploadResult, error), hash []byte, size int64, tempPath string, contentType string) (*AttachmentLocation, error) {
 	ctx := context.Background()
-	targetBackend := manager.ActiveBackendForAttachment()
 	if reused, ok, err := tryReuseAttachment(hash, size, targetBackend); err != nil {
 		return nil, err
 	} else if ok && reused != nil {
@@ -37,7 +48,7 @@ func PersistAttachmentFile(hash []byte, size int64, tempPath string, contentType
 		return reused, nil
 	}
 	objectKey := storage.BuildAttachmentObjectKey(hex.EncodeToString(hash), size, time.Now())
-	result, err := manager.UploadAttachment(ctx, storage.UploadInput{
+	result, err := upload(ctx, storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: contentType,
@@ -60,9 +71,21 @@ func PersistAttachmentFileForceNew(hash []byte, size int64, tempPath string, con
 	if manager == nil {
 		return nil, errors.New("存储服务未初始化")
 	}
+	return persistAttachmentFileForceNew(manager.UploadAttachment, hash, size, tempPath, contentType, originalName)
+}
+
+func PersistTheaterAttachmentFileForceNew(hash []byte, size int64, tempPath string, contentType string, originalName string) (*AttachmentLocation, error) {
+	manager := GetStorageManager()
+	if manager == nil {
+		return nil, errors.New("存储服务未初始化")
+	}
+	return persistAttachmentFileForceNew(manager.UploadTheaterAttachment, hash, size, tempPath, contentType, originalName)
+}
+
+func persistAttachmentFileForceNew(upload func(context.Context, storage.UploadInput) (*storage.UploadResult, error), hash []byte, size int64, tempPath string, contentType string, originalName string) (*AttachmentLocation, error) {
 	ctx := context.Background()
 	objectKey := storage.BuildAttachmentReissueObjectKey(hex.EncodeToString(hash), size, originalName, time.Now())
-	result, err := manager.UploadAttachment(ctx, storage.UploadInput{
+	result, err := upload(ctx, storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: contentType,
@@ -327,6 +350,21 @@ func AttachmentPublicURL(att *model.AttachmentModel) string {
 		return public
 	}
 	return ""
+}
+
+// AttachmentReadURL returns a browser-readable CDN or signed URL.
+func AttachmentReadURL(ctx context.Context, att *model.AttachmentModel) string {
+	if att == nil {
+		return ""
+	}
+	manager := GetStorageManager()
+	if manager != nil && strings.TrimSpace(att.ObjectKey) != "" {
+		backend := convertModelToBackend(att.StorageType)
+		if target := manager.ResolveReadURL(ctx, backend, att.ObjectKey); target != "" {
+			return target
+		}
+	}
+	return strings.TrimSpace(att.ExternalURL)
 }
 
 func AttachmentExportURL(att *model.AttachmentModel) string {

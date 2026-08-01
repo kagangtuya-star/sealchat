@@ -218,7 +218,7 @@ function openDetail(row: AdminAudioAssetItem) {
 
 function rowProps(row: AdminAudioAssetItem) {
   return {
-    style: 'cursor: pointer;',
+    style: 'cursor: var(--sc-cursor-pointer, pointer);',
     onClick: () => {
       selectedAssetId.value = row.id;
     },

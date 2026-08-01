@@ -59,6 +59,25 @@ type AudioConfig struct {
 	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
+type TheaterMediaConfig struct {
+	Enabled                 bool  `json:"enabled" yaml:"enabled"`
+	WorkerConcurrency       int   `json:"workerConcurrency" yaml:"workerConcurrency"`
+	ImageMaxSizeMB          int64 `json:"imageMaxSizeMB" yaml:"imageMaxSizeMB"`
+	VideoMaxSizeMB          int64 `json:"videoMaxSizeMB" yaml:"videoMaxSizeMB"`
+	RoomQuotaMB             int64 `json:"roomQuotaMB" yaml:"roomQuotaMB"`
+	MaxDimension            int   `json:"maxDimension" yaml:"maxDimension"`
+	MaxAnimatedFrames       int   `json:"maxAnimatedFrames" yaml:"maxAnimatedFrames"`
+	MaxAnimatedDurationMS   int64 `json:"maxAnimatedDurationMs" yaml:"maxAnimatedDurationMs"`
+	MaxAnimatedPixelFrames  int64 `json:"maxAnimatedPixelFrames" yaml:"maxAnimatedPixelFrames"`
+	VideoMaxDurationMS      int64 `json:"videoMaxDurationMs" yaml:"videoMaxDurationMs"`
+	VideoMaxWidth           int   `json:"videoMaxWidth" yaml:"videoMaxWidth"`
+	VideoMaxHeight          int   `json:"videoMaxHeight" yaml:"videoMaxHeight"`
+	VideoMaxFrameRate       int   `json:"videoMaxFrameRate" yaml:"videoMaxFrameRate"`
+	ProbeTimeoutSeconds     int   `json:"probeTimeoutSeconds" yaml:"probeTimeoutSeconds"`
+	TranscodeTimeoutSeconds int   `json:"transcodeTimeoutSeconds" yaml:"transcodeTimeoutSeconds"`
+	KeepOriginal            bool  `json:"keepOriginal" yaml:"keepOriginal"`
+}
+
 type StorageMode string
 
 const (
@@ -167,6 +186,7 @@ type S3StorageConfig struct {
 	AttachmentsEnabled *bool  `json:"attachmentsEnabled" yaml:"attachmentsEnabled"`
 	AudioEnabled       *bool  `json:"audioEnabled" yaml:"audioEnabled"`
 	FontsEnabled       *bool  `json:"fontsEnabled" yaml:"fontsEnabled"`
+	TheaterEnabled     *bool  `json:"theaterEnabled" yaml:"theaterEnabled"`
 	Endpoint           string `json:"endpoint" yaml:"endpoint"`
 	Region             string `json:"region" yaml:"region"`
 	Bucket             string `json:"bucket" yaml:"bucket"`
@@ -422,10 +442,12 @@ type AppConfig struct {
 	DSN                       string                    `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
 	BuiltInSealBotEnable      bool                      `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
 	BotIncomingParenAsOOC     bool                      `json:"botIncomingParenAsOoc" yaml:"botIncomingParenAsOoc"`
+	TheaterActivationCode     string                    `json:"theaterActivationCode" yaml:"theaterActivationCode"`
 	Version                   int                       `json:"version" yaml:"version"`
 	GalleryQuotaMB            int64                     `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig           `json:"logUpload" yaml:"logUpload"`
 	Audio                     AudioConfig               `json:"audio" yaml:"audio"`
+	TheaterMedia              TheaterMediaConfig        `json:"theaterMedia" yaml:"theaterMedia"`
 	Export                    ExportConfig              `json:"export" yaml:"export"`
 	Storage                   StorageConfig             `json:"storage" yaml:"storage"`
 	SQLite                    SQLiteConfig              `json:"sqlite" yaml:"sqlite"`
@@ -439,6 +461,7 @@ type AppConfig struct {
 	Proxy                     ProxyConfig               `json:"-" yaml:"proxy"`
 	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
+	CursorTheme               CursorThemeConfig         `json:"cursorTheme" yaml:"cursorTheme"`
 	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
@@ -528,6 +551,24 @@ func ReadConfig() *AppConfig {
 			FFmpegPath:               "",
 			AllowWorldAudioWorkbench: false,
 			AllowNonAdminCreateWorld: true,
+		},
+		TheaterMedia: TheaterMediaConfig{
+			Enabled:                 true,
+			WorkerConcurrency:       2,
+			ImageMaxSizeMB:          20,
+			VideoMaxSizeMB:          200,
+			RoomQuotaMB:             2048,
+			MaxDimension:            16384,
+			MaxAnimatedFrames:       500,
+			MaxAnimatedDurationMS:   300000,
+			MaxAnimatedPixelFrames:  512000000,
+			VideoMaxDurationMS:      900000,
+			VideoMaxWidth:           3840,
+			VideoMaxHeight:          2160,
+			VideoMaxFrameRate:       60,
+			ProbeTimeoutSeconds:     30,
+			TranscodeTimeoutSeconds: 900,
+			KeepOriginal:            true,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,
@@ -630,9 +671,12 @@ func ReadConfig() *AppConfig {
 			PanelShadowStrength: 22,
 		},
 		ThemeManagement: ThemeManagementConfig{
-			PlatformThemes:         []PlatformThemeConfig{},
-			DefaultPlatformThemeID: "",
+			PlatformThemes:               []PlatformThemeConfig{},
+			DefaultPlatformThemeID:       "",
+			PlatformDice3DStyles:         []PlatformDice3DStyleConfig{},
+			DefaultPlatformDice3DStyleID: "",
 		},
+		CursorTheme: NormalizeCursorThemeConfig(CursorThemeConfig{}, false),
 		UITextReplace: UITextReplaceConfig{
 			Enabled: false,
 			Rules:   DefaultUITextReplaceRules(),
@@ -722,6 +766,7 @@ func ReadConfig() *AppConfig {
 	applyAuthSessionDefaults(&config.AuthSession)
 	config.Proxy = NormalizeProxyConfig(config.Proxy)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 	config.AI = NormalizeAIConfig(config.AI)
@@ -1680,6 +1725,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("keywordMaxLength", config.KeywordMaxLength)
 		_ = k.Set("builtInSealBotEnable", config.BuiltInSealBotEnable)
 		_ = k.Set("botIncomingParenAsOoc", config.BotIncomingParenAsOOC)
+		_ = k.Set("theaterActivationCode", strings.TrimSpace(config.TheaterActivationCode))
 		_ = k.Set("galleryQuotaMB", config.GalleryQuotaMB)
 		_ = k.Set("imageBaseUrl", config.ImageBaseURL)
 		_ = k.Set("logUpload.enabled", config.LogUpload.Enabled)
@@ -1771,6 +1817,9 @@ func WriteConfig(config *AppConfig) {
 		if config.Storage.S3.FontsEnabled != nil {
 			_ = k.Set("storage.s3.fontsEnabled", *config.Storage.S3.FontsEnabled)
 		}
+		if config.Storage.S3.TheaterEnabled != nil {
+			_ = k.Set("storage.s3.theaterEnabled", *config.Storage.S3.TheaterEnabled)
+		}
 		_ = k.Set("storage.s3.endpoint", config.Storage.S3.Endpoint)
 		_ = k.Set("storage.s3.region", config.Storage.S3.Region)
 		_ = k.Set("storage.s3.bucket", config.Storage.S3.Bucket)
@@ -1857,6 +1906,11 @@ func WriteConfig(config *AppConfig) {
 		config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 		_ = k.Set("themeManagement.platformThemes", config.ThemeManagement.PlatformThemes)
 		_ = k.Set("themeManagement.defaultPlatformThemeId", config.ThemeManagement.DefaultPlatformThemeID)
+		_ = k.Set("themeManagement.platformDice3DStyles", config.ThemeManagement.PlatformDice3DStyles)
+		_ = k.Set("themeManagement.defaultPlatformDice3DStyleId", config.ThemeManagement.DefaultPlatformDice3DStyleID)
+		config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
+		_ = k.Set("cursorTheme.version", config.CursorTheme.Version)
+		_ = k.Set("cursorTheme.slots", config.CursorTheme.Slots)
 		_ = k.Set("uiTextReplace.enabled", config.UITextReplace.Enabled)
 		_ = k.Set("uiTextReplace.rules", config.UITextReplace.Rules)
 

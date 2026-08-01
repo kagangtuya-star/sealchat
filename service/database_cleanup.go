@@ -83,6 +83,16 @@ func DefaultDatabaseCleanupTools() []DatabaseCleanupTool {
 				return model.ChannelLatestReadCleanupOrphans()
 			},
 		},
+		{
+			Name: "theater_retention",
+			Run: func(now time.Time) (int64, error) {
+				result, err := RunTheaterRetention(now, 500)
+				if err != nil {
+					return 0, err
+				}
+				return result.Total(), nil
+			},
+		},
 	}
 }
 

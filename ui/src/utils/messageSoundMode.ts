@@ -1,4 +1,4 @@
-export const MESSAGE_SOUND_MODE_VALUES = ['off', 'away', 'world-other-channel'] as const
+export const MESSAGE_SOUND_MODE_VALUES = ['off', 'away', 'world-other-channel', 'background-all'] as const
 
 export type MessageSoundMode = typeof MESSAGE_SOUND_MODE_VALUES[number]
 
@@ -6,6 +6,7 @@ export const MESSAGE_SOUND_MODE_LABELS: Record<MessageSoundMode, string> = {
   off: '关闭',
   away: '离页时',
   'world-other-channel': '其他频道',
+  'background-all': '新消息时',
 }
 
 interface ChannelTreeNode {
@@ -50,6 +51,10 @@ export const shouldPlayMessageSound = ({
 
   if (mode === 'off') {
     return false
+  }
+
+  if (mode === 'background-all') {
+    return !isAppFocused
   }
 
   if (mode === 'away') {

@@ -67,6 +67,8 @@ type exportExtraOptions struct {
 	TextColorizeBBCodeNameMap map[string]string `json:"text_colorize_bbcode_name_map,omitempty"`
 	IncludeImages             bool              `json:"include_images"`
 	IncludeDiceCommand        bool              `json:"include_dice_commands"`
+	BatchChannelIDs           []string          `json:"batch_channel_ids,omitempty"`
+	BatchFormat               string            `json:"batch_format,omitempty"`
 }
 
 func normalizeExportFormat(format string) (string, bool) {
@@ -107,6 +109,65 @@ func CreateMessageExportJob(opts *ExportJobOptions) (*model.MessageExportJobMode
 		ExtraOptions:     extraOptions,
 	}
 
+	if err := model.GetDB().Create(job).Error; err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// CreateBatchMessageExportJob 创建汇总多个频道结果的 ZIP 导出任务。
+func CreateBatchMessageExportJob(opts *ExportJobOptions, channelIDs []string) (*model.MessageExportJobModel, error) {
+	if opts == nil {
+		return nil, fmt.Errorf("导出参数不能为空")
+	}
+	format, ok := normalizeExportFormat(opts.Format)
+	if !ok {
+		return nil, fmt.Errorf("不支持的导出格式: %s", opts.Format)
+	}
+	seen := make(map[string]struct{}, len(channelIDs))
+	normalizedIDs := make([]string, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channelID = strings.TrimSpace(channelID)
+		if channelID == "" {
+			continue
+		}
+		if _, exists := seen[channelID]; exists {
+			continue
+		}
+		seen[channelID] = struct{}{}
+		normalizedIDs = append(normalizedIDs, channelID)
+	}
+	if len(normalizedIDs) == 0 {
+		return nil, fmt.Errorf("至少选择一个频道")
+	}
+
+	opts.SliceLimit = NormalizeExportSliceLimit(opts.SliceLimit)
+	opts.MaxConcurrency = NormalizeExportConcurrency(opts.MaxConcurrency)
+	extraOptions, err := buildExportExtraOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	extra := parseExportExtraOptions(extraOptions)
+	extra.BatchChannelIDs = normalizedIDs
+	extra.BatchFormat = format
+	encodedExtraOptions, err := json.Marshal(extra)
+	if err != nil {
+		return nil, fmt.Errorf("导出附加参数序列化失败: %w", err)
+	}
+	job := &model.MessageExportJobModel{
+		UserID:           opts.UserID,
+		ChannelID:        opts.ChannelID,
+		Format:           "zip",
+		DisplayName:      normalizeExportDisplayName(opts.DisplayName),
+		IncludeOOC:       opts.IncludeOOC,
+		IncludeArchived:  opts.IncludeArchived,
+		WithoutTimestamp: opts.WithoutTimestamp,
+		MergeMessages:    opts.MergeMessages,
+		StartTime:        opts.StartTime,
+		EndTime:          opts.EndTime,
+		Status:           model.MessageExportStatusPending,
+		ExtraOptions:     string(encodedExtraOptions),
+	}
 	if err := model.GetDB().Create(job).Error; err != nil {
 		return nil, err
 	}
@@ -765,6 +826,7 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 	if job == nil {
 		return nil, fmt.Errorf("任务不存在")
 	}
+	extra := parseExportExtraOptions(job.ExtraOptions)
 	opts := &ExportJobOptions{
 		UserID:           job.UserID,
 		ChannelID:        job.ChannelID,
@@ -777,12 +839,15 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 		StartTime:        job.StartTime,
 		EndTime:          job.EndTime,
 	}
-	extra := parseExportExtraOptions(job.ExtraOptions)
 	opts.DisplaySettings = extra.DisplaySettings
 	opts.SliceLimit = extra.SliceLimit
 	opts.MaxConcurrency = extra.MaxConcurrency
 	opts.IncludeImages = extra.IncludeImages
 	opts.IncludeDiceCommand = extra.IncludeDiceCommand
+	if len(extra.BatchChannelIDs) > 0 {
+		opts.Format = extra.BatchFormat
+		return CreateBatchMessageExportJob(opts, extra.BatchChannelIDs)
+	}
 	return CreateMessageExportJob(opts)
 }
 

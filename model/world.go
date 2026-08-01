@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -15,8 +16,8 @@ const (
 	WorldVisibilityPrivate  = "private"
 	WorldVisibilityUnlisted = "unlisted"
 
-	WorldChannelDefaultDiceModeBuiltin = "builtin"
-	WorldChannelDefaultDiceModeBot     = "bot"
+	WorldChannelDefaultDiceModeBuiltin  = "builtin"
+	WorldChannelDefaultDiceModeBot      = "bot"
 	WorldChannelDefaultDiceModeDisabled = "disabled"
 
 	WorldRoleOwner     = "owner"
@@ -28,27 +29,32 @@ const (
 // WorldModel 表示"世界"实体，承载频道集合与可见性配置。
 type WorldModel struct {
 	StringPKBaseModel
-	Name                       string  `json:"name" gorm:"size:100;not null"`
-	Description                string  `json:"description" gorm:"size:500"`
-	Avatar                     string  `json:"avatar" gorm:"size:255"`
-	Visibility                 string  `json:"visibility" gorm:"size:24;default:public;index"` // public/private/unlisted
-	ObserverSlug               *string `json:"-" gorm:"size:64;uniqueIndex"`                   // 专属 OB 旁观 slug，空值使用 NULL 以避免唯一索引冲突
-	ObserverEnabled            bool    `json:"-" gorm:"default:false"`                         // 专属 OB 旁观链接启用状态
-	EnforceMembership          bool    `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
-	AllowAdminEditMessages     bool    `json:"allowAdminEditMessages" gorm:"default:false"`    // 允许管理员编辑成员发言
-	AllowManageOtherUserChannelIdentities bool `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
-	AllowMemberEditKeywords    bool    `json:"allowMemberEditKeywords" gorm:"default:false"`   // 允许成员编辑世界术语
-	StrictWhisperPrivacy       bool    `json:"strictWhisperPrivacy" gorm:"default:true"`       // 悄悄话严格保密：开启后管理员不可旁路查看
-	ChannelDefaultDiceMode     string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
-	ChannelDefaultBotID        string  `json:"channelDefaultBotId" gorm:"size:100"`
-	ChannelDefaultBotIDsJSON   string  `json:"-" gorm:"type:text"`
-	ChannelDefaultEventBotIDsJSON string `json:"-" gorm:"type:text"`
-	CharacterCardBadgeTemplate string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
-	IsSystemDefault            bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
-	OwnerID                    string  `json:"ownerId" gorm:"size:100;index"`
-	DefaultChannelID           string  `json:"defaultChannelId" gorm:"size:100"`
-	InviteSlug                 string  `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
-	Status                     string  `json:"status" gorm:"size:24;default:active;index"`
+	Name                                  string  `json:"name" gorm:"size:100;not null"`
+	Description                           string  `json:"description" gorm:"size:500"`
+	Avatar                                string  `json:"avatar" gorm:"size:255"`
+	Visibility                            string  `json:"visibility" gorm:"size:24;default:public;index"`             // public/private/unlisted
+	ObserverSlug                          *string `json:"-" gorm:"size:64;uniqueIndex"`                               // 专属 OB 旁观 slug，空值使用 NULL 以避免唯一索引冲突
+	ObserverEnabled                       bool    `json:"-" gorm:"default:false"`                                     // 专属 OB 旁观链接启用状态
+	EnforceMembership                     bool    `json:"enforceMembership" gorm:"default:false"`                     // 预留未来严格控制
+	AllowAdminEditMessages                bool    `json:"allowAdminEditMessages" gorm:"default:false"`                // 允许管理员编辑成员发言
+	AllowManageOtherUserChannelIdentities bool    `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
+	AllowMemberEditKeywords               bool    `json:"allowMemberEditKeywords" gorm:"default:false"`               // 允许成员编辑世界术语
+	StrictWhisperPrivacy                  bool    `json:"strictWhisperPrivacy" gorm:"default:true"`                   // 悄悄话严格保密：开启后管理员不可旁路查看
+	ChannelDefaultDiceMode                string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
+	ChannelDefaultBotID                   string  `json:"channelDefaultBotId" gorm:"size:100"`
+	ChannelDefaultBotIDsJSON              string  `json:"-" gorm:"type:text"`
+	ChannelDefaultEventBotIDsJSON         string  `json:"-" gorm:"type:text"`
+	CharacterCardBadgeTemplate            string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
+	CursorThemeJSON                       string  `json:"-" gorm:"type:text"`
+	TheaterPresentationTemplateJSON       string  `json:"-" gorm:"type:text"`
+	TheaterActivated                      bool    `json:"-" gorm:"default:false"`
+	StickyNoteDefaultAppearanceJSON       string  `json:"-" gorm:"type:text"`
+	Dice3DConfigJSON                      string  `json:"-" gorm:"column:dice_3d_config_json;type:text"`
+	IsSystemDefault                       bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
+	OwnerID                               string  `json:"ownerId" gorm:"size:100;index"`
+	DefaultChannelID                      string  `json:"defaultChannelId" gorm:"size:100"`
+	InviteSlug                            string  `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
+	Status                                string  `json:"status" gorm:"size:24;default:active;index"`
 }
 
 func (*WorldModel) TableName() string {
@@ -88,16 +94,62 @@ func (m *WorldModel) GetChannelDefaultEventBotIDs() []string {
 	return parseWorldBotIDs(m.ChannelDefaultEventBotIDsJSON)
 }
 
+func (m *WorldModel) GetTheaterPresentationTemplate() protocol.WorldTheaterPresentationTemplate {
+	var template protocol.WorldTheaterPresentationTemplate
+	if strings.TrimSpace(m.TheaterPresentationTemplateJSON) == "" {
+		return template
+	}
+	if err := json.Unmarshal([]byte(m.TheaterPresentationTemplateJSON), &template); err != nil {
+		return protocol.WorldTheaterPresentationTemplate{}
+	}
+	return template
+}
+
+func (m *WorldModel) GetStickyNoteDefaultAppearance() *protocol.StickyNoteAppearance {
+	if strings.TrimSpace(m.StickyNoteDefaultAppearanceJSON) == "" {
+		return nil
+	}
+	var value protocol.StickyNoteAppearance
+	if json.Unmarshal([]byte(m.StickyNoteDefaultAppearanceJSON), &value) != nil {
+		return nil
+	}
+	return &value
+}
+
+func (m *WorldModel) GetDice3DConfig() protocol.Dice3DWorldConfig {
+	var value protocol.Dice3DWorldConfig
+	if strings.TrimSpace(m.Dice3DConfigJSON) != "" {
+		_ = json.Unmarshal([]byte(m.Dice3DConfigJSON), &value)
+	}
+	return value
+}
+
+func (m *WorldModel) GetCursorTheme() utils.CursorThemeConfig {
+	var value utils.CursorThemeConfig
+	if strings.TrimSpace(m.CursorThemeJSON) != "" {
+		_ = json.Unmarshal([]byte(m.CursorThemeJSON), &value)
+	}
+	return utils.NormalizeCursorThemeConfig(value, true)
+}
+
 func (m *WorldModel) MarshalJSON() ([]byte, error) {
 	type worldModelAlias WorldModel
 	return json.Marshal(&struct {
 		*worldModelAlias
-		ChannelDefaultBotIDs      []string `json:"channelDefaultBotIds,omitempty"`
-		ChannelDefaultEventBotIDs []string `json:"channelDefaultEventBotIds,omitempty"`
+		ChannelDefaultBotIDs        []string                                  `json:"channelDefaultBotIds,omitempty"`
+		ChannelDefaultEventBotIDs   []string                                  `json:"channelDefaultEventBotIds,omitempty"`
+		TheaterPresentationTemplate protocol.WorldTheaterPresentationTemplate `json:"theaterPresentationTemplate"`
+		StickyNoteDefaultAppearance *protocol.StickyNoteAppearance            `json:"stickyNoteDefaultAppearance,omitempty"`
+		CursorTheme                 utils.CursorThemeConfig                   `json:"cursorTheme"`
+		Dice3DConfig                protocol.Dice3DWorldConfig                `json:"dice3dConfig"`
 	}{
-		worldModelAlias:           (*worldModelAlias)(m),
-		ChannelDefaultBotIDs:      m.GetChannelDefaultBotIDs(),
-		ChannelDefaultEventBotIDs: m.GetChannelDefaultEventBotIDs(),
+		worldModelAlias:             (*worldModelAlias)(m),
+		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
+		ChannelDefaultEventBotIDs:   m.GetChannelDefaultEventBotIDs(),
+		TheaterPresentationTemplate: m.GetTheaterPresentationTemplate(),
+		StickyNoteDefaultAppearance: m.GetStickyNoteDefaultAppearance(),
+		CursorTheme:                 m.GetCursorTheme(),
+		Dice3DConfig:                m.GetDice3DConfig(),
 	})
 }
 
@@ -123,11 +175,11 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 // WorldMemberModel 记录用户与世界的关系与角色。
 type WorldMemberModel struct {
 	StringPKBaseModel
-	WorldID           string     `json:"worldId" gorm:"size:100;index:idx_world_member,priority:1"`
-	UserID            string     `json:"userId" gorm:"size:100;index:idx_world_member,priority:2"`
-	Role              string     `json:"role" gorm:"size:24;index"` // owner/admin/member
-	JoinedAt          time.Time  `json:"joinedAt"`
-	EditNoticeAckedAt *time.Time `json:"editNoticeAckedAt"` // 确认管理员编辑提示的时间
+	WorldID                     string     `json:"worldId" gorm:"size:100;index:idx_world_member,priority:1"`
+	UserID                      string     `json:"userId" gorm:"size:100;index:idx_world_member,priority:2"`
+	Role                        string     `json:"role" gorm:"size:24;index"` // owner/admin/member
+	JoinedAt                    time.Time  `json:"joinedAt"`
+	EditNoticeAckedAt           *time.Time `json:"editNoticeAckedAt"`           // 确认管理员编辑提示的时间
 	ManageIdentityNoticeAckedAt *time.Time `json:"manageIdentityNoticeAckedAt"` // 确认频道角色代管提示的时间
 }
 

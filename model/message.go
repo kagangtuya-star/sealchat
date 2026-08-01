@@ -18,6 +18,7 @@ type MessageModel struct {
 	StringPKBaseModel
 	Content          string  `json:"content"`
 	WidgetData       string  `json:"widget_data" gorm:"type:text;not null;default:''"`
+	DiceVisualJSON   string  `json:"-" gorm:"type:text;not null;default:''"`
 	ChannelID        string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1;uniqueIndex:idx_msg_client_dedupe,priority:1"`
 	GuildID          string  `json:"guild_id" gorm:"null;size:100"`
 	MemberID         string  `json:"member_id" gorm:"null;size:100"`
@@ -64,6 +65,7 @@ type MessageModel struct {
 	SenderIdentityColor       string                        `json:"sender_identity_color"`
 	SenderIdentityAvatarID    string                        `json:"sender_identity_avatar_id"`
 	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decorations,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
+	SenderTheaterPresentation *protocol.TheaterPresentation `json:"sender_theater_presentation,omitempty" gorm:"serializer:json;column:sender_theater_presentation"`
 	SenderIdentityIsTemporary bool                          `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID              string                        `json:"sender_role_id" gorm:"size:100"`
 	MergedMessages            int                           `json:"-" gorm:"-"`
@@ -93,7 +95,14 @@ func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
 			tx.Statement.SetColumn("VisibleCharCount", m.VisibleCharCount)
 		}
 	}
+	if m.SenderTheaterPresentation == nil {
+		m.SenderTheaterPresentation = resolveMessageTheaterPresentation(tx, m)
+	}
 	return nil
+}
+
+func (m *MessageModel) AfterCreate(tx *gorm.DB) error {
+	return ReplaceMessageImageAttachments(tx, m.ID, m.Content)
 }
 
 func MessageUpdate(id string, values map[string]any) error {
@@ -130,7 +139,39 @@ func MessageUpdate(id string, values map[string]any) error {
 			values["sender_identity_decoration"] = string(encoded)
 		}
 	}
-	return db.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error
+	if rawPresentation, ok := values["sender_theater_presentation"]; ok {
+		switch value := rawPresentation.(type) {
+		case nil:
+			values["sender_theater_presentation"] = nil
+		case *protocol.TheaterPresentation:
+			if value == nil {
+				values["sender_theater_presentation"] = nil
+			} else {
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					return err
+				}
+				values["sender_theater_presentation"] = string(encoded)
+			}
+		case protocol.TheaterPresentation:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["sender_theater_presentation"] = string(encoded)
+		}
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error; err != nil {
+			return err
+		}
+		content, changed := values["content"]
+		if !changed {
+			return nil
+		}
+		contentText, _ := content.(string)
+		return ReplaceMessageImageAttachments(tx, id, contentText)
+	})
 }
 
 func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.Message {
@@ -188,6 +229,12 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	if m.ClientID != nil {
 		msg.ClientID = *m.ClientID
 	}
+	if strings.TrimSpace(m.DiceVisualJSON) != "" {
+		var payload protocol.DiceVisualPayload
+		if json.Unmarshal([]byte(m.DiceVisualJSON), &payload) == nil && len(payload.Groups) > 0 {
+			msg.DiceVisual = &payload
+		}
+	}
 	if len(m.WhisperTargets) > 0 {
 		msg.WhisperToIds = make([]*protocol.User, 0, len(m.WhisperTargets))
 		for _, target := range m.WhisperTargets {
@@ -204,14 +251,15 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	}
 	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || len(m.SenderIdentityDecorations) > 0 {
 		msg.Identity = &protocol.MessageIdentity{
-			ID:                m.SenderIdentityID,
-			VariantID:         m.SenderIdentityVariantID,
-			DisplayName:       m.SenderIdentityName,
-			Color:             m.SenderIdentityColor,
-			AvatarAttachment:  m.SenderIdentityAvatarID,
-			AvatarDecoration:  legacyDecoration,
-			AvatarDecorations: m.SenderIdentityDecorations,
-			IsTemporary:       m.SenderIdentityIsTemporary,
+			ID:                  m.SenderIdentityID,
+			VariantID:           m.SenderIdentityVariantID,
+			DisplayName:         m.SenderIdentityName,
+			Color:               m.SenderIdentityColor,
+			AvatarAttachment:    m.SenderIdentityAvatarID,
+			AvatarDecoration:    legacyDecoration,
+			AvatarDecorations:   m.SenderIdentityDecorations,
+			TheaterPresentation: m.SenderTheaterPresentation,
+			IsTemporary:         m.SenderIdentityIsTemporary,
 		}
 	}
 	if meta := m.buildWhisperMeta(); meta != nil {

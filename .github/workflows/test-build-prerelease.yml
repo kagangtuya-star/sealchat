@@ -346,6 +346,7 @@ jobs:
             BUILD_VERSION=${{ needs.prepare-prerelease.outputs.version }}
           tags: |
             ${{ env.IMAGE_NAME }}:dev
+            ${{ env.IMAGE_NAME }}:dev-${{ needs.prepare-prerelease.outputs.version }}
             ${{ env.IMAGE_NAME }}:prerelease
             ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
             ${{ env.IMAGE_NAME }}:${{ needs.prepare-prerelease.outputs.version }}

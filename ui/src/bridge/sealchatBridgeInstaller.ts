@@ -65,10 +65,17 @@ export const installSealChatBridgeRuntime = ({
       await chat.loadChannelIdentities(channelId, false)
       await chat.loadChannelIdentityVariants(channelId, false)
 
+      const activeIdentityId = chat.getActiveIdentityId(channelId)
+      const revision = Date.now()
+
       return chat.getScopedChannelIdentities(channelId).map((identity) =>
         buildRoleSnapshot({
           identity,
           variant: chat.getActiveIdentityVariant(channelId, identity.id),
+          variants: chat.getIdentityVariants(channelId, identity.id),
+          isActive: identity.id === activeIdentityId,
+          revision,
+          updatedAt: revision,
           resolveAttachmentUrl,
         }),
       )

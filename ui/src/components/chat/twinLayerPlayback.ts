@@ -16,13 +16,14 @@ export type TwinLayerPlaybackChar = {
 };
 
 type TwinLayerPlaybackOptions = {
+  charactersPerSecond?: number;
   onChar?: (entry: TwinLayerPlaybackChar) => void;
   onInstantText?: (entries: TwinLayerPlaybackChar[]) => void;
   onBreak?: () => void;
   onStateChange?: () => void;
 };
 
-type PlaybackState = 'idle' | 'playing' | 'waiting' | 'completed';
+type PlaybackState = 'idle' | 'playing' | 'waiting' | 'completed' | 'cancelled';
 
 const wait = (ms: number) => new Promise<void>((resolve) => {
   setTimeout(resolve, Math.max(0, ms));
@@ -31,6 +32,11 @@ const wait = (ms: number) => new Promise<void>((resolve) => {
 const isTruthyNumber = (value: unknown) => Number.isFinite(Number(value)) && Number(value) > 0;
 const isAnimatedEnterMode = (mode?: PerformanceEnterMode) => mode === 'blur' || mode === 'typewriter';
 const isImmediateEnterMode = (mode?: PerformanceEnterMode) => !mode || mode === 'normal';
+export const resolveCharactersPerSecondDelay = (charactersPerSecond?: number) => (
+  Number.isFinite(charactersPerSecond) && Number(charactersPerSecond) > 0
+    ? 1_000 / Math.min(60, Math.max(1, Number(charactersPerSecond)))
+    : null
+);
 export const resolveEnterDelay = (mode?: PerformanceEnterMode, speed?: number) => {
   if (!Number.isFinite(Number(speed))) {
     return mode === 'typewriter' ? 120 : 60;
@@ -43,16 +49,16 @@ export const resolveEnterDelay = (mode?: PerformanceEnterMode, speed?: number) =
   return baseDelay;
 };
 
-const TYPEWRITER_LIGHT_PUNCTUATION = new Set(['，', ',', '、', '；', ';', '：', ':']);
-const TYPEWRITER_HEAVY_PUNCTUATION = new Set(['。', '.', '！', '!', '？', '?', '…']);
+const LIGHT_PUNCTUATION = new Set(['，', ',', '、', '；', ';', '：', ':']);
+const HEAVY_PUNCTUATION = new Set(['。', '.', '．', '｡', '！', '!', '？', '?', '…']);
 
-export const resolveTypewriterPauseExtra = (char: string, speed?: number) => {
-  const normalized = Math.max(1, Math.min(9, Number.isFinite(Number(speed)) ? Number(speed) : 5));
-  if (TYPEWRITER_LIGHT_PUNCTUATION.has(char)) {
-    return Math.round(34 + (10 - normalized) * 8);
+export const resolvePunctuationPauseExtra = (char: string, baseDelayMs: number) => {
+  const normalizedDelay = Number.isFinite(baseDelayMs) ? Math.max(0, baseDelayMs) : 0;
+  if (LIGHT_PUNCTUATION.has(char)) {
+    return Math.round(Math.min(180, Math.max(40, normalizedDelay * 0.6)));
   }
-  if (TYPEWRITER_HEAVY_PUNCTUATION.has(char)) {
-    return Math.round(76 + (10 - normalized) * 14);
+  if (HEAVY_PUNCTUATION.has(char)) {
+    return Math.round(Math.max(90, normalizedDelay * 3.0));
   }
   return 0;
 };
@@ -86,6 +92,7 @@ export const createTwinLayerPlayback = (
   instructions: PerformanceInstruction[],
   options: TwinLayerPlaybackOptions = {},
 ) => {
+  let characterDelay = resolveCharactersPerSecondDelay(options.charactersPerSecond);
   let visibleText = '';
   let state: PlaybackState = 'idle';
   let fastForward = false;
@@ -118,12 +125,19 @@ export const createTwinLayerPlayback = (
   };
 
   const dispose = () => {
+    if (disposed) {
+      return;
+    }
     disposed = true;
     waitingForClick = false;
     continueResolver?.();
     continueResolver = null;
-    state = 'completed';
+    state = 'cancelled';
     notifyStateChange();
+  };
+
+  const setCharactersPerSecond = (charactersPerSecond?: number) => {
+    characterDelay = resolveCharactersPerSecondDelay(charactersPerSecond);
   };
 
   const continuePlayback = () => {
@@ -187,17 +201,15 @@ export const createTwinLayerPlayback = (
         }
         if (entry.type === 'char') {
           const mode = entry.effects.enterMode;
-          if (isImmediateEnterMode(mode)) {
+          if (isImmediateEnterMode(mode) && characterDelay === null) {
             appendInstantChars([entry as TwinLayerPlaybackChar]);
             continue;
           }
           visibleText += entry.char;
           options.onChar?.(entry as TwinLayerPlaybackChar);
           if (!fastForward) {
-            const baseDelay = resolveEnterDelay(mode, entry.effects.enterSpeed);
-            const extraDelay = mode === 'typewriter'
-              ? resolveTypewriterPauseExtra(entry.char, entry.effects.enterSpeed)
-              : 0;
+            const baseDelay = characterDelay ?? resolveEnterDelay(mode, entry.effects.enterSpeed);
+            const extraDelay = resolvePunctuationPauseExtra(entry.char, baseDelay);
             await wait(baseDelay + extraDelay);
           }
           continue;
@@ -234,6 +246,7 @@ export const createTwinLayerPlayback = (
     skip,
     reset,
     dispose,
+    setCharactersPerSecond,
     continuePlayback,
     isWaiting: () => waitingForClick,
     getVisibleText: () => visibleText,

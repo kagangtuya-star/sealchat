@@ -26,6 +26,15 @@ export interface ChannelRolePermSheet {
   func_channel_message_read_whisper_all: PermResult; // 频道 - 消息 - 查看所有悄悄话
   func_channel_iform_manage: PermResult; // 频道 - iForm - 配置管理
   func_channel_iform_broadcast: PermResult; // 频道 - iForm - 同步推送
+  func_channel_theater_view: PermResult; // 频道 - 小剧场 - 查看
+  func_channel_theater_scene_switch: PermResult; // 频道 - 小剧场 - 切换场景
+  func_channel_theater_object_edit: PermResult; // 频道 - 小剧场 - 编辑对象
+  func_channel_theater_object_edit_delegated: PermResult; // 频道 - 小剧场 - 编辑授权对象
+  func_channel_theater_character_edit: PermResult; // 频道 - 小剧场 - 编辑角色
+  func_channel_theater_resource_upload: PermResult; // 频道 - 小剧场 - 上传资源
+  func_channel_theater_resource_delete: PermResult; // 频道 - 小剧场 - 删除资源
+  func_channel_theater_action_trigger: PermResult; // 频道 - 小剧场 - 触发动作
+  func_channel_theater_admin_restore: PermResult; // 频道 - 小剧场 - 管理恢复
   func_channel_read_all: PermResult; // 频道 - 特殊 - 查看所有子频道
   func_channel_text_send_all: PermResult; // 频道 - 特殊 - 在所有子频道发送文本
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -31,10 +33,12 @@ var (
 	ErrWorldSystemDefaultProtect  = errors.New("系统默认世界不可删除")
 	ErrWorldObserverSlugInvalid   = errors.New("world observer slug invalid")
 	ErrWorldObserverSlugConflict  = errors.New("world observer slug conflict")
+	ErrWorldCursorThemeInvalid    = errors.New("世界鼠标样式无效")
 	ErrWorldObserverLinkInvalid   = errors.New("world observer link invalid")
 	ErrWorldDefaultDiceMode       = errors.New("world default dice mode invalid")
 	ErrWorldDefaultDiceBotEmpty   = errors.New("world default dice bot required")
 	ErrWorldDefaultDiceBotInvalid = errors.New("world default dice bot invalid")
+	ErrWorldStickyNoteAppearance  = errors.New("world sticky note appearance invalid")
 )
 
 const (
@@ -77,6 +81,8 @@ type WorldUpdateParams struct {
 	ChannelDefaultBotIDs                  *[]string
 	ChannelDefaultEventBotIDs             *[]string
 	CharacterCardBadgeTemplate            *string
+	CursorTheme                           *utils.CursorThemeConfig
+	StickyNoteDefaultAppearance           *protocol.StickyNoteAppearance
 }
 
 type WorldChannelDefaultDiceConfig struct {
@@ -340,20 +346,20 @@ func pickWorldObserverEntryChannelID(world *model.WorldModel) string {
 		return ""
 	}
 	defaultChannelID := strings.TrimSpace(world.DefaultChannelID)
-	if defaultChannelID != "" {
-		if channel, err := CanObserverAccessChannel(defaultChannelID, world.ID); err == nil && channel != nil && strings.TrimSpace(channel.ID) != "" {
-			return channel.ID
-		}
-	}
 	channels, err := ChannelListByWorld(world.ID)
 	if err != nil {
 		return ""
 	}
 	for _, channel := range channels {
-		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" || channel.ID == defaultChannelID {
 			continue
 		}
 		return channel.ID
+	}
+	if defaultChannelID != "" {
+		if channel, err := CanObserverAccessChannel(defaultChannelID, world.ID); err == nil && channel != nil && strings.TrimSpace(channel.ID) != "" {
+			return channel.ID
+		}
 	}
 	return ""
 }
@@ -733,6 +739,30 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 		}
 		updates["character_card_badge_template"] = template
 	}
+	if params.CursorTheme != nil {
+		if err := utils.ValidateCursorThemeConfig(*params.CursorTheme, true); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldCursorThemeInvalid, err)
+		}
+		normalized := utils.NormalizeCursorThemeConfig(*params.CursorTheme, true)
+		if err := validateWorldCursorThemeAttachments(worldID, actorID, normalized); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldCursorThemeInvalid, err)
+		}
+		raw, err := json.Marshal(normalized)
+		if err != nil {
+			return nil, err
+		}
+		updates["cursor_theme_json"] = string(raw)
+	}
+	if params.StickyNoteDefaultAppearance != nil {
+		if err := ValidateStickyNoteAppearanceForWorld(worldID, actorID, params.StickyNoteDefaultAppearance); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldStickyNoteAppearance, err)
+		}
+		raw, err := json.Marshal(params.StickyNoteDefaultAppearance)
+		if err != nil {
+			return nil, err
+		}
+		updates["sticky_note_default_appearance_json"] = string(raw)
+	}
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()
 		if err := model.GetDB().Model(world).Updates(updates).Error; err != nil {
@@ -775,6 +805,12 @@ func WorldDelete(worldID, actorID string) error {
 		if err := tx.Model(&model.ChannelModel{}).
 			Where("world_id = ?", worldID).
 			Updates(map[string]any{"status": "archived", "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		if err := archiveTheaterRoomsByWorld(tx, worldID); err != nil {
+			return err
+		}
+		if err := queueTheaterResourcesByWorld(tx, worldID); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.WorldInviteModel{}).

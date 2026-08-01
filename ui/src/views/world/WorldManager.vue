@@ -12,6 +12,8 @@ import {
   truncateTextByDisplayWidth,
 } from '@/utils/displayWidth';
 import { resolveActionErrorMessage } from '@/utils/errorMessage';
+import CursorThemeEditorModal from '@/components/cursor/CursorThemeEditorModal.vue';
+import { normalizeCursorTheme } from '@/services/cursor/cursorRuntime';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
@@ -22,6 +24,7 @@ const form = ref<any>({});
 const loading = ref(false);
 const botOptionsLoading = ref(false);
 const botList = ref<any[]>([]);
+const cursorThemeVisible = ref(false);
 
 const botSelectOptions = computed(() => botList.value.map((item) => ({
   label: item.nick || item.username || item.name || 'Bot',
@@ -62,6 +65,7 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
       channelDefaultBotId: detail.world?.channelDefaultBotId || '',
       channelDefaultEventBotIds: Array.isArray((detail.world as any)?.channelDefaultEventBotIds) ? (detail.world as any).channelDefaultEventBotIds : [],
       characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
+      cursorTheme: normalizeCursorTheme(detail.world?.cursorTheme, 'world'),
     };
   } catch (e: any) {
     message.error(e?.response?.data?.message || '加载世界信息失败');
@@ -187,8 +191,14 @@ const getDescriptionCountLabel = (value?: string) => {
             placeholder="留空则使用个人模板"
           />
           <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
-            示例：{{ DEFAULT_CARD_TEMPLATE }}
+            示例：{{ DEFAULT_CARD_TEMPLATE }}；支持 {对象.子项.属性}
           </span>
+        </n-form-item>
+        <n-form-item label="鼠标样式">
+          <div class="manager-cursor-row">
+            <n-button secondary @click="cursorThemeVisible = true">管理鼠标样式</n-button>
+            <span>世界配置按类型覆盖平台；可选择继承或浏览器默认。</span>
+          </div>
         </n-form-item>
       </n-form>
     </div>
@@ -200,6 +210,12 @@ const getDescriptionCountLabel = (value?: string) => {
       </n-space>
     </template>
   </n-modal>
+  <CursorThemeEditorModal
+    v-model:show="cursorThemeVisible"
+    v-model="form.cursorTheme"
+    scope="world"
+    :world-id="props.worldId"
+  />
 </template>
 
 <style scoped>
@@ -214,6 +230,15 @@ const getDescriptionCountLabel = (value?: string) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.manager-cursor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--sc-text-secondary);
+  font-size: 13px;
 }
 
 .world-manager__description-field {

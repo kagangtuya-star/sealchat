@@ -64,13 +64,9 @@ func broadcastChannelIdentityRefresh(payload channelIdentityRefreshPayload) {
 	if event == nil {
 		return
 	}
-	recipients := buildChannelIdentityRefreshRecipients(payload.TargetUserID, payload.OperatorUserID)
-	if len(recipients) == 0 {
-		return
-	}
 	ctx := &ChatContext{
 		ChannelUsersMap: getChannelUsersMap(),
 		UserId2ConnInfo: getUserConnInfoMap(),
 	}
-	ctx.BroadcastEventInChannelToUsers(strings.TrimSpace(payload.ChannelID), recipients, event)
+	ctx.BroadcastEventInChannel(strings.TrimSpace(payload.ChannelID), event)
 }

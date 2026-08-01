@@ -44,6 +44,8 @@ const props = withDefaults(defineProps<{
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
   defaultIFormEmbedLink?: string
   surfaceVariant?: 'default' | 'sticky-note'
+  performancePopoverPlacement?: 'bottom' | 'left-start' | 'right-start'
+  performancePopoverContentClass?: string
 }>(), {
   modelValue: '',
   placeholder: '',
@@ -58,6 +60,8 @@ const props = withDefaults(defineProps<{
   inlineImages: () => ({}),
   defaultIFormEmbedLink: '',
   surfaceVariant: 'default',
+  performancePopoverPlacement: 'bottom',
+  performancePopoverContentClass: '',
 });
 
 type SmartLinkUploadSource = 'smart-link-text-image' | 'smart-link-url-image';
@@ -112,6 +116,10 @@ const toolbarPopoverContentClass = computed(() => (
     ? 'tiptap-toolbar-popover tiptap-toolbar-popover--sticky-note'
     : 'tiptap-toolbar-popover'
 ));
+const performancePopoverClass = computed(() => [
+  toolbarPopoverContentClass.value,
+  props.performancePopoverContentClass,
+].filter(Boolean).join(' '));
 const toolbarPickerClass = computed(() => [
   'tiptap-toolbar-picker',
   { 'tiptap-toolbar-picker--sticky-note': isStickyNoteSurface.value },
@@ -3237,9 +3245,9 @@ defineExpose({
           <n-popover
             v-else
             trigger="manual"
-            placement="bottom"
+            :placement="props.performancePopoverPlacement"
             :show="performancePopoverShow"
-            :content-class="toolbarPopoverContentClass"
+            :content-class="performancePopoverClass"
           >
             <template #trigger>
               <span ref="performanceTriggerRef">

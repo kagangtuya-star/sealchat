@@ -6,7 +6,7 @@ import { Edit, Copy as CopyIcon } from '@vicons/tabler'
 import { useBattleReportStore } from '@/stores/battleReport'
 import { useDisplayStore } from '@/stores/display'
 import { copyTextWithFallback } from '@/utils/clipboard'
-import { chatEvent } from '@/stores/chat'
+import { chatEvent, useChatStore } from '@/stores/chat'
 
 interface Props {
   reportId: string
@@ -15,6 +15,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const store = useBattleReportStore()
+const chat = useChatStore()
 const display = useDisplayStore()
 const message = useMessage()
 const loading = ref(false)
@@ -49,6 +50,7 @@ const copyLink = async () => {
 }
 
 const openEditor = (event?: MouseEvent) => {
+  if (chat.observerMode) return
   event?.preventDefault()
   event?.stopPropagation()
   chatEvent.emit('battle-report-open-editor' as any, {
@@ -69,13 +71,13 @@ watch(() => props.reportId, () => {
     <div class="battle-report-embed-card__head">
       <div>
         <div class="battle-report-embed-card__eyebrow">战报总结</div>
-        <button class="battle-report-embed-card__title" type="button" @click="openEditor">
+        <button class="battle-report-embed-card__title" type="button" :disabled="chat.observerMode" @click="openEditor">
           {{ report?.title || (loading ? '加载中...' : '战报') }}
         </button>
         <div v-if="periodText" class="battle-report-embed-card__period">{{ periodText }}</div>
       </div>
       <div class="battle-report-embed-card__actions">
-        <n-button quaternary circle size="tiny" title="编辑战报" @click.stop="openEditor">
+        <n-button v-if="!chat.observerMode" quaternary circle size="tiny" title="编辑战报" @click.stop="openEditor">
           <template #icon>
             <n-icon :component="Edit" />
           </template>

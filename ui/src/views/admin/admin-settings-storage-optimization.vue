@@ -318,8 +318,8 @@ const fetchMigrationPreview = async () => {
   try {
     const resp = await api.get('/api/v1/admin/image-migration/preview')
     migrationStats.value = resp.data.stats
-  } catch {
-    message.error('获取迁移预览失败')
+  } catch (error: any) {
+    message.error('获取迁移预览失败: ' + (error?.response?.data?.error || error?.response?.data?.message || '未知错误'))
   } finally {
     migrationLoading.value = false
   }
@@ -346,7 +346,8 @@ const executeMigration = async (dryRun: boolean = false) => {
   }
 }
 
-const s3MigrationType = ref<'images' | 'audio'>('images')
+const s3MigrationType = ref<'images' | 'audio' | 'theater'>('images')
+const s3MigrationTarget = ref<'s3' | 'local'>('s3')
 const s3MigrationStats = ref<{
   total: number
   pending: number
@@ -361,6 +362,11 @@ const s3MigrationDeleteSource = ref(true)
 
 watch(s3MigrationType, (value) => {
   s3MigrationDeleteSource.value = value === 'images'
+  if (value === 'images') s3MigrationTarget.value = 's3'
+  s3MigrationStats.value = null
+})
+
+watch(s3MigrationTarget, () => {
   s3MigrationStats.value = null
 })
 
@@ -368,7 +374,7 @@ const fetchS3MigrationPreview = async () => {
   s3MigrationLoading.value = true
   try {
     const resp = await api.get('/api/v1/admin/s3-migration/preview', {
-      params: { type: s3MigrationType.value },
+      params: { type: s3MigrationType.value, target: s3MigrationTarget.value },
     })
     s3MigrationStats.value = resp.data.stats
   } catch {
@@ -383,6 +389,7 @@ const executeS3Migration = async (dryRun: boolean = false) => {
   try {
     const resp = await api.post('/api/v1/admin/s3-migration/execute', {
       type: s3MigrationType.value,
+      target: s3MigrationTarget.value,
       batchSize: s3MigrationBatchSize.value,
       dryRun,
       deleteSource: s3MigrationDeleteSource.value,
@@ -395,7 +402,7 @@ const executeS3Migration = async (dryRun: boolean = false) => {
     }
     await fetchS3MigrationPreview()
   } catch (error: any) {
-    message.error('执行迁移失败: ' + (error?.response?.data?.message || '未知错误'))
+    message.error('执行迁移失败: ' + (error?.response?.data?.error || error?.response?.data?.message || '未知错误'))
   } finally {
     s3MigrationExecuting.value = false
   }
@@ -518,13 +525,24 @@ onMounted(async () => {
           </n-form-item>
         </n-collapse-item>
 
-        <n-collapse-item title="迁移到 S3" name="migrate-to-s3">
+        <n-collapse-item title="存储迁移" name="storage-migration">
           <n-form-item label="迁移类型">
             <n-select
               v-model:value="s3MigrationType"
               :options="[
                 { label: '图片附件', value: 'images' },
                 { label: '音频', value: 'audio' },
+                { label: '小剧场资源', value: 'theater' },
+              ]"
+              class="w-52"
+            />
+          </n-form-item>
+          <n-form-item label="目标存储">
+            <n-select
+              v-model:value="s3MigrationTarget"
+              :options="[
+                { label: 'S3', value: 's3' },
+                { label: '本地', value: 'local', disabled: s3MigrationType === 'images' },
               ]"
               class="w-52"
             />
@@ -542,7 +560,7 @@ onMounted(async () => {
           <n-form-item label="批量大小">
             <n-input-number v-model:value="s3MigrationBatchSize" :min="1" :max="1000" />
           </n-form-item>
-          <n-form-item label="删除源文件" :feedback="s3MigrationType === 'images' ? '仅在确认上传成功且可访问后删除本地源文件' : ''">
+          <n-form-item label="删除源文件" feedback="仅在目标文件写入并校验成功后删除源文件">
             <n-switch v-model:value="s3MigrationDeleteSource" />
           </n-form-item>
           <n-form-item label="执行迁移">
@@ -566,8 +584,8 @@ onMounted(async () => {
                     执行迁移
                   </n-button>
                 </template>
-                确定要执行迁移吗？此操作会将当前类型的本地资源迁移到 S3。
-                <span v-if="s3MigrationDeleteSource">迁移成功且可访问后将删除本地源文件。</span>
+                确定要执行迁移吗？资源将迁移到 {{ s3MigrationTarget === 's3' ? 'S3' : '本地存储' }}。
+                <span v-if="s3MigrationDeleteSource">目标文件校验成功后将删除源文件。</span>
               </n-popconfirm>
             </div>
           </n-form-item>

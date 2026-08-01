@@ -9,6 +9,7 @@ import (
 	"github.com/mikespook/gorbac"
 
 	"github.com/samber/lo"
+	"gorm.io/gorm"
 
 	"sealchat/model"
 	"sealchat/pm"
@@ -349,6 +350,15 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelIFormManage,
 			pm.PermFuncChannelIFormBroadcast,
 			pm.PermFuncChannelMessagePin,
+			pm.PermFuncChannelTheaterView,
+			pm.PermFuncChannelTheaterSceneSwitch,
+			pm.PermFuncChannelTheaterObjectEdit,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
+			pm.PermFuncChannelTheaterCharacterEdit,
+			pm.PermFuncChannelTheaterResourceUpload,
+			pm.PermFuncChannelTheaterResourceDelete,
+			pm.PermFuncChannelTheaterActionTrigger,
+			pm.PermFuncChannelTheaterAdminRestore,
 		}
 	})
 
@@ -372,6 +382,15 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelIFormManage,
 			pm.PermFuncChannelIFormBroadcast,
 			pm.PermFuncChannelMessagePin,
+			pm.PermFuncChannelTheaterView,
+			pm.PermFuncChannelTheaterSceneSwitch,
+			pm.PermFuncChannelTheaterObjectEdit,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
+			pm.PermFuncChannelTheaterCharacterEdit,
+			pm.PermFuncChannelTheaterResourceUpload,
+			pm.PermFuncChannelTheaterResourceDelete,
+			pm.PermFuncChannelTheaterActionTrigger,
+			pm.PermFuncChannelTheaterAdminRestore,
 		}
 	})
 
@@ -383,6 +402,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelAudioSend,
 			pm.PermFuncChannelReadAll,
 			pm.PermFuncChannelMessageReadWhisperAll,
+			pm.PermFuncChannelTheaterView,
 		}
 	})
 
@@ -403,6 +423,9 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelAudioSend,
 			pm.PermFuncChannelInvite,
 			pm.PermFuncChannelMessagePin,
+			pm.PermFuncChannelTheaterView,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
+			pm.PermFuncChannelTheaterActionTrigger,
 		}
 	})
 
@@ -436,6 +459,7 @@ func ensureChannelSpectatorRole(channelID string) {
 			pm.PermFuncChannelRead,
 			pm.PermFuncChannelReadAll,
 			pm.PermFuncChannelMessageReadWhisperAll,
+			pm.PermFuncChannelTheaterView,
 		}
 	})
 }
@@ -487,6 +511,9 @@ func ChannelDissolve(channelID, operatorID string) (err error) {
 			"status":     "deleted",
 			"updated_at": time.Now(),
 		}).Error; err != nil {
+		return err
+	}
+	if err = setTheaterRoomsStatus(tx, []string{channelID}, "archived"); err != nil {
 		return err
 	}
 
@@ -545,23 +572,25 @@ func ChannelArchive(channelIDs []string, userID string, includeChildren bool) er
 
 	// 如果需要包含子频道
 	if includeChildren {
-		var childIDs []string
-		model.GetDB().Model(&model.ChannelModel{}).
-			Where("parent_id IN ? AND status = ?", targetIDs, model.ChannelStatusActive).
-			Pluck("id", &childIDs)
-		targetIDs = append(targetIDs, childIDs...)
+		var err error
+		targetIDs, err = collectChannelTreeIDs(model.GetDB(), targetIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(targetIDs) == 0 {
 		return errors.New("没有可归档的频道")
 	}
 
-	// 执行归档
-	err := model.GetDB().Model(&model.ChannelModel{}).
-		Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusActive).
-		Update("status", model.ChannelStatusArchived).Error
-
-	return err
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ChannelModel{}).
+			Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusActive).
+			Update("status", model.ChannelStatusArchived).Error; err != nil {
+			return err
+		}
+		return setTheaterRoomsStatus(tx, targetIDs, "archived")
+	})
 }
 
 // ChannelUnarchive 恢复归档频道，世界管理员/拥有者可操作
@@ -601,23 +630,25 @@ func ChannelUnarchive(channelIDs []string, userID string, includeChildren bool) 
 
 	// 如果需要包含子频道
 	if includeChildren {
-		var childIDs []string
-		model.GetDB().Model(&model.ChannelModel{}).
-			Where("parent_id IN ? AND status = ?", targetIDs, model.ChannelStatusArchived).
-			Pluck("id", &childIDs)
-		targetIDs = append(targetIDs, childIDs...)
+		var err error
+		targetIDs, err = collectChannelTreeIDs(model.GetDB(), targetIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(targetIDs) == 0 {
 		return errors.New("没有可恢复的频道")
 	}
 
-	// 执行恢复
-	err := model.GetDB().Model(&model.ChannelModel{}).
-		Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusArchived).
-		Update("status", model.ChannelStatusActive).Error
-
-	return err
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ChannelModel{}).
+			Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusArchived).
+			Update("status", model.ChannelStatusActive).Error; err != nil {
+			return err
+		}
+		return setTheaterRoomsStatus(tx, targetIDs, "active")
+	})
 }
 
 // ChannelPermanentDelete 永久删除归档频道，仅世界拥有者可操作
@@ -645,9 +676,14 @@ func ChannelPermanentDelete(channelIDs []string, userID string) error {
 		return errors.New("仅世界拥有者可永久删除频道")
 	}
 
+	targetIDs, err := collectChannelTreeIDs(model.GetDB(), channelIDs)
+	if err != nil {
+		return err
+	}
+
 	// 验证所有频道都是已归档状态
 	var channels []*model.ChannelModel
-	if err := model.GetDB().Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+	if err := model.GetDB().Where("id IN ?", targetIDs).Find(&channels).Error; err != nil {
 		return err
 	}
 
@@ -660,41 +696,27 @@ func ChannelPermanentDelete(channelIDs []string, userID string) error {
 		}
 	}
 
-	tx := model.GetDB().Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-
-	var err error
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
-
-	for _, channelID := range channelIDs {
-		// 删除频道及其子频道
-		if err = tx.Where("id = ? OR parent_id = ?", channelID, channelID).
-			Delete(&model.ChannelModel{}).Error; err != nil {
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := cleanupTheaterChannels(tx, targetIDs); err != nil {
 			return err
 		}
-
-		// 删除相关角色映射
-		rolePattern := fmt.Sprintf("ch-%s-%%", channelID)
-		if err = tx.Where("role_id LIKE ?", rolePattern).Delete(&model.UserRoleMappingModel{}).Error; err != nil {
+		if err := tx.Where("id IN ?", targetIDs).Delete(&model.ChannelModel{}).Error; err != nil {
 			return err
 		}
-		if err = tx.Where("role_id LIKE ?", rolePattern).Delete(&model.RolePermissionModel{}).Error; err != nil {
-			return err
+		for _, channelID := range targetIDs {
+			rolePattern := fmt.Sprintf("ch-%s-%%", channelID)
+			if err := tx.Where("role_id LIKE ?", rolePattern).Delete(&model.UserRoleMappingModel{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("role_id LIKE ?", rolePattern).Delete(&model.RolePermissionModel{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id LIKE ?", rolePattern).Delete(&model.ChannelRoleModel{}).Error; err != nil {
+				return err
+			}
 		}
-		if err = tx.Where("id LIKE ?", rolePattern).Delete(&model.ChannelRoleModel{}).Error; err != nil {
-			return err
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // ArchivedChannelListResult 归档频道列表结果

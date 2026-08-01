@@ -69,7 +69,7 @@ const handleToggleSidebarWidthResize = () => {
   emit('toggle-sidebar-width-resize');
 };
 
-const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel'];
+const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel', 'background-all'];
 
 const cycleMessageSoundMode = () => {
   const current = display.settings.messageSoundMode;
@@ -97,7 +97,10 @@ const messageSoundTooltip = computed(() => {
   if (display.settings.messageSoundMode === 'away') {
     return '仅当前频道在离开页面时播放提示音';
   }
-  return '仅当前世界内的其他频道来新消息时播放提示音';
+  if (display.settings.messageSoundMode === 'world-other-channel') {
+    return '仅当前世界内的其他频道来新消息时播放提示音';
+  }
+  return '页面处于后台时，任意频道收到新消息均播放提示音';
 });
 
 const renderIcon = (icon: Component) => {
@@ -452,7 +455,20 @@ const suffix = (item: SChannel) => {
 }
 
 
-const showAllSubChannels = ref(true);
+const SHOW_ALL_SUB_CHANNELS_STORAGE_KEY = 'sealchat.sidebar.showAllSubChannels';
+
+const resolveShowAllSubChannels = (): boolean => {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  try {
+    return window.localStorage.getItem(SHOW_ALL_SUB_CHANNELS_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+};
+
+const showAllSubChannels = ref(resolveShowAllSubChannels());
 const channelNameWrapEnabled = computed({
   get: () => display.settings.channelNameWrapEnabled,
   set: (value: boolean) => {
@@ -462,6 +478,14 @@ const channelNameWrapEnabled = computed({
 
 const toggleSubChannelDisplay = () => {
   showAllSubChannels.value = !showAllSubChannels.value;
+  try {
+    window.localStorage.setItem(
+      SHOW_ALL_SUB_CHANNELS_STORAGE_KEY,
+      String(showAllSubChannels.value),
+    );
+  } catch {
+    // 忽略 localStorage 写入失败，侧栏开关仍可在当前页面生效。
+  }
 };
 
 const openAppNotificationSettings = () => {
@@ -529,7 +553,9 @@ const handleWorldSelect = async (value: string) => {
   if (!value) return;
   try {
     await chat.switchWorld(value, { force: true });
-    router.push({ name: 'home' });
+    if (router.currentRoute.value.query.mode !== 'theater') {
+      router.push({ name: 'home' });
+    }
     // 检查是否需要显示编辑通知弹窗
     checkEditNoticeForWorld(value);
   } catch (error) {

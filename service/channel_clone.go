@@ -13,6 +13,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -570,6 +571,8 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		return nil, err
 	}
 	identityMap := map[string]string{}
+	attachmentMap := map[string]string{}
+	theaterMediaMaps := map[string]map[string]protocol.TheaterMediaRef{}
 	for _, identity := range identities {
 		if identity.UserID == "" {
 			continue
@@ -581,17 +584,36 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		}
 		newID := utils.NewID()
 		identityMap[identity.ID] = newID
+		presentation := cloneTheaterPresentation(identity.TheaterPresentation)
+		theaterMediaMap, err := cloneTheaterAppearanceAssetsForIdentityTx(tx, sourceID, targetID, identity.UserID, identity.ID, newID)
+		if err != nil {
+			return nil, err
+		}
+		if err := remapTheaterPresentationMedia(presentation, theaterMediaMap); err != nil {
+			return nil, err
+		}
+		theaterMediaMaps[identity.ID] = theaterMediaMap
+		avatarAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, identity.UserID, identity.AvatarAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		avatarDecorations, err := cloneChannelIdentityDecorationsTx(tx, sourceID, targetID, identity.UserID, identity.AvatarDecorations, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
 		clone := model.ChannelIdentityModel{
-			StringPKBaseModel:  model.StringPKBaseModel{ID: newID},
-			ChannelID:          targetID,
-			UserID:             identity.UserID,
-			DisplayName:        identity.DisplayName,
-			Color:              identity.Color,
-			AvatarAttachmentID: identity.AvatarAttachmentID,
-			AvatarDecorations:  identity.AvatarDecorations,
-			IsDefault:          identity.IsDefault,
-			IsHidden:           identity.IsHidden,
-			SortOrder:          identity.SortOrder,
+			StringPKBaseModel:   model.StringPKBaseModel{ID: newID},
+			ChannelID:           targetID,
+			UserID:              identity.UserID,
+			DisplayName:         identity.DisplayName,
+			Color:               identity.Color,
+			AvatarAttachmentID:  avatarAttachmentID,
+			AvatarDecorations:   avatarDecorations,
+			IsDefault:           identity.IsDefault,
+			IsTemporary:         identity.IsTemporary,
+			IsHidden:            identity.IsHidden,
+			SortOrder:           identity.SortOrder,
+			TheaterPresentation: presentation,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
@@ -725,6 +747,14 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if newIdentityID == "" {
 			continue
 		}
+		avatarAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, variant.UserID, variant.AvatarAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		appearanceJSON, err := remapVariantTheaterPresentationJSON(variant.AppearanceJSON, theaterMediaMaps[variant.IdentityID])
+		if err != nil {
+			return nil, err
+		}
 		clone := model.ChannelIdentityVariantModel{
 			StringPKBaseModel:  model.StringPKBaseModel{ID: utils.NewID()},
 			IdentityID:         newIdentityID,
@@ -733,20 +763,215 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			SelectorEmoji:      variant.SelectorEmoji,
 			Keyword:            variant.Keyword,
 			Note:               variant.Note,
-			AvatarAttachmentID: variant.AvatarAttachmentID,
+			AvatarAttachmentID: avatarAttachmentID,
 			DisplayName:        variant.DisplayName,
 			Color:              variant.Color,
-			AppearanceJSON:     variant.AppearanceJSON,
+			AppearanceJSON:     appearanceJSON,
 			SortOrder:          variant.SortOrder,
 			Enabled:            variant.Enabled,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
 		}
+		if err := tx.Model(&model.TheaterAppearanceAssetModel{}).
+			Where("channel_id = ? AND identity_id = ? AND variant_id = ?", targetID, newIdentityID, variant.ID).
+			Update("variant_id", clone.ID).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	summary.addCopied("identities")
 	return identityMap, nil
+}
+
+// cloneChannelIdentityAttachmentTx gives copied identities their own channel-scoped attachment IDs.
+// Storage objects are immutable and therefore safely shared by the cloned attachment records.
+func cloneChannelIdentityAttachmentTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID, attachmentID string, attachmentMap map[string]string) (string, error) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID == "" {
+		return "", nil
+	}
+	cacheKey := ownerUserID + "\x00" + attachmentID
+	if clonedID := attachmentMap[cacheKey]; clonedID != "" {
+		return clonedID, nil
+	}
+
+	var source model.AttachmentModel
+	query := tx.Where("id = ?", attachmentID)
+	if err := query.Limit(1).Find(&source).Error; err != nil {
+		return "", err
+	}
+	if source.ID == "" {
+		return "", fmt.Errorf("频道角色附件不存在: %s", attachmentID)
+	}
+	if source.UserID != ownerUserID && source.ChannelID != sourceChannelID {
+		return "", fmt.Errorf("频道角色附件不属于源角色或源频道: %s", attachmentID)
+	}
+
+	clone := source
+	clone.StringPKBaseModel = model.StringPKBaseModel{ID: utils.NewID()}
+	clone.ChannelID = targetChannelID
+	clone.UserID = ownerUserID
+	clone.RootID = ""
+	clone.RootIDType = ""
+	clone.ParentID = ""
+	clone.ParentIDType = ""
+	if err := tx.Create(&clone).Error; err != nil {
+		return "", err
+	}
+	attachmentMap[cacheKey] = clone.ID
+	return clone.ID, nil
+}
+
+func cloneChannelIdentityDecorationsTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID string, decorations protocol.AvatarDecorationList, attachmentMap map[string]string) (protocol.AvatarDecorationList, error) {
+	if len(decorations) == 0 {
+		return nil, nil
+	}
+	cloned := make(protocol.AvatarDecorationList, len(decorations))
+	for index, decoration := range decorations {
+		resourceAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceChannelID, targetChannelID, ownerUserID, decoration.ResourceAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		fallbackAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceChannelID, targetChannelID, ownerUserID, decoration.FallbackAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		cloned[index] = decoration
+		cloned[index].ResourceAttachmentID = resourceAttachmentID
+		cloned[index].FallbackAttachmentID = fallbackAttachmentID
+	}
+	return cloned, nil
+}
+
+func cloneTheaterAppearanceAssetsForIdentityTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID, sourceIdentityID, targetIdentityID string) (map[string]protocol.TheaterMediaRef, error) {
+	var assets []model.TheaterAppearanceAssetModel
+	if err := tx.Where("channel_id = ? AND owner_user_id = ? AND identity_id = ? AND status = ? AND deleted_at IS NULL", sourceChannelID, ownerUserID, sourceIdentityID, "ready").Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]protocol.TheaterMediaRef, len(assets))
+	for _, source := range assets {
+		newAssetID := utils.NewID()
+		attachmentMap := map[string]string{}
+		for _, attachmentID := range []string{source.SourceAttachmentID, source.DisplayAttachmentID, source.FallbackAttachmentID} {
+			if attachmentID == "" {
+				continue
+			}
+			if _, exists := attachmentMap[attachmentID]; exists {
+				continue
+			}
+			var attachment model.AttachmentModel
+			if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", attachmentID, sourceChannelID, ownerUserID).Limit(1).Find(&attachment).Error; err != nil {
+				return nil, err
+			}
+			if attachment.ID == "" {
+				return nil, fmt.Errorf("演出资源附件不存在: %s", attachmentID)
+			}
+			newAttachmentID := utils.NewID()
+			attachment.StringPKBaseModel = model.StringPKBaseModel{ID: newAttachmentID}
+			attachment.ChannelID = targetChannelID
+			attachment.RootID = newAssetID
+			if err := tx.Create(&attachment).Error; err != nil {
+				return nil, err
+			}
+			attachmentMap[attachmentID] = newAttachmentID
+		}
+		clone := source
+		clone.StringPKBaseModel = model.StringPKBaseModel{ID: newAssetID}
+		clone.ChannelID = targetChannelID
+		clone.IdentityID = targetIdentityID
+		// Preserve source ID until variants have been cloned; caller remaps it afterwards.
+		clone.VariantID = source.VariantID
+		clone.SourceAttachmentID = attachmentMap[source.SourceAttachmentID]
+		clone.DisplayAttachmentID = attachmentMap[source.DisplayAttachmentID]
+		clone.FallbackAttachmentID = attachmentMap[source.FallbackAttachmentID]
+		clone.OrphanedAt = nil
+		if err := tx.Create(&clone).Error; err != nil {
+			return nil, err
+		}
+		var duration *int64
+		if clone.DurationMS > 0 {
+			value := clone.DurationMS
+			duration = &value
+		}
+		result[source.ID] = protocol.TheaterMediaRef{AssetID: clone.ID, ResourceAttachmentID: clone.DisplayAttachmentID, FallbackAttachmentID: clone.FallbackAttachmentID, MIMEType: clone.MimeType, Kind: protocol.TheaterMediaKind(clone.Kind), Width: clone.Width, Height: clone.Height, DurationMS: duration}
+	}
+	return result, nil
+}
+
+func remapTheaterPresentationMedia(value *protocol.TheaterPresentation, mediaMap map[string]protocol.TheaterMediaRef) error {
+	if value == nil {
+		return nil
+	}
+	if value.Portrait != nil {
+		if err := remapTheaterLayerMedia(value.Portrait, mediaMap); err != nil {
+			return err
+		}
+	}
+	for index := range value.PortraitDecorations {
+		if err := remapTheaterLayerMedia(&value.PortraitDecorations[index], mediaMap); err != nil {
+			return err
+		}
+	}
+	if value.Dialogue.Frame != nil {
+		if err := remapTheaterLayerMedia(value.Dialogue.Frame, mediaMap); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func remapTheaterLayerMedia(layer *protocol.TheaterVisualLayer, mediaMap map[string]protocol.TheaterMediaRef) error {
+	if layer == nil {
+		return nil
+	}
+	if media, ok := mediaMap[layer.Media.AssetID]; ok {
+		layer.Media = media
+	}
+	// Pending or legacy media remains untouched when no ready cloned asset exists.
+	return nil
+}
+
+func remapVariantTheaterPresentationJSON(raw string, mediaMap map[string]protocol.TheaterMediaRef) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return raw, nil
+	}
+	presentationRaw, exists := document["theaterPresentation"]
+	if !exists || strings.TrimSpace(string(presentationRaw)) == "null" {
+		return raw, nil
+	}
+	var patch protocol.TheaterPresentationPatch
+	if err := json.Unmarshal(presentationRaw, &patch); err != nil {
+		return "", err
+	}
+	if patch.Portrait.Set && patch.Portrait.Value != nil {
+		if err := remapTheaterLayerMedia(patch.Portrait.Value, mediaMap); err != nil {
+			return "", err
+		}
+	}
+	if patch.PortraitDecorations.Set && patch.PortraitDecorations.Value != nil {
+		for index := range *patch.PortraitDecorations.Value {
+			if err := remapTheaterLayerMedia(&(*patch.PortraitDecorations.Value)[index], mediaMap); err != nil {
+				return "", err
+			}
+		}
+	}
+	if patch.Dialogue.Set && patch.Dialogue.Value != nil && patch.Dialogue.Value.Frame != nil {
+		if err := remapTheaterLayerMedia(patch.Dialogue.Value.Frame, mediaMap); err != nil {
+			return "", err
+		}
+	}
+	encodedPatch, err := json.Marshal(patch)
+	if err != nil {
+		return "", err
+	}
+	document["theaterPresentation"] = encodedPatch
+	encoded, err := json.Marshal(document)
+	return string(encoded), err
 }
 
 func copyChannelStickyNotes(tx *gorm.DB, sourceID, targetID, targetWorldID string, summary *ChannelCopySummary) error {

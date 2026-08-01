@@ -237,7 +237,7 @@ const handlePageSizeChange = (nextPageSize: number) => {
 
 const rowProps = (row: AdminAIQuotaDetail) => {
   return {
-    style: 'cursor: pointer;',
+    style: 'cursor: var(--sc-cursor-pointer, pointer);',
     onClick: () => {
       void loadDetail(row.userId)
     },

@@ -3,6 +3,7 @@
     <section class="scene-board__toolbar">
       <n-input
         v-model:value="keyword"
+        class="scene-board__search"
         size="small"
         clearable
         placeholder="搜索播放列表"
@@ -14,22 +15,20 @@
           </n-icon>
         </template>
       </n-input>
-      <n-space size="small">
-        <n-button size="small" quaternary @click="handleRefresh" :loading="audio.scenesLoading">
+      <n-space size="small" :wrap="false" class="scene-board__toolbar-actions">
+        <n-button
+          size="small"
+          quaternary
+          circle
+          aria-label="刷新播放列表"
+          @click="handleRefresh"
+          :loading="audio.scenesLoading"
+        >
           <template #icon>
             <n-icon size="16">
               <ReloadOutline />
             </n-icon>
           </template>
-          刷新
-        </n-button>
-        <n-button v-if="audio.canManage" size="small" secondary @click="openCreateDrawer">
-          <template #icon>
-            <n-icon size="16">
-              <AddOutline />
-            </n-icon>
-          </template>
-          新建播放列表
         </n-button>
         <n-button v-if="audio.canManage" size="small" type="primary" @click="openSaveCurrentDrawer">
           保存当前音轨
@@ -140,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { AddOutline, ReloadOutline, SearchOutline } from '@vicons/ionicons5';
+import { ReloadOutline, SearchOutline } from '@vicons/ionicons5';
 import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import {
   NButton,
@@ -267,17 +266,6 @@ async function handleSearch() {
 async function handleRefresh() {
   await audio.fetchScenes();
   message.success('播放列表已刷新');
-}
-
-function openCreateDrawer() {
-  if (!audio.canManage) return;
-  sceneForm.mode = 'create';
-  sceneForm.id = '';
-  sceneForm.name = '';
-  sceneForm.description = '';
-  sceneForm.tags = [];
-  sceneForm.autoPlayAfterSave = false;
-  formDrawerVisible.value = true;
 }
 
 function openSaveCurrentDrawer() {
@@ -420,9 +408,19 @@ onMounted(() => {
 
 .scene-board__toolbar {
   display: flex;
-  justify-content: space-between;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: nowrap;
+}
+
+.scene-board__search {
+  flex: 1 1 24rem;
+  max-width: 32rem;
+  min-width: 0;
+}
+
+.scene-board__toolbar-actions {
+  flex: none;
 }
 
 .scene-board__selection {

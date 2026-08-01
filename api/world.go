@@ -219,6 +219,8 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "选择 BOT 掷骰时必须指定默认 BOT"})
 		case errors.Is(err, service.ErrWorldDefaultDiceBotInvalid):
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认 BOT 不存在或不是机器人"})
+		case errors.Is(err, service.ErrWorldStickyNoteAppearance):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		default:
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
@@ -419,11 +421,14 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "选择 BOT 掷骰时必须指定默认 BOT"})
 		case errors.Is(err, service.ErrWorldDefaultDiceBotInvalid):
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认 BOT 不存在或不是机器人"})
+		case errors.Is(err, service.ErrWorldCursorThemeInvalid):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		default:
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新世界失败"})
 		}
 	}
 	if world != nil && world.ID != "" {
+		service.ConfirmCursorThemeAttachments(world.GetCursorTheme())
 		broadcastWorldUpdated(world)
 	}
 	return c.JSON(fiber.Map{"world": world})
