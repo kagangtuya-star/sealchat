@@ -18967,6 +18967,7 @@ onBeforeUnmount(() => {
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
                 <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id, currentIdentityTargetUserId).length }} 个</div>
                 <div v-if="!isManagingBotIdentity" class="identity-list__folders">
+                  <n-tag size="small" type="success" v-if="identity.sharedIdentityId">跨频道</n-tag>
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
                 </div>
