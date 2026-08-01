@@ -298,6 +298,9 @@ func autoMigrateTheaterModels(conn *gorm.DB) error {
 	if err := conn.AutoMigrate(theaterModels()...); err != nil {
 		return err
 	}
+	if err := ensureTheaterAppearanceSharedMappingIndex(conn); err != nil {
+		return err
+	}
 	if err := conn.Exec("UPDATE theater_rooms SET scope_type = ? WHERE scope_type IS NULL OR scope_type = ''", TheaterScopeChannel).Error; err != nil {
 		return err
 	}
@@ -305,6 +308,43 @@ func autoMigrateTheaterModels(conn *gorm.DB) error {
 		return err
 	}
 	return conn.Exec("UPDATE theater_objects SET interactive = ?, editable = ?, actions_json = ? WHERE kind = ?", false, false, "[]", "group").Error
+}
+
+func ensureTheaterAppearanceSharedMappingIndex(conn *gorm.DB) error {
+	const indexName = "udx_theater_shared_asset_mapping"
+	expectedColumns := []string{
+		"shared_source_asset_id",
+		"shared_target_channel_id",
+		"shared_target_identity_id",
+		"shared_target_variant_id",
+	}
+	indexes, err := conn.Migrator().GetIndexes(&TheaterAppearanceAssetModel{})
+	if err != nil {
+		return err
+	}
+	for _, index := range indexes {
+		if !strings.EqualFold(index.Name(), indexName) {
+			continue
+		}
+		columns := index.Columns()
+		matches := len(columns) == len(expectedColumns)
+		if matches {
+			for columnIndex := range expectedColumns {
+				if !strings.EqualFold(columns[columnIndex], expectedColumns[columnIndex]) {
+					matches = false
+					break
+				}
+			}
+		}
+		if matches {
+			return nil
+		}
+		if err := conn.Migrator().DropIndex(&TheaterAppearanceAssetModel{}, indexName); err != nil {
+			return err
+		}
+		break
+	}
+	return conn.Migrator().CreateIndex(&TheaterAppearanceAssetModel{}, indexName)
 }
 
 func TheaterRoomFindByScope(worldID, channelID string) (*TheaterRoomModel, error) {

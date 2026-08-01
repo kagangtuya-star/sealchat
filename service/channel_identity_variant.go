@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -33,6 +34,7 @@ type ChannelIdentityVariantInput struct {
 	TheaterPresentation        *protocol.TheaterPresentationPatch
 	TheaterPresentationSet     bool
 	SkipTheaterAssetValidation bool
+	ExpectedRevision           int64
 }
 
 type ResolvedIdentityAppearance struct {
@@ -230,7 +232,7 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation && identity.SharedIdentityID == "" {
 		if err := ValidateTheaterPresentationPatchAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
 			return nil, err
 		}
@@ -286,7 +288,7 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 		return nil, err
 	}
 	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), theaterPresentationPatchAssetIDs(input.TheaterPresentation)); err != nil {
-		return nil, err
+		log.Printf("频道角色差分创建后资源清理失败[identity=%s]: %v", identity.ID, err)
 	}
 	return item, nil
 }
@@ -345,7 +347,7 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation && item.SharedVariantID == "" {
 		if err := ValidateTheaterPresentationPatchAppearanceAssetsForVariant(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, item.ID, *input.TheaterPresentation); err != nil {
 			return nil, err
 		}
@@ -382,7 +384,7 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 		source.Color = input.Color
 		source.AppearanceJSON = appearanceJSON
 		source.Enabled = input.Enabled
-		updated, err = syncSharedChannelIdentityVariant(identity, &source)
+		updated, err = syncSharedChannelIdentityVariant(identity, &source, input.ExpectedRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -410,7 +412,7 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 		}
 	}
 	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
-		return nil, err
+		log.Printf("频道角色差分更新后资源清理失败[variant=%s]: %v", updated.ID, err)
 	}
 	return updated, nil
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -25,6 +26,7 @@ type channelIdentityVariantPayload struct {
 	Enabled                    bool                                      `json:"enabled"`
 	TheaterPresentation        protocol.OptionalTheaterPresentationPatch `json:"theaterPresentation"`
 	SkipTheaterAssetValidation bool                                      `json:"skipTheaterAssetValidation"`
+	ExpectedRevision           int64                                     `json:"expectedRevision"`
 }
 
 func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fiber.Map {
@@ -130,6 +132,7 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 		TheaterPresentation:        payload.TheaterPresentation.Value,
 		TheaterPresentationSet:     payload.TheaterPresentation.Set,
 		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
+		ExpectedRevision:           payload.ExpectedRevision,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -168,12 +171,31 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 		TheaterPresentation:        payload.TheaterPresentation.Value,
 		TheaterPresentationSet:     payload.TheaterPresentation.Set,
 		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
+		ExpectedRevision:           payload.ExpectedRevision,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrSharedChannelIdentityVariantRevisionConflict) {
+			copies, _ := model.SharedChannelIdentityVariantCopies(itemSharedVariantID(variantID))
+			var revision int64
+			for _, copy := range copies {
+				if copy.SharedRevision > revision {
+					revision = copy.SharedRevision
+				}
+			}
+			return c.Status(http.StatusConflict).JSON(fiber.Map{"error": err.Error(), "revision": revision})
+		}
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	broadcastSharedChannelIdentityVariantRefresh(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-variant-update")
 	return c.JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
+}
+
+func itemSharedVariantID(variantID string) string {
+	item, err := model.ChannelIdentityVariantGetByID(strings.TrimSpace(variantID))
+	if err != nil {
+		return ""
+	}
+	return item.SharedVariantID
 }
 
 func ChannelIdentityVariantDelete(c *fiber.Ctx) error {

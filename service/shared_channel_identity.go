@@ -27,6 +27,7 @@ var (
 	ErrSharedChannelIdentityRevisionConflict           = errors.New("共享角色已在其他位置更新，请刷新后重试")
 	ErrChannelIdentityAlreadyShared                    = errors.New("频道身份已关联共享角色")
 	ErrChannelIdentityNotShared                        = errors.New("频道身份未关联共享角色")
+	ErrSharedChannelIdentityVariantRevisionConflict    = errors.New("共享角色差分已在其他位置更新，请刷新后重试")
 )
 
 type SharedChannelIdentitySyncInput struct {
@@ -562,9 +563,6 @@ func SharedChannelIdentityTheaterPresentationSet(ownerUserID, operatorUserID, id
 		if err := protocol.ValidateTheaterPresentation(*presentation); err != nil {
 			return nil, fmt.Errorf("演出外观无效: %w", err)
 		}
-		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), identity.ChannelID, ownerUserID, identity.ID, *presentation); err != nil {
-			return nil, err
-		}
 	}
 
 	var affectedAssetIDs []string
@@ -598,7 +596,11 @@ func SharedChannelIdentityTheaterPresentationSet(ownerUserID, operatorUserID, id
 			return ErrSharedChannelIdentityWorldRequired
 		}
 
-		template.TheaterPresentation = cloneTheaterPresentation(presentation)
+		normalizedPresentation, err := mapSharedTheaterPresentationTx(tx, source.ChannelID, source.ID, &source, presentation)
+		if err != nil {
+			return err
+		}
+		template.TheaterPresentation = normalizedPresentation
 		template.SourceChannelID = source.ChannelID
 		template.SourceIdentityID = source.ID
 		template.Revision++
@@ -611,7 +613,7 @@ func SharedChannelIdentityTheaterPresentationSet(ownerUserID, operatorUserID, id
 			Updates(&template).Error; err != nil {
 			return err
 		}
-		source.TheaterPresentation = cloneTheaterPresentation(presentation)
+		source.TheaterPresentation = cloneTheaterPresentation(normalizedPresentation)
 		if err := upsertSharedChannelIdentityWorldPresentationTx(tx, &template, &source); err != nil {
 			return err
 		}
@@ -727,9 +729,6 @@ func mapSharedTheaterPresentationTx(tx *gorm.DB, sourceChannelID, sourceIdentity
 		return nil, nil
 	}
 	result := cloneTheaterPresentation(presentation)
-	if target.ChannelID == sourceChannelID && target.ID == sourceIdentityID {
-		return result, nil
-	}
 	var worldTemplateRef *protocol.TheaterMediaRef
 	worldID, err := sharedChannelIdentityWorldIDTx(tx, target.ChannelID)
 	if err != nil {
@@ -774,16 +773,25 @@ func mapSharedTheaterPresentationTx(tx *gorm.DB, sourceChannelID, sourceIdentity
 }
 
 func mapSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdentityID, sourceVariantID string, target *model.ChannelIdentityModel, targetVariantID string, ref protocol.TheaterMediaRef) (protocol.TheaterMediaRef, error) {
-	var source model.TheaterAppearanceAssetModel
-	if err := tx.Where("id = ? AND deleted_at IS NULL", ref.AssetID).Take(&source).Error; err != nil {
+	source, canonical, err := resolveSharedTheaterAppearanceAssetTx(tx, sourceChannelID, sourceIdentityID, sourceVariantID, ref)
+	if err != nil {
 		return protocol.TheaterMediaRef{}, err
 	}
-	if source.Status != "ready" || source.ChannelID != sourceChannelID || source.IdentityID != sourceIdentityID || source.VariantID != sourceVariantID || !theaterMediaRefMatchesAsset(ref, source) {
+	if source.Status != "ready" || !theaterMediaRefMatchesAsset(ref, *source) {
 		return protocol.TheaterMediaRef{}, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
 	}
-	canonicalSourceID := source.SharedSourceAssetID
-	if canonicalSourceID == "" {
-		canonicalSourceID = source.ID
+	canonicalSourceID := canonical.ID
+	if sharedTheaterAssetHasScope(source, target.ChannelID, target.ID, targetVariantID) {
+		if err := restoreSharedTheaterAppearanceAssetTx(tx, source); err != nil {
+			return protocol.TheaterMediaRef{}, err
+		}
+		return theaterAppearanceAssetMediaRef(*source), nil
+	}
+	if sharedTheaterAssetHasScope(canonical, target.ChannelID, target.ID, targetVariantID) {
+		if err := restoreSharedTheaterAppearanceAssetTx(tx, canonical); err != nil {
+			return protocol.TheaterMediaRef{}, err
+		}
+		return theaterAppearanceAssetMediaRef(*canonical), nil
 	}
 	var existing model.TheaterAppearanceAssetModel
 	query := tx.Unscoped().Where("shared_source_asset_id = ? AND shared_target_channel_id = ? AND shared_target_identity_id = ?", canonicalSourceID, target.ChannelID, target.ID)
@@ -796,6 +804,11 @@ func mapSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		return protocol.TheaterMediaRef{}, err
 	}
 	if existing.ID != "" {
+		existingCanonical, resolveErr := resolveSharedTheaterCanonicalAssetTx(tx, &existing)
+		allowed, scopeErr := sharedTheaterAssetBelongsToScopeTx(tx, &existing, target.ChannelID, target.ID, targetVariantID)
+		if resolveErr != nil || scopeErr != nil || !allowed || !sharedTheaterAssetHasScope(&existing, target.ChannelID, target.ID, targetVariantID) || existingCanonical.ID != canonicalSourceID {
+			return protocol.TheaterMediaRef{}, fmt.Errorf("共享角色演出资源映射作用域无效: %s", existing.ID)
+		}
 		if existing.Status != "ready" {
 			return protocol.TheaterMediaRef{}, fmt.Errorf("共享角色演出资源映射未就绪: %s", existing.ID)
 		}
@@ -809,10 +822,29 @@ func mapSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		}
 		return theaterAppearanceAssetMediaRef(existing), nil
 	}
+	var legacyMappings []model.TheaterAppearanceAssetModel
+	if err := tx.Unscoped().Where("channel_id = ? AND identity_id = ? AND variant_id = ? AND shared_source_asset_id <> ''", target.ChannelID, target.ID, targetVariantID).
+		Order("created_at ASC").Find(&legacyMappings).Error; err != nil {
+		return protocol.TheaterMediaRef{}, err
+	}
+	for index := range legacyMappings {
+		legacyCanonical, resolveErr := resolveSharedTheaterCanonicalAssetTx(tx, &legacyMappings[index])
+		allowed, scopeErr := sharedTheaterAssetBelongsToScopeTx(tx, &legacyMappings[index], target.ChannelID, target.ID, targetVariantID)
+		if resolveErr != nil || scopeErr != nil || !allowed || legacyMappings[index].Status != "ready" || legacyCanonical.ID != canonicalSourceID {
+			continue
+		}
+		if err := normalizeSharedTheaterAssetMappingTx(tx, &legacyMappings[index], canonicalSourceID, target, targetVariantID); err != nil {
+			return protocol.TheaterMediaRef{}, err
+		}
+		if err := restoreSharedTheaterAppearanceAssetTx(tx, &legacyMappings[index]); err != nil {
+			return protocol.TheaterMediaRef{}, err
+		}
+		return theaterAppearanceAssetMediaRef(legacyMappings[index]), nil
+	}
 
 	newAssetID := utils.NewID()
 	attachmentMap := map[string]string{}
-	for _, attachmentID := range []string{source.SourceAttachmentID, source.DisplayAttachmentID, source.FallbackAttachmentID} {
+	for _, attachmentID := range []string{canonical.SourceAttachmentID, canonical.DisplayAttachmentID, canonical.FallbackAttachmentID} {
 		if attachmentID == "" || attachmentMap[attachmentID] != "" {
 			continue
 		}
@@ -832,15 +864,15 @@ func mapSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		}
 		attachmentMap[attachmentID] = attachment.ID
 	}
-	clone := source
+	clone := *canonical
 	clone.StringPKBaseModel = model.StringPKBaseModel{ID: newAssetID}
 	clone.ChannelID = target.ChannelID
 	clone.OwnerUserID = target.UserID
 	clone.IdentityID = target.ID
 	clone.VariantID = targetVariantID
-	clone.SourceAttachmentID = attachmentMap[source.SourceAttachmentID]
-	clone.DisplayAttachmentID = attachmentMap[source.DisplayAttachmentID]
-	clone.FallbackAttachmentID = attachmentMap[source.FallbackAttachmentID]
+	clone.SourceAttachmentID = attachmentMap[canonical.SourceAttachmentID]
+	clone.DisplayAttachmentID = attachmentMap[canonical.DisplayAttachmentID]
+	clone.FallbackAttachmentID = attachmentMap[canonical.FallbackAttachmentID]
 	clone.SharedSourceAssetID = canonicalSourceID
 	clone.SharedTargetChannelID = target.ChannelID
 	clone.SharedTargetIdentityID = target.ID
@@ -850,6 +882,131 @@ func mapSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		return protocol.TheaterMediaRef{}, err
 	}
 	return theaterAppearanceAssetMediaRef(clone), nil
+}
+
+func resolveSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceIdentityID, sourceVariantID string, ref protocol.TheaterMediaRef) (*model.TheaterAppearanceAssetModel, *model.TheaterAppearanceAssetModel, error) {
+	var source model.TheaterAppearanceAssetModel
+	if err := tx.Where("id = ? AND deleted_at IS NULL", strings.TrimSpace(ref.AssetID)).Take(&source).Error; err != nil {
+		return nil, nil, err
+	}
+	allowed, err := sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, sourceVariantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// A variant customizes a whole visual layer. When that layer still uses
+	// inherited base media, promote the validated base asset into variant scope
+	// instead of persisting a base-scoped reference in the variant patch.
+	if !allowed && sourceVariantID != "" && source.VariantID == "" {
+		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, "")
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if !allowed {
+		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
+	}
+	canonical, err := resolveSharedTheaterCanonicalAssetTx(tx, &source)
+	if err != nil {
+		return nil, nil, err
+	}
+	allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, sourceVariantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !allowed && sourceVariantID != "" && canonical.VariantID == "" {
+		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, "")
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if !allowed || canonical.Status != "ready" {
+		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
+	}
+	return &source, canonical, nil
+}
+
+func resolveSharedTheaterCanonicalAssetTx(tx *gorm.DB, source *model.TheaterAppearanceAssetModel) (*model.TheaterAppearanceAssetModel, error) {
+	current := source
+	seen := map[string]struct{}{}
+	for current != nil && strings.TrimSpace(current.SharedSourceAssetID) != "" {
+		if _, exists := seen[current.ID]; exists {
+			return nil, fmt.Errorf("共享角色演出资源来源链循环: %s", current.ID)
+		}
+		seen[current.ID] = struct{}{}
+		var parent model.TheaterAppearanceAssetModel
+		if err := tx.Unscoped().Where("id = ?", strings.TrimSpace(current.SharedSourceAssetID)).Take(&parent).Error; err != nil {
+			return nil, fmt.Errorf("共享角色演出资源来源不存在 %s: %w", current.SharedSourceAssetID, err)
+		}
+		current = &parent
+	}
+	if current == nil || current.ID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return current, nil
+}
+
+func sharedTheaterAssetBelongsToScopeTx(tx *gorm.DB, asset *model.TheaterAppearanceAssetModel, sourceChannelID, sourceIdentityID, sourceVariantID string) (bool, error) {
+	if asset == nil || asset.OwnerUserID == "" {
+		return false, nil
+	}
+	var expectedIdentity, assetIdentity model.ChannelIdentityModel
+	if err := tx.Select("id", "channel_id", "user_id", "shared_identity_id").Where("id = ? AND channel_id = ?", sourceIdentityID, sourceChannelID).Take(&expectedIdentity).Error; err != nil {
+		return false, err
+	}
+	if err := tx.Select("id", "channel_id", "user_id", "shared_identity_id").Where("id = ? AND channel_id = ?", asset.IdentityID, asset.ChannelID).Take(&assetIdentity).Error; err != nil {
+		return false, err
+	}
+	if expectedIdentity.SharedIdentityID == "" || assetIdentity.SharedIdentityID != expectedIdentity.SharedIdentityID ||
+		assetIdentity.UserID != expectedIdentity.UserID || asset.OwnerUserID != expectedIdentity.UserID {
+		return false, nil
+	}
+	if sourceVariantID == "" {
+		return asset.VariantID == "", nil
+	}
+	if asset.VariantID == "" {
+		return false, nil
+	}
+	var expectedVariant, assetVariant model.ChannelIdentityVariantModel
+	if err := tx.Select("id", "identity_id", "channel_id", "user_id", "shared_variant_id").Where("id = ? AND identity_id = ?", sourceVariantID, sourceIdentityID).Take(&expectedVariant).Error; err != nil {
+		return false, err
+	}
+	if err := tx.Select("id", "identity_id", "channel_id", "user_id", "shared_variant_id").Where("id = ? AND identity_id = ?", asset.VariantID, asset.IdentityID).Take(&assetVariant).Error; err != nil {
+		return false, err
+	}
+	return expectedVariant.SharedVariantID != "" && assetVariant.SharedVariantID == expectedVariant.SharedVariantID &&
+		assetVariant.ChannelID == asset.ChannelID && assetVariant.UserID == expectedVariant.UserID, nil
+}
+
+func sharedTheaterAssetHasScope(asset *model.TheaterAppearanceAssetModel, channelID, identityID, variantID string) bool {
+	return asset != nil && asset.ChannelID == channelID && asset.IdentityID == identityID && asset.VariantID == variantID
+}
+
+func normalizeSharedTheaterAssetMappingTx(tx *gorm.DB, asset *model.TheaterAppearanceAssetModel, canonicalSourceID string, target *model.ChannelIdentityModel, targetVariantID string) error {
+	updates := map[string]any{
+		"shared_source_asset_id": canonicalSourceID, "shared_target_channel_id": target.ChannelID,
+		"shared_target_identity_id": target.ID, "shared_target_variant_id": targetVariantID,
+	}
+	if err := tx.Unscoped().Model(&model.TheaterAppearanceAssetModel{}).Where("id = ?", asset.ID).Updates(updates).Error; err != nil {
+		return err
+	}
+	asset.SharedSourceAssetID = canonicalSourceID
+	asset.SharedTargetChannelID = target.ChannelID
+	asset.SharedTargetIdentityID = target.ID
+	asset.SharedTargetVariantID = targetVariantID
+	return nil
+}
+
+func restoreSharedTheaterAppearanceAssetTx(tx *gorm.DB, asset *model.TheaterAppearanceAssetModel) error {
+	if asset.DeletedAt == nil && asset.OrphanedAt == nil {
+		return nil
+	}
+	if err := tx.Unscoped().Model(&model.TheaterAppearanceAssetModel{}).Where("id = ?", asset.ID).
+		Updates(map[string]any{"deleted_at": nil, "orphaned_at": nil}).Error; err != nil {
+		return err
+	}
+	asset.DeletedAt = nil
+	asset.OrphanedAt = nil
+	return nil
 }
 
 var sharedChannelIdentityRetryWorkerOnce sync.Once

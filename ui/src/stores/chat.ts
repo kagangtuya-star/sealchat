@@ -3311,6 +3311,7 @@ export const useChatStore = defineStore({
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
       skipTheaterAssetValidation?: boolean;
+      expectedRevision?: number;
       enabled: boolean;
     }) {
       const resp = await api.post<{ item: ChannelIdentityVariant }>('api/v1/channel-identity-variants', payload);
@@ -3331,6 +3332,7 @@ export const useChatStore = defineStore({
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
       skipTheaterAssetValidation?: boolean;
+      expectedRevision?: number;
       enabled: boolean;
     }) {
       const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}`, payload);

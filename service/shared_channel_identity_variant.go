@@ -109,6 +109,22 @@ func createSharedVariantCopiesTx(tx *gorm.DB, sourceIdentity *model.ChannelIdent
 	return nil
 }
 
+func normalizeSharedVariantSourceAppearanceTx(tx *gorm.DB, sourceIdentity *model.ChannelIdentityModel, source *model.ChannelIdentityVariantModel) error {
+	globalAppearance, patch, patchSet := sharedVariantAppearanceParts(source)
+	normalizedPatch, err := mapSharedTheaterPresentationPatchTx(
+		tx, sourceIdentity.ChannelID, sourceIdentity.ID, source.ID, sourceIdentity, source.ID, patch,
+	)
+	if err != nil {
+		return err
+	}
+	appearanceJSON, err := sharedVariantAppearanceJSON(globalAppearance, normalizedPatch, patchSet)
+	if err != nil {
+		return err
+	}
+	source.AppearanceJSON = appearanceJSON
+	return tx.Model(source).Update("appearance_json", appearanceJSON).Error
+}
+
 func promoteSharedChannelIdentityVariantsTx(tx *gorm.DB, sourceIdentity *model.ChannelIdentityModel, template *model.SharedChannelIdentityModel) error {
 	var variants []*model.ChannelIdentityVariantModel
 	if err := tx.Where("identity_id = ? AND channel_id = ? AND user_id = ?", sourceIdentity.ID, sourceIdentity.ChannelID, sourceIdentity.UserID).
@@ -131,6 +147,9 @@ func promoteSharedChannelIdentityVariantsTx(tx *gorm.DB, sourceIdentity *model.C
 		}).Error; err != nil {
 			return err
 		}
+		if err := normalizeSharedVariantSourceAppearanceTx(tx, sourceIdentity, variant); err != nil {
+			return err
+		}
 		if err := createSharedVariantCopiesTx(tx, sourceIdentity, variant, identityCopies); err != nil {
 			return err
 		}
@@ -149,6 +168,9 @@ func createSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityMod
 		if err := tx.Create(source).Error; err != nil {
 			return err
 		}
+		if err := normalizeSharedVariantSourceAppearanceTx(tx, &lockedIdentity, source); err != nil {
+			return err
+		}
 		identityCopies, err := sharedIdentityCopiesTx(tx, lockedIdentity.SharedIdentityID)
 		if err != nil {
 			return err
@@ -157,7 +179,7 @@ func createSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityMod
 	})
 }
 
-func syncSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityModel, source *model.ChannelIdentityVariantModel) (*model.ChannelIdentityVariantModel, error) {
+func syncSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityModel, source *model.ChannelIdentityVariantModel, expectedRevision int64) (*model.ChannelIdentityVariantModel, error) {
 	var updated model.ChannelIdentityVariantModel
 	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
 		var copies []*model.ChannelIdentityVariantModel
@@ -168,17 +190,34 @@ func syncSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityModel
 		if len(copies) == 0 {
 			return gorm.ErrRecordNotFound
 		}
+		// Highest committed shared revision is authority. A successful write
+		// replaces it atomically and projects source-local media refs to every copy.
+		var authority *model.ChannelIdentityVariantModel
+		var sourceCopy *model.ChannelIdentityVariantModel
+		for _, copy := range copies {
+			if authority == nil || copy.SharedRevision > authority.SharedRevision {
+				authority = copy
+			}
+			if copy.ID == source.ID {
+				sourceCopy = copy
+			}
+		}
+		if sourceCopy == nil || authority == nil {
+			return gorm.ErrRecordNotFound
+		}
+		if expectedRevision > 0 && authority.SharedRevision != expectedRevision {
+			return ErrSharedChannelIdentityVariantRevisionConflict
+		}
 		globalAppearance, patch, patchSet := sharedVariantAppearanceParts(source)
 		sourceWorldID, err := sharedChannelIdentityWorldIDTx(tx, sourceIdentity.ChannelID)
 		if err != nil {
 			return err
 		}
-		nextRevision := int64(1)
-		for _, copy := range copies {
-			if copy.SharedRevision >= nextRevision {
-				nextRevision = copy.SharedRevision + 1
-			}
+		normalizedPatch, err := mapSharedTheaterPresentationPatchTx(tx, sourceIdentity.ChannelID, sourceIdentity.ID, source.ID, sourceIdentity, source.ID, patch)
+		if err != nil {
+			return err
 		}
+		nextRevision := authority.SharedRevision + 1
 		for _, copy := range copies {
 			_, copyPatch, copyPatchSet := sharedVariantAppearanceParts(copy)
 			appearancePatch := copyPatch
@@ -195,7 +234,7 @@ func syncSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityModel
 				return err
 			}
 			if targetWorldID == sourceWorldID {
-				appearancePatch, err = mapSharedTheaterPresentationPatchTx(tx, sourceIdentity.ChannelID, sourceIdentity.ID, source.ID, targetIdentity, copy.ID, patch)
+				appearancePatch, err = mapSharedTheaterPresentationPatchTx(tx, sourceIdentity.ChannelID, sourceIdentity.ID, source.ID, targetIdentity, copy.ID, normalizedPatch)
 				if err != nil {
 					return err
 				}
@@ -260,9 +299,6 @@ func mapSharedTheaterPresentationPatchTx(tx *gorm.DB, sourceChannelID, sourceIde
 	var result protocol.TheaterPresentationPatch
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
-	}
-	if target.ChannelID == sourceChannelID && target.ID == sourceIdentityID && targetVariantID == sourceVariantID {
-		return &result, nil
 	}
 	var worldTemplateRef *protocol.TheaterMediaRef
 	worldID, err := sharedChannelIdentityWorldIDTx(tx, target.ChannelID)

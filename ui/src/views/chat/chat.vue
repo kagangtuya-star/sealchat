@@ -5469,6 +5469,20 @@ const openIdentityTheaterPresentationEditor = async () => {
 
 const openIdentityVariantTheaterPresentationEditor = async () => {
   if (!(await ensureTheaterModeForAppearanceEdit('variant'))) return;
+  if (editingIdentityVariant.value?.sharedVariantId && editingIdentity.value?.id && chat.curChannel?.id) {
+    try {
+      await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
+      const refreshed = chat.getIdentityVariants(chat.curChannel.id, editingIdentity.value.id, currentIdentityTargetUserId.value)
+        .find(item => item.id === editingIdentityVariant.value?.id);
+      if (refreshed) {
+        editingIdentityVariant.value = refreshed;
+        resetIdentityVariantForm(refreshed);
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || '刷新共享差分演出失败');
+      return;
+    }
+  }
   theaterPresentationEditorMode.value = 'variant';
   theaterPresentationEditorVisible.value = true;
 };
@@ -5508,7 +5522,13 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
         } catch (error: any) {
           const conflictRevision = Number(error?.response?.data?.revision || 0);
           if (error?.response?.status === 409 && conflictRevision > 0 && editingIdentity.value) {
-            editingIdentity.value = { ...editingIdentity.value, sharedRevision: conflictRevision };
+            await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value).catch(() => undefined);
+            const refreshed = chat.getScopedChannelIdentities(chat.curChannel.id, currentIdentityTargetUserId.value)
+              .find(item => item.id === editingIdentity.value?.id);
+            if (refreshed) {
+              editingIdentity.value = refreshed;
+              identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(refreshed.theaterPresentation);
+            }
           }
           message.error(error?.response?.data?.error || error?.message || '保存共享演出外观失败');
         }
@@ -5912,6 +5932,9 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
       color: normalizedColor,
       appearance: {},
       theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
+      expectedRevision: editingIdentityVariant.value?.sharedVariantId
+        ? editingIdentityVariant.value.sharedRevision
+        : undefined,
       enabled: identityVariantForm.enabled,
     };
     let savedVariant: ChannelIdentityVariant | null = null;
@@ -5936,6 +5959,15 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
     }
     return true;
   } catch (error: any) {
+    if (error?.response?.status === 409 && editingIdentityVariant.value?.id && chat.curChannel?.id && editingIdentity.value?.id) {
+      await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value).catch(() => undefined);
+      const refreshed = chat.getIdentityVariants(chat.curChannel.id, editingIdentity.value.id, currentIdentityTargetUserId.value)
+        .find(item => item.id === editingIdentityVariant.value?.id);
+      if (refreshed) {
+        editingIdentityVariant.value = refreshed;
+        resetIdentityVariantForm(refreshed);
+      }
+    }
     const errMsg = error?.response?.data?.error || error?.message || '保存差分失败，请稍后重试';
     message.error(errMsg);
     return false;
