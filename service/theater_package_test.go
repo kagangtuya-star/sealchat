@@ -503,6 +503,138 @@ func TestConvertCCFOLIAClickActions(t *testing.T) {
 	}
 }
 
+func TestRecoverCCFOLIAAssetReferences(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"角色立绘 final.PNG", "item-id.webp"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	background := "角色立绘 final.PNG"
+	backup := ccfoliaBackup{
+		Resources: map[string]ccfoliaResourceDescriptor{},
+		Entities: ccfoliaEntities{
+			Room: ccfoliaRoom{BackgroundURL: &background},
+			Items: map[string]ccfoliaItem{
+				"item-id": {ImageURL: ""},
+			},
+		},
+	}
+	warnings, err := recoverCCFOLIAAssetReferences(root, &backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.Resources[background].Type != "image/png" {
+		t.Fatalf("explicit JSON resource not recovered: %#v", backup.Resources[background])
+	}
+	if backup.Resources["item-id.webp"].Type != "image/webp" {
+		t.Fatalf("item resource not recovered: %#v", backup.Resources["item-id.webp"])
+	}
+	if item := backup.Entities.Items["item-id"]; item.ImageURL != "item-id.webp" {
+		t.Fatalf("item image URL = %q, want item-id.webp", item.ImageURL)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("recovered resources must produce compatibility warnings")
+	}
+}
+
+func TestCCFOLIAActionsPlainMessage(t *testing.T) {
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: "ET"}, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("plain message warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != "chat.send" {
+		t.Fatalf("plain message actions = %#v", actions)
+	}
+	var payload theaterChatSendPayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Content != "ET" {
+		t.Fatalf("plain message content = %q, want ET", payload.Content)
+	}
+	if conversion.Metadata["type"] != "chat-send" || conversion.Metadata["resolved"] != true {
+		t.Fatalf("plain message metadata = %#v", conversion.Metadata)
+	}
+}
+
+func TestConvertCCFOLIASavedataSnapshot(t *testing.T) {
+	background := "background.png"
+	itemImage := "item.png"
+	characterImage := "character.png"
+	faceImage := "face.png"
+	noteImage := "note.png"
+	thumbnail := "thumbnail.png"
+	backup := ccfoliaBackup{
+		Meta: ccfoliaMeta{Version: ccfoliaBackupVersion},
+		Entities: ccfoliaEntities{
+			Room:       ccfoliaRoom{FieldWidth: 100, FieldHeight: 100, GridSize: 1},
+			Items:      map[string]ccfoliaItem{},
+			Characters: map[string]ccfoliaCharacter{},
+			Scenes:     map[string]ccfoliaScene{},
+			Savedatas: map[string]ccfoliaSavedata{
+				"save": {Name: "存档场景", Thumbnail: &thumbnail, SnapshotVersion: "2", SnapshotID: "snapshot", Order: 1},
+			},
+			Snapshots: map[string]ccfoliaSnapshot{
+				"snapshot": {
+					Room: ccfoliaRoom{BackgroundURL: &background, FieldWidth: 100, FieldHeight: 100, GridSize: 1},
+					Items: map[string]ccfoliaItem{
+						"item": {ImageURL: itemImage, Width: 10, Height: 10, Visible: true},
+					},
+					Characters: map[string]ccfoliaCharacter{
+						"character": {Name: "角色", IconURL: &characterImage, Width: 10, Height: 10, Active: true, Faces: []ccfoliaFace{{Label: "差分", IconURL: &faceImage}}},
+					},
+					Notes: map[string]ccfoliaNote{
+						"note": {Name: "笔记", Text: "内容", IconURL: &noteImage, Order: 1},
+					},
+				},
+			},
+		},
+	}
+	targets := map[string]ccfoliaAssetTarget{}
+	for _, ref := range []string{background, itemImage, characterImage, faceImage, noteImage, thumbnail} {
+		targets[ref] = ccfoliaAssetTarget{ResourceID: "resource-" + ref, MimeType: "image/png"}
+	}
+	conversion, err := convertCCFOLIABackup(backup, "world", targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "存档场景")
+	if len(scene.Objects) != 2 {
+		t.Fatalf("savedata object count = %d, want 2", len(scene.Objects))
+	}
+	var state map[string]any
+	if err := json.Unmarshal(scene.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := state["ccfolia"].(map[string]any)
+	if metadata["sourceType"] != "savedata" || metadata["sourceSnapshotId"] != "snapshot" {
+		t.Fatalf("savedata metadata = %#v", metadata)
+	}
+	if notes, ok := metadata["notes"].([]any); !ok || len(notes) != 1 {
+		t.Fatalf("savedata notes = %#v", metadata["notes"])
+	}
+}
+
+func TestCCFOLIAAssetExtensionAllowsSafeJSONFileNames(t *testing.T) {
+	accepted := map[string]string{
+		"Yp7OwBWGsiPu6E75vc4L.png": "png",
+		"角色立绘 final.PNG":           "png",
+		"asset.v2.jpeg":            "jpeg",
+	}
+	for name, expected := range accepted {
+		if extension, ok := ccfoliaAssetExtension(name); !ok || extension != expected {
+			t.Errorf("ccfoliaAssetExtension(%q) = %q, %v; want %q, true", name, extension, ok, expected)
+		}
+	}
+	for _, name := range []string{"../escape.png", "nested/image.png", `nested\\image.png`, "image.txt", " image.png"} {
+		if extension, ok := ccfoliaAssetExtension(name); ok {
+			t.Errorf("ccfoliaAssetExtension(%q) = %q, true; want rejected", name, extension)
+		}
+	}
+}
+
 func TestConvertCCFOLIADemoAutoCanvasAndCharacters(t *testing.T) {
 	backup, err := loadCCFOLIABackup(filepath.Join("..", "docs", "ccf-demo2"))
 	if err != nil {
