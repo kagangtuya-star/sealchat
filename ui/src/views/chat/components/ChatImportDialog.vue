@@ -510,6 +510,16 @@ const templateOptions = computed(() =>
   }))
 )
 
+const selectedTemplate = computed(() =>
+  templates.value.find(template => template.id === form.templateId)
+)
+
+const handleTemplateChange = (templateId: string) => {
+  if (templateId === 'ccfolia') {
+    message.warning('从HTML文件中直接复制文本即可，提前在记事本中替换掉[main]')
+  }
+}
+
 const detectedRoles = computed(() => previewResult.value?.detectedRoles || [])
 
 const previewStats = computed(() => {
@@ -667,12 +677,19 @@ const importConfig = async (e: Event) => {
         </n-form-item>
 
         <n-form-item label="解析模板">
-          <n-select
-            v-model:value="form.templateId"
-            :options="templateOptions"
-            placeholder="选择解析模板"
-            :disabled="!!form.regexPattern"
-          />
+          <div class="template-field">
+            <n-select
+              v-model:value="form.templateId"
+              :options="templateOptions"
+              placeholder="选择解析模板"
+              :disabled="!!form.regexPattern"
+              @update:value="handleTemplateChange"
+            />
+            <div v-if="selectedTemplate" class="template-examples">
+              <div>格式：{{ selectedTemplate.description }}</div>
+              <div>示例：{{ selectedTemplate.example }}</div>
+            </div>
+          </div>
         </n-form-item>
 
         <n-form-item>
@@ -1032,6 +1049,18 @@ const importConfig = async (e: Event) => {
 .file-upload {
   display: flex;
   gap: 0.5rem;
+}
+
+.template-field {
+  width: 100%;
+}
+
+.template-examples {
+  margin-top: 0.5rem;
+  color: var(--sc-text-secondary, #475569);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .config-actions {
