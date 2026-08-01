@@ -773,6 +773,23 @@ const handleRevalidateCharacterApi = async () => {
   }
 };
 
+const ensureCharacterApiForPreview = async (channelId: string) => {
+  if (!characterApiDisabled.value) {
+    return true;
+  }
+  try {
+    const result = await cardStore.revalidateCharacterApi(channelId);
+    if (result.ok) {
+      return true;
+    }
+    message.error(`${result.error || '人物卡 API 自动连接失败'}，请在人物卡面板手动重试`);
+  } catch (e: any) {
+    const error = e?.response?.data?.error || e?.message || '人物卡 API 自动连接失败';
+    message.error(`${error}，请在人物卡面板手动重试`);
+  }
+  return false;
+};
+
 watch(() => props.visible, async (val) => {
   if (!val) {
     return;
@@ -1764,6 +1781,9 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
     message.warning('请先选择频道');
     return false;
   }
+  if (mode === 'view' && !await ensureCharacterApiForPreview(channelId)) {
+    return false;
+  }
 
   const shouldSwitchCard = !characterApiDisabled.value && currentActiveCardId.value !== card.id;
   const restoreToCurrentBinding = !characterApiDisabled.value
@@ -1813,7 +1833,9 @@ const openEditPanel = async (card: CharacterCard) => {
 const openCardById = async (cardId: string, mode: 'view' | 'edit' = 'view') => {
   const channelId = resolvedChannelId.value;
   const normalizedCardId = String(cardId || '').trim();
-  if (!channelId || !normalizedCardId || characterApiDisabled.value) return false;
+  if (!channelId || !normalizedCardId) return false;
+  if (mode === 'view' && !await ensureCharacterApiForPreview(channelId)) return false;
+  if (characterApiDisabled.value) return false;
 
   await loadPanelData(channelId);
   const card = allChannelCards.value.find(item => item.id === normalizedCardId);
