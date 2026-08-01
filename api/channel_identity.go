@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -26,6 +27,13 @@ type channelIdentityPayload struct {
 	FolderIDs                  []string                             `json:"folderIds"`
 	TheaterPresentation        protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
 	SkipTheaterAssetValidation bool                                 `json:"skipTheaterAssetValidation"`
+	PromoteToShared            bool                                 `json:"promoteToShared"`
+}
+
+type sharedChannelIdentityTheaterPresentationPayload struct {
+	ChannelID           string                        `json:"channelId"`
+	TheaterPresentation *protocol.TheaterPresentation `json:"theaterPresentation"`
+	ExpectedRevision    int64                         `json:"expectedRevision"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -53,6 +61,11 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	if err := service.ApplyTemporaryIdentityActivateModes(ctx.TargetUserID, result.Items); err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
+		})
+	}
+	if result.Repaired {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+			ChannelID: channelID, TargetUserID: ctx.TargetUserID, OperatorUserID: ctx.OperatorUserID, Reason: "identity-repair",
 		})
 	}
 	config, err := model.ChannelIdentityModeConfigGet(ctx.TargetUserID, channelID)
@@ -167,7 +180,10 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		payload.IsTemporary = false
 		payload.FolderIDs = nil
 	}
-	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
+	if payload.PromoteToShared && ctx.OperatorUserID != ctx.TargetUserID {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": service.ErrSharedChannelIdentityOwnerOnly.Error()})
+	}
+	updateResult, err := service.ChannelIdentityUpdateDetailedWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:                  payload.ChannelID,
 		DisplayName:                payload.DisplayName,
 		Color:                      payload.Color,
@@ -181,20 +197,83 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		TheaterPresentation:        payload.TheaterPresentation.Value,
 		TheaterPresentationSet:     payload.TheaterPresentation.Set,
 		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
-	})
+	}, payload.PromoteToShared)
 	if err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrSharedChannelIdentityOwnerOnly) || errors.Is(err, service.ErrSharedChannelIdentitySynchronizedFieldsReadOnly) {
+			status = http.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      payload.ChannelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-update",
-	})
+	item := updateResult.Item
+	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-update")
 	return c.JSON(fiber.Map{
-		"item": item,
+		"item":       item,
+		"sharedSync": updateResult.SharedSync,
+	})
+}
+
+func SharedChannelIdentityTheaterPresentationSet(c *fiber.Ctx) error {
+	identityID := strings.TrimSpace(c.Params("id"))
+	if identityID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "无效的身份ID"})
+	}
+	payload := sharedChannelIdentityTheaterPresentationPayload{}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
+	}
+	payload.ChannelID = strings.TrimSpace(payload.ChannelID)
+	if payload.ChannelID == "" || payload.TheaterPresentation == nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID或演出外观"})
+	}
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, "")
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.SharedChannelIdentityTheaterPresentationSet(
+		ctx.TargetUserID,
+		ctx.OperatorUserID,
+		identityID,
+		payload.ChannelID,
+		payload.TheaterPresentation,
+		payload.ExpectedRevision,
+	)
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, service.ErrSharedChannelIdentityOwnerOnly):
+			status = http.StatusForbidden
+		case errors.Is(err, service.ErrSharedChannelIdentityRevisionConflict):
+			if identity, identityErr := model.ChannelIdentityValidateOwnership(identityID, ctx.TargetUserID, payload.ChannelID); identityErr == nil && identity.SharedIdentityID != "" {
+				if template, templateErr := model.SharedChannelIdentityGetByID(identity.SharedIdentityID); templateErr == nil {
+					return c.Status(http.StatusConflict).JSON(fiber.Map{
+						"error":        err.Error(),
+						"revision":     template.Revision,
+						"presentation": template.TheaterPresentation,
+					})
+				}
+			}
+			status = http.StatusConflict
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+	}
+	var item *model.ChannelIdentityModel
+	for _, copy := range result.Copies {
+		if copy.ID == identityID {
+			item = copy
+			break
+		}
+	}
+	if item == nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "共享角色当前频道投影不存在"})
+	}
+	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "shared-theater-presentation-update")
+	return c.JSON(fiber.Map{
+		"item":         item,
+		"presentation": result.Template.TheaterPresentation,
+		"revision":     result.Template.Revision,
 	})
 }
 
@@ -218,20 +297,48 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 	if ctx.IsBotTarget {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "不能删除 BOT 默认频道外观"})
 	}
+	var sharedCopies []*model.ChannelIdentityModel
+	if identity, identityErr := model.ChannelIdentityValidateOwnership(identityID, ctx.TargetUserID, channelID); identityErr == nil && identity.SharedIdentityID != "" {
+		sharedCopies, _ = model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+	}
 	if err := service.ChannelIdentityDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, identityID); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrSharedChannelIdentityOwnerOnly) {
+			status = http.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      channelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-delete",
-	})
+	if len(sharedCopies) == 0 {
+		sharedCopies = []*model.ChannelIdentityModel{{ChannelID: channelID}}
+	}
+	for _, copy := range sharedCopies {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: copy.ChannelID, TargetUserID: ctx.TargetUserID, OperatorUserID: ctx.OperatorUserID, Reason: "identity-delete"})
+	}
 	return c.JSON(fiber.Map{
 		"success": true,
 	})
+}
+
+func broadcastUpdatedSharedChannelIdentityCopies(item *model.ChannelIdentityModel, targetUserID, operatorUserID, reason string) {
+	if item == nil || item.SharedIdentityID == "" || targetUserID != operatorUserID {
+		if item != nil {
+			broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: item.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+		}
+		return
+	}
+	copies, err := model.SharedChannelIdentityCopies(item.SharedIdentityID)
+	if err != nil {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: item.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+		return
+	}
+	for _, copy := range copies {
+		if copy.SharedRevision != item.SharedRevision {
+			continue
+		}
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: copy.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+	}
 }
 
 func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {

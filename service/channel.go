@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -444,6 +445,9 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 	})
 
 	syncWorldRolesForNewChannel(worldID, channelID)
+	if err := MaterializeSharedChannelIdentitiesForUser(creatorId); err != nil {
+		log.Printf("新频道共享角色副本创建失败[user=%s channel=%s]: %v", creatorId, channelID, err)
+	}
 
 	return m
 }

@@ -544,6 +544,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/channel-identities/:id", ChannelIdentityGet)
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
+	v1Auth.Put("/channel-identities/:id/shared-theater-presentation", SharedChannelIdentityTheaterPresentationSet)
 	v1Auth.Post("/channel-identities/:id/replace-temporary", ChannelIdentityReplaceTemporary)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 	v1Auth.Post("/worlds/:worldId/theater-presentations/resolve", WorldTheaterPresentationsResolve)

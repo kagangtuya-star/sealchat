@@ -965,6 +965,8 @@ export interface ChannelIdentity {
   id: string;
   channelId: string;
   userId: string;
+  sharedIdentityId?: string;
+  sharedRevision?: number;
   displayName: string;
   color: string;
   avatarAttachmentId: string;
@@ -985,6 +987,8 @@ export interface ChannelIdentityVariant {
   identityId: string;
   channelId: string;
   userId: string;
+  sharedVariantId?: string;
+  sharedRevision?: number;
   selectorEmoji: string;
   keyword: string;
   note: string;

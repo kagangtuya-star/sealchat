@@ -188,8 +188,10 @@ onMounted(() => {
   updateReducedMotion()
   invalidateAppearance = (event: Event) => {
     const detail = (event as CustomEvent<{ channelId?: string }>).detail
-    if (String(detail?.channelId || '').trim() !== String(props.channelId).trim()) return
-    appearanceCache.invalidate(props.worldId, props.channelId)
+    const invalidatedChannelId = String(detail?.channelId || '').trim()
+    if (!invalidatedChannelId) return
+    appearanceCache.invalidateChannel(invalidatedChannelId)
+    if (invalidatedChannelId !== String(props.channelId).trim()) return
     const actor = message.value?.actor
     if (!actor?.identityId) return
     livePresentation.value = null
@@ -209,12 +211,24 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.worldId, props.channelId, message.value?.actor.identityId, message.value?.actor.variantId, message.value?.messageId] as const,
+  () => [
+    props.worldId,
+    props.channelId,
+    props.characterSnapshot.revision,
+    props.characterSnapshot.updatedAt,
+    message.value?.actor.identityId,
+    message.value?.actor.variantId,
+    message.value?.messageId,
+  ] as const,
   async () => {
     livePresentation.value = null
     const actor = message.value?.actor
     if (!actor?.identityId) return
     try {
+      appearanceCache.invalidate(props.worldId, props.channelId, {
+        identityId: actor.identityId,
+        variantId: actor.variantId,
+      })
       const resolved = await appearanceCache.resolve(props.worldId, props.channelId, {
         identityId: actor.identityId,
         variantId: actor.variantId,

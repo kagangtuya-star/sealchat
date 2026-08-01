@@ -109,6 +109,8 @@ type AvatarDecorationSettings struct {
 
 type ChannelIdentity struct {
 	ID                  string               `json:"id"`
+	SharedIdentityID    string               `json:"sharedIdentityId,omitempty"`
+	SharedRevision      int64                `json:"sharedRevision,omitempty"`
 	DisplayName         string               `json:"displayName"`
 	Color               string               `json:"color"`
 	AvatarAttachmentID  string               `json:"avatarAttachmentId"`

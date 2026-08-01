@@ -3046,6 +3046,14 @@ export const useChatStore = defineStore({
           [scopeKey]: membership,
         };
       }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('sealchat:theater-appearance-invalidated', {
+          detail: {
+            channelId: identity.channelId,
+            targetUserId: normalizeIdentityScopeUserId(targetUserId),
+          },
+        }));
+      }
       chatEvent.emit('channel-identity-updated', { identity, channelId: identity.channelId });
     },
 
@@ -3364,10 +3372,32 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; promoteToShared?: boolean; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
+      return identity;
+    },
+
+    async sharedChannelIdentityTheaterPresentationSet(identityId: string, payload: {
+      channelId: string;
+      theaterPresentation: TheaterPresentation | null;
+      expectedRevision?: number;
+    }) {
+      const resp = await api.put<{
+        item: ChannelIdentity;
+        presentation: TheaterPresentation | null;
+        revision: number;
+      }>(`api/v1/channel-identities/${identityId}/shared-theater-presentation`, payload);
+      const presentation = resp.data.presentation
+        || resp.data.item?.theaterPresentation
+        || payload.theaterPresentation;
+      const identity: ChannelIdentity = {
+        ...resp.data.item,
+        theaterPresentation: presentation,
+        sharedRevision: resp.data.revision,
+      };
+      this.upsertChannelIdentity(identity);
       return identity;
     },
 

@@ -12,6 +12,7 @@ type ChannelIdentityListResult struct {
 	Folders    []*model.ChannelIdentityFolderModel `json:"folders"`
 	Favorites  []string                            `json:"favorites"`
 	Membership map[string][]string                 `json:"membership"`
+	Repaired   bool                                `json:"-"`
 }
 
 type ChannelIdentityFolderInput struct {
@@ -25,6 +26,25 @@ func ChannelIdentityListByUser(channelID string, userID string) (*ChannelIdentit
 	items, err := model.ChannelIdentityListVisible(channelID, userID)
 	if err != nil {
 		return nil, err
+	}
+	repaired := false
+	for _, item := range items {
+		if item.SharedIdentityID == "" {
+			continue
+		}
+		template, templateErr := model.SharedChannelIdentityGetByID(item.SharedIdentityID)
+		if templateErr != nil || item.SharedRevision >= template.Revision {
+			continue
+		}
+		if _, repairErr := SharedChannelIdentityRepairCopy(item.ID); repairErr == nil {
+			repaired = true
+		}
+	}
+	if repaired {
+		items, err = model.ChannelIdentityListVisible(channelID, userID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	folders, err := model.ChannelIdentityFolderList(channelID, userID)
 	if err != nil {
@@ -50,6 +70,7 @@ func ChannelIdentityListByUser(channelID string, userID string) (*ChannelIdentit
 		Folders:    folders,
 		Favorites:  favorites,
 		Membership: membership,
+		Repaired:   repaired,
 	}, nil
 }
 

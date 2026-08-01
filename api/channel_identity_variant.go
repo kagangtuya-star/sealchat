@@ -37,6 +37,8 @@ func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fi
 		"identityId":         item.IdentityID,
 		"channelId":          item.ChannelID,
 		"userId":             item.UserID,
+		"sharedVariantId":    item.SharedVariantID,
+		"sharedRevision":     item.SharedRevision,
 		"selectorEmoji":      item.SelectorEmoji,
 		"keyword":            item.Keyword,
 		"note":               item.Note,
@@ -132,12 +134,7 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      payload.ChannelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-variant-create",
-	})
+	broadcastSharedChannelIdentityVariantRefresh(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-variant-create")
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
 }
 
@@ -175,12 +172,7 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      payload.ChannelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-variant-update",
-	})
+	broadcastSharedChannelIdentityVariantRefresh(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-variant-update")
 	return c.JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
 }
 
@@ -206,15 +198,11 @@ func ChannelIdentityVariantDelete(c *fiber.Ctx) error {
 			return handleChannelIdentityActorErr(c, err)
 		}
 	}
+	item, _ := service.ChannelIdentityVariantGetForUser(ctx.TargetUserID, channelID, variantID)
 	if err := service.ChannelIdentityVariantDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, variantID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      channelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-variant-delete",
-	})
+	broadcastSharedChannelIdentityVariantRefresh(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-variant-delete")
 	return c.JSON(fiber.Map{"success": true})
 }
 
@@ -238,12 +226,8 @@ func ChannelIdentityVariantReorder(c *fiber.Ctx) error {
 	if err := service.ChannelIdentityVariantReorderWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityID, payload.IDs); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
-		ChannelID:      payload.ChannelID,
-		TargetUserID:   ctx.TargetUserID,
-		OperatorUserID: ctx.OperatorUserID,
-		Reason:         "identity-variant-reorder",
-	})
+	identity, _ := model.ChannelIdentityGetByID(payload.IdentityID)
+	broadcastSharedChannelIdentityVariantRefreshForIdentity(identity, ctx.TargetUserID, ctx.OperatorUserID, "identity-variant-reorder")
 	items, err := model.ChannelIdentityVariantListByIdentityID(payload.ChannelID, ctx.TargetUserID, payload.IdentityID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -253,4 +237,33 @@ func ChannelIdentityVariantReorder(c *fiber.Ctx) error {
 		result = append(result, serializeChannelIdentityVariant(item))
 	}
 	return c.JSON(fiber.Map{"items": result})
+}
+
+func broadcastSharedChannelIdentityVariantRefresh(item *model.ChannelIdentityVariantModel, targetUserID, operatorUserID, reason string) {
+	if item == nil {
+		return
+	}
+	identity, err := model.ChannelIdentityGetByID(item.IdentityID)
+	if err != nil {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: item.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+		return
+	}
+	broadcastSharedChannelIdentityVariantRefreshForIdentity(identity, targetUserID, operatorUserID, reason)
+}
+
+func broadcastSharedChannelIdentityVariantRefreshForIdentity(identity *model.ChannelIdentityModel, targetUserID, operatorUserID, reason string) {
+	if identity == nil || identity.SharedIdentityID == "" {
+		if identity != nil {
+			broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: identity.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+		}
+		return
+	}
+	copies, err := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+	if err != nil {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: identity.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+		return
+	}
+	for _, copy := range copies {
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: copy.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
+	}
 }

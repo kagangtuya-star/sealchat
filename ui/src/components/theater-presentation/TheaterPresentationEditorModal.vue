@@ -40,6 +40,7 @@ const props = withDefaults(defineProps<{
   worldTemplate?: WorldTheaterPresentationTemplate | null
   canSetWorldTemplate?: boolean
   worldTemplateSaving?: boolean
+  applying?: boolean
 }>(), {
   presentation: null,
   base: null,
@@ -50,6 +51,7 @@ const props = withDefaults(defineProps<{
   worldTemplate: null,
   canSetWorldTemplate: false,
   worldTemplateSaving: false,
+  applying: false,
 })
 const emit = defineEmits<{
   'update:show': [show: boolean]
@@ -143,9 +145,7 @@ const handlePreviewCommand = (event: MessageEvent) => {
   if (!data || data.type !== 'sealchat.theater.appearance-preview.command' || data.previewId !== previewId) return
   if (data.phase === 'start') editor.beginTransaction()
   if (data.phase === 'end') editor.commitTransaction()
-  if (data.command && typeof data.command === 'object') {
-    editor.dispatch(data.command as TheaterEditorCommand, { transient: data.transient === true })
-  }
+  if (data.command && typeof data.command === 'object') dispatch(data.command as TheaterEditorCommand, { transient: data.transient === true })
 }
 
 onMounted(() => window.addEventListener('message', handlePreviewCommand))
@@ -262,18 +262,27 @@ const handleFile = async (event: Event) => {
   }
 }
 
-const dispatch = (command: TheaterEditorCommand, options?: { transient?: boolean }) => editor.dispatch(command, options)
+const dispatch = (command: TheaterEditorCommand, options?: { transient?: boolean }) => {
+  if (command.type === 'select') {
+    if (command.target.kind === 'portrait') activeTab.value = 'portrait'
+    if (command.target.kind === 'decoration') activeTab.value = 'decorations'
+    if (command.target.kind === 'speaker') activeTab.value = 'speaker'
+    if (command.target.kind === 'content') activeTab.value = 'content'
+    if (command.target.kind === 'dialogue' || command.target.kind === 'dialogue-frame') activeTab.value = 'dialogue'
+  }
+  editor.dispatch(command, options)
+}
 const close = () => {
+  if (props.applying) return
   stopExternalPreview()
   emit('update:show', false)
 }
 const apply = () => {
-  if (!canApply.value) return
+  if (!canApply.value || props.applying) return
   const result = props.mode === 'variant'
     ? theaterPresentationPatchSchema.parse(editor.result.value)
     : theaterPresentationSchema.parse(editor.result.value)
   emit('apply', result)
-  close()
 }
 const setWorldTemplate = () => {
   if (!templateSections.value.length || props.worldTemplateSaving) return
@@ -283,7 +292,7 @@ const setWorldTemplate = () => {
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" :auto-focus="false" @update:show="emit('update:show', $event)">
+  <n-modal :show="show" :mask-closable="false" :auto-focus="false" @update:show="$event ? emit('update:show', true) : close()">
     <div class="theater-editor-modal" :class="{ 'is-external-preview': externalPreview }" data-testid="theater-presentation-editor">
       <header class="theater-editor-modal__header">
         <div>
@@ -314,7 +323,7 @@ const setWorldTemplate = () => {
           <n-tooltip><template #trigger><n-switch v-model:value="previewEnabled" size="small" /></template>编辑预览</n-tooltip>
           <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.past.length" @click="editor.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤销</n-tooltip>
           <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.future.length" @click="editor.redo"><template #icon><n-icon><ArrowForwardUp /></n-icon></template></n-button></template>重做</n-tooltip>
-          <n-tooltip><template #trigger><n-button circle quaternary @click="close"><template #icon><n-icon><X /></n-icon></template></n-button></template>关闭</n-tooltip>
+          <n-tooltip><template #trigger><n-button circle quaternary :disabled="applying" @click="close"><template #icon><n-icon><X /></n-icon></template></n-button></template>关闭</n-tooltip>
         </div>
       </header>
 
@@ -366,8 +375,8 @@ const setWorldTemplate = () => {
       </div>
 
       <footer class="theater-editor-modal__footer">
-        <n-button @click="close">取消</n-button>
-        <n-button type="primary" :disabled="!canApply" @click="apply">应用</n-button>
+        <n-button :disabled="applying" @click="close">取消</n-button>
+        <n-button type="primary" :loading="applying" :disabled="!canApply" @click="apply">应用</n-button>
       </footer>
     </div>
   </n-modal>

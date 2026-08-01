@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/protocol"
@@ -17,7 +19,8 @@ func cloneTheaterPresentation(value *protocol.TheaterPresentation) *protocol.The
 		return nil
 	}
 	clone := *value
-	clone.PortraitDecorations = append([]protocol.TheaterVisualLayer(nil), value.PortraitDecorations...)
+	clone.PortraitDecorations = make([]protocol.TheaterVisualLayer, len(value.PortraitDecorations))
+	copy(clone.PortraitDecorations, value.PortraitDecorations)
 	if value.Portrait != nil {
 		portrait := *value.Portrait
 		clone.Portrait = &portrait
@@ -49,6 +52,11 @@ type ChannelIdentityReplaceResult struct {
 	Item          *model.ChannelIdentityModel
 	OldIdentityID string
 	RemovedID     string
+}
+
+type ChannelIdentityUpdateResult struct {
+	Item       *model.ChannelIdentityModel      `json:"item"`
+	SharedSync *SharedChannelIdentitySyncResult `json:"sharedSync,omitempty"`
 }
 
 const temporaryIdentityActivateModePrefPrefix = "tmpMode:"
@@ -268,6 +276,157 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 }
 
 func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
+	result, err := ChannelIdentityUpdateDetailedWithAccess(ownerUserID, operatorUserID, identityID, input, false)
+	if err != nil {
+		return nil, err
+	}
+	return result.Item, nil
+}
+
+func ChannelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput, promoteToShared bool) (*ChannelIdentityUpdateResult, error) {
+	if promoteToShared {
+		if input == nil {
+			return nil, errors.New("参数不能为空")
+		}
+		identity, err := model.ChannelIdentityValidateOwnership(identityID, ownerUserID, input.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		if identity.SharedIdentityID == "" {
+			return channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID, identity, input)
+		}
+	}
+	return channelIdentityUpdateDetailedWithAccess(ownerUserID, operatorUserID, identityID, input)
+}
+
+func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID string, identity *model.ChannelIdentityModel, input *ChannelIdentityInput) (*ChannelIdentityUpdateResult, error) {
+	if err := ensureSharedChannelIdentityOwner(ownerUserID, operatorUserID); err != nil {
+		return nil, err
+	}
+	if err := validateIdentityInput(input); err != nil {
+		return nil, err
+	}
+	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+		return nil, err
+	}
+	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
+	if err != nil {
+		return nil, err
+	}
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
+		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+			return nil, err
+		}
+	}
+	folderIDs := sanitizeFolderIDs(input.FolderIDs)
+	if input.FolderIDs != nil {
+		if _, err := ChannelIdentityFoldersValidateOwnership(input.ChannelID, ownerUserID, folderIDs); err != nil {
+			return nil, err
+		}
+	}
+	affectedAssetIDs := theaterPresentationAssetIDs(identity.TheaterPresentation)
+	result := &ChannelIdentityUpdateResult{}
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var locked model.ChannelIdentityModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND user_id = ? AND channel_id = ?", identity.ID, ownerUserID, input.ChannelID).Take(&locked).Error; err != nil {
+			return err
+		}
+		if locked.SharedIdentityID != "" {
+			return ErrChannelIdentityAlreadyShared
+		}
+		if err := ensureSharedChannelIdentityEligibleTx(tx, &locked); err != nil {
+			return err
+		}
+		values := map[string]any{
+			"display_name": strings.TrimSpace(input.DisplayName), "color": input.Color,
+			"avatar_attachment_id": strings.TrimSpace(input.AvatarAttachmentID),
+			"avatar_decoration":    avatarDecorations, "is_default": input.IsDefault,
+		}
+		if input.BotAppearanceMode != "" {
+			values["bot_appearance_mode"] = input.BotAppearanceMode
+		}
+		if input.TheaterPresentationSet || input.TheaterPresentation != nil {
+			values["theater_presentation"] = input.TheaterPresentation
+		}
+		if err := model.ChannelIdentityEncodeStoredValues(values); err != nil {
+			return err
+		}
+		if err := tx.Model(&locked).Updates(values).Error; err != nil {
+			return err
+		}
+		if input.IsDefault {
+			if err := tx.Model(&model.ChannelIdentityModel{}).
+				Where("channel_id = ? AND user_id = ? AND id <> ?", locked.ChannelID, locked.UserID, locked.ID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		} else if locked.IsDefault {
+			var fallback model.ChannelIdentityModel
+			if err := tx.Where("channel_id = ? AND user_id = ? AND id <> ?", locked.ChannelID, locked.UserID, locked.ID).
+				Order("is_default DESC, sort_order ASC, created_at ASC").Limit(1).Find(&fallback).Error; err != nil {
+				return err
+			}
+			if fallback.ID != "" {
+				if err := tx.Model(&fallback).Update("is_default", true).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Model(&locked).Update("is_default", true).Error; err != nil {
+				return err
+			}
+		}
+		if input.FolderIDs != nil {
+			if err := tx.Where("identity_id = ?", locked.ID).Delete(&model.ChannelIdentityFolderMemberModel{}).Error; err != nil {
+				return err
+			}
+			for index, folderID := range folderIDs {
+				member := &model.ChannelIdentityFolderMemberModel{
+					ChannelID: locked.ChannelID, UserID: locked.UserID, FolderID: folderID, IdentityID: locked.ID, SortOrder: index,
+				}
+				if err := tx.Create(member).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if err := syncTemporaryIdentityActivateModeTx(tx, locked.UserID, locked.ID, ""); err != nil {
+			return err
+		}
+		var updated model.ChannelIdentityModel
+		if err := tx.Where("id = ?", locked.ID).Take(&updated).Error; err != nil {
+			return err
+		}
+		sharedResult := &SharedChannelIdentitySyncResult{}
+		if err := sharedChannelIdentityCreateFromCopyTx(tx, ownerUserID, updated.ID, sharedResult); err != nil {
+			return err
+		}
+		for _, copy := range sharedResult.Copies {
+			if copy.ID == updated.ID {
+				updated = *copy
+				break
+			}
+		}
+		if err := tx.Model(&model.ChannelIdentityFolderMemberModel{}).Where("identity_id = ?", updated.ID).
+			Order("sort_order ASC, created_at ASC").Pluck("folder_id", &updated.FolderIDs).Error; err != nil {
+			return err
+		}
+		result.Item = &updated
+		result.SharedSync = sharedResult
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Item.ICOOCOnActivate = ""
+	for _, copy := range result.SharedSync.Copies {
+		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(copy.TheaterPresentation)...)
+	}
+	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
+		log.Printf("共享角色提升后资源清理失败[identity=%s]: %v", result.Item.ID, err)
+	}
+	return result, nil
+}
+
+func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityUpdateResult, error) {
 	if input == nil {
 		return nil, errors.New("参数不能为空")
 	}
@@ -303,30 +462,55 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 	if strings.TrimSpace(operatorUserID) == "" {
 		operatorUserID = ownerUserID
 	}
-	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
-		return nil, err
-	}
-	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
-	if err != nil {
-		return nil, err
-	}
-	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
-		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+	delegatedShared := identity.SharedIdentityID != "" && operatorUserID != ownerUserID
+	sharedOwnerUpdate := identity.SharedIdentityID != "" && !delegatedShared
+	var sharedResult *SharedChannelIdentitySyncResult
+	avatarDecorations := append(protocol.AvatarDecorationList(nil), identity.AvatarDecorations...)
+	if delegatedShared {
+		if err := validateDelegatedSharedChannelIdentityInput(identity, input); err != nil {
 			return nil, err
+		}
+	} else {
+		if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+			return nil, err
+		}
+		avatarDecorations, err = NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
+		if err != nil {
+			return nil, err
+		}
+		if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
+			if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Shared theater presentation has a dedicated authority endpoint. Generic
+	// identity updates only synchronize the remaining shared appearance fields.
+	sharedSyncChanged := sharedOwnerUpdate && (strings.TrimSpace(input.DisplayName) != identity.DisplayName ||
+		input.Color != identity.Color ||
+		strings.TrimSpace(input.AvatarAttachmentID) != identity.AvatarAttachmentID ||
+		!sharedAvatarDecorationsEqual(avatarDecorations, identity.AvatarDecorations))
+	if sharedSyncChanged {
+		copies, copiesErr := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+		if copiesErr != nil {
+			return nil, copiesErr
+		}
+		for _, copy := range copies {
+			affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(copy.TheaterPresentation)...)
 		}
 	}
 
-	values := map[string]any{
-		"display_name":         strings.TrimSpace(input.DisplayName),
-		"color":                input.Color,
-		"avatar_attachment_id": input.AvatarAttachmentID,
-		"avatar_decoration":    avatarDecorations,
-		"is_default":           input.IsDefault,
+	values := map[string]any{"is_default": input.IsDefault}
+	if !delegatedShared && !sharedOwnerUpdate {
+		values["display_name"] = strings.TrimSpace(input.DisplayName)
+		values["color"] = input.Color
+		values["avatar_attachment_id"] = input.AvatarAttachmentID
+		values["avatar_decoration"] = avatarDecorations
 	}
 	if input.BotAppearanceMode != "" {
 		values["bot_appearance_mode"] = input.BotAppearanceMode
 	}
-	if input.TheaterPresentationSet || input.TheaterPresentation != nil {
+	if !delegatedShared && !sharedOwnerUpdate && (input.TheaterPresentationSet || input.TheaterPresentation != nil) {
 		values["theater_presentation"] = input.TheaterPresentation
 	}
 
@@ -372,10 +556,40 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 		}
 	}
 	affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(updated.TheaterPresentation)...)
+	if sharedSyncChanged {
+		folderIDs := append([]string(nil), updated.FolderIDs...)
+		icOocOnActivate := updated.ICOOCOnActivate
+		sharedResult, err = SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, updated.ID, &SharedChannelIdentitySyncInput{
+			DisplayName:            strings.TrimSpace(input.DisplayName),
+			Color:                  input.Color,
+			AvatarAttachmentID:     input.AvatarAttachmentID,
+			AvatarDecorations:      avatarDecorations,
+			TheaterPresentation:    nil,
+			TheaterPresentationSet: false,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, copy := range sharedResult.Copies {
+			if copy.ID == updated.ID {
+				updated = copy
+				break
+			}
+		}
+		updated.FolderIDs = folderIDs
+		updated.ICOOCOnActivate = icOocOnActivate
+		copies, copiesErr := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+		if copiesErr != nil {
+			return nil, copiesErr
+		}
+		for _, copy := range copies {
+			affectedAssetIDs = append(affectedAssetIDs, theaterPresentationAssetIDs(copy.TheaterPresentation)...)
+		}
+	}
 	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
 		return nil, err
 	}
-	return updated, nil
+	return &ChannelIdentityUpdateResult{Item: updated, SharedSync: sharedResult}, nil
 }
 
 func ChannelIdentityReplaceTemporary(userID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityReplaceResult, error) {
@@ -568,6 +782,28 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return err
 	}
+	if identity.SharedIdentityID != "" {
+		if err := ensureSharedChannelIdentityOwner(ownerUserID, operatorUserID); err != nil {
+			return err
+		}
+		copies, err := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+		if err != nil {
+			return err
+		}
+		var affectedAssetIDs []string
+		for _, copy := range copies {
+			ids, copyErr := channelIdentityReferencedTheaterAssetIDs(copy)
+			if copyErr != nil {
+				return copyErr
+			}
+			affectedAssetIDs = append(affectedAssetIDs, ids...)
+		}
+		_, err = SharedChannelIdentityDelete(ownerUserID, operatorUserID, identity.ID)
+		if err != nil {
+			return err
+		}
+		return reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs)
+	}
 	affectedAssetIDs, err := channelIdentityReferencedTheaterAssetIDs(identity)
 	if err != nil {
 		return err
@@ -659,6 +895,8 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"id":                  item.ID,
 		"channelId":           item.ChannelID,
 		"userId":              item.UserID,
+		"sharedIdentityId":    item.SharedIdentityID,
+		"sharedRevision":      item.SharedRevision,
 		"displayName":         item.DisplayName,
 		"color":               item.Color,
 		"avatarAttachmentId":  item.AvatarAttachmentID,

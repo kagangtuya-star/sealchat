@@ -3447,6 +3447,7 @@ const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
 const theaterPresentationEditorVisible = ref(false);
 const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
+const theaterPresentationApplying = ref(false);
 const worldTheaterTemplateSaving = ref(false);
 const currentWorldTheaterTemplate = computed<WorldTheaterPresentationTemplate>(() => {
   const worldId = String(chat.currentWorldId || '').trim();
@@ -3473,6 +3474,7 @@ const identityForm = reactive({
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
+  promoteToShared: false,
 });
 const identityColorDraft = ref('');
 const identityOriginalCardId = ref('');
@@ -3555,6 +3557,18 @@ const identityFolderMembership = computed<Record<string, string[]>>(() => (
   chat.getScopedChannelIdentityMembership(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
 ));
 const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
+const isDelegatedSharedIdentity = computed(() => (
+  isManagingOtherUserIdentity.value && Boolean(editingIdentity.value?.sharedIdentityId)
+));
+const sharedSynchronizedFieldsDisabled = computed(() => botBaseAppearanceInherited.value || isDelegatedSharedIdentity.value);
+const canPromoteEditingIdentityToShared = computed(() => (
+  identityDialogMode.value === 'edit'
+  && Boolean(editingIdentity.value)
+  && !editingIdentity.value?.sharedIdentityId
+  && !isEditingTemporaryIdentity.value
+  && !isManagingBotIdentity.value
+  && !isManagingOtherUserIdentity.value
+));
 const identityDialogTitle = computed(() => {
   if (isManagingBotIdentity.value) {
     return '编辑 BOT 频道外观';
@@ -5344,10 +5358,25 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
   identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
+  identityForm.promoteToShared = false;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
 
+const handlePromoteIdentityToSharedUpdate = async (checked: boolean) => {
+  if (!checked) {
+    identityForm.promoteToShared = false;
+    return;
+  }
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    '提升为跨频道角色',
+    '提升后，昵称、颜色、头像、头像装饰及差分配置会在全部副本间同步，小剧场演出与差分演出会在同一世界内同步。当前版本不支持拆分。确定继续吗？',
+  );
+  identityForm.promoteToShared = confirmed;
+};
+
 const openIdentityDecorationEditor = () => {
+  if (isDelegatedSharedIdentity.value) return;
   identityDecorationEditorVisible.value = true;
 };
 
@@ -5418,7 +5447,22 @@ const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
 };
 
 const openIdentityTheaterPresentationEditor = async () => {
+  if (isDelegatedSharedIdentity.value) return;
   if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
+  if (editingIdentity.value?.sharedIdentityId && editingIdentity.value.id && chat.curChannel?.id) {
+    try {
+      await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
+      const refreshed = chat.getScopedChannelIdentities(chat.curChannel.id, currentIdentityTargetUserId.value)
+        .find(item => item.id === editingIdentity.value?.id);
+      if (refreshed) {
+        editingIdentity.value = refreshed;
+        identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(refreshed.theaterPresentation);
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || '刷新共享演出外观失败');
+      return;
+    }
+  }
   theaterPresentationEditorMode.value = 'base';
   theaterPresentationEditorVisible.value = true;
 };
@@ -5430,15 +5474,54 @@ const openIdentityVariantTheaterPresentationEditor = async () => {
 };
 
 const handleTheaterPresentationApply = async (value: TheaterPresentation | TheaterPresentationPatch) => {
-  if (theaterPresentationEditorMode.value === 'variant') {
-    identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
-    if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
-      await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+  if (theaterPresentationApplying.value) return;
+  theaterPresentationApplying.value = true;
+  let saved = false;
+  try {
+    if (theaterPresentationEditorMode.value === 'variant') {
+      identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
+      if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
+        saved = await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+      } else {
+        saved = true;
+      }
+    } else {
+      const submittedPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
+      identityForm.theaterPresentation = submittedPresentation;
+      if (editingIdentity.value?.sharedIdentityId && editingIdentity.value.id && chat.curChannel?.id) {
+        try {
+          const savedIdentity = await chat.sharedChannelIdentityTheaterPresentationSet(editingIdentity.value.id, {
+            channelId: chat.curChannel.id,
+            theaterPresentation: identityForm.theaterPresentation,
+            expectedRevision: editingIdentity.value.sharedRevision,
+          });
+          const canonicalPresentation = cloneChannelIdentityTheaterPresentation(savedIdentity.theaterPresentation)
+            || submittedPresentation;
+          if (!canonicalPresentation) {
+            throw new Error('服务端未返回已保存的共享演出外观');
+          }
+          savedIdentity.theaterPresentation = canonicalPresentation;
+          chat.upsertChannelIdentity(savedIdentity);
+          editingIdentity.value = savedIdentity;
+          identityForm.theaterPresentation = canonicalPresentation;
+          saved = true;
+        } catch (error: any) {
+          const conflictRevision = Number(error?.response?.data?.revision || 0);
+          if (error?.response?.status === 409 && conflictRevision > 0 && editingIdentity.value) {
+            editingIdentity.value = { ...editingIdentity.value, sharedRevision: conflictRevision };
+          }
+          message.error(error?.response?.data?.error || error?.message || '保存共享演出外观失败');
+        }
+      } else {
+        saved = await submitIdentityForm({ closeDialog: false, successMessage: false });
+      }
     }
-    return;
+    if (saved) {
+      theaterPresentationEditorVisible.value = false;
+    }
+  } finally {
+    theaterPresentationApplying.value = false;
   }
-  identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
-  await submitIdentityForm({ closeDialog: false, successMessage: false });
 };
 
 const handleSetWorldTheaterTemplate = async (
@@ -5911,14 +5994,17 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     avatarAttachmentId: identityForm.avatarAttachmentId,
     avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
       .filter(item => item.enabled && item.resourceAttachmentId),
-    theaterPresentation: identityForm.theaterPresentation
-      ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
-      : null,
+    theaterPresentation: editingIdentity.value?.sharedIdentityId
+      ? undefined
+      : identityForm.theaterPresentation
+        ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+        : null,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
+    promoteToShared: identityDialogMode.value === 'edit' && identityForm.promoteToShared,
   };
   const wasCreating = identityDialogMode.value === 'create';
   try {
@@ -6021,7 +6107,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
           }
         }
         if (successMessage) {
-          message.success('频道角色已更新');
+          message.success(payload.promoteToShared ? '已提升为跨频道角色' : '频道角色已更新');
         }
       }
     }
@@ -18227,7 +18313,7 @@ onBeforeUnmount(() => {
         </div>
       </n-form-item>
       <n-form-item label="频道昵称">
-        <n-input v-model:value="identityForm.displayName" :disabled="botBaseAppearanceInherited" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
+        <n-input v-model:value="identityForm.displayName" :disabled="sharedSynchronizedFieldsDisabled" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
       </n-form-item>
       <n-form-item label="昵称颜色">
         <div class="identity-color-field">
@@ -18237,7 +18323,7 @@ onBeforeUnmount(() => {
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
-            :disabled="botBaseAppearanceInherited"
+            :disabled="sharedSynchronizedFieldsDisabled"
             @update:value="handleIdentityColorPickerUpdate"
           />
           <n-input
@@ -18245,11 +18331,11 @@ onBeforeUnmount(() => {
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
-            :disabled="botBaseAppearanceInherited"
+            :disabled="sharedSynchronizedFieldsDisabled"
             @blur="handleIdentityColorBlur"
             @keyup.enter="handleIdentityColorBlur"
           />
-          <n-button tertiary size="small" :disabled="botBaseAppearanceInherited" @click="clearIdentityColor">清除</n-button>
+          <n-button tertiary size="small" :disabled="sharedSynchronizedFieldsDisabled" @click="clearIdentityColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item label="频道头像">
@@ -18262,35 +18348,40 @@ onBeforeUnmount(() => {
             :fallback-text="identityForm.displayName"
           />
           <n-space>
-            <n-button size="small" type="primary" :disabled="botBaseAppearanceInherited" @click="handleIdentityAvatarTrigger">上传头像</n-button>
-            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary :disabled="botBaseAppearanceInherited" @click="removeIdentityAvatar">移除</n-button>
+            <n-button size="small" type="primary" :disabled="sharedSynchronizedFieldsDisabled" @click="handleIdentityAvatarTrigger">上传头像</n-button>
+            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary :disabled="sharedSynchronizedFieldsDisabled" @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
       </n-form-item>
       <n-form-item label="头像装饰">
         <div class="flex flex-col gap-2">
           <n-space align="center">
-            <n-button size="small" type="primary" secondary @click="openIdentityDecorationEditor">编辑装饰</n-button>
+            <n-button size="small" type="primary" secondary :disabled="isDelegatedSharedIdentity" @click="openIdentityDecorationEditor">编辑装饰</n-button>
             <n-tag v-if="identityForm.avatarDecorations.some(item => item.enabled && item.resourceAttachmentId)" size="small" type="success">
               已配置
             </n-tag>
             <n-text v-else depth="3">未配置</n-text>
           </n-space>
           <n-text depth="3">
-            仅对当前频道角色生效，并且只会显示在频道消息头像上。
+            {{ editingIdentity?.sharedIdentityId || identityForm.promoteToShared
+              ? '会同步到此角色的其他频道副本，并且只显示在频道消息头像上。'
+              : '仅对当前频道角色生效，并且只会显示在频道消息头像上。' }}
           </n-text>
         </div>
       </n-form-item>
       <n-form-item label="小剧场演出">
         <div class="flex flex-col gap-2">
           <n-space align="center">
-            <n-button size="small" type="primary" secondary @click="openIdentityTheaterPresentationEditor">编辑演出外观</n-button>
+            <n-button size="small" type="primary" secondary :disabled="isDelegatedSharedIdentity" @click="openIdentityTheaterPresentationEditor">编辑演出外观</n-button>
             <n-tag v-if="identityForm.theaterPresentation" size="small" type="success">已配置</n-tag>
             <n-text v-else depth="3">未配置</n-text>
           </n-space>
           <n-text depth="3">仅用于小剧场消息演出，不影响频道消息头像。</n-text>
         </div>
       </n-form-item>
+      <n-alert v-if="isDelegatedSharedIdentity" type="info" :show-icon="false">
+        此角色由本人跨频道共享。管理员可维护会同步到全部副本的头像差分；昵称、颜色、头像、头像装饰及基础小剧场演出只读。当前频道默认身份、文件夹、IC/OOC 映射和人物卡保持独立。
+      </n-alert>
       <n-form-item v-if="!isEditingTemporaryIdentity && !isManagingBotIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
@@ -18303,6 +18394,22 @@ onBeforeUnmount(() => {
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
+      </n-form-item>
+      <n-form-item
+        v-if="identityDialogMode === 'edit' && !isEditingTemporaryIdentity && !isManagingBotIdentity && !isManagingOtherUserIdentity"
+        label="跨频道角色"
+      >
+        <div class="flex flex-col gap-1">
+          <n-tag v-if="editingIdentity?.sharedIdentityId" type="success" size="small">已启用跨频道同步</n-tag>
+          <n-checkbox
+            v-else-if="canPromoteEditingIdentityToShared"
+            :checked="identityForm.promoteToShared"
+            @update:checked="handlePromoteIdentityToSharedUpdate"
+          >
+            提升为跨频道角色
+          </n-checkbox>
+          <n-text depth="3">同步昵称、颜色、头像、头像装饰及全部差分；基础与差分小剧场演出按世界同步。默认身份、角色排序、文件夹、IC/OOC 映射和人物卡保持频道独立。</n-text>
+        </div>
       </n-form-item>
       <n-form-item v-if="!isManagingBotIdentity && (identityForm.isTemporary || isEditingTemporaryIdentity)" label="切换到此角色时">
         <div class="identity-mini-mode-switch">
@@ -18333,7 +18440,7 @@ onBeforeUnmount(() => {
         <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
           <div class="identity-variant-section__header">
             <div>
-              <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
+              <div class="identity-variant-section__title">{{ editingIdentity.sharedIdentityId ? '配置跨频道同步的头像差分' : '为当前频道角色配置头像差分' }}</div>
               <div class="identity-variant-section__hint">
                 {{ isManagingBotIdentity ? 'BOT 需在消息中指定身份差分后生效。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
               </div>
@@ -18558,6 +18665,7 @@ onBeforeUnmount(() => {
     :world-template="currentWorldTheaterTemplate"
     :can-set-world-template="canSetWorldTheaterTemplate && !isManagingBotIdentity"
     :world-template-saving="worldTheaterTemplateSaving"
+    :applying="theaterPresentationApplying"
     @apply="handleTheaterPresentationApply"
     @set-world-template="handleSetWorldTheaterTemplate"
   />
@@ -18818,7 +18926,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="identity-list__actions">
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
-                <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+                <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1 || (isManagingOtherUserIdentity && Boolean(identity.sharedIdentityId))" @click="deleteIdentity(identity)">删除</n-button>
               </div>
             </div>
           </div>

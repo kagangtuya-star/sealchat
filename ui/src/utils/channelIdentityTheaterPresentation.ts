@@ -12,7 +12,9 @@ export const cloneChannelIdentityTheaterPresentation = (
   value?: TheaterPresentation | null,
 ): TheaterPresentation | null => {
   if (!value) return null
-  const parsed = theaterPresentationSchema.safeParse(cloneJson(value))
+  const normalized = cloneJson(value) as TheaterPresentation & { portraitDecorations?: unknown }
+  if (!Array.isArray(normalized.portraitDecorations)) normalized.portraitDecorations = []
+  const parsed = theaterPresentationSchema.safeParse(normalized)
   return parsed.success ? parsed.data : null
 }
 

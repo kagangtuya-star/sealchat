@@ -278,7 +278,11 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	} else {
 		item.Enabled = true
 	}
-	if err := model.ChannelIdentityVariantUpsert(item); err != nil {
+	if identity.SharedIdentityID != "" {
+		if err := createSharedChannelIdentityVariant(identity, item); err != nil {
+			return nil, err
+		}
+	} else if err := model.ChannelIdentityVariantUpsert(item); err != nil {
 		return nil, err
 	}
 	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), theaterPresentationPatchAssetIDs(input.TheaterPresentation)); err != nil {
@@ -317,6 +321,17 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if patch, exists := variantTheaterPresentationPatch(item); exists {
 		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
 	}
+	if item.SharedVariantID != "" {
+		copies, copiesErr := model.SharedChannelIdentityVariantCopies(item.SharedVariantID)
+		if copiesErr != nil {
+			return nil, copiesErr
+		}
+		for _, copy := range copies {
+			if patch, exists := variantTheaterPresentationPatch(copy); exists {
+				affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+			}
+		}
+	}
 	identity, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID)
 	if err != nil {
 		return nil, err
@@ -352,24 +367,47 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 		return nil, err
 	}
 	values := map[string]any{
-		"selector_emoji":       input.SelectorEmoji,
-		"keyword":              input.Keyword,
-		"note":                 input.Note,
-		"avatar_attachment_id": input.AvatarAttachmentID,
-		"display_name":         input.DisplayName,
-		"color":                input.Color,
-		"appearance_json":      appearanceJSON,
-		"enabled":              input.Enabled,
+		"selector_emoji": input.SelectorEmoji, "keyword": input.Keyword, "note": input.Note,
+		"avatar_attachment_id": input.AvatarAttachmentID, "display_name": input.DisplayName, "color": input.Color,
+		"appearance_json": appearanceJSON, "enabled": input.Enabled,
 	}
-	if err := model.ChannelIdentityVariantUpdate(item.ID, values); err != nil {
-		return nil, err
-	}
-	updated, err := model.ChannelIdentityVariantGetByID(item.ID)
-	if err != nil {
-		return nil, err
+	var updated *model.ChannelIdentityVariantModel
+	if item.SharedVariantID != "" && identity.SharedIdentityID != "" {
+		source := *item
+		source.SelectorEmoji = input.SelectorEmoji
+		source.Keyword = input.Keyword
+		source.Note = input.Note
+		source.AvatarAttachmentID = input.AvatarAttachmentID
+		source.DisplayName = input.DisplayName
+		source.Color = input.Color
+		source.AppearanceJSON = appearanceJSON
+		source.Enabled = input.Enabled
+		updated, err = syncSharedChannelIdentityVariant(identity, &source)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if err := model.ChannelIdentityVariantUpdate(item.ID, values); err != nil {
+			return nil, err
+		}
+		updated, err = model.ChannelIdentityVariantGetByID(item.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if patch, exists := variantTheaterPresentationPatch(updated); exists {
 		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+	}
+	if updated.SharedVariantID != "" {
+		copies, copiesErr := model.SharedChannelIdentityVariantCopies(updated.SharedVariantID)
+		if copiesErr != nil {
+			return nil, copiesErr
+		}
+		for _, copy := range copies {
+			if patch, exists := variantTheaterPresentationPatch(copy); exists {
+				affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+			}
+		}
 	}
 	if err := reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs); err != nil {
 		return nil, err
@@ -390,7 +428,21 @@ func ChannelIdentityVariantDeleteWithAccess(ownerUserID string, operatorUserID s
 	if patch, exists := variantTheaterPresentationPatch(item); exists {
 		affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
 	}
-	if err := model.ChannelIdentityVariantDelete(item.ID); err != nil {
+	if item.SharedVariantID != "" {
+		copies, copiesErr := model.SharedChannelIdentityVariantCopies(item.SharedVariantID)
+		if copiesErr != nil {
+			return copiesErr
+		}
+		for _, copy := range copies {
+			if patch, exists := variantTheaterPresentationPatch(copy); exists {
+				affectedAssetIDs = append(affectedAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+			}
+		}
+		err = deleteSharedChannelIdentityVariant(item.SharedVariantID)
+	} else {
+		err = model.ChannelIdentityVariantDelete(item.ID)
+	}
+	if err != nil {
 		return err
 	}
 	return reconcileTheaterAppearanceAssetOrphans(context.Background(), affectedAssetIDs)
@@ -406,7 +458,8 @@ func ChannelIdentityVariantReorderWithAccess(ownerUserID string, operatorUserID 
 	if channelID == "" || identityID == "" {
 		return errors.New("缺少频道ID或身份ID")
 	}
-	if _, err := ensureChannelIdentityVariantOwnership(ownerUserID, channelID, identityID); err != nil {
+	identity, err := ensureChannelIdentityVariantOwnership(ownerUserID, channelID, identityID)
+	if err != nil {
 		return err
 	}
 	items, err := model.ChannelIdentityVariantListByIdentityID(channelID, ownerUserID, identityID)
@@ -425,6 +478,24 @@ func ChannelIdentityVariantReorderWithAccess(ownerUserID string, operatorUserID 
 		indexMap[trimmed] = index
 	}
 	nextSort := 1
+	if identity.SharedIdentityID != "" {
+		byID := make(map[string]*model.ChannelIdentityVariantModel, len(items))
+		for _, item := range items {
+			byID[item.ID] = item
+		}
+		ordered := make([]*model.ChannelIdentityVariantModel, 0, len(items))
+		for _, id := range ids {
+			if item := byID[strings.TrimSpace(id)]; item != nil {
+				ordered = append(ordered, item)
+			}
+		}
+		for _, item := range items {
+			if _, ok := indexMap[item.ID]; !ok {
+				ordered = append(ordered, item)
+			}
+		}
+		return reorderSharedChannelIdentityVariants(ordered)
+	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
 		for _, id := range ids {
 			trimmed := strings.TrimSpace(id)

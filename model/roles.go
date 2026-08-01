@@ -244,16 +244,16 @@ func UserRoleUnlink(roleIds []string, userIds []string) (int64, error) {
 
 // UserRoleLink
 func UserRoleLink(roleIds []string, userIds []string) (int64, error) {
-	tx := db.Begin()
-	if tx.Error != nil {
-		return 0, tx.Error
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
+	var count int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		count, err = UserRoleLinkTx(tx, roleIds, userIds)
+		return err
+	})
+	return count, err
+}
 
+func UserRoleLinkTx(tx *gorm.DB, roleIds []string, userIds []string) (int64, error) {
 	for _, roleId := range roleIds {
 		roleType := "channel"
 		if !strings.HasPrefix(roleId, "ch-") {
@@ -267,14 +267,9 @@ func UserRoleLink(roleIds []string, userIds []string) (int64, error) {
 			}
 			item.Init()
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; err != nil {
-				tx.Rollback()
 				return 0, err
 			}
 		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return 0, err
 	}
 
 	return int64(len(userIds)), nil

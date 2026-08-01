@@ -12,8 +12,10 @@ import (
 
 type ChannelIdentityModel struct {
 	StringPKBaseModel
-	ChannelID           string                        `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1"`
+	ChannelID           string                        `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1;uniqueIndex:udx_channel_identity_shared_channel,priority:2"`
 	UserID              string                        `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
+	SharedIdentityID    string                        `json:"sharedIdentityId,omitempty" gorm:"size:100;default:null;uniqueIndex:udx_channel_identity_shared_channel,priority:1"`
+	SharedRevision      int64                         `json:"sharedRevision,omitempty" gorm:"not null;default:0"`
 	DisplayName         string                        `json:"displayName"`
 	Color               string                        `json:"color"`
 	AvatarAttachmentID  string                        `json:"avatarAttachmentId"`
@@ -41,6 +43,8 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 	}
 	return &protocol.ChannelIdentity{
 		ID:                  m.ID,
+		SharedIdentityID:    m.SharedIdentityID,
+		SharedRevision:      m.SharedRevision,
 		DisplayName:         m.DisplayName,
 		Color:               m.Color,
 		AvatarAttachmentID:  m.AvatarAttachmentID,
@@ -185,6 +189,64 @@ func ChannelIdentityUpdate(id string, values map[string]any) error {
 		}
 	}
 	return db.Model(&ChannelIdentityModel{}).Where("id = ?", id).Updates(values).Error
+}
+
+// ChannelIdentityEncodeStoredValues prepares map updates for a JSON-backed identity column.
+// GORM serializers run for struct fields but are bypassed by Updates(map[string]any).
+func ChannelIdentityEncodeStoredValues(values map[string]any) error {
+	if rawDecoration, ok := values["avatar_decoration"]; ok {
+		switch value := rawDecoration.(type) {
+		case nil:
+			values["avatar_decoration"] = nil
+		case protocol.AvatarDecorationList:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case []protocol.AvatarDecoration:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case *protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{*value})
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{value})
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		}
+	}
+	if rawPresentation, ok := values["theater_presentation"]; ok {
+		switch value := rawPresentation.(type) {
+		case nil:
+			values["theater_presentation"] = nil
+		case *protocol.TheaterPresentation:
+			if value == nil {
+				values["theater_presentation"] = nil
+				break
+			}
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["theater_presentation"] = string(encoded)
+		case protocol.TheaterPresentation:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["theater_presentation"] = string(encoded)
+		}
+	}
+	return nil
 }
 
 func ChannelIdentityDelete(id string) error {
