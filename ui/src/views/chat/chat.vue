@@ -5356,7 +5356,9 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
     ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
     : '';
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
-  identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+  identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id
+    ? characterCardStore.getBoundCardId(identity.id, identity.sharedIdentityId) || ''
+    : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityForm.promoteToShared = false;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
@@ -5640,7 +5642,9 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
     if (!isManagingBotIdentity.value && !characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
-    identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+    identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id
+      ? characterCardStore.getBoundCardId(identity.id, identity.sharedIdentityId) || ''
+      : '';
     identityOriginalCardId.value = identityForm.characterCardId;
   }
   identityDialogVisible.value = true;
@@ -6123,15 +6127,26 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       } else {
         savedIdentity = await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
         // Handle character card binding changes for existing identity
-        if (!isManagingBotIdentity.value && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        const characterCardBindingChanged = identityForm.characterCardId !== identityOriginalCardId.value
+          || Boolean(payload.promoteToShared && savedIdentity?.sharedIdentityId);
+        if (!isManagingBotIdentity.value && chat.curChannel?.id && characterCardBindingChanged) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
             try {
               if (identityForm.characterCardId) {
-                await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+                await characterCardStore.bindIdentity(
+                  chat.curChannel.id,
+                  savedIdentity?.id || editingIdentity.value.id,
+                  identityForm.characterCardId,
+                  savedIdentity?.sharedIdentityId,
+                );
               } else {
-                await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+                await characterCardStore.unbindIdentity(
+                  chat.curChannel.id,
+                  savedIdentity?.id || editingIdentity.value.id,
+                  savedIdentity?.sharedIdentityId,
+                );
               }
             } catch (e) {
               console.warn('Failed to update character card binding', e);
