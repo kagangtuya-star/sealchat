@@ -90,6 +90,10 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
         && left.payload.content === right.payload.content
         && left.payload.channelId === right.payload.channelId
         && left.payload.characterId === right.payload.characterId
+    case 'chat.random-table':
+      // Random tables execute on the server using objectId/actionId. The
+      // client payload may be normalized or redacted after a snapshot reload.
+      return right.type === 'chat.random-table'
     case 'chat.insert':
       return right.type === 'chat.insert' && left.payload.content === right.payload.content
     case 'scene.apply':
@@ -587,6 +591,9 @@ export class TheaterHostBridge {
         action.payload,
       )
       return
+    }
+    if (action.type === 'chat.random-table') {
+      throw new TheaterBridgeRequestError('UNSUPPORTED_ACTION', 'chat.random-table requires server execution')
     }
     await this.stageClient.request<ChatComposerInsertPayload, ChatComposerInsertResult>(
       'chat',

@@ -36,6 +36,7 @@ const (
 
 var ccfoliaHashedAssetNamePattern = regexp.MustCompile(`^([0-9a-f]{64})\.(png|gif|jpe?g|webp)$`)
 var ccfoliaSourceHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var ccfoliaRandomTableEntryPattern = regexp.MustCompile(`^\s*([0-9]+)(?:\s*-\s*([0-9]+))?\s*:(.*)$`)
 
 type ccfoliaBackup struct {
 	Meta      ccfoliaMeta                          `json:"meta"`
@@ -1736,6 +1737,23 @@ func ccfoliaActions(action *ccfoliaClickAction, sceneNameIDs map[string][]string
 		conversion.Metadata["reason"] = "target-scene-not-found"
 		return conversion, []string{"/scene 点击动作目标场景不存在，已保留为未解析源元数据"}
 	}
+	trimmedActionText := strings.TrimSpace(action.Text)
+	if trimmedActionText == "/roll-table" || strings.HasPrefix(trimmedActionText, "/roll-table\n") || strings.HasPrefix(trimmedActionText, "/roll-table\r") {
+		conversion.Metadata["type"] = "random-table"
+		randomTablePayload, err := parseCCFOLIARandomTable(action.Text)
+		if err == nil {
+			conversion.Actions, _ = json.Marshal([]map[string]any{{"id": utils.NewID(), "type": theaterActionChatRandomTable, "payload": randomTablePayload}})
+			conversion.Metadata["resolved"] = true
+			return conversion, nil
+		}
+		conversion.Metadata["reason"] = "random-table-parse-failed"
+		conversion.Metadata["failureReason"] = err.Error()
+		fallbackPayload, sendErr := normalizeTheaterChatSendPayload(theaterChatSendPayload{Content: action.Text})
+		if sendErr == nil {
+			conversion.Actions, _ = json.Marshal([]map[string]any{{"id": utils.NewID(), "type": "chat.send", "payload": map[string]any{"content": fallbackPayload.Content}}})
+		}
+		return conversion, []string{"随机表解析失败，已按普通消息导入"}
+	}
 	content := action.Text
 	if strings.HasPrefix(content, "/send ") {
 		content = strings.TrimPrefix(content, "/send ")
@@ -1749,6 +1767,45 @@ func ccfoliaActions(action *ccfoliaClickAction, sceneNameIDs map[string][]string
 	conversion.Actions, _ = json.Marshal([]map[string]any{{"id": utils.NewID(), "type": "chat.send", "payload": map[string]any{"content": payload.Content}}})
 	conversion.Metadata["resolved"] = true
 	return conversion, nil
+}
+
+func parseCCFOLIARandomTable(source string) (theaterRandomTablePayload, error) {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(source, "\r\n", "\n"), "\r", "\n")
+	lines := strings.Split(normalized, "\n")
+	if len(lines) < 4 || strings.TrimSpace(lines[0]) != "/roll-table" {
+		return theaterRandomTablePayload{}, theaterPayloadError("随机表第一行必须为 /roll-table")
+	}
+	payload := theaterRandomTablePayload{
+		Name:    strings.TrimSpace(lines[1]),
+		Formula: strings.TrimSpace(lines[2]),
+		Entries: make([]theaterRandomTableEntry, 0, len(lines)-3),
+	}
+	for _, line := range lines[3:] {
+		matches := ccfoliaRandomTableEntryPattern.FindStringSubmatch(line)
+		if matches == nil {
+			if len(payload.Entries) == 0 {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				return theaterRandomTablePayload{}, theaterPayloadError("随机表结果行缺少点数")
+			}
+			payload.Entries[len(payload.Entries)-1].Text += "\n" + line
+			continue
+		}
+		minimum, minErr := strconv.ParseInt(matches[1], 10, 32)
+		maximum := minimum
+		var maxErr error
+		if matches[2] != "" {
+			maximum, maxErr = strconv.ParseInt(matches[2], 10, 32)
+		}
+		if minErr != nil || maxErr != nil {
+			return theaterRandomTablePayload{}, theaterPayloadError("随机表点数超出限制")
+		}
+		payload.Entries = append(payload.Entries, theaterRandomTableEntry{
+			Min: int(minimum), Max: int(maximum), Text: matches[3],
+		})
+	}
+	return normalizeTheaterRandomTablePayload(payload)
 }
 
 func ccfoliaImageRef(sourceRef *string, alt, worldID string, targets map[string]ccfoliaAssetTarget) (any, error) {

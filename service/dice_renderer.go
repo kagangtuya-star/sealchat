@@ -687,6 +687,10 @@ func (r *diceRenderer) rollAdditionalDice(count int, sides int) ([]int, bool) {
 }
 
 func (r *diceRenderer) evaluateFormula(expr string) *model.MessageDiceRollModel {
+	return evaluateDiceFormula(expr, r.defaultDiceSides)
+}
+
+func evaluateDiceFormula(expr, defaultDiceSides string) *model.MessageDiceRollModel {
 	roll := &model.MessageDiceRollModel{Formula: expr}
 	vm := ds.NewVM()
 	vm.Config.EnableDiceWoD = true
@@ -695,8 +699,8 @@ func (r *diceRenderer) evaluateFormula(expr string) *model.MessageDiceRollModel 
 	vm.Config.EnableDiceDoubleCross = true
 	vm.Config.DisableStmts = true
 	vm.Config.OpCountLimit = 30000
-	if r.defaultDiceSides != "" {
-		vm.Config.DefaultDiceSideExpr = fmt.Sprintf("面数 ?? %s", r.defaultDiceSides)
+	if defaultDiceSides != "" {
+		vm.Config.DefaultDiceSideExpr = fmt.Sprintf("面数 ?? %s", defaultDiceSides)
 	}
 	if err := vm.Run(expr); err != nil {
 		roll.IsError = true

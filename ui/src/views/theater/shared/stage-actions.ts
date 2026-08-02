@@ -10,6 +10,10 @@ import { createDefaultStageActionSchedule, normalizeStageActionSchedule } from '
 
 export const STAGE_SEQUENCE_MAX_STEPS = 32
 export const STAGE_SEQUENCE_MAX_DELAY_MS = 60_000
+export const STAGE_RANDOM_TABLE_MAX_ENTRIES = 1_000
+export const STAGE_RANDOM_TABLE_MAX_TEXT_LENGTH = 10_000
+
+const stageSimpleDiceFormulaPattern = /^([1-9][0-9]*)d([1-9][0-9]*)(?:([+-])([0-9]+))?$/i
 
 const id = (prefix: string) => {
   const value = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -26,6 +30,18 @@ export const createStageAtomicActionDescriptor = (
   targetId = '',
 ): StageAtomicActionDescriptor => {
   if (type === 'chat.send') return { type, payload: { content: '舞台消息' } }
+  if (type === 'chat.random-table') return {
+    type,
+    payload: {
+      name: '随机表',
+      formula: '1d6',
+      entries: Array.from({ length: 6 }, (_, index) => ({
+        min: index + 1,
+        max: index + 1,
+        text: `结果${index + 1}`,
+      })),
+    },
+  }
   if (type === 'chat.insert') return { type, payload: { content: '舞台台词' } }
   if (type === 'scene.apply') return { type, payload: { sceneId } }
   if (type === 'effect.play') return { type, payload: { effectId: targetId } }
@@ -66,6 +82,68 @@ const normalizeTiming = (value: unknown): StageSequenceTiming => {
   return { mode: 'after' }
 }
 
+export const normalizeStageRandomTablePayload = (value: unknown): Extract<StageAtomicAction, { type: 'chat.random-table' }>['payload'] | null => {
+  if (!value || typeof value !== 'object') return null
+  const payload = value as { name?: unknown, formula?: unknown, entries?: unknown }
+  const name = typeof payload.name === 'string' ? payload.name.trim() : ''
+  const formula = typeof payload.formula === 'string' ? payload.formula.replace(/\s+/g, '') : ''
+  const formulaMatch = stageSimpleDiceFormulaPattern.exec(formula)
+  if (!name || Array.from(name).length > 128 || !formulaMatch) return null
+  const diceCount = Number(formulaMatch[1])
+  const diceSides = Number(formulaMatch[2])
+  const modifier = Number(formulaMatch[4] || 0) * (formulaMatch[3] === '-' ? -1 : 1)
+  if (diceCount > 100 || diceSides > 100_000 || Math.abs(modifier) > 1_000_000) return null
+  if (!Array.isArray(payload.entries) || !payload.entries.length || payload.entries.length > STAGE_RANDOM_TABLE_MAX_ENTRIES) return null
+  let totalTextLength = 0
+  const entries: Array<{ min: number, max: number, text: string }> = []
+  for (const value of payload.entries) {
+    if (!value || typeof value !== 'object') return null
+    const entry = value as { min?: unknown, max?: unknown, text?: unknown }
+    const text = typeof entry.text === 'string' ? entry.text.trim() : ''
+    if (typeof entry.min !== 'number' || typeof entry.max !== 'number' || !Number.isSafeInteger(entry.min) || !Number.isSafeInteger(entry.max) || entry.min > entry.max || !text) return null
+    totalTextLength += Array.from(text).length
+    if (totalTextLength > STAGE_RANDOM_TABLE_MAX_TEXT_LENGTH) return null
+    entries.push({ min: Number(entry.min), max: Number(entry.max), text })
+  }
+  const ordered = [...entries].sort((left, right) => left.min - right.min || left.max - right.max)
+  if (ordered.some((entry, index) => index > 0 && entry.min <= ordered[index - 1]!.max)) return null
+  const minimumRoll = diceCount + modifier
+  const maximumRoll = diceCount * diceSides + modifier
+  let coveredThrough = minimumRoll - 1
+  for (const entry of ordered) {
+    if (entry.max < minimumRoll) continue
+    if (entry.min > coveredThrough + 1) break
+    coveredThrough = Math.max(coveredThrough, entry.max)
+    if (coveredThrough >= maximumRoll) break
+  }
+  if (coveredThrough < maximumRoll) return null
+  return { name, formula, entries }
+}
+
+export const rollStageRandomTable = (
+  value: unknown,
+  random: () => number = Math.random,
+): { result: number, content: string } | null => {
+  const payload = normalizeStageRandomTablePayload(value)
+  if (!payload) return null
+  const formulaMatch = stageSimpleDiceFormulaPattern.exec(payload.formula)
+  if (!formulaMatch) return null
+  const diceCount = Number(formulaMatch[1])
+  const diceSides = Number(formulaMatch[2])
+  const modifier = Number(formulaMatch[4] || 0) * (formulaMatch[3] === '-' ? -1 : 1)
+  let result = modifier
+  for (let index = 0; index < diceCount; index += 1) {
+    const sample = Math.min(1 - Number.EPSILON, Math.max(0, random()))
+    result += Math.floor(sample * diceSides) + 1
+  }
+  const matched = payload.entries.find((entry) => result >= entry.min && result <= entry.max)
+  if (!matched) return null
+  return {
+    result,
+    content: `${payload.name}\n${payload.formula} = ${result}\n${matched.text}`,
+  }
+}
+
 const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor | null => {
   if (!value || typeof value !== 'object') return null
   const action = value as { type?: unknown, payload?: Record<string, unknown> }
@@ -85,6 +163,10 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
           : {}),
       },
     }
+  }
+  if (action.type === 'chat.random-table') {
+    const payload = normalizeStageRandomTablePayload(action.payload)
+    return payload ? { type: action.type, payload } : null
   }
   if (action.type === 'chat.insert') {
     const content = typeof action.payload.content === 'string' ? action.payload.content : ''

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -556,6 +557,111 @@ func TestCCFOLIAActionsPlainMessage(t *testing.T) {
 	}
 	if conversion.Metadata["type"] != "chat-send" || conversion.Metadata["resolved"] != true {
 		t.Fatalf("plain message metadata = %#v", conversion.Metadata)
+	}
+}
+
+func TestParseCCFOLIARandomTable(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		wantEntries []theaterRandomTableEntry
+	}{
+		{
+			name:        "single points",
+			source:      "/roll-table\n场景表：朽名村\n1D6\n1:结果一\n2:结果二\n3:结果三\n4:结果四\n5:结果五\n6:结果六",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "结果一"}, {Min: 2, Max: 2, Text: "结果二"}, {Min: 3, Max: 3, Text: "结果三"}, {Min: 4, Max: 4, Text: "结果四"}, {Min: 5, Max: 5, Text: "结果五"}, {Min: 6, Max: 6, Text: "结果六"}},
+		},
+		{
+			name:        "ranges",
+			source:      "/roll-table\n遭遇表\n1D6\n1-3:平静\n4-6:危险",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 3, Text: "平静"}, {Min: 4, Max: 6, Text: "危险"}},
+		},
+		{
+			name:        "multiline result",
+			source:      "/roll-table\n描述表\n1D1\n1:第一行\n第二行\n\n第四行",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "第一行\n第二行\n\n第四行"}},
+		},
+		{
+			name:        "crlf",
+			source:      "/roll-table\r\n天气表\r\n1D2\r\n\r\n1:晴\r\n2:雨\r\n",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "晴"}, {Min: 2, Max: 2, Text: "雨"}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := parseCCFOLIARandomTable(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(payload.Entries, test.wantEntries) {
+				t.Fatalf("entries = %#v, want %#v", payload.Entries, test.wantEntries)
+			}
+		})
+	}
+}
+
+func TestParseCCFOLIARandomTableRejectsInvalidPayload(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{name: "overlap", source: "/roll-table\n重叠表\n1D6\n1-3:一\n3-6:二"},
+		{name: "invalid formula", source: "/roll-table\n复杂骰式\n1D6*2\n1-6:结果"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseCCFOLIARandomTable(test.source); err == nil {
+				t.Fatal("expected random table parse error")
+			}
+		})
+	}
+}
+
+func TestCCFOLIAActionsRandomTable(t *testing.T) {
+	source := "/roll-table\n场景表：朽名村\n1D6\n1-6:结果"
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: source}, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("random table warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != theaterActionChatRandomTable {
+		t.Fatalf("random table actions = %#v", actions)
+	}
+	var payload theaterRandomTablePayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Name != "场景表：朽名村" || payload.Formula != "1D6" || len(payload.Entries) != 1 {
+		t.Fatalf("random table payload = %#v", payload)
+	}
+	if conversion.Metadata["type"] != "random-table" || conversion.Metadata["resolved"] != true {
+		t.Fatalf("random table metadata = %#v", conversion.Metadata)
+	}
+	metadataSource, ok := conversion.Metadata["source"].(map[string]any)
+	if !ok || metadataSource["type"] != "message" || metadataSource["text"] != source {
+		t.Fatalf("random table source metadata = %#v", conversion.Metadata["source"])
+	}
+}
+
+func TestCCFOLIAActionsRandomTableFallback(t *testing.T) {
+	source := "/roll-table\n坏表\n2D6*2\n1-6:结果"
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: source}, nil)
+	if len(warnings) != 1 || warnings[0] != "随机表解析失败，已按普通消息导入" {
+		t.Fatalf("fallback warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != "chat.send" {
+		t.Fatalf("fallback actions = %#v", actions)
+	}
+	var payload theaterChatSendPayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Content != source {
+		t.Fatalf("fallback content = %q, want %q", payload.Content, source)
+	}
+	if conversion.Metadata["reason"] != "random-table-parse-failed" || conversion.Metadata["failureReason"] == "" || conversion.Metadata["resolved"] != false {
+		t.Fatalf("fallback metadata = %#v", conversion.Metadata)
 	}
 }
 

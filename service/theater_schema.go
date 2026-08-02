@@ -1037,6 +1037,14 @@ func validateTheaterAtomicAction(action theaterStoredAction) error {
 		if _, err := normalizeTheaterChatSendPayload(payload); err != nil {
 			return err
 		}
+	case theaterActionChatRandomTable:
+		var payload theaterRandomTablePayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+			return theaterPayloadError("chat.random-table action payload 无效")
+		}
+		if _, err := normalizeTheaterRandomTablePayload(payload); err != nil {
+			return err
+		}
 	case "chat.insert":
 		var payload any
 		if err := json.Unmarshal(action.Payload, &payload); err != nil {

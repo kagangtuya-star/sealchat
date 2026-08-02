@@ -366,6 +366,48 @@ func testWorldTheaterActionChatSendUsesInputChannel(t *testing.T, kind string) {
 	}
 }
 
+func TestWorldTheaterRandomTableActionMatchesRoll(t *testing.T) {
+	actorID, worldID, inputChannelID := initWorldTheaterServiceTest(t)
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "random-table-scene", WorldID: worldID, Type: TheaterMutationSceneCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "random-table-scene", "name": "Random table", "order": 1, "state": map[string]any{}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "random-table-object", WorldID: worldID, ExpectedRevision: 1, Type: TheaterMutationObjectCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "random-table-scene", "object": map[string]any{
+			"id": "random-table", "kind": "button", "name": "Roll", "x": 0, "y": 0, "width": 10, "height": 10,
+			"rotation": 0, "z": 0, "orderKey": "a", "visible": true, "interactive": true,
+			"content": map[string]any{}, "metadata": map[string]any{},
+			"actions": []map[string]any{{"id": "roll", "type": theaterActionChatRandomTable, "payload": map[string]any{
+				"name": "场景表：朽名村", "formula": "1D1", "entries": []map[string]any{{"min": 1, "max": 1, "text": "结果一"}},
+			}}},
+		}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	var received TheaterChatSendRequest
+	SetTheaterChatSender(worldTheaterChatSenderFunc(func(_ context.Context, request TheaterChatSendRequest) (*TheaterChatSendResult, error) {
+		received = request
+		return &TheaterChatSendResult{MessageID: "random-table-message"}, nil
+	}))
+	t.Cleanup(func() { SetTheaterChatSender(nil) })
+	result, err := TriggerTheaterAction(context.Background(), actorID, TheaterActionCommand{
+		ActionRequestID: "random-table-action", WorldID: worldID, InputChannelID: inputChannelID,
+		ObjectID: "random-table", ActionID: "roll", ExpectedRevision: 2,
+	}, TheaterRequestMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Chat == nil || result.Chat.MessageID != "random-table-message" {
+		t.Fatalf("random table result = %#v", result)
+	}
+	if received.ChannelID != inputChannelID || received.Content != "场景表：朽名村\n1D1 = 1\n结果一" {
+		t.Fatalf("random table message = %#v", received)
+	}
+}
+
 func TestWorldTheaterMemberActionUsesComponentGrant(t *testing.T) {
 	ownerID, worldID, _ := initWorldTheaterServiceTest(t)
 	memberID := "member-" + utils.NewIDWithLength(8)

@@ -108,6 +108,7 @@ import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue
 import StageTextOverlay from './StageTextOverlay.vue'
 import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
+import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
@@ -174,6 +175,7 @@ const emit = defineEmits<{
 
 const stageActionDescriptions: Record<StageAction['type'], string> = {
   'chat.send': '发送消息',
+  'chat.random-table': '随机表',
   'chat.insert': '插入输入框',
   'scene.apply': '切换场景',
   'effect.play': '触发特效',
@@ -2329,6 +2331,31 @@ const openSequenceEditor = (actionId: string) => {
   object.interactive = true
   sequenceEditorActionId.value = actionId
 }
+const randomTableEditorActionId = ref('')
+const randomTableEditorVisible = computed({
+  get: () => Boolean(randomTableEditorActionId.value && selectedObject.value),
+  set: (value) => { if (!value) randomTableEditorActionId.value = '' },
+})
+const editingRandomTableAction = computed(() => {
+  const action = selectedObject.value?.actions.find((item) => item.id === randomTableEditorActionId.value)
+  return action?.type === 'chat.random-table' ? action : null
+})
+const openRandomTableEditor = (actionId: string) => {
+  const object = selectedObject.value
+  const action = object?.actions.find((item) => item.id === actionId)
+  if (!object || action?.type !== 'chat.random-table' || !canEditAllObjects.value) return
+  object.interactive = true
+  randomTableEditorActionId.value = actionId
+}
+const saveRandomTable = (payload: Extract<StageAction, { type: 'chat.random-table' }>['payload']) => {
+  const object = selectedObject.value
+  const action = object?.actions.find((item) => item.id === randomTableEditorActionId.value)
+  if (!object || action?.type !== 'chat.random-table') return
+  props.store.beginObjectEdit('编辑随机表')
+  action.payload = payload
+  object.interactive = true
+  props.store.commitObjectEdit()
+}
 const selectedEffectObject = computed(() => {
   const id = props.store.state.selectedObjectId
   const object = id ? props.store.activeObjects.value[id] || null : null
@@ -2706,15 +2733,31 @@ const addAction = (type: StageAction['type']) => {
   }
   const action: StageAction = type === 'chat.send'
     ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台消息' } }
-    : type === 'chat.insert'
-      ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台台词' } }
-      : type === 'scene.apply'
-        ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { sceneId: props.store.state.activeSceneId } }
-        : type === 'effect.play'
-          ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { effectId: effectActionOptions.value[0]?.value || '' } }
-          : { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { objectId: object.id } }
+    : type === 'chat.random-table'
+      ? {
+          id: actionId(),
+          type,
+          schedule: createDefaultStageActionSchedule(),
+          payload: {
+            name: '随机表',
+            formula: '1d6',
+            entries: Array.from({ length: 6 }, (_, index) => ({
+              min: index + 1,
+              max: index + 1,
+              text: `结果${index + 1}`,
+            })),
+          },
+        }
+      : type === 'chat.insert'
+        ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台台词' } }
+        : type === 'scene.apply'
+          ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { sceneId: props.store.state.activeSceneId } }
+          : type === 'effect.play'
+            ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { effectId: effectActionOptions.value[0]?.value || '' } }
+            : { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { objectId: object.id } }
   if (action.type === 'effect.play' && !action.payload.effectId) return
-  props.store.addObjectAction(object.id, action)
+  if (!props.store.addObjectAction(object.id, action)) return
+  if (action.type === 'chat.random-table') randomTableEditorActionId.value = action.id
 }
 
 const actionDelaySeconds = (milliseconds: number | undefined) => (
@@ -2827,6 +2870,43 @@ const triggerObjectActions = (object: StageObject) => {
         },
       } : {}),
     })
+  })
+}
+
+const triggerSingleObjectAction = (object: StageObject | null | undefined, action: StageAction) => {
+  if (!object) return
+  if (!canTriggerActions.value) {
+    stageMessage.warning('没有执行舞台动作的权限')
+    return
+  }
+  if (!object.visible) {
+    stageMessage.warning('隐藏组件不能执行动作')
+    return
+  }
+  if (!object.interactive) {
+    stageMessage.warning('请先开启组件的成员交互')
+    return
+  }
+  if (!isStageActionTarget(object.type)) {
+    stageMessage.warning('当前组件类型不支持点击动作')
+    return
+  }
+  const parsed = stageActionSchema.safeParse(action)
+  if (!parsed.success) {
+    stageMessage.warning('动作配置无效，无法执行')
+    return
+  }
+  emit('actionTriggered', {
+    objectId: object.id,
+    actionId: parsed.data.id,
+    direct: true,
+    action: parsed.data,
+    execution: {
+      id: actionId(),
+      mode: 'parallel',
+      total: 1,
+      index: 0,
+    },
   })
 }
 
@@ -7281,6 +7361,7 @@ onBeforeUnmount(() => {
               </label>
               <div class="theater-action-add">
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>
+                <n-button size="tiny" @click="addAction('chat.random-table')">随机表</n-button>
                 <n-button size="tiny" @click="addAction('chat.insert')">插入</n-button>
                 <n-button size="tiny" @click="addAction('scene.apply')">场景</n-button>
                 <n-button size="tiny" :disabled="!effectActionOptions.length" @click="addAction('effect.play')">特效</n-button>
@@ -7317,6 +7398,23 @@ onBeforeUnmount(() => {
                   :class="{ 'is-sequential': selectedObject.metadata.actionExecutionMode === 'sequential' }"
                 >
                   <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" class="theater-action-row__target" size="tiny" maxlength="10000" />
+                  <div v-else-if="action.type === 'chat.random-table'" class="theater-action-row__target theater-random-table-actions">
+                    <n-button size="tiny" secondary @click="openRandomTableEditor(action.id)">
+                      编辑 · {{ action.payload.name }} · {{ action.payload.formula }} · {{ action.payload.entries.length }} 项
+                    </n-button>
+                    <n-tooltip>
+                      <template #trigger>
+                        <n-button
+                          size="tiny"
+                          secondary
+                          circle
+                          aria-label="掷骰并发送随机表结果"
+                          @click="triggerSingleObjectAction(selectedObject, action)"
+                        ><template #icon><n-icon><PlayerPlay /></n-icon></template></n-button>
+                      </template>
+                      掷骰并发送结果
+                    </n-tooltip>
+                  </div>
                   <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" class="theater-action-row__target" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" class="theater-action-row__target" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
@@ -7718,6 +7816,12 @@ onBeforeUnmount(() => {
       :persistent-objects="store.state.persistentObjects"
       :active-scene-id="store.state.activeSceneId"
     />
+    <TheaterRandomTableEditor
+      v-model:show="randomTableEditorVisible"
+      :component-name="selectedObject?.name || ''"
+      :action="editingRandomTableAction"
+      @save="saveRandomTable"
+    />
   </section>
 </template>
 
@@ -8081,6 +8185,8 @@ onBeforeUnmount(() => {
 .theater-action-row__controls { min-width: 0; display: grid; grid-template-columns: minmax(72px, 1fr) 24px; align-items: center; gap: 4px; }
 .theater-action-row__controls.is-sequential { grid-template-columns: minmax(72px, 1fr) 62px 24px; }
 .theater-action-row__target, .theater-action-row__timing { min-width: 0; width: 100%; }
+.theater-random-table-actions { display: grid; grid-template-columns: minmax(0, 1fr) 24px; gap: 4px; }
+.theater-random-table-actions > .n-button:first-child { min-width: 0; overflow: hidden; }
 .theater-action-row__timing :deep(.n-input__input-el) { padding-right: 0; }
 @media (max-width: 1100px) {
   .theater-stage-toolbar { gap: 5px; padding: 0 6px; }
