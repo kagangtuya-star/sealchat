@@ -5,7 +5,7 @@
     </div>
     <h3 class="ffmpeg-missing__title">音频工作台暂不可用</h3>
     <p class="ffmpeg-missing__desc">
-      服务器未检测到 FFmpeg，音频工作台功能已禁用。建议同时提供 FFprobe 用于时长探测。
+      当服务器未检测到 FFmpeg，音频工作台功能已禁用，请参考用户交流群文档进行安装。
     </p>
     <div class="ffmpeg-missing__action">
       <n-button type="primary" tag="a" :href="downloadUrl" target="_blank" rel="noopener noreferrer">
@@ -16,7 +16,7 @@
       </n-button>
     </div>
     <p class="ffmpeg-missing__hint">
-      下载后将 <code>ffmpeg</code> 与 <code>ffprobe</code>（Windows 为 <code>.exe</code>）放入程序根目录（<code>sealchat-server.exe</code> 路径），重启服务即可启用。
+      下载ffmpeg-essentials_build.zip后将 <code>ffmpeg</code> 与 <code>ffprobe</code>（Windows 为 <code>.exe</code>）放入程序根目录（<code>sealchat-server.exe</code> 路径），重启服务即可启用。
     </p>
   </div>
 </template>
@@ -25,7 +25,7 @@
 import { NButton, NIcon } from 'naive-ui';
 import { MusicalNotesOutline, DownloadOutline } from '@vicons/ionicons5';
 
-const downloadUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases';
+const downloadUrl = 'https://github.com/GyanD/codexffmpeg/releases/';
 </script>
 
 <style scoped lang="scss">

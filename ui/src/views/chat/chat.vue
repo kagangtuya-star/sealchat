@@ -304,10 +304,26 @@ const openTheaterView = async () => {
     message.warning('正在切换世界，请稍后再试');
     return;
   }
+  const ffmpegUnavailable = !audioStudio.ffmpegAvailable;
   await router.push({
     name: 'theater',
     query: { worldId, channelId },
   });
+  if (ffmpegUnavailable) {
+    dialog.warning({
+      title: '未安装ffmpeg',
+      content: () => (
+        <div>
+          <p>当前未安装ffmpeg，动图与音频将无法处理完成上传，请参考用户交流群文档进行安装。</p>
+          <p>
+            <a href="https://github.com/GyanD/codexffmpeg/releases/" target="_blank" rel="noopener noreferrer">下载ffmpeg-essentials_build.zip</a>
+            后将 <code>ffmpeg</code> 与 <code>ffprobe</code>（Windows 为 <code>.exe</code>）放入程序根目录（<code>sealchat-server.exe</code> 路径），重启服务即可启用。
+          </p>
+        </div>
+      ),
+      positiveText: '知道了',
+    });
+  }
 };
 
 const openIcOocSplitView = async (side: 'left' | 'right') => {
