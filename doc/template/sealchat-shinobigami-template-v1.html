@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- sealchat-shinobigami-template:v1 -->
+<!-- sealchat-shinobigami-template:v2 -->
 <html>
 <head>
   <meta charset="UTF-8">
@@ -25,6 +25,8 @@
       --warn-ink: #fff;
       --muted: #b8b3a7;
       --chip: #e8e6df;
+      --taint: #7e6a3c; /* 污秽：旧纸/灰金 */
+      --taint-ink: #fff7dc;
       
       --shadow: rgba(26, 23, 20, 0.15);
       
@@ -211,6 +213,13 @@
       background: rgba(166, 27, 18, 0.08);
       border-color: var(--active);
       color: var(--active);
+      font-weight: bold;
+    }
+
+    .chip--taint {
+      background: rgba(126, 106, 60, 0.12);
+      border-color: var(--taint);
+      color: var(--taint);
       font-weight: bold;
     }
 
@@ -499,13 +508,35 @@
       transform: rotate(28deg) translateX(1px);
     }
 
+    .matrix-col__taint-icon {
+      grid-column: 3;
+      justify-self: end;
+      width: 14px;
+      height: 14px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .matrix-col__taint-icon::before {
+      content: '';
+      width: 12px;
+      height: 10px;
+      border-radius: 58% 42% 52% 48% / 62% 42% 58% 38%;
+      background: radial-gradient(circle at 32% 28%, rgba(255, 247, 220, 0.65) 0 12%, transparent 13%),
+                  linear-gradient(135deg, #b59a55, #67552f);
+      transform: rotate(-18deg);
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), 0 0 2px rgba(0, 0, 0, 0.45);
+    }
+
     .matrix-col__toggles {
       display: flex;
       flex-direction: column;
       gap: 2px;
     }
 
-    /* 得意/损伤 按钮（类似和风附笺） */
+    /* 得意/损伤/污秽按钮（类似和风附笺） */
     .matrix-col__toggle {
       width: 100%;
       min-height: 20px;
@@ -536,6 +567,78 @@
       background: var(--active);
       color: #fff;
       border-color: var(--active);
+    }
+
+    /* 污秽只扣生命，不封锁分野；以灰金印记区别于损伤 */
+    .matrix-col__toggle--taint.is-active {
+      background: var(--taint);
+      color: var(--taint-ink);
+      border-color: var(--taint);
+    }
+
+    .matrix-col.is-tainted {
+      background: rgba(126, 106, 60, 0.07);
+      border-color: rgba(126, 106, 60, 0.7);
+    }
+
+    /* 污秽裂痕：保留文字与特技可读性，只留下纸面裂纹 */
+    .matrix-col.is-tainted::before,
+    .matrix-col.is-tainted::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 30px;
+      pointer-events: none;
+      z-index: 4;
+      opacity: 0.42;
+      background: linear-gradient(90deg, rgba(126, 106, 60, 0.15), rgba(79, 64, 32, 0.7), rgba(126, 106, 60, 0.12));
+      filter: drop-shadow(0 0 1px rgba(255, 247, 220, 0.45));
+    }
+
+    .matrix-col.is-tainted::before {
+      left: 34%;
+      clip-path: polygon(
+        43% 0, 57% 0, 53% 13%, 83% 22%, 56% 27%,
+        78% 38%, 55% 43%, 73% 54%, 49% 61%,
+        67% 72%, 45% 80%, 58% 100%, 42% 100%,
+        38% 84%, 53% 75%, 36% 63%, 55% 53%,
+        39% 44%, 58% 36%, 38% 26%, 49% 16%
+      );
+    }
+
+    .matrix-col.is-tainted::after {
+      right: 26%;
+      width: 22px;
+      opacity: 0.28;
+      clip-path: polygon(
+        46% 16%, 58% 16%, 55% 29%, 88% 38%,
+        57% 44%, 78% 55%, 54% 61%, 69% 73%,
+        45% 82%, 57% 94%, 43% 94%, 38% 79%,
+        53% 70%, 37% 59%, 56% 52%, 39% 42%,
+        60% 35%, 41% 26%
+      );
+    }
+
+    .matrix-col.is-tainted .matrix-col__header {
+      border-bottom-color: var(--taint);
+    }
+
+    .matrix-col__taint-bar {
+      min-height: 8px;
+      background: repeating-linear-gradient(
+        135deg,
+        rgba(126, 106, 60, 0.55) 0,
+        rgba(126, 106, 60, 0.55) 2px,
+        transparent 2px,
+        transparent 6px
+      );
+      border-bottom: 1px solid var(--taint);
+    }
+
+    .matrix-col.is-tainted .matrix-col__footer {
+      background: rgba(126, 106, 60, 0.08);
+      border-top-color: var(--taint);
     }
 
     .matrix-col__damage-bar {
@@ -1726,12 +1829,13 @@
 
     function createDefaultMeta() {
       return {
-        version: 1,
+        version: 2,
         locale: 'zh-Hant',
         compactMode: 0,
         plotValue: null,
         specialtySwitches: createDefaultSwitchMap(CATEGORIES),
         damageSwitches: createDefaultSwitchMap(CATEGORIES),
+        taintSwitches: createDefaultSwitchMap(CATEGORIES),
         skillSwitches: createDefaultSwitchMap(ALL_SKILLS),
         connectivity: {
           topBottom: 0,
@@ -1801,7 +1905,7 @@
     function normalizeMeta(raw) {
       var meta = createDefaultMeta();
       var source = raw && typeof raw === 'object' ? raw : {};
-      meta.version = 1;
+      meta.version = 2;
       meta.locale = source.locale === 'zh-Hans' ? 'zh-Hans' : 'zh-Hant';
       meta.compactMode = normalizeBinary(source.compactMode);
       meta.plotValue = normalizePlotValue(source.plotValue);
@@ -1809,6 +1913,9 @@
       CATEGORIES.forEach(function (category) {
         meta.specialtySwitches[category] = normalizeBinary(source.specialtySwitches && source.specialtySwitches[category]);
         meta.damageSwitches[category] = normalizeBinary(source.damageSwitches && source.damageSwitches[category]);
+        meta.taintSwitches[category] = normalizeBinary(source.taintSwitches && source.taintSwitches[category]);
+        // 同一分野只能有一种生命损失状态；旧数据以损伤优先。
+        if (meta.damageSwitches[category]) meta.taintSwitches[category] = 0;
       });
 
       ALL_SKILLS.forEach(function (skill) {
@@ -1841,9 +1948,20 @@
       });
     }
 
+    function getTaintCategories(meta) {
+      return CATEGORIES.filter(function (category) {
+        return meta.taintSwitches[category] === 1;
+      });
+    }
+
     function getDamageText(meta) {
       var damaged = getDamageCategories(meta);
       return damaged.length ? damaged.join('、') : '无';
+    }
+
+    function getTaintText(meta) {
+      var tainted = getTaintCategories(meta);
+      return tainted.length ? tainted.join('、') : '无';
     }
 
     function getLocalizedDamageText(meta) {
@@ -1852,6 +1970,18 @@
       return damaged.map(function (category) {
         return getDamageTagLabel(category, meta);
       }).join('、');
+    }
+
+    function getLocalizedTaintText(meta) {
+      var tainted = getTaintCategories(meta);
+      if (!tainted.length) return meta.locale === 'zh-Hant' ? '無' : '无';
+      return tainted.map(function (category) {
+        return getDamageTagLabel(category, meta);
+      }).join('、');
+    }
+
+    function getLifeLossCount(meta) {
+      return getDamageCategories(meta).length + getTaintCategories(meta).length;
     }
 
     function getDamageTagLabel(category, meta) {
@@ -1950,8 +2080,7 @@
 
       var extraHp = toInteger(attrs && attrs['额外生命值'], 0);
       var hpMax = 6 + extraHp;
-      var damageCount = getDamageCategories(meta).length;
-      var hpCurrent = clamp(hpMax - damageCount, 0, hpMax);
+      var hpCurrent = clamp(hpMax - getLifeLossCount(meta), 0, hpMax);
 
       if (toInteger(attrs && attrs['生命值上限'], hpMax) !== hpMax || attrs['生命值上限'] == null) {
         patch['生命值上限'] = hpMax;
@@ -1963,6 +2092,10 @@
       var damageText = getDamageText(meta);
       if (String(attrs && attrs['损伤分野'] != null ? attrs['损伤分野'] : '') !== damageText) {
         patch['损伤分野'] = damageText;
+      }
+      var taintText = getTaintText(meta);
+      if (String(attrs && attrs['污秽'] != null ? attrs['污秽'] : '') !== taintText) {
+        patch['污秽'] = taintText;
       }
       var nextPlotAttr = buildPlotAttrValue(meta.plotValue);
       if (nextPlotAttr === '') {
@@ -2488,9 +2621,11 @@
       var manualGapIndices = getManualGapIndices(meta);
       var specialtyCategories = getSpecialtyCategories(meta);
       var damagedCategories = getDamageCategories(meta);
+      var taintedCategories = getTaintCategories(meta);
       var plotValue = meta.plotValue;
-      var hpCurrent = clamp(hpMax - damagedCategories.length, 0, hpMax);
+      var hpCurrent = clamp(hpMax - getLifeLossCount(meta), 0, hpMax);
       var localizedDamageText = getLocalizedDamageText(meta);
+      var localizedTaintText = getLocalizedTaintText(meta);
       var gapButtonCount = meta.connectivity.leftRight ? GAP_PAIRS.length + 1 : GAP_PAIRS.length;
       var avatarHtml = state.avatarUrl
         ? '<img class="summary__avatar" src="' + escapeHtml(state.avatarUrl) + '" alt="" />'
@@ -2514,7 +2649,7 @@
       html += '          <span class="field-label">生命值</span>';
       html += '          <span class="hp-panel__value">' + escapeHtml(String(hpCurrent)) + ' / ' + escapeHtml(String(hpMax)) + '</span>';
       html += '          <div class="hp-panel__meta">';
-      html += '            <span class="chip">自动</span>';
+      html += '            <span class="chip">损伤/污秽自动扣除</span>';
       html += '            <button class="mini-btn" data-action="edit-number" data-key="额外生命值">额外+' + escapeHtml(String(extraHp)) + '</button>';
       html += '          </div>';
       html += '        </div>';
@@ -2536,6 +2671,8 @@
       html += '      <div class="summary__chips">';
       html += '        <span class="chip chip--danger">损伤分野：' + escapeHtml(localizedDamageText) + '</span>';
       html += '        <span class="chip chip--danger">损伤列数：' + escapeHtml(String(damagedCategories.length)) + '</span>';
+      html += '        <span class="chip chip--taint">污秽分野：' + escapeHtml(localizedTaintText) + '</span>';
+      html += '        <span class="chip chip--taint">污秽列数：' + escapeHtml(String(taintedCategories.length)) + '</span>';
       html += '        <span class="chip">上下连通：' + (meta.connectivity.topBottom ? '开' : '关') + '</span>';
       html += '        <span class="chip">左右连通：' + (meta.connectivity.leftRight ? '开' : '关') + '</span>';
       html += '      </div>';
@@ -2564,7 +2701,7 @@
       html += '    <div class="matrix-tools__group">';
       html += '      <button class="matrix-help-btn' + (state.helpUi.matrixHintOpen ? ' is-active' : '') + '" data-action="toggle-matrix-hint" title="操作说明">?</button>';
       if (state.helpUi.matrixHintOpen) {
-        html += '      <span class="matrix-help-text">点击特技左侧切换修得状态，点击特技名或数值触发掷骰。</span>';
+        html += '      <span class="matrix-help-text">点击特技左侧切换修得状态；损伤封锁分野，污秽只扣生命。</span>';
       }
       html += '    </div>';
       html += '  </section>';
@@ -2573,19 +2710,25 @@
       html += '  <section class="matrix-shell">';
       CATEGORIES.forEach(function (category) {
         var damaged = meta.damageSwitches[category] === 1;
-        html += '    <div class="matrix-col' + (damaged ? ' is-damaged is-damaged-strong' : '') + '">';
+        var tainted = !damaged && meta.taintSwitches[category] === 1;
+        html += '    <div class="matrix-col' + (damaged ? ' is-damaged is-damaged-strong' : tainted ? ' is-tainted' : '') + '">';
         html += '      <div class="matrix-col__header">';
         html += '        <div class="matrix-col__title">';
         html += '          <span>' + escapeHtml(getDisplayLabel(category, meta.locale)) + '</span>';
-        html += damaged ? '          <span class="matrix-col__seal-icon" aria-hidden="true"></span>' : '          <span>&nbsp;</span>';
+        html += damaged
+          ? '          <span class="matrix-col__seal-icon" aria-hidden="true"></span>'
+          : (tainted ? '          <span class="matrix-col__taint-icon" aria-hidden="true"></span>' : '          <span>&nbsp;</span>');
         html += '        </div>';
         html += '        <div class="matrix-col__toggles">';
         html += '          <button class="matrix-col__toggle matrix-col__toggle--specialty' + (meta.specialtySwitches[category] ? ' is-active' : '') + '" data-action="toggle-specialty" data-category="' + escapeHtml(category) + '">得意</button>';
         html += '          <button class="matrix-col__toggle' + (meta.damageSwitches[category] ? ' is-active' : '') + '" data-action="toggle-damage" data-category="' + escapeHtml(category) + '">损伤</button>';
+        html += '          <button class="matrix-col__toggle matrix-col__toggle--taint' + (tainted ? ' is-active' : '') + '" data-action="toggle-taint" data-category="' + escapeHtml(category) + '" title="污秽：只扣生命，不封锁特技">污秽</button>';
         html += '        </div>';
         html += '      </div>';
         if (damaged) {
           html += '      <div class="matrix-col__damage-bar"></div>';
+        } else if (tainted) {
+          html += '      <div class="matrix-col__taint-bar"></div>';
         }
         html += '      <div class="matrix-grid">';
         SKILL_MATRIX[category].forEach(function (skill) {
@@ -2787,6 +2930,20 @@
             (function (category) {
               applyMetaMutation(function (meta) {
                 meta.damageSwitches[category] = meta.damageSwitches[category] ? 0 : 1;
+                if (meta.damageSwitches[category]) {
+                  meta.taintSwitches[category] = 0;
+                }
+              });
+            })(target.dataset.category);
+            return;
+          }
+          if (action === 'toggle-taint') {
+            (function (category) {
+              applyMetaMutation(function (meta) {
+                meta.taintSwitches[category] = meta.taintSwitches[category] ? 0 : 1;
+                if (meta.taintSwitches[category]) {
+                  meta.damageSwitches[category] = 0;
+                }
               });
             })(target.dataset.category);
             return;
