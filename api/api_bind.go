@@ -573,6 +573,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/character-card-templates", CharacterCardTemplateList)
 	v1Auth.Post("/character-card-templates", CharacterCardTemplateCreate)
 	v1Auth.Put("/character-card-templates/:id", CharacterCardTemplateUpdate)
+	v1Auth.Post("/character-card-templates/:id/replace-references", CharacterCardTemplateReplaceReferences)
 	v1Auth.Delete("/character-card-templates/:id", CharacterCardTemplateDelete)
 	v1Auth.Post("/character-card-templates/:id/set-default", CharacterCardTemplateSetDefault)
 	v1Auth.Post("/worlds/:worldId/character-card-templates/:templateId/share", WorldCharacterCardTemplateShareHandler)

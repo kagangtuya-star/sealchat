@@ -170,6 +170,10 @@ const clampWindowCoords = (
 
 const DEFAULT_TEMPLATE_MARK = 'sealchat-default-template:v2';
 const DEFAULT_TEMPLATE_MARK_COC = 'sealchat-default-template:v3-coc7th';
+const LEGACY_TEMPLATE_MARKERS = {
+  coc: ['sealchat-default-template:v2-coc-dark', 'sealchat-default-template:v2-coc7th'],
+  shinobigami: ['sealchat-shinobigami-template:v1'],
+};
 
 const isCocSheetType = (value?: string) => {
   const normalized = (value || '').trim().toLowerCase();
@@ -184,11 +188,12 @@ const isShinobigamiSheetType = (value?: string) => {
   return normalized === 'shinobigami' || normalized === '忍神' || normalized.startsWith('shinobigami');
 };
 
-const isLegacyDefaultTemplate = (template: string) => {
+const isLegacyDefaultTemplate = (template: string, sheetType?: string) => {
   if (!template) return false;
+  const normalizedSheetType = (sheetType || '').trim().toLowerCase();
+  if (isCocSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.coc.some(marker => template.includes(marker))) return true;
+  if (isShinobigamiSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.shinobigami.some(marker => template.includes(marker))) return true;
   if (template.includes(DEFAULT_TEMPLATE_MARK) || template.includes(DEFAULT_TEMPLATE_MARK_COC)) return false;
-  // 旧版 COC 默认模板（sealchat-default-template:v2-coc-dark）→ 自动升级为新版
-  if (template.includes('sealchat-default-template:v2-coc-dark')) return true;
   if (template.includes('window.prompt')) return true;
   const hasShell =
     template.includes('id="content"') &&
@@ -199,12 +204,14 @@ const isLegacyDefaultTemplate = (template: string) => {
     template.includes('data-roll=".ra {skill}"') ||
     template.includes('data-roll=\\".ra {skill}\\"');
   const hasPrompt = template.includes('window.prompt');
-  return hasShell && (hasLegacyRoll || hasPrompt);
+  return hasShell && (hasLegacyRoll || hasPrompt) && (
+    isCocSheetType(sheetType) || !normalizedSheetType
+  );
 };
 
 const normalizeTemplate = (_cardId: string | undefined, template: string, sheetType?: string) => {
   if (!template) return template;
-  if (!isLegacyDefaultTemplate(template)) return template;
+  if (!isLegacyDefaultTemplate(template, sheetType)) return template;
   return getDefaultTemplate(sheetType);
 };
 
@@ -710,6 +717,26 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       });
       const resolved = templateStore.resolveCardTemplate(win.channelId, win.cardId, win.sheetType, fallback);
       const normalized = normalizeTemplate(win.cardId, resolved, win.sheetType);
+      if (normalized !== resolved && binding) {
+        try {
+          if (binding.mode === 'managed' && binding.templateId) {
+            const template = templateStore.getTemplateById(binding.templateId);
+            if (template && !template.readonly) {
+              await templateStore.updateTemplate(binding.templateId, { content: normalized });
+            }
+          } else if (binding.mode === 'detached') {
+            await templateStore.bindCardToDetachedTemplate({
+              channelId: win.channelId,
+              externalCardId: win.cardId,
+              cardName: win.cardName,
+              sheetType: win.sheetType || '',
+              templateSnapshot: normalized,
+            });
+          }
+        } catch (e) {
+          console.warn('Failed to persist legacy character template upgrade', e);
+        }
+      }
       win.template = normalized;
       win.templateMode = binding?.mode;
       win.templateId = binding?.templateId || undefined;
@@ -718,6 +745,18 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     } catch (e) {
       console.warn('Failed to sync character sheet template from cloud', e);
     }
+  };
+
+  const syncOpenWindowsUsingTemplate = async (templateId: string, excludeWindowId?: string) => {
+    if (!templateId) return;
+    const windowIds = activeWindowIds.value.filter((windowId) => {
+      if (windowId === excludeWindowId) return false;
+      const win = windows.value[windowId];
+      if (!win || win.readOnly || win.templateMode !== 'managed') return false;
+      const binding = templateStore.getBinding(win.channelId, win.cardId);
+      return win.templateId === templateId || binding?.templateId === templateId;
+    });
+    await Promise.all(windowIds.map(windowId => syncWindowTemplateFromCloud(windowId)));
   };
 
   const applyManagedTemplate = async (windowId: string, templateId: string, options?: ApplyManagedTemplateOptions) => {
@@ -737,6 +776,13 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       templateId,
     });
     const normalized = normalizeTemplate(win.cardId, template.content, win.sheetType || template.sheetType);
+    if (normalized !== template.content && !template.readonly) {
+      try {
+        await templateStore.updateTemplate(templateId, { content: normalized });
+      } catch (e) {
+        console.warn('Failed to persist managed character template upgrade', e);
+      }
+    }
     win.template = normalized;
     win.templateMode = 'managed';
     win.templateId = templateId;
@@ -799,6 +845,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       content: win.template,
     });
     await applyManagedTemplate(windowId, templateId);
+    await syncOpenWindowsUsingTemplate(templateId, windowId);
     return templateStore.getTemplateById(templateId);
   };
 

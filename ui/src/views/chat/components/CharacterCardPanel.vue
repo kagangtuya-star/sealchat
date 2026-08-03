@@ -1109,6 +1109,16 @@ const openTemplateEditModal = (item: CharacterCardTemplate) => {
   templateModalVisible.value = true;
 };
 
+const syncOpenWindowsForTemplate = async (templateId: string) => {
+  const windowIds = sheetStore.activeWindowIds.filter((windowId) => {
+    const win = sheetStore.windows[windowId];
+    if (!win || win.readOnly || win.templateMode !== 'managed') return false;
+    const binding = templateStore.getBinding(win.channelId, win.cardId);
+    return win.templateId === templateId || binding?.templateId === templateId;
+  });
+  await Promise.all(windowIds.map(windowId => sheetStore.syncWindowTemplateFromCloud(windowId)));
+};
+
 const handleSaveTemplate = async () => {
   if (!ensureCharacterApiEnabled()) return;
   const name = templateName.value.trim();
@@ -1134,6 +1144,7 @@ const handleSaveTemplate = async () => {
         isGlobalDefault: templateGlobalDefault.value,
         isSheetDefault: templateSheetDefault.value,
       });
+      await syncOpenWindowsForTemplate(templateEditingId.value);
       message.success('模板已更新');
     } else {
       await templateStore.createTemplate({

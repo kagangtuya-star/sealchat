@@ -71,19 +71,31 @@ interface CharacterCardLite {
   sheetType: string;
 }
 
+interface BuiltinCharacterCardTemplate {
+  name: string;
+  sheetType: string;
+  content: string;
+  legacyMarkers: string[];
+}
+
 const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
-const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd']);
-const BUILTIN_CHARACTER_CARD_TEMPLATES = [
+const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd', 'shinobigami']);
+const BUILTIN_CHARACTER_CARD_TEMPLATES: BuiltinCharacterCardTemplate[] = [
   {
     name: 'coc默认',
     sheetType: 'coc7',
     content: cocTemplateHtml.trim(),
+    legacyMarkers: [
+      'sealchat-default-template:v2-coc-dark',
+      'sealchat-default-template:v2-coc7th',
+    ],
   },
   {
     name: '忍神人物卡模板',
     sheetType: '忍神',
     content: shinobigamiTemplateHtml.trim(),
+    legacyMarkers: ['sealchat-shinobigami-template:v1'],
   },
 ];
 
@@ -92,9 +104,20 @@ const normalizeSheetType = (value?: string) => {
   if (normalized === 'shinobigami' || normalized === '忍神') {
     return 'shinobigami';
   }
+  if (normalized === 'coc') return 'coc7';
+  if (normalized === 'dnd5' || normalized === 'dnd') return 'dnd5e';
   return normalized;
 };
 const isBuiltInSheetType = (value?: string) => BUILTIN_SHEET_TYPES.has(normalizeSheetType(value));
+
+const isLegacyBuiltinTemplate = (
+  template: CharacterCardTemplate,
+  builtin: BuiltinCharacterCardTemplate,
+) => (
+  !template.readonly
+  && normalizeSheetType(template.sheetType) === normalizeSheetType(builtin.sheetType)
+  && builtin.legacyMarkers.some(marker => template.content.includes(marker))
+);
 
 const buildMigrationFlagKey = (userId?: string) => {
   if (!userId) return '';
@@ -135,9 +158,16 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
 
   const getTemplatesBySheetType = (sheetType?: string) => {
     const normalized = normalizeSheetType(sheetType);
+    const builtin = BUILTIN_CHARACTER_CARD_TEMPLATES.find(item => normalizeSheetType(item.sheetType) === normalized);
     return templates.value.filter(item => {
       const current = normalizeSheetType(item.sheetType);
       if (!normalized) return true;
+      if (builtin && item.name !== builtin.name && isLegacyBuiltinTemplate(item, builtin)) {
+        return false;
+      }
+      if (builtin && !item.readonly && item.name !== builtin.name && current === normalized && item.content.trim() === builtin.content) {
+        return false;
+      }
       if (!current || current === normalized) return true;
       return !isBuiltInSheetType(current);
     });
@@ -240,37 +270,88 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
 
     const ensurePromise = (async () => {
       let ensured = true;
+      const updateBuiltinTemplate = async (
+        template: CharacterCardTemplate,
+        builtin: BuiltinCharacterCardTemplate,
+      ) => {
+        const payload: Partial<TemplatePayload> = {};
+        if (template.name !== builtin.name) payload.name = builtin.name;
+        if (template.sheetType !== builtin.sheetType) payload.sheetType = builtin.sheetType;
+        if (template.content.trim() !== builtin.content) payload.content = builtin.content;
+        if (Object.keys(payload).length === 0) return template;
+        try {
+          const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, payload);
+          const updated = resp.data?.item as CharacterCardTemplate | undefined;
+          if (!updated?.id) return null;
+          templateMap.value = { ...templateMap.value, [updated.id]: updated };
+          return updated;
+        } catch (e) {
+          console.warn('Failed to upgrade builtin character template', e);
+          return null;
+        }
+      };
+
       for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
         const matchingTemplates = items.filter(item => (
           !item.readonly
           && item.name === builtin.name
           && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
         ));
-        if (matchingTemplates.length) {
-          for (const template of matchingTemplates) {
-            if (template.content.trim() === builtin.content) continue;
-            const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, {
-              content: builtin.content,
-            });
-            const updated = resp.data?.item as CharacterCardTemplate | undefined;
-            if (!updated?.id) {
-              ensured = false;
-              continue;
-            }
-            if (Object.prototype.hasOwnProperty.call(templateMap.value, updated.id)) {
-              templateMap.value = { ...templateMap.value, [updated.id]: updated };
-            }
+        const legacyTemplates = items.filter(item => isLegacyBuiltinTemplate(item, builtin));
+        const contentDuplicateTemplates = items.filter(item => (
+          !item.readonly
+          && item.name !== builtin.name
+          && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
+          && item.content.trim() === builtin.content
+        ));
+        let canonical = legacyTemplates[0]
+          || matchingTemplates[0]
+          || contentDuplicateTemplates[0]
+          || null;
+        if (!canonical) {
+          canonical = await createTemplate({
+            name: builtin.name,
+            sheetType: builtin.sheetType,
+            content: builtin.content,
+            isBuiltin: true,
+          });
+          if (!canonical?.id) {
+            ensured = false;
+            continue;
           }
+        }
+
+        const updatedCanonical = await updateBuiltinTemplate(canonical, builtin);
+        if (!updatedCanonical) {
+          ensured = false;
           continue;
         }
-        const created = await createTemplate({
-          name: builtin.name,
-          sheetType: builtin.sheetType,
-          content: builtin.content,
-          isBuiltin: true,
+        canonical = updatedCanonical;
+
+        const duplicateIds = new Set<string>();
+        [...matchingTemplates, ...legacyTemplates, ...contentDuplicateTemplates].forEach((template) => {
+          if (template.id && template.id !== canonical?.id) duplicateIds.add(template.id);
         });
-        if (!created?.id) {
-          ensured = false;
+        for (const duplicateId of duplicateIds) {
+          try {
+            await replaceTemplateReferences(duplicateId, canonical.id);
+            const nextMap = { ...templateMap.value };
+            const duplicate = nextMap[duplicateId];
+            if (duplicate?.isSharedToCurrentWorld && !nextMap[canonical.id]?.isSharedToCurrentWorld) {
+              nextMap[canonical.id] = {
+                ...nextMap[canonical.id],
+                isSharedToCurrentWorld: true,
+                sharedWorldId: duplicate.sharedWorldId,
+                sharedByUserId: duplicate.sharedByUserId,
+                sharedByNickname: duplicate.sharedByNickname,
+              };
+            }
+            delete nextMap[duplicateId];
+            templateMap.value = nextMap;
+          } catch (e) {
+            console.warn('Failed to replace duplicate builtin template references', e);
+            ensured = false;
+          }
         }
       }
 
@@ -316,6 +397,30 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       }
     }
     return item || null;
+  };
+
+  const replaceTemplateReferences = async (templateId: string, replacementTemplateId: string) => {
+    const fromId = String(templateId || '').trim();
+    const toId = String(replacementTemplateId || '').trim();
+    if (!fromId || !toId || fromId === toId) return;
+    await api.post(`/api/v1/character-card-templates/${fromId}/replace-references`, {
+      replacementTemplateId: toId,
+    });
+    Object.entries(bindingsByChannel.value).forEach(([channelId, channelMap]) => {
+      let changed = false;
+      const nextMap = { ...channelMap };
+      Object.entries(nextMap).forEach(([externalCardId, binding]) => {
+        if (binding.templateId !== fromId || binding.mode !== 'managed') return;
+        nextMap[externalCardId] = { ...binding, templateId: toId };
+        changed = true;
+      });
+      if (changed) {
+        bindingsByChannel.value = {
+          ...bindingsByChannel.value,
+          [channelId]: nextMap,
+        };
+      }
+    });
   };
 
   const deleteTemplate = async (templateId: string) => {
@@ -581,6 +686,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     ensureTemplatesLoaded,
     createTemplate,
     updateTemplate,
+    replaceTemplateReferences,
     deleteTemplate,
     setTemplateDefault,
     shareTemplateToWorld,
