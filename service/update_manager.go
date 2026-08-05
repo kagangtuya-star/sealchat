@@ -884,6 +884,17 @@ func runPreparedUpdate(cfg utils.UpdateCheckConfig, release *UpdateReleaseInfo, 
 		finishUpdateRun()
 	}
 
+	saveUpdateJob(job, "preparing", 5, "正在执行更新前数据库备份", nil)
+	appCfg := utils.GetConfig()
+	if appCfg == nil {
+		fail(errors.New("更新前数据库备份失败: 配置未加载"))
+		return
+	}
+	if _, backupErr := ExecuteBackup(appCfg); backupErr != nil {
+		fail(fmt.Errorf("更新前数据库备份失败: %w", backupErr))
+		return
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		fail(err)
