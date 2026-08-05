@@ -436,9 +436,17 @@ function handleDragEnd() {
   dragTargetId.value = null
 }
 
-function resetForm() {
+function getCategoryFromFilter() {
+  const value = categoryFilter.value || ''
+  const category = value.startsWith('world:')
+    ? value.slice('world:'.length)
+    : value.match(/^ext:[^:]+:(.*)$/)?.[1] || ''
+  return category === MANAGER_UNCATEGORIZED_KEY ? '' : category
+}
+
+function resetForm(category = '') {
   formModel.keyword = ''
-  formModel.category = ''
+  formModel.category = category
   formModel.aliases = ''
   formModel.matchMode = 'plain'
   formModel.description = ''
@@ -450,7 +458,7 @@ function resetForm() {
 function openCreate() {
   const worldId = currentWorldId.value
   if (!worldId) return
-  resetForm()
+  resetForm(getCategoryFromFilter())
   glossary.openEditor(worldId)
 }
 
@@ -1053,7 +1061,7 @@ watch(
       formModel.display = keyword.display || 'inherit'
       formModel.isEnabled = keyword.isEnabled
     } else {
-      resetForm()
+      resetForm(getCategoryFromFilter())
     }
   },
 )
