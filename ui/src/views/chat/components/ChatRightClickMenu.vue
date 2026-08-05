@@ -874,6 +874,9 @@ const clickArchiveMessagesBefore = () => {
 
 <style scoped>
 .reaction-picker-slot {
+  /* Keep context-menu's first height measurement stable while picker chunk loads. */
+  min-height: 57px;
+  box-sizing: border-box;
   padding: 6px 8px;
 }
 
