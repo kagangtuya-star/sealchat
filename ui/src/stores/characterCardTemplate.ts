@@ -138,6 +138,8 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const templateMap = ref<Record<string, CharacterCardTemplate>>({});
   const bindingsByChannel = ref<Record<string, Record<string, CharacterCardTemplateBinding>>>({});
   const bindingsLoadedChannels = ref<Record<string, boolean>>({});
+  const bindingsMutationVersions = ref<Record<string, number>>({});
+  const bindingsLoadPromises: Record<string, Promise<CharacterCardTemplateBinding[]>> = {};
   const templatesLoaded = ref(false);
   const loading = ref(false);
   const migrating = ref(false);
@@ -154,6 +156,17 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
 
   const getBinding = (channelId: string, externalCardId: string) => {
     return bindingsByChannel.value[channelId]?.[externalCardId] || null;
+  };
+
+  const getBindingsMutationVersion = (channelId: string) => (
+    bindingsMutationVersions.value[channelId] || 0
+  );
+
+  const markBindingsMutated = (channelId: string) => {
+    bindingsMutationVersions.value = {
+      ...bindingsMutationVersions.value,
+      [channelId]: getBindingsMutationVersion(channelId) + 1,
+    };
   };
 
   const getTemplatesBySheetType = (sheetType?: string) => {
@@ -191,6 +204,25 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       && builtinNames.has(item.name)
       && normalizeSheetType(item.sheetType) === normalized
     )) || null;
+  };
+
+  const isSameSheetType = (left?: string, right?: string) => (
+    normalizeSheetType(left) === normalizeSheetType(right)
+  );
+
+  const getPreferredTemplateBySheetType = (sheetType?: string) => {
+    const normalized = normalizeSheetType(sheetType);
+    if (!normalized) return null;
+
+    const sheetDefault = getSheetDefaultTemplate(sheetType);
+    if (sheetDefault) return sheetDefault;
+
+    const builtinTemplate = getBuiltinTemplateBySheetType(sheetType);
+    if (builtinTemplate) return builtinTemplate;
+
+    return templates.value.find(item => !item.readonly && isSameSheetType(item.sheetType, sheetType))
+      || templates.value.find(item => isSameSheetType(item.sheetType, sheetType))
+      || null;
   };
 
   const getGlobalDefaultTemplate = () => {
@@ -403,6 +435,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     const fromId = String(templateId || '').trim();
     const toId = String(replacementTemplateId || '').trim();
     if (!fromId || !toId || fromId === toId) return;
+    Object.keys(bindingsByChannel.value).forEach(channelId => markBindingsMutated(channelId));
     await api.post(`/api/v1/character-card-templates/${fromId}/replace-references`, {
       replacementTemplateId: toId,
     });
@@ -450,32 +483,52 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
 
   const loadBindings = async (channelId: string) => {
     if (!channelId) return [];
-    const resp = await api.get('/api/v1/character-card-template-bindings', { params: { channelId } });
-    const items = Array.isArray(resp.data?.items) ? resp.data.items as CharacterCardTemplateBinding[] : [];
-    const channelMap: Record<string, CharacterCardTemplateBinding> = {};
-    items.forEach(item => {
-      if (item?.externalCardId) {
-        channelMap[item.externalCardId] = item;
+    const existingPromise = bindingsLoadPromises[channelId];
+    if (existingPromise) return existingPromise;
+
+    const requestVersion = getBindingsMutationVersion(channelId);
+    const loadPromise = (async () => {
+      const resp = await api.get('/api/v1/character-card-template-bindings', { params: { channelId } });
+      const items = Array.isArray(resp.data?.items) ? resp.data.items as CharacterCardTemplateBinding[] : [];
+      if (getBindingsMutationVersion(channelId) !== requestVersion) {
+        return items;
       }
+
+      const channelMap: Record<string, CharacterCardTemplateBinding> = {};
+      items.forEach(item => {
+        if (item?.externalCardId) {
+          channelMap[item.externalCardId] = item;
+        }
+      });
+      bindingsByChannel.value = {
+        ...bindingsByChannel.value,
+        [channelId]: channelMap,
+      };
+      bindingsLoadedChannels.value = {
+        ...bindingsLoadedChannels.value,
+        [channelId]: true,
+      };
+      return items;
+    })().finally(() => {
+      delete bindingsLoadPromises[channelId];
     });
-    bindingsByChannel.value = {
-      ...bindingsByChannel.value,
-      [channelId]: channelMap,
-    };
-    bindingsLoadedChannels.value = {
-      ...bindingsLoadedChannels.value,
-      [channelId]: true,
-    };
-    return items;
+
+    bindingsLoadPromises[channelId] = loadPromise;
+    return loadPromise;
   };
 
   const ensureBindingsLoaded = async (channelId: string) => {
     if (!channelId) return;
+    if (bindingsLoadPromises[channelId]) {
+      await bindingsLoadPromises[channelId];
+      return;
+    }
     if (bindingsLoadedChannels.value[channelId]) return;
     await loadBindings(channelId);
   };
 
   const upsertBinding = async (payload: BindingPayload) => {
+    markBindingsMutated(payload.channelId);
     const resp = await api.post('/api/v1/character-card-template-bindings/upsert', payload);
     const item = resp.data?.item as CharacterCardTemplateBinding | undefined;
     if (item?.externalCardId && item.channelId) {
@@ -545,14 +598,14 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     const existing = getBinding(payload.channelId, payload.externalCardId);
     if (existing) return existing;
 
-    const sheetDefault = getSheetDefaultTemplate(payload.sheetType);
-    if (sheetDefault?.id) {
+    const preferredTemplate = getPreferredTemplateBySheetType(payload.sheetType);
+    if (preferredTemplate?.id) {
       return bindCardToTemplate({
         channelId: payload.channelId,
         externalCardId: payload.externalCardId,
         cardName: payload.cardName,
         sheetType: payload.sheetType,
-        templateId: sheetDefault.id,
+        templateId: preferredTemplate.id,
       });
     }
 
@@ -679,6 +732,8 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     getTemplatesBySheetType,
     getSheetDefaultTemplate,
     getBuiltinTemplateBySheetType,
+    isSameSheetType,
+    getPreferredTemplateBySheetType,
     getGlobalDefaultTemplate,
     resolveDefaultTemplate,
     resolveCardTemplate,

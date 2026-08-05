@@ -1264,6 +1264,28 @@ const resolveSheetType = (preset: string, custom: string) => {
   return preset;
 };
 
+const setNewCardSheetType = (value: string) => {
+  const normalized = (value || '').trim();
+  const lower = normalized.toLowerCase();
+  if (lower === 'coc7' || lower === 'coc') {
+    newCardSheetTypePreset.value = 'coc7';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  if (lower === 'dnd5e' || lower === 'dnd5' || lower === 'dnd') {
+    newCardSheetTypePreset.value = 'dnd5e';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  if (lower === 'shinobigami' || normalized === '忍神') {
+    newCardSheetTypePreset.value = 'shinobigami';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  newCardSheetTypePreset.value = 'custom';
+  newCardSheetTypeCustom.value = normalized;
+};
+
 const newCardSheetType = computed(() => resolveSheetType(
   newCardSheetTypePreset.value,
   newCardSheetTypeCustom.value,
@@ -1280,21 +1302,43 @@ const newCardTemplateOptions = computed(() => [
 ]);
 
 const selectDefaultNewCardTemplate = () => {
-  const sheetDefault = templateStore.getSheetDefaultTemplate(newCardSheetType.value);
-  if (sheetDefault?.id) {
-    newCardTemplateId.value = sheetDefault.id;
+  const preferredTemplate = templateStore.getPreferredTemplateBySheetType(newCardSheetType.value);
+  if (preferredTemplate?.id) {
+    newCardTemplateId.value = preferredTemplate.id;
+    if (preferredTemplate.sheetType?.trim()) {
+      setNewCardSheetType(preferredTemplate.sheetType);
+    }
     return;
   }
-  const builtinTemplate = templateStore.getBuiltinTemplateBySheetType(newCardSheetType.value);
-  if (builtinTemplate?.id) {
-    newCardTemplateId.value = builtinTemplate.id;
+  if (newCardSheetTypePreset.value === 'custom') {
+    newCardTemplateId.value = DETACHED_TEMPLATE_VALUE;
     return;
   }
   const globalDefault = templateStore.getGlobalDefaultTemplate();
   const availableIds = new Set(newCardTemplateOptions.value.map(item => item.value));
-  newCardTemplateId.value = globalDefault?.id && availableIds.has(globalDefault.id)
-    ? globalDefault.id
+  const globalDefaultId = globalDefault?.id || '';
+  const canUseGlobalDefault = !!globalDefaultId
+    && availableIds.has(globalDefaultId)
+    && (!globalDefault?.sheetType?.trim()
+      || templateStore.isSameSheetType(globalDefault?.sheetType, newCardSheetType.value));
+  newCardTemplateId.value = canUseGlobalDefault
+    ? globalDefaultId
     : DETACHED_TEMPLATE_VALUE;
+};
+
+const syncNewCardTemplateForSheetType = () => {
+  const selectedTemplate = templateStore.getTemplateById(newCardTemplateId.value);
+  if (selectedTemplate && templateStore.isSameSheetType(selectedTemplate.sheetType, newCardSheetType.value)) {
+    return;
+  }
+  selectDefaultNewCardTemplate();
+};
+
+const handleNewCardTemplateChange = (templateId: string | number | null) => {
+  const selectedTemplate = templateStore.getTemplateById(String(templateId || '').trim());
+  const sheetType = selectedTemplate?.sheetType?.trim();
+  if (!sheetType) return;
+  setNewCardSheetType(sheetType);
 };
 
 const openCreateModal = async () => {
@@ -1311,7 +1355,7 @@ const openCreateModal = async () => {
 
 watch(newCardSheetType, () => {
   if (!createModalVisible.value) return;
-  selectDefaultNewCardTemplate();
+  syncNewCardTemplateForSheetType();
 });
 
 const handleCreateCard = async () => {
@@ -1320,7 +1364,13 @@ const handleCreateCard = async () => {
     message.warning('请输入角色名称');
     return;
   }
-  const sheetType = resolveSheetType(newCardSheetTypePreset.value, newCardSheetTypeCustom.value);
+  const selectedTemplate = newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE
+    ? templateStore.getTemplateById(newCardTemplateId.value)
+    : null;
+  if (selectedTemplate?.sheetType?.trim()) {
+    setNewCardSheetType(selectedTemplate.sheetType);
+  }
+  const sheetType = newCardSheetType.value;
   if (!sheetType) {
     message.warning('请输入自定义规则类型');
     return;
@@ -1736,6 +1786,9 @@ const openCharacterSheetWindow = async (
       card.templateId = binding.templateId || undefined;
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
+    const managedTemplateContent = binding?.mode === 'managed' && binding.templateId
+      ? templateStore.getTemplateById(binding.templateId)?.content
+      : undefined;
     const avatarUrl = resolveCardAvatarToken(card, effectiveCardData?.avatarUrl || '');
     const windowId = sheetStore.openSheet(card, channelId, {
       name: effectiveCardData?.name || card.name,
@@ -1745,7 +1798,9 @@ const openCharacterSheetWindow = async (
     }, {
       templateMode: binding?.mode,
       templateId: binding?.templateId || undefined,
-      templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
+      templateText: binding?.mode === 'detached'
+        ? binding.templateSnapshot
+        : managedTemplateContent,
       worldId: currentWorldId.value || undefined,
     });
     upsertChannelSheetSwitchState(channelId, {
@@ -2352,6 +2407,7 @@ defineExpose({ openCardById });
           :options="newCardTemplateOptions"
           placeholder="选择人物卡模板"
           :disabled="characterApiDisabled"
+          @update:value="handleNewCardTemplateChange"
         />
       </n-form-item>
       <n-form-item label="人物卡头像">

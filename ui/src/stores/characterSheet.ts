@@ -194,7 +194,9 @@ const isLegacyDefaultTemplate = (template: string, sheetType?: string) => {
   if (isCocSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.coc.some(marker => template.includes(marker))) return true;
   if (isShinobigamiSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.shinobigami.some(marker => template.includes(marker))) return true;
   if (template.includes(DEFAULT_TEMPLATE_MARK) || template.includes(DEFAULT_TEMPLATE_MARK_COC)) return false;
-  if (template.includes('window.prompt')) return true;
+  if (template.includes('window.prompt') && (isCocSheetType(sheetType) || !normalizedSheetType)) {
+    return true;
+  }
   const hasShell =
     template.includes('id="content"') &&
     template.includes('sealchat.onUpdate(render)') &&
@@ -955,6 +957,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   ): string => {
     restoreWindows();
+    const managedTemplate = templateMeta?.templateMode === 'managed' && templateMeta.templateId
+      ? templateStore.getTemplateById(templateMeta.templateId)
+      : null;
     const existingId = activeWindowIds.value.find(
       id => windows.value[id]?.cardId === card.id
     );
@@ -995,6 +1000,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         }
         if (templateMeta?.templateText) {
           existing.template = normalizeTemplate(existing.cardId, templateMeta.templateText, existing.sheetType);
+        } else if (managedTemplate?.content) {
+          existing.template = normalizeTemplate(existing.cardId, managedTemplate.content, existing.sheetType);
         }
 
         existing.mode = 'view';
@@ -1055,7 +1062,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
     const initialTemplate = normalizeTemplate(
       card.id,
-      templateMeta?.templateText || getTemplate(card.id, resolvedSheetType),
+      templateMeta?.templateText || managedTemplate?.content || getTemplate(card.id, resolvedSheetType),
       resolvedSheetType,
     );
     windows.value[windowId] = {
