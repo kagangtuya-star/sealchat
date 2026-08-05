@@ -1703,6 +1703,25 @@ const panelStyle = (id: PanelId) => {
   }
 }
 
+const sceneEditorPlacement = computed<'right-start' | 'left-start' | 'bottom-start'>(() => {
+  // Keep side placement only when editor width plus popover gap fits beside scene panel.
+  const layout = panelLayouts.value.scene || panelDefaultLayout('scene')
+  const workspaceLeft = workspaceRef.value?.getBoundingClientRect().left || 0
+  const viewportWidth = Math.max(
+    1,
+    document.documentElement.clientWidth || 0,
+    window.innerWidth || 0,
+    viewportSize.value.width,
+  )
+  const editorWidth = Math.min(320, Math.max(1, viewportWidth - 24))
+  const panelLeft = workspaceLeft + layout.x
+  const panelRight = panelLeft + layout.width
+  const popoverGap = 8
+  if (viewportWidth - panelRight >= editorWidth + popoverGap) return 'right-start'
+  if (panelLeft >= editorWidth + popoverGap) return 'left-start'
+  return 'bottom-start'
+})
+
 const bringPanelToFront = (id: PanelId) => {
   frontPanelId.value = id
 }
@@ -6936,11 +6955,11 @@ onBeforeUnmount(() => {
             <n-popover
             :show="sceneEditMode && editingSceneId === scene.id"
             trigger="manual"
-            placement="right-start"
+            :placement="sceneEditorPlacement"
             :show-arrow="false"
             :theme-overrides="theaterPopoverThemeOverrides"
-            class="theater-secondary-surface"
-            :style="{ width: 'min(320px, calc(100vw - 24px))' }"
+            class="theater-secondary-surface theater-scene-editor-popover"
+            scrollable
           >
             <template #trigger>
               <button
@@ -7866,6 +7885,13 @@ onBeforeUnmount(() => {
 :global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option--pending),
 :global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option:hover) {
   background-color: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)) !important;
+}
+:global(.theater-scene-editor-popover) {
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(640px, calc(100vh - 24px));
+  max-height: min(640px, calc(100dvh - 24px));
 }
 :global(body:has(.theater-stage-app) .v-binder-follower-container) {
   z-index: 10002 !important;
