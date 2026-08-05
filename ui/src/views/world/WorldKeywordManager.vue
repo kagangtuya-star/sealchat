@@ -149,6 +149,12 @@ const formModel = reactive({
   display: 'inherit' as KeywordDisplayStyle,
   isEnabled: true,
 })
+type KeywordCreatePreferences = Pick<typeof formModel, 'matchMode' | 'descriptionFormat' | 'display'>
+const lastCreatePreferences = reactive<KeywordCreatePreferences>({
+  matchMode: 'plain',
+  descriptionFormat: 'plain',
+  display: 'inherit',
+})
 
 // Description editor ref
 const descriptionEditorRef = ref<InstanceType<typeof KeywordDescriptionEditor> | null>(null)
@@ -448,10 +454,10 @@ function resetForm(category = '') {
   formModel.keyword = ''
   formModel.category = category
   formModel.aliases = ''
-  formModel.matchMode = 'plain'
   formModel.description = ''
-  formModel.descriptionFormat = 'plain'
-  formModel.display = 'inherit'
+  formModel.matchMode = lastCreatePreferences.matchMode
+  formModel.descriptionFormat = lastCreatePreferences.descriptionFormat
+  formModel.display = lastCreatePreferences.display
   formModel.isEnabled = true
 }
 
@@ -525,6 +531,9 @@ async function submitEditor() {
       message.success('已更新术语')
     } else {
       await glossary.createKeyword(worldId, payload)
+      lastCreatePreferences.matchMode = formModel.matchMode
+      lastCreatePreferences.descriptionFormat = formModel.descriptionFormat
+      lastCreatePreferences.display = formModel.display
       message.success('已创建术语')
     }
     editableCategoryOptions.value = await glossary.fetchCategories(worldId)
