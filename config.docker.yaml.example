@@ -211,3 +211,11 @@ emailAuth:
   codeTTLSeconds: 300           # 验证码有效期（秒）
   maxAttempts: 5                # 单个验证码最大尝试次数
   rateLimitPerIP: 5             # 每 IP 每小时发送上限
+# 容器应通过拉取新镜像更新，不执行容器内二进制替换。
+updateCheck:
+  enabled: false
+  intervalSec: 21600
+  githubRepo: kagangtuya-star/sealchat
+  githubToken: ""
+  sealupdRepo: sealdice/sealupd
+  downloadProxy: https://sealchat-update.aivu.top/

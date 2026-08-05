@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"sealchat/service"
 )
 
 // writeCounter 用于跟踪写入进度的结构体
@@ -87,7 +89,8 @@ func downloadLatestRelease() error {
 	}
 	defer resp.Body.Close()
 
-	out, err := os.Create(targetAsset.Name)
+	partPath := targetAsset.Name + ".part"
+	out, err := os.Create(partPath)
 	if err != nil {
 		return fmt.Errorf("创建文件失败: %v", err)
 	}
@@ -114,9 +117,23 @@ func downloadLatestRelease() error {
 
 	_, err = io.Copy(out, reader)
 	if err != nil {
+		_ = out.Close()
+		_ = os.Remove(partPath)
 		return fmt.Errorf("保存文件失败: %v", err)
 	}
-	fmt.Printf("文件 %s 下载完成\n", targetAsset.Name)
+	if err := out.Close(); err != nil {
+		_ = os.Remove(partPath)
+		return fmt.Errorf("关闭下载文件失败: %v", err)
+	}
+	_ = os.Remove(targetAsset.Name)
+	if err := os.Rename(partPath, targetAsset.Name); err != nil {
+		_ = os.Remove(partPath)
+		return fmt.Errorf("提交下载文件失败: %v", err)
+	}
+	if err := service.CacheLegacyDownloadedUpdate(targetAsset.Name); err != nil {
+		return fmt.Errorf("归档下载文件失败: %v", err)
+	}
+	fmt.Printf("文件 %s 下载并归档完成\n", targetAsset.Name)
 
 	return nil
 }

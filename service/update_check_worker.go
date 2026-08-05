@@ -15,18 +15,31 @@ import (
 )
 
 type UpdateCheckWorkerConfig struct {
-	IntervalSec   int
-	GithubRepo    string
-	GithubToken   string
+	IntervalSec    int
+	GithubRepo     string
+	GithubToken    string
 	CurrentVersion string
 }
 
 type githubRelease struct {
-	TagName     string `json:"tag_name"`
-	Name        string `json:"name"`
-	Body        string `json:"body"`
-	PublishedAt string `json:"published_at"`
-	HTMLURL     string `json:"html_url"`
+	ID          int64                `json:"id"`
+	TagName     string               `json:"tag_name"`
+	Name        string               `json:"name"`
+	Body        string               `json:"body"`
+	PublishedAt string               `json:"published_at"`
+	HTMLURL     string               `json:"html_url"`
+	Prerelease  bool                 `json:"prerelease"`
+	Assets      []githubReleaseAsset `json:"assets"`
+}
+
+type githubReleaseAsset struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	Size               int64  `json:"size"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Digest             string `json:"digest"`
 }
 
 type githubReleaseFetchResult struct {
@@ -86,9 +99,11 @@ func SyncUpdateCurrentVersion(currentVersion string) {
 	if err := model.UpdateCheckStateUpsert(state); err != nil {
 		log.Printf("update-check: 更新状态失败: %v", err)
 	}
+	ReconcileUpdateJob(current)
 }
 
 func runUpdateCheckOnce(cfg UpdateCheckWorkerConfig) {
+	CleanupDownloadedUpdates()
 	state, err := model.UpdateCheckStateGet()
 	if err != nil {
 		log.Printf("update-check: 读取状态失败: %v", err)
@@ -218,7 +233,7 @@ func isLatestNewer(current, latest string) bool {
 		if latestDate != currentDate {
 			return latestDate > currentDate
 		}
-		return strings.Compare(latestSha, currentSha) > 0
+		return latestSha != currentSha
 	}
 	if !currentOK && latestOK {
 		return true

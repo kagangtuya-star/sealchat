@@ -226,10 +226,12 @@ type EmailNotificationConfig struct {
 
 // UpdateCheckConfig 更新检测配置
 type UpdateCheckConfig struct {
-	Enabled     bool   `json:"-" yaml:"enabled"`
-	IntervalSec int    `json:"-" yaml:"intervalSec"`
-	GithubRepo  string `json:"-" yaml:"githubRepo"`
-	GithubToken string `json:"-" yaml:"githubToken"`
+	Enabled       bool   `json:"-" yaml:"enabled"`
+	IntervalSec   int    `json:"-" yaml:"intervalSec"`
+	GithubRepo    string `json:"-" yaml:"githubRepo"`
+	GithubToken   string `json:"-" yaml:"githubToken"`
+	SealupdRepo   string `json:"-" yaml:"sealupdRepo"`
+	DownloadProxy string `json:"-" yaml:"downloadProxy"`
 }
 
 // EmailAuthConfig 邮箱认证配置（SMTP 配置复用 emailNotification.smtp）
@@ -632,9 +634,11 @@ func ReadConfig() *AppConfig {
 			RateLimitPerIP: 10,
 		},
 		UpdateCheck: UpdateCheckConfig{
-			Enabled:     true,
-			IntervalSec: 6 * 60 * 60,
-			GithubRepo:  "kagangtuya-star/sealchat",
+			Enabled:       true,
+			IntervalSec:   6 * 60 * 60,
+			GithubRepo:    "kagangtuya-star/sealchat",
+			SealupdRepo:   "sealdice/sealupd",
+			DownloadProxy: "https://sealchat-update.aivu.top/",
 		},
 		Backup: BackupConfig{
 			Enabled:        true,
@@ -1519,6 +1523,12 @@ func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
 	}
 	if strings.TrimSpace(cfg.GithubRepo) == "" {
 		cfg.GithubRepo = "kagangtuya-star/sealchat"
+	}
+	if strings.TrimSpace(cfg.SealupdRepo) == "" {
+		cfg.SealupdRepo = "sealdice/sealupd"
+	}
+	if strings.TrimSpace(cfg.DownloadProxy) == "" {
+		cfg.DownloadProxy = "https://sealchat-update.aivu.top/"
 	}
 	if token := strings.TrimSpace(os.Getenv("SEALCHAT_GITHUB_TOKEN")); token != "" {
 		cfg.GithubToken = token

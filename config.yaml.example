@@ -194,3 +194,12 @@ emailAuth:
   codeTTLSeconds: 300           # 验证码有效期（秒）
   maxAttempts: 5                # 单个验证码最大尝试次数
   rateLimitPerIP: 5             # 每 IP 每小时发送上限
+
+# 版本检测与进程内更新。Docker 部署应关闭 enabled，改用镜像更新。
+updateCheck:
+  enabled: true
+  intervalSec: 21600
+  githubRepo: kagangtuya-star/sealchat
+  githubToken: "" # 建议留空并设置 SEALCHAT_GITHUB_TOKEN
+  sealupdRepo: sealdice/sealupd
+  downloadProxy: https://sealchat-update.aivu.top/ # 留空时仍使用默认代理；直连请配置完整 GitHub 代理策略

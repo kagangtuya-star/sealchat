@@ -42,6 +42,7 @@ const notifShow = ref(false)
 const userProfileShow = ref(false)
 const userProfileOpenAISettings = ref(false)
 const adminShow = ref(false)
+const adminInitialTab = ref<'basic' | 'update'>('basic')
 const inputStatsShow = ref(false)
 const inputStatsLoading = ref(false)
 const inputStatsComponent = shallowRef<Component | null>(null)
@@ -171,6 +172,14 @@ const toggleNotifPanel = () => {
   userProfileShow.value = false;
   adminShow.value = false;
   notifShow.value = !notifShow.value;
+};
+
+const openAdminUpdateSettings = () => {
+  notifShow.value = false;
+  userProfileShow.value = false;
+  inputStatsShow.value = false;
+  adminInitialTab.value = 'update';
+  adminShow.value = true;
 };
 
 const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
@@ -459,6 +468,7 @@ const handleSelect = async (key: string | number) => {
       notifShow.value = false;
       userProfileShow.value = false;
       inputStatsShow.value = false;
+      adminInitialTab.value = 'basic';
       adminShow.value = !adminShow.value;
       break;
 
@@ -1145,7 +1155,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     style="background-color: var(--n-color); margin-left: -1.5rem;"
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer"
   >
-    <AdminSettings @close="adminShow = false" />
+    <AdminSettings :initial-tab="adminInitialTab" @close="adminShow = false" />
   </div>
   <div
     v-if="inputStatsShow"
@@ -1344,7 +1354,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
       </div>
     </template>
   </n-modal>
-  <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
+  <Notif
+    v-show="notifShow"
+    :items="timelineItems"
+    :visible="notifShow"
+    @close="notifShow = false"
+    @open-update-settings="openAdminUpdateSettings"
+  />
   <AudioDrawer />
 </template>
 

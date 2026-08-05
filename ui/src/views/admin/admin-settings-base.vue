@@ -9,7 +9,6 @@ import { useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
 import { onMounted, ref, watch } from 'vue';
 import { api } from '@/stores/_config';
-import dayjs from 'dayjs';
 
 const model = ref<ServerConfig>({
   serveAt: ':3212',
@@ -35,12 +34,6 @@ const model = ref<ServerConfig>({
 const utils = useUtilsStore();
 const message = useMessage()
 const modified = ref(false);
-const updateStatus = ref<any>(null);
-const updateVersionInput = ref('');
-const updateLoading = ref(false);
-const updateVersionSaving = ref(false);
-const updateError = ref('');
-const updateBodyExpanded = ref(false);
 const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机；IPv6 可填 :: 或 ::1，保存时自动补全中括号。';
 const baseServeAtHostOptions = [
   { label: '仅本机 (127.0.0.1)', value: '127.0.0.1' },
@@ -212,7 +205,6 @@ onMounted(async () => {
   nextTick(() => {
     modified.value = false;
   })
-  await fetchUpdateStatus();
 })
 
 watch(model, (v) => {
@@ -283,134 +275,6 @@ defineExpose({
   save,
   isModified: () => modified.value,
 })
-
-const fetchUpdateStatus = async () => {
-  updateLoading.value = true;
-  updateError.value = '';
-  try {
-    const resp = await utils.adminUpdateStatus();
-    updateStatus.value = resp.data;
-    updateVersionInput.value = updateStatus.value?.currentVersion || '';
-  } catch (error) {
-    updateError.value = '获取更新状态失败';
-  } finally {
-    updateLoading.value = false;
-  }
-};
-
-const triggerUpdateCheck = async () => {
-  updateLoading.value = true;
-  updateError.value = '';
-  try {
-    const resp = await utils.adminUpdateCheck();
-    updateStatus.value = resp.data;
-    updateVersionInput.value = updateStatus.value?.currentVersion || '';
-  } catch (error) {
-    updateError.value = '检查更新失败';
-  } finally {
-    updateLoading.value = false;
-  }
-};
-
-const saveCurrentVersion = async () => {
-  const current = (updateVersionInput.value || '').trim();
-  if (!current) {
-    message.error('请输入当前版本');
-    return;
-  }
-  updateVersionSaving.value = true;
-  updateError.value = '';
-  try {
-    const resp = await utils.adminUpdateVersion(current);
-    updateStatus.value = resp.data;
-    updateVersionInput.value = updateStatus.value?.currentVersion || current;
-    message.success('已更新当前版本');
-  } catch (error) {
-    updateError.value = '保存当前版本失败';
-  } finally {
-    updateVersionSaving.value = false;
-  }
-};
-
-const escapeHtml = (text: string) => {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-};
-
-const formatInline = (text: string) => {
-  let result = escapeHtml(text);
-  result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
-  result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  result = result.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" />');
-  return result;
-};
-
-const renderMarkdown = (text: string) => {
-  const lines = (text || '').split(/\r?\n/);
-  let html = '';
-  let inList = false;
-  lines.forEach((raw) => {
-    const line = raw.trimEnd();
-    if (line.startsWith('- ') || line.startsWith('* ')) {
-      if (!inList) {
-        html += '<ul>';
-        inList = true;
-      }
-      html += `<li>${formatInline(line.slice(2).trim())}</li>`;
-      return;
-    }
-    if (inList) {
-      html += '</ul>';
-      inList = false;
-    }
-    if (line.startsWith('### ')) {
-      html += `<h3>${formatInline(line.slice(4).trim())}</h3>`;
-      return;
-    }
-    if (line.startsWith('## ')) {
-      html += `<h2>${formatInline(line.slice(3).trim())}</h2>`;
-      return;
-    }
-    if (line.startsWith('# ')) {
-      html += `<h1>${formatInline(line.slice(2).trim())}</h1>`;
-      return;
-    }
-    if (line === '') {
-      html += '<br />';
-      return;
-    }
-    html += `<p>${formatInline(line)}</p>`;
-  });
-  if (inList) {
-    html += '</ul>';
-  }
-  return html;
-};
-
-const updateBodyRaw = computed(() => (updateStatus.value?.latestBody || '').trim());
-const updateBodyHtml = computed(() => renderMarkdown(updateBodyRaw.value));
-const toggleUpdateBody = () => {
-  updateBodyExpanded.value = !updateBodyExpanded.value;
-};
-const updatePublishedAtText = computed(() => {
-  const ts = updateStatus.value?.latestPublishedAt;
-  if (!ts) return '未知';
-  return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
-});
-const updateCheckedAtText = computed(() => {
-  const ts = updateStatus.value?.lastCheckedAt;
-  if (!ts) return '尚未检查';
-  return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
-});
-
-watch(updateBodyRaw, (next, prev) => {
-  if (next && next !== prev) {
-    updateBodyExpanded.value = false;
-  }
-});
 
 const link = computed(() => {
   return <span class="text-sm font-bold">
@@ -662,60 +526,6 @@ const sendSmtpTestEmail = async () => {
         <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />
       </n-form-item>
 
-      <n-divider>版本检测</n-divider>
-      <n-form-item label="更新状态">
-        <div class="flex flex-col gap-2 w-full">
-          <div v-if="updateError" class="text-sm text-red-500">{{ updateError }}</div>
-          <div v-else class="text-sm text-gray-600 dark:text-gray-400">
-            上次检查：{{ updateCheckedAtText }}
-          </div>
-          <div class="text-sm text-gray-600 dark:text-gray-400">
-            当前版本：{{ updateStatus?.currentVersion || '未知' }}
-          </div>
-          <div class="flex gap-2 items-center">
-            <n-input
-              v-model:value="updateVersionInput"
-              size="small"
-              placeholder="例如 20260102-0362e01"
-              style="max-width: 220px;"
-            />
-            <n-button size="small" @click="saveCurrentVersion" :loading="updateVersionSaving">保存版本</n-button>
-            <span class="text-xs text-gray-500">用于已部署实例手动设置当前版本（重启后会被构建版本覆盖）</span>
-          </div>
-          <div v-if="updateStatus?.latestTag" class="text-sm text-gray-600 dark:text-gray-400">
-            最新版本：{{ updateStatus.latestTag }}
-          </div>
-          <div v-if="updateStatus?.latestName" class="text-sm text-gray-600 dark:text-gray-400">
-            版本名称：{{ updateStatus.latestName }}
-          </div>
-          <div v-if="updateStatus?.latestTag" class="text-sm text-gray-600 dark:text-gray-400">
-            发布时间：{{ updatePublishedAtText }}
-          </div>
-          <div v-if="updateStatus?.latestHtmlUrl" class="text-sm">
-            <a :href="updateStatus.latestHtmlUrl" target="_blank" rel="noreferrer">打开发布页</a>
-          </div>
-          <div class="flex gap-2 items-center">
-            <span v-if="updateStatus?.hasUpdate" class="text-xs text-orange-500">有新版本</span>
-            <span v-else class="text-xs text-emerald-500">已是最新</span>
-            <n-button size="small" @click="triggerUpdateCheck" :loading="updateLoading">检查更新</n-button>
-          </div>
-          <div v-if="updateBodyRaw" class="flex flex-col gap-2">
-            <button
-              type="button"
-              class="text-xs text-blue-600 dark:text-blue-400 hover:underline self-start"
-              @click="toggleUpdateBody"
-            >
-              {{ updateBodyExpanded ? '收起更新内容' : '展开更新内容' }}
-            </button>
-            <div
-              class="text-sm update-check-body"
-              :class="{ 'is-collapsed': !updateBodyExpanded }"
-              v-html="updateBodyHtml"
-            ></div>
-          </div>
-        </div>
-      </n-form-item>
-
     </n-form>
   </div>
 </template>
@@ -742,28 +552,6 @@ const sendSmtpTestEmail = async () => {
   height: 100%;
   object-fit: contain;
   display: block;
-}
-
-.update-check-body.is-collapsed {
-  max-height: 8rem;
-  overflow: hidden;
-}
-
-.update-check-body :deep(img) {
-  max-width: 100%;
-  border-radius: 6px;
-  margin-top: 6px;
-}
-
-.update-check-body :deep(h1),
-.update-check-body :deep(h2),
-.update-check-body :deep(h3) {
-  margin: 0.5rem 0 0.25rem;
-}
-
-.update-check-body :deep(ul) {
-  padding-left: 1.1rem;
-  margin: 0.35rem 0;
 }
 
 .settings-collapse {

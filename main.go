@@ -186,13 +186,20 @@ func main() {
 	}
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			cancel()
+			api.StopRuntimeCertificateManager()
+			cleanUp()
+			releaseStartupLock()
+			os.Exit(0)
+		})
+	}
+	service.SetUpdateShutdownFunc(shutdown)
 	go func() {
 		_ = <-c
-		cancel()
-		api.StopRuntimeCertificateManager()
-		cleanUp()
-		releaseStartupLock()
-		os.Exit(0)
+		shutdown()
 	}()
 
 	collector := metrics.Init(metrics.Config{
@@ -210,8 +217,6 @@ func main() {
 	}
 
 	pm.Init()
-
-	service.SyncUpdateCurrentVersion(utils.BuildVersion)
 
 	storageManager, err := service.InitStorageManager(config.Storage)
 	if err != nil {
@@ -328,6 +333,7 @@ func main() {
 	service.SetTheaterChatSender(api.LocalTheaterChatSender{})
 	service.StartTheaterOutboxWorker(ctx)
 
+	service.SyncUpdateCurrentVersion(utils.BuildVersion)
 	if err := api.Init(config, embedDirStatic); err != nil {
 		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)
 	}

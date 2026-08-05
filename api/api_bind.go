@@ -834,6 +834,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/user-batch-create", AdminUserBatchCreate)
 	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
 	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
+	v1AuthAdmin.Post("/admin/update-apply", AdminUpdateApply)
 	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
 	v1AuthAdmin.Get("/admin/ai/config", AdminAIConfigGet)
 	v1AuthAdmin.Put("/admin/ai/config", AdminAIConfigUpdate)

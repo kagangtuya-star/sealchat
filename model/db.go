@@ -191,7 +191,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&CaptchaCapChallengeModel{}, &CaptchaCapTokenModel{})
-	db.AutoMigrate(&UpdateCheckState{})
+	db.AutoMigrate(&UpdateCheckState{}, &UpdateJobState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})
 	db.AutoMigrate(&UserAIProviderProfileModel{})
