@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
+import MessageForwardDialog from './components/MessageForwardDialog.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
@@ -217,6 +218,11 @@ const stickyNoteStore = useStickyNoteStore();
 const dice3dSettingsVisible = ref(false);
 const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
+const forwardDialogVisible = ref(false);
+const forwardDialogSourceChannelId = ref('');
+const forwardDialogSourceWorldId = ref('');
+const forwardDialogMessageIds = ref<string[]>([]);
+const forwardDialogMessages = ref<any[]>([]);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
 const channelCharacterSnapshotStore = useChannelCharacterSnapshotStore();
@@ -15761,6 +15767,55 @@ const getMultiSelectedMessageIdsInDisplayOrder = () => {
     .filter((id): id is string => Boolean(id) && selected.has(id));
 };
 
+const openMessageForwardDialog = (payload: {
+  sourceChannelId?: string;
+  sourceWorldId?: string;
+  messageIds?: string[];
+  messages?: any[];
+}) => {
+  const channelId = String(payload.sourceChannelId || chat.curChannel?.id || '').trim();
+  const ids = Array.from(new Set((payload.messageIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!channelId || ids.length === 0) {
+    message.warning('请先选择消息');
+    return;
+  }
+  forwardDialogSourceChannelId.value = channelId;
+  forwardDialogSourceWorldId.value = String(payload.sourceWorldId || chat.currentWorldId || '').trim();
+  forwardDialogMessageIds.value = ids;
+  forwardDialogMessages.value = Array.isArray(payload.messages) ? payload.messages : [];
+  forwardDialogVisible.value = true;
+};
+
+const handleMessageForwardOpen = (payload?: any) => {
+  openMessageForwardDialog(payload || {});
+};
+
+chatEvent.on('message-forward-open' as any, handleMessageForwardOpen as any);
+onBeforeUnmount(() => {
+  chatEvent.off('message-forward-open' as any, handleMessageForwardOpen as any);
+});
+
+const handleMultiSelectForward = () => {
+  const messageIds = getMultiSelectedMessageIdsInDisplayOrder();
+  if (!messageIds.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  const selected = getMultiSelectedMessages();
+  openMessageForwardDialog({
+    sourceChannelId: chat.curChannel?.id || '',
+    sourceWorldId: chat.currentWorldId,
+    messageIds,
+    messages: selected,
+  });
+};
+
+const handleMessageForwardSuccess = () => {
+  if (chat.multiSelect?.active) {
+    chat.exitMultiSelectMode();
+  }
+};
+
 const handleMultiSelectCopy = async () => {
   const messages = getMultiSelectedMessages();
   if (!messages.length) {
@@ -18311,6 +18366,7 @@ onBeforeUnmount(() => {
   />
   <MultiSelectFloatingBar
     @copy="handleMultiSelectCopy"
+    @forward="handleMultiSelectForward"
     @archive="handleMultiSelectArchive"
     @delete="handleMultiSelectDelete"
     @copy-image="handleMultiSelectCopyImage"
@@ -18318,6 +18374,14 @@ onBeforeUnmount(() => {
     @relocate="handleMultiSelectRelocate"
     @select-all="handleMultiSelectAll"
     @cancel-relocate="handleCancelMultiSelectRelocate"
+  />
+  <MessageForwardDialog
+    v-model:visible="forwardDialogVisible"
+    :source-channel-id="forwardDialogSourceChannelId"
+    :source-world-id="forwardDialogSourceWorldId"
+    :message-ids="forwardDialogMessageIds"
+    :messages="forwardDialogMessages"
+    @success="handleMessageForwardSuccess"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
   <CharacterCardPanel ref="characterCardPanelRef" v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />

@@ -881,6 +881,18 @@ interface APIMessageGet {
   message_id: string
 }
 
+interface APIMessageForwardBatch {
+  source_channel_id: string;
+  message_ids: string[];
+  targets: Array<{
+    channel_id: string;
+    identity_id: string;
+    identity_variant_id: string;
+  }>;
+  client_id: string;
+  whisper_confirmed: boolean;
+}
+
 // 扩展部分
 interface APIChannelCreate {
   api: 'channel.create'
@@ -910,7 +922,7 @@ export interface APIChannelListResp {
   }
 }
 
-export type APIMessage = APIMessageCreate | APIMessageGet | APIChannelList;
+export type APIMessage = APIMessageCreate | APIMessageGet | APIChannelList | APIMessageForwardBatch;
 
 interface ModelDataBase {
   id: string;
