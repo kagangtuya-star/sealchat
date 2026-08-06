@@ -148,6 +148,15 @@ const blur = () => {
   }
 };
 
+const insertLineBreak = () => {
+  if (modeRef.value === 'plain') {
+    plainRef.value?.insertLineBreak?.();
+    return;
+  }
+  const editor = richRef.value?.getEditor?.();
+  editor?.chain().focus().setHardBreak().run();
+};
+
 const getTextarea = () => {
   if (modeRef.value === 'plain') {
     return plainRef.value?.getTextarea?.();
@@ -202,6 +211,7 @@ const moveCursorToEnd = () => {
 defineExpose({
   focus,
   blur,
+  insertLineBreak,
   getTextarea,
   getEditor,
   getJson,

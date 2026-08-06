@@ -11715,6 +11715,57 @@ const ensureInputFocus = () => {
   });
 };
 
+const MOBILE_SEND_LONG_PRESS_MS = 500;
+let mobileSendLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+let mobileSendLongPressTriggered = false;
+
+const clearMobileSendLongPressTimer = () => {
+  if (mobileSendLongPressTimer !== null) {
+    clearTimeout(mobileSendLongPressTimer);
+    mobileSendLongPressTimer = null;
+  }
+};
+
+const insertMobileSendLineBreak = () => {
+  if (!isMobileInteractionMode.value) {
+    return;
+  }
+  if (textInputRef.value?.insertLineBreak) {
+    textInputRef.value.insertLineBreak();
+    ensureInputFocus();
+    return;
+  }
+  insertComposerText('\n');
+};
+
+const handleSendPointerDown = (event: PointerEvent) => {
+  if (!isMobileInteractionMode.value) {
+    return;
+  }
+  event.preventDefault();
+  clearMobileSendLongPressTimer();
+  mobileSendLongPressTriggered = false;
+  mobileSendLongPressTimer = setTimeout(() => {
+    mobileSendLongPressTimer = null;
+    mobileSendLongPressTriggered = true;
+    insertMobileSendLineBreak();
+  }, MOBILE_SEND_LONG_PRESS_MS);
+};
+
+const handleSendPointerUp = () => {
+  if (isMobileInteractionMode.value) {
+    clearMobileSendLongPressTimer();
+  }
+};
+
+const handleSendClick = () => {
+  if (isMobileInteractionMode.value && mobileSendLongPressTriggered) {
+    mobileSendLongPressTriggered = false;
+    return;
+  }
+  send();
+};
+
 const handleSendMouseDown = (event: MouseEvent) => {
   if (isMobileInteractionMode.value) {
     event.preventDefault();
@@ -16416,6 +16467,7 @@ const closeAIPolishDock = () => {
 
 onBeforeUnmount(() => {
   handleInputResizeEnd();
+  clearMobileSendLongPressTimer();
   chatEvent.off('channel-identity-open', handleIdentityMenuOpen);
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
@@ -18203,8 +18255,11 @@ onBeforeUnmount(() => {
                   >
                     <n-button
                       size="medium"
+                      @pointerdown="handleSendPointerDown"
+                      @pointerup="handleSendPointerUp"
+                      @pointercancel="handleSendPointerUp"
                       @mousedown="handleSendMouseDown"
-                      @click="send"
+                      @click="handleSendClick"
                       :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="send-action-btn send-action-btn--compact"
                     >
@@ -18238,8 +18293,11 @@ onBeforeUnmount(() => {
                   >
                     <n-button
                       size="medium"
+                      @pointerdown="handleSendPointerDown"
+                      @pointerup="handleSendPointerUp"
+                      @pointercancel="handleSendPointerUp"
                       @mousedown="handleSendMouseDown"
-                      @click="send"
+                      @click="handleSendClick"
                       :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="send-action-btn send-action-btn--compact"
                     >
@@ -18342,7 +18400,13 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
                 <template v-else>
-                  <n-button size="medium" @mousedown="handleSendMouseDown" @click="send"
+                  <n-button
+                    size="medium"
+                    @pointerdown="handleSendPointerDown"
+                    @pointerup="handleSendPointerUp"
+                    @pointercancel="handleSendPointerUp"
+                    @mousedown="handleSendMouseDown"
+                    @click="handleSendClick"
                     :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                     class="send-action-btn">
                     <template #icon>
