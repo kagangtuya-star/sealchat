@@ -11715,6 +11715,12 @@ const ensureInputFocus = () => {
   });
 };
 
+const handleSendMouseDown = (event: MouseEvent) => {
+  if (isMobileInteractionMode.value) {
+    event.preventDefault();
+  }
+};
+
 const getInputSelection = (): SelectionRange => {
   const selection = textInputRef.value?.getSelectionRange?.();
   if (selection) {
@@ -13516,6 +13522,9 @@ const performSend = async (options?: {
   syncSessionDraftSnapshot();
   clearInputModeCache();
   suspendInlineSync = false;
+  if (isMobileInteractionMode.value) {
+    ensureInputFocus();
+  }
   chat.curReplyTo = null;
 
   const clientId = nanoid();
@@ -18194,6 +18203,7 @@ onBeforeUnmount(() => {
                   >
                     <n-button
                       size="medium"
+                      @mousedown="handleSendMouseDown"
                       @click="send"
                       :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="send-action-btn send-action-btn--compact"
@@ -18228,6 +18238,7 @@ onBeforeUnmount(() => {
                   >
                     <n-button
                       size="medium"
+                      @mousedown="handleSendMouseDown"
                       @click="send"
                       :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="send-action-btn send-action-btn--compact"
@@ -18331,7 +18342,7 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
                 <template v-else>
-                  <n-button size="medium" @click="send"
+                  <n-button size="medium" @mousedown="handleSendMouseDown" @click="send"
                     :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
                     class="send-action-btn">
                     <template #icon>
