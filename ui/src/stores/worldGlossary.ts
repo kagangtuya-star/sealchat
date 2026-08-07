@@ -189,6 +189,9 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const searchQuery = ref('')
   const effectiveConflictCandidateCache = new Map<string, EffectiveWorldKeywordItem[]>()
   const effectiveConflictCandidatePending = new Map<string, Promise<EffectiveWorldKeywordItem[]>>()
+  const keywordRefreshPending = new Map<string, Promise<void>>()
+  const effectiveKeywordRefreshPending = new Map<string, Promise<void>>()
+  const managerExternalRefreshPending = new Map<string, Promise<void>>()
 
   const currentWorldId = computed(() => useChatStore().currentWorldId)
 
@@ -395,19 +398,31 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000) {
       return
     }
-    loadingMap.value = { ...loadingMap.value, [worldId]: true }
+    const pending = keywordRefreshPending.get(worldId)
+    if (pending) return pending
+    const request = (async () => {
+      loadingMap.value = { ...loadingMap.value, [worldId]: true }
+      try {
+        const data = chat.isObserver
+          ? await fetchWorldKeywordsPublic(worldId, { page: 1, pageSize: 5000 })
+          : await fetchWorldKeywords(worldId, {
+            page: 1,
+            pageSize: 5000,
+            includeDisabled: true,
+          })
+        updateKeywordCache(worldId, data.items, data)
+        versionMap.value = { ...versionMap.value, [worldId]: Date.now() }
+      } finally {
+        loadingMap.value = { ...loadingMap.value, [worldId]: false }
+      }
+    })()
+    keywordRefreshPending.set(worldId, request)
     try {
-      const data = chat.isObserver
-        ? await fetchWorldKeywordsPublic(worldId, { page: 1, pageSize: 5000 })
-        : await fetchWorldKeywords(worldId, {
-          page: 1,
-          pageSize: 5000,
-          includeDisabled: true,
-        })
-      updateKeywordCache(worldId, data.items, data)
-      versionMap.value = { ...versionMap.value, [worldId]: Date.now() }
+      await request
     } finally {
-      loadingMap.value = { ...loadingMap.value, [worldId]: false }
+      if (keywordRefreshPending.get(worldId) === request) {
+        keywordRefreshPending.delete(worldId)
+      }
     }
   }
 
@@ -420,25 +435,38 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000) {
       return
     }
-    effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: true }
+    const refreshKey = `${worldId}::${opts?.query || ''}`
+    const pending = effectiveKeywordRefreshPending.get(refreshKey)
+    if (pending) return pending
+    const request = (async () => {
+      effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: true }
+      try {
+        const data = chat.isObserver
+          ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query })
+          : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query })
+        updateEffectiveKeywordCache(worldId, data.items, data)
+        Array.from(effectiveConflictCandidateCache.keys()).forEach((key) => {
+          if (key.startsWith(`${worldId}::`)) {
+            effectiveConflictCandidateCache.delete(key)
+          }
+        })
+        Array.from(effectiveConflictCandidatePending.keys()).forEach((key) => {
+          if (key.startsWith(`${worldId}::`)) {
+            effectiveConflictCandidatePending.delete(key)
+          }
+        })
+        effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: Date.now() }
+      } finally {
+        effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: false }
+      }
+    })()
+    effectiveKeywordRefreshPending.set(refreshKey, request)
     try {
-      const data = chat.isObserver
-        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query })
-        : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query })
-      updateEffectiveKeywordCache(worldId, data.items, data)
-      Array.from(effectiveConflictCandidateCache.keys()).forEach((key) => {
-        if (key.startsWith(`${worldId}::`)) {
-          effectiveConflictCandidateCache.delete(key)
-        }
-      })
-      Array.from(effectiveConflictCandidatePending.keys()).forEach((key) => {
-        if (key.startsWith(`${worldId}::`)) {
-          effectiveConflictCandidatePending.delete(key)
-        }
-      })
-      effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: Date.now() }
+      await request
     } finally {
-      effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: false }
+      if (effectiveKeywordRefreshPending.get(refreshKey) === request) {
+        effectiveKeywordRefreshPending.delete(refreshKey)
+      }
     }
   }
 
@@ -451,25 +479,38 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000 && !opts?.query) {
       return
     }
-    managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: true }
-    try {
-      const data = chat.isObserver
-        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query, includeAllMatches: true })
-        : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query, includeAllMatches: true })
-      const normalizedList = data.items
-        .map(normalizeEffectiveKeywordItem)
-        .filter((item) => item.sourceType === 'external_library')
-      normalizedList.sort(compareEffectiveKeywordPriority)
-      managerExternalPages.value = {
-        ...managerExternalPages.value,
-        [worldId]: {
-          items: normalizedList,
-          total: normalizedList.length,
-          fetchedAt: Date.now(),
-        },
+    const refreshKey = `${worldId}::${opts?.query || ''}`
+    const pending = managerExternalRefreshPending.get(refreshKey)
+    if (pending) return pending
+    const request = (async () => {
+      managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: true }
+      try {
+        const data = chat.isObserver
+          ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query, includeAllMatches: true })
+          : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query, includeAllMatches: true })
+        const normalizedList = data.items
+          .map(normalizeEffectiveKeywordItem)
+          .filter((item) => item.sourceType === 'external_library')
+        normalizedList.sort(compareEffectiveKeywordPriority)
+        managerExternalPages.value = {
+          ...managerExternalPages.value,
+          [worldId]: {
+            items: normalizedList,
+            total: normalizedList.length,
+            fetchedAt: Date.now(),
+          },
+        }
+      } finally {
+        managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: false }
       }
+    })()
+    managerExternalRefreshPending.set(refreshKey, request)
+    try {
+      await request
     } finally {
-      managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: false }
+      if (managerExternalRefreshPending.get(refreshKey) === request) {
+        managerExternalRefreshPending.delete(refreshKey)
+      }
     }
   }
 
@@ -523,7 +564,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     const list = [...(pages.value[worldId]?.items || [])]
     list.unshift(normalizeKeywordItem(item))
     updateKeywordCache(worldId, list)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    void ensureEffectiveKeywords(worldId, { force: true }).catch(() => undefined)
     return item
   }
 
@@ -532,7 +573,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     invalidateCategories(worldId)
     const list = (pages.value[worldId]?.items || []).map((existing) => (existing.id === keywordId ? normalizeKeywordItem(item) : existing))
     updateKeywordCache(worldId, list)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    void ensureEffectiveKeywords(worldId, { force: true }).catch(() => undefined)
     return item
   }
 
@@ -703,7 +744,9 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
     effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: revision }
     void ensureEffectiveKeywords(worldId, { force: true })
-    void ensureManagerExternalReadonlyKeywords(worldId, { force: true })
+    if (event.type === 'world-external-glossaries-updated') {
+      void ensureManagerExternalReadonlyKeywords(worldId, { force: true })
+    }
   }
 
   function ensureGateway() {

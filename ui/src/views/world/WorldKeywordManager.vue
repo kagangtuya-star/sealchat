@@ -536,7 +536,7 @@ async function submitEditor() {
       lastCreatePreferences.display = formModel.display
       message.success('已创建术语')
     }
-    await loadEditableCategories(worldId, true)
+    void loadEditableCategories(worldId, true)
     glossary.closeEditor()
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '保存失败'))
