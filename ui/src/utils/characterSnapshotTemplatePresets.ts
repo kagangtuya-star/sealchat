@@ -28,8 +28,8 @@ export const CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS: Record<CharacterSnapsh
 };
 
 export const CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS: Record<CharacterSnapshotTemplatePreset, string> = {
-  shinobigami: 'HP{生命值} 损{损伤分野}',
   coc: 'HP{生命值} SAN{理智} 魔法{魔法值} 幸运{幸运}',
+  shinobigami: "HP{生命值} 污损{污秽} {损伤分野}",
 };
 
 export const getCharacterSnapshotTemplatePreset = (sheetType: string): CharacterSnapshotTemplatePreset | null => {
