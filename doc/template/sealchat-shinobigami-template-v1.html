@@ -1956,12 +1956,12 @@
 
     function getDamageText(meta) {
       var damaged = getDamageCategories(meta);
-      return damaged.length ? damaged.join('、') : '无';
+      return damaged.length ? damaged.join('、') : '';
     }
 
     function getTaintText(meta) {
       var tainted = getTaintCategories(meta);
-      return tainted.length ? tainted.join('、') : '无';
+      return tainted.length ? tainted.join('、') : '';
     }
 
     function getLocalizedDamageText(meta) {
