@@ -161,6 +161,16 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 			return nil, err
 		}
 		return &TheaterActionResult{Kind: "chat", Chat: chat}, nil
+	case theaterActionChatRandomTable:
+		inputChannelID := strings.TrimSpace(command.InputChannelID)
+		if inputChannelID == "" {
+			inputChannelID = strings.TrimSpace(command.ChannelID)
+		}
+		chat, err := sendTheaterRandomTable(ctx, actorID, command.WorldID, inputChannelID, mutationID, selected.Payload)
+		if err != nil {
+			return nil, err
+		}
+		return &TheaterActionResult{Kind: "chat", Chat: chat}, nil
 	default:
 		return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "未知 StageAction", 400, map[string]any{"type": selected.Type})
 	}

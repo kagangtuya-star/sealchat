@@ -379,18 +379,18 @@ func classifyTheaterAppearanceError(err error) string {
 
 func ValidateTheaterPresentationAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, presentation protocol.TheaterPresentation) error {
 	refs := filterWorldTheaterTemplateMediaRefs(tx, channelID, theaterPresentationMediaRefs(presentation))
-	return validateTheaterAppearanceMediaRefs(tx, refs)
+	return validateTheaterAppearanceMediaRefs(tx, refs, channelID, ownerUserID, identityID, "")
 }
 
 func ValidateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, patch protocol.TheaterPresentationPatch) error {
-	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, patch)
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, "", patch)
 }
 
 func ValidateTheaterPresentationPatchAppearanceAssetsForVariant(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, patch protocol.TheaterPresentationPatch) error {
-	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, patch)
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, variantID, patch)
 }
 
-func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, patch protocol.TheaterPresentationPatch) error {
+func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, patch protocol.TheaterPresentationPatch) error {
 	var refs []protocol.TheaterMediaRef
 	if patch.Portrait.Set && patch.Portrait.Value != nil {
 		refs = append(refs, patch.Portrait.Value.Media)
@@ -404,7 +404,7 @@ func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ow
 		refs = append(refs, patch.Dialogue.Value.Frame.Media)
 	}
 	refs = filterWorldTheaterTemplateMediaRefs(tx, channelID, refs)
-	return validateTheaterAppearanceMediaRefs(tx, refs)
+	return validateTheaterAppearanceMediaRefs(tx, refs, channelID, ownerUserID, identityID, variantID)
 }
 
 func theaterPresentationMediaRefs(presentation protocol.TheaterPresentation) []protocol.TheaterMediaRef {
@@ -468,7 +468,7 @@ func theaterMediaRefMatchesAsset(ref protocol.TheaterMediaRef, asset model.Theat
 		((ref.DurationMS == nil && asset.DurationMS == 0) || ref.DurationMS != nil && *ref.DurationMS == asset.DurationMS)
 }
 
-func validateTheaterAppearanceMediaRefs(tx *gorm.DB, refs []protocol.TheaterMediaRef) error {
+func validateTheaterAppearanceMediaRefs(tx *gorm.DB, refs []protocol.TheaterMediaRef, channelID, ownerUserID, identityID, variantID string) error {
 	if tx == nil {
 		tx = model.GetDB()
 	}
@@ -483,6 +483,10 @@ func validateTheaterAppearanceMediaRefs(tx *gorm.DB, refs []protocol.TheaterMedi
 		// Appearance assets intentionally share backing attachments across users and channels.
 		if asset.Status != "ready" {
 			return newTheaterError(TheaterAppearanceAssetErrorNotReady, "演出资源尚未 ready", 409, nil)
+		}
+		if asset.ChannelID != strings.TrimSpace(channelID) || asset.OwnerUserID != strings.TrimSpace(ownerUserID) ||
+			asset.IdentityID != strings.TrimSpace(identityID) || asset.VariantID != strings.TrimSpace(variantID) {
+			return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "演出资源作用域不匹配", 400, nil)
 		}
 		if !theaterMediaRefMatchesAsset(ref, asset) {
 			return newTheaterError(TheaterAppearanceAssetErrorInvalid, "演出资源元数据与服务端记录不一致", 400, nil)

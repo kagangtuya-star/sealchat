@@ -8,6 +8,7 @@ import {
   STAGE_ACTION_MAX_DELAY_MS,
   isSafeStageImageUrl,
 } from '../shared/stage-types'
+import { normalizeStageRandomTablePayload } from '../shared/stage-actions'
 
 export const THEATER_BRIDGE_PROTOCOL = 'sealchat.theater' as const
 export const THEATER_BRIDGE_VERSION = '1.0' as const
@@ -259,6 +260,27 @@ const chatSendActionSchema = z.strictObject({
   }),
 })
 
+const chatRandomTablePayloadSchema = z.strictObject({
+  name: z.string().trim().min(1).max(128),
+  formula: z.string().trim().regex(/^([1-9][0-9]*)d([1-9][0-9]*)(?:[+-][0-9]+)?$/i),
+  entries: z.array(z.strictObject({
+    min: z.number().int(),
+    max: z.number().int(),
+    text: z.string().trim().min(1).max(10_000),
+  })).min(1).max(1_000),
+}).superRefine((payload, context) => {
+  if (!normalizeStageRandomTablePayload(payload)) {
+    context.addIssue({ code: 'custom', message: 'invalid random table payload' })
+  }
+})
+
+const chatRandomTableActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('chat.random-table'),
+  schedule: stageActionScheduleSchema,
+  payload: chatRandomTablePayloadSchema,
+})
+
 const chatInsertActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('chat.insert'),
@@ -291,6 +313,7 @@ const objectToggleActionSchema = z.strictObject({
 
 const stageAtomicActionSchema = z.discriminatedUnion('type', [
   chatSendActionSchema,
+  chatRandomTableActionSchema,
   chatInsertActionSchema,
   sceneApplyActionSchema,
   effectPlayActionSchema,
@@ -299,6 +322,7 @@ const stageAtomicActionSchema = z.discriminatedUnion('type', [
 
 const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
   chatSendActionSchema.omit({ id: true, schedule: true }),
+  chatRandomTableActionSchema.omit({ id: true, schedule: true }),
   chatInsertActionSchema.omit({ id: true, schedule: true }),
   sceneApplyActionSchema.omit({ id: true, schedule: true }),
   effectPlayActionSchema.omit({ id: true, schedule: true }),
@@ -564,6 +588,7 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
   objectId: nonEmptyIdSchema,
   actionId: nonEmptyIdSchema,
   stepId: nonEmptyIdSchema.optional(),
+  direct: z.literal(true).optional(),
   action: stageActionSchema,
   execution: z.strictObject({
     id: nonEmptyIdSchema,

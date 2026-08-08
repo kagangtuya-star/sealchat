@@ -135,7 +135,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const activeCards = ref<Record<string, CharacterCardData>>({});
   // Badge data broadcasted by identities in channel
   const badgeByIdentity = ref<Record<string, CharacterCardBadgeEntry>>({});
-  // Local identity bindings (cached for UI convenience)
+  // Local identity bindings. Shared identities use one binding key across copies.
   const identityBindings = ref<Record<string, string>>({});
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
@@ -317,6 +317,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     } catch (e) {
       console.warn('Failed to persist character card bindings to localStorage', e);
     }
+  };
+
+  const sharedIdentityBindingKey = (sharedIdentityId?: string) => {
+    const normalized = String(sharedIdentityId || '').trim();
+    return normalized ? `shared:${normalized}` : '';
+  };
+
+  const getIdentityBindingKey = (channelId: string, identityId: string, sharedIdentityId?: string) => {
+    const sharedKey = sharedIdentityBindingKey(sharedIdentityId);
+    if (sharedKey) return sharedKey;
+    const identity = (chatStore.channelIdentities[channelId] || []).find(item => item.id === identityId);
+    return sharedIdentityBindingKey(identity?.sharedIdentityId) || identityId;
   };
 
   const getBadgeCacheStorageKey = () => {
@@ -1273,22 +1285,26 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     );
     if (!channelId || !preset) return;
     try {
-      // Clear old effective template first so switching card systems cannot retain stale stat definitions.
-      await snapshotStore.updatePreference(channelId, {
-        badgeTemplateMode: 'off',
-        badgeTemplate: '',
-        theaterOverlayTemplateMode: 'off',
-        theaterOverlayTemplateJson: '',
-      });
+      const badgeTemplate = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset];
+      const theaterOverlayTemplateJson = JSON.stringify(
+        CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
+        null,
+        2,
+      );
+      const current = snapshotStore.preferenceByChannel[channelId];
+      if (
+        current?.badgeTemplateMode === 'custom'
+        && current.badgeTemplate === badgeTemplate
+        && current.theaterOverlayTemplateMode === 'custom'
+        && current.theaterOverlayTemplateJson === theaterOverlayTemplateJson
+      ) {
+        return;
+      }
       await snapshotStore.updatePreference(channelId, {
         badgeTemplateMode: 'custom',
-        badgeTemplate: CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset],
+        badgeTemplate,
         theaterOverlayTemplateMode: 'custom',
-        theaterOverlayTemplateJson: JSON.stringify(
-          CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
-          null,
-          2,
-        ),
+        theaterOverlayTemplateJson,
       });
       await snapshotStore.syncLocalSnapshot(channelId, true);
     } catch (error) {
@@ -1317,7 +1333,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const getCardsByChannel = (_channelId: string) => cardList.value;
 
   // Backwards compatibility: getBoundCardId
-  const getBoundCardId = (identityId: string) => identityBindings.value[identityId];
+  const getBoundCardId = (identityId: string, sharedIdentityId?: string) => {
+    loadIdentityBindings();
+    const sharedKey = sharedIdentityBindingKey(sharedIdentityId);
+    return (sharedKey && identityBindings.value[sharedKey]) || identityBindings.value[identityId];
+  };
 
   const getIdentityDisplayName = (channelId: string, identityId: string) => {
     if (!channelId || !identityId) {
@@ -1376,7 +1396,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     loadIdentityBindings();
     let boundCardName = '';
-    const boundCardId = identityBindings.value[identityId];
+    const boundCardId = identityBindings.value[getIdentityBindingKey(channelId, identityId)];
     if (boundCardId) {
       boundCardName = String(getCardById(boundCardId)?.name || '').trim();
       if (!boundCardName) {
@@ -1411,7 +1431,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       };
     }
     loadIdentityBindings();
-    const boundCardId = identityBindings.value[identityId];
+    const boundCardId = identityBindings.value[getIdentityBindingKey(channelId, identityId)];
     const preserveWhenUnbound = options.preserveWhenUnbound !== false;
     const reloadAfterSwitch = options.reloadAfterSwitch !== false;
     const nicknameSyncReason = boundCardId ? 'identity-switch-bound' : 'identity-switch-unbound';
@@ -1466,10 +1486,14 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   // Backwards compatibility: bindIdentity persists mapping locally then syncs SealDice
-  const bindIdentity = async (channelId: string, identityId: string, cardId: string) => {
+  const bindIdentity = async (channelId: string, identityId: string, cardId: string, sharedIdentityId?: string) => {
     if (!channelId || !identityId || !cardId) return null;
     loadIdentityBindings();
-    identityBindings.value[identityId] = cardId;
+    const bindingKey = getIdentityBindingKey(channelId, identityId, sharedIdentityId);
+    identityBindings.value[bindingKey] = cardId;
+    if (bindingKey !== identityId) {
+      delete identityBindings.value[identityId];
+    }
     persistIdentityBindings();
     if (chatStore.getActiveIdentityId(channelId) === identityId) {
       await syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: false });
@@ -1478,10 +1502,14 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   // Backwards compatibility: unbindIdentity persists mapping locally then syncs SealDice
-  const unbindIdentity = async (channelId: string, identityId: string) => {
+  const unbindIdentity = async (channelId: string, identityId: string, sharedIdentityId?: string) => {
     if (!channelId || !identityId) return null;
     loadIdentityBindings();
-    delete identityBindings.value[identityId];
+    const bindingKey = getIdentityBindingKey(channelId, identityId, sharedIdentityId);
+    delete identityBindings.value[bindingKey];
+    if (bindingKey !== identityId) {
+      delete identityBindings.value[identityId];
+    }
     persistIdentityBindings();
     if (chatStore.getActiveIdentityId(channelId) === identityId) {
       await syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: false });
@@ -1559,6 +1587,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   );
 
   snapshotStore.setLocalSnapshotProvider(async (channelId) => {
+    if (!displayStore.settings.characterCardSnapshotUploadEnabled) return null;
     try {
       await avatarStore.ensureBindingsLoaded(channelId);
     } catch (error) {

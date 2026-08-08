@@ -201,6 +201,11 @@ func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {
 		switch action["type"] {
 		case "chat.send", "chat.insert":
 			action["payload"] = map[string]any{"content": "redacted"}
+		case theaterActionChatRandomTable:
+			action["payload"] = map[string]any{
+				"name": "redacted", "formula": "1D1",
+				"entries": []map[string]any{{"min": 1, "max": 1, "text": "redacted"}},
+			}
 		case TheaterMutationSceneApply:
 			action["payload"] = map[string]any{"sceneId": "redacted"}
 		case "effect.play":

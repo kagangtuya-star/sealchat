@@ -151,7 +151,10 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&BotOneBotConfigModel{})
 	db.AutoMigrate(&OneBotIDMappingModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
-	db.AutoMigrate(&ChannelIdentityModel{})
+	db.AutoMigrate(&SharedChannelIdentityModel{}, &SharedChannelIdentityWorldPresentationModel{}, &SharedChannelIdentitySyncRetryModel{}, &ChannelIdentityModel{})
+	if err := MigrateSharedChannelIdentityWorldScope(); err != nil {
+		log.Printf("迁移共享角色世界作用域失败: %v", err)
+	}
 	db.AutoMigrate(&ChannelIdentityVariantModel{})
 	if err := cleanupUnsupportedTheaterPresentations(db); err != nil {
 		log.Printf("cleanup unsupported theater presentations failed: %v", err)
@@ -188,7 +191,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&CaptchaCapChallengeModel{}, &CaptchaCapTokenModel{})
-	db.AutoMigrate(&UpdateCheckState{})
+	db.AutoMigrate(&UpdateCheckState{}, &UpdateJobState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})
 	db.AutoMigrate(&UserAIProviderProfileModel{})

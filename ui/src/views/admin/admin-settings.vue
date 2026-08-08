@@ -10,17 +10,21 @@ import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vu
 import AdminSettingsStorageOptimization from './admin-settings-storage-optimization.vue'
 import AdminSettingsThemeStyle from './admin-settings-theme-style.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
+import AdminSettingsUpdate from './admin-settings-update.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate'
+type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
   isModified: () => boolean
 }
 
+const props = withDefaults(defineProps<{ initialTab?: AdminTab }>(), {
+  initialTab: 'basic',
+});
 const emit = defineEmits(['close']);
-const activeTab = ref<AdminTab>('basic');
+const activeTab = ref<AdminTab>(props.initialTab);
 const basicSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const aiSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
@@ -108,6 +112,9 @@ const saveCurrentTab = async () => {
     <n-tabs v-model:value="activeTab" type="line" animated class="sc-admin-settings-tabs">
       <n-tab-pane name="basic" tab="基本设置">
         <admin-settings-base ref="basicSettingsRef" />
+      </n-tab-pane>
+      <n-tab-pane name="update" tab="版本检测与更新">
+        <admin-settings-update />
       </n-tab-pane>
       <n-tab-pane name="bot" tab="BOT接入">
         <admin-settings-bot @close="cancel" />

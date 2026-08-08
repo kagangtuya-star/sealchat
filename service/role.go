@@ -6,6 +6,7 @@ import (
 
 	"github.com/mikespook/gorbac"
 
+	"gorm.io/gorm"
 	"sealchat/model"
 	"sealchat/pm"
 )
@@ -50,7 +51,20 @@ func UserRoleUnlink(roleIds []string, userIds []string) (int64, error) {
 }
 
 func UserRoleLink(roleIds []string, userIds []string) (int64, error) {
-	num, err := model.UserRoleLink(roleIds, userIds)
+	var num int64
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var linkErr error
+		num, linkErr = model.UserRoleLinkTx(tx, roleIds, userIds)
+		if linkErr != nil {
+			return linkErr
+		}
+		for _, userID := range userIds {
+			if err := MaterializeSharedChannelIdentitiesForUserTx(tx, userID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return num, err
 	}

@@ -5,6 +5,8 @@ import type {
   AdminAIQuotaDetail,
   AdminAIQuotaListResult,
   AdminAIUsageLogListResult,
+  AdminUpdateJob,
+  AdminUpdateOverview,
   BotOneBotConfig,
   CertificateConfig,
   ServerConfig,
@@ -302,15 +304,26 @@ export const useUtilsStore = defineStore({
 
     async adminUpdateStatus() {
       const user = useUserStore();
-      const resp = await api.get('api/v1/admin/update-status', {
+      const resp = await api.get<AdminUpdateOverview>('api/v1/admin/update-status', {
         headers: { 'Authorization': user.token },
       });
       return resp;
     },
 
+    async adminUpdateApply(payload: {
+      channel: 'stable' | 'test';
+      expectedReleaseId: number;
+      expectedAssetId: number;
+    }) {
+      const user = useUserStore();
+      return await api.post<AdminUpdateJob>('api/v1/admin/update-apply', payload, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
     async adminUpdateCheck() {
       const user = useUserStore();
-      const resp = await api.post('api/v1/admin/update-check', null, {
+      const resp = await api.post<AdminUpdateOverview>('api/v1/admin/update-check', null, {
         headers: { 'Authorization': user.token },
       });
       return resp;

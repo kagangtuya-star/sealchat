@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { NIcon, NTooltip } from 'naive-ui';
-import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical, Focus2 } from '@vicons/tabler';
+import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical, Focus2, ArrowForwardUp } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 
 const chat = useChatStore();
 
 const emit = defineEmits<{
   (e: 'copy'): void;
+  (e: 'forward'): void;
   (e: 'archive'): void;
   (e: 'delete'): void;
   (e: 'copy-image'): void;
@@ -245,6 +246,21 @@ const handleToggleRangeMode = () => {
               class="multi-select-bar__button"
               :class="{ 'is-disabled': !hasSelection }"
               :disabled="!hasSelection"
+              @click="emit('forward')"
+            >
+              <n-icon :size="16"><ArrowForwardUp /></n-icon>
+              <span>转发</span>
+            </button>
+          </template>
+          转发选中消息
+        </n-tooltip>
+
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
+          <template #trigger>
+            <button
+              class="multi-select-bar__button"
+              :class="{ 'is-disabled': !hasSelection }"
+              :disabled="!hasSelection"
               @click="emit('archive')"
             >
               <n-icon :size="16"><Archive /></n-icon>
@@ -369,7 +385,7 @@ const handleToggleRangeMode = () => {
   gap: 16px;
   padding: 10px 16px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.66);
   border: 1px solid rgba(15, 23, 42, 0.12);
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(12px);
@@ -381,7 +397,7 @@ const handleToggleRangeMode = () => {
 }
 
 :root[data-display-palette='night'] .multi-select-bar {
-  background: rgba(20, 24, 36, 0.95);
+  background: rgba(20, 24, 36, 0.66);
   border-color: rgba(255, 255, 255, 0.1);
   color: rgba(248, 250, 252, 0.95);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
@@ -529,6 +545,10 @@ const handleToggleRangeMode = () => {
     gap: 8px;
   }
 
+  .multi-select-bar.is-floating {
+    width: calc(100vw - 16px);
+  }
+
   .multi-select-bar__info {
     width: 100%;
     flex-direction: row;
@@ -568,9 +588,39 @@ const handleToggleRangeMode = () => {
     display: none;
   }
 
+  .multi-select-bar__actions {
+    display: grid;
+    grid-template-columns: repeat(10, minmax(28px, 1fr));
+    width: 100%;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .multi-select-bar__button {
+    width: 100%;
+    min-width: 0;
+    min-height: 32px;
+    justify-content: center;
+    padding: 6px 4px;
+  }
+
+  .multi-select-bar__button:only-child {
+    grid-column: 1 / -1;
+  }
+
+  .multi-select-bar__divider {
+    display: none;
+  }
+
   .slide-up-enter-from,
   .slide-up-leave-to {
     transform: translateY(20px);
+  }
+}
+
+@media (max-width: 480px) {
+  .multi-select-bar__actions {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 </style>

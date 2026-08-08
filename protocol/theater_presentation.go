@@ -180,6 +180,15 @@ func (presentation *TheaterPresentation) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (presentation TheaterPresentation) MarshalJSON() ([]byte, error) {
+	type theaterPresentation TheaterPresentation
+	value := presentation
+	if value.PortraitDecorations == nil {
+		value.PortraitDecorations = []TheaterVisualLayer{}
+	}
+	return json.Marshal(theaterPresentation(value))
+}
+
 // TheaterPatchField preserves omitted, null, and value as distinct JSON states.
 type TheaterPatchField[T any] struct {
 	Set   bool

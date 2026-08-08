@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -12,40 +13,17 @@ import (
 	"sealchat/utils"
 )
 
-type updateStatusResponse struct {
-	CurrentVersion    string `json:"currentVersion"`
-	LatestTag         string `json:"latestTag"`
-	LatestName        string `json:"latestName"`
-	LatestBody        string `json:"latestBody"`
-	LatestPublishedAt int64  `json:"latestPublishedAt"`
-	LatestHtmlURL     string `json:"latestHtmlUrl"`
-	LastCheckedAt     int64  `json:"lastCheckedAt"`
-	HasUpdate         bool   `json:"hasUpdate"`
-}
-
 func AdminUpdateStatus(c *fiber.Ctx) error {
 	if !CanWithSystemRole(c, pm.PermModAdmin) {
 		return nil
 	}
-	state, err := model.UpdateCheckStateGet()
+	cfg := utils.GetConfig()
+	if cfg == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "update configuration is unavailable"})
+	}
+	resp, err := service.GetUpdateOverview(cfg.UpdateCheck, false)
 	if err != nil {
-		return err
-	}
-	currentVersion := strings.TrimSpace(utils.BuildVersion)
-	resp := updateStatusResponse{
-		CurrentVersion: currentVersion,
-	}
-	if state != nil {
-		if resp.CurrentVersion == "" && strings.TrimSpace(state.CurrentVersion) != "" {
-			resp.CurrentVersion = strings.TrimSpace(state.CurrentVersion)
-		}
-		resp.LatestTag = state.LatestTag
-		resp.LatestName = state.LatestName
-		resp.LatestBody = state.LatestBody
-		resp.LatestPublishedAt = state.LatestPublishedAt
-		resp.LatestHtmlURL = state.LatestHtmlURL
-		resp.LastCheckedAt = state.LastCheckedAt
-		resp.HasUpdate = service.IsLatestNewer(resp.CurrentVersion, state.LatestTag)
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": err.Error()})
 	}
 	return c.Status(http.StatusOK).JSON(resp)
 }
@@ -60,19 +38,38 @@ func AdminUpdateCheck(c *fiber.Ctx) error {
 			"message": "update check is disabled",
 		})
 	}
-	currentVersion := strings.TrimSpace(utils.BuildVersion)
-	if currentVersion == "" {
-		if state, _ := model.UpdateCheckStateGet(); state != nil && strings.TrimSpace(state.CurrentVersion) != "" {
-			currentVersion = strings.TrimSpace(state.CurrentVersion)
-		}
+	resp, err := service.GetUpdateOverview(cfg.UpdateCheck, true)
+	if err != nil {
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": err.Error()})
 	}
-	service.UpdateCheckOnce(service.UpdateCheckWorkerConfig{
-		IntervalSec:   cfg.UpdateCheck.IntervalSec,
-		GithubRepo:    cfg.UpdateCheck.GithubRepo,
-		GithubToken:   cfg.UpdateCheck.GithubToken,
-		CurrentVersion: currentVersion,
-	})
-	return AdminUpdateStatus(c)
+	return c.Status(http.StatusOK).JSON(resp)
+}
+
+func AdminUpdateApply(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return nil
+	}
+	var payload struct {
+		Channel           string `json:"channel"`
+		ExpectedReleaseID int64  `json:"expectedReleaseId"`
+		ExpectedAssetID   int64  `json:"expectedAssetId"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return err
+	}
+	cfg := utils.GetConfig()
+	if cfg == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "update configuration is unavailable"})
+	}
+	job, err := service.StartUpdate(cfg.UpdateCheck, strings.TrimSpace(payload.Channel), payload.ExpectedReleaseID, payload.ExpectedAssetID)
+	if err == nil {
+		return c.Status(http.StatusAccepted).JSON(job)
+	}
+	status := http.StatusBadRequest
+	if errors.Is(err, service.ErrUpdateBusy) || errors.Is(err, service.ErrReleaseChanged) {
+		status = http.StatusConflict
+	}
+	return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 }
 
 func AdminUpdateVersion(c *fiber.Ctx) error {

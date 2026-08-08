@@ -39,6 +39,7 @@ let intersectionObserver: IntersectionObserver | null = null
 let bodyContentObserver: { disconnect: () => void } | null = null
 let motionQuery: MediaQueryList | null = null
 let invalidateAppearance: ((event: Event) => void) | null = null
+let appearanceRequestGeneration = 0
 
 /** Keep the latest revealed line visible while dialogue text grows. */
 const stickDialogueBodyToBottom = () => {
@@ -181,6 +182,36 @@ const handleRichPlaybackCompleted = () => {
 
 const updateReducedMotion = () => props.runtime.setReducedMotion(resolveTheaterReducedMotion().effectiveReducedMotion)
 
+const refreshLivePresentation = () => {
+  const targetMessage = message.value
+  const targetActor = targetMessage?.actor
+  const generation = ++appearanceRequestGeneration
+  const targetMessageId = targetMessage?.messageId || ''
+  const targetIdentityId = targetActor?.identityId || ''
+  const targetVariantId = targetActor?.variantId || null
+
+  // Keep current message's snapshot presentation visible while remote resolution runs.
+  livePresentation.value = targetActor
+    ? resolveTheaterDialoguePresentation(targetMessage, props.characterSnapshot)
+    : null
+  if (!targetActor?.identityId) return
+
+  void appearanceCache.resolve(props.worldId, props.channelId, {
+    identityId: targetActor.identityId,
+    variantId: targetActor.variantId,
+  }).then((resolved) => {
+    const currentMessage = message.value
+    const currentActor = currentMessage?.actor
+    if (
+      generation !== appearanceRequestGeneration
+      || currentMessage?.messageId !== targetMessageId
+      || currentActor?.identityId !== targetIdentityId
+      || currentActor?.variantId !== targetVariantId
+    ) return
+    if (resolved) livePresentation.value = resolved.presentation || createDefaultTheaterPresentation()
+  }).catch(() => undefined)
+}
+
 onMounted(() => {
   unsubscribe = props.runtime.subscribe((value) => { snapshot.value = value })
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -188,17 +219,11 @@ onMounted(() => {
   updateReducedMotion()
   invalidateAppearance = (event: Event) => {
     const detail = (event as CustomEvent<{ channelId?: string }>).detail
-    if (String(detail?.channelId || '').trim() !== String(props.channelId).trim()) return
-    appearanceCache.invalidate(props.worldId, props.channelId)
-    const actor = message.value?.actor
-    if (!actor?.identityId) return
-    livePresentation.value = null
-    void appearanceCache.resolve(props.worldId, props.channelId, {
-      identityId: actor.identityId,
-      variantId: actor.variantId,
-    }).then((resolved) => {
-      livePresentation.value = resolved?.presentation || createDefaultTheaterPresentation()
-    }).catch(() => undefined)
+    const invalidatedChannelId = String(detail?.channelId || '').trim()
+    if (!invalidatedChannelId) return
+    appearanceCache.invalidateChannel(invalidatedChannelId)
+    if (invalidatedChannelId !== String(props.channelId).trim()) return
+    refreshLivePresentation()
   }
   window.addEventListener('sealchat:theater-appearance-invalidated', invalidateAppearance)
   void nextTick(() => {
@@ -209,25 +234,21 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.worldId, props.channelId, message.value?.actor.identityId, message.value?.actor.variantId, message.value?.messageId] as const,
-  async () => {
-    livePresentation.value = null
-    const actor = message.value?.actor
-    if (!actor?.identityId) return
-    try {
-      const resolved = await appearanceCache.resolve(props.worldId, props.channelId, {
-        identityId: actor.identityId,
-        variantId: actor.variantId,
-      })
-      if (resolved) livePresentation.value = resolved.presentation || createDefaultTheaterPresentation()
-    } catch {
-      // Message snapshot remains usable when API unavailable.
-    }
-  },
+  () => [
+    props.worldId,
+    props.channelId,
+    props.characterSnapshot.revision,
+    props.characterSnapshot.updatedAt,
+    message.value?.actor.identityId,
+    message.value?.actor.variantId,
+    message.value?.messageId,
+  ] as const,
+  refreshLivePresentation,
   { immediate: true },
 )
 
 onBeforeUnmount(() => {
+  appearanceRequestGeneration += 1
   unsubscribe?.()
   intersectionObserver?.disconnect()
   bodyContentObserver?.disconnect()

@@ -158,6 +158,13 @@ const onlineCharacterCardsEnabled = computed({
   },
 });
 
+const characterCardSnapshotUploadEnabled = computed({
+  get: () => displayStore.settings.characterCardSnapshotUploadEnabled,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardSnapshotUploadEnabled: value });
+  },
+});
+
 const onlineCharacterCards = computed(() => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return [];
@@ -773,6 +780,23 @@ const handleRevalidateCharacterApi = async () => {
   }
 };
 
+const ensureCharacterApiForPreview = async (channelId: string) => {
+  if (!characterApiDisabled.value) {
+    return true;
+  }
+  try {
+    const result = await cardStore.revalidateCharacterApi(channelId);
+    if (result.ok) {
+      return true;
+    }
+    message.error(`${result.error || '人物卡 API 自动连接失败'}，请在人物卡面板手动重试`);
+  } catch (e: any) {
+    const error = e?.response?.data?.error || e?.message || '人物卡 API 自动连接失败';
+    message.error(`${error}，请在人物卡面板手动重试`);
+  }
+  return false;
+};
+
 watch(() => props.visible, async (val) => {
   if (!val) {
     return;
@@ -874,6 +898,16 @@ watch(onlineCharacterCardsEnabled, (enabled, prevEnabled) => {
   }
   void cardStore.broadcastOnlineActiveCard(channelId);
   void refreshOnlineCharacterCards(false);
+});
+
+watch(characterCardSnapshotUploadEnabled, (enabled, prevEnabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || prevEnabled === undefined || enabled === prevEnabled) {
+    return;
+  }
+  void snapshotStore.syncLocalSnapshot(channelId, true).catch((error) => {
+    console.warn('[CharacterCard] Failed to update snapshot upload setting', error);
+  });
 });
 
 watch(
@@ -1092,6 +1126,16 @@ const openTemplateEditModal = (item: CharacterCardTemplate) => {
   templateModalVisible.value = true;
 };
 
+const syncOpenWindowsForTemplate = async (templateId: string) => {
+  const windowIds = sheetStore.activeWindowIds.filter((windowId) => {
+    const win = sheetStore.windows[windowId];
+    if (!win || win.readOnly || win.templateMode !== 'managed') return false;
+    const binding = templateStore.getBinding(win.channelId, win.cardId);
+    return win.templateId === templateId || binding?.templateId === templateId;
+  });
+  await Promise.all(windowIds.map(windowId => sheetStore.syncWindowTemplateFromCloud(windowId)));
+};
+
 const handleSaveTemplate = async () => {
   if (!ensureCharacterApiEnabled()) return;
   const name = templateName.value.trim();
@@ -1117,6 +1161,7 @@ const handleSaveTemplate = async () => {
         isGlobalDefault: templateGlobalDefault.value,
         isSheetDefault: templateSheetDefault.value,
       });
+      await syncOpenWindowsForTemplate(templateEditingId.value);
       message.success('模板已更新');
     } else {
       await templateStore.createTemplate({
@@ -1236,6 +1281,28 @@ const resolveSheetType = (preset: string, custom: string) => {
   return preset;
 };
 
+const setNewCardSheetType = (value: string) => {
+  const normalized = (value || '').trim();
+  const lower = normalized.toLowerCase();
+  if (lower === 'coc7' || lower === 'coc') {
+    newCardSheetTypePreset.value = 'coc7';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  if (lower === 'dnd5e' || lower === 'dnd5' || lower === 'dnd') {
+    newCardSheetTypePreset.value = 'dnd5e';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  if (lower === 'shinobigami' || normalized === '忍神') {
+    newCardSheetTypePreset.value = 'shinobigami';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  newCardSheetTypePreset.value = 'custom';
+  newCardSheetTypeCustom.value = normalized;
+};
+
 const newCardSheetType = computed(() => resolveSheetType(
   newCardSheetTypePreset.value,
   newCardSheetTypeCustom.value,
@@ -1252,21 +1319,43 @@ const newCardTemplateOptions = computed(() => [
 ]);
 
 const selectDefaultNewCardTemplate = () => {
-  const sheetDefault = templateStore.getSheetDefaultTemplate(newCardSheetType.value);
-  if (sheetDefault?.id) {
-    newCardTemplateId.value = sheetDefault.id;
+  const preferredTemplate = templateStore.getPreferredTemplateBySheetType(newCardSheetType.value);
+  if (preferredTemplate?.id) {
+    newCardTemplateId.value = preferredTemplate.id;
+    if (preferredTemplate.sheetType?.trim()) {
+      setNewCardSheetType(preferredTemplate.sheetType);
+    }
     return;
   }
-  const builtinTemplate = templateStore.getBuiltinTemplateBySheetType(newCardSheetType.value);
-  if (builtinTemplate?.id) {
-    newCardTemplateId.value = builtinTemplate.id;
+  if (newCardSheetTypePreset.value === 'custom') {
+    newCardTemplateId.value = DETACHED_TEMPLATE_VALUE;
     return;
   }
   const globalDefault = templateStore.getGlobalDefaultTemplate();
   const availableIds = new Set(newCardTemplateOptions.value.map(item => item.value));
-  newCardTemplateId.value = globalDefault?.id && availableIds.has(globalDefault.id)
-    ? globalDefault.id
+  const globalDefaultId = globalDefault?.id || '';
+  const canUseGlobalDefault = !!globalDefaultId
+    && availableIds.has(globalDefaultId)
+    && (!globalDefault?.sheetType?.trim()
+      || templateStore.isSameSheetType(globalDefault?.sheetType, newCardSheetType.value));
+  newCardTemplateId.value = canUseGlobalDefault
+    ? globalDefaultId
     : DETACHED_TEMPLATE_VALUE;
+};
+
+const syncNewCardTemplateForSheetType = () => {
+  const selectedTemplate = templateStore.getTemplateById(newCardTemplateId.value);
+  if (selectedTemplate && templateStore.isSameSheetType(selectedTemplate.sheetType, newCardSheetType.value)) {
+    return;
+  }
+  selectDefaultNewCardTemplate();
+};
+
+const handleNewCardTemplateChange = (templateId: string | number | null) => {
+  const selectedTemplate = templateStore.getTemplateById(String(templateId || '').trim());
+  const sheetType = selectedTemplate?.sheetType?.trim();
+  if (!sheetType) return;
+  setNewCardSheetType(sheetType);
 };
 
 const openCreateModal = async () => {
@@ -1283,7 +1372,7 @@ const openCreateModal = async () => {
 
 watch(newCardSheetType, () => {
   if (!createModalVisible.value) return;
-  selectDefaultNewCardTemplate();
+  syncNewCardTemplateForSheetType();
 });
 
 const handleCreateCard = async () => {
@@ -1292,7 +1381,13 @@ const handleCreateCard = async () => {
     message.warning('请输入角色名称');
     return;
   }
-  const sheetType = resolveSheetType(newCardSheetTypePreset.value, newCardSheetTypeCustom.value);
+  const selectedTemplate = newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE
+    ? templateStore.getTemplateById(newCardTemplateId.value)
+    : null;
+  if (selectedTemplate?.sheetType?.trim()) {
+    setNewCardSheetType(selectedTemplate.sheetType);
+  }
+  const sheetType = newCardSheetType.value;
   if (!sheetType) {
     message.warning('请输入自定义规则类型');
     return;
@@ -1708,6 +1803,9 @@ const openCharacterSheetWindow = async (
       card.templateId = binding.templateId || undefined;
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
+    const managedTemplateContent = binding?.mode === 'managed' && binding.templateId
+      ? templateStore.getTemplateById(binding.templateId)?.content
+      : undefined;
     const avatarUrl = resolveCardAvatarToken(card, effectiveCardData?.avatarUrl || '');
     const windowId = sheetStore.openSheet(card, channelId, {
       name: effectiveCardData?.name || card.name,
@@ -1717,7 +1815,9 @@ const openCharacterSheetWindow = async (
     }, {
       templateMode: binding?.mode,
       templateId: binding?.templateId || undefined,
-      templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
+      templateText: binding?.mode === 'detached'
+        ? binding.templateSnapshot
+        : managedTemplateContent,
       worldId: currentWorldId.value || undefined,
     });
     upsertChannelSheetSwitchState(channelId, {
@@ -1762,6 +1862,9 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
+    return false;
+  }
+  if (mode === 'view' && !await ensureCharacterApiForPreview(channelId)) {
     return false;
   }
 
@@ -1813,7 +1916,9 @@ const openEditPanel = async (card: CharacterCard) => {
 const openCardById = async (cardId: string, mode: 'view' | 'edit' = 'view') => {
   const channelId = resolvedChannelId.value;
   const normalizedCardId = String(cardId || '').trim();
-  if (!channelId || !normalizedCardId || characterApiDisabled.value) return false;
+  if (!channelId || !normalizedCardId) return false;
+  if (mode === 'view' && !await ensureCharacterApiForPreview(channelId)) return false;
+  if (characterApiDisabled.value) return false;
 
   await loadPanelData(channelId);
   const card = allChannelCards.value.find(item => item.id === normalizedCardId);
@@ -1896,6 +2001,16 @@ defineExpose({ openCardById });
                 <p class="settings-desc">为人物卡预览、角色徽章和小剧场数据浮层提供统一数据</p>
               </div>
               <n-switch v-model:value="onlineCharacterCardsEnabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row">
+              <div>
+                <p class="settings-title">上传自己的人物卡快照</p>
+                <p class="settings-desc">关闭后立即清除自己的快照，但仍可读取其他成员快照</p>
+              </div>
+              <n-switch v-model:value="characterCardSnapshotUploadEnabled">
                 <template #checked>已启用</template>
                 <template #unchecked>已关闭</template>
               </n-switch>
@@ -2319,6 +2434,7 @@ defineExpose({ openCardById });
           :options="newCardTemplateOptions"
           placeholder="选择人物卡模板"
           :disabled="characterApiDisabled"
+          @update:value="handleNewCardTemplateChange"
         />
       </n-form-item>
       <n-form-item label="人物卡头像">

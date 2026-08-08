@@ -73,3 +73,5 @@ config yun.yaml
 /bin/cn-font-split
 /.agents
 skills-lock.json
+/.sealchat-update
+/data11

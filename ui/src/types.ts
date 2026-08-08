@@ -696,6 +696,57 @@ export interface ServerConfig {
   performanceProfiler?: PerformanceProfilerConfig;
 }
 
+export type UpdateChannel = 'stable' | 'test';
+
+export interface AdminUpdateAsset {
+  id: number;
+  name: string;
+  size: number;
+  createdAt: number;
+  digest: string;
+}
+
+export interface AdminUpdateRelease {
+  channel: UpdateChannel;
+  releaseId: number;
+  tag: string;
+  version: string;
+  name: string;
+  body: string;
+  publishedAt: number;
+  htmlUrl: string;
+  prerelease: boolean;
+  asset?: AdminUpdateAsset;
+  isCurrent: boolean;
+  platformLabel: string;
+}
+
+export interface AdminUpdateJob {
+  status: string;
+  channel: UpdateChannel | '';
+  targetVersion: string;
+  releaseId: number;
+  assetId: number;
+  assetName: string;
+  progress: number;
+  message: string;
+  error: string;
+  startedAt: number;
+  finishedAt: number;
+  previousVersion: string;
+}
+
+export interface AdminUpdateOverview {
+  currentVersion: string;
+  supported: boolean;
+  unsupportedReason: string;
+  platform: string;
+  lastCheckedAt: number;
+  stable?: AdminUpdateRelease;
+  test?: AdminUpdateRelease;
+  job?: AdminUpdateJob;
+}
+
 export interface UserInfo {
   id: string;
   createdAt: null | string;
@@ -830,6 +881,18 @@ interface APIMessageGet {
   message_id: string
 }
 
+interface APIMessageForwardBatch {
+  source_channel_id: string;
+  message_ids: string[];
+  targets: Array<{
+    channel_id: string;
+    identity_id: string;
+    identity_variant_id: string;
+  }>;
+  client_id: string;
+  whisper_confirmed: boolean;
+}
+
 // 扩展部分
 interface APIChannelCreate {
   api: 'channel.create'
@@ -859,7 +922,7 @@ export interface APIChannelListResp {
   }
 }
 
-export type APIMessage = APIMessageCreate | APIMessageGet | APIChannelList;
+export type APIMessage = APIMessageCreate | APIMessageGet | APIChannelList | APIMessageForwardBatch;
 
 interface ModelDataBase {
   id: string;
@@ -965,6 +1028,8 @@ export interface ChannelIdentity {
   id: string;
   channelId: string;
   userId: string;
+  sharedIdentityId?: string;
+  sharedRevision?: number;
   displayName: string;
   color: string;
   avatarAttachmentId: string;
@@ -985,6 +1050,8 @@ export interface ChannelIdentityVariant {
   identityId: string;
   channelId: string;
   userId: string;
+  sharedVariantId?: string;
+  sharedRevision?: number;
   selectorEmoji: string;
   keyword: string;
   note: string;

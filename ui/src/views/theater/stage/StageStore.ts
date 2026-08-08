@@ -28,7 +28,7 @@ import {
   type StageSurfaceTarget,
   type StageWorkspaceState,
 } from '../shared/stage-types'
-import { normalizeStageSequenceAction } from '../shared/stage-actions'
+import { normalizeStageRandomTablePayload, normalizeStageSequenceAction } from '../shared/stage-actions'
 import {
   applyObjectHistoryEntry,
   cloneStageActionsForCopy,
@@ -231,6 +231,9 @@ const normalizeActions = (input: unknown): StageAction[] => {
             : {}),
         },
       })
+    } else if (action.type === 'chat.random-table') {
+      const payload = normalizeStageRandomTablePayload(action.payload)
+      if (payload) result.push({ id, type: action.type, schedule, payload })
     } else if (action.type === 'chat.insert') {
       const content = typeof action.payload.content === 'string' ? action.payload.content : ''
       if (content && content.length <= 10_000) result.push({ id, type: action.type, schedule, payload: { content } })

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { NButton, NDropdown, NIcon, NInput, NInputNumber, NModal } from 'naive-ui'
 import { GripVertical, Plus, Trash, X } from '@vicons/tabler'
 import NSelect from '@/components/NSelect.vue'
+import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
 import {
   createStageAtomicActionDescriptor,
   createStageSequenceStep,
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 
 const actionTypeOptions: Array<{ label: string, value: StageAtomicAction['type'] }> = [
   { label: '发送消息', value: 'chat.send' },
+  { label: '随机表', value: 'chat.random-table' },
   { label: '插入输入框', value: 'chat.insert' },
   { label: '切换场景', value: 'scene.apply' },
   { label: '播放特效', value: 'effect.play' },
@@ -117,6 +119,7 @@ const addStep = (type: StageAtomicAction['type']) => {
   const step = createStageSequenceStep(sceneId, firstObjectId(sceneId))
   step.action = createStageAtomicActionDescriptor(type, sceneId, targetId)
   props.action.payload.steps.push(step)
+  if (type === 'chat.random-table') randomTableStepId.value = step.id
 }
 
 const handleAddStepSelect = (key: string | number) => {
@@ -128,6 +131,23 @@ const removeStep = (stepId: string) => {
   if (!props.action) return
   const index = props.action.payload.steps.findIndex((step) => step.id === stepId)
   if (index >= 0) props.action.payload.steps.splice(index, 1)
+}
+
+const randomTableStepId = ref('')
+const randomTableEditorVisible = computed({
+  get: () => Boolean(randomTableStepId.value && props.action),
+  set: (value) => { if (!value) randomTableStepId.value = '' },
+})
+const editingRandomTableAction = computed(() => {
+  const step = props.action?.payload.steps.find((item) => item.id === randomTableStepId.value)
+  return step?.action.type === 'chat.random-table' ? step.action : null
+})
+const openRandomTableEditor = (stepId: string) => {
+  randomTableStepId.value = stepId
+}
+const saveRandomTable = (payload: Extract<StageAtomicAction, { type: 'chat.random-table' }>['payload']) => {
+  const action = editingRandomTableAction.value
+  if (action) action.payload = payload
 }
 
 const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
@@ -303,6 +323,9 @@ onBeforeUnmount(() => {
               maxlength="10000"
               placeholder="输入文本"
             />
+            <n-button v-else-if="step.action.type === 'chat.random-table'" secondary @click="openRandomTableEditor(step.id)">
+              编辑随机表 · {{ step.action.payload.name }} · {{ step.action.payload.formula }} · {{ step.action.payload.entries.length }} 项
+            </n-button>
             <n-select
               v-else-if="step.action.type === 'object.toggle'"
               :value="step.action.payload.objectId"
@@ -368,6 +391,12 @@ onBeforeUnmount(() => {
       </div>
     </section>
   </n-modal>
+  <TheaterRandomTableEditor
+    v-model:show="randomTableEditorVisible"
+    :component-name="componentName"
+    :action="editingRandomTableAction"
+    @save="saveRandomTable"
+  />
 </template>
 
 <style scoped>

@@ -692,6 +692,23 @@ const clickMultiSelect = () => {
   chat.messageMenu.show = false;
 };
 
+const clickForward = () => {
+  const target = menuMessage.value.raw;
+  const messageId = String(target?.id || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!messageId || !channelId) {
+    message.warning('当前消息不可转发');
+    return;
+  }
+  chat.messageMenu.show = false;
+  chatEvent.emit('message-forward-open' as any, {
+    sourceChannelId: channelId,
+    sourceWorldId: chat.currentWorldId,
+    messageIds: [messageId],
+    messages: [target],
+  } as any);
+};
+
 const clickCopyMessageLink = async () => {
   const msgId = menuMessage.value.raw?.id;
   const curChannelId = chat.curChannel?.id;
@@ -826,6 +843,7 @@ const clickArchiveMessagesBefore = () => {
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
     <context-menu-item label="复制消息链接" @click="clickCopyMessageLink" />
+    <context-menu-item label="转发" @click="clickForward" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
     <context-menu-item v-if="canSetMessageInsertTarget" :label="insertTargetMenuLabel" @click="clickToggleMessageInsertTarget" />
@@ -856,6 +874,9 @@ const clickArchiveMessagesBefore = () => {
 
 <style scoped>
 .reaction-picker-slot {
+  /* Keep context-menu's first height measurement stable while picker chunk loads. */
+  min-height: 57px;
+  box-sizing: border-box;
   padding: 6px 8px;
 }
 

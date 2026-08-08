@@ -18,7 +18,10 @@ const props = withDefaults(defineProps<{ items?: any[]; visible?: boolean }>(), 
   items: () => [],
   visible: false,
 });
-const emit = defineEmits(['close']);
+const emit = defineEmits<{
+  (event: 'close'): void;
+  (event: 'open-update-settings'): void;
+}>();
 
 const list = computed(() => props.items || []);
 const updateItem = computed(() => list.value.find((item) => item?.type === 'system.update'));
@@ -197,6 +200,13 @@ watch(updateBodyRaw, (next, prev) => {
           <div v-if="releaseLink" class="text-xs mt-2">
             <a :href="releaseLink" target="_blank" rel="noreferrer" class="sc-notif-link hover:underline">查看发布页</a>
           </div>
+          <button
+            type="button"
+            class="sc-notif-update-button mt-3"
+            @click="emit('open-update-settings')"
+          >
+            前往平台管理下载更新
+          </button>
           <div class="mt-3">
             <div v-if="updateLoading" class="text-xs sc-notif-muted">
               正在加载更新内容...
@@ -305,6 +315,22 @@ watch(updateBodyRaw, (next, prev) => {
   color: #2563eb;
 }
 
+.sc-notif-update-button {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  border-radius: 6px;
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  font-size: 12px;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.sc-notif-update-button:hover {
+  border-color: rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.14);
+}
+
 .sc-update-panel {
   background: rgba(248, 250, 252, 0.9);
   border-color: rgba(226, 232, 240, 0.9);
@@ -368,6 +394,12 @@ watch(updateBodyRaw, (next, prev) => {
 
 :global(:root[data-custom-theme='true'] .sc-notif-link) {
   color: var(--primary-color, #2563eb);
+}
+
+:global(:root[data-custom-theme='true'] .sc-notif-update-button) {
+  border-color: var(--primary-color, rgba(37, 99, 235, 0.35));
+  color: var(--primary-color, #2563eb);
+  background: color-mix(in srgb, var(--primary-color, #2563eb) 10%, transparent);
 }
 
 :global(:root[data-custom-theme='true'] .sc-notif-body) {

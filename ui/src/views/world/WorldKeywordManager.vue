@@ -149,6 +149,12 @@ const formModel = reactive({
   display: 'inherit' as KeywordDisplayStyle,
   isEnabled: true,
 })
+type KeywordCreatePreferences = Pick<typeof formModel, 'matchMode' | 'descriptionFormat' | 'display'>
+const lastCreatePreferences = reactive<KeywordCreatePreferences>({
+  matchMode: 'plain',
+  descriptionFormat: 'plain',
+  display: 'inherit',
+})
 
 // Description editor ref
 const descriptionEditorRef = ref<InstanceType<typeof KeywordDescriptionEditor> | null>(null)
@@ -436,21 +442,29 @@ function handleDragEnd() {
   dragTargetId.value = null
 }
 
-function resetForm() {
+function getCategoryFromFilter() {
+  const value = categoryFilter.value || ''
+  const category = value.startsWith('world:')
+    ? value.slice('world:'.length)
+    : value.match(/^ext:[^:]+:(.*)$/)?.[1] || ''
+  return category === MANAGER_UNCATEGORIZED_KEY ? '' : category
+}
+
+function resetForm(category = '') {
   formModel.keyword = ''
-  formModel.category = ''
+  formModel.category = category
   formModel.aliases = ''
-  formModel.matchMode = 'plain'
   formModel.description = ''
-  formModel.descriptionFormat = 'plain'
-  formModel.display = 'inherit'
+  formModel.matchMode = lastCreatePreferences.matchMode
+  formModel.descriptionFormat = lastCreatePreferences.descriptionFormat
+  formModel.display = lastCreatePreferences.display
   formModel.isEnabled = true
 }
 
 function openCreate() {
   const worldId = currentWorldId.value
   if (!worldId) return
-  resetForm()
+  resetForm(getCategoryFromFilter())
   glossary.openEditor(worldId)
 }
 
@@ -517,9 +531,12 @@ async function submitEditor() {
       message.success('已更新术语')
     } else {
       await glossary.createKeyword(worldId, payload)
+      lastCreatePreferences.matchMode = formModel.matchMode
+      lastCreatePreferences.descriptionFormat = formModel.descriptionFormat
+      lastCreatePreferences.display = formModel.display
       message.success('已创建术语')
     }
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    void loadEditableCategories(worldId, true)
     glossary.closeEditor()
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '保存失败'))
@@ -531,7 +548,7 @@ async function handleDelete(itemId: string) {
   if (!worldId) return
   try {
     await glossary.removeKeyword(worldId, itemId)
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     message.success('已删除')
     selectedIds.value = selectedIds.value.filter((id) => id !== itemId)
   } catch (error: any) {
@@ -631,7 +648,7 @@ async function handleBulkRenameCategory(oldName: string, newName: string) {
       await renameWorldKeywordCategory(worldId, oldName, targetName)
       await glossary.ensureKeywords(worldId, { force: true })
     }
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     message.success(`已将分类 "${oldName}" 重命名为 "${targetName}"`)
     await openCategoryManager()
   } catch (error: any) {
@@ -645,7 +662,7 @@ async function handleCreateCategory() {
   const catName = newCategoryName.value.trim()
   try {
     await createWorldKeywordCategory(worldId, catName)
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     message.success(`已创建分类 "${catName}"`)
     newCategoryName.value = ''
     await openCategoryManager()
@@ -678,7 +695,7 @@ async function handleSaveCategoryPriority(name: string) {
     await glossary.setCategoryPriority(worldId, name, priority)
     const latest = await glossary.ensureCategoryInfos(worldId, { force: true })
     categoryPriorityItems.value = [...latest]
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     message.success(`已更新分类 "${name}" 的优先级`)
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '更新分类优先级失败'))
@@ -763,7 +780,7 @@ async function handleBulkModifyCategory() {
   try {
     await handleBulkModifyCategoryToTarget(bulkTargetCategory.value)
     message.success(`已将 ${selectedIds.value.length} 个术语的分类修改为 "${bulkTargetCategory.value}"`)
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     bulkCategoryModalVisible.value = false
     bulkTargetCategory.value = ''
     clearSelection()
@@ -814,7 +831,7 @@ async function handleDeleteCategory(categoryName: string) {
       try {
         await deleteWorldKeywordCategory(worldId, categoryName)
         await glossary.ensureKeywords(worldId, { force: true })
-        editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+        await loadEditableCategories(worldId, true)
         message.success(`已删除分类 "${categoryName}"，${items.length} 个术语已设为未分类`)
         await openCategoryManager()
       } catch (error: any) {
@@ -842,7 +859,7 @@ async function handleImport(replace = false) {
     await glossary.importKeywords(worldId, payloads, replace)
     message.success('导入完成')
     // Refresh categories
-    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
+    await loadEditableCategories(worldId, true)
     importTargetCategory.value = ''
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '导入失败'))
@@ -964,7 +981,24 @@ async function handleRefresh() {
   await Promise.all([
     glossary.ensureKeywords(worldId, { force: true }),
     glossary.ensureManagerExternalReadonlyKeywords(worldId, { force: true }),
+    loadEditableCategories(worldId, true),
   ])
+}
+
+async function loadEditableCategories(worldId: string, force = false) {
+  if (!worldId) return
+  const isActiveWorld = () =>
+    currentWorldId.value === worldId &&
+    (!glossary.editorState.visible || glossary.editorState.worldId === worldId)
+  try {
+    const categories = await glossary.ensureCategories(worldId, { force })
+    if (!isActiveWorld()) return
+    editableCategoryOptions.value = categories
+  } catch {
+    if (isActiveWorld()) {
+      editableCategoryOptions.value = []
+    }
+  }
 }
 
 watch(
@@ -974,12 +1008,6 @@ watch(
       if (currentWorldId.value) {
         void handleRefresh()
         chat.worldDetail(currentWorldId.value)
-        // Load categories
-        try {
-          editableCategoryOptions.value = await glossary.fetchCategories(currentWorldId.value)
-        } catch (e) {
-          editableCategoryOptions.value = []
-        }
       }
       currentPage.value = 1
     } else {
@@ -1005,6 +1033,9 @@ watch(
 onMounted(() => {
   if (currentWorldId.value) {
     glossary.ensureKeywords(currentWorldId.value)
+  }
+  if (glossary.editorState.visible && glossary.editorState.worldId) {
+    void loadEditableCategories(glossary.editorState.worldId)
   }
 })
 
@@ -1033,6 +1064,7 @@ watch(
 watch(
   () => ({
     visible: glossary.editorState.visible,
+    worldId: glossary.editorState.worldId,
     keyword: glossary.editorState.keyword,
     prefill: glossary.editorState.prefill,
   }),
@@ -1040,6 +1072,9 @@ watch(
     if (!state.visible) {
       resetForm()
       return
+    }
+    if (state.worldId) {
+      void loadEditableCategories(state.worldId)
     }
     if (state.keyword) {
       const keyword = state.keyword
@@ -1053,7 +1088,7 @@ watch(
       formModel.display = keyword.display || 'inherit'
       formModel.isEnabled = keyword.isEnabled
     } else {
-      resetForm()
+      resetForm(getCategoryFromFilter())
     }
   },
 )

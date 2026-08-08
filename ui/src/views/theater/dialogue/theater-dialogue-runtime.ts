@@ -18,7 +18,7 @@ import {
 import { logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
 
 export const THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND = 10
-export const THEATER_DIALOGUE_HOLD_MS = 900
+export const THEATER_DIALOGUE_HOLD_MS = 1_500
 
 export type TheaterDialoguePlaybackPhase = 'idle' | 'typing' | 'hold'
 

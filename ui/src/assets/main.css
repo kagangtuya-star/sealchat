@@ -321,6 +321,30 @@ body .mx-context-menu .mx-context-menu-item {
   font-family: inherit;
 }
 
+/* 二级右键菜单继承主菜单最终主题，避免覆盖主菜单本身 */
+body .mx-context-menu.chat-menu--night .mx-context-menu,
+body .mx-context-menu.chat-menu--day .mx-context-menu,
+body .mx-context-menu-item-wrapper .mx-context-menu.chat-menu--night,
+body .mx-context-menu-item-wrapper .mx-context-menu.chat-menu--day {
+  background-color: var(--mx-menu-backgroud) !important;
+  --mx-menu-backgroud: inherit !important;
+  --mx-menu-hover-backgroud: inherit !important;
+  --mx-menu-active-backgroud: inherit !important;
+  --mx-menu-open-backgroud: inherit !important;
+  --mx-menu-open-hover-backgroud: inherit !important;
+  --mx-menu-divider: inherit !important;
+  --mx-menu-text: inherit !important;
+  --mx-menu-hover-text: inherit !important;
+  --mx-menu-active-text: inherit !important;
+  --mx-menu-open-text: inherit !important;
+  --mx-menu-open-hover-text: inherit !important;
+  --mx-menu-disabled-text: inherit !important;
+  --mx-menu-shadow-color: inherit !important;
+  --mx-menu-backgroud-radius: inherit !important;
+  --mx-menu-focus-color: inherit !important;
+  color: inherit !important;
+}
+
 /* 通用独立浮层适配：给浮层根节点加 data-sc-font-surface="true" */
 body [data-sc-font-surface='true'] {
   --n-font-family: var(--sc-font-family);

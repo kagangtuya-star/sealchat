@@ -23,6 +23,10 @@ type characterCardTemplateSetDefaultPayload struct {
 	Scope string `json:"scope"`
 }
 
+type characterCardTemplateReplaceReferencesPayload struct {
+	ReplacementTemplateID string `json:"replacementTemplateId"`
+}
+
 type characterCardTemplateBindingPayload struct {
 	ChannelID        string `json:"channelId"`
 	ExternalCardID   string `json:"externalCardId"`
@@ -133,6 +137,27 @@ func CharacterCardTemplateUpdate(c *fiber.Ctx) error {
 		return c.Status(status).JSON(fiber.Map{"error": msg})
 	}
 	return c.JSON(fiber.Map{"item": item})
+}
+
+func CharacterCardTemplateReplaceReferences(c *fiber.Ctx) error {
+	templateID := strings.TrimSpace(c.Params("id"))
+	if templateID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "无效的模板ID"})
+	}
+	payload := characterCardTemplateReplaceReferencesPayload{}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
+	}
+	replacementID := strings.TrimSpace(payload.ReplacementTemplateID)
+	if replacementID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少替换模板ID"})
+	}
+	user := getCurUser(c)
+	if err := service.CharacterCardTemplateReplaceReferences(user.ID, templateID, replacementID); err != nil {
+		status, msg := mapCharacterCardTemplateError(err)
+		return c.Status(status).JSON(fiber.Map{"error": msg})
+	}
+	return c.JSON(fiber.Map{"success": true})
 }
 
 func CharacterCardTemplateDelete(c *fiber.Ctx) error {

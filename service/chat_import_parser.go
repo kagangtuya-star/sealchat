@@ -15,7 +15,7 @@ var chatImportTemplates = []*model.ChatImportTemplate{
 		Name:        "带时间戳尖括号格式",
 		Description: "[时间戳]<角色名>内容 或 [时间戳]<角色名>：内容",
 		Pattern:     `\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]\s*<([^>]+)>\s*[:：]?\s*(.*)`,
-		Example:     "[2025-12-07 21:02:49] <木落> 你好世界",
+		Example:     "[2025-12-07 21:02:49] <星尘> 你好世界",
 	},
 	{
 		ID:          "time_angle",
@@ -29,21 +29,28 @@ var chatImportTemplates = []*model.ChatImportTemplate{
 		Name:        "仅尖括号格式",
 		Description: "<角色名>内容 或 <角色名>：内容（无时间信息）",
 		Pattern:     `<([^>]+)>\s*[:：]?\s*(.*)`,
-		Example:     "<木落>：从前有一座房子",
+		Example:     "<星尘>：从前有一座房子",
 	},
 	{
 		ID:          "bracket_name",
 		Name:        "方括号角色名格式",
 		Description: "[角色名] 内容",
 		Pattern:     `\[([^\]]+)\]\s*[:：]?\s*(.*)`,
-		Example:     "[木落] 你好世界",
+		Example:     "[星尘] 你好世界",
 	},
 	{
 		ID:          "colon_name",
 		Name:        "冒号分隔格式",
 		Description: "角色名：内容 或 角色名: 内容",
 		Pattern:     `^([^:：\s]+)\s*[:：]\s*(.+)`,
-		Example:     "木落：你好世界",
+		Example:     "星尘：你好世界",
+	},
+	{
+		ID:          "ccfolia",
+		Name:        "CCFOLIA格式（冒号分隔格式二）",
+		Description: "角色名：内容（消息之间以空行分隔）",
+		Pattern:     `(?ms)^[ \t]*([^\r\n:：]{1,40}?)[ \t]+[:：][ \t]+(.*?)(?:\r?\n[ \t]*\r?\n+|\z)`,
+		Example:     "星尘：你好世界\n\n海豹一号机：新的故事开始了",
 	},
 }
 
@@ -300,11 +307,11 @@ func (p *ChatLogParser) processOOCMarking(entries []*model.ParsedLogEntry) {
 			if content == "" {
 				continue
 			}
-			
+
 			// 检查是否以括号开始和结束
 			startsWithParen := strings.HasPrefix(content, "(") || strings.HasPrefix(content, "（")
 			endsWithParen := strings.HasSuffix(content, ")") || strings.HasSuffix(content, "）")
-			
+
 			// 只有当内容以括号开始并以括号结束时才标记为OOC
 			if startsWithParen && endsWithParen && len(content) > 1 {
 				entry.IsOOC = true

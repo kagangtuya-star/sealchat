@@ -329,6 +329,87 @@ func CharacterCardTemplateUpdate(userID string, templateID string, input *Charac
 	return model.CharacterCardTemplateGetByID(template.ID)
 }
 
+// CharacterCardTemplateReplaceReferences merges one template into another.
+// Existing managed bindings and world shares are rewired before the source
+// template is deleted in the same transaction.
+func CharacterCardTemplateReplaceReferences(userID string, templateID string, replacementTemplateID string) error {
+	fromID := strings.TrimSpace(templateID)
+	toID := strings.TrimSpace(replacementTemplateID)
+	if fromID == "" || toID == "" {
+		return errors.New("模板ID不能为空")
+	}
+	if fromID == toID {
+		return nil
+	}
+	fromTemplate, err := CharacterCardTemplateGet(userID, fromID)
+	if err != nil {
+		return err
+	}
+	toTemplate, err := CharacterCardTemplateGet(userID, toID)
+	if err != nil {
+		return err
+	}
+	if fromTemplate.ID == toTemplate.ID {
+		return nil
+	}
+
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.CharacterCardTemplateBindingModel{}).
+			Where("template_id = ?", fromTemplate.ID).
+			Where("mode = ?", model.CharacterCardTemplateModeManaged).
+			Updates(map[string]any{
+				"template_id":       toTemplate.ID,
+				"template_snapshot": "",
+			}).Error; err != nil {
+			return err
+		}
+
+		// Preserve world shares while avoiding the unique (world, template)
+		// conflict when the replacement is already shared there.
+		var worldBindings []*model.WorldCharacterCardTemplateBindingModel
+		if err := tx.Where("template_id = ?", fromTemplate.ID).Find(&worldBindings).Error; err != nil {
+			return err
+		}
+		for _, binding := range worldBindings {
+			if binding == nil {
+				continue
+			}
+			var count int64
+			if err := tx.Model(&model.WorldCharacterCardTemplateBindingModel{}).
+				Where("world_id = ? AND template_id = ?", binding.WorldID, toTemplate.ID).
+				Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				if err := tx.Delete(&model.WorldCharacterCardTemplateBindingModel{}, "id = ?", binding.ID).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if err := tx.Model(&model.WorldCharacterCardTemplateBindingModel{}).
+				Where("id = ?", binding.ID).
+				Update("template_id", toTemplate.ID).Error; err != nil {
+				return err
+			}
+		}
+		defaultUpdates := map[string]any{}
+		if fromTemplate.IsGlobalDefault && !toTemplate.IsGlobalDefault {
+			defaultUpdates["is_global_default"] = true
+		}
+		if fromTemplate.IsSheetDefault && !toTemplate.IsSheetDefault {
+			defaultUpdates["is_sheet_default"] = true
+		}
+		if len(defaultUpdates) > 0 {
+			if err := tx.Model(&model.CharacterCardTemplateModel{}).
+				Where("id = ?", toTemplate.ID).
+				Updates(defaultUpdates).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("id = ?", fromTemplate.ID).Delete(&model.CharacterCardTemplateModel{}).Error
+	})
+}
+
 func CharacterCardTemplateDelete(userID string, templateID string) error {
 	template, err := CharacterCardTemplateGet(userID, templateID)
 	if err != nil {

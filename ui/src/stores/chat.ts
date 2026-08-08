@@ -3046,6 +3046,14 @@ export const useChatStore = defineStore({
           [scopeKey]: membership,
         };
       }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('sealchat:theater-appearance-invalidated', {
+          detail: {
+            channelId: identity.channelId,
+            targetUserId: normalizeIdentityScopeUserId(targetUserId),
+          },
+        }));
+      }
       chatEvent.emit('channel-identity-updated', { identity, channelId: identity.channelId });
     },
 
@@ -3303,6 +3311,7 @@ export const useChatStore = defineStore({
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
       skipTheaterAssetValidation?: boolean;
+      expectedRevision?: number;
       enabled: boolean;
     }) {
       const resp = await api.post<{ item: ChannelIdentityVariant }>('api/v1/channel-identity-variants', payload);
@@ -3323,6 +3332,7 @@ export const useChatStore = defineStore({
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
       skipTheaterAssetValidation?: boolean;
+      expectedRevision?: number;
       enabled: boolean;
     }) {
       const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}`, payload);
@@ -3364,10 +3374,32 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; promoteToShared?: boolean; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
+      return identity;
+    },
+
+    async sharedChannelIdentityTheaterPresentationSet(identityId: string, payload: {
+      channelId: string;
+      theaterPresentation: TheaterPresentation | null;
+      expectedRevision?: number;
+    }) {
+      const resp = await api.put<{
+        item: ChannelIdentity;
+        presentation: TheaterPresentation | null;
+        revision: number;
+      }>(`api/v1/channel-identities/${identityId}/shared-theater-presentation`, payload);
+      const presentation = resp.data.presentation
+        || resp.data.item?.theaterPresentation
+        || payload.theaterPresentation;
+      const identity: ChannelIdentity = {
+        ...resp.data.item,
+        theaterPresentation: presentation,
+        sharedRevision: resp.data.revision,
+      };
+      this.upsertChannelIdentity(identity);
       return identity;
     },
 
@@ -3920,7 +3952,7 @@ export const useChatStore = defineStore({
       this.channelCollapseState = next;
     },
 
-    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean; preserveCurrentChannel?: boolean }) {
+    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean; preserveCurrentChannel?: boolean; refreshUnread?: boolean }) {
       let targetWorld = worldId || this.currentWorldId;
       if (!targetWorld && this.observerMode && this.observerWorldId) {
         targetWorld = this.observerWorldId;
@@ -3977,7 +4009,7 @@ export const useChatStore = defineStore({
         }
       }
 
-      if (!this.observerMode) {
+      if (!this.observerMode && options?.refreshUnread !== false) {
         const unreadState = await this.channelUnreadCount(finalWorld);
         this.unreadCountMap = unreadState.counts;
         this.channelMentionMap = unreadState.mentions;
@@ -4754,6 +4786,41 @@ export const useChatStore = defineStore({
       const data = resp?.data as { message_ids?: string[] } | undefined;
       if (!data || !Array.isArray(data.message_ids) || data.message_ids.length === 0) {
         throw new Error('置底失败：未找到目标消息或无权限操作');
+      }
+      return data;
+    },
+
+    async messageForwardBatch(
+      sourceChannelId: string,
+      payload: {
+        messageIds: string[];
+        targets: Array<{ channelId: string; identityId?: string; identityVariantId?: string }>;
+        clientId?: string;
+        whisperConfirmed?: boolean;
+      },
+    ) {
+      const channelId = String(sourceChannelId || '').trim();
+      const messageIds = Array.from(new Set((payload.messageIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+      const targets = (payload.targets || [])
+        .map((target) => ({
+          channel_id: String(target.channelId || '').trim(),
+          identity_id: String(target.identityId || '').trim(),
+          identity_variant_id: String(target.identityVariantId || '').trim(),
+        }))
+        .filter((target) => target.channel_id);
+      if (!channelId || messageIds.length === 0 || targets.length === 0) {
+        throw new Error('转发失败：缺少源消息或目标频道');
+      }
+      const resp = await this.sendAPI('message.forward.batch', {
+        source_channel_id: channelId,
+        message_ids: messageIds,
+        targets,
+        client_id: payload.clientId || nanoid(),
+        whisper_confirmed: payload.whisperConfirmed === true,
+      }, { timeoutMs: 15_000 });
+      const data = resp?.data as { created?: Array<{ message_id?: string }>; failed?: unknown[] } | undefined;
+      if (!data || !Array.isArray(data.created) || data.created.length === 0 || (data.failed && data.failed.length > 0)) {
+        throw new Error('转发失败：服务端未创建消息');
       }
       return data;
     },

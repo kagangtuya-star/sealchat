@@ -607,7 +607,8 @@ func broadcastWorldKeywordEvent(payload *worldKeywordEventPayload) {
 		Type: protocol.EventWorldKeywordsUpdated,
 		Argv: &protocol.Argv{Options: options},
 	}
-	broadcastEventToWorld(payload.WorldID, event)
+	// Event delivery must not extend keyword write response latency.
+	go broadcastEventToWorld(payload.WorldID, event)
 }
 
 func broadcastEventToWorld(worldID string, event *protocol.Event) {

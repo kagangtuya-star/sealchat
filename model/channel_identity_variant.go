@@ -10,8 +10,10 @@ import (
 type ChannelIdentityVariantModel struct {
 	StringPKBaseModel
 	IdentityID         string `json:"identityId" gorm:"size:100;index:idx_identity_variant_identity,priority:1;index:idx_identity_variant_channel_user,priority:3"`
-	ChannelID          string `json:"channelId" gorm:"size:100;index:idx_identity_variant_channel_user,priority:1"`
+	ChannelID          string `json:"channelId" gorm:"size:100;index:idx_identity_variant_channel_user,priority:1;uniqueIndex:udx_identity_variant_shared_channel,priority:2"`
 	UserID             string `json:"userId" gorm:"size:100;index:idx_identity_variant_channel_user,priority:2"`
+	SharedVariantID    string `json:"sharedVariantId,omitempty" gorm:"size:100;default:null;uniqueIndex:udx_identity_variant_shared_channel,priority:1"`
+	SharedRevision     int64  `json:"sharedRevision,omitempty" gorm:"not null;default:0"`
 	SelectorEmoji      string `json:"selectorEmoji" gorm:"size:64"`
 	Keyword            string `json:"keyword" gorm:"size:64;index"`
 	Note               string `json:"note" gorm:"size:255"`
@@ -109,4 +111,12 @@ func ChannelIdentityVariantDeleteByIdentityIDs(identityIDs []string) error {
 		return nil
 	}
 	return db.Where("identity_id IN ?", identityIDs).Delete(&ChannelIdentityVariantModel{}).Error
+}
+
+func SharedChannelIdentityVariantCopies(sharedVariantID string) ([]*ChannelIdentityVariantModel, error) {
+	var items []*ChannelIdentityVariantModel
+	err := db.Where("shared_variant_id = ?", strings.TrimSpace(sharedVariantID)).
+		Order("channel_id ASC, created_at ASC").
+		Find(&items).Error
+	return items, err
 }

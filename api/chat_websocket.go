@@ -1092,6 +1092,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "message.create":
 						apiWrap(ctx, msg, apiMessageCreate)
 						solved = true
+					case "message.forward.batch":
+						apiWrap(ctx, msg, apiMessageForwardBatch)
+						solved = true
 					case "message.update":
 						apiWrap(ctx, msg, apiMessageUpdate)
 						solved = true

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -500,6 +501,243 @@ func TestConvertCCFOLIAClickActions(t *testing.T) {
 	}
 	if metadata := ccfoliaTestClickActionMetadata(t, unresolved); metadata["targetSceneName"] != "不存在" || metadata["resolved"] != false || metadata["reason"] != "target-scene-not-found" {
 		t.Fatalf("unresolved metadata = %#v", metadata)
+	}
+}
+
+func TestRecoverCCFOLIAAssetReferences(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"角色立绘 final.PNG", "item-id.webp"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	background := "角色立绘 final.PNG"
+	backup := ccfoliaBackup{
+		Resources: map[string]ccfoliaResourceDescriptor{},
+		Entities: ccfoliaEntities{
+			Room: ccfoliaRoom{BackgroundURL: &background},
+			Items: map[string]ccfoliaItem{
+				"item-id": {ImageURL: ""},
+			},
+		},
+	}
+	warnings, err := recoverCCFOLIAAssetReferences(root, &backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.Resources[background].Type != "image/png" {
+		t.Fatalf("explicit JSON resource not recovered: %#v", backup.Resources[background])
+	}
+	if backup.Resources["item-id.webp"].Type != "image/webp" {
+		t.Fatalf("item resource not recovered: %#v", backup.Resources["item-id.webp"])
+	}
+	if item := backup.Entities.Items["item-id"]; item.ImageURL != "item-id.webp" {
+		t.Fatalf("item image URL = %q, want item-id.webp", item.ImageURL)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("recovered resources must produce compatibility warnings")
+	}
+}
+
+func TestCCFOLIAActionsPlainMessage(t *testing.T) {
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: "ET"}, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("plain message warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != "chat.send" {
+		t.Fatalf("plain message actions = %#v", actions)
+	}
+	var payload theaterChatSendPayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Content != "ET" {
+		t.Fatalf("plain message content = %q, want ET", payload.Content)
+	}
+	if conversion.Metadata["type"] != "chat-send" || conversion.Metadata["resolved"] != true {
+		t.Fatalf("plain message metadata = %#v", conversion.Metadata)
+	}
+}
+
+func TestParseCCFOLIARandomTable(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		wantEntries []theaterRandomTableEntry
+	}{
+		{
+			name:        "single points",
+			source:      "/roll-table\n场景表：朽名村\n1D6\n1:结果一\n2:结果二\n3:结果三\n4:结果四\n5:结果五\n6:结果六",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "结果一"}, {Min: 2, Max: 2, Text: "结果二"}, {Min: 3, Max: 3, Text: "结果三"}, {Min: 4, Max: 4, Text: "结果四"}, {Min: 5, Max: 5, Text: "结果五"}, {Min: 6, Max: 6, Text: "结果六"}},
+		},
+		{
+			name:        "ranges",
+			source:      "/roll-table\n遭遇表\n1D6\n1-3:平静\n4-6:危险",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 3, Text: "平静"}, {Min: 4, Max: 6, Text: "危险"}},
+		},
+		{
+			name:        "multiline result",
+			source:      "/roll-table\n描述表\n1D1\n1:第一行\n第二行\n\n第四行",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "第一行\n第二行\n\n第四行"}},
+		},
+		{
+			name:        "crlf",
+			source:      "/roll-table\r\n天气表\r\n1D2\r\n\r\n1:晴\r\n2:雨\r\n",
+			wantEntries: []theaterRandomTableEntry{{Min: 1, Max: 1, Text: "晴"}, {Min: 2, Max: 2, Text: "雨"}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := parseCCFOLIARandomTable(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(payload.Entries, test.wantEntries) {
+				t.Fatalf("entries = %#v, want %#v", payload.Entries, test.wantEntries)
+			}
+		})
+	}
+}
+
+func TestParseCCFOLIARandomTableRejectsInvalidPayload(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{name: "overlap", source: "/roll-table\n重叠表\n1D6\n1-3:一\n3-6:二"},
+		{name: "invalid formula", source: "/roll-table\n复杂骰式\n1D6*2\n1-6:结果"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseCCFOLIARandomTable(test.source); err == nil {
+				t.Fatal("expected random table parse error")
+			}
+		})
+	}
+}
+
+func TestCCFOLIAActionsRandomTable(t *testing.T) {
+	source := "/roll-table\n场景表：朽名村\n1D6\n1-6:结果"
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: source}, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("random table warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != theaterActionChatRandomTable {
+		t.Fatalf("random table actions = %#v", actions)
+	}
+	var payload theaterRandomTablePayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Name != "场景表：朽名村" || payload.Formula != "1D6" || len(payload.Entries) != 1 {
+		t.Fatalf("random table payload = %#v", payload)
+	}
+	if conversion.Metadata["type"] != "random-table" || conversion.Metadata["resolved"] != true {
+		t.Fatalf("random table metadata = %#v", conversion.Metadata)
+	}
+	metadataSource, ok := conversion.Metadata["source"].(map[string]any)
+	if !ok || metadataSource["type"] != "message" || metadataSource["text"] != source {
+		t.Fatalf("random table source metadata = %#v", conversion.Metadata["source"])
+	}
+}
+
+func TestCCFOLIAActionsRandomTableFallback(t *testing.T) {
+	source := "/roll-table\n坏表\n2D6*2\n1-6:结果"
+	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: source}, nil)
+	if len(warnings) != 1 || warnings[0] != "随机表解析失败，已按普通消息导入" {
+		t.Fatalf("fallback warnings = %#v", warnings)
+	}
+	actions := ccfoliaTestActions(t, conversion.Actions)
+	if len(actions) != 1 || actions[0].Type != "chat.send" {
+		t.Fatalf("fallback actions = %#v", actions)
+	}
+	var payload theaterChatSendPayload
+	if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Content != source {
+		t.Fatalf("fallback content = %q, want %q", payload.Content, source)
+	}
+	if conversion.Metadata["reason"] != "random-table-parse-failed" || conversion.Metadata["failureReason"] == "" || conversion.Metadata["resolved"] != false {
+		t.Fatalf("fallback metadata = %#v", conversion.Metadata)
+	}
+}
+
+func TestConvertCCFOLIASavedataSnapshot(t *testing.T) {
+	background := "background.png"
+	itemImage := "item.png"
+	characterImage := "character.png"
+	faceImage := "face.png"
+	noteImage := "note.png"
+	thumbnail := "thumbnail.png"
+	backup := ccfoliaBackup{
+		Meta: ccfoliaMeta{Version: ccfoliaBackupVersion},
+		Entities: ccfoliaEntities{
+			Room:       ccfoliaRoom{FieldWidth: 100, FieldHeight: 100, GridSize: 1},
+			Items:      map[string]ccfoliaItem{},
+			Characters: map[string]ccfoliaCharacter{},
+			Scenes:     map[string]ccfoliaScene{},
+			Savedatas: map[string]ccfoliaSavedata{
+				"save": {Name: "存档场景", Thumbnail: &thumbnail, SnapshotVersion: "2", SnapshotID: "snapshot", Order: 1},
+			},
+			Snapshots: map[string]ccfoliaSnapshot{
+				"snapshot": {
+					Room: ccfoliaRoom{BackgroundURL: &background, FieldWidth: 100, FieldHeight: 100, GridSize: 1},
+					Items: map[string]ccfoliaItem{
+						"item": {ImageURL: itemImage, Width: 10, Height: 10, Visible: true},
+					},
+					Characters: map[string]ccfoliaCharacter{
+						"character": {Name: "角色", IconURL: &characterImage, Width: 10, Height: 10, Active: true, Faces: []ccfoliaFace{{Label: "差分", IconURL: &faceImage}}},
+					},
+					Notes: map[string]ccfoliaNote{
+						"note": {Name: "笔记", Text: "内容", IconURL: &noteImage, Order: 1},
+					},
+				},
+			},
+		},
+	}
+	targets := map[string]ccfoliaAssetTarget{}
+	for _, ref := range []string{background, itemImage, characterImage, faceImage, noteImage, thumbnail} {
+		targets[ref] = ccfoliaAssetTarget{ResourceID: "resource-" + ref, MimeType: "image/png"}
+	}
+	conversion, err := convertCCFOLIABackup(backup, "world", targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "存档场景")
+	if len(scene.Objects) != 2 {
+		t.Fatalf("savedata object count = %d, want 2", len(scene.Objects))
+	}
+	var state map[string]any
+	if err := json.Unmarshal(scene.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := state["ccfolia"].(map[string]any)
+	if metadata["sourceType"] != "savedata" || metadata["sourceSnapshotId"] != "snapshot" {
+		t.Fatalf("savedata metadata = %#v", metadata)
+	}
+	if notes, ok := metadata["notes"].([]any); !ok || len(notes) != 1 {
+		t.Fatalf("savedata notes = %#v", metadata["notes"])
+	}
+}
+
+func TestCCFOLIAAssetExtensionAllowsSafeJSONFileNames(t *testing.T) {
+	accepted := map[string]string{
+		"Yp7OwBWGsiPu6E75vc4L.png": "png",
+		"角色立绘 final.PNG":           "png",
+		"asset.v2.jpeg":            "jpeg",
+	}
+	for name, expected := range accepted {
+		if extension, ok := ccfoliaAssetExtension(name); !ok || extension != expected {
+			t.Errorf("ccfoliaAssetExtension(%q) = %q, %v; want %q, true", name, extension, ok, expected)
+		}
+	}
+	for _, name := range []string{"../escape.png", "nested/image.png", `nested\\image.png`, "image.txt", " image.png"} {
+		if extension, ok := ccfoliaAssetExtension(name); ok {
+			t.Errorf("ccfoliaAssetExtension(%q) = %q, true; want rejected", name, extension)
+		}
 	}
 }
 

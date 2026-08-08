@@ -1393,7 +1393,7 @@ func ensureChannelRoleLink(userID, channelID, roleKey string) error {
 		ensureChannelSpectatorRole(channelID)
 	}
 	roleID := fmt.Sprintf("ch-%s-%s", channelID, roleKey)
-	_, err := model.UserRoleLink([]string{roleID}, []string{userID})
+	_, err := UserRoleLink([]string{roleID}, []string{userID})
 	return err
 }
 

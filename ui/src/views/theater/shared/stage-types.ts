@@ -161,6 +161,19 @@ type StageAtomicActionData =
   }
   | {
     id: string
+    type: 'chat.random-table'
+    payload: {
+      name: string
+      formula: string
+      entries: Array<{
+        min: number
+        max: number
+        text: string
+      }>
+    }
+  }
+  | {
+    id: string
     type: 'chat.insert'
     payload: {
       content: string
@@ -225,6 +238,7 @@ export interface StageActionTriggeredPayload {
   objectId: string
   actionId: string
   stepId?: string
+  direct?: true
   action: StageAction
   execution?: {
     id: string
