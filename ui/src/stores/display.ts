@@ -152,6 +152,7 @@ export interface DisplaySettings {
   characterCardBadgeAutoContrastEnabled: boolean
   characterCardAutoSyncBotNickname: boolean
   onlineCharacterCardsEnabled: boolean
+  characterCardSnapshotUploadEnabled: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
   identityRemarkAutoContrastEnabled: boolean
   showOwnIdentityRemark: boolean
@@ -570,6 +571,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   characterCardBadgeAutoContrastEnabled: true,
   characterCardAutoSyncBotNickname: true,
   onlineCharacterCardsEnabled: true,
+  characterCardSnapshotUploadEnabled: true,
   characterCardBadgeTemplateByWorld: {},
   identityRemarkAutoContrastEnabled: true,
   showOwnIdentityRemark: true,
@@ -875,6 +877,7 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
       characterCardAutoSyncBotNickname: coerceBoolean((parsed as any)?.characterCardAutoSyncBotNickname ?? true),
       onlineCharacterCardsEnabled: normalizeOnlineCharacterCardsEnabled((parsed as any)?.onlineCharacterCardsEnabled),
+      characterCardSnapshotUploadEnabled: coerceBoolean((parsed as any)?.characterCardSnapshotUploadEnabled ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
         ? (parsed as any).characterCardBadgeTemplateByWorld
         : {},
@@ -1245,6 +1248,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'onlineCharacterCardsEnabled')
       ? normalizeOnlineCharacterCardsEnabled((patch as any).onlineCharacterCardsEnabled)
       : base.onlineCharacterCardsEnabled,
+  characterCardSnapshotUploadEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardSnapshotUploadEnabled')
+      ? coerceBoolean((patch as any).characterCardSnapshotUploadEnabled)
+      : base.characterCardSnapshotUploadEnabled,
   characterCardBadgeTemplateByWorld:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeTemplateByWorld')
       ? (isPlainObject((patch as any).characterCardBadgeTemplateByWorld)

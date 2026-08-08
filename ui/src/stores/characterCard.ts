@@ -1587,6 +1587,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   );
 
   snapshotStore.setLocalSnapshotProvider(async (channelId) => {
+    if (!displayStore.settings.characterCardSnapshotUploadEnabled) return null;
     try {
       await avatarStore.ensureBindingsLoaded(channelId);
     } catch (error) {

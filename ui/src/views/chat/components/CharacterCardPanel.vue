@@ -158,6 +158,13 @@ const onlineCharacterCardsEnabled = computed({
   },
 });
 
+const characterCardSnapshotUploadEnabled = computed({
+  get: () => displayStore.settings.characterCardSnapshotUploadEnabled,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardSnapshotUploadEnabled: value });
+  },
+});
+
 const onlineCharacterCards = computed(() => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return [];
@@ -891,6 +898,16 @@ watch(onlineCharacterCardsEnabled, (enabled, prevEnabled) => {
   }
   void cardStore.broadcastOnlineActiveCard(channelId);
   void refreshOnlineCharacterCards(false);
+});
+
+watch(characterCardSnapshotUploadEnabled, (enabled, prevEnabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || prevEnabled === undefined || enabled === prevEnabled) {
+    return;
+  }
+  void snapshotStore.syncLocalSnapshot(channelId, true).catch((error) => {
+    console.warn('[CharacterCard] Failed to update snapshot upload setting', error);
+  });
 });
 
 watch(
@@ -1984,6 +2001,16 @@ defineExpose({ openCardById });
                 <p class="settings-desc">为人物卡预览、角色徽章和小剧场数据浮层提供统一数据</p>
               </div>
               <n-switch v-model:value="onlineCharacterCardsEnabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row">
+              <div>
+                <p class="settings-title">上传自己的人物卡快照</p>
+                <p class="settings-desc">关闭后立即清除自己的快照，但仍可读取其他成员快照</p>
+              </div>
+              <n-switch v-model:value="characterCardSnapshotUploadEnabled">
                 <template #checked>已启用</template>
                 <template #unchecked>已关闭</template>
               </n-switch>
