@@ -245,13 +245,54 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
     void refreshChannel(channelId);
   };
 
+  const applyPreferenceToSnapshotItems = (channelId: string, value: any) => {
+    const userId = String(value?.userId || '').trim();
+    const current = snapshotsByChannel.value[channelId];
+    if (!userId || !current) return;
+
+    const settings = settingsByChannel.value[channelId];
+    const badgeMode = String(value?.badgeTemplateMode || 'inherit');
+    const overlayMode = String(value?.theaterOverlayTemplateMode || 'inherit');
+    let changed = false;
+    const next = { ...current };
+
+    Object.entries(current).forEach(([identityId, item]) => {
+      if (item.userId !== userId) return;
+      let badgeTemplate = String(settings?.badgeTemplate ?? item.badgeTemplate ?? '');
+      let theaterOverlayTemplateJson = String(
+        settings?.theaterOverlayTemplateJson ?? item.theaterOverlayTemplateJson ?? '',
+      );
+      if (badgeMode === 'off') badgeTemplate = '';
+      if (badgeMode === 'custom') badgeTemplate = String(value?.badgeTemplate || '');
+      if (overlayMode === 'off') theaterOverlayTemplateJson = '';
+      if (overlayMode === 'custom') {
+        theaterOverlayTemplateJson = String(value?.theaterOverlayTemplateJson || '');
+      }
+      if (
+        item.badgeTemplate === badgeTemplate
+        && item.theaterOverlayTemplateJson === theaterOverlayTemplateJson
+      ) {
+        return;
+      }
+      next[identityId] = { ...item, badgeTemplate, theaterOverlayTemplateJson };
+      changed = true;
+    });
+
+    if (changed) {
+      snapshotsByChannel.value = { ...snapshotsByChannel.value, [channelId]: next };
+    }
+  };
+
   const applyPreference = (event: any) => {
     const value = event?.characterSnapshotPreference;
     const channelId = String(value?.channelId || '').trim();
     if (!channelId) return;
-    void refreshChannel(channelId);
-    if (String(value?.userId || '') !== String(userStore.info?.id || '')) return;
+    if (String(value?.userId || '') !== String(userStore.info?.id || '')) {
+      applyPreferenceToSnapshotItems(channelId, value);
+      return;
+    }
     preferenceByChannel.value = { ...preferenceByChannel.value, [channelId]: value };
+    void refreshChannel(channelId);
   };
 
   const bindGateway = () => {

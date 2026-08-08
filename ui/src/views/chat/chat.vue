@@ -13482,6 +13482,7 @@ const performSend = async (options?: {
       chat.setActiveIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id);
       await characterCardStore.syncCardForIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id, {
         preserveWhenUnbound: true,
+        reloadAfterSwitch: false,
       });
       draft = shortcutResult.restContent;
       textToSend.value = shortcutResult.restContent;

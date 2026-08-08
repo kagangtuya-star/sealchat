@@ -1285,22 +1285,26 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     );
     if (!channelId || !preset) return;
     try {
-      // Clear old effective template first so switching card systems cannot retain stale stat definitions.
-      await snapshotStore.updatePreference(channelId, {
-        badgeTemplateMode: 'off',
-        badgeTemplate: '',
-        theaterOverlayTemplateMode: 'off',
-        theaterOverlayTemplateJson: '',
-      });
+      const badgeTemplate = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset];
+      const theaterOverlayTemplateJson = JSON.stringify(
+        CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
+        null,
+        2,
+      );
+      const current = snapshotStore.preferenceByChannel[channelId];
+      if (
+        current?.badgeTemplateMode === 'custom'
+        && current.badgeTemplate === badgeTemplate
+        && current.theaterOverlayTemplateMode === 'custom'
+        && current.theaterOverlayTemplateJson === theaterOverlayTemplateJson
+      ) {
+        return;
+      }
       await snapshotStore.updatePreference(channelId, {
         badgeTemplateMode: 'custom',
-        badgeTemplate: CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset],
+        badgeTemplate,
         theaterOverlayTemplateMode: 'custom',
-        theaterOverlayTemplateJson: JSON.stringify(
-          CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
-          null,
-          2,
-        ),
+        theaterOverlayTemplateJson,
       });
       await snapshotStore.syncLocalSnapshot(channelId, true);
     } catch (error) {
