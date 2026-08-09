@@ -163,6 +163,7 @@ export interface DisplaySettings {
 export const FAVORITE_CHANNEL_LIMIT = 4
 
 const STORAGE_KEY = 'sealchat_display_settings'
+const DISPLAY_SETTINGS_DEFAULT_MIGRATION_KEY = 'sealchat_display_settings_defaults_v2_done'
 
 const SLICE_LIMIT_DEFAULT = 5000
 const SLICE_LIMIT_MIN = 1000
@@ -282,7 +283,8 @@ const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
   return 'away'
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
-const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
+const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'time'
+const LEGACY_TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
 const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url', 'platform']
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
   if (typeof value === 'string') {
@@ -328,6 +330,11 @@ const coerceBotBadgeStyle = (value: unknown): BotBadgeStyle => (
     : typeof value === 'string' && BOT_BADGE_STYLE_VALUES.includes(value as BotBadgeStyle)
       ? value as BotBadgeStyle
     : BOT_BADGE_STYLE_DEFAULT
+)
+const CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT: MessageVisibilityScope = 'ic'
+const LEGACY_CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT: MessageVisibilityScope = 'all'
+const coerceCharacterCardBadgeVisibilityScope = (value: unknown): MessageVisibilityScope => (
+  normalizeMessageVisibilityScope(value, CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT)
 )
 const coerceBoolean = (value: any): boolean => value !== false
 const coerceNumberInRange = (value: any, fallback: number, min: number, max: number): number => {
@@ -567,7 +574,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   characterCardBadgeSettingsExpanded: true,
   characterCardBadgeEnabled: true,
   botBadgeStyle: BOT_BADGE_STYLE_DEFAULT,
-  characterCardBadgeVisibilityScope: 'ic',
+  characterCardBadgeVisibilityScope: CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT,
   characterCardBadgeAutoContrastEnabled: true,
   characterCardAutoSyncBotNickname: true,
   onlineCharacterCardsEnabled: true,
@@ -686,9 +693,17 @@ const normalizePlatformThemes = (value: any): PlatformTheme[] => {
   return result
 }
 
-export const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => {
+interface ParsedStoredSettingsResult {
+  settings: DisplaySettings
+  migrated: boolean
+}
+
+const parseStoredSettingsInternal = (
+  raw: string | null | undefined,
+  migrateLegacyDefaults = true,
+): ParsedStoredSettingsResult => {
   if (!raw) {
-    return defaultSettings()
+    return { settings: defaultSettings(), migrated: false }
   }
   try {
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
@@ -720,7 +735,7 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
         : null,
     })
 
-    return {
+    const settings: DisplaySettings = {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
       followSystemTheme: coerceBoolean((parsed as any)?.followSystemTheme ?? false),
@@ -873,7 +888,9 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       ),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       botBadgeStyle: coerceBotBadgeStyle((parsed as any)?.botBadgeStyle),
-      characterCardBadgeVisibilityScope: normalizeMessageVisibilityScope((parsed as any)?.characterCardBadgeVisibilityScope),
+      characterCardBadgeVisibilityScope: coerceCharacterCardBadgeVisibilityScope(
+        (parsed as any)?.characterCardBadgeVisibilityScope,
+      ),
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
       characterCardAutoSyncBotNickname: coerceBoolean((parsed as any)?.characterCardAutoSyncBotNickname ?? true),
       onlineCharacterCardsEnabled: normalizeOnlineCharacterCardsEnabled((parsed as any)?.onlineCharacterCardsEnabled),
@@ -886,17 +903,64 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       showOthersIdentityRemark: coerceBoolean((parsed as any)?.showOthersIdentityRemark ?? true),
       dice3dEnabled: coerceBoolean((parsed as any)?.dice3dEnabled ?? true),
     }
+
+    if (!migrateLegacyDefaults) {
+      return { settings, migrated: false }
+    }
+
+    let migrated = false
+    const hasBadgeVisibilityScope = Object.prototype.hasOwnProperty.call(parsed as any, 'characterCardBadgeVisibilityScope')
+    const storedBadgeVisibilityScope = (parsed as any)?.characterCardBadgeVisibilityScope
+    if (!hasBadgeVisibilityScope || storedBadgeVisibilityScope === LEGACY_CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT) {
+      settings.characterCardBadgeVisibilityScope = CHARACTER_CARD_BADGE_VISIBILITY_SCOPE_DEFAULT
+      migrated = true
+    }
+
+    const hasTimestampFormat = Object.prototype.hasOwnProperty.call(parsed as any, 'timestampFormat')
+    const storedTimestampFormat = typeof (parsed as any)?.timestampFormat === 'string'
+      ? (parsed as any).timestampFormat.trim()
+      : (parsed as any)?.timestampFormat
+    if (!hasTimestampFormat || storedTimestampFormat === LEGACY_TIMESTAMP_FORMAT_DEFAULT) {
+      settings.timestampFormat = TIMESTAMP_FORMAT_DEFAULT
+      migrated = true
+    }
+
+    return { settings, migrated }
   } catch (error) {
     console.warn('加载常规设置设置失败，使用默认值', error)
-    return defaultSettings()
+    return { settings: defaultSettings(), migrated: false }
   }
+}
+
+export const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => (
+  parseStoredSettingsInternal(raw).settings
+)
+
+const resolveStoredSettings = (raw: string | null | undefined): DisplaySettings => {
+  if (typeof window === 'undefined') {
+    return parseStoredSettingsInternal(raw).settings
+  }
+  // 旧默认值只迁移一次，避免用户之后主动选择旧选项时被覆盖。
+  const migrationDone = window.localStorage.getItem(DISPLAY_SETTINGS_DEFAULT_MIGRATION_KEY) === '1'
+  const parsed = parseStoredSettingsInternal(raw, !migrationDone)
+  if (!migrationDone) {
+    try {
+      if (parsed.migrated) {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed.settings))
+      }
+      window.localStorage.setItem(DISPLAY_SETTINGS_DEFAULT_MIGRATION_KEY, '1')
+    } catch (error) {
+      console.warn('常规设置默认值迁移失败，继续使用当前设置', error)
+    }
+  }
+  return parsed.settings
 }
 
 const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
     return defaultSettings()
   }
-  return parseStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+  return resolveStoredSettings(window.localStorage.getItem(STORAGE_KEY))
 }
 
 let storageSyncBound = false
@@ -1234,7 +1298,7 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
       : base.botBadgeStyle,
   characterCardBadgeVisibilityScope:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeVisibilityScope')
-      ? normalizeMessageVisibilityScope((patch as any).characterCardBadgeVisibilityScope)
+      ? coerceCharacterCardBadgeVisibilityScope((patch as any).characterCardBadgeVisibilityScope)
       : base.characterCardBadgeVisibilityScope,
   characterCardBadgeAutoContrastEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeAutoContrastEnabled')
@@ -1522,7 +1586,7 @@ export const useDisplayStore = defineStore('display', {
       window.addEventListener('storage', (event) => {
         if (event.storageArea !== window.localStorage) return
         if (event.key !== STORAGE_KEY) return
-        const nextSettings = parseStoredSettings(event.newValue)
+        const nextSettings = resolveStoredSettings(event.newValue)
         const currentSnapshot = JSON.stringify(this.settings)
         const nextSnapshot = JSON.stringify(nextSettings)
         if (currentSnapshot === nextSnapshot) return
