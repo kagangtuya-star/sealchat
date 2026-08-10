@@ -5820,6 +5820,86 @@ const handleRetrySend = () => {
   background: transparent;
 }
 
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget {
+  background: var(--sc-bg-elevated, #26262c);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget * {
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget button {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 10%, transparent);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget button:hover {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 18%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget input {
+  border-color: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+  background: var(--sc-bg-input, #3f3f46);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 16%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range::-webkit-slider-thumb,
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range::-moz-range-thumb {
+  background: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__bar {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 16%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__fill {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 44%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__settings-panel {
+  border-color: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+  background: var(--sc-bg-elevated, #26262c);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-list__item:hover {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 8%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__svg > circle:first-child {
+  stroke: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 24%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__svg > circle:last-of-type {
+  fill: var(--sc-bg-input, #3f3f46);
+  stroke: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 10%, transparent);
+  stroke: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 24%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment:hover {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 18%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment--filled {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 44%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment--filled:hover {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 36%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__count {
+  fill: var(--sc-text-primary, #f4f4f5);
+}
+
 :root[data-display-palette='night'] .message-sticky-note-embed__content {
   color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 95%, transparent);
 }
