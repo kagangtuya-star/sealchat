@@ -381,6 +381,11 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	if req.Color == "" {
 		req.Color = "yellow"
 	}
+	normalizedColor, ok := model.StickyNoteNormalizeColor(req.Color)
+	if !ok {
+		return c.Status(400).JSON(fiber.Map{"error": "便签颜色无效"})
+	}
+	req.Color = normalizedColor
 	if req.DefaultW == 0 {
 		req.DefaultW = 300
 	}
@@ -844,7 +849,11 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 		updates["content_text"] = *req.ContentText
 	}
 	if req.Color != nil {
-		updates["color"] = *req.Color
+		normalizedColor, ok := model.StickyNoteNormalizeColor(*req.Color)
+		if !ok {
+			return c.Status(400).JSON(fiber.Map{"error": "便签颜色无效"})
+		}
+		updates["color"] = normalizedColor
 	}
 	if req.Appearance != nil {
 		appearanceJSON, err := encodeStickyNoteAppearance(req.Appearance, note.WorldID, user.ID)

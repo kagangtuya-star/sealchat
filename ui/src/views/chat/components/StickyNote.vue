@@ -6,7 +6,7 @@
       class="sticky-note"
       data-sc-font-surface="true"
       :class="[
-        `sticky-note--${note.color || 'yellow'}`,
+        `sticky-note--${getStickyNoteColorTheme(pendingColor || note.color)}`,
         { 'sticky-note--editing': isEditing, 'sticky-note--highlight': isHighlighted }
       ]"
       :style="noteStyle"
@@ -233,10 +233,35 @@
               v-for="color in colors"
               :key="color"
               class="sticky-note__color-btn"
-              :class="{ 'sticky-note__color-btn--active': note.color === color }"
+              :class="{ 'sticky-note__color-btn--active': !pendingColor && note.color === color }"
               :style="{ backgroundColor: getColorValue(color) }"
+              type="button"
+              :title="color"
+              :aria-label="`设置便签颜色 ${color}`"
+              @pointerdown.stop
               @click="changeColor(color)"
             ></button>
+            <label
+              class="sticky-note__color-btn sticky-note__color-btn--custom"
+              :class="{ 'sticky-note__color-btn--active': isCustomColor }"
+              title="自定义颜色"
+              aria-label="自定义便签颜色"
+              @pointerdown.stop
+            >
+              <input
+                class="sticky-note__color-input"
+                type="color"
+                :value="customColorDraft"
+                aria-label="自定义便签颜色"
+                @input="handleCustomColorChange"
+                @change="savePendingColorWithSession"
+              />
+              <span
+                class="sticky-note__color-custom-fill"
+                :style="{ backgroundColor: customColorValue }"
+              ></span>
+              <span class="sticky-note__color-custom-icon">+</span>
+            </label>
           </div>
         </div>
         <span class="sticky-note__meta-time">
@@ -265,6 +290,14 @@ import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUpl
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver'
 import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback, copyTextWithResult } from '@/utils/clipboard'
+import {
+  STICKY_NOTE_PRESET_COLORS,
+  getStickyNoteColorTheme,
+  getStickyNoteColorValue,
+  getStickyNoteSurfaceColor,
+  isStickyNoteCustomColor,
+  normalizeStickyNoteHexColor,
+} from '@/utils/stickyNoteColor'
 import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 import { preloadPlatformFontsFromDom } from '@/services/font/platformFontRegistry'
@@ -342,7 +375,12 @@ const resizeStart = ref({ x: 0, y: 0, w: 0, h: 0 })
 const resizePointerId = ref<number | null>(null)
 
 // 颜色选项
-const colors = ['yellow', 'pink', 'green', 'blue', 'purple', 'orange']
+const colors = STICKY_NOTE_PRESET_COLORS
+const customColorDraft = ref('#fff9c4')
+const pendingColor = ref<string | null>(null)
+let colorUpdatePromise: Promise<void> | null = null
+let savingColor: string | null = null
+let queuedColor: string | null = null
 
 // 计算属性
 const note = computed<StickyNote | undefined>(() =>
@@ -357,8 +395,29 @@ const isEditing = computed(() =>
   stickyNoteStore.editingNoteId === props.noteId
 )
 
+const isCustomColor = computed(() =>
+  Boolean(pendingColor.value) || isStickyNoteCustomColor(note.value?.color)
+)
+
+const customColorValue = computed(() => {
+  const pending = pendingColor.value
+  if (pending) return getColorValue(pending)
+  if (isStickyNoteCustomColor(note.value?.color)) {
+    return getColorValue(note.value?.color)
+  }
+  return 'transparent'
+})
+
+watch(() => note.value?.color, (color) => {
+  const normalized = normalizeStickyNoteHexColor(color)
+  if (normalized && !pendingColor.value) {
+    customColorDraft.value = normalized
+  }
+}, { immediate: true })
+
 // 进入编辑模式时，如果内容是富文本（TipTap JSON），自动切换到富文本模式
 watch(isEditing, (editing) => {
+  pendingColor.value = null
   if (editing && note.value?.content) {
     richMode.value = isTipTapJson(note.value.content)
   }
@@ -372,6 +431,7 @@ watch(() => note.value?.editingLock, (lock) => {
     clearAutoSaveTimer()
     stickyNoteStore.stopEditing(props.noteId)
     currentEditSessionId.value = null
+    pendingColor.value = null
   }
 })
 
@@ -679,6 +739,50 @@ async function saveContentNowWithSession() {
   }
 }
 
+async function savePendingColorWithSession() {
+  const color = pendingColor.value
+  if (!note.value || !color) return
+  await persistColor(color)
+}
+
+async function persistColor(color: string) {
+  if (savingColor === color && queuedColor === null && colorUpdatePromise) {
+    await colorUpdatePromise
+    return
+  }
+
+  queuedColor = color
+  if (colorUpdatePromise) {
+    await colorUpdatePromise
+    return
+  }
+
+  colorUpdatePromise = (async () => {
+    while (queuedColor) {
+      const nextColor = queuedColor
+      queuedColor = null
+      savingColor = nextColor
+      const result = await stickyNoteStore.updateNoteWithOptions(props.noteId, { color: nextColor }, {
+        lockSessionId: getActiveSessionId()
+      })
+      if (result.ok === false) {
+        if (result.conflict) {
+          message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+        }
+      } else if (pendingColor.value === nextColor) {
+        pendingColor.value = null
+      }
+    }
+  })()
+
+  try {
+    await colorUpdatePromise
+  } finally {
+    colorUpdatePromise = null
+    savingColor = null
+  }
+}
+
 async function saveAndReleaseEditing(options?: { autoReason?: 'idle' | 'blur' | 'close' }) {
   if (!isEditing.value) return
   if (isReleasingEditing.value) return
@@ -687,12 +791,14 @@ async function saveAndReleaseEditing(options?: { autoReason?: 'idle' | 'blur' | 
   try {
     await saveTitleWithSession()
     await saveContentNowWithSession()
+    await savePendingColorWithSession()
     const sessionId = getActiveSessionId()
     if (sessionId) {
       await stickyNoteStore.releaseEditLock(props.noteId, sessionId)
     }
     stickyNoteStore.stopEditing(props.noteId)
     currentEditSessionId.value = null
+    pendingColor.value = null
     if (options?.autoReason === 'idle') {
       message.info('便签已自动保存并释放编辑锁')
     }
@@ -707,6 +813,7 @@ async function beginEditing() {
     message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
     return
   }
+  pendingColor.value = null
   localTitle.value = note.value.title || ''
   localContent.value = note.value.content || ''
   const sessionId = generateEditingSessionId()
@@ -981,7 +1088,8 @@ const noteStyle = computed(() => {
     '--sticky-note-bg-size': fit === 'stretch' ? '100% 100%' : fit === 'tile' ? 'auto' : fit,
     '--sticky-note-bg-repeat': fit === 'tile' ? 'repeat' : 'no-repeat',
     '--sticky-note-bg-position': `${background?.positionX ?? 50}% ${background?.positionY ?? 50}%`,
-    '--sticky-note-bg-wash': String(background?.contentWashOpacity ?? 0)
+    '--sticky-note-bg-wash': String(background?.contentWashOpacity ?? 0),
+    '--sticky-note-custom-color': getStickyNoteSurfaceColor(pendingColor.value || n?.color)
   }
 })
 
@@ -996,17 +1104,8 @@ function getViewportSize() {
   }
 }
 
-// 颜色映射
-function getColorValue(color: string): string {
-  const colorMap: Record<string, string> = {
-    yellow: '#fff9c4',
-    pink: '#f8bbd9',
-    green: '#c8e6c9',
-    blue: '#bbdefb',
-    purple: '#e1bee7',
-    orange: '#ffe0b2'
-  }
-  return colorMap[color] || colorMap.yellow
+function getColorValue(color: string | undefined | null): string {
+  return getStickyNoteColorValue(color)
 }
 
 // 格式化时间
@@ -1101,9 +1200,17 @@ async function pushToTargets() {
 }
 
 function changeColor(color: string) {
-  void stickyNoteStore.updateNoteWithOptions(props.noteId, { color }, {
-    lockSessionId: getActiveSessionId()
-  })
+  pendingColor.value = null
+  void persistColor(color)
+}
+
+function handleCustomColorChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const normalized = normalizeStickyNoteHexColor(input?.value)
+  if (!normalized) return
+  customColorDraft.value = normalized
+  pendingColor.value = normalized
+  markEditingActivity()
 }
 
 function minimize() {
@@ -1366,6 +1473,9 @@ if (typeof window !== 'undefined') {
 .sticky-note--blue { background: linear-gradient(135deg, #bbdefb 0%, #90caf9 100%); }
 .sticky-note--purple { background: linear-gradient(135deg, #e1bee7 0%, #ce93d8 100%); }
 .sticky-note--orange { background: linear-gradient(135deg, #ffe0b2 0%, #ffcc80 100%); }
+.sticky-note--custom {
+  background: var(--sticky-note-custom-color, #fff9c4);
+}
 
 .sticky-note__header {
   display: flex;
@@ -1617,6 +1727,54 @@ if (typeof window !== 'undefined') {
 
 .sticky-note__color-btn--active {
   border-color: rgba(0, 0, 0, 0.4);
+}
+
+.sticky-note__color-btn--custom {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 0;
+  padding: 2px;
+  background: linear-gradient(135deg, #f87171 0%, #fbbf24 25%, #34d399 50%, #60a5fa 75%, #a78bfa 100%);
+}
+
+.sticky-note__color-btn--custom.sticky-note__color-btn--active {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.42);
+}
+
+.sticky-note__color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.sticky-note__color-custom-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.sticky-note__color-custom-icon {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 .sticky-note__resize-handle {

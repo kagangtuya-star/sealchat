@@ -24,7 +24,8 @@
             v-for="note in minimizedNotes"
             :key="note.id"
             class="sticky-note-minimized-item"
-            :class="`sticky-note-minimized-item--${note.color}`"
+            :class="`sticky-note-minimized-item--${getStickyNoteColorTheme(note.color)}`"
+            :style="getMinimizedNoteColorStyle(note.color)"
             @click="restore(note.id)"
           >
             <span class="sticky-note-minimized-title">
@@ -171,7 +172,8 @@
                   v-for="note in uncategorizedNotes"
                   :key="note.id"
                   class="sticky-note-rail__item"
-                  :class="`sticky-note-rail__item--${note.color}`"
+                  :class="`sticky-note-rail__item--${getStickyNoteColorTheme(note.color)}`"
+                  :style="getRailNoteColorStyle(note.color)"
                   draggable="true"
                   @click="openNote(note.id)"
                   @dragstart="onNoteDragStart($event, note.id)"
@@ -330,7 +332,8 @@
                     v-for="note in getNotesByFolder(folder.id)"
                     :key="note.id"
                     class="sticky-note-rail__item sticky-note-rail__item--nested"
-                    :class="`sticky-note-rail__item--${note.color}`"
+                    :class="`sticky-note-rail__item--${getStickyNoteColorTheme(note.color)}`"
+                    :style="getRailNoteColorStyle(note.color)"
                     draggable="true"
                     @click="openNote(note.id)"
                     @dragstart="onNoteDragStart($event, note.id)"
@@ -442,6 +445,7 @@ import { matchText } from '@/utils/pinyinMatch'
 import StickyNote from './StickyNote.vue'
 import StickyNoteTypeSelector from './sticky-notes/StickyNoteTypeSelector.vue'
 import { useMessage } from 'naive-ui'
+import { getStickyNoteColorTheme, getStickyNoteColorValue, getStickyNoteSurfaceColor, isStickyNoteCustomColor } from '@/utils/stickyNoteColor'
 
 const StickyNoteBackgroundModal = defineAsyncComponent(() => import('./StickyNoteBackgroundModal.vue'))
 
@@ -453,6 +457,18 @@ const stickyNoteStore = useStickyNoteStore()
 const chatStore = useChatStore()
 const userStore = useUserStore()
 const message = useMessage()
+
+function getRailNoteColorStyle(color: string | undefined) {
+  return isStickyNoteCustomColor(color)
+    ? { borderLeftColor: getStickyNoteColorValue(color) }
+    : undefined
+}
+
+function getMinimizedNoteColorStyle(color: string | undefined) {
+  return isStickyNoteCustomColor(color)
+    ? { backgroundColor: getStickyNoteSurfaceColor(color) }
+    : undefined
+}
 
 const railOpen = ref(false)
 const railPinned = ref(false)

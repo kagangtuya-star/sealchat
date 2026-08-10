@@ -38,6 +38,7 @@ import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/
 import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { normalizeStickyNoteHexColor } from '@/utils/stickyNoteColor'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
@@ -192,7 +193,12 @@ const resolveStickyNoteAccent = (color: string): string => {
     purple: '#9c27b0',
     orange: '#ff9800',
   };
-  return colorMap[color] || '#64748b';
+  const presetColor = colorMap[color];
+  if (presetColor) return presetColor;
+  const customColor = normalizeStickyNoteHexColor(color);
+  return customColor
+    ? `color-mix(in srgb, ${customColor} 50%, var(--chat-text-primary, currentColor))`
+    : '#64748b';
 };
 
 const resolveStickyNoteContentText = (note: any): string => {
