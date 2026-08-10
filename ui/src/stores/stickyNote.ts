@@ -213,6 +213,12 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     const privateCreateEnabled = ref(false)
     // 每频道远端持久化开关缓存
     const persistRemoteStateByChannel = ref<Record<string, boolean>>({})
+    // 防止高速类型数据更新时，旧请求响应覆盖本地最新值
+    const typeDataMutationSequence = new Map<string, number>()
+    const pendingTypeDataMutations = new Set<string>()
+    const pendingTypeDataPayloads = new Map<string, { sequence: number; typeDataStr: string }>()
+    const inFlightTypeDataMutations = new Set<string>()
+    const typeDataLastUpdatedAt = new Map<string, number>()
 
     // 计算属性
     const noteList = computed(() => Object.values(notes.value))
@@ -538,7 +544,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     async function updateNoteWithOptions(
         noteId: string,
         updates: Partial<StickyNote>,
-        options?: { lockSessionId?: string }
+        options?: { lockSessionId?: string; applyResponse?: boolean; applyOptimistic?: boolean }
     ): Promise<StickyNoteUpdateResult> {
         const payload: Record<string, any> = { ...updates }
         const lockSessionId = options?.lockSessionId ?? editingSessionByNoteId.value[noteId]
@@ -552,7 +558,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
 
         const existing = notes.value[noteId]
-        if (existing) {
+        if (existing && options?.applyOptimistic !== false) {
             notes.value[noteId] = {
                 ...existing,
                 ...payload
@@ -561,15 +567,19 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
         try {
             const response = await api.patch(`api/v1/sticky-notes/${noteId}`, payload)
-            notes.value[noteId] = response.data.note
-            persistLocalCache()
+            if (options?.applyResponse !== false) {
+                notes.value[noteId] = response.data.note
+                persistLocalCache()
+            }
             return { ok: true, note: response.data.note as StickyNote }
         } catch (err) {
             const status = (err as any)?.response?.status
             const lockedNote = (err as any)?.response?.data?.note as StickyNote | undefined
             if (status === 409 && lockedNote?.id) {
-                notes.value[lockedNote.id] = lockedNote
-                persistLocalCache()
+                if (options?.applyResponse !== false) {
+                    notes.value[lockedNote.id] = lockedNote
+                    persistLocalCache()
+                }
                 return { ok: false, conflict: true, note: lockedNote }
             }
             console.error('更新便签失败:', err)
@@ -948,7 +958,21 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
             case 'update':
                 if (note && note.channelId === currentChannelId.value) {
                     if (canCurrentUserViewNote(note)) {
+                        const current = notes.value[note.id]
+                        const lastUpdatedAt = typeDataLastUpdatedAt.get(note.id) || 0
+                        const incomingUpdatedAt = Number(note.updatedAt) || 0
+                        if (
+                            note.typeData &&
+                            current?.typeData &&
+                            note.typeData !== current.typeData &&
+                            (pendingTypeDataMutations.has(note.id) || incomingUpdatedAt <= lastUpdatedAt)
+                        ) {
+                            break
+                        }
                         notes.value[note.id] = note
+                        if (note.typeData && incomingUpdatedAt > 0) {
+                            typeDataLastUpdatedAt.set(note.id, incomingUpdatedAt)
+                        }
                         persistLocalCache()
                     } else {
                         removeNoteFromLocalState(note.id)
@@ -1026,6 +1050,11 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         remoteNotesReady.value = false
         uiVisible.value = false
         privateCreateEnabled.value = false
+        typeDataMutationSequence.clear()
+        pendingTypeDataMutations.clear()
+        pendingTypeDataPayloads.clear()
+        inFlightTypeDataMutations.clear()
+        typeDataLastUpdatedAt.clear()
     }
 
     function parseRawTypeDataObject(note?: StickyNote | null): Record<string, any> {
@@ -1120,8 +1149,50 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         return result.ok
     }
 
+    function applyOptimisticTypeData(noteId: string, typeDataStr: string) {
+        const existing = notes.value[noteId]
+        if (!existing) return
+        notes.value[noteId] = {
+            ...existing,
+            typeData: typeDataStr,
+        }
+        persistLocalCache()
+    }
+
+    async function flushTypeDataMutation(noteId: string) {
+        if (inFlightTypeDataMutations.has(noteId)) return
+        const pending = pendingTypeDataPayloads.get(noteId)
+        if (!pending) return
+
+        pendingTypeDataPayloads.delete(noteId)
+        inFlightTypeDataMutations.add(noteId)
+        try {
+            const result = await updateNoteWithOptions(
+                noteId,
+                { typeData: pending.typeDataStr },
+                { applyResponse: false, applyOptimistic: false },
+            )
+            if (typeDataMutationSequence.get(noteId) === pending.sequence) {
+                pendingTypeDataMutations.delete(noteId)
+                if (result.ok && result.note) {
+                    notes.value[noteId] = result.note
+                    typeDataLastUpdatedAt.set(noteId, Number(result.note.updatedAt) || 0)
+                    persistLocalCache()
+                } else if (result.conflict && result.note) {
+                    notes.value[noteId] = result.note
+                    persistLocalCache()
+                }
+            }
+        } finally {
+            inFlightTypeDataMutations.delete(noteId)
+            if (pendingTypeDataPayloads.has(noteId)) {
+                void flushTypeDataMutation(noteId)
+            }
+        }
+    }
+
     // 更新 typeData
-    async function updateTypeData(noteId: string, typeData: StickyNoteTypeData) {
+    function updateTypeData(noteId: string, typeData: StickyNoteTypeData) {
         const note = notes.value[noteId]
         const embedLayout = getEmbedLayoutState(noteId)
         const hasEmbedLayout = Boolean(
@@ -1141,7 +1212,12 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
 
         const typeDataStr = JSON.stringify(nextTypeData)
-        await updateNote(noteId, { typeData: typeDataStr })
+        const sequence = (typeDataMutationSequence.get(noteId) || 0) + 1
+        typeDataMutationSequence.set(noteId, sequence)
+        pendingTypeDataMutations.add(noteId)
+        pendingTypeDataPayloads.set(noteId, { sequence, typeDataStr })
+        applyOptimisticTypeData(noteId, typeDataStr)
+        void flushTypeDataMutation(noteId)
     }
 
     // 获取默认 typeData
