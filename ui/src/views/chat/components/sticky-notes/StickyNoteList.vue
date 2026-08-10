@@ -231,6 +231,7 @@ function moveItem(index: number, direction: 'up' | 'down') {
   border-radius: 4px;
   font-size: 14px;
   background: rgba(255, 255, 255, 0.8);
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .sticky-note-list__item-actions {
@@ -276,6 +277,7 @@ function moveItem(index: number, direction: 'up' | 'down') {
   border-radius: 4px;
   font-size: 14px;
   background: rgba(255, 255, 255, 0.5);
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .sticky-note-list__add-btn {
