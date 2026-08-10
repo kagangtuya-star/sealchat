@@ -51,20 +51,25 @@
         >
           <!-- 便签文字角标 -->
           <div class="sticky-note-rail__badge">便签</div>
-          <button
-            class="sticky-note-rail__handle"
-            title="展开便签"
-            @click.stop="toggleRailPinned"
-            @mousedown.stop
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M9 18l6-6-6-6v12z"/>
-            </svg>
-          </button>
           <div class="sticky-note-rail__body">
             <div class="sticky-note-rail__header">
               <span>便签</span>
-              <span class="sticky-note-rail__count">{{ stickyNoteStore.noteList.length }}</span>
+              <div class="sticky-note-rail__header-meta">
+                <span class="sticky-note-rail__count">{{ stickyNoteStore.noteList.length }}</span>
+                <button
+                  class="sticky-note-rail__toggle"
+                  :class="{ 'sticky-note-rail__toggle--active': railPinned }"
+                  :title="railPinned ? '已固定展开，点击切换为自动收缩' : '自动收缩，点击固定展开'"
+                  :aria-label="railPinned ? '切换为自动收缩' : '切换为固定展开'"
+                  :aria-pressed="railPinned"
+                  @click.stop="toggleRailPinned"
+                  @mousedown.stop
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M16 9V4h1V2H7v2h1v5c0 1.1-.9 2-2 2v2h5v7h2v-7h5v-2c-1.1 0-2-.9-2-2z"/>
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="sticky-note-rail__actions">
               <div class="sticky-note-rail__action-wrapper">
@@ -1287,21 +1292,38 @@ onUnmounted(() => {
   transform: translateY(-50%) translateX(0);
 }
 
-.sticky-note-rail__handle {
-  position: absolute;
-  right: -8px;
-  top: 18px;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 10px 0 0 10px;
-  background: var(--sc-primary-color, #3b82f6);
-  color: var(--sc-primary-contrast, #fff);
+.sticky-note-rail__header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sticky-note-rail__toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sc-text-secondary, #64748b);
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sticky-note-rail__toggle:hover {
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35);
+  background: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.1);
+  color: var(--sc-primary-color, #3b82f6);
+}
+
+.sticky-note-rail__toggle--active {
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.45);
+  background: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.14);
+  color: var(--sc-primary-color, #3b82f6);
 }
 
 /* 便签文字角标 - 显示在面板左侧外部，竖排文字 */
@@ -1349,6 +1371,7 @@ onUnmounted(() => {
 .sticky-note-rail__count {
   font-size: 11px;
   color: var(--sc-text-secondary, #64748b);
+  line-height: 20px;
 }
 
 .sticky-note-rail__actions {
