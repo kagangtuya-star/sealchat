@@ -317,7 +317,7 @@ const copyAgentPrompt = async () => {
                   <span v-if="lastAccessAt">最近访问：{{ lastAccessAt }}</span>
                 </div>
                 <div class="agent-access-help">
-                  常用参数：<code>resource=messages|counts</code>、重复的 <code>channel=频道ID</code>、<code>from</code>、<code>to</code>、<code>scope=all|ic|ooc</code>、<code>format=json|jsonl|text</code>、<code>content=plain|rich|both</code>、<code>colorizer=export</code>。完整定义以基础链接返回的 manifest 为准。
+                  常用参数：默认 <code>scope=ic</code>、<code>timestamp=none</code>；<code>resource=messages|counts</code>、重复的 <code>channel=频道ID</code>、<code>from</code>、<code>to</code>、<code>scope=all|ic|ooc</code>、<code>format=json|jsonl|text</code>、<code>content=plain|rich|both</code>、<code>colorizer=export</code>。完整定义以基础链接返回的 manifest 为准。
                 </div>
               </n-space>
             </n-collapse-item>

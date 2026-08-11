@@ -8,7 +8,7 @@
 GET {BASE_URL}
 ```
 
-基础链接默认返回 `manifest`。Agent 必须先读取 manifest，再根据返回的频道、能力、限制和链接模板进行抓取。
+基础链接默认返回 `manifest`。消息请求默认强制使用 `scope=ic`（仅场内）和 `timestamp=none`（不返回时间戳）。Agent 必须先读取 manifest，再根据返回的频道、能力、限制和链接模板进行抓取；需要 OOC 或时间戳时必须显式传参。
 
 本指南固定通过 `GET {SERVER_BASE}/ob-print/v1/docs` 获取，不绑定任何世界或 Agent 令牌。
 
@@ -71,7 +71,7 @@ to=2026-08-10T00:00:00Z
 
 即包含 `from`，不包含 `to`。
 
-未指定时按链接权限和服务器默认范围返回。
+未指定时使用 `scope=ic`，仅返回场内消息。
 
 ### 增量游标
 
@@ -94,7 +94,7 @@ scope=ooc
 | 值 | 含义 |
 |---|---|
 | `all` | IC + OOC |
-| `ic` | 仅角色内消息 |
+| `ic` | 仅角色内消息；默认值 |
 | `ooc` | 仅角色外消息 |
 
 ### 身份 / 用户过滤
@@ -122,7 +122,7 @@ timestamp=both
 timestamp=none
 ```
 
-推荐 Agent 使用，默认不带时间戳：
+服务端默认且推荐 Agent 使用 `timestamp=none`，不返回时间戳。需要时间戳时必须显式指定 `iso`、`unix_ms` 或 `both`：
 
 ```text
 timestamp=none
@@ -361,8 +361,10 @@ Agent 可先调用 `counts` 判断哪些频道发生变化，再抓取这些频�
 3. GET {BASE_URL}?resource=counts
 4. 记录服务端当前时间/同步边界
 5. 对每个频道执行：
-   GET {BASE_URL}?resource=messages
+       GET {BASE_URL}?resource=messages
        &channel=<ID>
+       &scope=ic
+       &timestamp=none
        &to=<同步边界>
        &order=asc
        &format=json
@@ -391,6 +393,8 @@ GET {BASE_URL}?resource=counts&after=<CHECKPOINT>
 ```text
 GET {BASE_URL}?resource=messages
     &channel=<ID>
+    &scope=ic
+    &timestamp=none
     &after=<CHECKPOINT>
     &order=asc
     &format=json
@@ -438,8 +442,8 @@ channels[C].messages
 ```text
 ?resource=messages
 &channel=<ID>
-&scope=all
-&timestamp=both
+&scope=ic
+&timestamp=none
 &images=meta
 &dice=structured
 &merge=none
@@ -463,7 +467,8 @@ channels[C].messages
 &rich_format=bbcode
 &sanitize=supported
 &colorizer=export
-&timestamp=iso
+&scope=ic
+&timestamp=none
 &images=omit
 &dice=include
 &merge=adjacent
