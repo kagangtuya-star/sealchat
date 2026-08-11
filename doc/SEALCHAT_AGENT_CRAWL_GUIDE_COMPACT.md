@@ -2,7 +2,7 @@
 
 ## 1. 基础用法
 
-将“AI 爬虫访问链接”作为唯一入口交给 Agent：
+将“AI Agent 访问链接”作为唯一入口交给 Agent：
 
 ```text
 GET {BASE_URL}
