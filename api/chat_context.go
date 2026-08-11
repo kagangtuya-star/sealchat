@@ -431,7 +431,7 @@ func normalizeBotCommandContentWithPrefixes(content string, prefixes []string) s
 	}
 
 	normalizedSource := content
-	if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
+	if serialized, ok := service.SerializeMessageContentToBotCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
 		normalizedSource = serialized
 	} else if !hasBotCommandPrefix(leading, prefixes) {
 		return content

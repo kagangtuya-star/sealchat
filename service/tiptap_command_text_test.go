@@ -48,3 +48,35 @@ func TestSerializeMessageContentToCommandText_RestoresDiceRollGroupSource(t *tes
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+func TestSerializeMessageContentToBotCommandTextPreservesMentions(t *testing.T) {
+	input := `<p>。ra 力量<at id="Nva7dGShxwcqKa2a" name="ceshi"/></p>`
+	got, ok := SerializeMessageContentToBotCommandText(input)
+	if !ok {
+		t.Fatal("expected command content to serialize")
+	}
+	want := `。ra 力量 <at id="Nva7dGShxwcqKa2a" name="ceshi"/>`
+	if got != want {
+		t.Fatalf("serialized bot command = %q, want %q", got, want)
+	}
+
+	legacy, ok := SerializeMessageContentToCommandText(input)
+	if !ok {
+		t.Fatal("expected legacy command content to serialize")
+	}
+	if legacy != `。ra 力量@ceshi` {
+		t.Fatalf("legacy serialized command = %q, want %q", legacy, `。ra 力量@ceshi`)
+	}
+}
+
+func TestSerializeTipTapBotCommandTextPreservesMentions(t *testing.T) {
+	input := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"。ra 力量"},{"type":"satoriMention","attrs":{"id":"Nva7dGShxwcqKa2a","name":"ceshi"}}]}]}`
+	got, ok := SerializeMessageContentToBotCommandText(input)
+	if !ok {
+		t.Fatal("expected TipTap command content to serialize")
+	}
+	want := `。ra 力量 <at id="Nva7dGShxwcqKa2a" name="ceshi"/>`
+	if got != want {
+		t.Fatalf("serialized TipTap bot command = %q, want %q", got, want)
+	}
+}
