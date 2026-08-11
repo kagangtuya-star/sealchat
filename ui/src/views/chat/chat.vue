@@ -10203,7 +10203,7 @@ const sendTypingUpdate = throttle(
 		lastTypingWhisperTargetId = targetId ?? null;
 		chat.messageTyping(state, content, channelId, extra);
 	},
-	400,
+	800,
 	{ leading: true, trailing: true },
 );
 const broadcastTypingOrderChange = throttle(
