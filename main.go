@@ -334,6 +334,7 @@ func main() {
 	service.StartTheaterOutboxWorker(ctx)
 
 	service.SyncUpdateCurrentVersion(utils.BuildVersion)
+	api.SetAgentCrawlGuide(embeddedAgentCrawlGuide)
 	if err := api.Init(config, embedDirStatic); err != nil {
 		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)
 	}

@@ -31,26 +31,29 @@ func ListChannelMessageActiveDays(channelID, month string) ([]string, error) {
 	}
 
 	type row struct {
-		Day string `gorm:"column:day"`
+		CreatedAt time.Time `gorm:"column:created_at"`
 	}
 	var rows []row
 	query := model.GetDB().Table("messages").
-		Select("DISTINCT date(created_at) as day").
+		Select("created_at").
 		Where("channel_id = ?", channelID).
 		Where("is_deleted = ?", false).
-		Where("is_revoked = ?", false).
-		Where("created_at >= ? AND created_at < ?", start, end).
-		Order("day asc")
+		Where("is_revoked = ?", false)
+	query = applyDatabaseTimeComparison(query, "created_at", ">=", start)
+	query = applyDatabaseTimeComparison(query, "created_at", "<", end)
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
-	days := make([]string, 0, len(rows))
+	daySet := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		day := strings.TrimSpace(row.Day)
-		if day == "" {
+		if row.CreatedAt.IsZero() {
 			continue
 		}
+		daySet[row.CreatedAt.In(time.Local).Format("2006-01-02")] = struct{}{}
+	}
+	days := make([]string, 0, len(daySet))
+	for day := range daySet {
 		days = append(days, day)
 	}
 	sort.Strings(days)

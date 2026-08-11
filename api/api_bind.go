@@ -31,6 +31,7 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+var agentCrawlGuideMarkdown string
 var serveAppWithOptionalCertificateForInit = serveAppWithOptionalCertificate
 var startOneBotReverseRuntimeForInit = startOneBotReverseRuntime
 
@@ -162,6 +163,39 @@ func buildObserverPrintPaths(webURL string) []string {
 	}
 	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
 	return paths
+}
+
+func buildAgentAccessPaths(webURL string) []string {
+	paths := []string{"/ob-print/v1/:token"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	paths = append(paths, path.Join(webRoot, "ob-print", "v1", ":token"))
+	return paths
+}
+
+func buildAgentGuidePaths(webURL string) []string {
+	paths := []string{"/ob-print/v1/docs"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	return append(paths, path.Join(webRoot, "ob-print", "v1", "docs"))
 }
 
 func normalizeWebRoot(webURL string) string {
@@ -450,6 +484,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		pathCopy := routePath
 		app.Get(pathCopy, ObserverPrintPageHandler)
 	}
+	for _, routePath := range buildAgentGuidePaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, AgentCrawlGuideHandler)
+	}
+	for _, routePath := range buildAgentAccessPaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, AgentAccessHandler)
+	}
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)
@@ -714,6 +756,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Get("/:worldId", WorldDetail)
 	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
 	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
+	worldGroup.Get("/:worldId/agent-access", WorldAgentAccessGetHandler)
+	worldGroup.Put("/:worldId/agent-access", WorldAgentAccessUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
 	worldGroup.Get("/:worldId/dice3d", WorldDice3DConfigGet)
 	worldGroup.Put("/:worldId/dice3d", WorldDice3DConfigPut)
