@@ -483,7 +483,7 @@ func (rt *oneBotRuntime) applyHTTPPostQuickOperation(botUserID string, event *pr
 			senderUserID = strings.TrimSpace(event.Message.User.ID)
 		}
 		if senderUserID != "" {
-			numericUserID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, senderUserID)
+			numericUserID, err := service.GetOrCreateOneBotUserID(senderUserID)
 			if err != nil {
 				return err
 			}

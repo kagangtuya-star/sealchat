@@ -247,13 +247,13 @@ func oneBotChatContext(session *oneBotSession) *ChatContext {
 func oneBotCodecHooks() service.OneBotMessageCodecHooks {
 	return service.OneBotMessageCodecHooks{
 		ResolveUserID: func(numericID int64) (string, error) {
-			return service.ResolveInternalID(service.OneBotEntityUser, numericID)
+			return service.ResolveOneBotUserInternalID(numericID)
 		},
 		ResolveMessageID: func(numericID int64) (string, error) {
 			return service.ResolveInternalID(service.OneBotEntityMessage, numericID)
 		},
 		ResolveUserOneBotID: func(userID string) (int64, error) {
-			return service.GetOrCreateOneBotID(service.OneBotEntityUser, userID)
+			return service.GetOrCreateOneBotUserID(userID)
 		},
 		ResolveMessageOneBotID: func(messageID string) (int64, error) {
 			return service.GetOrCreateOneBotID(service.OneBotEntityMessage, messageID)
@@ -354,7 +354,7 @@ func oneBotActionSendPrivateMessage(session *oneBotSession, raw json.RawMessage)
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
+	targetUserID, err := service.ResolveOneBotUserInternalID(params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -413,7 +413,7 @@ func oneBotActionSendMessage(session *oneBotSession, raw json.RawMessage) (any, 
 		if params.UserID.Int64() <= 0 {
 			return nil, oneBotBadRequest("user_id missing")
 		}
-		targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
+		targetUserID, err := service.ResolveOneBotUserInternalID(params.UserID.Int64())
 		if err != nil {
 			return nil, oneBotNotFound("user not found")
 		}
@@ -568,7 +568,7 @@ func oneBotActionGetStrangerInfo(_ *oneBotSession, raw json.RawMessage) (any, er
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	internalID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
+	internalID, err := service.ResolveOneBotUserInternalID(params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -594,7 +594,7 @@ func oneBotActionGetFriendList(session *oneBotSession) (any, error) {
 		if item == nil || item.UserInfo == nil {
 			continue
 		}
-		userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, item.UserInfo.ID)
+		userID, err := service.GetOrCreateOneBotUserID(item.UserInfo.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -657,7 +657,7 @@ func oneBotActionGetGroupMemberInfo(session *oneBotSession, raw json.RawMessage)
 	if err != nil {
 		return nil, err
 	}
-	userID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
+	userID, err := service.ResolveOneBotUserInternalID(params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -791,7 +791,7 @@ func buildOneBotGroupMemberInfo(channel *model.ChannelModel, member *model.Membe
 	if err != nil {
 		return nil, err
 	}
-	userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, user.ID)
+	userID, err := service.GetOrCreateOneBotUserID(user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +856,7 @@ func buildOneBotMessageResponseFromModel(channel *model.ChannelModel, msg *model
 	if err != nil {
 		return nil, err
 	}
-	userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, msg.UserID)
+	userID, err := service.GetOrCreateOneBotUserID(msg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -906,7 +906,7 @@ func projectProtocolEventToOneBot(session *oneBotSession, event *protocol.Event)
 	if userIDSource == "" {
 		return nil, false
 	}
-	userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, userIDSource)
+	userID, err := service.GetOrCreateOneBotUserID(userIDSource)
 	if err != nil {
 		return nil, false
 	}
@@ -966,7 +966,7 @@ func buildOneBotSender(channel *model.ChannelModel, msg *protocol.Message, userI
 		"sex":      "unknown",
 		"age":      0,
 	}
-	if mappedUserID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, userID); err == nil && mappedUserID > 0 {
+	if mappedUserID, err := service.GetOrCreateOneBotUserID(userID); err == nil && mappedUserID > 0 {
 		result["user_id"] = mappedUserID
 	}
 	if channel != nil && !channel.IsPrivate && !strings.EqualFold(channel.PermType, "private") {
