@@ -64,6 +64,78 @@ const newObjectOffsets = [
 const stageObjectTypes: StageObjectType[] = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video', 'effect']
 type StageInsertableObjectType = Exclude<StageObjectType, 'drawing'>
 
+const snapStageCoordinate = (value: number, fieldSize: number, gridSize: number) => {
+  const step = Math.max(0.25, gridSize)
+  const origin = -fieldSize / 2
+  return Number((origin + Math.round((value - origin) / step) * step).toFixed(6))
+}
+
+const objectParents = (object: StageObject, objects: Record<string, StageObject>) => {
+  const parents: StageObject[] = []
+  const visited = new Set<string>()
+  let parentId = object.parentId
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = objects[parentId]
+    if (!parent) break
+    parents.push(parent)
+    parentId = parent.parentId
+  }
+  return parents
+}
+
+const objectWorldPosition = (object: StageObject, objects: Record<string, StageObject>) => {
+  let x = object.transform.x
+  let y = object.transform.y
+  objectParents(object, objects).forEach((parent) => {
+    const scaleX = parent.transform.scaleX || 1
+    const scaleY = parent.transform.scaleY || 1
+    const angle = parent.transform.rotation * Math.PI / 180
+    const scaledX = x * scaleX
+    const scaledY = y * scaleY
+    const rotatedX = scaledX * Math.cos(angle) - scaledY * Math.sin(angle)
+    const rotatedY = scaledX * Math.sin(angle) + scaledY * Math.cos(angle)
+    x = rotatedX + parent.transform.x
+    y = rotatedY + parent.transform.y
+  })
+  return { x, y }
+}
+
+const setObjectWorldPosition = (
+  object: StageObject,
+  objects: Record<string, StageObject>,
+  worldPosition: { x: number, y: number },
+) => {
+  let x = worldPosition.x
+  let y = worldPosition.y
+  const parents = objectParents(object, objects)
+  parents.reverse().forEach((parent) => {
+    const angle = parent.transform.rotation * Math.PI / 180
+    const translatedX = x - parent.transform.x
+    const translatedY = y - parent.transform.y
+    const rotatedX = translatedX * Math.cos(angle) + translatedY * Math.sin(angle)
+    const rotatedY = -translatedX * Math.sin(angle) + translatedY * Math.cos(angle)
+    x = rotatedX / (parent.transform.scaleX || 1)
+    y = rotatedY / (parent.transform.scaleY || 1)
+  })
+  object.transform.x = Number(x.toFixed(6))
+  object.transform.y = Number(y.toFixed(6))
+}
+
+const snapObjectToGrid = (
+  object: StageObject,
+  liveState: StageLiveState,
+  objects: Record<string, StageObject>,
+) => {
+  // Effects use an independent 1920x1080 design canvas, not world coordinates.
+  if (!liveState.alignWithGrid || object.type === 'effect') return
+  const world = objectWorldPosition(object, objects)
+  setObjectWorldPosition(object, objects, {
+    x: snapStageCoordinate(world.x, liveState.fieldWidth, liveState.gridSize),
+    y: snapStageCoordinate(world.y, liveState.fieldHeight, liveState.gridSize),
+  })
+}
+
 const uid = (prefix: string) => {
   const id = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -814,6 +886,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     )
     objects[object.id] = object
     placeObjectAbove(object, objects)
+    snapObjectToGrid(object, state.liveState, activeObjects.value)
     setSelectedObjectIds([object.id], object.id)
     return object
   })
@@ -844,6 +917,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
     objects[object.id] = object
     placeObjectAbove(object, objects)
+    snapObjectToGrid(object, state.liveState, activeObjects.value)
     setSelectedObjectIds([object.id], object.id)
     return object
   })
@@ -1062,6 +1136,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
         } else if (!object.parentId || !collection[object.parentId]) {
           placeObjectAbove(object, collection, null)
         }
+        snapObjectToGrid(object, state.liveState, activeObjects.value)
       })
       reconcileGroupScopes()
       const pastedRootIds = pasted.roots.map((root) => root.id)

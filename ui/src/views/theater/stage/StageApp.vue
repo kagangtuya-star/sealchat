@@ -30,6 +30,7 @@ import {
   LetterT,
   Lock,
   LockOpen,
+  Magnet,
   Message,
   Photo,
   Pencil,
@@ -819,6 +820,7 @@ const drawingDashOptions = [
   { label: '点线', value: 'dotted' },
 ]
 const draggedLayerId = ref<string | null>(null)
+const gridSnapPreviewActive = ref(false)
 type LayerDropPlacement = 'before' | 'inside' | 'after'
 const layerDropTarget = ref<{ id: string | null, placement: LayerDropPlacement } | null>(null)
 const layerListRef = ref<HTMLDivElement | null>(null)
@@ -1898,6 +1900,56 @@ let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
 let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
+
+const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
+const toggleGridSnap = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.alignWithGrid = !props.store.state.liveState.alignWithGrid
+}
+
+const setGridSnapPreview = (active: boolean) => {
+  if (gridSnapPreviewActive.value === active) return
+  gridSnapPreviewActive.value = active
+  syncField()
+}
+
+const finishGridSnapPreview = () => {
+  if (gridSnapPreviewActive.value) setGridSnapPreview(false)
+}
+
+const snapStageCoordinate = (value: number, axis: 'x' | 'y') => {
+  const liveState = props.store.state.liveState
+  if (!liveState.alignWithGrid) return value
+  const fieldSize = axis === 'x' ? liveState.fieldWidth : liveState.fieldHeight
+  const origin = -fieldSize * WORLD_UNIT_PX / 2
+  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  return origin + Math.round((value - origin) / step) * step
+}
+
+const snapStagePosition = (position: { x: number, y: number }) => ({
+  x: snapStageCoordinate(position.x, 'x'),
+  y: snapStageCoordinate(position.y, 'y'),
+})
+
+const snapNodeToGrid = (node: Konva.Node) => {
+  if (!gridSnapEnabled.value || !worldCameraGroup) return { x: 0, y: 0 }
+  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
+  const camera = worldCameraGroup.absolutePosition()
+  const current = node.absolutePosition()
+  const world = {
+    x: (current.x - camera.x) / zoom,
+    y: (current.y - camera.y) / zoom,
+  }
+  const snapped = snapStagePosition(world)
+  const correction = {
+    x: (snapped.x - world.x) * zoom,
+    y: (snapped.y - world.y) * zoom,
+  }
+  if (correction.x || correction.y) {
+    node.absolutePosition({ x: current.x + correction.x, y: current.y + correction.y })
+  }
+  return correction
+}
 
 interface DrawingSession {
   tool: StageDrawingTool
@@ -4642,23 +4694,48 @@ const updateSurfaceSlot = (
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
   if (!gridGroup) return
   const liveState = props.store.state.liveState
-  const signature = [fieldWidth, fieldHeight, liveState.displayGrid, liveState.gridSize].join(':')
+  const camera = props.store.state.camera
+  const signature = [
+    fieldWidth,
+    fieldHeight,
+    liveState.displayGrid,
+    liveState.gridSize,
+    gridSnapPreviewActive.value,
+    viewportSize.value.width,
+    viewportSize.value.height,
+    camera.x,
+    camera.y,
+    camera.zoom,
+  ].join(':')
   if (signature === gridSignature) return
   gridSignature = signature
   gridGroup.destroyChildren()
-  if (!liveState.displayGrid) return
+  if (!liveState.displayGrid && !gridSnapPreviewActive.value) return
   const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
-  for (let x = fieldX; x <= fieldX + fieldWidth; x += step) {
+  const zoom = Math.max(0.01, camera.zoom)
+  const visibleLeft = (-viewportSize.value.width / 2 - camera.x) / zoom
+  const visibleRight = (viewportSize.value.width / 2 - camera.x) / zoom
+  const visibleTop = (-viewportSize.value.height / 2 - camera.y) / zoom
+  const visibleBottom = (viewportSize.value.height / 2 - camera.y) / zoom
+  // Draw across current viewport, not only inside finite field rectangle.
+  // Grid phase still follows field origin, so snapping and lines stay aligned.
+  const minX = visibleLeft - step
+  const maxX = visibleRight + step
+  const minY = visibleTop - step
+  const maxY = visibleBottom + step
+  const firstX = fieldX + Math.floor((minX - fieldX) / step) * step
+  const firstY = fieldY + Math.floor((minY - fieldY) / step) * step
+  for (let x = firstX; x <= maxX; x += step) {
     gridGroup.add(new Konva.Line({
-      points: [x, fieldY, x, fieldY + fieldHeight],
+      points: [x, minY, x, maxY],
       stroke: 'rgba(148, 163, 184, 0.12)',
       strokeWidth: 1,
       listening: false,
     }))
   }
-  for (let y = fieldY; y <= fieldY + fieldHeight; y += step) {
+  for (let y = firstY; y <= maxY; y += step) {
     gridGroup.add(new Konva.Line({
-      points: [fieldX, y, fieldX + fieldWidth, y],
+      points: [minX, y, maxX, y],
       stroke: 'rgba(148, 163, 184, 0.12)',
       strokeWidth: 1,
       listening: false,
@@ -5118,13 +5195,18 @@ const createObjectNode = (object: StageObject) => {
       const driverStart = nodes.get(object.id)?.absolute
       if (!driverStart) return
       multiDrag = { driverId: object.id, driverStart, nodes }
+      setGridSnapPreview(gridSnapEnabled.value)
       props.store.beginObjectEdit('批量移动对象')
       return
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('移动对象')
   })
   wrapper.on('dragmove', () => {
-    if (!multiDrag || multiDrag.driverId !== object.id) return
+    if (!multiDrag || multiDrag.driverId !== object.id) {
+      snapNodeToGrid(wrapper)
+      return
+    }
     const current = wrapper.absolutePosition()
     const delta = {
       x: current.x - multiDrag.driverStart.x,
@@ -5134,6 +5216,14 @@ const createObjectNode = (object: StageObject) => {
       if (id === object.id) return
       node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
     })
+    if (gridSnapEnabled.value) {
+      const correction = snapNodeToGrid(wrapper)
+      multiDrag.nodes.forEach(({ node }) => {
+        if (node === wrapper) return
+        const position = node.absolutePosition()
+        node.absolutePosition({ x: position.x + correction.x, y: position.y + correction.y })
+      })
+    }
     updateTransformer()
   })
   wrapper.on('dragend', () => {
@@ -5147,18 +5237,25 @@ const createObjectNode = (object: StageObject) => {
         current.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
       })
       props.store.commitObjectEdit()
+      setGridSnapPreview(false)
       updateTransformer()
       return
     }
     const current = getObject(object.id)
     if (!canEditObject(current)) {
       props.store.cancelObjectEdit()
+      setGridSnapPreview(false)
       return
+    }
+    if (gridSnapEnabled.value) {
+      snapNodeToGrid(wrapper)
     }
     current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
     current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
     props.store.commitObjectEdit()
+    setGridSnapPreview(false)
   })
+  wrapper.on('dragcancel', finishGridSnapPreview)
   wrapper.on('transformstart', () => {
     if (!canEditObject(getObject(object.id))) return
     if (isBatchSelection.value && props.store.selectionGroup.value.rootIds.includes(object.id)) return
@@ -5939,6 +6036,14 @@ const handleCanvasDrop = async (event: DragEvent) => {
     const object = props.store.addObject('image')
     object.transform.x = baseX + i * step
     object.transform.y = baseY + i * step
+    if (gridSnapEnabled.value) {
+      const snapped = snapStagePosition({
+        x: object.transform.x * WORLD_UNIT_PX,
+        y: object.transform.y * WORLD_UNIT_PX,
+      })
+      object.transform.x = snapped.x / WORLD_UNIT_PX
+      object.transform.y = snapped.y / WORLD_UNIT_PX
+    }
     try {
       await uploadImage(files[i], { kind: 'object', objectId: object.id })
       createdIds.push(object.id)
@@ -6346,6 +6451,7 @@ onMounted(() => {
       start: selectionGroupHitArea!.position(),
       nodes,
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('批量移动对象')
   })
   selectionGroupHitArea.on('dragmove', (event) => {
@@ -6359,6 +6465,16 @@ onMounted(() => {
     selectionGroupDrag.nodes.forEach(({ node, absolute }) => {
       node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
     })
+    if (gridSnapEnabled.value) {
+      const anchor = selectionGroupDrag.nodes.values().next().value as { node: Konva.Group, absolute: { x: number, y: number } } | undefined
+      if (!anchor) return
+      const correction = snapNodeToGrid(anchor.node)
+      selectionGroupDrag.nodes.forEach(({ node }) => {
+        if (node === anchor.node) return
+        const position = node.absolutePosition()
+        node.absolutePosition({ x: position.x + correction.x, y: position.y + correction.y })
+      })
+    }
     transformer?.forceUpdate()
     syncSelectionGroupHitArea([...selectionGroupDrag.nodes.values()].map(({ node }) => node))
     interactionLayer?.batchDraw()
@@ -6375,6 +6491,7 @@ onMounted(() => {
       object.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
     })
     props.store.commitObjectEdit()
+    setGridSnapPreview(false)
     void nextTick(() => {
       syncObjects()
       updateTransformer()
@@ -6492,6 +6609,7 @@ watch(() => props.store.state.persistentObjects, () => {
 }, { deep: true })
 watch(() => props.store.state.camera, () => {
   applyCamera()
+  syncField()
   updateTransformer()
 }, { deep: true })
 watch(activeCanvasTool, () => {
@@ -6605,6 +6723,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('touchstart', unlockTheaterAudio, true)
   document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
+  finishGridSnapPreview()
   cancelDrawingSession()
   finishPointerTrace()
   Array.from(pointerTraceVisuals.keys()).forEach(clearPointerTrace)
@@ -6782,6 +6901,20 @@ onBeforeUnmount(() => {
           @copy="copySelectedObjects"
           @select-mode="copyMode = $event"
         />
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              class="theater-grid-snap-tool"
+              :class="{ 'is-active': gridSnapEnabled }"
+              :aria-pressed="gridSnapEnabled"
+              aria-label="网格吸附"
+              @click="toggleGridSnap"
+            >
+              <template #icon><n-icon><Magnet /></n-icon></template>
+            </n-button>
+          </template>
+          {{ gridSnapEnabled ? '关闭网格吸附' : '网格吸附' }}
+        </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-badge
@@ -7942,7 +8075,7 @@ onBeforeUnmount(() => {
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
   box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
 }
-.theater-toolbar-exit, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
@@ -7955,7 +8088,7 @@ onBeforeUnmount(() => {
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
 .theater-bulk-select-badge { display: inline-flex; }
-.theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
+.theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }
