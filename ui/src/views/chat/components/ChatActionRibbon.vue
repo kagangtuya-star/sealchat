@@ -213,7 +213,9 @@ const overflowButtons = computed(() => {
 
 // Check if any overflow action is active
 const hasActiveOverflowAction = computed(() => {
-  return overflowButtons.value.some(btn => props[btn.activeKey])
+  return overflowButtons.value.some(
+    btn => btn.key !== 'sticky-note' && props[btn.activeKey],
+  )
 })
 
 const hasOverflowButtons = computed(() => {
