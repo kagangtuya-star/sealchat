@@ -370,6 +370,10 @@ export interface ServerAudioConfig {
   allowNonAdminCreateWorld?: boolean;
 }
 
+export interface ServerStorageConfig {
+  uploadTimeoutSeconds?: number;
+}
+
 export interface BackupConfig {
   enabled: boolean;
   intervalHours: number;
@@ -685,6 +689,7 @@ export interface ServerConfig {
   backup?: BackupConfig;
   sqlite?: SQLiteConfig;
   audio?: ServerAudioConfig;
+  storage?: ServerStorageConfig;
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;

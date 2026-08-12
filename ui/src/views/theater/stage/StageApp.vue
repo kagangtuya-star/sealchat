@@ -46,6 +46,7 @@ import {
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
+import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
@@ -590,7 +591,10 @@ const uploadTheaterAudio = async (file: File, targetEffectId = ''): Promise<Audi
   try {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await api.post<{ item?: AudioAsset }>(theaterAudioPath(), formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const response = await api.post<{ item?: AudioAsset }>(theaterAudioPath(), formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: getUploadTimeoutMs(),
+    })
     const asset = response.data?.item
     const target = targetEffectId ? props.store.activeObjects.value[targetEffectId] : null
     if (asset && isTheaterEffectObject(target) && canEditAllObjects.value) {

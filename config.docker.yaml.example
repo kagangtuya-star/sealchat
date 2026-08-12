@@ -146,6 +146,7 @@ export:
 storage:
   mode: local                                # local / s3 / auto
   presignTTL: 900
+  uploadTimeoutSeconds: 20                   # S3、附件、音频、字体上传超时时间（秒）
   maxSizeMB: 64
   local:
     uploadDir: ./sealchat-data/upload

@@ -8,6 +8,7 @@ import { chatEvent, useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embeddedRuntime';
+import { getUploadTimeoutMs } from '@/utils/uploadTimeout';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
@@ -2956,6 +2957,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           }
           const resp = await api.post('/api/v1/audio/assets/upload', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: getUploadTimeoutMs(),
           });
           const serverStatus = resp.data?.status;
           const uploadedAsset = resp.data?.item as AudioAsset | undefined;

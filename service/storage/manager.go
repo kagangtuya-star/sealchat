@@ -34,7 +34,8 @@ func NewManager(cfg utils.StorageConfig) (*Manager, error) {
 		localBaseURL: strings.TrimRight(cfg.Local.BaseURL, "/"),
 	}
 	if cfg.S3.Enabled {
-		if remote, err := newS3Backend(cfg.S3); err != nil {
+		uploadTimeout := time.Duration(cfg.UploadTimeoutSeconds) * time.Second
+		if remote, err := newS3Backend(cfg.S3, uploadTimeout); err != nil {
 			mgr.remoteInitErr = err
 			log.Printf("[storage] 初始化 S3 失败，回退到本地：%v", err)
 		} else {
