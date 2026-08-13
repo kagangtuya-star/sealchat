@@ -539,6 +539,26 @@ func TestRecoverCCFOLIAAssetReferences(t *testing.T) {
 	}
 }
 
+func TestCCFOLIAItemsSkipMissingImage(t *testing.T) {
+	items := map[string]ccfoliaItem{
+		"missing": {Order: 1},
+		"valid":   {ImageURL: "valid.png", Width: 1, Height: 1, Visible: true, Order: 2},
+	}
+	targets := map[string]ccfoliaAssetTarget{
+		"valid.png": {ResourceID: "resource-valid", MimeType: "image/png"},
+	}
+	objects, warnings, err := ccfoliaItems(items, "world", targets, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 1 {
+		t.Fatalf("objects = %d, want 1", len(objects))
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "missing") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
 func TestCCFOLIAActionsPlainMessage(t *testing.T) {
 	conversion, warnings := ccfoliaActions(&ccfoliaClickAction{Type: "message", Text: "ET"}, nil)
 	if len(warnings) != 0 {
