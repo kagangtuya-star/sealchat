@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -255,6 +255,16 @@ const stageMessage = useMessage()
 const packageDialog = useDialog()
 const stageDialog = useDialog()
 const packageBusy = ref(false)
+const packageProgressVisible = ref(false)
+const packageProgressJob = ref<TheaterPackageJob | null>(null)
+const packageProgressError = ref('')
+const packageDisplayedProgress = ref(0)
+const packageDisplayedDone = ref(0)
+const packageTargetProgress = ref(0)
+const packageTargetDone = ref(0)
+let packageDisplayAnimation = 0
+let packageDisplayLoopRunning = false
+let packageDisplayLoopAnimation = 0
 let packagePollTimer: number | null = null
 let packagePollGeneration = 0
 
@@ -263,6 +273,9 @@ type TheaterPackageJob = {
   type: 'export' | 'export_effects' | 'import' | 'import_ccfolia'
   status: 'pending' | 'running' | 'done' | 'failed'
   progress: number
+  progressDone?: number
+  progressTotal?: number
+  progressStage?: string
   outputFileName?: string
   errorMessage?: string
   summary?: { packageKind?: 'theater' | 'effects', effects?: number, scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
@@ -302,8 +315,37 @@ const waitPackagePoll = (generation: number) => new Promise<boolean>((resolve) =
   packagePollTimer = window.setTimeout(() => {
     packagePollTimer = null
     resolve(generation === packagePollGeneration)
-  }, 1000)
+  }, 300)
 })
+
+const setPackageProgressTarget = (job: TheaterPackageJob) => {
+  packageTargetProgress.value = Math.max(0, Math.min(1, job.progress || 0))
+  packageTargetDone.value = Math.max(0, job.progressDone || 0)
+  if (packageDisplayLoopRunning && packageDisplayLoopAnimation === packageDisplayAnimation) return
+  packageDisplayLoopRunning = true
+  const animation = packageDisplayAnimation
+  packageDisplayLoopAnimation = animation
+  const run = async () => {
+    while (animation === packageDisplayAnimation && (packageDisplayedDone.value < packageTargetDone.value || packageDisplayedProgress.value < packageTargetProgress.value - 0.001)) {
+      if (packageDisplayedDone.value < packageTargetDone.value) packageDisplayedDone.value += 1
+      const delta = packageTargetProgress.value - packageDisplayedProgress.value
+      packageDisplayedProgress.value += Math.abs(delta) < 0.01 ? delta : delta * 0.12
+      await new Promise(resolve => window.setTimeout(resolve, 35))
+    }
+    if (animation === packageDisplayAnimation) {
+      packageDisplayedDone.value = packageTargetDone.value
+      packageDisplayedProgress.value = packageTargetProgress.value
+    }
+    if (packageDisplayLoopAnimation === animation) packageDisplayLoopRunning = false
+  }
+  void run()
+}
+
+const waitPackageProgressDisplayed = async () => {
+  while (packageDisplayedDone.value < packageTargetDone.value || packageDisplayedProgress.value < packageTargetProgress.value - 0.001) {
+    await new Promise(resolve => window.setTimeout(resolve, 35))
+  }
+}
 
 const pollTheaterPackageJob = async (jobId: string) => {
   stopPackagePolling()
@@ -311,7 +353,13 @@ const pollTheaterPackageJob = async (jobId: string) => {
   while (generation === packagePollGeneration) {
     const response = await api.get<{ job: TheaterPackageJob }>(theaterPackagePath(`jobs/${encodeURIComponent(jobId)}`), { timeout: 30000 })
     const job = response.data.job
-    if (job.status === 'done') return job
+    packageProgressJob.value = job
+    setPackageProgressTarget(job)
+    if (job.status === 'failed') packageProgressError.value = job.errorMessage || '小剧场任务失败'
+    if (job.status === 'done') {
+      await waitPackageProgressDisplayed()
+      return job
+    }
     if (job.status === 'failed') throw new Error(job.errorMessage || '小剧场任务失败')
     if (!await waitPackagePoll(generation)) throw new Error('小剧场任务已取消')
   }
@@ -329,13 +377,23 @@ const downloadTheaterPackage = (job: TheaterPackageJob) => {
 
 const exportTheaterPackage = async (kind: 'theater' | 'effects' = 'theater') => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath(kind === 'effects' ? 'export/effects' : 'export'), { inputChannelId: props.channelId })
+    packageProgressJob.value = response.data.job
     packageMessage.info(kind === 'effects' ? '特效包导出任务已启动' : '小剧场导出任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     downloadTheaterPackage(job)
     packageMessage.success(kind === 'effects' ? '特效包 ZIP 已生成' : '小剧场 ZIP 已生成')
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, kind === 'effects' ? '特效包导出失败' : '小剧场导出失败')
     packageMessage.error(theaterAudioErrorMessage(error, kind === 'effects' ? '特效包导出失败' : '小剧场导出失败'))
   } finally {
     packageBusy.value = false
@@ -344,6 +402,14 @@ const exportTheaterPackage = async (kind: 'theater' | 'effects' = 'theater') => 
 
 const importTheaterPackageFile = async (file: File) => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const body = new FormData()
     body.append('file', file)
@@ -352,6 +418,7 @@ const importTheaterPackageFile = async (file: File) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
     })
+    packageProgressJob.value = response.data.job
     packageMessage.info('ZIP 导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     await fetchTheaterAudioAssets()
@@ -362,6 +429,7 @@ const importTheaterPackageFile = async (file: File) => {
       : `已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, 'ZIP 导入失败')
     packageMessage.error(theaterAudioErrorMessage(error, 'ZIP 导入失败'))
   } finally {
     packageBusy.value = false
@@ -384,6 +452,14 @@ const handlePackageInput = (event: Event) => {
 
 const importCCFOLIAPackageFile = async (file: File) => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const body = new FormData()
     body.append('file', file)
@@ -392,12 +468,14 @@ const importCCFOLIAPackageFile = async (file: File) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
     })
+    packageProgressJob.value = response.data.job
     packageMessage.info('CCFOLIA 导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     const warnings = job.summary?.warnings?.filter(Boolean) || []
     packageMessage.success(`已导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件、${job.summary?.resources ?? 0} 个资源`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, 'CCFOLIA 导入失败')
     packageMessage.error(theaterAudioErrorMessage(error, 'CCFOLIA 导入失败'))
   } finally {
     packageBusy.value = false
@@ -7005,7 +7083,7 @@ onBeforeUnmount(() => {
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('editable'), 'is-mixed': batchBooleanIndeterminate('editable') }" :disabled="!batchBooleanObjects('editable').length" aria-label="批量设置可编辑" @click.stop="toggleBatchQuickFlag('editable')"><template #icon><n-icon><Edit /></n-icon></template></n-button></template>{{ batchBooleanChecked('editable') ? '取消可编辑' : '设为可编辑' }}</n-tooltip>
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('interactive'), 'is-mixed': batchBooleanIndeterminate('interactive') }" :disabled="!batchBooleanObjects('interactive').length" aria-label="批量设置可交互" @click.stop="toggleBatchQuickFlag('interactive')"><template #icon><n-icon><component :is="batchBooleanChecked('interactive') ? Bolt : BoltOff" /></n-icon></template></n-button></template>{{ batchBooleanChecked('interactive') ? '取消可交互' : '设为可交互' }}</n-tooltip>
         </div>
-        <TheaterCharacterStatsOverlay
+          <TheaterCharacterStatsOverlay
           :world-id="worldId"
           :channel-id="channelId"
           @open-character-card="emit('openCharacterCard', $event)"
@@ -7978,6 +8056,17 @@ onBeforeUnmount(() => {
       :action="editingRandomTableAction"
       @save="saveRandomTable"
     />
+    <n-modal v-model:show="packageProgressVisible" :mask-closable="false" :closable="false" preset="card" title="小剧场导入进度" class="theater-package-progress-modal">
+      <div class="theater-package-progress">
+        <n-progress type="line" :percentage="Math.round(packageDisplayedProgress * 100)" :status="packageProgressJob?.status === 'failed' ? 'error' : packageProgressJob?.status === 'done' ? 'success' : 'default'" />
+        <div class="theater-package-progress-meta">
+          <span>{{ packageProgressJob?.progressStage || '等待任务开始' }}</span>
+          <span v-if="packageProgressJob?.progressTotal">{{ packageDisplayedDone }} / {{ packageProgressJob.progressTotal }}</span>
+        </div>
+        <p v-if="packageProgressError" class="theater-package-progress-error">{{ packageProgressError }}</p>
+        <n-button v-if="packageProgressError || packageProgressJob?.status === 'done' || packageProgressJob?.status === 'failed'" type="primary" block @click="packageProgressVisible = false">关闭</n-button>
+      </div>
+    </n-modal>
   </section>
 </template>
 
@@ -8037,6 +8126,16 @@ onBeforeUnmount(() => {
   z-index: 10004 !important;
 }
 .theater-image-input { display: none; }
+.theater-package-progress-modal {
+  width: min(460px, calc(100vw - 32px));
+  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 72%, transparent) !important;
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16));
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+}
+.theater-package-progress { display: grid; gap: 12px; }
+.theater-package-progress-meta { display: flex; justify-content: space-between; color: var(--sc-text-secondary, rgba(255, 255, 255, .68)); font-size: 12px; }
+.theater-package-progress-error { margin: 0; color: var(--sc-color-error, #ef4444); white-space: pre-wrap; word-break: break-word; }
 .theater-stage-toolbar {
   position: absolute; z-index: 10000; top: 0; right: 0; left: 0; box-sizing: border-box;
   height: 46px; display: flex; align-items: center; gap: 7px; padding: 0 8px;

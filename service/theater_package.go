@@ -187,6 +187,23 @@ var theaterPackageWorkerState = struct {
 	config    theaterPackageWorkerConfig
 }{config: theaterPackageWorkerConfig{StorageDir: "./data/exports/theater-packages"}}
 
+type theaterPackageProgressSnapshot struct {
+	Done, Total int
+	Stage       string
+	Progress    float64
+}
+
+type TheaterPackageProgressView struct {
+	Done, Total int
+	Stage       string
+	Progress    float64
+}
+
+var theaterPackageProgressState = struct {
+	sync.RWMutex
+	jobs map[string]theaterPackageProgressSnapshot
+}{jobs: map[string]theaterPackageProgressSnapshot{}}
+
 func StartTheaterPackageWorker(ctx context.Context, storageDir string) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -264,6 +281,7 @@ func acquireNextTheaterPackageJob() (*model.TheaterPackageJobModel, error) {
 	}
 	job.Status = model.TheaterPackageJobStatusRunning
 	job.StartedAt = &now
+	initializeTheaterPackageProgress(job.ID, 1, "准备处理任务")
 	return &job, nil
 }
 
@@ -293,8 +311,16 @@ func processTheaterPackageJob(ctx context.Context, job *model.TheaterPackageJobM
 	raw, _ := json.Marshal(summary)
 	now := time.Now()
 	expiresAt := now.Add(theaterPackageRetention)
+	theaterPackageProgressState.Lock()
+	snapshot := theaterPackageProgressState.jobs[job.ID]
+	snapshot.Progress, snapshot.Stage = 1, "完成"
+	if snapshot.Total > 0 {
+		snapshot.Done = snapshot.Total
+	}
+	theaterPackageProgressState.jobs[job.ID] = snapshot
+	theaterPackageProgressState.Unlock()
 	return model.GetDB().Model(&model.TheaterPackageJobModel{}).Where("id = ?", job.ID).Updates(map[string]any{
-		"status": model.TheaterPackageJobStatusDone, "progress": 1, "summary_json": string(raw),
+		"status": model.TheaterPackageJobStatusDone, "progress": 1, "progress_done": snapshot.Done, "progress_total": snapshot.Total, "progress_stage": snapshot.Stage, "summary_json": string(raw),
 		"finished_at": &now, "expires_at": &expiresAt, "error_code": "", "error_message": "",
 	}).Error
 }
@@ -306,7 +332,53 @@ func updateTheaterPackageProgress(jobID string, progress float64) {
 	if progress > 0.99 {
 		progress = 0.99
 	}
-	_ = model.GetDB().Model(&model.TheaterPackageJobModel{}).Where("id = ? AND status = ?", jobID, model.TheaterPackageJobStatusRunning).Update("progress", progress).Error
+	theaterPackageProgressState.Lock()
+	snapshot := theaterPackageProgressState.jobs[jobID]
+	snapshot.Progress = progress
+	theaterPackageProgressState.jobs[jobID] = snapshot
+	theaterPackageProgressState.Unlock()
+}
+
+func updateTheaterPackageStage(jobID, stage string) {
+	theaterPackageProgressState.Lock()
+	snapshot := theaterPackageProgressState.jobs[jobID]
+	snapshot.Stage = stage
+	theaterPackageProgressState.jobs[jobID] = snapshot
+	theaterPackageProgressState.Unlock()
+}
+
+// initializeTheaterPackageProgress records material count used by UI progress.
+func initializeTheaterPackageProgress(jobID string, total int, stage string) {
+	if total < 1 {
+		total = 1
+	}
+	theaterPackageProgressState.Lock()
+	theaterPackageProgressState.jobs[jobID] = theaterPackageProgressSnapshot{Total: total, Stage: stage, Progress: 0.01}
+	theaterPackageProgressState.Unlock()
+}
+
+func advanceTheaterPackageProgress(jobID string, stage string) {
+	theaterPackageProgressState.Lock()
+	defer theaterPackageProgressState.Unlock()
+	snapshot := theaterPackageProgressState.jobs[jobID]
+	done := snapshot.Done + 1
+	total := snapshot.Total
+	if total < 1 {
+		total = 1
+	}
+	progress := 0.01 + 0.94*float64(done)/float64(total)
+	if progress > 0.99 {
+		progress = 0.99
+	}
+	snapshot.Done, snapshot.Total, snapshot.Stage, snapshot.Progress = done, total, stage, progress
+	theaterPackageProgressState.jobs[jobID] = snapshot
+}
+
+func GetTheaterPackageProgress(jobID string) (TheaterPackageProgressView, bool) {
+	theaterPackageProgressState.RLock()
+	snapshot, found := theaterPackageProgressState.jobs[jobID]
+	theaterPackageProgressState.RUnlock()
+	return TheaterPackageProgressView{Done: snapshot.Done, Total: snapshot.Total, Stage: snapshot.Stage, Progress: snapshot.Progress}, found
 }
 
 func failTheaterPackageJob(jobID, code string, cause error) error {
@@ -316,8 +388,14 @@ func failTheaterPackageJob(jobID, code string, cause error) error {
 	if cause != nil {
 		message = cause.Error()
 	}
+	theaterPackageProgressState.Lock()
+	snapshot := theaterPackageProgressState.jobs[jobID]
+	snapshot.Stage = "失败"
+	snapshot.Progress = 0
+	theaterPackageProgressState.jobs[jobID] = snapshot
+	theaterPackageProgressState.Unlock()
 	return model.GetDB().Model(&model.TheaterPackageJobModel{}).Where("id = ?", jobID).Updates(map[string]any{
-		"status": model.TheaterPackageJobStatusFailed, "error_code": code, "error_message": message,
+		"status": model.TheaterPackageJobStatusFailed, "progress": snapshot.Progress, "progress_done": snapshot.Done, "progress_total": snapshot.Total, "progress_stage": snapshot.Stage, "error_code": code, "error_message": message,
 		"finished_at": &now, "expires_at": &expiresAt,
 	}).Error
 }

@@ -405,6 +405,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 	if _, _, err := requireTheaterPermission(job.ActorUserID, job.TargetWorldID, "", TheaterPermissionAdminRestore); err != nil {
 		return summary, err
 	}
+	updateTheaterPackageStage(job.ID, "解压并读取 CCFOLIA 数据")
 	room, err := model.TheaterRoomCreateIfMissing(job.TargetWorldID, "", job.ActorUserID)
 	if err != nil {
 		return summary, err
@@ -442,11 +443,14 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 	if err := validateCCFOLIAResourceQuota(room.ID, resources); err != nil {
 		return summary, err
 	}
+	initializeTheaterPackageProgress(job.ID, len(resources), "准备素材")
 	processor := NewVisualMediaProcessor(theaterMedia.config, theaterMedia.toolchain, theaterMedia.runner)
+	updateTheaterPackageStage(job.ID, "转换动画素材")
 	if err := prepareCCFOLIAAnimatedResources(ctx, extractDir, resources, targets, processor); err != nil {
 		return summary, err
 	}
 	warnings = append(warnings, resourceWarnings...)
+	updateTheaterPackageStage(job.ID, "生成场景数据")
 	conversion, err := convertCCFOLIABackup(backup, job.TargetWorldID, targets)
 	if err != nil {
 		return summary, err
@@ -549,6 +553,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 			if err := importTheaterPackageResource(tx, extractDir, &current, job, resource, remap, &persistedAttachments); err != nil {
 				return fmt.Errorf("导入 CCFOLIA 资源 %s 失败: %w", resource.ID, err)
 			}
+			advanceTheaterPackageProgress(job.ID, "导入 CCFOLIA 素材")
 		}
 
 		var maxOrder int64

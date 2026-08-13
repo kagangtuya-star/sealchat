@@ -44,6 +44,7 @@ func importTheaterEffectsPackage(ctx context.Context, job *model.TheaterPackageJ
 			return summary, fmt.Errorf("特效包引用未打包音频: %s", audioID)
 		}
 	}
+	initializeTheaterPackageProgress(job.ID, len(manifest.Resources)+len(manifest.Audio), "准备素材")
 
 	remap := theaterPackageRemap{
 		scenes: map[string]string{}, objects: map[string]string{}, resources: map[string]string{},
@@ -105,6 +106,7 @@ func importTheaterEffectsPackage(ctx context.Context, job *model.TheaterPackageJ
 		}
 		createdAudio = append(createdAudio, asset)
 		remap.audio[item.ID] = asset.ID
+		advanceTheaterPackageProgress(job.ID, "导入音频")
 		updateTheaterPackageProgress(job.ID, 0.15+0.2*float64(index+1)/float64(maxInt(1, len(manifest.Audio))))
 	}
 
@@ -194,6 +196,7 @@ func importTheaterEffectsPackage(ctx context.Context, job *model.TheaterPackageJ
 			if err := importTheaterPackageResource(tx, extractDir, &current, job, resource, remap, &persistedAttachments); err != nil {
 				return fmt.Errorf("导入资源 %s 失败: %w", resource.ID, err)
 			}
+			advanceTheaterPackageProgress(job.ID, "导入素材")
 		}
 		for _, entry := range remappedEntries {
 			var sceneID *string

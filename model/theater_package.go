@@ -24,6 +24,9 @@ type TheaterPackageJobModel struct {
 	TargetWorldID  string     `json:"targetWorldId,omitempty" gorm:"size:100;index"`
 	InputChannelID string     `json:"inputChannelId,omitempty" gorm:"size:100;index"`
 	Progress       float64    `json:"progress" gorm:"not null;default:0"`
+	ProgressDone   int        `json:"progressDone" gorm:"not null;default:0"`
+	ProgressTotal  int        `json:"progressTotal" gorm:"not null;default:0"`
+	ProgressStage  string     `json:"progressStage,omitempty" gorm:"size:255"`
 	InputFilePath  string     `json:"-" gorm:"size:1024"`
 	OriginalName   string     `json:"originalName,omitempty" gorm:"size:255"`
 	OutputFilePath string     `json:"-" gorm:"size:1024"`
