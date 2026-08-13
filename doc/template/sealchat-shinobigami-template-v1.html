@@ -843,6 +843,32 @@
       flex-wrap: wrap;
     }
 
+    .matrix-tools__group--random {
+      margin-left: auto;
+    }
+
+    .matrix-tools__group--expanded {
+      flex-basis: 100%;
+    }
+
+    .matrix-tools__group--help {
+      flex-basis: 100%;
+    }
+
+    .matrix-tools__collapse {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .matrix-tools__collapse:hover {
+      color: var(--active);
+    }
+
     .matrix-help-btn {
       width: 24px;
       min-width: 24px;
@@ -1337,6 +1363,10 @@
       gap: 6px;
     }
 
+    .dialog--roll .modifier-btn--full {
+      grid-column: 1 / -1;
+    }
+
     .modifier-btn {
       min-height: 36px;
       border-radius: 0;
@@ -1722,6 +1752,13 @@
         modifier: '',
         fumbleValue: ''
       },
+      randomDialog: {
+        open: false,
+        kind: '',
+        category: '',
+        count: '1'
+      },
+      matrixToolsExpanded: false,
       editorDialog: {
         open: false,
         kind: 'text',
@@ -2022,6 +2059,19 @@
 
     function getRollLabel(skill, meta) {
       return getDisplayLabel(skill, meta.locale) + ' ' + getRollActionText(meta);
+    }
+
+    function normalizeRandomCount(value) {
+      var count = toInteger(value, 1);
+      return count > 0 ? count : 1;
+    }
+
+    function buildRandomCommand(kind, category, count) {
+      var normalizedCount = normalizeRandomCount(count);
+      if (kind === 'category') return '.随机分野 ' + normalizedCount;
+      return category
+        ? '.随机特技 ' + category + ' ' + normalizedCount
+        : '.随机特技 ' + normalizedCount;
     }
 
     function getSpecialtyCategories(meta) {
@@ -2575,6 +2625,32 @@
       );
     }
 
+    function openRandomDialog(kind) {
+      state.randomDialog.open = true;
+      state.randomDialog.kind = kind;
+      state.randomDialog.category = '';
+      state.randomDialog.count = '1';
+      render();
+    }
+
+    function closeRandomDialog() {
+      state.randomDialog.open = false;
+      render();
+    }
+
+    function confirmRandomDialog() {
+      var dialog = state.randomDialog;
+      if (!dialog.open || !dialog.kind) return;
+      sealchat.roll(buildRandomCommand(dialog.kind, dialog.category, dialog.count), dialog.kind === 'category' ? '随机分野' : '随机特技', {});
+      closeRandomDialog();
+    }
+
+    function syncRandomCommandPreview() {
+      var preview = document.getElementById('randomCommandPreview');
+      if (!preview) return;
+      preview.textContent = buildRandomCommand(state.randomDialog.kind, state.randomDialog.category, state.randomDialog.count);
+    }
+
     function openEditorDialog(kind, title, value, extra) {
       state.editorDialog.open = true;
       state.editorDialog.kind = kind;
@@ -2681,29 +2757,38 @@
 
       html += '  <section class="matrix-tools">';
       html += '    <div class="matrix-tools__group">';
-      html += '      <strong>连通</strong>';
-      html += '      <button class="mini-btn' + (meta.connectivity.topBottom ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="topBottom">上下</button>';
-      html += '      <button class="mini-btn' + (meta.connectivity.leftRight ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="leftRight">左右</button>';
+      html += '      <button class="matrix-tools__collapse" data-action="toggle-matrix-tools">连通与手动空隙 ' + (state.matrixToolsExpanded ? '▲' : '▼') + '</button>';
       html += '    </div>';
-      html += '    <div class="matrix-tools__group">';
-      html += '      <strong>手动空隙</strong>';
-      for (var gapIdx = 0; gapIdx < gapButtonCount; gapIdx += 1) {
-        html += '      <button class="mini-btn gap-btn' + (manualGapIndices.indexOf(gapIdx) >= 0 ? ' is-active' : '') + '" data-action="toggle-gap" data-gap="' + gapIdx + '">' + escapeHtml(String(gapIdx + 1)) + '</button>';
-      }
-      html += '      <span class="gap-summary' + (specialtyCategories.length > 0 ? ' is-muted' : '') + '">' + escapeHtml(getGapSummaryText(meta)) + '</span>';
-      html += '      <span class="gap-edge-track">';
-      for (var edgeIdx = 0; edgeIdx < gapButtonCount; edgeIdx += 1) {
-        var isOpen = table.gaps[edgeIdx] === false;
-        html += '    <span class="gap-edge' + (isOpen ? ' is-open' : '') + '" title="' + escapeHtml(isOpen ? '连通边' : '空隙边') + '">' + escapeHtml(getGapEdgeLabel(edgeIdx, !!meta.connectivity.leftRight)) + '</span>';
-      }
-      html += '      </span>';
-      html += '    </div>';
-      html += '    <div class="matrix-tools__group">';
+      html += '    <div class="matrix-tools__group matrix-tools__group--random">';
       html += '      <button class="matrix-help-btn' + (state.helpUi.matrixHintOpen ? ' is-active' : '') + '" data-action="toggle-matrix-hint" title="操作说明">?</button>';
-      if (state.helpUi.matrixHintOpen) {
-        html += '      <span class="matrix-help-text">点击特技左侧切换修得状态；损伤封锁分野，污秽只扣生命。</span>';
-      }
+      html += '      <button class="mini-btn" data-action="open-random-category">随机分野</button>';
+      html += '      <button class="mini-btn" data-action="open-random-skill">随机特技</button>';
       html += '    </div>';
+      if (state.helpUi.matrixHintOpen) {
+        html += '    <div class="matrix-tools__group matrix-tools__group--help">';
+        html += '      <span class="matrix-help-text">点击特技左侧切换修得状态；损伤封锁分野，污秽只扣生命。</span>';
+        html += '    </div>';
+      }
+      if (state.matrixToolsExpanded) {
+        html += '    <div class="matrix-tools__group matrix-tools__group--expanded">';
+        html += '      <strong>连通</strong>';
+        html += '      <button class="mini-btn' + (meta.connectivity.topBottom ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="topBottom">上下</button>';
+        html += '      <button class="mini-btn' + (meta.connectivity.leftRight ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="leftRight">左右</button>';
+        html += '    </div>';
+        html += '    <div class="matrix-tools__group matrix-tools__group--expanded">';
+        html += '      <strong>手动空隙</strong>';
+        for (var gapIdx = 0; gapIdx < gapButtonCount; gapIdx += 1) {
+          html += '      <button class="mini-btn gap-btn' + (manualGapIndices.indexOf(gapIdx) >= 0 ? ' is-active' : '') + '" data-action="toggle-gap" data-gap="' + gapIdx + '">' + escapeHtml(String(gapIdx + 1)) + '</button>';
+        }
+        html += '      <span class="gap-summary' + (specialtyCategories.length > 0 ? ' is-muted' : '') + '">' + escapeHtml(getGapSummaryText(meta)) + '</span>';
+        html += '      <span class="gap-edge-track">';
+        for (var edgeIdx = 0; edgeIdx < gapButtonCount; edgeIdx += 1) {
+          var isOpen = table.gaps[edgeIdx] === false;
+          html += '    <span class="gap-edge' + (isOpen ? ' is-open' : '') + '" title="' + escapeHtml(isOpen ? '连通边' : '空隙边') + '">' + escapeHtml(getGapEdgeLabel(edgeIdx, !!meta.connectivity.leftRight)) + '</span>';
+        }
+        html += '      </span>';
+        html += '    </div>';
+      }
       html += '  </section>';
 
       html += '  <div class="matrix-scroll">';
@@ -2854,6 +2939,36 @@
         html += '  </div>';
       }
 
+      if (state.randomDialog.open) {
+        html += '  <div class="overlay" data-action="close-random">';
+        html += '    <div class="dialog dialog--roll" data-dialog-panel="1">';
+        html += '      <div class="dialog__header">';
+        html += '        <div class="dialog__title">' + (state.randomDialog.kind === 'category' ? '随机分野' : '随机特技') + '</div>';
+        html += '        <button class="dialog-btn" data-action="close-random">关闭</button>';
+        html += '      </div>';
+        html += '      <div class="dialog__body">';
+        if (state.randomDialog.kind === 'skill') {
+          html += '        <div class="field-label">选择分野</div>';
+          html += '        <div class="modifier-grid">';
+          html += '          <button class="modifier-btn modifier-btn--full' + (!state.randomDialog.category ? ' is-active' : '') + '" data-action="set-random-category" data-category="">无</button>';
+          CATEGORIES.forEach(function (category) {
+            html += '          <button class="modifier-btn' + (state.randomDialog.category === category ? ' is-active' : '') + '" data-action="set-random-category" data-category="' + escapeHtml(category) + '">' + escapeHtml(getDisplayLabel(category, meta.locale)) + '</button>';
+          });
+          html += '        </div>';
+        }
+        html += '        <div class="field-label">数量</div>';
+        html += '        <input id="randomCountInput" class="field-input" type="number" min="1" step="1" value="' + escapeHtml(state.randomDialog.count) + '">';
+        html += '        <div class="field-label">最终发送</div>';
+        html += '        <div id="randomCommandPreview" class="formula-preview">' + escapeHtml(buildRandomCommand(state.randomDialog.kind, state.randomDialog.category, state.randomDialog.count)) + '</div>';
+        html += '      </div>';
+        html += '      <div class="dialog__footer">';
+        html += '        <button class="dialog-btn" data-action="close-random">取消</button>';
+        html += '        <button class="dialog-btn dialog-btn--primary" data-action="confirm-random">发送</button>';
+        html += '      </div>';
+        html += '    </div>';
+        html += '  </div>';
+      }
+
       if (state.editorDialog.open) {
         html += '  <div class="overlay" data-action="close-editor">';
         html += '    <div class="dialog" data-dialog-panel="1">';
@@ -2893,6 +3008,9 @@
       } else if (target && target.id === 'rollFumbleValueInput') {
         state.rollDialog.fumbleValue = target.value;
         syncRollExpressionPreview();
+      } else if (target && target.id === 'randomCountInput') {
+        state.randomDialog.count = target.value;
+        syncRandomCommandPreview();
       } else if (target && target.id === 'toolInlineNameInput') {
         state.toolInlineEditor.type = target.value;
       } else if (target && target.id === 'toolInlineCountInput') {
@@ -2959,6 +3077,11 @@
             })(target.dataset.key);
             return;
           }
+          if (action === 'toggle-matrix-tools') {
+            state.matrixToolsExpanded = !state.matrixToolsExpanded;
+            render();
+            return;
+          }
           if (action === 'toggle-gap') {
             (function (gapKey) {
               applyMetaMutation(function (meta) {
@@ -2980,6 +3103,27 @@
           }
           if (action === 'open-roll') {
             openRollDialog(target.dataset.skill, toInteger(target.dataset.targetValue, 12));
+            return;
+          }
+          if (action === 'open-random-category') {
+            openRandomDialog('category');
+            return;
+          }
+          if (action === 'open-random-skill') {
+            openRandomDialog('skill');
+            return;
+          }
+          if (action === 'set-random-category') {
+            state.randomDialog.category = target.dataset.category || '';
+            render();
+            return;
+          }
+          if (action === 'confirm-random') {
+            confirmRandomDialog();
+            return;
+          }
+          if (action === 'close-random') {
+            closeRandomDialog();
             return;
           }
           if (action === 'set-plot') {
@@ -3128,6 +3272,10 @@
       if (event.key === 'Escape') {
         if (state.rollDialog.open) {
           closeRollDialog();
+          return;
+        }
+        if (state.randomDialog.open) {
+          closeRandomDialog();
           return;
         }
         if (state.toolInlineEditor.open) {
