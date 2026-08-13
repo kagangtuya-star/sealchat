@@ -1750,6 +1750,7 @@
         skill: '',
         targetValue: 0,
         modifier: '',
+        extraDice: '',
         fumbleValue: ''
       },
       randomDialog: {
@@ -2391,8 +2392,18 @@
       return String(numeric);
     }
 
-    function buildShinobiRollExpression(skill, targetValue, modifier, fumbleValue) {
+    function normalizeRollExtraDice(value) {
+      var text = String(value == null ? '' : value).trim();
+      if (!text) return '';
+      var numeric = Number(text);
+      if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric <= 0) return '';
+      return String(numeric + 2) + 'd6';
+    }
+
+    function buildShinobiRollExpression(skill, targetValue, modifier, extraDice, fumbleValue) {
       var parts = ['.sbg'];
+      var normalizedExtraDice = normalizeRollExtraDice(extraDice);
+      if (normalizedExtraDice) parts.push(normalizedExtraDice);
       var normalizedModifier = normalizeRollModifier(modifier);
       if (normalizedModifier) parts.push(normalizedModifier);
       parts.push(skill);
@@ -2591,6 +2602,7 @@
       state.rollDialog.skill = skill;
       state.rollDialog.targetValue = targetValue;
       state.rollDialog.modifier = '';
+      state.rollDialog.extraDice = '';
       state.rollDialog.fumbleValue = getPlotRollValue(meta.plotValue);
       render();
     }
@@ -2607,6 +2619,7 @@
         state.rollDialog.skill,
         state.rollDialog.targetValue,
         state.rollDialog.modifier,
+        state.rollDialog.extraDice,
         state.rollDialog.fumbleValue
       );
       sealchat.roll(expression, getRollLabel(state.rollDialog.skill, meta), {});
@@ -2621,6 +2634,7 @@
         state.rollDialog.skill,
         state.rollDialog.targetValue,
         state.rollDialog.modifier,
+        state.rollDialog.extraDice,
         state.rollDialog.fumbleValue
       );
     }
@@ -2927,8 +2941,13 @@
         html += '          <input id="rollModifierInput" class="field-input" type="number" step="1" value="' + escapeHtml(state.rollDialog.modifier) + '" placeholder="例如 +4 / -2">';
         html += '          <button class="mini-btn" data-action="set-roll-modifier" data-modifier="">无修正</button>';
         html += '        </div>';
+        html += '        <div class="field-label">额外骰数</div>';
+        html += '        <div class="roll-inline-action">';
+        html += '          <input id="rollExtraDiceInput" class="field-input" type="number" min="1" step="1" value="' + escapeHtml(state.rollDialog.extraDice) + '" placeholder="例如 1">';
+        html += '          <button class="mini-btn" data-action="set-roll-extra-dice" data-extra-dice="">无额外骰</button>';
+        html += '        </div>';
         html += '        <div class="field-label">最终发送</div>';
-        html += '        <div id="rollExpressionPreview" class="formula-preview">' + escapeHtml(buildShinobiRollExpression(state.rollDialog.skill, state.rollDialog.targetValue, state.rollDialog.modifier, state.rollDialog.fumbleValue)) + '</div>';
+        html += '        <div id="rollExpressionPreview" class="formula-preview">' + escapeHtml(buildShinobiRollExpression(state.rollDialog.skill, state.rollDialog.targetValue, state.rollDialog.modifier, state.rollDialog.extraDice, state.rollDialog.fumbleValue)) + '</div>';
         html += '        <div class="field-label">点击发送会进行掷骰</div>';
       html += '      </div>';
         html += '      <div class="dialog__footer">';
@@ -3004,6 +3023,9 @@
         state.editorDialog.value = target.value;
       } else if (target && target.id === 'rollModifierInput') {
         state.rollDialog.modifier = target.value;
+        syncRollExpressionPreview();
+      } else if (target && target.id === 'rollExtraDiceInput') {
+        state.rollDialog.extraDice = target.value;
         syncRollExpressionPreview();
       } else if (target && target.id === 'rollFumbleValueInput') {
         state.rollDialog.fumbleValue = target.value;
@@ -3132,6 +3154,11 @@
           }
           if (action === 'set-roll-modifier') {
             state.rollDialog.modifier = target.dataset.modifier || '';
+            render();
+            return;
+          }
+          if (action === 'set-roll-extra-dice') {
+            state.rollDialog.extraDice = target.dataset.extraDice || '';
             render();
             return;
           }
