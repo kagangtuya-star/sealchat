@@ -38,6 +38,7 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 		return nil, fmt.Errorf("S3 配置不完整")
 	}
 	endpoint, secure := normalizeEndpoint(cfg.Endpoint, cfg.UseSSL)
+	endpoint, isTencentCOS := utils.NormalizeTencentCOSHost(endpoint)
 	opts := &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		Secure: secure,
@@ -45,6 +46,8 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 	}
 	if cfg.ForcePathStyle {
 		opts.BucketLookup = minio.BucketLookupPath
+	} else if isTencentCOS {
+		opts.BucketLookup = minio.BucketLookupDNS
 	}
 	client, err := minio.New(endpoint, opts)
 	if err != nil {

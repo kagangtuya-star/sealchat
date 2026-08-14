@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/url"
@@ -288,6 +289,7 @@ func newAudioS3Client() (*minio.Client, utils.S3StorageConfig, error) {
 		secure = parsed.Scheme == "https"
 		endpoint = parsed.Host
 	}
+	endpoint, isTencentCOS := utils.NormalizeTencentCOSHost(endpoint)
 	opts := &minio.Options{
 		Creds:  credentials.NewStaticV4(s3cfg.AccessKey, s3cfg.SecretKey, s3cfg.SessionToken),
 		Secure: secure,
@@ -295,12 +297,36 @@ func newAudioS3Client() (*minio.Client, utils.S3StorageConfig, error) {
 	}
 	if s3cfg.ForcePathStyle {
 		opts.BucketLookup = minio.BucketLookupPath
+	} else if isTencentCOS {
+		opts.BucketLookup = minio.BucketLookupDNS
 	}
 	client, err := minio.New(endpoint, opts)
 	if err != nil {
 		return nil, s3cfg, err
 	}
 	return client, s3cfg, nil
+}
+
+// ProbeAudioS3LibraryPath performs a non-fatal startup read of configured S3 audio path.
+// It exists to expose S3-compatible listing errors before the first UI request.
+func ProbeAudioS3LibraryPath(ctx context.Context) {
+	cfg := utils.GetConfig()
+	if cfg == nil || !cfg.Storage.S3.Enabled {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	prefix := audioS3RootPrefix()
+	result, err := AudioS3Browse(probeCtx, prefix)
+	s3cfg := cfg.Storage.S3
+	if err != nil {
+		log.Printf("[storage] S3 音频路径读取失败: endpoint=%q region=%q bucket=%q prefix=%q pathStyle=%t useSSL=%t err=%v", strings.TrimSpace(s3cfg.Endpoint), strings.TrimSpace(s3cfg.Region), strings.TrimSpace(s3cfg.Bucket), prefix, s3cfg.ForcePathStyle, s3cfg.UseSSL, err)
+		return
+	}
+	log.Printf("[storage] S3 音频路径读取成功: endpoint=%q bucket=%q prefix=%q children=%d", strings.TrimSpace(s3cfg.Endpoint), strings.TrimSpace(s3cfg.Bucket), result.Current, len(result.Prefixes))
 }
 
 func EncodeAudioS3AssetRef(objectKey string) string {
