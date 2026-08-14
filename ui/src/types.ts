@@ -251,6 +251,14 @@ export interface BattleReport {
   updatedAt: number;
 }
 
+export interface BattleReportJumpTarget {
+  worldId: string;
+  channelId: string;
+  messageId: string;
+  createdAt?: number;
+  displayOrder?: number;
+}
+
 export interface BattleReportPayload {
   title?: string;
   content?: string;

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { api } from './_config';
 import { useChatStore } from './chat';
-import type { BattleReport, BattleReportDisplayChannel, BattleReportPayload } from '@/types';
+import type { BattleReport, BattleReportDisplayChannel, BattleReportJumpTarget, BattleReportPayload } from '@/types';
 
 interface BattleReportListResponse {
   items?: BattleReport[];
@@ -9,6 +9,11 @@ interface BattleReportListResponse {
 
 interface BattleReportItemResponse {
   item?: BattleReport;
+}
+
+interface BattleReportJumpTargetResponse {
+  target?: BattleReportJumpTarget | null;
+  reason?: string;
 }
 
 interface BattleReportDisplayResponse {
@@ -113,6 +118,19 @@ export const useBattleReportStore = defineStore('battleReport', {
       } finally {
         this.loading = false;
       }
+    },
+    async getJumpTarget(reportId: string, edge: 'start' | 'end') {
+      const chat = useChatStore();
+      const observerSlug = chat.observerMode ? String(chat.observerSlug || '').trim() : '';
+      const report = this.detailById[reportId];
+      const observerChannelId = String(report?.channelId || chat.curChannel?.id || '').trim();
+      const endpoint = observerSlug && observerChannelId
+        ? `api/v1/public/ob/channels/${observerChannelId}/battle-reports/${reportId}/jump-target`
+        : `api/v1/battle-reports/${reportId}/jump-target`;
+      const resp = await api.get<BattleReportJumpTargetResponse>(endpoint, {
+        params: { edge, ...(observerSlug ? { ob_slug: observerSlug } : {}) },
+      });
+      return resp.data?.target || null;
     },
     async create(channelId: string, payload: BattleReportPayload) {
       this.saving = true;

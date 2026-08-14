@@ -15,26 +15,28 @@ const (
 
 type BattleReportModel struct {
 	StringPKBaseModel
-	ChannelID          string             `json:"channelId" gorm:"size:100;index:idx_battle_report_channel_order,priority:1;index"`
-	WorldID            string             `json:"worldId" gorm:"size:100;index"`
-	Title              string             `json:"title" gorm:"size:255"`
-	Content            string             `json:"content" gorm:"type:text"`
-	ContentPreview     string             `json:"contentPreview" gorm:"size:500"`
-	PeriodStart        time.Time          `json:"periodStart" gorm:"index"`
-	PeriodEnd          time.Time          `json:"periodEnd" gorm:"index"`
-	ContextReportCount int                `json:"contextReportCount" gorm:"default:3"`
-	SortOrder          int                `json:"sortOrder" gorm:"default:0;index:idx_battle_report_channel_order,priority:2"`
-	Status             BattleReportStatus `json:"status" gorm:"size:32;default:'ready';index"`
-	ErrorMessage       string             `json:"errorMessage" gorm:"size:500"`
-	CreatorID          string             `json:"creatorId" gorm:"size:100;index"`
-	UpdaterID          string             `json:"updaterId" gorm:"size:100;index"`
-	AISource           string             `json:"aiSource" gorm:"column:ai_source;size:32"`
-	AIProviderID       string             `json:"aiProviderId" gorm:"column:ai_provider_id;size:100"`
-	AIModel            string             `json:"aiModel" gorm:"column:ai_model;size:120"`
-	AIFeatureKey       string             `json:"aiFeatureKey" gorm:"column:ai_feature_key;size:64"`
-	IsDeleted          bool               `json:"isDeleted" gorm:"default:false;index"`
-	DeletedAt          *time.Time         `json:"deletedAt"`
-	DeletedBy          string             `json:"deletedBy" gorm:"size:100"`
+	ChannelID                string             `json:"channelId" gorm:"size:100;index:idx_battle_report_channel_order,priority:1;index"`
+	WorldID                  string             `json:"worldId" gorm:"size:100;index"`
+	Title                    string             `json:"title" gorm:"size:255"`
+	Content                  string             `json:"content" gorm:"type:text"`
+	ContentPreview           string             `json:"contentPreview" gorm:"size:500"`
+	PeriodStart              time.Time          `json:"periodStart" gorm:"index"`
+	PeriodEnd                time.Time          `json:"periodEnd" gorm:"index"`
+	NavigationStartMessageID *string            `json:"-" gorm:"size:100;index"`
+	NavigationEndMessageID   *string            `json:"-" gorm:"size:100;index"`
+	ContextReportCount       int                `json:"contextReportCount" gorm:"default:3"`
+	SortOrder                int                `json:"sortOrder" gorm:"default:0;index:idx_battle_report_channel_order,priority:2"`
+	Status                   BattleReportStatus `json:"status" gorm:"size:32;default:'ready';index"`
+	ErrorMessage             string             `json:"errorMessage" gorm:"size:500"`
+	CreatorID                string             `json:"creatorId" gorm:"size:100;index"`
+	UpdaterID                string             `json:"updaterId" gorm:"size:100;index"`
+	AISource                 string             `json:"aiSource" gorm:"column:ai_source;size:32"`
+	AIProviderID             string             `json:"aiProviderId" gorm:"column:ai_provider_id;size:100"`
+	AIModel                  string             `json:"aiModel" gorm:"column:ai_model;size:120"`
+	AIFeatureKey             string             `json:"aiFeatureKey" gorm:"column:ai_feature_key;size:64"`
+	IsDeleted                bool               `json:"isDeleted" gorm:"default:false;index"`
+	DeletedAt                *time.Time         `json:"deletedAt"`
+	DeletedBy                string             `json:"deletedBy" gorm:"size:100"`
 }
 
 func (*BattleReportModel) TableName() string {

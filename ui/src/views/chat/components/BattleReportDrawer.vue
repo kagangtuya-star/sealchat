@@ -3,12 +3,14 @@ import dayjs from 'dayjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { useDialog, useMessage } from 'naive-ui'
+import { ArrowBarToDown, ArrowBarToUp } from '@vicons/tabler'
 import { useBattleReportStore } from '@/stores/battleReport'
 import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import type { BattleReport, SChannel } from '@/types'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { generateBattleReportEmbedLink } from '@/utils/battleReportEmbedLink'
+import { navigateToMessageTarget } from '@/utils/messageJump'
 import ActiveDayDateRangePicker from './export/ActiveDayDateRangePicker.vue'
 import BattleReportEditorModal from './BattleReportEditorModal.vue'
 
@@ -37,6 +39,7 @@ const displayVisible = ref(false)
 const editorVisible = ref(false)
 const editingReportId = ref('')
 const draggedId = ref('')
+const jumpingEdge = ref<{ reportId: string; edge: 'start' | 'end' } | null>(null)
 const createMode = ref<'manual' | 'ai'>('ai')
 const localSummaryRunning = ref(false)
 const localSummaryStatus = ref('')
@@ -301,6 +304,23 @@ const copyReportLink = async (item: BattleReport) => {
   message.success('战报嵌入链接已复制')
 }
 
+const jumpToEdge = async (item: BattleReport, edge: 'start' | 'end') => {
+  if (jumpingEdge.value) return
+  jumpingEdge.value = { reportId: item.id, edge }
+  try {
+    const target = await store.getJumpTarget(item.id, edge)
+    if (!target) {
+      message.warning('该时间范围没有可跳转的场内消息')
+      return
+    }
+    await navigateToMessageTarget(chat, target)
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '跳转消息失败')
+  } finally {
+    jumpingEdge.value = null
+  }
+}
+
 const createLocalAISummaryReport = async (primaryChannelId: string, payload: {
   title: string
   content: string
@@ -542,6 +562,16 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
                 </span>
               </div>
               <div class="battle-report-actions" @click.stop @dblclick.stop>
+                <n-button quaternary circle size="tiny" title="跳转到战报开头" :loading="jumpingEdge?.reportId === item.id && jumpingEdge?.edge === 'start'" :disabled="Boolean(jumpingEdge)" @click="jumpToEdge(item, 'start')">
+                  <template #icon>
+                    <n-icon :component="ArrowBarToUp" />
+                  </template>
+                </n-button>
+                <n-button quaternary circle size="tiny" title="跳转到战报结尾" :loading="jumpingEdge?.reportId === item.id && jumpingEdge?.edge === 'end'" :disabled="Boolean(jumpingEdge)" @click="jumpToEdge(item, 'end')">
+                  <template #icon>
+                    <n-icon :component="ArrowBarToDown" />
+                  </template>
+                </n-button>
                 <n-button quaternary circle size="tiny" title="编辑战报" @click="openEditor(item)">✎</n-button>
                 <n-button quaternary circle size="tiny" title="复制嵌入链接" @click="copyReportLink(item)">⧉</n-button>
                 <n-button quaternary circle size="tiny" title="删除" @click="deleteReport(item)">×</n-button>

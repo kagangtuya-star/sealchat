@@ -69,6 +69,14 @@ type battleReportDisplayResponse struct {
 	UpdatedAt        int64  `json:"updatedAt"`
 }
 
+type battleReportJumpTargetResponse struct {
+	WorldID      string  `json:"worldId"`
+	ChannelID    string  `json:"channelId"`
+	MessageID    string  `json:"messageId"`
+	CreatedAt    int64   `json:"createdAt"`
+	DisplayOrder float64 `json:"displayOrder"`
+}
+
 func BattleReportList(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
@@ -111,6 +119,17 @@ func BattleReportGet(c *fiber.Ctx) error {
 		return battleReportError(c, err)
 	}
 	return c.JSON(fiber.Map{"item": battleReportToResponse(item, true)})
+}
+
+func BattleReportJumpTarget(c *fiber.Ctx) error {
+	target, err := service.GetBattleReportJumpTarget(c.Params("reportId"), c.Query("edge"))
+	if err != nil {
+		return battleReportError(c, err)
+	}
+	if target == nil {
+		return c.JSON(fiber.Map{"target": nil, "reason": "no_message"})
+	}
+	return c.JSON(fiber.Map{"target": battleReportJumpTargetToResponse(target)})
 }
 
 func BattleReportUpdate(c *fiber.Ctx) error {
@@ -304,6 +323,19 @@ func battleReportDisplayToResponse(item *model.BattleReportDisplayChannelModel) 
 		Enabled:          item.Enabled,
 		CreatedAt:        timeToUnixMilli(item.CreatedAt),
 		UpdatedAt:        timeToUnixMilli(item.UpdatedAt),
+	}
+}
+
+func battleReportJumpTargetToResponse(target *service.BattleReportJumpTarget) battleReportJumpTargetResponse {
+	if target == nil {
+		return battleReportJumpTargetResponse{}
+	}
+	return battleReportJumpTargetResponse{
+		WorldID:      target.WorldID,
+		ChannelID:    target.ChannelID,
+		MessageID:    target.MessageID,
+		CreatedAt:    timeToUnixMilli(target.CreatedAt),
+		DisplayOrder: target.DisplayOrder,
 	}
 }
 

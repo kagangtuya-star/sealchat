@@ -42,6 +42,7 @@ import { normalizeStickyNoteHexColor } from '@/utils/stickyNoteColor'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
+import { navigateToMessageTarget } from '@/utils/messageJump'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
 import {
   SMART_LINK_DATA_ATTR,
@@ -3054,30 +3055,14 @@ const processStateTextWidgets = () => {
 };
 
 const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId?: string; isCurrentWorld: boolean }) => {
-  // 内联跳转，不开新标签页
-  if (!info.isCurrentWorld) {
-    try {
-      await chat.switchWorld(info.worldId, { force: true });
-    } catch {
-      message.error('无法访问该世界');
-      return;
-    }
-  }
-
-  if (chat.curChannel?.id !== info.channelId) {
-    const switched = await chat.channelSwitchTo(info.channelId);
-    if (!switched) {
-      message.error('无法访问该频道');
-      return;
-    }
-  }
-
-  if (info.messageId) {
-    await nextTick();
-    chatEvent.emit('search-jump', {
-      messageId: info.messageId,
+  try {
+    await navigateToMessageTarget(chat, {
+      worldId: info.worldId,
       channelId: info.channelId,
+      messageId: info.messageId,
     });
+  } catch (error: any) {
+    message.error(error?.message || '跳转失败');
   }
 };
 
