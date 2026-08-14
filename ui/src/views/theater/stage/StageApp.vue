@@ -1978,6 +1978,8 @@ let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
 let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
+let gridCoverage: { minX: number, maxX: number, minY: number, maxY: number } | null = null
+let gridSyncFrame: number | null = null
 
 const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
 const toggleGridSnap = () => {
@@ -1988,7 +1990,7 @@ const toggleGridSnap = () => {
 const setGridSnapPreview = (active: boolean) => {
   if (gridSnapPreviewActive.value === active) return
   gridSnapPreviewActive.value = active
-  syncField()
+  scheduleGridSync()
 }
 
 const finishGridSnapPreview = () => {
@@ -2224,6 +2226,8 @@ interface SurfaceSlot {
   version: number
   source: StageMediaSource | null
   ready: boolean
+  directImageSource: StageMediaSource | null
+  directImageSignature: string
   debugDrawCount: number
 }
 
@@ -3107,7 +3111,7 @@ const applyCamera = () => {
     camera.position(position)
     camera.scale(scale)
   })
-  backgroundLayer?.batchDraw()
+  // Background camera stays fixed; camera movement does not invalidate its canvas.
   drawWorldLayers()
   foregroundLayer?.batchDraw()
   interactionLayer?.batchDraw()
@@ -4536,13 +4540,37 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   cameraGroup.add(group)
   if (base) group.add(base)
   group.add(media, directImage, overlay, placeholder, label)
-  slot = { group, base, media, directImage, overlay, placeholder, label, style, url: '', version: 0, source: null, ready: false, debugDrawCount: 0 }
+  slot = {
+    group,
+    base,
+    media,
+    directImage,
+    overlay,
+    placeholder,
+    label,
+    style,
+    url: '',
+    version: 0,
+    source: null,
+    ready: false,
+    directImageSource: null,
+    directImageSignature: '',
+    debugDrawCount: 0,
+  }
   return slot
 }
 
 const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
   style.fit !== 'tile'
 )
+
+const clearDirectSurfaceImage = (slot: SurfaceSlot) => {
+  if (slot.directImageSource || slot.directImage.image()) slot.directImage.clearCache()
+  slot.directImage.image(undefined)
+  slot.directImage.visible(false)
+  slot.directImageSource = null
+  slot.directImageSignature = ''
+}
 
 const updateDirectSurfaceImage = (
   slot: SurfaceSlot,
@@ -4558,12 +4586,35 @@ const updateDirectSurfaceImage = (
     useDirect: useDirectSurfaceImage(slot.style),
   })
   if (!source || !useDirectSurfaceImage(slot.style) || isVideoSource(source)) {
-    slot.directImage.image(undefined)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     return
   }
   const dimensions = stageMediaDimensions(source)
   const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
+  const signature = [
+    stageMediaObjectUrls.get(source) || '',
+    dimensions.width,
+    dimensions.height,
+    box.width,
+    box.height,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    slot.style.fit,
+    slot.style.zoom,
+    slot.style.brightness,
+    slot.style.blurPx,
+  ].join(':')
+  if (
+    slot.directImageSource === source
+    && slot.directImageSignature === signature
+    && slot.directImage.image() === source
+  ) {
+    slot.directImage.opacity(slot.style.opacity)
+    slot.directImage.visible(true)
+    return
+  }
   slot.directImage.image(source)
   slot.directImage.position({ x: rect.x, y: rect.y })
   slot.directImage.size({ width: rect.width, height: rect.height })
@@ -4585,6 +4636,8 @@ const updateDirectSurfaceImage = (
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
   if (filters.length) slot.directImage.cache()
+  slot.directImageSource = source
+  slot.directImageSignature = signature
   slot.directImage.visible(true)
 }
 
@@ -4635,7 +4688,7 @@ const updateSurfaceSlot = (
     slot.source = null
     slot.ready = false
     slot.media.visible(false)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -4647,7 +4700,7 @@ const updateSurfaceSlot = (
     slot.source = null
     slot.ready = false
     slot.media.visible(false)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
@@ -4770,37 +4823,54 @@ const updateSurfaceSlot = (
 }
 
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
-  if (!gridGroup) return
+  if (!gridGroup) return false
   const liveState = props.store.state.liveState
   const camera = props.store.state.camera
+  const gridVisible = liveState.displayGrid || gridSnapPreviewActive.value
   const signature = [
+    fieldX,
+    fieldY,
     fieldWidth,
     fieldHeight,
-    liveState.displayGrid,
+    gridVisible,
     liveState.gridSize,
-    gridSnapPreviewActive.value,
-    viewportSize.value.width,
-    viewportSize.value.height,
-    camera.x,
-    camera.y,
-    camera.zoom,
   ].join(':')
-  if (signature === gridSignature) return
-  gridSignature = signature
-  gridGroup.destroyChildren()
-  if (!liveState.displayGrid && !gridSnapPreviewActive.value) return
+  if (!gridVisible) {
+    const changed = gridSignature !== signature || gridGroup.children.length > 0
+    if (changed) gridGroup.destroyChildren()
+    gridSignature = signature
+    gridCoverage = null
+    return changed
+  }
+
   const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
   const zoom = Math.max(0.01, camera.zoom)
   const visibleLeft = (-viewportSize.value.width / 2 - camera.x) / zoom
   const visibleRight = (viewportSize.value.width / 2 - camera.x) / zoom
   const visibleTop = (-viewportSize.value.height / 2 - camera.y) / zoom
   const visibleBottom = (viewportSize.value.height / 2 - camera.y) / zoom
-  // Draw across current viewport, not only inside finite field rectangle.
+  const visibleWidth = Math.max(step, visibleRight - visibleLeft)
+  const visibleHeight = Math.max(step, visibleBottom - visibleTop)
+  // Keep overscan so small pans do not allocate and destroy grid nodes every frame.
+  const paddingX = Math.max(step * 2, visibleWidth * 0.5)
+  const paddingY = Math.max(step * 2, visibleHeight * 0.5)
+  const minX = visibleLeft - paddingX
+  const maxX = visibleRight + paddingX
+  const minY = visibleTop - paddingY
+  const maxY = visibleBottom + paddingY
+  const covered = Boolean(
+    gridCoverage
+    && visibleLeft >= gridCoverage.minX
+    && visibleRight <= gridCoverage.maxX
+    && visibleTop >= gridCoverage.minY
+    && visibleBottom <= gridCoverage.maxY,
+  )
+  if (gridSignature === signature && covered) return false
+
+  gridSignature = signature
+  gridGroup.destroyChildren()
+  // Draw across current viewport plus overscan, not only inside finite field rectangle.
   // Grid phase still follows field origin, so snapping and lines stay aligned.
-  const minX = visibleLeft - step
-  const maxX = visibleRight + step
-  const minY = visibleTop - step
-  const maxY = visibleBottom + step
   const firstX = fieldX + Math.floor((minX - fieldX) / step) * step
   const firstY = fieldY + Math.floor((minY - fieldY) / step) * step
   for (let x = firstX; x <= maxX; x += step) {
@@ -4819,9 +4889,32 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
       listening: false,
     }))
   }
+  gridCoverage = { minX, maxX, minY, maxY }
+  return true
 }
 
-const syncField = () => {
+const syncGrid = () => {
+  if (!gridGroup) return
+  const liveState = props.store.state.liveState
+  const width = liveState.fieldWidth * WORLD_UNIT_PX
+  const height = liveState.fieldHeight * WORLD_UNIT_PX
+  const box = { x: -width / 2, y: -height / 2, width, height }
+  if (rebuildGrid(box.x, box.y, width, height)) worldLayer?.batchDraw()
+}
+
+const scheduleGridSync = () => {
+  if (!gridGroup) return
+  const liveState = props.store.state.liveState
+  const hasGridNodes = Boolean(gridGroup?.children.length)
+  if (!liveState.displayGrid && !gridSnapPreviewActive.value && !hasGridNodes) return
+  if (gridSyncFrame !== null) return
+  gridSyncFrame = window.requestAnimationFrame(() => {
+    gridSyncFrame = null
+    syncGrid()
+  })
+}
+
+const syncSurfaceSlots = () => {
   if (!backgroundSlot || !foregroundSlot) return
   const liveState = props.store.state.liveState
   const width = liveState.fieldWidth * WORLD_UNIT_PX
@@ -4830,10 +4923,13 @@ const syncField = () => {
   const viewportBox = { x: 0, y: 0, width: viewportSize.value.width, height: viewportSize.value.height }
   updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景', 'surface:background')
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
-  rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
-  drawWorldLayers()
   foregroundLayer?.batchDraw()
+}
+
+const syncField = () => {
+  syncSurfaceSlots()
+  syncGrid()
 }
 
 const drawingDash = (style: StageDrawingStyle) => style.dash === 'dashed'
@@ -6676,10 +6772,14 @@ watch(() => ({
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
   fieldObjectFit: props.store.state.liveState.fieldObjectFit,
+}), syncSurfaceSlots, { deep: true })
+watch(() => ({
+  fieldWidth: props.store.state.liveState.fieldWidth,
+  fieldHeight: props.store.state.liveState.fieldHeight,
   displayGrid: props.store.state.liveState.displayGrid,
   gridSize: props.store.state.liveState.gridSize,
   alignWithGrid: props.store.state.liveState.alignWithGrid,
-}), syncField, { deep: true })
+}), scheduleGridSync, { deep: true })
 watch(() => props.store.state.persistentObjects, () => {
   if (layerHierarchyMovePending) syncLayerHierarchy()
   else syncObjects()
@@ -6687,7 +6787,7 @@ watch(() => props.store.state.persistentObjects, () => {
 }, { deep: true })
 watch(() => props.store.state.camera, () => {
   applyCamera()
-  syncField()
+  scheduleGridSync()
   updateTransformer()
 }, { deep: true })
 watch(activeCanvasTool, () => {
@@ -6802,6 +6902,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
   finishGridSnapPreview()
+  if (gridSyncFrame !== null) window.cancelAnimationFrame(gridSyncFrame)
+  gridSyncFrame = null
   cancelDrawingSession()
   finishPointerTrace()
   Array.from(pointerTraceVisuals.keys()).forEach(clearPointerTrace)
