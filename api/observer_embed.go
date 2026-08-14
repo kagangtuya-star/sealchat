@@ -72,6 +72,25 @@ func ObserverStickyNoteFolderList(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"folders": items})
 }
 
+func ObserverBattleReportList(c *fiber.Ctx) error {
+	world, _, status, message := resolveObserverEmbedChannel(c)
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": message})
+	}
+	items, err := service.ListBattleReportsForObserver(c.Params("channelId"), world.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+	}
+	out := make([]battleReportResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, battleReportToResponse(item, false))
+	}
+	return c.JSON(fiber.Map{"items": out})
+}
+
 func ObserverBattleReportGet(c *fiber.Ctx) error {
 	world, _, status, message := resolveObserverEmbedChannel(c)
 	if status != 0 {

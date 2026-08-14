@@ -82,10 +82,18 @@ export const useBattleReportStore = defineStore('battleReport', {
         : [item, ...current];
       this.itemsByChannel[channelId] = next;
     },
-    async list(channelId: string) {
+    async list(channelId: string, options?: { readonly?: boolean; observerSlug?: string }) {
       this.loading = true;
       try {
-        const resp = await api.get<BattleReportListResponse>(`api/v1/channels/${channelId}/battle-reports`);
+        const chat = useChatStore();
+        const observerMode = options?.readonly === true || chat.observerMode;
+        const observerSlug = String(options?.observerSlug ?? chat.observerSlug ?? '').trim();
+        const endpoint = observerMode
+          ? `api/v1/public/ob/channels/${channelId}/battle-reports`
+          : `api/v1/channels/${channelId}/battle-reports`;
+        const resp = await api.get<BattleReportListResponse>(endpoint, {
+          params: observerMode ? { ob_slug: observerSlug } : undefined,
+        });
         const items = normalizeItems(resp.data?.items).map((item) => {
           const existingDetail = this.detailById[item.id];
           return {
@@ -100,17 +108,18 @@ export const useBattleReportStore = defineStore('battleReport', {
         this.loading = false;
       }
     },
-    async get(reportId: string) {
+    async get(reportId: string, requestedChannelId?: string) {
       this.loading = true;
       try {
         const chat = useChatStore();
-        const observerSlug = chat.observerMode ? String(chat.observerSlug || '').trim() : '';
-        const channelId = String(chat.curChannel?.id || '').trim();
-        const endpoint = observerSlug && channelId
+        const observerMode = chat.observerMode;
+        const observerSlug = observerMode ? String(chat.observerSlug || '').trim() : '';
+        const channelId = String(this.detailById[reportId]?.channelId || requestedChannelId || chat.curChannel?.id || '').trim();
+        const endpoint = observerMode
           ? `api/v1/public/ob/channels/${channelId}/battle-reports/${reportId}`
           : `api/v1/battle-reports/${reportId}`;
         const resp = await api.get<BattleReportItemResponse>(endpoint, {
-          params: observerSlug ? { ob_slug: observerSlug } : undefined,
+          params: observerMode ? { ob_slug: observerSlug } : undefined,
         });
         const item = resp.data?.item;
         this.upsertItem(item);
@@ -121,14 +130,15 @@ export const useBattleReportStore = defineStore('battleReport', {
     },
     async getJumpTarget(reportId: string, edge: 'start' | 'end') {
       const chat = useChatStore();
-      const observerSlug = chat.observerMode ? String(chat.observerSlug || '').trim() : '';
+      const observerMode = chat.observerMode;
+      const observerSlug = observerMode ? String(chat.observerSlug || '').trim() : '';
       const report = this.detailById[reportId];
       const observerChannelId = String(report?.channelId || chat.curChannel?.id || '').trim();
-      const endpoint = observerSlug && observerChannelId
+      const endpoint = observerMode
         ? `api/v1/public/ob/channels/${observerChannelId}/battle-reports/${reportId}/jump-target`
         : `api/v1/battle-reports/${reportId}/jump-target`;
       const resp = await api.get<BattleReportJumpTargetResponse>(endpoint, {
-        params: { edge, ...(observerSlug ? { ob_slug: observerSlug } : {}) },
+        params: { edge, ...(observerMode ? { ob_slug: observerSlug } : {}) },
       });
       return resp.data?.target || null;
     },

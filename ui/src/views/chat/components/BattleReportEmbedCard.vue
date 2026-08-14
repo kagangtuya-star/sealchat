@@ -8,6 +8,7 @@ import { useDisplayStore } from '@/stores/display'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import { navigateToMessageTarget } from '@/utils/messageJump'
+import { parseBattleReportEmbedLink } from '@/utils/battleReportEmbedLink'
 
 interface Props {
   reportId: string
@@ -24,6 +25,8 @@ const failed = ref('')
 const jumpingEdge = ref<'start' | 'end' | ''>('')
 const expanded = ref(display.settings.battleReportCardExpandedByDefault)
 const report = computed(() => store.detailById[props.reportId])
+const linkParams = computed(() => props.rawLink ? parseBattleReportEmbedLink(props.rawLink) : null)
+const reportChannelId = computed(() => report.value?.channelId || linkParams.value?.channelId || '')
 const contentText = computed(() => report.value?.content || report.value?.contentPreview || '暂无内容')
 const isLongContent = computed(() => contentText.value.length > 800 || contentText.value.split('\n').length > 16)
 const periodText = computed(() => {
@@ -37,7 +40,7 @@ const load = async () => {
   loading.value = true
   failed.value = ''
   try {
-    await store.get(props.reportId)
+    await store.get(props.reportId, reportChannelId.value)
   } catch (error: any) {
     failed.value = error?.response?.data?.message || error?.message || '加载战报失败'
   } finally {
@@ -68,14 +71,25 @@ const jumpToEdge = async (edge: 'start' | 'end') => {
   }
 }
 
-const openEditor = (event?: MouseEvent) => {
-  if (chat.observerMode) return
+const openContent = (mode: 'view' | 'edit', event?: MouseEvent) => {
+  if (mode === 'edit' && chat.observerMode) return
   event?.preventDefault()
   event?.stopPropagation()
   chatEvent.emit('battle-report-open-editor' as any, {
     reportId: props.reportId,
-    channelId: report.value?.channelId,
+    channelId: reportChannelId.value,
+    mode,
   })
+}
+
+const openView = (event?: MouseEvent) => openContent('view', event)
+const openEditor = (event?: MouseEvent) => openContent('edit', event)
+const openDoubleClick = (event?: MouseEvent) => {
+  if (chat.observerMode) {
+    openView(event)
+    return
+  }
+  openEditor(event)
 }
 
 onMounted(load)
@@ -86,11 +100,11 @@ watch(() => props.reportId, () => {
 </script>
 
 <template>
-  <div class="battle-report-embed-card" @dblclick="openEditor">
+  <div class="battle-report-embed-card" @dblclick="openDoubleClick">
     <div class="battle-report-embed-card__head">
       <div>
         <div class="battle-report-embed-card__eyebrow">战报总结</div>
-        <button class="battle-report-embed-card__title" type="button" :disabled="chat.observerMode" @click="openEditor">
+        <button class="battle-report-embed-card__title" type="button" @click="openView">
           {{ report?.title || (loading ? '加载中...' : '战报') }}
         </button>
         <div v-if="periodText" class="battle-report-embed-card__period">{{ periodText }}</div>
@@ -111,7 +125,7 @@ watch(() => props.reportId, () => {
             <n-icon :component="Edit" />
           </template>
         </n-button>
-        <n-button v-if="rawLink" quaternary circle size="tiny" title="复制链接" @click.stop="copyLink">
+        <n-button v-if="rawLink && !chat.observerMode" quaternary circle size="tiny" title="复制链接" @click.stop="copyLink">
           <template #icon>
             <n-icon :component="CopyIcon" />
           </template>

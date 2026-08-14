@@ -86,6 +86,38 @@ func ListBattleReports(channelID string, userID string) ([]*model.BattleReportMo
 	return items, err
 }
 
+// ListBattleReportsForObserver returns world reports whose source channels are
+// inside observer's public channel scope.
+func ListBattleReportsForObserver(channelID, observerWorldID string) ([]*model.BattleReportModel, error) {
+	channel, err := CanObserverAccessChannel(channelID, observerWorldID)
+	if err != nil {
+		return nil, err
+	}
+	if channel == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var candidates []*model.BattleReportModel
+	if err := model.GetDB().
+		Where("world_id = ? AND is_deleted = ?", strings.TrimSpace(observerWorldID), false).
+		Order("sort_order DESC, period_start DESC, created_at DESC").
+		Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]*model.BattleReportModel, 0, len(candidates))
+	for _, item := range candidates {
+		if item == nil || strings.TrimSpace(item.ChannelID) == "" {
+			continue
+		}
+		if _, err := CanObserverAccessChannel(item.ChannelID, observerWorldID); err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func GetBattleReport(reportID string, userID string) (*model.BattleReportModel, error) {
 	report, err := loadBattleReport(reportID)
 	if err != nil {

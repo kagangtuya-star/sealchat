@@ -18,6 +18,8 @@ interface Props {
   visible: boolean
   channelId?: string
   worldId?: string
+  readonly?: boolean
+  observerMode?: boolean
 }
 
 interface Emits {
@@ -38,6 +40,7 @@ const createVisible = ref(false)
 const displayVisible = ref(false)
 const editorVisible = ref(false)
 const editingReportId = ref('')
+const editorMode = ref<'view' | 'edit'>('view')
 const draggedId = ref('')
 const jumpingEdge = ref<{ reportId: string; edge: 'start' | 'end' } | null>(null)
 const createMode = ref<'manual' | 'ai'>('ai')
@@ -55,7 +58,8 @@ const displayForm = reactive({
 })
 let pollTimer: number | null = null
 
-const displayChannel = computed(() => props.channelId ? (store.displayByChannel[props.channelId] || null) : null)
+const isReadonly = computed(() => props.readonly === true || props.observerMode === true || chat.observerMode)
+const displayChannel = computed(() => isReadonly.value ? null : (props.channelId ? (store.displayByChannel[props.channelId] || null) : null))
 const sourceChannelId = computed(() => displayChannel.value?.sourceChannelId || props.channelId || '')
 const displayChannelId = computed(() => displayChannel.value?.displayChannelId || '')
 const sourceReports = computed(() => sourceChannelId.value ? (store.itemsByChannel[sourceChannelId.value] || []) : [])
@@ -101,6 +105,12 @@ const formatPeriod = (item: BattleReport) => {
   return `${dayjs(item.periodStart).format('YYYY-MM-DD HH:mm')} - ${dayjs(item.periodEnd).format('YYYY-MM-DD HH:mm')}`
 }
 
+const statusText = (item: BattleReport) => ({
+  ready: '已完成',
+  generating: '生成中',
+  failed: '失败',
+}[item.status] || '未知')
+
 const previewText = (item: BattleReport) => (item.contentPreview || item.content || '暂无内容').slice(0, 200)
 
 const resetCreateForm = () => {
@@ -115,6 +125,10 @@ const resetCreateForm = () => {
 const refresh = async () => {
   if (!props.channelId) return
   try {
+    if (isReadonly.value) {
+      await store.list(props.channelId, { readonly: true, observerSlug: chat.observerSlug })
+      return
+    }
     const display = await store.getDisplayChannel(props.channelId)
     const targetChannelId = display?.sourceChannelId || props.channelId
     await store.list(targetChannelId)
@@ -238,23 +252,36 @@ const disableDisplayChannel = async () => {
   })
 }
 
-const openEditor = async (item: BattleReport) => {
+const openContent = async (item: BattleReport, mode: 'view' | 'edit') => {
+  if (mode === 'edit' && isReadonly.value) {
+    mode = 'view'
+  }
   editingReportId.value = item.id
+  editorMode.value = mode
   try {
-    await store.get(item.id)
+    await store.get(item.id, item.channelId)
   } catch (error) {
     console.warn('加载战报详情失败', error)
   }
   editorVisible.value = true
 }
 
-const openEditorById = async (reportId: string) => {
+const openView = (item: BattleReport) => {
+  void openContent(item, 'view')
+}
+
+const openEditor = (item: BattleReport) => {
+  void openContent(item, 'edit')
+}
+
+const openContentById = async (reportId: string, channelId?: string, mode: 'view' | 'edit' = 'view') => {
   const normalized = String(reportId || '').trim()
   if (!normalized) return
   emit('update:visible', true)
   editingReportId.value = normalized
+  editorMode.value = isReadonly.value ? 'view' : mode
   try {
-    await store.get(normalized)
+    await store.get(normalized, channelId)
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '加载战报详情失败')
     return
@@ -273,7 +300,8 @@ const handleBattleReportOpenEditor = (payload: any) => {
   if (!payload?.deferToDrawer && channelId && allowedChannelIds.size && !allowedChannelIds.has(channelId)) {
     return
   }
-  void openEditorById(reportId)
+  const mode = payload?.mode === 'edit' ? 'edit' : 'view'
+  void openContentById(reportId, channelId, mode)
 }
 
 const handleDisplayMessageReordered = (payload: any) => {
@@ -432,6 +460,7 @@ const createReport = async () => {
 }
 
 const saveEditor = async (payload: { title: string; content: string }) => {
+  if (isReadonly.value || editorMode.value !== 'edit') return
   const item = editingReport.value
   if (!item) return
   try {
@@ -470,6 +499,7 @@ const deleteReport = async (item: BattleReport) => {
 }
 
 const handleDragStart = (item: BattleReport, event: DragEvent) => {
+  if (isReadonly.value) return
   draggedId.value = item.id
   event.dataTransfer?.setData('text/plain', item.id)
   if (event.dataTransfer) {
@@ -479,6 +509,7 @@ const handleDragStart = (item: BattleReport, event: DragEvent) => {
 
 const handleDrop = async (target: BattleReport, event: DragEvent) => {
   event.preventDefault()
+  if (isReadonly.value) return
   const sourceId = draggedId.value || event.dataTransfer?.getData('text/plain') || ''
   draggedId.value = ''
   if (!sourceChannelId.value || !sourceId || sourceId === target.id) return
@@ -510,13 +541,13 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
     placement="right"
     @update:show="emit('update:visible', $event)"
   >
-    <n-drawer-content title="战报总结" closable>
+    <n-drawer-content :title="isReadonly ? '战报时间线' : '战报总结'" closable>
       <div class="battle-report-toolbar">
         <div>
-          <div class="battle-report-toolbar__title">世界战报</div>
-          <div class="battle-report-toolbar__hint">手动或 AI 总结当前世界的战报。</div>
+          <div class="battle-report-toolbar__title">{{ isReadonly ? '战报时间线' : '世界战报' }}</div>
+          <div class="battle-report-toolbar__hint">{{ isReadonly ? '双击战报查看完整内容。' : '手动或 AI 总结当前世界的战报。' }}</div>
         </div>
-        <div class="battle-report-toolbar__actions">
+        <div v-if="!isReadonly" class="battle-report-toolbar__actions">
           <n-button v-if="displayChannel" size="small" secondary @click="openDisplayChannel">打开展示频道</n-button>
           <n-button v-if="displayChannel" size="small" tertiary @click="disableDisplayChannel">关闭展示频道</n-button>
           <n-button v-else size="small" secondary @click="openDisplaySetup">开启展示频道</n-button>
@@ -525,15 +556,15 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
       </div>
       <n-spin :show="store.loading">
         <div v-if="!sourceReports.length" class="battle-report-empty">
-          暂无战报。点击上方新建，手写或交给 AI 总结。
+          {{ isReadonly ? '暂无可查看战报。' : '暂无战报。点击上方新建，手写或交给 AI 总结。' }}
         </div>
         <div v-else class="battle-report-timeline">
           <div
             v-for="item in sourceReports"
             :key="item.id"
             class="battle-report-item"
-            :class="`battle-report-item--${item.status}`"
-            draggable="true"
+            :class="[`battle-report-item--${item.status}`, { 'battle-report-item--readonly': isReadonly }]"
+            :draggable="!isReadonly"
             @dragstart="handleDragStart(item, $event)"
             @dragover.prevent
             @drop="handleDrop(item, $event)"
@@ -546,17 +577,19 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
               </template>
               {{ formatPeriod(item) }}
             </n-tooltip>
-            <div class="battle-report-card" @dblclick="openEditor(item)">
+            <div class="battle-report-card" @dblclick="isReadonly ? openView(item) : openEditor(item)">
               <div class="battle-report-card__main">
                 <n-popover trigger="hover" placement="left" :width="280">
                   <template #trigger>
-                    <button class="battle-report-title" type="button" @click="openEditor(item)">
+                    <button class="battle-report-title" type="button" @click="openView(item)">
                       {{ item.title || '未命名战报' }}
                     </button>
                   </template>
                   <div class="battle-report-preview">{{ previewText(item) }}</div>
                 </n-popover>
-                <span class="battle-report-meta">{{ formatPeriod(item) }}</span>
+                <span class="battle-report-meta">
+                  {{ formatPeriod(item) }} · {{ statusText(item) }}
+                </span>
                 <span v-if="item.status === 'failed'" class="battle-report-error">
                   {{ item.errorMessage || '生成失败' }}
                 </span>
@@ -572,9 +605,9 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
                     <n-icon :component="ArrowBarToDown" />
                   </template>
                 </n-button>
-                <n-button quaternary circle size="tiny" title="编辑战报" @click="openEditor(item)">✎</n-button>
-                <n-button quaternary circle size="tiny" title="复制嵌入链接" @click="copyReportLink(item)">⧉</n-button>
-                <n-button quaternary circle size="tiny" title="删除" @click="deleteReport(item)">×</n-button>
+                <n-button v-if="!isReadonly" quaternary circle size="tiny" title="编辑战报" @click="openEditor(item)">✎</n-button>
+                <n-button v-if="!isReadonly" quaternary circle size="tiny" title="复制嵌入链接" @click="copyReportLink(item)">⧉</n-button>
+                <n-button v-if="!isReadonly" quaternary circle size="tiny" title="删除" @click="deleteReport(item)">×</n-button>
               </div>
             </div>
           </div>
@@ -669,6 +702,7 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
   <BattleReportEditorModal
     v-model:visible="editorVisible"
     :report="editingReport"
+    :mode="editorMode"
     @save="saveEditor"
   />
 </template>
@@ -726,6 +760,11 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 
 .battle-report-item:active {
   cursor: grabbing;
+}
+
+.battle-report-item--readonly,
+.battle-report-item--readonly:active {
+  cursor: default;
 }
 
 .battle-report-node {

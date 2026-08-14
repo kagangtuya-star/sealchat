@@ -47,7 +47,7 @@ type battleReportResponse struct {
 	ContextReportCount int    `json:"contextReportCount"`
 	SortOrder          int    `json:"sortOrder"`
 	Status             string `json:"status"`
-	ErrorMessage       string `json:"errorMessage,omitempty"`
+	ErrorMessage       string `json:"errorMessage"`
 	CreatorID          string `json:"creatorId"`
 	UpdaterID          string `json:"updaterId"`
 	AISource           string `json:"aiSource,omitempty"`
