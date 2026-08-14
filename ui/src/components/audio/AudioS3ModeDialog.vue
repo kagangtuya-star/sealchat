@@ -81,10 +81,6 @@
           </div>
         </n-spin>
       </section>
-
-      <n-alert type="info" :bordered="false">
-        路径选择器从 Bucket 根路径开始按层读取。现有对象不会导入本地数据库；对象名称、大小、ETag 与更新时间直接来自 S3。
-      </n-alert>
     </div>
 
     <template #footer>

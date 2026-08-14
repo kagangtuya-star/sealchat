@@ -28,9 +28,6 @@
         </n-button>
         <n-button v-if="s3.settings.canConfigure" size="small" secondary @click="s3ModeVisible = true">S3模式</n-button>
       </div>
-      <n-alert type="info" :bordered="false">
-        当前数据源：S3 · {{ s3.settings.bucket || '未配置 Bucket' }}/{{ s3.settings.prefix }}。素材元数据不写入本地数据库。
-      </n-alert>
     </section>
 
     <section v-if="checkedRowKeys.length" class="audio-s3-library__selection">
@@ -75,6 +72,7 @@
           :checked-row-keys="checkedRowKeys"
           :row-class-name="rowClassName"
           :row-props="rowProps"
+          :max-height="'calc(100dvh - 350px)'"
           @update:checked-row-keys="handleCheckedRows"
           bordered
         />
@@ -305,10 +303,7 @@ const columns = computed<DataTableColumns<AudioS3Asset>>(() => [
     key: 'name',
     minWidth: 300,
     render: (row) => h('div', { class: 'audio-s3-library__name-cell' }, [
-      h('div', [
-        h('strong', row.name),
-        h('p', row.objectKey),
-      ]),
+      h('strong', row.name),
       h('div', { class: 'audio-s3-library__inline-actions' }, [
         h(NButton, {
           size: 'tiny',
@@ -343,12 +338,6 @@ const columns = computed<DataTableColumns<AudioS3Asset>>(() => [
     key: 'size',
     width: 110,
     render: (row) => formatFileSize(row.size),
-  },
-  {
-    title: '类型',
-    key: 'contentType',
-    width: 150,
-    render: (row) => row.contentType || '-',
   },
   {
     title: () => sortHeader('更新时间', 'updatedAt'),
@@ -648,7 +637,7 @@ function formatDate(value?: string) {
 
 .audio-s3-library__toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
   align-items: center;
   border: 1px solid var(--sc-border-mute);
@@ -657,7 +646,11 @@ function formatDate(value?: string) {
   background: var(--audio-card-surface, var(--sc-bg-elevated));
 }
 
-.audio-s3-library__toolbar > :last-child {
+.audio-s3-library__toolbar > :deep(.n-input) {
+  min-width: 0;
+}
+
+.audio-s3-library__toolbar > :deep(.n-alert) {
   grid-column: 1 / -1;
 }
 
@@ -666,6 +659,12 @@ function formatDate(value?: string) {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.audio-s3-library__toolbar-actions {
+  min-width: max-content;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
 }
 
 .audio-s3-library__selection {
@@ -683,7 +682,8 @@ function formatDate(value?: string) {
   display: grid;
   grid-template-columns: 230px minmax(0, 1fr) 300px;
   gap: 0.75rem;
-  min-height: 430px;
+  height: clamp(420px, calc(100dvh - 250px), 720px);
+  min-height: 0;
 }
 
 .audio-s3-library__folders,
@@ -694,6 +694,8 @@ function formatDate(value?: string) {
   padding: 0.75rem;
   background: var(--audio-card-surface, var(--sc-bg-elevated));
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .audio-s3-library__panel-header,
@@ -712,6 +714,18 @@ function formatDate(value?: string) {
   gap: 0.5rem;
 }
 
+.audio-s3-library__folders {
+  display: flex;
+  flex-direction: column;
+}
+
+.audio-s3-library__folders :deep(.n-tree) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
 .audio-s3-library__path {
   color: var(--sc-text-secondary);
   font-size: 0.8rem;
@@ -726,6 +740,45 @@ function formatDate(value?: string) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  overflow-y: auto;
+}
+
+.audio-s3-library__folders :deep(.n-tree),
+.audio-s3-library__detail,
+.audio-s3-library__table :deep(.n-data-table-wrapper),
+.audio-s3-library__table :deep(.n-data-table-base-table-body) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+}
+
+.audio-s3-library__folders :deep(.n-tree)::-webkit-scrollbar,
+.audio-s3-library__detail::-webkit-scrollbar,
+.audio-s3-library__table :deep(.n-data-table-wrapper)::-webkit-scrollbar,
+.audio-s3-library__table :deep(.n-data-table-base-table-body)::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.audio-s3-library__folders :deep(.n-tree)::-webkit-scrollbar-track,
+.audio-s3-library__detail::-webkit-scrollbar-track,
+.audio-s3-library__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-track,
+.audio-s3-library__table :deep(.n-data-table-base-table-body)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.audio-s3-library__folders :deep(.n-tree)::-webkit-scrollbar-thumb,
+.audio-s3-library__detail::-webkit-scrollbar-thumb,
+.audio-s3-library__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb,
+.audio-s3-library__table :deep(.n-data-table-base-table-body)::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+}
+
+.audio-s3-library__folders :deep(.n-tree)::-webkit-scrollbar-thumb:hover,
+.audio-s3-library__detail::-webkit-scrollbar-thumb:hover,
+.audio-s3-library__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb:hover,
+.audio-s3-library__table :deep(.n-data-table-base-table-body)::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.5);
 }
 
 .audio-s3-library__detail-header h3 {
@@ -733,8 +786,7 @@ function formatDate(value?: string) {
   overflow-wrap: anywhere;
 }
 
-.audio-s3-library__detail-header p,
-.audio-s3-library__name-cell p {
+.audio-s3-library__detail-header p {
   margin: 0.2rem 0 0;
   color: var(--sc-text-secondary);
   font-size: 0.72rem;
@@ -797,6 +849,22 @@ function formatDate(value?: string) {
   .audio-s3-library__toolbar,
   .audio-s3-library__content {
     grid-template-columns: 1fr;
+  }
+
+  .audio-s3-library__toolbar-actions {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .audio-s3-library__content {
+    height: auto;
+  }
+
+  .audio-s3-library__folders,
+  .audio-s3-library__table,
+  .audio-s3-library__detail {
+    min-height: 360px;
   }
 
   .audio-s3-library__selection {
