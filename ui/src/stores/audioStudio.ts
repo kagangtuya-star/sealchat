@@ -11,6 +11,7 @@ import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embedde
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
+import { useAudioS3LibraryStore } from './audioS3Library';
 import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
 import { normalizeStageMusicSnapshot, type StageMusicSnapshot } from '@/views/theater/shared/stage-types';
 import type {
@@ -915,10 +916,16 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       }
       if (changed && this.initialized) {
+        const s3Library = useAudioS3LibraryStore();
         void this.fetchScenes();
-        void this.fetchFolders();
-        void this.fetchTrackSelectableAssets();
-        void this.fetchAssets({ pagination: { page: 1 } });
+        if (s3Library.enabled) {
+          void s3Library.fetchFolders();
+          void s3Library.fetchSelectableAssets();
+        } else {
+          void this.fetchFolders();
+          void this.fetchTrackSelectableAssets();
+          void this.fetchAssets({ pagination: { page: 1 } });
+        }
       }
     },
 
@@ -1468,8 +1475,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async ensureInitialized() {
       if (this.initialized) return;
       this.refreshEmbeddedRuntimeSnapshot();
-      await Promise.all([this.fetchScenes(), this.fetchFolders(), this.fetchTrackSelectableAssets()]);
-      await this.fetchAssets();
+      const s3Library = useAudioS3LibraryStore();
+      await s3Library.ensureSettings();
+      if (s3Library.enabled) {
+        await Promise.all([this.fetchScenes(), s3Library.fetchFolders(), s3Library.fetchSelectableAssets()]);
+        this.assets = [];
+        this.filteredAssets = [];
+        this.trackSelectableAssets = [];
+        this.folders = [];
+        this.folderPathLookup = {};
+      } else {
+        await Promise.all([this.fetchScenes(), this.fetchFolders(), this.fetchTrackSelectableAssets()]);
+        await this.fetchAssets();
+      }
       this.initialized = true;
       if (this.canManage && !this.currentSceneId && this.scenes.length) {
         this.applyScene(this.scenes[0].id);
@@ -1752,6 +1770,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchAllAssetsByFolder(folderId: string, pageSize = 200) {
+      const s3Library = useAudioS3LibraryStore();
+      if (folderId.startsWith('s3f:')) {
+        return s3Library.fetchAssetsByFolder(folderId, Math.max(pageSize, 5000));
+      }
       const normalizedFolderId = normalizeFolderId(folderId);
       if (!normalizedFolderId) {
         return [] as AudioAsset[];
@@ -2135,6 +2157,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchSingleAsset(assetId: string) {
+      if (assetId.startsWith('s3a:')) {
+        const s3Library = useAudioS3LibraryStore();
+        return normalizeAudioAsset(await s3Library.fetchAsset(assetId));
+      }
       const resp = await api.get(`/api/v1/audio/assets/${assetId}`);
       const asset = normalizeAudioAsset(resp.data as AudioAsset);
       this.upsertAssetLocally(asset);
@@ -2143,6 +2169,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     buildRawStreamUrl(assetId: string) {
+      if (assetId.startsWith('s3a:')) {
+        return useAudioS3LibraryStore().buildRawStreamUrl(assetId);
+      }
       return `${urlBase}/api/v1/audio/stream/${assetId}`;
     },
 
@@ -2150,6 +2179,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const normalizedAssetId = String(assetId || '').trim();
       if (!normalizedAssetId) {
         throw new Error('assetId is empty');
+      }
+      if (normalizedAssetId.startsWith('s3a:')) {
+        const data = await useAudioS3LibraryStore().fetchPlayableStreamUrl(normalizedAssetId);
+        const streamUrl = String(data?.streamUrl || '').trim();
+        if (!streamUrl) throw new Error('S3 play token response missing streamUrl');
+        return streamUrl;
       }
       if (useRawProtectedStreamMode()) {
         warnAudioSync('[AudioPlayback] raw stream fallback enabled', {

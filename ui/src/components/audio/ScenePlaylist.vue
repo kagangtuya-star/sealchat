@@ -152,8 +152,10 @@ import {
 } from 'naive-ui';
 import type { AudioScene } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { useAudioS3LibraryStore } from '@/stores/audioS3Library';
 
 const audio = useAudioStudioStore();
+const s3Library = useAudioS3LibraryStore();
 const message = useMessage();
 const dialog = useDialog();
 
@@ -359,7 +361,10 @@ function trackLabel(type: string) {
 
 function findAssetName(assetId: string | null) {
   if (!assetId) return '未绑定';
-  return audio.assets.find((asset) => asset.id === assetId)?.name || '未知素材';
+  return audio.assets.find((asset) => asset.id === assetId)?.name
+    || audio.trackSelectableAssets.find((asset) => asset.id === assetId)?.name
+    || s3Library.selectableAssets.find((asset) => asset.id === assetId)?.name
+    || '未知素材';
 }
 
 const drawerTitle = computed(() => {
