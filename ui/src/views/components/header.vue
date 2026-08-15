@@ -3,7 +3,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { api } from '@/stores/_config';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo, Send } from '@vicons/tabler';
-import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
+import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline, DocumentTextOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, shallowRef, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -112,6 +112,10 @@ const channelAggregateBadge = computed(() => {
 
 const currentWorldName = computed(() => chat.currentWorld?.name || '未选择世界');
 const isObserver = computed(() => chat.isObserver);
+
+const openBattleSummaryFromHeader = () => {
+  chatEvent.emit('open-battle-summary');
+};
 
 const openWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -1142,6 +1146,18 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         </template>
         <span>常规设置</span>
       </n-tooltip>
+      <n-button
+        size="small"
+        secondary
+        class="sc-ob-battle-report-button"
+        aria-label="查看战报"
+        @click="openBattleSummaryFromHeader"
+      >
+        <template #icon>
+          <n-icon :component="DocumentTextOutline" size="16" />
+        </template>
+        查看战报
+      </n-button>
       <n-button size="small" type="primary" @click="goLogin">登录</n-button>
     </div>
   </div>

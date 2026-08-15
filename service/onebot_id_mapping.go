@@ -121,6 +121,19 @@ func GetOrCreateOneBotID(entityType, entityID string) (int64, error) {
 	return 0, errors.New("failed to allocate onebot numeric id")
 }
 
+// GetOrCreateOneBotUserID 返回内部用户对外使用的 OneBot 用户号。
+// 手动 BOT 使用 bot_user 映射，确保与 self_id 一致。
+func GetOrCreateOneBotUserID(userID string) (int64, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return 0, errors.New("invalid onebot user")
+	}
+	if user := model.UserGet(userID); user != nil && user.IsBot && strings.EqualFold(strings.TrimSpace(user.BotKind), model.BotKindManual) {
+		return GetOrCreateOneBotID(OneBotEntityBotUser, userID)
+	}
+	return GetOrCreateOneBotID(OneBotEntityUser, userID)
+}
+
 func ResolveInternalID(entityType string, numericID int64) (string, error) {
 	entityType = normalizeOneBotEntityType(entityType)
 	if !validateOneBotEntityType(entityType) || numericID <= 0 {
@@ -139,6 +152,16 @@ func ResolveInternalID(entityType string, numericID int64) (string, error) {
 		return "", ErrOneBotMappingNotFound
 	}
 	return item.EntityID, nil
+}
+
+// ResolveOneBotUserInternalID 同时解析普通用户号与手动 BOT 的 self_id。
+func ResolveOneBotUserInternalID(numericID int64) (string, error) {
+	if internalID, err := ResolveInternalID(OneBotEntityUser, numericID); err == nil {
+		return internalID, nil
+	} else if !IsOneBotMappingNotFound(err) {
+		return "", err
+	}
+	return ResolveInternalID(OneBotEntityBotUser, numericID)
 }
 
 func IsOneBotMappingNotFound(err error) bool {

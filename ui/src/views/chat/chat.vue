@@ -10203,7 +10203,7 @@ const sendTypingUpdate = throttle(
 		lastTypingWhisperTargetId = targetId ?? null;
 		chat.messageTyping(state, content, channelId, extra);
 	},
-	400,
+	800,
 	{ leading: true, trailing: true },
 );
 const broadcastTypingOrderChange = throttle(
@@ -14167,7 +14167,12 @@ const handleChannelContextCleared = () => {
   showButton.value = false;
 };
 
+function handleOpenBattleSummaryEvent() {
+  openBattleSummary();
+}
+
 onMounted(async () => {
+  chatEvent.on('open-battle-summary' as any, handleOpenBattleSummaryEvent as any);
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
   clearLegacyHistoryAutoRestoreStore();
@@ -16478,6 +16483,7 @@ onBeforeUnmount(() => {
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   chatEvent.off('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
   chatEvent.off('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
+  chatEvent.off('open-battle-summary' as any, handleOpenBattleSummaryEvent as any);
   chatEvent.off('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
   chatEvent.off('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
   revokeIdentityObjectURL();
@@ -19333,6 +19339,8 @@ onBeforeUnmount(() => {
     v-model:visible="battleReportDrawerVisible"
     :channel-id="chat.curChannel?.id"
     :world-id="chat.currentWorldId"
+    :readonly="chat.isObserver"
+    :observer-mode="chat.observerMode"
   />
   <ChatAiPolishDock
     :visible="aiPolishDockVisible"

@@ -26,6 +26,21 @@ type BattleReportInput struct {
 	AIFeatureKey       string
 }
 
+type BattleReportJumpEdge string
+
+const (
+	BattleReportJumpEdgeStart BattleReportJumpEdge = "start"
+	BattleReportJumpEdgeEnd   BattleReportJumpEdge = "end"
+)
+
+type BattleReportJumpTarget struct {
+	WorldID      string
+	ChannelID    string
+	MessageID    string
+	CreatedAt    time.Time
+	DisplayOrder float64
+}
+
 func EnsureBattleReportChannelAccess(userID, channelID string) error {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
@@ -71,6 +86,38 @@ func ListBattleReports(channelID string, userID string) ([]*model.BattleReportMo
 	return items, err
 }
 
+// ListBattleReportsForObserver returns world reports whose source channels are
+// inside observer's public channel scope.
+func ListBattleReportsForObserver(channelID, observerWorldID string) ([]*model.BattleReportModel, error) {
+	channel, err := CanObserverAccessChannel(channelID, observerWorldID)
+	if err != nil {
+		return nil, err
+	}
+	if channel == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var candidates []*model.BattleReportModel
+	if err := model.GetDB().
+		Where("world_id = ? AND is_deleted = ?", strings.TrimSpace(observerWorldID), false).
+		Order("sort_order DESC, period_start DESC, created_at DESC").
+		Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]*model.BattleReportModel, 0, len(candidates))
+	for _, item := range candidates {
+		if item == nil || strings.TrimSpace(item.ChannelID) == "" {
+			continue
+		}
+		if _, err := CanObserverAccessChannel(item.ChannelID, observerWorldID); err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func GetBattleReport(reportID string, userID string) (*model.BattleReportModel, error) {
 	report, err := loadBattleReport(reportID)
 	if err != nil {
@@ -94,6 +141,136 @@ func GetBattleReportForObserver(reportID, observerWorldID string) (*model.Battle
 		return nil, err
 	}
 	return report, nil
+}
+
+func GetBattleReportJumpTarget(reportID, edge string) (*BattleReportJumpTarget, error) {
+	report, err := loadBattleReport(reportID)
+	if err != nil {
+		return nil, err
+	}
+	return resolveBattleReportJumpTarget(report, edge)
+}
+
+func GetBattleReportJumpTargetForObserver(reportID, observerWorldID, edge string) (*BattleReportJumpTarget, error) {
+	report, err := GetBattleReportForObserver(reportID, observerWorldID)
+	if err != nil {
+		return nil, err
+	}
+	return resolveBattleReportJumpTarget(report, edge)
+}
+
+func resolveBattleReportJumpTarget(report *model.BattleReportModel, rawEdge string) (*BattleReportJumpTarget, error) {
+	if report == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	edge := BattleReportJumpEdge(strings.ToLower(strings.TrimSpace(rawEdge)))
+	field := ""
+	var cached *string
+	switch edge {
+	case BattleReportJumpEdgeStart:
+		field = "navigation_start_message_id"
+		cached = report.NavigationStartMessageID
+	case BattleReportJumpEdgeEnd:
+		field = "navigation_end_message_id"
+		cached = report.NavigationEndMessageID
+	default:
+		return nil, fmt.Errorf("无效的战报跳转位置")
+	}
+
+	if cached != nil {
+		if strings.TrimSpace(*cached) == "" {
+			return nil, nil
+		}
+		if message, err := loadBattleReportJumpMessage(report, *cached); err == nil {
+			return battleReportJumpTargetFromMessage(report, message), nil
+		}
+	}
+
+	message, err := findBattleReportBoundaryMessage(report, edge)
+	if err != nil {
+		return nil, err
+	}
+	if message == nil {
+		return nil, nil
+	}
+	updates := map[string]any{field: message.ID}
+	query := model.GetDB().Model(&model.BattleReportModel{}).
+		Where("id = ? AND is_deleted = ?", report.ID, false)
+	if cached == nil {
+		query = query.Where(field + " IS NULL")
+	}
+	if err := query.Updates(updates).Error; err != nil {
+		return nil, err
+	}
+
+	return battleReportJumpTargetFromMessage(report, message), nil
+}
+
+func findBattleReportBoundaryMessage(report *model.BattleReportModel, edge BattleReportJumpEdge) (*model.MessageModel, error) {
+	if strings.TrimSpace(report.ChannelID) == "" {
+		return nil, nil
+	}
+	query := model.GetDB().Model(&model.MessageModel{}).
+		Where("channel_id = ?", report.ChannelID).
+		Where("is_deleted = ? AND is_revoked = ?", false, false).
+		Where("is_whisper = ?", false).
+		Where("(ic_mode = ? OR ic_mode = '' OR ic_mode IS NULL)", "ic").
+		Where("content <> ?", "")
+	if !report.PeriodStart.IsZero() {
+		query = query.Where("created_at >= ?", report.PeriodStart)
+	}
+	if !report.PeriodEnd.IsZero() {
+		query = query.Where("created_at <= ?", report.PeriodEnd)
+	}
+	if edge == BattleReportJumpEdgeEnd {
+		query = query.Order("display_order desc").Order("created_at desc").Order("id desc")
+	} else {
+		query = query.Order("display_order asc").Order("created_at asc").Order("id asc")
+	}
+	var message model.MessageModel
+	if err := query.Limit(1).Find(&message).Error; err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(message.ID) == "" {
+		return nil, nil
+	}
+	return &message, nil
+}
+
+func loadBattleReportJumpMessage(report *model.BattleReportModel, messageID string) (*model.MessageModel, error) {
+	query := model.GetDB().Model(&model.MessageModel{}).
+		Where("id = ? AND channel_id = ?", strings.TrimSpace(messageID), report.ChannelID).
+		Where("is_deleted = ? AND is_revoked = ?", false, false).
+		Where("is_whisper = ?", false).
+		Where("(ic_mode = ? OR ic_mode = '' OR ic_mode IS NULL)", "ic").
+		Where("content <> ?", "")
+	if !report.PeriodStart.IsZero() {
+		query = query.Where("created_at >= ?", report.PeriodStart)
+	}
+	if !report.PeriodEnd.IsZero() {
+		query = query.Where("created_at <= ?", report.PeriodEnd)
+	}
+	var message model.MessageModel
+	if err := query.Limit(1).Find(&message).Error; err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(message.ID) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &message, nil
+}
+
+func battleReportJumpTargetFromMessage(report *model.BattleReportModel, message *model.MessageModel) *BattleReportJumpTarget {
+	if report == nil || message == nil {
+		return nil
+	}
+	return &BattleReportJumpTarget{
+		WorldID:      report.WorldID,
+		ChannelID:    message.ChannelID,
+		MessageID:    message.ID,
+		CreatedAt:    message.CreatedAt,
+		DisplayOrder: message.DisplayOrder,
+	}
 }
 
 func CreateBattleReport(channelID string, userID string, input BattleReportInput) (*model.BattleReportModel, error) {
@@ -144,11 +321,16 @@ func UpdateBattleReport(reportID string, userID string, input BattleReportInput)
 	if err := EnsureBattleReportWorldAccess(userID, item.WorldID); err != nil {
 		return nil, err
 	}
+	periodChanged := !item.PeriodStart.Equal(input.PeriodStart) || !item.PeriodEnd.Equal(input.PeriodEnd)
 	item.Title = input.Title
 	item.Content = input.Content
 	item.PeriodStart = input.PeriodStart
 	item.PeriodEnd = input.PeriodEnd
 	item.ContextReportCount = input.ContextReportCount
+	if periodChanged {
+		item.NavigationStartMessageID = nil
+		item.NavigationEndMessageID = nil
+	}
 	item.UpdaterID = strings.TrimSpace(userID)
 	if input.Status != "" {
 		item.Status = input.Status

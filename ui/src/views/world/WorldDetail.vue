@@ -3,6 +3,7 @@ import WorldInviteList from "./WorldInviteList.vue"
 import WorldManager from "./WorldManager.vue"
 import WorldMemberManager from "./WorldMemberManager.vue"
 import WorldObserverLinkCard from "./WorldObserverLinkCard.vue"
+import WorldAgentAccessLinkCard from "./WorldAgentAccessLinkCard.vue"
 import EmailNotificationManager from "@/views/split/components/EmailNotificationManager.vue"
 
 import { onMounted, ref, computed } from 'vue';
@@ -147,6 +148,9 @@ const handleLeaveWorld = () => {
       <n-collapse v-model:expanded-names="obExpandedNames" arrow-placement="right">
         <n-collapse-item name="ob-link" title="OB旁观链接">
           <WorldObserverLinkCard :world-id="worldId" :can-manage="canManageWorld" />
+        </n-collapse-item>
+        <n-collapse-item name="agent-access" title="AI Agent 访问访问链接">
+          <WorldAgentAccessLinkCard :world-id="worldId" :can-manage="canManageWorld" />
         </n-collapse-item>
       </n-collapse>
     </n-card>

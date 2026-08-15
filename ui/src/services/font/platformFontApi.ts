@@ -1,4 +1,5 @@
 import { api, urlBase } from '@/stores/_config'
+import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import type {
   PlatformFontAsset,
   PlatformFontCreatePayload,
@@ -56,6 +57,7 @@ export const createAdminPlatformFont = async (payload: PlatformFontCreatePayload
   if (payload.style) form.append('style', payload.style)
   const resp = await api.post('/api/v1/admin/platform-fonts', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: getUploadTimeoutMs(),
   })
   return (resp.data?.item || resp.data) as PlatformFontAsset
 }
@@ -86,7 +88,7 @@ export const uploadAdminPlatformFontSubsetPackage = async (
   })
   const resp = await api.post(`/api/v1/admin/platform-fonts/${encodeURIComponent(fontId)}/subset-package`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000,
+    timeout: getUploadTimeoutMs(),
   })
   return (resp.data?.item || resp.data) as PlatformFontAsset
 }

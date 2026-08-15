@@ -627,7 +627,7 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if object.Width < 0 || object.Height < 0 || object.Width > 1000000 || object.Height > 1000000 {
 		return theaterPayloadError("object 尺寸无效")
 	}
-	if len(object.Name) > 512 || len(object.OrderKey) > 128 {
+	if len([]rune(object.Name)) > 512 || len(object.OrderKey) > 128 {
 		return theaterPayloadError("object 字符串超限")
 	}
 	if len(object.Content)+len(object.Actions)+len(object.Metadata) > 64<<10 {

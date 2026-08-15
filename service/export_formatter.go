@@ -900,20 +900,22 @@ func formatStickyNoteDuration(seconds float64) string {
 }
 
 func normalizeStickyNoteColorName(color string) string {
-	color = strings.ToLower(strings.TrimSpace(color))
-	if color == "" {
+	normalized, ok := model.StickyNoteNormalizeColor(color)
+	if !ok {
 		return "yellow"
 	}
-	for _, r := range color {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
-			return "custom"
-		}
+	if strings.HasPrefix(normalized, "#") {
+		return "custom"
 	}
-	return color
+	return normalized
 }
 
 func resolveStickyNoteExportColor(color string) string {
-	switch normalizeStickyNoteColorName(color) {
+	normalized, ok := model.StickyNoteNormalizeColor(color)
+	if ok && strings.HasPrefix(normalized, "#") {
+		return normalized
+	}
+	switch normalizeStickyNoteColorName(normalized) {
 	case "yellow":
 		return "#f59e0b"
 	case "pink":
@@ -2931,7 +2933,13 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	senderName := resolveBBCodeSenderName(payload, msg)
 	var headerParts []string
 	if !payload.WithoutTimestamp {
-		headerParts = append(headerParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
+		timestamp := msg.CreatedAt.Format("2006-01-02 15:04:05")
+		if payload.ExtraMeta != nil {
+			if precision, ok := payload.ExtraMeta["agent_timestamp_precision"].(string); ok && precision == "rfc3339nano" {
+				timestamp = msg.CreatedAt.UTC().Format(time.RFC3339Nano)
+			}
+		}
+		headerParts = append(headerParts, fmt.Sprintf("[%s]", timestamp))
 	}
 	headerParts = append(headerParts, fmt.Sprintf("<%s>", senderName))
 	header := strings.Join(headerParts, " ")

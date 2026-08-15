@@ -1077,6 +1077,7 @@ watch(
               @open-display-settings="openPanel('display')"
               @open-favorites="openPanel('favorites')"
               @open-channel-images="openPanel('channel-images')"
+              @open-character-remark="openPanel('character-remark')"
               @toggle-sticky-note="toggleStickyNoteForActivePane"
               @open-dice3d="openPanel('dice3d')"
               @open-character-card="openCharacterCardForActivePane"

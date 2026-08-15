@@ -27,14 +27,18 @@ type s3Backend struct {
 	publicBaseURL  string
 	publicExplicit bool
 	forcePathStyle bool
+	uploadTimeout  time.Duration
 	presignURLFunc func(context.Context, string, time.Duration) (string, error)
 }
 
-func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
+const defaultS3UploadTimeout = 20 * time.Second
+
+func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Backend, error) {
 	if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" {
 		return nil, fmt.Errorf("S3 配置不完整")
 	}
 	endpoint, secure := normalizeEndpoint(cfg.Endpoint, cfg.UseSSL)
+	endpoint, isTencentCOS := utils.NormalizeTencentCOSHost(endpoint)
 	opts := &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		Secure: secure,
@@ -42,6 +46,8 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 	}
 	if cfg.ForcePathStyle {
 		opts.BucketLookup = minio.BucketLookupPath
+	} else if isTencentCOS {
+		opts.BucketLookup = minio.BucketLookupDNS
 	}
 	client, err := minio.New(endpoint, opts)
 	if err != nil {
@@ -49,6 +55,9 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 	}
 	if err := verifyS3ReadWrite(client, cfg.Bucket); err != nil {
 		return nil, fmt.Errorf("S3 自检失败: %w", err)
+	}
+	if uploadTimeout <= 0 {
+		uploadTimeout = defaultS3UploadTimeout
 	}
 	publicBase := strings.TrimSpace(cfg.PublicBaseURL)
 	publicExplicit := publicBase != ""
@@ -61,6 +70,7 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 		publicBaseURL:  strings.TrimRight(publicBase, "/"),
 		publicExplicit: publicExplicit,
 		forcePathStyle: cfg.ForcePathStyle,
+		uploadTimeout:  uploadTimeout,
 	}, nil
 }
 
@@ -68,13 +78,22 @@ func (s *s3Backend) upload(ctx context.Context, input UploadInput) (*UploadResul
 	if strings.TrimSpace(input.ObjectKey) == "" {
 		return nil, fmt.Errorf("objectKey 不能为空")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	uploadTimeout := s.uploadTimeout
+	if uploadTimeout <= 0 {
+		uploadTimeout = defaultS3UploadTimeout
+	}
+	uploadCtx, cancel := context.WithTimeout(ctx, uploadTimeout)
+	defer cancel()
 	opts := minio.PutObjectOptions{
 		ContentType: strings.TrimSpace(input.ContentType),
 	}
 	if opts.ContentType == "" {
 		opts.ContentType = "application/octet-stream"
 	}
-	info, err := s.client.FPutObject(ctx, s.bucket, input.ObjectKey, input.LocalPath, opts)
+	info, err := s.client.FPutObject(uploadCtx, s.bucket, input.ObjectKey, input.LocalPath, opts)
 	if err != nil {
 		return nil, err
 	}

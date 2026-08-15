@@ -120,7 +120,11 @@ const baseUrl = computed(() => {
     return '';
   }
   try {
-    return new URL(import.meta.env.BASE_URL || '/', window.location.origin).toString();
+    const configuredBase = String((window as any).__SEALCHAT_BASE__ ?? import.meta.env.BASE_URL ?? '').trim();
+    const normalizedBase = configuredBase && configuredBase !== '/'
+      ? `/${configuredBase.replace(/^\/+|\/+$/g, '')}/`
+      : '/';
+    return new URL(normalizedBase, window.location.origin).toString();
   } catch {
     return `${window.location.origin}/`;
   }

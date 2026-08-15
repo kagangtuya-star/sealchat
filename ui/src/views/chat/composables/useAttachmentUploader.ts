@@ -3,6 +3,7 @@ import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { useImageCompressor } from '@/composables/useImageCompressor';
+import { getUploadTimeoutMs } from '@/utils/uploadTimeout';
 
 interface UploadImageOptions {
   channelId?: string | null;
@@ -59,7 +60,7 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   let resp;
   try {
     // 相对路径，避免 baseURL 含子路径时绝对路径丢前缀
-    resp = await api.post('api/v1/attachment-upload', formData, { headers });
+    resp = await api.post('api/v1/attachment-upload', formData, { headers, timeout: getUploadTimeoutMs() });
   } catch (error: any) {
     const data = error?.response?.data;
     const backendMessage = data?.message || data?.error;

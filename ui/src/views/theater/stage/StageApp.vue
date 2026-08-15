@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -30,6 +30,7 @@ import {
   LetterT,
   Lock,
   LockOpen,
+  Magnet,
   Message,
   Photo,
   Pencil,
@@ -46,6 +47,7 @@ import {
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
+import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
@@ -253,6 +255,16 @@ const stageMessage = useMessage()
 const packageDialog = useDialog()
 const stageDialog = useDialog()
 const packageBusy = ref(false)
+const packageProgressVisible = ref(false)
+const packageProgressJob = ref<TheaterPackageJob | null>(null)
+const packageProgressError = ref('')
+const packageDisplayedProgress = ref(0)
+const packageDisplayedDone = ref(0)
+const packageTargetProgress = ref(0)
+const packageTargetDone = ref(0)
+let packageDisplayAnimation = 0
+let packageDisplayLoopRunning = false
+let packageDisplayLoopAnimation = 0
 let packagePollTimer: number | null = null
 let packagePollGeneration = 0
 
@@ -261,6 +273,9 @@ type TheaterPackageJob = {
   type: 'export' | 'export_effects' | 'import' | 'import_ccfolia'
   status: 'pending' | 'running' | 'done' | 'failed'
   progress: number
+  progressDone?: number
+  progressTotal?: number
+  progressStage?: string
   outputFileName?: string
   errorMessage?: string
   summary?: { packageKind?: 'theater' | 'effects', effects?: number, scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
@@ -300,8 +315,37 @@ const waitPackagePoll = (generation: number) => new Promise<boolean>((resolve) =
   packagePollTimer = window.setTimeout(() => {
     packagePollTimer = null
     resolve(generation === packagePollGeneration)
-  }, 1000)
+  }, 300)
 })
+
+const setPackageProgressTarget = (job: TheaterPackageJob) => {
+  packageTargetProgress.value = Math.max(0, Math.min(1, job.progress || 0))
+  packageTargetDone.value = Math.max(0, job.progressDone || 0)
+  if (packageDisplayLoopRunning && packageDisplayLoopAnimation === packageDisplayAnimation) return
+  packageDisplayLoopRunning = true
+  const animation = packageDisplayAnimation
+  packageDisplayLoopAnimation = animation
+  const run = async () => {
+    while (animation === packageDisplayAnimation && (packageDisplayedDone.value < packageTargetDone.value || packageDisplayedProgress.value < packageTargetProgress.value - 0.001)) {
+      if (packageDisplayedDone.value < packageTargetDone.value) packageDisplayedDone.value += 1
+      const delta = packageTargetProgress.value - packageDisplayedProgress.value
+      packageDisplayedProgress.value += Math.abs(delta) < 0.01 ? delta : delta * 0.12
+      await new Promise(resolve => window.setTimeout(resolve, 35))
+    }
+    if (animation === packageDisplayAnimation) {
+      packageDisplayedDone.value = packageTargetDone.value
+      packageDisplayedProgress.value = packageTargetProgress.value
+    }
+    if (packageDisplayLoopAnimation === animation) packageDisplayLoopRunning = false
+  }
+  void run()
+}
+
+const waitPackageProgressDisplayed = async () => {
+  while (packageDisplayedDone.value < packageTargetDone.value || packageDisplayedProgress.value < packageTargetProgress.value - 0.001) {
+    await new Promise(resolve => window.setTimeout(resolve, 35))
+  }
+}
 
 const pollTheaterPackageJob = async (jobId: string) => {
   stopPackagePolling()
@@ -309,7 +353,13 @@ const pollTheaterPackageJob = async (jobId: string) => {
   while (generation === packagePollGeneration) {
     const response = await api.get<{ job: TheaterPackageJob }>(theaterPackagePath(`jobs/${encodeURIComponent(jobId)}`), { timeout: 30000 })
     const job = response.data.job
-    if (job.status === 'done') return job
+    packageProgressJob.value = job
+    setPackageProgressTarget(job)
+    if (job.status === 'failed') packageProgressError.value = job.errorMessage || '小剧场任务失败'
+    if (job.status === 'done') {
+      await waitPackageProgressDisplayed()
+      return job
+    }
     if (job.status === 'failed') throw new Error(job.errorMessage || '小剧场任务失败')
     if (!await waitPackagePoll(generation)) throw new Error('小剧场任务已取消')
   }
@@ -327,13 +377,23 @@ const downloadTheaterPackage = (job: TheaterPackageJob) => {
 
 const exportTheaterPackage = async (kind: 'theater' | 'effects' = 'theater') => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath(kind === 'effects' ? 'export/effects' : 'export'), { inputChannelId: props.channelId })
+    packageProgressJob.value = response.data.job
     packageMessage.info(kind === 'effects' ? '特效包导出任务已启动' : '小剧场导出任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     downloadTheaterPackage(job)
     packageMessage.success(kind === 'effects' ? '特效包 ZIP 已生成' : '小剧场 ZIP 已生成')
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, kind === 'effects' ? '特效包导出失败' : '小剧场导出失败')
     packageMessage.error(theaterAudioErrorMessage(error, kind === 'effects' ? '特效包导出失败' : '小剧场导出失败'))
   } finally {
     packageBusy.value = false
@@ -342,6 +402,14 @@ const exportTheaterPackage = async (kind: 'theater' | 'effects' = 'theater') => 
 
 const importTheaterPackageFile = async (file: File) => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const body = new FormData()
     body.append('file', file)
@@ -350,6 +418,7 @@ const importTheaterPackageFile = async (file: File) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
     })
+    packageProgressJob.value = response.data.job
     packageMessage.info('ZIP 导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     await fetchTheaterAudioAssets()
@@ -360,6 +429,7 @@ const importTheaterPackageFile = async (file: File) => {
       : `已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, 'ZIP 导入失败')
     packageMessage.error(theaterAudioErrorMessage(error, 'ZIP 导入失败'))
   } finally {
     packageBusy.value = false
@@ -382,6 +452,14 @@ const handlePackageInput = (event: Event) => {
 
 const importCCFOLIAPackageFile = async (file: File) => {
   packageBusy.value = true
+  packageProgressError.value = ''
+  packageProgressVisible.value = true
+  packageDisplayAnimation += 1
+  packageDisplayLoopRunning = false
+  packageDisplayedProgress.value = 0
+  packageDisplayedDone.value = 0
+  packageTargetProgress.value = 0
+  packageTargetDone.value = 0
   try {
     const body = new FormData()
     body.append('file', file)
@@ -390,12 +468,14 @@ const importCCFOLIAPackageFile = async (file: File) => {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
     })
+    packageProgressJob.value = response.data.job
     packageMessage.info('CCFOLIA 导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
     const warnings = job.summary?.warnings?.filter(Boolean) || []
     packageMessage.success(`已导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件、${job.summary?.resources ?? 0} 个资源`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
   } catch (error) {
+    packageProgressError.value = theaterAudioErrorMessage(error, 'CCFOLIA 导入失败')
     packageMessage.error(theaterAudioErrorMessage(error, 'CCFOLIA 导入失败'))
   } finally {
     packageBusy.value = false
@@ -590,7 +670,10 @@ const uploadTheaterAudio = async (file: File, targetEffectId = ''): Promise<Audi
   try {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await api.post<{ item?: AudioAsset }>(theaterAudioPath(), formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const response = await api.post<{ item?: AudioAsset }>(theaterAudioPath(), formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: getUploadTimeoutMs(),
+    })
     const asset = response.data?.item
     const target = targetEffectId ? props.store.activeObjects.value[targetEffectId] : null
     if (asset && isTheaterEffectObject(target) && canEditAllObjects.value) {
@@ -815,6 +898,7 @@ const drawingDashOptions = [
   { label: '点线', value: 'dotted' },
 ]
 const draggedLayerId = ref<string | null>(null)
+const gridSnapPreviewActive = ref(false)
 type LayerDropPlacement = 'before' | 'inside' | 'after'
 const layerDropTarget = ref<{ id: string | null, placement: LayerDropPlacement } | null>(null)
 const layerListRef = ref<HTMLDivElement | null>(null)
@@ -1894,6 +1978,58 @@ let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
 let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
+let gridCoverage: { minX: number, maxX: number, minY: number, maxY: number } | null = null
+let gridSyncFrame: number | null = null
+
+const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
+const toggleGridSnap = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.alignWithGrid = !props.store.state.liveState.alignWithGrid
+}
+
+const setGridSnapPreview = (active: boolean) => {
+  if (gridSnapPreviewActive.value === active) return
+  gridSnapPreviewActive.value = active
+  scheduleGridSync()
+}
+
+const finishGridSnapPreview = () => {
+  if (gridSnapPreviewActive.value) setGridSnapPreview(false)
+}
+
+const snapStageCoordinate = (value: number, axis: 'x' | 'y') => {
+  const liveState = props.store.state.liveState
+  if (!liveState.alignWithGrid) return value
+  const fieldSize = axis === 'x' ? liveState.fieldWidth : liveState.fieldHeight
+  const origin = -fieldSize * WORLD_UNIT_PX / 2
+  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  return origin + Math.round((value - origin) / step) * step
+}
+
+const snapStagePosition = (position: { x: number, y: number }) => ({
+  x: snapStageCoordinate(position.x, 'x'),
+  y: snapStageCoordinate(position.y, 'y'),
+})
+
+const snapNodeToGrid = (node: Konva.Node) => {
+  if (!gridSnapEnabled.value || !worldCameraGroup) return { x: 0, y: 0 }
+  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
+  const camera = worldCameraGroup.absolutePosition()
+  const current = node.absolutePosition()
+  const world = {
+    x: (current.x - camera.x) / zoom,
+    y: (current.y - camera.y) / zoom,
+  }
+  const snapped = snapStagePosition(world)
+  const correction = {
+    x: (snapped.x - world.x) * zoom,
+    y: (snapped.y - world.y) * zoom,
+  }
+  if (correction.x || correction.y) {
+    node.absolutePosition({ x: current.x + correction.x, y: current.y + correction.y })
+  }
+  return correction
+}
 
 interface DrawingSession {
   tool: StageDrawingTool
@@ -2090,6 +2226,8 @@ interface SurfaceSlot {
   version: number
   source: StageMediaSource | null
   ready: boolean
+  directImageSource: StageMediaSource | null
+  directImageSignature: string
   debugDrawCount: number
 }
 
@@ -2973,7 +3111,7 @@ const applyCamera = () => {
     camera.position(position)
     camera.scale(scale)
   })
-  backgroundLayer?.batchDraw()
+  // Background camera stays fixed; camera movement does not invalidate its canvas.
   drawWorldLayers()
   foregroundLayer?.batchDraw()
   interactionLayer?.batchDraw()
@@ -4402,13 +4540,37 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   cameraGroup.add(group)
   if (base) group.add(base)
   group.add(media, directImage, overlay, placeholder, label)
-  slot = { group, base, media, directImage, overlay, placeholder, label, style, url: '', version: 0, source: null, ready: false, debugDrawCount: 0 }
+  slot = {
+    group,
+    base,
+    media,
+    directImage,
+    overlay,
+    placeholder,
+    label,
+    style,
+    url: '',
+    version: 0,
+    source: null,
+    ready: false,
+    directImageSource: null,
+    directImageSignature: '',
+    debugDrawCount: 0,
+  }
   return slot
 }
 
 const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
   style.fit !== 'tile'
 )
+
+const clearDirectSurfaceImage = (slot: SurfaceSlot) => {
+  if (slot.directImageSource || slot.directImage.image()) slot.directImage.clearCache()
+  slot.directImage.image(undefined)
+  slot.directImage.visible(false)
+  slot.directImageSource = null
+  slot.directImageSignature = ''
+}
 
 const updateDirectSurfaceImage = (
   slot: SurfaceSlot,
@@ -4424,12 +4586,35 @@ const updateDirectSurfaceImage = (
     useDirect: useDirectSurfaceImage(slot.style),
   })
   if (!source || !useDirectSurfaceImage(slot.style) || isVideoSource(source)) {
-    slot.directImage.image(undefined)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     return
   }
   const dimensions = stageMediaDimensions(source)
   const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
+  const signature = [
+    stageMediaObjectUrls.get(source) || '',
+    dimensions.width,
+    dimensions.height,
+    box.width,
+    box.height,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    slot.style.fit,
+    slot.style.zoom,
+    slot.style.brightness,
+    slot.style.blurPx,
+  ].join(':')
+  if (
+    slot.directImageSource === source
+    && slot.directImageSignature === signature
+    && slot.directImage.image() === source
+  ) {
+    slot.directImage.opacity(slot.style.opacity)
+    slot.directImage.visible(true)
+    return
+  }
   slot.directImage.image(source)
   slot.directImage.position({ x: rect.x, y: rect.y })
   slot.directImage.size({ width: rect.width, height: rect.height })
@@ -4451,6 +4636,8 @@ const updateDirectSurfaceImage = (
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
   if (filters.length) slot.directImage.cache()
+  slot.directImageSource = source
+  slot.directImageSignature = signature
   slot.directImage.visible(true)
 }
 
@@ -4501,7 +4688,7 @@ const updateSurfaceSlot = (
     slot.source = null
     slot.ready = false
     slot.media.visible(false)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -4513,7 +4700,7 @@ const updateSurfaceSlot = (
     slot.source = null
     slot.ready = false
     slot.media.visible(false)
-    slot.directImage.visible(false)
+    clearDirectSurfaceImage(slot)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
@@ -4636,33 +4823,98 @@ const updateSurfaceSlot = (
 }
 
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
-  if (!gridGroup) return
+  if (!gridGroup) return false
   const liveState = props.store.state.liveState
-  const signature = [fieldWidth, fieldHeight, liveState.displayGrid, liveState.gridSize].join(':')
-  if (signature === gridSignature) return
+  const camera = props.store.state.camera
+  const gridVisible = liveState.displayGrid || gridSnapPreviewActive.value
+  const signature = [
+    fieldX,
+    fieldY,
+    fieldWidth,
+    fieldHeight,
+    gridVisible,
+    liveState.gridSize,
+  ].join(':')
+  if (!gridVisible) {
+    const changed = gridSignature !== signature || gridGroup.children.length > 0
+    if (changed) gridGroup.destroyChildren()
+    gridSignature = signature
+    gridCoverage = null
+    return changed
+  }
+
+  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  const zoom = Math.max(0.01, camera.zoom)
+  const visibleLeft = (-viewportSize.value.width / 2 - camera.x) / zoom
+  const visibleRight = (viewportSize.value.width / 2 - camera.x) / zoom
+  const visibleTop = (-viewportSize.value.height / 2 - camera.y) / zoom
+  const visibleBottom = (viewportSize.value.height / 2 - camera.y) / zoom
+  const visibleWidth = Math.max(step, visibleRight - visibleLeft)
+  const visibleHeight = Math.max(step, visibleBottom - visibleTop)
+  // Keep overscan so small pans do not allocate and destroy grid nodes every frame.
+  const paddingX = Math.max(step * 2, visibleWidth * 0.5)
+  const paddingY = Math.max(step * 2, visibleHeight * 0.5)
+  const minX = visibleLeft - paddingX
+  const maxX = visibleRight + paddingX
+  const minY = visibleTop - paddingY
+  const maxY = visibleBottom + paddingY
+  const covered = Boolean(
+    gridCoverage
+    && visibleLeft >= gridCoverage.minX
+    && visibleRight <= gridCoverage.maxX
+    && visibleTop >= gridCoverage.minY
+    && visibleBottom <= gridCoverage.maxY,
+  )
+  if (gridSignature === signature && covered) return false
+
   gridSignature = signature
   gridGroup.destroyChildren()
-  if (!liveState.displayGrid) return
-  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
-  for (let x = fieldX; x <= fieldX + fieldWidth; x += step) {
+  // Draw across current viewport plus overscan, not only inside finite field rectangle.
+  // Grid phase still follows field origin, so snapping and lines stay aligned.
+  const firstX = fieldX + Math.floor((minX - fieldX) / step) * step
+  const firstY = fieldY + Math.floor((minY - fieldY) / step) * step
+  for (let x = firstX; x <= maxX; x += step) {
     gridGroup.add(new Konva.Line({
-      points: [x, fieldY, x, fieldY + fieldHeight],
+      points: [x, minY, x, maxY],
       stroke: 'rgba(148, 163, 184, 0.12)',
       strokeWidth: 1,
       listening: false,
     }))
   }
-  for (let y = fieldY; y <= fieldY + fieldHeight; y += step) {
+  for (let y = firstY; y <= maxY; y += step) {
     gridGroup.add(new Konva.Line({
-      points: [fieldX, y, fieldX + fieldWidth, y],
+      points: [minX, y, maxX, y],
       stroke: 'rgba(148, 163, 184, 0.12)',
       strokeWidth: 1,
       listening: false,
     }))
   }
+  gridCoverage = { minX, maxX, minY, maxY }
+  return true
 }
 
-const syncField = () => {
+const syncGrid = () => {
+  if (!gridGroup) return
+  const liveState = props.store.state.liveState
+  const width = liveState.fieldWidth * WORLD_UNIT_PX
+  const height = liveState.fieldHeight * WORLD_UNIT_PX
+  const box = { x: -width / 2, y: -height / 2, width, height }
+  if (rebuildGrid(box.x, box.y, width, height)) worldLayer?.batchDraw()
+}
+
+const scheduleGridSync = () => {
+  if (!gridGroup) return
+  const liveState = props.store.state.liveState
+  const hasGridNodes = Boolean(gridGroup?.children.length)
+  if (!liveState.displayGrid && !gridSnapPreviewActive.value && !hasGridNodes) return
+  if (gridSyncFrame !== null) return
+  gridSyncFrame = window.requestAnimationFrame(() => {
+    gridSyncFrame = null
+    syncGrid()
+  })
+}
+
+const syncSurfaceSlots = () => {
   if (!backgroundSlot || !foregroundSlot) return
   const liveState = props.store.state.liveState
   const width = liveState.fieldWidth * WORLD_UNIT_PX
@@ -4671,10 +4923,13 @@ const syncField = () => {
   const viewportBox = { x: 0, y: 0, width: viewportSize.value.width, height: viewportSize.value.height }
   updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景', 'surface:background')
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
-  rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
-  drawWorldLayers()
   foregroundLayer?.batchDraw()
+}
+
+const syncField = () => {
+  syncSurfaceSlots()
+  syncGrid()
 }
 
 const drawingDash = (style: StageDrawingStyle) => style.dash === 'dashed'
@@ -5114,13 +5369,18 @@ const createObjectNode = (object: StageObject) => {
       const driverStart = nodes.get(object.id)?.absolute
       if (!driverStart) return
       multiDrag = { driverId: object.id, driverStart, nodes }
+      setGridSnapPreview(gridSnapEnabled.value)
       props.store.beginObjectEdit('批量移动对象')
       return
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('移动对象')
   })
   wrapper.on('dragmove', () => {
-    if (!multiDrag || multiDrag.driverId !== object.id) return
+    if (!multiDrag || multiDrag.driverId !== object.id) {
+      snapNodeToGrid(wrapper)
+      return
+    }
     const current = wrapper.absolutePosition()
     const delta = {
       x: current.x - multiDrag.driverStart.x,
@@ -5130,6 +5390,14 @@ const createObjectNode = (object: StageObject) => {
       if (id === object.id) return
       node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
     })
+    if (gridSnapEnabled.value) {
+      const correction = snapNodeToGrid(wrapper)
+      multiDrag.nodes.forEach(({ node }) => {
+        if (node === wrapper) return
+        const position = node.absolutePosition()
+        node.absolutePosition({ x: position.x + correction.x, y: position.y + correction.y })
+      })
+    }
     updateTransformer()
   })
   wrapper.on('dragend', () => {
@@ -5143,18 +5411,25 @@ const createObjectNode = (object: StageObject) => {
         current.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
       })
       props.store.commitObjectEdit()
+      setGridSnapPreview(false)
       updateTransformer()
       return
     }
     const current = getObject(object.id)
     if (!canEditObject(current)) {
       props.store.cancelObjectEdit()
+      setGridSnapPreview(false)
       return
+    }
+    if (gridSnapEnabled.value) {
+      snapNodeToGrid(wrapper)
     }
     current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
     current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
     props.store.commitObjectEdit()
+    setGridSnapPreview(false)
   })
+  wrapper.on('dragcancel', finishGridSnapPreview)
   wrapper.on('transformstart', () => {
     if (!canEditObject(getObject(object.id))) return
     if (isBatchSelection.value && props.store.selectionGroup.value.rootIds.includes(object.id)) return
@@ -5935,6 +6210,14 @@ const handleCanvasDrop = async (event: DragEvent) => {
     const object = props.store.addObject('image')
     object.transform.x = baseX + i * step
     object.transform.y = baseY + i * step
+    if (gridSnapEnabled.value) {
+      const snapped = snapStagePosition({
+        x: object.transform.x * WORLD_UNIT_PX,
+        y: object.transform.y * WORLD_UNIT_PX,
+      })
+      object.transform.x = snapped.x / WORLD_UNIT_PX
+      object.transform.y = snapped.y / WORLD_UNIT_PX
+    }
     try {
       await uploadImage(files[i], { kind: 'object', objectId: object.id })
       createdIds.push(object.id)
@@ -6342,6 +6625,7 @@ onMounted(() => {
       start: selectionGroupHitArea!.position(),
       nodes,
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('批量移动对象')
   })
   selectionGroupHitArea.on('dragmove', (event) => {
@@ -6355,6 +6639,16 @@ onMounted(() => {
     selectionGroupDrag.nodes.forEach(({ node, absolute }) => {
       node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
     })
+    if (gridSnapEnabled.value) {
+      const anchor = selectionGroupDrag.nodes.values().next().value as { node: Konva.Group, absolute: { x: number, y: number } } | undefined
+      if (!anchor) return
+      const correction = snapNodeToGrid(anchor.node)
+      selectionGroupDrag.nodes.forEach(({ node }) => {
+        if (node === anchor.node) return
+        const position = node.absolutePosition()
+        node.absolutePosition({ x: position.x + correction.x, y: position.y + correction.y })
+      })
+    }
     transformer?.forceUpdate()
     syncSelectionGroupHitArea([...selectionGroupDrag.nodes.values()].map(({ node }) => node))
     interactionLayer?.batchDraw()
@@ -6371,6 +6665,7 @@ onMounted(() => {
       object.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
     })
     props.store.commitObjectEdit()
+    setGridSnapPreview(false)
     void nextTick(() => {
       syncObjects()
       updateTransformer()
@@ -6477,10 +6772,14 @@ watch(() => ({
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
   fieldObjectFit: props.store.state.liveState.fieldObjectFit,
+}), syncSurfaceSlots, { deep: true })
+watch(() => ({
+  fieldWidth: props.store.state.liveState.fieldWidth,
+  fieldHeight: props.store.state.liveState.fieldHeight,
   displayGrid: props.store.state.liveState.displayGrid,
   gridSize: props.store.state.liveState.gridSize,
   alignWithGrid: props.store.state.liveState.alignWithGrid,
-}), syncField, { deep: true })
+}), scheduleGridSync, { deep: true })
 watch(() => props.store.state.persistentObjects, () => {
   if (layerHierarchyMovePending) syncLayerHierarchy()
   else syncObjects()
@@ -6488,6 +6787,7 @@ watch(() => props.store.state.persistentObjects, () => {
 }, { deep: true })
 watch(() => props.store.state.camera, () => {
   applyCamera()
+  scheduleGridSync()
   updateTransformer()
 }, { deep: true })
 watch(activeCanvasTool, () => {
@@ -6601,6 +6901,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('touchstart', unlockTheaterAudio, true)
   document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
+  finishGridSnapPreview()
+  if (gridSyncFrame !== null) window.cancelAnimationFrame(gridSyncFrame)
+  gridSyncFrame = null
   cancelDrawingSession()
   finishPointerTrace()
   Array.from(pointerTraceVisuals.keys()).forEach(clearPointerTrace)
@@ -6780,6 +7083,20 @@ onBeforeUnmount(() => {
         />
         <n-tooltip trigger="hover">
           <template #trigger>
+            <n-button
+              class="theater-grid-snap-tool"
+              :class="{ 'is-active': gridSnapEnabled }"
+              :aria-pressed="gridSnapEnabled"
+              aria-label="网格吸附"
+              @click="toggleGridSnap"
+            >
+              <template #icon><n-icon><Magnet /></n-icon></template>
+            </n-button>
+          </template>
+          {{ gridSnapEnabled ? '关闭网格吸附' : '网格吸附' }}
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
             <n-badge
               class="theater-bulk-select-badge"
               :value="store.selectionGroup.value.memberIds.length"
@@ -6868,7 +7185,7 @@ onBeforeUnmount(() => {
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('editable'), 'is-mixed': batchBooleanIndeterminate('editable') }" :disabled="!batchBooleanObjects('editable').length" aria-label="批量设置可编辑" @click.stop="toggleBatchQuickFlag('editable')"><template #icon><n-icon><Edit /></n-icon></template></n-button></template>{{ batchBooleanChecked('editable') ? '取消可编辑' : '设为可编辑' }}</n-tooltip>
           <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('interactive'), 'is-mixed': batchBooleanIndeterminate('interactive') }" :disabled="!batchBooleanObjects('interactive').length" aria-label="批量设置可交互" @click.stop="toggleBatchQuickFlag('interactive')"><template #icon><n-icon><component :is="batchBooleanChecked('interactive') ? Bolt : BoltOff" /></n-icon></template></n-button></template>{{ batchBooleanChecked('interactive') ? '取消可交互' : '设为可交互' }}</n-tooltip>
         </div>
-        <TheaterCharacterStatsOverlay
+          <TheaterCharacterStatsOverlay
           :world-id="worldId"
           :channel-id="channelId"
           @open-character-card="emit('openCharacterCard', $event)"
@@ -7841,6 +8158,17 @@ onBeforeUnmount(() => {
       :action="editingRandomTableAction"
       @save="saveRandomTable"
     />
+    <n-modal v-model:show="packageProgressVisible" :mask-closable="false" :closable="false" preset="card" title="小剧场导入进度" class="theater-package-progress-modal">
+      <div class="theater-package-progress">
+        <n-progress type="line" :percentage="Math.round(packageDisplayedProgress * 100)" :status="packageProgressJob?.status === 'failed' ? 'error' : packageProgressJob?.status === 'done' ? 'success' : 'default'" />
+        <div class="theater-package-progress-meta">
+          <span>{{ packageProgressJob?.progressStage || '等待任务开始' }}</span>
+          <span v-if="packageProgressJob?.progressTotal">{{ packageDisplayedDone }} / {{ packageProgressJob.progressTotal }}</span>
+        </div>
+        <p v-if="packageProgressError" class="theater-package-progress-error">{{ packageProgressError }}</p>
+        <n-button v-if="packageProgressError || packageProgressJob?.status === 'done' || packageProgressJob?.status === 'failed'" type="primary" block @click="packageProgressVisible = false">关闭</n-button>
+      </div>
+    </n-modal>
   </section>
 </template>
 
@@ -7900,6 +8228,16 @@ onBeforeUnmount(() => {
   z-index: 10004 !important;
 }
 .theater-image-input { display: none; }
+.theater-package-progress-modal {
+  width: min(460px, calc(100vw - 32px));
+  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 72%, transparent) !important;
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16));
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+}
+.theater-package-progress { display: grid; gap: 12px; }
+.theater-package-progress-meta { display: flex; justify-content: space-between; color: var(--sc-text-secondary, rgba(255, 255, 255, .68)); font-size: 12px; }
+.theater-package-progress-error { margin: 0; color: var(--sc-color-error, #ef4444); white-space: pre-wrap; word-break: break-word; }
 .theater-stage-toolbar {
   position: absolute; z-index: 10000; top: 0; right: 0; left: 0; box-sizing: border-box;
   height: 46px; display: flex; align-items: center; gap: 7px; padding: 0 8px;
@@ -7938,7 +8276,7 @@ onBeforeUnmount(() => {
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
   box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
 }
-.theater-toolbar-exit, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
@@ -7951,7 +8289,7 @@ onBeforeUnmount(() => {
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
 .theater-bulk-select-badge { display: inline-flex; }
-.theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
+.theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }

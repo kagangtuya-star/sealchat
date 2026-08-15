@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"sealchat/protocol"
@@ -31,6 +32,37 @@ const (
 	StickyNoteVisibilityEditors StickyNoteVisibility = "editors"
 	StickyNoteVisibilityViewers StickyNoteVisibility = "viewers"
 )
+
+var stickyNotePresetColors = map[string]struct{}{
+	"yellow": {},
+	"pink":   {},
+	"green":  {},
+	"blue":   {},
+	"purple": {},
+	"orange": {},
+}
+
+// StickyNoteNormalizeColor 保留预设颜色，规范化自定义十六进制颜色。
+func StickyNoteNormalizeColor(value string) (string, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := stickyNotePresetColors[value]; ok {
+		return value, true
+	}
+
+	hex := strings.TrimPrefix(value, "#")
+	if len(hex) != 3 && len(hex) != 6 {
+		return "", false
+	}
+	for _, character := range hex {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return "", false
+		}
+	}
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	return "#" + hex, true
+}
 
 // StickyNoteModel 便签数据模型
 type StickyNoteModel struct {

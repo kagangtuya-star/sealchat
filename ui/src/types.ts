@@ -251,6 +251,14 @@ export interface BattleReport {
   updatedAt: number;
 }
 
+export interface BattleReportJumpTarget {
+  worldId: string;
+  channelId: string;
+  messageId: string;
+  createdAt?: number;
+  displayOrder?: number;
+}
+
 export interface BattleReportPayload {
   title?: string;
   content?: string;
@@ -368,6 +376,10 @@ export interface ServerAudioConfig {
   ffmpegPath?: string;
   allowWorldAudioWorkbench?: boolean;
   allowNonAdminCreateWorld?: boolean;
+}
+
+export interface ServerStorageConfig {
+  uploadTimeoutSeconds?: number;
 }
 
 export interface BackupConfig {
@@ -685,6 +697,7 @@ export interface ServerConfig {
   backup?: BackupConfig;
   sqlite?: SQLiteConfig;
   audio?: ServerAudioConfig;
+  storage?: ServerStorageConfig;
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;

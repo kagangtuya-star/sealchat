@@ -1368,5 +1368,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				ctx.BroadcastChannelPresence(chId)
 			}
 		}
+	}, websocket.Config{
+		EnableCompression: true,
 	}))
 }

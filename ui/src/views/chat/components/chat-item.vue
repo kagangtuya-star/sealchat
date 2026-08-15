@@ -38,9 +38,11 @@ import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/
 import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { normalizeStickyNoteHexColor } from '@/utils/stickyNoteColor'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
+import { navigateToMessageTarget } from '@/utils/messageJump'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
 import {
   SMART_LINK_DATA_ATTR,
@@ -192,7 +194,12 @@ const resolveStickyNoteAccent = (color: string): string => {
     purple: '#9c27b0',
     orange: '#ff9800',
   };
-  return colorMap[color] || '#64748b';
+  const presetColor = colorMap[color];
+  if (presetColor) return presetColor;
+  const customColor = normalizeStickyNoteHexColor(color);
+  return customColor
+    ? `color-mix(in srgb, ${customColor} 50%, var(--chat-text-primary, currentColor))`
+    : '#64748b';
 };
 
 const resolveStickyNoteContentText = (note: any): string => {
@@ -3048,30 +3055,14 @@ const processStateTextWidgets = () => {
 };
 
 const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId?: string; isCurrentWorld: boolean }) => {
-  // 内联跳转，不开新标签页
-  if (!info.isCurrentWorld) {
-    try {
-      await chat.switchWorld(info.worldId, { force: true });
-    } catch {
-      message.error('无法访问该世界');
-      return;
-    }
-  }
-
-  if (chat.curChannel?.id !== info.channelId) {
-    const switched = await chat.channelSwitchTo(info.channelId);
-    if (!switched) {
-      message.error('无法访问该频道');
-      return;
-    }
-  }
-
-  if (info.messageId) {
-    await nextTick();
-    chatEvent.emit('search-jump', {
-      messageId: info.messageId,
+  try {
+    await navigateToMessageTarget(chat, {
+      worldId: info.worldId,
       channelId: info.channelId,
+      messageId: info.messageId,
     });
+  } catch (error: any) {
+    message.error(error?.message || '跳转失败');
   }
 };
 
@@ -5818,6 +5809,86 @@ const handleRetrySend = () => {
 
 :root[data-display-palette='night'] .message-sticky-note-embed {
   background: transparent;
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget {
+  background: var(--sc-bg-elevated, #26262c);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget * {
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget button {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 10%, transparent);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget button:hover {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 18%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget input {
+  border-color: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+  background: var(--sc-bg-input, #3f3f46);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 16%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range::-webkit-slider-thumb,
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__range::-moz-range-thumb {
+  background: var(--sc-text-primary, #f4f4f5);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__bar {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 16%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__fill {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 44%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-slider__settings-panel {
+  border-color: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+  background: var(--sc-bg-elevated, #26262c);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-list__item:hover {
+  background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 8%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__svg > circle:first-child {
+  stroke: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 24%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__svg > circle:last-of-type {
+  fill: var(--sc-bg-input, #3f3f46);
+  stroke: var(--sc-border-strong, rgba(255, 255, 255, 0.16));
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 10%, transparent);
+  stroke: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 24%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment:hover {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 18%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment--filled {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 44%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__segment--filled:hover {
+  fill: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 36%, transparent);
+}
+
+:root:is([data-display-palette='night'], [data-custom-theme='true']) .message-sticky-note-embed--interactive .message-sticky-note-embed__widget .sticky-note-clock__count {
+  fill: var(--sc-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .message-sticky-note-embed__content {

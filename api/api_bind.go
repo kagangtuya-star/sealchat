@@ -31,6 +31,7 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+var agentCrawlGuideMarkdown string
 var serveAppWithOptionalCertificateForInit = serveAppWithOptionalCertificate
 var startOneBotReverseRuntimeForInit = startOneBotReverseRuntime
 
@@ -162,6 +163,39 @@ func buildObserverPrintPaths(webURL string) []string {
 	}
 	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
 	return paths
+}
+
+func buildAgentAccessPaths(webURL string) []string {
+	paths := []string{"/ob-print/v1/:token"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	paths = append(paths, path.Join(webRoot, "ob-print", "v1", ":token"))
+	return paths
+}
+
+func buildAgentGuidePaths(webURL string) []string {
+	paths := []string{"/ob-print/v1/docs"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	return append(paths, path.Join(webRoot, "ob-print", "v1", "docs"))
 }
 
 func normalizeWebRoot(webURL string) string {
@@ -440,8 +474,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/public/ob/channels/:channelId/messages/search/refine", ChannelMessageSearchRefineObserver)
 	v1.Get("/public/ob/channels/:channelId/sticky-notes", ObserverStickyNoteList)
 	v1.Get("/public/ob/channels/:channelId/sticky-note-folders", ObserverStickyNoteFolderList)
+	v1.Get("/public/ob/channels/:channelId/battle-reports", ObserverBattleReportList)
 	v1.Get("/public/ob/channels/:channelId/battle-reports/:reportId", ObserverBattleReportGet)
+	v1.Get("/public/ob/channels/:channelId/battle-reports/:reportId/jump-target", ObserverBattleReportJumpTarget)
 	v1.Get("/public/ob/channels/:channelId/iforms", ObserverChannelIFormList)
+	v1.Get("/battle-reports/:reportId/jump-target", BattleReportJumpTarget)
 	BindTheaterObserverRoutes(v1)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/effective", EffectiveWorldKeywordPublicListHandler)
@@ -449,6 +486,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	for _, routePath := range buildObserverPrintPaths(config.WebUrl) {
 		pathCopy := routePath
 		app.Get(pathCopy, ObserverPrintPageHandler)
+	}
+	for _, routePath := range buildAgentGuidePaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, AgentCrawlGuideHandler)
+	}
+	for _, routePath := range buildAgentAccessPaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, AgentAccessHandler)
 	}
 
 	v1.Get("/attachment/:id", AttachmentGet)
@@ -660,6 +705,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	audio.Get("/assets", AudioAssetList)
 	audio.Get("/assets/:id", AudioAssetGet)
 	audio.Post("/assets/:id/play-token", AudioAssetPlayToken)
+	audio.Get("/s3-library/settings", AudioS3LibrarySettingsGet)
+	audio.Get("/s3-library/assets", AudioS3LibraryAssetList)
+	audio.Post("/s3-library/assets/:id/play-token", AudioS3LibraryAssetPlayToken)
+	audio.Get("/s3-library/assets/:id", AudioS3LibraryAssetGet)
+	audio.Get("/s3-library/folders", AudioS3LibraryFolderList)
+	audio.Get("/s3-library/stream/:id", AudioS3LibraryStream)
 	audio.Get("/folders", AudioFolderList)
 	audio.Get("/scenes", AudioSceneList)
 	audio.Get("/state", AudioPlaybackStateGet)
@@ -669,6 +720,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	audioManage.Delete("/assets/:id", AudioManageAssetDeleteSafe)
 	audioManage.Post("/assets/bulk-delete", AudioManageAssetBulkDeleteSafe)
 	audioAdmin := audio.Group("", AudioWorkbenchMiddleware)
+	audioAdmin.Put("/s3-library/settings", AudioS3LibrarySettingsPut)
+	audioAdmin.Get("/s3-library/browse", AudioS3LibraryBrowse)
+	audioAdmin.Post("/s3-library/assets/upload", AudioS3LibraryAssetUpload)
+	audioAdmin.Patch("/s3-library/assets/:id", AudioS3LibraryAssetUpdate)
+	audioAdmin.Delete("/s3-library/assets/:id", AudioS3LibraryAssetDelete)
+	audioAdmin.Post("/s3-library/folders", AudioS3LibraryFolderCreate)
+	audioAdmin.Patch("/s3-library/folders/:id", AudioS3LibraryFolderUpdate)
+	audioAdmin.Delete("/s3-library/folders/:id", AudioS3LibraryFolderDelete)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
 	audioAdmin.Get("/assets/import/browser", AudioAssetImportBrowse)
 	audioAdmin.Get("/assets/import/preview", AudioAssetImportPreview)
@@ -714,6 +773,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Get("/:worldId", WorldDetail)
 	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
 	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
+	worldGroup.Get("/:worldId/agent-access", WorldAgentAccessGetHandler)
+	worldGroup.Put("/:worldId/agent-access", WorldAgentAccessUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
 	worldGroup.Get("/:worldId/dice3d", WorldDice3DConfigGet)
 	worldGroup.Put("/:worldId/dice3d", WorldDice3DConfigPut)

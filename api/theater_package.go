@@ -129,8 +129,17 @@ func theaterPackageJobMatchesWorld(job *model.TheaterPackageJobModel, worldID st
 }
 
 func theaterPackageJobView(job *model.TheaterPackageJobModel) fiber.Map {
+	progress, hasProgress := service.GetTheaterPackageProgress(job.ID)
+	if hasProgress {
+		job = cloneTheaterPackageJob(job)
+		job.Progress = progress.Progress
+		job.ProgressDone = progress.Done
+		job.ProgressTotal = progress.Total
+		job.ProgressStage = progress.Stage
+	}
 	result := fiber.Map{
 		"id": job.ID, "type": job.Type, "status": job.Status, "progress": job.Progress,
+		"progressDone": job.ProgressDone, "progressTotal": job.ProgressTotal, "progressStage": job.ProgressStage,
 		"sourceWorldId": job.SourceWorldID, "targetWorldId": job.TargetWorldID,
 		"inputChannelId": job.InputChannelID, "originalName": job.OriginalName,
 		"outputFileName": job.OutputFileName, "outputFileSize": job.OutputFileSize,
@@ -144,4 +153,9 @@ func theaterPackageJobView(job *model.TheaterPackageJobModel) fiber.Map {
 		}
 	}
 	return result
+}
+
+func cloneTheaterPackageJob(job *model.TheaterPackageJobModel) *model.TheaterPackageJobModel {
+	copy := *job
+	return &copy
 }

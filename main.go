@@ -222,6 +222,7 @@ func main() {
 	if err != nil {
 		fatalWithStartupLock("初始化存储系统失败: %v", err)
 	}
+	service.ProbeAudioS3LibraryPath(ctx)
 
 	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
 		fatalWithStartupLock("初始化音频子系统失败: %v", err)
@@ -334,6 +335,7 @@ func main() {
 	service.StartTheaterOutboxWorker(ctx)
 
 	service.SyncUpdateCurrentVersion(utils.BuildVersion)
+	api.SetAgentCrawlGuide(embeddedAgentCrawlGuide)
 	if err := api.Init(config, embedDirStatic); err != nil {
 		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)
 	}

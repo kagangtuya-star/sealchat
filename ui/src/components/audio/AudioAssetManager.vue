@@ -81,6 +81,9 @@
           </template>
           新建文件夹
         </n-button>
+        <n-button size="small" secondary @click="s3ModeVisible = true" v-if="audio.isSystemAdmin">
+          S3模式
+        </n-button>
         <n-button size="small" secondary @click="openAssetManagement" v-if="audio.canManage">
           素材管理
         </n-button>
@@ -512,6 +515,8 @@
       </template>
     </n-modal>
 
+    <AudioS3ModeDialog v-model:show="s3ModeVisible" />
+
     <AudioAssetManagementDialog
       v-model:show="assetManagementVisible"
       endpoint-base="/api/v1/audio/manage/assets"
@@ -557,6 +562,7 @@ import { useUserStore } from '@/stores/user';
 import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
 import AudioAssetManagementDialog from './AudioAssetManagementDialog.vue';
+import AudioS3ModeDialog from './AudioS3ModeDialog.vue';
 
 const audio = useAudioStudioStore();
 const chat = useChatStore();
@@ -628,6 +634,7 @@ const detailDrawerVisible = ref(false);
 const folderDrawerVisible = ref(false);
 const uploadDrawerVisible = ref(false);
 const assetManagementVisible = ref(false);
+const s3ModeVisible = ref(false);
 const dragUploadActive = ref(false);
 const dragUploadDepth = ref(0);
 const draggingAssetId = ref<string | null>(null);

@@ -42,6 +42,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 	if _, _, err := requireTheaterPermission(job.ActorUserID, job.TargetWorldID, "", TheaterPermissionAdminRestore); err != nil {
 		return summary, err
 	}
+	updateTheaterPackageStage(job.ID, "解压并校验压缩包")
 	room, err := model.TheaterRoomCreateIfMissing(job.TargetWorldID, "", job.ActorUserID)
 	if err != nil {
 		return summary, err
@@ -84,6 +85,8 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 	if err := validateTheaterPackageManifestEntities(manifest); err != nil {
 		return summary, err
 	}
+	updateTheaterPackageStage(job.ID, "读取素材清单")
+	initializeTheaterPackageProgress(job.ID, len(manifest.Resources)+len(manifest.Audio)+len(manifest.AppearanceAssets), "准备素材")
 	if packageKind == TheaterPackageKindEffects {
 		return importTheaterEffectsPackage(ctx, job, room, extractDir, manifest)
 	}
@@ -179,6 +182,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		}
 		createdAudio = append(createdAudio, asset)
 		remap.audio[item.ID] = asset.ID
+		advanceTheaterPackageProgress(job.ID, "导入音频")
 		updateTheaterPackageProgress(job.ID, 0.15+0.2*float64(index+1)/float64(maxInt(1, len(manifest.Audio))))
 	}
 
@@ -239,6 +243,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 			if err := importTheaterPackageResource(tx, extractDir, &current, job, resource, remap, &persistedAttachments); err != nil {
 				return fmt.Errorf("导入资源 %s 失败: %w", resource.ID, err)
 			}
+			advanceTheaterPackageProgress(job.ID, "导入素材")
 		}
 		appearanceAllowed := job.InputChannelID != ""
 		if !appearanceAllowed && len(manifest.AppearanceAssets) > 0 {
@@ -250,6 +255,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 				if err := importTheaterPackageAppearanceAsset(tx, extractDir, job, asset, remap, &persistedAttachments); err != nil {
 					return fmt.Errorf("导入演出资源 %s 失败: %w", asset.ID, err)
 				}
+				advanceTheaterPackageProgress(job.ID, "导入演出资源")
 			}
 		}
 

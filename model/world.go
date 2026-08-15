@@ -29,32 +29,39 @@ const (
 // WorldModel 表示"世界"实体，承载频道集合与可见性配置。
 type WorldModel struct {
 	StringPKBaseModel
-	Name                                  string  `json:"name" gorm:"size:100;not null"`
-	Description                           string  `json:"description" gorm:"size:500"`
-	Avatar                                string  `json:"avatar" gorm:"size:255"`
-	Visibility                            string  `json:"visibility" gorm:"size:24;default:public;index"`             // public/private/unlisted
-	ObserverSlug                          *string `json:"-" gorm:"size:64;uniqueIndex"`                               // 专属 OB 旁观 slug，空值使用 NULL 以避免唯一索引冲突
-	ObserverEnabled                       bool    `json:"-" gorm:"default:false"`                                     // 专属 OB 旁观链接启用状态
-	EnforceMembership                     bool    `json:"enforceMembership" gorm:"default:false"`                     // 预留未来严格控制
-	AllowAdminEditMessages                bool    `json:"allowAdminEditMessages" gorm:"default:false"`                // 允许管理员编辑成员发言
-	AllowManageOtherUserChannelIdentities bool    `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
-	AllowMemberEditKeywords               bool    `json:"allowMemberEditKeywords" gorm:"default:false"`               // 允许成员编辑世界术语
-	StrictWhisperPrivacy                  bool    `json:"strictWhisperPrivacy" gorm:"default:true"`                   // 悄悄话严格保密：开启后管理员不可旁路查看
-	ChannelDefaultDiceMode                string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
-	ChannelDefaultBotID                   string  `json:"channelDefaultBotId" gorm:"size:100"`
-	ChannelDefaultBotIDsJSON              string  `json:"-" gorm:"type:text"`
-	ChannelDefaultEventBotIDsJSON         string  `json:"-" gorm:"type:text"`
-	CharacterCardBadgeTemplate            string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
-	CursorThemeJSON                       string  `json:"-" gorm:"type:text"`
-	TheaterPresentationTemplateJSON       string  `json:"-" gorm:"type:text"`
-	TheaterActivated                      bool    `json:"-" gorm:"default:false"`
-	StickyNoteDefaultAppearanceJSON       string  `json:"-" gorm:"type:text"`
-	Dice3DConfigJSON                      string  `json:"-" gorm:"column:dice_3d_config_json;type:text"`
-	IsSystemDefault                       bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
-	OwnerID                               string  `json:"ownerId" gorm:"size:100;index"`
-	DefaultChannelID                      string  `json:"defaultChannelId" gorm:"size:100"`
-	InviteSlug                            string  `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
-	Status                                string  `json:"status" gorm:"size:24;default:active;index"`
+	Name                                  string     `json:"name" gorm:"size:100;not null"`
+	Description                           string     `json:"description" gorm:"size:500"`
+	Avatar                                string     `json:"avatar" gorm:"size:255"`
+	Visibility                            string     `json:"visibility" gorm:"size:24;default:public;index"`             // public/private/unlisted
+	ObserverSlug                          *string    `json:"-" gorm:"size:64;uniqueIndex"`                               // 专属 OB 旁观 slug，空值使用 NULL 以避免唯一索引冲突
+	ObserverEnabled                       bool       `json:"-" gorm:"default:false"`                                     // 专属 OB 旁观链接启用状态
+	AgentAccessPublicID                   *string    `json:"-" gorm:"size:32;uniqueIndex"`                               // AI/Agent 访问令牌公开定位段
+	AgentAccessSecretHash                 string     `json:"-" gorm:"size:64"`                                           // AI/Agent 访问密钥 SHA-256 摘要
+	AgentAccessTokenTail                  string     `json:"-" gorm:"size:12"`                                           // 令牌尾号，仅用于管理界面识别
+	AgentAccessEnabled                    bool       `json:"-" gorm:"default:false"`                                     // AI/Agent 访问链接启用状态
+	AgentAccessProfileUserID              string     `json:"-" gorm:"size:100;index"`                                    // 导出 BBCode 染色配置所属用户
+	AgentAccessRotatedAt                  *time.Time `json:"-"`                                                          // 最近生成/轮换访问令牌时间
+	AgentAccessLastAccessAt               *time.Time `json:"-"`                                                          // 最近一次有效访问时间
+	EnforceMembership                     bool       `json:"enforceMembership" gorm:"default:false"`                     // 预留未来严格控制
+	AllowAdminEditMessages                bool       `json:"allowAdminEditMessages" gorm:"default:false"`                // 允许管理员编辑成员发言
+	AllowManageOtherUserChannelIdentities bool       `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
+	AllowMemberEditKeywords               bool       `json:"allowMemberEditKeywords" gorm:"default:false"`               // 允许成员编辑世界术语
+	StrictWhisperPrivacy                  bool       `json:"strictWhisperPrivacy" gorm:"default:true"`                   // 悄悄话严格保密：开启后管理员不可旁路查看
+	ChannelDefaultDiceMode                string     `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
+	ChannelDefaultBotID                   string     `json:"channelDefaultBotId" gorm:"size:100"`
+	ChannelDefaultBotIDsJSON              string     `json:"-" gorm:"type:text"`
+	ChannelDefaultEventBotIDsJSON         string     `json:"-" gorm:"type:text"`
+	CharacterCardBadgeTemplate            string     `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
+	CursorThemeJSON                       string     `json:"-" gorm:"type:text"`
+	TheaterPresentationTemplateJSON       string     `json:"-" gorm:"type:text"`
+	TheaterActivated                      bool       `json:"-" gorm:"default:false"`
+	StickyNoteDefaultAppearanceJSON       string     `json:"-" gorm:"type:text"`
+	Dice3DConfigJSON                      string     `json:"-" gorm:"column:dice_3d_config_json;type:text"`
+	IsSystemDefault                       bool       `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
+	OwnerID                               string     `json:"ownerId" gorm:"size:100;index"`
+	DefaultChannelID                      string     `json:"defaultChannelId" gorm:"size:100"`
+	InviteSlug                            string     `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
+	Status                                string     `json:"status" gorm:"size:24;default:active;index"`
 }
 
 func (*WorldModel) TableName() string {

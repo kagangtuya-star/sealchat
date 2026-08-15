@@ -72,6 +72,25 @@ func ObserverStickyNoteFolderList(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"folders": items})
 }
 
+func ObserverBattleReportList(c *fiber.Ctx) error {
+	world, _, status, message := resolveObserverEmbedChannel(c)
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": message})
+	}
+	items, err := service.ListBattleReportsForObserver(c.Params("channelId"), world.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+	}
+	out := make([]battleReportResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, battleReportToResponse(item, false))
+	}
+	return c.JSON(fiber.Map{"items": out})
+}
+
 func ObserverBattleReportGet(c *fiber.Ctx) error {
 	world, _, status, message := resolveObserverEmbedChannel(c)
 	if status != 0 {
@@ -85,6 +104,27 @@ func ObserverBattleReportGet(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "没有访问该战报的权限"})
 	}
 	return c.JSON(fiber.Map{"item": battleReportToResponse(item, true)})
+}
+
+func ObserverBattleReportJumpTarget(c *fiber.Ctx) error {
+	world, _, status, message := resolveObserverEmbedChannel(c)
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": message})
+	}
+	target, err := service.GetBattleReportJumpTargetForObserver(c.Params("reportId"), world.ID, c.Query("edge"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "战报不存在"})
+		}
+		if strings.Contains(err.Error(), "无效的战报跳转位置") {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "没有访问该战报的权限"})
+	}
+	if target == nil {
+		return c.JSON(fiber.Map{"target": nil, "reason": "no_message"})
+	}
+	return c.JSON(fiber.Map{"target": battleReportJumpTargetToResponse(target)})
 }
 
 func ObserverChannelIFormList(c *fiber.Ctx) error {

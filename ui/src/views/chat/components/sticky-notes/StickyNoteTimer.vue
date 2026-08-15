@@ -15,8 +15,16 @@ const typeData = computed<TimerTypeData>(() => {
   return parsed || { startTime: 0, baseValue: 0, direction: 'up', running: false, resetValue: 0 }
 })
 
+const draftData = ref<TimerTypeData>({ ...typeData.value })
+const isInteracting = ref(false)
 const displayTime = ref('00:00:00')
 let intervalId: ReturnType<typeof setInterval> | null = null
+let holdStartTimer: ReturnType<typeof setTimeout> | null = null
+let holdInterval: ReturnType<typeof setInterval> | null = null
+let holdDelta = 0
+let holdStarted = false
+let suppressNextClick = false
+let suppressClickTimer: ReturnType<typeof setTimeout> | null = null
 
 function formatTime(seconds: number): string {
   const abs = Math.abs(seconds)
@@ -27,8 +35,8 @@ function formatTime(seconds: number): string {
   return `${sign}${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-function calculateCurrentValue(): number {
-  const { startTime, baseValue, direction, running } = typeData.value
+function calculateCurrentValue(data: TimerTypeData = draftData.value): number {
+  const { startTime, baseValue, direction, running } = data
   if (!running) return baseValue
   const elapsed = Math.floor((Date.now() - startTime) / 1000)
   return direction === 'up' ? baseValue + elapsed : baseValue - elapsed
@@ -38,63 +46,129 @@ function updateDisplay() {
   displayTime.value = formatTime(calculateCurrentValue())
 }
 
+function commitDraft() {
+  stickyNoteStore.updateTypeData(props.note.id, { ...draftData.value })
+  isInteracting.value = false
+}
+
 function toggleTimer() {
-  const { running, direction, resetValue } = typeData.value
+  const { running } = draftData.value
   if (running) {
     const currentValue = calculateCurrentValue()
-    stickyNoteStore.updateTypeData(props.note.id, {
-      ...typeData.value,
+    draftData.value = {
+      ...draftData.value,
       running: false,
       baseValue: currentValue,
       startTime: 0
-    })
+    }
   } else {
-    stickyNoteStore.updateTypeData(props.note.id, {
-      ...typeData.value,
+    draftData.value = {
+      ...draftData.value,
       running: true,
       startTime: Date.now()
-    })
+    }
   }
+  updateDisplay()
+  commitDraft()
 }
 
 function resetTimer() {
-  const { resetValue, direction } = typeData.value
-  stickyNoteStore.updateTypeData(props.note.id, {
-    ...typeData.value,
+  const { resetValue } = draftData.value
+  draftData.value = {
+    ...draftData.value,
     running: false,
     baseValue: resetValue,
     startTime: 0
-  })
+  }
+  updateDisplay()
+  commitDraft()
 }
 
 function setDirection(dir: 'up' | 'down') {
-  const currentValue = typeData.value.running ? calculateCurrentValue() : typeData.value.baseValue
-  stickyNoteStore.updateTypeData(props.note.id, {
-    ...typeData.value,
+  const currentValue = draftData.value.running ? calculateCurrentValue() : draftData.value.baseValue
+  draftData.value = {
+    ...draftData.value,
     direction: dir,
     baseValue: currentValue,
-    startTime: typeData.value.running ? Date.now() : 0
-  })
+    startTime: draftData.value.running ? Date.now() : 0
+  }
+  updateDisplay()
+  commitDraft()
 }
 
 function adjustTime(delta: number) {
-  const currentValue = typeData.value.running ? calculateCurrentValue() : typeData.value.baseValue
-  stickyNoteStore.updateTypeData(props.note.id, {
-    ...typeData.value,
+  const currentValue = draftData.value.running ? calculateCurrentValue() : draftData.value.baseValue
+  draftData.value = {
+    ...draftData.value,
     baseValue: currentValue + delta,
-    startTime: typeData.value.running ? Date.now() : 0
-  })
+    startTime: draftData.value.running ? Date.now() : 0
+  }
+  updateDisplay()
+}
+
+function handleAdjustClick(delta: number) {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    if (suppressClickTimer) {
+      clearTimeout(suppressClickTimer)
+      suppressClickTimer = null
+    }
+    return
+  }
+  adjustTime(delta)
+  commitDraft()
+}
+
+function startAdjustHold(delta: number, e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  stopAdjustHold()
+  isInteracting.value = true
+  holdDelta = delta
+  holdStarted = false
+  suppressNextClick = false
+  const target = e.currentTarget as HTMLButtonElement | null
+  target?.setPointerCapture?.(e.pointerId)
+  holdStartTimer = setTimeout(() => {
+    holdStarted = true
+    adjustTime(holdDelta)
+    holdInterval = setInterval(() => adjustTime(holdDelta), 100)
+  }, 350)
+}
+
+function stopAdjustHold() {
+  if (holdStartTimer) {
+    clearTimeout(holdStartTimer)
+    holdStartTimer = null
+  }
+  if (holdInterval) {
+    clearInterval(holdInterval)
+    holdInterval = null
+  }
+  if (holdStarted) {
+    suppressNextClick = true
+    if (suppressClickTimer) clearTimeout(suppressClickTimer)
+    suppressClickTimer = setTimeout(() => {
+      suppressNextClick = false
+      suppressClickTimer = null
+    }, 500)
+    commitDraft()
+  }
+  holdStarted = false
 }
 
 function setResetValue() {
-  const currentValue = typeData.value.running ? calculateCurrentValue() : typeData.value.baseValue
-  stickyNoteStore.updateTypeData(props.note.id, {
-    ...typeData.value,
+  const currentValue = draftData.value.running ? calculateCurrentValue() : draftData.value.baseValue
+  draftData.value = {
+    ...draftData.value,
     resetValue: currentValue
-  })
+  }
+  commitDraft()
 }
 
-watch(() => typeData.value, () => {
+watch(() => typeData.value, (data) => {
+  if (!isInteracting.value) {
+    draftData.value = { ...data }
+  }
   updateDisplay()
 }, { immediate: true })
 
@@ -105,6 +179,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (intervalId) clearInterval(intervalId)
+  stopAdjustHold()
+  if (suppressClickTimer) clearTimeout(suppressClickTimer)
 })
 </script>
 
@@ -147,10 +223,38 @@ onUnmounted(() => {
     </div>
 
     <div class="sticky-note-timer__adjust">
-      <button class="sticky-note-timer__adj-btn" @click="adjustTime(-60)">-1m</button>
-      <button class="sticky-note-timer__adj-btn" @click="adjustTime(-10)">-10s</button>
-      <button class="sticky-note-timer__adj-btn" @click="adjustTime(10)">+10s</button>
-      <button class="sticky-note-timer__adj-btn" @click="adjustTime(60)">+1m</button>
+      <button
+        class="sticky-note-timer__adj-btn"
+        @click="handleAdjustClick(-60)"
+        @pointerdown="startAdjustHold(-60, $event)"
+        @pointerup="stopAdjustHold"
+        @pointercancel="stopAdjustHold"
+        @contextmenu.prevent
+      >-1m</button>
+      <button
+        class="sticky-note-timer__adj-btn"
+        @click="handleAdjustClick(-10)"
+        @pointerdown="startAdjustHold(-10, $event)"
+        @pointerup="stopAdjustHold"
+        @pointercancel="stopAdjustHold"
+        @contextmenu.prevent
+      >-10s</button>
+      <button
+        class="sticky-note-timer__adj-btn"
+        @click="handleAdjustClick(10)"
+        @pointerdown="startAdjustHold(10, $event)"
+        @pointerup="stopAdjustHold"
+        @pointercancel="stopAdjustHold"
+        @contextmenu.prevent
+      >+10s</button>
+      <button
+        class="sticky-note-timer__adj-btn"
+        @click="handleAdjustClick(60)"
+        @pointerdown="startAdjustHold(60, $event)"
+        @pointerup="stopAdjustHold"
+        @pointercancel="stopAdjustHold"
+        @contextmenu.prevent
+      >+1m</button>
     </div>
 
     <div class="sticky-note-timer__footer">
@@ -243,6 +347,8 @@ onUnmounted(() => {
   cursor: pointer;
   font-size: 11px;
   color: rgba(0, 0, 0, 0.6);
+  touch-action: manipulation;
+  user-select: none;
 }
 
 .sticky-note-timer__adj-btn:hover {

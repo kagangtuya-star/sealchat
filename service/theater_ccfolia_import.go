@@ -405,6 +405,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 	if _, _, err := requireTheaterPermission(job.ActorUserID, job.TargetWorldID, "", TheaterPermissionAdminRestore); err != nil {
 		return summary, err
 	}
+	updateTheaterPackageStage(job.ID, "解压并读取 CCFOLIA 数据")
 	room, err := model.TheaterRoomCreateIfMissing(job.TargetWorldID, "", job.ActorUserID)
 	if err != nil {
 		return summary, err
@@ -435,18 +436,21 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 	}
 	_ = model.GetDB().Model(&model.TheaterPackageJobModel{}).Where("id = ?", job.ID).Update("package_hash", packageFile.SHA256).Error
 
-	resources, targets, animated, resourceWarnings, err := loadCCFOLIAResources(extractDir, backup)
+	resources, targets, animated, resourceWarnings, err := loadCCFOLIAResources(extractDir, &backup)
 	if err != nil {
 		return summary, err
 	}
 	if err := validateCCFOLIAResourceQuota(room.ID, resources); err != nil {
 		return summary, err
 	}
+	initializeTheaterPackageProgress(job.ID, len(resources), "准备素材")
 	processor := NewVisualMediaProcessor(theaterMedia.config, theaterMedia.toolchain, theaterMedia.runner)
+	updateTheaterPackageStage(job.ID, "转换动画素材")
 	if err := prepareCCFOLIAAnimatedResources(ctx, extractDir, resources, targets, processor); err != nil {
 		return summary, err
 	}
 	warnings = append(warnings, resourceWarnings...)
+	updateTheaterPackageStage(job.ID, "生成场景数据")
 	conversion, err := convertCCFOLIABackup(backup, job.TargetWorldID, targets)
 	if err != nil {
 		return summary, err
@@ -549,6 +553,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 			if err := importTheaterPackageResource(tx, extractDir, &current, job, resource, remap, &persistedAttachments); err != nil {
 				return fmt.Errorf("导入 CCFOLIA 资源 %s 失败: %w", resource.ID, err)
 			}
+			advanceTheaterPackageProgress(job.ID, "导入 CCFOLIA 素材")
 		}
 
 		var maxOrder int64
@@ -773,8 +778,8 @@ func loadCCFOLIABackup(root string) (ccfoliaBackup, error) {
 	return backup, nil
 }
 
-func loadCCFOLIAResources(root string, backup ccfoliaBackup) ([]TheaterPackageResource, map[string]ccfoliaAssetTarget, int, []string, error) {
-	recoveryWarnings, err := recoverCCFOLIAAssetReferences(root, &backup)
+func loadCCFOLIAResources(root string, backup *ccfoliaBackup) ([]TheaterPackageResource, map[string]ccfoliaAssetTarget, int, []string, error) {
+	recoveryWarnings, err := recoverCCFOLIAAssetReferences(root, backup)
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
@@ -862,7 +867,7 @@ func loadCCFOLIAResources(root string, backup ccfoliaBackup) ([]TheaterPackageRe
 			warnings = appendWarning(warnings, "ZIP 包含未声明文件，已忽略: "+entry.Name())
 		}
 	}
-	references := ccfoliaAssetReferences(backup)
+	references := ccfoliaAssetReferences(*backup)
 	for ref, paths := range references {
 		if _, ok := targets[ref]; !ok {
 			return nil, nil, 0, nil, fmt.Errorf("CCFOLIA 引用资源未声明或缺失: %s (%s)", ref, strings.Join(paths, ", "))
@@ -1654,7 +1659,8 @@ func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[stri
 	for index, entry := range entries {
 		item := entry.Item
 		if strings.TrimSpace(item.ImageURL) == "" {
-			return nil, warnings, fmt.Errorf("CCFOLIA item 图片引用缺失: %s", entry.SourceID)
+			warnings = appendWarning(warnings, "CCFOLIA item 图片引用缺失，已跳过无图 item: "+entry.SourceID)
+			continue
 		}
 		if item.Width < 0 || item.Height < 0 {
 			return nil, warnings, fmt.Errorf("CCFOLIA item 尺寸无效: %s", entry.SourceID)

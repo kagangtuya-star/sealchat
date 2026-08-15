@@ -8,11 +8,17 @@ export interface AvatarRenderStateInput {
   mergedWithPrev?: boolean
 }
 
-export const normalizeMessageVisibilityScope = (value: unknown): MessageVisibilityScope => {
+export const normalizeMessageVisibilityScope = (
+  value: unknown,
+  fallback: MessageVisibilityScope = 'all',
+): MessageVisibilityScope => {
   if (value === 'ic' || value === 'ooc') {
     return value
   }
-  return 'all'
+  if (value === 'all') {
+    return 'all'
+  }
+  return fallback
 }
 
 export const normalizeAvatarVisibilityScope = (value: unknown): AvatarVisibilityScope => {

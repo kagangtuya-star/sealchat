@@ -164,13 +164,14 @@ type CaptchaConfig struct {
 }
 
 type StorageConfig struct {
-	Mode       StorageMode        `json:"mode" yaml:"mode"`
-	BaseURL    string             `json:"baseUrl" yaml:"baseUrl"`
-	PresignTTL int                `json:"presignTTL" yaml:"presignTTL"`
-	MaxSizeMB  int64              `json:"maxSizeMB" yaml:"maxSizeMB"`
-	LogLevel   string             `json:"logLevel" yaml:"logLevel"`
-	Local      LocalStorageConfig `json:"local" yaml:"local"`
-	S3         S3StorageConfig    `json:"s3" yaml:"s3"`
+	Mode                 StorageMode        `json:"mode" yaml:"mode"`
+	BaseURL              string             `json:"baseUrl" yaml:"baseUrl"`
+	PresignTTL           int                `json:"presignTTL" yaml:"presignTTL"`
+	UploadTimeoutSeconds int                `json:"uploadTimeoutSeconds" yaml:"uploadTimeoutSeconds"`
+	MaxSizeMB            int64              `json:"maxSizeMB" yaml:"maxSizeMB"`
+	LogLevel             string             `json:"logLevel" yaml:"logLevel"`
+	Local                LocalStorageConfig `json:"local" yaml:"local"`
+	S3                   S3StorageConfig    `json:"s3" yaml:"s3"`
 }
 
 type LocalStorageConfig struct {
@@ -582,9 +583,10 @@ func ReadConfig() *AppConfig {
 			DiceCommandPrefixes:   []string{".", "。"},
 		},
 		Storage: StorageConfig{
-			Mode:       StorageModeLocal,
-			PresignTTL: 900,
-			MaxSizeMB:  64,
+			Mode:                 StorageModeLocal,
+			PresignTTL:           900,
+			UploadTimeoutSeconds: 20,
+			MaxSizeMB:            64,
 			Local: LocalStorageConfig{
 				UploadDir: "./data/upload",
 				AudioDir:  "./static/audio",
@@ -1810,6 +1812,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("storage.mode", config.Storage.Mode)
 		_ = k.Set("storage.baseUrl", config.Storage.BaseURL)
 		_ = k.Set("storage.presignTTL", config.Storage.PresignTTL)
+		_ = k.Set("storage.uploadTimeoutSeconds", config.Storage.UploadTimeoutSeconds)
 		_ = k.Set("storage.maxSizeMB", config.Storage.MaxSizeMB)
 		_ = k.Set("storage.logLevel", config.Storage.LogLevel)
 		_ = k.Set("storage.local.uploadDir", config.Storage.Local.UploadDir)
@@ -2314,6 +2317,9 @@ func (cfg *StorageConfig) normalize() {
 	}
 	if cfg.PresignTTL <= 0 {
 		cfg.PresignTTL = 900
+	}
+	if cfg.UploadTimeoutSeconds <= 0 {
+		cfg.UploadTimeoutSeconds = 20
 	}
 	if cfg.S3.PresignTTL <= 0 {
 		cfg.S3.PresignTTL = cfg.PresignTTL

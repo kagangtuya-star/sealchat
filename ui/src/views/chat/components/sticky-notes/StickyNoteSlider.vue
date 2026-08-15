@@ -16,45 +16,75 @@ const typeData = computed<SliderTypeData>(() => {
 })
 
 const localValue = ref(typeData.value.value)
+const isInteracting = ref(false)
 const showSettings = ref(false)
 const settingsMin = ref(typeData.value.min)
 const settingsMax = ref(typeData.value.max)
 const settingsStep = ref(typeData.value.step)
 
 watch(() => typeData.value, (data) => {
-  localValue.value = data.value
+  if (!isInteracting.value) {
+    localValue.value = data.value
+  }
   settingsMin.value = data.min
   settingsMax.value = data.max
   settingsStep.value = data.step
 }, { immediate: true })
 
 const percentage = computed(() => {
-  const { min, max, value } = typeData.value
+  const { min, max } = typeData.value
+  const value = localValue.value
   const range = max - min
   if (!Number.isFinite(range) || range <= 0) return 0
   return ((value - min) / range) * 100
 })
 
-function updateValue(newValue: number) {
+function normalizeValue(newValue: number) {
   const { min, max, step } = typeData.value
   const safeStep = Number.isFinite(step) && step > 0 ? step : 1
   const clamped = Math.max(min, Math.min(max, newValue))
-  const stepped = Math.round((clamped - min) / safeStep) * safeStep + min
-  stickyNoteStore.updateTypeData(props.note.id, { ...typeData.value, value: stepped })
+  return Math.round((clamped - min) / safeStep) * safeStep + min
+}
+
+function updateLocalValue(newValue: number) {
+  if (!Number.isFinite(newValue)) return
+  localValue.value = normalizeValue(newValue)
+}
+
+function commitValue() {
+  if (!Number.isFinite(localValue.value)) {
+    localValue.value = typeData.value.value
+    isInteracting.value = false
+    return
+  }
+  const value = normalizeValue(localValue.value)
+  localValue.value = value
+  if (value === typeData.value.value) {
+    isInteracting.value = false
+    return
+  }
+  stickyNoteStore.updateTypeData(props.note.id, { ...typeData.value, value })
+  isInteracting.value = false
+}
+
+function beginInteraction(e: PointerEvent) {
+  isInteracting.value = true
+  const target = e.currentTarget as HTMLInputElement | null
+  target?.setPointerCapture?.(e.pointerId)
 }
 
 function handleSliderInput(e: Event) {
   const target = e.target as HTMLInputElement
-  updateValue(parseFloat(target.value))
+  updateLocalValue(parseFloat(target.value))
 }
 
 function handleInputChange() {
-  updateValue(localValue.value)
+  commitValue()
 }
 
 function saveSettings() {
   stickyNoteStore.updateTypeData(props.note.id, {
-    value: Math.max(settingsMin.value, Math.min(settingsMax.value, typeData.value.value)),
+    value: Math.max(settingsMin.value, Math.min(settingsMax.value, localValue.value)),
     min: settingsMin.value,
     max: settingsMax.value,
     step: settingsStep.value
@@ -71,9 +101,13 @@ function saveSettings() {
         :min="typeData.min"
         :max="typeData.max"
         :step="typeData.step"
-        :value="typeData.value"
+        :value="localValue"
         class="sticky-note-slider__range"
+        @pointerdown="beginInteraction"
         @input="handleSliderInput"
+        @change="handleInputChange"
+        @pointerup="commitValue"
+        @pointercancel="commitValue"
       />
 
       <div class="sticky-note-slider__value-row">

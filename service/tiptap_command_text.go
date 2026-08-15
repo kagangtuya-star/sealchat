@@ -13,15 +13,29 @@ import (
 var htmlEntityLikePattern = regexp.MustCompile(`&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,8}|#x[0-9A-Fa-f]{1,8});`)
 
 func SerializeMessageContentToCommandText(input string) (string, bool) {
+	return serializeMessageContentToCommandText(input, commandTextOptions{})
+}
+
+// SerializeMessageContentToBotCommandText 将消息内容序列化为 BOT 命令文本，并保留 mention ID。
+// 仅供发送 BOT 事件时使用；普通消息文本序列化保持原有行为。
+func SerializeMessageContentToBotCommandText(input string) (string, bool) {
+	return serializeMessageContentToCommandText(input, commandTextOptions{preserveMentions: true})
+}
+
+type commandTextOptions struct {
+	preserveMentions bool
+}
+
+func serializeMessageContentToCommandText(input string, options commandTextOptions) (string, bool) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return "", false
 	}
 	if LooksLikeTipTapJSON(trimmed) {
-		return SerializeTipTapContentToCommandText(trimmed)
+		return serializeTipTapContentToCommandText(trimmed, options)
 	}
 	if looksLikeHTMLCommandText(trimmed) {
-		return serializeHTMLContentToCommandText(trimmed)
+		return serializeHTMLContentToCommandText(trimmed, options)
 	}
 	return normalizePlainText(trimmed), true
 }
@@ -39,6 +53,10 @@ func looksLikeHTMLCommandText(input string) bool {
 // SerializeTipTapContentToCommandText 将 TipTap JSON 序列化为适合 BOT 命令解析的纯文本。
 // 它会尽量保留常见 Markdown 标记，避免命令中的 * / ` 在富文本模式下被吞掉。
 func SerializeTipTapContentToCommandText(input string) (string, bool) {
+	return serializeTipTapContentToCommandText(input, commandTextOptions{})
+}
+
+func serializeTipTapContentToCommandText(input string, options commandTextOptions) (string, bool) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return "", false
@@ -53,11 +71,11 @@ func SerializeTipTapContentToCommandText(input string) (string, bool) {
 	}
 
 	var buf strings.Builder
-	renderTipTapCommandText(&buf, &doc)
+	renderTipTapCommandText(&buf, &doc, options)
 	return normalizePlainText(buf.String()), true
 }
 
-func serializeHTMLContentToCommandText(input string) (string, bool) {
+func serializeHTMLContentToCommandText(input string, options commandTextOptions) (string, bool) {
 	wrapper := &htmlparser.Node{Type: htmlparser.ElementNode, DataAtom: htmlatom.Div, Data: "div"}
 	nodes, err := htmlparser.ParseFragment(strings.NewReader(input), wrapper)
 	if err != nil {
@@ -68,12 +86,12 @@ func serializeHTMLContentToCommandText(input string) (string, bool) {
 	}
 	var buf strings.Builder
 	for _, node := range nodes {
-		renderHTMLCommandText(&buf, node, false)
+		renderHTMLCommandText(&buf, node, false, options)
 	}
 	return normalizePlainText(buf.String()), true
 }
 
-func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBlock bool) {
+func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBlock bool, options commandTextOptions) {
 	if buf == nil || node == nil {
 		return
 	}
@@ -90,38 +108,38 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 		case "br":
 			ensureCommandTextTrailingNewline(buf)
 		case "p", "div", "blockquote":
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			ensureCommandTextTrailingNewline(buf)
 		case "ul", "ol":
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 		case "li":
 			buf.WriteString("- ")
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			ensureCommandTextTrailingNewline(buf)
 		case "strong", "b":
 			buf.WriteString("**")
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			buf.WriteString("**")
 		case "em", "i":
 			buf.WriteString("*")
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			buf.WriteString("*")
 		case "s", "strike", "del":
 			buf.WriteString("~~")
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			buf.WriteString("~~")
 		case "code":
 			if inCodeBlock {
-				renderHTMLChildrenCommandText(buf, node, true)
+				renderHTMLChildrenCommandText(buf, node, true, options)
 			} else {
 				buf.WriteString("`")
-				renderHTMLChildrenCommandText(buf, node, false)
+				renderHTMLChildrenCommandText(buf, node, false, options)
 				buf.WriteString("`")
 			}
 		case "pre":
 			buf.WriteString("```")
 			ensureCommandTextTrailingNewline(buf)
-			renderHTMLChildrenCommandText(buf, node, true)
+			renderHTMLChildrenCommandText(buf, node, true, options)
 			ensureCommandTextTrailingNewline(buf)
 			buf.WriteString("```")
 			ensureCommandTextTrailingNewline(buf)
@@ -135,12 +153,12 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 			}
 			if href != "" {
 				buf.WriteString("[")
-				renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+				renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 				buf.WriteString("](")
 				buf.WriteString(html.UnescapeString(href))
 				buf.WriteString(")")
 			} else {
-				renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+				renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 			}
 		case "img":
 			alt := ""
@@ -173,13 +191,17 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 					id = html.UnescapeString(attr.Val)
 				}
 			}
-			display := firstNonEmpty(name, id)
-			if display != "" {
-				buf.WriteString("@")
-				buf.WriteString(display)
+			if options.preserveMentions && id != "" {
+				writeBotCommandMention(buf, id, name)
+			} else {
+				display := firstNonEmpty(name, id)
+				if display != "" {
+					buf.WriteString("@")
+					buf.WriteString(display)
+				}
 			}
 		default:
-			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
+			renderHTMLChildrenCommandText(buf, node, inCodeBlock, options)
 		}
 	}
 }
@@ -208,13 +230,13 @@ func resolveDiceHTMLSource(node *htmlparser.Node) (string, bool) {
 	return "", false
 }
 
-func renderHTMLChildrenCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBlock bool) {
+func renderHTMLChildrenCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBlock bool, options commandTextOptions) {
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		renderHTMLCommandText(buf, child, inCodeBlock)
+		renderHTMLCommandText(buf, child, inCodeBlock, options)
 	}
 }
 
-func renderTipTapCommandText(buf *strings.Builder, node *tiptapNode) {
+func renderTipTapCommandText(buf *strings.Builder, node *tiptapNode, options commandTextOptions) {
 	if buf == nil || node == nil {
 		return
 	}
@@ -225,21 +247,21 @@ func renderTipTapCommandText(buf *strings.Builder, node *tiptapNode) {
 			if index > 0 && shouldInsertCommandBlockBreak(child) {
 				ensureCommandTextTrailingNewline(buf)
 			}
-			renderTipTapCommandText(buf, child)
+			renderTipTapCommandText(buf, child, options)
 		}
 	case "paragraph", "heading", "blockquote":
 		for _, child := range node.Content {
-			renderTipTapCommandText(buf, child)
+			renderTipTapCommandText(buf, child, options)
 		}
 		ensureCommandTextTrailingNewline(buf)
 	case "bulletlist", "orderedlist":
 		for _, child := range node.Content {
-			renderTipTapCommandText(buf, child)
+			renderTipTapCommandText(buf, child, options)
 		}
 	case "listitem":
 		buf.WriteString("- ")
 		for _, child := range node.Content {
-			renderTipTapCommandText(buf, child)
+			renderTipTapCommandText(buf, child, options)
 		}
 		ensureCommandTextTrailingNewline(buf)
 	case "text":
@@ -278,14 +300,39 @@ func renderTipTapCommandText(buf *strings.Builder, node *tiptapNode) {
 		buf.WriteString(src)
 		buf.WriteString(")")
 	case "satorimention":
-		display := firstNonEmpty(node.attrString("name"), node.attrString("id"), "用户")
-		buf.WriteString("@")
-		buf.WriteString(display)
+		id := node.attrString("id")
+		name := node.attrString("name")
+		if options.preserveMentions && id != "" {
+			writeBotCommandMention(buf, id, name)
+		} else {
+			display := firstNonEmpty(name, id, "用户")
+			buf.WriteString("@")
+			buf.WriteString(display)
+		}
 	default:
 		for _, child := range node.Content {
-			renderTipTapCommandText(buf, child)
+			renderTipTapCommandText(buf, child, options)
 		}
 	}
+}
+
+func writeBotCommandMention(buf *strings.Builder, id, name string) {
+	if buf == nil || id == "" {
+		return
+	}
+	if buf.Len() > 0 {
+		buf.WriteByte(' ')
+	}
+	buf.WriteString(`<at id="`)
+	buf.WriteString(html.EscapeString(id))
+	buf.WriteByte('"')
+	if name != "" {
+		buf.WriteString(` name="`)
+		buf.WriteString(html.EscapeString(name))
+		buf.WriteByte('"')
+	}
+	buf.WriteString("/>")
+	buf.WriteByte(' ')
 }
 
 func renderTipTapCommandCodeText(buf *strings.Builder, node *tiptapNode) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,10 +98,16 @@ func (c *Collector) sampleOnce() {
 	}
 	c.latestSample.Store(sample)
 	if err := model.InsertServiceMetricSample(sample); err != nil {
+		if strings.Contains(err.Error(), "database is locked") {
+			return
+		}
 		log.Printf("metrics: insert sample failed: %v", err)
 	}
 	cutoff := sample.TimestampMs - c.cfg.Retention.Milliseconds()
 	if err := model.DeleteServiceMetricBefore(cutoff); err != nil {
+		if strings.Contains(err.Error(), "database is locked") {
+			return
+		}
 		log.Printf("metrics: cleanup expired samples failed: %v", err)
 	}
 }
