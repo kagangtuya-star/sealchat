@@ -186,13 +186,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed } from 'vue';
 import type { PropType } from 'vue';
 import { PlayerPause, PlayerPlay } from '@vicons/tabler';
 import type { TrackRuntime } from '@/stores/audioStudio';
 import type { AudioAsset, PlaylistMode } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
-import { useAudioS3LibraryStore } from '@/stores/audioS3Library';
 import { isTrackPlaybackActive } from '@/stores/audioPlaybackState';
 
 const props = defineProps({
@@ -224,7 +223,6 @@ const speedOptions = [
 ];
 
 const audio = useAudioStudioStore();
-const s3Library = useAudioS3LibraryStore();
 const isReadOnly = computed(() => !audio.canManage);
 const isTrackPlaying = computed(() => isTrackPlaybackActive(props.track));
 const progressPercent = computed(() => Math.round(props.track.progress * 100));
@@ -233,10 +231,9 @@ const currentSeconds = computed(() => {
   return duration * props.track.progress;
 });
 
-const selectableAssets = computed(() => {
-  if (props.track.playlistFolderId) return props.track.playlistAssets;
-  return s3Library.enabled ? s3Library.selectableAssets : audio.trackSelectableAssets;
-});
+const selectableAssets = computed(() => (
+  props.track.playlistFolderId ? props.track.playlistAssets : audio.trackSelectableAssets
+));
 const assetsAvailable = computed(() => selectableAssets.value.length > 0);
 const assetOptions = computed(() =>
   selectableAssets.value.map((asset) => ({
@@ -246,7 +243,6 @@ const assetOptions = computed(() =>
 );
 
 const folderOptions = computed(() => {
-  const sourceFolders = s3Library.enabled ? s3Library.folders : audio.folders;
   const flattenFolders = (folders: typeof audio.folders, prefix = ''): { label: string; value: string }[] => {
     const result: { label: string; value: string }[] = [];
     for (const folder of folders) {
@@ -258,24 +254,8 @@ const folderOptions = computed(() => {
     }
     return result;
   };
-  return flattenFolders(sourceFolders as typeof audio.folders);
+  return flattenFolders(audio.folders);
 });
-
-async function ensureS3Options() {
-  if (!s3Library.enabled) return;
-  await Promise.all([s3Library.fetchFolders(), s3Library.fetchSelectableAssets()]);
-}
-
-onMounted(() => {
-  void ensureS3Options();
-});
-
-watch(
-  () => s3Library.enabled,
-  (enabled) => {
-    if (enabled) void ensureS3Options();
-  },
-);
 
 function formatTime(value: number) {
   if (!value || Number.isNaN(value)) return '00:00';
@@ -340,7 +320,6 @@ function handleSelect(value: string | null) {
   if (!value) return;
   const asset =
     selectableAssets.value.find((item) => item.id === value)
-    || s3Library.selectableAssets.find((item) => item.id === value)
     || audio.assets.find((item) => item.id === value)
     || audio.filteredAssets.find((item) => item.id === value);
   if (asset) {

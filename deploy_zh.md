@@ -592,8 +592,6 @@ storage:
   - 如果你的自定义域名访问需要带桶路径（例如 `https://域名/桶名/...`），这里就必须填 `https://域名/桶名`。
   - 如果你的域名已经 CNAME 到桶的 virtual-host 域名（例如 `https://桶名.xxx/...`），这里填 `https://域名` 即可。
 
-腾讯云 COS 建议使用区域根 endpoint，例如 `https://cos.ap-beijing.myqcloud.com`，桶名单独填写在 `storage.s3.bucket`；不要把 `https://桶名.cos.<region>.myqcloud.com` 作为 endpoint。`pathStyle: false` 时程序会使用 COS virtual-host 寻址。
-
 ### 4.3 密钥与权限（强烈建议用环境变量）
 
 为避免密钥写入配置文件，建议使用环境变量：
@@ -605,7 +603,6 @@ storage:
 权限建议（至少满足以下能力）：
 
 - 启动自检：对前缀 `sealchat/_healthcheck/*` 具备 `PutObject/GetObject/DeleteObject`（只用于验证连通性）。
-- 目录读取：对目标 bucket 具备 `ListBucket`，并允许音频根前缀（例如 `audio/`）的列表查询。
 - 业务读写：对前缀 `attachments/*`、`audio/*` 具备 `PutObject/GetObject/DeleteObject`（删除用于资源清理/迁移）。
 
 ### 4.4 启动自检与回退策略

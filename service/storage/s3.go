@@ -38,7 +38,6 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 		return nil, fmt.Errorf("S3 配置不完整")
 	}
 	endpoint, secure := normalizeEndpoint(cfg.Endpoint, cfg.UseSSL)
-	endpoint, isTencentCOS := utils.NormalizeTencentCOSHost(endpoint)
 	opts := &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		Secure: secure,
@@ -46,8 +45,6 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 	}
 	if cfg.ForcePathStyle {
 		opts.BucketLookup = minio.BucketLookupPath
-	} else if isTencentCOS {
-		opts.BucketLookup = minio.BucketLookupDNS
 	}
 	client, err := minio.New(endpoint, opts)
 	if err != nil {
@@ -156,19 +153,10 @@ func (s *s3Backend) deletePrefix(ctx context.Context, prefix string) error {
 }
 
 func (s *s3Backend) publicURL(objectKey string) string {
-	return BuildPublicObjectURL(s.publicBaseURL, objectKey)
-}
-
-// BuildPublicObjectURL joins configured browser-facing base URL with S3 object key.
-// PublicBaseURL may include bucket path, for example:
-// https://cdn.example.com/my-bucket + audio/id/file.mp3.
-func BuildPublicObjectURL(baseURL, objectKey string) string {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	key := strings.TrimLeft(objectKey, "/")
-	if base == "" || key == "" {
+	if s.publicBaseURL == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s", base, key)
+	return fmt.Sprintf("%s/%s", s.publicBaseURL, strings.TrimLeft(objectKey, "/"))
 }
 
 func (s *s3Backend) presignedURL(ctx context.Context, objectKey string, ttl time.Duration) string {
