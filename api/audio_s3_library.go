@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -102,8 +103,15 @@ func AudioS3LibraryAssetPlayToken(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{
 		"streamUrl": target,
-		"expiresAt": expiresAt.UnixMilli(),
+		"expiresAt": audioS3ExpiresAtMillis(expiresAt),
 	})
+}
+
+func audioS3ExpiresAtMillis(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }
 
 func AudioS3LibraryStream(c *fiber.Ctx) error {

@@ -24,6 +24,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
@@ -714,6 +715,9 @@ func AudioS3PresignedURL(ctx context.Context, ref string) (string, time.Time, er
 	if err != nil {
 		return "", time.Time{}, err
 	}
+	if target := resolveAudioS3PublicURL(cfg, key); target != "" {
+		return target, time.Time{}, nil
+	}
 	ttl := cfg.PresignTTL
 	if ttl <= 0 {
 		if appCfg := utils.GetConfig(); appCfg != nil {
@@ -729,6 +733,10 @@ func AudioS3PresignedURL(ctx context.Context, ref string) (string, time.Time, er
 		return "", time.Time{}, err
 	}
 	return target.String(), time.Now().Add(duration), nil
+}
+
+func resolveAudioS3PublicURL(cfg utils.S3StorageConfig, objectKey string) string {
+	return storage.BuildPublicObjectURL(cfg.PublicBaseURL, objectKey)
 }
 
 func resolveAudioS3FolderPrefix(folderID string) (string, error) {

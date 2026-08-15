@@ -156,10 +156,19 @@ func (s *s3Backend) deletePrefix(ctx context.Context, prefix string) error {
 }
 
 func (s *s3Backend) publicURL(objectKey string) string {
-	if s.publicBaseURL == "" {
+	return BuildPublicObjectURL(s.publicBaseURL, objectKey)
+}
+
+// BuildPublicObjectURL joins configured browser-facing base URL with S3 object key.
+// PublicBaseURL may include bucket path, for example:
+// https://cdn.example.com/my-bucket + audio/id/file.mp3.
+func BuildPublicObjectURL(baseURL, objectKey string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	key := strings.TrimLeft(objectKey, "/")
+	if base == "" || key == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s", s.publicBaseURL, strings.TrimLeft(objectKey, "/"))
+	return fmt.Sprintf("%s/%s", base, key)
 }
 
 func (s *s3Backend) presignedURL(ctx context.Context, objectKey string, ttl time.Duration) string {
