@@ -100,8 +100,8 @@
             </ul>
           </section>
           <section class="scene-board__detail-actions">
-            <n-button size="small" type="primary" @click="applyScene(selectedScene, true)">加载并播放</n-button>
-            <n-button size="small" tertiary @click="applyScene(selectedScene, false)">仅加载</n-button>
+            <n-button size="small" type="primary" @click="applyScene(selectedScene, true)">切换并播放</n-button>
+            <n-button size="small" tertiary @click="applyScene(selectedScene, false)">切换到此列表</n-button>
             <n-button v-if="audio.canManage" size="small" @click="openEditDrawer(selectedScene)">编辑</n-button>
           </section>
         </template>
@@ -217,7 +217,7 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 160,
+    width: 220,
     render: (row) =>
       h(
         'div',
@@ -226,12 +226,12 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
           h(
             NButton,
             { size: 'tiny', type: 'primary', ghost: true, onClick: () => applyScene(row, true) },
-            { default: () => '播放' }
+            { default: () => '切换并播放' }
           ),
           h(
             NButton,
             { size: 'tiny', quaternary: true, onClick: () => applyScene(row, false) },
-            { default: () => '加载' }
+            { default: () => '切换到此列表' }
           ),
           audio.canManage
             ? h(
@@ -347,9 +347,9 @@ function confirmBatchDelete() {
 async function applyScene(scene: AudioScene, autoPlay: boolean) {
   await audio.applyScene(scene.id, { autoPlay });
   if (autoPlay) {
-    message.success(`已套用并播放「${scene.name}」`);
+    message.success(`已切换并播放「${scene.name}」`);
   } else {
-    message.success(`已加载「${scene.name}」，等待播放`);
+    message.success(`已切换到「${scene.name}」`);
   }
 }
 
@@ -505,6 +505,7 @@ onMounted(() => {
 .scene-board__row-actions {
   display: flex;
   gap: 0.25rem;
+  flex-wrap: wrap;
 }
 
 :deep(.is-selected-row td) {

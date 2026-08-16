@@ -224,6 +224,7 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
 let progressTimer: number | null = null;
 let transcodeTimer: number | null = null;
 let importJobPollingTimer: number | null = null;
+let sceneApplySeq = 0;
 const SYNC_DEBOUNCE_MS = 300;
 const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
@@ -1641,7 +1642,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           this.scenes.unshift(updated);
         }
         if (this.currentSceneId === sceneId) {
-          this.applyScene(sceneId, { skipSync: true });
+          await this.applyScene(sceneId, { skipSync: true });
           this.queuePlaybackSync();
         }
         await this.fetchScenes();
@@ -1947,21 +1948,44 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async applyScene(sceneId: string | null, options?: { autoPlay?: boolean; force?: boolean; skipSync?: boolean }) {
-      if (!sceneId) return;
+      if (!sceneId || (!this.canManage && !options?.force)) return;
       const scene = this.scenes.find((item) => item.id === sceneId);
       if (!scene) return;
+      const applySeq = ++sceneApplySeq;
+      const shouldPlay = options?.autoPlay ?? this.isPlaying;
+
+      if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+        window.clearTimeout(this.pendingSyncHandle);
+        this.pendingSyncHandle = null;
+      }
+      this.pendingCommitPayload = null;
+      this.clearRetrySyncTimer();
+      this.syncRetryAttempt = 0;
+      this.pauseAll({ force: true });
       this.currentSceneId = sceneId;
       DEFAULT_TRACK_TYPES.forEach((type) => {
         const trackMeta = scene.tracks.find((t) => t.type === type) || createEmptyTrack(type);
-        this.assignTrack(type, trackMeta);
+        this.assignTrack(type, trackMeta, { force: true, deferLoad: true });
       });
-      if (options?.autoPlay ?? this.isPlaying) {
-        await this.playAll({ force: options?.force });
+
+      await Promise.all(
+        DEFAULT_TRACK_TYPES.map(async (type) => {
+          const assetId = this.tracks[type]?.assetId;
+          if (assetId) {
+            await this.loadTrackAsset(type, assetId, { force: true });
+          }
+        }),
+      );
+      if (applySeq !== sceneApplySeq || this.currentSceneId !== sceneId) {
+        return;
+      }
+      if (shouldPlay) {
+        await this.playAll({ force: true });
       } else {
         this.pauseAll({ force: true });
       }
       if (!options?.force && !options?.skipSync) {
-        this.queuePlaybackSync();
+        this.queuePlaybackSync({ syncReason: shouldPlay ? 'scene-switch-play' : 'scene-switch' });
       }
     },
 
