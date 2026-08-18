@@ -1382,6 +1382,9 @@ async function handleS3ModeSaved(settings: typeof audio.audioLibrary) {
     audio.fetchAssets({ pagination: { page: 1 } }),
     audio.fetchTrackSelectableAssets(),
   ]);
+  window.setTimeout(() => {
+    handleResetFilters();
+  }, 3000);
 }
 
 async function handleAssetManagementChanged() {
