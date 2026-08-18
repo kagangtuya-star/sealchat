@@ -169,8 +169,7 @@ const clampWindowCoords = (
 };
 
 const DEFAULT_TEMPLATE_MARK = 'sealchat-default-template:v2';
-const DEFAULT_TEMPLATE_MARK_COC = 'sealchat-default-template:v3-coc7th';
-const LEGACY_TEMPLATE_MARKERS = {
+export const LEGACY_TEMPLATE_MARKERS = {
   coc: ['sealchat-default-template:v2-coc-dark', 'sealchat-default-template:v2-coc7th'],
   shinobigami: ['sealchat-shinobigami-template:v1'],
 };
@@ -188,30 +187,20 @@ const isShinobigamiSheetType = (value?: string) => {
   return normalized === 'shinobigami' || normalized === '忍神' || normalized.startsWith('shinobigami');
 };
 
-const isLegacyDefaultTemplate = (template: string, sheetType?: string) => {
+export const isLegacyDefaultTemplate = (template: string, sheetType?: string) => {
   if (!template) return false;
   const normalizedSheetType = (sheetType || '').trim().toLowerCase();
-  if (isCocSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.coc.some(marker => template.includes(marker))) return true;
-  if (isShinobigamiSheetType(sheetType) && LEGACY_TEMPLATE_MARKERS.shinobigami.some(marker => template.includes(marker))) return true;
-  if (template.includes(DEFAULT_TEMPLATE_MARK) || template.includes(DEFAULT_TEMPLATE_MARK_COC)) return false;
-  if (template.includes('window.prompt') && (isCocSheetType(sheetType) || !normalizedSheetType)) {
-    return true;
+  if (!normalizedSheetType) return false;
+  if (isCocSheetType(sheetType)) {
+    return LEGACY_TEMPLATE_MARKERS.coc.some(marker => template.includes(marker));
   }
-  const hasShell =
-    template.includes('id="content"') &&
-    template.includes('sealchat.onUpdate(render)') &&
-    template.includes('attrs-table') &&
-    template.includes('card-header');
-  const hasLegacyRoll =
-    template.includes('data-roll=".ra {skill}"') ||
-    template.includes('data-roll=\\".ra {skill}\\"');
-  const hasPrompt = template.includes('window.prompt');
-  return hasShell && (hasLegacyRoll || hasPrompt) && (
-    isCocSheetType(sheetType) || !normalizedSheetType
-  );
+  if (isShinobigamiSheetType(sheetType)) {
+    return LEGACY_TEMPLATE_MARKERS.shinobigami.some(marker => template.includes(marker));
+  }
+  return false;
 };
 
-const normalizeTemplate = (_cardId: string | undefined, template: string, sheetType?: string) => {
+export const normalizeTemplate = (_cardId: string | undefined, template: string, sheetType?: string) => {
   if (!template) return template;
   if (!isLegacyDefaultTemplate(template, sheetType)) return template;
   return getDefaultTemplate(sheetType);
@@ -479,6 +468,20 @@ const getDefaultTemplate = (sheetType?: string) => (
     ? getShinobigamiDefaultTemplate()
     : (isCocSheetType(sheetType) ? cocTemplateHtml.trim() : getGenericDefaultTemplate())
 );
+
+export const resolveInitialSheetTemplate = (
+  cardId: string,
+  sheetType: string,
+  templateMeta: { readOnly?: boolean; templateText?: string } | undefined,
+  managedTemplateContent: string | undefined,
+  getTemplate: (cardId: string, sheetType?: string) => string,
+  getDefault: (sheetType?: string) => string = getDefaultTemplate,
+) => {
+  const source = templateMeta?.readOnly && !templateMeta.templateText
+    ? getDefault(sheetType)
+    : templateMeta?.templateText || managedTemplateContent || getTemplate(cardId, sheetType);
+  return normalizeTemplate(cardId, source, sheetType);
+};
 
 export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const windows = ref<Record<string, CharacterSheetWindow>>({});
@@ -1060,10 +1063,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       : getDefaultBubblePosition(activeWindowIds.value.length);
 
     const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
-    const initialTemplate = normalizeTemplate(
+    const initialTemplate = resolveInitialSheetTemplate(
       card.id,
-      templateMeta?.templateText || managedTemplate?.content || getTemplate(card.id, resolvedSheetType),
       resolvedSheetType,
+      templateMeta,
+      managedTemplate?.content,
+      getTemplate,
     );
     windows.value[windowId] = {
       id: windowId,

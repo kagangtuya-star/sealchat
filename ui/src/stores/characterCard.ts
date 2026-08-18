@@ -125,6 +125,23 @@ const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
   updatedAt: card.updated_at,
 });
 
+export const resolveCardIdByNameAndType = (
+  cards: readonly Pick<CharacterCard, 'id' | 'name' | 'sheetType'>[],
+  name?: string,
+  sheetType?: string,
+) => {
+  const normalizedName = String(name || '');
+  const normalizedSheetType = String(sheetType || '');
+  if (!normalizedName) return '';
+  if (normalizedSheetType) {
+    const exact = cards.find(card => (
+      card.name === normalizedName && card.sheetType === normalizedSheetType
+    ));
+    if (exact) return exact.id;
+  }
+  return cards.find(card => card.name === normalizedName)?.id || '';
+};
+
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 export const characterApiUnsupportedText = '当前BOT不支持人物卡API、未开启或未启用。';
 
@@ -901,7 +918,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (resp?.data?.ok) {
         await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
         await templateStore.ensureBindingsLoaded(channelId);
-        const activeCardId = getActiveCardId(channelId);
+        const activeCardId = resolveCardIdByNameAndType(
+          cardList.value,
+          resp.data.name,
+          resp.data.type,
+        );
         const resolvedTemplate = activeCardId
           ? templateStore.resolveCardTemplate(channelId, activeCardId, resp.data.type || '', '')
           : '';
@@ -1321,12 +1342,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const getActiveCardId = (channelId: string) => {
     const active = activeCards.value[channelId];
     if (!active) return '';
-    const byNameAndType = cardList.value.find(card =>
-      card.name === active.name && (!active.type || card.sheetType === active.type),
-    );
-    if (byNameAndType) return byNameAndType.id;
-    const byName = cardList.value.find(card => card.name === active.name);
-    return byName?.id || '';
+    return resolveCardIdByNameAndType(cardList.value, active.name, active.type);
   };
 
   // Backwards compatibility: getCardsByChannel returns all cards (SealDice doesn't filter by channel)
