@@ -6,7 +6,7 @@
           v-model:value="keyword"
           size="small"
           clearable
-          placeholder="搜索名称 / 标签 / 描述"
+          :placeholder="audio.audioLibrary.mode === 's3' ? '搜索名称 / 路径' : '搜索名称 / 标签 / 描述'"
           @keyup.enter="handleSearch"
         >
           <template #prefix>
@@ -17,6 +17,7 @@
         </n-input>
 
         <n-select
+          v-if="audio.audioLibrary.mode !== 's3'"
           v-model:value="selectedTags"
           multiple
           filterable
@@ -28,6 +29,7 @@
         />
 
         <n-select
+          v-if="audio.audioLibrary.mode !== 's3'"
           v-model:value="selectedCreators"
           multiple
           filterable
@@ -38,6 +40,7 @@
         />
 
         <n-select
+          v-if="audio.audioLibrary.mode !== 's3'"
           v-model:value="selectedScope"
           size="small"
           placeholder="作用域"
@@ -45,7 +48,7 @@
           class="audio-library__filter-item"
         />
 
-        <div class="audio-library__duration">
+        <div v-if="audio.audioLibrary.mode !== 's3'" class="audio-library__duration">
           <label>时长 (秒)</label>
           <n-slider v-model:value="durationRange" :max="durationMax" :min="0" range size="small" />
         </div>
@@ -65,7 +68,7 @@
           </template>
           刷新列表
         </n-button>
-        <n-button size="small" secondary @click="openUploadPanel" v-if="audio.canManage">
+        <n-button size="small" secondary @click="openUploadPanel" v-if="canManageLibrary">
           <template #icon>
             <n-icon size="16">
               <CloudUploadOutline />
@@ -73,7 +76,7 @@
           </template>
           上传素材
         </n-button>
-        <n-button size="small" type="primary" @click="openCreateFolder" v-if="audio.canManage">
+        <n-button size="small" type="primary" @click="openCreateFolder" v-if="canManageLibrary">
           <template #icon>
             <n-icon size="16">
               <FolderOpenOutline />
@@ -81,13 +84,25 @@
           </template>
           新建文件夹
         </n-button>
-        <n-button size="small" secondary @click="openAssetManagement" v-if="audio.canManage">
+        <n-button
+          v-if="audio.canManageCurrentWorld"
+          size="small"
+          :type="audio.audioLibrary.mode === 's3' ? 'primary' : 'default'"
+          :secondary="audio.audioLibrary.mode !== 's3'"
+          @click="s3ModeDialogVisible = true"
+        >
+          S3模式
+        </n-button>
+        <n-button size="small" secondary @click="openAssetManagement" v-if="audio.canManage && audio.audioLibrary.mode !== 's3'">
           素材管理
         </n-button>
       </div>
 
       <n-alert v-if="audio.networkMode !== 'normal'" class="audio-library__alert" type="warning" closable>
         当前处于弱网模式，素材加载将优先使用本地缓存，建议手动刷新确认最新数据。
+      </n-alert>
+      <n-alert v-if="audio.audioLibrary.mode === 's3' && audio.audioLibraryError" class="audio-library__alert" type="error" closable>
+        {{ audio.audioLibraryError }}
       </n-alert>
     </section>
 
@@ -97,14 +112,14 @@
         <n-button text size="tiny" @click="clearSelection">清空</n-button>
       </div>
       <n-space size="small">
-        <n-button size="small" @click="openBatchMoveModal" :loading="audio.assetBulkLoading" secondary>
+        <n-button v-if="audio.audioLibrary.mode !== 's3'" size="small" @click="openBatchMoveModal" :loading="audio.assetBulkLoading" secondary>
           批量移动
         </n-button>
-        <n-button size="small" @click="openBatchVisibilityModal" :loading="audio.assetBulkLoading">
+        <n-button v-if="audio.audioLibrary.mode !== 's3'" size="small" @click="openBatchVisibilityModal" :loading="audio.assetBulkLoading">
           批量修改可见性
         </n-button>
         <n-button
-          v-if="audio.isSystemAdmin"
+          v-if="audio.isSystemAdmin && audio.audioLibrary.mode !== 's3'"
           size="small"
           @click="openBatchScopeModal"
           :loading="audio.assetBulkLoading"
@@ -112,6 +127,7 @@
           批量修改级别
         </n-button>
         <n-button
+          v-if="audio.audioLibrary.mode !== 's3'"
           size="small"
           type="error"
           @click="confirmBatchDelete"
@@ -122,7 +138,10 @@
       </n-space>
     </section>
 
-    <section class="audio-library__content" :class="contentClassNames">
+    <section
+      class="audio-library__content"
+      :class="[contentClassNames, { 'is-s3-mode': audio.audioLibrary.mode === 's3' }]"
+    >
       <aside v-if="!isMobileLayout" class="audio-library__folders" :class="{ 'is-collapsed': folderPanelCollapsed }">
         <div class="audio-library__panel-top">
           <div class="audio-library__panel-title">
@@ -131,10 +150,10 @@
               {{ folderPanelCollapsed ? '展开' : '收起' }}
             </n-button>
           </div>
-          <div class="audio-library__folder-actions" v-if="audio.canManage && !folderPanelCollapsed">
+          <div class="audio-library__folder-actions" v-if="canManageLibrary && !folderPanelCollapsed">
             <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
-            <n-button quaternary size="tiny" @click="openAssetManagement">素材管理</n-button>
-            <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
+            <n-button quaternary size="tiny" @click="openAssetManagement" v-if="audio.audioLibrary.mode !== 's3'">素材管理</n-button>
+            <n-button v-if="audio.audioLibrary.mode !== 's3'" quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
             <n-button
               quaternary
               size="tiny"
@@ -146,16 +165,17 @@
             </n-button>
           </div>
         </div>
-        <n-tree
-          v-if="!folderPanelCollapsed"
-          block-line
-          :data="folderTreeData"
-          :default-expanded-keys="['all']"
-          selectable
-          :selected-keys="folderKeys"
-          :node-props="treeNodeProps"
-          @update:selected-keys="handleFolderSelect"
-        />
+        <div v-if="!folderPanelCollapsed" class="audio-library__folder-scroll">
+          <n-tree
+            block-line
+            :data="folderTreeData"
+            :default-expanded-keys="['all']"
+            selectable
+            :selected-keys="folderKeys"
+            :node-props="treeNodeProps"
+            @update:selected-keys="handleFolderSelect"
+          />
+        </div>
         <div v-else class="audio-library__panel-collapsed">
           <n-button quaternary circle size="large" @click="toggleFolderPanel">
             <template #icon>
@@ -182,7 +202,7 @@
             <span>条素材</span>
           </div>
           <div class="audio-library__table-actions">
-            <n-tooltip trigger="hover">
+            <n-tooltip v-if="audio.audioLibrary.mode !== 's3'" trigger="hover">
               <template #trigger>
                 <n-button
                   size="small"
@@ -216,20 +236,28 @@
           </div>
         </div>
 
-        <n-data-table
-          size="small"
-          :columns="columns"
-          :data="tableData"
-          :loading="audio.assetsLoading"
-          :row-key="rowKey"
-          :row-class-name="rowClassName"
-          :row-props="rowProps"
-          :checked-row-keys="checkedRowKeys"
-          @update:checked-row-keys="handleCheckedRowKeysChange"
-          bordered
-        />
+        <div class="audio-library__table-scroll">
+          <n-data-table
+            size="small"
+            :columns="columns"
+            :data="tableData"
+            :loading="audio.assetsLoading"
+            :row-key="rowKey"
+            :row-class-name="rowClassName"
+            :row-props="rowProps"
+            :checked-row-keys="checkedRowKeys"
+            @update:checked-row-keys="handleCheckedRowKeysChange"
+            bordered
+          />
+        </div>
         <div class="audio-library__pagination">
+          <n-space v-if="audio.audioLibrary.mode === 's3'" align="center" justify="center">
+            <n-button size="small" :disabled="audio.assetPagination.page <= 1 || audio.assetsLoading" @click="audio.setAssetPage(audio.assetPagination.page - 1)">上一页</n-button>
+            <n-text depth="3">第 {{ audio.assetPagination.page }} 页</n-text>
+            <n-button size="small" :disabled="!audio.audioLibraryCursor || audio.assetsLoading" @click="audio.setAssetPage(audio.assetPagination.page + 1)">下一页</n-button>
+          </n-space>
           <n-pagination
+            v-else
             size="small"
             :page="audio.assetPagination.page"
             :page-size="audio.assetPagination.pageSize"
@@ -269,9 +297,9 @@
             <div class="audio-library__panel-title">
               <span>文件夹</span>
             </div>
-            <div class="audio-library__folder-actions" v-if="audio.canManage">
+            <div class="audio-library__folder-actions" v-if="canManageLibrary">
               <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
-              <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
+              <n-button v-if="audio.audioLibrary.mode !== 's3'" quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
               <n-button
                 quaternary
                 size="tiny"
@@ -291,15 +319,17 @@
               </n-button>
             </div>
           </div>
-          <n-tree
-            block-line
-            :data="folderTreeData"
-            :default-expanded-keys="['all']"
-            selectable
-            :selected-keys="folderKeys"
-            :node-props="treeNodeProps"
-            @update:selected-keys="handleFolderSelect"
-          />
+          <div class="audio-library__folder-scroll">
+            <n-tree
+              block-line
+              :data="folderTreeData"
+              :default-expanded-keys="['all']"
+              selectable
+              :selected-keys="folderKeys"
+              :node-props="treeNodeProps"
+              @update:selected-keys="handleFolderSelect"
+            />
+          </div>
         </div>
       </n-drawer-content>
     </n-drawer>
@@ -376,10 +406,10 @@
           <n-form-item label="名称" path="name">
             <n-input v-model:value="assetForm.name" maxlength="60" show-count />
           </n-form-item>
-          <n-form-item label="备注" path="description">
+          <n-form-item v-if="audio.audioLibrary.mode !== 's3'" label="备注" path="description">
             <n-input v-model:value="assetForm.description" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" />
           </n-form-item>
-          <n-form-item label="标签" path="tags">
+          <n-form-item v-if="audio.audioLibrary.mode !== 's3'" label="标签" path="tags">
             <n-select
               v-model:value="assetForm.tags"
               multiple
@@ -397,13 +427,16 @@
               placeholder="未分类"
             />
           </n-form-item>
-        <n-form-item label="可见性" path="visibility">
+          <n-form-item v-if="audio.audioLibrary.mode === 's3'" label="Content-Type" path="contentType">
+            <n-input v-model:value="assetForm.contentType" placeholder="例如 audio/mpeg" />
+          </n-form-item>
+        <n-form-item v-if="audio.audioLibrary.mode !== 's3'" label="可见性" path="visibility">
           <n-radio-group v-model:value="assetForm.visibility">
             <n-radio value="public">公开</n-radio>
             <n-radio value="restricted">受限</n-radio>
           </n-radio-group>
         </n-form-item>
-        <template v-if="audio.isSystemAdmin">
+        <template v-if="audio.isSystemAdmin && audio.audioLibrary.mode !== 's3'">
           <n-form-item label="素材级别" path="scope">
             <n-radio-group v-model:value="assetForm.scope">
               <n-radio value="common">通用级</n-radio>
@@ -440,7 +473,7 @@
             placeholder="根目录"
           />
         </n-form-item>
-        <template v-if="(folderModalMode === 'create' || folderModalMode === 'edit') && audio.isSystemAdmin">
+        <template v-if="audio.audioLibrary.mode !== 's3' && (folderModalMode === 'create' || folderModalMode === 'edit') && audio.isSystemAdmin">
           <n-form-item label="级别" path="scope">
             <n-radio-group v-model:value="folderForm.scope">
               <n-radio value="common">通用级</n-radio>
@@ -519,6 +552,12 @@
       show-quota
       @changed="handleAssetManagementChanged"
     />
+    <AudioS3ModeDialog
+      v-model:show="s3ModeDialogVisible"
+      :settings="audio.audioLibrary"
+      :world-id="audio.currentWorldId"
+      @saved="handleS3ModeSaved"
+    />
   </div>
 </template>
 
@@ -526,9 +565,11 @@
 import { SearchOutline, CloudUploadOutline, FolderOpenOutline, ReloadOutline, TrashOutline, CreateOutline, CopyOutline, MenuOutline, CloseOutline } from '@vicons/ionicons5';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import {
+  NAlert,
   NButton,
   NSpace,
   NTag,
+  NText,
   NTooltip,
   useDialog,
   useMessage,
@@ -557,6 +598,7 @@ import { useUserStore } from '@/stores/user';
 import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
 import AudioAssetManagementDialog from './AudioAssetManagementDialog.vue';
+import AudioS3ModeDialog from './AudioS3ModeDialog.vue';
 
 const audio = useAudioStudioStore();
 const chat = useChatStore();
@@ -608,6 +650,8 @@ const assetFormRef = ref<FormInst | null>(null);
 const assetForm = reactive({
   id: '',
   name: '',
+  contentType: '',
+  originalContentType: '',
   description: '',
   tags: [] as string[],
   folderId: null as string | null,
@@ -628,6 +672,7 @@ const detailDrawerVisible = ref(false);
 const folderDrawerVisible = ref(false);
 const uploadDrawerVisible = ref(false);
 const assetManagementVisible = ref(false);
+const s3ModeDialogVisible = ref(false);
 const dragUploadActive = ref(false);
 const dragUploadDepth = ref(0);
 const draggingAssetId = ref<string | null>(null);
@@ -756,7 +801,8 @@ const contentClassNames = computed(() => ({
   'is-detail-collapsed': detailPanelCollapsed.value,
 }));
 const manualSortEnabled = computed(() => audio.filters.manualSort !== false);
-const canReorderAssets = computed(() => audio.canManage && !audio.assetsLoading);
+const canManageLibrary = computed(() => audio.canManage && (audio.audioLibrary.mode !== 's3' || audio.canManageCurrentWorld));
+const canReorderAssets = computed(() => audio.canManage && audio.audioLibrary.mode !== 's3' && !audio.assetsLoading);
 const manualSortTooltip = computed(() =>
   manualSortEnabled.value
     ? '当前排序会叠加手动拖拽顺序。拖拽素材可调整排序号。'
@@ -771,6 +817,21 @@ const detailContent = defineComponent({
       const folder = currentFolder.value;
 
       if (asset) {
+        if (audio.audioLibrary.mode === 's3') {
+          return h('div', { class: 'audio-library__detail-body' }, [
+            h('header', { class: 'audio-library__detail-header' }, [h('h3', asset.name)]),
+            h('div', { class: 'audio-library__detail-actions audio-library__detail-actions--stacked' }, [
+              h(NButton, { size: 'small', quaternary: true, onClick: () => copyStream(asset.id) }, { default: () => '复制播放链接' }),
+              audio.canDeleteAsset(asset) ? h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => confirmDeleteAsset(asset) }, { default: () => '删除对象' }) : null,
+            ]),
+            h('ul', { class: 'audio-library__detail-list' }, [
+              h('li', `路径：${asset.objectKey || '-'}`),
+              h('li', `大小：${formatFileSize(asset.size)}`),
+              h('li', `类型：${(asset as any).extension || '-'}`),
+              h('li', `最后修改：${formatDate(asset.updatedAt)}`),
+            ]),
+          ]);
+        }
         return h('div', { class: 'audio-library__detail-body' }, [
           h('header', { class: 'audio-library__detail-header' }, [
             h('div', [
@@ -844,6 +905,13 @@ const detailContent = defineComponent({
       }
 
       if (folder) {
+        if (audio.audioLibrary.mode === 's3') {
+          return h('div', { class: 'audio-library__detail-body' }, [
+            h('header', { class: 'audio-library__detail-header' }, [h('h3', folder.name)]),
+            h('p', { class: 'audio-library__detail-subtitle' }, folder.path || '/'),
+            canManageLibrary.value ? h(NButton, { size: 'small', type: 'error', ghost: true, onClick: confirmDeleteFolder }, { default: () => '删除目录' }) : null,
+          ]);
+        }
         return h('div', { class: 'audio-library__detail-body' }, [
           h('header', { class: 'audio-library__detail-header' }, [
             h('div', [
@@ -858,7 +926,7 @@ const detailContent = defineComponent({
               ),
             ]),
           ]),
-          audio.canManage
+          canManageLibrary.value
             ? h('div', { class: 'audio-library__detail-actions audio-library__detail-actions--stacked' }, [
                 h(
                   NButton,
@@ -909,7 +977,8 @@ function renderSortableHeader(label: string, field: NonNullable<AudioSearchFilte
   );
 }
 
-const columns = computed<DataTableColumns<AudioAsset>>(() => [
+const columns = computed<DataTableColumns<AudioAsset>>(() => {
+  const allColumns: DataTableColumns<AudioAsset> = [
   {
     type: 'selection',
     multiple: true,
@@ -917,24 +986,26 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     fixed: 'left',
   },
   {
-    title: () => renderSortableHeader('名称', 'name'),
+    title: () => audio.audioLibrary.mode === 's3' ? '名称' : renderSortableHeader('名称', 'name'),
     key: 'name',
     minWidth: 320,
     render: (row) =>
       h('div', { class: 'audio-table__name-wrap' }, [
         h('div', { class: 'audio-table__name' }, [
           h('span', { class: 'audio-table__title' }, row.name),
-          h(
-            'p',
-            { class: 'audio-table__meta' },
-            [
-              folderLabel(row.folderId) || '未分类',
-              row.createdBy ? formatUserLabel(row.createdBy) : '未知上传者',
-              row.visibility === 'public' ? '公开' : '受限',
-            ].join(' · ')
-          ),
+          audio.audioLibrary.mode !== 's3'
+            ? h(
+                'p',
+                { class: 'audio-table__meta' },
+                [
+                  folderLabel(row.folderId) || '未分类',
+                  row.createdBy ? formatUserLabel(row.createdBy) : '未知上传者',
+                  row.visibility === 'public' ? '公开' : '受限',
+                ].join(' · ')
+              )
+            : null,
           row.description ? h('p', { class: 'audio-table__desc' }, row.description) : null,
-          isMobileLayout.value && audio.canEditAsset(row)
+          isMobileLayout.value && audio.audioLibrary.mode !== 's3' && audio.canEditAsset(row)
             ? h('div', { class: 'audio-table__mobile-reorder' }, [
                 h(
                   NButton,
@@ -1040,7 +1111,17 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     width: 148,
     render: (row) => formatDate(row.updatedAt),
   },
-]);
+  ];
+  if (audio.audioLibrary.mode === 's3') {
+    return [
+      ...allColumns.filter((column: any) => ['selection', 'name'].includes(column.key)),
+      { title: '大小', key: 'size', width: 100, render: (row) => formatFileSize(row.size) },
+      { title: '类型', key: 'extension', width: 90, render: (row) => String((row as any).extension || '').replace(/^\./, '').toUpperCase() || '-' },
+      { title: '最后修改时间', key: 'updatedAt', width: 168, render: (row) => formatDate(row.updatedAt) },
+    ] as DataTableColumns<AudioAsset>;
+  }
+  return allColumns;
+});
 
 const rowKey = (row: AudioAsset) => row.id;
 const rowClassName = (row: AudioAsset) =>
@@ -1261,8 +1342,16 @@ function getDurationFilter(): [number, number] | null {
 }
 
 async function handleRefresh() {
-  await audio.fetchFolders();
-  await audio.fetchAssets();
+  if (audio.audioLibrary.mode === 's3') {
+    await Promise.all([
+      audio.fetchFolders(),
+      audio.fetchAssets({ pagination: { page: 1 } }),
+      audio.fetchTrackSelectableAssets(),
+    ]);
+  } else {
+    await audio.fetchFolders();
+    await audio.fetchAssets();
+  }
   message.success('素材列表已刷新');
 }
 
@@ -1272,6 +1361,27 @@ function toggleManualSort() {
 
 function openAssetManagement() {
   assetManagementVisible.value = true;
+}
+
+async function handleS3ModeSaved(settings: typeof audio.audioLibrary) {
+  audio.audioLibrary = settings;
+  audio.audioLibraryPrefixes = [];
+  audio.audioLibraryCursor = '';
+  audio.audioLibraryAssetCursors = {};
+  audio.audioLibraryResolveCache = {};
+  audio.audioLibraryError = null;
+  audio.playableStreamCacheByAsset = {};
+  audio.filters.folderId = null;
+  folderKeys.value = ['all'];
+  audio.selectedAssetId = null;
+  audio.assets = [];
+  audio.filteredAssets = [];
+  audio.trackSelectableAssets = [];
+  await Promise.all([
+    audio.fetchFolders(),
+    audio.fetchAssets({ pagination: { page: 1 } }),
+    audio.fetchTrackSelectableAssets(),
+  ]);
 }
 
 async function handleAssetManagementChanged() {
@@ -1316,7 +1426,6 @@ async function handleFolderSelect(keys: Array<string | number>) {
     return;
   }
   await audio.applyFilters({ folderId: target });
-  audio.setSelectedAsset(null);
   if (isMobileLayout.value) {
     folderDrawerVisible.value = false;
   }
@@ -1364,7 +1473,7 @@ function openEditFolderMeta() {
 }
 
 async function handleSaveFolder() {
-  if (!audio.canManage) {
+  if (!canManageLibrary.value) {
     message.error('没有权限管理文件夹');
     return;
   }
@@ -1446,6 +1555,8 @@ function openAssetEditor(asset: AudioAsset) {
   if (!audio.canEditAsset(asset)) return;
   assetForm.id = asset.id;
   assetForm.name = asset.name;
+  assetForm.contentType = String((asset as AudioAsset & { contentType?: string }).contentType || '');
+  assetForm.originalContentType = assetForm.contentType;
   assetForm.description = asset.description || '';
   assetForm.tags = [...asset.tags];
   assetForm.folderId = asset.folderId;
@@ -1465,6 +1576,13 @@ async function handleSaveAsset() {
       folderId: assetForm.folderId,
       visibility: assetForm.visibility,
     };
+    if (
+      audio.audioLibrary.mode === 's3'
+      && assetForm.contentType.trim()
+      && assetForm.contentType.trim() !== assetForm.originalContentType.trim()
+    ) {
+      payload.contentType = assetForm.contentType.trim();
+    }
     if (audio.isSystemAdmin) {
       if (assetForm.scope === 'world') {
         if (!assetForm.worldId) {
@@ -1645,20 +1763,20 @@ function handleAssetDragEnd() {
 
 function handleListDragEnter(event: DragEvent) {
   if (isAssetReorderDrag(event)) return;
-  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  if (!canManageLibrary.value || !event.dataTransfer?.files?.length) return;
   dragUploadDepth.value += 1;
   dragUploadActive.value = true;
 }
 
 function handleListDragOver(event: DragEvent) {
   if (isAssetReorderDrag(event)) return;
-  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  if (!canManageLibrary.value || !event.dataTransfer?.files?.length) return;
   event.dataTransfer.dropEffect = 'copy';
   dragUploadActive.value = true;
 }
 
 function handleListDragLeave() {
-  if (!audio.canManage) return;
+  if (!canManageLibrary.value) return;
   dragUploadDepth.value = Math.max(0, dragUploadDepth.value - 1);
   if (dragUploadDepth.value === 0) {
     dragUploadActive.value = false;
@@ -1669,7 +1787,7 @@ function handleListDrop(event: DragEvent) {
   if (isAssetReorderDrag(event)) return;
   dragUploadDepth.value = 0;
   dragUploadActive.value = false;
-  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  if (!canManageLibrary.value || !event.dataTransfer?.files?.length) return;
   uploadDrawerVisible.value = true;
   const scope = dragUploadScope.value;
   audio.handleUpload(event.dataTransfer.files, {
@@ -1680,13 +1798,13 @@ function handleListDrop(event: DragEvent) {
 }
 
 function openBatchMoveModal() {
-  if (!audio.canManage || !selectionCount.value) return;
+  if (!canManageLibrary.value || !selectionCount.value) return;
   batchMoveTarget.value = currentFolder.value?.id ?? null;
   batchMoveModalVisible.value = true;
 }
 
 async function handleBatchMoveSave() {
-  if (!audio.canManage) return;
+  if (!canManageLibrary.value) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       folderId: batchMoveTarget.value ?? null,
@@ -1706,13 +1824,13 @@ async function handleBatchMoveSave() {
 }
 
 function openBatchVisibilityModal() {
-  if (!audio.canManage || !selectionCount.value) return;
+  if (!canManageLibrary.value || !selectionCount.value) return;
   batchVisibilityValue.value = 'public';
   batchVisibilityModalVisible.value = true;
 }
 
 async function handleBatchVisibilitySave() {
-  if (!audio.canManage) return;
+  if (!canManageLibrary.value) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       visibility: batchVisibilityValue.value,
@@ -1962,6 +2080,11 @@ onMounted(() => {
   min-height: 420px;
 }
 
+.audio-library__content.is-s3-mode {
+  height: clamp(420px, calc(100vh - 300px), 720px);
+  min-height: 0;
+}
+
 .audio-library__content.is-folder-collapsed {
   grid-template-columns: 72px minmax(0, 1fr) 320px;
 }
@@ -1991,6 +2114,47 @@ onMounted(() => {
   border-radius: 12px;
   padding: 0.75rem;
   background: var(--audio-card-surface, var(--sc-bg-elevated));
+  min-height: 0;
+}
+
+.audio-library__folders {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.audio-library__folders,
+.audio-library__folder-scroll,
+.audio-library__table-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb, var(--sc-border-mute)) transparent;
+}
+
+.audio-library__folders::-webkit-scrollbar,
+.audio-library__folder-scroll::-webkit-scrollbar,
+.audio-library__table-scroll::-webkit-scrollbar {
+  width: var(--sc-scrollbar-size, 6px);
+  height: var(--sc-scrollbar-size, 6px);
+}
+
+.audio-library__folders::-webkit-scrollbar-track,
+.audio-library__folder-scroll::-webkit-scrollbar-track,
+.audio-library__table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.audio-library__folders::-webkit-scrollbar-thumb,
+.audio-library__folder-scroll::-webkit-scrollbar-thumb,
+.audio-library__table-scroll::-webkit-scrollbar-thumb {
+  background: var(--sc-scrollbar-thumb, var(--sc-border-mute));
+  border-radius: 999px;
+}
+
+.audio-library__folders::-webkit-scrollbar-thumb:hover,
+.audio-library__folder-scroll::-webkit-scrollbar-thumb:hover,
+.audio-library__table-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--sc-scrollbar-thumb-hover, var(--sc-border-strong));
 }
 
 .audio-library__folders.is-collapsed {
@@ -2008,6 +2172,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.audio-library__folder-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.25rem;
 }
 
 .audio-library__panel-title {
@@ -2046,6 +2217,13 @@ onMounted(() => {
   gap: 0.5rem;
   position: relative;
   min-width: 0;
+  overflow: hidden;
+}
+
+.audio-library__table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .audio-library__table-top {
@@ -2314,6 +2492,11 @@ onMounted(() => {
 @media (max-width: 960px) {
   .audio-library__content {
     grid-template-columns: 1fr;
+  }
+
+  .audio-library__content.is-s3-mode {
+    height: auto;
+    min-height: 0;
   }
 
   .audio-library__content.is-folder-collapsed,

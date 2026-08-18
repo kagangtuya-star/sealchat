@@ -13,6 +13,7 @@ import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } fro
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
 import { normalizeStageMusicSnapshot, type StageMusicSnapshot } from '@/views/theater/shared/stage-types';
+import type { AudioLibraryAsset, AudioLibraryPrefix, AudioLibrarySettings } from '@/types/audio-library';
 import type {
   AudioAsset,
   AudioAssetBatchDeleteSummary,
@@ -124,6 +125,15 @@ interface AudioStudioState {
   lastSnapshotFetchedAtByScope: Record<string, number>;
   channelSwitchSeq: number;
   playbackContextGeneration: number;
+  audioLibrary: AudioLibrarySettings;
+  audioLibraryPrefixes: AudioLibraryPrefix[];
+  audioLibraryCursor: string;
+  audioLibraryAssetCursors: Record<number, string>;
+  audioLibraryResolveCache: Record<string, AudioAsset>;
+  audioLibraryError: string | null;
+  s3FolderFetchSeq: number;
+  s3AssetFetchSeq: number;
+  s3SelectableFetchSeq: number;
 }
 
 interface PlaybackSyncPayload {
@@ -376,6 +386,33 @@ function normalizeAudioAssets(assets: AudioAsset[]): AudioAsset[] {
   return assets.map((asset) => normalizeAudioAsset(asset));
 }
 
+function normalizeS3LibraryAsset(asset: AudioLibraryAsset): AudioAsset {
+  const result = {
+    id: asset.ref,
+    name: asset.name,
+    size: asset.size,
+    storageType: 's3',
+    objectKey: asset.key,
+    tags: [],
+    folderId: null,
+    createdAt: asset.lastModified,
+    updatedAt: asset.lastModified,
+  } as unknown as AudioAsset;
+  (result as any).etag = asset.etag;
+  (result as any).extension = asset.extension;
+  (result as any).contentType = asset.contentType;
+  return result;
+}
+
+function audioLibraryErrorMessage(error: unknown, fallback: string): string {
+  const value = error as any;
+  return String(value?.response?.data?.message || value?.response?.data?.error || value?.message || fallback);
+}
+
+function audioLibraryCacheBust(): number {
+  return Date.now();
+}
+
 interface FetchAssetsOptions {
   filters?: Partial<AudioSearchFilters>;
   pagination?: Partial<PaginationState>;
@@ -526,6 +563,24 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     lastSnapshotFetchedAtByScope: {},
     channelSwitchSeq: 0,
     playbackContextGeneration: 0,
+    audioLibrary: {
+      mode: 'database',
+      prefix: '',
+      selectorDepth: 2,
+      sourceId: '',
+      s3Available: false,
+      bucketLabel: '',
+      canConfigure: false,
+      version: 1,
+    },
+    audioLibraryPrefixes: [],
+    audioLibraryCursor: '',
+    audioLibraryAssetCursors: {},
+    audioLibraryResolveCache: {},
+    audioLibraryError: null,
+    s3FolderFetchSeq: 0,
+    s3AssetFetchSeq: 0,
+    s3SelectableFetchSeq: 0,
   }),
 
   getters: {
@@ -901,6 +956,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           page: 1,
           total: 0,
         };
+        this.audioLibrary = {
+          mode: 'database',
+          prefix: '',
+          selectorDepth: 2,
+          sourceId: '',
+          s3Available: false,
+          bucketLabel: '',
+          canConfigure: false,
+          version: 1,
+        };
+        this.audioLibraryPrefixes = [];
+        this.audioLibraryCursor = '';
+        this.audioLibraryAssetCursors = {};
+        this.audioLibraryResolveCache = {};
+        this.audioLibraryError = null;
       }
       if (worldId) {
         this.filters.worldId = worldId;
@@ -916,15 +986,25 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       }
       if (changed && this.initialized) {
-        void this.fetchScenes();
-        void this.fetchFolders();
-        void this.fetchTrackSelectableAssets();
-        void this.fetchAssets({ pagination: { page: 1 } });
+        void (async () => {
+          try {
+            await this.fetchAudioLibrarySettings();
+          } catch (error) {
+            console.warn('fetch audio library settings on world switch failed', error);
+          }
+          await Promise.all([
+            this.fetchScenes(),
+            this.fetchFolders(),
+            this.fetchTrackSelectableAssets(),
+            this.fetchAssets({ pagination: { page: 1 } }),
+          ]);
+        })();
       }
     },
 
     canEditAsset(asset: AudioAsset): boolean {
       if (this.isSystemAdmin) return true;
+      if (this.audioLibrary.mode === 's3') return false;
       if (asset.scope === 'common') return false;
       if (!this.canManageCurrentWorld) return false;
       return asset.worldId === this.currentWorldId;
@@ -1466,9 +1546,53 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    async fetchAudioLibrarySettings() {
+      const resp = await api.get('/api/v1/audio/library/settings', { params: { worldId: this.currentWorldId || undefined, _refresh: audioLibraryCacheBust() } });
+      this.audioLibrary = resp.data as AudioLibrarySettings;
+      this.audioLibraryError = null;
+      return this.audioLibrary;
+    },
+
+    async saveAudioLibrarySettings(mode: 'database' | 's3', prefix: string, selectorDepth = this.audioLibrary.selectorDepth) {
+      const resp = await api.put('/api/v1/audio/library/settings', { worldId: this.currentWorldId || undefined, mode, prefix, selectorDepth });
+      this.audioLibrary = resp.data as AudioLibrarySettings;
+      this.audioLibraryPrefixes = [];
+      this.audioLibraryCursor = '';
+      this.audioLibraryAssetCursors = {};
+      this.audioLibraryResolveCache = {};
+      this.audioLibraryError = null;
+      this.playableStreamCacheByAsset = {};
+      this.filters.folderId = null;
+      this.selectedAssetId = null;
+      this.assets = [];
+      this.filteredAssets = [];
+      this.trackSelectableAssets = [];
+      await Promise.all([
+        this.fetchFolders(),
+        this.fetchAssets({ pagination: { page: 1 } }),
+        this.fetchTrackSelectableAssets(),
+      ]);
+      return this.audioLibrary;
+    },
+
+    async fetchAudioLibraryPrefixes(prefix = '', cursor = '') {
+      if (this.audioLibrary.mode !== 's3') return [] as AudioLibraryPrefix[];
+      const resp = await api.get('/api/v1/audio/library/s3/prefixes', { params: { worldId: this.currentWorldId || undefined, prefix, cursor, limit: 100, _refresh: audioLibraryCacheBust() } });
+      const prefixes = (resp.data?.prefixes || []) as AudioLibraryPrefix[];
+      if (!cursor) this.audioLibraryPrefixes = prefixes;
+      else this.audioLibraryPrefixes = [...this.audioLibraryPrefixes, ...prefixes];
+      this.audioLibraryCursor = String(resp.data?.nextCursor || '');
+      return prefixes;
+    },
+
     async ensureInitialized() {
       if (this.initialized) return;
       this.refreshEmbeddedRuntimeSnapshot();
+      try {
+        await this.fetchAudioLibrarySettings();
+      } catch (error) {
+        console.warn('fetch audio library settings failed', error);
+      }
       await Promise.all([this.fetchScenes(), this.fetchFolders(), this.fetchTrackSelectableAssets()]);
       await this.fetchAssets();
       this.initialized = true;
@@ -1534,6 +1658,23 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           this.selectedSceneId = items[0].id;
         } else if (this.selectedSceneId && !items.some((scene) => scene.id === this.selectedSceneId)) {
           this.selectedSceneId = items[0]?.id ?? null;
+        }
+        if (this.audioLibrary.mode === 's3') {
+          const refs = [...new Set(items.flatMap((scene) => scene.tracks.flatMap((track) => [
+            track.assetId,
+            ...(track.playlistAssetIds || []),
+          ]).filter((ref): ref is string => Boolean(ref))))];
+          if (refs.length) {
+            try {
+              const resolved = await api.post('/api/v1/audio/library/assets/resolve', { worldId: this.currentWorldId || undefined, refs });
+              for (const item of (resolved.data?.items || []) as AudioLibraryAsset[]) {
+                const normalized = normalizeS3LibraryAsset(item);
+                this.audioLibraryResolveCache[normalized.id] = normalized;
+              }
+            } catch (resolveError) {
+              console.warn('resolve S3 scene assets failed', resolveError);
+            }
+          }
         }
       } catch (err) {
         console.error('fetchScenes failed', err);
@@ -1673,6 +1814,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchAssets(options?: FetchAssetsOptions) {
+      const requestSeq = ++this.s3AssetFetchSeq;
       if (!options?.silent) {
         this.assetsLoading = true;
       }
@@ -1688,8 +1830,42 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           ...this.assetPagination,
           ...(options?.pagination || {}),
         };
+        if (this.audioLibrary.mode === 's3') {
+          if (!options?.pagination) pagination.page = 1;
+          if (pagination.page === 1) this.audioLibraryAssetCursors = {};
+          const resp = await api.get('/api/v1/audio/library/assets', {
+            params: {
+              worldId: this.currentWorldId || undefined,
+              prefix: (this.filters.folderId && this.folderPathLookup[this.filters.folderId]) || this.audioLibrary.prefix,
+              cursor: this.audioLibraryAssetCursors[pagination.page] || '',
+              limit: pagination.pageSize,
+              _refresh: audioLibraryCacheBust(),
+            },
+          });
+          if (requestSeq !== this.s3AssetFetchSeq) return;
+          const libraryItems = (resp.data?.items || []) as AudioLibraryAsset[];
+          const items = libraryItems.map(normalizeS3LibraryAsset);
+          const query = String(mergedFilters.query || '').trim().toLowerCase();
+          const visibleItems = query
+            ? items.filter((asset) => `${asset.name} ${(asset as any).objectKey || ''}`.toLowerCase().includes(query))
+            : items;
+          this.assets = visibleItems;
+          this.filteredAssets = visibleItems;
+          this.assetPagination = { page: pagination.page, pageSize: pagination.pageSize, total: visibleItems.length + (resp.data?.isTruncated ? pagination.pageSize : 0) };
+          this.quotaSummary = null;
+          this.audioLibraryError = null;
+          this.audioLibraryCursor = String(resp.data?.nextCursor || '');
+          if (resp.data?.nextCursor) {
+            this.audioLibraryAssetCursors = { ...this.audioLibraryAssetCursors, [pagination.page + 1]: String(resp.data.nextCursor) };
+          }
+          if (!visibleItems.some((asset) => asset.id === this.selectedAssetId)) {
+            this.selectedAssetId = visibleItems[0]?.id ?? null;
+          }
+          return;
+        }
         const params = buildAssetQueryParams(mergedFilters, pagination);
         const resp = await api.get('/api/v1/audio/assets', { params });
+        if (requestSeq !== this.s3AssetFetchSeq) return;
         const raw = resp.data as AudioAssetListResult | PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
         const items = normalizeAudioAssets(Array.isArray(raw) ? raw : raw?.items || []);
         const page = !Array.isArray(raw) && raw?.page ? raw.page : pagination.page;
@@ -1710,6 +1886,16 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
         await this.persistAssetsToCache();
       } catch (err) {
+        if (requestSeq !== this.s3AssetFetchSeq) return;
+        if (this.audioLibrary.mode === 's3') {
+          console.warn('fetch S3 audio library failed', err);
+          this.audioLibraryError = audioLibraryErrorMessage(err, '读取 S3 音频素材失败');
+          this.assets = [];
+          this.filteredAssets = [];
+          this.assetPagination = { ...this.assetPagination, page: 1, total: 0 };
+          this.quotaSummary = null;
+          return;
+        }
         console.warn('fetchAssets failed, fallback to cache', err);
         const query = (this.filters.query ?? '').trim().toLowerCase();
         const cached = query
@@ -1746,7 +1932,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           this.selectedAssetId = fallback[0]?.id ?? null;
         }
       } finally {
-        if (!options?.silent) {
+        if (requestSeq === this.s3AssetFetchSeq) {
           this.assetsLoading = false;
         }
       }
@@ -1756,6 +1942,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const normalizedFolderId = normalizeFolderId(folderId);
       if (!normalizedFolderId) {
         return [] as AudioAsset[];
+      }
+      if (this.audioLibrary.mode === 's3') {
+        const prefix = this.folderPathLookup[normalizedFolderId] || normalizedFolderId;
+        const resp = await api.get('/api/v1/audio/library/assets', { params: { worldId: this.currentWorldId || undefined, prefix, limit: pageSize, _refresh: audioLibraryCacheBust() } });
+        return ((resp.data?.items || []) as AudioLibraryAsset[]).map(normalizeS3LibraryAsset);
       }
 
       const playlistFilters: AudioSearchFilters = {
@@ -1794,7 +1985,22 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return Array.from(assetMap.values());
     },
 
-    async fetchTrackSelectableAssets(pageSize = 200) {
+    async fetchTrackSelectableAssets(pageSize = 1000) {
+      const requestSeq = ++this.s3SelectableFetchSeq;
+      if (this.audioLibrary.mode === 's3') {
+        try {
+          const resp = await api.get('/api/v1/audio/library/assets/selector', { params: { worldId: this.currentWorldId || undefined, prefix: this.audioLibrary.prefix, depth: this.audioLibrary.selectorDepth, limit: pageSize, _refresh: audioLibraryCacheBust() } });
+          if (requestSeq !== this.s3SelectableFetchSeq) return [] as AudioAsset[];
+          const result = ((resp.data?.items || []) as AudioLibraryAsset[]).map(normalizeS3LibraryAsset);
+          this.trackSelectableAssets = result;
+          return result;
+        } catch (err) {
+          if (requestSeq !== this.s3SelectableFetchSeq) return [] as AudioAsset[];
+          this.audioLibraryError = audioLibraryErrorMessage(err, '读取 S3 音频素材失败');
+          this.trackSelectableAssets = [];
+          return [] as AudioAsset[];
+        }
+      }
       const worldId = this.currentWorldId ?? this.filters.worldId ?? null;
       if (!this.isSystemAdmin && !worldId) {
         this.trackSelectableAssets = [];
@@ -1840,12 +2046,33 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchFolders(options?: FetchFoldersOptions) {
+      const requestSeq = ++this.s3FolderFetchSeq;
       try {
         const params: Record<string, unknown> = {};
         const targetScope = options?.scope ?? this.filters.scope;
         const targetWorldId = normalizeFolderId(options?.worldId ?? this.filters.worldId);
         const includeCommon = options?.includeCommon ?? this.filters.includeCommon;
         const applyState = options?.applyState ?? true;
+        if (this.audioLibrary.mode === 's3') {
+          const resp = await api.get('/api/v1/audio/library/s3/prefixes', {
+            params: { worldId: this.currentWorldId || undefined, prefix: this.audioLibrary.prefix, cursor: '', limit: 100, _refresh: audioLibraryCacheBust() },
+          });
+          if (requestSeq !== this.s3FolderFetchSeq) return [] as AudioFolder[];
+          const prefixes = (resp.data?.prefixes || []) as AudioLibraryPrefix[];
+          const items = prefixes.map((item) => ({
+            id: item.ref,
+            parentId: null,
+            name: item.name,
+            path: item.prefix,
+          })) as unknown as AudioFolder[];
+          if (applyState) {
+            this.folders = items;
+            this.folderPathLookup = buildFolderPathLookup(this.folders);
+            this.audioLibraryPrefixes = prefixes;
+            this.audioLibraryError = null;
+          }
+          return items;
+        }
         if (!this.isSystemAdmin && !targetWorldId) {
           if (applyState) {
             this.folders = [];
@@ -1863,6 +2090,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           params.includeCommon = includeCommon;
         }
         const resp = await api.get('/api/v1/audio/folders', { params });
+        if (requestSeq !== this.s3FolderFetchSeq) return [] as AudioFolder[];
         const items = (resp.data?.items || []) as AudioFolder[];
         if (applyState) {
           this.folders = items;
@@ -1871,7 +2099,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
         return items;
       } catch (err) {
+        if (requestSeq !== this.s3FolderFetchSeq) return [] as AudioFolder[];
         console.error('fetchFolders failed', err);
+        if (this.audioLibrary.mode === 's3') {
+          this.audioLibraryError = audioLibraryErrorMessage(err, '读取 S3 文件夹失败');
+        }
         if (options?.applyState ?? true) {
           this.folders = [];
           this.folderPathLookup = {};
@@ -1883,6 +2115,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async createFolder(payload: AudioFolderPayload) {
       this.folderActionLoading = true;
       try {
+        if (this.audioLibrary.mode === 's3') {
+          const parentPath = payload.parentId ? this.folderPathLookup[payload.parentId] || '' : this.audioLibrary.prefix;
+          const prefix = `${String(parentPath || '').replace(/\/$/, '')}/${payload.name}`.replace(/^\//, '');
+          await api.post('/api/v1/audio/library/folders', { prefix }, { params: { worldId: this.currentWorldId || undefined } });
+          await this.fetchFolders();
+          return null;
+        }
         const effectivePayload = { ...payload };
         if (!effectivePayload.scope) {
           if (this.filters.scope) {
@@ -1911,6 +2150,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!folderId) return;
       this.folderActionLoading = true;
       try {
+        if (this.audioLibrary.mode === 's3') {
+          throw new Error('S3 文件夹不支持数据库元数据编辑');
+        }
         await api.patch(`/api/v1/audio/folders/${folderId}`, payload);
         await this.fetchFolders();
       } catch (err) {
@@ -1925,6 +2167,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!folderId) return;
       this.folderActionLoading = true;
       try {
+        if (this.audioLibrary.mode === 's3') {
+          const prefix = this.folderPathLookup[folderId];
+          if (!prefix) throw new Error('S3 文件夹不存在');
+          await api.delete('/api/v1/audio/library/folders', { params: { worldId: this.currentWorldId || undefined }, data: { prefix } });
+          if (this.filters.folderId === folderId) this.filters.folderId = null;
+          await this.fetchFolders();
+          await this.fetchAssets({ pagination: { page: 1 } });
+          return;
+        }
         await api.delete(`/api/v1/audio/folders/${folderId}`);
         if (this.filters.folderId === folderId) {
           this.filters.folderId = null;
@@ -2087,6 +2338,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (payload.assetId && !options?.deferLoad) {
         this.loadTrackAsset(type, payload.assetId, options);
       }
+      if (this.audioLibrary.mode === 's3' && payload.playlistAssetIds?.length) {
+        const track = this.tracks[type];
+        const refs = [...new Set(payload.playlistAssetIds.filter(Boolean))];
+        void api.post('/api/v1/audio/library/assets/resolve', { worldId: this.currentWorldId || undefined, refs }).then((response) => {
+          if (this.tracks[type] !== track) return;
+          const assets = ((response.data?.items || []) as AudioLibraryAsset[]).map(normalizeS3LibraryAsset);
+          assets.forEach((asset) => { this.audioLibraryResolveCache[asset.id] = asset; });
+          track.playlistAssets = assets;
+        }).catch((error) => {
+          console.warn('resolve S3 playlist assets failed', error);
+        });
+      }
       if (!options?.force) {
         this.queuePlaybackSync();
       }
@@ -2159,6 +2422,16 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchSingleAsset(assetId: string) {
+      if (this.audioLibrary.mode === 's3') {
+        if (this.audioLibraryResolveCache[assetId]) return this.audioLibraryResolveCache[assetId];
+        const resp = await api.post('/api/v1/audio/library/assets/resolve', { worldId: this.currentWorldId || undefined, refs: [assetId] });
+        const item = (resp.data?.items || [])[0] as AudioLibraryAsset | undefined;
+        if (!item) throw new Error('S3 audio asset not found');
+        const asset = normalizeS3LibraryAsset(item);
+        this.audioLibraryResolveCache[asset.id] = asset;
+        this.upsertAssetLocally(asset);
+        return asset;
+      }
       const resp = await api.get(`/api/v1/audio/assets/${assetId}`);
       const asset = normalizeAudioAsset(resp.data as AudioAsset);
       this.upsertAssetLocally(asset);
@@ -2190,7 +2463,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return cached.streamUrl;
       }
       this.refreshEmbeddedRuntimeSnapshot();
-      const resp = await api.post(`/api/v1/audio/assets/${normalizedAssetId}/play-token`);
+      const resp = this.audioLibrary.mode === 's3'
+        ? await api.post('/api/v1/audio/library/play-token', { worldId: this.currentWorldId || undefined, ref: normalizedAssetId })
+        : await api.post(`/api/v1/audio/assets/${normalizedAssetId}/play-token`);
       const data = resp.data as AudioPlayableStreamResponse;
       const streamUrl = String(data?.streamUrl || '').trim();
       if (!streamUrl) {
@@ -2647,6 +2922,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           const description = asset.description ?? '';
           const targets = [
             asset.name,
+            (asset as any).objectKey ?? '',
             asset.tags.join(' '),
             asset.createdBy,
             folderPath,
@@ -2734,6 +3010,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!assetId) return;
       this.assetMutationLoading = true;
       try {
+        if (this.audioLibrary.mode === 's3') {
+          const existing = this.assets.find((item) => item.id === assetId);
+          const targetPrefix = payload.folderId ? this.folderPathLookup[payload.folderId] || this.audioLibrary.prefix : this.audioLibrary.prefix;
+          const resp = await api.patch('/api/v1/audio/library/assets', {
+            ref: assetId,
+            name: payload.name || existing?.name,
+            targetPrefix,
+            expectedEtag: (existing as any)?.etag || '',
+            ...(payload.contentType ? { contentType: payload.contentType } : {}),
+          }, { params: { worldId: this.currentWorldId || undefined } });
+          if (resp.data?.item) this.upsertAssetLocally(normalizeS3LibraryAsset(resp.data.item as AudioLibraryAsset));
+          await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
+          return;
+        }
         const resp = await api.patch(`/api/v1/audio/assets/${assetId}`, payload);
         const updated = resp.data as AudioAsset | undefined;
         if (updated) {
@@ -2758,6 +3048,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!assetId) return;
       this.assetMutationLoading = true;
       try {
+        if (this.audioLibrary.mode === 's3') {
+          await api.delete('/api/v1/audio/library/assets', {
+            params: { worldId: this.currentWorldId || undefined },
+            data: { ref: assetId, forceDetach: options?.forceDetach === true, expectedEtag: (this.assets.find((item) => item.id === assetId) as any)?.etag || '' },
+          });
+          this.removeAssetLocally(assetId);
+          await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: false });
+          return { message: 'ok' } as AudioDeleteResult;
+        }
         const resp = await api.delete<AudioDeleteResult>(`/api/v1/audio/assets/${assetId}`, {
           params: options?.forceDetach ? { forceDetach: true } : undefined,
         });
@@ -2884,6 +3183,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async persistAssetsToCache() {
+      if (this.audioLibrary.mode === 's3') return;
       if (!this.assets.length) return;
       const lookup = this.folderPathLookup;
       try {
@@ -2979,20 +3279,29 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           if (options?.folderId) {
             formData.append('folderId', options.folderId);
           }
-          const resp = await api.post('/api/v1/audio/assets/upload', formData, {
+          const uploadEndpoint = this.audioLibrary.mode === 's3' ? '/api/v1/audio/library/upload' : '/api/v1/audio/assets/upload';
+          if (this.audioLibrary.mode === 's3') {
+            formData.append('prefix', (this.filters.folderId && this.folderPathLookup[this.filters.folderId]) || this.audioLibrary.prefix);
+            if (this.currentWorldId) formData.append('worldId', this.currentWorldId);
+          }
+          const resp = await api.post(uploadEndpoint, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
             timeout: getUploadTimeoutMs(),
           });
           const serverStatus = resp.data?.status;
-          const uploadedAsset = resp.data?.item as AudioAsset | undefined;
-          const assetId = resp.data?.item?.id;
+          const uploadedAsset = this.audioLibrary.mode === 's3'
+            ? (resp.data?.item ? normalizeS3LibraryAsset(resp.data.item as AudioLibraryAsset) : undefined)
+            : (resp.data?.item as AudioAsset | undefined);
+          const assetId = this.audioLibrary.mode === 's3' ? resp.data?.item?.ref : resp.data?.item?.id;
           if (assetId) {
             task.assetId = assetId;
           }
           if (uploadedAsset) {
             this.upsertAssetLocally(uploadedAsset);
           }
-          if (serverStatus === 'processing') {
+          if (this.audioLibrary.mode === 's3') {
+            task.status = 'success';
+          } else if (serverStatus === 'processing') {
             task.status = 'transcoding';
             startTranscodeWatcher(this);
           } else if (serverStatus === 'failed') {

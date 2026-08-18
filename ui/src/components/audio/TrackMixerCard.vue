@@ -231,9 +231,21 @@ const currentSeconds = computed(() => {
   return duration * props.track.progress;
 });
 
-const selectableAssets = computed(() => (
-  props.track.playlistFolderId ? props.track.playlistAssets : audio.trackSelectableAssets
-));
+const selectableAssets = computed(() => {
+  const base = props.track.playlistFolderId ? props.track.playlistAssets : audio.trackSelectableAssets;
+  if (audio.audioLibrary.mode !== 's3') return base;
+  const selectedRefs = new Set([
+    props.track.assetId,
+    ...(props.track.playlistAssetIds || []),
+  ].filter((value): value is string => Boolean(value)));
+  const cached = Object.values(audio.audioLibraryResolveCache).filter((asset) => selectedRefs.has(asset.id));
+  const seen = new Set<string>();
+  return [...base, ...cached].filter((asset) => {
+    if (seen.has(asset.id)) return false;
+    seen.add(asset.id);
+    return true;
+  });
+});
 const assetsAvailable = computed(() => selectableAssets.value.length > 0);
 const assetOptions = computed(() =>
   selectableAssets.value.map((asset) => ({
@@ -321,7 +333,8 @@ function handleSelect(value: string | null) {
   const asset =
     selectableAssets.value.find((item) => item.id === value)
     || audio.assets.find((item) => item.id === value)
-    || audio.filteredAssets.find((item) => item.id === value);
+    || audio.filteredAssets.find((item) => item.id === value)
+    || audio.audioLibraryResolveCache[value];
   if (asset) {
     audio.assignAssetToTrack(props.track.type, asset as AudioAsset);
   }

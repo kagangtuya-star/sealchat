@@ -359,7 +359,7 @@ function trackLabel(type: string) {
 
 function findAssetName(assetId: string | null) {
   if (!assetId) return '未绑定';
-  return audio.assets.find((asset) => asset.id === assetId)?.name || '未知素材';
+  return [...audio.assets, ...audio.trackSelectableAssets, ...Object.values(audio.audioLibraryResolveCache)].find((asset) => asset.id === assetId)?.name || '源对象不存在';
 }
 
 const drawerTitle = computed(() => {

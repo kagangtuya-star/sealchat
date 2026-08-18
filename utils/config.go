@@ -59,6 +59,13 @@ type AudioConfig struct {
 	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
+type AudioLibraryMode string
+
+const (
+	AudioLibraryModeDatabase AudioLibraryMode = "database"
+	AudioLibraryModeS3       AudioLibraryMode = "s3"
+)
+
 type TheaterMediaConfig struct {
 	Enabled                 bool  `json:"enabled" yaml:"enabled"`
 	WorkerConcurrency       int   `json:"workerConcurrency" yaml:"workerConcurrency"`
@@ -1794,6 +1801,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
 		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
+		k.Delete("audio.s3Library")
 		_ = k.Set("sqlite.wal", config.SQLite.EnableWAL)
 		_ = k.Set("sqlite.busyTimeout", config.SQLite.BusyTimeoutMS)
 		_ = k.Set("sqlite.cacheSizeKB", config.SQLite.CacheSizeKB)
