@@ -34,6 +34,7 @@ import type {
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
+  AudioLibraryMode,
   AudioPlayableStreamResponse,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
@@ -384,6 +385,46 @@ function normalizeAudioAsset(asset: AudioAsset): AudioAsset {
 
 function normalizeAudioAssets(assets: AudioAsset[]): AudioAsset[] {
   return assets.map((asset) => normalizeAudioAsset(asset));
+}
+
+export type AudioSceneLibraryMode = AudioLibraryMode | 'mixed' | null;
+
+export function isS3AudioRef(value: string | null | undefined): boolean {
+  const ref = String(value || '').trim();
+  return ref.startsWith('aud:s3:v1:') || ref.startsWith('aud:s3p:v1:');
+}
+
+export function sceneUsesS3DirectRead(scene: Pick<AudioScene, 'tracks'> | null | undefined): boolean {
+  return (scene?.tracks || []).some((track) => [
+    track.assetId,
+    track.playlistFolderId,
+    ...(track.playlistAssetIds || []),
+  ].some((ref) => isS3AudioRef(ref)));
+}
+
+export function getAudioSceneLibraryMode(scene: Pick<AudioScene, 'tracks'> | null | undefined): AudioSceneLibraryMode {
+  if (!scene) return null;
+  const modes = new Set<AudioLibraryMode>();
+  for (const track of scene.tracks || []) {
+    const refs = [track.assetId, track.playlistFolderId, ...(track.playlistAssetIds || [])];
+    refs.forEach((ref) => {
+      if (!String(ref || '').trim()) return;
+      modes.add(isS3AudioRef(ref) ? 's3' : 'database');
+    });
+  }
+  if (modes.size > 1) return 'mixed';
+  return modes.values().next().value || null;
+}
+
+function getAudioSceneModeMismatchMessage(scene: AudioScene, currentMode: AudioLibraryMode): string | null {
+  const sceneMode = getAudioSceneLibraryMode(scene);
+  if (!sceneMode || (sceneMode !== 'mixed' && sceneMode === currentMode)) return null;
+  if (sceneMode === 'mixed') {
+    return '播放列表包含数据库与 S3 直读素材，模式不匹配，无法切换或播放';
+  }
+  const sceneLabel = sceneMode === 's3' ? 'S3直读' : '数据库';
+  const currentLabel = currentMode === 's3' ? 'S3直读' : '数据库';
+  return `播放列表为${sceneLabel}模式，当前素材库为${currentLabel}模式，模式不匹配，无法切换或播放`;
 }
 
 function normalizeS3LibraryAsset(asset: AudioLibraryAsset): AudioAsset {
@@ -1597,7 +1638,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.fetchAssets();
       this.initialized = true;
       if (this.canManage && !this.currentSceneId && this.scenes.length) {
-        this.applyScene(this.scenes[0].id);
+        void this.applyScene(this.scenes[0].id).catch((error) => {
+          console.warn('初始播放列表模式不匹配', error);
+        });
       }
     },
 
@@ -2202,6 +2245,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!sceneId || (!this.canManage && !options?.force)) return;
       const scene = this.scenes.find((item) => item.id === sceneId);
       if (!scene) return;
+      const modeMismatchMessage = getAudioSceneModeMismatchMessage(scene, this.audioLibrary.mode);
+      if (modeMismatchMessage) {
+        throw new Error(modeMismatchMessage);
+      }
       const applySeq = ++sceneApplySeq;
       const shouldPlay = options?.autoPlay ?? this.isPlaying;
 

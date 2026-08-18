@@ -83,6 +83,7 @@
               <p>{{ selectedScene.description || '暂无描述' }}</p>
             </div>
             <n-tag size="small" v-if="selectedScene.channelScope">频道限定</n-tag>
+            <n-tag size="small" type="info" v-if="selectedSceneIsS3DirectRead">S3直读</n-tag>
           </header>
           <section class="scene-board__detail-section">
             <strong>标签</strong>
@@ -151,7 +152,7 @@ import {
   type FormRules,
 } from 'naive-ui';
 import type { AudioScene } from '@/types/audio';
-import { useAudioStudioStore } from '@/stores/audioStudio';
+import { sceneUsesS3DirectRead, useAudioStudioStore } from '@/stores/audioStudio';
 
 const audio = useAudioStudioStore();
 const message = useMessage();
@@ -176,6 +177,7 @@ const sceneFormRules: FormRules = {
 
 const sceneData = computed(() => audio.scenes);
 const selectedScene = computed(() => audio.selectedScene);
+const selectedSceneIsS3DirectRead = computed(() => sceneUsesS3DirectRead(selectedScene.value));
 const hasSelection = computed(() => checkedSceneIds.value.length > 0);
 
 const columns = computed<DataTableColumns<AudioScene>>(() => [
@@ -198,8 +200,8 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
     key: 'tags',
     minWidth: 120,
     render: (row) =>
-      row.tags.length
-        ? row.tags.map((tag) => h(NTag, { size: 'tiny', bordered: false, key: tag }, { default: () => tag }))
+      sceneTags(row).length
+        ? sceneTags(row).map((tag) => h(NTag, { size: 'tiny', bordered: false, key: tag }, { default: () => tag }))
         : '-',
   },
   {
@@ -345,12 +347,24 @@ function confirmBatchDelete() {
 }
 
 async function applyScene(scene: AudioScene, autoPlay: boolean) {
-  await audio.applyScene(scene.id, { autoPlay });
-  if (autoPlay) {
-    message.success(`已切换并播放「${scene.name}」`);
-  } else {
-    message.success(`已切换到「${scene.name}」`);
+  try {
+    await audio.applyScene(scene.id, { autoPlay });
+    if (autoPlay) {
+      message.success(`已切换并播放「${scene.name}」`);
+    } else {
+      message.success(`已切换到「${scene.name}」`);
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '播放列表模式不匹配，无法切换或播放');
   }
+}
+
+function sceneTags(scene: AudioScene): string[] {
+  const tags = [...scene.tags];
+  if (sceneUsesS3DirectRead(scene) && !tags.includes('S3直读')) {
+    tags.push('S3直读');
+  }
+  return tags;
 }
 
 function trackLabel(type: string) {
