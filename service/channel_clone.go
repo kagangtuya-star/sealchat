@@ -310,6 +310,7 @@ func cleanupClonedChannel(channelID string) {
 	db.Where("channel_id = ?", channelID).Delete(&model.StickyNoteModel{})
 
 	db.Where("channel_id = ?", channelID).Delete(&model.MemberModel{})
+	db.Where("channel_id = ?", channelID).Delete(&model.ChannelCharacterRemarkModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityFolderModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityFolderMemberModel{})

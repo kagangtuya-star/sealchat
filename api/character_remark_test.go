@@ -3,8 +3,6 @@ package api
 import (
 	"strings"
 	"testing"
-
-	"sealchat/protocol"
 )
 
 func TestNormalizeCharacterRemarkContent(t *testing.T) {
@@ -56,47 +54,5 @@ func TestNormalizeCharacterRemarkContent(t *testing.T) {
 				t.Fatalf("expected clear=%v, got %v", tt.wantClear, gotClear)
 			}
 		})
-	}
-}
-
-func TestCharacterRemarkCacheSnapshotAndRemove(t *testing.T) {
-	cache := newCharacterRemarkCache()
-
-	cache.upsert("channel-1", &protocol.CharacterRemarkEventPayload{
-		IdentityID: "identity-1",
-		UserID:     "user-1",
-		Content:    "前排侦察",
-		Action:     "update",
-	})
-	cache.upsert("channel-1", &protocol.CharacterRemarkEventPayload{
-		IdentityID: "identity-2",
-		UserID:     "user-2",
-		Content:    "后排支援",
-		Action:     "update",
-	})
-
-	items := cache.snapshot("channel-1")
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items in snapshot, got %d", len(items))
-	}
-
-	items[0].Content = "tampered"
-	itemsAgain := cache.snapshot("channel-1")
-	if len(itemsAgain) != 2 {
-		t.Fatalf("expected snapshot size remain 2, got %d", len(itemsAgain))
-	}
-	for _, item := range itemsAgain {
-		if item.IdentityID == "identity-1" && item.Content != "前排侦察" {
-			t.Fatalf("expected cached snapshot to remain unchanged, got %q", item.Content)
-		}
-	}
-
-	cache.remove("channel-1", "identity-1")
-	itemsAfterRemove := cache.snapshot("channel-1")
-	if len(itemsAfterRemove) != 1 {
-		t.Fatalf("expected 1 item after remove, got %d", len(itemsAfterRemove))
-	}
-	if itemsAfterRemove[0].IdentityID != "identity-2" {
-		t.Fatalf("expected remaining identity to be identity-2, got %q", itemsAfterRemove[0].IdentityID)
 	}
 }

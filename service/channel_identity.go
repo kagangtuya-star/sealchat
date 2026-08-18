@@ -728,6 +728,9 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityFolderMemberModel{}).Error; err != nil {
 			return err
 		}
+		if err := model.CharacterRemarkDeleteByIdentityTx(tx, identity.ChannelID, identity.ID); err != nil {
+			return err
+		}
 		if err := tx.Where("id = ?", identity.ID).Delete(&model.ChannelIdentityModel{}).Error; err != nil {
 			return err
 		}
@@ -809,6 +812,9 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 		return err
 	}
 	if err := model.ChannelIdentityVariantDeleteByIdentityIDs([]string{identity.ID}); err != nil {
+		return err
+	}
+	if err := model.CharacterRemarkDeleteByIdentityTx(model.GetDB(), channelID, identity.ID); err != nil {
 		return err
 	}
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {

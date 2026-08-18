@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { chatEvent, useChatStore } from './chat'
 import { useDisplayStore } from './display'
 import { useUserStore } from './user'
@@ -16,105 +16,25 @@ const CHARACTER_REMARK_MAX_LENGTH = 80
 
 export const useCharacterRemarkStore = defineStore('characterRemark', () => {
   const remarkByIdentity = ref<Record<string, CharacterRemarkEntry>>({})
-  const remarkCacheByChannel = ref<Record<string, Record<string, CharacterRemarkEntry>>>({})
+  const latestRevisionByIdentity = ref<Record<string, number>>({})
   const savingIdentityId = ref('')
 
   const chatStore = useChatStore()
   const userStore = useUserStore()
   const displayStore = useDisplayStore()
 
-  let loadedCacheKey = ''
   let gatewayBound = false
 
   const getUserId = () => userStore.info?.id || ''
 
-  const getCacheStorageKey = () => {
-    const userId = getUserId()
-    if (!userId || typeof window === 'undefined') {
-      return ''
-    }
-    return `characterRemarkCache:${userId}`
-  }
-
-  const ensureCacheLoaded = () => {
-    const key = getCacheStorageKey()
-    if (!key || key === loadedCacheKey) {
-      return key
-    }
-    loadedCacheKey = key
-    try {
-      const raw = localStorage.getItem(key)
-      if (!raw) {
-        remarkCacheByChannel.value = {}
-        return key
-      }
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') {
-        remarkCacheByChannel.value = parsed
-      } else {
-        remarkCacheByChannel.value = {}
-      }
-    } catch (error) {
-      console.warn('Failed to load character remarks from localStorage', error)
-      remarkCacheByChannel.value = {}
-    }
-    return key
-  }
-
-  const persistCache = () => {
-    const key = ensureCacheLoaded()
-    if (!key) {
-      return
-    }
-    try {
-      localStorage.setItem(key, JSON.stringify(remarkCacheByChannel.value))
-    } catch (error) {
-      console.warn('Failed to persist character remarks to localStorage', error)
-    }
-  }
-
-  const loadRemarkCache = (channelId: string) => {
-    if (!channelId) return
-    const key = ensureCacheLoaded()
-    if (!key) return
-    const cached = remarkCacheByChannel.value[channelId]
-    if (!cached || typeof cached !== 'object') {
-      return
-    }
-    const next = { ...remarkByIdentity.value }
-    let changed = false
-    Object.values(cached).forEach((entry) => {
-      if (!entry || typeof entry !== 'object') return
-      const rawEntry = entry as CharacterRemarkEntry & { updatedAt?: number }
-      const identityId = typeof rawEntry.identityId === 'string' ? rawEntry.identityId : ''
-      if (!identityId) return
-      const normalized: CharacterRemarkEntry = {
-        identityId,
-        channelId: typeof rawEntry.channelId === 'string' && rawEntry.channelId ? rawEntry.channelId : channelId,
-        userId: typeof rawEntry.userId === 'string' ? rawEntry.userId : '',
-        content: typeof rawEntry.content === 'string' ? rawEntry.content : '',
-        revision: typeof rawEntry.revision === 'number'
-          ? rawEntry.revision
-          : (typeof rawEntry.updatedAt === 'number' ? rawEntry.updatedAt : 0),
-      }
-      if (!normalized.content.trim()) {
-        return
-      }
-      const existing = next[identityId]
-      if (!existing || normalized.revision > existing.revision) {
-        next[identityId] = normalized
-        changed = true
-      }
-    })
-    if (changed) {
-      remarkByIdentity.value = next
-    }
-  }
-
   const upsertRemarkEntry = (entry: CharacterRemarkEntry) => {
-    const existing = remarkByIdentity.value[entry.identityId]
-    if (existing && entry.revision <= existing.revision) {
+    const latestRevision = latestRevisionByIdentity.value[entry.identityId] || 0
+    if (entry.revision <= latestRevision) {
       return
+    }
+    latestRevisionByIdentity.value = {
+      ...latestRevisionByIdentity.value,
+      [entry.identityId]: entry.revision,
     }
     remarkByIdentity.value = { ...remarkByIdentity.value, [entry.identityId]: entry }
   }
@@ -124,44 +44,6 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     const next = { ...remarkByIdentity.value }
     delete next[identityId]
     remarkByIdentity.value = next
-  }
-
-  const upsertRemarkCacheEntry = (entry: CharacterRemarkEntry) => {
-    if (!entry.identityId || !entry.channelId) return
-    const key = ensureCacheLoaded()
-    if (!key) return
-    const channelMap = { ...(remarkCacheByChannel.value[entry.channelId] || {}) }
-    const existing = channelMap[entry.identityId]
-    if (existing && entry.revision <= existing.revision) {
-      return
-    }
-    channelMap[entry.identityId] = entry
-    remarkCacheByChannel.value = {
-      ...remarkCacheByChannel.value,
-      [entry.channelId]: channelMap,
-    }
-    persistCache()
-  }
-
-  const removeRemarkCacheEntry = (channelId: string, identityId: string) => {
-    if (!channelId || !identityId) return
-    const key = ensureCacheLoaded()
-    if (!key) return
-    const channelMap = { ...(remarkCacheByChannel.value[channelId] || {}) }
-    if (!channelMap[identityId]) {
-      return
-    }
-    delete channelMap[identityId]
-    if (Object.keys(channelMap).length === 0) {
-      const { [channelId]: _removed, ...rest } = remarkCacheByChannel.value
-      remarkCacheByChannel.value = rest
-    } else {
-      remarkCacheByChannel.value = {
-        ...remarkCacheByChannel.value,
-        [channelId]: channelMap,
-      }
-    }
-    persistCache()
   }
 
   const removeRemarkEntriesByChannel = (channelId: string) => {
@@ -179,29 +61,6 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     }
   }
 
-  const clearRemarkCacheForChannel = (channelId: string) => {
-    if (!channelId) return
-    const key = ensureCacheLoaded()
-    if (!key) return
-    if (!Object.prototype.hasOwnProperty.call(remarkCacheByChannel.value, channelId)) {
-      return
-    }
-    const { [channelId]: _removed, ...rest } = remarkCacheByChannel.value
-    remarkCacheByChannel.value = rest
-    persistCache()
-  }
-
-  const replaceRemarkCacheForChannel = (channelId: string, entries: Record<string, CharacterRemarkEntry>) => {
-    if (!channelId) return
-    const key = ensureCacheLoaded()
-    if (!key) return
-    remarkCacheByChannel.value = {
-      ...remarkCacheByChannel.value,
-      [channelId]: entries,
-    }
-    persistCache()
-  }
-
   const applyRemarkEvent = (event?: any) => {
     const payload = event?.characterRemark
     const identityId = typeof payload?.identityId === 'string' ? payload.identityId : ''
@@ -213,17 +72,15 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
       : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now())
     const action = typeof payload?.action === 'string' ? payload.action : 'update'
     if (action === 'clear') {
-      const existing = remarkByIdentity.value[identityId]
-      if (existing && revision < existing.revision) {
+      const latestRevision = latestRevisionByIdentity.value[identityId] || 0
+      if (revision < latestRevision) {
         return
       }
-      const channelId = typeof event?.channel?.id === 'string'
-        ? event.channel.id
-        : remarkByIdentity.value[identityId]?.channelId || ''
-      removeRemarkEntry(identityId)
-      if (channelId) {
-        removeRemarkCacheEntry(channelId, identityId)
+      latestRevisionByIdentity.value = {
+        ...latestRevisionByIdentity.value,
+        [identityId]: revision,
       }
+      removeRemarkEntry(identityId)
       return
     }
     const channelId = typeof event?.channel?.id === 'string' ? event.channel.id : ''
@@ -239,7 +96,6 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
       revision,
     }
     upsertRemarkEntry(entry)
-    upsertRemarkCacheEntry(entry)
   }
 
   const applyRemarkSnapshot = (event?: any) => {
@@ -252,36 +108,43 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
       : []
     if (!items.length) {
       removeRemarkEntriesByChannel(channelId)
-      clearRemarkCacheForChannel(channelId)
       return
     }
     const next = { ...remarkByIdentity.value }
-    const cacheNext: Record<string, CharacterRemarkEntry> = {}
-    Object.keys(next).forEach((key) => {
-      if (next[key]?.channelId === channelId) {
-        delete next[key]
-      }
-    })
+    const snapshotIdentityIds = new Set<string>()
     items.forEach((item: any) => {
       const identityId = typeof item?.identityId === 'string' ? item.identityId : ''
       const content = typeof item?.content === 'string' ? item.content.trim() : ''
       if (!identityId || !content || item?.action === 'clear') {
         return
       }
+      snapshotIdentityIds.add(identityId)
+      const revision = typeof item?.revision === 'number'
+        ? item.revision
+        : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now())
+      const latestRevision = latestRevisionByIdentity.value[identityId] || 0
+      if (revision < latestRevision) {
+        return
+      }
+      latestRevisionByIdentity.value = {
+        ...latestRevisionByIdentity.value,
+        [identityId]: revision,
+      }
       const entry: CharacterRemarkEntry = {
         identityId,
         channelId,
         userId: typeof item?.userId === 'string' ? item.userId : '',
         content,
-        revision: typeof item?.revision === 'number'
-          ? item.revision
-          : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now()),
+        revision,
       }
       next[identityId] = entry
-      cacheNext[identityId] = entry
+    })
+    Object.keys(next).forEach((key) => {
+      if (next[key]?.channelId === channelId && !snapshotIdentityIds.has(key)) {
+        delete next[key]
+      }
     })
     remarkByIdentity.value = next
-    replaceRemarkCacheForChannel(channelId, cacheNext)
   }
 
   const ensureGateway = () => {
@@ -326,7 +189,6 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
 
   const requestRemarkSnapshot = async (channelId: string) => {
     if (!channelId) return
-    loadRemarkCache(channelId)
     await chatStore.ensureConnectionReady()
     try {
       await chatStore.sendAPI('character.remark.snapshot', { channel_id: channelId } as any)
@@ -376,20 +238,10 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     }
   }
 
-  watch(
-    () => userStore.info?.id,
-    () => {
-      loadedCacheKey = ''
-      ensureCacheLoaded()
-    },
-    { immediate: true },
-  )
-
   ensureGateway()
 
   return {
     remarkByIdentity,
-    remarkCacheByChannel,
     savingIdentityId,
     requestRemarkSnapshot,
     saveRemark,

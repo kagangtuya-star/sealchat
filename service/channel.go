@@ -704,6 +704,9 @@ func ChannelPermanentDelete(channelIDs []string, userID string) error {
 		if err := cleanupTheaterChannels(tx, targetIDs); err != nil {
 			return err
 		}
+		if err := tx.Where("channel_id IN ?", targetIDs).Delete(&model.ChannelCharacterRemarkModel{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("id IN ?", targetIDs).Delete(&model.ChannelModel{}).Error; err != nil {
 			return err
 		}

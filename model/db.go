@@ -152,6 +152,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&OneBotIDMappingModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&SharedChannelIdentityModel{}, &SharedChannelIdentityWorldPresentationModel{}, &SharedChannelIdentitySyncRetryModel{}, &ChannelIdentityModel{})
+	db.AutoMigrate(&ChannelCharacterRemarkModel{})
 	if err := MigrateSharedChannelIdentityWorldScope(); err != nil {
 		log.Printf("迁移共享角色世界作用域失败: %v", err)
 	}
