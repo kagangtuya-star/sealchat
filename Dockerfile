@@ -54,6 +54,7 @@ WORKDIR /app
 ARG TARGETARCH
 
 COPY --from=go-builder /out/sealchat-server /app/sealchat-server
+COPY --from=go-builder /src/builtin /app/builtin
 COPY --from=webp-assets /out/bin /app/bin
 COPY --from=webp-assets /out/LICENSE /app/LICENSE
 RUN set -eux; \

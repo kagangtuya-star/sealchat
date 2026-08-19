@@ -274,6 +274,7 @@ jobs:
           cp bin/LICENSE package/LICENSE
           cp config.yaml.example package/
           cp config.docker.yaml.example package/
+          cp -a builtin package/builtin
 
       - name: Compress package
         run: |
