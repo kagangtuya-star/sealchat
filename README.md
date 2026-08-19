@@ -4,7 +4,9 @@
 
 面向 TRPG、文字跑团与角色协作场景的自托管实时聊天平台
 
-[在线体验](https://kagangtuya-sc.sealdice.com/) · [Releases](https://github.com/kagangtuya-star/sealchat/releases) · [文档](doc/README.md) · [QQ 群](https://qm.qq.com/q/wL4lD8saIM)
+[在线体验](https://kagangtuya-sc.sealdice.com/) · [服务端 Releases](https://github.com/kagangtuya-star/sealchat/releases) · [APP Releases](https://github.com/kagangtuya-star/sealchat-app/releases/) · [文档](doc/README.md) · [QQ 群](https://qm.qq.com/q/wL4lD8saIM)
+
+[综合使用说明](https://bv1ofo8afz3.feishu.cn/wiki/DVPgwwwbBi4CVpk5JY3cw3Ijnoh) · [常见问题答疑](https://my.feishu.cn/wiki/FTrOwMTY8itexxkNs6lcPw3Ens8)
 
 [![Latest Release](https://img.shields.io/github/v/release/kagangtuya-star/sealchat?style=flat-square&label=Latest%20Release)](https://github.com/kagangtuya-star/sealchat/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/kagangtuya-star/sealchat/total?style=flat-square&label=Downloads)](https://github.com/kagangtuya-star/sealchat/releases)
