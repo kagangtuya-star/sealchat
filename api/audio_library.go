@@ -56,6 +56,10 @@ func AudioLibrarySettingsPut(c *fiber.Ctx) error {
 	if !isSystemAdmin && !service.IsWorldAdmin(resolvedWorldID, user.ID) {
 		return fiber.ErrForbidden
 	}
+	requestedMode := utils.AudioLibraryMode(strings.ToLower(strings.TrimSpace(string(req.Mode))))
+	if requestedMode == utils.AudioLibraryModeS3 && !canConfigureAudioLibraryS3(user.ID, resolvedWorldID) {
+		return fiber.ErrForbidden
+	}
 	selectorDepth := service.AudioLibrarySettingsGet(resolvedWorldID, true).SelectorDepth
 	if req.SelectorDepth != nil {
 		selectorDepth = *req.SelectorDepth
@@ -72,6 +76,10 @@ func AudioLibraryS3Prefixes(c *fiber.Ctx) error {
 	worldID, err := requireAudioLibraryWorld(c, false)
 	if err != nil {
 		return err
+	}
+	user := getCurUser(c)
+	if !service.AudioLibraryModeIsS3(worldID) && (user == nil || !canConfigureAudioLibraryS3(user.ID, worldID)) {
+		return fiber.ErrForbidden
 	}
 	result, err := service.ListAudioLibraryPrefixes(worldID, c.Query("prefix"), c.Query("cursor"), c.QueryInt("limit", 100))
 	if err != nil {
@@ -337,6 +345,17 @@ func isAudioLibraryValidationError(err error) bool {
 		}
 	}
 	return errors.Is(err, service.ErrAudioUnsupportedMime)
+}
+
+func canConfigureAudioLibraryS3(userID, worldID string) bool {
+	if pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return true
+	}
+	cfg := utils.GetConfig()
+	return cfg != nil &&
+		cfg.Audio.AllowWorldAudioWorkbench &&
+		cfg.Audio.AllowWorldAudioS3DirectRead &&
+		service.IsWorldAdmin(worldID, userID)
 }
 
 func requireAudioLibraryOperator(c *fiber.Ctx) (string, error) {

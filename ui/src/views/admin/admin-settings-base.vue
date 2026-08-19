@@ -28,7 +28,7 @@ const model = ref<ServerConfig>({
   builtInSealBotEnable: true,
   theaterActivationCode: '',
   emailNotification: { enabled: false },
-  audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 },
+  audio: { allowWorldAudioWorkbench: false, allowWorldAudioS3DirectRead: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 },
 })
 
 const utils = useUtilsStore();
@@ -163,8 +163,11 @@ watch([serveAtHost, serveAtPort], ([host, port]) => {
 
 const ensureAudioConfigDefaults = () => {
   if (!model.value.audio) {
-    model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 };
+    model.value.audio = { allowWorldAudioWorkbench: false, allowWorldAudioS3DirectRead: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 };
     return;
+  }
+  if (model.value.audio.allowWorldAudioS3DirectRead === undefined) {
+    model.value.audio.allowWorldAudioS3DirectRead = false;
   }
   if (model.value.audio.allowNonAdminCreateWorld === undefined) {
     model.value.audio.allowNonAdminCreateWorld = true;
@@ -237,6 +240,7 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
     ...(payload.audio || {}),
     ...(model.value.audio || {}),
     allowWorldAudioWorkbench: model.value.audio?.allowWorldAudioWorkbench ?? false,
+    allowWorldAudioS3DirectRead: model.value.audio?.allowWorldAudioS3DirectRead ?? false,
     allowNonAdminCreateWorld: model.value.audio?.allowNonAdminCreateWorld ?? true,
     userQuotaMB: Math.max(1, Math.trunc(model.value.audio?.userQuotaMB ?? 150)),
   };
@@ -464,6 +468,16 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item v-if="model.audio" label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
         <n-switch v-model:value="model.audio.allowWorldAudioWorkbench" />
+      </n-form-item>
+      <n-form-item
+        v-if="model.audio"
+        label="允许世界管理员开启音频S3直读模式"
+        feedback="仅在上项开启后生效；开启后世界管理员可在音频素材库切换 S3 模式"
+      >
+        <n-switch
+          v-model:value="model.audio.allowWorldAudioS3DirectRead"
+          :disabled="!model.audio.allowWorldAudioWorkbench"
+        />
       </n-form-item>
       <n-form-item
         v-if="model.audio"

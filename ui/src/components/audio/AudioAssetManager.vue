@@ -85,7 +85,7 @@
           新建文件夹
         </n-button>
         <n-button
-          v-if="audio.canManageCurrentWorld"
+          v-if="canUseS3Mode"
           size="small"
           :type="audio.audioLibrary.mode === 's3' ? 'primary' : 'default'"
           :secondary="audio.audioLibrary.mode !== 's3'"
@@ -594,6 +594,7 @@ import type {
 import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { useUserStore } from '@/stores/user';
 import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
@@ -602,6 +603,7 @@ import AudioS3ModeDialog from './AudioS3ModeDialog.vue';
 
 const audio = useAudioStudioStore();
 const chat = useChatStore();
+const utils = useUtilsStore();
 const user = useUserStore();
 const message = useMessage();
 const dialog = useDialog();
@@ -802,6 +804,9 @@ const contentClassNames = computed(() => ({
 }));
 const manualSortEnabled = computed(() => audio.filters.manualSort !== false);
 const canManageLibrary = computed(() => audio.canManage && (audio.audioLibrary.mode !== 's3' || audio.canManageCurrentWorld));
+const canUseS3Mode = computed(() =>
+  audio.isSystemAdmin || (audio.canManageCurrentWorld && utils.config?.audio?.allowWorldAudioS3DirectRead === true)
+);
 const canReorderAssets = computed(() => audio.canManage && audio.audioLibrary.mode !== 's3' && !audio.assetsLoading);
 const manualSortTooltip = computed(() =>
   manualSortEnabled.value

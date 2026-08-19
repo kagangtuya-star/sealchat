@@ -375,6 +375,7 @@ export interface ServerAudioConfig {
   alternateBitrates?: number[];
   ffmpegPath?: string;
   allowWorldAudioWorkbench?: boolean;
+  allowWorldAudioS3DirectRead?: boolean;
   allowNonAdminCreateWorld?: boolean;
 }
 

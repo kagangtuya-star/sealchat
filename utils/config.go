@@ -45,18 +45,19 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir               string   `json:"storageDir" yaml:"storageDir"`
-	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
-	ImportDir                string   `json:"importDir" yaml:"importDir"`
-	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	UserQuotaMB              int64    `json:"userQuotaMB" yaml:"userQuotaMB"`
-	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps       int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates        []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath               string   `json:"ffmpegPath" yaml:"ffmpegPath"`
-	AllowWorldAudioWorkbench bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
-	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
+	StorageDir                  string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                     string   `json:"tempDir" yaml:"tempDir"`
+	ImportDir                   string   `json:"importDir" yaml:"importDir"`
+	MaxUploadSizeMB             int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	UserQuotaMB                 int64    `json:"userQuotaMB" yaml:"userQuotaMB"`
+	AllowedMimeTypes            []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode             bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps          int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates           []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath                  string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench    bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	AllowWorldAudioS3DirectRead bool     `json:"allowWorldAudioS3DirectRead" yaml:"allowWorldAudioS3DirectRead"`
+	AllowNonAdminCreateWorld    bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
 type AudioLibraryMode string
@@ -549,18 +550,19 @@ func ReadConfig() *AppConfig {
 			Note:           defaultLogUploadNote,
 		},
 		Audio: AudioConfig{
-			StorageDir:               "./static/audio",
-			TempDir:                  "./data/audio-temp",
-			ImportDir:                "./static/audio/import",
-			MaxUploadSizeMB:          80,
-			UserQuotaMB:              150,
-			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
-			EnableTranscode:          true,
-			DefaultBitrateKbps:       96,
-			AlternateBitrates:        []int{64, 128},
-			FFmpegPath:               "",
-			AllowWorldAudioWorkbench: false,
-			AllowNonAdminCreateWorld: true,
+			StorageDir:                  "./static/audio",
+			TempDir:                     "./data/audio-temp",
+			ImportDir:                   "./static/audio/import",
+			MaxUploadSizeMB:             80,
+			UserQuotaMB:                 150,
+			AllowedMimeTypes:            []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
+			EnableTranscode:             true,
+			DefaultBitrateKbps:          96,
+			AlternateBitrates:           []int{64, 128},
+			FFmpegPath:                  "",
+			AllowWorldAudioWorkbench:    false,
+			AllowWorldAudioS3DirectRead: false,
+			AllowNonAdminCreateWorld:    true,
 		},
 		TheaterMedia: TheaterMediaConfig{
 			Enabled:                 true,
@@ -1800,6 +1802,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
+		_ = k.Set("audio.allowWorldAudioS3DirectRead", config.Audio.AllowWorldAudioS3DirectRead)
 		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
 		k.Delete("audio.s3Library")
 		_ = k.Set("sqlite.wal", config.SQLite.EnableWAL)
