@@ -277,6 +277,27 @@ type ChannelIForm struct {
 	SharedRef        bool                      `json:"sharedRef,omitempty"`
 	SharedWorldID    string                    `json:"sharedWorldId,omitempty"`
 	Readonly         bool                      `json:"readonly,omitempty"`
+	BridgePolicy     *ChannelIFormBridgePolicy `json:"bridgePolicy,omitempty"`
+}
+
+type ChannelIFormBridgePolicy struct {
+	Enabled        bool     `json:"enabled"`
+	AllowedOrigins []string `json:"allowedOrigins,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
+}
+
+type ChannelIFormEmbedEventPayload struct {
+	EventID   string `json:"eventId"`
+	ChannelID string `json:"channelId"`
+	FormID    string `json:"formId"`
+	Seq       uint64 `json:"seq,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Op        string `json:"op"`
+	Revision  uint64 `json:"revision,omitempty"`
+	Topic     string `json:"topic,omitempty"`
+	Payload   any    `json:"payload,omitempty"`
+	Value     any    `json:"value,omitempty"`
+	At        int64  `json:"at"`
 }
 
 type ChannelIFormMediaOptions struct {
@@ -405,6 +426,7 @@ const (
 	EventAudioStateUpdated              EventName = "audio-state-updated"
 	EventChannelIFormUpdated            EventName = "channel-iform-updated"
 	EventChannelIFormPushed             EventName = "channel-iform-pushed"
+	EventChannelIFormEmbed              EventName = "channel-iform-embed"
 	EventChannelImageLayoutUpdated      EventName = "channel-image-layout-updated"
 	EventChannelIdentitiesUpdated       EventName = "channel-identities-updated"
 	EventWorldKeywordsUpdated           EventName = "world-keywords-updated"
@@ -531,6 +553,7 @@ type Event struct {
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
 	Theater                     *TheaterEventPayload                `json:"theater,omitempty"`
+	ChannelIFormEmbed           *ChannelIFormEmbedEventPayload      `json:"channelIFormEmbed,omitempty"`
 	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
 	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`

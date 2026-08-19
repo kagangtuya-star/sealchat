@@ -516,6 +516,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/platform-fonts/:id/file", PlatformFontFileHandler)
 	v1.Get("/platform-fonts/:id/subset-manifest", PlatformFontSubsetManifestHandler)
 	v1.Get("/platform-fonts/:id/subset/*", PlatformFontSubsetFileHandler)
+	// Embed SDK 只提供静态客户端代码，不读取用户数据，保持无鉴权。
+	v1.Get("/channel-embed-sdk.js", ChannelEmbedSDKHandler)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)

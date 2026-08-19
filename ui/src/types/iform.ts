@@ -28,6 +28,13 @@ export interface ChannelIForm {
   sharedWorldId?: string;
   readonly?: boolean;
   mediaOptions?: ChannelIFormMediaOptions;
+  bridgePolicy?: ChannelIFormBridgePolicy;
+}
+
+export interface ChannelIFormBridgePolicy {
+  enabled: boolean;
+  allowedOrigins?: string[];
+  capabilities?: string[];
 }
 
 export interface ChannelIFormStatePayload {

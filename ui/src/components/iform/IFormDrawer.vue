@@ -164,6 +164,16 @@
               <template #unchecked>保持静音</template>
             </n-switch>
           </n-form-item>
+          <n-form-item label="Embed API">
+            <n-space vertical size="small">
+              <n-switch v-model:value="formModel.bridgePolicy.enabled">
+                <template #checked>启用</template>
+                <template #unchecked>关闭</template>
+              </n-switch>
+              <n-input v-model:value="formModel.bridgePolicy.allowedOrigins" placeholder="允许来源，逗号分隔（可选）" :disabled="!formModel.bridgePolicy.enabled" />
+              <n-input v-model:value="formModel.bridgePolicy.capabilities" placeholder="能力，逗号分隔（storage.read 等）" :disabled="!formModel.bridgePolicy.enabled" />
+            </n-space>
+          </n-form-item>
         </n-form>
       </n-modal>
 
@@ -235,6 +245,11 @@ const formModel = reactive({
     autoPlay: false,
     autoUnmute: false,
   },
+  bridgePolicy: {
+    enabled: false,
+    allowedOrigins: '',
+    capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
+  },
 });
 
 const migrationModalVisible = ref(false);
@@ -273,6 +288,11 @@ const resetFormModel = () => {
       autoPlay: false,
       autoUnmute: false,
     },
+    bridgePolicy: {
+      enabled: false,
+      allowedOrigins: '',
+      capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
+    },
   });
 };
 
@@ -296,6 +316,11 @@ const openFormModal = (form?: ChannelIForm) => {
       mediaOptions: {
         autoPlay: !!form.mediaOptions?.autoPlay,
         autoUnmute: !!form.mediaOptions?.autoUnmute,
+      },
+      bridgePolicy: {
+        enabled: !!form.bridgePolicy?.enabled,
+        allowedOrigins: (form.bridgePolicy?.allowedOrigins || []).join(','),
+        capabilities: (form.bridgePolicy?.capabilities || []).join(','),
       },
     });
   } else {
@@ -324,6 +349,7 @@ const handleSubmit = async () => {
         defaultCollapsed: formModel.defaultCollapsed,
         defaultFloating: formModel.defaultFloating,
         mediaOptions: formModel.mediaOptions,
+        bridgePolicy: normalizeBridgePolicyForm(),
       });
       message.success('控件已更新');
     } else {
@@ -336,6 +362,7 @@ const handleSubmit = async () => {
         defaultCollapsed: formModel.defaultCollapsed,
         defaultFloating: formModel.defaultFloating,
         mediaOptions: formModel.mediaOptions,
+        bridgePolicy: normalizeBridgePolicyForm(),
       });
       message.success('控件已创建');
     }
@@ -347,6 +374,12 @@ const handleSubmit = async () => {
     return false;
   }
 };
+
+const normalizeBridgePolicyForm = () => ({
+  enabled: !!formModel.bridgePolicy.enabled,
+  allowedOrigins: formModel.bridgePolicy.allowedOrigins.split(',').map((item) => item.trim()).filter(Boolean),
+  capabilities: formModel.bridgePolicy.capabilities.split(',').map((item) => item.trim()).filter(Boolean),
+});
 
 const handleCancel = () => {
   resetFormModel();

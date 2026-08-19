@@ -23,16 +23,17 @@ const (
 )
 
 type channelIFormCreateRequest struct {
-	Name             string                         `json:"name"`
-	Url              string                         `json:"url"`
-	EmbedCode        string                         `json:"embedCode"`
-	DefaultWidth     int                            `json:"defaultWidth"`
-	DefaultHeight    int                            `json:"defaultHeight"`
-	DefaultCollapsed bool                           `json:"defaultCollapsed"`
-	DefaultFloating  bool                           `json:"defaultFloating"`
-	AllowPopout      bool                           `json:"allowPopout"`
-	OrderIndex       int                            `json:"orderIndex"`
-	MediaOptions     model.ChannelIFormMediaOptions `json:"mediaOptions"`
+	Name             string                          `json:"name"`
+	Url              string                          `json:"url"`
+	EmbedCode        string                          `json:"embedCode"`
+	DefaultWidth     int                             `json:"defaultWidth"`
+	DefaultHeight    int                             `json:"defaultHeight"`
+	DefaultCollapsed bool                            `json:"defaultCollapsed"`
+	DefaultFloating  bool                            `json:"defaultFloating"`
+	AllowPopout      bool                            `json:"allowPopout"`
+	OrderIndex       int                             `json:"orderIndex"`
+	MediaOptions     model.ChannelIFormMediaOptions  `json:"mediaOptions"`
+	BridgePolicy     *model.ChannelIFormBridgePolicy `json:"bridgePolicy"`
 }
 
 type channelIFormUpdateRequest struct {
@@ -46,6 +47,7 @@ type channelIFormUpdateRequest struct {
 	AllowPopout      *bool                           `json:"allowPopout"`
 	OrderIndex       *int                            `json:"orderIndex"`
 	MediaOptions     *model.ChannelIFormMediaOptions `json:"mediaOptions"`
+	BridgePolicy     *model.ChannelIFormBridgePolicy `json:"bridgePolicy"`
 }
 
 type channelIFormPushRequest struct {
@@ -481,6 +483,7 @@ func buildIFormModelFromCreate(payload *channelIFormCreateRequest, channelID, ac
 		CreatedBy:        actor,
 		UpdatedBy:        actor,
 		MediaOptions:     normalizeMediaOptions(payload.MediaOptions),
+		BridgePolicy:     normalizeBridgePolicy(payload.BridgePolicy),
 	}
 	return form, nil
 }
@@ -539,6 +542,9 @@ func buildIFormUpdateMap(payload *channelIFormUpdateRequest, current *model.Chan
 	if payload.MediaOptions != nil {
 		updates["media_options"] = normalizeMediaOptions(*payload.MediaOptions)
 	}
+	if payload.BridgePolicy != nil {
+		updates["bridge_policy"] = normalizeBridgePolicy(payload.BridgePolicy)
+	}
 	return updates, nil
 }
 
@@ -585,6 +591,42 @@ func normalizeMediaOptions(opts model.ChannelIFormMediaOptions) model.ChannelIFo
 		normalized.AllowVideo = true
 	}
 	return normalized
+}
+
+func normalizeBridgePolicy(policy *model.ChannelIFormBridgePolicy) model.ChannelIFormBridgePolicy {
+	if policy == nil {
+		return model.ChannelIFormBridgePolicy{}
+	}
+	result := *policy
+	seen := map[string]struct{}{}
+	allowed := make([]string, 0, len(result.AllowedOrigins))
+	for _, origin := range result.AllowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		allowed = append(allowed, origin)
+	}
+	result.AllowedOrigins = allowed
+	seen = map[string]struct{}{}
+	caps := make([]string, 0, len(result.Capabilities))
+	for _, capability := range result.Capabilities {
+		capability = strings.TrimSpace(capability)
+		if capability == "" {
+			continue
+		}
+		if _, ok := seen[capability]; ok {
+			continue
+		}
+		seen[capability] = struct{}{}
+		caps = append(caps, capability)
+	}
+	result.Capabilities = caps
+	return result
 }
 
 func broadcastIFormSnapshot(user *model.UserModel, channelID string) error {
@@ -735,6 +777,11 @@ func convertIFormToProtocol(item *model.ChannelIFormModel) *protocol.ChannelIFor
 		UpdatedBy:        item.UpdatedBy,
 		CreatedAt:        item.CreatedAt.UnixMilli(),
 		UpdatedAt:        item.UpdatedAt.UnixMilli(),
+		BridgePolicy: &protocol.ChannelIFormBridgePolicy{
+			Enabled:        item.BridgePolicy.Enabled,
+			AllowedOrigins: append([]string(nil), item.BridgePolicy.AllowedOrigins...),
+			Capabilities:   append([]string(nil), item.BridgePolicy.Capabilities...),
+		},
 	}
 }
 

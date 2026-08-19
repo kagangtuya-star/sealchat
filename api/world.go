@@ -254,6 +254,10 @@ func WorldDetail(c *fiber.Ctx) error {
 	}
 	var memberCount int64
 	_ = db.Model(&model.WorldMemberModel{}).Where("world_id = ?", worldID).Count(&memberCount).Error
+	admins, err := service.ListWorldAdminSummaries(worldID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界管理员失败"})
+	}
 
 	// 获取世界拥有者昵称
 	var ownerNickname string
@@ -276,6 +280,7 @@ func WorldDetail(c *fiber.Ctx) error {
 		"isMember":                              member.ID != "",
 		"memberRole":                            member.Role,
 		"memberCount":                           memberCount,
+		"admins":                                admins,
 		"allowAdminEditMessages":                world.AllowAdminEditMessages,
 		"allowManageOtherUserChannelIdentities": world.AllowManageOtherUserChannelIdentities,
 		"allowMemberEditKeywords":               world.AllowMemberEditKeywords,

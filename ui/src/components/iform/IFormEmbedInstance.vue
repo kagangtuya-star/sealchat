@@ -1,6 +1,6 @@
 <template>
   <teleport v-if="host && form" :to="host">
-    <IFormEmbedFrame :form="form" />
+    <IFormEmbedFrame :form="form" :enable-channel-embed="true" :channel-id="iform.visibleChannelId" />
   </teleport>
 </template>
 
@@ -23,6 +23,6 @@ const form = computed<ChannelIForm | undefined>(() => {
   if (!formId.value) {
     return undefined;
   }
-  return iform.getForm(iform.currentChannelId, formId.value);
+  return iform.getForm(iform.visibleChannelId, formId.value);
 });
 </script>

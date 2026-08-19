@@ -553,6 +553,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
       sharedWorldId: matchedForm?.sharedWorldId,
       readonly: matchedForm?.readonly,
       mediaOptions: matchedForm?.mediaOptions,
+      bridgePolicy: matchedForm?.bridgePolicy,
     };
     return h(
       'div',
@@ -573,7 +574,11 @@ const parseContent = (payload: any, overrideContent?: string) => {
         h(
           'div',
           { class: 'message-iform-embed__scale' },
-          [h(IFormEmbedFrame, { form: runtimeForm })],
+          [h(IFormEmbedFrame, {
+            form: runtimeForm,
+            enableChannelEmbed: true,
+            channelId: chat.curChannel?.id || runtimeForm.channelId,
+          })],
         ),
       ],
     );

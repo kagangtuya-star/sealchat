@@ -1910,6 +1910,19 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	db := model.GetDB()
 	channelId := data.ChannelID
 	trimmedClientID := strings.TrimSpace(data.ClientID)
+	if strings.HasPrefix(trimmedClientID, "iform_embed:") {
+		parts := strings.SplitN(strings.TrimPrefix(trimmedClientID, "iform_embed:"), ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			return nil, errors.New("INVALID_PARAMS")
+		}
+		_, resolvedChannelID, err := resolveEmbedForm(ctx, embedScopeRequest{ChannelID: channelId, FormID: strings.TrimSpace(parts[0])}, "messages.send")
+		if err != nil {
+			return nil, err
+		}
+		if resolvedChannelID != channelId {
+			return nil, errors.New("PERMISSION_DENIED")
+		}
+	}
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)

@@ -88,6 +88,8 @@ type ConnInfo struct {
 	BotLastWhisperTargets        *utils.SyncMap[string, []string]
 	BotHiddenDicePending         *utils.SyncMap[string, *BotHiddenDicePending]
 	BotNicknameSyncPending       *utils.SyncMap[string, *BotNicknameSyncPending]
+	embedMu                      sync.RWMutex
+	embedSubscriptions           map[string]struct{}
 	BotCharacterSupport          BotCharacterSupportState
 	BotCharacterProbeOn          bool
 	BotCharacterProbeFail        int
@@ -1052,6 +1054,27 @@ func websocketWorks(app *fiber.App, webUrl string) {
 						solved = true
 					case "channel.member.list": // 自设API: 获取频道成员
 						apiWrap(ctx, msg, apiChannelMemberList)
+						solved = true
+					case "iform.storage.get":
+						apiWrap(ctx, msg, apiIFormStorageGet)
+						solved = true
+					case "iform.storage.set":
+						apiWrap(ctx, msg, apiIFormStorageSet)
+						solved = true
+					case "iform.storage.delete":
+						apiWrap(ctx, msg, apiIFormStorageDelete)
+						solved = true
+					case "iform.storage.list":
+						apiWrap(ctx, msg, apiIFormStorageList)
+						solved = true
+					case "iform.storage.snapshot":
+						apiWrap(ctx, msg, apiIFormStorageSnapshot)
+						solved = true
+					case "iform.event.publish":
+						apiWrap(ctx, msg, apiIFormEventPublish)
+						solved = true
+					case "iform.event.subscribe":
+						apiWrap(ctx, msg, apiIFormEventSubscribe)
 						solved = true
 					case "channel.private.list": // 自设API：获取私聊频道
 						apiWrap(ctx, msg, apiFriendChannelList)

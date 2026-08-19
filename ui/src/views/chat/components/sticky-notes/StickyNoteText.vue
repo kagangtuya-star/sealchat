@@ -206,6 +206,7 @@ const stickyIFormNode = computed(() => {
     sharedWorldId: matchedForm?.sharedWorldId,
     readonly: matchedForm?.readonly,
     mediaOptions: matchedForm?.mediaOptions,
+    bridgePolicy: matchedForm?.bridgePolicy,
   }
   return h(
     'div',
@@ -219,7 +220,11 @@ const stickyIFormNode = computed(() => {
         minHeight: '72px',
       },
     },
-    [h(IFormEmbedFrame, { form: runtimeForm })],
+    [h(IFormEmbedFrame, {
+      form: runtimeForm,
+      enableChannelEmbed: true,
+      channelId: chat.curChannel?.id || runtimeForm.channelId,
+    })],
   )
 })
 

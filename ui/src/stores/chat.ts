@@ -1474,6 +1474,7 @@ export const useChatStore = defineStore({
       }
       this.subject = null;
       this.connectState = 'disconnected';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       this.lastGatewayAckAt = 0;
     },
 
@@ -1550,6 +1551,7 @@ export const useChatStore = defineStore({
         }
         // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
         this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
+        chatEvent.emit('connection.changed' as any, { state: this.connectState });
 
         // 'ws://localhost:3212/ws/seal'
         // const subject = webSocket(`ws:${urlBase}/ws/seal`);
@@ -1611,6 +1613,7 @@ export const useChatStore = defineStore({
             rejectPendingApiRequests('ws connection error');
             this.subject = null;
             this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            chatEvent.emit('connection.changed' as any, { state: this.connectState });
             clearForegroundProbeTimer();
             this.stopPingLoop();
             this.lastGatewayAckAt = 0;
@@ -1649,6 +1652,7 @@ export const useChatStore = defineStore({
             rejectPendingApiRequests('ws connection closed');
             this.subject = null;
             this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            chatEvent.emit('connection.changed' as any, { state: this.connectState });
             clearForegroundProbeTimer();
             this.stopPingLoop();
             this.lastGatewayAckAt = 0;
@@ -1691,6 +1695,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'reconnecting';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       let remain = Math.max(0, Math.floor(secs));
       this.iReconnectAfterTime = remain;
 
@@ -1721,6 +1726,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'connected';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       this.markGatewayActivity();
       clearWsReconnectTimer(this);
 
@@ -4851,17 +4857,19 @@ export const useChatStore = defineStore({
       quote_id?: string,
       whisper_to?: string,
       clientId?: string,
-      identityId?: string,
+      identityId?: string | null,
       displayOrder?: number,
       whisperTargetIds?: string[],
       typingDurationMs?: number,
       position?: { beforeId?: string; afterId?: string },
       identityVariantId?: string,
+      icMode?: 'ic' | 'ooc',
+      channelIdOverride?: string,
     ) {
       const payload: Record<string, any> = {
-        channel_id: this.curChannel?.id,
+        channel_id: channelIdOverride || this.curChannel?.id,
         content,
-        ic_mode: this.icMode,
+        ic_mode: icMode || this.icMode,
       };
       if (quote_id) {
         payload.quote_id = quote_id;
@@ -4881,11 +4889,11 @@ export const useChatStore = defineStore({
       if (clientId) {
         payload.client_id = clientId;
       }
-      const resolvedIdentityId = identityId || this.getActiveIdentityId(this.curChannel?.id);
+      const resolvedIdentityId = identityId === null ? '' : identityId || this.getActiveIdentityId(this.curChannel?.id);
       if (resolvedIdentityId) {
         payload.identity_id = resolvedIdentityId;
       }
-      const resolvedIdentityVariantId = identityVariantId || this.getActiveIdentityVariantId(this.curChannel?.id, resolvedIdentityId);
+      const resolvedIdentityVariantId = identityId === null ? '' : identityVariantId || this.getActiveIdentityVariantId(this.curChannel?.id, resolvedIdentityId);
       if (resolvedIdentityVariantId) {
         payload.identity_variant_id = resolvedIdentityVariantId;
       }

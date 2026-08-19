@@ -25,6 +25,43 @@ type ChannelIFormMediaOptions struct {
 	AllowVideo bool `json:"allowVideo"`
 }
 
+// ChannelIFormBridgePolicy controls the host-mediated embed runtime. Empty
+// legacy values stay disabled for backwards compatibility.
+type ChannelIFormBridgePolicy struct {
+	Enabled        bool     `json:"enabled"`
+	AllowedOrigins []string `json:"allowedOrigins,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
+}
+
+func (policy ChannelIFormBridgePolicy) Value() (driver.Value, error) {
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
+}
+
+func (policy *ChannelIFormBridgePolicy) Scan(value interface{}) error {
+	if value == nil {
+		*policy = ChannelIFormBridgePolicy{}
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return errors.New("unsupported bridge policy type")
+	}
+	if len(data) == 0 {
+		*policy = ChannelIFormBridgePolicy{}
+		return nil
+	}
+	return json.Unmarshal(data, policy)
+}
+
 func (opts ChannelIFormMediaOptions) Value() (driver.Value, error) {
 	data, err := json.Marshal(opts)
 	if err != nil {
@@ -75,6 +112,7 @@ type ChannelIFormModel struct {
 	CreatedBy        string                   `json:"createdBy"`
 	UpdatedBy        string                   `json:"updatedBy"`
 	MediaOptions     ChannelIFormMediaOptions `json:"mediaOptions" gorm:"type:json"`
+	BridgePolicy     ChannelIFormBridgePolicy `json:"bridgePolicy" gorm:"type:json"`
 }
 
 func (*ChannelIFormModel) TableName() string {

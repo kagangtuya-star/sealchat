@@ -812,6 +812,9 @@ const quickIFormForm = reactive({
   embedCode: '',
   defaultWidth: 640,
   defaultHeight: 360,
+  bridgeEnabled: false,
+  bridgeAllowedOrigins: '',
+  bridgeCapabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
 });
 
 const canQuickCreateIForm = computed(() => {
@@ -825,6 +828,9 @@ const resetQuickIFormForm = () => {
     embedCode: '',
     defaultWidth: 640,
     defaultHeight: 360,
+    bridgeEnabled: false,
+    bridgeAllowedOrigins: '',
+    bridgeCapabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
   });
 };
 
@@ -886,6 +892,11 @@ const confirmQuickIFormCreate = async () => {
       defaultHeight: height,
       defaultCollapsed: false,
       defaultFloating: true,
+      bridgePolicy: {
+        enabled: quickIFormForm.bridgeEnabled,
+        allowedOrigins: quickIFormForm.bridgeAllowedOrigins.split(',').map((item) => item.trim()).filter(Boolean),
+        capabilities: quickIFormForm.bridgeCapabilities.split(',').map((item) => item.trim()).filter(Boolean),
+      },
     });
     const createdForm = created?.id
       ? (iform.currentForms.find((item) => item.id === created.id) || created)
@@ -4113,6 +4124,24 @@ defineExpose({
             <n-input-number v-model:value="quickIFormForm.defaultWidth" :min="120" :step="10" style="flex: 1;" placeholder="宽度" />
             <n-input-number v-model:value="quickIFormForm.defaultHeight" :min="72" :step="10" style="flex: 1;" placeholder="高度" />
           </div>
+        </n-form-item>
+        <n-form-item label="Embed API">
+          <n-space vertical size="small" style="width: 100%;">
+            <n-switch v-model:value="quickIFormForm.bridgeEnabled">
+              <template #checked>启用</template>
+              <template #unchecked>关闭</template>
+            </n-switch>
+            <n-input
+              v-model:value="quickIFormForm.bridgeAllowedOrigins"
+              :disabled="!quickIFormForm.bridgeEnabled"
+              placeholder="允许来源，逗号分隔（srcdoc 可留空）"
+            />
+            <n-input
+              v-model:value="quickIFormForm.bridgeCapabilities"
+              :disabled="!quickIFormForm.bridgeEnabled"
+              placeholder="能力，逗号分隔（storage.read 等）"
+            />
+          </n-space>
         </n-form-item>
       </n-form>
       <template #footer>
