@@ -23,7 +23,7 @@
 - 父页面 -> SealChat iframe：发送握手和取消订阅指令
 - SealChat iframe -> 父页面：发送握手确认、角色快照、消息事件
 
-Bridge 运行于完整站点前端内部，入口已在 [ui/src/main.ts](/mnt/e/Code/go/sealchat/ui/src/main.ts:11) 接入。
+Bridge 运行于完整站点前端内部，入口已在 [`ui/src/main.ts`](../ui/src/main.ts#L11) 接入。
 
 ## 4. 接入流程
 
@@ -199,7 +199,7 @@ Bridge 运行于完整站点前端内部，入口已在 [ui/src/main.ts](/mnt/e/
 
 ## 7. `contentText` 归一化规则
 
-当前实现位于 [ui/src/bridge/sealchatBridgeSerializer.ts](/mnt/e/Code/go/sealchat/ui/src/bridge/sealchatBridgeSerializer.ts:1)。
+当前实现位于 [`ui/src/bridge/sealchatBridgeSerializer.ts`](../ui/src/bridge/sealchatBridgeSerializer.ts#L1)。
 
 规则如下：
 
@@ -251,7 +251,7 @@ Bridge 只推送“当前打开频道”的数据。
 
 ## 10. Origin 与安全边界
 
-当前运行时位于 [ui/src/bridge/sealchatBridgeRuntime.ts](/mnt/e/Code/go/sealchat/ui/src/bridge/sealchatBridgeRuntime.ts:47)。
+当前运行时位于 [`ui/src/bridge/sealchatBridgeRuntime.ts`](../ui/src/bridge/sealchatBridgeRuntime.ts#L47)。
 
 行为：
 
@@ -317,7 +317,7 @@ Bridge 只推送“当前打开频道”的数据。
 
 仓库已提供独立单页调试工具：
 
-- [ui/public/sealchat-bridge-debug.html](/mnt/e/Code/go/sealchat/ui/public/sealchat-bridge-debug.html:1)
+- [`ui/public/sealchat-bridge-debug.html`](../ui/public/sealchat-bridge-debug.html#L1)
 
 用途：
 

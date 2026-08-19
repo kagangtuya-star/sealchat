@@ -16,9 +16,9 @@
 
 相关实现文件：
 
-- [ui/src/assets/main.css](/mnt/e/Code/go/sealchat/ui/src/assets/main.css:473)
-- [ui/src/views/admin/components/AdminAudioQuotaModal.vue](/mnt/e/Code/go/sealchat/ui/src/views/admin/components/AdminAudioQuotaModal.vue:304)
-- [ui/src/views/admin/admin-settings-audio.vue](/mnt/e/Code/go/sealchat/ui/src/views/admin/admin-settings-audio.vue:769)
+- [`ui/src/assets/main.css`](../../ui/src/assets/main.css#L473)
+- [`ui/src/views/admin/components/AdminAudioQuotaModal.vue`](../../ui/src/views/admin/components/AdminAudioQuotaModal.vue#L304)
+- [`ui/src/views/admin/admin-settings-audio.vue`](../../ui/src/views/admin/admin-settings-audio.vue#L769)
 
 ## 设计原则
 
@@ -220,4 +220,3 @@ body .some-modal .n-card {
   - `sc-fluid-drawer`
   - `sc-fluid-panel`
 - 若表格场景持续增多，可补一个通用业务包装组件，例如 `AdminTableModalShell`
-
