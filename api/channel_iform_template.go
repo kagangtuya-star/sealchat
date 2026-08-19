@@ -24,6 +24,7 @@ type channelIFormTemplateCatalogItem struct {
 	Origin      string `json:"origin"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	Installable bool   `json:"installable"`
 	Archived    bool   `json:"archived"`
 	Enabled     bool   `json:"enabled"`
@@ -82,7 +83,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 			}
 		}
 		var templates []model.ChannelIFormTemplateModel
-		query := model.GetDB().Order("created_at DESC")
+		query := model.GetDB().Order("updated_at DESC")
 		if err := query.Find(&templates).Error; err != nil {
 			return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
 		}
@@ -93,10 +94,15 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 			if !catalogSearchMatch(search, template.Name, template.Description) {
 				continue
 			}
+			updatedAt := ""
+			if !template.UpdatedAt.IsZero() {
+				updatedAt = template.UpdatedAt.UTC().Format(time.RFC3339Nano)
+			}
 			items = append(items, channelIFormTemplateCatalogItem{
 				Ref: "platform:" + template.ID, Origin: "platform", Name: template.Name,
 				Description: template.Description, Installable: template.Enabled && !template.Archived,
-				Archived: template.Archived, Enabled: template.Enabled, Editable: isAdmin,
+				UpdatedAt: updatedAt,
+				Archived:  template.Archived, Enabled: template.Enabled, Editable: isAdmin,
 				References: referenceCounts["platform:"+template.ID],
 			})
 		}
@@ -308,6 +314,39 @@ func AdminChannelIFormTemplateUsage(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取模板引用数量失败")
 	}
 	return c.JSON(fiber.Map{"templateRef": "platform:" + id, "references": count})
+}
+
+func AdminChannelIFormTemplateDelete(c *fiber.Ctx) error {
+	if err := requirePlatformAdmin(c); err != nil {
+		return err
+	}
+	id := strings.TrimSpace(c.Params("templateId"))
+	var template model.ChannelIFormTemplateModel
+	if err := model.GetDB().Where("id = ?", id).First(&template).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "模板不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
+	}
+
+	var references int64
+	if err := model.GetDB().Model(&model.ChannelIFormModel{}).
+		Where("template_ref = ?", "platform:"+id).
+		Count(&references).Error; err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取模板引用数量失败")
+	}
+	if references > 0 {
+		return wrapErrorStatus(c, fiber.StatusConflict, nil, fmt.Sprintf("模板仍被 %d 个频道引用，请先解除引用", references))
+	}
+
+	result := model.GetDB().Unscoped().Where("id = ?", id).Delete(&template)
+	if result.Error != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, result.Error, "删除频道嵌入模板失败")
+	}
+	if result.RowsAffected == 0 {
+		return wrapErrorStatus(c, fiber.StatusNotFound, gorm.ErrRecordNotFound, "模板不存在")
+	}
+	return c.JSON(fiber.Map{"id": id})
 }
 
 func validateChannelIFormTemplateWrite(payload *channelIFormTemplateWriteRequest) error {

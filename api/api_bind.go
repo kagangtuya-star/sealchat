@@ -917,6 +917,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/channel-embed-tools/templates/:templateId/archive", AdminChannelIFormTemplateArchive)
 	v1AuthAdmin.Post("/admin/channel-embed-tools/templates/:templateId/restore", AdminChannelIFormTemplateRestore)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/templates/:templateId/usage", AdminChannelIFormTemplateUsage)
+	v1AuthAdmin.Delete("/admin/channel-embed-tools/templates/:templateId", AdminChannelIFormTemplateDelete)
 	v1AuthAdmin.Get("/admin/ai-quotas", AdminAIQuotaList)
 	v1AuthAdmin.Get("/admin/ai-quotas/:userId", AdminAIQuotaGet)
 	v1AuthAdmin.Put("/admin/ai-quotas/:userId", AdminAIQuotaUpsert)
