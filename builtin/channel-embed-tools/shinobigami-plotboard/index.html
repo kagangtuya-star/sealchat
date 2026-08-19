@@ -762,6 +762,20 @@
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
+  <dialog id="resetDialog" aria-labelledby="resetDialogTitle">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="resetDialogTitle">开启新一轮</h2>
+      <p class="dialog-copy">确定清除当前全部谋位，并立即开启下一轮吗？此操作不可撤销。</p>
+    </div>
+    <div class="dialog-body">
+      <p class="security-note">当前回合的所有提交都会被清除，其他玩家也会立即看到新回合。</p>
+    </div>
+    <form class="dialog-actions" method="dialog">
+      <button class="secondary-button" value="cancel" type="submit">取消</button>
+      <button class="danger-button" value="confirm" type="submit">清空并开启</button>
+    </form>
+  </dialog>
+
   <script>
     (() => {
       'use strict'
@@ -813,7 +827,8 @@
         diagnosticsLog: $('#diagnosticsLog'),
         copyDiagnosticsButton: $('#copyDiagnosticsButton'),
         clearDiagnosticsButton: $('#clearDiagnosticsButton'),
-        toastStack: $('#toastStack')
+        toastStack: $('#toastStack'),
+        resetDialog: $('#resetDialog')
       }
 
       let client = null
@@ -834,6 +849,7 @@
       let debugMode = false
       let layoutOverride = null
       let measuredEmbedWidth = 0
+      let resetConfirmationPromise = null
 
       function errorSummary(error) {
         if (!error) return 'unknown error'
@@ -1113,6 +1129,26 @@
         el.textContent = message
         ui.toastStack.appendChild(el)
         window.setTimeout(() => el.remove(), 3200)
+      }
+
+      function confirmResetRound() {
+        if (resetConfirmationPromise) return resetConfirmationPromise
+        const dialog = ui.resetDialog
+        if (!dialog || typeof dialog.showModal !== 'function') return Promise.resolve(false)
+
+        resetConfirmationPromise = new Promise(resolve => {
+          const finish = accepted => {
+            resetConfirmationPromise = null
+            resolve(accepted)
+          }
+          dialog.addEventListener('close', () => finish(dialog.returnValue === 'confirm'), { once: true })
+          try {
+            dialog.showModal()
+          } catch {
+            finish(false)
+          }
+        })
+        return resetConfirmationPromise
       }
 
       function showFatal(error) {
@@ -1777,7 +1813,7 @@
 
       async function resetRound() {
         requireWorldAdmin()
-        if (!window.confirm('确定清除当前全部谋位，并立即开启下一轮吗？此操作不可撤销。')) return
+        if (!await confirmResetRound()) return
         await mutateBoard(draft => {
           draft.round = Math.max(1, Number(draft.round) || 1) + 1
           draft.phase = 'collecting'
