@@ -195,8 +195,19 @@ func ChannelIFormUpdate(channelID, formID string, updates map[string]interface{}
 }
 
 func ChannelIFormDelete(channelID, formID string) error {
-	return db.Where("channel_id = ? AND id = ?", channelID, formID).
-		Delete(&ChannelIFormModel{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		return ChannelIFormDeleteTx(tx, channelID, formID)
+	})
+}
+
+func ChannelIFormDeleteTx(tx *gorm.DB, channelID, formID string) error {
+	if tx == nil {
+		return errors.New("db transaction is nil")
+	}
+	if err := tx.Unscoped().Where("channel_id = ? AND id = ?", channelID, formID).Delete(&ChannelIFormModel{}).Error; err != nil {
+		return err
+	}
+	return ChannelIFormStorageDeleteByFormIDTx(tx, formID)
 }
 
 func ChannelIFormCloneToChannel(source *ChannelIFormModel, targetChannelID, actor string) (*ChannelIFormModel, error) {

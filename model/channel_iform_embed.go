@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -31,20 +32,22 @@ func (*ChannelIFormStorageNamespaceModel) TableName() string {
 
 type ChannelIFormStorageDocumentModel struct {
 	StringPKBaseModel
-	NamespaceID string `json:"namespaceId" gorm:"size:100;not null;uniqueIndex:idx_channel_iform_storage_document,priority:1;index"`
-	Key         string `json:"key" gorm:"size:128;not null;uniqueIndex:idx_channel_iform_storage_document,priority:2"`
-	JSONValue   string `json:"value" gorm:"type:text;not null"`
-	Revision    uint64 `json:"revision" gorm:"not null;default:1"`
-	UpdatedBy   string `json:"updatedBy" gorm:"size:100;index"`
+	NamespaceID string     `json:"namespaceId" gorm:"size:100;not null;uniqueIndex:idx_channel_iform_storage_document,priority:1;index"`
+	Key         string     `json:"key" gorm:"size:128;not null;uniqueIndex:idx_channel_iform_storage_document,priority:2"`
+	JSONValue   string     `json:"value" gorm:"type:text;not null"`
+	Revision    uint64     `json:"revision" gorm:"not null;default:1"`
+	UpdatedBy   string     `json:"updatedBy" gorm:"size:100;index"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty" gorm:"index"`
 }
 
 func (*ChannelIFormStorageDocumentModel) TableName() string { return "channel_iform_storage_documents" }
 
 type ChannelIFormStorageItem struct {
-	Key      string          `json:"key"`
-	Value    json.RawMessage `json:"value"`
-	Revision uint64          `json:"revision"`
-	Seq      uint64          `json:"seq"`
+	Key       string          `json:"key"`
+	Value     json.RawMessage `json:"value"`
+	Revision  uint64          `json:"revision"`
+	Seq       uint64          `json:"seq"`
+	ExpiresAt *time.Time      `json:"expiresAt,omitempty"`
 }
 
 func normalizeEmbedStorageKey(key string) (string, error) {
@@ -112,12 +115,12 @@ func ChannelIFormStorageSnapshot(channelID, formID string) (*ChannelIFormStorage
 			return err
 		}
 		var docs []ChannelIFormStorageDocumentModel
-		if err := tx.Where("namespace_id = ?", namespace.ID).Order("key ASC").Find(&docs).Error; err != nil {
+		if err := tx.Where("namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)", namespace.ID, time.Now()).Order("key ASC").Find(&docs).Error; err != nil {
 			return err
 		}
 		items = make([]ChannelIFormStorageItem, 0, len(docs))
 		for _, doc := range docs {
-			items = append(items, ChannelIFormStorageItem{Key: doc.Key, Value: json.RawMessage(doc.JSONValue), Revision: doc.Revision, Seq: namespace.Seq})
+			items = append(items, ChannelIFormStorageItem{Key: doc.Key, Value: json.RawMessage(doc.JSONValue), Revision: doc.Revision, Seq: namespace.Seq, ExpiresAt: doc.ExpiresAt})
 		}
 		return nil
 	})
@@ -152,6 +155,10 @@ type ChannelIFormStorageMutation struct {
 }
 
 func ChannelIFormStorageSet(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string) (*ChannelIFormStorageMutation, error) {
+	return ChannelIFormStorageSetWithExpiry(channelID, formID, key, value, ifRevision, updatedBy, nil)
+}
+
+func ChannelIFormStorageSetWithExpiry(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string, expiresAt *time.Time) (*ChannelIFormStorageMutation, error) {
 	key, err := normalizeEmbedStorageKey(key)
 	if err != nil {
 		return nil, err
@@ -188,11 +195,18 @@ func ChannelIFormStorageSet(channelID, formID, key string, value json.RawMessage
 		} else {
 			existingDoc = true
 			oldJSONValue = doc.JSONValue
-			if ifRevision != nil && doc.Revision != *ifRevision {
+			expired := doc.ExpiresAt != nil && !doc.ExpiresAt.After(time.Now())
+			if expired {
+				if ifRevision != nil && *ifRevision != 0 {
+					return fmt.Errorf("REVISION_CONFLICT: currentRevision=0")
+				}
+				doc.Revision = 1
+			} else if ifRevision != nil && doc.Revision != *ifRevision {
 				return fmt.Errorf("REVISION_CONFLICT: currentRevision=%d", doc.Revision)
+			} else {
+				doc.Revision++
 			}
 			doc.JSONValue = jsonValue
-			doc.Revision++
 			doc.UpdatedBy = updatedBy
 		}
 		oldBytes := int64(0)
@@ -203,6 +217,7 @@ func ChannelIFormStorageSet(channelID, formID, key string, value json.RawMessage
 		if newBytes > EmbedStorageNamespaceMax {
 			return errors.New("QUOTA_EXCEEDED: namespace exceeds 2 MiB")
 		}
+		doc.ExpiresAt = expiresAt
 		if err := tx.Save(&doc).Error; err != nil {
 			return err
 		}
@@ -212,7 +227,7 @@ func ChannelIFormStorageSet(channelID, formID, key string, value json.RawMessage
 			return err
 		}
 		mutation.Namespace = ns
-		mutation.Item = &ChannelIFormStorageItem{Key: key, Value: json.RawMessage(jsonValue), Revision: doc.Revision, Seq: ns.Seq}
+		mutation.Item = &ChannelIFormStorageItem{Key: key, Value: json.RawMessage(jsonValue), Revision: doc.Revision, Seq: ns.Seq, ExpiresAt: doc.ExpiresAt}
 		return nil
 	})
 	return &mutation, err
@@ -257,7 +272,7 @@ func ChannelIFormStorageDelete(channelID, formID, key string, ifRevision *uint64
 			return err
 		}
 		mutation.Namespace, mutation.Deleted = ns, true
-		mutation.Item = &ChannelIFormStorageItem{Key: key, Revision: doc.Revision, Seq: ns.Seq}
+		mutation.Item = &ChannelIFormStorageItem{Key: key, Revision: doc.Revision, Seq: ns.Seq, ExpiresAt: doc.ExpiresAt}
 		return nil
 	})
 	return &mutation, err
@@ -280,7 +295,7 @@ func ChannelIFormStorageList(channelID, formID, prefix, cursor string, limit int
 		if err != nil {
 			return err
 		}
-		q := tx.Where("namespace_id = ?", ns.ID).Order("key ASC").Limit(limit)
+		q := tx.Where("namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)", ns.ID, time.Now()).Order("key ASC").Limit(limit)
 		if strings.TrimSpace(prefix) != "" {
 			q = q.Where("key LIKE ?", strings.TrimSpace(prefix)+"%")
 		}
@@ -293,7 +308,7 @@ func ChannelIFormStorageList(channelID, formID, prefix, cursor string, limit int
 		}
 		items = make([]ChannelIFormStorageItem, 0, len(docs))
 		for _, doc := range docs {
-			items = append(items, ChannelIFormStorageItem{Key: doc.Key, Value: json.RawMessage(doc.JSONValue), Revision: doc.Revision, Seq: ns.Seq})
+			items = append(items, ChannelIFormStorageItem{Key: doc.Key, Value: json.RawMessage(doc.JSONValue), Revision: doc.Revision, Seq: ns.Seq, ExpiresAt: doc.ExpiresAt})
 		}
 		return nil
 	})
@@ -304,5 +319,157 @@ func ChannelIFormStorageList(channelID, formID, prefix, cursor string, limit int
 }
 
 func ChannelIFormStorageNamespaceDelete(channelID, formID string) error {
-	return GetDB().Where("channel_id = ? AND form_id = ?", channelID, formID).Delete(&ChannelIFormStorageNamespaceModel{}).Error
+	return GetDB().Transaction(func(tx *gorm.DB) error {
+		return ChannelIFormStorageDeleteByNamespaceScopeTx(tx, channelID, formID)
+	})
+}
+
+func ChannelIFormStorageDeleteByNamespaceScopeTx(tx *gorm.DB, channelID, formID string) error {
+	if !channelIFormStorageTablesReady(tx) {
+		return nil
+	}
+	var namespaces []ChannelIFormStorageNamespaceModel
+	if err := tx.Unscoped().Where("channel_id = ? AND form_id = ?", channelID, formID).Find(&namespaces).Error; err != nil {
+		return err
+	}
+	if len(namespaces) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		ids = append(ids, namespace.ID)
+	}
+	if err := tx.Unscoped().Where("namespace_id IN ?", ids).Delete(&ChannelIFormStorageDocumentModel{}).Error; err != nil {
+		return err
+	}
+	return tx.Unscoped().Where("id IN ?", ids).Delete(&ChannelIFormStorageNamespaceModel{}).Error
+}
+
+func ChannelIFormStorageDeleteByFormIDTx(tx *gorm.DB, formID string) error {
+	if !channelIFormStorageTablesReady(tx) {
+		return nil
+	}
+	formID = strings.TrimSpace(formID)
+	if formID == "" {
+		return nil
+	}
+	var namespaces []ChannelIFormStorageNamespaceModel
+	if err := tx.Unscoped().Where("form_id = ?", formID).Find(&namespaces).Error; err != nil {
+		return err
+	}
+	if len(namespaces) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		ids = append(ids, namespace.ID)
+	}
+	if err := tx.Unscoped().Where("namespace_id IN ?", ids).Delete(&ChannelIFormStorageDocumentModel{}).Error; err != nil {
+		return err
+	}
+	return tx.Unscoped().Where("id IN ?", ids).Delete(&ChannelIFormStorageNamespaceModel{}).Error
+}
+
+func ChannelIFormStorageDeleteByChannelIDsTx(tx *gorm.DB, channelIDs []string) error {
+	if !channelIFormStorageTablesReady(tx) {
+		return nil
+	}
+	ids := make([]string, 0, len(channelIDs))
+	seen := map[string]struct{}{}
+	for _, raw := range channelIDs {
+		channelID := strings.TrimSpace(raw)
+		if channelID == "" {
+			continue
+		}
+		if _, ok := seen[channelID]; ok {
+			continue
+		}
+		seen[channelID] = struct{}{}
+		ids = append(ids, channelID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var namespaces []ChannelIFormStorageNamespaceModel
+	if err := tx.Unscoped().Where("channel_id IN ?", ids).Find(&namespaces).Error; err != nil {
+		return err
+	}
+	if len(namespaces) == 0 {
+		return nil
+	}
+	namespaceIDs := make([]string, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		namespaceIDs = append(namespaceIDs, namespace.ID)
+	}
+	if err := tx.Unscoped().Where("namespace_id IN ?", namespaceIDs).Delete(&ChannelIFormStorageDocumentModel{}).Error; err != nil {
+		return err
+	}
+	return tx.Unscoped().Where("id IN ?", namespaceIDs).Delete(&ChannelIFormStorageNamespaceModel{}).Error
+}
+
+type ChannelIFormStorageExpiredMutation struct {
+	ChannelID string
+	FormID    string
+	Namespace *ChannelIFormStorageNamespaceModel
+	Item      ChannelIFormStorageItem
+}
+
+func ChannelIFormStorageDeleteExpired(now time.Time, batchSize int) ([]ChannelIFormStorageExpiredMutation, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if batchSize <= 0 {
+		batchSize = 256
+	}
+	var mutations []ChannelIFormStorageExpiredMutation
+	err := GetDB().Transaction(func(tx *gorm.DB) error {
+		if !channelIFormStorageTablesReady(tx) {
+			return nil
+		}
+		var candidates []ChannelIFormStorageDocumentModel
+		if err := tx.Unscoped().Where("expires_at IS NOT NULL AND expires_at <= ?", now).Order("id ASC").Limit(batchSize).Find(&candidates).Error; err != nil {
+			return err
+		}
+		for _, candidate := range candidates {
+			var namespace ChannelIFormStorageNamespaceModel
+			if loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Unscoped().Where("id = ?", candidate.NamespaceID).First(&namespace).Error; loadErr != nil {
+				if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return loadErr
+			}
+			var doc ChannelIFormStorageDocumentModel
+			loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Unscoped().Where("id = ?", candidate.ID).First(&doc).Error
+			if loadErr != nil {
+				if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return loadErr
+			}
+			if doc.ExpiresAt == nil || doc.ExpiresAt.After(now) {
+				continue
+			}
+			if err := tx.Unscoped().Delete(&doc).Error; err != nil {
+				return err
+			}
+			namespace.Seq++
+			namespace.CurrentBytes -= int64(len(doc.JSONValue))
+			if namespace.CurrentBytes < 0 {
+				namespace.CurrentBytes = 0
+			}
+			if err := tx.Save(&namespace).Error; err != nil {
+				return err
+			}
+			mutations = append(mutations, ChannelIFormStorageExpiredMutation{ChannelID: namespace.ChannelID, FormID: namespace.FormID, Namespace: &namespace, Item: ChannelIFormStorageItem{Key: doc.Key, Revision: doc.Revision, Seq: namespace.Seq, ExpiresAt: doc.ExpiresAt}})
+		}
+		return nil
+	})
+	return mutations, err
+}
+
+func channelIFormStorageTablesReady(tx *gorm.DB) bool {
+	if tx == nil {
+		return false
+	}
+	return tx.Migrator().HasTable(&ChannelIFormStorageNamespaceModel{}) && tx.Migrator().HasTable(&ChannelIFormStorageDocumentModel{})
 }

@@ -4,11 +4,24 @@ import (
 	"errors"
 	"strings"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/pm"
 )
+
+// ChannelIFormPermanentDelete removes form and every storage namespace owned by form ID.
+func ChannelIFormPermanentDelete(channelID, formID string) error {
+	channelID = strings.TrimSpace(channelID)
+	formID = strings.TrimSpace(formID)
+	if channelID == "" || formID == "" {
+		return errors.New("控件ID不能为空")
+	}
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		return model.ChannelIFormDeleteTx(tx, channelID, formID)
+	})
+}
 
 type ChannelIFormView struct {
 	*model.ChannelIFormModel

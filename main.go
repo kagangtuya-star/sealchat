@@ -171,6 +171,7 @@ func main() {
 	defer cancel()
 
 	model.DBInit(config)
+	service.StartChannelIFormStorageGCWorker(ctx)
 	if err := service.MergeAllTheaterRoomsToWorld(); err != nil {
 		log.Printf("合并世界级 Theater 数据失败: %v", err)
 	}

@@ -402,6 +402,7 @@ func registerFrontendStaticRoutes(app *fiber.App, webURL string, uiStatic fs.FS,
 
 func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	appConfig = config
+	service.SetChannelIFormStorageGCNotifier(broadcastEmbedStorageGCEvent)
 	corsConfig := cors.New(cors.Config{
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId, X-SealChat-Device-ID, Last-Event-ID",

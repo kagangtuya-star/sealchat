@@ -204,7 +204,7 @@ func ChannelIFormDelete(c *fiber.Ctx) error {
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "计算受影响频道失败")
 	}
-	if err := model.ChannelIFormDelete(channelID, formID); err != nil {
+	if err := service.ChannelIFormPermanentDelete(channelID, formID); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除控件失败")
 	}
 	_ = model.GetDB().Where("form_id = ?", formID).Delete(&model.WorldIFormBindingModel{}).Error
@@ -388,7 +388,7 @@ func ChannelIFormMigrate(c *fiber.Ctx) error {
 	}
 	if mode == "move" {
 		for _, form := range selected {
-			_ = model.ChannelIFormDelete(channelID, form.ID)
+			_ = service.ChannelIFormPermanentDelete(channelID, form.ID)
 		}
 		_ = broadcastIFormSnapshot(user, channelID)
 	}

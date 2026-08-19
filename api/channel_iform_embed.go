@@ -85,12 +85,37 @@ type embedStorageSetRequest struct {
 	Key        string          `json:"key"`
 	Value      json.RawMessage `json:"value"`
 	IfRevision *uint64         `json:"if_revision"`
+	ExpiresAt  json.RawMessage `json:"expires_at"`
 }
 type embedStorageDeleteRequest struct {
 	embedScopeRequest
 	Key        string  `json:"key"`
 	IfRevision *uint64 `json:"if_revision"`
 }
+
+func parseEmbedStorageExpiresAt(raw json.RawMessage) (*time.Time, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		if millis, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(text)); err == nil {
+			return &millis, nil
+		}
+		if numeric, err := json.Number(strings.TrimSpace(text)).Int64(); err == nil {
+			value := time.UnixMilli(numeric)
+			return &value, nil
+		}
+		return nil, errors.New("INVALID_PARAMS: expires_at must be RFC3339 or Unix milliseconds")
+	}
+	var numeric int64
+	if err := json.Unmarshal(raw, &numeric); err != nil {
+		return nil, errors.New("INVALID_PARAMS: expires_at must be RFC3339 or Unix milliseconds")
+	}
+	value := time.UnixMilli(numeric)
+	return &value, nil
+}
+
 type embedStorageListRequest struct {
 	embedScopeRequest
 	Prefix string `json:"prefix"`
@@ -111,6 +136,11 @@ func resolveEmbedForm(ctx *ChatContext, scope embedScopeRequest, capability stri
 	}
 	if ctx == nil || ctx.User == nil {
 		return nil, "", errors.New("PERMISSION_DENIED")
+	}
+	if strings.HasPrefix(capability, "storage.") {
+		if ctx.ConnInfo == nil || strings.TrimSpace(ctx.ConnInfo.ChannelId) == "" || strings.TrimSpace(ctx.ConnInfo.ChannelId) != channelID {
+			return nil, "", errors.New("CONTEXT_CHANGED")
+		}
 	}
 	if ctx.IsReadOnly() && (capability == embedStorageCapabilityWrite || capability == embedEventsPublish || capability == "messages.send") {
 		return nil, "", errors.New("PERMISSION_DENIED")
@@ -237,7 +267,11 @@ func apiIFormStorageSet(ctx *ChatContext, data *embedStorageSetRequest) (any, er
 	if err != nil {
 		return nil, err
 	}
-	mutation, err := model.ChannelIFormStorageSet(channelID, data.FormID, data.Key, data.Value, data.IfRevision, ctx.User.ID)
+	expiresAt, err := parseEmbedStorageExpiresAt(data.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	mutation, err := model.ChannelIFormStorageSetWithExpiry(channelID, data.FormID, data.Key, data.Value, data.IfRevision, ctx.User.ID, expiresAt)
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
@@ -336,6 +370,15 @@ func broadcastEmbedStorageEvent(ctx *ChatContext, channelID, formID string, seq 
 	// value through storage.get, preventing value disclosure to unrelated clients.
 	_ = value
 	dispatchEmbedEvent(channelID, &protocol.ChannelIFormEmbedEventPayload{EventID: utils.NewID(), ChannelID: channelID, FormID: formID, Seq: seq, Key: item.Key, Op: op, Revision: item.Revision, At: time.Now().UnixMilli()}, false)
+}
+
+func broadcastEmbedStorageGCEvent(channelID, formID string, mutation model.ChannelIFormStorageExpiredMutation) {
+	item := mutation.Item
+	dispatchEmbedEvent(channelID, &protocol.ChannelIFormEmbedEventPayload{
+		EventID: utils.NewID(), ChannelID: channelID, FormID: formID,
+		Seq: item.Seq, Key: item.Key, Op: "delete", Revision: item.Revision,
+		At: time.Now().UnixMilli(),
+	}, false)
 }
 
 func embedScopeKey(channelID, formID, topic string) string {
