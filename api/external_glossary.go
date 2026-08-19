@@ -356,6 +356,26 @@ func ExternalGlossaryLibraryImportHandler(c *fiber.Ctx) error {
 	})
 }
 
+func ExternalGlossaryLibraryOverwriteImportHandler(c *fiber.Ctx) error {
+	user, err := ensureExternalGlossaryAdminAPI(c)
+	if err != nil {
+		return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"message": err.Error()})
+	}
+	var payload struct {
+		Items []service.WorldKeywordInput `json:"items"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	stats, importErr := service.ExternalGlossaryLibraryOverwriteImport(c.Params("libraryId"), user.ID, payload.Items)
+	if importErr != nil {
+		return c.Status(mapExternalGlossaryErrorStatus(importErr)).JSON(fiber.Map{"message": importErr.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastExternalGlossaryLibraryChanged([]string{c.Params("libraryId")}, "overwritten", requestID, true)
+	return c.JSON(fiber.Map{"stats": stats, "requestId": requestID})
+}
+
 func ExternalGlossaryTermListHandler(c *fiber.Ctx) error {
 	user, err := ensureExternalGlossaryAdminAPI(c)
 	if err != nil {

@@ -28,6 +28,7 @@ import {
   renameExternalGlossaryCategory,
   reorderExternalGlossaryLibraries,
   reorderExternalGlossaryTerms,
+  overwriteExternalGlossaryLibrary,
   updateExternalGlossaryCategoryPriority,
   updateExternalGlossaryLibrary,
   updateExternalGlossaryTerm,
@@ -305,6 +306,14 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     return result
   }
 
+  async function overwriteLibrary(libraryId: string, items: WorldKeywordPayload[]) {
+    const result = await overwriteExternalGlossaryLibrary(libraryId, { items })
+    await ensureLibraries({ force: true })
+    await ensureTerms(libraryId, { force: true })
+    await ensureCategories(libraryId, { force: true })
+    return result
+  }
+
   async function exportLibrary(libraryId: string) {
     return exportExternalGlossaryLibrary(libraryId)
   }
@@ -419,6 +428,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     setTermsEnabled,
     setTermsDisplay,
     importLibrary,
+    overwriteLibrary,
     exportLibrary,
     importTerms,
     exportTerms,

@@ -944,6 +944,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/external-glossaries", ExternalGlossaryLibraryListHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries", ExternalGlossaryLibraryCreateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/import", ExternalGlossaryLibraryImportHandler)
+	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/import", ExternalGlossaryLibraryOverwriteImportHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/reorder", ExternalGlossaryLibraryReorderHandler)
 	v1AuthAdmin.Get("/admin/external-glossaries/:libraryId/export", ExternalGlossaryLibraryExportHandler)
 	v1AuthAdmin.Patch("/admin/external-glossaries/:libraryId", ExternalGlossaryLibraryUpdateHandler)

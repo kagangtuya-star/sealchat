@@ -31,6 +31,7 @@ const libraryModalVisible = ref(false)
 const libraryEditingId = ref('')
 const editorVisible = ref(false)
 const importLibraryVisible = ref(false)
+const libraryImportTargetId = ref('')
 const importTermsVisible = ref(false)
 const categoryVisible = ref(false)
 const categoryPriorityVisible = ref(false)
@@ -84,6 +85,9 @@ const selectedLibrary = computed(() => {
 })
 
 const libraryItems = computed(() => store.libraryPage?.items || [])
+const libraryImportTarget = computed(() =>
+  libraryItems.value.find((item) => item.id === libraryImportTargetId.value) || null,
+)
 const filteredLibraries = computed(() => {
   const query = libraryQuery.value.trim()
   if (!query) return libraryItems.value
@@ -123,6 +127,11 @@ const keywordMaxLength = computed(() => DEFAULT_KEYWORD_MAX_LENGTH)
 const clampText = (value = '') => value.slice(0, keywordMaxLength.value)
 const clampDescription = (value = '') => clampTextWithImageTokens(value, keywordMaxLength.value)
 const resolveErrorMessage = (error: any, fallback: string) => error?.response?.data?.message || error?.message || fallback
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '未知'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString()
+}
 
 const displayOptions: Array<{ label: string; value: KeywordDisplayStyle }> = [
   { label: '跟随全局', value: 'inherit' },
@@ -425,11 +434,57 @@ async function handleExportLibrary(item: ExternalGlossaryLibraryItem) {
   }
 }
 
+function openImportLibrary() {
+  libraryImportTargetId.value = ''
+  libraryImportForm.name = ''
+  libraryImportForm.description = ''
+  libraryImportForm.isEnabled = true
+  libraryImportForm.sortOrder = 0
+  libraryImportForm.content = ''
+  libraryImportReplace.value = false
+  importLibraryVisible.value = true
+}
+
+function openOverwriteLibrary(item: ExternalGlossaryLibraryItem) {
+  libraryImportTargetId.value = item.id
+  libraryImportForm.name = item.name
+  libraryImportForm.description = item.description
+  libraryImportForm.isEnabled = item.isEnabled
+  libraryImportForm.sortOrder = item.sortOrder
+  libraryImportForm.content = ''
+  libraryImportReplace.value = false
+  importLibraryVisible.value = true
+}
+
+async function executeOverwriteLibrary(targetId: string, items: WorldKeywordPayload[]) {
+  try {
+    const result = await store.overwriteLibrary(targetId, items)
+    importLibraryVisible.value = false
+    libraryImportTargetId.value = ''
+    libraryImportForm.content = ''
+    message.success(`覆盖导入完成，删除 ${result.stats.deleted}，新增 ${result.stats.created}，跳过 ${result.stats.skipped}`)
+  } catch (error) {
+    message.error(resolveErrorMessage(error, '覆盖导入失败'))
+  }
+}
+
 async function handleImportLibrary() {
   try {
     const parsed = parseLibraryImportContent(libraryImportForm.content)
     const importedLibrary = parsed.library
     const items = parsed.items
+    if (libraryImportTargetId.value) {
+      const targetId = libraryImportTargetId.value
+      const targetName = libraryImportTarget.value?.name || '当前术语库'
+      dialog.warning({
+        title: '确认覆盖导入',
+        content: `将替换“${targetName}”现有 ${libraryImportTarget.value?.termCount ?? 0} 条术语，世界绑定保持不变。`,
+        positiveText: '确认覆盖',
+        negativeText: '取消',
+        onPositiveClick: () => executeOverwriteLibrary(targetId, items),
+      })
+      return
+    }
     const name = libraryImportForm.name.trim() || importedLibrary?.name || ''
     if (!name) {
       message.warning('术语库名称不能为空')
@@ -828,7 +883,7 @@ onMounted(async () => {
       <n-input v-model:value="libraryQuery" size="small" clearable placeholder="搜索术语库名称或简介" />
       <n-button size="small" @click="refreshAll">刷新</n-button>
       <n-button size="small" type="primary" @click="openCreateLibrary">新建术语库</n-button>
-      <n-button size="small" secondary @click="importLibraryVisible = true">导入整库</n-button>
+      <n-button size="small" secondary @click="openImportLibrary">导入整库</n-button>
       <n-button size="small" :disabled="!selectedLibraryIds.length" @click="handleBulkLibraryState(true)">批量启用</n-button>
       <n-button size="small" :disabled="!selectedLibraryIds.length" @click="handleBulkLibraryState(false)">批量停用</n-button>
       <n-button size="small" tertiary type="error" :disabled="!selectedLibraryIds.length" @click="handleBulkDeleteLibraries">批量删除</n-button>
@@ -855,6 +910,7 @@ onMounted(async () => {
                   <th>术语库</th>
                   <th>术语数</th>
                   <th>状态</th>
+                  <th>更新时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -878,6 +934,7 @@ onMounted(async () => {
                       {{ item.isEnabled ? '启用' : '停用' }}
                     </n-tag>
                   </td>
+                  <td>{{ formatDateTime(item.updatedAt) }}</td>
                   <td>
                     <n-space size="small">
                       <n-button size="tiny" text type="primary" @click.stop="openLibraryEditor(item)">编辑</n-button>
@@ -886,12 +943,13 @@ onMounted(async () => {
                         {{ item.isEnabled ? '停用' : '启用' }}
                       </n-button>
                       <n-button size="tiny" text @click.stop="handleExportLibrary(item)">导出</n-button>
+                      <n-button size="tiny" text type="warning" @click.stop="openOverwriteLibrary(item)">覆盖导入</n-button>
                       <n-button size="tiny" text type="error" @click.stop="handleDeleteLibrary(item)">删除</n-button>
                     </n-space>
                   </td>
                 </tr>
                 <tr v-if="!filteredLibraries.length">
-                  <td colspan="5" class="external-glossary-admin__empty">暂无术语库</td>
+                  <td colspan="6" class="external-glossary-admin__empty">暂无术语库</td>
                 </tr>
               </tbody>
             </table>
@@ -1115,21 +1173,26 @@ onMounted(async () => {
       </template>
     </n-modal>
 
-    <n-modal v-model:show="importLibraryVisible" preset="card" title="导入外挂术语库" class="external-glossary-admin__modal external-glossary-admin__modal--wide">
+    <n-modal v-model:show="importLibraryVisible" preset="card" :title="libraryImportTargetId ? `覆盖导入：${libraryImportTarget?.name || '外挂术语库'}` : '导入外挂术语库'" class="external-glossary-admin__modal external-glossary-admin__modal--wide">
       <n-form label-placement="top">
-        <n-form-item label="术语库名称" required>
-          <n-input v-model:value="libraryImportForm.name" />
-        </n-form-item>
-        <n-form-item label="简介">
-          <n-input v-model:value="libraryImportForm.description" type="textarea" />
-        </n-form-item>
-        <div class="external-glossary-admin__modal-row">
-          <n-form-item label="排序" class="external-glossary-admin__modal-field">
-            <n-input-number v-model:value="libraryImportForm.sortOrder" style="width: 100%" />
+        <template v-if="!libraryImportTargetId">
+          <n-form-item label="术语库名称" required>
+            <n-input v-model:value="libraryImportForm.name" />
           </n-form-item>
-          <n-form-item label="启用" class="external-glossary-admin__modal-field">
-            <n-switch v-model:value="libraryImportForm.isEnabled" />
+          <n-form-item label="简介">
+            <n-input v-model:value="libraryImportForm.description" type="textarea" />
           </n-form-item>
+          <div class="external-glossary-admin__modal-row">
+            <n-form-item label="排序" class="external-glossary-admin__modal-field">
+              <n-input-number v-model:value="libraryImportForm.sortOrder" style="width: 100%" />
+            </n-form-item>
+            <n-form-item label="启用" class="external-glossary-admin__modal-field">
+              <n-switch v-model:value="libraryImportForm.isEnabled" />
+            </n-form-item>
+          </div>
+        </template>
+        <div v-else class="external-glossary-admin__library-desc">
+          目标术语库：{{ libraryImportTarget?.name || '未知' }}，现有 {{ libraryImportTarget?.termCount || 0 }} 条术语。覆盖后保留库信息与世界绑定。
         </div>
         <div class="external-glossary-admin__import-upload">
           <n-button size="small" @click="triggerImportLibraryFile">上传 JSON 文件</n-button>
@@ -1149,12 +1212,12 @@ onMounted(async () => {
             placeholder="支持整库导出 JSON、术语 JSON 数组，或每行 keyword|description|aliases|category"
           />
         </n-form-item>
-        <n-checkbox v-model:checked="libraryImportReplace">同关键词允许覆盖更新</n-checkbox>
+        <n-checkbox v-if="!libraryImportTargetId" v-model:checked="libraryImportReplace">同关键词允许覆盖更新</n-checkbox>
       </n-form>
       <template #footer>
         <n-space justify="end">
           <n-button @click="importLibraryVisible = false">取消</n-button>
-          <n-button type="primary" @click="handleImportLibrary">导入</n-button>
+          <n-button type="primary" @click="handleImportLibrary">{{ libraryImportTargetId ? '覆盖导入' : '导入' }}</n-button>
         </n-space>
       </template>
     </n-modal>
