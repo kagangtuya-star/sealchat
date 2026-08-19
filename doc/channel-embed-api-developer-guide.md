@@ -623,3 +623,4 @@ SDK 由 SealChat 后端提供，无需开发者维护。把下面 `script` 的�
 - 不用 Storage 模拟高频消息流；不用 Event 保存必须恢复的数据。
 - 不缓存或猜测 `channelId`、`formId`；以当前 Session 返回值为准。
 - 不向 iframe 暴露 token、内部错误栈、任意 HTTP API 或原始 WebSocket。
+- 频道 iframe 可能处于 sandbox；不要使用 `window.alert()`、`window.confirm()`、`window.prompt()`，确认交互改用页面内 HTML `<dialog>` 或其他 DOM UI。
