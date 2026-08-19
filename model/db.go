@@ -179,6 +179,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&BattleReportModel{}, &BattleReportDisplayChannelModel{}, &BattleReportDisplayEmbedModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
+	db.AutoMigrate(&ChannelIFormTemplateModel{})
 	db.AutoMigrate(&WorldIFormBindingModel{})
 	db.AutoMigrate(&ChannelIFormStorageNamespaceModel{}, &ChannelIFormStorageDocumentModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldMemberDice3DProfileModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldArchiveModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})

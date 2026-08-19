@@ -159,6 +159,18 @@ func resolveEmbedForm(ctx *ChatContext, scope embedScopeRequest, capability stri
 		return nil, "", embedPublicError(err)
 	}
 	form = local
+	if local != nil {
+		resolved, resolveErr := service.ResolveChannelIForm(local)
+		if resolveErr != nil {
+			return nil, "", embedPublicError(resolveErr)
+		}
+		if resolved != nil {
+			if resolved.Metadata.TemplateMissing {
+				return nil, "", errors.New("NOT_FOUND: form template")
+			}
+			form = resolved.Form
+		}
+	}
 	if form == nil {
 		forms, listErr := service.ListEffectiveChannelIForms(channelID)
 		if listErr != nil {

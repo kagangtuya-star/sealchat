@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -23,31 +24,35 @@ const (
 )
 
 type channelIFormCreateRequest struct {
-	Name             string                          `json:"name"`
-	Url              string                          `json:"url"`
-	EmbedCode        string                          `json:"embedCode"`
-	DefaultWidth     int                             `json:"defaultWidth"`
-	DefaultHeight    int                             `json:"defaultHeight"`
-	DefaultCollapsed bool                            `json:"defaultCollapsed"`
-	DefaultFloating  bool                            `json:"defaultFloating"`
-	AllowPopout      bool                            `json:"allowPopout"`
-	OrderIndex       int                             `json:"orderIndex"`
-	MediaOptions     model.ChannelIFormMediaOptions  `json:"mediaOptions"`
-	BridgePolicy     *model.ChannelIFormBridgePolicy `json:"bridgePolicy"`
+	Name              string                               `json:"name"`
+	Url               string                               `json:"url"`
+	EmbedCode         string                               `json:"embedCode"`
+	DefaultWidth      int                                  `json:"defaultWidth"`
+	DefaultHeight     int                                  `json:"defaultHeight"`
+	DefaultCollapsed  bool                                 `json:"defaultCollapsed"`
+	DefaultFloating   bool                                 `json:"defaultFloating"`
+	AllowPopout       bool                                 `json:"allowPopout"`
+	OrderIndex        int                                  `json:"orderIndex"`
+	MediaOptions      model.ChannelIFormMediaOptions       `json:"mediaOptions"`
+	BridgePolicy      *model.ChannelIFormBridgePolicy      `json:"bridgePolicy"`
+	TemplateRef       string                               `json:"templateRef"`
+	TemplateOverrides *model.ChannelIFormTemplateOverrides `json:"templateOverrides"`
 }
 
 type channelIFormUpdateRequest struct {
-	Name             *string                         `json:"name"`
-	Url              *string                         `json:"url"`
-	EmbedCode        *string                         `json:"embedCode"`
-	DefaultWidth     *int                            `json:"defaultWidth"`
-	DefaultHeight    *int                            `json:"defaultHeight"`
-	DefaultCollapsed *bool                           `json:"defaultCollapsed"`
-	DefaultFloating  *bool                           `json:"defaultFloating"`
-	AllowPopout      *bool                           `json:"allowPopout"`
-	OrderIndex       *int                            `json:"orderIndex"`
-	MediaOptions     *model.ChannelIFormMediaOptions `json:"mediaOptions"`
-	BridgePolicy     *model.ChannelIFormBridgePolicy `json:"bridgePolicy"`
+	Name              *string                              `json:"name"`
+	Url               *string                              `json:"url"`
+	EmbedCode         *string                              `json:"embedCode"`
+	DefaultWidth      *int                                 `json:"defaultWidth"`
+	DefaultHeight     *int                                 `json:"defaultHeight"`
+	DefaultCollapsed  *bool                                `json:"defaultCollapsed"`
+	DefaultFloating   *bool                                `json:"defaultFloating"`
+	AllowPopout       *bool                                `json:"allowPopout"`
+	OrderIndex        *int                                 `json:"orderIndex"`
+	MediaOptions      *model.ChannelIFormMediaOptions      `json:"mediaOptions"`
+	BridgePolicy      *model.ChannelIFormBridgePolicy      `json:"bridgePolicy"`
+	TemplateRef       *string                              `json:"templateRef"`
+	TemplateOverrides *model.ChannelIFormTemplateOverrides `json:"templateOverrides"`
 }
 
 type channelIFormPushRequest struct {
@@ -121,7 +126,18 @@ func ChannelIFormCreate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
 	}
-	form, err := buildIFormModelFromCreate(&payload, channelID, user.ID)
+	var form *model.ChannelIFormModel
+	if strings.TrimSpace(payload.TemplateRef) != "" {
+		if jsonFieldPresent(c.Body(), "url") || jsonFieldPresent(c.Body(), "embedCode") {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
+		}
+		if err := validateTemplateOverridesPayload(c.Body()); err != nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		}
+		form, err = buildIFormModelFromTemplate(&payload, channelID, user.ID)
+	} else {
+		form, err = buildIFormModelFromCreate(&payload, channelID, user.ID)
+	}
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
@@ -131,9 +147,14 @@ func ChannelIFormCreate(c *fiber.Ctx) error {
 	if err := broadcastIFormSnapshotsForFormIDs(user, []string{form.ID}); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
 	}
+	responseForm, responseMeta := resolveIFormResponse(form)
 	return c.JSON(fiber.Map{
-		"item":    form,
-		"message": "创建成功",
+		"item":             responseForm,
+		"templateOrigin":   responseMeta.Origin,
+		"templateName":     responseMeta.Name,
+		"templateMissing":  responseMeta.TemplateMissing,
+		"templateArchived": responseMeta.Archived,
+		"message":          "创建成功",
 	})
 }
 
@@ -160,7 +181,23 @@ func ChannelIFormUpdate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
 	}
-	updates, err := buildIFormUpdateMap(&payload, form)
+	if strings.TrimSpace(form.TemplateRef) != "" && (jsonFieldPresent(c.Body(), "url") || jsonFieldPresent(c.Body(), "embedCode")) {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
+	}
+	if jsonFieldPresent(c.Body(), "templateRef") {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用关系不可直接修改")
+	}
+	if strings.TrimSpace(form.TemplateRef) != "" {
+		if err := validateTemplateOverridesPayload(c.Body()); err != nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		}
+	}
+	var updates map[string]interface{}
+	if strings.TrimSpace(form.TemplateRef) != "" {
+		updates, err = buildIFormReferenceUpdateMap(&payload, form, c.Body())
+	} else {
+		updates, err = buildIFormUpdateMap(&payload, form)
+	}
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
@@ -175,9 +212,14 @@ func ChannelIFormUpdate(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
 	}
 	form, _ = model.ChannelIFormGet(sourceChannelID, formID)
+	responseForm, responseMeta := resolveIFormResponse(form)
 	return c.JSON(fiber.Map{
-		"item":    form,
-		"message": "更新成功",
+		"item":             responseForm,
+		"templateOrigin":   responseMeta.Origin,
+		"templateName":     responseMeta.Name,
+		"templateMissing":  responseMeta.TemplateMissing,
+		"templateArchived": responseMeta.Archived,
+		"message":          "更新成功",
 	})
 }
 
@@ -488,6 +530,268 @@ func buildIFormModelFromCreate(payload *channelIFormCreateRequest, channelID, ac
 	return form, nil
 }
 
+func buildIFormModelFromTemplate(payload *channelIFormCreateRequest, channelID, actor string) (*model.ChannelIFormModel, error) {
+	ref := strings.TrimSpace(payload.TemplateRef)
+	template, err := service.ResolveChannelIFormTemplate(ref)
+	if err != nil {
+		return nil, err
+	}
+	if !template.Installable {
+		return nil, errors.New("模板已归档或未启用，不能安装")
+	}
+	overrides := model.ChannelIFormTemplateOverrides{}
+	if payload.TemplateOverrides != nil {
+		overrides = *payload.TemplateOverrides
+	}
+	if err := validateIFormTemplateOverrides(&overrides); err != nil {
+		return nil, err
+	}
+	return &model.ChannelIFormModel{
+		ChannelID: channelID, TemplateRef: ref, TemplateOverrides: overrides,
+		OrderIndex: payload.OrderIndex, CreatedBy: actor, UpdatedBy: actor,
+	}, nil
+}
+
+func validateIFormTemplateOverrides(overrides *model.ChannelIFormTemplateOverrides) error {
+	if overrides == nil {
+		return nil
+	}
+	if overrides.Name != nil {
+		name := strings.TrimSpace(*overrides.Name)
+		if name == "" || utf8.RuneCountInString(name) > 64 {
+			return errors.New("名称长度必须为1-64字符")
+		}
+		overrides.Name = &name
+	}
+	if overrides.DefaultWidth != nil && (*overrides.DefaultWidth <= 0 || *overrides.DefaultWidth > maxEmbedSize) {
+		return errors.New("默认宽度超出范围")
+	}
+	if overrides.DefaultHeight != nil && (*overrides.DefaultHeight <= 0 || *overrides.DefaultHeight > maxEmbedSize) {
+		return errors.New("默认高度超出范围")
+	}
+	return nil
+}
+
+func buildIFormReferenceUpdateMap(payload *channelIFormUpdateRequest, current *model.ChannelIFormModel, body []byte) (map[string]interface{}, error) {
+	if payload.Url != nil || payload.EmbedCode != nil {
+		return nil, errors.New("模板引用控件的 URL 和嵌入代码由模板管理")
+	}
+	overrides, err := mergeIFormTemplateOverridesPayload(body, current.TemplateOverrides)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Name != nil {
+		value := strings.TrimSpace(*payload.Name)
+		overrides.Name = &value
+	}
+	if payload.DefaultWidth != nil {
+		overrides.DefaultWidth = payload.DefaultWidth
+	}
+	if payload.DefaultHeight != nil {
+		overrides.DefaultHeight = payload.DefaultHeight
+	}
+	if payload.DefaultCollapsed != nil {
+		overrides.DefaultCollapsed = payload.DefaultCollapsed
+	}
+	if payload.DefaultFloating != nil {
+		overrides.DefaultFloating = payload.DefaultFloating
+	}
+	if payload.AllowPopout != nil {
+		overrides.AllowPopout = payload.AllowPopout
+	}
+	if payload.MediaOptions != nil {
+		overrides.MediaOptions = payload.MediaOptions
+	}
+	if payload.BridgePolicy != nil {
+		overrides.BridgePolicy = payload.BridgePolicy
+	}
+	if err := validateIFormTemplateOverrides(&overrides); err != nil {
+		return nil, err
+	}
+	updates := map[string]interface{}{"template_overrides": overrides}
+	if payload.OrderIndex != nil {
+		updates["order_index"] = *payload.OrderIndex
+	}
+	return updates, nil
+}
+
+// mergeIFormTemplateOverridesPayload applies only the keys present in the
+// request. A JSON null explicitly removes that override; omitted keys keep the
+// existing sparse value. This preserves both sparse semantics and a practical
+// per-field "restore default" API.
+func mergeIFormTemplateOverridesPayload(body []byte, current model.ChannelIFormTemplateOverrides) (model.ChannelIFormTemplateOverrides, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return current, errors.New("请求体 JSON 无效")
+	}
+	raw, ok := root["templateOverrides"]
+	if !ok {
+		return current, nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return model.ChannelIFormTemplateOverrides{}, nil
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return current, errors.New("templateOverrides 必须是对象")
+	}
+	for key, rawValue := range values {
+		if strings.TrimSpace(string(rawValue)) == "null" {
+			switch key {
+			case "name":
+				current.Name = nil
+			case "defaultWidth":
+				current.DefaultWidth = nil
+			case "defaultHeight":
+				current.DefaultHeight = nil
+			case "defaultCollapsed":
+				current.DefaultCollapsed = nil
+			case "defaultFloating":
+				current.DefaultFloating = nil
+			case "allowPopout":
+				current.AllowPopout = nil
+			case "mediaOptions":
+				current.MediaOptions = nil
+			case "bridgePolicy":
+				current.BridgePolicy = nil
+			}
+			continue
+		}
+		switch key {
+		case "name":
+			var decoded string
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 name 类型无效")
+			}
+			current.Name = &decoded
+		case "defaultWidth":
+			var decoded int
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 defaultWidth 类型无效")
+			}
+			current.DefaultWidth = &decoded
+		case "defaultHeight":
+			var decoded int
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 defaultHeight 类型无效")
+			}
+			current.DefaultHeight = &decoded
+		case "defaultCollapsed":
+			var decoded bool
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 defaultCollapsed 类型无效")
+			}
+			current.DefaultCollapsed = &decoded
+		case "defaultFloating":
+			var decoded bool
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 defaultFloating 类型无效")
+			}
+			current.DefaultFloating = &decoded
+		case "allowPopout":
+			var decoded bool
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 allowPopout 类型无效")
+			}
+			current.AllowPopout = &decoded
+		case "mediaOptions":
+			var decoded model.ChannelIFormMediaOptions
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 mediaOptions 类型无效")
+			}
+			current.MediaOptions = &decoded
+		case "bridgePolicy":
+			var decoded model.ChannelIFormBridgePolicy
+			if err := json.Unmarshal(rawValue, &decoded); err != nil {
+				return current, errors.New("模板覆盖字段 bridgePolicy 类型无效")
+			}
+			current.BridgePolicy = &decoded
+		}
+	}
+	return current, nil
+}
+
+func jsonFieldPresent(body []byte, field string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	_, ok := payload[field]
+	if !ok && field == "embedCode" {
+		_, ok = payload["embed_code"]
+	}
+	return ok
+}
+
+func resolveIFormResponse(raw *model.ChannelIFormModel) (*model.ChannelIFormModel, service.ChannelIFormTemplateMetadata) {
+	if raw == nil {
+		return nil, service.ChannelIFormTemplateMetadata{}
+	}
+	resolved, err := service.ResolveChannelIForm(raw)
+	if err != nil {
+		// A reference must never fall back to a stored source snapshot when its
+		// registry/database lookup fails. Keep the relationship visible while
+		// ensuring runtime consumers cannot execute stale URL/embed content.
+		if strings.TrimSpace(raw.TemplateRef) != "" {
+			missing := *raw
+			missing.Url = ""
+			missing.EmbedCode = ""
+			return &missing, service.ChannelIFormTemplateMetadata{
+				Ref:             raw.TemplateRef,
+				Origin:          strings.SplitN(raw.TemplateRef, ":", 2)[0],
+				TemplateMissing: true,
+			}
+		}
+		return raw, service.ChannelIFormTemplateMetadata{}
+	}
+	if resolved == nil || resolved.Form == nil {
+		return raw, service.ChannelIFormTemplateMetadata{}
+	}
+	return resolved.Form, resolved.Metadata
+}
+
+func validateTemplateOverridesPayload(body []byte) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return errors.New("请求体 JSON 无效")
+	}
+	raw, ok := root["templateOverrides"]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return errors.New("templateOverrides 必须是对象")
+	}
+	allowed := map[string]struct{}{
+		"name": {}, "defaultWidth": {}, "defaultHeight": {}, "defaultCollapsed": {},
+		"defaultFloating": {}, "allowPopout": {}, "mediaOptions": {}, "bridgePolicy": {},
+	}
+	for key, value := range values {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("不支持的模板覆盖字段: %s", key)
+		}
+		if key == "mediaOptions" || key == "bridgePolicy" {
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(value, &nested); err != nil {
+				return fmt.Errorf("模板覆盖字段 %s 必须是对象", key)
+			}
+			nestedAllowed := map[string]struct{}{}
+			if key == "mediaOptions" {
+				nestedAllowed = map[string]struct{}{"autoPlay": {}, "autoUnmute": {}, "autoExpand": {}, "allowAudio": {}, "allowVideo": {}}
+			} else {
+				nestedAllowed = map[string]struct{}{"enabled": {}, "allowedOrigins": {}, "capabilities": {}}
+			}
+			for nestedKey := range nested {
+				if _, ok := nestedAllowed[nestedKey]; !ok {
+					return fmt.Errorf("不支持的模板覆盖字段: %s.%s", key, nestedKey)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func buildIFormUpdateMap(payload *channelIFormUpdateRequest, current *model.ChannelIFormModel) (map[string]interface{}, error) {
 	updates := map[string]interface{}{}
 	if payload.Name != nil {
@@ -760,23 +1064,29 @@ func convertIFormToProtocol(item *model.ChannelIFormModel) *protocol.ChannelIFor
 		AllowAudio: opts.AllowAudio,
 		AllowVideo: opts.AllowVideo,
 	}
+	var templateOverrides any
+	if strings.TrimSpace(item.TemplateRef) != "" {
+		templateOverrides = item.TemplateOverrides
+	}
 	return &protocol.ChannelIForm{
-		ID:               item.ID,
-		ChannelID:        item.ChannelID,
-		Name:             item.Name,
-		Url:              item.Url,
-		EmbedCode:        item.EmbedCode,
-		DefaultWidth:     item.DefaultWidth,
-		DefaultHeight:    item.DefaultHeight,
-		DefaultCollapsed: item.DefaultCollapsed,
-		DefaultFloating:  item.DefaultFloating,
-		AllowPopout:      item.AllowPopout,
-		OrderIndex:       item.OrderIndex,
-		MediaOptions:     protoOpts,
-		CreatedBy:        item.CreatedBy,
-		UpdatedBy:        item.UpdatedBy,
-		CreatedAt:        item.CreatedAt.UnixMilli(),
-		UpdatedAt:        item.UpdatedAt.UnixMilli(),
+		ID:                item.ID,
+		ChannelID:         item.ChannelID,
+		Name:              item.Name,
+		Url:               item.Url,
+		EmbedCode:         item.EmbedCode,
+		DefaultWidth:      item.DefaultWidth,
+		DefaultHeight:     item.DefaultHeight,
+		DefaultCollapsed:  item.DefaultCollapsed,
+		DefaultFloating:   item.DefaultFloating,
+		AllowPopout:       item.AllowPopout,
+		OrderIndex:        item.OrderIndex,
+		MediaOptions:      protoOpts,
+		CreatedBy:         item.CreatedBy,
+		UpdatedBy:         item.UpdatedBy,
+		CreatedAt:         item.CreatedAt.UnixMilli(),
+		UpdatedAt:         item.UpdatedAt.UnixMilli(),
+		TemplateRef:       item.TemplateRef,
+		TemplateOverrides: templateOverrides,
 		BridgePolicy: &protocol.ChannelIFormBridgePolicy{
 			Enabled:        item.BridgePolicy.Enabled,
 			AllowedOrigins: append([]string(nil), item.BridgePolicy.AllowedOrigins...),
@@ -809,6 +1119,10 @@ func convertIFormViewToProtocol(item *service.ChannelIFormView) *protocol.Channe
 	protoItem.SharedRef = item.SharedRef
 	protoItem.SharedWorldID = item.SharedWorldID
 	protoItem.Readonly = item.Readonly
+	protoItem.TemplateOrigin = item.TemplateOrigin
+	protoItem.TemplateName = item.TemplateName
+	protoItem.TemplateMissing = item.TemplateMissing
+	protoItem.TemplateArchived = item.TemplateArchived
 	return protoItem
 }
 

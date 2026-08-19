@@ -256,28 +256,34 @@ type AudioPlaybackStatePayload struct {
 }
 
 type ChannelIForm struct {
-	ID               string                    `json:"id"`
-	ChannelID        string                    `json:"channelId"`
-	SourceChannelID  string                    `json:"sourceChannelId,omitempty"`
-	Name             string                    `json:"name"`
-	Url              string                    `json:"url"`
-	EmbedCode        string                    `json:"embedCode"`
-	DefaultWidth     int                       `json:"defaultWidth"`
-	DefaultHeight    int                       `json:"defaultHeight"`
-	DefaultCollapsed bool                      `json:"defaultCollapsed"`
-	DefaultFloating  bool                      `json:"defaultFloating"`
-	AllowPopout      bool                      `json:"allowPopout"`
-	OrderIndex       int                       `json:"orderIndex"`
-	MediaOptions     *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
-	CreatedBy        string                    `json:"createdBy,omitempty"`
-	UpdatedBy        string                    `json:"updatedBy,omitempty"`
-	CreatedAt        int64                     `json:"createdAt,omitempty"`
-	UpdatedAt        int64                     `json:"updatedAt,omitempty"`
-	WorldShared      bool                      `json:"worldShared,omitempty"`
-	SharedRef        bool                      `json:"sharedRef,omitempty"`
-	SharedWorldID    string                    `json:"sharedWorldId,omitempty"`
-	Readonly         bool                      `json:"readonly,omitempty"`
-	BridgePolicy     *ChannelIFormBridgePolicy `json:"bridgePolicy,omitempty"`
+	ID                string                    `json:"id"`
+	ChannelID         string                    `json:"channelId"`
+	SourceChannelID   string                    `json:"sourceChannelId,omitempty"`
+	Name              string                    `json:"name"`
+	Url               string                    `json:"url"`
+	EmbedCode         string                    `json:"embedCode"`
+	DefaultWidth      int                       `json:"defaultWidth"`
+	DefaultHeight     int                       `json:"defaultHeight"`
+	DefaultCollapsed  bool                      `json:"defaultCollapsed"`
+	DefaultFloating   bool                      `json:"defaultFloating"`
+	AllowPopout       bool                      `json:"allowPopout"`
+	OrderIndex        int                       `json:"orderIndex"`
+	MediaOptions      *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
+	CreatedBy         string                    `json:"createdBy,omitempty"`
+	UpdatedBy         string                    `json:"updatedBy,omitempty"`
+	CreatedAt         int64                     `json:"createdAt,omitempty"`
+	UpdatedAt         int64                     `json:"updatedAt,omitempty"`
+	WorldShared       bool                      `json:"worldShared,omitempty"`
+	SharedRef         bool                      `json:"sharedRef,omitempty"`
+	SharedWorldID     string                    `json:"sharedWorldId,omitempty"`
+	Readonly          bool                      `json:"readonly,omitempty"`
+	TemplateRef       string                    `json:"templateRef,omitempty"`
+	TemplateOverrides any                       `json:"templateOverrides,omitempty"`
+	TemplateOrigin    string                    `json:"templateOrigin,omitempty"`
+	TemplateName      string                    `json:"templateName,omitempty"`
+	TemplateMissing   bool                      `json:"templateMissing,omitempty"`
+	TemplateArchived  bool                      `json:"templateArchived,omitempty"`
+	BridgePolicy      *ChannelIFormBridgePolicy `json:"bridgePolicy,omitempty"`
 }
 
 type ChannelIFormBridgePolicy struct {

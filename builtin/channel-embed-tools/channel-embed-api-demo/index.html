@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SealChat Channel Embed API - [Workbench v1.0]</title>
+  <style>
+    :root {
+      --win-teal: #008080;
+      --win-gray: #c0c0c0;
+      --win-light: #ffffff;
+      --win-dark: #808080;
+      --win-darker: #000000;
+      --win-blue-start: #000080;
+      --win-blue-end: #1084d0;
+      --win-font: "Segoe UI", Tahoma, "MS Sans Serif", "Microsoft YaHei", sans-serif;
+      --win-mono: "Lucida Console", "Consolas", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    /* Win98 像素边框系统 */
+    .bevel-outset {
+      border: 2px solid;
+      border-color: var(--win-light) var(--win-darker) var(--win-darker) var(--win-light);
+      box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 var(--win-dark);
+    }
+    
+    .bevel-inset {
+      border: 2px solid;
+      border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+      box-shadow: inset 1px 1px 0 var(--win-darker), inset -1px -1px 0 #dfdfdf;
+    }
+
+    .bevel-statusbar {
+      border: 1px solid;
+      border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+      padding: 2px 6px;
+      background: var(--win-gray);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      background-color: var(--win-teal);
+      background-image: 
+        radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 0);
+      background-size: 8px 8px;
+      font-family: var(--win-font);
+      font-size: 12px;
+      color: var(--win-darker);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 经典主窗口 */
+    .app-window {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: var(--win-gray);
+    }
+
+    /* 窗口标题栏 */
+    .win-titlebar {
+      height: 24px;
+      background: linear-gradient(90deg, var(--win-blue-start) 0%, var(--win-blue-end) 100%);
+      color: var(--win-light);
+      font-weight: bold;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px 0 6px;
+      user-select: none;
+    }
+
+    .win-title-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .win-icon {
+      width: 16px;
+      height: 16px;
+      image-rendering: pixelated;
+    }
+
+    .win-controls {
+      display: flex;
+      gap: 2px;
+    }
+
+    .win-btn-ctrl {
+      width: 16px;
+      height: 14px;
+      font-size: 9px;
+      line-height: 1;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-family: var(--win-mono);
+      background: var(--win-gray);
+      color: var(--win-darker);
+    }
+
+    /* 菜单栏 */
+    .win-menubar {
+      display: flex;
+      gap: 8px;
+      padding: 3px 6px;
+      border-bottom: 1px solid var(--win-dark);
+      background: var(--win-gray);
+      font-size: 12px;
+    }
+
+    .win-menu-item {
+      padding: 2px 6px;
+      cursor: default;
+    }
+    .win-menu-item:hover {
+      background: var(--win-blue-start);
+      color: var(--win-light);
+    }
+
+    /* 窗口工作区 */
+    .win-body {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* 说明横幅 */
+    .readme-banner {
+      background: #ffffe1;
+      border: 1px solid var(--win-dark);
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #000;
+    }
+    .readme-banner p { margin: 0; }
+    .readme-banner code {
+      background: #e8e8c8;
+      padding: 1px 4px;
+      border: 1px dotted var(--win-dark);
+      font-family: var(--win-mono);
+    }
+
+    /* 经典 Win98 分组框 (Fieldset) */
+    fieldset {
+      border: 2px groove var(--win-light);
+      padding: 10px;
+      margin: 0;
+      background: var(--win-gray);
+    }
+    legend {
+      padding: 0 4px;
+      font-weight: bold;
+      color: var(--win-darker);
+    }
+
+    /* 栅格排布 */
+    .grid-2col {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      gap: 10px;
+    }
+
+    .flex-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .grow { flex: 1 1 200px; }
+
+    label {
+      display: block;
+      font-size: 11px;
+      margin: 6px 0 2px;
+      color: #000;
+    }
+
+    /* 按钮与表单控件 */
+    button {
+      background: var(--win-gray);
+      color: var(--win-darker);
+      font-family: var(--win-font);
+      font-size: 12px;
+      padding: 4px 10px;
+      border: 2px solid;
+      border-color: var(--win-light) var(--win-darker) var(--win-darker) var(--win-light);
+      box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 var(--win-dark);
+      cursor: pointer;
+      outline: none;
+    }
+
+    button:hover {
+      background: #d4d0c8;
+    }
+
+    button:active:not(:disabled) {
+      border-color: var(--win-darker) var(--win-light) var(--win-light) var(--win-darker);
+      box-shadow: inset 1px 1px 0 var(--win-dark), inset -1px -1px 0 #dfdfdf;
+      padding: 5px 9px 3px 11px;
+    }
+
+    button:disabled {
+      color: var(--win-dark);
+      text-shadow: 1px 1px 0 var(--win-light);
+      cursor: not-allowed;
+      border-color: var(--win-light) var(--win-dark) var(--win-dark) var(--win-light);
+    }
+
+    button.danger {
+      color: #900000;
+      font-weight: bold;
+    }
+
+    input, select, textarea {
+      font-family: var(--win-mono);
+      font-size: 12px;
+      background: #ffffff;
+      color: #000000;
+      border: 2px solid;
+      border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+      box-shadow: inset 1px 1px 0 var(--win-darker), inset -1px -1px 0 #dfdfdf;
+      padding: 3px 5px;
+      border-radius: 0;
+      outline: none;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: 1px dotted #000000;
+      outline-offset: -3px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 75px;
+      resize: vertical;
+      line-height: 1.35;
+    }
+
+    /* 结果显示区与日志终端 */
+    pre.result, pre.log {
+      margin: 6px 0 0;
+      background: #ffffff;
+      color: #000080;
+      font-family: var(--win-mono);
+      font-size: 11px;
+      border: 2px solid;
+      border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+      box-shadow: inset 1px 1px 0 var(--win-darker), inset -1px -1px 0 #dfdfdf;
+      padding: 6px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    pre.result { min-height: 60px; max-height: 160px; }
+    pre.log { height: 180px; background: #000000; color: #00ff66; }
+
+    /* 状态点与指示灯 */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      background: #ff0000;
+      border: 1px solid #400000;
+      box-shadow: inset 1px 1px 0 #ff8080, inset -1px -1px 0 #800000;
+    }
+    .dot.connected {
+      background: #00ff00;
+      border-color: #004000;
+      box-shadow: inset 1px 1px 0 #80ff80, inset -1px -1px 0 #008000;
+    }
+    .dot.connecting {
+      background: #ffff00;
+      border-color: #404000;
+      box-shadow: inset 1px 1px 0 #ffff80, inset -1px -1px 0 #808000;
+    }
+
+    .hint { font-size: 11px; color: #333333; }
+    .hint code { font-family: var(--win-mono); color: #000080; font-weight: bold; }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 6px 0;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    /* 底部状态栏 */
+    .win-statusbar {
+      display: grid;
+      grid-template-columns: 160px 180px 1fr 280px;
+      gap: 2px;
+      padding: 2px;
+      background: var(--win-gray);
+      border-top: 1px solid var(--win-dark);
+      font-size: 11px;
+    }
+
+    /* 经典复古滚动条 */
+    ::-webkit-scrollbar { width: 16px; height: 16px; background: #dfdfdf; }
+    ::-webkit-scrollbar-button {
+      width: 16px;
+      height: 16px;
+      background: var(--win-gray);
+      border: 2px solid;
+      border-color: var(--win-light) var(--win-darker) var(--win-darker) var(--win-light);
+      box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 var(--win-dark);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--win-gray);
+      border: 2px solid;
+      border-color: var(--win-light) var(--win-darker) var(--win-darker) var(--win-light);
+      box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 var(--win-dark);
+    }
+  </style>
+</head>
+<body>
+
+<div class="app-window bevel-outset">
+  <!-- 窗口标题栏 -->
+  <div class="win-titlebar">
+    <div class="win-title-left">
+      <svg class="win-icon" viewBox="0 0 16 16" fill="currentColor">
+        <rect x="1" y="2" width="14" height="10" fill="#fff" stroke="#000" stroke-width="1"/>
+        <rect x="3" y="4" width="10" height="6" fill="#000080"/>
+        <rect x="0" y="13" width="16" height="2" fill="#808080"/>
+      </svg>
+      <span>SealChat Channel Embed API 多端测试工作台 [版本 1.0.0]</span>
+    </div>
+    <div class="win-controls">
+      <button class="win-btn-ctrl" tabindex="-1">_</button>
+      <button class="win-btn-ctrl" tabindex="-1">□</button>
+      <button class="win-btn-ctrl" tabindex="-1">×</button>
+    </div>
+  </div>
+
+  <!-- 菜单栏 -->
+  <div class="win-menubar">
+    <div class="win-menu-item">文件(<u>F</u>)</div>
+    <div class="win-menu-item">编辑(<u>E</u>)</div>
+    <div class="win-menu-item">视图(<u>V</u>)</div>
+    <div class="win-menu-item">调试(<u>D</u>)</div>
+    <div class="win-menu-item">帮助(<u>H</u>)</div>
+  </div>
+
+  <div class="win-body">
+    <!-- 说明栏 -->
+    <div class="readme-banner bevel-inset">
+      <p>
+        <strong>说明：</strong>将此页面作为频道 iForm iframe 打开。另开一个浏览器窗口，使用同一 world/channel/form，验证 storage 和 ephemeral event 跨客户端同步。
+        页面不会读取或显示 SealChat token、cookie、Authorization header 或原始 WebSocket。
+        默认使用内置 SDK；填入 <code>?sdk=...</code>、设置 <code>window.SEALCHAT_EMBED_SDK_URL</code> 或由 srcdoc 注入时加载后端 SDK；Session 失效后将自动指数退避重连。
+      </p>
+    </div>
+
+    <!-- 连接与握手 -->
+    <fieldset>
+      <legend>连接与握手 (Handshake & Session)</legend>
+      <div class="flex-row">
+        <label for="parentOrigin" style="margin:0;">父窗口 Origin:</label>
+        <input id="parentOrigin" class="grow" placeholder="（可选，例如 https://sealchat.example）">
+        <button id="connectButton">连接 SealChat</button>
+        <button id="refreshButton" class="secondary" disabled>刷新全部上下文</button>
+        <button id="closeButton" class="danger" disabled>关闭 Session</button>
+      </div>
+      <div style="margin-top: 6px;">
+        <label style="margin: 0 0 2px 0;">握手上下文与能力清单 (Context & Capabilities):</label>
+        <pre id="contextResult" class="result">等待连接...</pre>
+      </div>
+    </fieldset>
+
+    <!-- 栅格 1: 成员角色 & 频道连接 -->
+    <div class="grid-2col">
+      <fieldset>
+        <legend>安全用户 / 成员 / 角色 (Security Context)</legend>
+        <div class="flex-row" style="margin-bottom:6px;">
+          <button data-call="user">当前用户</button>
+          <button data-call="member">当前 Member</button>
+          <button data-call="online">在线成员</button>
+          <button data-call="guild">Guild 成员</button>
+          <button data-call="worldAdmins">World 管理员</button>
+          <button data-call="characters">Characters</button>
+          <button data-call="currentCharacter">当前角色</button>
+          <button data-call="permissions">Permissions</button>
+        </div>
+        <pre id="identityResult" class="result">-</pre>
+      </fieldset>
+
+      <fieldset>
+        <legend>频道与连接状态 (State)</legend>
+        <div class="flex-row" style="margin-bottom:6px;">
+          <button data-call="channel">channel.getState()</button>
+          <button data-call="connection">connection.getState()</button>
+        </div>
+        <pre id="connectionResult" class="result">-</pre>
+      </fieldset>
+    </div>
+
+    <!-- JSON KV 存储 -->
+    <fieldset>
+      <legend>JSON 键值存储 (Storage)</legend>
+      <div class="grid-2col">
+        <div>
+          <label for="storageKey">Key（默认同一频道 / form 共享）:</label>
+          <input id="storageKey" style="width:100%" value="demo:board">
+          <label for="storageValue">JSON Value:</label>
+          <textarea id="storageValue">{
+  "round": 1,
+  "source": "embed-demo"
+}</textarea>
+        </div>
+        <div>
+          <label for="storagePrefix">List Prefix:</label>
+          <input id="storagePrefix" style="width:100%" value="demo:">
+          <label for="storageCursor">List Cursor（可填上一次 next）:</label>
+          <input id="storageCursor" style="width:100%">
+          <div>
+            <label class="check">
+              <input id="useRevision" type="checkbox" checked> set / delete 时使用当前 revision (CAS)
+            </label>
+          </div>
+          <div class="hint" style="margin-top: 4px;">
+            当前 revision: <code id="revisionText">-</code> | 当前 seq: <code id="seqText">-</code>
+          </div>
+        </div>
+      </div>
+      <div class="flex-row" style="margin-top:8px;">
+        <button data-storage="get">get</button>
+        <button data-storage="set">set</button>
+        <button data-storage="delete" class="danger">delete</button>
+        <button data-storage="list">list</button>
+        <button data-storage="snapshot">snapshot</button>
+      </div>
+      <pre id="storageResult" class="result" style="margin-top:6px;">-</pre>
+    </fieldset>
+
+    <!-- 栅格 2: 事件 & 消息 -->
+    <div class="grid-2col">
+      <fieldset>
+        <legend>实时临时事件 (Ephemeral Events)</legend>
+        <label for="eventTopic">Topic 标识符:</label>
+        <input id="eventTopic" style="width:100%" value="demo.ping">
+        <label for="eventPayload">JSON Payload:</label>
+        <textarea id="eventPayload">{
+  "from": "embed-demo",
+  "at": "now"
+}</textarea>
+        <div class="flex-row" style="margin-top:6px;">
+          <button id="subscribeButton">订阅 topic</button>
+          <button id="publishButton">Publish 发布</button>
+        </div>
+        <pre id="eventResult" class="result">尚未收到事件</pre>
+      </fieldset>
+
+      <fieldset>
+        <legend>发送聊天消息 (Messages)</legend>
+        <label for="messageText">消息文本 (Text):</label>
+        <textarea id="messageText" style="min-height:55px;">Embed API demo message</textarea>
+        <div class="grid-2col" style="gap:6px;">
+          <div><label for="identityId">identityId（可选）:</label><input id="identityId" style="width:100%"></div>
+          <div><label for="variantId">identityVariantId（可选）:</label><input id="variantId" style="width:100%"></div>
+        </div>
+        <div class="flex-row" style="margin-top:4px;">
+          <div style="flex:1;">
+            <label for="replyTo" style="margin-top:0;">replyTo 消息 ID:</label>
+            <input id="replyTo" style="width:100%">
+          </div>
+          <div style="width:90px;">
+            <label for="icMode" style="margin-top:0;">icMode:</label>
+            <select id="icMode" style="width:100%"><option value="ic">ic</option><option value="ooc">ooc</option></select>
+          </div>
+        </div>
+        <div style="margin-top:6px;">
+          <button id="sendMessageButton">发送 message.create</button>
+        </div>
+        <pre id="messageResult" class="result">-</pre>
+      </fieldset>
+    </div>
+
+    <!-- 实时事件日志 -->
+    <fieldset>
+      <legend>实时事件控制台日志 (Event Monitor Log)</legend>
+      <div class="flex-row" style="justify-content: space-between; margin-bottom: 4px;">
+        <span class="hint">正在监听: context.changed, characters.changed, members.changed, permissions.changed, connection.changed, storage.changed, session.closed</span>
+        <button id="clearLogButton">清空日志控制台</button>
+      </div>
+      <pre id="eventLog" class="log"></pre>
+    </fieldset>
+
+    <!-- 多端验收步骤 -->
+    <fieldset>
+      <legend>多端验收步骤 (Checklist)</legend>
+      <ol class="hint" style="margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li>在 iForm policy 中启用 Embed API；测试 World 管理员列表时，额外打开 <code>members.read,world.admins.read</code>。</li>
+        <li>打开本页两个实例，确认两个 handshake 的 session 独立，但 storage namespace 相同。</li>
+        <li>A 点击 <b>set</b>，B 应收到 <code>storage.changed</code>，seq 递增；B 再执行 get/snapshot 验证内容。</li>
+        <li>两个实例读取同一 revision 后同时 set：一个成功，另一个应得到 <code>REVISION_CONFLICT</code>。</li>
+        <li>A publish <code>demo.ping</code>，B 订阅同 topic 后应收到 event；刷新或重连后 event 不应 replay。</li>
+        <li>切换频道、关闭 form、退出登录后，旧窗口请求应失败并显示 <code>SESSION_EXPIRED</code> 或 <code>CONTEXT_CHANGED</code>。</li>
+      </ol>
+    </fieldset>
+  </div>
+
+  <!-- 底部经典状态栏 -->
+  <div class="win-statusbar">
+    <div class="bevel-statusbar">
+      <span class="status">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">未连接</span>
+      </span>
+    </div>
+    <div id="sessionText" class="bevel-statusbar">session: -</div>
+    <div id="sdkText" class="bevel-statusbar">SDK: -</div>
+    <div id="capabilities" class="bevel-statusbar">capabilities: -</div>
+  </div>
+</div>
+
+<script type="module">
+  const $ = (id) => document.getElementById(id)
+  const pretty = (value) => {
+    try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+  }
+  const now = () => new Date().toLocaleTimeString()
+  const log = (message, data) => {
+    const line = `[${now()}] ${message}${data === undefined ? '' : `\n${pretty(data)}`}`
+    const box = $('eventLog')
+    box.textContent = `${box.textContent}${box.textContent ? '\n' : ''}${line}`.slice(-30000)
+    box.scrollTop = box.scrollHeight
+  }
+  const show = (id, value) => { $(id).textContent = pretty(value) }
+  const setStatus = (state, detail = '') => {
+    $('statusDot').className = `dot ${state === 'connected' ? 'connected' : state === 'connecting' ? 'connecting' : ''}`
+    $('statusText').textContent = detail || state
+  }
+  const parseJSON = (id) => {
+    try { return JSON.parse($(id).value) } catch (error) { throw new Error(`${id} JSON invalid: ${error.message}`) }
+  }
+  const errorText = (error) => ({ code: error?.code || 'INTERNAL_ERROR', message: error?.message || String(error), details: error?.details })
+
+  // Standalone fallback: backend/static servers do not transform Vite's .ts source URL.
+  const randomEmbedId = (prefix) => {
+    const cryptoObject = globalThis.crypto
+    if (cryptoObject?.randomUUID) return `${prefix}_${cryptoObject.randomUUID()}`
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+  }
+  class InlineEmbedError extends Error {
+    constructor(error) {
+      super(error.message)
+      this.name = 'SealChatEmbedError'
+      this.code = error.code
+      this.details = error.details
+    }
+  }
+  class InlineEmbedClient {
+    constructor(port, sessionId, contextVersion) {
+      this.port = port
+      this.sessionId = sessionId
+      this.contextVersion = contextVersion
+      this.requestCounter = 0
+      this.pending = new Map()
+      this.handlers = new Map()
+      this.closedHandlers = new Set()
+      this.storageSeq = 0
+      this.storageResyncing = false
+      this.closed = false
+      port.onmessage = (message) => this.handleMessage(message.data)
+      port.start?.()
+    }
+    handleMessage(value) {
+      if (!value || typeof value !== 'object' || value.version !== 1 || value.sessionId !== this.sessionId) return
+      if (value.type === 'sealchat.embed.response' && typeof value.requestId === 'string') {
+        const pending = this.pending.get(value.requestId)
+        if (!pending) return
+        this.pending.delete(value.requestId)
+        clearTimeout(pending.timer)
+        if (value.ok) pending.resolve(value.result)
+        else pending.reject(new InlineEmbedError(value.error || { code: 'INTERNAL_ERROR', message: 'Embed request failed' }))
+        return
+      }
+      if (value.type !== 'sealchat.embed.event' || typeof value.topic !== 'string') return
+      if (typeof value.contextVersion === 'number') this.contextVersion = value.contextVersion
+      if (value.topic === 'session.closed') { this.close(value); return }
+      if (value.topic === 'storage.changed' && Number.isInteger(value.seq)) {
+        const seq = Number(value.seq)
+        const payload = value.payload
+        if (seq <= this.storageSeq) return
+        if (payload?.snapshot) {
+          this.storageSeq = seq
+          this.emit('storage.changed', { kind: 'resynced', seq, snapshot: payload.snapshot }, value)
+          return
+        }
+        if (seq > this.storageSeq + 1) {
+          if (!this.storageResyncing) {
+            this.storageResyncing = true
+            void this.request('storage.snapshot').then((snapshot) => {
+              this.storageSeq = Number(snapshot?.seq || seq)
+              this.emit('storage.changed', { kind: 'resynced', seq: this.storageSeq, snapshot }, value)
+            }).catch(() => {}).finally(() => { this.storageResyncing = false })
+          }
+          return
+        }
+        this.storageSeq = seq
+        this.emit('storage.changed', { kind: payload?.op === 'delete' ? 'delete' : 'set', seq, ...payload }, value)
+        return
+      }
+      if (typeof CustomEvent !== 'undefined') window.dispatchEvent(new CustomEvent('sealchat:embed:event', { detail: value }))
+      this.emit(value.topic, value.payload, value)
+    }
+    emit(topic, payload, event) {
+      this.handlers.get(topic)?.forEach((handler) => handler(payload, event))
+      this.handlers.get('*')?.forEach((handler) => handler(payload, event))
+    }
+    request(method, params, timeoutMs = 10000) {
+      if (this.closed) return Promise.reject(new InlineEmbedError({ code: 'SESSION_EXPIRED', message: 'Embed session closed' }))
+      const requestId = randomEmbedId(`r${++this.requestCounter}`)
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(requestId)
+          reject(new InlineEmbedError({ code: 'TIMEOUT', message: `${method} timeout` }))
+        }, timeoutMs)
+        this.pending.set(requestId, { resolve, reject, timer })
+        try {
+          this.port.postMessage({ type: 'sealchat.embed.request', version: 1, sessionId: this.sessionId, requestId, method, contextVersion: this.contextVersion, params })
+        } catch {
+          clearTimeout(timer)
+          this.pending.delete(requestId)
+          reject(new InlineEmbedError({ code: 'INVALID_PARAMS', message: 'Request cannot be cloned' }))
+        }
+      })
+    }
+    on(topic, handler) {
+      const handlers = this.handlers.get(topic) || new Set()
+      handlers.add(handler)
+      this.handlers.set(topic, handlers)
+      return () => this.off(topic, handler)
+    }
+    off(topic, handler) { this.handlers.get(topic)?.delete(handler) }
+    onClosed(handler) {
+      if (this.closed) {
+        queueMicrotask(() => handler())
+        return () => undefined
+      }
+      this.closedHandlers.add(handler)
+      return () => this.closedHandlers.delete(handler)
+    }
+    close(event) {
+      if (this.closed) return
+      this.closed = true
+      this.pending.forEach((pending) => { clearTimeout(pending.timer); pending.reject(new InlineEmbedError({ code: 'SESSION_EXPIRED', message: 'Embed session closed' })) })
+      this.pending.clear()
+      this.closedHandlers.forEach((handler) => {
+        try { handler(event) } catch {}
+      })
+      this.closedHandlers.clear()
+      this.port.close()
+    }
+    context = { get: () => this.request('context.get'), onChanged: (handler) => this.on('context.changed', handler) }
+    user = { getCurrent: () => this.request('user.getCurrent') }
+    member = { getCurrent: () => this.request('member.getCurrent') }
+    members = { list: (params) => this.request('members.list', params), onChanged: (handler) => this.on('members.changed', handler) }
+    characters = { list: () => this.request('characters.list'), getCurrent: () => this.request('characters.getCurrent'), onChanged: (handler) => this.on('characters.changed', handler) }
+    permissions = { getCurrent: () => this.request('permissions.getCurrent'), onChanged: (handler) => this.on('permissions.changed', handler) }
+    channel = { getState: () => this.request('channel.getState') }
+    connection = { getState: () => this.request('connection.getState'), onChanged: (handler) => this.on('connection.changed', handler) }
+    session = { onClosed: (handler) => this.onClosed(handler) }
+    storage = {
+      get: (key) => this.request('storage.get', { key }),
+      set: (key, value, options) => this.request('storage.set', { key, value, ifRevision: options?.ifRevision }),
+      delete: (key, options) => this.request('storage.delete', { key, ifRevision: options?.ifRevision }),
+      list: (options) => this.request('storage.list', options || {}),
+      snapshot: () => this.request('storage.snapshot'),
+      onChanged: (handler) => this.on('storage.changed', handler),
+    }
+    events = {
+      publish: (topic, payload) => this.request('events.publish', { topic, payload }),
+      on: (topic, handler) => { void this.request('events.subscribe', { topic }).catch(() => undefined); return this.on(`event:${topic}`, handler) },
+      off: (topic, handler) => this.off(`event:${topic}`, handler),
+    }
+    messages = { send: (params) => this.request('messages.send', params) }
+  }
+  const inlineSealChatEmbed = {
+    connect: (options = {}) => {
+      if (window.parent === window) return Promise.reject(new InlineEmbedError({ code: 'HANDSHAKE_FAILED', message: 'Embed must run inside iframe' }))
+      const nonce = randomEmbedId('nonce')
+      const targetOrigin = options.targetOrigin || '*'
+      const timeoutMs = Math.max(1, options.timeoutMs || 10000)
+      return new Promise((resolve, reject) => {
+        let settled = false
+        const onMessage = (event) => {
+          if (event.source !== window.parent || (targetOrigin !== '*' && event.origin !== targetOrigin) || !event.data || event.data.type !== 'sealchat.embed.handshake.ack' || event.data.version !== 1 || event.data.nonce !== nonce) return
+          if (settled) return
+          settled = true
+          window.removeEventListener('message', onMessage)
+          clearTimeout(timer)
+          clearInterval(retryTimer)
+          if (!event.data.ok || !event.ports[0] || !event.data.sessionId) { reject(new InlineEmbedError(event.data.error || { code: 'HANDSHAKE_FAILED', message: 'Embed handshake rejected' })); return }
+          resolve(new InlineEmbedClient(event.ports[0], event.data.sessionId, event.data.contextVersion || 0))
+        }
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          window.removeEventListener('message', onMessage)
+          clearInterval(retryTimer)
+          reject(new InlineEmbedError({ code: 'HANDSHAKE_FAILED', message: 'Embed handshake timeout' }))
+        }, timeoutMs)
+        const retryTimer = setInterval(() => {
+          if (!settled) window.parent.postMessage({ type: 'sealchat.embed.handshake', version: 1, nonce }, targetOrigin)
+        }, 500)
+        window.addEventListener('message', onMessage)
+        window.parent.postMessage({ type: 'sealchat.embed.handshake', version: 1, nonce }, targetOrigin)
+      })
+    },
+  }
+
+  let sealchat = null
+  let storageRevision = null
+  let storageSeq = null
+  let unsubscribeTopic = null
+  let reconnectTimer = 0
+  let reconnectDelay = 1000
+  let connectionGeneration = 0
+  let manuallyClosed = false
+  const listeners = []
+  const retryableCodes = new Set(['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'])
+
+  const cleanupListeners = () => {
+    listeners.splice(0).forEach((off) => { try { off() } catch {} })
+    if (unsubscribeTopic) { unsubscribeTopic(); unsubscribeTopic = null }
+  }
+
+  const scheduleReconnect = (error) => {
+    if (manuallyClosed || reconnectTimer) return
+    if (error?.code && !retryableCodes.has(error.code)) {
+      setStatus('error', `${error.code}: ${error.message || ''}`)
+      return
+    }
+    sealchat = null
+    $('connectButton').disabled = true
+    $('closeButton').disabled = true
+    $('refreshButton').disabled = true
+    setStatus('connecting', `等待重连（${error?.code || 'session closed'}）`)
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = 0
+      void connect().catch(() => {})
+    }, reconnectDelay)
+    reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+  }
+
+  const loadClassicSdk = (sdkURL) => {
+    if (window.SealChatEmbed) return Promise.resolve(window.SealChatEmbed)
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = sdkURL
+      script.async = true
+      script.onload = () => window.SealChatEmbed ? resolve(window.SealChatEmbed) : reject(new Error('SealChatEmbed 未加载'))
+      script.onerror = () => reject(new Error(`外部 SDK 加载失败：${sdkURL}`))
+      document.head.appendChild(script)
+    })
+  }
+
+  const call = async (label, fn, output = 'contextResult') => {
+    if (!sealchat) throw new Error('尚未连接 SealChat')
+    try {
+      const result = await fn()
+      show(output, result)
+      log(`${label} OK`, result)
+      return result
+    } catch (error) {
+      const detail = errorText(error)
+      show(output, detail)
+      log(`${label} ERROR`, detail)
+      throw error
+    }
+  }
+
+  const attachListeners = (generation) => {
+    const listen = (topic, handler) => {
+      const off = handler()
+      if (typeof off === 'function') listeners.push(off)
+      log(`订阅 ${topic}`)
+    }
+    listen('context.changed', () => sealchat.context.onChanged((value, event) => { if (generation !== connectionGeneration) return; log('context.changed', event || value); show('contextResult', value) }))
+    listen('characters.changed', () => sealchat.characters.onChanged((value, event) => { if (generation !== connectionGeneration) return; log('characters.changed', event || value); show('identityResult', value) }))
+    listen('members.changed', () => sealchat.members.onChanged((value, event) => { if (generation !== connectionGeneration) return; log('members.changed', event || value) }))
+    listen('permissions.changed', () => sealchat.permissions.onChanged((value, event) => { if (generation !== connectionGeneration) return; log('permissions.changed', event || value) }))
+    listen('connection.changed', () => sealchat.connection.onChanged((value, event) => { if (generation !== connectionGeneration) return; log('connection.changed', event || value); show('connectionResult', value) }))
+    listen('storage.changed', () => sealchat.storage.onChanged((value, event) => {
+      if (generation !== connectionGeneration) return
+      if (event?.seq !== undefined) { storageSeq = event.seq; $('seqText').textContent = String(storageSeq) }
+      log('storage.changed', event || value)
+      show('storageResult', event || value)
+    }))
+    const offWindowEvent = (event) => log('window sealchat:embed:event', event.detail)
+    window.addEventListener('sealchat:embed:event', offWindowEvent)
+    listeners.push(() => window.removeEventListener('sealchat:embed:event', offWindowEvent))
+  }
+
+  const connect = async () => {
+    if (sealchat) return sealchat
+    manuallyClosed = false
+    setStatus('connecting', '握手中...')
+    const embedConfig = window.__SEALCHAT_EMBED_CONFIG__ || {}
+    const inferredSdkURL = (() => {
+      try {
+        const marker = '/api/v1/channel-embed-tools/'
+        const markerIndex = location.pathname.indexOf(marker)
+        const webPrefix = markerIndex >= 0 ? location.pathname.slice(0, markerIndex) : ''
+        return `${location.origin}${webPrefix}/api/v1/channel-embed-sdk.js`
+      } catch {
+        return ''
+      }
+    })()
+    const sdkURL = new URLSearchParams(location.search).get('sdk') || window.SEALCHAT_EMBED_SDK_URL || embedConfig.sdkUrl || (window.parent !== window ? inferredSdkURL : '')
+    if (!$('parentOrigin').value.trim() && embedConfig.hostOrigin) $('parentOrigin').value = embedConfig.hostOrigin
+    $('sdkText').textContent = sdkURL ? `SDK: ${sdkURL}` : 'SDK: HTML 内置'
+    try {
+      let embedSdk = inlineSealChatEmbed
+      if (sdkURL) {
+        try {
+          embedSdk = await loadClassicSdk(sdkURL)
+        } catch (error) {
+          log('外部 SDK 加载失败，回退内置 SDK', { url: sdkURL, error: String(error) })
+          $('sdkText').textContent = 'SDK: HTML 内置（外部加载失败）'
+        }
+      }
+      const targetOrigin = $('parentOrigin').value.trim() || undefined
+      sealchat = await embedSdk.connect({ targetOrigin })
+      const generation = ++connectionGeneration
+      reconnectDelay = 1000
+      $('sessionText').textContent = `session: ${sealchat.sessionId}`
+      $('connectButton').disabled = true
+      $('closeButton').disabled = false
+      $('refreshButton').disabled = false
+      setStatus('connected', '已连接')
+      attachListeners(generation)
+      listeners.push(sealchat.session?.onClosed?.(() => {
+        if (generation !== connectionGeneration || manuallyClosed) return
+        cleanupListeners()
+        scheduleReconnect({ code: 'SESSION_EXPIRED', message: 'Embed session closed' })
+      }))
+      const context = await call('context.get', () => sealchat.context.get())
+      $('capabilities').textContent = `capabilities: ${(context.capabilities || []).join(', ') || '-'}`
+      await call('connection.getState', () => sealchat.connection.getState(), 'connectionResult')
+      return sealchat
+    } catch (error) {
+      sealchat = null
+      setStatus('error', '连接失败')
+      log('handshake ERROR', errorText(error))
+      show('contextResult', errorText(error))
+      scheduleReconnect(error)
+      throw error
+    }
+  }
+
+  const close = () => {
+    manuallyClosed = true
+    connectionGeneration++
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = 0
+    cleanupListeners()
+    sealchat?.close()
+    sealchat = null
+    $('connectButton').disabled = false
+    $('closeButton').disabled = true
+    $('refreshButton').disabled = true
+    $('sessionText').textContent = 'session: -'
+    $('capabilities').textContent = 'capabilities: -'
+    setStatus('disconnected', '已关闭')
+    log('session closed')
+  }
+
+  $('connectButton').addEventListener('click', () => connect().catch(() => {}))
+  $('closeButton').addEventListener('click', close)
+  $('refreshButton').addEventListener('click', async () => {
+    try {
+      const context = await call('context.get', () => sealchat.context.get())
+      $('capabilities').textContent = `capabilities: ${(context.capabilities || []).join(', ') || '-'}`
+      await call('user.getCurrent', () => sealchat.user.getCurrent(), 'identityResult')
+      await call('connection.getState', () => sealchat.connection.getState(), 'connectionResult')
+    } catch {}
+  })
+  $('clearLogButton').addEventListener('click', () => { $('eventLog').textContent = '' })
+
+  const actions = {
+    user: () => sealchat.user.getCurrent(),
+    member: () => sealchat.member.getCurrent(),
+    online: () => sealchat.members.list({ scope: 'online' }),
+    guild: () => sealchat.members.list({ scope: 'guild' }),
+    worldAdmins: () => sealchat.members.list({ scope: 'world-admins' }),
+    characters: () => sealchat.characters.list(),
+    currentCharacter: () => sealchat.characters.getCurrent(),
+    permissions: () => sealchat.permissions.getCurrent(),
+    channel: () => sealchat.channel.getState(),
+    connection: () => sealchat.connection.getState(),
+  }
+  document.querySelectorAll('[data-call]').forEach((button) => button.addEventListener('click', async () => {
+    const name = button.dataset.call
+    const output = name === 'connection' ? 'connectionResult' : 'identityResult'
+    try { await call(name, actions[name], output) } catch {}
+  }))
+
+  document.querySelectorAll('[data-storage]').forEach((button) => button.addEventListener('click', async () => {
+    const operation = button.dataset.storage
+    const key = $('storageKey').value.trim()
+    try {
+      let result
+      if (operation === 'get') {
+        result = await call('storage.get', () => sealchat.storage.get(key), 'storageResult')
+        storageRevision = result?.revision ?? null
+      } else if (operation === 'set') {
+        const value = parseJSON('storageValue')
+        const options = $('useRevision').checked && Number.isInteger(storageRevision) ? { ifRevision: storageRevision } : undefined
+        result = await call('storage.set', () => sealchat.storage.set(key, value, options), 'storageResult')
+        storageRevision = result?.revision ?? null
+      } else if (operation === 'delete') {
+        const options = $('useRevision').checked && Number.isInteger(storageRevision) ? { ifRevision: storageRevision } : undefined
+        result = await call('storage.delete', () => sealchat.storage.delete(key, options), 'storageResult')
+        storageRevision = null
+      } else if (operation === 'list') {
+        result = await call('storage.list', () => sealchat.storage.list({ prefix: $('storagePrefix').value, cursor: $('storageCursor').value }), 'storageResult')
+        $('storageCursor').value = result?.next || ''
+      } else if (operation === 'snapshot') {
+        result = await call('storage.snapshot', () => sealchat.storage.snapshot(), 'storageResult')
+      }
+      if (result?.seq !== undefined) { storageSeq = result.seq; $('seqText').textContent = String(storageSeq) }
+      if (result?.revision !== undefined) $('revisionText').textContent = String(result.revision)
+    } catch {}
+  }))
+
+  $('subscribeButton').addEventListener('click', async () => {
+    try {
+      await connect()
+      if (unsubscribeTopic) unsubscribeTopic()
+      const topic = $('eventTopic').value.trim()
+      unsubscribeTopic = sealchat.events.on(topic, (payload, event) => {
+        show('eventResult', event || payload)
+        log(`event:${topic}`, event || payload)
+      })
+      $('subscribeButton').textContent = `已订阅 ${topic}`
+    } catch {}
+  })
+  $('publishButton').addEventListener('click', async () => {
+    try {
+      await connect()
+      const topic = $('eventTopic').value.trim()
+      const payload = parseJSON('eventPayload')
+      await call('events.publish', () => sealchat.events.publish(topic, payload), 'eventResult')
+    } catch {}
+  })
+  $('sendMessageButton').addEventListener('click', async () => {
+    try {
+      await connect()
+      const params = {
+        text: $('messageText').value,
+        replyTo: $('replyTo').value.trim() || undefined,
+        identityId: $('identityId').value.trim() || undefined,
+        identityVariantId: $('variantId').value.trim() || undefined,
+        icMode: $('icMode').value,
+      }
+      await call('messages.send', () => sealchat.messages.send(params), 'messageResult')
+    } catch {}
+  })
+
+  window.addEventListener('beforeunload', close)
+  log('页面就绪；点击“连接 SealChat”开始测试')
+</script>
+</body>
+</html>

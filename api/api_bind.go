@@ -519,6 +519,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/platform-fonts/:id/subset/*", PlatformFontSubsetFileHandler)
 	// Embed SDK 只提供静态客户端代码，不读取用户数据，保持无鉴权。
 	v1.Get("/channel-embed-sdk.js", ChannelEmbedSDKHandler)
+	// Builtin channel tools stay outside frontend bundle and are opened only on
+	// the browser's explicit iframe request.
+	v1.Get("/channel-embed-tools/builtin/:key/assets/*", ChannelIFormBuiltinAsset)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
@@ -871,6 +874,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	iform.Post("/push", ChannelIFormPush)
 	iform.Post("/migrate", ChannelIFormMigrate)
 	iform.Post("/world-share", ChannelIFormWorldShare)
+	v1Auth.Get("/channel-embed-tools/catalog", ChannelIFormTemplateCatalog)
 
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)
@@ -905,6 +909,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/ai/models", AdminAIProviderModelsDiscover)
 	v1AuthAdmin.Get("/admin/ai/usage-logs", AdminAIUsageLogs)
 	v1AuthAdmin.Post("/admin/ai/usage-logs/cleanup", AdminAIUsageLogsCleanup)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/templates", AdminChannelIFormTemplateList)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/builtin/:key", AdminChannelIFormBuiltinGet)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/templates/:templateId", AdminChannelIFormTemplateGet)
+	v1AuthAdmin.Post("/admin/channel-embed-tools/templates", AdminChannelIFormTemplateCreate)
+	v1AuthAdmin.Patch("/admin/channel-embed-tools/templates/:templateId", AdminChannelIFormTemplateUpdate)
+	v1AuthAdmin.Post("/admin/channel-embed-tools/templates/:templateId/archive", AdminChannelIFormTemplateArchive)
+	v1AuthAdmin.Post("/admin/channel-embed-tools/templates/:templateId/restore", AdminChannelIFormTemplateRestore)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/templates/:templateId/usage", AdminChannelIFormTemplateUsage)
 	v1AuthAdmin.Get("/admin/ai-quotas", AdminAIQuotaList)
 	v1AuthAdmin.Get("/admin/ai-quotas/:userId", AdminAIQuotaGet)
 	v1AuthAdmin.Put("/admin/ai-quotas/:userId", AdminAIQuotaUpsert)

@@ -55,7 +55,7 @@
           <n-icon size="14" :component="VolumeHighOutline" />
           <span>需要手动激活音/视频。</span>
         </div>
-        <IFormEmbedPortal :window-id="window.windowId" :form-id="window.formId" surface="floating" />
+        <IFormEmbedPortal v-if="!window.minimized" :window-id="window.windowId" :form-id="window.formId" surface="floating" />
         <div class="iform-floating__resize" @pointerdown.stop.prevent="startResizing(window, 'se', $event)">
           <n-icon size="16" :component="ResizeOutline" />
         </div>

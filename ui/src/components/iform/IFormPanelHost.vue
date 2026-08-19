@@ -57,7 +57,7 @@
             <n-icon size="14" :component="VolumeHighOutline" />
             <span>如果页面包含媒体，请点击解除静音/播放。</span>
           </div>
-          <IFormEmbedPortal :window-id="panel.windowId" :form-id="panel.formId" surface="panel" />
+          <IFormEmbedPortal v-if="!panel.collapsed" :window-id="panel.windowId" :form-id="panel.formId" surface="panel" />
           <div class="iform-panel__resize" @mousedown.prevent="startResizing(panel, $event)">
             <n-icon size="16" :component="ResizeOutline" />
           </div>

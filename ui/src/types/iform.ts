@@ -27,8 +27,37 @@ export interface ChannelIForm {
   sharedRef?: boolean;
   sharedWorldId?: string;
   readonly?: boolean;
+  templateRef?: string;
+  templateOverrides?: ChannelIFormTemplateOverrides;
+  templateOrigin?: 'builtin' | 'platform' | string;
+  templateName?: string;
+  templateMissing?: boolean;
+  templateArchived?: boolean;
   mediaOptions?: ChannelIFormMediaOptions;
   bridgePolicy?: ChannelIFormBridgePolicy;
+}
+
+export interface ChannelIFormTemplateOverrides {
+  name?: string;
+  defaultWidth?: number;
+  defaultHeight?: number;
+  defaultCollapsed?: boolean;
+  defaultFloating?: boolean;
+  allowPopout?: boolean;
+  mediaOptions?: ChannelIFormMediaOptions;
+  bridgePolicy?: ChannelIFormBridgePolicy;
+}
+
+export interface ChannelIFormTemplateCatalogItem {
+  ref: string;
+  origin: 'builtin' | 'platform' | string;
+  name: string;
+  description?: string;
+  installable: boolean;
+  archived?: boolean;
+  enabled?: boolean;
+  editable?: boolean;
+  readOnly?: boolean;
 }
 
 export interface ChannelIFormBridgePolicy {

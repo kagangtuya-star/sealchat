@@ -1,0 +1,15 @@
+{
+  "name": "Demo测试",
+  "description": "SealChat Channel Embed API 多端测试工具",
+  "entry": "index.html",
+  "defaultWidth": 960,
+  "defaultHeight": 760,
+  "defaultCollapsed": false,
+  "defaultFloating": false,
+  "allowPopout": true,
+  "mediaOptions": { "allowAudio": false, "allowVideo": false },
+  "bridgePolicy": {
+    "enabled": true,
+    "capabilities": ["context.read", "user.read", "members.read", "world.admins.read", "characters.read", "permissions.read", "storage.read", "storage.write", "events.subscribe", "events.publish", "messages.send"]
+  }
+}

@@ -17,6 +17,7 @@
       allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
       sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads"
       referrerpolicy="no-referrer"
+      loading="lazy"
     ></iframe>
     <iframe
       v-else-if="form?.url"
@@ -25,6 +26,7 @@
       allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
       sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups"
       referrerpolicy="no-referrer"
+      loading="lazy"
     ></iframe>
     <div v-else class="iform-frame__empty">
       <n-empty description="未配置 URL 或嵌入代码" size="small" />
