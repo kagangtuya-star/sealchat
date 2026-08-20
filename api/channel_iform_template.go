@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 
+	builtinassets "sealchat/builtin"
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
@@ -389,7 +390,7 @@ func ChannelIFormBuiltinAsset(c *fiber.Ctx) error {
 	root := filepath.Join(service.BuiltinChannelIFormRoot(), registration.Directory)
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
+		return sendEmbeddedChannelIFormBuiltinAsset(c, key, registration.Directory, clean)
 	}
 	target := filepath.Join(rootAbs, clean)
 	rel, err := filepath.Rel(rootAbs, target)
@@ -398,11 +399,11 @@ func ChannelIFormBuiltinAsset(c *fiber.Ctx) error {
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
+		return sendEmbeddedChannelIFormBuiltinAsset(c, key, registration.Directory, clean)
 	}
 	resolvedTarget, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
+		return sendEmbeddedChannelIFormBuiltinAsset(c, key, registration.Directory, clean)
 	}
 	rel, err = filepath.Rel(resolvedRoot, resolvedTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -410,7 +411,7 @@ func ChannelIFormBuiltinAsset(c *fiber.Ctx) error {
 	}
 	info, err := os.Stat(resolvedTarget)
 	if err != nil || info.IsDir() {
-		return c.SendStatus(fiber.StatusNotFound)
+		return sendEmbeddedChannelIFormBuiltinAsset(c, key, registration.Directory, clean)
 	}
 	weakETag := fmt.Sprintf("W/\"%d-%d\"", info.ModTime().UnixNano(), info.Size())
 	c.Set(fiber.HeaderETag, weakETag)
@@ -429,6 +430,29 @@ func ChannelIFormBuiltinAsset(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 	contentType := mime.TypeByExtension(filepath.Ext(resolvedTarget))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if strings.HasPrefix(contentType, "text/") || contentType == "application/javascript" {
+		contentType += "; charset=utf-8"
+	}
+	c.Set(fiber.HeaderContentType, contentType)
+	c.Set(fiber.HeaderContentLength, strconv.Itoa(len(data)))
+	return c.Send(data)
+}
+
+func sendEmbeddedChannelIFormBuiltinAsset(c *fiber.Ctx, key, directory, asset string) error {
+	data, err := builtinassets.ReadChannelEmbedToolAsset(directory, filepath.ToSlash(asset))
+	if err != nil {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
+	etag := fmt.Sprintf("W/\"embedded-%s-%s-%d\"", key, strings.ReplaceAll(filepath.ToSlash(asset), "/", "-"), len(data))
+	c.Set(fiber.HeaderETag, etag)
+	c.Set(fiber.HeaderCacheControl, "public, max-age=300")
+	if strings.Contains(c.Get(fiber.HeaderIfNoneMatch), etag) {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+	contentType := mime.TypeByExtension(filepath.Ext(asset))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}

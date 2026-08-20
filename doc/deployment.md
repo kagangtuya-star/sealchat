@@ -81,7 +81,7 @@ docker run -d --name sealchat --restart unless-stopped \
 ## 5. 二进制部署
 
 1. 从 [GitHub Releases](https://github.com/kagangtuya-star/sealchat/releases) 下载对应平台的发行包并完整解压。
-2. 保留主程序旁的 `bin/`、`builtin/` 和示例配置等发行内容。启动时会检查 WebP 工具；发行目录不完整会导致启动失败。
+2. 保留主程序旁的 `bin/` 和示例配置等发行内容。`builtin/channel-embed-tools/` 已嵌入主程序，只有需要外部覆盖时才需额外保留。启动时会检查 WebP 工具；发行目录不完整会导致启动失败。
 3. 复制 `config.yaml.example` 为 `config.yaml` 并按需修改。若不提供，程序会尝试从数据库恢复配置；全新安装则生成默认配置。
 4. 在发行目录运行 `./sealchat-server`；Windows 使用 `sealchat-server.exe`。
 5. 访问 `http://localhost:3212/`。默认端口由 `serveAt: :3212` 决定。

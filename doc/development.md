@@ -117,9 +117,9 @@ npm run build
 
 ## 单体发行结构
 
-`main.go` 通过 `//go:embed ui/dist` 将前端产物嵌入主程序。Channel Embed SDK、导出 Viewer 资源和 `doc/SEALCHAT_AGENT_CRAWL_GUIDE_COMPACT.md` 也分别由对应 Go 文件嵌入。
+`main.go` 通过 `//go:embed ui/dist` 将前端产物嵌入主程序。Channel Embed SDK、频道内置工具、导出 Viewer 资源和 `doc/SEALCHAT_AGENT_CRAWL_GUIDE_COMPACT.md` 也分别由对应 Go 文件嵌入。
 
-单体主程序并不意味着所有外部工具都已内嵌：WebP 编码器、可选字体分割 WASM、FFmpeg/FFprobe、`builtin/` 内容和配置仍可能需要作为发行目录的一部分保留。以当前 Dockerfile 和发布流水线为准。
+单体主程序并不意味着所有外部工具都已内嵌：WebP 编码器、可选字体分割 WASM、FFmpeg/FFprobe 和配置仍可能需要作为发行目录的一部分保留。`builtin/channel-embed-tools/` 可作为开发或定制部署时的外部覆盖，不再是内置频道工具运行前提。
 
 ## 平台字体分割器
 
@@ -166,7 +166,7 @@ wasm32-wasip1@7.4.1
 | `cmd/` | 可独立运行的辅助程序 |
 | `utils/` | 配置及跨模块基础工具 |
 | `bin/` | 随发行包使用的平台工具与资源 |
-| `builtin/` | 内置模板和运行时内容 |
+| `builtin/` | 内置模板和运行时内容源码（频道工具会嵌入主程序） |
 | `doc/` | 用户指南、外部 API 和专题设计文档 |
 | `specs/` | 需求、协议和实现规格记录 |
 | `plans/` | 阶段性实施计划 |

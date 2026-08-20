@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	builtinassets "sealchat/builtin"
 	"sealchat/model"
 )
 
@@ -32,8 +33,7 @@ type BuiltinChannelIFormToolRegistration struct {
 	AllowPopout      bool
 }
 
-// Keep this list source-only. Runtime files are opened by the asset handler,
-// never embedded in the Go binary or frontend bundle.
+// Keep this list in sync with directories under builtin/channel-embed-tools.
 var builtinChannelIFormTools = []BuiltinChannelIFormToolRegistration{
 	{
 		Key: "channel-embed-api-demo", Directory: "channel-embed-api-demo", Name: "Demo测试",
@@ -100,12 +100,16 @@ func LoadBuiltinChannelIFormManifest(key string) (BuiltinChannelIFormManifest, e
 	manifestPath := filepath.Join(BuiltinChannelIFormRoot(), registration.Directory, "manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return BuiltinChannelIFormManifest{
-			Name: registration.Name, Description: registration.Description, Entry: "index.html",
-			DefaultWidth: registration.DefaultWidth, DefaultHeight: registration.DefaultHeight,
-			DefaultCollapsed: registration.DefaultCollapsed, DefaultFloating: registration.DefaultFloating,
-			AllowPopout: registration.AllowPopout,
-		}, nil
+		if embedded, embeddedErr := builtinassets.ReadChannelEmbedToolAsset(registration.Directory, "manifest.json"); embeddedErr == nil {
+			data = embedded
+		} else {
+			return BuiltinChannelIFormManifest{
+				Name: registration.Name, Description: registration.Description, Entry: "index.html",
+				DefaultWidth: registration.DefaultWidth, DefaultHeight: registration.DefaultHeight,
+				DefaultCollapsed: registration.DefaultCollapsed, DefaultFloating: registration.DefaultFloating,
+				AllowPopout: registration.AllowPopout,
+			}, nil
+		}
 	}
 	var manifest BuiltinChannelIFormManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
