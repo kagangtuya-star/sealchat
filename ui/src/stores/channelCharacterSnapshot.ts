@@ -38,6 +38,7 @@ export interface ChannelCharacterSnapshotCard {
   avatarAttachmentId?: string;
   attrs: Record<string, any>;
   templateText?: string;
+  platformTemplateRef?: string;
 }
 
 export interface ChannelCharacterSnapshotItem {
@@ -53,6 +54,7 @@ export interface ChannelCharacterSnapshotItem {
     badgeAttrs?: Record<string, any>;
   };
   badgeTemplate?: string;
+  badgeTemplateDisabled?: boolean;
   theaterOverlayTemplateJson?: string;
   contentHash: string;
   serverRevision: number;
@@ -109,6 +111,7 @@ const normalizeItem = (value: any): ChannelCharacterSnapshotItem | null => {
       avatarAttachmentId: String(value.data.card.avatarAttachmentId || ''),
       attrs: value.data.card.attrs && typeof value.data.card.attrs === 'object' ? value.data.card.attrs : {},
       ...(value.data.card.templateText ? { templateText: String(value.data.card.templateText) } : {}),
+      ...(value.data.card.platformTemplateRef ? { platformTemplateRef: String(value.data.card.platformTemplateRef) } : {}),
     }
     : undefined;
   return {
@@ -131,6 +134,7 @@ const normalizeItem = (value: any): ChannelCharacterSnapshotItem | null => {
       badgeAttrs: value.data.badgeAttrs && typeof value.data.badgeAttrs === 'object' ? value.data.badgeAttrs : {},
     },
     badgeTemplate: String(value.badgeTemplate || ''),
+    badgeTemplateDisabled: value.badgeTemplateDisabled === true,
     theaterOverlayTemplateJson: String(value.theaterOverlayTemplateJson || ''),
     contentHash: String(value.contentHash || ''),
     serverRevision: Number(value.serverRevision || 0),
@@ -245,50 +249,12 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
     void refreshChannel(channelId);
   };
 
-  const applyPreferenceToSnapshotItems = (channelId: string, value: any) => {
-    const userId = String(value?.userId || '').trim();
-    const current = snapshotsByChannel.value[channelId];
-    if (!userId || !current) return;
-
-    const settings = settingsByChannel.value[channelId];
-    const badgeMode = String(value?.badgeTemplateMode || 'inherit');
-    const overlayMode = String(value?.theaterOverlayTemplateMode || 'inherit');
-    let changed = false;
-    const next = { ...current };
-
-    Object.entries(current).forEach(([identityId, item]) => {
-      if (item.userId !== userId) return;
-      let badgeTemplate = String(settings?.badgeTemplate ?? item.badgeTemplate ?? '');
-      let theaterOverlayTemplateJson = String(
-        settings?.theaterOverlayTemplateJson ?? item.theaterOverlayTemplateJson ?? '',
-      );
-      if (badgeMode === 'off') badgeTemplate = '';
-      if (badgeMode === 'custom') badgeTemplate = String(value?.badgeTemplate || '');
-      if (overlayMode === 'off') theaterOverlayTemplateJson = '';
-      if (overlayMode === 'custom') {
-        theaterOverlayTemplateJson = String(value?.theaterOverlayTemplateJson || '');
-      }
-      if (
-        item.badgeTemplate === badgeTemplate
-        && item.theaterOverlayTemplateJson === theaterOverlayTemplateJson
-      ) {
-        return;
-      }
-      next[identityId] = { ...item, badgeTemplate, theaterOverlayTemplateJson };
-      changed = true;
-    });
-
-    if (changed) {
-      snapshotsByChannel.value = { ...snapshotsByChannel.value, [channelId]: next };
-    }
-  };
-
   const applyPreference = (event: any) => {
     const value = event?.characterSnapshotPreference;
     const channelId = String(value?.channelId || '').trim();
     if (!channelId) return;
     if (String(value?.userId || '') !== String(userStore.info?.id || '')) {
-      applyPreferenceToSnapshotItems(channelId, value);
+      void refreshChannel(channelId);
       return;
     }
     preferenceByChannel.value = { ...preferenceByChannel.value, [channelId]: value };

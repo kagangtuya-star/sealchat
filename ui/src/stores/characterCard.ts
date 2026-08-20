@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
-import { useCharacterCardTemplateStore } from './characterCardTemplate';
+import { isPlatformCharacterCardTemplateRef, useCharacterCardTemplateStore } from './characterCardTemplate';
 import { useCharacterSheetStore } from './characterSheet';
 import {
   getWorldCardTemplate,
@@ -66,6 +66,7 @@ export interface CharacterCardBadgeEntry {
   template: string;
   attrs: Record<string, any>;
   updatedAt: number;
+  platformTemplateRef?: string;
 }
 
 export interface OnlineCharacterCardItem {
@@ -1575,6 +1576,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (isNarratorIdentity(channelId, identityId)) return null;
     const snapshot = snapshotStore.getSnapshot(channelId, identityId);
     if (snapshot) {
+      if (snapshot.badgeTemplateDisabled) return null;
       if (!snapshot.data.badgeEnabled) return null;
       const template = String(snapshot.badgeTemplate || '').trim();
       const attrs = snapshot.data.badgeAttrs || {};
@@ -1585,6 +1587,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           template,
           attrs,
           updatedAt: Math.floor((snapshot.sourceUpdatedAt || snapshot.lastSeenAt || Date.now()) / 1000),
+          ...(snapshot.data.card?.platformTemplateRef ? { platformTemplateRef: snapshot.data.card.platformTemplateRef } : {}),
         };
       }
     }
@@ -1609,6 +1612,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     } catch (error) {
       console.warn('[CharacterCard] Failed to load card avatar bindings for snapshot', error);
     }
+    try {
+      await templateStore.ensureBindingsLoaded(channelId);
+    } catch (error) {
+      console.warn('[CharacterCard] Failed to load character template bindings for snapshot', error);
+    }
     const identity = chatStore.getActiveIdentity(channelId);
     if (!identity?.id) return null;
     const isOocIdentity = chatStore.getIdentityIcOocMode(channelId, identity.id) === 'ooc';
@@ -1624,6 +1632,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const active = activeCards.value[channelId];
     const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
     const cardId = getActiveCardId(channelId);
+    const templateBinding = cardId ? templateStore.getBinding(channelId, cardId) : null;
+    const platformTemplateRef = templateBinding?.mode === 'managed' && isPlatformCharacterCardTemplateRef(templateBinding.templateId)
+      ? templateBinding.templateId
+      : '';
     const cardMeta = cardId ? cardList.value.find(card => card.id === cardId) : undefined;
     const cardAvatarAttachmentId = cardId
       ? avatarStore.resolveCardAvatar(cardId, channelId, active?.avatarUrl)
@@ -1665,6 +1677,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
             avatarAttachmentId: cardAvatarAttachmentId,
             attrs: active.attrs || {},
             ...(active.templateText ? { templateText: active.templateText } : {}),
+            ...(platformTemplateRef ? { platformTemplateRef } : {}),
           },
         } : {}),
         badgeEnabled: includeBadge,

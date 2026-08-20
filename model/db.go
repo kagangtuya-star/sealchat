@@ -163,6 +163,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
+	db.AutoMigrate(&PlatformCharacterCardTemplateModel{})
 	db.AutoMigrate(&CharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&WorldCharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})

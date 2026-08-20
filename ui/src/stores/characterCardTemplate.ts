@@ -6,6 +6,24 @@ import { api } from './_config';
 import { useUserStore } from './user';
 
 export type CharacterCardTemplateMode = 'managed' | 'detached';
+export type CharacterCardTemplateAccess = 'owner' | 'world_shared' | 'platform';
+
+export const PLATFORM_CHARACTER_CARD_TEMPLATE_REF_PREFIX = 'platform:';
+
+export const parseCharacterCardTemplateRef = (value?: string) => {
+  const ref = String(value || '').trim();
+  if (!ref) return null;
+  if (ref.startsWith(PLATFORM_CHARACTER_CARD_TEMPLATE_REF_PREFIX)) {
+    const id = ref.slice(PLATFORM_CHARACTER_CARD_TEMPLATE_REF_PREFIX.length).trim();
+    if (!id || id.includes(':')) return null;
+    return { source: 'platform' as const, id, ref: `${PLATFORM_CHARACTER_CARD_TEMPLATE_REF_PREFIX}${id}` };
+  }
+  return { source: 'user' as const, id: ref, ref };
+};
+
+export const isPlatformCharacterCardTemplateRef = (value?: string) => (
+  parseCharacterCardTemplateRef(value)?.source === 'platform'
+);
 
 export interface CharacterCardTemplate {
   id: string;
@@ -16,7 +34,12 @@ export interface CharacterCardTemplate {
   defaultBadgeTemplate: string;
   isGlobalDefault: boolean;
   isSheetDefault: boolean;
-  access?: 'owner' | 'world_shared';
+  ref?: string;
+  origin?: 'user' | 'platform';
+  enabled?: boolean;
+  badgeTemplateOverride?: string;
+  theaterOverlayTemplateJson?: string;
+  access?: CharacterCardTemplateAccess;
   readonly?: boolean;
   isSharedToCurrentWorld?: boolean;
   sharedWorldId?: string;
@@ -139,7 +162,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const bindingsByChannel = ref<Record<string, Record<string, CharacterCardTemplateBinding>>>({});
   const bindingsLoadedChannels = ref<Record<string, boolean>>({});
   const bindingsMutationVersions = ref<Record<string, number>>({});
-  const bindingsLoadPromises: Record<string, Promise<CharacterCardTemplateBinding[]>> = {};
+  const bindingsLoadPromises: Record<string, Promise<CharacterCardTemplateBinding[]> | undefined> = {};
   const templatesLoaded = ref(false);
   const loading = ref(false);
   const migrating = ref(false);
@@ -151,7 +174,13 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
 
   const getTemplateById = (templateId?: string) => {
     if (!templateId) return null;
-    return templateMap.value[templateId] || null;
+    const parsed = parseCharacterCardTemplateRef(templateId);
+    return templateMap.value[parsed?.ref || templateId] || null;
+  };
+
+  const getTemplateRef = (template?: CharacterCardTemplate | null) => {
+    if (!template) return '';
+    return String(template.ref || template.id || '').trim();
   };
 
   const getBinding = (channelId: string, externalCardId: string) => {
@@ -173,6 +202,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     const normalized = normalizeSheetType(sheetType);
     const builtin = BUILTIN_CHARACTER_CARD_TEMPLATES.find(item => normalizeSheetType(item.sheetType) === normalized);
     return templates.value.filter(item => {
+      if (item.enabled === false) return false;
       const current = normalizeSheetType(item.sheetType);
       if (!normalized) return true;
       if (builtin && item.name !== builtin.name && isLegacyBuiltinTemplate(item, builtin)) {
@@ -221,7 +251,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     if (builtinTemplate) return builtinTemplate;
 
     return templates.value.find(item => !item.readonly && isSameSheetType(item.sheetType, sheetType))
-      || templates.value.find(item => isSameSheetType(item.sheetType, sheetType))
+      || templates.value.find(item => item.enabled !== false && isSameSheetType(item.sheetType, sheetType))
       || null;
   };
 
@@ -280,7 +310,8 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
             if (builtinKeys.has(key)) return;
             builtinKeys.add(key);
           }
-          nextMap[item.id] = item;
+          const key = String(item.ref || item.id || '').trim();
+          if (key) nextMap[key] = item;
         }
       });
       templateMap.value = nextMap;
@@ -336,7 +367,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
           && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
           && item.content.trim() === builtin.content
         ));
-        let canonical = legacyTemplates[0]
+        let canonical: CharacterCardTemplate | null = legacyTemplates[0]
           || matchingTemplates[0]
           || contentDuplicateTemplates[0]
           || null;
@@ -605,7 +636,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
         externalCardId: payload.externalCardId,
         cardName: payload.cardName,
         sheetType: payload.sheetType,
-        templateId: preferredTemplate.id,
+        templateId: getTemplateRef(preferredTemplate),
       });
     }
 
@@ -616,7 +647,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
         externalCardId: payload.externalCardId,
         cardName: payload.cardName,
         sheetType: payload.sheetType,
-        templateId: globalDefault.id,
+        templateId: getTemplateRef(globalDefault),
       });
     }
 
@@ -665,7 +696,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       await ensureTemplatesLoaded();
       await ensureBindingsLoaded(channelId);
       const contentIndex = new Map<string, CharacterCardTemplate>();
-      templates.value.forEach(item => {
+      templates.value.filter(item => !item.readonly).forEach(item => {
         const idxKey = `${normalizeSheetType(item.sheetType)}::${item.content}`;
         if (!contentIndex.has(idxKey)) {
           contentIndex.set(idxKey, item);
@@ -728,6 +759,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     templateMap,
     bindingsByChannel,
     getTemplateById,
+    getTemplateRef,
     getBinding,
     getTemplatesBySheetType,
     getSheetDefaultTemplate,

@@ -793,11 +793,12 @@ type CharacterSnapshotIdentity struct {
 }
 
 type CharacterSnapshotCard struct {
-	Name               string         `json:"name,omitempty"`
-	SheetType          string         `json:"sheetType,omitempty"`
-	AvatarAttachmentID string         `json:"avatarAttachmentId,omitempty"`
-	Attrs              map[string]any `json:"attrs,omitempty"`
-	TemplateText       string         `json:"templateText,omitempty"`
+	Name                string         `json:"name,omitempty"`
+	SheetType           string         `json:"sheetType,omitempty"`
+	AvatarAttachmentID  string         `json:"avatarAttachmentId,omitempty"`
+	Attrs               map[string]any `json:"attrs,omitempty"`
+	TemplateText        string         `json:"templateText,omitempty"`
+	PlatformTemplateRef string         `json:"platformTemplateRef,omitempty"`
 }
 
 type CharacterSnapshotData struct {
@@ -815,6 +816,7 @@ type CharacterSnapshotItem struct {
 	SourceCardID               string                `json:"sourceCardId,omitempty"`
 	Data                       CharacterSnapshotData `json:"data"`
 	BadgeTemplate              string                `json:"badgeTemplate,omitempty"`
+	BadgeTemplateDisabled      bool                  `json:"badgeTemplateDisabled,omitempty"`
 	TheaterOverlayTemplateJSON string                `json:"theaterOverlayTemplateJson,omitempty"`
 	ContentHash                string                `json:"contentHash"`
 	ServerRevision             int64                 `json:"serverRevision"`
