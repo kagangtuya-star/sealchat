@@ -232,6 +232,13 @@
     }
     .nickname-input:focus { border-color: var(--danger); box-shadow: 3px 3px 0 var(--danger); }
 
+    .speed-picker {
+      display: grid;
+      grid-template-columns: minmax(76px, 94px) minmax(0, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+    .speed-zero-choice { display: grid; }
     .speed-choices { display: grid; grid-template-columns: repeat(6, minmax(42px, 1fr)); gap: 6px; }
     .speed-choice {
       min-height: 42px;
@@ -254,6 +261,21 @@
       box-shadow: 2px 2px 0 var(--danger);
       transform: translate(-2px, -2px);
     }
+    .speed-zero-choice .speed-choice {
+      min-height: 42px;
+      border-color: var(--danger);
+      box-shadow: 2px 2px 0 rgba(179,27,27,.25);
+    }
+    .speed-zero-choice .speed-choice::before {
+      content: 'SPECIAL';
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      color: var(--danger);
+      font: 700 7px/1 var(--font-sans);
+      letter-spacing: .08em;
+    }
+    .speed-zero-choice .speed-choice.active::before { color: #fff; }
 
     .submit-button { min-width: 110px; min-height: 36px; font-size: 13px; }
     .command-hint { grid-column: 1 / -1; margin-top: 2px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
@@ -366,7 +388,7 @@
       width: 100%;
       min-width: 0;
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--lane-count, 6), minmax(0, 1fr));
       gap: 2px; /* 栏目间粗线分割 */
       background: var(--ink);
       border: 2px solid var(--ink);
@@ -424,11 +446,114 @@
     }
     .lane-number { font: 900 42px/.8 var(--font-serif); color: var(--ink); }
 
-    .pips { width: 44px; height: 44px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 4px; align-content: center; transform: rotate(45deg); }
+    .pips { width: 44px; height: 44px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 3px; align-content: center; transform: rotate(45deg); }
     .pip { width: 8px; height: 8px; background: var(--danger); align-self: center; justify-self: center; }
 
-    .lane-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+    /* 0 与 7 对应规则表两端的特殊谋位，用暗色表头与普通谋位拉开层级。 */
+    .lane[data-speed="0"] .lane-head,
+    .lane[data-speed="7"] .lane-head {
+      color: #fff;
+      background: var(--ink);
+    }
+    .lane[data-speed="0"] .lane-zh,
+    .lane[data-speed="7"] .lane-zh { color: var(--paper); }
+    .lane[data-speed="0"] .lane-number,
+    .lane[data-speed="7"] .lane-number { color: #fff; }
+    .lane[data-speed="0"] .lane-kanji,
+    .lane[data-speed="7"] .lane-kanji { color: rgba(255,255,255,.08); }
+    .lane[data-speed="0"] .pip,
+    .lane[data-speed="7"] .pip { background: #fff; }
+
+    .lane-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; position: relative; overflow: hidden; }
+    /* 谋位阴文直接作为 DOM 字符绘制，避免伪元素/缓存造成旧的一二三四五六残留。 */
+    .lane-watermark {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      z-index: 0;
+      transform: translate(-50%, -50%) scaleY(1.08);
+      transform-origin: center;
+      font-family: "STXingkai", "华文行楷", "FZShuTi", "方正舒体", "STKaiti", "华文楷体", "Kaiti SC", "KaiTi", "楷体", cursive;
+      font-size: clamp(64px, 8vw, 126px);
+      font-weight: 900;
+      font-style: normal;
+      line-height: .92;
+      letter-spacing: .02em;
+      color: rgba(17, 17, 17, 0.075);
+      white-space: nowrap;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      text-shadow:
+        1px 0 0 rgba(17,17,17,.018),
+        -1px 1px 0 rgba(17,17,17,.014),
+        0 -1px 0 rgba(17,17,17,.012);
+      filter: saturate(.75) contrast(1.08);
+    }
+    .lane[data-speed="7"] .lane-watermark { letter-spacing: .12em; }
+    .lane-body > :not(.lane-watermark) { position: relative; z-index: 1; }
+    .lane-body.drag-over,
+    .lane-body.move-target { background: #e0d7c6; }
+    .lane-body.move-target { outline: 2px dashed var(--danger); outline-offset: -4px; cursor: pointer; }
     .lane-empty { margin: auto; color: var(--ink-2); font-size: 13px; font-weight: bold; text-align: center; padding: 40px 12px; }
+
+    /* 每个谋位底部自带一块大失败区：只需切分底部一块，并用阴文提示。 */
+    .lane-fumble {
+      position: relative;
+      min-height: 88px;
+      padding: 8px;
+      border-top: 2px solid var(--danger);
+      background:
+        linear-gradient(rgba(179,27,27,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(179,27,27,.045) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(179,27,27,.08), rgba(179,27,27,.02));
+      background-size: 18px 18px, 18px 18px, 100% 100%;
+      overflow: hidden;
+    }
+    .lane-fumble::before {
+      content: '大失败';
+      position: absolute;
+      inset: 50% auto auto 50%;
+      transform: translate(-50%, -50%);
+      font: 900 30px/1 var(--font-serif);
+      letter-spacing: .22em;
+      color: rgba(179,27,27,.08);
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .lane-fumble.drag-over,
+    .lane-fumble.move-target { background-color: #ead6d0; }
+    .lane-fumble.move-target {
+      outline: 2px dashed var(--danger);
+      outline-offset: -4px;
+      cursor: pointer;
+    }
+    .lane-fumble-label {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 6px;
+      color: var(--danger);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .14em;
+      font-family: var(--font-serif);
+    }
+    .lane-fumble-body {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 48px;
+    }
+    .lane-fumble-empty {
+      margin: auto;
+      padding: 10px 6px;
+      color: rgba(17,17,17,.6);
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+    }
 
     /* 角色谋位块：实体卡牌感 */
     .token {
@@ -491,7 +616,7 @@
     }
     .token-delete:hover:not(:disabled) { background: var(--danger); color: #fff; border-color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }
 
-    /* 窄 iframe 使用单列竖向跑道，避免结果区横向滚动 */
+    /* 竖排模式：8 个谋位改为规则书式单列卡片，避免窄 iframe 出现过密的八栏表格。 */
     body.is-vertical-layout .board-scroll { overflow-x: visible; }
     body.is-vertical-layout .velocity-board {
       min-width: 0;
@@ -504,33 +629,77 @@
     body.is-vertical-layout .lane {
       min-height: 0;
       border: 2px solid var(--ink);
-      box-shadow: var(--shadow);
+      box-shadow: 2px 2px 0 var(--ink);
     }
     body.is-vertical-layout .lane-head {
-      min-height: 64px;
-      padding: 8px 10px;
-      flex-direction: row;
-      justify-content: flex-start;
-      gap: 8px;
+      min-height: 58px;
+      padding: 7px 9px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "en mark"
+        "zh mark";
+      column-gap: 10px;
+      row-gap: 1px;
+      align-items: center;
     }
-    body.is-vertical-layout .lane-en,
-    body.is-vertical-layout .lane-zh { text-align: left; }
-    body.is-vertical-layout .lane-zh { margin-top: 0; }
+    body.is-vertical-layout .lane-en {
+      grid-area: en;
+      align-self: end;
+      text-align: left;
+      font-size: 11px;
+    }
+    body.is-vertical-layout .lane-zh {
+      grid-area: zh;
+      align-self: start;
+      margin-top: 0;
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: .08em;
+    }
     body.is-vertical-layout .lane-mark {
+      grid-area: mark;
       width: auto;
-      margin: 0 0 0 auto;
+      margin: 0;
       gap: 5px;
+    }
+    body.is-vertical-layout .lane-kanji {
+      left: 26px;
+      transform: translate(0, -50%);
+      font-size: 54px;
     }
     body.is-vertical-layout .lane-number { font-size: 30px; }
     body.is-vertical-layout .pips { width: 30px; height: 30px; gap: 2px; }
     body.is-vertical-layout .pip { width: 6px; height: 6px; }
     body.is-vertical-layout .lane-body {
+      min-height: 54px;
+      padding: 7px;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       align-content: start;
       gap: 6px;
     }
-    body.is-vertical-layout .lane-empty { grid-column: 1 / -1; padding: 20px 12px; }
+    body.is-vertical-layout .lane-watermark { font-size: 72px; }
+    body.is-vertical-layout .lane-empty { grid-column: 1 / -1; padding: 12px; }
+    body.is-vertical-layout .lane-fumble {
+      min-height: 64px;
+      padding: 7px;
+    }
+    body.is-vertical-layout .lane-fumble::before {
+      font-size: 28px;
+      letter-spacing: .18em;
+    }
+    body.is-vertical-layout .lane-fumble-label {
+      margin-bottom: 5px;
+      font-size: 10px;
+    }
+    body.is-vertical-layout .lane-fumble-body {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      min-height: 36px;
+    }
+    body.is-vertical-layout .lane-fumble-empty { grid-column: 1 / -1; padding: 10px 6px; }
 
     body.is-compact-layout:not(.is-vertical-layout) .lane-head { min-height: 104px; padding: 8px 5px; }
     body.is-compact-layout:not(.is-vertical-layout) .lane-en,
@@ -655,7 +824,18 @@
     @media (max-width: 720px) {
       main { padding: 10px; }
       .lobby-grid { grid-template-columns: 1fr; }
+      .speed-picker { grid-template-columns: minmax(70px, 84px) minmax(0, 1fr); }
       .speed-choices { grid-template-columns: repeat(3, 1fr); }
+      .lane-fumble-body { gap: 6px; }
+    }
+
+    @media (max-width: 420px) {
+      body.is-vertical-layout .lane-body,
+      body.is-vertical-layout .lane-fumble-body { grid-template-columns: minmax(0, 1fr); }
+      body.is-vertical-layout .lane-empty,
+      body.is-vertical-layout .lane-fumble-empty { grid-column: 1; }
+      .speed-picker { grid-template-columns: 68px minmax(0, 1fr); gap: 6px; }
+      .speed-choice { min-height: 40px; font-size: 18px; }
     }
 
     @media (max-width: 380px) {
@@ -712,7 +892,10 @@
 
         <div>
           <span class="field-label">选择谋位（可多选）</span>
-          <div class="speed-choices" id="speedChoices" role="group" aria-label="谋位 1 到 6"></div>
+          <div class="speed-picker">
+            <div class="speed-zero-choice" id="speedZeroChoice" role="group" aria-label="特殊谋位 0"></div>
+            <div class="speed-choices" id="speedChoices" role="group" aria-label="谋位 1 到 6"></div>
+          </div>
         </div>
 
         <button class="primary-button submit-button" id="submitButton" type="button">提交谋位</button>
@@ -743,6 +926,7 @@
             <div class="results-meta" id="resultsMeta">—</div>
           </div>
           <div class="toolbar-actions">
+            <button class="secondary-button" id="specialLanesButton" type="button" aria-pressed="false">显示 0 / 7</button>
             <button class="secondary-button" id="layoutButton" type="button" aria-pressed="false">竖排显示</button>
             <button class="secondary-button" id="exportButton" type="button">导出 JSON</button>
           </div>
@@ -782,19 +966,23 @@
 
       const STORAGE_KEY = 'shinobigami:plot-board:v1'
       // 每个角色独立 actorKey；每条 entry 保留提交时昵称，避免覆盖。
-      const BOARD_SCHEMA = 2
+      const BOARD_SCHEMA = 4
       const MAX_MUTATION_RETRIES = 5
       const MAX_ENTRIES_PER_USER = 20
       const MAX_TOTAL_ENTRIES = 120
 
       const SPEEDS = [
-        { id: 1, en: 'Ghost Walk',  zh: '幽灵步',   brush: '幽步' },
-        { id: 2, en: 'Shadow Run',  zh: '影走',     brush: '影走' },
-        { id: 3, en: 'Neuro Speed', zh: '思考速度', brush: '思速' },
-        { id: 4, en: 'Sonic Speed', zh: '音速',     brush: '音速' },
-        { id: 5, en: 'Bullet Speed',zh: '弹速',     brush: '弹速' },
-        { id: 6, en: 'Light Speed', zh: '光速',     brush: '光速' }
+        { id: 0, en: 'Mundain',     zh: '静止的时间', brush: '零',   watermark: '零', submit: true },
+        { id: 1, en: 'Ghost Walk',  zh: '幽灵步',     brush: '幽步', watermark: '壹', submit: true },
+        { id: 2, en: 'Shadow Run',  zh: '影走',       brush: '影走', watermark: '贰', submit: true },
+        { id: 3, en: 'Neuro Speed', zh: '思考速度',   brush: '思速', watermark: '叁', submit: true },
+        { id: 4, en: 'Sonic Speed', zh: '音速',       brush: '音速', watermark: '肆', submit: true },
+        { id: 5, en: 'Bullet Speed',zh: '弹速',       brush: '弹速', watermark: '伍', submit: true },
+        { id: 6, en: 'Light Speed', zh: '光速',       brush: '光速', watermark: '陆', submit: true },
+        { id: 7, en: 'F.T.L.',      zh: '超光速',     brush: '死地', watermark: '死地', submit: false }
       ]
+      const SUBMIT_SPEEDS = SPEEDS.filter(speed => speed.submit)
+      const FAILURE_POSITION = 'failure'
 
       const $ = selector => document.querySelector(selector)
       const ui = {
@@ -810,6 +998,7 @@
         revealButton: $('#revealButton'),
         resetButton: $('#resetButton'),
         nicknameInput: $('#nicknameInput'),
+        speedZeroChoice: $('#speedZeroChoice'),
         speedChoices: $('#speedChoices'),
         submitButton: $('#submitButton'),
         commandHint: $('#commandHint'),
@@ -820,6 +1009,7 @@
         resultsSection: $('#resultsSection'),
         resultsMeta: $('#resultsMeta'),
         velocityBoard: $('#velocityBoard'),
+        specialLanesButton: $('#specialLanesButton'),
         layoutButton: $('#layoutButton'),
         exportButton: $('#exportButton'),
         fatalBox: $('#fatalBox'),
@@ -848,6 +1038,7 @@
       let diagnostics = []
       let debugMode = false
       let layoutOverride = null
+      let showSpecialLanes = false
       let measuredEmbedWidth = 0
       let resetConfirmationPromise = null
 
@@ -888,17 +1079,25 @@
 
       function updatePlacementSelection() {
         const selection = selectedPlacement
-        ui.velocityBoard.querySelectorAll('.token').forEach(token => {
+        document.querySelectorAll('.token').forEach(token => {
           const isSelected = Boolean(selection &&
             token.dataset.actorKey === selection.actorKey &&
             token.dataset.entryId === selection.entryId &&
-            Number(token.dataset.sourceSpeed) === selection.fromSpeed)
+            token.dataset.sourcePosition === String(selection.fromPosition) &&
+            (token.dataset.failureId || '') === (selection.failureId || '') &&
+            (token.dataset.failureSpeed || '') === (selection.failureSpeed == null ? '' : String(selection.failureSpeed)))
           token.classList.toggle('is-selected', isSelected)
           token.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
         })
-        ui.velocityBoard.querySelectorAll('.lane').forEach(lane => {
-          const isTarget = Boolean(selection && Number(lane.dataset.speed) !== selection.fromSpeed)
-          lane.classList.toggle('move-target', isTarget)
+        ui.velocityBoard.querySelectorAll('.lane-main-drop').forEach(zone => {
+          const speed = String(zone.dataset.speed || '')
+          const isSameMain = Boolean(selection && selection.fromPosition !== FAILURE_POSITION && speed === String(selection.fromPosition))
+          zone.classList.toggle('move-target', Boolean(selection && !isSameMain))
+        })
+        ui.velocityBoard.querySelectorAll('.lane-fumble-drop').forEach(zone => {
+          const speed = String(zone.dataset.speed || '')
+          const isSameFailure = Boolean(selection && selection.fromPosition === FAILURE_POSITION && speed === String(selection.failureSpeed ?? ''))
+          zone.classList.toggle('move-target', Boolean(selection && !isSameFailure))
         })
       }
 
@@ -1013,13 +1212,17 @@
       function normalizeSubmissionActor(key, actor) {
         if (!actor || typeof actor !== 'object') return null
         const actorNickname = String(actor.nickname || actor.memberName || '未命名忍者').slice(0, 24)
-        const entries = Array.isArray(actor.entries) ? actor.entries.map(entry => ({
-          id: String(entry?.id || makeEntryId()),
-          choices: sanitizeChoices(entry?.choices),
-          nickname: String(entry?.nickname || actorNickname).slice(0, 24),
-          createdAt: Number(entry?.createdAt) || now(),
-          updatedAt: Number(entry?.updatedAt) || Number(entry?.createdAt) || now()
-        })).filter(entry => entry.choices.length) : []
+        const entries = Array.isArray(actor.entries) ? actor.entries.map(entry => {
+          const choices = sanitizeChoices(entry?.choices)
+          return {
+            id: String(entry?.id || makeEntryId()),
+            choices,
+            failures: sanitizeFailures(entry?.failures, choices[0] ?? 0),
+            nickname: String(entry?.nickname || actorNickname).slice(0, 24),
+            createdAt: Number(entry?.createdAt) || now(),
+            updatedAt: Number(entry?.updatedAt) || Number(entry?.createdAt) || now()
+          }
+        }).filter(entry => entry.choices.length || entry.failures.length) : []
         if (!entries.length) return null
         return {
           actorKey: String(actor.actorKey || key),
@@ -1034,7 +1237,7 @@
       }
 
       function normalizeBoard(value) {
-        if (!value || typeof value !== 'object' || ![1, BOARD_SCHEMA].includes(value.schema)) return freshBoard()
+        if (!value || typeof value !== 'object' || ![1, 2, 3, BOARD_SCHEMA].includes(value.schema)) return freshBoard()
         const submissions = {}
         Object.entries(value.submissions && typeof value.submissions === 'object' ? value.submissions : {}).forEach(([key, actor]) => {
           const normalized = normalizeSubmissionActor(key, actor)
@@ -1359,12 +1562,32 @@
       }
 
       function sanitizeChoices(choices) {
-        return [...new Set((choices || []).map(Number).filter(v => Number.isInteger(v) && v >= 1 && v <= 6))].sort((a, b) => a - b)
+        return [...new Set((choices || []).map(Number).filter(v => Number.isInteger(v) && v >= 0 && v <= 7))].sort((a, b) => a - b)
+      }
+
+      function sanitizeFailures(failures, fallbackSpeed = 0) {
+        if (!Array.isArray(failures)) return []
+        const normalizedFallback = Number.isInteger(Number(fallbackSpeed)) && Number(fallbackSpeed) >= 0 && Number(fallbackSpeed) <= 7 ? Number(fallbackSpeed) : 0
+        const rows = []
+        const seen = new Set()
+        failures.forEach(value => {
+          const source = value && typeof value === 'object' ? value : { id: value, speed: normalizedFallback }
+          const id = String(source?.id || source?.failureId || '')
+          const speed = Number(source?.speed)
+          const laneSpeed = Number.isInteger(speed) && speed >= 0 && speed <= 7 ? speed : normalizedFallback
+          if (!id) return
+          const key = `${laneSpeed}:${id}`
+          if (seen.has(key)) return
+          seen.add(key)
+          rows.push({ id, speed: laneSpeed })
+        })
+        return rows.sort((a, b) => a.speed - b.speed || String(a.id).localeCompare(String(b.id), 'zh-CN'))
       }
 
       function renderSpeedChoices() {
+        ui.speedZeroChoice.textContent = ''
         ui.speedChoices.textContent = ''
-        for (const speed of SPEEDS) {
+        for (const speed of SUBMIT_SPEEDS) {
           const button = document.createElement('button')
           button.type = 'button'
           button.className = 'speed-choice'
@@ -1382,7 +1605,7 @@
             renderSpeedChoices()
             updateCommandState()
           }
-          ui.speedChoices.appendChild(button)
+          ;(speed.id === 0 ? ui.speedZeroChoice : ui.speedChoices).appendChild(button)
         }
         updateCommandState()
       }
@@ -1395,14 +1618,15 @@
         const enabled = canSubmitPhase && writable && identityOk
         ui.nicknameInput.disabled = !enabled
         ui.submitButton.disabled = !enabled || selectedChoices.size === 0 || !ui.nicknameInput.value.trim()
+        ui.speedZeroChoice.querySelectorAll('button').forEach(button => { button.disabled = !enabled })
         ui.speedChoices.querySelectorAll('button').forEach(button => { button.disabled = !enabled })
 
         if (!client) ui.commandHint.textContent = '等待连接 SealChat…'
         else if (!identityOk) ui.commandHint.textContent = '当前用户/成员身份不可用：可查看状态，但不能提交。'
         else if (!writable) ui.commandHint.textContent = '当前 iForm 没有 storage.write 权限：处于只读状态。'
         else if (board.phase === 'idle') ui.commandHint.textContent = '等待管理员点击“开始谋位”。'
-        else if (board.phase === 'collecting') ui.commandHint.textContent = '可多选 1–6；一次提交会保存为一条谋位，可继续提交多条。'
-        else ui.commandHint.textContent = '结果已公开：仍可继续添加谋位；公开项可点击选择后移动，也可拖动或删除。'
+        else if (board.phase === 'collecting') ui.commandHint.textContent = '可多选 0–6；谋位 0 独立显示。谋位 7 与各谋位底部的大失败区仅在公开后手动移动进入。'
+        else ui.commandHint.textContent = '结果已公开：可继续提交 0–6；谋位 7 与各谋位底部的大失败区需手动移动进入。点击落点后再点目标区域，或直接拖动。'
       }
 
       function isCurrentActor(actor, key) {
@@ -1491,16 +1715,19 @@
         const wrap = document.createElement('div')
         wrap.className = 'pips'
         const positions = {
+          0: [4],
           1: [4],
-          2: [0, 5],
-          3: [0, 4, 5],
-          4: [0, 2, 3, 5],
-          5: [0, 2, 3, 5, 4],
-          6: [0, 1, 2, 3, 4, 5]
+          2: [0, 8],
+          3: [0, 4, 8],
+          4: [0, 2, 6, 8],
+          5: [0, 2, 4, 6, 8],
+          6: [0, 2, 3, 5, 6, 8],
+          7: [0, 2, 3, 4, 5, 6, 8]
         }
-        for (let i = 0; i < 6; i++) {
+        const active = positions[count] || []
+        for (let i = 0; i < 9; i++) {
           const slot = document.createElement('span')
-          if (positions[count].includes(i)) slot.className = 'pip'
+          if (active.includes(i)) slot.className = 'pip'
           wrap.appendChild(slot)
         }
         return wrap
@@ -1525,14 +1752,82 @@
         })
       }
 
+      function collectFailurePlacements(board, speed) {
+        const rows = []
+        for (const [actorKey, actor] of Object.entries(board.submissions)) {
+          if (!actor || !Array.isArray(actor.entries)) continue
+          actor.entries.forEach((entry, entryIndex) => {
+            const choices = sanitizeChoices(entry.choices)
+            const failures = sanitizeFailures(entry.failures, choices[0] ?? speed)
+            for (const failure of failures) {
+              if (failure.speed !== speed) continue
+              rows.push({
+                actorKey,
+                actor,
+                entry,
+                entryIndex,
+                position: FAILURE_POSITION,
+                failureId: failure.id,
+                failureSpeed: failure.speed
+              })
+            }
+          })
+        }
+        return rows.sort((a, b) => {
+          const byName = String(a.entry.nickname || a.actor.nickname || '').localeCompare(String(b.entry.nickname || b.actor.nickname || ''), 'zh-CN')
+          if (byName) return byName
+          const byUser = String(a.actor.userId || '').localeCompare(String(b.actor.userId || ''))
+          if (byUser) return byUser
+          return (a.entry.createdAt || 0) - (b.entry.createdAt || 0)
+        })
+      }
+
+      function hasSpecialLaneData(board) {
+        for (const actor of Object.values(board.submissions || {})) {
+          if (!actor || !Array.isArray(actor.entries)) continue
+          for (const entry of actor.entries) {
+            const choices = sanitizeChoices(entry?.choices)
+            if (choices.includes(0) || choices.includes(7)) return true
+            const failures = sanitizeFailures(entry?.failures, choices[0] ?? 0)
+            if (failures.some(item => item.speed === 0 || item.speed === 7)) return true
+          }
+        }
+        return false
+      }
+
+      function updateSpecialLanesButton(board) {
+        if (!ui.specialLanesButton) return
+        const autoVisible = hasSpecialLaneData(board)
+        const visible = autoVisible || showSpecialLanes
+        ui.specialLanesButton.setAttribute('aria-pressed', visible ? 'true' : 'false')
+        if (autoVisible) {
+          ui.specialLanesButton.textContent = '0 / 7 自动显示'
+          ui.specialLanesButton.title = '谋位 0 或 7 中已有数据，因此所有用户端自动显示'
+        } else if (showSpecialLanes) {
+          ui.specialLanesButton.textContent = '隐藏 0 / 7'
+          ui.specialLanesButton.title = '仅在当前用户端隐藏谋位 0 与 7'
+        } else {
+          ui.specialLanesButton.textContent = '显示 0 / 7'
+          ui.specialLanesButton.title = '仅在当前用户端显示谋位 0 与 7；一旦其中出现数据，其他用户端也会自动显示'
+        }
+      }
+
       function renderResults(board) {
         selectedPlacement = null
         ui.velocityBoard.textContent = ''
         let placementCount = 0
-        const displaySpeeds = document.body.classList.contains('is-vertical-layout') ? [...SPEEDS].reverse() : SPEEDS
+        let failureCount = 0
+        const showSpecial = showSpecialLanes || hasSpecialLaneData(board)
+        const visibleSpeeds = showSpecial ? SPEEDS : SPEEDS.filter(speed => speed.id !== 0 && speed.id !== 7)
+        const displaySpeeds = document.body.classList.contains('is-vertical-layout') ? [...visibleSpeeds].reverse() : visibleSpeeds
+        ui.velocityBoard.style.setProperty('--lane-count', String(displaySpeeds.length))
+        updateSpecialLanesButton(board)
         for (const speed of displaySpeeds) {
           const placements = collectPlacements(board, speed.id)
-          placementCount += placements.length
+          const failures = collectFailurePlacements(board, speed.id)
+          placementCount += placements.length + failures.length
+          failureCount += failures.length
+
           const lane = document.createElement('section')
           lane.className = 'lane'
           lane.dataset.speed = String(speed.id)
@@ -1557,48 +1852,129 @@
           head.append(brush, en, zh, mark)
 
           const body = document.createElement('div')
-          body.className = 'lane-body'
-          if (!placements.length) {
-            const empty = document.createElement('div')
-            empty.className = 'lane-empty'
-            empty.textContent = '暂无谋位'
-            body.appendChild(empty)
-          } else {
-            for (const item of placements) body.appendChild(makeToken(item, board))
+          body.className = 'lane-body lane-main-drop'
+          body.dataset.speed = String(speed.id)
+          const watermark = document.createElement('div')
+          watermark.className = 'lane-watermark'
+          watermark.textContent = speed.watermark
+          body.appendChild(watermark)
+          if (placements.length) {
+            for (const item of placements) body.appendChild(makeToken({ ...item, position: speed.id, failureId: null, failureSpeed: null }, board))
           }
-          lane.append(head, body)
 
-          lane.addEventListener('dragover', event => {
+          body.addEventListener('dragover', event => {
             if (board.phase !== 'revealed' || !canWriteStorage()) return
             event.preventDefault()
-            lane.classList.add('drag-over')
+            body.classList.add('drag-over')
           })
-          lane.addEventListener('dragleave', () => lane.classList.remove('drag-over'))
-          lane.addEventListener('drop', event => {
-            lane.classList.remove('drag-over')
+          body.addEventListener('dragleave', () => body.classList.remove('drag-over'))
+          body.addEventListener('drop', event => {
+            body.classList.remove('drag-over')
             if (board.phase !== 'revealed' || !canWriteStorage()) return
             event.preventDefault()
             try {
               const payload = JSON.parse(event.dataTransfer.getData('text/plain'))
-              if (!payload?.actorKey || !payload?.entryId || !payload?.fromSpeed) return
-              void movePlacement(payload.actorKey, payload.entryId, Number(payload.fromSpeed), speed.id).catch(handleActionError)
+              if (!payload?.actorKey || !payload?.entryId || payload?.fromPosition == null) return
+              void movePlacement(
+                payload.actorKey,
+                payload.entryId,
+                payload.fromPosition,
+                speed.id,
+                {
+                  failureId: payload.failureId || null,
+                  sourceFailureSpeed: payload.failureSpeed,
+                  targetFailureSpeed: null
+                }
+              ).catch(handleActionError)
             } catch {}
           })
-          lane.addEventListener('click', event => {
+          body.addEventListener('click', event => {
             if (!selectedPlacement || (event.target instanceof Element && event.target.closest('.token'))) return
             if (board.phase !== 'revealed' || !canWriteStorage()) return
             const selection = selectedPlacement
             selectedPlacement = null
             updatePlacementSelection()
-            if (selection.fromSpeed === speed.id) return
-            void movePlacement(selection.actorKey, selection.entryId, selection.fromSpeed, speed.id).catch(handleActionError)
+            if (selection.fromPosition !== FAILURE_POSITION && String(selection.fromPosition) === String(speed.id)) return
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              speed.id,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: null
+              }
+            ).catch(handleActionError)
           })
 
+          const fumble = document.createElement('div')
+          fumble.className = 'lane-fumble lane-fumble-drop'
+          fumble.dataset.speed = String(speed.id)
+          const fumbleLabel = document.createElement('div')
+          fumbleLabel.className = 'lane-fumble-label'
+          fumbleLabel.textContent = '大失败'
+          const fumbleBody = document.createElement('div')
+          fumbleBody.className = 'lane-fumble-body'
+          if (failures.length) {
+            for (const item of failures) fumbleBody.appendChild(makeToken(item, board))
+          }
+          fumble.append(fumbleLabel, fumbleBody)
+
+          fumble.addEventListener('dragover', event => {
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            fumble.classList.add('drag-over')
+          })
+          fumble.addEventListener('dragleave', () => fumble.classList.remove('drag-over'))
+          fumble.addEventListener('drop', event => {
+            fumble.classList.remove('drag-over')
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            try {
+              const payload = JSON.parse(event.dataTransfer.getData('text/plain'))
+              if (!payload?.actorKey || !payload?.entryId || payload?.fromPosition == null) return
+              void movePlacement(
+                payload.actorKey,
+                payload.entryId,
+                payload.fromPosition,
+                FAILURE_POSITION,
+                {
+                  failureId: payload.failureId || null,
+                  sourceFailureSpeed: payload.failureSpeed,
+                  targetFailureSpeed: speed.id
+                }
+              ).catch(handleActionError)
+            } catch {}
+          })
+          fumble.addEventListener('click', event => {
+            if (!selectedPlacement || (event.target instanceof Element && event.target.closest('.token'))) return
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            const selection = selectedPlacement
+            selectedPlacement = null
+            updatePlacementSelection()
+            if (selection.fromPosition === FAILURE_POSITION && String(selection.failureSpeed) === String(speed.id)) return
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              FAILURE_POSITION,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: speed.id
+              }
+            ).catch(handleActionError)
+          })
+
+          lane.append(head, body, fumble)
           ui.velocityBoard.appendChild(lane)
         }
 
         const users = Object.values(board.submissions).filter(actor => Array.isArray(actor?.entries) && actor.entries.length).length
-        ui.resultsMeta.textContent = `${users} 名提交者 · ${totalEntries(board)} 条谋位 · ${placementCount} 个落点 · 公布于 ${formatTime(board.revealedAt)}`
+        const failureMeta = failureCount ? ` · 大失败 ${failureCount}` : ''
+        ui.resultsMeta.textContent = `${users} 名提交者 · ${totalEntries(board)} 条谋位 · ${placementCount} 个落点${failureMeta} · 公布于 ${formatTime(board.revealedAt)}`
+        updatePlacementSelection()
       }
 
       function makeToken(item, board) {
@@ -1608,28 +1984,51 @@
         token.style.setProperty('--accent', safeColor(item.actor.color))
         token.dataset.actorKey = item.actorKey
         token.dataset.entryId = item.entry.id
-        token.dataset.sourceSpeed = String(item.speed)
-        token.title = '点击选择后，点击其他谋位区域可修改；也可拖动'
+        token.dataset.sourcePosition = String(item.position)
+        if (item.failureId) token.dataset.failureId = item.failureId
+        if (item.failureSpeed != null) token.dataset.failureSpeed = String(item.failureSpeed)
+        token.title = '点击选择后，点击其他谋位或对应底部大失败区可修改；也可拖动'
         token.tabIndex = 0
         token.setAttribute('aria-pressed', 'false')
 
         const toggleActions = () => token.classList.toggle('show-actions')
         token.addEventListener('click', event => {
           if (event.target instanceof Element && event.target.closest('.token-delete')) return
-          if (selectedPlacement && selectedPlacement.fromSpeed !== item.speed && board.phase === 'revealed' && canWriteStorage()) {
+          const sameSourcePosition = selectedPlacement &&
+            String(selectedPlacement.fromPosition) === String(item.position) &&
+            String(selectedPlacement.failureSpeed ?? '') === String(item.failureSpeed ?? '')
+          if (selectedPlacement && !sameSourcePosition && board.phase === 'revealed' && canWriteStorage()) {
             const selection = selectedPlacement
             selectedPlacement = null
             updatePlacementSelection()
-            void movePlacement(selection.actorKey, selection.entryId, selection.fromSpeed, item.speed).catch(handleActionError)
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              item.position,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: item.position === FAILURE_POSITION ? item.failureSpeed : null
+              }
+            ).catch(handleActionError)
             return
           }
           if (board.phase === 'revealed' && canWriteStorage()) {
             const isSelected = selectedPlacement?.actorKey === item.actorKey &&
               selectedPlacement?.entryId === item.entry.id &&
-              selectedPlacement?.fromSpeed === item.speed
+              String(selectedPlacement?.fromPosition) === String(item.position) &&
+              (selectedPlacement?.failureId || '') === (item.failureId || '') &&
+              String(selectedPlacement?.failureSpeed ?? '') === String(item.failureSpeed ?? '')
             selectedPlacement = isSelected
               ? null
-              : { actorKey: item.actorKey, entryId: item.entry.id, fromSpeed: item.speed }
+              : {
+                  actorKey: item.actorKey,
+                  entryId: item.entry.id,
+                  fromPosition: item.position,
+                  failureId: item.failureId || null,
+                  failureSpeed: item.failureSpeed == null ? null : item.failureSpeed
+                }
             updatePlacementSelection()
           }
           toggleActions()
@@ -1645,7 +2044,9 @@
           event.dataTransfer.setData('text/plain', JSON.stringify({
             actorKey: item.actorKey,
             entryId: item.entry.id,
-            fromSpeed: item.speed
+            fromPosition: item.position,
+            failureId: item.failureId || null,
+            failureSpeed: item.failureSpeed == null ? null : item.failureSpeed
           }))
         })
 
@@ -1742,6 +2143,7 @@
             nickname,
             characterId: getCurrentCharacterId(),
             choices,
+            failures: [],
             createdAt: now(),
             updatedAt: now()
           })
@@ -1768,25 +2170,66 @@
         toast('已删除谋位')
       }
 
-      async function movePlacement(actorKey, entryId, fromSpeed, toSpeed) {
-        if (fromSpeed === toSpeed) return
+      async function movePlacement(actorKey, entryId, fromPosition, toPosition, options = {}) {
+        const normalizePosition = value => value === FAILURE_POSITION ? FAILURE_POSITION : Number(value)
+        const normalizeSpeed = value => {
+          const speed = Number(value)
+          return Number.isInteger(speed) && speed >= 0 && speed <= 7 ? speed : null
+        }
+        const sourcePosition = normalizePosition(fromPosition)
+        const targetPosition = normalizePosition(toPosition)
+        const sourceFailureSpeed = normalizeSpeed(options?.sourceFailureSpeed)
+        const targetFailureSpeed = normalizeSpeed(options?.targetFailureSpeed)
+        const failureId = String(options?.failureId || '')
+
+        if (sourcePosition !== FAILURE_POSITION && (!Number.isInteger(sourcePosition) || sourcePosition < 0 || sourcePosition > 7)) return
+        if (targetPosition !== FAILURE_POSITION && (!Number.isInteger(targetPosition) || targetPosition < 0 || targetPosition > 7)) return
+        if (sourcePosition === FAILURE_POSITION && sourceFailureSpeed == null) return
+        if (targetPosition === FAILURE_POSITION && targetFailureSpeed == null) return
+
+        const sameTarget = targetPosition === FAILURE_POSITION
+          ? sourcePosition === FAILURE_POSITION && sourceFailureSpeed === targetFailureSpeed
+          : sourcePosition !== FAILURE_POSITION && String(sourcePosition) === String(targetPosition)
+        if (sameTarget) return
+
         const board = currentBoard()
-        if (board.phase !== 'revealed') throw new Error('只有结果公开后才能拖动谋位。')
+        if (board.phase !== 'revealed') throw new Error('只有结果公开后才能手动调整谋位。')
         const sourceActor = board.submissions?.[actorKey]
         const sourceEntry = sourceActor?.entries?.find(item => item.id === entryId)
         const displayName = sourceEntry?.nickname || sourceActor?.nickname || sourceActor?.memberName || '未命名忍者'
+
         await mutateBoard(draft => {
           if (draft.phase !== 'revealed') throw new Error('结果状态已变化。')
           const actor = draft.submissions[actorKey]
           const entry = actor?.entries?.find(item => item.id === entryId)
           if (!entry) throw new Error('这条谋位已被其他人修改或删除。')
+
           const choices = new Set(sanitizeChoices(entry.choices))
-          choices.delete(fromSpeed)
-          choices.add(toSpeed)
+          const failures = sanitizeFailures(entry.failures, [...choices][0] ?? targetFailureSpeed ?? sourceFailureSpeed ?? 0)
+
+          if (sourcePosition === FAILURE_POSITION) {
+            const index = failures.findIndex(item => item.id === failureId && item.speed === sourceFailureSpeed)
+            if (index < 0) throw new Error('这条大失败落点已被其他人修改。')
+            failures.splice(index, 1)
+          } else {
+            if (!choices.has(sourcePosition)) throw new Error('原谋位已被其他人修改。')
+            choices.delete(sourcePosition)
+          }
+
+          if (targetPosition === FAILURE_POSITION) {
+            failures.push({ id: makeEntryId(), speed: targetFailureSpeed })
+          } else {
+            if (choices.has(targetPosition)) throw new Error(`谋位 ${targetPosition} 已有同一条提交，不能合并落点。`)
+            choices.add(targetPosition)
+          }
+
           entry.choices = [...choices].sort((a, b) => a - b)
+          entry.failures = sanitizeFailures(failures, targetFailureSpeed ?? sourceFailureSpeed ?? [...choices][0] ?? 0)
           entry.updatedAt = now()
         })
-        toast(`${displayName} 变更为 谋位 ${toSpeed}`)
+
+        const targetLabel = targetPosition === FAILURE_POSITION ? `谋位 ${targetFailureSpeed} 的大失败区` : `谋位 ${targetPosition}`
+        toast(`${displayName} 变更为 ${targetLabel}`)
       }
 
       async function startRound() {
@@ -1860,6 +2303,17 @@
       ui.revealButton.onclick = () => void revealRound().catch(handleActionError)
       ui.resetButton.onclick = () => void resetRound().catch(handleActionError)
       ui.debugButton.onclick = () => setDebugMode(!debugMode)
+      ui.specialLanesButton.onclick = () => {
+        const board = currentBoard()
+        if (hasSpecialLaneData(board)) {
+          updateSpecialLanesButton(board)
+          toast('谋位 0 / 7 中已有数据，已自动显示')
+          return
+        }
+        showSpecialLanes = !showSpecialLanes
+        if (board.phase === 'revealed') renderResults(board)
+        else updateSpecialLanesButton(board)
+      }
       ui.layoutButton.onclick = () => {
         layoutOverride = !document.body.classList.contains('is-vertical-layout')
         updateResultLayout(measuredEmbedWidth)
