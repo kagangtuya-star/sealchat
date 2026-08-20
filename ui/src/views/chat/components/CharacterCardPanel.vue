@@ -1274,6 +1274,36 @@ const sheetTypeOptions = [
   { label: '自定义', value: 'custom' },
 ];
 
+const builtinSheetTypeAliases = new Set([
+  'coc7',
+  'coc',
+  'dnd5e',
+  'dnd5',
+  'dnd',
+  'shinobigami',
+  '忍神',
+]);
+
+const newCardCustomSheetTypeOptions = computed(() => {
+  const seen = new Set<string>();
+  return templateStore.templates
+    .filter(item => item.enabled !== false)
+    .map(item => String(item.sheetType || '').trim())
+    .filter(sheetType => {
+      const key = sheetType.toLowerCase();
+      if (!sheetType || builtinSheetTypeAliases.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(sheetType => ({ label: sheetType, value: sheetType }));
+});
+
+const newCardSheetTypeOptions = computed(() => [
+  ...sheetTypeOptions.slice(0, -1),
+  ...newCardCustomSheetTypeOptions.value,
+  sheetTypeOptions[sheetTypeOptions.length - 1],
+]);
+
 const resolveSheetType = (preset: string, custom: string) => {
   if (preset === 'custom') {
     return custom.trim();
@@ -1296,6 +1326,14 @@ const setNewCardSheetType = (value: string) => {
   }
   if (lower === 'shinobigami' || normalized === '忍神') {
     newCardSheetTypePreset.value = 'shinobigami';
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
+  const matchedCustomOption = newCardCustomSheetTypeOptions.value.find(
+    option => option.value.toLowerCase() === lower,
+  );
+  if (matchedCustomOption) {
+    newCardSheetTypePreset.value = matchedCustomOption.value;
     newCardSheetTypeCustom.value = '';
     return;
   }
@@ -2421,7 +2459,7 @@ defineExpose({ openCardById });
         <n-input v-model:value="newCardName" maxlength="32" placeholder="请输入角色名称" />
       </n-form-item>
       <n-form-item label="卡片类型">
-        <n-select v-model:value="newCardSheetTypePreset" :options="sheetTypeOptions" :disabled="characterApiDisabled" />
+        <n-select v-model:value="newCardSheetTypePreset" :options="newCardSheetTypeOptions" :disabled="characterApiDisabled" />
         <n-input
           v-if="newCardSheetTypePreset === 'custom'"
           v-model:value="newCardSheetTypeCustom"
