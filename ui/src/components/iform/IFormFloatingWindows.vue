@@ -38,11 +38,16 @@
             </template>
             <span>适配屏幕</span>
           </n-tooltip>
-          <n-button quaternary size="tiny" @click.stop="toggleMinimize(window.windowId)">
-            <template #icon>
-              <n-icon :component="ContractOutline" />
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button quaternary size="tiny" @click.stop="toggleMinimize(window.windowId)">
+                <template #icon>
+                  <n-icon :component="ContractOutline" />
+                </template>
+              </n-button>
             </template>
-          </n-button>
+            <span>最小化</span>
+          </n-tooltip>
           <n-button quaternary size="tiny" @click.stop="closeFloating(window.windowId)">
             <template #icon>
               <n-icon :component="CloseOutline" />
@@ -107,7 +112,7 @@
         @click.stop="onFloatingBadgeClick"
         @pointerdown.prevent="startFloatingBadgeGesture(window, $event)"
       >
-        <span>{{ formInitial(window.formId) }}</span>
+        <span class="iform-floating__badge-title">{{ formTitle(window.formId) }}</span>
       </button>
     </div>
   </teleport>
@@ -143,13 +148,7 @@ const formMap = computed<Map<string, ChannelIForm>>(() => {
 
 const resolveForm = (formId: string) => formMap.value.get(formId);
 
-const formInitial = (formId: string) => {
-  const name = resolveForm(formId)?.name?.trim();
-  if (!name) {
-    return 'I';
-  }
-  return name.charAt(0).toUpperCase();
-};
+const formTitle = (formId: string) => resolveForm(formId)?.name?.trim() || '嵌入窗口';
 
 const floatingStyle = (windowState: (typeof floatingWindows.value)[number]) => ({
   left: `${windowState.x}px`,
@@ -253,7 +252,13 @@ useEventListener(window, 'pointermove', (event: PointerEvent) => {
     const result = updateFloatingBadgeGesture(badgeGesture.value.gesture, event.clientX, event.clientY);
     if (result.dragActivated) {
       badgeGesture.value.suppressClick = true;
-      iform.updateFloatingPosition(badgeGesture.value.windowId, result.position.x, result.position.y);
+      const badgeRect = badgeGesture.value.captureTarget?.getBoundingClientRect();
+      iform.updateFloatingPosition(
+        badgeGesture.value.windowId,
+        result.position.x,
+        result.position.y,
+        badgeRect ? { width: badgeRect.width, height: badgeRect.height } : undefined,
+      );
     }
   } else if (dragging.value) {
     if (event.pointerId !== dragging.value.pointerId) {
@@ -588,24 +593,37 @@ const dockToPanel = async (windowId: string, formId: string) => {
 }
 
 .iform-floating__badge {
-  width: 48px;
-  height: 48px;
-  border-radius: 9999px;
-  border: none;
-  background: rgba(14, 165, 233, 0.92);
-  color: #f8fafc;
+  box-sizing: border-box;
+  min-width: 72px;
+  max-width: calc(6em + 1.75rem);
+  min-height: 48px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 34%, var(--sc-border-mute, rgba(15, 23, 42, 0.12)) 66%);
+  background: color-mix(in srgb, var(--primary-color, #3388de) 14%, var(--sc-bg-elevated, #ffffff) 86%);
+  color: var(--sc-text-primary, #0f172a);
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  line-height: 1.25;
   display: flex;
   align-items: center;
   justify-content: center;
+  text-align: center;
   cursor: pointer;
-  box-shadow: 0 10px 25px rgba(14, 165, 233, 0.45);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.iform-floating__badge-title {
+  display: block;
+  max-width: 6em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .iform-floating__badge:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 28px rgba(14, 165, 233, 0.55);
+  border-color: color-mix(in srgb, var(--primary-color, #3388de) 52%, var(--sc-border-strong, rgba(15, 23, 42, 0.2)) 48%);
+  background: color-mix(in srgb, var(--primary-color, #3388de) 20%, var(--sc-bg-elevated, #ffffff) 80%);
 }
 </style>
