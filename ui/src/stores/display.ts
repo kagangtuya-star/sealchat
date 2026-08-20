@@ -27,6 +27,7 @@ import type {
 } from '@/services/theme/themeTypes'
 import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messageSoundMode'
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
+import { isMobileBrowserRuntime } from '@/utils/windowFocusState'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
@@ -164,6 +165,7 @@ export const FAVORITE_CHANNEL_LIMIT = 4
 
 const STORAGE_KEY = 'sealchat_display_settings'
 const DISPLAY_SETTINGS_DEFAULT_MIGRATION_KEY = 'sealchat_display_settings_defaults_v2_done'
+const MOBILE_MINIMAL_INPUT_MIGRATION_KEY = 'sealchat_mobile_minimal_input_default_v1_done'
 
 const SLICE_LIMIT_DEFAULT = 5000
 const SLICE_LIMIT_MIN = 1000
@@ -538,7 +540,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
-  mobileMinimalInputEnabled: false,
+  mobileMinimalInputEnabled: isMobileBrowserRuntime(),
   channelAggregateBadgeEnabled: true,
   enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
@@ -960,7 +962,23 @@ const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
     return defaultSettings()
   }
-  return resolveStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+  const settings = resolveStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+  if (
+    isMobileBrowserRuntime()
+    && window.localStorage.getItem(MOBILE_MINIMAL_INPUT_MIGRATION_KEY) !== '1'
+  ) {
+    const migrated = !settings.mobileMinimalInputEnabled
+    settings.mobileMinimalInputEnabled = true
+    try {
+      if (migrated) {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+      }
+      window.localStorage.setItem(MOBILE_MINIMAL_INPUT_MIGRATION_KEY, '1')
+    } catch (error) {
+      console.warn('移动端简洁输入框默认值迁移失败，继续使用当前设置', error)
+    }
+  }
+  return settings
 }
 
 let storageSyncBound = false
