@@ -69,6 +69,9 @@ type FilterState = {
   icFilter: 'all' | 'ic' | 'ooc';
   showArchived: boolean;
   roleIds: string[];
+  whisperOnly: boolean;
+  fromTime: number | null;
+  toTime: number | null;
 };
 
 type RoleOption = { id: string; label?: string; name?: string };
@@ -510,6 +513,9 @@ const normalizeFilterState = (state: any): FilterState => {
     icFilter,
     showArchived: !!state?.showArchived,
     roleIds: roleIdsRaw.map((id: any) => String(id || '')).filter(Boolean),
+    whisperOnly: !!state?.whisperOnly,
+    fromTime: typeof state?.fromTime === 'number' && Number.isFinite(state.fromTime) ? state.fromTime : null,
+    toTime: typeof state?.toTime === 'number' && Number.isFinite(state.toTime) ? state.toTime : null,
   };
 };
 

@@ -359,6 +359,9 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
         icFilter: chat.filterState.icFilter,
         showArchived: chat.filterState.showArchived,
         roleIds: [...chat.filterState.roleIds],
+        whisperOnly: chat.filterState.whisperOnly,
+        fromTime: chat.filterState.fromTime,
+        toTime: chat.filterState.toTime,
       },
     },
   );
@@ -7077,9 +7080,42 @@ const buildRoleFilterOptions = () => {
   }
   return { roleIds, includeRoleless };
 };
+const messageFilterSignature = computed(() => [
+  chat.filterState.icFilter,
+  chat.filterState.showArchived ? '1' : '0',
+  chat.filterState.whisperOnly ? '1' : '0',
+  chat.filterState.fromTime ?? '',
+  chat.filterState.toTime ?? '',
+  roleFilterSignature.value,
+].join('|'));
+const buildMessageFilterOptions = () => ({
+  includeArchived: chat.filterState.showArchived,
+  ...(chat.filterState.icFilter === 'ic' ? { icOnly: true } : {}),
+  ...(chat.filterState.icFilter === 'ooc' ? { oocOnly: true } : {}),
+  whisperOnly: chat.filterState.whisperOnly,
+  ...(chat.filterState.fromTime !== null ? { fromTime: chat.filterState.fromTime } : {}),
+  ...(chat.filterState.toTime !== null ? { toTime: chat.filterState.toTime } : {}),
+  ...buildRoleFilterOptions(),
+});
+const intersectMessageFilterTimeWindow = (fromTime: number, toTime: number) => {
+  const filterFromTime = chat.filterState.fromTime;
+  const filterToTime = chat.filterState.toTime;
+  const effectiveFromTime = filterFromTime === null ? fromTime : Math.max(fromTime, filterFromTime);
+  const effectiveToTime = filterToTime === null ? toTime : Math.min(toTime, filterToTime);
+  if (effectiveToTime < effectiveFromTime) {
+    return null;
+  }
+  return { fromTime: effectiveFromTime, toTime: effectiveToTime };
+};
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
-  const { icFilter, showArchived } = chat.filterState;
+  const {
+    icFilter,
+    showArchived,
+    whisperOnly,
+    fromTime,
+    toTime,
+  } = chat.filterState;
   const { roleIds: filterRoleIds, includeRoleless } = roleFilterState.value;
   const allowMergeNeighbors = display.settings.mergeNeighbors && !roleFilterActive.value;
 
@@ -7089,6 +7125,18 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
     }
     const isArchived = Boolean(message?.isArchived || message?.is_archived);
     if (!showArchived && isArchived) {
+      return false;
+    }
+
+    if (whisperOnly && !(message as any)?.isWhisper) {
+      return false;
+    }
+
+    const createdAt = normalizeTimestamp(message?.createdAt);
+    if (fromTime !== null && (createdAt === null || createdAt < fromTime)) {
+      return false;
+    }
+    if (toTime !== null && (createdAt === null || createdAt > toTime)) {
       return false;
     }
 
@@ -14755,12 +14803,18 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (rows.value.length > 0) {
       let now = Date.now();
       const lastCreatedAt = rows.value[rows.value.length - 1].createdAt || now;
+      const reconnectWindow = intersectMessageFilterTimeWindow(lastCreatedAt, now);
 
       // 获取断线期间消息
-      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now, {
-        ...buildRoleFilterOptions(),
-      })
-      console.log('时间起始', lastCreatedAt, now)
+      const messages = reconnectWindow
+        ? await chat.messageListDuring(
+            chat.curChannel?.id || '',
+            reconnectWindow.fromTime,
+            reconnectWindow.toTime,
+            { ...buildMessageFilterOptions() },
+          )
+        : { data: [], next: '' };
+      console.log('时间起始', reconnectWindow?.fromTime, reconnectWindow?.toTime)
       console.log('相关数据', messages)
       if (messages.next) {
         //  如果大于30个，那么基本上清除历史
@@ -14891,24 +14945,25 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
   while (attempts < HISTORY_WINDOW_EXPANSION_LIMIT) {
     const from = Math.max(0, anchorTimestamp - span);
     const to = Math.max(from + 1, anchorTimestamp - 1);
-    if (to <= from) {
-      break;
+    const queryWindow = intersectMessageFilterTimeWindow(from, to);
+    if (!queryWindow) {
+      return { messages: [] as Message[], cursor: '', reachedStart: true };
     }
+    const reachedFilterStart = chat.filterState.fromTime !== null
+      && queryWindow.fromTime === chat.filterState.fromTime;
     try {
-      const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
-        includeArchived: true,
-        includeOoc: true,
-        ...buildRoleFilterOptions(),
+      const resp = await chat.messageListDuring(chat.curChannel!.id, queryWindow.fromTime, queryWindow.toTime, {
+        ...buildMessageFilterOptions(),
       });
       const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
         return created < anchorTimestamp;
       });
       if (normalized.length) {
-        const reachedStart = from === 0 && !resp?.next;
+        const reachedStart = (queryWindow.fromTime === 0 || reachedFilterStart) && !resp?.next;
         return { messages: normalized, cursor: resp?.next ?? '', reachedStart };
       }
-      if (from === 0) {
+      if (queryWindow.fromTime === 0 || reachedFilterStart) {
         return { messages: [], cursor: '', reachedStart: true };
       }
     } catch (error) {
@@ -14968,7 +15023,12 @@ const fetchLatestMessages = async () => {
   }
   const channelIdAtStart = chat.curChannel.id;
   const fetchEpoch = ++latestMessagesFetchEpoch;
-  const isStale = () => fetchEpoch !== latestMessagesFetchEpoch || chat.curChannel?.id !== channelIdAtStart;
+  const filterSignatureAtStart = messageFilterSignature.value;
+  const isStale = () => (
+    fetchEpoch !== latestMessagesFetchEpoch
+    || chat.curChannel?.id !== channelIdAtStart
+    || messageFilterSignature.value !== filterSignatureAtStart
+  );
   console.info('[channel-load] messages-fetch-start', {
     channelId: channelIdAtStart,
     fetchEpoch,
@@ -14981,9 +15041,8 @@ const fetchLatestMessages = async () => {
   messageWindow.loadingLatest = true;
   try {
     const resp = await chat.messageList(channelIdAtStart, undefined, {
-      includeArchived: chat.filterState.showArchived,
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
-      ...buildRoleFilterOptions(),
+      ...buildMessageFilterOptions(),
     });
     if (isStale()) {
       return;
@@ -15034,20 +15093,8 @@ const fetchLatestMessages = async () => {
   }
 };
 
-// Watch for showArchived filter changes to reload messages with archived content
 watch(
-  () => chat.filterState.showArchived,
-  async (showArchived, prevShowArchived) => {
-    // Only reload when switching to "show archived" mode
-    // When hiding, the client-side filter in visibleRowEntries handles it
-    if (showArchived && !prevShowArchived && chat.curChannel?.id) {
-      await fetchLatestMessages();
-    }
-  },
-);
-
-watch(
-  () => roleFilterSignature.value,
+  () => messageFilterSignature.value,
   async (next, prev) => {
     if (!chat.curChannel?.id || next === prev) {
       return;
@@ -15087,9 +15134,8 @@ const loadOlderMessages = async () => {
 
     if (useCursor) {
       const resp = await chat.messageList(chat.curChannel.id, messageWindow.beforeCursor, {
-        includeArchived: chat.filterState.showArchived,
         limit: PAGINATED_MESSAGE_LOAD_LIMIT,
-        ...buildRoleFilterOptions(),
+        ...buildMessageFilterOptions(),
       });
       normalized = normalizeMessageList(resp.data);
       nextCursor = resp?.next ?? '';
@@ -15153,10 +15199,9 @@ const loadNewerMessages = async () => {
   messageWindow.loadingAfter = true;
   try {
     const resp = await chat.messageList(chat.curChannel.id, messageWindow.afterCursor, {
-      includeArchived: chat.filterState.showArchived,
       limit: PAGINATED_MESSAGE_LOAD_LIMIT,
       direction: 'after',
-      ...buildRoleFilterOptions(),
+      ...buildMessageFilterOptions(),
     });
     const normalized = normalizeMessageList(resp?.data || []);
     if (normalized.length) {
@@ -16559,7 +16604,7 @@ onBeforeUnmount(() => {
           @open-bridge-status="bridgeStatusDrawerVisible = true"
           @open-email-notification="emailNotificationDrawerVisible = true"
           @open-character-card="openCharacterCardPanel"
-          @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
+          @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [], whisperOnly: false, fromTime: null, toTime: null })"
         />
       </div>
     </transition>

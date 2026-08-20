@@ -254,6 +254,9 @@ interface ChatState {
     icFilter: 'all' | 'ic' | 'ooc';
     showArchived: boolean;
     roleIds: string[];
+    whisperOnly: boolean;
+    fromTime: number | null;
+    toTime: number | null;
   };
   channelSessionRestoreFilterOverride: 'all' | 'ic' | 'ooc';
   channelRoleCache: Record<string, string[]>;
@@ -1227,6 +1230,9 @@ export const useChatStore = defineStore({
       icFilter: 'all',
       showArchived: false,
       roleIds: [],
+      whisperOnly: false,
+      fromTime: null,
+      toTime: null,
     },
     channelSessionRestoreFilterOverride: 'all',
     channelRoleCache: {},
@@ -1380,7 +1386,14 @@ export const useChatStore = defineStore({
       this.observerChannelId = effectiveChannelId;
       this.observerSlug = normalizedObserverSlug;
       if (!wasObserver || prevObserverSlug !== normalizedObserverSlug) {
-        this.setFilterState({ icFilter: 'ic', showArchived: false, roleIds: [] });
+        this.setFilterState({
+          icFilter: 'ic',
+          showArchived: false,
+          roleIds: [],
+          whisperOnly: false,
+          fromTime: null,
+          toTime: null,
+        });
       }
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
@@ -1411,6 +1424,7 @@ export const useChatStore = defineStore({
       this.observerChannelId = '';
       this.observerSlug = '';
       this.joinedWorldIds = [];
+      this.setFilterState({ whisperOnly: false, fromTime: null, toTime: null });
       if (this.subject) {
         this.disconnect('observer-disable');
         this.connect();
@@ -4262,6 +4276,10 @@ export const useChatStore = defineStore({
       includeOoc?: boolean;
       archivedOnly?: boolean;
       icOnly?: boolean;
+      oocOnly?: boolean;
+      whisperOnly?: boolean;
+      fromTime?: number;
+      toTime?: number;
       userIds?: string[];
       roleIds?: string[];
       includeRoleless?: boolean;
@@ -4286,6 +4304,21 @@ export const useChatStore = defineStore({
         }
         if (typeof options.icOnly === 'boolean') {
           payload.ic_only = options.icOnly;
+        }
+        if (typeof options.oocOnly === 'boolean') {
+          payload.ooc_only = options.oocOnly;
+        }
+        if (typeof options.whisperOnly === 'boolean') {
+          payload.whisper_only = options.whisperOnly;
+        }
+        if (typeof options.fromTime === 'number' || typeof options.toTime === 'number') {
+          payload.type = 'time';
+          if (typeof options.fromTime === 'number') {
+            payload.from_time = options.fromTime;
+          }
+          if (typeof options.toTime === 'number') {
+            payload.to_time = options.toTime;
+          }
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
@@ -4315,6 +4348,8 @@ export const useChatStore = defineStore({
       includeArchived?: boolean;
       includeOoc?: boolean;
       icOnly?: boolean;
+      oocOnly?: boolean;
+      whisperOnly?: boolean;
       userIds?: string[];
       roleIds?: string[];
       includeRoleless?: boolean;
@@ -4335,6 +4370,12 @@ export const useChatStore = defineStore({
         }
         if (typeof options.icOnly === 'boolean') {
           payload.ic_only = options.icOnly;
+        }
+        if (typeof options.oocOnly === 'boolean') {
+          payload.ooc_only = options.oocOnly;
+        }
+        if (typeof options.whisperOnly === 'boolean') {
+          payload.whisper_only = options.whisperOnly;
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
@@ -5944,7 +5985,14 @@ export const useChatStore = defineStore({
       this.lastPingSentAt = null;
     },
 
-    setFilterState(filters: Partial<{ icFilter: 'all' | 'ic' | 'ooc'; showArchived: boolean; roleIds: string[] }>) {
+    setFilterState(filters: Partial<{
+      icFilter: 'all' | 'ic' | 'ooc';
+      showArchived: boolean;
+      roleIds: string[];
+      whisperOnly: boolean;
+      fromTime: number | null;
+      toTime: number | null;
+    }>) {
       this.filterState = {
         ...this.filterState,
         ...filters,

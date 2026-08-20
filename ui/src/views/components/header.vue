@@ -23,6 +23,7 @@ import { useIFormStore } from '@/stores/iform';
 import { sortObserverRoleOptions } from '@/utils/observerRoleOptions';
 import { useDisplayStore } from '@/stores/display';
 import { resolveOtherChannelUnreadAggregate } from './channelAggregateBadge';
+import ObserverFilterModal from './ObserverFilterModal.vue';
 
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
@@ -708,6 +709,7 @@ const ROLELESS_FILTER_ID = '__roleless__';
 const observerRoleOptions = ref<Array<{ label: string; value: string }>>([]);
 let observerRoleRequestSeq = 0;
 
+const observerFilterModalVisible = ref(false);
 const observerIcFilterLabel = computed(() => {
   switch (chat.filterState.icFilter) {
     case 'ic':
@@ -726,13 +728,6 @@ const cycleObserverIcFilter = () => {
   chat.setFilterState({ icFilter: next });
 };
 
-const observerHideArchived = computed({
-  get: () => !chat.filterState.showArchived,
-  set: (value: boolean) => {
-    chat.setFilterState({ showArchived: !value });
-  },
-});
-
 const observerRoleFilterValue = computed({
   get: () => Array.isArray(chat.filterState.roleIds) ? chat.filterState.roleIds : [],
   set: (value: string[]) => {
@@ -742,6 +737,17 @@ const observerRoleFilterValue = computed({
     chat.setFilterState({ roleIds: normalized });
   },
 });
+
+const applyObserverFilters = (filters: {
+  icFilter: 'all' | 'ic' | 'ooc';
+  showArchived: boolean;
+  roleIds: string[];
+  whisperOnly: boolean;
+  fromTime: number | null;
+  toTime: number | null;
+}) => {
+  chat.setFilterState(filters);
+};
 
 const loadObserverRoleOptions = async (channelId?: string | null) => {
   const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
@@ -1090,10 +1096,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         >
           {{ observerIcFilterLabel }}
         </n-button>
-        <div class="sc-ob-archive-toggle">
-          <span class="sc-ob-filter-label">隐藏归档</span>
-          <n-switch v-model:value="observerHideArchived" size="small" />
-        </div>
+        <n-button
+          size="small"
+          class="sc-ob-more-filter-button"
+          @click="observerFilterModalVisible = true"
+        >
+          更多筛选
+        </n-button>
         <n-select
           v-model:value="observerRoleFilterValue"
           class="sc-ob-role-select"
@@ -1161,6 +1170,14 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
       <n-button size="small" type="primary" @click="goLogin">登录</n-button>
     </div>
   </div>
+
+  <ObserverFilterModal
+    v-if="isObserver"
+    v-model:show="observerFilterModalVisible"
+    :filters="chat.filterState"
+    :roles="observerRoleOptions"
+    @apply="applyObserverFilters"
+  />
 
   <div v-if="userProfileShow" style="background-color: var(--n-color); margin-left: -1.5rem;"
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer">
@@ -1506,18 +1523,6 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   justify-content: flex-end;
 }
 
-.input-stats-loading {
-  width: min(1100px, calc(100vw - 3rem));
-  min-height: 16rem;
-  margin-top: 1rem;
-  border-radius: 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--sc-text-secondary);
-  background-color: var(--sc-bg-elevated, var(--n-color));
-}
-
 .sc-ob-filters {
   display: inline-flex;
   flex: 1 1 auto;
@@ -1529,21 +1534,9 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   justify-content: flex-end;
 }
 
-.sc-ob-filter-button {
+.sc-ob-filter-button,
+.sc-ob-more-filter-button {
   white-space: nowrap;
-}
-
-.sc-ob-archive-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.85rem;
-  white-space: nowrap;
-}
-
-.sc-ob-filter-label {
-  line-height: 1;
 }
 
 .sc-ob-role-select {
@@ -1574,6 +1567,18 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background-color: var(--sc-bg-elevated, var(--n-color));
 }
 
 .sc-user-button {

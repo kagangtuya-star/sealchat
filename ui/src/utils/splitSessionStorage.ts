@@ -6,6 +6,9 @@ export interface SplitSessionFilterState {
   icFilter: 'all' | 'ic' | 'ooc'
   showArchived: boolean
   roleIds: string[]
+  whisperOnly: boolean
+  fromTime: number | null
+  toTime: number | null
 }
 
 export interface SplitSessionPaneSnapshot {
@@ -57,6 +60,9 @@ export const createDefaultSplitSessionFilterState = (): SplitSessionFilterState 
   icFilter: 'all',
   showArchived: false,
   roleIds: [],
+  whisperOnly: false,
+  fromTime: null,
+  toTime: null,
 })
 
 export const createDefaultSplitSessionPaneSnapshot = (): SplitSessionPaneSnapshot => ({
@@ -162,7 +168,7 @@ export const resolveIcOocSplitSessionSnapshot = (
     && normalizedExisting.panes.B.worldId === normalizedWorldId
     && normalizedExisting.panes.A.channelId === normalizedChannelId
     && normalizedExisting.panes.B.channelId === normalizedChannelId
-  const snapshot = canReuseIdentityState
+  const snapshot: SplitSessionSnapshot = canReuseIdentityState
     ? {
       ...normalizedExisting,
       panes: {
@@ -201,6 +207,9 @@ export const resolveIcOocSplitSessionSnapshot = (
       ...targetPane.filterState,
       showArchived: normalizedEntryFilterState.showArchived,
       roleIds: normalizedEntryFilterState.roleIds,
+      whisperOnly: normalizedEntryFilterState.whisperOnly,
+      fromTime: normalizedEntryFilterState.fromTime,
+      toTime: normalizedEntryFilterState.toTime,
       icFilter: targetPane.filterState.icFilter,
     }
   }
@@ -235,6 +244,9 @@ const normalizeFilterState = (value: unknown): SplitSessionFilterState => {
     icFilter: raw.icFilter === 'ic' || raw.icFilter === 'ooc' || raw.icFilter === 'all' ? raw.icFilter : 'all',
     showArchived: !!raw.showArchived,
     roleIds: roleIdsRaw.map((id) => String(id ?? '').trim()).filter(Boolean),
+    whisperOnly: !!raw.whisperOnly,
+    fromTime: typeof raw.fromTime === 'number' && Number.isFinite(raw.fromTime) ? raw.fromTime : null,
+    toTime: typeof raw.toTime === 'number' && Number.isFinite(raw.toTime) ? raw.toTime : null,
   }
 }
 

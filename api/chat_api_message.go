@@ -2641,6 +2641,8 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	FromTime        int64    `json:"from_time"`
 	ToTime          int64    `json:"to_time"`
 	ICOnly          bool     `json:"ic_only"`
+	OOCOnly         bool     `json:"ooc_only"`
+	WhisperOnly     bool     `json:"whisper_only"`
 	IncludeOOC      *bool    `json:"include_ooc"`
 	IncludeArchived bool     `json:"include_archived"`
 	ArchivedOnly    bool     `json:"archived_only"`
@@ -2694,8 +2696,13 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 	if data.ICOnly {
 		q = q.Where("ic_mode = ?", "ic")
+	} else if data.OOCOnly {
+		q = q.Where("ic_mode = ?", "ooc")
 	} else if !includeOOC {
 		q = q.Where("ic_mode <> ?", "ooc")
+	}
+	if data.WhisperOnly {
+		q = q.Where("is_whisper = ?", true)
 	}
 	if len(data.UserIDs) > 0 {
 		q = q.Where("user_id IN ?", data.UserIDs)
