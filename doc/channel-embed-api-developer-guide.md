@@ -69,6 +69,8 @@ const sealchat = await SealChatEmbed.connect({
 - `timeoutMs`：握手超时，默认 `10000`。
 - `targetOrigin`：父级 SealChat origin。生产环境应传明确 origin；默认 `*` 只适合无法提前确定 origin 的场景。
 
+`SealChatEmbed.connect()` resolve 表示 Embed Session 握手成功，但不要把“握手成功”等同于“已经收到一次连接状态事件”。新建 Session 时，宿主不保证主动补发 `connection.changed`；`connection.onChanged()` 用于监听后续变化，客户端应在握手成功后主动调用一次 `connection.getState()` 初始化 UI 和本地状态。推荐先注册监听，再读取初始状态，以避免只依赖事件导致状态栏长期停留在“连接中”。
+
 iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需 Capability。`world.admins.read` 已加入新建 iForm 默认能力；旧 iForm 的已保存 policy 不会自动升级，请在编辑器的“能力”字段追加 `world.admins.read` 后保存。
 
 连接断开分两类：
@@ -156,8 +158,8 @@ interface SafeCharacter {
 | --- | --- | --- |
 | `permissions.getCurrent()` | `permissions.read` | 当前 Embed 权限摘要 |
 | `permissions.onChanged(handler)` | `permissions.read` | 权限变化 |
-| `connection.getState()` | `context.read` | 当前连接状态 |
-| `connection.onChanged(handler)` | `context.read` | 连接状态变化 |
+| `connection.getState()` | `context.read` | 读取当前连接状态；新建 Session 后应主动调用一次 |
+| `connection.onChanged(handler)` | `context.read` | 监听后续连接状态变化；不保证订阅时补发当前状态 |
 | `session.onClosed(handler)` | 无 | Session 失效或 Host 关闭时通知，需重新 `connect()` |
 
 ```ts
@@ -181,6 +183,21 @@ interface EmbedPermissionSummary {
 }
 ```
 
+连接状态初始化建议采用“先订阅、再主动读取”的模式：
+
+```js
+const offConnection = sealchat.connection.onChanged(state => {
+  renderConnection(state)
+})
+
+// 新 Session 建立后不会保证收到一条初始 connection.changed。
+// 必须主动读取当前状态，不能只等 onChanged。
+const initialState = await sealchat.connection.getState()
+renderConnection(initialState)
+```
+
+`connect()` 成功后如果 UI 仍显示“连接中”，而其他 API 已可调用，首先检查是否漏掉了这次初始 `getState()`；不要通过等待下一次 `connection.onChanged()` 来初始化状态。
+
 ```ts
 interface EmbedWorldAdmin {
   userId: string
@@ -199,7 +216,7 @@ Storage 是频道 + iForm 隔离的轻量 JSON KV。适合计分板、轮次、�
 | API | Capability | 说明 |
 | --- | --- | --- |
 | `storage.get(key)` | `storage.read` | 读取；不存在返回 `null` |
-| `storage.set(key, value, options?)` | `storage.write` | 新增或覆盖；支持 `ifRevision` |
+| `storage.set(key, value, options?)` | `storage.write` | 新增或覆盖；更新已有文档时可用 `ifRevision` 做乐观锁 |
 | `storage.delete(key, options?)` | `storage.write` | 删除；支持 `ifRevision` |
 | `storage.list({ prefix?, cursor? })` | `storage.read` | 按前缀列出 |
 | `storage.snapshot()` | `storage.read` | 获取当前 namespace 权威快照 |
@@ -212,6 +229,10 @@ interface StorageDocument<T = unknown> {
   revision: number
   seq: number
 }
+
+interface StorageMutationOptions {
+  ifRevision?: number
+}
 ```
 
 普通写入：
@@ -222,16 +243,35 @@ const document = await sealchat.storage.get('board')
 await sealchat.storage.delete('board')
 ```
 
-多人编辑建议使用乐观锁：
+`ifRevision` 只用于“基于一个已经存在的 Storage 文档版本进行更新或删除”。其类型是可选 `number`，不是 `number | null`。`storage.get(key)` 在 key 不存在时返回 `null`；这种首次创建场景应直接调用 `storage.set(key, value)`，省略 `options`。不要把 `null` 作为 `ifRevision` 传入，也不要依赖把 `undefined` 放进 options 后由传输层自动忽略。需要乐观锁时，应传入 `storage.get()` 返回文档中的实际 `revision`。同样地，调用 `storage.delete()` 并使用乐观锁时，也只应传入已存在文档的有效 `revision`。
 
 ```js
 const current = await sealchat.storage.get('board')
-await sealchat.storage.set(
-  'board',
-  { ...current.value, round: current.value.round + 1 },
-  { ifRevision: current.revision }
-)
+
+if (current === null) {
+  // 首次创建：省略 options，不要传 { ifRevision: null }
+  await sealchat.storage.set('board', { round: 1 })
+} else {
+  // 更新已有文档：使用实际 revision 做乐观锁
+  await sealchat.storage.set(
+    'board',
+    { ...current.value, round: current.value.round + 1 },
+    { ifRevision: current.revision }
+  )
+}
 ```
+
+不要写成下面这样：
+
+```js
+const current = await sealchat.storage.get('board')
+const revision = current ? current.revision : null
+
+// 错误：key 不存在时会显式发送 ifRevision: null，可能返回 INVALID_PARAMS。
+await sealchat.storage.set('board', nextValue, { ifRevision: revision })
+```
+
+Embed API v1 没有在本契约中定义用 `null` 表示“仅当 key 不存在时创建”的语义。如果多个客户端可能并发首次创建同一 key，不要自行发明 revision 哨兵值；首次创建完成后应通过 Storage 变更事件或重新 `get()` / `snapshot()` 同步权威状态。
 
 其他客户端先写入时，调用抛出 `REVISION_CONFLICT`。重新 `get()` 或 `snapshot()`，基于最新值决定是否重试。SDK 遇到 Storage `seq` 缺口会自动读取快照，并触发 `kind: 'resynced'`。
 
@@ -298,9 +338,14 @@ sealchat.close()
 
 ```js
 try {
-  await sealchat.storage.set('board', nextValue, {
-    ifRevision: current.revision
-  })
+  const current = await sealchat.storage.get('board')
+  if (current === null) {
+    await sealchat.storage.set('board', nextValue)
+  } else {
+    await sealchat.storage.set('board', nextValue, {
+      ifRevision: current.revision
+    })
+  }
 } catch (error) {
   if (error instanceof SealChatEmbedError) {
     console.error(error.code, error.message, error.details)
@@ -316,10 +361,10 @@ try {
 - `CAPABILITY_DENIED`、`PERMISSION_DENIED`：iForm 未授权或当前用户无权限。
 - `REVISION_CONFLICT`：Storage 乐观锁冲突。
 - `WS_OFFLINE`、`TIMEOUT`：宿主连接不可用或调用超时。
-- `INVALID_PARAMS`、`NOT_FOUND`：参数或方法错误。
+- `INVALID_PARAMS`、`NOT_FOUND`：参数或方法错误。遇到 `INVALID_PARAMS` 应同时检查 `error.message` 和 `error.details`；Storage 常见误用之一是在 key 不存在时发送 `{ ifRevision: null }`。
 - `PAYLOAD_TOO_LARGE`、`QUOTA_EXCEEDED`、`RATE_LIMITED`：超过服务端限制。
 
-只对瞬时连接错误做退避重试。权限、参数、配额错误必须由配置或业务逻辑处理。
+只对瞬时连接错误做退避重试。权限、参数、配额错误必须由配置或业务逻辑处理。`INVALID_PARAMS` 不应通过重复提交解决；应修正请求结构，并在调试阶段保留 `error.code`、`error.message`、`error.details`。
 
 ## 5. 最小 HTML 示例
 
@@ -484,6 +529,15 @@ SDK 由 SealChat 后端提供，无需开发者维护。把下面 `script` 的�
           scheduleReconnect({ code: 'SESSION_EXPIRED', message: 'Embed session closed' })
         }))
 
+        // onChanged 不保证为新 Session 补发当前状态。握手成功后主动读取一次。
+        const initialState = await next.connection.getState()
+        if (generation === connectionGeneration) {
+          showStatus(
+            initialState.state,
+            initialState.latencyMs == null ? '' : `${initialState.latencyMs} ms`
+          )
+        }
+
         await refresh(next).catch(error => {
           output.textContent = `${error.code || 'ERROR'}: ${error.message}`
           throw error
@@ -530,14 +584,12 @@ SDK 由 SealChat 后端提供，无需开发者维护。把下面 `script` 的�
     }
 
     async function refresh(activeClient) {
-      const [state, currentCharacter, onlineMembers, context, permissionSummary] = await Promise.all([
-        activeClient.connection.getState(),
+      const [currentCharacter, onlineMembers, context, permissionSummary] = await Promise.all([
         activeClient.characters.getCurrent(),
         activeClient.members.list({ scope: 'online' }),
         activeClient.context.get(),
         activeClient.permissions.getCurrent()
       ])
-      showStatus(state.state, state.latencyMs == null ? '' : `${state.latencyMs} ms`)
       renderCharacter(currentCharacter)
       renderMembers(onlineMembers)
       renderPermissions(permissionSummary)
@@ -612,14 +664,15 @@ SDK 由 SealChat 后端提供，无需开发者维护。把下面 `script` 的�
 </html>
 ```
 
-重连规则：`HANDSHAKE_FAILED`、`SESSION_EXPIRED`、`CONTEXT_CHANGED`、`TIMEOUT`、`WS_OFFLINE`、`INTERNAL_ERROR` 属于瞬时连接错误，使用指数退避重新调用 `SealChatEmbed.connect()`；每次新连接都要重新订阅事件。`ORIGIN_DENIED`、`CAPABILITY_DENIED`、`PERMISSION_DENIED`、`CONFIG_ERROR` 等配置/权限错误不应无限重试，应先修正 iForm 或 URL 配置。宿主 WebSocket 短暂离线时，SDK Client 可保留，按 `connection.onChanged()` 更新状态并等待宿主恢复；`session.onClosed()` 则表示旧 Session 已失效，必须丢弃旧 Client 后重连。
+重连规则：`HANDSHAKE_FAILED`、`SESSION_EXPIRED`、`CONTEXT_CHANGED`、`TIMEOUT`、`WS_OFFLINE`、`INTERNAL_ERROR` 属于瞬时连接错误，使用指数退避重新调用 `SealChatEmbed.connect()`；每次新连接都要重新订阅事件，并主动调用一次 `connection.getState()` 初始化当前连接态。`ORIGIN_DENIED`、`CAPABILITY_DENIED`、`PERMISSION_DENIED`、`CONFIG_ERROR` 等配置/权限错误不应无限重试，应先修正 iForm 或 URL 配置。宿主 WebSocket 短暂离线时，SDK Client 可保留，按 `connection.onChanged()` 更新状态并等待宿主恢复；`session.onClosed()` 则表示旧 Session 已失效，必须丢弃旧 Client 后重连。
 
 ## 6. 开发约定
 
 - 页面卸载前执行各订阅返回的取消函数；需要主动终止时调用 `sealchat.close()`。
 - 所有 UI 都要允许 `currentUser`、`currentMember`、`currentCharacter` 为 `null`。
 - 收到 `context.onChanged()` 后，用新 Context 更新权限与当前角色。
-- 写入共享对象优先传 `ifRevision`，避免多人修改静默覆盖。
+- 新 Session 握手成功后，先注册 `connection.onChanged()`，再主动 `connection.getState()` 初始化一次；不要假设宿主会自动推送初始 `connection.changed`。
+- 更新已经存在的共享对象时优先传有效的 `ifRevision`，避免多人修改静默覆盖；首次创建 key 时省略该选项，不传 `null` 占位值。
 - 不用 Storage 模拟高频消息流；不用 Event 保存必须恢复的数据。
 - 不缓存或猜测 `channelId`、`formId`；以当前 Session 返回值为准。
 - 不向 iframe 暴露 token、内部错误栈、任意 HTTP API 或原始 WebSocket。
