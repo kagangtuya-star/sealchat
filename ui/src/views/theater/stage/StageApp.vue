@@ -30,7 +30,6 @@ import {
   LetterT,
   Lock,
   LockOpen,
-  Magnet,
   Message,
   Photo,
   Pencil,
@@ -104,6 +103,7 @@ import {
 } from './stage-media'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
 import StageCopyToolbar from './StageCopyToolbar.vue'
+import StageGridToolbar from './StageGridToolbar.vue'
 import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
@@ -1982,9 +1982,14 @@ let gridCoverage: { minX: number, maxX: number, minY: number, maxY: number } | n
 let gridSyncFrame: number | null = null
 
 const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
+const gridDisplayEnabled = computed(() => props.store.state.liveState.displayGrid)
 const toggleGridSnap = () => {
   if (!canEditAllObjects.value) return
   props.store.state.liveState.alignWithGrid = !props.store.state.liveState.alignWithGrid
+}
+const toggleGridDisplay = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.displayGrid = !props.store.state.liveState.displayGrid
 }
 
 const setGridSnapPreview = (active: boolean) => {
@@ -4827,7 +4832,7 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
   const liveState = props.store.state.liveState
   const camera = props.store.state.camera
   const gridVisible = liveState.displayGrid || gridSnapPreviewActive.value
-  const signature = [
+  const baseSignature = [
     fieldX,
     fieldY,
     fieldWidth,
@@ -4836,15 +4841,19 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
     liveState.gridSize,
   ].join(':')
   if (!gridVisible) {
-    const changed = gridSignature !== signature || gridGroup.children.length > 0
+    const changed = gridSignature !== baseSignature || gridGroup.children.length > 0
     if (changed) gridGroup.destroyChildren()
-    gridSignature = signature
+    gridSignature = baseSignature
     gridCoverage = null
     return changed
   }
 
-  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
   const zoom = Math.max(0.01, camera.zoom)
+  const snapStep = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  // Keep rendered lines legible and bounded while preserving the finer snap interval.
+  const gridLineStepMultiplier = Math.max(1, Math.ceil(8 / (snapStep * zoom)))
+  const step = snapStep * gridLineStepMultiplier
+  const signature = `${baseSignature}:${gridLineStepMultiplier}`
   const visibleLeft = (-viewportSize.value.width / 2 - camera.x) / zoom
   const visibleRight = (viewportSize.value.width / 2 - camera.x) / zoom
   const visibleTop = (-viewportSize.value.height / 2 - camera.y) / zoom
@@ -7081,20 +7090,13 @@ onBeforeUnmount(() => {
           @copy="copySelectedObjects"
           @select-mode="copyMode = $event"
         />
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button
-              class="theater-grid-snap-tool"
-              :class="{ 'is-active': gridSnapEnabled }"
-              :aria-pressed="gridSnapEnabled"
-              aria-label="网格吸附"
-              @click="toggleGridSnap"
-            >
-              <template #icon><n-icon><Magnet /></n-icon></template>
-            </n-button>
-          </template>
-          {{ gridSnapEnabled ? '关闭网格吸附' : '网格吸附' }}
-        </n-tooltip>
+        <StageGridToolbar
+          :snap-enabled="gridSnapEnabled"
+          :display-grid="gridDisplayEnabled"
+          :disabled="!canEditAllObjects"
+          @toggle-snap="toggleGridSnap"
+          @toggle-display-grid="toggleGridDisplay"
+        />
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-badge
