@@ -32,6 +32,10 @@ var defaultAIModelPricingByModel = map[string]AIModelPricingConfig{
 	},
 }
 
+var defaultAIModelPricingAliases = map[string]string{
+	"deepseek-v4-flash-vision-exp": "deepseek-v4-flash",
+}
+
 type LogUploadConfig struct {
 	Enabled        bool     `json:"enabled" yaml:"enabled"`
 	Endpoint       string   `json:"endpoint" yaml:"endpoint"`
@@ -972,10 +976,16 @@ func normalizeAIIdentifierList(values []string) []string {
 }
 
 func resolveDefaultAIModelPricing(model string) (AIModelPricingConfig, bool) {
-	item, ok := defaultAIModelPricingByModel[strings.TrimSpace(model)]
+	model = strings.TrimSpace(model)
+	lookupModel := model
+	if baseModel, ok := defaultAIModelPricingAliases[model]; ok {
+		lookupModel = baseModel
+	}
+	item, ok := defaultAIModelPricingByModel[lookupModel]
 	if !ok {
 		return AIModelPricingConfig{}, false
 	}
+	item.Model = model
 	return item, true
 }
 
@@ -1113,7 +1123,9 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	}
 
 	for _, provider := range result.Providers {
+		providerModels := make(map[string]struct{}, len(provider.Models))
 		for _, model := range provider.Models {
+			providerModels[model] = struct{}{}
 			defaultPricing, ok := resolveDefaultAIModelPricing(model)
 			if !ok {
 				continue
@@ -1125,6 +1137,27 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 			result.Pricing = append(result.Pricing, AIModelPricingConfig{
 				ProviderID:                 provider.ID,
 				Model:                      model,
+				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
+				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
+				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
+			})
+			pricingIndexByKey[key] = len(result.Pricing) - 1
+		}
+		for aliasModel, baseModel := range defaultAIModelPricingAliases {
+			if _, exists := providerModels[baseModel]; !exists {
+				continue
+			}
+			key := provider.ID + "::" + aliasModel
+			if _, exists := pricingIndexByKey[key]; exists {
+				continue
+			}
+			defaultPricing, ok := resolveDefaultAIModelPricing(aliasModel)
+			if !ok {
+				continue
+			}
+			result.Pricing = append(result.Pricing, AIModelPricingConfig{
+				ProviderID:                 provider.ID,
+				Model:                      aliasModel,
 				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
 				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
 				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
