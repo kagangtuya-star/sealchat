@@ -8290,6 +8290,24 @@ onBeforeUnmount(() => {
   color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
+.theater-stage-object-actions :deep(.theater-copy-trigger--primary),
+.theater-stage-object-actions :deep(.theater-scene-fixed-trigger--primary),
+.theater-stage-object-actions :deep(.theater-grid-trigger--primary),
+.theater-stage-object-actions :deep(.theater-drawing-trigger--primary) {
+  --n-width: 30px !important;
+  --n-padding: 0 !important;
+  width: 30px;
+  min-width: 30px;
+}
+.theater-stage-object-actions :deep(.theater-copy-trigger--menu),
+.theater-stage-object-actions :deep(.theater-scene-fixed-trigger--menu),
+.theater-stage-object-actions :deep(.theater-grid-trigger--menu),
+.theater-stage-object-actions :deep(.theater-drawing-trigger--menu) {
+  --n-width: 18px !important;
+  --n-padding: 0 !important;
+  width: 18px;
+  min-width: 18px;
+}
 .theater-bulk-select-badge { display: inline-flex; }
 .theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
