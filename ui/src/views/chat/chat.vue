@@ -915,6 +915,9 @@ const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
+const historyNavigationOpacityStyle = computed(() => ({
+  opacity: display.settings.historyNavigationOpacity / 100,
+}));
 const canManageWorldAnnouncements = computed(() => {
   const worldId = chat.currentWorldId;
   if (!worldId) return false;
@@ -17527,6 +17530,7 @@ onBeforeUnmount(() => {
           v-if="historyHintVisible"
           class="history-mode-hint"
           :class="{ 'history-mode-hint--mobile': isMobileUa }"
+          :style="historyNavigationOpacityStyle"
         >
           <template v-if="isMobileUa">
             <span class="history-mode-hint__label">历史</span>
@@ -17542,6 +17546,7 @@ onBeforeUnmount(() => {
           :circle="isMobileUa"
           :color="scrollButtonColor"
           :text-color="scrollButtonTextColor"
+          :style="historyNavigationOpacityStyle"
           @click="inHistoryMode ? handleBackToLatest() : toBottom"
         >
           <template #icon>

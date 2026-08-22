@@ -260,6 +260,7 @@ const previewStyleVars = computed(() => ({
 }))
 
 const formatPxTooltip = (value: number) => `${Math.round(value)}px`
+const formatPercentTooltip = (value: number) => `${Math.round(value)}%`
 const formatLetterSpacingTooltip = (value: number) => `${value.toFixed(1)}px`
 const formatLineHeightTooltip = (value: number) => value.toFixed(2)
 type NumericSettingKey =
@@ -273,6 +274,7 @@ type NumericSettingKey =
   | 'paragraphSpacing'
   | 'messagePaddingX'
   | 'messagePaddingY'
+  | 'historyNavigationOpacity'
   | 'quickGalleryPageSize'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
@@ -289,6 +291,7 @@ const handleLocalizedAvatarSideOffsetUpdate = (value: number | null) => handleNu
 const handleParagraphSpacingUpdate = (value: number | null) => handleNumericInput('paragraphSpacing', value)
 const handleMessagePaddingXUpdate = (value: number | null) => handleNumericInput('messagePaddingX', value)
 const handleMessagePaddingYUpdate = (value: number | null) => handleNumericInput('messagePaddingY', value)
+const handleHistoryNavigationOpacityUpdate = (value: number | null) => handleNumericInput('historyNavigationOpacity', value)
 
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
@@ -897,6 +900,34 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           <template #checked>显示置顶消息</template>
           <template #unchecked>隐藏置顶消息</template>
         </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">历史浏览控件不透明度</p>
+            <p class="section-desc">控制历史提示与回到底部按钮，旁观模式同样生效</p>
+          </div>
+        </header>
+        <div class="control-input">
+          <n-slider
+            v-model:value="draft.historyNavigationOpacity"
+            :min="20"
+            :max="100"
+            :step="5"
+            :format-tooltip="formatPercentTooltip"
+          />
+          <n-input-number
+            v-model:value="draft.historyNavigationOpacity"
+            size="small"
+            :min="20"
+            :max="100"
+            :step="5"
+            @update:value="handleHistoryNavigationOpacityUpdate"
+          >
+            <template #suffix>%</template>
+          </n-input-number>
+        </div>
       </section>
 
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">

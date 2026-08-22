@@ -89,6 +89,7 @@ export interface DisplaySettings {
   mergeNeighbors: boolean
   battleReportCardExpandedByDefault: boolean
   showPinnedMessages: boolean
+  historyNavigationOpacity: number
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
   maxExportMessages: number
@@ -173,6 +174,9 @@ const SLICE_LIMIT_MAX = 20000
 const CONCURRENCY_DEFAULT = 2
 const CONCURRENCY_MIN = 1
 const CONCURRENCY_MAX = 8
+const HISTORY_NAVIGATION_OPACITY_DEFAULT = 65
+const HISTORY_NAVIGATION_OPACITY_MIN = 20
+const HISTORY_NAVIGATION_OPACITY_MAX = 100
 
 const FONT_SIZE_DEFAULT = 15
 const FONT_SIZE_MIN = 12
@@ -521,6 +525,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   mergeNeighbors: true,
   battleReportCardExpandedByDefault: false,
   showPinnedMessages: true,
+  historyNavigationOpacity: HISTORY_NAVIGATION_OPACITY_DEFAULT,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
@@ -771,6 +776,12 @@ const parseStoredSettingsInternal = (
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       battleReportCardExpandedByDefault: coerceBoolean((parsed as any)?.battleReportCardExpandedByDefault ?? false),
       showPinnedMessages: coerceBoolean((parsed as any)?.showPinnedMessages ?? true),
+      historyNavigationOpacity: coerceNumberInRange(
+        (parsed as any)?.historyNavigationOpacity,
+        HISTORY_NAVIGATION_OPACITY_DEFAULT,
+        HISTORY_NAVIGATION_OPACITY_MIN,
+        HISTORY_NAVIGATION_OPACITY_MAX,
+      ),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
       maxExportMessages: coerceNumberInRange(
@@ -1052,6 +1063,15 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showPinnedMessages')
       ? coerceBoolean((patch as any)?.showPinnedMessages)
       : base.showPinnedMessages,
+  historyNavigationOpacity:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'historyNavigationOpacity')
+      ? coerceNumberInRange(
+        (patch as any)?.historyNavigationOpacity,
+        HISTORY_NAVIGATION_OPACITY_DEFAULT,
+        HISTORY_NAVIGATION_OPACITY_MIN,
+        HISTORY_NAVIGATION_OPACITY_MAX,
+      )
+      : base.historyNavigationOpacity,
   alwaysShowTimestamp:
     patch && Object.prototype.hasOwnProperty.call(patch, 'alwaysShowTimestamp')
       ? coerceBoolean((patch as any)?.alwaysShowTimestamp)
