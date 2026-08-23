@@ -18968,7 +18968,7 @@ onBeforeUnmount(() => {
   <n-modal
     v-model:show="identityVariantResetDialogVisible"
     preset="card"
-    title="恢复默认头像"
+    title="恢复默认规则"
     :auto-focus="false"
     class="identity-variant-dialog"
   >
