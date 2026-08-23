@@ -1971,7 +1971,7 @@ const identityVariantTabTooltip = computed(() => {
       ? '当前频道角色尚未配置头像差分，点击前往设置'
       : '当前频道角色尚未配置头像差分';
   }
-  return '切换当前频道角色的头像差分，可用 =关键词 快捷切换 =还原 恢复';
+  return '切换当前频道角色的头像差分，可用已配置的匹配规则快捷切换或恢复';
 });
 
 const describeIdentityVariantCard = (variant?: ChannelIdentityVariant | null) => {
@@ -3372,22 +3372,46 @@ const shouldSuppressKeywordSuggestForIdentityShortcut = (rawDraft: string, trigg
 
 const resolveIdentityVariantShortcutMatch = (
   rawDraft: string,
+  identity: ChannelIdentity,
   variants: ChannelIdentityVariant[],
   legacyTrigger = '=',
 ): IdentityVariantShortcutMatchResult | null => {
   if (!rawDraft) {
     return null;
   }
-  const resetMatch = new RegExp(`^${escapeRegExp(legacyTrigger)}还原(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
-  if (resetMatch) {
-    return {
-      matched: null,
-      restContent: resetMatch[1] ?? '',
-      ambiguous: false,
-      resetToDefault: true,
-    };
-  }
   const normalizedDraft = rawDraft.toLowerCase();
+  const resetMode = (identity.variantResetMatchMode || 'prefix') as IdentityVariantMatchMode;
+  const resetContent = String(identity.variantResetMatchContent || '还原').trim() || '还原';
+  const resetConfig = String(identity.variantResetMatchConfig || (resetMode === 'prefix' ? '=' : resetMode === 'keyword' ? 'any' : 'sensitive')).trim();
+  if (resetMode === 'prefix') {
+    const activation = `${resetConfig || legacyTrigger || '='}${resetContent}`;
+    if (normalizedDraft.startsWith(activation.toLowerCase()) && (rawDraft.length === activation.length || /\s/.test(rawDraft.charAt(activation.length)))) {
+      return {
+        matched: null,
+        restContent: rawDraft.slice(activation.length).replace(/^\s+/, ''),
+        ambiguous: false,
+        resetToDefault: true,
+      };
+    }
+  } else if (resetMode === 'keyword') {
+    const matchAll = resetConfig === 'all';
+    const separator = matchAll ? '&' : '|';
+    const keywords = resetContent.split(separator).map(keyword => keyword.trim().toLowerCase()).filter(Boolean);
+    const matched = keywords.length > 0 && (matchAll
+      ? keywords.every(keyword => normalizedDraft.includes(keyword))
+      : keywords.some(keyword => normalizedDraft.includes(keyword)));
+    if (matched) {
+      return { matched: null, restContent: rawDraft, ambiguous: false, resetToDefault: true };
+    }
+  } else if (resetMode === 'regex') {
+    try {
+      if (new RegExp(resetContent, resetConfig === 'insensitive' ? 'i' : '').test(rawDraft)) {
+        return { matched: null, restContent: rawDraft, ambiguous: false, resetToDefault: true };
+      }
+    } catch {
+      // Invalid persisted reset regex does not block message sending.
+    }
+  }
   for (const targetMode of ['prefix', 'keyword', 'regex'] as IdentityVariantMatchMode[]) {
     for (const item of variants) {
       if (!item || item.enabled === false) {
@@ -3508,6 +3532,9 @@ const identityForm = reactive({
   isDefault: false,
   isTemporary: false,
   botAppearanceMode: '' as '' | 'inherit' | 'custom',
+  variantResetMatchMode: 'prefix' as IdentityVariantMatchMode,
+  variantResetMatchConfig: '=',
+  variantResetMatchContent: '还原',
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
@@ -3538,6 +3565,23 @@ const identityVariantRegexMatchOptions = [
   { label: '区分大小写', value: 'sensitive' },
   { label: '忽略大小写', value: 'insensitive' },
 ];
+const identityVariantResetDialogVisible = ref(false);
+const identityVariantResetForm = reactive({
+  matchMode: 'prefix' as IdentityVariantMatchMode,
+  matchDrafts: {
+    prefix: { config: '=', content: '还原' },
+    keyword: { config: 'any', content: '还原' },
+    regex: { config: 'sensitive', content: '还原' },
+  } as Record<IdentityVariantMatchMode, { config: string; content: string }>,
+});
+const activeIdentityVariantResetMatchDraft = computed(() => identityVariantResetForm.matchDrafts[identityVariantResetForm.matchMode]);
+const identityVariantResetMatchContentPlaceholder = computed(() => {
+  if (identityVariantResetForm.matchMode === 'prefix') return '例如：还原';
+  if (identityVariantResetForm.matchMode === 'keyword') {
+    return activeIdentityVariantResetMatchDraft.value.config === 'all' ? '例如：结束&恢复' : '例如：还原|恢复';
+  }
+  return '例如：^(还原|恢复)';
+});
 const identityVariantForm = reactive({
   selectorEmoji: '',
   matchMode: 'prefix' as IdentityVariantMatchMode,
@@ -5424,6 +5468,10 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.botAppearanceMode = isManagingBotIdentity.value
     ? (identity?.botAppearanceMode === 'custom' ? 'custom' : 'inherit')
     : '';
+  identityForm.variantResetMatchMode = (identity?.variantResetMatchMode || 'prefix') as IdentityVariantMatchMode;
+  identityForm.variantResetMatchConfig = identity?.variantResetMatchConfig
+    || (identityForm.variantResetMatchMode === 'prefix' ? '=' : identityForm.variantResetMatchMode === 'keyword' ? 'any' : 'sensitive');
+  identityForm.variantResetMatchContent = identity?.variantResetMatchContent || '还原';
   identityForm.icOocOnActivate = identity?.isTemporary
     ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
     : '';
@@ -5829,6 +5877,56 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
 };
 
+const openIdentityVariantResetConfig = () => {
+  identityVariantResetForm.matchMode = identityForm.variantResetMatchMode || 'prefix';
+  identityVariantResetForm.matchDrafts = {
+    prefix: { config: '=', content: '还原' },
+    keyword: { config: 'any', content: '还原' },
+    regex: { config: 'sensitive', content: '还原' },
+  };
+  const activeDraft = identityVariantResetForm.matchDrafts[identityVariantResetForm.matchMode];
+  activeDraft.config = identityForm.variantResetMatchConfig || activeDraft.config;
+  activeDraft.content = identityForm.variantResetMatchContent || activeDraft.content;
+  identityVariantResetDialogVisible.value = true;
+};
+
+const applyIdentityVariantResetConfig = async () => {
+  const matchMode = identityVariantResetForm.matchMode;
+  const matchConfig = String(activeIdentityVariantResetMatchDraft.value.config || '').trim();
+  const matchContent = String(activeIdentityVariantResetMatchDraft.value.content || '').trim();
+  if (!matchContent) {
+    message.warning('请输入匹配内容');
+    return;
+  }
+  if (matchMode === 'prefix' && (!matchConfig || /\s/.test(matchConfig))) {
+    message.warning('前缀符号不能为空或包含空白');
+    return;
+  }
+  if (matchMode === 'keyword') {
+    const forbidden = matchConfig === 'all' ? '|' : '&';
+    const separator = matchConfig === 'all' ? '&' : '|';
+    if (matchContent.includes(forbidden) || matchContent.split(separator).some(item => !item.trim())) {
+      message.warning('关键词匹配内容不能混用 | 和 &，且不能包含空关键词');
+      return;
+    }
+  }
+  if (matchMode === 'regex') {
+    try {
+      new RegExp(matchContent, matchConfig === 'insensitive' ? 'i' : '');
+    } catch {
+      message.warning('请输入有效的正则表达式');
+      return;
+    }
+  }
+  identityForm.variantResetMatchMode = matchMode;
+  identityForm.variantResetMatchConfig = matchConfig;
+  identityForm.variantResetMatchContent = matchContent;
+  if (await submitIdentityForm({ closeDialog: false, successMessage: false })) {
+    identityVariantResetDialogVisible.value = false;
+    message.success('恢复默认头像规则已更新');
+  }
+};
+
 const closeIdentityVariantDialog = () => {
   if (identityVariantSubmitting.value) {
     return;
@@ -6142,6 +6240,9 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
+    variantResetMatchMode: identityForm.variantResetMatchMode,
+    variantResetMatchConfig: identityForm.variantResetMatchConfig,
+    variantResetMatchContent: identityForm.variantResetMatchContent,
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
     promoteToShared: identityDialogMode.value === 'edit' && identityForm.promoteToShared,
@@ -9913,6 +10014,7 @@ const activeIdentityVariantShortcutContext = computed(() => {
   const trigger = display.settings.identityVariantQuickSwitchTrigger || '=';
   const shortcutResult = resolveIdentityVariantShortcutMatch(
     rawDraft,
+    identity,
     chat.getIdentityVariants(channelId, identity.id),
     trigger,
   );
@@ -13616,10 +13718,13 @@ const performSend = async (options?: {
   }
 
   const identityVariantQuickSwitchTrigger = display.settings.identityVariantQuickSwitchTrigger || '=';
-  if (sendMode === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
+  if (sendMode === 'plain' && chat.curChannel?.id) {
     const activeIdentityId = identityIdOverride || chat.getActiveIdentityId(chat.curChannel.id);
+    const activeIdentity = chat.getScopedChannelIdentities(chat.curChannel.id).find(item => item.id === activeIdentityId);
     const variants = chat.getIdentityVariants(chat.curChannel.id, activeIdentityId);
-    const shortcutResult = resolveIdentityVariantShortcutMatch(draft, variants, identityVariantQuickSwitchTrigger);
+    const shortcutResult = activeIdentity
+      ? resolveIdentityVariantShortcutMatch(draft, activeIdentity, variants, identityVariantQuickSwitchTrigger)
+      : null;
     if (shortcutResult?.ambiguous) {
       message.warning('匹配到多个同长度差分，请输入更长关键词');
       return;
@@ -18770,10 +18875,13 @@ onBeforeUnmount(() => {
             <div>
               <div class="identity-variant-section__title">{{ editingIdentity.sharedIdentityId ? '配置跨频道同步的头像差分' : '为当前频道角色配置头像差分' }}</div>
               <div class="identity-variant-section__hint">
-                {{ isManagingBotIdentity ? 'BOT 发送消息时由后端按匹配规则自动选择差分。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
+                {{ isManagingBotIdentity ? 'BOT 发送消息时由后端按匹配规则自动选择差分或恢复默认头像' : '可通过已配置的匹配规则切换差分或恢复默认头像' }}
               </div>
             </div>
-            <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
+            <div class="identity-variant-section__actions">
+              <n-button size="small" @click="openIdentityVariantResetConfig">恢复默认头像</n-button>
+              <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
+            </div>
           </div>
           <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
             <div
@@ -18854,6 +18962,71 @@ onBeforeUnmount(() => {
     <template #footer>
       <n-space justify="end">
         <n-button :loading="identitySubmitting" @click="handleIdentityDecorationEditorShow(false)">完成</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <n-modal
+    v-model:show="identityVariantResetDialogVisible"
+    preset="card"
+    title="恢复默认头像"
+    :auto-focus="false"
+    class="identity-variant-dialog"
+  >
+    <n-form label-width="90px" label-placement="left">
+      <n-form-item>
+        <template #label>
+          <span class="identity-variant-match-label">
+            匹配方式
+            <n-popover trigger="hover" placement="right-start" :width="260">
+              <template #trigger>
+                <button type="button" class="identity-variant-match-help" aria-label="匹配方式说明">?</button>
+              </template>
+              <div class="identity-variant-match-help-content">
+                <div><strong>前缀匹配：</strong>消息以指定符号和匹配内容开头时恢复默认头像，并移除匹配头。</div>
+                <div><strong>关键词匹配：</strong>消息包含关键词时恢复；| 表示“或”，&amp; 表示“与”。</div>
+                <div><strong>正则表达式匹配：</strong>使用正则规则匹配消息内容；无效规则不会触发。</div>
+              </div>
+            </n-popover>
+          </span>
+        </template>
+        <n-select v-model:value="identityVariantResetForm.matchMode" :options="identityVariantMatchModeOptions" />
+      </n-form-item>
+      <n-form-item>
+        <div class="identity-variant-match-grid">
+          <label class="identity-variant-match-field">
+            <span>{{ identityVariantResetForm.matchMode === 'prefix' ? '前缀符号' : identityVariantResetForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配方式' }}</span>
+            <n-input
+              v-if="identityVariantResetForm.matchMode === 'prefix'"
+              v-model:value="activeIdentityVariantResetMatchDraft.config"
+              maxlength="8"
+              placeholder="="
+            />
+            <n-select
+              v-else-if="identityVariantResetForm.matchMode === 'keyword'"
+              v-model:value="activeIdentityVariantResetMatchDraft.config"
+              :options="identityVariantKeywordMatchOptions"
+            />
+            <n-select
+              v-else
+              v-model:value="activeIdentityVariantResetMatchDraft.config"
+              :options="identityVariantRegexMatchOptions"
+            />
+          </label>
+          <label class="identity-variant-match-field">
+            <span>匹配内容</span>
+            <n-input
+              v-model:value="activeIdentityVariantResetMatchDraft.content"
+              maxlength="255"
+              :placeholder="identityVariantResetMatchContentPlaceholder"
+            />
+          </label>
+        </div>
+      </n-form-item>
+    </n-form>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="identityVariantResetDialogVisible = false">取消</n-button>
+        <n-button type="primary" :loading="identitySubmitting" @click="applyIdentityVariantResetConfig">确定</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -23266,6 +23439,15 @@ onBeforeUnmount(() => {
   margin-top: 0.2rem;
   font-size: 0.78rem;
   color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-variant-section__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: flex-end;
+  gap: 0.4rem;
+  flex-shrink: 0;
 }
 
 .identity-variant-list {

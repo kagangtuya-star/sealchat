@@ -108,17 +108,20 @@ type AvatarDecorationSettings struct {
 }
 
 type ChannelIdentity struct {
-	ID                  string               `json:"id"`
-	SharedIdentityID    string               `json:"sharedIdentityId,omitempty"`
-	SharedRevision      int64                `json:"sharedRevision,omitempty"`
-	DisplayName         string               `json:"displayName"`
-	Color               string               `json:"color"`
-	AvatarAttachmentID  string               `json:"avatarAttachmentId"`
-	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
-	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
-	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
-	IsDefault           bool                 `json:"isDefault"`
-	IsTemporary         bool                 `json:"isTemporary"`
+	ID                       string               `json:"id"`
+	SharedIdentityID         string               `json:"sharedIdentityId,omitempty"`
+	SharedRevision           int64                `json:"sharedRevision,omitempty"`
+	DisplayName              string               `json:"displayName"`
+	Color                    string               `json:"color"`
+	AvatarAttachmentID       string               `json:"avatarAttachmentId"`
+	AvatarDecoration         *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations        AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	TheaterPresentation      *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	IsDefault                bool                 `json:"isDefault"`
+	IsTemporary              bool                 `json:"isTemporary"`
+	VariantResetMatchMode    string               `json:"variantResetMatchMode,omitempty"`
+	VariantResetMatchConfig  string               `json:"variantResetMatchConfig,omitempty"`
+	VariantResetMatchContent string               `json:"variantResetMatchContent,omitempty"`
 }
 
 type CharacterCard struct {

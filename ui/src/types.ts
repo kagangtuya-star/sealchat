@@ -1054,6 +1054,9 @@ export interface ChannelIdentity {
   isDefault: boolean;
   isTemporary: boolean;
   botAppearanceMode?: 'inherit' | 'custom' | '';
+  variantResetMatchMode?: 'prefix' | 'keyword' | 'regex' | '';
+  variantResetMatchConfig?: string;
+  variantResetMatchContent?: string;
   icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];

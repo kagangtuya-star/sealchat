@@ -80,6 +80,49 @@ func normalizeChannelIdentityVariantMatch(input *ChannelIdentityVariantInput) {
 	}
 }
 
+func normalizeChannelIdentityResetMatch(input *ChannelIdentityInput) error {
+	input.VariantResetMatchMode = strings.ToLower(strings.TrimSpace(input.VariantResetMatchMode))
+	input.VariantResetMatchConfig = strings.TrimSpace(input.VariantResetMatchConfig)
+	input.VariantResetMatchContent = strings.TrimSpace(input.VariantResetMatchContent)
+	if input.VariantResetMatchMode == "" {
+		input.VariantResetMatchMode = ChannelIdentityVariantMatchModePrefix
+	}
+	if input.VariantResetMatchContent == "" {
+		input.VariantResetMatchContent = "还原"
+	}
+	if utf8.RuneCountInString(input.VariantResetMatchContent) > 255 {
+		return errors.New("恢复默认头像匹配内容长度不能超过255个字符")
+	}
+	switch input.VariantResetMatchMode {
+	case ChannelIdentityVariantMatchModePrefix:
+		if input.VariantResetMatchConfig == "" {
+			input.VariantResetMatchConfig = "="
+		}
+		if utf8.RuneCountInString(input.VariantResetMatchConfig) > 8 || strings.IndexFunc(input.VariantResetMatchConfig, unicode.IsSpace) >= 0 {
+			return errors.New("前缀符号不能包含空白且长度不能超过8个字符")
+		}
+	case ChannelIdentityVariantMatchModeKeyword:
+		input.VariantResetMatchConfig = strings.ToLower(input.VariantResetMatchConfig)
+		if input.VariantResetMatchConfig == "" {
+			input.VariantResetMatchConfig = "any"
+		}
+		if input.VariantResetMatchConfig != "any" && input.VariantResetMatchConfig != "all" {
+			return errors.New("无效的关键词匹配类型")
+		}
+	case ChannelIdentityVariantMatchModeRegex:
+		input.VariantResetMatchConfig = strings.ToLower(input.VariantResetMatchConfig)
+		if input.VariantResetMatchConfig == "" {
+			input.VariantResetMatchConfig = "sensitive"
+		}
+		if input.VariantResetMatchConfig != "sensitive" && input.VariantResetMatchConfig != "insensitive" {
+			return errors.New("无效的正则表达式匹配方式")
+		}
+	default:
+		return errors.New("无效的恢复默认头像匹配方式")
+	}
+	return nil
+}
+
 func normalizeChannelIdentityVariantEmoji(value string) string {
 	value = strings.TrimSpace(value)
 	if utf8.RuneCountInString(value) > 64 {
@@ -649,10 +692,102 @@ func matchChannelIdentityVariantPrefix(content string, symbol string, keyword st
 	return strings.TrimLeftFunc(rest, unicode.IsSpace), true
 }
 
-// ChannelIdentityVariantMatchMessage 按 BOT 消息内容匹配差分；前缀规则会移除匹配头。
+func channelIdentityResetMatchValues(identity *model.ChannelIdentityModel) (string, string, string) {
+	mode := strings.ToLower(strings.TrimSpace(identity.VariantResetMatchMode))
+	config := strings.TrimSpace(identity.VariantResetMatchConfig)
+	content := strings.TrimSpace(identity.VariantResetMatchContent)
+	if mode == "" {
+		mode = ChannelIdentityVariantMatchModePrefix
+	}
+	if content == "" {
+		content = "还原"
+	}
+	switch mode {
+	case ChannelIdentityVariantMatchModePrefix:
+		if config == "" {
+			config = "="
+		}
+	case ChannelIdentityVariantMatchModeKeyword:
+		config = strings.ToLower(config)
+		if config != "all" {
+			config = "any"
+		}
+	case ChannelIdentityVariantMatchModeRegex:
+		config = strings.ToLower(config)
+		if config != "insensitive" {
+			config = "sensitive"
+		}
+	default:
+		mode, config, content = ChannelIdentityVariantMatchModePrefix, "=", "还原"
+	}
+	return mode, config, content
+}
+
+func matchChannelIdentityResetMessage(identity *model.ChannelIdentityModel, content string) (string, bool) {
+	mode, config, matchContent := channelIdentityResetMatchValues(identity)
+	plainContent := NormalizeMessageContentToPlainText(content)
+	if plainContent == "" {
+		plainContent = content
+	}
+	switch mode {
+	case ChannelIdentityVariantMatchModePrefix:
+		if rest, matched := matchChannelIdentityVariantPrefix(content, config, matchContent); matched {
+			return rest, true
+		}
+		if content != plainContent {
+			if _, matched := matchChannelIdentityVariantPrefix(plainContent, config, matchContent); matched {
+				return content, true
+			}
+		}
+	case ChannelIdentityVariantMatchModeKeyword:
+		matchAll := config == "all"
+		separator := "|"
+		if matchAll {
+			separator = "&"
+		}
+		lowerContent := strings.ToLower(plainContent)
+		parts := strings.Split(matchContent, separator)
+		matched := matchAll
+		hasKeyword := false
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			hasKeyword = true
+			partMatched := strings.Contains(lowerContent, strings.ToLower(part))
+			if matchAll && !partMatched {
+				matched = false
+				break
+			}
+			if !matchAll && partMatched {
+				matched = true
+				break
+			}
+		}
+		if hasKeyword && matched {
+			return content, true
+		}
+	case ChannelIdentityVariantMatchModeRegex:
+		pattern := matchContent
+		if config == "insensitive" {
+			pattern = "(?i:" + pattern + ")"
+		}
+		compiled, err := regexp.Compile(pattern)
+		if err == nil && compiled.MatchString(plainContent) {
+			return content, true
+		}
+	}
+	return content, false
+}
+
+// ChannelIdentityVariantMatchMessage 按 BOT 消息内容优先匹配恢复规则，再匹配差分；前缀规则会移除匹配头。
 func ChannelIdentityVariantMatchMessage(identity *model.ChannelIdentityModel, content string) (*model.ChannelIdentityVariantModel, string, error) {
 	if identity == nil || strings.TrimSpace(content) == "" {
 		return nil, content, nil
+	}
+	if matchedContent, matched := matchChannelIdentityResetMessage(identity, content); matched {
+		return nil, matchedContent, nil
 	}
 	items, err := model.ChannelIdentityVariantListByIdentityID(identity.ChannelID, identity.UserID, identity.ID)
 	if err != nil {
