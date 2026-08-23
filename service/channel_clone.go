@@ -796,6 +796,8 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			UserID:             variant.UserID,
 			SelectorEmoji:      variant.SelectorEmoji,
 			Keyword:            variant.Keyword,
+			MatchMode:          variant.MatchMode,
+			MatchConfig:        variant.MatchConfig,
 			Note:               variant.Note,
 			AvatarAttachmentID: avatarAttachmentID,
 			DisplayName:        variant.DisplayName,

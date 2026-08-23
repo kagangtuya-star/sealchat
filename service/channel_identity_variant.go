@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"gorm.io/gorm"
@@ -16,8 +16,10 @@ import (
 	"sealchat/protocol"
 )
 
-var (
-	channelIdentityVariantKeywordPattern = regexp.MustCompile(`^[\p{L}\p{N}_-]{1,64}$`)
+const (
+	ChannelIdentityVariantMatchModePrefix  = "prefix"
+	ChannelIdentityVariantMatchModeKeyword = "keyword"
+	ChannelIdentityVariantMatchModeRegex   = "regex"
 )
 
 type ChannelIdentityVariantInput struct {
@@ -25,6 +27,8 @@ type ChannelIdentityVariantInput struct {
 	IdentityID                 string
 	SelectorEmoji              string
 	Keyword                    string
+	MatchMode                  string
+	MatchConfig                string
 	Note                       string
 	AvatarAttachmentID         string
 	DisplayName                string
@@ -49,6 +53,30 @@ type ResolvedIdentityAppearance struct {
 
 func normalizeChannelIdentityVariantKeyword(keyword string) string {
 	return strings.TrimSpace(keyword)
+}
+
+func normalizeChannelIdentityVariantMatch(input *ChannelIdentityVariantInput) {
+	input.MatchMode = strings.ToLower(strings.TrimSpace(input.MatchMode))
+	input.MatchConfig = strings.TrimSpace(input.MatchConfig)
+	if input.MatchMode == "" {
+		input.MatchMode = ChannelIdentityVariantMatchModePrefix
+	}
+	switch input.MatchMode {
+	case ChannelIdentityVariantMatchModePrefix:
+		if input.MatchConfig == "" {
+			input.MatchConfig = "="
+		}
+	case ChannelIdentityVariantMatchModeKeyword:
+		input.MatchConfig = strings.ToLower(input.MatchConfig)
+		if input.MatchConfig == "" {
+			input.MatchConfig = "any"
+		}
+	case ChannelIdentityVariantMatchModeRegex:
+		input.MatchConfig = strings.ToLower(input.MatchConfig)
+		if input.MatchConfig == "" {
+			input.MatchConfig = "sensitive"
+		}
+	}
 }
 
 func normalizeChannelIdentityVariantEmoji(value string) string {
@@ -132,6 +160,7 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 	input.ChannelID = strings.TrimSpace(input.ChannelID)
 	input.IdentityID = strings.TrimSpace(input.IdentityID)
 	input.Keyword = normalizeChannelIdentityVariantKeyword(input.Keyword)
+	normalizeChannelIdentityVariantMatch(input)
 	input.SelectorEmoji = normalizeChannelIdentityVariantEmoji(input.SelectorEmoji)
 	input.Note = normalizeChannelIdentityVariantNote(input.Note)
 
@@ -142,10 +171,38 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 		return errors.New("缺少身份ID")
 	}
 	if input.Keyword == "" {
-		return errors.New("差分快捷关键词不能为空")
+		return errors.New("差分匹配内容不能为空")
 	}
-	if !channelIdentityVariantKeywordPattern.MatchString(input.Keyword) {
-		return errors.New("差分快捷关键词仅支持字母、数字、下划线和短横线，长度不超过64")
+	if utf8.RuneCountInString(input.Keyword) > 255 {
+		return errors.New("差分匹配内容长度不能超过255个字符")
+	}
+	switch input.MatchMode {
+	case ChannelIdentityVariantMatchModePrefix:
+		if utf8.RuneCountInString(input.MatchConfig) > 8 || strings.IndexFunc(input.MatchConfig, unicode.IsSpace) >= 0 {
+			return errors.New("前缀符号不能包含空白且长度不能超过8个字符")
+		}
+	case ChannelIdentityVariantMatchModeKeyword:
+		if input.MatchConfig != "any" && input.MatchConfig != "all" {
+			return errors.New("无效的关键词匹配类型")
+		}
+		separator, forbidden := "|", "&"
+		if input.MatchConfig == "all" {
+			separator, forbidden = "&", "|"
+		}
+		if strings.Contains(input.Keyword, forbidden) {
+			return errors.New("关键词匹配内容不能混用 | 和 &")
+		}
+		for _, part := range strings.Split(input.Keyword, separator) {
+			if strings.TrimSpace(part) == "" {
+				return errors.New("关键词匹配内容包含空关键词")
+			}
+		}
+	case ChannelIdentityVariantMatchModeRegex:
+		if input.MatchConfig != "sensitive" && input.MatchConfig != "insensitive" {
+			return errors.New("无效的正则表达式匹配方式")
+		}
+	default:
+		return errors.New("无效的差分匹配方式")
 	}
 	if input.SelectorEmoji == "" {
 		return errors.New("差分选择表情不能为空")
@@ -181,7 +238,7 @@ func ensureChannelIdentityVariantOwnership(userID string, channelID string, iden
 	return identity, nil
 }
 
-func ensureChannelIdentityVariantKeywordUnique(userID string, channelID string, identityID string, keyword string, excludeID string) error {
+func ensureChannelIdentityVariantKeywordUnique(userID string, channelID string, identityID string, keyword string, matchMode string, matchConfig string, excludeID string) error {
 	items, err := model.ChannelIdentityVariantListByIdentityID(channelID, userID, identityID)
 	if err != nil {
 		return err
@@ -190,8 +247,8 @@ func ensureChannelIdentityVariantKeywordUnique(userID string, channelID string, 
 		if item == nil || item.ID == excludeID {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(item.Keyword), keyword) {
-			return fmt.Errorf("差分快捷关键词 %s 已存在", keyword)
+		if strings.EqualFold(strings.TrimSpace(item.Keyword), keyword) && item.MatchMode == matchMode && item.MatchConfig == matchConfig {
+			return fmt.Errorf("差分匹配规则 %s 已存在", keyword)
 		}
 	}
 	return nil
@@ -243,7 +300,7 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, identity.ID, input.Keyword, ""); err != nil {
+	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, identity.ID, input.Keyword, input.MatchMode, input.MatchConfig, ""); err != nil {
 		return nil, err
 	}
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
@@ -267,6 +324,8 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 		UserID:             ownerUserID,
 		SelectorEmoji:      input.SelectorEmoji,
 		Keyword:            input.Keyword,
+		MatchMode:          input.MatchMode,
+		MatchConfig:        input.MatchConfig,
 		Note:               input.Note,
 		AvatarAttachmentID: input.AvatarAttachmentID,
 		DisplayName:        input.DisplayName,
@@ -352,7 +411,7 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 			return nil, err
 		}
 	}
-	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, input.IdentityID, input.Keyword, item.ID); err != nil {
+	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, input.IdentityID, input.Keyword, input.MatchMode, input.MatchConfig, item.ID); err != nil {
 		return nil, err
 	}
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
@@ -369,7 +428,7 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 		return nil, err
 	}
 	values := map[string]any{
-		"selector_emoji": input.SelectorEmoji, "keyword": input.Keyword, "note": input.Note,
+		"selector_emoji": input.SelectorEmoji, "keyword": input.Keyword, "match_mode": input.MatchMode, "match_config": input.MatchConfig, "note": input.Note,
 		"avatar_attachment_id": input.AvatarAttachmentID, "display_name": input.DisplayName, "color": input.Color,
 		"appearance_json": appearanceJSON, "enabled": input.Enabled,
 	}
@@ -378,6 +437,8 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 		source := *item
 		source.SelectorEmoji = input.SelectorEmoji
 		source.Keyword = input.Keyword
+		source.MatchMode = input.MatchMode
+		source.MatchConfig = input.MatchConfig
 		source.Note = input.Note
 		source.AvatarAttachmentID = input.AvatarAttachmentID
 		source.DisplayName = input.DisplayName

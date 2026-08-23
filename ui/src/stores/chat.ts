@@ -3324,6 +3324,8 @@ export const useChatStore = defineStore({
       identityId: string;
       selectorEmoji: string;
       keyword: string;
+      matchMode: 'prefix' | 'keyword' | 'regex';
+      matchConfig: string;
       note: string;
       avatarAttachmentId: string;
       displayName?: string;
@@ -3345,6 +3347,8 @@ export const useChatStore = defineStore({
       identityId: string;
       selectorEmoji: string;
       keyword: string;
+      matchMode: 'prefix' | 'keyword' | 'regex';
+      matchConfig: string;
       note: string;
       avatarAttachmentId: string;
       displayName?: string;

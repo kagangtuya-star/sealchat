@@ -18,6 +18,8 @@ type channelIdentityVariantPayload struct {
 	IdentityID                 string                                    `json:"identityId"`
 	SelectorEmoji              string                                    `json:"selectorEmoji"`
 	Keyword                    string                                    `json:"keyword"`
+	MatchMode                  string                                    `json:"matchMode"`
+	MatchConfig                string                                    `json:"matchConfig"`
 	Note                       string                                    `json:"note"`
 	AvatarAttachmentID         string                                    `json:"avatarAttachmentId"`
 	DisplayName                string                                    `json:"displayName"`
@@ -43,6 +45,8 @@ func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fi
 		"sharedRevision":     item.SharedRevision,
 		"selectorEmoji":      item.SelectorEmoji,
 		"keyword":            item.Keyword,
+		"matchMode":          item.MatchMode,
+		"matchConfig":        item.MatchConfig,
 		"note":               item.Note,
 		"avatarAttachmentId": item.AvatarAttachmentID,
 		"displayName":        item.DisplayName,
@@ -123,6 +127,8 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 		IdentityID:                 payload.IdentityID,
 		SelectorEmoji:              payload.SelectorEmoji,
 		Keyword:                    payload.Keyword,
+		MatchMode:                  payload.MatchMode,
+		MatchConfig:                payload.MatchConfig,
 		Note:                       payload.Note,
 		AvatarAttachmentID:         payload.AvatarAttachmentID,
 		DisplayName:                payload.DisplayName,
@@ -162,6 +168,8 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 		IdentityID:                 payload.IdentityID,
 		SelectorEmoji:              payload.SelectorEmoji,
 		Keyword:                    payload.Keyword,
+		MatchMode:                  payload.MatchMode,
+		MatchConfig:                payload.MatchConfig,
 		Note:                       payload.Note,
 		AvatarAttachmentID:         payload.AvatarAttachmentID,
 		DisplayName:                payload.DisplayName,

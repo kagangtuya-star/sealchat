@@ -3268,6 +3268,8 @@ type IdentityVariantShortcutMatchResult = {
   resetToDefault?: boolean;
 };
 
+type IdentityVariantMatchMode = 'prefix' | 'keyword' | 'regex';
+
 type IdentityAppearancePreview = {
   identityId: string;
   variantId: string;
@@ -3371,59 +3373,66 @@ const shouldSuppressKeywordSuggestForIdentityShortcut = (rawDraft: string, trigg
 const resolveIdentityVariantShortcutMatch = (
   rawDraft: string,
   variants: ChannelIdentityVariant[],
-  trigger = '=',
+  legacyTrigger = '=',
 ): IdentityVariantShortcutMatchResult | null => {
-  const shortcutMatch = new RegExp(`^${escapeRegExp(trigger)}(\\S+)(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
-  if (!shortcutMatch) {
+  if (!rawDraft) {
     return null;
   }
-  const targetKeywordRaw = (shortcutMatch[1] || '').trim();
-  if (!targetKeywordRaw) {
-    return null;
-  }
-  const restContent = shortcutMatch[2] ?? '';
-  const targetKeyword = targetKeywordRaw.toLowerCase();
-  if (targetKeyword === '还原') {
+  const resetMatch = new RegExp(`^${escapeRegExp(legacyTrigger)}还原(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
+  if (resetMatch) {
     return {
       matched: null,
-      restContent,
+      restContent: resetMatch[1] ?? '',
       ambiguous: false,
       resetToDefault: true,
     };
   }
-  const normalizedCandidates = variants
-    .filter(item => item?.enabled !== false)
-    .map((item, index) => ({
-      item,
-      index,
-      normalizedKeyword: (item.keyword || '').trim().toLowerCase(),
-      length: (item.keyword || '').trim().length,
-    }))
-    .filter(item => !!item.normalizedKeyword);
-
-  const exact = normalizedCandidates.find(item => item.normalizedKeyword === targetKeyword);
-  if (exact) {
-    return { matched: exact.item, restContent, ambiguous: false };
-  }
-
-  const prefixCandidates = normalizedCandidates.filter(item => item.normalizedKeyword.startsWith(targetKeyword));
-  if (!prefixCandidates.length) {
-    return { matched: null, restContent, ambiguous: false };
-  }
-
-  const sortedCandidates = prefixCandidates.slice().sort((a, b) => {
-    if (a.length !== b.length) {
-      return a.length - b.length;
+  const normalizedDraft = rawDraft.toLowerCase();
+  for (const targetMode of ['prefix', 'keyword', 'regex'] as IdentityVariantMatchMode[]) {
+    for (const item of variants) {
+      if (!item || item.enabled === false) {
+        continue;
+      }
+      const content = String(item.keyword || '').trim();
+      if (!content) {
+        continue;
+      }
+      const mode = (item.matchMode || 'prefix') as IdentityVariantMatchMode;
+      if (mode !== targetMode) {
+        continue;
+      }
+      if (mode === 'prefix') {
+        const symbol = String(item.matchConfig || legacyTrigger || '=').trim();
+        const activation = `${symbol}${content}`;
+        if (normalizedDraft.startsWith(activation.toLowerCase()) && (rawDraft.length === activation.length || /\s/.test(rawDraft.charAt(activation.length)))) {
+          return { matched: item, restContent: rawDraft.slice(activation.length).replace(/^\s+/, ''), ambiguous: false };
+        }
+        continue;
+      }
+      if (mode === 'keyword') {
+        const matchAll = item.matchConfig === 'all';
+        const separator = matchAll ? '&' : '|';
+        const keywords = content.split(separator).map(keyword => keyword.trim().toLowerCase()).filter(Boolean);
+        const matched = keywords.length > 0 && (matchAll
+          ? keywords.every(keyword => normalizedDraft.includes(keyword))
+          : keywords.some(keyword => normalizedDraft.includes(keyword)));
+        if (matched) {
+          return { matched: item, restContent: rawDraft, ambiguous: false };
+        }
+        continue;
+      }
+      if (mode === 'regex') {
+        try {
+          if (new RegExp(content, item.matchConfig === 'insensitive' ? 'i' : '').test(rawDraft)) {
+            return { matched: item, restContent: rawDraft, ambiguous: false };
+          }
+        } catch {
+          continue;
+        }
+      }
     }
-    return a.index - b.index;
-  });
-  const best = sortedCandidates[0];
-  const hasAmbiguousShortest = sortedCandidates.some((item, index) => index > 0 && item.length === best.length && item.normalizedKeyword !== best.normalizedKeyword);
-  return {
-    matched: hasAmbiguousShortest ? null : best.item,
-    restContent,
-    ambiguous: hasAmbiguousShortest,
-  };
+  }
+  return { matched: null, restContent: rawDraft, ambiguous: false };
 };
 
 const resolveIdentityVariantIdFromMessage = (msg?: any): string | null => {
@@ -3516,15 +3525,41 @@ const identityVariantDialogMode = ref<'create' | 'edit'>('create');
 const identityVariantSubmitting = ref(false);
 const editingIdentityVariant = ref<ChannelIdentityVariant | null>(null);
 const identityVariantEmojiPickerVisible = ref(false);
+const identityVariantMatchModeOptions = [
+  { label: '前缀匹配', value: 'prefix' },
+  { label: '关键词匹配', value: 'keyword' },
+  { label: '正则表达式匹配', value: 'regex' },
+];
+const identityVariantKeywordMatchOptions = [
+  { label: '任一关键词', value: 'any' },
+  { label: '全部关键词', value: 'all' },
+];
+const identityVariantRegexMatchOptions = [
+  { label: '区分大小写', value: 'sensitive' },
+  { label: '忽略大小写', value: 'insensitive' },
+];
 const identityVariantForm = reactive({
   selectorEmoji: '',
-  keyword: '',
+  matchMode: 'prefix' as IdentityVariantMatchMode,
+  matchDrafts: {
+    prefix: { config: '=', content: '' },
+    keyword: { config: 'any', content: '' },
+    regex: { config: 'sensitive', content: '' },
+  } as Record<IdentityVariantMatchMode, { config: string; content: string }>,
   note: '',
   avatarAttachmentId: '',
   displayName: '',
   color: '',
   theaterPresentation: {} as TheaterPresentationPatch,
   enabled: true,
+});
+const activeIdentityVariantMatchDraft = computed(() => identityVariantForm.matchDrafts[identityVariantForm.matchMode]);
+const identityVariantMatchContentPlaceholder = computed(() => {
+  if (identityVariantForm.matchMode === 'prefix') return '例如：笑';
+  if (identityVariantForm.matchMode === 'keyword') {
+    return activeIdentityVariantMatchDraft.value.config === 'all' ? '例如：笑&挥手' : '例如：笑|开心';
+  }
+  return '例如：笑|开心|挥手';
 });
 const identityVariantColorDraft = ref('');
 const identityVariantAvatarPreview = ref('');
@@ -4243,13 +4278,14 @@ const maybePromptIdentitySync = async () => {
   await openIdentitySyncDialog();
 };
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v5';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v6';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
   'sealchat.channel-identity/v1',
   'sealchat.channel-identity/v2',
   'sealchat.channel-identity/v3',
   'sealchat.channel-identity/v4',
   'sealchat.channel-identity/v5',
+  'sealchat.channel-identity/v6',
 ];
 
 interface IdentityAssetExportIssueState {
@@ -4612,6 +4648,8 @@ const buildIdentityExportSnapshot = async (options: {
         identitySourceId: identity.id,
         selectorEmoji: variant.selectorEmoji,
         keyword: variant.keyword,
+        matchMode: variant.matchMode || 'prefix',
+        matchConfig: variant.matchConfig || '=',
         note: variant.note,
         avatarAssetKey: avatarVariantAssetKey || undefined,
         displayName: variant.displayName,
@@ -4949,6 +4987,8 @@ const importIdentityMigrationSnapshot = async (
           identityId: targetIdentityId,
           selectorEmoji: variant.selectorEmoji,
           keyword: temporaryKeyword,
+          matchMode: variant.matchMode || 'prefix',
+          matchConfig: variant.matchConfig || '=',
           note: variant.note || '',
           avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
           displayName: variant.displayName || '',
@@ -4972,6 +5012,8 @@ const importIdentityMigrationSnapshot = async (
             identityId: targetIdentityId,
             selectorEmoji: variant.selectorEmoji,
             keyword: temporaryKeyword,
+            matchMode: variant.matchMode || 'prefix',
+            matchConfig: variant.matchConfig || '=',
             note: variant.note || '',
             avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
             displayName: variant.displayName || '',
@@ -4996,6 +5038,8 @@ const importIdentityMigrationSnapshot = async (
             identityId: targetIdentityId,
             selectorEmoji: variant.selectorEmoji,
             keyword: variant.keyword,
+            matchMode: variant.matchMode || 'prefix',
+            matchConfig: variant.matchConfig || '=',
             note: variant.note || '',
             avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
             displayName: variant.displayName || '',
@@ -5766,7 +5810,15 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   revokeIdentityVariantObjectURL();
   identityVariantAvatarFile = null;
   identityVariantForm.selectorEmoji = variant?.selectorEmoji || '';
-  identityVariantForm.keyword = variant?.keyword || '';
+  identityVariantForm.matchMode = (variant?.matchMode || 'prefix') as IdentityVariantMatchMode;
+  identityVariantForm.matchDrafts = {
+    prefix: { config: '=', content: '' },
+    keyword: { config: 'any', content: '' },
+    regex: { config: 'sensitive', content: '' },
+  };
+  const activeDraft = identityVariantForm.matchDrafts[identityVariantForm.matchMode];
+  activeDraft.config = variant?.matchConfig || activeDraft.config;
+  activeDraft.content = variant?.keyword || '';
   identityVariantForm.note = variant?.note || '';
   identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
   identityVariantForm.displayName = variant?.displayName || '';
@@ -5923,7 +5975,9 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
     return false;
   }
   const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
-  const keyword = String(identityVariantForm.keyword || '').trim();
+  const matchMode = identityVariantForm.matchMode;
+  const matchConfig = String(activeIdentityVariantMatchDraft.value.config || '').trim();
+  const keyword = String(activeIdentityVariantMatchDraft.value.content || '').trim();
   const note = String(identityVariantForm.note || '').trim();
   const rawColor = normalizeColorDraftText(identityVariantColorDraft.value);
   const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
@@ -5932,8 +5986,28 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
     return false;
   }
   if (!keyword) {
-    message.warning('请输入切换关键词');
+    message.warning('请输入匹配内容');
     return false;
+  }
+  if (matchMode === 'prefix' && (!matchConfig || /\s/.test(matchConfig))) {
+    message.warning('前缀符号不能为空或包含空白');
+    return false;
+  }
+  if (matchMode === 'keyword') {
+    const forbidden = matchConfig === 'all' ? '|' : '&';
+    const separator = matchConfig === 'all' ? '&' : '|';
+    if (keyword.includes(forbidden) || keyword.split(separator).some(item => !item.trim())) {
+      message.warning('关键词匹配内容不能混用 | 和 &，且不能包含空关键词');
+      return false;
+    }
+  }
+  if (matchMode === 'regex') {
+    try {
+      new RegExp(keyword, matchConfig === 'insensitive' ? 'i' : '');
+    } catch {
+      message.warning('请输入有效的正则表达式');
+      return false;
+    }
   }
   if (!commitIdentityVariantColorDraft(true)) {
     return false;
@@ -5958,6 +6032,8 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
       identityId: editingIdentity.value.id,
       selectorEmoji,
       keyword,
+      matchMode,
+      matchConfig,
       note,
       avatarAttachmentId,
       displayName: String(identityVariantForm.displayName || '').trim(),
@@ -9835,13 +9911,6 @@ const activeIdentityVariantShortcutContext = computed(() => {
     };
   }
   const trigger = display.settings.identityVariantQuickSwitchTrigger || '=';
-  if (!rawDraft.startsWith(trigger)) {
-    return {
-      draftContent: rawDraft,
-      variant: fallbackVariant,
-      matched: false,
-    };
-  }
   const shortcutResult = resolveIdentityVariantShortcutMatch(
     rawDraft,
     chat.getIdentityVariants(channelId, identity.id),
@@ -18823,12 +18892,54 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </n-form-item>
-      <n-form-item label="切换关键词">
-        <n-input
-          v-model:value="identityVariantForm.keyword"
-          maxlength="64"
-          placeholder="例如 battle / calm / angry"
-        />
+      <n-form-item>
+        <template #label>
+          <span class="identity-variant-match-label">
+            匹配方式
+            <n-popover trigger="hover" placement="right-start" :width="260">
+              <template #trigger>
+                <button type="button" class="identity-variant-match-help" aria-label="匹配方式说明">?</button>
+              </template>
+              <div class="identity-variant-match-help-content">
+                <div><strong>前缀匹配：</strong>消息以指定符号和关键词开头时触发，例如 =笑。</div>
+                <div><strong>关键词匹配：</strong>消息包含关键词时触发；| 表示“或”，&amp; 表示“与”。</div>
+                <div><strong>正则表达式匹配：</strong>使用正则规则匹配消息内容；无效规则不会触发。</div>
+              </div>
+            </n-popover>
+          </span>
+        </template>
+        <n-select v-model:value="identityVariantForm.matchMode" :options="identityVariantMatchModeOptions" />
+      </n-form-item>
+      <n-form-item>
+        <div class="identity-variant-match-grid">
+          <label class="identity-variant-match-field">
+            <span>{{ identityVariantForm.matchMode === 'prefix' ? '前缀符号' : identityVariantForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配方式' }}</span>
+            <n-input
+              v-if="identityVariantForm.matchMode === 'prefix'"
+              v-model:value="activeIdentityVariantMatchDraft.config"
+              maxlength="8"
+              placeholder="="
+            />
+            <n-select
+              v-else-if="identityVariantForm.matchMode === 'keyword'"
+              v-model:value="activeIdentityVariantMatchDraft.config"
+              :options="identityVariantKeywordMatchOptions"
+            />
+            <n-select
+              v-else
+              v-model:value="activeIdentityVariantMatchDraft.config"
+              :options="identityVariantRegexMatchOptions"
+            />
+          </label>
+          <label class="identity-variant-match-field">
+            <span>匹配内容</span>
+            <n-input
+              v-model:value="activeIdentityVariantMatchDraft.content"
+              maxlength="255"
+              :placeholder="identityVariantMatchContentPlaceholder"
+            />
+          </label>
+        </div>
       </n-form-item>
       <n-form-item label="备注">
         <n-input
@@ -23235,6 +23346,47 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.identity-variant-match-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.identity-variant-match-help {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--sc-border-strong, rgba(148, 163, 184, 0.45));
+  border-radius: 50%;
+  background: transparent;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 12px;
+  line-height: 16px;
+  cursor: help;
+}
+
+.identity-variant-match-help-content {
+  display: grid;
+  gap: 0.55rem;
+  line-height: 1.6;
+}
+
+.identity-variant-match-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 35fr) minmax(0, 65fr);
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.identity-variant-match-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 0.78rem;
 }
 
 .identity-variant-picker {
