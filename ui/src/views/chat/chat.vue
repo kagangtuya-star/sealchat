@@ -97,6 +97,7 @@ import { isSmartLinkNode, smartLinkToPlainText } from '@/utils/tiptapSmartLink';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
+import { normalizePunctuationForMessageSend } from '@/utils/punctuationNormalizer';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
 import { useIFormStore } from '@/stores/iform';
@@ -6831,6 +6832,7 @@ const handleExportMessages = async (params: {
   removeDiceCommands: boolean;
   withoutTimestamp: boolean;
   mergeMessages: boolean;
+  autoCorrectPunctuation: boolean;
   textColorizeBBCode: boolean;
   textColorizeBBCodeMap?: Record<string, string>;
   textColorizeBBCodeNameMap?: Record<string, string>;
@@ -6869,6 +6871,7 @@ const handleExportMessages = async (params: {
       includeDiceCommands: !params.removeDiceCommands,
       withoutTimestamp: params.withoutTimestamp,
       mergeMessages: params.mergeMessages,
+      autoCorrectPunctuation: params.autoCorrectPunctuation,
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
       textColorizeBBCodeMap: params.textColorizeBBCode && params.format === 'txt'
         ? (params.textColorizeBBCodeMap || {})
@@ -13778,6 +13781,14 @@ const performSend = async (options?: {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
+  const outgoingDraft = normalizePunctuationForMessageSend(
+    draft,
+    display.settings.autoCorrectPunctuation,
+    sendMode,
+    isBotCommandLikeContent(draft, chat.curChannel?.botCommandPrefixes),
+    Boolean(activeReeditSource),
+  );
+
   let insertPlacement = resolveMessageInsertPlacement();
   if (activeMessageInsertTarget.value && !insertPlacement) {
     validateMessageInsertTarget();
@@ -13810,7 +13821,7 @@ const performSend = async (options?: {
     id: clientId,
     createdAt: now,
     updatedAt: now,
-    content: draft,
+    content: outgoingDraft,
     user: user.info,
     member: chat.curMember || undefined,
     quote: replyTo,
@@ -13881,10 +13892,10 @@ const performSend = async (options?: {
 
     if (isRichMode) {
       // 富文本模式：直接发送 JSON
-      finalContent = draft;
+      finalContent = outgoingDraft;
     } else {
       // 纯文本模式：仅做安全转义与 Satori 占位替换，轻量 Markdown 交给前端渲染
-      finalContent = await normalizePlainMessageContent(draft);
+      finalContent = await normalizePlainMessageContent(outgoingDraft);
     }
 
     if (

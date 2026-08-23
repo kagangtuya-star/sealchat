@@ -23,6 +23,7 @@ interface ExportParams {
   removeDiceCommands: boolean
   withoutTimestamp: boolean
   mergeMessages: boolean
+  autoCorrectPunctuation: boolean
   textColorizeBBCode: boolean
   textColorizeBBCodeMap?: Record<string, string>
   textColorizeBBCodeNameMap?: Record<string, string>
@@ -165,6 +166,7 @@ const form = reactive<ExportParams>({
   removeDiceCommands: true,
   withoutTimestamp: false,
   mergeMessages: true,
+  autoCorrectPunctuation: true,
   textColorizeBBCode: false,
   autoUpload: false,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
@@ -895,6 +897,7 @@ const handleClose = () => {
   form.removeDiceCommands = true
   form.withoutTimestamp = false
   form.mergeMessages = true
+  form.autoCorrectPunctuation = true
   form.textColorizeBBCode = false
   form.autoUpload = false
   form.displayName = ''
@@ -1097,6 +1100,14 @@ onBeforeUnmount(() => {
               </n-checkbox>
             </template>
             导出的文本中移除每条消息的时间前缀，适合整理剧本或公开内容。
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.autoCorrectPunctuation">
+                自动纠正标点
+              </n-checkbox>
+            </template>
+            按中文语境纠正每条消息正文中的标点，不修改原始消息。
           </n-tooltip>
           <n-tooltip trigger="hover" v-if="form.format === 'txt'">
             <template #trigger>

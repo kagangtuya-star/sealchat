@@ -27,6 +27,7 @@ import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLast
 import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, resolveChannelSessionRestoreStrategy as resolveChannelSessionRestoreState, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
 import { isMobileBrowserRuntime, resolveWindowFocusState, shouldSuppressExternalNotification } from '@/utils/windowFocusState';
 import { canCreateChannelSession } from '@/utils/channelCreateGuard';
+import { buildAutoCorrectPunctuationExportPayload } from '@/utils/exportPunctuationOption';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -6251,6 +6252,7 @@ export const useChatStore = defineStore({
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
+      autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
       sliceLimit?: number;
       maxConcurrency?: number;
@@ -6268,6 +6270,7 @@ export const useChatStore = defineStore({
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
+        ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };
       if (params.displayName) {
         payload.display_name = params.displayName;
@@ -6313,6 +6316,7 @@ export const useChatStore = defineStore({
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
+      autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
       sliceLimit?: number;
       maxConcurrency?: number;
@@ -6331,6 +6335,7 @@ export const useChatStore = defineStore({
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
+        ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };
       if (params.displayName) payload.display_name = params.displayName;
       if (params.timeRange?.length === 2) payload.time_range = params.timeRange;

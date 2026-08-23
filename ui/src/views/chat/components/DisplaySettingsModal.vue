@@ -1076,6 +1076,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">自动纠正标点符号</p>
+            <p class="section-desc">发送普通文本时按中文语境纠正标点；富文本不受影响</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.autoCorrectPunctuation">
+          <template #checked>已开启</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">插话切换规则</p>
             <p class="section-desc">点击“插话”后，第一条消息发送成功时，第二条消息将按此规则进入场内/场外模式</p>
           </div>

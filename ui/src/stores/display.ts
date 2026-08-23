@@ -109,6 +109,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  autoCorrectPunctuation: boolean
   mobileMinimalInputEnabled: boolean
   channelAggregateBadgeEnabled: boolean
   enableIcToggleHotkey: boolean
@@ -545,6 +546,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
+  autoCorrectPunctuation: true,
   mobileMinimalInputEnabled: isMobileBrowserRuntime(),
   channelAggregateBadgeEnabled: true,
   enableIcToggleHotkey: true,
@@ -846,6 +848,7 @@ const parseStoredSettingsInternal = (
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       channelAggregateBadgeEnabled: coerceBoolean((parsed as any)?.channelAggregateBadgeEnabled ?? true),
       enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
@@ -1183,6 +1186,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  autoCorrectPunctuation:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'autoCorrectPunctuation')
+      ? coerceBoolean((patch as any).autoCorrectPunctuation)
+      : base.autoCorrectPunctuation,
   mobileMinimalInputEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)

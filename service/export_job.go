@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/service/textfmt"
 )
 
 const (
@@ -48,6 +49,7 @@ type ExportJobOptions struct {
 	IncludeDiceCommand        bool
 	WithoutTimestamp          bool
 	MergeMessages             bool
+	AutoCorrectPunctuation    bool
 	StartTime                 *time.Time
 	EndTime                   *time.Time
 	DisplaySettings           map[string]any
@@ -65,6 +67,7 @@ type exportExtraOptions struct {
 	TextColorizeBBCode        bool              `json:"text_colorize_bbcode,omitempty"`
 	TextColorizeBBCodeMap     map[string]string `json:"text_colorize_bbcode_map,omitempty"`
 	TextColorizeBBCodeNameMap map[string]string `json:"text_colorize_bbcode_name_map,omitempty"`
+	AutoCorrectPunctuation    bool              `json:"auto_correct_punctuation"`
 	IncludeImages             bool              `json:"include_images"`
 	IncludeDiceCommand        bool              `json:"include_dice_commands"`
 	BatchChannelIDs           []string          `json:"batch_channel_ids,omitempty"`
@@ -224,11 +227,42 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 		return nil, err
 	}
 	extra := parseExportExtraOptions(job.ExtraOptions)
+	messages = normalizeMessagesForExportPunctuation(messages, extra.AutoCorrectPunctuation)
 	if job.MergeMessages {
 		return mergeSequentialMessagesForExport(messages, extra, job.IncludeOOC), nil
 	}
 	messages = filterMessagesForExport(messages, extra, job.IncludeOOC)
 	return messages, nil
+}
+
+func normalizeMessagesForExportPunctuation(messages []*model.MessageModel, enabled bool) []*model.MessageModel {
+	if !enabled || len(messages) == 0 {
+		return messages
+	}
+	normalized := make([]*model.MessageModel, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil {
+			normalized = append(normalized, nil)
+			continue
+		}
+		clone := cloneMessage(msg)
+		if shouldNormalizeExportPunctuation(msg) {
+			clone.Content = textfmt.NormalizeChinesePunctuation(msg.Content)
+		}
+		normalized = append(normalized, clone)
+	}
+	return normalized
+}
+
+func shouldNormalizeExportPunctuation(msg *model.MessageModel) bool {
+	// MessageModel has no explicit type. Plain user text whitelist: persisted user
+	// sender, no widget/dice payload, no TipTap document, no command syntax.
+	if msg == nil || strings.TrimSpace(msg.UserID) == "" || (msg.User != nil && msg.User.IsBot) ||
+		strings.TrimSpace(msg.WidgetData) != "" || strings.TrimSpace(msg.DiceVisualJSON) != "" || LooksLikeTipTapJSON(msg.Content) {
+		return false
+	}
+	plainContent := buildFilteredPlainContent(msg.Content, true)
+	return !shouldDisableInlineCodeForBotCommand(msg.Content) && !isSingleLineDiceCommand(plainContent)
 }
 
 func filterMessagesForExport(messages []*model.MessageModel, extra *exportExtraOptions, includeOOC bool) []*model.MessageModel {
@@ -613,6 +647,7 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		TextColorizeBBCode:        opts.TextColorizeBBCode,
 		TextColorizeBBCodeMap:     cloneStringMap(opts.TextColorizeBBCodeMap),
 		TextColorizeBBCodeNameMap: cloneStringMap(opts.TextColorizeBBCodeNameMap),
+		AutoCorrectPunctuation:    opts.AutoCorrectPunctuation,
 		IncludeImages:             opts.IncludeImages,
 		IncludeDiceCommand:        opts.IncludeDiceCommand,
 	}
@@ -625,6 +660,7 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		!extra.TextColorizeBBCode &&
 		len(extra.TextColorizeBBCodeMap) == 0 &&
 		len(extra.TextColorizeBBCodeNameMap) == 0 &&
+		extra.AutoCorrectPunctuation &&
 		extra.IncludeImages &&
 		extra.IncludeDiceCommand {
 		return "", nil
@@ -638,10 +674,11 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 
 func parseExportExtraOptions(raw string) *exportExtraOptions {
 	extra := &exportExtraOptions{
-		SliceLimit:         DefaultExportSliceLimit,
-		MaxConcurrency:     DefaultExportConcurrency,
-		IncludeImages:      true,
-		IncludeDiceCommand: true,
+		SliceLimit:             DefaultExportSliceLimit,
+		MaxConcurrency:         DefaultExportConcurrency,
+		AutoCorrectPunctuation: true,
+		IncludeImages:          true,
+		IncludeDiceCommand:     true,
 	}
 	if strings.TrimSpace(raw) == "" {
 		return extra
@@ -650,6 +687,7 @@ func parseExportExtraOptions(raw string) *exportExtraOptions {
 		// 格式异常时退回默认值
 		extra.SliceLimit = DefaultExportSliceLimit
 		extra.MaxConcurrency = DefaultExportConcurrency
+		extra.AutoCorrectPunctuation = true
 		return extra
 	}
 	extra.SliceLimit = NormalizeExportSliceLimit(extra.SliceLimit)
@@ -828,16 +866,17 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 	}
 	extra := parseExportExtraOptions(job.ExtraOptions)
 	opts := &ExportJobOptions{
-		UserID:           job.UserID,
-		ChannelID:        job.ChannelID,
-		Format:           job.Format,
-		DisplayName:      job.DisplayName,
-		IncludeOOC:       job.IncludeOOC,
-		IncludeArchived:  job.IncludeArchived,
-		WithoutTimestamp: job.WithoutTimestamp,
-		MergeMessages:    job.MergeMessages,
-		StartTime:        job.StartTime,
-		EndTime:          job.EndTime,
+		UserID:                 job.UserID,
+		ChannelID:              job.ChannelID,
+		Format:                 job.Format,
+		DisplayName:            job.DisplayName,
+		IncludeOOC:             job.IncludeOOC,
+		IncludeArchived:        job.IncludeArchived,
+		WithoutTimestamp:       job.WithoutTimestamp,
+		MergeMessages:          job.MergeMessages,
+		AutoCorrectPunctuation: extra.AutoCorrectPunctuation,
+		StartTime:              job.StartTime,
+		EndTime:                job.EndTime,
 	}
 	opts.DisplaySettings = extra.DisplaySettings
 	opts.SliceLimit = extra.SliceLimit
