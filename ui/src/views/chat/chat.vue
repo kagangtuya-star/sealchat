@@ -18770,7 +18770,7 @@ onBeforeUnmount(() => {
             <div>
               <div class="identity-variant-section__title">{{ editingIdentity.sharedIdentityId ? '配置跨频道同步的头像差分' : '为当前频道角色配置头像差分' }}</div>
               <div class="identity-variant-section__hint">
-                {{ isManagingBotIdentity ? 'BOT 需在消息中指定身份差分后生效。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
+                {{ isManagingBotIdentity ? 'BOT 发送消息时由后端按匹配规则自动选择差分。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
               </div>
             </div>
             <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>

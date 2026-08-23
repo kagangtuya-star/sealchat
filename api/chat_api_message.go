@@ -1965,7 +1965,25 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 
+	identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, data.IdentityID)
+	if err != nil {
+		return nil, err
+	}
+	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
+	if identity == nil && len(channelId) < 30 {
+		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
+	}
 	content := data.Content
+	var variant *model.ChannelIdentityVariantModel
+	if ctx.User.IsBot && strings.TrimSpace(data.IdentityVariantID) == "" {
+		variant, content, err = service.ChannelIdentityVariantMatchMessage(identity, content)
+	} else {
+		variant, err = service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 	messageContextICMode := icMode
 	if ctx.User.IsBot && requestedICMode == "ooc" && botContextICMode != "" && shouldTreatExternalBotMessageAsOOC(content) {
 		messageContextICMode = botContextICMode
@@ -2022,21 +2040,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if err != nil {
 		return nil, err
 	}
-
-	identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, data.IdentityID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
-	if identity == nil && len(channelId) < 30 {
-		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
-	}
-	variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
-	if err != nil {
-		return nil, err
-	}
-	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {

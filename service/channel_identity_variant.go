@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -200,6 +201,13 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 	case ChannelIdentityVariantMatchModeRegex:
 		if input.MatchConfig != "sensitive" && input.MatchConfig != "insensitive" {
 			return errors.New("无效的正则表达式匹配方式")
+		}
+		pattern := input.Keyword
+		if input.MatchConfig == "insensitive" {
+			pattern = "(?i:" + pattern + ")"
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return errors.New("正则表达式无效")
 		}
 	default:
 		return errors.New("无效的差分匹配方式")
@@ -624,6 +632,112 @@ func ResolveChannelIdentityAppearance(identity *model.ChannelIdentityModel, vari
 		result.AvatarAttachmentID = value
 	}
 	return result
+}
+
+func matchChannelIdentityVariantPrefix(content string, symbol string, keyword string) (string, bool) {
+	activation := symbol + keyword
+	if len(content) < len(activation) || !strings.EqualFold(content[:len(activation)], activation) {
+		return content, false
+	}
+	rest := content[len(activation):]
+	if rest != "" {
+		next, _ := utf8.DecodeRuneInString(rest)
+		if !unicode.IsSpace(next) {
+			return content, false
+		}
+	}
+	return strings.TrimLeftFunc(rest, unicode.IsSpace), true
+}
+
+// ChannelIdentityVariantMatchMessage 按 BOT 消息内容匹配差分；前缀规则会移除匹配头。
+func ChannelIdentityVariantMatchMessage(identity *model.ChannelIdentityModel, content string) (*model.ChannelIdentityVariantModel, string, error) {
+	if identity == nil || strings.TrimSpace(content) == "" {
+		return nil, content, nil
+	}
+	items, err := model.ChannelIdentityVariantListByIdentityID(identity.ChannelID, identity.UserID, identity.ID)
+	if err != nil {
+		return nil, content, err
+	}
+	plainContent := NormalizeMessageContentToPlainText(content)
+	if plainContent == "" {
+		plainContent = content
+	}
+	lowerContent := strings.ToLower(plainContent)
+	for _, targetMode := range []string{
+		ChannelIdentityVariantMatchModePrefix,
+		ChannelIdentityVariantMatchModeKeyword,
+		ChannelIdentityVariantMatchModeRegex,
+	} {
+		for _, item := range items {
+			if item == nil || !item.Enabled {
+				continue
+			}
+			mode := strings.ToLower(strings.TrimSpace(item.MatchMode))
+			if mode == "" {
+				mode = ChannelIdentityVariantMatchModePrefix
+			}
+			if mode != targetMode {
+				continue
+			}
+			keyword := strings.TrimSpace(item.Keyword)
+			if keyword == "" {
+				continue
+			}
+			switch mode {
+			case ChannelIdentityVariantMatchModePrefix:
+				symbol := strings.TrimSpace(item.MatchConfig)
+				if symbol == "" {
+					symbol = "="
+				}
+				if rest, matched := matchChannelIdentityVariantPrefix(content, symbol, keyword); matched {
+					return item, rest, nil
+				}
+				if content != plainContent {
+					if _, matched := matchChannelIdentityVariantPrefix(plainContent, symbol, keyword); matched {
+						return item, content, nil
+					}
+				}
+			case ChannelIdentityVariantMatchModeKeyword:
+				matchAll := strings.EqualFold(strings.TrimSpace(item.MatchConfig), "all")
+				separator := "|"
+				if matchAll {
+					separator = "&"
+				}
+				parts := strings.Split(keyword, separator)
+				matched := matchAll
+				hasKeyword := false
+				for _, part := range parts {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					hasKeyword = true
+					partMatched := strings.Contains(lowerContent, strings.ToLower(part))
+					if matchAll && !partMatched {
+						matched = false
+						break
+					}
+					if !matchAll && partMatched {
+						matched = true
+						break
+					}
+				}
+				if hasKeyword && matched {
+					return item, content, nil
+				}
+			case ChannelIdentityVariantMatchModeRegex:
+				pattern := keyword
+				if strings.EqualFold(strings.TrimSpace(item.MatchConfig), "insensitive") {
+					pattern = "(?i:" + pattern + ")"
+				}
+				compiled, compileErr := regexp.Compile(pattern)
+				if compileErr == nil && compiled.MatchString(plainContent) {
+					return item, content, nil
+				}
+			}
+		}
+	}
+	return nil, content, nil
 }
 
 func ChannelIdentityVariantValidateMessageVariant(userID string, channelID string, identity *model.ChannelIdentityModel, variantID string) (*model.ChannelIdentityVariantModel, error) {
