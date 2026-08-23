@@ -45,6 +45,16 @@ type backupFile struct {
 }
 
 func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
+	return executeBackup(cfg, false)
+}
+
+// ExecuteAutomaticBackup 执行自动备份，近期已有备份时跳过。
+func ExecuteAutomaticBackup(cfg *utils.AppConfig) (bool, error) {
+	info, err := executeBackup(cfg, true)
+	return info != nil, err
+}
+
+func executeBackup(cfg *utils.AppConfig, respectMinInterval bool) (*BackupInfo, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
 	}
@@ -59,6 +69,16 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 	backupDir := strings.TrimSpace(cfg.Backup.Path)
 	if backupDir == "" {
 		return nil, errors.New("backup path is empty")
+	}
+	now := backupNow()
+	if respectMinInterval && cfg.Backup.MinIntervalMinutes > 0 {
+		recent, err := hasRecentBackup(backupDir, cfg.Backup.MinIntervalMinutes, now)
+		if err != nil {
+			return nil, err
+		}
+		if recent {
+			return nil, nil
+		}
 	}
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return nil, err
@@ -90,7 +110,6 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 		files = append(files, backupFile{Source: dbPath + "-shm", Name: filepath.Base(dbPath + "-shm")})
 	}
 
-	now := backupNow()
 	timestamp := now.Format("20060102-150405")
 	filename := fmt.Sprintf("backup-%s.zip", timestamp)
 	targetPath := filepath.Join(backupDir, filename)
@@ -121,6 +140,19 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 		CreatedAt: info.ModTime().Unix(),
 		Protected: false,
 	}, nil
+}
+
+func hasRecentBackup(dir string, minIntervalMinutes int, now time.Time) (bool, error) {
+	items, err := listBackups(dir)
+	if err != nil {
+		return false, err
+	}
+	if len(items) == 0 {
+		return false, nil
+	}
+	minimumInterval := time.Duration(minIntervalMinutes) * time.Minute
+	latest := time.Unix(items[0].CreatedAt, 0)
+	return now.Before(latest.Add(minimumInterval)), nil
 }
 
 func ListBackups(cfg utils.BackupConfig) ([]BackupInfo, error) {

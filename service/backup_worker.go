@@ -42,10 +42,19 @@ func runBackupWorker(cfg *utils.AppConfig) {
 }
 
 func runBackupOnce(cfg *utils.AppConfig) {
+	if current := utils.GetConfig(); current != nil {
+		cfg = current
+	}
 	if cfg == nil {
 		return
 	}
-	if _, err := ExecuteBackup(cfg); err != nil {
+	if !cfg.Backup.Enabled {
+		return
+	}
+	created, err := ExecuteAutomaticBackup(cfg)
+	if err != nil {
 		log.Printf("backup: 执行失败: %v", err)
+	} else if !created {
+		log.Println("backup: 近期已有备份，跳过自动备份")
 	}
 }

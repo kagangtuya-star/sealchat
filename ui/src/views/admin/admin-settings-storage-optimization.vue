@@ -34,6 +34,7 @@ const message = useMessage()
 const defaultBackupConfig = (): BackupConfig => ({
   enabled: true,
   intervalHours: 12,
+  minIntervalMinutes: 10,
   retentionCount: 5,
   path: './backups',
 })
@@ -46,6 +47,8 @@ const defaultSQLiteConfig = (): SQLiteConfig => ({
 const normalizeBackupConfig = (value?: BackupConfig | null): BackupConfig => ({
   enabled: value?.enabled ?? true,
   intervalHours: value?.intervalHours && value.intervalHours > 0 ? value.intervalHours : 12,
+  minIntervalMinutes:
+    value?.minIntervalMinutes && value.minIntervalMinutes > 0 ? value.minIntervalMinutes : 10,
   retentionCount: value?.retentionCount && value.retentionCount > 0 ? value.retentionCount : 5,
   path: value?.path || './backups',
 })
@@ -425,6 +428,11 @@ onMounted(async () => {
           <n-form-item label="备份间隔">
             <n-input-number v-model:value="backupConfig.intervalHours" :min="1">
               <template #suffix>小时</template>
+            </n-input-number>
+          </n-form-item>
+          <n-form-item label="最小备份间隔" feedback="仅限制自动备份；手动备份不受影响。">
+            <n-input-number v-model:value="backupConfig.minIntervalMinutes" :min="1" :precision="0">
+              <template #suffix>分钟</template>
             </n-input-number>
           </n-form-item>
           <n-form-item label="保留数量" feedback="超过此数量的旧备份将被自动删除；其中约三分之一历史时间桶会自动保护，超时后才可被轮转。保留数量为 1 时仅保留最新备份，历史保护不会生效。">

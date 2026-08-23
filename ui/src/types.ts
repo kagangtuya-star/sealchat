@@ -386,6 +386,7 @@ export interface ServerStorageConfig {
 export interface BackupConfig {
   enabled: boolean;
   intervalHours: number;
+  minIntervalMinutes: number;
   retentionCount: number;
   path: string;
 }

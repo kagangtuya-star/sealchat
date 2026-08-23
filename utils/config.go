@@ -120,6 +120,7 @@ const (
 	defaultLogUploadNote                 = "默认上传到海豹染色器获取 BBcode/Docx"
 	defaultBackupPath                    = "./backups"
 	defaultBackupIntervalHours           = 12
+	defaultBackupMinIntervalMinutes      = 10
 	defaultBackupRetentionCount          = 5
 	defaultAuthTokenMaxAgeDays           = 15
 	defaultAuthRefreshThresholdDays      = 7
@@ -258,10 +259,11 @@ type EmailAuthConfig struct {
 
 // BackupConfig SQLite 备份配置
 type BackupConfig struct {
-	Enabled        bool   `json:"enabled" yaml:"enabled"`
-	IntervalHours  int    `json:"intervalHours" yaml:"intervalHours"`
-	RetentionCount int    `json:"retentionCount" yaml:"retentionCount"`
-	Path           string `json:"path" yaml:"path"`
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	IntervalHours      int    `json:"intervalHours" yaml:"intervalHours"`
+	MinIntervalMinutes int    `json:"minIntervalMinutes" yaml:"minIntervalMinutes"`
+	RetentionCount     int    `json:"retentionCount" yaml:"retentionCount"`
+	Path               string `json:"path" yaml:"path"`
 }
 
 // AuthSessionConfig 登录会话配置
@@ -656,10 +658,11 @@ func ReadConfig() *AppConfig {
 			DownloadProxy: "https://sealchat-update.aivu.top/",
 		},
 		Backup: BackupConfig{
-			Enabled:        true,
-			IntervalHours:  defaultBackupIntervalHours,
-			RetentionCount: defaultBackupRetentionCount,
-			Path:           defaultBackupPath,
+			Enabled:            true,
+			IntervalHours:      defaultBackupIntervalHours,
+			MinIntervalMinutes: defaultBackupMinIntervalMinutes,
+			RetentionCount:     defaultBackupRetentionCount,
+			Path:               defaultBackupPath,
 		},
 		AuthSession: AuthSessionConfig{
 			MaxAgeDays:           defaultAuthTokenMaxAgeDays,
@@ -1586,6 +1589,9 @@ func applyBackupDefaults(cfg *BackupConfig) {
 	if cfg.IntervalHours <= 0 {
 		cfg.IntervalHours = defaultBackupIntervalHours
 	}
+	if cfg.MinIntervalMinutes <= 0 {
+		cfg.MinIntervalMinutes = defaultBackupMinIntervalMinutes
+	}
 	if cfg.RetentionCount <= 0 {
 		cfg.RetentionCount = defaultBackupRetentionCount
 	}
@@ -1746,6 +1752,7 @@ func WriteConfig(config *AppConfig) {
 		config.AI = NormalizeAIConfig(config.AI)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
+		applyBackupDefaults(&config.Backup)
 		applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
@@ -1931,6 +1938,7 @@ func WriteConfig(config *AppConfig) {
 		// 备份配置
 		_ = k.Set("backup.enabled", config.Backup.Enabled)
 		_ = k.Set("backup.intervalHours", config.Backup.IntervalHours)
+		_ = k.Set("backup.minIntervalMinutes", config.Backup.MinIntervalMinutes)
 		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
 		_ = k.Set("backup.path", config.Backup.Path)
 
