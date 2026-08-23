@@ -115,10 +115,10 @@ func normalizeChannelIdentityResetMatch(input *ChannelIdentityInput) error {
 			input.VariantResetMatchConfig = "sensitive"
 		}
 		if input.VariantResetMatchConfig != "sensitive" && input.VariantResetMatchConfig != "insensitive" {
-			return errors.New("无效的正则表达式匹配方式")
+			return errors.New("无效的正则表达式匹配式")
 		}
 	default:
-		return errors.New("无效的恢复默认头像匹配方式")
+		return errors.New("无效的恢复默认头像匹配式")
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 		}
 	case ChannelIdentityVariantMatchModeRegex:
 		if input.MatchConfig != "sensitive" && input.MatchConfig != "insensitive" {
-			return errors.New("无效的正则表达式匹配方式")
+			return errors.New("无效的正则表达式匹配式")
 		}
 		pattern := input.Keyword
 		if input.MatchConfig == "insensitive" {
@@ -253,7 +253,7 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 			return errors.New("正则表达式无效")
 		}
 	default:
-		return errors.New("无效的差分匹配方式")
+		return errors.New("无效的差分匹配式")
 	}
 	if input.SelectorEmoji == "" {
 		return errors.New("差分选择表情不能为空")

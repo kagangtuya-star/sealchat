@@ -18976,10 +18976,10 @@ onBeforeUnmount(() => {
       <n-form-item>
         <template #label>
           <span class="identity-variant-match-label">
-            匹配方式
+            匹配式
             <n-popover trigger="hover" placement="right-start" :width="260">
               <template #trigger>
-                <button type="button" class="identity-variant-match-help" aria-label="匹配方式说明">?</button>
+                <button type="button" class="identity-variant-match-help" aria-label="匹配式说明">?</button>
               </template>
               <div class="identity-variant-match-help-content">
                 <div><strong>前缀匹配：</strong>消息以指定符号和匹配内容开头时恢复默认头像，并移除匹配头。</div>
@@ -18994,7 +18994,7 @@ onBeforeUnmount(() => {
       <n-form-item>
         <div class="identity-variant-match-grid">
           <label class="identity-variant-match-field">
-            <span>{{ identityVariantResetForm.matchMode === 'prefix' ? '前缀符号' : identityVariantResetForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配方式' }}</span>
+            <span>{{ identityVariantResetForm.matchMode === 'prefix' ? '前缀符号' : identityVariantResetForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配式' }}</span>
             <n-input
               v-if="identityVariantResetForm.matchMode === 'prefix'"
               v-model:value="activeIdentityVariantResetMatchDraft.config"
@@ -19068,10 +19068,10 @@ onBeforeUnmount(() => {
       <n-form-item>
         <template #label>
           <span class="identity-variant-match-label">
-            匹配方式
+            匹配式
             <n-popover trigger="hover" placement="right-start" :width="260">
               <template #trigger>
-                <button type="button" class="identity-variant-match-help" aria-label="匹配方式说明">?</button>
+                <button type="button" class="identity-variant-match-help" aria-label="匹配式说明">?</button>
               </template>
               <div class="identity-variant-match-help-content">
                 <div><strong>前缀匹配：</strong>消息以指定符号和关键词开头时触发，例如 =笑。</div>
@@ -19086,7 +19086,7 @@ onBeforeUnmount(() => {
       <n-form-item>
         <div class="identity-variant-match-grid">
           <label class="identity-variant-match-field">
-            <span>{{ identityVariantForm.matchMode === 'prefix' ? '前缀符号' : identityVariantForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配方式' }}</span>
+            <span>{{ identityVariantForm.matchMode === 'prefix' ? '前缀符号' : identityVariantForm.matchMode === 'keyword' ? '关键词匹配类型' : '正则表达式匹配式' }}</span>
             <n-input
               v-if="identityVariantForm.matchMode === 'prefix'"
               v-model:value="activeIdentityVariantMatchDraft.config"
