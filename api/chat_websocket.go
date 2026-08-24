@@ -403,6 +403,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		"channel.member.list.online": {},
 		"message.list":               {},
 		"message.get":                {},
+		"message.first":              {},
 		"message.context":            {},
 		"theater.subscribe":          {},
 		"theater.unsubscribe":        {},
@@ -1144,6 +1145,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 						solved = true
 					case "message.get":
 						apiWrap(ctx, msg, apiMessageGet)
+						solved = true
+					case "message.first":
+						apiWrap(ctx, msg, apiMessageFirst)
 						solved = true
 					case "message.revoked.draft":
 						apiWrap(ctx, msg, apiMessageRevokedDraft)

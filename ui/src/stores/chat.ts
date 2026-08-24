@@ -4601,6 +4601,11 @@ export const useChatStore = defineStore({
       return (resp as any)?.data || null;
     },
 
+    async messageFirst(channel_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
+      const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.first', { channel_id } as APIMessage);
+      return (resp as any)?.data || null;
+    },
+
     async messageContext(
       channel_id: string,
       message_id: string,

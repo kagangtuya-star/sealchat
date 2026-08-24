@@ -446,6 +446,71 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiMessageFirst(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+}) (any, error) {
+	db := model.GetDB()
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+
+	if ctx.IsReadOnly() {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelID); err != nil {
+			return nil, err
+		}
+	} else if len(channelID) < 30 {
+		channel, err := model.ChannelGet(channelID)
+		if err != nil {
+			return nil, err
+		}
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			return nil, fmt.Errorf("频道不存在")
+		}
+		if service.IsChannelDeletedForAccess(channel) {
+			return nil, fmt.Errorf("频道已被解散")
+		}
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, channelID)
+	var item struct {
+		ID           string    `gorm:"column:id"`
+		ChannelID    string    `gorm:"column:channel_id"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+		DisplayOrder float64   `gorm:"column:display_order"`
+	}
+	q := db.Model(&model.MessageModel{}).
+		Where("channel_id = ?", channelID).
+		Where("is_deleted = ?", false)
+	q = applyWhisperVisibilityFilterWithReadAll(q, ctx.User.ID, canReadAllWhispers)
+	if err := q.Select("id, channel_id, created_at, display_order").
+		Order("display_order ASC").
+		Order("created_at ASC").
+		Order("id ASC").
+		Limit(1).
+		Find(&item).Error; err != nil {
+		return nil, err
+	}
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	return map[string]any{
+		"id":            item.ID,
+		"channel_id":    item.ChannelID,
+		"created_at":    item.CreatedAt.UnixMilli(),
+		"display_order": item.DisplayOrder,
+	}, nil
+}
+
 func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`
