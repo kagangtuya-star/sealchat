@@ -16,6 +16,7 @@ export interface ChannelSearchFilters {
 
 export interface ChannelSearchResult {
   id: string
+  content?: string
   contentSnippet: string
   senderName: string
   senderAvatar?: string
@@ -23,6 +24,7 @@ export interface ChannelSearchResult {
   icMode: 'ic' | 'ooc'
   isArchived: boolean
   archivedAt?: number
+  archivedBy?: string
   createdAt: number
   displayOrder?: number
   highlightRanges?: Array<[number, number]>
@@ -418,13 +420,15 @@ export const useChannelSearchStore = defineStore('channelSearch', {
       const items: ChannelSearchResult[] = Array.isArray(payload.items)
         ? payload.items.map((item: any) => ({
             id: String(item.id || item.message_id || item.messageId || item._id || ''),
+            content: item.content || item.content_raw || '',
             contentSnippet: item.snippet || item.content_snippet || item.content || '',
             senderName: item.sender_name || item.user?.nick || item.user?.name || '未知成员',
             senderAvatar: item.user?.avatar,
-            senderId: item.user_id || item.sender_id,
+            senderId: item.user_id || item.sender_id || item.user?.id,
             icMode: item.ic_mode || item.icMode || 'ic',
             isArchived: !!(item.is_archived ?? item.archived),
             archivedAt: item.archived_at ?? item.archivedAt,
+            archivedBy: item.archived_by ?? item.archivedBy,
             createdAt: Number(item.created_at ?? item.createdAt ?? Date.now()),
             displayOrder: item.display_order ?? item.displayOrder,
             highlightRanges: item.highlight_ranges ?? item.highlightRanges,
@@ -460,13 +464,15 @@ export const useChannelSearchStore = defineStore('channelSearch', {
       const items: ChannelSearchResult[] = Array.isArray(payload.items)
         ? payload.items.map((item: any) => ({
             id: String(item.id || item.message_id || item.messageId || item._id || ''),
+            content: item.content || item.content_raw || '',
             contentSnippet: item.snippet || item.content_snippet || item.content || '',
             senderName: item.sender_name || item.user?.nick || item.user?.name || '未知成员',
             senderAvatar: item.user?.avatar,
-            senderId: item.user_id || item.sender_id,
+            senderId: item.user_id || item.sender_id || item.user?.id,
             icMode: item.ic_mode || item.icMode || 'ic',
             isArchived: !!(item.is_archived ?? item.archived),
             archivedAt: item.archived_at ?? item.archivedAt,
+            archivedBy: item.archived_by ?? item.archivedBy,
             createdAt: Number(item.created_at ?? item.createdAt ?? Date.now()),
             displayOrder: item.display_order ?? item.displayOrder,
             highlightRanges: item.highlight_ranges ?? item.highlightRanges,

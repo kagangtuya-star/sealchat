@@ -2,10 +2,12 @@
 import { ref, computed, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useWindowSize } from '@vueuse/core'
+import type { Message } from '@satorijs/protocol'
+import ChatItem from '../chat-item.vue'
 
 interface ArchivedMessage {
   id: string
-  content: string
+  message: Message
   createdAt: string
   archivedAt: string
   archivedBy: string
@@ -23,6 +25,7 @@ interface Props {
   pageCount: number
   total: number
   searchQuery: string
+  hasMore?: boolean
 }
 
 interface Emits {
@@ -31,6 +34,7 @@ interface Emits {
   (e: 'update:search', keyword: string): void
   (e: 'unarchive', messageIds: string[]): void
   (e: 'delete', messageIds: string[]): void
+  (e: 'load-more'): void
   (e: 'refresh'): void
 }
 
@@ -70,9 +74,17 @@ const allSelected = computed({
 
 const hasSelection = computed(() => selectedIds.value.length > 0)
 
-const formatContent = (content: string) => {
-  // 简单的内容预览，移除HTML标签
-  return content.replace(/<[^>]*>/g, '').slice(0, 100) + (content.length > 100 ? '...' : '')
+const handleSelectionChange = (id: string, checked: boolean) => {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) {
+      selectedIds.value.push(id)
+    }
+    return
+  }
+  const index = selectedIds.value.indexOf(id)
+  if (index > -1) {
+    selectedIds.value.splice(index, 1)
+  }
 }
 
 const formatDate = (dateStr: string) => {
@@ -155,7 +167,9 @@ const handleClose = () => {
             clearable
             @update:value="handleSearchInput"
           />
-          <n-tag size="small" type="info">共 {{ total }} 条</n-tag>
+          <n-tag size="small" type="info">
+            共 {{ total }}<span v-if="props.hasMore && !props.searchQuery.trim()">+</span> 条
+          </n-tag>
         </div>
 
         <div v-if="loading" class="archive-loading">
@@ -204,14 +218,7 @@ const handleClose = () => {
             >
               <n-checkbox
                 :checked="selectedIds.includes(msg.id)"
-                @update:checked="(checked) => {
-                  if (checked) {
-                    selectedIds.push(msg.id)
-                  } else {
-                    const index = selectedIds.indexOf(msg.id)
-                    if (index > -1) selectedIds.splice(index, 1)
-                  }
-                }"
+                @update:checked="handleSelectionChange(msg.id, $event)"
               />
 
               <div class="message-content">
@@ -219,7 +226,19 @@ const handleClose = () => {
                   <span class="sender-name">{{ msg.sender.name }}</span>
                   <span class="message-date">{{ formatDate(msg.createdAt) }}</span>
                 </div>
-                <div class="message-text">{{ formatContent(msg.content) }}</div>
+                <div class="message-renderer">
+                  <ChatItem
+                    :avatar="msg.sender.avatar"
+                    :username="msg.sender.name"
+                    :content="msg.message.content || ''"
+                    :item="msg.message"
+                    tone="archived"
+                    layout="compact"
+                    :show-avatar="false"
+                    :body-only="true"
+                    :readonly="true"
+                  />
+                </div>
                 <div class="archive-info">
                   <span class="archive-date">归档于 {{ formatDate(msg.archivedAt) }}</span>
                   <span class="archive-by">by {{ msg.archivedBy }}</span>
@@ -228,16 +247,21 @@ const handleClose = () => {
             </div>
           </div>
 
-          <div class="archive-pagination">
+          <div v-if="props.searchQuery.trim()" class="archive-pagination">
             <n-pagination
               size="small"
               :page="props.page"
               :page-count="Math.max(props.pageCount, 1)"
               :item-count="props.total"
-              :page-size="10"
+              :page-size="30"
               :disabled="props.pageCount <= 1"
               @update:page="handlePageChange"
             />
+          </div>
+          <div v-else-if="props.hasMore" class="archive-load-more">
+            <n-button size="small" :loading="props.loading" @click="emit('load-more')">
+              加载更旧消息
+            </n-button>
           </div>
         </div>
       </div>
@@ -378,11 +402,15 @@ const handleClose = () => {
   color: var(--sc-text-secondary, #6b7280);
 }
 
-.message-text {
+.message-renderer {
   color: var(--sc-text-primary, #374151);
   line-height: 1.5;
   margin-bottom: 0.5rem;
   word-break: break-word;
+}
+
+.message-renderer :deep(.chat-item) {
+  width: 100%;
 }
 
 .archive-info {
@@ -404,6 +432,12 @@ const handleClose = () => {
 .archive-pagination {
   display: flex;
   justify-content: flex-end;
+  padding-top: 0.5rem;
+}
+
+.archive-load-more {
+  display: flex;
+  justify-content: center;
   padding-top: 0.5rem;
 }
 </style>

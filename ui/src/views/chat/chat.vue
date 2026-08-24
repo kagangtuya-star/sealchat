@@ -101,7 +101,7 @@ import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
-import { useChannelSearchStore } from '@/stores/channelSearch';
+import { useChannelSearchStore, type ChannelSearchResult } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { useOnboardingStore } from '@/stores/onboarding';
@@ -6175,7 +6175,7 @@ const getMessageAuthorId = (message: any): string => {
 
 interface ArchivedPanelMessage {
   id: string;
-  content: string;
+  message: Message;
   createdAt: string;
   archivedAt: string;
   archivedBy: string;
@@ -6185,13 +6185,16 @@ interface ArchivedPanelMessage {
   };
 }
 
-const ARCHIVE_PAGE_SIZE = 10;
+const ARCHIVE_PAGE_SIZE = 30;
 const archivedMessagesRaw = ref<ArchivedPanelMessage[]>([]);
 const archivedMessages = ref<ArchivedPanelMessage[]>([]);
 const archivedLoading = ref(false);
 const archivedSearchQuery = ref('');
 const archivedCurrentPage = ref(1);
 const archivedTotalCount = ref(0);
+const archivedHasMore = ref(false);
+const archivedNextCursor = ref('');
+const archivedRequestSeq = ref(0);
 
 const resolveUserNameById = (userId: string): string => {
   if (!userId) {
@@ -6216,7 +6219,7 @@ const toIsoStringOrEmpty = (value: any): string => {
 const toArchivedPanelEntry = (message: Message): ArchivedPanelMessage => {
   return {
     id: message.id || '',
-    content: message.content || '',
+    message,
     createdAt: toIsoStringOrEmpty((message as any).createdAt ?? message.createdAt),
     archivedAt: toIsoStringOrEmpty((message as any).archivedAt ?? message.archivedAt),
     archivedBy: resolveUserNameById((message as any).archivedBy || ''),
@@ -6227,19 +6230,8 @@ const toArchivedPanelEntry = (message: Message): ArchivedPanelMessage => {
   };
 };
 
-const filteredArchivedMessages = computed(() => {
-  const keyword = archivedSearchQuery.value.trim();
-  if (!keyword) {
-    return [...archivedMessagesRaw.value];
-  }
-  return archivedMessagesRaw.value.filter((item) => {
-    const fields = [item.content, item.sender?.name, item.archivedBy];
-    return fields.some((field) => (field ? matchText(keyword, field) : false));
-  });
-});
-
 const archivedPageCount = computed(() => {
-  const total = filteredArchivedMessages.value.length;
+  const total = archivedTotalCount.value;
   if (total === 0) {
     return 1;
   }
@@ -6247,23 +6239,14 @@ const archivedPageCount = computed(() => {
 });
 
 const updateArchivedDisplay = () => {
-  const totalPages = archivedPageCount.value;
-  if (archivedCurrentPage.value > totalPages) {
-    archivedCurrentPage.value = totalPages;
-    return;
+  archivedMessages.value = [...archivedMessagesRaw.value];
+  if (!archivedSearchQuery.value.trim()) {
+    archivedTotalCount.value = archivedMessagesRaw.value.length;
   }
-  if (archivedCurrentPage.value < 1) {
-    archivedCurrentPage.value = 1;
-    return;
-  }
-  const start = (archivedCurrentPage.value - 1) * ARCHIVE_PAGE_SIZE;
-  const end = start + ARCHIVE_PAGE_SIZE;
-  archivedMessages.value = filteredArchivedMessages.value.slice(start, end);
-  archivedTotalCount.value = filteredArchivedMessages.value.length;
 };
 
 watch(
-  [filteredArchivedMessages, archivedCurrentPage],
+  archivedMessagesRaw,
   () => {
     updateArchivedDisplay();
   },
@@ -6289,7 +6272,7 @@ const handleArchiveMessages = async (messageIds: string[]) => {
     await chat.archiveMessages(messageIds);
     message.success('消息已归档');
     if (archiveDrawerVisible.value) {
-      await fetchArchivedMessages();
+      await fetchArchivedMessages(true);
     }
     await fetchLatestMessages();
   } catch (error) {
@@ -6303,11 +6286,25 @@ const handleUnarchiveMessages = async (messageIds: string[]) => {
     await chat.unarchiveMessages(messageIds);
     message.success('消息已恢复');
     if (archiveDrawerVisible.value) {
-      await fetchArchivedMessages();
+      await fetchArchivedMessages(true);
     }
     await fetchLatestMessages();
   } catch (error) {
     const errMsg = (error as Error)?.message || '恢复失败';
+    message.error(errMsg);
+  }
+};
+
+const handleDeleteArchivedMessages = async (messageIds: string[]) => {
+  try {
+    await chat.removeMessages(messageIds);
+    message.success('消息已删除');
+    if (archiveDrawerVisible.value) {
+      await fetchArchivedMessages(true);
+    }
+    await fetchLatestMessages();
+  } catch (error) {
+    const errMsg = (error as Error)?.message || '删除失败';
     message.error(errMsg);
   }
 };
@@ -6527,42 +6524,117 @@ const handleExportMessages = async (params: {
 };
 
 const handleArchivePageChange = (page: number) => {
+  if (!archivedSearchQuery.value.trim()) {
+    return;
+  }
   archivedCurrentPage.value = page;
+  void fetchArchivedMessages(false);
 };
 
 const handleArchiveSearchChange = (keyword: string) => {
   archivedSearchQuery.value = keyword;
   archivedCurrentPage.value = 1;
+  void fetchArchivedMessages(true);
 };
 
-const fetchArchivedMessages = async () => {
+const toArchivedPanelEntryFromSearch = (item: ChannelSearchResult): ArchivedPanelMessage => {
+  const rawMessage = {
+    id: item.id,
+    content: item.content || item.contentSnippet || '',
+    channel_id: item.channelId || chat.curChannel?.id || '',
+    created_at: item.createdAt,
+    archived_at: item.archivedAt,
+    archived_by: item.archivedBy || '',
+    is_archived: true,
+    ic_mode: item.icMode,
+    sender_member_name: item.senderName,
+    user: item.senderId || item.senderAvatar
+      ? { id: item.senderId || '', nickname: item.senderName, avatar: item.senderAvatar || '' }
+      : undefined,
+  };
+  return toArchivedPanelEntry(normalizeMessageShape(rawMessage));
+};
+
+const sortArchivedPanelMessages = (items: ArchivedPanelMessage[]) => items.sort((a, b) => {
+  const archivedDiff = (normalizeTimestamp(b.archivedAt) ?? 0) - (normalizeTimestamp(a.archivedAt) ?? 0);
+  if (archivedDiff !== 0) {
+    return archivedDiff;
+  }
+  const createdDiff = (normalizeTimestamp(b.createdAt) ?? 0) - (normalizeTimestamp(a.createdAt) ?? 0);
+  if (createdDiff !== 0) {
+    return createdDiff;
+  }
+  return b.id.localeCompare(a.id);
+});
+
+const fetchArchivedMessages = async (reset = true) => {
   if (!chat.curChannel?.id) {
     archivedMessagesRaw.value = [];
     archivedMessages.value = [];
     archivedTotalCount.value = 0;
+    archivedHasMore.value = false;
+    archivedNextCursor.value = '';
     return;
   }
+  const channelId = chat.curChannel.id;
+  const keyword = archivedSearchQuery.value.trim();
+  const requestSeq = ++archivedRequestSeq.value;
   archivedLoading.value = true;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, undefined, {
+    if (keyword) {
+      const result = await channelSearch.fetchChannelSearch(channelId, {
+        keyword,
+        match_mode: 'fuzzy',
+        page: archivedCurrentPage.value,
+        page_size: ARCHIVE_PAGE_SIZE,
+        archived: 'only',
+      });
+      if (requestSeq !== archivedRequestSeq.value || chat.curChannel?.id !== channelId) {
+        return;
+      }
+      archivedMessagesRaw.value = result.items.map(toArchivedPanelEntryFromSearch);
+      archivedTotalCount.value = result.total;
+      archivedHasMore.value = false;
+      archivedNextCursor.value = '';
+      return;
+    }
+
+    if (reset) {
+      archivedMessagesRaw.value = [];
+      archivedCurrentPage.value = 1;
+      archivedNextCursor.value = '';
+      archivedHasMore.value = false;
+    }
+    const resp = await chat.messageList(channelId, archivedNextCursor.value || undefined, {
       includeArchived: true,
       archivedOnly: true,
       includeOoc: true,
+      limit: ARCHIVE_PAGE_SIZE,
     });
-    const items = resp?.data ?? [];
-    const mapped = items
+    if (requestSeq !== archivedRequestSeq.value || chat.curChannel?.id !== channelId) {
+      return;
+    }
+    const mapped = (resp?.data ?? [])
       .map((item: any) => normalizeMessageShape(item))
-      .map((item: Message) => toArchivedPanelEntry(item))
-      .sort((a, b) => (normalizeTimestamp(b.archivedAt) ?? 0) - (normalizeTimestamp(a.archivedAt) ?? 0));
-    archivedMessagesRaw.value = mapped;
-    archivedCurrentPage.value = 1;
+      .map((item: Message) => toArchivedPanelEntry(item));
+    archivedMessagesRaw.value = sortArchivedPanelMessages(
+      reset ? mapped : [...archivedMessagesRaw.value, ...mapped],
+    );
+    archivedNextCursor.value = String(resp?.next || '');
+    archivedHasMore.value = Boolean(archivedNextCursor.value);
+    archivedTotalCount.value = archivedMessagesRaw.value.length;
   } catch (error) {
+    if (requestSeq !== archivedRequestSeq.value) {
+      return;
+    }
     console.error('加载归档消息失败', error);
     if (archiveDrawerVisible.value) {
       message.error('加载归档消息失败');
     }
   } finally {
-    archivedLoading.value = false;
+    if (requestSeq === archivedRequestSeq.value) {
+      archivedLoading.value = false;
+    }
   }
 };
 
@@ -6570,7 +6642,7 @@ watch(archiveDrawerVisible, (visible) => {
   if (visible) {
     archivedSearchQuery.value = '';
     archivedCurrentPage.value = 1;
-    void fetchArchivedMessages();
+    void fetchArchivedMessages(true);
   }
 });
 
@@ -6580,6 +6652,8 @@ watch(() => chat.curChannel?.id, () => {
   archivedSearchQuery.value = '';
   archivedCurrentPage.value = 1;
   archivedTotalCount.value = 0;
+  archivedHasMore.value = false;
+  archivedNextCursor.value = '';
 });
 
 const SCROLL_STICKY_THRESHOLD = 200;
@@ -13146,6 +13220,7 @@ const handleMessageRemoved = (e?: Event) => {
       const index = archivedMessagesRaw.value.findIndex((item) => item.id === targetId);
       if (index >= 0) {
         archivedMessagesRaw.value.splice(index, 1);
+        updateArchivedDisplay();
       }
     }
   };
@@ -13424,9 +13499,10 @@ chatEvent.on('message-archived', (e?: Event) => {
     const index = archivedMessagesRaw.value.findIndex(item => item.id === entry.id);
     if (index >= 0) {
       archivedMessagesRaw.value.splice(index, 1, entry);
-    } else {
+    } else if (!archivedSearchQuery.value.trim()) {
       archivedMessagesRaw.value.unshift(entry);
     }
+    updateArchivedDisplay();
   }
 });
 
@@ -13469,6 +13545,7 @@ chatEvent.on('message-unarchived', (e?: Event) => {
     const index = archivedMessagesRaw.value.findIndex(item => item.id === incoming.id);
     if (index >= 0) {
       archivedMessagesRaw.value.splice(index, 1);
+      updateArchivedDisplay();
     }
   }
 });
@@ -17564,10 +17641,12 @@ onBeforeUnmount(() => {
     :page-count="archivedPageCount"
     :total="archivedTotalCount"
     :search-query="archivedSearchQuery"
+    :has-more="archivedHasMore"
     @update:page="handleArchivePageChange"
     @update:search="handleArchiveSearchChange"
     @unarchive="handleUnarchiveMessages"
-    @delete="handleArchiveMessages"
+    @delete="handleDeleteArchivedMessages"
+    @load-more="() => fetchArchivedMessages(false)"
     @refresh="fetchArchivedMessages"
   />
 
