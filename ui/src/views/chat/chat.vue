@@ -8,7 +8,7 @@ import type { Event, Message, User } from '@satorijs/protocol'
 import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, MessagePlus, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
-import { NIcon, c, type MentionOption } from 'naive-ui';
+import { NIcon, c } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
@@ -72,10 +72,9 @@ import { useCharacterRemarkStore } from '@/stores/characterRemark';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
 import { copyTextWithFallback } from '@/utils/clipboard';
-import dayjs from 'dayjs';
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
-import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
+import { useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import {
@@ -84,9 +83,9 @@ import {
   writeTheaterAppearanceEditIntent,
 } from '@/utils/theaterAppearanceEditIntent';
 import { useI18n } from 'vue-i18n';
-import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai';
+import { useAIStore } from '@/stores/ai';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
-import { resolveAttachmentUrl, fetchAttachmentMetaById, fetchAttachmentFileById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
+import { resolveAttachmentUrl, fetchAttachmentMetaById, fetchAttachmentFileById, normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
@@ -106,18 +105,6 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { useOnboardingStore } from '@/stores/onboarding';
-import {
-  clearAIPolishSlot,
-  createAIPolishDockState,
-  finishAIPolishTaskError,
-  finishAIPolishTaskSuccess,
-  findNextIdleAIPolishSlot,
-  readCurrentInputIntoSlot,
-  setActiveAIPolishSlot,
-  setAIPolishSlotViewMode,
-  prepareAIPolishTask,
-  toggleAIPolishDockMinimized,
-} from '@/services/ai/ai-polish-dock'
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
@@ -186,9 +173,12 @@ import {
 } from './inputHistoryWhisperState';
 import { buildEditMessageUpdateOptions } from './editMessageUpdate';
 import { shouldMergeNeighborMessages } from './messageMerge';
-import { useRobustInfiniteScroll } from '@/composables/useRobustInfiniteScroll';
-import { shouldResetMentionOptionsOnSearchStart, sortMentionableMembersByMode } from './mentionOptionOrdering';
 import { resolveInterjectTargetMode, shouldAllowInterject } from './interjectFlow';
+import { useMentionSuggestions } from './composables/useMentionSuggestions';
+import { useChatAIPolish } from './composables/useChatAIPolish';
+import { useMessageSelection } from './composables/useMessageSelection';
+import { useTypingPreview, type EditingPreviewInfo, type TypingPreviewItem } from './composables/useTypingPreview';
+import { useChatEmoji } from './composables/useChatEmoji';
 import {
   hasTheaterComposerDraft,
   shouldResolveTheaterIdentityShortcut,
@@ -219,11 +209,6 @@ const stickyNoteStore = useStickyNoteStore();
 const dice3dSettingsVisible = ref(false);
 const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
-const forwardDialogVisible = ref(false);
-const forwardDialogSourceChannelId = ref('');
-const forwardDialogSourceWorldId = ref('');
-const forwardDialogMessageIds = ref<string[]>([]);
-const forwardDialogMessages = ref<any[]>([]);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
 const channelCharacterSnapshotStore = useChannelCharacterSnapshotStore();
@@ -1832,66 +1817,6 @@ chatEvent.on('action-ribbon-toggle', handleActionRibbonToggleRequest);
 chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
 chatEvent.on('open-display-settings', handleOpenDisplaySettings);
 
-const emojiLoading = ref(false)
-// 统一使用 Gallery Store 的表情收藏数据
-const emojiItems = computed<GalleryItem[]>(() => gallery.emojiItems);
-
-const EMOJI_THUMB_SIZE = 80;
-const emojiAttachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
-const pendingEmojiMetaFetch = new Set<string>();
-
-const ensureEmojiAttachmentMeta = async (attachmentId: string) => {
-  const normalized = normalizeAttachmentId(attachmentId);
-  if (!normalized || pendingEmojiMetaFetch.has(normalized) || emojiAttachmentMetaCache[normalized] !== undefined) {
-    return;
-  }
-  pendingEmojiMetaFetch.add(normalized);
-  try {
-    const meta = await fetchAttachmentMetaById(normalized);
-    emojiAttachmentMetaCache[normalized] = meta;
-  } finally {
-    pendingEmojiMetaFetch.delete(normalized);
-  }
-};
-
-const resolveEmojiAttachmentUrl = (attachmentId: string) => {
-  const normalized = normalizeAttachmentId(attachmentId);
-  if (!normalized) {
-    return '';
-  }
-  const meta = emojiAttachmentMetaCache[normalized];
-  if (meta === undefined && !pendingEmojiMetaFetch.has(normalized)) {
-    void ensureEmojiAttachmentMeta(normalized);
-  }
-  // Animated images should use original to preserve animation
-  if (meta?.isAnimated) {
-    return resolveAttachmentUrl(normalized);
-  }
-  // Use server-side thumbnail API for faster loading
-  return `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
-};
-
-const getEmojiItemSrc = (item: GalleryItem) => {
-  const id = item.attachmentId;
-  return resolveEmojiAttachmentUrl(id);
-};
-
-const hasEmojiItems = computed(() => emojiItems.value.length > 0);
-
-const emojiPopoverShow = ref(false);
-const emojiTriggerButtonRef = ref<HTMLElement | null>(null);
-const emojiAnchorElement = ref<HTMLElement | null>(null);
-const emojiPopoverX = ref<number | null>(null);
-const emojiPopoverY = ref<number | null>(null);
-const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
-const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
-const emojiSearchQuery = ref('');
-const emojiPanelTab = ref<'gallery' | 'utf' | 'variant'>('gallery');
-const emojiPanelRenderKey = ref(0);
-const emojiPanelContentRef = ref<HTMLElement | null>(null);
-const emojiPanelLoadMoreSentinelRef = ref<HTMLElement | null>(null);
-const isManagingEmoji = ref(false);
-const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
 const editingIdentityPreviewContext = computed(() => {
   if (!isEditingCurrentChannel.value || !chat.editing) {
     return null;
@@ -1927,302 +1852,86 @@ const editingIdentityPreviewContext = computed(() => {
     appearance,
   };
 });
-const activeIdentityForEmojiPanel = computed(() => {
-  if (editingIdentityPreviewContext.value) {
-    return editingIdentityPreviewContext.value.identity;
-  }
-  return chat.getActiveIdentity(chat.curChannel?.id || '');
-});
-const activeIdentityVariantOptions = computed(() => {
-  const channelId = chat.curChannel?.id || '';
-  const identityId = activeIdentityForEmojiPanel.value?.id || '';
-  if (!channelId || !identityId) {
-    return [] as ChannelIdentityVariant[];
-  }
-  return chat.getIdentityVariants(channelId, identityId).filter(item => item.enabled !== false);
-});
-const activeIdentityVariantForEmojiPanel = computed(() => {
-  if (editingIdentityPreviewContext.value) {
-    return editingIdentityPreviewContext.value.variant;
-  }
-  const channelId = chat.curChannel?.id || '';
-  const identityId = activeIdentityForEmojiPanel.value?.id || '';
-  if (!channelId || !identityId) {
-    return null as ChannelIdentityVariant | null;
-  }
-  return chat.getActiveIdentityVariant(channelId, identityId);
-});
-const filteredIdentityVariantOptions = computed(() => {
-  const query = emojiSearchQuery.value.trim();
-  if (!query) {
-    return activeIdentityVariantOptions.value;
-  }
-  return activeIdentityVariantOptions.value.filter((item) => {
-    const haystack = `${item.keyword || ''} ${item.note || ''} ${item.displayName || ''}`;
-    return matchText(query, haystack);
-  });
-});
-const hasIdentityVariantOptions = computed(() => activeIdentityVariantOptions.value.length > 0);
-const identityVariantTabTooltip = computed(() => {
-  if (!activeIdentityForEmojiPanel.value) {
-    return '请先选择频道角色，再切换头像差分';
-  }
-  if (!hasIdentityVariantOptions.value) {
-    return canManageIdentities()
-      ? '当前频道角色尚未配置头像差分，点击前往设置'
-      : '当前频道角色尚未配置头像差分';
-  }
-  return '切换当前频道角色的头像差分，可用已配置的匹配规则快捷切换或恢复';
-});
-
-const describeIdentityVariantCard = (variant?: ChannelIdentityVariant | null) => {
-  if (!variant) {
-    return '恢复为当前频道角色的默认头像';
-  }
-  const summary = [
-    resolveVariantNote(variant),
-    variant.keyword ? `关键词：=${variant.keyword}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-  const details = [
-    variant.displayName ? `覆盖昵称：${variant.displayName}` : '仅覆盖头像',
-    variant.color ? `覆盖颜色：${variant.color}` : '',
-    variant.note && variant.note !== resolveVariantNote(variant) ? variant.note : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-  return [summary, details].filter(Boolean).join('\n');
-};
-
-// 表情分类选项卡（使用 store 持久化）
-const activeEmojiTab = computed({
-  get: () => gallery.activeEmojiTabId,
-  set: (val) => {
-    const userId = user.info?.id;
-    if (userId) {
-      gallery.setActiveEmojiTab(val, userId);
-    }
-  }
-});
-const emojiTabOptions = computed(() => {
-  const ids = gallery.allEmojiCollectionIds;
-  const ownerId = user.info?.id;
-  if (!ownerId) return [];
-  const collections = gallery.getCollections(ownerId);
-  return ids.map(id => {
-    const col = collections.find(c => c.id === id);
-    return {
-      id,
-      name: col?.name || '未知分类',
-      isFavorites: id === gallery.favoritesCollectionId
-    };
-  });
-});
-const hasMultipleTabs = computed(() => emojiTabOptions.value.length > 1);
-const emojiPanelPagination = computed(() => {
-  const tabId = activeEmojiTab.value;
-  if (!tabId) {
-    return { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: emojiItems.value.length };
-  }
-  return gallery.getItemPagination(tabId);
-});
-const emojiPanelLoading = computed(() => {
-  const tabId = activeEmojiTab.value;
-  return tabId ? gallery.isCollectionLoading(tabId) : false;
-});
-const emojiPanelLoadingMore = computed(() => {
-  const tabId = activeEmojiTab.value;
-  return tabId ? gallery.isCollectionLoadingMore(tabId) : false;
-});
-const emojiPanelHasMore = computed(() => {
-  const tabId = activeEmojiTab.value;
-  if (!tabId) return false;
-  return emojiPanelPagination.value.total > gallery.getItemsByCollection(tabId).length;
-});
-
-const toggleEmojiRemarkVisible = () => {
-  const userId = user.info?.id;
-  if (!userId) {
-    message.warning('请先登录');
-    return;
-  }
-  gallery.setEmojiRemarkVisible(!gallery.emojiRemarkVisible, userId);
-};
-
-const resolveEmojiAnchorElement = () => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const current = emojiAnchorElement.value;
-  if (current && document.body.contains(current)) {
-    return current;
-  }
-  return null;
-};
-
-const EMOJI_POPOVER_VERTICAL_OFFSET = 10; // 让弹层靠近头像顶部，避免遮挡
-
-const syncEmojiPopoverPosition = (trigger?: HTMLElement | null) => {
-  const anchor = trigger || resolveEmojiAnchorElement() || emojiTriggerButtonRef.value;
-  if (!anchor) {
-    return false;
-  }
-  emojiAnchorElement.value = anchor;
-  const rect = anchor.getBoundingClientRect();
-  emojiPopoverX.value = rect.left;
-  emojiPopoverY.value = rect.top + EMOJI_POPOVER_VERTICAL_OFFSET;
-  return true;
-};
-
-const allGalleryItems = computed(() =>
-  Object.values(gallery.items).flatMap((entry) => entry?.items ?? [])
-);
-
-const emojiUsageKey = 'sealchat_emoji_usage';
-const emojiUsageMap = ref<Record<string, number>>({});
-
-const ensureEmojiCollectionLoaded = async () => {
-  const ownerId = user.info?.id;
-  if (!ownerId) {
-    return;
-  }
-  try {
-    await gallery.ensureEmojiCollection(ownerId);
-  } catch {
-    // ignore load errors for emoji collections
-  }
-};
-
-const loadMoreEmojiPanelItems = async () => {
-  const tabId = activeEmojiTab.value;
-  if (!tabId || emojiPanelLoading.value || emojiPanelLoadingMore.value || !emojiPanelHasMore.value) {
-    return;
-  }
-  const current = gallery.getItemPagination(tabId);
-  await gallery.loadItems(tabId, {
-    page: current.page + 1,
-    pageSize: current.pageSize,
-    append: true,
-  });
-};
-
-const handleEmojiPanelContentScroll = (event: Event) => {
-  if (emojiPanelTab.value !== 'gallery') {
-    return;
-  }
-  const target = event.target as HTMLElement | null;
-  if (!target) {
-    return;
-  }
-  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
-    void loadMoreEmojiPanelItems();
-  }
-};
-
-const refreshEmojiPanelRender = () => {
-  emojiPanelRenderKey.value += 1;
-};
-
-if (typeof window !== 'undefined') {
-  useEventListener(window, 'resize', () => {
-    if (emojiPopoverShow.value) {
-      syncEmojiPopoverPosition();
-    }
-  });
-  useEventListener(
-    window,
-    'scroll',
-    () => {
-      if (emojiPopoverShow.value) {
-        syncEmojiPopoverPosition();
-      }
-    },
-    { passive: true, capture: true },
-  );
-}
-
-useRobustInfiniteScroll({
-  containerRef: emojiPanelContentRef,
-  sentinelRef: emojiPanelLoadMoreSentinelRef,
-  enabled: computed(() => emojiPanelTab.value === 'gallery'),
-  canLoadMore: emojiPanelHasMore,
-  loading: computed(() => emojiPanelLoading.value || emojiPanelLoadingMore.value),
-  onLoadMore: loadMoreEmojiPanelItems,
-  triggerDeps: () => [
-    emojiPanelTab.value,
-    activeEmojiTab.value,
-    filteredEmojiItems.value.length,
-    emojiPanelLoading.value,
-    emojiPanelLoadingMore.value,
-  ],
-  rootMargin: '0px 0px 80px 0px',
-  bottomOffset: 40,
-  scrollFallback: true,
-  observeResize: true,
-  requestAnimationFrameCheck: true,
-});
-
-onMounted(() => {
-  try {
-    const stored = localStorage.getItem(emojiUsageKey);
-    if (stored) emojiUsageMap.value = JSON.parse(stored);
-  } catch (e) {
-    console.warn('Failed to load emoji usage', e);
-  }
-  // Check if we should show avatar prompt
-  checkAvatarPromptOnMount();
-});
-
-const recordEmojiUsage = (id: string) => {
-  emojiUsageMap.value[id] = Date.now();
-  try {
-    localStorage.setItem(emojiUsageKey, JSON.stringify(emojiUsageMap.value));
-  } catch (e) {
-    console.warn('Failed to save emoji usage', e);
-  }
-};
-
-const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
-  return [...items].sort((a, b) => {
-    const timeA = emojiUsageMap.value[a.id] || 0;
-    const timeB = emojiUsageMap.value[b.id] || 0;
-    return timeB - timeA;
-  });
-};
-
-const filteredEmojiItems = computed(() => {
-  const query = emojiSearchQuery.value.trim();
-  const tabId = activeEmojiTab.value;
-
-  // 根据选项卡筛选
-  let items: GalleryItem[];
-  if (tabId) {
-    items = gallery.getItemsByCollection(tabId);
-  } else {
-    items = emojiItems.value;
-  }
-
-  // 搜索过滤
-  const filtered = !query ? items : items.filter((item, idx) => {
-    const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
-    return matchText(query, remark);
-  });
-  return sortByUsage(filtered);
-});
-
 const galleryPanelVisible = computed(() => gallery.isPanelVisible);
 const channelImagesPanelVisible = computed(() => channelImages.panelVisible);
 
 const message = useMessage()
-const aiPolishDockVisible = ref(false)
-const aiPolishDockState = reactive(createAIPolishDockState())
 const dialog = useDialog()
 const { t } = useI18n();
+const {
+  emojiLoading,
+  emojiItems,
+  ensureEmojiAttachmentMeta,
+  resolveEmojiAttachmentUrl,
+  getEmojiItemSrc,
+  hasEmojiItems,
+  emojiPopoverShow,
+  emojiTriggerButtonRef,
+  emojiAnchorElement,
+  emojiPopoverXCoord,
+  emojiPopoverYCoord,
+  emojiSearchQuery,
+  emojiPanelTab,
+  emojiPanelRenderKey,
+  emojiPanelContentRef,
+  emojiPanelLoadMoreSentinelRef,
+  isManagingEmoji,
+  emojiRemarkVisible,
+  activeIdentityForEmojiPanel,
+  activeIdentityVariantOptions,
+  activeIdentityVariantForEmojiPanel,
+  filteredIdentityVariantOptions,
+  hasIdentityVariantOptions,
+  identityVariantTabTooltip,
+  describeIdentityVariantCard,
+  activeEmojiTab,
+  emojiTabOptions,
+  hasMultipleTabs,
+  emojiPanelPagination,
+  emojiPanelLoading,
+  emojiPanelLoadingMore,
+  emojiPanelHasMore,
+  toggleEmojiRemarkVisible,
+  syncEmojiPopoverPosition,
+  allGalleryItems,
+  emojiUsageMap,
+  ensureEmojiCollectionLoaded,
+  loadMoreEmojiPanelItems,
+  handleEmojiPanelContentScroll,
+  refreshEmojiPanelRender,
+  recordEmojiUsage,
+  filteredEmojiItems,
+  buildEmojiRemarkMap,
+  replaceEmojiRemarksForPreview,
+  selectedEmojiIds,
+  emojiRemarkModalVisible,
+  emojiRemarkInput,
+  emojiRemarkSaving,
+  editingEmojiItem,
+  resolveEmojiRemark,
+  openEmojiRemarkEditor,
+  submitEmojiRemark,
+  cancelEmojiRemark,
+  exitEmojiManage,
+  emojiSelectedDelete,
+} = useChatEmoji({
+  chat,
+  gallery,
+  user,
+  message,
+  dialog,
+  editingIdentityPreviewContext,
+  resolveIdentityAppearancePreview: (...args) => resolveIdentityAppearancePreview(...args),
+  cloneAvatarDecorations: (...args) => cloneAvatarDecorations(...args),
+  resolveVariantNote: (variant) => resolveVariantNote(variant),
+  canManageIdentities: () => canManageIdentities(),
+});
+onMounted(() => {
+  checkAvatarPromptOnMount();
+});
 
 // const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
-const typingPreviewViewportRef = ref<HTMLElement | null>(null);
 const selectionBar = reactive({
   visible: false,
   text: '',
@@ -3008,56 +2717,6 @@ const handleRichInlineImageEditorConfirm = async (file: File) => {
 
 const identityDialogVisible = ref(false);
 
-watch(
-  () => user.info.id,
-  async (id) => {
-    if (!id) return;
-    gallery.loadEmojiPreference(id);
-    await ensureEmojiCollectionLoaded();
-  },
-  { immediate: true }
-);
-
-watch(
-  () => gallery.emojiCollectionIds,
-  (ids) => {
-    for (const id of ids) {
-      void gallery.loadItems(id);
-    }
-  },
-  { deep: true }
-);
-
-watch(emojiPopoverShow, (show, prevShow) => {
-  if (!show) {
-    isManagingEmoji.value = false;
-    emojiSearchQuery.value = '';
-  } else {
-    refreshEmojiPanelRender();
-    nextTick(() => {
-      syncEmojiPopoverPosition();
-    });
-    void ensureEmojiCollectionLoaded();
-  }
-  if (show) {
-    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
-  } else if (prevShow) {
-    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: false } as any);
-  }
-});
-
-watch(hasIdentityVariantOptions, (hasOptions) => {
-  if (!hasOptions && emojiPanelTab.value === 'variant') {
-    emojiPanelTab.value = 'gallery';
-  }
-});
-
-watch(isManagingEmoji, (val) => {
-  if (val) {
-    void ensureEmojiCollectionLoaded();
-  }
-});
-
 const openGalleryPanel = async () => {
   const userId = user.info?.id;
   if (!userId) {
@@ -3180,39 +2839,6 @@ const handleEmojiVariantTabClick = async () => {
   switchEmojiPanelTab('variant');
 };
 
-
-const buildEmojiRemarkMap = () => {
-  // 优先使用表情收藏的备注映射，采用"先到先得"策略避免覆盖
-  const remarkMap = new Map<string, string>();
-
-  // 先添加表情收藏（优先级最高）
-  for (const item of emojiItems.value) {
-    const remark = item.remark?.trim();
-    if (remark && item.attachmentId && !remarkMap.has(remark)) {
-      remarkMap.set(remark, item.attachmentId);
-    }
-  }
-
-  // 再添加其他画廊条目（不覆盖已存在的）
-  for (const item of allGalleryItems.value) {
-    const remark = item.remark?.trim();
-    if (remark && item.attachmentId && !remarkMap.has(remark)) {
-      remarkMap.set(remark, item.attachmentId);
-    }
-  }
-
-  return remarkMap;
-};
-
-const replaceEmojiRemarksForPreview = (text: string): string => {
-  const remarkMap = buildEmojiRemarkMap();
-  return text.replace(/[\[【\/]([^\]】\/]+)[\]】\/]/g, (match, remark) => {
-    const attachmentId = remarkMap.get(remark.trim());
-    if (!attachmentId) return match;
-    const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
-    return `[[img:id:${normalized}]]`;
-  });
-};
 
 const replaceEmojiRemarks = (text: string): string => {
   const remarkMap = buildEmojiRemarkMap();
@@ -9610,903 +9236,65 @@ async function replaceUsernames(text: string) {
 
 const instantMessages = reactive(new Set<Message>());
 
-interface TypingPreviewItem {
-  userId: string;
-  displayName: string;
-  avatar?: string;
-  avatarDecorations?: AvatarDecoration[] | null;
-  color?: string;
-  content: string;
-  indicatorOnly: boolean;
-  mode: 'typing' | 'editing';
-  messageId?: string;
-  isTemporary?: boolean;
-  tone: 'ic' | 'ooc';
-  orderKey: number;
-}
+// Typing preview composable initialized after textToSend.
 
-const resolveTypingTone = (typing?: { icMode?: string; ic_mode?: string; tone?: string }): 'ic' | 'ooc' => {
-  const raw = typing?.icMode ?? typing?.ic_mode ?? typing?.tone;
-  if (typeof raw === 'string' && raw.toLowerCase() === 'ooc') {
-    return 'ooc';
-  }
-  return 'ic';
-};
-
-interface EditingPreviewInfo {
-  userId: string;
-  displayName: string;
-  color?: string;
-  avatar?: string;
-  avatarDecorations?: AvatarDecoration[] | null;
-  content: string;
-  indicatorOnly: boolean;
-  isSelf: boolean;
-  isTemporary?: boolean;
-  summary: string;
-  previewHtml: string;
-  tone: 'ic' | 'ooc';
-}
-
-type TypingBroadcastState = 'indicator' | 'content' | 'silent';
-
-const typingPreviewStorageKey = 'sealchat.typingPreviewMode';
-const legacyTypingPreviewKey = 'sealchat.typingPreviewEnabled';
-const resolveTypingPreviewMode = (): TypingBroadcastState => {
-  const stored = localStorage.getItem(typingPreviewStorageKey);
-  if (stored === 'indicator' || stored === 'content' || stored === 'silent') {
-    return stored as TypingBroadcastState;
-  }
-  if (stored === 'on') {
-    return 'content';
-  }
-  if (stored === 'off') {
-    return 'indicator';
-  }
-  const legacy = localStorage.getItem(legacyTypingPreviewKey);
-  if (legacy === 'true') {
-    return 'content';
-  }
-  if (legacy === 'false') {
-    return 'indicator';
-  }
-  return 'content';
-};
-const typingPreviewMode = ref<TypingBroadcastState>(resolveTypingPreviewMode());
-if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
-  localStorage.removeItem(legacyTypingPreviewKey);
-}
-const typingPreviewActive = ref(false);
-const typingPreviewList = ref<TypingPreviewItem[]>([]);
-let typingPreviewOrderSeq = Date.now();
-const previewOrderMin = 1e-6;
-const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
-const selfPreviewOrderModified = ref(false);
-const draftStartedAtMs = ref<number | null>(null);
-const resetSelfPreviewOrder = () => {
-	selfPreviewOrderKey.value = Number.MAX_SAFE_INTEGER;
-	selfPreviewOrderModified.value = false;
-};
-const resetDraftOrderContext = () => {
-  draftStartedAtMs.value = null;
-  resetSelfPreviewOrder();
-};
-const typingPreviewRowRefs = new Map<string, HTMLElement>();
-const typingPreviewItemKey = (preview: TypingPreviewItem | null | undefined) =>
-  preview ? `${preview.userId || ''}-${preview.mode}` : '';
-const registerTypingPreviewRow = (el: HTMLElement | null, preview: TypingPreviewItem) => {
-  const key = typingPreviewItemKey(preview);
-  if (!key) {
-    return;
-  }
-  if (el) {
-    typingPreviewRowRefs.set(key, el);
-  } else {
-    typingPreviewRowRefs.delete(key);
-  }
-};
-const getPreviewOrderValue = (item?: TypingPreviewItem | null) => {
-  if (!item) {
-    return null;
-  }
-  const value = typeof item.orderKey === 'number' ? item.orderKey : Number.NaN;
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
-const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallback: number) => {
-  const prevOrder = getPreviewOrderValue(list[index - 1]);
-  const nextOrder = getPreviewOrderValue(list[index + 1]);
-  if (prevOrder !== null && nextOrder !== null) {
-    return (prevOrder + nextOrder) / 2;
-  }
-  if (prevOrder !== null) {
-    return prevOrder + 1;
-  }
-  if (nextOrder !== null) {
-    return nextOrder > 1 ? nextOrder - 1 : nextOrder / 2;
-  }
-  return fallback;
-};
-interface PreviewDragState {
-  pointerId: number | null;
-  activeKey: string | null;
-  overKey: string | null;
-  position: 'before' | 'after' | null;
-  startY: number;
-  initialOrderKey: number | null;
-  handleEl: HTMLElement | null;
-  initialModified: boolean;
-}
-const previewDragState = reactive<PreviewDragState>({
-  pointerId: null,
-  activeKey: null,
-  overKey: null,
-  position: null,
-  startY: 0,
-  initialOrderKey: null,
-  handleEl: null,
-  initialModified: false,
-});
-const resetPreviewDragState = () => {
-  previewDragState.pointerId = null;
-  previewDragState.activeKey = null;
-  previewDragState.overKey = null;
-  previewDragState.position = null;
-  previewDragState.startY = 0;
-  previewDragState.initialOrderKey = null;
-  previewDragState.handleEl = null;
-  previewDragState.initialModified = false;
-};
-const updateSelfPreviewOrderKey = (orderKey: number | null, markModified = false) => {
-  if (orderKey === null || !Number.isFinite(orderKey)) {
-    return;
-  }
-  const normalized = orderKey > 0 ? orderKey : previewOrderMin;
-  selfPreviewOrderKey.value = normalized;
-  if (markModified) {
-    selfPreviewOrderModified.value = true;
-  }
-  typingPreviewList.value = typingPreviewList.value.map((item) => {
-    if (item.userId === selfPreviewUserId.value && item.mode === 'typing') {
-      return { ...item, orderKey: normalized };
-    }
-    return item;
-  });
-};
-const getPreviewTargetIndex = (list: TypingPreviewItem[], overKey: string | null, position: 'before' | 'after' | null) => {
-  if (!overKey || !position) {
-    return null;
-  }
-  const overIndex = list.findIndex((item) => typingPreviewItemKey(item) === overKey);
-  if (overIndex < 0) {
-    return null;
-  }
-  if (position === 'before') {
-    return overIndex;
-  }
-  return overIndex + 1;
-};
-const applyPreviewDragReorder = () => {
-  const activeKey = previewDragState.activeKey;
-  if (!activeKey) {
-    return;
-  }
-  const previews = typingPreviewItems.value.slice();
-  const fromIndex = previews.findIndex((item) => typingPreviewItemKey(item) === activeKey);
-  if (fromIndex < 0) {
-    return;
-  }
-  const [activeItem] = previews.splice(fromIndex, 1);
-  const targetIndex = getPreviewTargetIndex(previews, previewDragState.overKey, previewDragState.position);
-	if (targetIndex === null) {
-		previews.splice(fromIndex, 0, activeItem);
-		updateSelfPreviewOrderKey(previewDragState.initialOrderKey);
-		selfPreviewOrderModified.value = previewDragState.initialModified;
-		return;
-	}
-  const clampedTarget = Math.min(Math.max(targetIndex, 0), previews.length);
-  previews.splice(clampedTarget, 0, activeItem);
-  const fallback = getPreviewOrderValue(activeItem) ?? Date.now();
-  const derived = derivePreviewOrderValue(previews, clampedTarget, fallback);
-	updateSelfPreviewOrderKey(derived, true);
-	broadcastTypingOrderChange();
-};
-const detachPreviewDragListeners = () => {
-  window.removeEventListener('pointermove', onPreviewDragPointerMove);
-  window.removeEventListener('pointerup', onPreviewDragPointerUp);
-  window.removeEventListener('pointercancel', onPreviewDragPointerCancel);
-};
-const cancelPreviewDrag = () => {
-	detachPreviewDragListeners();
-	if (previewDragState.initialOrderKey !== null) {
-		updateSelfPreviewOrderKey(previewDragState.initialOrderKey);
-	}
-	selfPreviewOrderModified.value = previewDragState.initialModified;
-	if (previewDragState.handleEl && previewDragState.pointerId !== null) {
-		try {
-			previewDragState.handleEl.releasePointerCapture?.(previewDragState.pointerId);
-		} catch {
-			// ignore
-		}
-	}
-	document.body.style.userSelect = '';
-	resetPreviewDragState();
-	broadcastTypingOrderChange.flush();
-};
-const finalizePreviewDrag = () => {
-	detachPreviewDragListeners();
-	if (previewDragState.handleEl && previewDragState.pointerId !== null) {
-		try {
-			previewDragState.handleEl.releasePointerCapture?.(previewDragState.pointerId);
-		} catch {
-			// ignore
-		}
-	}
-	document.body.style.userSelect = '';
-	resetPreviewDragState();
-	broadcastTypingOrderChange.flush();
-};
-const updatePreviewDragTarget = (clientY: number) => {
-  const activeKey = previewDragState.activeKey;
-  if (!activeKey) {
-    return;
-  }
-  const previews = typingPreviewItems.value;
-  let matched = false;
-  for (const preview of previews) {
-    const key = typingPreviewItemKey(preview);
-    if (!key || key === activeKey) {
-      continue;
-    }
-    const el = typingPreviewRowRefs.get(key);
-    if (!el) {
-      continue;
-    }
-    const rect = el.getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    if (clientY <= mid) {
-      previewDragState.overKey = key;
-      previewDragState.position = 'before';
-      matched = true;
-      break;
-    }
-    if (clientY < rect.bottom) {
-      previewDragState.overKey = key;
-      previewDragState.position = 'after';
-      matched = true;
-      break;
-    }
-  }
-  if (!matched && previews.length > 0) {
-    const last = previews[previews.length - 1];
-    const lastKey = typingPreviewItemKey(last);
-    if (lastKey) {
-      previewDragState.overKey = lastKey;
-      previewDragState.position = 'after';
-      matched = true;
-    }
-  }
-  if (!matched) {
-    previewDragState.overKey = null;
-    previewDragState.position = null;
-  }
-};
-const onPreviewDragPointerMove = (event: PointerEvent) => {
-  if (event.pointerId !== previewDragState.pointerId) {
-    return;
-  }
-  event.preventDefault();
-  updatePreviewDragTarget(event.clientY);
-  applyPreviewDragReorder();
-};
-const onPreviewDragPointerUp = (event: PointerEvent) => {
-  if (event.pointerId !== previewDragState.pointerId) {
-    return;
-  }
-  event.preventDefault();
-  finalizePreviewDrag();
-};
-const onPreviewDragPointerCancel = (event: PointerEvent) => {
-  if (event.pointerId !== previewDragState.pointerId) {
-    return;
-  }
-  event.preventDefault();
-  cancelPreviewDrag();
-};
-const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
-  const existing = typingPreviewList.value.find((item) => item.userId === userId && item.mode === mode);
-  if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
-    return existing.orderKey;
-  }
-  if (!Number.isFinite(typingPreviewOrderSeq) || typingPreviewOrderSeq <= 0) {
-    typingPreviewOrderSeq = Date.now();
-  }
-  const next = Math.max(typingPreviewOrderSeq, previewOrderMin);
-  typingPreviewOrderSeq += 1;
-  return next;
-};
-const typingPreviewItemClass = (preview: TypingPreviewItem) => [
-	'typing-preview-item',
-	'message-row',
-	`message-row--tone-${preview.tone}`,
-	`typing-preview-item--${preview.tone}`,
-	{
-		'typing-preview-item--indicator': preview.indicatorOnly,
-		'typing-preview-item--dragging': typingPreviewItemKey(preview) === previewDragState.activeKey,
-	},
-];
-const typingPreviewSurfaceClass = (preview: TypingPreviewItem) => [
-  'typing-preview-surface',
-  'message-row__surface',
-  `message-row__surface--tone-${preview.tone}`,
-];
-const typingPreviewHandleClass = (preview: TypingPreviewItem) => {
-  const classes = ['message-row__handle'];
-  const key = typingPreviewItemKey(preview);
-  const isSelfPreview = preview.userId === selfPreviewUserId.value;
-	if (isSelfPreview) {
-    classes.push('typing-preview-handle');
-    if (key && key === previewDragState.activeKey) {
-      classes.push('typing-preview-handle--dragging');
-    }
-  } else {
-    classes.push('message-row__handle--placeholder');
-  }
-  return classes;
-};
-const canDragTypingPreview = (preview: TypingPreviewItem) => preview.userId === selfPreviewUserId.value;
-const onPreviewDragHandlePointerDown = (event: PointerEvent, preview: TypingPreviewItem) => {
-  if (!canDragTypingPreview(preview)) {
-    return;
-  }
-  if (event.pointerType === 'mouse' && event.button !== 0) {
-    return;
-  }
-  const key = typingPreviewItemKey(preview);
-  if (!key) {
-    return;
-  }
-  const handleEl = event.currentTarget as HTMLElement | null;
-  if (handleEl) {
-    previewDragState.handleEl = handleEl;
-    try {
-      handleEl.setPointerCapture?.(event.pointerId);
-    } catch {
-      // ignore capture errors
-    }
-  }
-  previewDragState.pointerId = event.pointerId;
-  previewDragState.activeKey = key;
-  previewDragState.overKey = key;
-  previewDragState.position = 'after';
-  previewDragState.startY = event.clientY;
-  previewDragState.initialOrderKey = getPreviewOrderValue(preview) ?? selfPreviewOrderKey.value;
-  previewDragState.initialModified = selfPreviewOrderModified.value;
-  document.body.style.userSelect = 'none';
-  updatePreviewDragTarget(event.clientY);
-  window.addEventListener('pointermove', onPreviewDragPointerMove);
-  window.addEventListener('pointerup', onPreviewDragPointerUp);
-  window.addEventListener('pointercancel', onPreviewDragPointerCancel);
-  event.preventDefault();
-};
-const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
-const autoScrollTypingPreviewAlways = computed(() => display.settings.autoScrollTypingPreview === true);
-const shouldObserveTypingPreview = computed(() => (
-  inputPreviewEnabled.value
-  && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
-));
-const activeIdentityForPreview = computed(() => {
-  if (editingIdentityPreviewContext.value) {
-    return editingIdentityPreviewContext.value.identity;
-  }
-  return chat.getActiveIdentity(chat.curChannel?.id || '');
-});
-const activeIdentityVariantShortcutContext = computed(() => {
-  const rawDraft = textToSend.value;
-  const channelId = chat.curChannel?.id || '';
-  const identity = activeIdentityForPreview.value;
-  const fallbackVariant = editingIdentityPreviewContext.value
-    ? editingIdentityPreviewContext.value.variant
-    : (identity ? chat.getActiveIdentityVariant(channelId, identity.id) : null);
-  if (isEditing.value || inputMode.value !== 'plain' || !channelId || !identity) {
-    return {
-      draftContent: rawDraft,
-      variant: fallbackVariant,
-      matched: false,
-    };
-  }
-  const trigger = display.settings.identityVariantQuickSwitchTrigger || '=';
-  const shortcutResult = resolveIdentityVariantShortcutMatch(
-    rawDraft,
-    identity,
-    chat.getIdentityVariants(channelId, identity.id),
-    trigger,
-  );
-  if (shortcutResult?.matched) {
-    return {
-      draftContent: shortcutResult.restContent,
-      variant: shortcutResult.matched,
-      matched: true,
-    };
-  }
-  if (shortcutResult?.resetToDefault) {
-    return {
-      draftContent: shortcutResult.restContent,
-      variant: null,
-      matched: true,
-    };
-  }
-  return {
-    draftContent: rawDraft,
-    variant: fallbackVariant,
-    matched: false,
-  };
-});
-const activeIdentityVariantForPreview = computed(() => {
-  if (editingIdentityPreviewContext.value) {
-    return editingIdentityPreviewContext.value.variant;
-  }
-  return activeIdentityVariantShortcutContext.value.variant;
-});
-const activeIdentityAppearanceForPreview = computed(() => {
-  if (editingIdentityPreviewContext.value) {
-    return editingIdentityPreviewContext.value.appearance;
-  }
-  return resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value);
-});
-const activeIdentityAppearancePreviewSignature = computed(() => {
-  const appearance = activeIdentityAppearanceForPreview.value;
-  return [
-    appearance?.identityId || '',
-    appearance?.variantId || '',
-    appearance?.displayName || '',
-    appearance?.color || '',
-    appearance?.avatarAttachmentId || '',
-    JSON.stringify(appearance?.avatarDecorations || []),
-    appearance?.isTemporary ? '1' : '0',
-  ].join('__');
-});
-const effectiveIdentityVariantForEmojiPanel = computed(() => activeIdentityVariantForPreview.value);
-const selfPreviewUserId = computed(() => user.info?.id || '__self__');
-const isTypingPreviewVisibleForCurrentFilter = (tone: 'ic' | 'ooc') => {
-  const filter = chat.filterState.icFilter;
-  if (filter === 'ic') {
-    return tone === 'ic';
-  }
-  if (filter === 'ooc') {
-    return tone === 'ooc';
-  }
-  return true;
-};
-const typingPreviewItems = computed(() =>
-  typingPreviewList.value
-    .filter((item) => item.mode === 'typing' && isTypingPreviewVisibleForCurrentFilter(item.tone))
-    .slice()
-    .sort((a, b) => a.orderKey - b.orderKey),
-);
-const selfTypingPreview = computed(() =>
-  typingPreviewItems.value.find((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing') || null,
-);
-const selfTypingPreviewSignature = computed(() => {
-  if (!selfTypingPreview.value) {
-    return '';
-  }
-  return `${selfTypingPreview.value.content}__${selfTypingPreview.value.indicatorOnly ? '1' : '0'}`;
-});
-const hasSelfTypingPreview = computed(() =>
-  typingPreviewItems.value.some((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing'),
-);
-
-const selfTypingPreviewKey = computed(() =>
-  selfPreviewUserId.value ? `${selfPreviewUserId.value}-typing` : '',
-);
-let selfPreviewResizeObserver: ResizeObserver | null = null;
-let selfPreviewObservedEl: HTMLElement | null = null;
-let lastSelfPreviewHeight = 0;
-let pendingSelfPreviewScroll = false;
-
-const disconnectSelfPreviewObserver = () => {
-  if (selfPreviewResizeObserver && selfPreviewObservedEl) {
-    selfPreviewResizeObserver.unobserve(selfPreviewObservedEl);
-  }
-  selfPreviewObservedEl = null;
-  lastSelfPreviewHeight = 0;
-};
-
-const disposeSelfPreviewObserver = () => {
-  disconnectSelfPreviewObserver();
-  if (selfPreviewResizeObserver) {
-    selfPreviewResizeObserver.disconnect();
-    selfPreviewResizeObserver = null;
-  }
-};
-
-const shouldAutoScrollTypingPreview = () => {
-  if (!inputPreviewEnabled.value) {
-    return false;
-  }
-  if (autoScrollTypingPreviewAlways.value) {
-    return true;
-  }
-  if (inHistoryMode.value || historyLocked.value) {
-    return false;
-  }
-  return isNearBottom();
-};
-
-const scheduleSelfPreviewAutoScroll = () => {
-  if (pendingSelfPreviewScroll) {
-    return;
-  }
-  if (!shouldAutoScrollTypingPreview()) {
-    return;
-  }
-  pendingSelfPreviewScroll = true;
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      pendingSelfPreviewScroll = false;
-      if (!shouldAutoScrollTypingPreview()) {
-        return;
-      }
-      scrollToBottom();
-    });
-  });
-};
-
-const ensureSelfPreviewObserver = async () => {
-  if (!shouldObserveTypingPreview.value) {
-    disconnectSelfPreviewObserver();
-    return;
-  }
-  const key = selfTypingPreviewKey.value;
-  if (!key) {
-    disconnectSelfPreviewObserver();
-    return;
-  }
-  await nextTick();
-  const el = typingPreviewRowRefs.get(key);
-  if (!el) {
-    disconnectSelfPreviewObserver();
-    return;
-  }
-  if (selfPreviewObservedEl === el) {
-    return;
-  }
-  disconnectSelfPreviewObserver();
-  selfPreviewObservedEl = el;
-  lastSelfPreviewHeight = el.getBoundingClientRect().height;
-  if (!selfPreviewResizeObserver) {
-    selfPreviewResizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry || entry.target !== selfPreviewObservedEl) {
-        return;
-      }
-      const nextHeight = entry.contentRect.height;
-      if (nextHeight > lastSelfPreviewHeight) {
-        scheduleSelfPreviewAutoScroll();
-      }
-      lastSelfPreviewHeight = nextHeight;
-    });
-  }
-  selfPreviewResizeObserver.observe(el);
-};
-
-watch(
-  [typingPreviewItems, selfPreviewUserId, shouldObserveTypingPreview],
-  () => {
-    void ensureSelfPreviewObserver();
-  },
-  { flush: 'post' },
-);
-
-watch(
-  hasSelfTypingPreview,
-  (hasPreview, prevHasPreview) => {
-    if (!hasPreview || prevHasPreview) {
-      return;
-    }
-    scheduleSelfPreviewAutoScroll();
-  },
-  { flush: 'post' },
-);
-
-watch(
-  selfTypingPreviewSignature,
-  (next, prev) => {
-    if (!next || next === prev) {
-      return;
-    }
-    scheduleSelfPreviewAutoScroll();
-  },
-  { flush: 'post' },
-);
-
-// 监听整个 typing-preview-viewport 容器的高度变化（用于他人的实时广播）
-let typingViewportResizeObserver: ResizeObserver | null = null;
-let lastTypingViewportHeight = 0;
-
-const shouldAutoScrollRemoteTyping = () => {
-  if (inHistoryMode.value || historyLocked.value) {
-    return false;
-  }
-  return true;
-};
-
-const scheduleRemotePreviewAutoScroll = () => {
-  if (!shouldAutoScrollRemoteTyping()) {
-    return;
-  }
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      if (!shouldAutoScrollRemoteTyping()) {
-        return;
-      }
-      scrollToBottom();
-    });
-  });
-};
-
-const setupTypingViewportObserver = () => {
-  const el = typingPreviewViewportRef.value;
-  if (!el) {
-    return;
-  }
-  if (typingViewportResizeObserver) {
-    typingViewportResizeObserver.disconnect();
-  }
-  lastTypingViewportHeight = el.getBoundingClientRect().height;
-  typingViewportResizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[0];
-    if (!entry) {
-      return;
-    }
-    const nextHeight = entry.contentRect.height;
-    if (nextHeight > lastTypingViewportHeight) {
-      scheduleRemotePreviewAutoScroll();
-    }
-    lastTypingViewportHeight = nextHeight;
-  });
-  typingViewportResizeObserver.observe(el);
-  scheduleRemotePreviewAutoScroll();
-};
-
-const disposeTypingViewportObserver = () => {
-  if (typingViewportResizeObserver) {
-    typingViewportResizeObserver.disconnect();
-    typingViewportResizeObserver = null;
-  }
-  lastTypingViewportHeight = 0;
-};
-
-watch(
+const textToSend = ref('');
+const {
+  typingPreviewMode,
+  typingPreviewActive,
+  typingPreviewList,
   typingPreviewViewportRef,
-  (el) => {
-    if (el) {
-      setupTypingViewportObserver();
-    } else {
-      disposeTypingViewportObserver();
-    }
-  },
-  { flush: 'post' },
-);
-
-const resolveSelfPreviewDisplayName = () => {
-  const appearance = activeIdentityAppearanceForPreview.value;
-  if (appearance?.displayName) {
-    return appearance.displayName;
-  }
-  return user.info?.nick || user.info?.name || '我';
-};
-const resolveSelfPreviewAvatar = () => {
-  const appearance = activeIdentityAppearanceForPreview.value;
-  if (appearance?.avatarAttachmentId) {
-    return resolveAttachmentUrl(appearance.avatarAttachmentId);
-  }
-  return chat.curMember?.avatar || user.info?.avatar || '';
-};
-const removeSelfTypingPreview = () => {
-  const userId = selfPreviewUserId.value;
-  if (userId) {
-    removeTypingPreview(userId, 'typing');
-  }
-};
-const syncSelfTypingPreview = () => {
-  if (!inputPreviewEnabled.value || isEditing.value) {
-    removeSelfTypingPreview();
-    return;
-  }
-  const draft = activeIdentityVariantShortcutContext.value.draftContent;
-  if (!isContentMeaningful(inputMode.value, draft)) {
-    removeSelfTypingPreview();
-    return;
-  }
-  const displayName = resolveSelfPreviewDisplayName();
-  const avatar = resolveSelfPreviewAvatar();
-  const normalizedColor = activeIdentityAppearanceForPreview.value?.color
-    ? normalizeHexColor(activeIdentityAppearanceForPreview.value.color || '') || undefined
-    : undefined;
-  const tone = inputIcMode.value || 'ic';
-  if (!isTypingPreviewVisibleForCurrentFilter(tone)) {
-    removeSelfTypingPreview();
-    return;
-  }
-  let previewContent = draft;
-  if (inputMode.value !== 'rich') {
-    const normalized = replaceEmojiRemarksForPreview(draft);
-    previewContent = normalized.length > 500 ? normalized.slice(0, 500) : normalized;
-  }
-  const payload: TypingPreviewItem = {
-    userId: selfPreviewUserId.value,
-    displayName,
-    avatar,
-    avatarDecorations: cloneAvatarDecorations(activeIdentityAppearanceForPreview.value?.avatarDecorations),
-    color: normalizedColor,
-    content: previewContent,
-    indicatorOnly: false,
-    mode: 'typing',
-    tone,
-    messageId: undefined,
-    isTemporary: Boolean(activeIdentityAppearanceForPreview.value?.isTemporary),
-    orderKey: 0,
-  };
-  upsertTypingPreview(payload);
-};
-watch(selfPreviewUserId, (next, prev) => {
-	if (prev && prev !== next) {
-		removeTypingPreview(prev, 'typing');
-		resetSelfPreviewOrder();
-	}
-	syncSelfTypingPreview();
+  typingPreviewItems,
+  typingPreviewTooltip,
+  typingToggleClass,
+  typingPreviewItemClass,
+  typingPreviewSurfaceClass,
+  typingPreviewHandleClass,
+  canDragTypingPreview,
+  onPreviewDragHandlePointerDown,
+  registerTypingPreviewRow,
+  emitTypingPreview,
+  emitEditingPreview,
+  stopTypingPreviewNow,
+  stopEditingPreviewNow,
+  resetTypingPreview,
+  resetDraftOrderContext,
+  removeTypingPreview,
+  removeSelfTypingPreview,
+  upsertTypingPreview,
+  syncSelfTypingPreview,
+  editingPreviewActive,
+  inputPreviewEnabled,
+  toggleTypingPreview,
+  activeIdentityForPreview,
+  activeIdentityVariantShortcutContext,
+  activeIdentityVariantForPreview,
+  activeIdentityAppearanceForPreview,
+  activeIdentityAppearancePreviewSignature,
+  effectiveIdentityVariantForEmojiPanel,
+  selfPreviewUserId,
+  draftStartedAtMs,
+  selfPreviewOrderModified,
+} = useTypingPreview({
+  chat,
+  user,
+  display,
+  inputMode,
+  inputIcMode,
+  textToSend,
+  isEditing,
+  inHistoryMode,
+  historyLocked,
+  editingIdentityPreviewContext,
+  resolveIdentityVariantShortcutMatch: (...args) => resolveIdentityVariantShortcutMatch(...args),
+  resolveIdentityAppearancePreview: (...args) => resolveIdentityAppearancePreview(...args),
+  replaceEmojiRemarksForPreview,
+  cloneAvatarDecorations: (...args) => cloneAvatarDecorations(...args),
+  normalizeHexColor: (value) => normalizeHexColor(value),
+  isContentMeaningful: (mode, content) => isContentMeaningful(mode, content),
+  isNearBottom: () => isNearBottom(),
+  scrollToBottom: () => scrollToBottom(),
 });
-let lastTypingChannelId = '';
-let lastTypingWhisperTargetId: string | null = null;
-
-const upsertTypingPreview = (item: TypingPreviewItem) => {
-  const isSelfPreview = item.userId === selfPreviewUserId.value;
-  let orderKey: number;
-  if (isSelfPreview) {
-    const existing = typingPreviewList.value.find((preview) => preview.userId === item.userId && preview.mode === item.mode);
-    if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
-      orderKey = existing.orderKey;
-    } else if (Number.isFinite(selfPreviewOrderKey.value) && selfPreviewOrderKey.value > 0) {
-      orderKey = selfPreviewOrderKey.value;
-    } else {
-      orderKey = Number.MAX_SAFE_INTEGER;
-    }
-		selfPreviewOrderKey.value = orderKey;
-	} else {
-		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey) && item.orderKey > 0) {
-			orderKey = item.orderKey;
-		} else {
-			orderKey = getTypingOrderKey(item.userId, item.mode);
-		}
-	}
-  const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
-  if (existingIndex >= 0) {
-    typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
-  } else {
-    typingPreviewList.value.push({ ...item, orderKey });
-  }
-};
-
-const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typing') => {
-	if (!userId) {
-		return;
-	}
-	typingPreviewList.value = typingPreviewList.value.filter((item) => !(item.userId === userId && item.mode === mode));
-};
-
-const resetTypingPreview = () => {
-	typingPreviewList.value = [];
-	typingPreviewOrderSeq = Date.now();
-	resetSelfPreviewOrder();
-	typingPreviewRowRefs.clear();
-};
-
-const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTargets[0]?.id || null;
-
-const sendTypingUpdate = throttle(
-	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
-		const targetId = options?.whisperTo ?? resolveCurrentWhisperTargetId();
-		const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
-		const extra: {
-			whisperTo?: string;
-			icMode: 'ic' | 'ooc';
-			orderKey?: number;
-			identityId?: string;
-			identityVariantId?: string;
-		} = {
-			icMode,
-			identityId: activeIdentityForPreview.value?.id || undefined,
-			identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
-		};
-		if (targetId) {
-			extra.whisperTo = targetId;
-		}
-		if (typeof options?.orderKey === 'number' && Number.isFinite(options.orderKey) && options.orderKey > 0) {
-			extra.orderKey = options.orderKey;
-		}
-		lastTypingWhisperTargetId = targetId ?? null;
-		chat.messageTyping(state, content, channelId, extra);
-	},
-	800,
-	{ leading: true, trailing: true },
-);
-const broadcastTypingOrderChange = throttle(
-	() => {
-		if (!typingPreviewActive.value || !chat.curChannel?.id) {
-			return;
-		}
-		emitTypingPreview();
-		sendTypingUpdate.flush();
-	},
-	250,
-	{ leading: false, trailing: true },
-);
-
-const stopTypingPreviewNow = () => {
-  sendTypingUpdate.cancel();
-  if (typingPreviewActive.value && lastTypingChannelId) {
-    const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
-    const extra = lastTypingWhisperTargetId ? { whisperTo: lastTypingWhisperTargetId, icMode } : { icMode };
-    chat.messageTyping('silent', '', lastTypingChannelId, extra);
-  }
-  typingPreviewActive.value = false;
-  lastTypingChannelId = '';
-  lastTypingWhisperTargetId = null;
-  removeSelfTypingPreview();
-};
-
-const editingPreviewActive = ref(false);
-let lastEditingChannelId = '';
-let lastEditingMessageId = '';
-
-let lastEditingWhisperTargetId: string | null = null;
-
-const sendEditingPreview = throttle((channelId: string, messageId: string, content: string) => {
-  if (typingPreviewMode.value !== 'content') {
-    return;
-  }
-  const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
-  const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
-  const extra: {
-    mode: 'editing';
-    messageId: string;
-    whisperTo?: string;
-    icMode: 'ic' | 'ooc';
-    identityId?: string;
-    identityVariantId?: string;
-  } = {
-    mode: 'editing',
-    messageId,
-    icMode,
-    identityId: chat.editing?.identityId || undefined,
-    identityVariantId: chat.editing?.identityVariantId || undefined,
-  };
-  if (whisperTargetId) {
-    extra.whisperTo = whisperTargetId;
-  }
-  chat.messageTyping('content', content, channelId, extra);
-  editingPreviewActive.value = true;
-  lastEditingChannelId = channelId;
-  lastEditingMessageId = messageId;
-  lastEditingWhisperTargetId = whisperTargetId ?? null;
-}, 400, { leading: true, trailing: true });
-
-const stopEditingPreviewNow = () => {
-  sendEditingPreview.cancel();
-  if (editingPreviewActive.value && lastEditingChannelId && lastEditingMessageId) {
-    const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
-    const extra: Record<string, any> = { mode: 'editing', messageId: lastEditingMessageId, icMode };
-    if (lastEditingWhisperTargetId) {
-      extra.whisperTo = lastEditingWhisperTargetId;
-    }
-    chat.messageTyping('silent', '', lastEditingChannelId, extra);
-  }
-  editingPreviewActive.value = false;
-  lastEditingChannelId = '';
-  lastEditingMessageId = '';
-  lastEditingWhisperTargetId = null;
-};
 
 const stripDiceChipMarkup = (html: string) => {
   if (!html || !html.includes('dice-chip')) {
@@ -10559,7 +9347,7 @@ const convertMessageContentToDraft = (content?: string) => {
     return text;
   }
   const imageRecords: Array<{ id: string; token: string; attachmentId: string }> = [];
-  text = text.replace(/<img\s+[^>]*src="([^"]+)"[^>]*\/?>/gi, (_, src) => {
+  text = text.replace(/<img\s+[^>]*src="([^"]+)"[^>]*\/?>/gi, (_, src: string) => {
     const markerId = nanoid();
     const token = `[[图片:${markerId}]]`;
     const attachmentId = src.startsWith('id:') ? src : src;
@@ -10576,121 +9364,13 @@ const convertMessageContentToDraft = (content?: string) => {
     });
     inlineImages.set(id, record);
   });
-  text = text.replace(/<at\s+[^>]*name="([^"]+)"[^>]*\/>/gi, (_, name) => `@${name}`);
-  text = text.replace(/<at\s+[^>]*id="([^"]+)"[^>]*\/>/gi, (_, id) => `@${id}`);
+  text = text.replace(/<at\s+[^>]*name="([^"]+)"[^>]*\/>/gi, (_, name: string) => `@${name}`);
+  text = text.replace(/<at\s+[^>]*id="([^"]+)"[^>]*\/>/gi, (_, id: string) => `@${id}`);
   text = restoreQuickFormatTextFromHtml(text);
   text = text.replace(/<br\s*\/?>/gi, '\n');
   return text;
 };
 
-const emitTypingPreview = () => {
-  if (chat.connectState !== 'connected') return;
-  const channelId = chat.curChannel?.id;
-  if (!channelId) return;
-
-  if (isEditing.value) {
-    emitEditingPreview();
-    return;
-  }
-
-  if (typingPreviewMode.value === 'silent') {
-    stopTypingPreviewNow();
-    return;
-  }
-
-  let raw = inputMode.value === 'plain'
-    ? activeIdentityVariantShortcutContext.value.draftContent
-    : textToSend.value;
-  const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
-    && activeIdentityVariantShortcutContext.value.matched;
-
-  if (inputMode.value === 'rich') {
-    try {
-      const json = JSON.parse(raw);
-      if (!json.content || json.content.length === 0) {
-        stopTypingPreviewNow();
-        return;
-      }
-    } catch {
-      stopTypingPreviewNow();
-      return;
-    }
-  } else {
-    if (raw.trim().length === 0) {
-      if (!canBroadcastIndicatorWithoutContent) {
-        stopTypingPreviewNow();
-        return;
-      }
-      raw = '';
-    }
-    raw = replaceEmojiRemarksForPreview(raw);
-  }
-
-  typingPreviewActive.value = true;
-  lastTypingChannelId = channelId;
-
-  // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
-  const truncated = inputMode.value === 'rich' ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
-  const content = typingPreviewMode.value === 'content' ? truncated : '';
-	const orderKeyForBroadcast = Number.isFinite(selfPreviewOrderKey.value)
-		? selfPreviewOrderKey.value
-		: undefined;
-	sendTypingUpdate(typingPreviewMode.value, content, channelId, {
-		whisperTo: resolveCurrentWhisperTargetId(),
-		orderKey: orderKeyForBroadcast,
-	});
-};
-
-const emitEditingPreview = () => {
-  if (!chat.editing || chat.connectState !== 'connected') {
-    return;
-  }
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    return;
-  }
-  const messageId = chat.editing.messageId;
-  const raw = textToSend.value;
-  // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
-  const isRichMode = chat.editing.mode === 'rich' || isTipTapJson(raw);
-  const truncated = isRichMode ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
-  sendEditingPreview(channelId, messageId, truncated);
-};
-
-const typingPreviewTooltip = computed(() => {
-  switch (typingPreviewMode.value) {
-    case 'indicator':
-      return '当前：实时广播关闭（仅显示“正在输入”提示）。点击开启实时广播';
-    case 'content':
-      return '当前：实时广播开启。点击切换为沉默广播';
-    case 'silent':
-      return '当前：实时广播沉默。点击恢复指示模式';
-    default:
-      return '调整实时广播状态';
-  }
-});
-
-const toggleTypingPreview = () => {
-  if (typingPreviewMode.value === 'indicator') {
-    typingPreviewMode.value = 'content';
-    emitTypingPreview();
-    return;
-  }
-  if (typingPreviewMode.value === 'content') {
-    typingPreviewMode.value = 'silent';
-    return;
-  }
-  typingPreviewMode.value = 'indicator';
-  emitTypingPreview();
-};
-
-const typingToggleClass = computed(() => ({
-  'typing-toggle--indicator': typingPreviewMode.value === 'indicator',
-  'typing-toggle--content': typingPreviewMode.value === 'content',
-  'typing-toggle--silent': typingPreviewMode.value === 'silent',
-}));
-
-const textToSend = ref('');
 const showAIPolish = computed(() => aiStore.isFeatureEnabled('polish'))
 const showBattleSummary = computed(() => aiStore.isFeatureEnabled('battle_summary'))
 const reeditRevokedSource = ref<{ channelId: string; messageId: string } | null>(null);
@@ -11011,16 +9691,35 @@ const resolveAIPolishInput = () => {
 
 const hasAIPolishInput = computed(() => resolveAIPolishInput().trim().length > 0);
 const canRunAIPolish = computed(() => hasAIPolishInput.value);
-const aiPolishActiveSlot = computed(() => aiPolishDockState.slots[aiPolishDockState.activeSlotIndex])
-const aiPolishAnyLoading = computed(() => aiPolishDockState.slots.some((slot) => slot.status === 'loading'))
-const aiPolishFaviconHref = computed(() => {
-  const faviconAttachmentId = utils.config?.faviconAttachmentId?.trim() || ''
-  const normalized = faviconAttachmentId.startsWith('id:') ? faviconAttachmentId.slice(3) : faviconAttachmentId
-  if (normalized) {
-    return `${urlBase}/api/v1/attachment/${encodeURIComponent(normalized)}?v=${encodeURIComponent(normalized)}`
-  }
-  return `${urlBase}/favicon.ico?v=default`
-})
+const {
+  aiPolishDockVisible,
+  aiPolishDockState,
+  aiPolishActiveSlot,
+  aiPolishAnyLoading,
+  aiPolishFaviconHref,
+  runAIPolish,
+  applyAIPolishResult,
+  retryCurrentAIPolishTask,
+  readCurrentInputIntoAIPolishSlot,
+  updateActiveAIPolishResultText,
+  updateActiveAIPolishSourceText,
+  updateActiveAIPolishViewMode,
+  clearCurrentAIPolishSlot,
+  closeAIPolishDock,
+  setActiveAIPolishSlot,
+  toggleAIPolishDockMinimized,
+} = useChatAIPolish({
+  aiStore,
+  chat,
+  utils,
+  message,
+  dialog,
+  inputMode,
+  textToSend,
+  textInputRef,
+  resolveInput: resolveAIPolishInput,
+  buildRichContentFromPlain,
+});
 
 const hasMeaningfulDraft = computed(() => (
   isEditing.value || isContentMeaningful(inputMode.value, textToSend.value)
@@ -14188,45 +12887,6 @@ watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds
   emitTypingPreview();
 });
 
-watch(typingPreviewMode, (mode) => {
-  localStorage.setItem(typingPreviewStorageKey, mode);
-  if (mode === 'silent') {
-    stopTypingPreviewNow();
-    stopEditingPreviewNow();
-    return;
-  }
-  if (typingPreviewActive.value && lastTypingChannelId) {
-    const raw = inputMode.value === 'plain'
-      ? activeIdentityVariantShortcutContext.value.draftContent
-      : textToSend.value;
-    const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
-      && activeIdentityVariantShortcutContext.value.matched;
-    if (raw.trim().length > 0 || canBroadcastIndicatorWithoutContent) {
-      // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
-      const isRich = inputMode.value === 'rich' || isTipTapJson(raw);
-      const truncated = isRich ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
-      sendTypingUpdate.cancel();
-      const content = mode === 'content' ? truncated : '';
-      const whisperId = resolveCurrentWhisperTargetId();
-      const extra = {
-        whisperTo: whisperId || undefined,
-        identityId: activeIdentityForPreview.value?.id || undefined,
-        identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
-      };
-      lastTypingWhisperTargetId = whisperId ?? null;
-      chat.messageTyping(mode, content, lastTypingChannelId, extra);
-    } else {
-      stopTypingPreviewNow();
-    }
-  }
-  if (mode === 'content' && isEditing.value) {
-    emitEditingPreview();
-  }
-  if (mode !== 'content' && editingPreviewActive.value) {
-    stopEditingPreviewNow();
-  }
-});
-
 watch(() => identityForm.color, (value) => {
   const normalized = normalizeColorDraftText(value);
   if (identityColorDraft.value !== normalized) {
@@ -14813,83 +13473,6 @@ chatEvent.on('message-unarchived', (e?: Event) => {
   }
 });
 
-chatEvent.off('typing-preview', '*');
-chatEvent.on('typing-preview', (e?: Event) => {
-  if (!e?.channel || e.channel.id !== chat.curChannel?.id) {
-    return;
-  }
-  const typingUserId = e.user?.id;
-  if (!typingUserId || typingUserId === user.info.id) {
-    return;
-  }
-  const mode = e.typing?.mode === 'editing' ? 'editing' : 'typing';
-  const identity = e.member?.identity;
-  const identityColor = identity ? normalizeHexColor(identity.color || '') : '';
-  const identityAvatar = identity?.avatarAttachmentId
-    ? resolveAttachmentUrl(identity.avatarAttachmentId)
-    : '';
-  const debugEnabled =
-    typeof window !== 'undefined' &&
-    (window as any).__SC_DEBUG_TYPING__ === true;
-  if (debugEnabled) {
-    console.debug(
-      '[typing-preview]',
-      'user=', typingUserId,
-      'mode=', mode,
-      'state=', typingState,
-      'messageId=', e.typing?.messageId,
-      'identityId=', identity?.id || '(none)',
-      'identityName=', identity?.displayName || '(none)',
-    );
-  }
-  const typingState: TypingBroadcastState = (() => {
-    const candidate = (e.typing?.state || '').toLowerCase();
-    switch (candidate) {
-      case 'content':
-      case 'on':
-        return 'content';
-      case 'silent':
-        return 'silent';
-      case 'indicator':
-      case 'off':
-        return 'indicator';
-      default:
-        if (typeof e.typing?.enabled === 'boolean') {
-          return e.typing.enabled ? 'content' : 'indicator';
-        }
-        return 'indicator';
-    }
-  })();
-  if (typingState === 'silent') {
-    removeTypingPreview(typingUserId, mode);
-    return;
-  }
-  const displayName =
-    (identity?.displayName && identity.displayName.trim()) ||
-    e.member?.nick ||
-    e.user?.nick ||
-    '未知成员';
-  const avatar =
-    identityAvatar ||
-    e.member?.avatar ||
-    e.user?.avatar ||
-    '';
-	upsertTypingPreview({
-		userId: typingUserId,
-		displayName,
-		avatar,
-		avatarDecorations: cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration),
-		color: identityColor,
-		content: typingState === 'content' ? (e.typing?.content || '') : '',
-		indicatorOnly: typingState !== 'content' || !e.typing?.content,
-		mode,
-		messageId: e.typing?.messageId,
-		isTemporary: Boolean(identity?.isTemporary),
-		tone: resolveTypingTone(e.typing),
-		orderKey: typeof e.typing?.orderKey === 'number' ? e.typing.orderKey : Number.NaN,
-	});
-});
-
 chatEvent.off('channel-presence-updated', '*');
 chatEvent.on('channel-presence-updated', (e?: Event) => {
   const channelId = e?.channel?.id || '';
@@ -15078,14 +13661,9 @@ onBeforeUnmount(() => {
     window.removeEventListener('pageshow', handleForegroundResume);
     window.removeEventListener('online', handleForegroundResume);
   }
-  stopTypingPreviewNow();
-  stopEditingPreviewNow();
-  resetTypingPreview();
   scheduleHistorySnapshot.cancel();
   scheduleSessionDraftSnapshot.cancel();
   syncSessionDraftSnapshot();
-  disposeSelfPreviewObserver();
-  disposeTypingViewportObserver();
   disposeImageLayoutRowObserver();
   cancelDrag();
   stopTopObserver();
@@ -15807,157 +14385,19 @@ const keyDown = function (e: KeyboardEvent) {
   }
 }
 
-const atOptions = ref<MentionOption[]>([])
-const atLoading = ref(true)
-let atSearchRequestSeq = 0
-const atRenderLabel = (option: MentionOption) => {
-  switch (option.type) {
-    case 'cmd':
-      return <div class="flex items-center space-x-1">
-        <span>{(option as any).data.info}</span>
-      </div>
-    case 'at': {
-      const data = (option as any).data || {};
-      const identityType = data.identityType;
-      const color = data.color || 'inherit';
-      const isAll = data.userId === 'all';
-      return <div class="flex items-center space-x-2">
-        {isAll ? (
-          <span class="at-option-avatar at-option-avatar--all">@</span>
-        ) : (
-          <AvatarVue size={24} border={false} src={data.avatar} />
-        )}
-        <span style={{ color: isAll ? '#ef4444' : color }}>{option.label}</span>
-        {identityType && identityType !== 'all' && (
-          <span class={`at-option-tag at-option-tag--${identityType}`}>
-            {identityType === 'ic' ? '场内' : identityType === 'ooc' ? '场外' : '用户'}
-          </span>
-        )}
-      </div>
-    }
-  }
-}
-
-const atPrefix = computed(() => chat.atOptionsOn ? ['@', '/', '.'] : ['@']);
-
-const atHandleSearch = async (pattern: string, prefix: string) => {
-  const requestSeq = ++atSearchRequestSeq;
-  pauseKeydown.value = true;
-  atLoading.value = true;
-
-  const atElementCheck = () => {
-    const els = document.getElementsByClassName("v-binder-follower-content");
-    if (els.length) {
-      return els[0].children.length > 0;
-    }
-    return false;
-  }
-
-  // 如果at框非正常消失，那么也一样要恢复回车键功能
-  let x = setInterval(() => {
-    if (!atElementCheck()) {
-      pauseKeydown.value = false;
-      clearInterval(x);
-    }
-  }, 100)
-
-  const cmdCheck = () => {
-    const text = textToSend.value.trim();
-    if (text.startsWith(prefix)) {
-      return true;
-    }
-  }
-
-  try {
-    switch (prefix) {
-      case '@': {
-        if (shouldResetMentionOptionsOnSearchStart(prefix)) {
-          atOptions.value = [];
-        }
-        await ensurePinyinLoaded();
-        if (requestSeq !== atSearchRequestSeq) {
-          return;
-        }
-        const channelId = chat.curChannel?.id;
-        if (!channelId) {
-          atOptions.value = [];
-          break;
-        }
-        const result = await chat.fetchMentionableMembers(channelId);
-        if (requestSeq !== atSearchRequestSeq) {
-          return;
-        }
-        let lst: MentionOption[] = [];
-        // @all option
-        if (result.canAtAll) {
-          const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
-          if (allMatches) {
-            lst.push({
-              type: 'at',
-              value: '<at id="all" name="全体成员"/>',
-              label: '全体成员',
-              data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
-            });
-          }
-        }
-        const sortedItems = sortMentionableMembersByMode(result.items || [], inputIcMode.value === 'ooc' ? 'ooc' : 'ic');
-        // Filter and map members
-        for (const item of sortedItems) {
-          if (pattern && !matchText(pattern, item.displayName)) {
-            continue;
-          }
-          const escapedName = item.displayName.replace(/"/g, '&quot;');
-          lst.push({
-            type: 'at',
-            value: `<at id="${item.userId}" name="${escapedName}"/>`,
-            label: item.displayName,
-            data: item,
-          });
-        }
-        atOptions.value = lst.slice(0, 10);
-        break;
-      }
-      case '.': case '/':
-        // 好像暂时没法组织他弹出
-        // if (!cmdCheck()) {
-        //   atLoading.value = false;
-        //   pauseKeydown.value = false;
-        //   return;
-        // }
-
-        if (chat.atOptionsOn) {
-          atOptions.value = [[`x`, 'x d100'],].map((i) => {
-            return {
-              type: 'cmd',
-              value: i[0],
-              label: i[0],
-              data: {
-                "info": '/x 简易骰点指令，如：/x d100 (100面骰)'
-              }
-            }
-          });
-
-          for (let [id, data] of Object.entries(utils.botCommands)) {
-            for (let [k, v] of Object.entries(data)) {
-              atOptions.value.push({
-                type: 'cmd',
-                value: k,
-                label: k,
-                data: {
-                  "info": `/${k} ` + (v as any).split('\n', 1)[0].replace(/^\.\S+/, '')
-                }
-              })
-            }
-          }
-        }
-        break;
-    }
-  } finally {
-    if (requestSeq === atSearchRequestSeq) {
-      atLoading.value = false;
-    }
-  }
-}
+const {
+  atOptions,
+  atLoading,
+  atPrefix,
+  atRenderLabel,
+  atHandleSearch,
+} = useMentionSuggestions({
+  chat,
+  utils,
+  inputIcMode,
+  textToSend,
+  pauseKeydown,
+});
 
 const { stop: stopTopObserver } = useIntersectionObserver(
   topSentinelRef,
@@ -16036,429 +14476,25 @@ const avatarLongpress = (data: any) => {
   }
 }
 
-// Multi-select handlers
-const allMessageIds = computed(() => {
-  const ids = new Set<string>();
-  for (const row of rows.value) {
-    if (row.id) {
-      ids.add(row.id);
-    }
-  }
-  for (const row of pinnedRows.value) {
-    if (row.id) {
-      ids.add(row.id);
-    }
-  }
-  return Array.from(ids);
-});
-
-const getMultiSelectedMessages = () => {
-  if (!chat.multiSelect?.selectedIds.size) return [];
-  const selected = Array.from(chat.multiSelect.selectedIds);
-  return rows.value.filter(row => selected.includes(row.id));
-};
-
-const getMultiSelectedMessageIdsInDisplayOrder = () => {
-  const selected = chat.multiSelect?.selectedIds;
-  if (!selected?.size) return [];
-  return rows.value
-    .map(row => row.id)
-    .filter((id): id is string => Boolean(id) && selected.has(id));
-};
-
-const openMessageForwardDialog = (payload: {
-  sourceChannelId?: string;
-  sourceWorldId?: string;
-  messageIds?: string[];
-  messages?: any[];
-}) => {
-  const channelId = String(payload.sourceChannelId || chat.curChannel?.id || '').trim();
-  const ids = Array.from(new Set((payload.messageIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
-  if (!channelId || ids.length === 0) {
-    message.warning('请先选择消息');
-    return;
-  }
-  forwardDialogSourceChannelId.value = channelId;
-  forwardDialogSourceWorldId.value = String(payload.sourceWorldId || chat.currentWorldId || '').trim();
-  forwardDialogMessageIds.value = ids;
-  forwardDialogMessages.value = Array.isArray(payload.messages) ? payload.messages : [];
-  forwardDialogVisible.value = true;
-};
-
-const handleMessageForwardOpen = (payload?: any) => {
-  openMessageForwardDialog(payload || {});
-};
-
-chatEvent.on('message-forward-open' as any, handleMessageForwardOpen as any);
-onBeforeUnmount(() => {
-  chatEvent.off('message-forward-open' as any, handleMessageForwardOpen as any);
-});
-
-const handleMultiSelectForward = () => {
-  const messageIds = getMultiSelectedMessageIdsInDisplayOrder();
-  if (!messageIds.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const selected = getMultiSelectedMessages();
-  openMessageForwardDialog({
-    sourceChannelId: chat.curChannel?.id || '',
-    sourceWorldId: chat.currentWorldId,
-    messageIds,
-    messages: selected,
-  });
-};
-
-const handleMessageForwardSuccess = () => {
-  if (chat.multiSelect?.active) {
-    chat.exitMultiSelectMode();
-  }
-};
-
-const handleMultiSelectCopy = async () => {
-  const messages = getMultiSelectedMessages();
-  if (!messages.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const text = messages.map(msg => {
-    const time = msg.createdAt ? dayjs(msg.createdAt).format('YYYY-MM-DD HH:mm:ss') : '';
-    const name = (msg as any).sender_member_name || (msg as any).identity?.displayName || msg.member?.nick || msg.user?.name || '未知';
-    const content = typeof msg.content === 'string' ? msg.content.replace(/<[^>]*>/g, '') : '';
-    return `[${time}] ${name}: ${content}`;
-  }).join('\n');
-  const copied = await copyTextWithFallback(text);
-  if (copied) {
-    message.success(`已复制 ${messages.length} 条消息`);
-    chat.exitMultiSelectMode();
-  } else {
-    message.error('复制失败');
-  }
-};
-
-const handleMultiSelectArchive = async () => {
-  const ids = Array.from(chat.multiSelect?.selectedIds || []);
-  if (!ids.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const confirmed = await dialogAskConfirm(
-    dialog,
-    '批量归档',
-    `确定归档选中的 ${ids.length} 条消息吗？归档后可在归档管理中查看或恢复。`,
-  );
-  if (!confirmed) {
-    return;
-  }
-  try {
-    await chat.archiveMessages(ids);
-    message.success(`已归档 ${ids.length} 条消息`);
-    chat.exitMultiSelectMode();
-  } catch (e) {
-    message.error('归档失败');
-  }
-};
-
-const handleMultiSelectDelete = async () => {
-  const ids = Array.from(chat.multiSelect?.selectedIds || []);
-  if (!ids.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    message.error('当前频道不可用');
-    return;
-  }
-  dialog.warning({
-    title: '批量删除',
-    content: `确定要删除选中的 ${ids.length} 条消息吗？此操作不可撤销。`,
-    positiveText: '删除',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        await chat.removeMessages(ids);
-        message.success(`已删除 ${ids.length} 条消息`);
-        chat.exitMultiSelectMode();
-      } catch (e) {
-        message.error('删除失败');
-      }
-    },
-  });
-};
-
-const handleMultiSelectCopyImage = async () => {
-  const messages = getMultiSelectedMessages();
-  if (!messages.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  try {
-    const html2canvas = (await import('html2canvas')).default;
-    
-    // Find message elements in DOM
-    const messageEls: HTMLElement[] = [];
-    for (const msg of messages) {
-      const el = document.getElementById(msg.id);
-      if (el) messageEls.push(el);
-    }
-    if (!messageEls.length) {
-      message.error('未找到消息元素');
-      return;
-    }
-
-    // Get background color
-    const rootStyles = getComputedStyle(document.documentElement);
-    const bgColor = rootStyles.getPropertyValue('--sc-bg-base')?.trim() 
-      || rootStyles.getPropertyValue('--chat-bg')?.trim()
-      || getComputedStyle(document.body).backgroundColor
-      || '#ffffff';
-
-    // Render each message element in-place with onclone callback
-    const canvases: HTMLCanvasElement[] = [];
-    for (const el of messageEls) {
-      const canvas = await html2canvas(el, {
-        backgroundColor: bgColor,
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        onclone: (clonedDoc, clonedEl) => {
-          // Remove selection classes
-          clonedEl.classList.remove('chat-item--multiselect', 'chat-item--selected');
-          // Remove checkbox element
-          const checkbox = clonedEl.querySelector('.chat-item__select-checkbox');
-          if (checkbox) checkbox.remove();
-        },
-      });
-      canvases.push(canvas);
-    }
-
-    // Calculate combined canvas size
-    const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
-    const maxWidth = Math.max(...canvases.map(c => c.width));
-    const padding = 16 * 2; // scale factor
-
-    // Create combined canvas
-    const combinedCanvas = document.createElement('canvas');
-    combinedCanvas.width = maxWidth + padding * 2;
-    combinedCanvas.height = totalHeight + padding * 2;
-    const ctx = combinedCanvas.getContext('2d')!;
-    
-    // Fill background
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, combinedCanvas.width, combinedCanvas.height);
-
-    // Draw each message canvas
-    let y = padding;
-    for (const canvas of canvases) {
-      ctx.drawImage(canvas, padding, y);
-      y += canvas.height;
-    }
-
-    // Copy to clipboard
-    combinedCanvas.toBlob(async (blob) => {
-      if (blob) {
-        try {
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': blob })
-          ]);
-          message.success('已复制为图片');
-          chat.exitMultiSelectMode();
-        } catch (e) {
-          message.error('复制图片失败');
-        }
-      }
-    }, 'image/png');
-  } catch (e) {
-    console.error(e);
-    message.error('生成图片失败');
-  }
-};
-
-const handleMultiSelectMoveToBottom = async () => {
-  const messages = getMultiSelectedMessages();
-  if (!messages.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    message.error('当前频道不可用');
-    return;
-  }
-  const messageIds = messages.map((msg) => msg.id).filter((id): id is string => Boolean(id));
-  if (!messageIds.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  const confirmed = await dialogAskConfirm(
-    dialog,
-    '批量置底',
-    `确定将选中的 ${messageIds.length} 条消息置底吗？原有相对顺序会保持不变。`,
-  );
-  if (!confirmed) {
-    return;
-  }
-  try {
-    await chat.messageReorderBatch(channelId, {
-      messageIds,
-      clientOpId: nanoid(),
-    });
-    message.success(`已置底 ${messageIds.length} 条消息`);
-    chat.exitMultiSelectMode();
-  } catch (error) {
-    message.error((error as Error)?.message || '置底失败');
-  }
-};
-
-const handleMultiSelectRelocate = () => {
-  const messageIds = getMultiSelectedMessageIdsInDisplayOrder();
-  if (!messageIds.length) {
-    message.warning('请先选择消息');
-    return;
-  }
-  chat.startMultiSelectRelocate(messageIds);
-};
-
-const handleCancelMultiSelectRelocate = () => {
-  chat.cancelMultiSelectRelocate();
-};
-
-const handleRelocateTargetPick = (messageId: string) => {
-  const relocate = chat.multiSelect?.relocate;
-  if (!relocate?.active) {
-    return;
-  }
-  const targetId = String(messageId || '').trim();
-  if (!targetId) {
-    return;
-  }
-  if (relocate.sourceMessageIds.includes(targetId)) {
-    message.warning('不能定位到已选消息内部');
-    return;
-  }
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    message.error('当前频道不可用');
-    return;
-  }
-  chat.setMultiSelectRelocateTarget(targetId);
-  const targetMessage = rows.value.find(row => row.id === targetId);
-  const targetSummary = (() => {
-    const raw = typeof targetMessage?.content === 'string' ? targetMessage.content.replace(/<[^>]*>/g, '').trim() : '';
-    if (raw) {
-      return raw.length > 32 ? `${raw.slice(0, 32)}...` : raw;
-    }
-    return '该消息';
-  })();
-  const messageIds = relocate.sourceMessageIds.slice();
-  dialog.warning({
-    title: '批量重定位',
-    content: `确定将选中的 ${messageIds.length} 条消息移动到“${targetSummary}”下方吗？`,
-    positiveText: '移动',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        await chat.messageRelocateBatch(channelId, {
-          messageIds,
-          targetMessageId: targetId,
-          placement: 'after',
-          clientOpId: nanoid(),
-        });
-        message.success(`已重定位 ${messageIds.length} 条消息`);
-        chat.exitMultiSelectMode();
-      } catch (error) {
-        message.error((error as Error)?.message || '重定位失败');
-      }
-    },
-  });
-};
-
-const handleMultiSelectAll = () => {
-  const allIds = rows.value.map(row => row.id);
-  chat.selectMessagesByIds(allIds);
-  message.info(`已选中 ${allIds.length} 条消息`);
-};
-
-const selectedEmojiIds = ref<string[]>([]);
-const emojiRemarkModalVisible = ref(false);
-const emojiRemarkInput = ref('');
-const emojiRemarkSaving = ref(false);
-const editingEmojiItem = ref<GalleryItem | null>(null);
-const emojiRemarkPattern = /^[\p{L}\p{N}_]{1,64}$/u;
-
-const resolveEmojiRemark = (item: GalleryItem, idx: number) => (item.remark?.trim() || `收藏${idx + 1}`);
-
-const openEmojiRemarkEditor = (item: GalleryItem) => {
-  editingEmojiItem.value = item;
-  emojiRemarkInput.value = item.remark?.trim() || '';
-  emojiRemarkModalVisible.value = true;
-};
-
-const submitEmojiRemark = async () => {
-  if (!editingEmojiItem.value) {
-    return false;
-  }
-  const remark = emojiRemarkInput.value.trim();
-  if (!remark) {
-    message.warning('备注不能为空');
-    return false;
-  }
-  if (!emojiRemarkPattern.test(remark)) {
-    message.warning('备注仅支持字母、数字和下划线，长度不超过64');
-    return false;
-  }
-  emojiRemarkSaving.value = true;
-  try {
-    const collectionId = editingEmojiItem.value.collectionId;
-    await gallery.updateItem(collectionId, editingEmojiItem.value.id, { remark });
-    message.success('备注已更新');
-    emojiRemarkModalVisible.value = false;
-    return true;
-  } catch (error: any) {
-    console.error('更新表情备注失败', error);
-    message.error(error?.message || '更新失败，请稍后再试');
-    return false;
-  } finally {
-    emojiRemarkSaving.value = false;
-  }
-};
-
-const cancelEmojiRemark = () => {
-  if (emojiRemarkSaving.value) {
-    return false;
-  }
-  emojiRemarkModalVisible.value = false;
-  return true;
-};
-
-const exitEmojiManage = () => {
-  isManagingEmoji.value = false;
-  selectedEmojiIds.value = [];
-};
-
-const emojiSelectedDelete = async () => {
-  if (!(await dialogAskConfirm(dialog))) return;
-
-  if (!selectedEmojiIds.value.length) {
-    message.info('没有选中的表情');
-    return;
-  }
-  const collectionId = gallery.favoritesCollectionId;
-  if (!collectionId) {
-    message.error('未找到表情收藏分类');
-    return;
-  }
-  try {
-    await gallery.deleteItems(collectionId, selectedEmojiIds.value);
-    message.success('已删除所选表情');
-    selectedEmojiIds.value = [];
-  } catch (error: any) {
-    console.error('删除表情失败', error);
-    message.error(error?.message || '删除失败，请稍后再试');
-  }
-};
+const {
+  allMessageIds,
+  forwardDialogVisible,
+  forwardDialogSourceChannelId,
+  forwardDialogSourceWorldId,
+  forwardDialogMessageIds,
+  forwardDialogMessages,
+  handleMultiSelectForward,
+  handleMessageForwardSuccess,
+  handleMultiSelectCopy,
+  handleMultiSelectArchive,
+  handleMultiSelectDelete,
+  handleMultiSelectCopyImage,
+  handleMultiSelectMoveToBottom,
+  handleMultiSelectRelocate,
+  handleCancelMultiSelectRelocate,
+  handleRelocateTargetPick,
+  handleMultiSelectAll,
+} = useMessageSelection({ chat, rows, pinnedRows, message, dialog });
 
 const insertGalleryInline = (attachmentId: string, selection?: SelectionRange) => {
   const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
@@ -16576,133 +14612,6 @@ const handleBattleReportOpenEditorRequest = async (payload: any) => {
     deferToDrawer: true,
   })
 }
-
-const runAIPolish = async () => {
-  const input = resolveAIPolishInput()
-  if (!input) {
-    message.error('请输入需要润色的内容')
-    return
-  }
-  aiPolishDockVisible.value = true
-  const activeSlot = aiPolishDockState.slots[aiPolishDockState.activeSlotIndex]
-  if (activeSlot && activeSlot.status !== 'idle' && activeSlot.sourceText.trim()) {
-    const nextIdleIndex = findNextIdleAIPolishSlot(aiPolishDockState)
-    if (nextIdleIndex < 0) {
-      message.warning('5 个润色槽都已占用，请先清空一个槽位或切换后重用')
-      return
-    }
-  }
-  const { slotIndex, requestId } = prepareAIPolishTask(aiPolishDockState, input)
-  try {
-    const resp = await aiStore.runTask('polish', {
-      worldId: chat.currentWorldId ? String(chat.currentWorldId) : '',
-      channelId: chat.curChannel?.id || '',
-      input,
-      source: aiStore.currentSource,
-    })
-    finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''))
-  } catch (error: any) {
-    const errMsg = error?.response?.data?.message || error?.message || '润色失败'
-    finishAIPolishTaskError(aiPolishDockState, slotIndex, requestId, errMsg)
-    if (isUserAISettingsRequiredMessage(errMsg)) {
-      dialog.warning({
-        title: '需要配置个人 API',
-        content: '当前功能仅允许用户自定义调用。请先前往个人设置中的 AI 设置，配置个人 API 后再使用。',
-        positiveText: '前往配置',
-        negativeText: '取消',
-        onPositiveClick: () => {
-          chatEvent.emit('open-user-profile', { openAISettings: true } as any)
-        },
-      })
-      return
-    }
-    message.error(errMsg)
-  }
-}
-
-const applyAIPolishResult = () => {
-  const resultText = aiPolishActiveSlot.value?.resultText || ''
-  if (inputMode.value === 'rich') {
-    textToSend.value = JSON.stringify(buildRichContentFromPlain(resultText))
-  } else {
-    textToSend.value = resultText
-  }
-  textInputRef.value?.focus?.()
-}
-
-const retryCurrentAIPolishTask = async () => {
-  const sourceText = aiPolishActiveSlot.value?.sourceText?.trim() || ''
-  if (!sourceText) {
-    message.error('当前槽位没有可重试的原文')
-    return
-  }
-  const slotIndex = aiPolishDockState.activeSlotIndex
-  const { requestId } = prepareAIPolishTask(aiPolishDockState, sourceText, slotIndex)
-  try {
-    const resp = await aiStore.runTask('polish', {
-      worldId: chat.currentWorldId ? String(chat.currentWorldId) : '',
-      channelId: chat.curChannel?.id || '',
-      input: sourceText,
-      source: aiStore.currentSource,
-    })
-    finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''))
-  } catch (error: any) {
-    const errMsg = error?.response?.data?.message || error?.message || '润色失败'
-    finishAIPolishTaskError(aiPolishDockState, slotIndex, requestId, errMsg)
-    if (isUserAISettingsRequiredMessage(errMsg)) {
-      dialog.warning({
-        title: '需要配置个人 API',
-        content: '当前功能仅允许用户自定义调用。请先前往个人设置中的 AI 设置，配置个人 API 后再使用。',
-        positiveText: '前往配置',
-        negativeText: '取消',
-        onPositiveClick: () => {
-          chatEvent.emit('open-user-profile', { openAISettings: true } as any)
-        },
-      })
-      return
-    }
-    message.error(errMsg)
-  }
-}
-
-const readCurrentInputIntoAIPolishSlot = () => {
-  const input = resolveAIPolishInput()
-  if (!input) {
-    message.error('当前输入框没有可读取内容')
-    return
-  }
-  aiPolishDockVisible.value = true
-  readCurrentInputIntoSlot(aiPolishDockState, aiPolishDockState.activeSlotIndex, input)
-}
-
-const updateActiveAIPolishResultText = (value: string) => {
-  const slot = aiPolishActiveSlot.value
-  if (!slot) return
-  slot.resultText = value
-}
-
-const updateActiveAIPolishSourceText = (value: string) => {
-  const slot = aiPolishActiveSlot.value
-  if (!slot) return
-  slot.sourceText = value
-}
-
-const updateActiveAIPolishViewMode = (viewMode: 'edit' | 'diff') => {
-  setAIPolishSlotViewMode(aiPolishDockState, aiPolishDockState.activeSlotIndex, viewMode)
-}
-
-const clearCurrentAIPolishSlot = () => {
-  if (aiPolishActiveSlot.value?.status === 'loading') {
-    message.warning('当前槽位仍在处理中，暂不能清空')
-    return
-  }
-  clearAIPolishSlot(aiPolishDockState, aiPolishDockState.activeSlotIndex)
-}
-
-const closeAIPolishDock = () => {
-  aiPolishDockVisible.value = false
-}
-
 
 onBeforeUnmount(() => {
   handleInputResizeEnd();
