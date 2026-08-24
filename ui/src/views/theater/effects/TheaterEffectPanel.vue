@@ -493,12 +493,12 @@ const handleAudioInput = (event: Event) => {
         @change="updateKeywords(keywordDraft)"
       />
 
-      <label>指定频道角色名</label>
+      <label>指定频道角色名（可多个）</label>
       <n-input
         :value="targetActorNameDraft"
         size="small"
         clearable
-        placeholder="按角色名匹配；留空表示全部"
+        placeholder="多个角色名用英文 ; 分隔；留空表示全部"
         @update:value="targetActorNameDraft = $event"
         @change="updateTargetActorName"
       />

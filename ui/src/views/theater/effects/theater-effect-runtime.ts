@@ -43,7 +43,10 @@ const normalizedActorName = (value: string) => value.normalize('NFKC').trim()
 
 export const theaterEffectMatchesMessage = (config: TheaterEffectConfig, message: TheaterDialogueMessage) => {
   if (!config.keywords.length) return false
-  if (config.targetActorName && normalizedActorName(config.targetActorName) !== normalizedActorName(message.actor.displayName)) return false
+  if (config.targetActorName) {
+    const targetActorNames = config.targetActorName.split(';').map(normalizedActorName).filter(Boolean)
+    if (targetActorNames.length && !targetActorNames.includes(normalizedActorName(message.actor.displayName))) return false
+  }
   const content = normalizedKeywordText(message.contentText)
   return config.keywords.some((keyword) => content.includes(normalizedKeywordText(keyword)))
 }
