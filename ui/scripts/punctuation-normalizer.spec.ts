@@ -29,6 +29,7 @@ assert.equal(normalizePunctuationForMessageSend(outgoing, false, 'plain'), outgo
 assert.equal(normalizePunctuationForMessageSend(outgoing, true, 'rich'), outgoing)
 assert.equal(normalizePunctuationForMessageSend(outgoing, true, 'plain', true), outgoing)
 assert.equal(normalizePunctuationForMessageSend(outgoing, true, 'plain', false, true), outgoing)
+assert.equal(normalizeChinesePunctuation('[[图片:marker_1]]你好!'), '[[图片:marker_1]]你好！')
 
 assert.equal(
   JSON.stringify(buildAutoCorrectPunctuationExportPayload(false)),
