@@ -74,6 +74,52 @@
         >
           清空
         </n-button>
+        <n-popover trigger="click" placement="bottom-end">
+          <template #trigger>
+            <n-button
+              class="track-card__sort-action"
+              size="tiny"
+              quaternary
+              icon-placement="right"
+              :type="hasActiveSort ? 'info' : 'default'"
+              :disabled="!assetsAvailable || isReadOnly"
+              aria-label="音频排序"
+            >
+              排序
+              <template #icon><n-icon :component="ArrowsSort" /></template>
+            </n-button>
+          </template>
+          <div class="track-card__sort-popover">
+            <div class="track-card__sort-row">
+              <span>名称</span>
+              <n-button
+                size="tiny"
+                quaternary
+                circle
+                :type="sortState.name === 'off' ? 'default' : 'info'"
+                :aria-label="`名称排序：${sortDirectionLabel(sortState.name)}`"
+                :title="`名称排序：${sortDirectionLabel(sortState.name)}`"
+                @click="cycleSort('name')"
+              >
+                <template #icon><n-icon :component="sortIcon('name', sortState.name)" /></template>
+              </n-button>
+            </div>
+            <div class="track-card__sort-row">
+              <span>时间</span>
+              <n-button
+                size="tiny"
+                quaternary
+                circle
+                :type="sortState.updatedAt === 'off' ? 'default' : 'info'"
+                :aria-label="`时间排序：${sortDirectionLabel(sortState.updatedAt)}`"
+                :title="`时间排序：${sortDirectionLabel(sortState.updatedAt)}`"
+                @click="cycleSort('updatedAt')"
+              >
+                <template #icon><n-icon :component="sortIcon('updatedAt', sortState.updatedAt)" /></template>
+              </n-button>
+            </div>
+          </div>
+        </n-popover>
       </div>
 
       <div class="track-card__progress">
@@ -186,9 +232,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, reactive } from 'vue';
 import type { PropType } from 'vue';
-import { PlayerPause, PlayerPlay } from '@vicons/tabler';
+import {
+  ArrowsSort,
+  PlayerPause,
+  PlayerPlay,
+  SortAscendingLetters,
+  SortAscendingNumbers,
+  SortDescendingLetters,
+  SortDescendingNumbers,
+} from '@vicons/tabler';
 import type { TrackRuntime } from '@/stores/audioStudio';
 import type { AudioAsset, PlaylistMode } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -225,6 +279,12 @@ const speedOptions = [
 const audio = useAudioStudioStore();
 const isReadOnly = computed(() => !audio.canManage);
 const isTrackPlaying = computed(() => isTrackPlaybackActive(props.track));
+type SortDirection = 'off' | 'asc' | 'desc';
+type SortField = 'name' | 'updatedAt';
+const sortState = reactive<Record<SortField, SortDirection>>({
+  name: 'asc',
+  updatedAt: 'off',
+});
 const progressPercent = computed(() => Math.round(props.track.progress * 100));
 const currentSeconds = computed(() => {
   const duration = props.track.duration || 0;
@@ -247,12 +307,31 @@ const selectableAssets = computed(() => {
   });
 });
 const assetsAvailable = computed(() => selectableAssets.value.length > 0);
+const sortedSelectableAssets = computed(() => {
+  const activeSorts = (['name', 'updatedAt'] as SortField[]).filter((field) => sortState[field] !== 'off');
+  if (!activeSorts.length) return selectableAssets.value;
+
+  return selectableAssets.value
+    .map((asset, index) => ({ asset, index }))
+    .sort((left, right) => {
+      for (const field of activeSorts) {
+        const direction = sortState[field] === 'desc' ? -1 : 1;
+        const result = field === 'name'
+          ? left.asset.name.localeCompare(right.asset.name, undefined, { sensitivity: 'base', numeric: true })
+          : (Date.parse(left.asset.updatedAt) || 0) - (Date.parse(right.asset.updatedAt) || 0);
+        if (result !== 0) return result * direction;
+      }
+      return left.index - right.index;
+    })
+    .map(({ asset }) => asset);
+});
 const assetOptions = computed(() =>
-  selectableAssets.value.map((asset) => ({
+  sortedSelectableAssets.value.map((asset) => ({
     label: `${asset.name}${asset.tags?.length ? ` · ${asset.tags.join(',')}` : ''}`,
     value: asset.id,
   })),
 );
+const hasActiveSort = computed(() => Object.values(sortState).some((direction) => direction !== 'off'));
 
 const folderOptions = computed(() => {
   const flattenFolders = (folders: typeof audio.folders, prefix = ''): { label: string; value: string }[] => {
@@ -284,6 +363,21 @@ function formatProgressTooltip(val: number) {
 
 function formatFadeTooltip(val: number) {
   return `${(val / 1000).toFixed(1)}s`;
+}
+
+function cycleSort(field: SortField) {
+  sortState[field] = sortState[field] === 'off' ? 'asc' : sortState[field] === 'asc' ? 'desc' : 'off';
+}
+
+function sortDirectionLabel(direction: SortDirection) {
+  return direction === 'asc' ? '顺序' : direction === 'desc' ? '倒序' : '关闭';
+}
+
+function sortIcon(field: SortField, direction: SortDirection) {
+  if (field === 'name') {
+    return direction === 'asc' ? SortAscendingLetters : direction === 'desc' ? SortDescendingLetters : ArrowsSort;
+  }
+  return direction === 'asc' ? SortAscendingNumbers : direction === 'desc' ? SortDescendingNumbers : ArrowsSort;
 }
 
 function handleSeek(value: number) {
@@ -479,6 +573,24 @@ function handleNext() {
 
 .track-card__mode-action {
   opacity: 0.92;
+}
+
+.track-card__sort-action {
+  flex-shrink: 0;
+}
+
+.track-card__sort-popover {
+  min-width: 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.track-card__sort-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .track-card__speed {
