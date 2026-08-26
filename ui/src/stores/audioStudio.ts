@@ -13,6 +13,7 @@ import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } fro
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
 import { normalizeStageMusicSnapshot, type StageMusicSnapshot } from '@/views/theater/shared/stage-types';
+import { AudioPlaybackApplyQueue } from '@/utils/audioPlaybackApplyQueue';
 import type { AudioLibraryAsset, AudioLibraryPrefix, AudioLibrarySettings } from '@/types/audio-library';
 import type {
   AudioAsset,
@@ -242,6 +243,7 @@ const SYNC_RETRY_BASE_MS = 600;
 const SYNC_RETRY_MAX_MS = 10_000;
 const DEFAULT_WORLD_PLAYBACK_ENABLED = true;
 const PLAYABLE_STREAM_REFRESH_SKEW_MS = 15_000;
+const remotePlaybackApplyQueue = new AudioPlaybackApplyQueue();
 const initialEmbeddedRuntime = detectEmbeddedRuntime();
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 const useRawProtectedStreamMode = () =>
@@ -1193,7 +1195,26 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.hasPlaybackAuthority) {
         return;
       }
+      const scopeKey = this.getScopeKeyFromPayload(payload);
+      await remotePlaybackApplyQueue.enqueue(scopeKey, () => this.applyRemotePlaybackInternal(payload, options, scopeKey));
+    },
+
+    async applyRemotePlaybackInternal(
+      payload: AudioPlaybackStatePayload | null,
+      options?: RemotePlaybackApplyOptions,
+      queuedScopeKey?: string,
+    ) {
+      if (!this.hasPlaybackAuthority) {
+        return;
+      }
       if (payload && !this.isPayloadInCurrentPlaybackContext(payload)) {
+        return;
+      }
+      if (
+        !payload &&
+        queuedScopeKey &&
+        queuedScopeKey !== this.getScopeKey(this.currentChannelId, this.worldPlaybackEnabled)
+      ) {
         return;
       }
       const source = options?.source || 'push';
@@ -1371,6 +1392,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             track.status = 'loading';
 
             this.tracks[type] = track;
+            const activeTrack = this.tracks[type];
 
             let asset = this.assets.find((item) => item.id === incoming.assetId) || null;
             if (!asset) {
@@ -1384,7 +1406,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               }
             }
             track.asset = asset;
-            track.howl = await this.createHowlInstance(track, asset, { initialSeek: targetPosition });
+            const howl = await this.createHowlInstance(track, asset, { initialSeek: targetPosition });
+            if (this.tracks[type] !== activeTrack) {
+              // 轨道在异步加载期间可能因频道/权限切换而被重置；
+              // 旧播放器不能再挂回当前状态，否则会成为无法清理的孤儿实例。
+              howl.unload();
+              return;
+            }
+            track.howl = howl;
             track.status = 'ready';
 
             if (shouldPlay && track.howl) {
@@ -1394,6 +1423,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               // 尝试恢复 AudioContext
               if (Howler.ctx?.state === 'suspended') {
                 await Howler.ctx.resume();
+              }
+              if (this.tracks[type] !== activeTrack) {
+                try {
+                  track.howl.stop();
+                  track.howl.unload();
+                } catch (e) {
+                  console.warn(`Failed to unload stale track ${type}`, e);
+                }
+                return;
               }
               try {
                 track.howl.play();
