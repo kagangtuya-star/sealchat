@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { api } from './_config'
+import { useChatStore } from './chat'
 import {
     nextChannelImagesIcModeFilter,
     nextChannelImagesSortOrder,
@@ -196,14 +197,21 @@ export const useChannelImagesStore = defineStore('channelImages', {
 
             this.loading = true
             try {
+                const chat = useChatStore()
+                const observerMode = chat.observerMode
+                const observerSlug = observerMode ? String(chat.observerSlug || '').trim() : ''
+                const endpoint = observerMode
+                    ? `api/v1/public/ob/channels/${this.channelId}/images`
+                    : `api/v1/channels/${this.channelId}/images`
                 const resp = await api.get<ChannelImagesApiResponse>(
-                    `api/v1/channels/${this.channelId}/images`,
+                    endpoint,
                     {
                         params: {
                             page: this.page,
                             page_size: this.pageSize,
                             ic_mode: this.icModeFilter,
                             sort: this.sortOrder,
+                            ...(observerMode ? { ob_slug: observerSlug } : {}),
                         },
                     }
                 )

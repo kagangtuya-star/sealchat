@@ -475,6 +475,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/public/ob/channels/:channelId/messages/search/refine", ChannelMessageSearchRefineObserver)
 	v1.Get("/public/ob/channels/:channelId/sticky-notes", ObserverStickyNoteList)
 	v1.Get("/public/ob/channels/:channelId/sticky-note-folders", ObserverStickyNoteFolderList)
+	v1.Get("/public/ob/channels/:channelId/images", ObserverChannelImagesList)
+	v1.Get("/public/ob/channels/:channelId/speaker-options", ObserverChannelSpeakerOptions)
 	v1.Get("/public/ob/channels/:channelId/battle-reports", ObserverBattleReportList)
 	v1.Get("/public/ob/channels/:channelId/battle-reports/:reportId", ObserverBattleReportGet)
 	v1.Get("/public/ob/channels/:channelId/battle-reports/:reportId/jump-target", ObserverBattleReportJumpTarget)

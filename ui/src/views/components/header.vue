@@ -756,15 +756,18 @@ const loadObserverRoleOptions = async (channelId?: string | null) => {
     return;
   }
   const seq = ++observerRoleRequestSeq;
+  const observerMode = isObserver.value;
   const identityScopeKey = chat.resolveChannelIdentityScopeKey(normalizedChannelId);
   try {
     const [payload, roleConfig] = await Promise.all([
       chat.channelSpeakerOptions(normalizedChannelId),
-      (identityScopeKey && chat.channelIdentityLoadedAt[identityScopeKey]
-        ? Promise.resolve(chat.getChannelIcOocRoleConfig(normalizedChannelId))
-        : chat.loadChannelIdentities(normalizedChannelId, false)
-          .then(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))
-          .catch(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))),
+      observerMode
+        ? Promise.resolve(null)
+        : (identityScopeKey && chat.channelIdentityLoadedAt[identityScopeKey]
+          ? Promise.resolve(chat.getChannelIcOocRoleConfig(normalizedChannelId))
+          : chat.loadChannelIdentities(normalizedChannelId, false)
+            .then(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))
+            .catch(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))),
     ]);
     if (seq !== observerRoleRequestSeq) {
       return;
@@ -1107,11 +1110,12 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           v-model:value="observerRoleFilterValue"
           class="sc-ob-role-select"
           :options="observerRoleOptions"
-          placeholder="筛选角色"
+          placeholder="角色筛选"
           size="small"
           multiple
           clearable
           max-tag-count="responsive"
+          :consistent-menu-width="false"
         />
       </div>
       <n-tooltip placement="bottom" trigger="hover">
@@ -1542,7 +1546,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-ob-role-select {
   flex: 1 1 12rem;
   width: auto;
-  min-width: 0;
+  min-width: 7rem;
   max-width: min(24rem, 100%);
 }
 
@@ -1698,10 +1702,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     width: 100%;
     margin-right: 0;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    overflow: visible;
   }
 
   .sc-ob-role-select {
     flex: 1 1 130px;
+    min-width: 130px;
     max-width: none;
   }
 

@@ -5373,8 +5373,14 @@ export const useChatStore = defineStore({
       if (!channelId) {
         return { items: [], total: 0 };
       }
+      const observerMode = this.observerMode;
+      const observerSlug = observerMode ? String(this.observerSlug || '').trim() : '';
+      const endpoint = observerMode
+        ? `api/v1/public/ob/channels/${channelId}/speaker-options`
+        : `api/v1/channels/${channelId}/speaker-options`;
       const resp = await api.get<{ items: Array<{ id: string; label: string; color?: string }>; total: number }>(
-        `api/v1/channels/${channelId}/speaker-options`,
+        endpoint,
+        { params: observerMode ? { ob_slug: observerSlug } : undefined },
       );
       return resp.data;
     },

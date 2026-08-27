@@ -72,6 +72,59 @@ func ObserverStickyNoteFolderList(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"folders": items})
 }
 
+func ObserverChannelSpeakerOptions(c *fiber.Ctx) error {
+	_, channel, status, message := resolveObserverEmbedChannel(c)
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": message})
+	}
+	options, err := model.ChannelIdentityOptionListActive(channel.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "获取频道角色失败"})
+	}
+	return c.JSON(fiber.Map{
+		"items": options,
+		"total": len(options),
+		"channel": fiber.Map{
+			"id":   channel.ID,
+			"name": channel.Name,
+		},
+	})
+}
+
+func ObserverChannelImagesList(c *fiber.Ctx) error {
+	_, channel, status, message := resolveObserverEmbedChannel(c)
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": message})
+	}
+
+	page := c.QueryInt("page", 1)
+	if page < 1 {
+		page = 1
+	}
+	pageSize := c.QueryInt("page_size", 50)
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	icModeFilter := strings.ToLower(strings.TrimSpace(c.Query("ic_mode", "all")))
+	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sort", "desc")))
+	if sortOrder != "asc" {
+		sortOrder = "desc"
+	}
+
+	db := model.GetDB()
+	if err := model.BackfillMessageImageAttachmentsForChannel(db, channel.ID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "初始化频道图片索引失败"})
+	}
+	resp, err := queryChannelImages(db, "", channel.ID, icModeFilter, sortOrder, page, pageSize, false)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "查询失败"})
+	}
+	return c.JSON(resp)
+}
+
 func ObserverBattleReportList(c *fiber.Ctx) error {
 	world, _, status, message := resolveObserverEmbedChannel(c)
 	if status != 0 {
