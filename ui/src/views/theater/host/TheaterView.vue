@@ -9,7 +9,11 @@ import { useAudioStudioStore } from '@/stores/audioStudio'
 import { useUserStore } from '@/stores/user'
 import StageApp from '../stage/StageApp.vue'
 import { createTheaterStageStore } from '../stage/StageStore'
-import { mergeTheaterBridgePermissions, TheaterHostBridge } from '../bridge/TheaterHostBridge'
+import {
+  mergeTheaterBridgePermissions,
+  TheaterHostBridge,
+  type TheaterChatBridgeStatus,
+} from '../bridge/TheaterHostBridge'
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
@@ -57,6 +61,7 @@ const isNarrow = computed(() => width.value < 840)
 const chatVisible = computed(() => isNarrow.value ? mobileTab.value === 'chat' : !chatHidden.value)
 const theaterDividerWidth = 7
 const chatBridgeOnline = ref(false)
+const chatBridgeStatus = ref<TheaterChatBridgeStatus>('connecting')
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
 const theaterPermissions = ref<string[]>([])
@@ -109,6 +114,7 @@ const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
   characters: [],
 })
 let theaterBridge: TheaterHostBridge | null = null
+let theaterBridgeGeneration = 0
 let theaterSync: TheaterSyncClient | null = null
 let theaterSyncGeneration = 0
 const theaterActivationVisible = ref(false)
@@ -276,7 +282,7 @@ const publishTheaterPointerTrace = (trace: StagePointerTraceInput) => {
 
 const sendSceneDialogue = async (sceneId: string) => {
   const scene = stageStore.state.scenes[sceneId]
-  if (!sceneDialogueEnabled.value || !scene?.switchText) return
+  if (chatBridgeStatus.value === 'manual-disconnected' || !sceneDialogueEnabled.value || !scene?.switchText) return
   try {
     const result = await theaterBridge?.sendChatMessage({
       content: scene.switchText,
@@ -304,7 +310,7 @@ const broadcastSceneAudio = async (sceneId: string) => {
 const applySceneMusic = async (sceneId: string) => {
   const scene = stageStore.state.scenes[sceneId]
   const snapshot = scene?.state.musicSnapshot
-  if (!scene || !stageMusicSnapshotHasContent(snapshot) || !theaterBridge) return
+  if (chatBridgeStatus.value === 'manual-disconnected' || !scene || !stageMusicSnapshotHasContent(snapshot) || !theaterBridge) return
   try {
     const result = await theaterBridge.applyChatAudioPlaybackSnapshot({
       sceneId,
@@ -402,10 +408,12 @@ const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
 
 const startTheaterBridge = () => {
   if (!worldId.value || !channelId.value || typeof window === 'undefined') return
+  const generation = ++theaterBridgeGeneration
   dialogueRuntime.reset()
   theaterBridge?.stop()
   theaterBridge = null
   chatBridgeOnline.value = false
+  chatBridgeStatus.value = 'connecting'
   characterSnapshot.value = emptyCharacterSnapshot()
   const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
   const stagePermissions = theaterPermissions.value.length
@@ -414,7 +422,8 @@ const startTheaterBridge = () => {
       ? ['stage.view', 'stage.scene.switch', 'stage.object.edit', 'stage.action.trigger']
       : ['stage.view', 'stage.object.edit.delegated', 'stage.action.trigger']
   const permissions = resolveBridgePermissions(stagePermissions)
-  theaterBridge = new TheaterHostBridge({
+  let bridge: TheaterHostBridge
+  bridge = new TheaterHostBridge({
     context: { worldId: worldId.value, channelId: channelId.value, sessionId },
     stageStore,
     getChatWindow: () => iframeRef.value?.contentWindow || null,
@@ -422,13 +431,28 @@ const startTheaterBridge = () => {
     userId: user.info?.id ? String(user.info.id) : '',
     permissions,
     debug: () => import.meta.env.DEV || route.query.bridgeDebug === '1' || isTheaterBridgeDebugEnabled(),
-    onChatOnlineChange: (online) => { chatBridgeOnline.value = online },
-    onCharacterSnapshotChange: (snapshot) => { characterSnapshot.value = snapshot },
-    onChatMessageCreated: dialogueRuntime.created,
-    onChatMessageUpdated: dialogueRuntime.updated,
-    onChatMessageRemoved: ({ messageId }) => dialogueRuntime.removed(messageId),
+    onChatOnlineChange: (online) => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) chatBridgeOnline.value = online
+    },
+    onChatBridgeStatusChange: (status) => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) chatBridgeStatus.value = status
+    },
+    onCharacterSnapshotChange: (snapshot) => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) characterSnapshot.value = snapshot
+    },
+    onChatMessageCreated: payload => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) dialogueRuntime.created(payload)
+    },
+    onChatMessageUpdated: payload => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) dialogueRuntime.updated(payload)
+    },
+    onChatMessageRemoved: ({ messageId }) => {
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) dialogueRuntime.removed(messageId)
+    },
     onSceneApplied: (sceneId) => {
-      void runSceneSwitchSideEffects(sceneId)
+      if (generation === theaterBridgeGeneration && theaterBridge === bridge) {
+        void runSceneSwitchSideEffects(sceneId)
+      }
     },
     triggerStageAction: async (payload) => {
       if (!theaterSync) return false
@@ -459,9 +483,24 @@ const startTheaterBridge = () => {
     },
     playStageEffect: (effectId, triggerId) => stageAppRef.value?.playEffect(effectId, triggerId) === true,
   })
-  void theaterBridge.start().catch((error) => {
+  theaterBridge = bridge
+  void bridge.start().catch((error) => {
+    if (generation === theaterBridgeGeneration && theaterBridge === bridge) chatBridgeStatus.value = 'error'
     console.warn('[theater-bridge] host startup failed', error)
   })
+}
+
+const disconnectTheaterChatBridge = () => {
+  dialogueRuntime.close()
+  theaterBridge?.disconnectChatBridge()
+}
+
+const reconnectTheaterChatBridge = () => {
+  try {
+    theaterBridge?.reconnectChatBridge()
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '聊天桥接重连失败')
+  }
 }
 
 const startTheaterSync = async () => {
@@ -639,12 +678,15 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
   window.removeEventListener('message', handleTheaterContext)
 	window.removeEventListener('message', handleDice3DMessage)
   appearancePreview.value = null
   theaterBridge?.stop()
   theaterBridge = null
+  chatBridgeOnline.value = false
+  chatBridgeStatus.value = 'disconnected'
   dialogueRuntime.dispose()
   void theaterSync?.stop()
   theaterSync = null
@@ -704,6 +746,7 @@ function handleDice3DMessage(event: MessageEvent) {
           scope-type="world"
           :character-snapshot="characterSnapshot"
           :chat-bridge-online="chatBridgeOnline"
+          :chat-bridge-status="chatBridgeStatus"
           :chat-visible="chatVisible"
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
@@ -727,6 +770,8 @@ function handleDice3DMessage(event: MessageEvent) {
           @select-character-variant="selectChatCharacterVariant"
           @open-character-card="openCharacterCard"
           @toggle-chat="toggleChat"
+          @disconnect-chat-bridge="disconnectTheaterChatBridge"
+          @reconnect-chat-bridge="reconnectTheaterChatBridge"
           @reset-layout="resetLayout"
           @exit-theater="exitTheater"
           @appearance-preview-command="sendAppearancePreviewCommand"

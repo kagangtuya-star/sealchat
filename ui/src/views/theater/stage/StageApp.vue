@@ -117,6 +117,7 @@ import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import type { TheaterPresentation } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
@@ -137,6 +138,7 @@ const props = defineProps<{
   scopeType?: 'channel' | 'world'
   characterSnapshot: ChatCharactersSnapshotPayload
   chatBridgeOnline: boolean
+  chatBridgeStatus: TheaterChatBridgeStatus
   chatVisible: boolean
   syncReady: boolean
   syncing: boolean
@@ -162,6 +164,8 @@ const emit = defineEmits<{
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
   openCharacterCard: [identityId: string]
   toggleChat: []
+  disconnectChatBridge: []
+  reconnectChatBridge: []
   resetLayout: []
   exitTheater: []
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
@@ -174,6 +178,17 @@ const emit = defineEmits<{
   updateSceneDialogueEnabled: [enabled: boolean]
   updateSceneAudioEnabled: [enabled: boolean]
 }>()
+
+const chatBridgeStatusLabel = computed(() => {
+  switch (props.chatBridgeStatus) {
+    case 'connected': return '已连接'
+    case 'connecting': return '连接中'
+    case 'reconnecting': return '重连中'
+    case 'manual-disconnected': return '已手动断开'
+    case 'error': return '连接异常'
+    default: return '未连接'
+  }
+})
 
 const stageActionDescriptions: Record<StageAction['type'], string> = {
   'chat.send': '发送消息',
@@ -7040,11 +7055,67 @@ onBeforeUnmount(() => {
           {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
         </n-tooltip>
       </n-button-group>
-      <span
-        class="theater-sync-status"
-        :class="{ 'is-online': syncReady && !syncing, 'is-syncing': syncing }"
-        :title="syncing ? '正在同步' : syncReady ? '后端同步已连接' : '后端同步未连接'"
-      />
+      <n-popover
+        trigger="click"
+        placement="bottom-start"
+        :show-arrow="false"
+        :width="220"
+        :theme-overrides="theaterPopoverThemeOverrides"
+        class="theater-secondary-surface"
+      >
+        <template #trigger>
+          <n-button
+            class="theater-bridge-status"
+            :class="{
+              'is-connected': chatBridgeStatus === 'connected',
+              'is-reconnecting': chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting',
+              'is-manual-disconnected': chatBridgeStatus === 'manual-disconnected',
+              'is-error': chatBridgeStatus === 'error' || chatBridgeStatus === 'disconnected',
+            }"
+            quaternary
+            circle
+            size="tiny"
+            :aria-label="`聊天桥接：${chatBridgeStatusLabel}`"
+            :title="`聊天桥接：${chatBridgeStatusLabel}`"
+          >
+            <template #icon><n-icon><component :is="chatBridgeStatus === 'manual-disconnected' ? BoltOff : Bolt" /></n-icon></template>
+          </n-button>
+        </template>
+        <div class="theater-bridge-popover">
+          <div class="theater-bridge-popover__heading">聊天桥接</div>
+          <div class="theater-bridge-popover__status">
+            <span
+              class="theater-bridge-popover__dot"
+              :class="{
+                'is-connected': chatBridgeStatus === 'connected',
+                'is-reconnecting': chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting',
+                'is-manual-disconnected': chatBridgeStatus === 'manual-disconnected',
+                'is-error': chatBridgeStatus === 'error' || chatBridgeStatus === 'disconnected',
+              }"
+            />
+            {{ chatBridgeStatusLabel }}
+          </div>
+          <div class="theater-bridge-popover__actions">
+            <n-button
+              v-if="chatBridgeStatus === 'connected'"
+              size="tiny"
+              secondary
+              @click="emit('disconnectChatBridge')"
+            >断开桥接</n-button>
+            <n-button
+              v-else
+              size="tiny"
+              type="primary"
+              :loading="chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting'"
+              :disabled="chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting'"
+              @click="emit('reconnectChatBridge')"
+            >重连桥接</n-button>
+          </div>
+          <div class="theater-bridge-popover__sync">
+            舞台同步：{{ syncing ? '同步中' : syncReady ? '已连接' : '未连接' }}
+          </div>
+        </div>
+      </n-popover>
       <n-tooltip trigger="hover">
         <template #trigger>
           <n-button
@@ -8314,9 +8385,20 @@ onBeforeUnmount(() => {
 }
 .theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }
 .theater-toolbar-divider { width: 1px; height: 22px; flex: 0 0 1px; margin: 0 2px; background: var(--theater-border); }
-.theater-sync-status { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--sc-fg-muted, #71717a); }
-.theater-sync-status.is-online { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
-.theater-sync-status.is-syncing { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .12); }
+.theater-bridge-status { width: 28px; min-width: 28px; height: 28px; flex: 0 0 28px; padding: 0; color: var(--sc-fg-muted, #71717a); }
+.theater-bridge-status.is-connected { color: #22c55e; }
+.theater-bridge-status.is-reconnecting { color: #f59e0b; }
+.theater-bridge-status.is-manual-disconnected { color: var(--sc-fg-muted, #71717a); }
+.theater-bridge-status.is-error { color: #ef4444; }
+.theater-bridge-popover { display: grid; gap: 8px; min-width: 184px; font-size: 12px; }
+.theater-bridge-popover__heading { color: var(--sc-text-primary, #f4f4f5); font-weight: 600; }
+.theater-bridge-popover__status { display: flex; align-items: center; gap: 7px; color: var(--sc-text-secondary, rgba(255, 255, 255, .72)); }
+.theater-bridge-popover__dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--sc-fg-muted, #71717a); }
+.theater-bridge-popover__dot.is-connected { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
+.theater-bridge-popover__dot.is-reconnecting { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .12); }
+.theater-bridge-popover__dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .12); }
+.theater-bridge-popover__actions { display: flex; justify-content: flex-end; }
+.theater-bridge-popover__sync { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-muted, rgba(255, 255, 255, .52)); }
 .theater-stage-character-bridge {
   width: 218px; flex: 0 0 218px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px;
   padding: 3px 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px;

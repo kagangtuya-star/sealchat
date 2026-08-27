@@ -20,6 +20,7 @@ import {
   type ChatComposerInsertResult,
   type ChatMessageSendPayload,
   type ChatMessageSendResult,
+  type InitializePayload,
   type InitializedPayload,
   type OpenCharacterCardPayload,
   type OpenCharacterCardResult,
@@ -49,6 +50,7 @@ interface TheaterHostBridgeOptions {
   chatQueueTtlMs?: number
   debug?: boolean | (() => boolean)
   onChatOnlineChange?: (online: boolean) => void
+  onChatBridgeStatusChange?: (status: TheaterChatBridgeStatus) => void
   onCharacterSnapshotChange?: (snapshot: ChatCharactersSnapshotPayload) => void
   onChatMessageCreated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
@@ -58,6 +60,14 @@ interface TheaterHostBridgeOptions {
   playStageEffect?: (effectId: string, triggerId?: string) => boolean
   onSceneApplied?: (sceneId: string) => void
 }
+
+export type TheaterChatBridgeStatus =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'manual-disconnected'
+  | 'error'
 
 const CHAT_BRIDGE_PERMISSIONS = [
   'chat.message.send',
@@ -132,6 +142,10 @@ export class TheaterHostBridge {
   private readonly stageCapabilitySet: ReadonlySet<string>
   private routerUnsubscribers: Array<() => void> = []
   private chatOnline = false
+  private chatBridgeStatus: TheaterChatBridgeStatus = 'disconnected'
+  private chatBridgeManuallyDisconnected = false
+  private chatBridgeEpoch = 0
+  private readonly chatEventEpochs = new Map<string, number>()
   private started = false
   private pendingChatMessages: Array<{ message: TheaterBridgeMessage, expiresAt: number }> = []
   private readonly runningSequenceActions = new Set<string>()
@@ -177,6 +191,7 @@ export class TheaterHostBridge {
   async start() {
     if (this.started) return
     this.started = true
+    this.setChatBridgeStatus('connecting')
     await this.hostStageTransport.connect()
     this.routerUnsubscribers = [
       this.chatTransport.subscribe((message) => this.routeFromChat(message)),
@@ -194,6 +209,8 @@ export class TheaterHostBridge {
   stop() {
     if (!this.started) return
     this.started = false
+    this.chatBridgeEpoch += 1
+    this.chatEventEpochs.clear()
     this.sequenceGeneration += 1
     this.runningSequenceActions.clear()
     this.sequentialActionExecutions.clear()
@@ -210,10 +227,48 @@ export class TheaterHostBridge {
     this.hostClient.disconnect()
     this.stageClient.disconnect()
     this.hostStageTransport.disconnect()
+    this.chatBridgeManuallyDisconnected = false
+    this.setChatBridgeStatus('disconnected')
   }
 
   handleChatFrameLoad() {
+    this.chatBridgeEpoch += 1
+    this.chatEventEpochs.clear()
     this.setChatOnline(false)
+    if (!this.chatBridgeManuallyDisconnected) this.setChatBridgeStatus('connecting')
+  }
+
+  disconnectChatBridge() {
+    if (this.chatBridgeManuallyDisconnected) return
+    this.chatBridgeManuallyDisconnected = true
+    this.chatBridgeEpoch += 1
+    this.chatEventEpochs.clear()
+    this.setChatOnline(false)
+    this.clearChatQueue('BRIDGE_DISABLED', 'Theater chat bridge is disabled')
+    this.setChatBridgeStatus('manual-disconnected')
+    try {
+      this.hostClient.sendSystem('chat', 'system.suspend', {})
+    } catch (error) {
+      this.debug('chat bridge suspend failed', error)
+    }
+  }
+
+  reconnectChatBridge() {
+    if (!this.started) {
+      throw new TheaterBridgeRequestError('BRIDGE_NOT_READY', 'Theater bridge is not ready')
+    }
+    if (!this.chatBridgeManuallyDisconnected && this.chatOnline) return
+    this.chatBridgeManuallyDisconnected = false
+    this.chatBridgeEpoch += 1
+    this.chatEventEpochs.clear()
+    this.setChatOnline(false)
+    this.setChatBridgeStatus('reconnecting')
+    try {
+      this.hostClient.sendSystem('chat', 'system.initialize', this.buildInitializePayload())
+    } catch (error) {
+      this.setChatBridgeStatus('error')
+      throw error
+    }
   }
 
   triggerStageAction(payload: StageActionTriggeredPayload) {
@@ -229,6 +284,7 @@ export class TheaterHostBridge {
     if (!this.started) {
       throw new TheaterBridgeRequestError('BRIDGE_NOT_READY', 'Theater bridge is not ready')
     }
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<ChatMessageSendPayload, ChatMessageSendResult>(
       'chat',
       'chat.message.send',
@@ -237,6 +293,7 @@ export class TheaterHostBridge {
   }
 
   readChatAudioPlaybackSnapshot() {
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<Record<string, never>, AudioPlaybackSnapshotReadResult>(
       'chat',
       'chat.audio.playback.snapshot.read',
@@ -245,6 +302,7 @@ export class TheaterHostBridge {
   }
 
   applyChatAudioPlaybackSnapshot(payload: AudioPlaybackSnapshotApplyPayload) {
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<AudioPlaybackSnapshotApplyPayload, AudioPlaybackSnapshotApplyResult>(
       'chat',
       'chat.audio.playback.snapshot.apply',
@@ -253,6 +311,7 @@ export class TheaterHostBridge {
   }
 
   selectChatCharacter(identityId: string) {
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<SelectCharacterPayload, SelectCharacterResult>(
       'chat',
       'chat.character.select',
@@ -264,6 +323,7 @@ export class TheaterHostBridge {
   }
 
   selectChatCharacterVariant(identityId: string, variantId: string | null) {
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<SelectCharacterVariantPayload, SelectCharacterResult>(
       'chat',
       'chat.character.variant.select',
@@ -275,6 +335,7 @@ export class TheaterHostBridge {
   }
 
   openCharacterCard(identityId: string) {
+    this.assertChatBridgeEnabled()
     return this.stageClient.request<OpenCharacterCardPayload, OpenCharacterCardResult>(
       'chat',
       'chat.character.card.open',
@@ -289,21 +350,23 @@ export class TheaterHostBridge {
         this.debug('chat version rejected', payload.supportedVersions)
         return
       }
+      if (this.chatBridgeManuallyDisconnected) {
+        this.setChatOnline(false)
+        this.setChatBridgeStatus('manual-disconnected')
+        return
+      }
+      this.chatBridgeEpoch += 1
+      this.chatEventEpochs.clear()
+      this.setChatBridgeStatus('connecting')
       this.setChatOnline(false)
       this.hostClient.setRemoteCapabilities('chat', payload.capabilities)
       this.stageClient.setRemoteCapabilities('chat', payload.capabilities)
-      this.hostClient.sendSystem('chat', 'system.initialize', {
-        selectedVersion: THEATER_BRIDGE_VERSION,
-        worldId: this.options.context.worldId,
-        channelId: this.options.context.channelId,
-        userId: this.options.userId,
-        permissions: [...this.options.permissions],
-        capabilities: [...this.stageCapabilities],
-        initialContext: {
-          activeSceneId: this.options.stageStore.state.activeSceneId,
-          activeCharacterId: null,
-        },
-      })
+      try {
+        this.hostClient.sendSystem('chat', 'system.initialize', this.buildInitializePayload())
+      } catch (error) {
+        this.setChatBridgeStatus('error')
+        this.debug('chat initialize failed', error)
+      }
     })
 
     this.hostClient.onSystem<InitializedPayload>('system.initialized', (payload, message) => {
@@ -312,9 +375,15 @@ export class TheaterHostBridge {
         || payload.endpoint !== 'chat'
         || payload.selectedVersion !== THEATER_BRIDGE_VERSION
       ) return
+      if (this.chatBridgeManuallyDisconnected) {
+        this.setChatOnline(false)
+        this.setChatBridgeStatus('manual-disconnected')
+        return
+      }
       this.hostClient.setRemoteCapabilities('chat', payload.capabilities)
       this.stageClient.setRemoteCapabilities('chat', payload.capabilities)
       this.setChatOnline(true)
+      this.setChatBridgeStatus('connected')
     })
 
     this.stageClient.onCommand('stage.scene.read', () => ({
@@ -324,20 +393,24 @@ export class TheaterHostBridge {
 
     this.stageClient.onCommand<ApplyScenePayload>('stage.scene.apply', (payload) => this.applyScene(payload))
 
-    const applyCharacterEvent = (payload: ChatCharactersSnapshotPayload) => {
+    const applyCharacterEvent = (payload: ChatCharactersSnapshotPayload, message: TheaterBridgeMessage) => {
+      if (!this.acceptChatEvent(message)) return
       this.applyCharacterSnapshot(payload)
     }
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.updated', applyCharacterEvent)
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.selected', applyCharacterEvent)
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.appearance.updated', applyCharacterEvent)
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.variant.selected', applyCharacterEvent)
-    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.created', (payload) => {
+    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.created', (payload, message) => {
+      if (!this.acceptChatEvent(message)) return
       this.options.onChatMessageCreated?.(structuredClone(payload))
     })
-    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.updated', (payload) => {
+    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.updated', (payload, message) => {
+      if (!this.acceptChatEvent(message)) return
       this.options.onChatMessageUpdated?.(structuredClone(payload))
     })
-    this.stageClient.onEvent<TheaterDialogueMessageRemovedPayload>('chat.message.removed', (payload) => {
+    this.stageClient.onEvent<TheaterDialogueMessageRemovedPayload>('chat.message.removed', (payload, message) => {
+      if (!this.acceptChatEvent(message)) return
       this.options.onChatMessageRemoved?.(structuredClone(payload))
     })
   }
@@ -345,6 +418,10 @@ export class TheaterHostBridge {
   private routeFromChat(message: TheaterBridgeMessage) {
     if (message.source !== 'chat' || message.target !== 'stage') return
     if (!this.matchesContext(message)) return
+    if (this.chatBridgeManuallyDisconnected) {
+      this.rejectCommand(message, 'BRIDGE_DISABLED', 'Theater chat bridge is disabled')
+      return
+    }
     if (!this.chatOnline) {
       this.rejectCommand(message, 'ENDPOINT_OFFLINE', 'Theater chat endpoint is not initialized')
       return
@@ -374,8 +451,10 @@ export class TheaterHostBridge {
       return
     }
     try {
+      if (message.kind === 'event') this.chatEventEpochs.set(message.id, this.chatBridgeEpoch)
       this.hostStageTransport.send(message)
     } catch (error) {
+      this.chatEventEpochs.delete(message.id)
       this.rejectCommand(message, 'ROUTE_FAILED', error instanceof Error ? error.message : String(error))
     }
   }
@@ -390,6 +469,12 @@ export class TheaterHostBridge {
       return
     }
     if (message.target !== 'chat') return
+    if (this.chatBridgeManuallyDisconnected) {
+      if (message.kind === 'command') {
+        this.rejectStageCommand(message, 'BRIDGE_DISABLED', 'Theater chat bridge is disabled')
+      }
+      return
+    }
     if (message.kind === 'command') {
       if (!this.hostClient.supports('chat', message.name)) {
         this.rejectStageCommand(message, 'CAPABILITY_UNAVAILABLE', `Chat capability unavailable: ${message.name}`)
@@ -656,7 +741,16 @@ export class TheaterHostBridge {
       && message.sessionId === this.options.context.sessionId
   }
 
+  private acceptChatEvent(message: TheaterBridgeMessage) {
+    const eventEpoch = this.chatEventEpochs.get(message.id)
+    this.chatEventEpochs.delete(message.id)
+    return eventEpoch === this.chatBridgeEpoch
+      && this.chatOnline
+      && !this.chatBridgeManuallyDisconnected
+  }
+
   private setChatOnline(online: boolean) {
+    if (online && this.chatBridgeManuallyDisconnected) return
     if (this.chatOnline === online) return
     this.chatOnline = online
     this.options.onChatOnlineChange?.(online)
@@ -665,6 +759,33 @@ export class TheaterHostBridge {
       this.sendPermissionsUpdate()
       this.flushChatQueue()
       void this.refreshCharacterSnapshot()
+    }
+  }
+
+  private assertChatBridgeEnabled() {
+    if (this.chatBridgeManuallyDisconnected) {
+      throw new TheaterBridgeRequestError('BRIDGE_DISABLED', 'Theater chat bridge is disabled')
+    }
+  }
+
+  private setChatBridgeStatus(status: TheaterChatBridgeStatus) {
+    if (this.chatBridgeStatus === status) return
+    this.chatBridgeStatus = status
+    this.options.onChatBridgeStatusChange?.(status)
+  }
+
+  private buildInitializePayload(): InitializePayload {
+    return {
+      selectedVersion: THEATER_BRIDGE_VERSION,
+      worldId: this.options.context.worldId,
+      channelId: this.options.context.channelId,
+      userId: this.options.userId,
+      permissions: [...this.options.permissions],
+      capabilities: [...this.stageCapabilities],
+      initialContext: {
+        activeSceneId: this.options.stageStore.state.activeSceneId,
+        activeCharacterId: null,
+      },
     }
   }
 
@@ -698,6 +819,14 @@ export class TheaterHostBridge {
     this.debug('chat message queued', message.name)
   }
 
+  private clearChatQueue(code: string, message: string) {
+    const queued = this.pendingChatMessages
+    this.pendingChatMessages = []
+    queued.forEach(({ message: queuedMessage }) => {
+      this.rejectStageCommand(queuedMessage, code, message)
+    })
+  }
+
   private flushChatQueue() {
     const now = this.now()
     const queued = this.pendingChatMessages
@@ -719,7 +848,9 @@ export class TheaterHostBridge {
         'chat.character.read',
         {},
       )
-      if (result.ok) this.applyCharacterSnapshot(result.snapshot)
+      if (result.ok && this.chatOnline && !this.chatBridgeManuallyDisconnected) {
+        this.applyCharacterSnapshot(result.snapshot)
+      }
     } catch (error) {
       this.debug('character snapshot refresh failed', error)
     }

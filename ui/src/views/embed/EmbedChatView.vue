@@ -35,6 +35,7 @@ import {
   type SelectCharacterVariantPayload,
   type SceneAppliedPayload,
   type StageSceneReadResult,
+  type SuspendPayload,
 } from '@/views/theater/bridge/theater-bridge-protocol';
 import { PostMessageTransport } from '@/views/theater/bridge/theater-bridge-transport';
 import { getCharacterSnapshotContentSignature } from '@/views/theater/bridge/theater-character-snapshot';
@@ -246,6 +247,7 @@ const queueTheaterCharacterPublish = (
     const client = theaterBridgeClient;
     if (!client || !theaterBridgeInitialized) return null;
     const snapshot = await buildTheaterCharacterSnapshot();
+    if (client !== theaterBridgeClient || !theaterBridgeInitialized) return null;
     const signature = getCharacterSnapshotContentSignature(snapshot);
     if (signature === theaterLastCharacterSnapshotSignature && theaterLastCharacterSnapshot) {
       return theaterLastCharacterSnapshot;
@@ -352,6 +354,15 @@ const startTheaterBridge = async () => {
   client.onSystem<PermissionsUpdatedPayload>('system.permissions.updated', (payload, message) => {
     if (message.source !== 'host' || message.target !== 'chat') return;
     theaterGrantedPermissions = new Set(payload.permissions);
+  });
+  client.onSystem<SuspendPayload>('system.suspend', (_payload, message) => {
+    if (message.source !== 'host' || message.target !== 'chat') return;
+    theaterBridgeInitialized = false;
+    disposeTheaterMessageEvents?.();
+    disposeTheaterMessageEvents = null;
+    theaterGrantedPermissions = new Set();
+    theaterLastCharacterSnapshot = null;
+    theaterLastCharacterSnapshotSignature = '';
   });
   client.onEvent<SceneAppliedPayload>('stage.scene.applied', (payload) => {
     if (debug()) console.debug('[theater-bridge:chat] stage.scene.applied', payload);

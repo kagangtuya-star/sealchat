@@ -532,6 +532,8 @@ export const initializedPayloadSchema = z.strictObject({
   capabilities: z.array(capabilitySchema).max(256),
 })
 
+export const suspendPayloadSchema = z.strictObject({})
+
 export const bridgeErrorResultSchema = z.strictObject({
   ok: z.literal(false),
   error: z.strictObject({
@@ -718,6 +720,7 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['system:system.initialize', initializePayloadSchema],
   ['system:system.permissions.updated', permissionsUpdatedPayloadSchema],
   ['system:system.initialized', initializedPayloadSchema],
+  ['system:system.suspend', suspendPayloadSchema],
   ['command:stage.scene.read', stageSceneReadPayloadSchema],
   ['result:stage.scene.read.result', stageSceneReadResultSchema],
   ['command:stage.scene.apply', applyScenePayloadSchema],
@@ -755,6 +758,7 @@ export type ReadyPayload = z.infer<typeof readyPayloadSchema>
 export type InitializePayload = z.infer<typeof initializePayloadSchema>
 export type PermissionsUpdatedPayload = z.infer<typeof permissionsUpdatedPayloadSchema>
 export type InitializedPayload = z.infer<typeof initializedPayloadSchema>
+export type SuspendPayload = z.infer<typeof suspendPayloadSchema>
 export type BridgeErrorResult = z.infer<typeof bridgeErrorResultSchema>
 export type StageSceneReadResult = z.infer<typeof stageSceneReadResultSchema>
 export type ApplyScenePayload = z.infer<typeof applyScenePayloadSchema>
