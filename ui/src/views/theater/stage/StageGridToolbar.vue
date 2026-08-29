@@ -6,12 +6,14 @@ import { Check, ChevronDown, Magnet } from '@vicons/tabler'
 const props = defineProps<{
   snapEnabled: boolean
   displayGrid: boolean
+  gridOnTop: boolean
   disabled?: boolean
 }>()
 
 const emit = defineEmits<{
   toggleSnap: []
   toggleDisplayGrid: []
+  toggleGridOnTop: []
 }>()
 
 const renderCheck = (checked: boolean) => () => h(
@@ -23,11 +25,13 @@ const renderCheck = (checked: boolean) => () => h(
 const options = computed<DropdownOption[]>(() => [
   { key: 'snap', label: '网格吸附', icon: renderCheck(props.snapEnabled) },
   { key: 'display-grid', label: '始终显示网格', icon: renderCheck(props.displayGrid) },
+  { key: 'grid-on-top', label: '网格显示顶层', icon: renderCheck(props.gridOnTop) },
 ])
 
 const selectGridOption = (key: string | number) => {
   if (key === 'snap') emit('toggleSnap')
   if (key === 'display-grid') emit('toggleDisplayGrid')
+  if (key === 'grid-on-top') emit('toggleGridOnTop')
 }
 
 const theaterSecondaryMenuProps = () => ({ class: 'theater-secondary-surface' })

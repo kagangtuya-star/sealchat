@@ -224,6 +224,7 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
   fieldHeight: 24,
   fieldObjectFit: 'cover',
   displayGrid: false,
+  gridOnTop: false,
   gridSize: 1,
   alignWithGrid: false,
   sceneObjects,
@@ -431,6 +432,7 @@ const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallback
     ? input.fieldObjectFit
     : 'cover',
   displayGrid: input?.displayGrid === true,
+  gridOnTop: input?.gridOnTop === true,
   gridSize: typeof input?.gridSize === 'number' && input.gridSize > 0 ? input.gridSize : 1,
   alignWithGrid: input?.alignWithGrid === true,
   sceneObjects: normalizeObjects(input?.sceneObjects),

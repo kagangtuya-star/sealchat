@@ -472,6 +472,7 @@ const stageSceneStateSchema = z.strictObject({
   fieldHeight: z.number().finite().positive(),
   fieldObjectFit: z.enum(['fill', 'cover', 'contain']),
   displayGrid: z.boolean(),
+  gridOnTop: z.boolean().default(false),
   gridSize: z.number().finite().positive(),
   alignWithGrid: z.boolean(),
   sceneObjects: z.record(z.string(), stageObjectSchema),

@@ -549,6 +549,7 @@ export interface StageLiveState {
   fieldHeight: number
   fieldObjectFit: StageObjectFit
   displayGrid: boolean
+  gridOnTop: boolean
   gridSize: number
   alignWithGrid: boolean
   sceneObjects: Record<string, StageObject>

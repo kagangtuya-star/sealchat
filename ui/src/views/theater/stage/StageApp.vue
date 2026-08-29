@@ -2051,17 +2051,20 @@ let backgroundLayer: Konva.Layer | null = null
 let worldLayer: Konva.Layer | null = null
 let worldOverlayLayer: Konva.Layer | null = null
 let foregroundLayer: Konva.Layer | null = null
+let gridTopLayer: Konva.Layer | null = null
 let interactionLayer: Konva.Layer | null = null
 let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
 let worldOverlayCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
+let gridTopCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
 const objectRootLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group }>()
 const rootStackingOrder = ref<Record<string, number>>({})
 const OBJECT_ROOT_LAYER_Z_BASE = 100
 const WORLD_OVERLAY_LAYER_Z = 8990
+const GRID_TOP_LAYER_Z = 9990
 let sceneMorphStage: Konva.Stage | null = null
 const sceneMorphLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }>()
 const sceneMorphTextCameras = new Map<string, HTMLDivElement>()
@@ -2088,6 +2091,7 @@ let gridSyncFrame: number | null = null
 
 const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
 const gridDisplayEnabled = computed(() => props.store.state.liveState.displayGrid)
+const gridOnTopEnabled = computed(() => props.store.state.liveState.gridOnTop)
 const toggleGridSnap = () => {
   if (!canEditAllObjects.value) return
   props.store.state.liveState.alignWithGrid = !props.store.state.liveState.alignWithGrid
@@ -2095,6 +2099,10 @@ const toggleGridSnap = () => {
 const toggleGridDisplay = () => {
   if (!canEditAllObjects.value) return
   props.store.state.liveState.displayGrid = !props.store.state.liveState.displayGrid
+}
+const toggleGridOnTop = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.gridOnTop = !props.store.state.liveState.gridOnTop
 }
 
 const setGridSnapPreview = (active: boolean) => {
@@ -2316,11 +2324,13 @@ const drawWorldLayers = (immediate = false) => {
     worldLayer?.draw()
     objectRootLayers.forEach(({ layer }) => layer.draw())
     worldOverlayLayer?.draw()
+    gridTopLayer?.draw()
     return
   }
   worldLayer?.batchDraw()
   objectRootLayers.forEach(({ layer }) => layer.batchDraw())
   worldOverlayLayer?.batchDraw()
+  gridTopLayer?.batchDraw()
 }
 
 interface SurfaceSlot {
@@ -3203,10 +3213,10 @@ const applyCamera = () => {
     y: stage.height() / 2 + props.store.state.camera.y,
   }
   const scale = { x: props.store.state.camera.zoom, y: props.store.state.camera.zoom }
-  // Background fills viewport independently; world and foreground follow camera.
+  // Background fills viewport independently; world, foreground, and top grid follow camera.
   backgroundCameraGroup?.position({ x: 0, y: 0 })
   backgroundCameraGroup?.scale({ x: 1, y: 1 })
-  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup]) {
+  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup, gridTopCameraGroup]) {
     group?.position(position)
     group?.scale(scale)
   }
@@ -3407,13 +3417,14 @@ const syncMediaAnimation = () => {
     mediaAnimation?.stop()
     return
   }
-  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer) {
+  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer && gridTopLayer) {
     mediaAnimation = new Konva.Animation(() => {}, [
       backgroundLayer,
       worldLayer,
       ...[...objectRootLayers.values()].map(({ layer }) => layer),
       worldOverlayLayer,
       foregroundLayer,
+      gridTopLayer,
     ])
   }
   mediaAnimation?.start()
@@ -4932,6 +4943,17 @@ const updateSurfaceSlot = (
   })
 }
 
+const syncGridLayer = () => {
+  if (!gridGroup) return false
+  const target = props.store.state.liveState.gridOnTop ? gridTopCameraGroup : worldCameraGroup
+  if (!target || gridGroup.getParent() === target) return false
+  const previousLayer = gridGroup.getLayer()
+  gridGroup.moveTo(target)
+  previousLayer?.batchDraw()
+  target.getLayer()?.batchDraw()
+  return true
+}
+
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
   if (!gridGroup) return false
   const liveState = props.store.state.liveState
@@ -5009,11 +5031,15 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
 
 const syncGrid = () => {
   if (!gridGroup) return
+  const moved = syncGridLayer()
   const liveState = props.store.state.liveState
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
-  if (rebuildGrid(box.x, box.y, width, height)) worldLayer?.batchDraw()
+  if (rebuildGrid(box.x, box.y, width, height) || moved) {
+    worldLayer?.batchDraw()
+    gridTopLayer?.batchDraw()
+  }
 }
 
 const scheduleGridSync = () => {
@@ -5764,6 +5790,7 @@ const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
   roots.forEach((object) => objectRootLayers.get(object.id)?.layer.moveToTop())
   worldOverlayLayer?.moveToTop()
   foregroundLayer?.moveToTop()
+  gridTopLayer?.moveToTop()
   interactionLayer?.moveToTop()
   rootStackingOrder.value = stackingOrder
   if (changed) {
@@ -6764,11 +6791,13 @@ onMounted(() => {
   worldLayer = new Konva.Layer()
   worldOverlayLayer = new Konva.Layer({ listening: false })
   foregroundLayer = new Konva.Layer({ listening: false })
+  gridTopLayer = new Konva.Layer({ listening: false })
   interactionLayer = new Konva.Layer()
   backgroundCameraGroup = new Konva.Group()
   worldCameraGroup = new Konva.Group()
   worldOverlayCameraGroup = new Konva.Group()
   foregroundCameraGroup = new Konva.Group()
+  gridTopCameraGroup = new Konva.Group()
   gridGroup = new Konva.Group({ listening: false })
   objectRoot = new Konva.Group()
   drawingDraftRoot = new Konva.Group({ listening: false })
@@ -6929,19 +6958,22 @@ onMounted(() => {
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot)
   worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
+  gridTopLayer.add(gridTopCameraGroup)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   worldOverlayLayer.add(worldOverlayCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
-  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, interactionLayer)
+  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, gridTopLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
   worldLayer.getCanvas()._canvas.style.zIndex = '10'
   worldOverlayLayer.getCanvas()._canvas.style.zIndex = String(WORLD_OVERLAY_LAYER_Z)
   foregroundLayer.getCanvas()._canvas.style.zIndex = '9000'
+  gridTopLayer.getCanvas()._canvas.style.zIndex = String(GRID_TOP_LAYER_Z)
   interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
   worldOverlayLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  gridTopLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
@@ -7024,6 +7056,7 @@ watch(() => ({
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
   displayGrid: props.store.state.liveState.displayGrid,
+  gridOnTop: props.store.state.liveState.gridOnTop,
   gridSize: props.store.state.liveState.gridSize,
   alignWithGrid: props.store.state.liveState.alignWithGrid,
 }), scheduleGridSync, { deep: true })
@@ -7191,6 +7224,9 @@ onBeforeUnmount(() => {
   stage = null
   objectRootLayers.clear()
   rootStackingOrder.value = {}
+  gridTopLayer = null
+  gridTopCameraGroup = null
+  gridGroup = null
   worldOverlayLayer = null
   worldOverlayCameraGroup = null
   drawingDraftRoot = null
@@ -7389,9 +7425,11 @@ onBeforeUnmount(() => {
         <StageGridToolbar
           :snap-enabled="gridSnapEnabled"
           :display-grid="gridDisplayEnabled"
+          :grid-on-top="gridOnTopEnabled"
           :disabled="!canEditAllObjects"
           @toggle-snap="toggleGridSnap"
           @toggle-display-grid="toggleGridDisplay"
+          @toggle-grid-on-top="toggleGridOnTop"
         />
         <n-tooltip trigger="hover">
           <template #trigger>
