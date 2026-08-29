@@ -142,6 +142,17 @@ type TheaterPanelFolderStateModel struct {
 
 func (*TheaterPanelFolderStateModel) TableName() string { return "theater_panel_folder_states" }
 
+type TheaterImageAssetModel struct {
+	StringPKBaseModel
+	RoomID     string `json:"roomId" gorm:"size:100;not null;index"`
+	Name       string `json:"name" gorm:"size:255;not null"`
+	ResourceID string `json:"resourceId" gorm:"size:100;not null;index"`
+	CreatedBy  string `json:"createdBy" gorm:"size:100;index"`
+	UpdatedBy  string `json:"updatedBy" gorm:"size:100"`
+}
+
+func (*TheaterImageAssetModel) TableName() string { return "theater_image_assets" }
+
 type TheaterResourceModel struct {
 	StringPKBaseModel
 	RoomID             string     `json:"roomId" gorm:"size:100;not null;index:idx_theater_resource_hash,priority:1"`
@@ -282,6 +293,7 @@ func theaterModels() []any {
 		&TheaterPanelFolderModel{},
 		&TheaterPanelItemModel{},
 		&TheaterPanelFolderStateModel{},
+		&TheaterImageAssetModel{},
 		&TheaterResourceModel{},
 		&TheaterResourceVariantModel{},
 		&TheaterResourceJobModel{},

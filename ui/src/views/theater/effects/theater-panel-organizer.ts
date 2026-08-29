@@ -1,4 +1,4 @@
-export type TheaterPanelDomain = 'audio' | 'effect'
+export type TheaterPanelDomain = 'audio' | 'effect' | 'image'
 
 export interface TheaterPanelFolder {
   id: string

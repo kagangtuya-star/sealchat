@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { NButton, NCheckbox, NDropdown, NIcon, NProgress, NSlider, NTabPane, NTabs, NTooltip } from 'naive-ui'
-import { Box, ChevronDown, ChevronRight, Edit, Folder, GripVertical, Music, PlayerPlay, Refresh, Trash, Upload } from '@vicons/tabler'
+import { ChevronDown, ChevronRight, Edit, Folder, GripVertical, Music, PlayerPlay, Refresh, Trash, Upload } from '@vicons/tabler'
 
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
+import TheaterImageAssetPanel from './TheaterImageAssetPanel.vue'
+import type { TheaterImageAsset } from './theater-image-assets'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { useTheaterPointerSort, type TheaterPointerDrag, type TheaterPointerTarget } from './useTheaterPointerSort'
 
 const props = defineProps<{
   assets: AudioAsset[]
+  imageAssets: TheaterImageAsset[]
+  imageLoading: boolean
+  imageUploading: boolean
+  imageError: string
   quota: AudioQuotaSummary | null
   loading: boolean
   uploading: boolean
@@ -27,6 +33,14 @@ const emit = defineEmits<{
   preview: [asset: AudioAsset]
   delete: [asset: AudioAsset]
   deleteBatch: [assets: AudioAsset[]]
+  refreshImages: []
+  uploadImages: [files: File[], folderId: string]
+  renameImage: [assetId: string, name: string]
+  deleteImage: [asset: TheaterImageAsset]
+  deleteImageBatch: [assets: TheaterImageAsset[]]
+  createImageFolder: [done: (folder: TheaterPanelFolder | null) => void]
+  reorderImageFolders: [folderIds: string[]]
+  reorderImageItems: [folderId: string, targetIds: string[]]
   createFolder: [done: (folder: TheaterPanelFolder | null) => void]
   renameFolder: [folderId: string, name: string]
   deleteFolder: [folderId: string]
@@ -163,7 +177,30 @@ const assetStatus = (asset: AudioAsset) => {
 
 <template>
   <div class="theater-asset-manager">
-    <n-tabs type="line" size="small" animated>
+    <n-tabs type="line" size="small" animated default-value="image">
+      <n-tab-pane name="image" tab="图片素材">
+        <TheaterImageAssetPanel
+          :assets="imageAssets"
+          :loading="imageLoading"
+          :uploading="imageUploading"
+          :error="imageError"
+          :can-upload="canUpload"
+          :can-edit="canUpload || canDelete"
+          :can-delete="canDelete"
+          :organizer-folders="organizerFolders"
+          :organizer-items="organizerItems"
+          @refresh="emit('refreshImages')"
+          @upload="(files, folderId) => emit('uploadImages', files, folderId)"
+          @rename="(assetId, name) => emit('renameImage', assetId, name)"
+          @delete="emit('deleteImage', $event)"
+          @delete-batch="emit('deleteImageBatch', $event)"
+          @create-folder="emit('createImageFolder', $event)"
+          @rename-folder="(folderId, name) => emit('renameFolder', folderId, name)"
+          @delete-folder="emit('deleteFolder', $event)"
+          @reorder-folders="emit('reorderImageFolders', $event)"
+          @reorder-items="(folderId, targetIds) => emit('reorderImageItems', folderId, targetIds)"
+        />
+      </n-tab-pane>
       <n-tab-pane name="audio" tab="音频">
         <div class="theater-asset-manager__toolbar">
           <div class="theater-asset-manager__quota">
@@ -279,12 +316,6 @@ const assetStatus = (asset: AudioAsset) => {
         <div v-else-if="!loading" class="theater-asset-manager__empty">当前频道暂无特性音频</div>
       </n-tab-pane>
 
-      <n-tab-pane name="reserved" tab="其他素材" disabled>
-        <div class="theater-asset-manager__reserved">
-          <n-icon><Box /></n-icon>
-          <span>预留素材管理入口</span>
-        </div>
-      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -319,7 +350,6 @@ const assetStatus = (asset: AudioAsset) => {
 .theater-asset-manager__meta { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .theater-asset-manager__meta strong { overflow: hidden; color: var(--sc-text-primary); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .theater-asset-manager__meta span { color: var(--sc-text-secondary); font-size: 9px; }
-.theater-asset-manager__empty, .theater-asset-manager__reserved { min-height: 160px; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--sc-text-secondary); font-size: 11px; }
-.theater-asset-manager__reserved .n-icon { font-size: 24px; }
+.theater-asset-manager__empty { min-height: 160px; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--sc-text-secondary); font-size: 11px; }
 .theater-asset-manager__error { margin: 0 0 7px; color: #f87171; font-size: 10px; }
 </style>

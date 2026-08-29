@@ -997,6 +997,13 @@ func recalculateTheaterResourceReferences(tx *gorm.DB, roomID string) error {
 	for _, object := range objects {
 		countResourceIDsInJSON(object.ContentJSON, counts)
 	}
+	var imageAssets []model.TheaterImageAssetModel
+	if err := tx.Where("room_id = ?", roomID).Find(&imageAssets).Error; err != nil {
+		return err
+	}
+	for _, asset := range imageAssets {
+		counts[asset.ResourceID]++
+	}
 	if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id = ?", roomID).Update("reference_count", 0).Error; err != nil {
 		return err
 	}

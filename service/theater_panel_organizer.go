@@ -15,6 +15,7 @@ import (
 const (
 	TheaterPanelDomainAudio  = "audio"
 	TheaterPanelDomainEffect = "effect"
+	TheaterPanelDomainImage  = "image"
 )
 
 type TheaterPanelOrganizerSnapshot struct {
@@ -24,14 +25,14 @@ type TheaterPanelOrganizerSnapshot struct {
 
 func normalizeTheaterPanelDomain(domain string) (string, error) {
 	domain = strings.TrimSpace(domain)
-	if domain != TheaterPanelDomainAudio && domain != TheaterPanelDomainEffect {
+	if domain != TheaterPanelDomainAudio && domain != TheaterPanelDomainEffect && domain != TheaterPanelDomainImage {
 		return "", theaterPayloadError("domain 无效")
 	}
 	return domain, nil
 }
 
 func requireTheaterPanelWrite(actorID, worldID, channelID, domain string) error {
-	if domain == TheaterPanelDomainAudio {
+	if domain == TheaterPanelDomainAudio || domain == TheaterPanelDomainImage {
 		if !CanManageTheaterResources(actorID, worldID, channelID) {
 			return newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 素材管理权限", 403, nil)
 		}
@@ -326,6 +327,16 @@ func validateTheaterPanelTargets(roomID, worldID, channelID, domain string, targ
 		}
 		if count != int64(len(targetIDs)) {
 			return newTheaterError(TheaterErrorNotFound, "部分特效不存在", 404, nil)
+		}
+		return nil
+	}
+	if domain == TheaterPanelDomainImage {
+		var count int64
+		if err := model.GetDB().Model(&model.TheaterImageAssetModel{}).Where("room_id = ? AND id IN ?", roomID, targetIDs).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != int64(len(targetIDs)) {
+			return newTheaterError(TheaterErrorResourceNotFound, "部分图片素材不存在", 404, nil)
 		}
 		return nil
 	}

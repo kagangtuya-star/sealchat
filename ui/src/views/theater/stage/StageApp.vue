@@ -130,6 +130,7 @@ import {
   type TheaterPanelFolder,
   type TheaterPanelOrganizerSnapshot,
 } from '../effects/theater-panel-organizer'
+import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from '../effects/theater-image-assets'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -243,6 +244,12 @@ const theaterAudioQuota = ref<AudioQuotaSummary | null>(null)
 const theaterAudioLoading = ref(false)
 const theaterAudioUploading = ref(false)
 const theaterAudioError = ref('')
+const theaterImageAssets = ref<TheaterImageAsset[]>([])
+const theaterImageLoading = ref(false)
+const theaterImageUploading = ref(false)
+const theaterImageError = ref('')
+let theaterImageFetchGeneration = 0
+let theaterImageUploadGeneration = 0
 const theaterPanelOrganizer = ref<TheaterPanelOrganizerSnapshot>(emptyTheaterPanelOrganizer())
 const duplicatingScene = ref(false)
 const theaterAudioPlayers = new Map<string, Howl>()
@@ -306,6 +313,24 @@ const packageMenuOptions = computed<DropdownOption[]>(() => [
 
 const theaterPackagePath = (suffix: string) => `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/packages/${suffix}`
 
+type TheaterRequestScope = {
+  worldId: string
+  channelId: string
+  scopeType?: 'channel' | 'world'
+}
+
+const captureTheaterRequestScope = (): TheaterRequestScope => ({
+  worldId: props.worldId,
+  channelId: props.channelId,
+  scopeType: props.scopeType,
+})
+
+const isCurrentTheaterRequestScope = (scope: TheaterRequestScope) => (
+  scope.worldId === props.worldId
+  && scope.channelId === props.channelId
+  && scope.scopeType === props.scopeType
+)
+
 const theaterEditorStatePath = (objectId = '') => {
   const base = props.scopeType === 'world'
     ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/editor-state/groups`
@@ -313,11 +338,18 @@ const theaterEditorStatePath = (objectId = '') => {
   return objectId ? `${base}/${encodeURIComponent(objectId)}` : base
 }
 
-const theaterPanelOrganizerPath = (suffix = '') => {
-  const base = props.scopeType === 'world'
-    ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/panel-organizer`
-    : `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/panel-organizer`
+const theaterPanelOrganizerPath = (suffix = '', scope = captureTheaterRequestScope()) => {
+  const base = scope.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(scope.worldId)}/theater/panel-organizer`
+    : `api/v1/worlds/${encodeURIComponent(scope.worldId)}/channels/${encodeURIComponent(scope.channelId)}/theater/panel-organizer`
   return suffix ? `${base}/${suffix}` : base
+}
+
+const theaterImageAssetPath = (assetId = '', scope = captureTheaterRequestScope()) => {
+  const base = scope.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(scope.worldId)}/theater/image-assets`
+    : `api/v1/worlds/${encodeURIComponent(scope.worldId)}/channels/${encodeURIComponent(scope.channelId)}/theater/image-assets`
+  return assetId ? `${base}/${encodeURIComponent(assetId)}` : base
 }
 
 const stopPackagePolling = () => {
@@ -546,6 +578,64 @@ const theaterAudioErrorMessage = (error: unknown, fallback: string) => {
   if (typeof data === 'string' && data.trim()) return data.trim()
   if (data && typeof data === 'object') return data.error?.message || data.message || value?.message || fallback
   return value?.message || fallback
+}
+
+const withTheaterImageAssetURL = (asset: Omit<TheaterImageAsset, 'url'>, scope = captureTheaterRequestScope()): TheaterImageAsset => {
+  const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+  const variant = asset.resource.playbackVariant || 'original'
+  return {
+    ...asset,
+    url: `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(scope), asset.resourceId, variant)}`,
+  }
+}
+
+const fetchTheaterImageAssets = async () => {
+  const generation = ++theaterImageFetchGeneration
+  const scope = captureTheaterRequestScope()
+  if (!props.worldId || (props.scopeType !== 'world' && !props.channelId) || !props.syncReady) {
+    theaterImageAssets.value = []
+    theaterImageLoading.value = false
+    return
+  }
+  theaterImageLoading.value = true
+  try {
+    const response = await api.get<{ items?: Omit<TheaterImageAsset, 'url'>[] }>(theaterImageAssetPath('', scope))
+    if (generation !== theaterImageFetchGeneration || !isCurrentTheaterRequestScope(scope)) return
+    theaterImageAssets.value = (response.data?.items || []).map((asset) => withTheaterImageAssetURL(asset, scope))
+    theaterImageError.value = ''
+  } catch (error) {
+    if (generation !== theaterImageFetchGeneration || !isCurrentTheaterRequestScope(scope)) return
+    theaterImageError.value = theaterAudioErrorMessage(error, '读取图片素材失败')
+  } finally {
+    if (generation === theaterImageFetchGeneration) theaterImageLoading.value = false
+  }
+}
+
+const renameTheaterImageAsset = async (assetId: string, name: string) => {
+  try {
+    await api.patch(theaterImageAssetPath(assetId), { name })
+    await fetchTheaterImageAssets()
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, '重命名图片素材失败')
+  }
+}
+
+const deleteTheaterImageAsset = async (asset: TheaterImageAsset) => {
+  if (!canDeleteResources.value || !window.confirm(`删除图片素材“${asset.name}”？舞台上的图片组件不会受影响。`)) return
+  try {
+    await api.delete(theaterImageAssetPath(asset.id))
+    await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, '删除图片素材失败')
+  }
+}
+
+const deleteTheaterImageAssetsBatch = async (assets: TheaterImageAsset[]) => {
+  if (!canDeleteResources.value || !assets.length || !window.confirm(`删除选中的 ${assets.length} 个图片素材？舞台上的图片组件不会受影响。`)) return
+  const results = await Promise.allSettled(assets.map((asset) => api.delete(theaterImageAssetPath(asset.id))))
+  await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  const failed = results.filter((result) => result.status === 'rejected')
+  if (failed.length) theaterImageError.value = `${assets.length - failed.length} 个删除成功，${failed.length} 个删除失败`
 }
 
 const fetchTheaterPanelOrganizer = async () => {
@@ -3299,11 +3389,11 @@ const toggleBulkSelectionMode = () => {
 
 const isVideoSource = (source: StageMediaSource): source is HTMLVideoElement => source instanceof HTMLVideoElement
 
-const theaterMediaScope = () => ({
+const theaterMediaScope = (scope = captureTheaterRequestScope()) => ({
   urlBase: String(urlBase),
-  worldId: props.worldId,
-  channelId: props.channelId,
-  scopeType: props.scopeType,
+  worldId: scope.worldId,
+  channelId: scope.channelId,
+  scopeType: scope.scopeType,
 })
 
 const resolveTheaterStageMedia = (imageRef: StageImageRef) => resolveTheaterStageMediaLocation(imageRef, theaterMediaScope())
@@ -6034,13 +6124,13 @@ const applyImageUrl = (
   return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, loopCount, dimensions)
 }
 
-const theaterResourcePath = (resourceId = '') => {
-  return buildTheaterResourcePath(theaterMediaScope(), resourceId)
+const theaterResourcePath = (resourceId = '', scope = captureTheaterRequestScope()) => {
+  return buildTheaterResourcePath(theaterMediaScope(scope), resourceId)
 }
 
-const waitForResource = async (resourceId: string) => {
+const waitForResource = async (resourceId: string, scope = captureTheaterRequestScope()) => {
   for (let attempt = 0; attempt < 240; attempt += 1) {
-    const response = await api.get<TheaterResourceResponse>(theaterResourcePath(resourceId))
+    const response = await api.get<TheaterResourceResponse>(theaterResourcePath(resourceId, scope))
     const resource = response.data?.resource
     const status = resource?.status
     if (status === 'ready') return resource
@@ -6115,41 +6205,134 @@ const theaterMediaDimensions = (file: File): Promise<{ width: number, height: nu
   image.src = url
 })
 
+const uploadTheaterImageResource = async (file: File, targetObjectId = '', scope = captureTheaterRequestScope()) => {
+  if (!scope.worldId || !scope.channelId) throw new Error('缺少小剧场频道信息')
+  const prepared = await prepareTheaterMedia(file)
+  const formData = new FormData()
+  formData.append('file', prepared)
+  formData.append('mediaKind', 'image')
+  formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  if (!canUploadResources.value && targetObjectId) formData.append('targetObjectId', targetObjectId)
+  const response = await api.post<TheaterResourceResponse>(theaterResourcePath('', scope), formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  let resource = response.data?.resource
+  const resourceId = resource?.id
+  if (!resourceId) throw new Error('上传响应缺少资源 ID')
+  if (resource?.status !== 'ready') resource = await waitForResource(resourceId, scope)
+  const variant = resource?.playbackVariant || 'original'
+  const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
+  const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+  return {
+    resource,
+    resourceId,
+    prepared,
+    url: `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(scope), resourceId, variant)}`,
+    mimeType,
+  }
+}
+
 const uploadImage = async (file: File, target: ImageTarget) => {
   if (!canUploadImageTarget(target)) throw new Error('缺少小剧场图片编辑权限')
   if (!props.worldId || !props.channelId) throw new Error('缺少小剧场频道信息')
   resourceUploading.value = true
   resourceError.value = ''
   try {
-    const prepared = await prepareTheaterMedia(file)
     const targetObject = target.kind === 'object' ? props.store.activeObjects.value[target.objectId] : null
     const targetEffectConfig = isTheaterEffectObject(targetObject) ? theaterEffectConfigFromObject(targetObject) : null
+    const uploaded = await uploadTheaterImageResource(file, target.kind === 'object' ? target.objectId : '')
     const dimensions = targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
-      ? await theaterMediaDimensions(prepared)
+      ? await theaterMediaDimensions(uploaded.prepared)
       : undefined
-    const formData = new FormData()
-    formData.append('file', prepared)
-    formData.append('mediaKind', 'image')
-    formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-    if (!canUploadResources.value && target.kind === 'object') formData.append('targetObjectId', target.objectId)
-    const response = await api.post<TheaterResourceResponse>(theaterResourcePath(), formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    let resource = response.data?.resource
-    const resourceId = resource?.id
-    if (!resourceId) throw new Error('上传响应缺少资源 ID')
-    if (resource?.status !== 'ready') resource = await waitForResource(resourceId)
-    const variant = resource?.playbackVariant || 'original'
-    const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
-    const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
-    const url = `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(), resourceId, variant)}`
-    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
+    if (!applyImageUrl(target, uploaded.url, uploaded.resourceId, uploaded.mimeType, uploaded.resource?.animated === true, uploaded.resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
     throw error
   } finally {
     resourceUploading.value = false
   }
+}
+
+const uploadTheaterImageAssets = async (files: File[], folderId: string) => {
+  if (!canUploadResources.value || !files.length) return
+  const generation = ++theaterImageUploadGeneration
+  const scope = captureTheaterRequestScope()
+  const finishUpload = () => {
+    if (generation === theaterImageUploadGeneration) theaterImageUploading.value = false
+  }
+  theaterImageUploading.value = true
+  theaterImageError.value = ''
+  let succeeded = 0
+  const errors: string[] = []
+  const createdIds: string[] = []
+  const imageItems = new Map(theaterPanelOrganizer.value.items
+    .filter((item) => item.domain === 'image')
+    .map((item) => [item.targetId, item]))
+  const existingIds = theaterImageAssets.value
+    .filter((asset) => (imageItems.get(asset.id)?.folderId || '') === folderId)
+    .sort((left, right) => {
+      const leftOrder = imageItems.get(left.id)?.sortOrder ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = imageItems.get(right.id)?.sortOrder ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder || left.name.localeCompare(right.name)
+    })
+    .map((asset) => asset.id)
+  for (const file of files) {
+    if (!isCurrentTheaterRequestScope(scope)) {
+      finishUpload()
+      return
+    }
+    try {
+      const uploaded = await uploadTheaterImageResource(file, '', scope)
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      const name = file.name.replace(/\.[^.]+$/, '').trim() || '未命名图片'
+      const response = await api.post<{ item?: { id?: string } }>(theaterImageAssetPath('', scope), { resourceId: uploaded.resourceId, name })
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      if (response.data?.item?.id) createdIds.push(response.data.item.id)
+      succeeded += 1
+    } catch (error) {
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      errors.push(error instanceof Error ? error.message : '图片素材导入失败')
+    }
+  }
+  let organizerError = ''
+  if (!isCurrentTheaterRequestScope(scope)) {
+    finishUpload()
+    return
+  }
+  if (createdIds.length) {
+    try {
+      await api.put(theaterPanelOrganizerPath('item-order', scope), {
+        domain: 'image',
+        folderId,
+        targetIds: [...existingIds, ...createdIds],
+      })
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+    } catch (error) {
+      organizerError = theaterAudioErrorMessage(error, '上传成功，但整理到当前文件夹失败')
+    }
+  }
+  if (!isCurrentTheaterRequestScope(scope)) {
+    finishUpload()
+    return
+  }
+  await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  const messages: string[] = []
+  if (errors.length) messages.push(files.length === 1 ? errors[0] : `${succeeded} 个成功，${errors.length} 个失败：${errors[0]}${errors.length > 1 ? ' 等' : ''}`)
+  if (organizerError) messages.push(organizerError)
+  if (messages.length) theaterImageError.value = messages.join('；')
+  finishUpload()
 }
 
 const requestImageUpload = (target: ImageTarget) => {
@@ -6215,32 +6398,72 @@ const saveEditedImage = async (file: File) => {
   }
 }
 
-const handleCanvasDrop = async (event: DragEvent) => {
-  if (!canEditAllObjects.value || !canUploadResources.value) return
+const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetIndex = 0) => {
   const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return
+  if (!rect) return false
+  const { x: cameraX, y: cameraY, zoom } = props.store.state.camera
+  const step = 24 / zoom / WORLD_UNIT_PX
+  object.transform.x = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX + offsetIndex * step
+  object.transform.y = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX + offsetIndex * step
+  if (gridSnapEnabled.value) {
+    const snapped = snapStagePosition({
+      x: object.transform.x * WORLD_UNIT_PX,
+      y: object.transform.y * WORLD_UNIT_PX,
+    })
+    object.transform.x = snapped.x / WORLD_UNIT_PX
+    object.transform.y = snapped.y / WORLD_UNIT_PX
+  }
+  return true
+}
+
+const handleCanvasDrop = async (event: DragEvent) => {
+  const imageAssetId = event.dataTransfer?.getData(THEATER_IMAGE_ASSET_DRAG_TYPE)?.trim() || ''
+  if (imageAssetId) {
+    if (!canEditAllObjects.value) return
+    let asset = theaterImageAssets.value.find((item) => item.id === imageAssetId)
+    if (!asset) {
+      await fetchTheaterImageAssets()
+      asset = theaterImageAssets.value.find((item) => item.id === imageAssetId)
+    }
+    if (!asset || asset.resource.status !== 'ready') {
+      theaterImageError.value = '图片素材不存在或资源不可用'
+      return
+    }
+    const object = props.store.addObject('image')
+    if (!placeCanvasDropObject(object, event)) {
+      props.store.removeObjects([object.id], false)
+      return
+    }
+    object.name = asset.name
+    if (!props.store.setObjectImage(
+      object.id,
+      asset.url,
+      asset.resourceId,
+      asset.resource.playbackMimeType || asset.resource.mimeType,
+      asset.resource.animated === true,
+      asset.resource.loopCount || undefined,
+    )) {
+      props.store.removeObjects([object.id], false)
+      theaterImageError.value = '图片组件创建失败'
+      return
+    }
+    props.store.setSelectedObjectIds([object.id], object.id)
+    theaterImageError.value = ''
+    return
+  }
+  if (!canEditAllObjects.value || !canUploadResources.value) return
   const files = Array.from(event.dataTransfer?.files || [])
     .filter((item) => supportedTheaterMedia.has(normalizedFileType(item)))
   if (!files.length) return
 
-  const { x: cameraX, y: cameraY, zoom } = props.store.state.camera
-  const baseX = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX
-  const baseY = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX
-  const step = 24 / zoom / WORLD_UNIT_PX
   const createdIds: string[] = []
   const errors: string[] = []
 
   for (let i = 0; i < files.length; i += 1) {
     const object = props.store.addObject('image')
-    object.transform.x = baseX + i * step
-    object.transform.y = baseY + i * step
-    if (gridSnapEnabled.value) {
-      const snapped = snapStagePosition({
-        x: object.transform.x * WORLD_UNIT_PX,
-        y: object.transform.y * WORLD_UNIT_PX,
-      })
-      object.transform.x = snapped.x / WORLD_UNIT_PX
-      object.transform.y = snapped.y / WORLD_UNIT_PX
+    if (!placeCanvasDropObject(object, event, i)) {
+      props.store.removeObjects([object.id], false)
+      continue
     }
     try {
       await uploadImage(files[i], { kind: 'object', objectId: object.id })
@@ -6845,8 +7068,9 @@ watch(() => [props.syncReady, ...props.permissions], () => {
     assetPanelOpen.value = false
     theaterAudioAssets.value = []
     theaterAudioQuota.value = null
+    theaterImageAssets.value = []
   } else {
-    void fetchTheaterAudioAssets()
+    void Promise.all([fetchTheaterAudioAssets(), fetchTheaterImageAssets()])
   }
   syncObjects()
   if (props.syncReady) playPendingSceneEntrances(props.store.state.activeSceneId)
@@ -6863,6 +7087,7 @@ watch(
 )
 watch([effectPanelOpen, assetPanelOpen], ([effectOpen, assetOpen]) => {
   if (effectOpen || assetOpen) void fetchTheaterPanelOrganizer()
+  if (assetOpen) void fetchTheaterImageAssets()
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
@@ -6879,7 +7104,7 @@ watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, asse
   observeOpenPanels()
 })
 watch(() => [props.worldId, props.channelId], () => {
-  if (canManageResources.value) void fetchTheaterAudioAssets()
+  if (canManageResources.value) void Promise.all([fetchTheaterAudioAssets(), fetchTheaterImageAssets()])
 })
 watch(theaterAudioMasterVolume, (volume) => {
   const normalized = Math.max(0, Math.min(1, volume))
@@ -8169,12 +8394,16 @@ onBeforeUnmount(() => {
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('asset', $event)">
           <span>素材管理器</span>
           <div class="theater-panel-heading__actions">
-            <small>{{ theaterAudioAssets.length }}</small>
+            <small>{{ theaterImageAssets.length + theaterAudioAssets.length }}</small>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭素材管理器" @click="assetPanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
         <TheaterAssetManager
           :assets="theaterAudioAssets"
+          :image-assets="theaterImageAssets"
+          :image-loading="theaterImageLoading"
+          :image-uploading="theaterImageUploading"
+          :image-error="theaterImageError"
           :quota="theaterAudioQuota"
           :loading="theaterAudioLoading"
           :uploading="theaterAudioUploading"
@@ -8191,6 +8420,14 @@ onBeforeUnmount(() => {
           @preview="previewTheaterAudio"
           @delete="deleteTheaterAudio"
           @delete-batch="deleteTheaterAudioBatch"
+          @refresh-images="fetchTheaterImageAssets"
+          @upload-images="uploadTheaterImageAssets"
+          @rename-image="renameTheaterImageAsset"
+          @delete-image="deleteTheaterImageAsset"
+          @delete-image-batch="deleteTheaterImageAssetsBatch"
+          @create-image-folder="done => createTheaterPanelFolder('image', done)"
+          @reorder-image-folders="folderIds => reorderTheaterPanelFolders('image', folderIds)"
+          @reorder-image-items="(folderId, targetIds) => reorderTheaterPanelItems('image', folderId, targetIds)"
           @create-folder="done => createTheaterPanelFolder('audio', done)"
           @rename-folder="renameTheaterPanelFolder"
           @delete-folder="deleteTheaterPanelFolder"
