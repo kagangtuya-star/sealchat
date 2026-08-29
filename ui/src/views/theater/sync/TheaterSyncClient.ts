@@ -126,6 +126,16 @@ const asObject = (value: unknown): JsonObject => value && typeof value === 'obje
   ? value as JsonObject
   : {}
 const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Number(value) : fallback
+
+// These state extensions are part of the server contract but are not rendered
+// directly by the stage store. Keep them explicitly; never round-trip unknown
+// top-level keys from persisted state.
+const sceneStateExtensionKeys = ['resources', 'ccfolia'] as const
+const sceneStateExtensionsFromRaw = (raw: JsonObject): JsonObject => Object.fromEntries(
+  sceneStateExtensionKeys.flatMap((key) => (
+    Object.prototype.hasOwnProperty.call(raw, key) ? [[key, clone(raw[key])]] : []
+  )),
+)
 const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
 const same = (left: unknown, right: unknown): boolean => {
@@ -231,12 +241,12 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
     transition: normalizeStageSceneTransition(raw.transition),
     switchAudio: normalizeStageAudioRef(raw.switchAudio),
     musicSnapshot: normalizeStageMusicSnapshot(raw.musicSnapshot),
-    serverState: clone(raw),
+    serverState: sceneStateExtensionsFromRaw(raw),
   }
 }
 
 const serverStateFromStage = (state: StageLiveState): JsonObject => ({
-  ...asObject(state.serverState),
+  ...sceneStateExtensionsFromRaw(asObject(state.serverState)),
   background: state.background,
   foreground: state.foreground,
   surfaceStyles: clone(state.surfaceStyles),
@@ -1268,5 +1278,7 @@ export const theaterSyncTesting = {
   documentFromWorkspace,
   normalizeDocument,
   rebaseDocument,
+  serverStateFromStage,
+  stageStateFromServer,
   workspaceFromDocument,
 }

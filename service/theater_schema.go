@@ -373,9 +373,8 @@ func validateTheaterSwitchText(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "musicSnapshot": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
-		if !allowed[key] {
+		if !isTheaterSceneStateKeyAllowed(key) {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
 		}
 		if err := rejectUnsafeTheaterJSON(value); err != nil {

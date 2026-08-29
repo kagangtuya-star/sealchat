@@ -240,6 +240,12 @@ func RestoreTheaterSnapshot(ctx context.Context, actorID string, command Theater
 	if err := decodeStrictJSON([]byte(snapshotModel.SnapshotJSON), &snapshot); err != nil {
 		return nil, newTheaterError(TheaterErrorSchemaUnsupported, "checkpoint schema 无效", 409, nil)
 	}
+	// Checkpoints may predate the current scene-state allowlist. Normalize their
+	// state before the strict replacement validation so legacy keys cannot block
+	// an otherwise valid restore.
+	if _, _, err := canonicalizeTheaterSharedSnapshot(&snapshot); err != nil {
+		return nil, newTheaterError(TheaterErrorSchemaUnsupported, "checkpoint scene state 无效", 409, nil)
+	}
 	expected := room.Revision
 	if command.ExpectedRevision != nil {
 		expected = *command.ExpectedRevision
@@ -523,7 +529,7 @@ func ListTheaterCheckpoints(actorID, worldID, channelID string, limit int) ([]mo
 
 func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeResources bool) (TheaterSharedSnapshot, string, error) {
 	result := TheaterSharedSnapshot{
-		LiveState:         normalizedRawJSON(room.StateJSON, `{}`),
+		LiveState:         normalizedTheaterSceneStateJSON(room.StateJSON),
 		Scenes:            map[string]TheaterSceneSnapshot{},
 		PersistentObjects: map[string]TheaterObjectSnapshot{},
 		Characters:        map[string]TheaterObjectSnapshot{},
@@ -538,7 +544,7 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 		return result, "", err
 	}
 	for _, scene := range scenes {
-		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.SortOrder, Locked: scene.Locked, State: normalizedRawJSON(scene.StateJSON, `{}`), Objects: map[string]TheaterObjectSnapshot{}}
+		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.SortOrder, Locked: scene.Locked, State: normalizedTheaterSceneStateJSON(scene.StateJSON), Objects: map[string]TheaterObjectSnapshot{}}
 	}
 	var objects []model.TheaterObjectModel
 	if err := conn.Where("room_id = ?", room.ID).Order("order_key ASC, id ASC").Find(&objects).Error; err != nil {
