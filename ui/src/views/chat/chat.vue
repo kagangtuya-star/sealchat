@@ -5858,7 +5858,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     color: normalizedColor,
     avatarAttachmentId: identityForm.avatarAttachmentId,
     avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
-      .filter(item => item.enabled && item.resourceAttachmentId),
+      .filter(item => item.resourceAttachmentId),
     theaterPresentation: editingIdentity.value?.sharedIdentityId
       ? undefined
       : identityForm.theaterPresentation
