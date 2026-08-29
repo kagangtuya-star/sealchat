@@ -64,7 +64,7 @@ type MessageModel struct {
 	SenderIdentityName        string                        `json:"sender_identity_name"`
 	SenderIdentityColor       string                        `json:"sender_identity_color"`
 	SenderIdentityAvatarID    string                        `json:"sender_identity_avatar_id"`
-	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decorations,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
+	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decoration,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
 	SenderTheaterPresentation *protocol.TheaterPresentation `json:"sender_theater_presentation,omitempty" gorm:"serializer:json;column:sender_theater_presentation"`
 	SenderIdentityIsTemporary bool                          `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID              string                        `json:"sender_role_id" gorm:"size:100"`
