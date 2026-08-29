@@ -28,9 +28,15 @@ const utils = useUtilsStore()
 const message = useMessage()
 const resourceInputRef = ref<HTMLInputElement | null>(null)
 const fallbackInputRef = ref<HTMLInputElement | null>(null)
+const assetListRef = ref<HTMLElement | null>(null)
 const uploadingTarget = ref<'resource' | 'fallback' | null>(null)
 const dragging = ref(false)
 const selectedDecorationId = ref('')
+const draggingDecorationId = ref('')
+const dragOverDecorationId = ref('')
+const dragOverPlacement = ref<'before' | 'after' | ''>('')
+const decorationGhostX = ref(0)
+const decorationGhostY = ref(0)
 const selectedResourceMeta = ref<AttachmentMeta | null>(null)
 const selectedFallbackMeta = ref<AttachmentMeta | null>(null)
 
@@ -39,6 +45,14 @@ let dragStartX = 0
 let dragStartY = 0
 let dragStartOffsetX = 0
 let dragStartOffsetY = 0
+let decorationPointerId: number | null = null
+let decorationPointerTarget: HTMLElement | null = null
+let decorationDragStartX = 0
+let decorationDragStartY = 0
+let decorationGhostOffsetX = 0
+let decorationGhostOffsetY = 0
+let decorationDragMoved = false
+let suppressDecorationClick = false
 
 const defaultSettings = () => ({
   scale: 1,
@@ -68,6 +82,19 @@ const cloneDecoration = (item: AvatarDecoration): AvatarDecoration => ({
 const normalizedDecorations = computed<AvatarDecoration[]>(() => (
   normalizeAvatarDecorations(props.modelValue).map(cloneDecoration)
 ))
+
+const orderedDecorations = computed<AvatarDecoration[]>(() => (
+  [...normalizedDecorations.value].reverse()
+))
+
+const draggingDecoration = computed<AvatarDecoration | null>(() => (
+  orderedDecorations.value.find(item => item.id === draggingDecorationId.value) || null
+))
+
+const decorationGhostStyle = computed(() => ({
+  left: `${decorationGhostX.value}px`,
+  top: `${decorationGhostY.value}px`,
+}))
 
 const updateDecorations = (next: AvatarDecoration[]) => {
   emit('update:modelValue', next.length ? next : [])
@@ -202,6 +229,120 @@ const removeDecoration = (decorationId: string) => {
   updateDecorations(next)
   if (selectedDecorationId.value === decorationId) {
     selectedDecorationId.value = next[targetIndex]?.id || next[targetIndex - 1]?.id || ''
+  }
+}
+
+const resetDecorationDrag = () => {
+  draggingDecorationId.value = ''
+  dragOverDecorationId.value = ''
+  dragOverPlacement.value = ''
+  decorationPointerId = null
+  decorationPointerTarget = null
+  decorationDragMoved = false
+}
+
+const handleDecorationClick = (decorationId: string) => {
+  if (suppressDecorationClick) {
+    return
+  }
+  selectedDecorationId.value = decorationId
+}
+
+const beginDecorationDrag = (decorationId: string, event: PointerEvent) => {
+  if (!decorationId || (event.pointerType === 'mouse' && event.button !== 0)) {
+    return
+  }
+  if ((event.target as HTMLElement | null)?.closest('.avatar-decoration-editor__asset-delete')) {
+    return
+  }
+  decorationPointerId = event.pointerId
+  decorationPointerTarget = event.currentTarget as HTMLElement
+  decorationDragStartX = event.clientX
+  decorationDragStartY = event.clientY
+  const rect = decorationPointerTarget.getBoundingClientRect()
+  decorationGhostOffsetX = event.clientX - rect.left
+  decorationGhostOffsetY = event.clientY - rect.top
+  decorationDragMoved = false
+  try {
+    decorationPointerTarget.setPointerCapture(event.pointerId)
+  } catch {
+    resetDecorationDrag()
+  }
+}
+
+const reorderDecoration = (sourceId: string, targetId: string, placement: 'before' | 'after') => {
+  if (!sourceId || sourceId === targetId) {
+    return
+  }
+  const ordered = [...orderedDecorations.value]
+  const sourceIndex = ordered.findIndex(item => item.id === sourceId)
+  const targetIndex = ordered.findIndex(item => item.id === targetId)
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return
+  }
+  const [source] = ordered.splice(sourceIndex, 1)
+  const nextTargetIndex = ordered.findIndex(item => item.id === targetId)
+  const insertIndex = nextTargetIndex + (placement === 'after' ? 1 : 0)
+  ordered.splice(insertIndex, 0, source)
+  updateDecorations(ordered.reverse())
+}
+
+const handleDecorationDragMove = (decorationId: string, event: PointerEvent) => {
+  if (decorationPointerId !== event.pointerId) {
+    return
+  }
+  const deltaX = event.clientX - decorationDragStartX
+  const deltaY = event.clientY - decorationDragStartY
+  if (!decorationDragMoved) {
+    if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 6) {
+      return
+    }
+    if (event.pointerType !== 'mouse' && Math.abs(deltaY) > Math.abs(deltaX)) {
+      resetDecorationDrag()
+      return
+    }
+    decorationDragMoved = true
+    draggingDecorationId.value = decorationId
+    selectedDecorationId.value = decorationId
+  }
+  event.preventDefault()
+  decorationGhostX.value = event.clientX - decorationGhostOffsetX
+  decorationGhostY.value = event.clientY - decorationGhostOffsetY
+  const target = document.elementFromPoint(event.clientX, event.clientY)
+    ?.closest<HTMLElement>('[data-decoration-id]') || null
+  const targetId = target && assetListRef.value?.contains(target)
+    ? target.dataset.decorationId || ''
+    : ''
+  if (!target || !targetId || targetId === decorationId) {
+    dragOverDecorationId.value = ''
+    dragOverPlacement.value = ''
+    return
+  }
+  const targetRect = target.getBoundingClientRect()
+  dragOverDecorationId.value = targetId
+  dragOverPlacement.value = event.clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after'
+}
+
+const finishDecorationDrag = (event: PointerEvent, commit: boolean) => {
+  if (decorationPointerId !== event.pointerId) {
+    return
+  }
+  const sourceId = draggingDecorationId.value
+  const targetId = dragOverDecorationId.value
+  const placement = dragOverPlacement.value
+  const moved = decorationDragMoved
+  try {
+    decorationPointerTarget?.releasePointerCapture(event.pointerId)
+  } catch {
+    // Pointer capture may already be released by the browser.
+  }
+  resetDecorationDrag()
+  if (commit && moved && placement) {
+    reorderDecoration(sourceId, targetId, placement)
+    suppressDecorationClick = true
+    window.setTimeout(() => {
+      suppressDecorationClick = false
+    }, 0)
   }
 }
 
@@ -527,19 +668,29 @@ onBeforeUnmount(() => {
       <div class="avatar-decoration-editor__asset-head">
         <div>
           <div class="avatar-decoration-editor__title">装饰预览区</div>
-          <div class="avatar-decoration-editor__asset-hint">点击某个装饰进行编辑；悬浮小图会显示红色删除按钮。</div>
+          <div class="avatar-decoration-editor__asset-hint">左右拖动调整层级，左侧最高；点击装饰进行编辑，悬浮小图会显示红色删除按钮。</div>
         </div>
         <n-button size="small" type="primary" @click="addDecoration">新增装饰</n-button>
       </div>
-      <div v-if="normalizedDecorations.length" class="avatar-decoration-editor__asset-list">
+      <div v-if="normalizedDecorations.length" ref="assetListRef" class="avatar-decoration-editor__asset-list">
         <div
-          v-for="item in normalizedDecorations"
+          v-for="item in orderedDecorations"
           :key="item.id"
           class="avatar-decoration-editor__asset-item"
-          :class="{ 'is-active': item.id === selectedDecorationId }"
+          :class="{
+            'is-active': item.id === selectedDecorationId,
+            'is-dragging': item.id === draggingDecorationId,
+            'is-drop-before': item.id === dragOverDecorationId && dragOverPlacement === 'before',
+            'is-drop-after': item.id === dragOverDecorationId && dragOverPlacement === 'after',
+          }"
           role="button"
           tabindex="0"
-          @click="selectedDecorationId = item.id || ''"
+          :data-decoration-id="item.id || ''"
+          @click="handleDecorationClick(item.id || '')"
+          @pointerdown="beginDecorationDrag(item.id || '', $event)"
+          @pointermove="handleDecorationDragMove(item.id || '', $event)"
+          @pointerup="finishDecorationDrag($event, true)"
+          @pointercancel="finishDecorationDrag($event, false)"
         >
           <button
             type="button"
@@ -580,6 +731,26 @@ onBeforeUnmount(() => {
         <n-tag v-else size="small">已停用</n-tag>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="draggingDecoration"
+        class="avatar-decoration-editor__drag-ghost"
+        :style="decorationGhostStyle"
+        aria-hidden="true"
+      >
+        <UserAvatarDecoration
+          :src="avatarSrc"
+          :size="42"
+          :border="false"
+          :fallback-text="fallbackText || previewName || '频道角色'"
+          :use-text-fallback="!avatarSrc"
+          :decorations="[draggingDecoration]"
+          :pause-when-out-of-view="false"
+        />
+        <span>{{ draggingDecoration.settings?.zIndex === -1 ? '背景' : '前景' }}</span>
+      </div>
+    </Teleport>
 
     <div class="avatar-decoration-editor__toolbar">
       <input
@@ -837,7 +1008,9 @@ onBeforeUnmount(() => {
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.24));
   border-radius: 0.85rem;
   background: color-mix(in srgb, var(--sc-bg-input, #fff) 94%, transparent);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
   transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -849,6 +1022,31 @@ onBeforeUnmount(() => {
 .avatar-decoration-editor__asset-item.is-active {
   border-color: color-mix(in srgb, var(--primary-color, #3388de) 72%, white);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 22%, transparent);
+}
+
+.avatar-decoration-editor__asset-item.is-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.avatar-decoration-editor__asset-item.is-drop-before::before,
+.avatar-decoration-editor__asset-item.is-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--primary-color, #3388de);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--primary-color, #3388de) 70%, transparent);
+}
+
+.avatar-decoration-editor__asset-item.is-drop-before::before {
+  left: -0.45rem;
+}
+
+.avatar-decoration-editor__asset-item.is-drop-after::after {
+  right: -0.45rem;
 }
 
 .avatar-decoration-editor__asset-meta {
@@ -874,6 +1072,29 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+}
+
+.avatar-decoration-editor__drag-ghost {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 84px;
+  padding: 0.55rem 0.45rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 72%, white);
+  border-radius: 0.85rem;
+  color: var(--sc-text-secondary, #64748b);
+  background: color-mix(in srgb, var(--sc-bg-input, #fff) 94%, transparent);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+  opacity: 0.9;
+  pointer-events: none;
+  transform: rotate(2deg) scale(1.03);
+}
+
+.avatar-decoration-editor__drag-ghost span {
+  font-size: 0.72rem;
 }
 
 .avatar-decoration-editor__asset-item:hover .avatar-decoration-editor__asset-delete,
