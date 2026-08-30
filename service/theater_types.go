@@ -11,6 +11,7 @@ const (
 	TheaterMutationSceneReorder        = "scene.reorder"
 	TheaterMutationSceneDelete         = "scene.delete"
 	TheaterMutationSceneApply          = "scene.apply"
+	TheaterMutationSceneFoldersUpdate  = "scene.folders.update"
 	TheaterMutationRoomConstructionSet = "room.construction.set"
 	TheaterMutationObjectCreate        = "object.create"
 	TheaterMutationObjectUpdate        = "object.update"
@@ -76,9 +77,15 @@ type TheaterSceneSnapshot struct {
 	Name       string                           `json:"name"`
 	SwitchText string                           `json:"switchText"`
 	Order      int64                            `json:"order"`
+	FolderID   string                           `json:"folderId,omitempty"`
 	Locked     bool                             `json:"locked"`
 	State      json.RawMessage                  `json:"state"`
 	Objects    map[string]TheaterObjectSnapshot `json:"objects"`
+}
+
+type TheaterSceneFolder struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type TheaterObjectSnapshot struct {
@@ -112,6 +119,7 @@ type TheaterObjectSnapshot struct {
 type TheaterSharedSnapshot struct {
 	ActiveSceneID     *string                          `json:"activeSceneId"`
 	LiveState         json.RawMessage                  `json:"liveState"`
+	SceneFolders      []TheaterSceneFolder             `json:"sceneFolders,omitempty"`
 	Scenes            map[string]TheaterSceneSnapshot  `json:"scenes"`
 	PersistentObjects map[string]TheaterObjectSnapshot `json:"persistentObjects"`
 	Characters        map[string]TheaterObjectSnapshot `json:"characters"`

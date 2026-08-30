@@ -55,6 +55,7 @@ type TheaterSceneModel struct {
 	Name          string `json:"name" gorm:"size:512;not null"`
 	SwitchText    string `json:"switchText" gorm:"type:text;not null;default:''"`
 	SortOrder     int64  `json:"sortOrder" gorm:"not null;index:idx_theater_scene_room_sort,priority:2"`
+	FolderID      string `json:"folderId,omitempty" gorm:"size:100;index"`
 	Locked        bool   `json:"locked" gorm:"not null;default:false"`
 	StateJSON     string `json:"stateJson" gorm:"not null"`
 	SchemaVersion int    `json:"schemaVersion" gorm:"not null"`

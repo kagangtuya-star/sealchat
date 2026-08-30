@@ -25,6 +25,7 @@ var theaterSceneStateAllowedKeys = map[string]struct{}{
 	"transition":    {},
 	"switchAudio":   {},
 	"musicSnapshot": {},
+	"sceneFolders":  {},
 	"resources":     {},
 	"ccfolia":       {},
 }

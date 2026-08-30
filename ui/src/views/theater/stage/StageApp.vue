@@ -19,10 +19,12 @@ import {
   CloudDownload,
   Copy,
   Cut,
+  Dots,
   Edit,
   Eye,
   EyeOff,
   Filter,
+  Folder,
   FolderPlus,
   Focus,
   GripVertical,
@@ -81,6 +83,7 @@ import {
   type StageObjectFit,
   type StagePointerTrace,
   type StagePointerTraceInput,
+  type SceneFolder,
   type StageScene,
   type StageSceneTransition,
   type StageSceneTransitionPhase,
@@ -1478,6 +1481,45 @@ const sceneTransitionTypeOptions = stageSceneTransitionTypes.map((type) => ({
   } satisfies Record<StageSceneTransitionType, string>)[type],
 }))
 const sceneListRef = ref<HTMLDivElement | null>(null)
+const collapsedSceneFolders = ref(new Set<string>())
+const sceneFolderCollapseKey = (folderId: string) => `folder:${folderId}`
+const uncategorizedSceneFolderCollapseKey = 'virtual:uncategorized'
+type SceneFolderDialogMode = 'create' | 'rename'
+const sceneFolderDialogVisible = ref(false)
+const sceneFolderDialogMode = ref<SceneFolderDialogMode>('create')
+const sceneFolderDialogFolderId = ref<string | null>(null)
+const sceneFolderNameDraft = ref('')
+type SceneListEntry =
+  | { kind: 'scene', key: string, scene: StageScene, nested: boolean }
+  | { kind: 'folder', key: string, folder: SceneFolder, scenes: StageScene[], collapsed: boolean }
+  | { kind: 'uncategorized', key: string, scenes: StageScene[], collapsed: boolean }
+const sceneListEntries = computed<SceneListEntry[]>(() => {
+  const folders = props.store.state.sceneFolders || []
+  const scenes = props.store.scenes.value
+  const folderIDs = new Set(folders.map((folder) => folder.id))
+  const grouped = new Map<string, StageScene[]>()
+  const uncategorized: StageScene[] = []
+  scenes.forEach((scene) => {
+    const folderId = scene.folderId && folderIDs.has(scene.folderId) ? scene.folderId : ''
+    if (!folderId) uncategorized.push(scene)
+    else {
+      const bucket = grouped.get(folderId)
+      if (bucket) bucket.push(scene)
+      else grouped.set(folderId, [scene])
+    }
+  })
+  const entries: SceneListEntry[] = []
+  folders.forEach((folder) => {
+    const scenesInFolder = grouped.get(folder.id) || []
+    const collapsed = collapsedSceneFolders.value.has(sceneFolderCollapseKey(folder.id))
+    entries.push({ kind: 'folder', key: `folder:${folder.id}`, folder, scenes: scenesInFolder, collapsed })
+    if (!collapsed) scenesInFolder.forEach((scene) => entries.push({ kind: 'scene', key: scene.id, scene, nested: true }))
+  })
+  const uncategorizedCollapsed = collapsedSceneFolders.value.has(uncategorizedSceneFolderCollapseKey)
+  entries.push({ kind: 'uncategorized', key: 'virtual-folder:uncategorized', scenes: uncategorized, collapsed: uncategorizedCollapsed })
+  if (!uncategorizedCollapsed) uncategorized.forEach((scene) => entries.push({ kind: 'scene', key: scene.id, scene, nested: true }))
+  return entries
+})
 const draggedSceneId = ref<string | null>(null)
 type SceneDropPlacement = 'before' | 'after'
 const sceneDropTarget = ref<{ id: string, placement: SceneDropPlacement } | null>(null)
@@ -1690,6 +1732,113 @@ const finishScenePointerDrag = (event: PointerEvent, cancelled = false) => {
   draggedSceneId.value = null
   setSceneDropTarget(null)
   if (!cancelled && dropTarget) props.store.reorderScenes(session.sceneId, dropTarget.id, dropTarget.placement)
+}
+
+const toggleSceneFolder = (folderId: string) => {
+  const next = new Set(collapsedSceneFolders.value)
+  if (next.has(folderId)) next.delete(folderId)
+  else next.add(folderId)
+  collapsedSceneFolders.value = next
+}
+
+const openSceneFolderDialog = (mode: SceneFolderDialogMode, folderId: string | null = null) => {
+  if (!canEditAllObjects.value) return
+  const folder = mode === 'rename' && folderId
+    ? props.store.state.sceneFolders.find((item) => item.id === folderId)
+    : null
+  if (mode === 'rename' && !folder) return
+  sceneFolderDialogMode.value = mode
+  sceneFolderDialogFolderId.value = folder?.id || null
+  sceneFolderNameDraft.value = folder?.name || ''
+  sceneFolderDialogVisible.value = true
+}
+
+const createSceneFolder = () => openSceneFolderDialog('create')
+
+const closeSceneFolderDialog = () => {
+  sceneFolderDialogVisible.value = false
+}
+
+const submitSceneFolderDialog = () => {
+  const name = sceneFolderNameDraft.value.trim()
+  if (!name) {
+    stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+    return
+  }
+  if (sceneFolderDialogMode.value === 'create') {
+    if (props.store.state.sceneFolders.length >= 200) {
+      stageMessage.warning('场景文件夹最多创建 200 个')
+      return
+    }
+    const folder = props.store.createSceneFolder(name)
+    if (!folder) {
+      stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+      return
+    }
+    const next = new Set(collapsedSceneFolders.value)
+    next.delete(sceneFolderCollapseKey(folder.id))
+    collapsedSceneFolders.value = next
+    closeSceneFolderDialog()
+    return
+  }
+  const folderId = sceneFolderDialogFolderId.value
+  const folder = folderId ? props.store.state.sceneFolders.find((item) => item.id === folderId) : null
+  if (!folder) {
+    closeSceneFolderDialog()
+    return
+  }
+  if (name === folder.name) {
+    closeSceneFolderDialog()
+    return
+  }
+  if (!props.store.renameSceneFolder(folder.id, name)) {
+    stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+    return
+  }
+  closeSceneFolderDialog()
+}
+
+const handleSceneFolderDialogKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing || event.key !== 'Enter') return
+  event.preventDefault()
+  submitSceneFolderDialog()
+}
+
+const sceneFolderMenuOptions: DropdownOption[] = [
+  { label: '重命名', key: 'rename' },
+  { label: '删除', key: 'delete' },
+]
+
+const handleSceneFolderMenu = (key: string | number, folderId: string) => {
+  const folder = props.store.state.sceneFolders.find((item) => item.id === folderId)
+  if (!folder) return
+  if (key === 'rename') {
+    openSceneFolderDialog('rename', folder.id)
+    return
+  }
+  if (key === 'delete') {
+    confirmDelete('删除文件夹', `删除文件夹“${folder.name}”不会删除其中的场景，场景将移动到未分类。`, () => {
+      props.store.deleteSceneFolder(folderId)
+      const collapseKey = sceneFolderCollapseKey(folderId)
+      collapsedSceneFolders.value = new Set([...collapsedSceneFolders.value].filter((id) => id !== collapseKey))
+    })
+  }
+}
+
+const sceneMoveOptions = (scene: StageScene): DropdownOption[] => [
+  { label: '移动到未分类', key: 'move:', disabled: !scene.folderId },
+  ...props.store.state.sceneFolders.map((folder) => ({
+    label: `移动到：${folder.name}`,
+    key: `move:${folder.id}`,
+    disabled: scene.folderId === folder.id,
+  })),
+]
+
+const moveSceneFromMenu = (key: string | number, sceneId: string) => {
+  const value = String(key)
+  if (!value.startsWith('move:')) return
+  const folderId = value.slice('move:'.length) || null
+  props.store.moveSceneToFolder(sceneId, folderId)
 }
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -7711,31 +7860,49 @@ onBeforeUnmount(() => {
               预加载全部场景到所有设备
             </n-tooltip>
             <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" :disabled="sceneEditMode" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
+            <n-button v-if="canEditAllObjects" text size="tiny" aria-label="新建场景文件夹" :disabled="sceneEditMode" @click="createSceneFolder"><n-icon><FolderPlus /></n-icon></n-button>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
         <div ref="sceneListRef" class="theater-scene-list">
+          <template v-for="entry in sceneListEntries" :key="entry.key">
           <div
-            v-for="scene in store.scenes.value"
-            :key="scene.id"
+            v-if="entry.kind === 'folder' || entry.kind === 'uncategorized'"
+            class="theater-scene-folder"
+            :class="{ 'is-collapsed': entry.collapsed, 'is-virtual': entry.kind === 'uncategorized' }"
+          >
+            <button type="button" class="theater-scene-folder__main" @click="toggleSceneFolder(entry.kind === 'folder' ? sceneFolderCollapseKey(entry.folder.id) : uncategorizedSceneFolderCollapseKey)">
+              <n-icon :component="entry.collapsed ? ChevronRight : ChevronDown" />
+              <n-icon><Folder /></n-icon>
+              <strong>{{ entry.kind === 'folder' ? entry.folder.name : '未分类' }}</strong>
+              <small>{{ entry.scenes.length }}</small>
+            </button>
+            <n-dropdown v-if="entry.kind === 'folder' && canEditAllObjects" trigger="click" :options="sceneFolderMenuOptions" :menu-props="theaterSecondaryMenuProps" @select="handleSceneFolderMenu($event, entry.folder.id)">
+              <n-button quaternary circle size="tiny" aria-label="文件夹操作" @click.stop><template #icon><n-icon><Dots /></n-icon></template></n-button>
+            </n-dropdown>
+          </div>
+          <div
+            v-else
+            :data-scene-id="entry.scene.id"
             class="theater-scene-row"
             :class="{
-              'has-preload-pulse': scenePreloadPulse[scene.id],
+              'has-preload-pulse': scenePreloadPulse[entry.scene.id],
+              'is-nested': entry.nested,
               'is-edit-mode': sceneEditMode,
               'is-batch-mode': sceneBatchMode,
-              'is-dragging': draggedSceneId === scene.id,
-              'is-drop-before': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'before',
-              'is-drop-after': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'after',
+              'has-scene-move-actions': canEditAllObjects,
+              'is-dragging': draggedSceneId === entry.scene.id,
+              'is-drop-before': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'before',
+              'is-drop-after': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'after',
             }"
-            :data-scene-id="scene.id"
           >
             <n-checkbox
               v-if="sceneBatchMode && canEditAllObjects"
               class="theater-scene-row__select"
-              :checked="isSceneBatchSelected(scene.id)"
-              :aria-label="`选择场景 ${scene.name}`"
+              :checked="isSceneBatchSelected(entry.scene.id)"
+              :aria-label="`选择场景 ${entry.scene.name}`"
               @click.stop
-              @update:checked="setSceneBatchSelected(scene.id, $event)"
+              @update:checked="setSceneBatchSelected(entry.scene.id, $event)"
             />
             <span
               v-if="sceneEditMode && canEditAllObjects"
@@ -7743,7 +7910,7 @@ onBeforeUnmount(() => {
               aria-label="拖动调整场景顺序"
               role="button"
               tabindex="0"
-              @pointerdown.stop="startScenePointerDrag($event, scene.id)"
+              @pointerdown.stop="startScenePointerDrag($event, entry.scene.id)"
               @pointermove.stop="moveScenePointerDrag"
               @pointerup.stop="finishScenePointerDrag($event)"
               @pointercancel.stop="finishScenePointerDrag($event, true)"
@@ -7752,7 +7919,7 @@ onBeforeUnmount(() => {
               <n-icon><GripVertical /></n-icon>
             </span>
             <n-popover
-            :show="sceneEditMode && editingSceneId === scene.id"
+            :show="sceneEditMode && editingSceneId === entry.scene.id"
             trigger="manual"
             :placement="sceneEditorPlacement"
             :show-arrow="false"
@@ -7763,13 +7930,13 @@ onBeforeUnmount(() => {
             <template #trigger>
               <button
                 class="theater-scene-card"
-                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id, 'is-selected': isSceneBatchSelected(scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(scene.id) }"
-                :aria-pressed="sceneBatchMode ? isSceneBatchSelected(scene.id) : undefined"
+                :class="{ 'is-active': entry.scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === entry.scene.id, 'is-selected': isSceneBatchSelected(entry.scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(entry.scene.id) }"
+                :aria-pressed="sceneBatchMode ? isSceneBatchSelected(entry.scene.id) : undefined"
                 :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canSwitchScene"
-                @click="handleSceneClick(scene)"
+                @click="handleSceneClick(entry.scene)"
               >
-                <span class="theater-scene-card__title">{{ scene.name }}</span>
-                <n-icon v-if="constructionSceneId === scene.id" class="theater-scene-card__construction" aria-label="施工模式锁定场景"><Lock /></n-icon>
+                <span class="theater-scene-card__title">{{ entry.scene.name }}</span>
+                <n-icon v-if="constructionSceneId === entry.scene.id" class="theater-scene-card__construction" aria-label="施工模式锁定场景"><Lock /></n-icon>
               </button>
             </template>
             <div class="theater-scene-editor">
@@ -7887,15 +8054,19 @@ onBeforeUnmount(() => {
               </div>
             </div>
             </n-popover>
-            <div v-if="canSwitchScene && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
+            <div v-if="(canSwitchScene || canEditAllObjects) && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
+              <n-dropdown v-if="canEditAllObjects" trigger="click" :options="sceneMoveOptions(entry.scene)" :menu-props="theaterSecondaryMenuProps" @select="moveSceneFromMenu($event, entry.scene.id)">
+                <n-button quaternary circle size="tiny" aria-label="移动场景到文件夹" @click.stop><template #icon><n-icon><Dots /></n-icon></template></n-button>
+              </n-dropdown>
               <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
                 <template #trigger>
-                  <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
+                  <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[entry.scene.id] }" text size="tiny" :type="scenePreloadStatus[entry.scene.id] === 'ready' ? 'success' : scenePreloadStatus[entry.scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[entry.scene.id] === 'loading'" :aria-label="`预加载场景 ${entry.scene.name}`" @click="requestScenePreload([entry.scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
                 </template>
                 在所有设备预加载此场景
               </n-tooltip>
             </div>
           </div>
+          </template>
         </div>
         <div v-if="canSwitchScene || canEditAllObjects" class="theater-scene-actions">
           <n-tooltip v-if="canEditAllObjects" trigger="hover">
@@ -8652,6 +8823,36 @@ onBeforeUnmount(() => {
       :action="editingRandomTableAction"
       @save="saveRandomTable"
     />
+    <n-modal
+      :show="sceneFolderDialogVisible"
+      :mask-closable="false"
+      :close-on-esc="true"
+      @update:show="value => { if (!value) closeSceneFolderDialog() }"
+    >
+      <section class="theater-scene-folder-dialog" role="dialog" aria-modal="true" :aria-label="sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹'">
+        <header class="theater-scene-folder-dialog__header">
+          <div>
+            <strong>{{ sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹' }}</strong>
+            <small>文件夹仅用于整理场景列表</small>
+          </div>
+          <n-button text aria-label="关闭文件夹弹窗" @click="closeSceneFolderDialog"><n-icon><X /></n-icon></n-button>
+        </header>
+        <div class="theater-scene-folder-dialog__body">
+          <n-input
+            v-model:value="sceneFolderNameDraft"
+            autofocus
+            maxlength="128"
+            show-count
+            placeholder="输入文件夹名称"
+            @keydown="handleSceneFolderDialogKeydown"
+          />
+        </div>
+        <footer class="theater-scene-folder-dialog__footer">
+          <n-button @click="closeSceneFolderDialog">取消</n-button>
+          <n-button type="primary" @click="submitSceneFolderDialog">确定</n-button>
+        </footer>
+      </section>
+    </n-modal>
     <n-modal v-model:show="packageProgressVisible" :mask-closable="false" :closable="false" preset="card" title="小剧场导入进度" class="theater-package-progress-modal">
       <div class="theater-package-progress">
         <n-progress type="line" :percentage="Math.round(packageDisplayedProgress * 100)" :status="packageProgressJob?.status === 'failed' ? 'error' : packageProgressJob?.status === 'done' ? 'success' : 'default'" />
@@ -8722,6 +8923,30 @@ onBeforeUnmount(() => {
   z-index: 10004 !important;
 }
 .theater-image-input { display: none; }
+.theater-scene-folder-dialog {
+  width: min(420px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16));
+  border-radius: 7px;
+  color: var(--sc-text-primary, #f4f4f5);
+  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(8px) saturate(110%);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+}
+.theater-scene-folder-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08));
+}
+.theater-scene-folder-dialog__header div { min-width: 0; display: grid; gap: 3px; }
+.theater-scene-folder-dialog__header strong { font-size: 15px; }
+.theater-scene-folder-dialog__header small { color: var(--sc-text-secondary, #b5b5c5); font-size: 10px; }
+.theater-scene-folder-dialog__body { padding: 16px; }
+.theater-scene-folder-dialog__footer { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 14px; }
 .theater-package-progress-modal {
   width: min(460px, calc(100vw - 32px));
   background: color-mix(in srgb, var(--sc-bg-surface, #262626) 72%, transparent) !important;
@@ -8902,6 +9127,7 @@ onBeforeUnmount(() => {
 }
 .theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
 .theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
+.theater-scene-row.has-scene-move-actions:hover .theater-scene-card, .theater-scene-row.has-scene-move-actions:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-scene-move-actions.has-preload-pulse .theater-scene-card { padding-right: 66px; }
 .theater-scene-row.is-dragging { opacity: .36; }
 .theater-scene-row.is-drag-preview {
   position: fixed; z-index: 10003; top: 0; left: 0; pointer-events: none; opacity: .92;
@@ -8915,6 +9141,13 @@ onBeforeUnmount(() => {
 .theater-scene-row.is-drop-after::after { bottom: 0; }
 .theater-scene-row__grip { width: 16px; height: 100%; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; touch-action: none; user-select: none; }
 .theater-scene-row__grip:active { cursor: grabbing; }
+.theater-scene-folder { display: flex; align-items: center; gap: 2px; min-height: 32px; padding: 1px 2px; color: var(--sc-text-secondary, #b5b5c5); }
+.theater-scene-folder__main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 5px; padding: 6px 6px; border: 0; border-radius: 5px; color: inherit; background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
+.theater-scene-folder__main:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
+.theater-scene-folder__main strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theater-scene-folder__main small { margin-left: auto; color: var(--sc-fg-muted, #71717a); font-size: 10px; }
+.theater-scene-folder.is-virtual { margin-top: 3px; border-top: 1px solid color-mix(in srgb, var(--theater-border) 70%, transparent); }
+.theater-scene-row.is-nested .theater-scene-card { padding-left: 24px; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;

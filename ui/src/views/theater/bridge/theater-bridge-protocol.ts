@@ -482,11 +482,17 @@ const stageSceneStateSchema = z.strictObject({
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
+const sceneFolderSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  name: z.string().trim().min(1).max(128),
+})
+
 const stageSceneSchema = z.strictObject({
   id: nonEmptyIdSchema,
   name: z.string().max(512),
   switchText: z.string().max(10_000),
   order: z.number().finite(),
+  folderId: nonEmptyIdSchema.optional(),
   locked: z.boolean(),
   state: stageSceneStateSchema,
 })
@@ -495,6 +501,7 @@ const stageWorkspaceStateSchema = z.strictObject({
   activeSceneId: nonEmptyIdSchema,
   liveState: stageSceneStateSchema,
   scenes: z.record(z.string(), stageSceneSchema),
+  sceneFolders: z.array(sceneFolderSchema).max(200).optional(),
   persistentObjects: z.record(z.string(), stageObjectSchema),
   camera: z.strictObject({
     x: z.number().finite(),

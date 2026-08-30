@@ -395,6 +395,8 @@ func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model
 		return applyTheaterSceneDelete(tx, room, payload)
 	case *theaterSceneApplyPayload:
 		return applyTheaterSceneApply(tx, room, payload)
+	case *theaterSceneFoldersUpdatePayload:
+		return applyTheaterSceneFoldersUpdate(tx, room, actorID, payload)
 	case *theaterRoomConstructionSetPayload:
 		return applyTheaterRoomConstructionSet(tx, room, payload)
 	case *theaterObjectCreatePayload:
@@ -438,6 +440,9 @@ func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model
 }
 
 func applyTheaterSceneCreate(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterSceneCreatePayload) error {
+	if err := validateTheaterSceneFolderReference(room, payload.FolderID); err != nil {
+		return err
+	}
 	var count int64
 	if err := tx.Model(&model.TheaterSceneModel{}).Where("room_id = ?", room.ID).Count(&count).Error; err != nil {
 		return err
@@ -453,7 +458,7 @@ func applyTheaterSceneCreate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 		return theaterPayloadError("sceneId 已存在")
 	}
 	state, _ := json.Marshal(payload.State)
-	scene := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: payload.SceneID}, RoomID: room.ID, Name: strings.TrimSpace(payload.Name), SwitchText: payload.SwitchText, SortOrder: payload.Order, StateJSON: string(state), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
+	scene := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: payload.SceneID}, RoomID: room.ID, Name: strings.TrimSpace(payload.Name), SwitchText: payload.SwitchText, SortOrder: payload.Order, FolderID: strings.TrimSpace(payload.FolderID), StateJSON: string(state), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
 	if err := tx.Create(&scene).Error; err != nil {
 		return err
 	}
@@ -480,8 +485,17 @@ func applyTheaterSceneUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 	if err != nil {
 		return err
 	}
+	if folderID, present := payload.Fields["folderId"]; present {
+		if err := validateTheaterSceneFolderReference(room, fmt.Sprint(folderID)); err != nil {
+			return err
+		}
+	}
 	if scene.Locked && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) && !IsWorldAdmin(room.WorldID, actorID) {
-		return newTheaterError(TheaterErrorPermissionDenied, "场景已锁定", 403, nil)
+		for key := range payload.Fields {
+			if key != "folderId" {
+				return newTheaterError(TheaterErrorPermissionDenied, "场景已锁定", 403, nil)
+			}
+		}
 	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
 	for key, value := range payload.Fields {
@@ -494,12 +508,64 @@ func applyTheaterSceneUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 			updates["sort_order"] = jsonNumberInt64(value)
 		case "locked":
 			updates["locked"] = value
+		case "folderId":
+			updates["folder_id"] = strings.TrimSpace(fmt.Sprint(value))
 		case "state":
 			raw, _ := json.Marshal(value)
 			updates["state_json"] = string(raw)
 		}
 	}
 	return tx.Model(scene).Updates(updates).Error
+}
+
+func validateTheaterSceneFolderReference(room *model.TheaterRoomModel, folderID string) error {
+	folderID = strings.TrimSpace(folderID)
+	if folderID == "" {
+		return nil
+	}
+	for _, folder := range sceneFoldersFromStateJSON(room.StateJSON) {
+		if folder.ID == folderID {
+			return nil
+		}
+	}
+	return theaterPayloadError("folderId 不存在")
+}
+
+func applyTheaterSceneFoldersUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterSceneFoldersUpdatePayload) error {
+	var state map[string]any
+	if err := json.Unmarshal([]byte(room.StateJSON), &state); err != nil || state == nil {
+		state = map[string]any{}
+	}
+	folders := make([]map[string]string, 0, len(payload.Folders))
+	valid := make(map[string]struct{}, len(payload.Folders))
+	for _, folder := range payload.Folders {
+		id := strings.TrimSpace(folder.ID)
+		name := strings.TrimSpace(folder.Name)
+		folders = append(folders, map[string]string{"id": id, "name": name})
+		valid[id] = struct{}{}
+	}
+	state["sceneFolders"] = folders
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	room.StateJSON = string(raw)
+	if err := tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Updates(map[string]any{"state_json": string(raw), "updated_by": actorID, "updated_at": time.Now()}).Error; err != nil {
+		return err
+	}
+	// Removed folders release their scene references atomically.
+	if len(valid) == 0 {
+		return tx.Model(&model.TheaterSceneModel{}).Where("room_id = ?", room.ID).Update("folder_id", "").Error
+	}
+	return tx.Model(&model.TheaterSceneModel{}).Where("room_id = ? AND folder_id <> '' AND folder_id NOT IN ?", room.ID, keysOfStringSet(valid)).Update("folder_id", "").Error
+}
+
+func keysOfStringSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	return result
 }
 
 func applyTheaterSceneReorder(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterSceneReorderPayload) error {

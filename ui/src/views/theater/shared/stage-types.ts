@@ -567,7 +567,13 @@ export interface StageScene {
   switchText: string
   order: number
   locked: boolean
+  folderId?: string
   state: StageSceneState
+}
+
+export interface SceneFolder {
+  id: string
+  name: string
 }
 
 export type StageObjectScope = 'scene' | 'scene-fixed'
@@ -582,6 +588,7 @@ export interface StageWorkspaceState {
   activeSceneId: string
   liveState: StageLiveState
   scenes: Record<string, StageScene>
+  sceneFolders: SceneFolder[]
   persistentObjects: Record<string, StageObject>
   camera: CameraState
   selectedObjectId: string | null

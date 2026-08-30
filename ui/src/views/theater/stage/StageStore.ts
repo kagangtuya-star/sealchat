@@ -23,6 +23,7 @@ import {
   type StageObjectTransform,
   type StageObjectType,
   type StageScene,
+  type SceneFolder,
   type StageSceneTransition,
   type StageSurfaceStylePatch,
   type StageSurfaceTarget,
@@ -272,6 +273,7 @@ export const createInitialTheaterStageState = (): StageWorkspaceState => {
     activeSceneId: opening.id,
     liveState: clone(opening.state),
     scenes: { [opening.id]: opening, [tavern.id]: tavern },
+    sceneFolders: [],
     persistentObjects: {},
     camera: { x: 0, y: 0, zoom: 0.5 },
     selectedObjectId: null,
@@ -483,6 +485,10 @@ export interface TheaterStageStore {
   updateSceneTransition: (sceneId: string, transition: StageSceneTransition) => boolean
   updateSceneSwitchAudio: (sceneId: string, audio: StageAudioRef | null) => boolean
   updateSceneMusicSnapshot: (sceneId: string, snapshot: StageMusicSnapshot | null) => boolean
+  createSceneFolder: (name: string) => SceneFolder | null
+  renameSceneFolder: (folderId: string, name: string) => boolean
+  deleteSceneFolder: (folderId: string) => boolean
+  moveSceneToFolder: (sceneId: string, folderId: string | null) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
   addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
@@ -778,6 +784,47 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (JSON.stringify(scene.state.musicSnapshot) === JSON.stringify(normalized)) return false
     scene.state.musicSnapshot = normalized
     if (sceneId === state.activeSceneId) state.liveState.musicSnapshot = clone(normalized)
+    return true
+  }
+
+  const createSceneFolder = (name: string): SceneFolder | null => {
+    const normalized = name.trim()
+    if (!normalized || [...normalized].length > 128) return null
+    if (state.sceneFolders.length >= 200) return null
+    if (state.sceneFolders.some((folder) => folder.name === normalized)) return null
+    const folder: SceneFolder = { id: uid('scene-folder'), name: normalized }
+    state.sceneFolders.push(folder)
+    return folder
+  }
+
+  const renameSceneFolder = (folderId: string, name: string) => {
+    const folder = state.sceneFolders.find((item) => item.id === folderId)
+    const normalized = name.trim()
+    if (!folder || !normalized || [...normalized].length > 128) return false
+    if (folder.name === normalized) return false
+    if (state.sceneFolders.some((item) => item.id !== folderId && item.name === normalized)) return false
+    folder.name = normalized
+    return true
+  }
+
+  const deleteSceneFolder = (folderId: string) => {
+    const index = state.sceneFolders.findIndex((item) => item.id === folderId)
+    if (index < 0) return false
+    state.sceneFolders.splice(index, 1)
+    Object.values(state.scenes).forEach((scene) => {
+      if (scene.folderId === folderId) delete scene.folderId
+    })
+    return true
+  }
+
+  const moveSceneToFolder = (sceneId: string, folderId: string | null) => {
+    const scene = state.scenes[sceneId]
+    const normalized = folderId?.trim() || ''
+    if (!scene) return false
+    if (normalized && !state.sceneFolders.some((folder) => folder.id === normalized)) return false
+    if ((scene.folderId || '') === normalized) return false
+    if (normalized) scene.folderId = normalized
+    else delete scene.folderId
     return true
   }
 
@@ -1515,11 +1562,16 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const replaceState = (next: StageWorkspaceState) => {
     transaction = null
     const value = clone(next)
+    value.sceneFolders = Array.isArray(value.sceneFolders)
+      ? value.sceneFolders.filter((folder) => folder && typeof folder.id === 'string' && typeof folder.name === 'string' && folder.id.trim() && folder.name.trim())
+        .map((folder) => ({ id: folder.id.trim(), name: folder.name.trim() }))
+      : []
     // Remote member snapshots contain only the incoming active scene. Install
     // scene metadata before changing activeSceneId, while keeping the outgoing
     // liveState mounted long enough for the synchronous transition watcher to
     // capture its visual state and build the incoming media readiness batch.
     state.scenes = value.scenes
+    state.sceneFolders = value.sceneFolders
     state.persistentObjects = value.persistentObjects
     state.activeSceneId = value.activeSceneId
     state.liveState = value.liveState
@@ -1553,6 +1605,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     updateSceneTransition,
     updateSceneSwitchAudio,
     updateSceneMusicSnapshot,
+    createSceneFolder,
+    renameSceneFolder,
+    deleteSceneFolder,
+    moveSceneToFolder,
     reorderScenes,
     addScene,
     duplicateScene,

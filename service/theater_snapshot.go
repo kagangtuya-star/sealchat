@@ -89,6 +89,7 @@ func projectTheaterSnapshotForMember(snapshot TheaterSharedSnapshot) (TheaterSha
 	projected := TheaterSharedSnapshot{
 		ActiveSceneID:     snapshot.ActiveSceneID,
 		LiveState:         snapshot.LiveState,
+		SceneFolders:      snapshot.SceneFolders,
 		Scenes:            map[string]TheaterSceneSnapshot{},
 		PersistentObjects: projectTheaterObjectsForMember(snapshot.PersistentObjects),
 		Characters:        map[string]TheaterObjectSnapshot{},
@@ -382,6 +383,32 @@ func validateTheaterSharedSnapshot(snapshot TheaterSharedSnapshot) error {
 	if len(snapshot.Scenes) > theaterMaxScenes || len(snapshot.PersistentObjects)+len(snapshot.Characters) > theaterMaxObjects {
 		return newTheaterError(TheaterErrorLimitExceeded, "snapshot 实体数量超限", 409, nil)
 	}
+	if len(snapshot.SceneFolders) > theaterMaxSceneFolders {
+		return theaterPayloadError("scene folders 数量超限")
+	}
+	seenFolderIDs := make(map[string]struct{}, len(snapshot.SceneFolders))
+	seenFolderNames := make(map[string]struct{}, len(snapshot.SceneFolders))
+	for _, folder := range snapshot.SceneFolders {
+		if err := validateTheaterID(folder.ID, "folder.id"); err != nil {
+			return err
+		}
+		id := strings.TrimSpace(folder.ID)
+		if id != folder.ID {
+			return theaterPayloadError("folder.id 无效")
+		}
+		name := strings.TrimSpace(folder.Name)
+		if name == "" || len([]rune(name)) > theaterMaxSceneFolderName {
+			return theaterPayloadError("folder.name 无效")
+		}
+		if _, exists := seenFolderIDs[id]; exists {
+			return theaterPayloadError("folder.id 不能重复")
+		}
+		if _, exists := seenFolderNames[name]; exists {
+			return theaterPayloadError("folder.name 不能重复")
+		}
+		seenFolderIDs[id] = struct{}{}
+		seenFolderNames[name] = struct{}{}
+	}
 	if snapshot.ActiveSceneID != nil {
 		if _, ok := snapshot.Scenes[*snapshot.ActiveSceneID]; !ok {
 			return theaterPayloadError("activeSceneId 不存在")
@@ -391,6 +418,15 @@ func validateTheaterSharedSnapshot(snapshot TheaterSharedSnapshot) error {
 	for id, scene := range snapshot.Scenes {
 		if id != scene.ID {
 			return theaterPayloadError("scene map key 与 id 不一致")
+		}
+		folderID := strings.TrimSpace(scene.FolderID)
+		if folderID != scene.FolderID {
+			return theaterPayloadError("scene.folderId 无效")
+		}
+		if folderID != "" {
+			if _, exists := seenFolderIDs[folderID]; !exists {
+				return theaterPayloadError("scene.folderId 不存在")
+			}
 		}
 		var state map[string]any
 		if err := json.Unmarshal(scene.State, &state); err != nil {
@@ -422,6 +458,13 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 	}
 	room.ActiveSceneID = derefString(snapshot.ActiveSceneID)
 	room.StateJSON = defaultJSON(snapshot.LiveState, `{}`)
+	var liveState map[string]any
+	if json.Unmarshal([]byte(room.StateJSON), &liveState) != nil || liveState == nil {
+		liveState = map[string]any{}
+	}
+	liveState["sceneFolders"] = snapshot.SceneFolders
+	rawState, _ := json.Marshal(liveState)
+	room.StateJSON = string(rawState)
 	if _, exists := snapshot.Scenes[room.ConstructionSceneID]; !exists {
 		room.ConstructionSceneID = ""
 	}
@@ -429,7 +472,7 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 		return err
 	}
 	for id, scene := range snapshot.Scenes {
-		row := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, RoomID: room.ID, Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: scene.Order, Locked: scene.Locked, StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
+		row := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, RoomID: room.ID, Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: scene.Order, FolderID: scene.FolderID, Locked: scene.Locked, StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -530,6 +573,7 @@ func ListTheaterCheckpoints(actorID, worldID, channelID string, limit int) ([]mo
 func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeResources bool) (TheaterSharedSnapshot, string, error) {
 	result := TheaterSharedSnapshot{
 		LiveState:         normalizedTheaterSceneStateJSON(room.StateJSON),
+		SceneFolders:      sceneFoldersFromStateJSON(room.StateJSON),
 		Scenes:            map[string]TheaterSceneSnapshot{},
 		PersistentObjects: map[string]TheaterObjectSnapshot{},
 		Characters:        map[string]TheaterObjectSnapshot{},
@@ -544,7 +588,7 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 		return result, "", err
 	}
 	for _, scene := range scenes {
-		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.SortOrder, Locked: scene.Locked, State: normalizedTheaterSceneStateJSON(scene.StateJSON), Objects: map[string]TheaterObjectSnapshot{}}
+		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.SortOrder, FolderID: scene.FolderID, Locked: scene.Locked, State: normalizedTheaterSceneStateJSON(scene.StateJSON), Objects: map[string]TheaterObjectSnapshot{}}
 	}
 	var objects []model.TheaterObjectModel
 	if err := conn.Where("room_id = ?", room.ID).Order("order_key ASC, id ASC").Find(&objects).Error; err != nil {
@@ -593,6 +637,31 @@ func normalizedRawJSON(value, fallback string) json.RawMessage {
 		return json.RawMessage(fallback)
 	}
 	return json.RawMessage(value)
+}
+
+func sceneFoldersFromStateJSON(value string) []TheaterSceneFolder {
+	var state map[string]any
+	if err := json.Unmarshal([]byte(value), &state); err != nil || state == nil {
+		return nil
+	}
+	raw, ok := state["sceneFolders"].([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]TheaterSceneFolder, 0, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, idOK := entry["id"].(string)
+		name, nameOK := entry["name"].(string)
+		if !idOK || !nameOK || strings.TrimSpace(id) == "" || strings.TrimSpace(name) == "" {
+			continue
+		}
+		result = append(result, TheaterSceneFolder{ID: strings.TrimSpace(id), Name: strings.TrimSpace(name)})
+	}
+	return result
 }
 
 func optionalString(value string) *string {
