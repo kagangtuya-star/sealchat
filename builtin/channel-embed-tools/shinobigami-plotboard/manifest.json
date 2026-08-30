@@ -1,0 +1,15 @@
+{
+  "name": "忍神谋位工具",
+  "description": "忍神谋位频道嵌入工具",
+  "entry": "index.html",
+  "defaultWidth": 800,
+  "defaultHeight": 400,
+  "defaultCollapsed": false,
+  "defaultFloating": false,
+  "allowPopout": true,
+  "mediaOptions": { "allowAudio": false, "allowVideo": false },
+  "bridgePolicy": {
+    "enabled": true,
+    "capabilities": ["context.read", "user.read", "characters.read", "permissions.read", "storage.read", "storage.write"]
+  }
+}

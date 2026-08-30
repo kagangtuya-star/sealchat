@@ -171,6 +171,12 @@ func main() {
 	defer cancel()
 
 	model.DBInit(config)
+	if summary, err := service.RepairTheaterStateJSON(); err != nil {
+		log.Printf("修复 Theater 状态 JSON 失败: %v", err)
+	} else if summary.Rooms > 0 || summary.Scenes > 0 || summary.Snapshots > 0 || summary.InvalidJSON > 0 {
+		log.Printf("修复 Theater 状态 JSON 完成: rooms=%d scenes=%d snapshots=%d fieldsRemoved=%d invalidJSON=%d", summary.Rooms, summary.Scenes, summary.Snapshots, summary.FieldsRemoved, summary.InvalidJSON)
+	}
+	service.StartChannelIFormStorageGCWorker(ctx)
 	if err := service.MergeAllTheaterRoomsToWorld(); err != nil {
 		log.Printf("合并世界级 Theater 数据失败: %v", err)
 	}
@@ -222,7 +228,6 @@ func main() {
 	if err != nil {
 		fatalWithStartupLock("初始化存储系统失败: %v", err)
 	}
-	service.ProbeAudioS3LibraryPath(ctx)
 
 	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
 		fatalWithStartupLock("初始化音频子系统失败: %v", err)

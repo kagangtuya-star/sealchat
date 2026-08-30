@@ -1274,6 +1274,36 @@ const sheetTypeOptions = [
   { label: '自定义', value: 'custom' },
 ];
 
+const builtinSheetTypeAliases = new Set([
+  'coc7',
+  'coc',
+  'dnd5e',
+  'dnd5',
+  'dnd',
+  'shinobigami',
+  '忍神',
+]);
+
+const newCardCustomSheetTypeOptions = computed(() => {
+  const seen = new Set<string>();
+  return templateStore.templates
+    .filter(item => item.enabled !== false)
+    .map(item => String(item.sheetType || '').trim())
+    .filter(sheetType => {
+      const key = sheetType.toLowerCase();
+      if (!sheetType || builtinSheetTypeAliases.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(sheetType => ({ label: sheetType, value: sheetType }));
+});
+
+const newCardSheetTypeOptions = computed(() => [
+  ...sheetTypeOptions.slice(0, -1),
+  ...newCardCustomSheetTypeOptions.value,
+  sheetTypeOptions[sheetTypeOptions.length - 1],
+]);
+
 const resolveSheetType = (preset: string, custom: string) => {
   if (preset === 'custom') {
     return custom.trim();
@@ -1299,6 +1329,14 @@ const setNewCardSheetType = (value: string) => {
     newCardSheetTypeCustom.value = '';
     return;
   }
+  const matchedCustomOption = newCardCustomSheetTypeOptions.value.find(
+    option => option.value.toLowerCase() === lower,
+  );
+  if (matchedCustomOption) {
+    newCardSheetTypePreset.value = matchedCustomOption.value;
+    newCardSheetTypeCustom.value = '';
+    return;
+  }
   newCardSheetTypePreset.value = 'custom';
   newCardSheetTypeCustom.value = normalized;
 };
@@ -1313,15 +1351,17 @@ const newCardTemplateOptions = computed(() => [
   ...templateStore.getTemplatesBySheetType(newCardSheetType.value).map(item => ({
     label: item.access === 'world_shared'
       ? `${item.name}${item.sharedByNickname ? ` [世界共享:${item.sharedByNickname}]` : ' [世界共享]'}`
+      : item.access === 'platform'
+        ? `${item.name} [平台]`
       : `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
-    value: item.id,
+    value: templateStore.getTemplateRef(item),
   })),
 ]);
 
 const selectDefaultNewCardTemplate = () => {
   const preferredTemplate = templateStore.getPreferredTemplateBySheetType(newCardSheetType.value);
   if (preferredTemplate?.id) {
-    newCardTemplateId.value = preferredTemplate.id;
+    newCardTemplateId.value = templateStore.getTemplateRef(preferredTemplate);
     if (preferredTemplate.sheetType?.trim()) {
       setNewCardSheetType(preferredTemplate.sheetType);
     }
@@ -1333,7 +1373,7 @@ const selectDefaultNewCardTemplate = () => {
   }
   const globalDefault = templateStore.getGlobalDefaultTemplate();
   const availableIds = new Set(newCardTemplateOptions.value.map(item => item.value));
-  const globalDefaultId = globalDefault?.id || '';
+  const globalDefaultId = templateStore.getTemplateRef(globalDefault);
   const canUseGlobalDefault = !!globalDefaultId
     && availableIds.has(globalDefaultId)
     && (!globalDefault?.sheetType?.trim()
@@ -2419,7 +2459,7 @@ defineExpose({ openCardById });
         <n-input v-model:value="newCardName" maxlength="32" placeholder="请输入角色名称" />
       </n-form-item>
       <n-form-item label="卡片类型">
-        <n-select v-model:value="newCardSheetTypePreset" :options="sheetTypeOptions" :disabled="characterApiDisabled" />
+        <n-select v-model:value="newCardSheetTypePreset" :options="newCardSheetTypeOptions" :disabled="characterApiDisabled" />
         <n-input
           v-if="newCardSheetTypePreset === 'custom'"
           v-model:value="newCardSheetTypeCustom"
@@ -2589,13 +2629,14 @@ defineExpose({ openCardById });
       </div>
 
       <n-empty v-if="filteredManagedTemplates.length === 0" description="暂无模板" />
-      <n-card v-for="tpl in filteredManagedTemplates" :key="tpl.id" size="small" class="template-manager__item">
+      <n-card v-for="tpl in filteredManagedTemplates" :key="tpl.ref || tpl.id" size="small" class="template-manager__item">
         <template #header>
           <div class="template-manager__header">
             <span>{{ tpl.name }}</span>
             <div class="template-manager__tags">
               <n-tag size="small" :bordered="false">{{ tpl.sheetType || '通用' }}</n-tag>
               <n-tag v-if="tpl.access === 'world_shared'" size="small" type="warning" :bordered="false">世界共享</n-tag>
+              <n-tag v-else-if="tpl.access === 'platform'" size="small" type="info" :bordered="false">平台</n-tag>
               <n-tag v-else size="small" type="default" :bordered="false">我的模板</n-tag>
               <n-tag v-if="tpl.isSharedToCurrentWorld && tpl.access !== 'world_shared'" size="small" type="primary" :bordered="false">已共享</n-tag>
               <n-tag v-if="tpl.isGlobalDefault && !tpl.readonly" size="small" type="info" :bordered="false">全局默认</n-tag>
@@ -2616,7 +2657,7 @@ defineExpose({ openCardById });
             {{ tpl.isSharedToCurrentWorld ? '取消世界共享' : '设为世界共享' }}
           </n-button>
           <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="openTemplateEditModal(tpl)">编辑</n-button>
-          <n-button text size="small" :disabled="characterApiDisabled" @click="handleCopyTemplate(tpl)">复制</n-button>
+          <n-button v-if="!tpl.readonly" text size="small" :disabled="characterApiDisabled" @click="handleCopyTemplate(tpl)">复制</n-button>
           <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
           <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规则默认</n-button>
           <n-popconfirm v-if="canEditTemplateItem(tpl)" @positive-click="handleDeleteTemplate(tpl)">

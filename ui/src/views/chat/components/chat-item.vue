@@ -553,6 +553,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
       sharedWorldId: matchedForm?.sharedWorldId,
       readonly: matchedForm?.readonly,
       mediaOptions: matchedForm?.mediaOptions,
+      bridgePolicy: matchedForm?.bridgePolicy,
     };
     return h(
       'div',
@@ -573,7 +574,11 @@ const parseContent = (payload: any, overrideContent?: string) => {
         h(
           'div',
           { class: 'message-iform-embed__scale' },
-          [h(IFormEmbedFrame, { form: runtimeForm })],
+          [h(IFormEmbedFrame, {
+            form: runtimeForm,
+            enableChannelEmbed: true,
+            channelId: chat.curChannel?.id || runtimeForm.channelId,
+          })],
         ),
       ],
     );
@@ -975,6 +980,9 @@ const getCurrentViewerImage = () => {
 };
 
 const handleViewerImageEdit = () => {
+  if (props.readonly) {
+    return;
+  }
   const image = getCurrentViewerImage();
   if (!image) {
     return;
@@ -1150,7 +1158,7 @@ const setupImageViewer = async () => {
       flipHorizontal: false,
       flipVertical: false,
       editMessageImage: {
-        show: true,
+        show: !props.readonly,
         size: 'medium',
         click: handleViewerImageEdit,
       },
@@ -1201,6 +1209,9 @@ const handleContentDblclick = async (event: MouseEvent) => {
 };
 
 const handleContentClick = (event: MouseEvent) => {
+  if (props.readonly) {
+    return;
+  }
   const target = event.target as HTMLElement | null;
   if (!target) return;
   const host = messageContentRef.value;
@@ -1294,6 +1305,10 @@ const props = defineProps({
     default: false,
   },
   bodyOnly: {
+    type: Boolean,
+    default: false,
+  },
+  readonly: {
     type: Boolean,
     default: false,
   },
@@ -1584,7 +1599,7 @@ const canEdit = computed(() => {
   }
   return false;
 });
-const hasEditAction = computed(() => !selfEditingPreview.value);
+const hasEditAction = computed(() => !props.readonly && !selfEditingPreview.value);
 const canShowEditAction = computed(() => canEdit.value && hasEditAction.value);
 
 const contentClassList = computed(() => {
@@ -1602,7 +1617,7 @@ const contentClassList = computed(() => {
 });
 
 const canReeditRevoked = computed(() => {
-  return Boolean(props.item?.is_revoked && props.isSelf);
+  return Boolean(!props.readonly && props.item?.is_revoked && props.isSelf);
 });
 
 const revokedReeditLabel = computed(() => '重新编辑');
@@ -1936,7 +1951,7 @@ const stopImageResizeMode = async (emitState = true, restoreViewer = true) => {
 };
 
 const enterImageResizeMode = async () => {
-  if (!canEdit.value || !hasImage.value) {
+  if (props.readonly || !canEdit.value || !hasImage.value) {
     return;
   }
   const attachmentIds = messageImageAttachmentIds.value;
@@ -3117,6 +3132,9 @@ const openContextMenu = (point: { x: number, y: number }, item: any) => {
 };
 
 const onContextMenu = (e: MouseEvent, item: any) => {
+  if (props.readonly) {
+    return;
+  }
   e.preventDefault();
   if (imageResizeMode.value) {
     e.stopPropagation();
@@ -3155,6 +3173,9 @@ const message = useMessage()
 let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
 
 const handleQuoteClick = () => {
+  if (props.readonly) {
+    return;
+  }
   const quote = quoteItem.value as any;
   if (!quote?.id) {
     message.warning('未找到要跳转的消息');
@@ -3645,7 +3666,7 @@ const messageReactions = computed(() => {
 });
 
 const handleReactionToggle = async (emoji: string) => {
-  if (!props.item?.id) return;
+  if (props.readonly || !props.item?.id) return;
   const reaction = messageReactions.value.find((item) => item.emoji === emoji);
   if (reaction?.meReacted) {
     await chat.removeReaction(props.item.id, emoji);
@@ -4049,7 +4070,7 @@ const handleRetrySend = () => {
         </template>
       </div>
       <MessageReactions
-        v-if="props.item?.id"
+        v-if="props.item?.id && !props.readonly"
         :reactions="messageReactions"
         :message-id="props.item.id"
         @toggle="handleReactionToggle"

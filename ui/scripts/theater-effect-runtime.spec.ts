@@ -79,6 +79,11 @@ assert.equal(theaterEffectMatchesMessage(config, message('match', 'A CRITICAL HI
 config.targetActorName = 'Mage'
 assert.equal(theaterEffectMatchesMessage(config, message('wrong-actor', 'critical hit')), false)
 assert.equal(theaterEffectMatchesMessage(config, message('right-actor', 'critical hit', 'Mage')), true)
+config.targetActorName = 'Mage; Warrior ;Narrator'
+assert.equal(theaterEffectMatchesMessage(config, message('first-actor', 'critical hit', 'Mage')), true)
+assert.equal(theaterEffectMatchesMessage(config, message('middle-actor', 'critical hit', 'Warrior')), true)
+assert.equal(theaterEffectMatchesMessage(config, message('last-actor', 'critical hit', 'Narrator')), true)
+assert.equal(theaterEffectMatchesMessage(config, message('missing-actor', 'critical hit', 'Rogue')), false)
 config.targetActorName = null
 assert.equal(theaterEffectMatchesMessage(config, message('all-actors', 'critical hit', 'Warrior')), true)
 

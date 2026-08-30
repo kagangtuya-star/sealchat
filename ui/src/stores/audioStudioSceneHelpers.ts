@@ -23,7 +23,7 @@ export function buildSceneListRequestParams(state: SceneListRequestState): Recor
   if (!params.query) {
     delete params.query;
   }
-  if (state.currentWorldId) {
+  if (state.currentWorldId && !state.isSystemAdmin) {
     params.scope = 'world';
     params.worldId = state.currentWorldId;
     params.includeCommon = false;

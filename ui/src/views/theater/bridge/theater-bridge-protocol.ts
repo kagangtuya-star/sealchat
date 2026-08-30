@@ -472,6 +472,7 @@ const stageSceneStateSchema = z.strictObject({
   fieldHeight: z.number().finite().positive(),
   fieldObjectFit: z.enum(['fill', 'cover', 'contain']),
   displayGrid: z.boolean(),
+  gridOnTop: z.boolean().default(false),
   gridSize: z.number().finite().positive(),
   alignWithGrid: z.boolean(),
   sceneObjects: z.record(z.string(), stageObjectSchema),
@@ -481,11 +482,17 @@ const stageSceneStateSchema = z.strictObject({
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
+const sceneFolderSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  name: z.string().trim().min(1).max(128),
+})
+
 const stageSceneSchema = z.strictObject({
   id: nonEmptyIdSchema,
   name: z.string().max(512),
   switchText: z.string().max(10_000),
   order: z.number().finite(),
+  folderId: nonEmptyIdSchema.optional(),
   locked: z.boolean(),
   state: stageSceneStateSchema,
 })
@@ -494,6 +501,7 @@ const stageWorkspaceStateSchema = z.strictObject({
   activeSceneId: nonEmptyIdSchema,
   liveState: stageSceneStateSchema,
   scenes: z.record(z.string(), stageSceneSchema),
+  sceneFolders: z.array(sceneFolderSchema).max(200).optional(),
   persistentObjects: z.record(z.string(), stageObjectSchema),
   camera: z.strictObject({
     x: z.number().finite(),
@@ -531,6 +539,8 @@ export const initializedPayloadSchema = z.strictObject({
   selectedVersion: z.literal(THEATER_BRIDGE_VERSION),
   capabilities: z.array(capabilitySchema).max(256),
 })
+
+export const suspendPayloadSchema = z.strictObject({})
 
 export const bridgeErrorResultSchema = z.strictObject({
   ok: z.literal(false),
@@ -718,6 +728,7 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['system:system.initialize', initializePayloadSchema],
   ['system:system.permissions.updated', permissionsUpdatedPayloadSchema],
   ['system:system.initialized', initializedPayloadSchema],
+  ['system:system.suspend', suspendPayloadSchema],
   ['command:stage.scene.read', stageSceneReadPayloadSchema],
   ['result:stage.scene.read.result', stageSceneReadResultSchema],
   ['command:stage.scene.apply', applyScenePayloadSchema],
@@ -755,6 +766,7 @@ export type ReadyPayload = z.infer<typeof readyPayloadSchema>
 export type InitializePayload = z.infer<typeof initializePayloadSchema>
 export type PermissionsUpdatedPayload = z.infer<typeof permissionsUpdatedPayloadSchema>
 export type InitializedPayload = z.infer<typeof initializedPayloadSchema>
+export type SuspendPayload = z.infer<typeof suspendPayloadSchema>
 export type BridgeErrorResult = z.infer<typeof bridgeErrorResultSchema>
 export type StageSceneReadResult = z.infer<typeof stageSceneReadResultSchema>
 export type ApplyScenePayload = z.infer<typeof applyScenePayloadSchema>

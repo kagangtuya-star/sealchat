@@ -76,6 +76,10 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 	if err != nil {
 		return nil, err
 	}
+	platformTemplateCache, err := loadPlatformCharacterSnapshotTemplates(rows)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]*protocol.CharacterSnapshotItem, 0, len(rows))
 	invalidIdentityIDs := make([]string, 0)
 	for _, row := range rows {
@@ -87,7 +91,7 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 		}
 		item, err := characterSnapshotModelToProtocol(row)
 		if err == nil && item != nil {
-			applyEffectiveCharacterSnapshotTemplates(item, settings, preferences[item.UserID])
+			applyEffectiveCharacterSnapshotTemplates(item, settings, preferences[item.UserID], platformTemplateCache)
 			items = append(items, item)
 		}
 	}
@@ -159,6 +163,10 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 		data.Card.Name = strings.TrimSpace(data.Card.Name)
 		data.Card.SheetType = strings.TrimSpace(data.Card.SheetType)
 		data.Card.AvatarAttachmentID = strings.TrimSpace(data.Card.AvatarAttachmentID)
+		data.Card.PlatformTemplateRef = strings.TrimSpace(data.Card.PlatformTemplateRef)
+		if data.Card.PlatformTemplateRef != "" && utf8.RuneCountInString(data.Card.PlatformTemplateRef) > 160 {
+			return nil, errors.New("人物卡平台模板引用过长")
+		}
 		if utf8.RuneCountInString(data.Card.Name) > 128 || utf8.RuneCountInString(data.Card.SheetType) > 64 {
 			return nil, errors.New("人物卡名称或类型过长")
 		}
@@ -175,15 +183,6 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 	if data.BadgeAttrs == nil {
 		data.BadgeAttrs = map[string]any{}
 	}
-	payloadJSON, err := json.Marshal(data)
-	if err != nil {
-		return nil, errors.New("人物卡快照无法序列化")
-	}
-	if len(payloadJSON) > maxCharacterSnapshotBytes {
-		return nil, errors.New("人物卡快照不可超过1MB")
-	}
-	hashBytes := sha256.Sum256(payloadJSON)
-	contentHash := hex.EncodeToString(hashBytes[:])
 	sourceType = strings.TrimSpace(sourceType)
 	if sourceType == "" {
 		sourceType = "client"
@@ -198,6 +197,28 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 	if utf8.RuneCountInString(sourceCardID) > 100 {
 		return nil, errors.New("人物卡来源ID过长")
 	}
+	if data.Card != nil && data.Card.PlatformTemplateRef != "" {
+		parsed, validPlatformRef := ParseCharacterCardTemplateRef(data.Card.PlatformTemplateRef)
+		if !validPlatformRef || parsed.Source != CharacterCardTemplateRefSourcePlatform || sourceCardID == "" {
+			data.Card.PlatformTemplateRef = ""
+		} else {
+			binding, bindingErr := model.CharacterCardTemplateBindingGet(actorID, channelID, sourceCardID)
+			if bindingErr != nil || binding == nil || binding.Mode != model.CharacterCardTemplateModeManaged || strings.TrimSpace(binding.TemplateID) != parsed.Ref {
+				data.Card.PlatformTemplateRef = ""
+			} else {
+				data.Card.PlatformTemplateRef = parsed.Ref
+			}
+		}
+	}
+	payloadJSON, err := json.Marshal(data)
+	if err != nil {
+		return nil, errors.New("人物卡快照无法序列化")
+	}
+	if len(payloadJSON) > maxCharacterSnapshotBytes {
+		return nil, errors.New("人物卡快照不可超过1MB")
+	}
+	hashBytes := sha256.Sum256(payloadJSON)
+	contentHash := hex.EncodeToString(hashBytes[:])
 	now := time.Now().UnixMilli()
 	var saved *model.ChannelCharacterSnapshotModel
 	changed := false
@@ -478,21 +499,59 @@ func loadCharacterSnapshotTemplates(channelID string) (*model.ChannelCharacterSn
 	return settings, preferences, nil
 }
 
-func applyEffectiveCharacterSnapshotTemplates(item *protocol.CharacterSnapshotItem, settings *model.ChannelCharacterSnapshotSettingsModel, preference *model.ChannelCharacterSnapshotPreferenceModel) {
+func loadPlatformCharacterSnapshotTemplates(rows []*model.ChannelCharacterSnapshotModel) (map[string]*model.PlatformCharacterCardTemplateModel, error) {
+	ids := make(map[string]struct{})
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		var data protocol.CharacterSnapshotData
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &data); err != nil || data.Card == nil {
+			continue
+		}
+		parsed, ok := ParseCharacterCardTemplateRef(data.Card.PlatformTemplateRef)
+		if ok && parsed.Source == CharacterCardTemplateRefSourcePlatform {
+			ids[parsed.ID] = struct{}{}
+		}
+	}
+	cache := make(map[string]*model.PlatformCharacterCardTemplateModel, len(ids))
+	if len(ids) == 0 {
+		return cache, nil
+	}
+	idList := make([]string, 0, len(ids))
+	for id := range ids {
+		idList = append(idList, id)
+	}
+	var templates []*model.PlatformCharacterCardTemplateModel
+	if err := model.GetDB().Where("id IN ?", idList).Find(&templates).Error; err != nil {
+		return nil, err
+	}
+	for _, template := range templates {
+		if template != nil {
+			cache[template.ID] = template
+		}
+	}
+	return cache, nil
+}
+
+func applyEffectiveCharacterSnapshotTemplates(item *protocol.CharacterSnapshotItem, settings *model.ChannelCharacterSnapshotSettingsModel, preference *model.ChannelCharacterSnapshotPreferenceModel, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
 	if item == nil {
 		return
 	}
 	item.BadgeTemplate = settings.BadgeTemplate
+	item.BadgeTemplateDisabled = false
 	item.TheaterOverlayTemplateJSON = settings.TheaterOverlayTemplateJSON
 	if item.TheaterOverlayTemplateJSON == "" {
 		item.TheaterOverlayTemplateJSON = defaultCharacterOverlayTemplate
 	}
 	if preference == nil {
+		applyPlatformCharacterSnapshotTemplate(item, nil, platformTemplateCache...)
 		return
 	}
 	switch preference.BadgeTemplateMode {
 	case "off":
 		item.BadgeTemplate = ""
+		item.BadgeTemplateDisabled = true
 	case "custom":
 		item.BadgeTemplate = preference.BadgeTemplate
 	}
@@ -501,6 +560,49 @@ func applyEffectiveCharacterSnapshotTemplates(item *protocol.CharacterSnapshotIt
 		item.TheaterOverlayTemplateJSON = ""
 	case "custom":
 		item.TheaterOverlayTemplateJSON = preference.TheaterOverlayTemplateJSON
+	}
+	applyPlatformCharacterSnapshotTemplate(item, preference, platformTemplateCache...)
+}
+
+func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, preference *model.ChannelCharacterSnapshotPreferenceModel, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
+	if item == nil || item.Data.Card == nil {
+		return
+	}
+	ref := strings.TrimSpace(item.Data.Card.PlatformTemplateRef)
+	parsed, ok := ParseCharacterCardTemplateRef(ref)
+	if !ok || parsed.Source != CharacterCardTemplateRefSourcePlatform {
+		return
+	}
+	var resolved *CharacterCardTemplateResolution
+	if len(platformTemplateCache) > 0 {
+		platformTemplate := platformTemplateCache[0][parsed.ID]
+		if platformTemplate == nil {
+			return
+		}
+		resolved = &CharacterCardTemplateResolution{
+			Ref: ref, Source: parsed.Source, ID: parsed.ID, Exists: true,
+			Content: platformTemplate.Content, BadgeTemplateOverride: platformTemplate.BadgeTemplateOverride,
+			TheaterOverlayTemplateJSON: platformTemplate.TheaterOverlayTemplateJSON, PlatformTemplate: platformTemplate,
+		}
+	} else {
+		var err error
+		resolved, err = ResolveCharacterCardTemplateRef(ref)
+		if err != nil || resolved == nil || !resolved.Exists || resolved.PlatformTemplate == nil {
+			return
+		}
+	}
+	if resolved.Content != "" {
+		item.Data.Card.TemplateText = resolved.Content
+	}
+	if preference == nil || preference.BadgeTemplateMode != "off" {
+		if resolved.BadgeTemplateOverride != "" {
+			item.BadgeTemplate = resolved.BadgeTemplateOverride
+		}
+	}
+	if preference == nil || preference.TheaterOverlayTemplateMode != "off" {
+		if resolved.TheaterOverlayTemplateJSON != "" {
+			item.TheaterOverlayTemplateJSON = resolved.TheaterOverlayTemplateJSON
+		}
 	}
 }
 

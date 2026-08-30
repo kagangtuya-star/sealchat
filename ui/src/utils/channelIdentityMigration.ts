@@ -44,6 +44,8 @@ export interface IdentityExportVariantItem {
   identitySourceId: string;
   selectorEmoji: string;
   keyword: string;
+  matchMode?: 'prefix' | 'keyword' | 'regex';
+  matchConfig?: string;
   note: string;
   avatarAssetKey?: string;
   displayName?: string;
@@ -174,7 +176,7 @@ export const normalizeIdentityExportFileForImport = (
     if (item.avatarDecoration) upgradeDecorations([item.avatarDecoration])
     upgradeTheaterPresentation(item.theaterPresentation)
   }
-  const variantKeywords = new Map<string, Set<string>>()
+  const variantMatches = new Map<string, Set<string>>()
   for (const variant of normalized.variants || []) {
     const theaterPresentation = resolveIdentityExportVariantTheaterPresentation(variant)
     if (theaterPresentation !== undefined) {
@@ -186,16 +188,21 @@ export const normalizeIdentityExportFileForImport = (
     upgradeTheaterPresentation(variant.theaterPresentation)
     const identitySourceId = String(variant.identitySourceId || '').trim()
     const keyword = String(variant.keyword || '').trim()
-    if (!identitySourceId || !keyword || !/^[\p{L}\p{N}_-]{1,64}$/u.test(keyword)) {
-      throw new Error('导入文件包含无效差分快捷关键词')
+    variant.matchMode = ['prefix', 'keyword', 'regex'].includes(String(variant.matchMode || ''))
+      ? variant.matchMode
+      : 'prefix'
+    variant.matchConfig = String(variant.matchConfig || '').trim()
+      || (variant.matchMode === 'prefix' ? '=' : variant.matchMode === 'keyword' ? 'any' : 'sensitive')
+    if (!identitySourceId || !keyword || Array.from(keyword).length > 255) {
+      throw new Error('导入文件包含无效差分匹配内容')
     }
-    const keywords = variantKeywords.get(identitySourceId) || new Set<string>()
-    const normalizedKeyword = keyword.toLowerCase()
-    if (keywords.has(normalizedKeyword)) {
-      throw new Error(`导入文件包含重复差分快捷关键词: ${keyword}`)
+    const matches = variantMatches.get(identitySourceId) || new Set<string>()
+    const normalizedMatch = `${variant.matchMode}\u0000${variant.matchConfig}\u0000${keyword.toLowerCase()}`
+    if (matches.has(normalizedMatch)) {
+      throw new Error(`导入文件包含重复差分匹配规则: ${keyword}`)
     }
-    keywords.add(normalizedKeyword)
-    variantKeywords.set(identitySourceId, keywords)
+    matches.add(normalizedMatch)
+    variantMatches.set(identitySourceId, matches)
   }
   return normalized
 }

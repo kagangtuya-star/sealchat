@@ -3,8 +3,6 @@ package api
 import (
 	"errors"
 	"strings"
-	"sync"
-	"time"
 	"unicode/utf8"
 
 	"sealchat/model"
@@ -23,133 +21,6 @@ type characterRemarkBroadcastPayload struct {
 type characterRemarkSnapshotPayload struct {
 	ChannelID string `json:"channel_id"`
 }
-
-type characterRemarkCache struct {
-	sync.RWMutex
-	items     map[string]map[string]*protocol.CharacterRemarkEventPayload
-	revisions map[string]map[string]int64
-}
-
-func newCharacterRemarkCache() *characterRemarkCache {
-	return &characterRemarkCache{
-		items:     map[string]map[string]*protocol.CharacterRemarkEventPayload{},
-		revisions: map[string]map[string]int64{},
-	}
-}
-
-func (c *characterRemarkCache) upsert(channelID string, payload *protocol.CharacterRemarkEventPayload) {
-	if c == nil || channelID == "" || payload == nil || payload.IdentityID == "" {
-		return
-	}
-	c.Lock()
-	defer c.Unlock()
-	channelMap, ok := c.items[channelID]
-	if !ok || channelMap == nil {
-		channelMap = map[string]*protocol.CharacterRemarkEventPayload{}
-		c.items[channelID] = channelMap
-	}
-	revisionMap, ok := c.revisions[channelID]
-	if !ok || revisionMap == nil {
-		revisionMap = map[string]int64{}
-		c.revisions[channelID] = revisionMap
-	}
-	lastRevision := revisionMap[payload.IdentityID]
-	if payload.Revision > 0 {
-		if payload.Revision < lastRevision {
-			return
-		}
-		revisionMap[payload.IdentityID] = payload.Revision
-	} else {
-		payload.Revision = lastRevision
-	}
-	channelMap[payload.IdentityID] = &protocol.CharacterRemarkEventPayload{
-		IdentityID: payload.IdentityID,
-		UserID:     payload.UserID,
-		Content:    payload.Content,
-		Revision:   payload.Revision,
-		Action:     "update",
-	}
-}
-
-func (c *characterRemarkCache) remove(channelID, identityID string) {
-	c.removeWithRevision(channelID, identityID, 0)
-}
-
-func (c *characterRemarkCache) removeWithRevision(channelID, identityID string, revision int64) {
-	if c == nil || channelID == "" || identityID == "" {
-		return
-	}
-	c.Lock()
-	defer c.Unlock()
-	revisionMap, ok := c.revisions[channelID]
-	if !ok || revisionMap == nil {
-		revisionMap = map[string]int64{}
-		c.revisions[channelID] = revisionMap
-	}
-	lastRevision := revisionMap[identityID]
-	if revision > 0 {
-		if revision < lastRevision {
-			return
-		}
-		revisionMap[identityID] = revision
-	}
-	channelMap, ok := c.items[channelID]
-	if !ok || channelMap == nil {
-		return
-	}
-	delete(channelMap, identityID)
-	if len(channelMap) == 0 {
-		delete(c.items, channelID)
-	}
-}
-
-func (c *characterRemarkCache) nextRevision(channelID, identityID string) int64 {
-	if c == nil || channelID == "" || identityID == "" {
-		return 0
-	}
-	c.Lock()
-	defer c.Unlock()
-	revisionMap, ok := c.revisions[channelID]
-	if !ok || revisionMap == nil {
-		revisionMap = map[string]int64{}
-		c.revisions[channelID] = revisionMap
-	}
-	now := time.Now().UnixMilli()
-	lastRevision := revisionMap[identityID]
-	if lastRevision >= now {
-		now = lastRevision + 1
-	}
-	revisionMap[identityID] = now
-	return now
-}
-
-func (c *characterRemarkCache) snapshot(channelID string) []*protocol.CharacterRemarkEventPayload {
-	if c == nil || channelID == "" {
-		return nil
-	}
-	c.RLock()
-	channelMap := c.items[channelID]
-	c.RUnlock()
-	if len(channelMap) == 0 {
-		return nil
-	}
-	items := make([]*protocol.CharacterRemarkEventPayload, 0, len(channelMap))
-	for _, item := range channelMap {
-		if item == nil || item.IdentityID == "" || item.Action == "clear" || strings.TrimSpace(item.Content) == "" {
-			continue
-		}
-		items = append(items, &protocol.CharacterRemarkEventPayload{
-			IdentityID: item.IdentityID,
-			UserID:     item.UserID,
-			Content:    item.Content,
-			Revision:   item.Revision,
-			Action:     "update",
-		})
-	}
-	return items
-}
-
-var characterRemarkState = newCharacterRemarkCache()
 
 func normalizeCharacterRemarkContent(raw string) (string, bool, error) {
 	content := strings.TrimSpace(raw)
@@ -195,13 +66,18 @@ func apiCharacterRemarkBroadcast(ctx *ChatContext, data *characterRemarkBroadcas
 	if err != nil {
 		return nil, err
 	}
-	revision := characterRemarkState.nextRevision(channelID, identityID)
 	if action == "clear" || shouldClear {
-		characterRemarkState.removeWithRevision(channelID, identityID, revision)
+		content = ""
+	}
+	item, err := model.CharacterRemarkSave(channelID, identityID, ctx.User.ID, content)
+	if err != nil {
+		return nil, err
+	}
+	if content == "" {
 		broadcastCharacterRemarkEvent(ctx, channelID, &protocol.CharacterRemarkEventPayload{
 			IdentityID: identityID,
 			UserID:     ctx.User.ID,
-			Revision:   revision,
+			Revision:   item.Revision,
 			Action:     "clear",
 		})
 		return map[string]any{"ok": true}, nil
@@ -210,10 +86,9 @@ func apiCharacterRemarkBroadcast(ctx *ChatContext, data *characterRemarkBroadcas
 		IdentityID: identityID,
 		UserID:     ctx.User.ID,
 		Content:    content,
-		Revision:   revision,
+		Revision:   item.Revision,
 		Action:     "update",
 	}
-	characterRemarkState.upsert(channelID, payload)
 	broadcastCharacterRemarkEvent(ctx, channelID, payload)
 	return map[string]any{"ok": true}, nil
 }
@@ -233,7 +108,23 @@ func apiCharacterRemarkSnapshot(ctx *ChatContext, data *characterRemarkSnapshotP
 	} else if err := ensureChannelMembership(ctx.User.ID, channelID); err != nil {
 		return nil, err
 	}
-	items := characterRemarkState.snapshot(channelID)
+	rows, err := model.CharacterRemarkListByChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*protocol.CharacterRemarkEventPayload, 0, len(rows))
+	for _, row := range rows {
+		if row == nil || row.IdentityID == "" || strings.TrimSpace(row.Content) == "" {
+			continue
+		}
+		items = append(items, &protocol.CharacterRemarkEventPayload{
+			IdentityID: row.IdentityID,
+			UserID:     row.UserID,
+			Content:    row.Content,
+			Revision:   row.Revision,
+			Action:     "update",
+		})
+	}
 	if ctx.Conn != nil {
 		event := &protocol.Event{
 			Type:    protocol.EventCharacterRemarkSnapshot,

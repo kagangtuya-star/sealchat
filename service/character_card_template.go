@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -46,13 +47,27 @@ type CharacterCardTemplateBindingInput struct {
 }
 
 type CharacterCardTemplateView struct {
-	*model.CharacterCardTemplateModel
-	Access                 string `json:"access"`
-	Readonly               bool   `json:"readonly"`
-	IsSharedToCurrentWorld bool   `json:"isSharedToCurrentWorld"`
-	SharedWorldID          string `json:"sharedWorldId,omitempty"`
-	SharedByUserID         string `json:"sharedByUserId,omitempty"`
-	SharedByNickname       string `json:"sharedByNickname,omitempty"`
+	ID                         string    `json:"id"`
+	UserID                     string    `json:"userId"`
+	Name                       string    `json:"name"`
+	SheetType                  string    `json:"sheetType"`
+	Content                    string    `json:"content"`
+	DefaultBadgeTemplate       string    `json:"defaultBadgeTemplate"`
+	IsGlobalDefault            bool      `json:"isGlobalDefault"`
+	IsSheetDefault             bool      `json:"isSheetDefault"`
+	CreatedAt                  time.Time `json:"createdAt,omitempty"`
+	UpdatedAt                  time.Time `json:"updatedAt,omitempty"`
+	Ref                        string    `json:"ref,omitempty"`
+	Origin                     string    `json:"origin,omitempty"`
+	Enabled                    bool      `json:"enabled"`
+	BadgeTemplateOverride      string    `json:"badgeTemplateOverride,omitempty"`
+	TheaterOverlayTemplateJSON string    `json:"theaterOverlayTemplateJson,omitempty"`
+	Access                     string    `json:"access"`
+	Readonly                   bool      `json:"readonly"`
+	IsSharedToCurrentWorld     bool      `json:"isSharedToCurrentWorld"`
+	SharedWorldID              string    `json:"sharedWorldId,omitempty"`
+	SharedByUserID             string    `json:"sharedByUserId,omitempty"`
+	SharedByNickname           string    `json:"sharedByNickname,omitempty"`
 }
 
 var characterCardTemplateCreateMu sync.Mutex
@@ -152,18 +167,20 @@ func CharacterCardTemplateListWithWorld(userID string, worldID string, sheetType
 	if err != nil {
 		return nil, err
 	}
+	platformItems, err := model.PlatformCharacterCardTemplateList(sheetType, true)
+	if err != nil {
+		return nil, err
+	}
 
 	viewMap := map[string]*CharacterCardTemplateView{}
-	result := make([]*CharacterCardTemplateView, 0, len(ownerItems)+len(sharedItems))
+	result := make([]*CharacterCardTemplateView, 0, len(ownerItems)+len(sharedItems)+len(platformItems))
 	for _, item := range ownerItems {
 		if item == nil || item.ID == "" {
 			continue
 		}
-		view := &CharacterCardTemplateView{
-			CharacterCardTemplateModel: item,
-			Access:                     "owner",
-			Readonly:                   false,
-		}
+		view := buildCharacterCardTemplateView(item)
+		view.Access = "owner"
+		view.Readonly = false
 		viewMap[item.ID] = view
 		result = append(result, view)
 	}
@@ -178,16 +195,29 @@ func CharacterCardTemplateListWithWorld(userID string, worldID string, sheetType
 			existing.SharedByNickname = resolveTemplateOwnerNickname(item.UserID)
 			continue
 		}
-		view := &CharacterCardTemplateView{
-			CharacterCardTemplateModel: item,
-			Access:                     "world_shared",
-			Readonly:                   item.UserID != userID,
-			IsSharedToCurrentWorld:     true,
-			SharedWorldID:              worldID,
-			SharedByUserID:             item.UserID,
-			SharedByNickname:           resolveTemplateOwnerNickname(item.UserID),
-		}
+		view := buildCharacterCardTemplateView(item)
+		view.Access = "world_shared"
+		view.Readonly = item.UserID != userID
+		view.IsSharedToCurrentWorld = true
+		view.SharedWorldID = worldID
+		view.SharedByUserID = item.UserID
+		view.SharedByNickname = resolveTemplateOwnerNickname(item.UserID)
 		viewMap[item.ID] = view
+		result = append(result, view)
+	}
+	for _, item := range platformItems {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		ref := PlatformCharacterCardTemplateRefPrefix + item.ID
+		view := &CharacterCardTemplateView{
+			ID: item.ID, Name: item.Name, SheetType: item.SheetType, Content: item.Content,
+			Ref: ref, Origin: "platform", Access: "platform", Readonly: true, Enabled: item.Enabled,
+			BadgeTemplateOverride:      item.BadgeTemplateOverride,
+			TheaterOverlayTemplateJSON: item.TheaterOverlayTemplateJSON,
+			CreatedAt:                  item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		}
+		viewMap[ref] = view
 		result = append(result, view)
 	}
 	return result, nil
@@ -533,32 +563,42 @@ func CharacterCardTemplateBindingUpsert(userID string, input *CharacterCardTempl
 		return nil, err
 	}
 	if input.Mode == model.CharacterCardTemplateModeManaged {
-		template, err := model.CharacterCardTemplateGetByID(input.TemplateID)
+		resolved, err := ResolveCharacterCardTemplateRef(input.TemplateID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errors.New("模板不存在")
 			}
 			return nil, err
 		}
-		allowed := template.UserID == userID
-		if !allowed {
-			channel, err := model.ChannelGet(input.ChannelID)
-			if err != nil {
-				return nil, err
+		if resolved == nil || !resolved.Exists {
+			return nil, errors.New("模板不存在")
+		}
+		if resolved.Source == CharacterCardTemplateRefSourcePlatform {
+			if !resolved.Enabled {
+				return nil, errors.New("平台模板已停用")
 			}
-			if channel != nil && strings.TrimSpace(channel.WorldID) != "" {
-				shared, err := IsCharacterCardTemplateSharedToWorld(template.ID, channel.WorldID)
+		} else {
+			template := resolved.UserTemplate
+			allowed := template != nil && template.UserID == userID
+			if !allowed {
+				channel, err := model.ChannelGet(input.ChannelID)
 				if err != nil {
 					return nil, err
 				}
-				allowed = shared
+				if channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+					shared, err := IsCharacterCardTemplateSharedToWorld(template.ID, channel.WorldID)
+					if err != nil {
+						return nil, err
+					}
+					allowed = shared
+				}
+			}
+			if !allowed {
+				return nil, errors.New("无权绑定该模板")
 			}
 		}
-		if !allowed {
-			return nil, errors.New("无权绑定该模板")
-		}
 		if input.SheetType == "" {
-			input.SheetType = template.SheetType
+			input.SheetType = resolved.SheetType
 		}
 		input.TemplateSnapshot = ""
 	}
@@ -610,17 +650,28 @@ func buildOwnerTemplateViews(items []*model.CharacterCardTemplateModel, worldID 
 				isShared = shared
 			}
 		}
-		result = append(result, &CharacterCardTemplateView{
-			CharacterCardTemplateModel: item,
-			Access:                     "owner",
-			Readonly:                   false,
-			IsSharedToCurrentWorld:     isShared,
-			SharedWorldID:              worldID,
-			SharedByUserID:             item.UserID,
-			SharedByNickname:           resolveTemplateOwnerNickname(item.UserID),
-		})
+		view := buildCharacterCardTemplateView(item)
+		view.Access = "owner"
+		view.Readonly = false
+		view.IsSharedToCurrentWorld = isShared
+		view.SharedWorldID = worldID
+		view.SharedByUserID = item.UserID
+		view.SharedByNickname = resolveTemplateOwnerNickname(item.UserID)
+		result = append(result, view)
 	}
 	return result
+}
+
+func buildCharacterCardTemplateView(item *model.CharacterCardTemplateModel) *CharacterCardTemplateView {
+	if item == nil {
+		return nil
+	}
+	return &CharacterCardTemplateView{
+		ID: item.ID, UserID: item.UserID, Name: item.Name, SheetType: item.SheetType,
+		Content: item.Content, DefaultBadgeTemplate: item.DefaultBadgeTemplate,
+		IsGlobalDefault: item.IsGlobalDefault, IsSheetDefault: item.IsSheetDefault,
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Enabled: true,
+	}
 }
 
 func listSharedTemplatesByWorld(worldID string, sheetType string) ([]*model.CharacterCardTemplateModel, error) {

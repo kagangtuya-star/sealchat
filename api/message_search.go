@@ -44,6 +44,7 @@ type messageSearchChannelRef struct {
 type messageSearchItem struct {
 	ID              string                 `json:"id"`
 	ChannelID       string                 `json:"channel_id"`
+	Content         string                 `json:"content"`
 	ContentSnippet  string                 `json:"content_snippet"`
 	Snippet         string                 `json:"snippet"`
 	SenderName      string                 `json:"sender_name"`
@@ -51,6 +52,7 @@ type messageSearchItem struct {
 	IcMode          string                 `json:"ic_mode"`
 	IsArchived      bool                   `json:"is_archived"`
 	ArchivedAt      int64                  `json:"archived_at"`
+	ArchivedBy      string                 `json:"archived_by"`
 	CreatedAt       int64                  `json:"created_at"`
 	DisplayOrder    float64                `json:"display_order"`
 	User            *messageSearchUser     `json:"user,omitempty"`
@@ -1156,6 +1158,7 @@ func buildMessageSearchItem(msg *model.MessageModel) messageSearchItem {
 	item := messageSearchItem{
 		ID:             msg.ID,
 		ChannelID:      msg.ChannelID,
+		Content:        msg.Content,
 		ContentSnippet: snippet,
 		Snippet:        snippet,
 		SenderName:     senderName,
@@ -1168,6 +1171,7 @@ func buildMessageSearchItem(msg *model.MessageModel) messageSearchItem {
 			}
 			return msg.ArchivedAt.UnixMilli()
 		}(),
+		ArchivedBy:   msg.ArchivedBy,
 		CreatedAt:    msg.CreatedAt.UnixMilli(),
 		DisplayOrder: msg.DisplayOrder,
 		IsWhisper:    msg.IsWhisper,

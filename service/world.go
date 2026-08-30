@@ -1035,6 +1035,62 @@ type WorldMemberDetail struct {
 	Avatar   string    `json:"avatar"`
 }
 
+// WorldAdminSummary is the minimal identity returned to trusted Embed callers.
+// It intentionally omits internal role/user fields beyond owner/admin role.
+type WorldAdminSummary struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
+	Avatar      string `json:"avatar,omitempty"`
+	Role        string `json:"role"`
+}
+
+func ListWorldAdminSummaries(worldID string) ([]*WorldAdminSummary, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return []*WorldAdminSummary{}, nil
+	}
+	var rows []struct {
+		UserID   string
+		Role     string
+		Username string
+		Nickname string
+		Avatar   string
+	}
+	if err := model.GetDB().Table("world_members AS wm").
+		Select("wm.user_id, wm.role, u.username, u.nickname, u.avatar").
+		Joins("LEFT JOIN users u ON u.id = wm.user_id").
+		Where("wm.world_id = ? AND wm.role IN ?", worldID, []string{model.WorldRoleOwner, model.WorldRoleAdmin}).
+		Order("wm.joined_at asc").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	admins := make([]*WorldAdminSummary, 0, len(rows))
+	for _, row := range rows {
+		userID := strings.TrimSpace(row.UserID)
+		if userID == "" {
+			continue
+		}
+		displayName := strings.TrimSpace(row.Nickname)
+		if displayName == "" {
+			displayName = strings.TrimSpace(row.Username)
+		}
+		if displayName == "" {
+			displayName = userID
+		}
+		role := model.WorldRoleAdmin
+		if row.Role == model.WorldRoleOwner {
+			role = model.WorldRoleOwner
+		}
+		admins = append(admins, &WorldAdminSummary{
+			UserID:      userID,
+			DisplayName: displayName,
+			Avatar:      strings.TrimSpace(row.Avatar),
+			Role:        role,
+		})
+	}
+	return admins, nil
+}
+
 func ListWorldMembersDetail(worldID string, page, pageSize int, keyword string) ([]*WorldMemberDetail, int64, error) {
 	if page <= 0 {
 		page = 1

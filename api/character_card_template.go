@@ -47,7 +47,7 @@ func mapCharacterCardTemplateError(err error) (int, string) {
 		return http.StatusNotFound, msg
 	case strings.Contains(msg, "无权"), strings.Contains(msg, "成员"):
 		return http.StatusForbidden, msg
-	case strings.Contains(msg, "不能为空"), strings.Contains(msg, "无效"), strings.Contains(msg, "缺少"), strings.Contains(msg, "长度"):
+	case strings.Contains(msg, "不能为空"), strings.Contains(msg, "无效"), strings.Contains(msg, "缺少"), strings.Contains(msg, "长度"), strings.Contains(msg, "停用"):
 		return http.StatusBadRequest, msg
 	default:
 		return http.StatusInternalServerError, "操作失败"

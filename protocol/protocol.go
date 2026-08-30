@@ -108,17 +108,20 @@ type AvatarDecorationSettings struct {
 }
 
 type ChannelIdentity struct {
-	ID                  string               `json:"id"`
-	SharedIdentityID    string               `json:"sharedIdentityId,omitempty"`
-	SharedRevision      int64                `json:"sharedRevision,omitempty"`
-	DisplayName         string               `json:"displayName"`
-	Color               string               `json:"color"`
-	AvatarAttachmentID  string               `json:"avatarAttachmentId"`
-	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
-	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
-	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
-	IsDefault           bool                 `json:"isDefault"`
-	IsTemporary         bool                 `json:"isTemporary"`
+	ID                       string               `json:"id"`
+	SharedIdentityID         string               `json:"sharedIdentityId,omitempty"`
+	SharedRevision           int64                `json:"sharedRevision,omitempty"`
+	DisplayName              string               `json:"displayName"`
+	Color                    string               `json:"color"`
+	AvatarAttachmentID       string               `json:"avatarAttachmentId"`
+	AvatarDecoration         *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations        AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	TheaterPresentation      *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	IsDefault                bool                 `json:"isDefault"`
+	IsTemporary              bool                 `json:"isTemporary"`
+	VariantResetMatchMode    string               `json:"variantResetMatchMode,omitempty"`
+	VariantResetMatchConfig  string               `json:"variantResetMatchConfig,omitempty"`
+	VariantResetMatchContent string               `json:"variantResetMatchContent,omitempty"`
 }
 
 type CharacterCard struct {
@@ -256,27 +259,54 @@ type AudioPlaybackStatePayload struct {
 }
 
 type ChannelIForm struct {
-	ID               string                    `json:"id"`
-	ChannelID        string                    `json:"channelId"`
-	SourceChannelID  string                    `json:"sourceChannelId,omitempty"`
-	Name             string                    `json:"name"`
-	Url              string                    `json:"url"`
-	EmbedCode        string                    `json:"embedCode"`
-	DefaultWidth     int                       `json:"defaultWidth"`
-	DefaultHeight    int                       `json:"defaultHeight"`
-	DefaultCollapsed bool                      `json:"defaultCollapsed"`
-	DefaultFloating  bool                      `json:"defaultFloating"`
-	AllowPopout      bool                      `json:"allowPopout"`
-	OrderIndex       int                       `json:"orderIndex"`
-	MediaOptions     *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
-	CreatedBy        string                    `json:"createdBy,omitempty"`
-	UpdatedBy        string                    `json:"updatedBy,omitempty"`
-	CreatedAt        int64                     `json:"createdAt,omitempty"`
-	UpdatedAt        int64                     `json:"updatedAt,omitempty"`
-	WorldShared      bool                      `json:"worldShared,omitempty"`
-	SharedRef        bool                      `json:"sharedRef,omitempty"`
-	SharedWorldID    string                    `json:"sharedWorldId,omitempty"`
-	Readonly         bool                      `json:"readonly,omitempty"`
+	ID                string                    `json:"id"`
+	ChannelID         string                    `json:"channelId"`
+	SourceChannelID   string                    `json:"sourceChannelId,omitempty"`
+	Name              string                    `json:"name"`
+	Url               string                    `json:"url"`
+	EmbedCode         string                    `json:"embedCode"`
+	DefaultWidth      int                       `json:"defaultWidth"`
+	DefaultHeight     int                       `json:"defaultHeight"`
+	DefaultCollapsed  bool                      `json:"defaultCollapsed"`
+	DefaultFloating   bool                      `json:"defaultFloating"`
+	AllowPopout       bool                      `json:"allowPopout"`
+	OrderIndex        int                       `json:"orderIndex"`
+	MediaOptions      *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
+	CreatedBy         string                    `json:"createdBy,omitempty"`
+	UpdatedBy         string                    `json:"updatedBy,omitempty"`
+	CreatedAt         int64                     `json:"createdAt,omitempty"`
+	UpdatedAt         int64                     `json:"updatedAt,omitempty"`
+	WorldShared       bool                      `json:"worldShared,omitempty"`
+	SharedRef         bool                      `json:"sharedRef,omitempty"`
+	SharedWorldID     string                    `json:"sharedWorldId,omitempty"`
+	Readonly          bool                      `json:"readonly,omitempty"`
+	TemplateRef       string                    `json:"templateRef,omitempty"`
+	TemplateOverrides any                       `json:"templateOverrides,omitempty"`
+	TemplateOrigin    string                    `json:"templateOrigin,omitempty"`
+	TemplateName      string                    `json:"templateName,omitempty"`
+	TemplateMissing   bool                      `json:"templateMissing,omitempty"`
+	TemplateArchived  bool                      `json:"templateArchived,omitempty"`
+	BridgePolicy      *ChannelIFormBridgePolicy `json:"bridgePolicy,omitempty"`
+}
+
+type ChannelIFormBridgePolicy struct {
+	Enabled        bool     `json:"enabled"`
+	AllowedOrigins []string `json:"allowedOrigins,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
+}
+
+type ChannelIFormEmbedEventPayload struct {
+	EventID   string `json:"eventId"`
+	ChannelID string `json:"channelId"`
+	FormID    string `json:"formId"`
+	Seq       uint64 `json:"seq,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Op        string `json:"op"`
+	Revision  uint64 `json:"revision,omitempty"`
+	Topic     string `json:"topic,omitempty"`
+	Payload   any    `json:"payload,omitempty"`
+	Value     any    `json:"value,omitempty"`
+	At        int64  `json:"at"`
 }
 
 type ChannelIFormMediaOptions struct {
@@ -405,6 +435,7 @@ const (
 	EventAudioStateUpdated              EventName = "audio-state-updated"
 	EventChannelIFormUpdated            EventName = "channel-iform-updated"
 	EventChannelIFormPushed             EventName = "channel-iform-pushed"
+	EventChannelIFormEmbed              EventName = "channel-iform-embed"
 	EventChannelImageLayoutUpdated      EventName = "channel-image-layout-updated"
 	EventChannelIdentitiesUpdated       EventName = "channel-identities-updated"
 	EventWorldKeywordsUpdated           EventName = "world-keywords-updated"
@@ -531,6 +562,7 @@ type Event struct {
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
 	Theater                     *TheaterEventPayload                `json:"theater,omitempty"`
+	ChannelIFormEmbed           *ChannelIFormEmbedEventPayload      `json:"channelIFormEmbed,omitempty"`
 	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
 	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`
@@ -764,11 +796,12 @@ type CharacterSnapshotIdentity struct {
 }
 
 type CharacterSnapshotCard struct {
-	Name               string         `json:"name,omitempty"`
-	SheetType          string         `json:"sheetType,omitempty"`
-	AvatarAttachmentID string         `json:"avatarAttachmentId,omitempty"`
-	Attrs              map[string]any `json:"attrs,omitempty"`
-	TemplateText       string         `json:"templateText,omitempty"`
+	Name                string         `json:"name,omitempty"`
+	SheetType           string         `json:"sheetType,omitempty"`
+	AvatarAttachmentID  string         `json:"avatarAttachmentId,omitempty"`
+	Attrs               map[string]any `json:"attrs,omitempty"`
+	TemplateText        string         `json:"templateText,omitempty"`
+	PlatformTemplateRef string         `json:"platformTemplateRef,omitempty"`
 }
 
 type CharacterSnapshotData struct {
@@ -786,6 +819,7 @@ type CharacterSnapshotItem struct {
 	SourceCardID               string                `json:"sourceCardId,omitempty"`
 	Data                       CharacterSnapshotData `json:"data"`
 	BadgeTemplate              string                `json:"badgeTemplate,omitempty"`
+	BadgeTemplateDisabled      bool                  `json:"badgeTemplateDisabled,omitempty"`
 	TheaterOverlayTemplateJSON string                `json:"theaterOverlayTemplateJson,omitempty"`
 	ContentHash                string                `json:"contentHash"`
 	ServerRevision             int64                 `json:"serverRevision"`

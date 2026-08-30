@@ -107,6 +107,13 @@ export async function importExternalGlossaryLibrary(payload: ExternalGlossaryLib
   return data
 }
 
+export async function overwriteExternalGlossaryLibrary(libraryId: string, payload: { items: WorldKeywordPayload[] }) {
+  const { data } = await api.post<{
+    stats: { deleted: number; created: number; skipped: number }
+  }>(`/api/v1/admin/external-glossaries/${libraryId}/import`, payload)
+  return data
+}
+
 export async function exportExternalGlossaryLibrary(libraryId: string) {
   const { data } = await api.get<ExternalGlossaryLibraryExportPayload>(`/api/v1/admin/external-glossaries/${libraryId}/export`)
   return data

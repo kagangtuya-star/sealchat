@@ -257,10 +257,12 @@ const handlePrimaryClick = () => {
 }
 .theater-drawing-trigger--primary {
   width: 30px;
+  min-width: 30px;
   border-radius: 3px 0 0 3px;
 }
 .theater-drawing-trigger--menu {
   width: 18px;
+  min-width: 18px;
   margin-left: -1px;
   border-radius: 0 3px 3px 0;
 }

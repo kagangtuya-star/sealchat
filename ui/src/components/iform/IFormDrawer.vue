@@ -33,6 +33,9 @@
           <n-button type="primary" size="small" :disabled="!iform.canManage" @click="openFormModal()">
             新增控件
           </n-button>
+          <n-button size="small" :disabled="!iform.canManage" @click="openTemplateModal">
+            安装内置工具
+          </n-button>
           <n-button size="small" :disabled="!iform.canBroadcast || !iform.selectedFormIds.length" @click="pushSelected">
             推送选中
           </n-button>
@@ -47,6 +50,9 @@
           <n-button size="small" tertiary :disabled="!iform.canManage || !forms.length" @click="migrationModalVisible = true">
             迁移/复制
           </n-button>
+          <n-button size="small" tertiary :disabled="!forms.length" @click="exportForms">导出</n-button>
+          <n-button size="small" tertiary :disabled="!iform.canManage" @click="openImport">导入</n-button>
+          <input ref="importInput" type="file" accept="application/json,.json" hidden @change="handleImportFile" />
         </div>
 
         <n-alert v-if="!iform.canManage" type="info" closable>
@@ -71,6 +77,11 @@
                         {{ form.defaultFloating ? '弹出' : '面板' }}
                       </p>
                       <div class="iform-card__tags">
+                        <n-tag v-if="form.templateMissing" size="small" type="error">模板不可用</n-tag>
+                        <n-tag v-else-if="form.templateArchived" size="small" type="warning">模板已归档</n-tag>
+                        <n-tag v-else-if="form.templateOrigin === 'builtin'" size="small" type="info">内置模板</n-tag>
+                        <n-tag v-else-if="form.templateOrigin === 'platform'" size="small" type="info">平台模板</n-tag>
+                        <n-tag v-else size="small">独立控件</n-tag>
                         <n-tag v-if="!form.sharedRef" size="small">本频道</n-tag>
                         <n-tag v-if="form.worldShared && !form.sharedRef" size="small" type="success">世界共享</n-tag>
                         <n-tag v-if="form.sharedRef" size="small" type="warning">世界引用</n-tag>
@@ -132,10 +143,10 @@
             <n-input v-model:value="formModel.name" placeholder="示例：战斗地图" maxlength="64" />
           </n-form-item>
           <n-form-item label="URL">
-            <n-input v-model:value="formModel.url" placeholder="https://example.com" />
+            <n-input v-model:value="formModel.url" placeholder="https://example.com" :disabled="!!editingForm?.templateRef" />
           </n-form-item>
           <n-form-item label="嵌入代码">
-            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 HTML / iframe 代码（可含 script）" :rows="3" />
+            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 HTML / iframe 代码（可含 script）" :rows="3" :disabled="!!editingForm?.templateRef" />
           </n-form-item>
           <n-form-item label="默认尺寸">
             <div class="iform-form__size">
@@ -153,6 +164,10 @@
               <template #checked>弹出</template>
               <template #unchecked>面板</template>
             </n-switch>
+            <n-switch v-model:value="formModel.allowPopout">
+              <template #checked>允许弹出</template>
+              <template #unchecked>禁止弹出</template>
+            </n-switch>
           </n-form-item>
           <n-form-item label="媒体优化">
             <n-switch v-model:value="formModel.mediaOptions.autoPlay">
@@ -163,8 +178,50 @@
               <template #checked>自动解除静音</template>
               <template #unchecked>保持静音</template>
             </n-switch>
+            <n-switch v-model:value="formModel.mediaOptions.allowAudio">
+              <template #checked>允许音频</template>
+              <template #unchecked>禁用音频</template>
+            </n-switch>
+            <n-switch v-model:value="formModel.mediaOptions.allowVideo">
+              <template #checked>允许视频</template>
+              <template #unchecked>禁用视频</template>
+            </n-switch>
           </n-form-item>
+          <n-form-item label="Embed API">
+            <n-space vertical size="small">
+              <n-switch v-model:value="formModel.bridgePolicy.enabled">
+                <template #checked>启用</template>
+                <template #unchecked>关闭</template>
+              </n-switch>
+              <n-input v-model:value="formModel.bridgePolicy.allowedOrigins" placeholder="允许来源，逗号分隔（可选）" :disabled="!formModel.bridgePolicy.enabled" />
+              <n-input v-model:value="formModel.bridgePolicy.capabilities" placeholder="能力，逗号分隔（storage.read 等）" :disabled="!formModel.bridgePolicy.enabled" />
+            </n-space>
+          </n-form-item>
+          <n-button v-if="editingForm?.templateRef" size="small" tertiary @click="resetTemplateOverrides">恢复模板默认</n-button>
         </n-form>
+      </n-modal>
+
+      <n-modal v-model:show="templateModalVisible" preset="card" title="安装内置工具" style="width: min(620px, 92vw);">
+        <n-space vertical>
+          <n-input v-model:value="templateSearch" placeholder="搜索模板" clearable @keyup.enter="loadTemplateCatalog(1)" />
+          <n-spin :show="templateLoading">
+            <n-list bordered>
+              <n-list-item v-for="item in templateCatalog" :key="item.ref">
+                <n-thing :title="item.name" :description="item.description || ''">
+                  <template #header-extra><n-tag size="small" :type="item.origin === 'builtin' ? 'info' : 'success'">{{ item.origin === 'builtin' ? '内置' : '平台' }}</n-tag></template>
+                  <template #footer><n-button size="small" type="primary" :disabled="!item.installable" @click="installTemplate(item.ref)">安装</n-button></template>
+                </n-thing>
+              </n-list-item>
+            </n-list>
+            <n-pagination
+              v-if="templateTotal > templatePageSize"
+              v-model:page="templatePage"
+              :page-size="templatePageSize"
+              :item-count="templateTotal"
+              @update:page="loadTemplateCatalog"
+            />
+          </n-spin>
+        </n-space>
       </n-modal>
 
       <n-modal v-model:show="migrationModalVisible" preset="dialog" title="迁移到其他频道" positive-text="执行" negative-text="取消" @positive-click="handleMigration" @negative-click="() => (migrationModalVisible = false)">
@@ -203,6 +260,8 @@ import { TrashOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { api } from '@/stores/_config';
+import type { ChannelIFormTemplateCatalogItem } from '@/types/iform';
 
 const iform = useIFormStore();
 const chat = useChatStore();
@@ -231,9 +290,18 @@ const formModel = reactive({
   defaultHeight: 360,
   defaultCollapsed: false,
   defaultFloating: false,
+  allowPopout: true,
   mediaOptions: {
     autoPlay: false,
     autoUnmute: false,
+    autoExpand: false,
+    allowAudio: true,
+    allowVideo: true,
+  },
+  bridgePolicy: {
+    enabled: false,
+    allowedOrigins: '',
+    capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
   },
 });
 
@@ -241,6 +309,14 @@ const migrationModalVisible = ref(false);
 const migrationTargets = ref<string[]>([]);
 const migrationMode = ref<'copy' | 'move'>('copy');
 const migrationFormIds = ref<string[]>([]);
+const templateModalVisible = ref(false);
+const templateLoading = ref(false);
+const templateSearch = ref('');
+const templateCatalog = ref<ChannelIFormTemplateCatalogItem[]>([]);
+const templatePage = ref(1);
+const templatePageSize = 30;
+const templateTotal = ref(0);
+const importInput = ref<HTMLInputElement | null>(null);
 
 const channelOptions = computed(() => flattenChannels(chat.channelTree || [], chat.curChannel?.id));
 
@@ -269,9 +345,18 @@ const resetFormModel = () => {
     defaultHeight: 360,
     defaultCollapsed: false,
     defaultFloating: false,
+    allowPopout: true,
     mediaOptions: {
       autoPlay: false,
       autoUnmute: false,
+      autoExpand: false,
+      allowAudio: true,
+      allowVideo: true,
+    },
+    bridgePolicy: {
+      enabled: false,
+      allowedOrigins: '',
+      capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
     },
   });
 };
@@ -293,9 +378,18 @@ const openFormModal = (form?: ChannelIForm) => {
       defaultHeight: form.defaultHeight || 360,
       defaultCollapsed: !!form.defaultCollapsed,
       defaultFloating: !!form.defaultFloating,
+      allowPopout: form.allowPopout !== false,
       mediaOptions: {
         autoPlay: !!form.mediaOptions?.autoPlay,
         autoUnmute: !!form.mediaOptions?.autoUnmute,
+        autoExpand: !!form.mediaOptions?.autoExpand,
+        allowAudio: form.mediaOptions?.allowAudio !== false,
+        allowVideo: form.mediaOptions?.allowVideo !== false,
+      },
+      bridgePolicy: {
+        enabled: !!form.bridgePolicy?.enabled,
+        allowedOrigins: (form.bridgePolicy?.allowedOrigins || []).join(','),
+        capabilities: (form.bridgePolicy?.capabilities || []).join(','),
       },
     });
   } else {
@@ -309,22 +403,50 @@ const handleSubmit = async () => {
     message.warning('名称不能为空');
     return false;
   }
-  if (!formModel.url.trim() && !formModel.embedCode.trim()) {
+  if (!editingForm.value?.templateRef && !formModel.url.trim() && !formModel.embedCode.trim()) {
     message.warning('请至少填写 URL 或嵌入代码');
     return false;
   }
   try {
     if (editingForm.value) {
-      await iform.updateForm(editingForm.value.id, {
-        name: formModel.name.trim(),
-        url: formModel.url.trim(),
-        embedCode: formModel.embedCode.trim(),
-        defaultWidth: formModel.defaultWidth,
-        defaultHeight: formModel.defaultHeight,
-        defaultCollapsed: formModel.defaultCollapsed,
-        defaultFloating: formModel.defaultFloating,
-        mediaOptions: formModel.mediaOptions,
-      });
+      const payload: Record<string, unknown> = {};
+      if (editingForm.value.templateRef) {
+        const original = editingForm.value;
+        const mediaOptions = { ...formModel.mediaOptions };
+        const originalMediaOptions = {
+          autoPlay: !!original.mediaOptions?.autoPlay,
+          autoUnmute: !!original.mediaOptions?.autoUnmute,
+          autoExpand: !!original.mediaOptions?.autoExpand,
+          allowAudio: original.mediaOptions?.allowAudio !== false,
+          allowVideo: original.mediaOptions?.allowVideo !== false,
+        };
+        const bridgePolicy = normalizeBridgePolicyForm();
+        const originalBridgePolicy = {
+          enabled: !!original.bridgePolicy?.enabled,
+          allowedOrigins: original.bridgePolicy?.allowedOrigins || [],
+          capabilities: original.bridgePolicy?.capabilities || [],
+        };
+        if (formModel.name.trim() !== (original.name || '')) payload.name = formModel.name.trim();
+        if (formModel.defaultWidth !== original.defaultWidth) payload.defaultWidth = formModel.defaultWidth;
+        if (formModel.defaultHeight !== original.defaultHeight) payload.defaultHeight = formModel.defaultHeight;
+        if (formModel.defaultCollapsed !== !!original.defaultCollapsed) payload.defaultCollapsed = formModel.defaultCollapsed;
+        if (formModel.defaultFloating !== !!original.defaultFloating) payload.defaultFloating = formModel.defaultFloating;
+        if (formModel.allowPopout !== original.allowPopout) payload.allowPopout = formModel.allowPopout;
+        if (JSON.stringify(mediaOptions) !== JSON.stringify(originalMediaOptions)) payload.mediaOptions = mediaOptions;
+        if (JSON.stringify(bridgePolicy) !== JSON.stringify(originalBridgePolicy)) payload.bridgePolicy = bridgePolicy;
+      } else {
+        payload.name = formModel.name.trim();
+        payload.defaultWidth = formModel.defaultWidth;
+        payload.defaultHeight = formModel.defaultHeight;
+        payload.defaultCollapsed = formModel.defaultCollapsed;
+        payload.defaultFloating = formModel.defaultFloating;
+        payload.allowPopout = formModel.allowPopout;
+        payload.mediaOptions = formModel.mediaOptions;
+        payload.bridgePolicy = normalizeBridgePolicyForm();
+        payload.url = formModel.url.trim();
+        payload.embedCode = formModel.embedCode.trim();
+      }
+      await iform.updateForm(editingForm.value.id, payload);
       message.success('控件已更新');
     } else {
       await iform.createForm({
@@ -335,7 +457,9 @@ const handleSubmit = async () => {
         defaultHeight: formModel.defaultHeight,
         defaultCollapsed: formModel.defaultCollapsed,
         defaultFloating: formModel.defaultFloating,
+        allowPopout: formModel.allowPopout,
         mediaOptions: formModel.mediaOptions,
+        bridgePolicy: normalizeBridgePolicyForm(),
       });
       message.success('控件已创建');
     }
@@ -347,6 +471,12 @@ const handleSubmit = async () => {
     return false;
   }
 };
+
+const normalizeBridgePolicyForm = () => ({
+  enabled: !!formModel.bridgePolicy.enabled,
+  allowedOrigins: formModel.bridgePolicy.allowedOrigins.split(',').map((item) => item.trim()).filter(Boolean),
+  capabilities: formModel.bridgePolicy.capabilities.split(',').map((item) => item.trim()).filter(Boolean),
+});
 
 const handleCancel = () => {
   resetFormModel();
@@ -506,6 +636,103 @@ const refresh = async () => {
   }
   await iform.ensureForms(iform.currentChannelId, true);
   message.success('已刷新控件列表');
+};
+
+const loadTemplateCatalog = async (page = templatePage.value) => {
+  templatePage.value = page;
+  templateLoading.value = true;
+  try {
+    const { data } = await api.get<{ items: ChannelIFormTemplateCatalogItem[]; total?: number }>('api/v1/channel-embed-tools/catalog', {
+      params: { search: templateSearch.value.trim(), page: templatePage.value, pageSize: templatePageSize },
+    });
+    templateCatalog.value = data?.items || [];
+    templateTotal.value = data?.total || 0;
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '读取模板目录失败');
+  } finally {
+    templateLoading.value = false;
+  }
+};
+
+const openTemplateModal = async () => {
+  templateModalVisible.value = true;
+  templatePage.value = 1;
+  await loadTemplateCatalog(1);
+};
+
+const installTemplate = async (templateRef: string) => {
+  try {
+    await iform.createForm({ name: '', templateRef });
+    await iform.ensureForms(iform.visibleChannelId || '', true);
+    message.success('模板已安装');
+    templateModalVisible.value = false;
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '安装失败');
+  }
+};
+
+const resetTemplateOverrides = async () => {
+  if (!editingForm.value?.templateRef) return;
+  try {
+    await iform.updateForm(editingForm.value.id, { templateOverrides: {} });
+    message.success('已恢复模板默认');
+    formModalVisible.value = false;
+    resetFormModel();
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '恢复失败');
+  }
+};
+
+const exportForms = () => {
+  const items = forms.value.map((form) => form.templateRef
+    ? { mode: 'reference', templateRef: form.templateRef, overrides: form.templateOverrides || {}, local: { orderIndex: form.orderIndex } }
+    : { mode: 'standalone', config: {
+      name: form.name, url: form.url || '', embedCode: form.embedCode || '', defaultWidth: form.defaultWidth,
+      defaultHeight: form.defaultHeight, defaultCollapsed: form.defaultCollapsed, defaultFloating: form.defaultFloating,
+      allowPopout: form.allowPopout, mediaOptions: form.mediaOptions, bridgePolicy: form.bridgePolicy,
+    } });
+  const blob = new Blob([JSON.stringify({ schemaVersion: 1, type: 'sealchat-channel-iforms', items }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'sealchat-channel-iforms.json';
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
+const openImport = () => importInput.value?.click();
+
+const handleImportFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  try {
+    const bundle = JSON.parse(await file.text());
+    if (bundle?.schemaVersion !== 1 || bundle?.type !== 'sealchat-channel-iforms' || !Array.isArray(bundle.items)) {
+      throw new Error('导入文件格式无效');
+    }
+    let success = 0;
+    const failures: string[] = [];
+    for (const [index, item] of bundle.items.entries()) {
+      try {
+        if (item?.mode === 'reference' && typeof item.templateRef === 'string') {
+          await iform.createForm({ templateRef: item.templateRef, templateOverrides: item.overrides || {}, orderIndex: item.local?.orderIndex || 0, name: '' });
+        } else if (item?.mode === 'standalone' && item.config) {
+          await iform.createForm(item.config);
+        } else {
+          throw new Error('项目模式无效');
+        }
+        success += 1;
+      } catch (error: any) {
+        failures.push(`${index + 1}: ${error?.response?.data?.message || error?.message || '失败'}`);
+      }
+    }
+    await iform.ensureForms(iform.visibleChannelId || '', true);
+    message.info(`导入完成：成功 ${success}，失败 ${failures.length}${failures.length ? `（${failures.join('；')}）` : ''}`);
+  } catch (error: any) {
+    message.error(error?.message || '导入失败');
+  }
 };
 
 const handleMigration = async () => {

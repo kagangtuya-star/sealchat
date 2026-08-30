@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	avatarDecorationOffsetMin       = -128
-	avatarDecorationOffsetMax       = 128
-	avatarDecorationRotationMin     = 0
-	avatarDecorationRotationMax     = 360
-	avatarDecorationOpacityMin      = 0
-	avatarDecorationOpacityMax      = 1
+	avatarDecorationOffsetMin   = -128
+	avatarDecorationOffsetMax   = 128
+	avatarDecorationRotationMin = 0
+	avatarDecorationRotationMax = 360
+	avatarDecorationOpacityMin  = 0
+	avatarDecorationOpacityMax  = 1
 )
 
 func NormalizeAvatarDecoration(userID string, decoration *protocol.AvatarDecoration) (*protocol.AvatarDecoration, error) {
@@ -46,7 +46,7 @@ func NormalizeAvatarDecorationsWithAccess(ownerUserID string, operatorUserID str
 	result := make(protocol.AvatarDecorationList, 0, len(decorations))
 	for _, rawDecoration := range decorations {
 		resourceID := strings.TrimSpace(rawDecoration.ResourceAttachmentID)
-		if !rawDecoration.Enabled || resourceID == "" {
+		if resourceID == "" {
 			continue
 		}
 
@@ -110,7 +110,7 @@ func NormalizeAvatarDecorationsWithAccess(ownerUserID string, operatorUserID str
 
 		result = append(result, protocol.AvatarDecoration{
 			ID:                   strings.TrimSpace(rawDecoration.ID),
-			Enabled:              true,
+			Enabled:              rawDecoration.Enabled,
 			DecorationID:         strings.TrimSpace(rawDecoration.DecorationID),
 			ResourceAttachmentID: resourceID,
 			FallbackAttachmentID: fallbackID,

@@ -12,23 +12,26 @@ import (
 
 type ChannelIdentityModel struct {
 	StringPKBaseModel
-	ChannelID           string                        `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1;uniqueIndex:udx_channel_identity_shared_channel,priority:2"`
-	UserID              string                        `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
-	SharedIdentityID    string                        `json:"sharedIdentityId,omitempty" gorm:"size:100;default:null;uniqueIndex:udx_channel_identity_shared_channel,priority:1"`
-	SharedRevision      int64                         `json:"sharedRevision,omitempty" gorm:"not null;default:0"`
-	DisplayName         string                        `json:"displayName"`
-	Color               string                        `json:"color"`
-	AvatarAttachmentID  string                        `json:"avatarAttachmentId"`
-	AvatarDecorations   protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
-	TheaterPresentation *protocol.TheaterPresentation `json:"theaterPresentation,omitempty" gorm:"serializer:json;column:theater_presentation"`
-	CharacterCardID     string                        `json:"characterCardId,omitempty" gorm:"size:100;index"`
-	IsDefault           bool                          `json:"isDefault" gorm:"default:false"`
-	IsTemporary         bool                          `json:"isTemporary" gorm:"default:false"`
-	IsHidden            bool                          `json:"isHidden" gorm:"default:false"`
-	BotAppearanceMode   string                        `json:"botAppearanceMode,omitempty" gorm:"size:16;default:''"`
-	ICOOCOnActivate     string                        `json:"icOocOnActivate,omitempty" gorm:"-"`
-	SortOrder           int                           `json:"sortOrder" gorm:"index"`
-	FolderIDs           []string                      `json:"folderIds,omitempty" gorm:"-"`
+	ChannelID                string                        `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1;uniqueIndex:udx_channel_identity_shared_channel,priority:2"`
+	UserID                   string                        `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
+	SharedIdentityID         string                        `json:"sharedIdentityId,omitempty" gorm:"size:100;default:null;uniqueIndex:udx_channel_identity_shared_channel,priority:1"`
+	SharedRevision           int64                         `json:"sharedRevision,omitempty" gorm:"not null;default:0"`
+	DisplayName              string                        `json:"displayName"`
+	Color                    string                        `json:"color"`
+	AvatarAttachmentID       string                        `json:"avatarAttachmentId"`
+	AvatarDecorations        protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
+	TheaterPresentation      *protocol.TheaterPresentation `json:"theaterPresentation,omitempty" gorm:"serializer:json;column:theater_presentation"`
+	CharacterCardID          string                        `json:"characterCardId,omitempty" gorm:"size:100;index"`
+	IsDefault                bool                          `json:"isDefault" gorm:"default:false"`
+	IsTemporary              bool                          `json:"isTemporary" gorm:"default:false"`
+	IsHidden                 bool                          `json:"isHidden" gorm:"default:false"`
+	BotAppearanceMode        string                        `json:"botAppearanceMode,omitempty" gorm:"size:16;default:''"`
+	VariantResetMatchMode    string                        `json:"variantResetMatchMode,omitempty" gorm:"size:16;default:''"`
+	VariantResetMatchConfig  string                        `json:"variantResetMatchConfig,omitempty" gorm:"size:16;default:''"`
+	VariantResetMatchContent string                        `json:"variantResetMatchContent,omitempty" gorm:"size:255;default:''"`
+	ICOOCOnActivate          string                        `json:"icOocOnActivate,omitempty" gorm:"-"`
+	SortOrder                int                           `json:"sortOrder" gorm:"index"`
+	FolderIDs                []string                      `json:"folderIds,omitempty" gorm:"-"`
 }
 
 func (*ChannelIdentityModel) TableName() string {
@@ -42,17 +45,20 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 		legacyDecoration = &first
 	}
 	return &protocol.ChannelIdentity{
-		ID:                  m.ID,
-		SharedIdentityID:    m.SharedIdentityID,
-		SharedRevision:      m.SharedRevision,
-		DisplayName:         m.DisplayName,
-		Color:               m.Color,
-		AvatarAttachmentID:  m.AvatarAttachmentID,
-		AvatarDecoration:    legacyDecoration,
-		AvatarDecorations:   m.AvatarDecorations,
-		TheaterPresentation: m.TheaterPresentation,
-		IsDefault:           m.IsDefault,
-		IsTemporary:         m.IsTemporary,
+		ID:                       m.ID,
+		SharedIdentityID:         m.SharedIdentityID,
+		SharedRevision:           m.SharedRevision,
+		DisplayName:              m.DisplayName,
+		Color:                    m.Color,
+		AvatarAttachmentID:       m.AvatarAttachmentID,
+		AvatarDecoration:         legacyDecoration,
+		AvatarDecorations:        m.AvatarDecorations,
+		TheaterPresentation:      m.TheaterPresentation,
+		IsDefault:                m.IsDefault,
+		IsTemporary:              m.IsTemporary,
+		VariantResetMatchMode:    m.VariantResetMatchMode,
+		VariantResetMatchConfig:  m.VariantResetMatchConfig,
+		VariantResetMatchContent: m.VariantResetMatchContent,
 	}
 }
 

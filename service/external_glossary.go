@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gorm.io/gorm"
@@ -29,6 +30,32 @@ type ExternalGlossaryLibraryListOptions struct {
 	PageSize        int
 	Query           string
 	IncludeDisabled bool
+}
+
+type ExternalGlossaryOverwriteStats struct {
+	Deleted int `json:"deleted"`
+	Created int `json:"created"`
+	Skipped int `json:"skipped"`
+}
+
+func touchExternalGlossaryLibrary(tx *gorm.DB, libraryID, actorID string) error {
+	libraryID = strings.TrimSpace(libraryID)
+	if libraryID == "" {
+		return ErrExternalGlossaryNotFound
+	}
+	result := tx.Model(&model.ExternalGlossaryLibraryModel{}).
+		Where("id = ?", libraryID).
+		Updates(map[string]any{
+			"updated_at": time.Now(),
+			"updated_by": actorID,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrExternalGlossaryNotFound
+	}
+	return nil
 }
 
 func ensureExternalGlossaryAdmin(actorID string) error {
@@ -236,6 +263,7 @@ func ExternalGlossaryLibraryReorder(actorID string, items []WorldKeywordReorderI
 		return 0, nil
 	}
 	updated := 0
+	touchedLibraryID := ""
 	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
 		for _, item := range items {
 			id := strings.TrimSpace(item.ID)
@@ -253,11 +281,111 @@ func ExternalGlossaryLibraryReorder(actorID string, items []WorldKeywordReorderI
 			}
 			if res.RowsAffected > 0 {
 				updated++
+				if touchedLibraryID == "" {
+					touchedLibraryID = id
+				}
 			}
 		}
-		return nil
+		if updated == 0 {
+			return nil
+		}
+		return touchExternalGlossaryLibrary(tx, touchedLibraryID, actorID)
 	})
 	return updated, err
+}
+
+func ExternalGlossaryLibraryOverwriteImport(libraryID, actorID string, entries []WorldKeywordInput) (*ExternalGlossaryOverwriteStats, error) {
+	if err := ensureExternalGlossaryAdmin(actorID); err != nil {
+		return nil, err
+	}
+	libraryID = strings.TrimSpace(libraryID)
+	if libraryID == "" {
+		return nil, ErrExternalGlossaryNotFound
+	}
+
+	stats := &ExternalGlossaryOverwriteStats{}
+	normalized := make([]WorldKeywordInput, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		item := entry
+		if err := normalizeWorldKeywordInput(&item); err != nil {
+			stats.Skipped++
+			continue
+		}
+		if _, exists := seen[item.Keyword]; exists {
+			stats.Skipped++
+			continue
+		}
+		seen[item.Keyword] = struct{}{}
+		normalized = append(normalized, item)
+	}
+
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var library model.ExternalGlossaryLibraryModel
+		if err := tx.Where("id = ?", libraryID).First(&library).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrExternalGlossaryNotFound
+			}
+			return err
+		}
+		result := tx.Where("library_id = ?", libraryID).Delete(&model.ExternalGlossaryTermModel{})
+		if result.Error != nil {
+			return result.Error
+		}
+		stats.Deleted = int(result.RowsAffected)
+
+		for index, input := range normalized {
+			sortOrder := index
+			if input.SortOrder != nil {
+				sortOrder = *input.SortOrder
+			}
+			item := &model.ExternalGlossaryTermModel{
+				LibraryID:         libraryID,
+				Keyword:           input.Keyword,
+				Category:          input.Category,
+				Aliases:           model.JSONList[string](input.Aliases),
+				MatchMode:         model.WorldKeywordMatchMode(input.MatchMode),
+				Description:       strings.TrimSpace(input.Description),
+				DescriptionFormat: model.WorldKeywordDescFormat(input.DescriptionFormat),
+				Display:           model.WorldKeywordDisplayStyle(input.Display),
+				SortOrder:         sortOrder,
+				IsEnabled:         input.Enabled == nil || *input.Enabled,
+				CreatedBy:         actorID,
+				UpdatedBy:         actorID,
+			}
+			item.Normalize()
+			if err := upsertExternalGlossaryCategory(tx, libraryID, input.Category, actorID); err != nil {
+				return err
+			}
+			item.Init()
+			if err := tx.Model(&model.ExternalGlossaryTermModel{}).Create(map[string]any{
+				"id":                 item.ID,
+				"created_at":         item.CreatedAt,
+				"updated_at":         item.UpdatedAt,
+				"deleted_at":         item.DeletedAt,
+				"library_id":         item.LibraryID,
+				"keyword":            item.Keyword,
+				"category":           item.Category,
+				"aliases":            item.Aliases,
+				"match_mode":         item.MatchMode,
+				"description":        item.Description,
+				"description_format": item.DescriptionFormat,
+				"display":            item.Display,
+				"sort_order":         item.SortOrder,
+				"is_enabled":         item.IsEnabled,
+				"created_by":         item.CreatedBy,
+				"updated_by":         item.UpdatedBy,
+			}).Error; err != nil {
+				return err
+			}
+			stats.Created++
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
 }
 
 func upsertExternalGlossaryCategory(tx *gorm.DB, libraryID, categoryName, actorID string) error {
@@ -401,7 +529,7 @@ func ExternalGlossaryTermCreate(libraryID, actorID string, input WorldKeywordInp
 			return err
 		}
 		item.Init()
-		return tx.Model(&model.ExternalGlossaryTermModel{}).Create(map[string]any{
+		if err := tx.Model(&model.ExternalGlossaryTermModel{}).Create(map[string]any{
 			"id":                 item.ID,
 			"created_at":         item.CreatedAt,
 			"updated_at":         item.UpdatedAt,
@@ -418,7 +546,10 @@ func ExternalGlossaryTermCreate(libraryID, actorID string, input WorldKeywordInp
 			"is_enabled":         item.IsEnabled,
 			"created_by":         item.CreatedBy,
 			"updated_by":         item.UpdatedBy,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	}); err != nil {
 		return nil, err
 	}
@@ -469,7 +600,7 @@ func ExternalGlossaryTermUpdate(libraryID, keywordID, actorID string, input Worl
 				return err
 			}
 		}
-		return nil
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	}); err != nil {
 		return nil, err
 	}
@@ -494,7 +625,10 @@ func ExternalGlossaryTermDelete(libraryID, keywordID, actorID string) error {
 		if err := tx.Where("id = ? AND library_id = ?", record.ID, record.LibraryID).Delete(&model.ExternalGlossaryTermModel{}).Error; err != nil {
 			return err
 		}
-		return cleanupExternalGlossaryCategoryIfUnused(tx, record.LibraryID, record.Category)
+		if err := cleanupExternalGlossaryCategoryIfUnused(tx, record.LibraryID, record.Category); err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, record.LibraryID, actorID)
 	})
 }
 
@@ -536,7 +670,7 @@ func ExternalGlossaryTermBulkDelete(libraryID string, ids []string, actorID stri
 				return err
 			}
 		}
-		return nil
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	return affected, err
 }
@@ -704,7 +838,10 @@ func ExternalGlossaryCategoryCreate(libraryID, actorID, categoryName string) (st
 		return "", err
 	}
 	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
-		return upsertExternalGlossaryCategory(tx, strings.TrimSpace(libraryID), name, actorID)
+		if err := upsertExternalGlossaryCategory(tx, strings.TrimSpace(libraryID), name, actorID); err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	}); err != nil {
 		return "", err
 	}
@@ -724,12 +861,15 @@ func ExternalGlossaryCategoryUpdatePriority(libraryID, actorID, categoryName str
 		if err := upsertExternalGlossaryCategory(tx, strings.TrimSpace(libraryID), name, actorID); err != nil {
 			return err
 		}
-		return tx.Model(&model.ExternalGlossaryCategoryModel{}).
+		if err := tx.Model(&model.ExternalGlossaryCategoryModel{}).
 			Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), name).
 			Updates(map[string]any{
 				"priority":   priority,
 				"updated_by": actorID,
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	if err != nil {
 		return nil, err
@@ -783,7 +923,10 @@ func ExternalGlossaryCategoryBulkUpdatePriority(libraryID, actorID string, items
 				updated++
 			}
 		}
-		return nil
+		if updated == 0 {
+			return nil
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	return updated, err
 }
@@ -840,8 +983,11 @@ func ExternalGlossaryCategoryRename(libraryID, actorID, oldName, newName string)
 			return res.Error
 		}
 		updated = res.RowsAffected
-		return tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), from).
-			Delete(&model.ExternalGlossaryCategoryModel{}).Error
+		if err := tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), from).
+			Delete(&model.ExternalGlossaryCategoryModel{}).Error; err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	return updated, to, err
 }
@@ -866,8 +1012,11 @@ func ExternalGlossaryCategoryDelete(libraryID, actorID, categoryName string) (in
 			return res.Error
 		}
 		updated = res.RowsAffected
-		return tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), name).
-			Delete(&model.ExternalGlossaryCategoryModel{}).Error
+		if err := tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), name).
+			Delete(&model.ExternalGlossaryCategoryModel{}).Error; err != nil {
+			return err
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	return updated, err
 }
@@ -899,7 +1048,10 @@ func ExternalGlossaryTermReorder(libraryID, actorID string, items []WorldKeyword
 				updated++
 			}
 		}
-		return nil
+		if updated == 0 {
+			return nil
+		}
+		return touchExternalGlossaryLibrary(tx, libraryID, actorID)
 	})
 	return updated, err
 }

@@ -446,6 +446,71 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiMessageFirst(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+}) (any, error) {
+	db := model.GetDB()
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+
+	if ctx.IsReadOnly() {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelID); err != nil {
+			return nil, err
+		}
+	} else if len(channelID) < 30 {
+		channel, err := model.ChannelGet(channelID)
+		if err != nil {
+			return nil, err
+		}
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			return nil, fmt.Errorf("频道不存在")
+		}
+		if service.IsChannelDeletedForAccess(channel) {
+			return nil, fmt.Errorf("频道已被解散")
+		}
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, channelID)
+	var item struct {
+		ID           string    `gorm:"column:id"`
+		ChannelID    string    `gorm:"column:channel_id"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+		DisplayOrder float64   `gorm:"column:display_order"`
+	}
+	q := db.Model(&model.MessageModel{}).
+		Where("channel_id = ?", channelID).
+		Where("is_deleted = ?", false)
+	q = applyWhisperVisibilityFilterWithReadAll(q, ctx.User.ID, canReadAllWhispers)
+	if err := q.Select("id, channel_id, created_at, display_order").
+		Order("display_order ASC").
+		Order("created_at ASC").
+		Order("id ASC").
+		Limit(1).
+		Find(&item).Error; err != nil {
+		return nil, err
+	}
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	return map[string]any{
+		"id":            item.ID,
+		"channel_id":    item.ChannelID,
+		"created_at":    item.CreatedAt.UnixMilli(),
+		"display_order": item.DisplayOrder,
+	}, nil
+}
+
 func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`
@@ -1910,6 +1975,19 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	db := model.GetDB()
 	channelId := data.ChannelID
 	trimmedClientID := strings.TrimSpace(data.ClientID)
+	if strings.HasPrefix(trimmedClientID, "iform_embed:") {
+		parts := strings.SplitN(strings.TrimPrefix(trimmedClientID, "iform_embed:"), ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			return nil, errors.New("INVALID_PARAMS")
+		}
+		_, resolvedChannelID, err := resolveEmbedForm(ctx, embedScopeRequest{ChannelID: channelId, FormID: strings.TrimSpace(parts[0])}, "messages.send")
+		if err != nil {
+			return nil, err
+		}
+		if resolvedChannelID != channelId {
+			return nil, errors.New("PERMISSION_DENIED")
+		}
+	}
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)
@@ -1952,7 +2030,25 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 
+	identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, data.IdentityID)
+	if err != nil {
+		return nil, err
+	}
+	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
+	if identity == nil && len(channelId) < 30 {
+		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
+	}
 	content := data.Content
+	var variant *model.ChannelIdentityVariantModel
+	if ctx.User.IsBot && strings.TrimSpace(data.IdentityVariantID) == "" {
+		variant, content, err = service.ChannelIdentityVariantMatchMessage(identity, content)
+	} else {
+		variant, err = service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 	messageContextICMode := icMode
 	if ctx.User.IsBot && requestedICMode == "ooc" && botContextICMode != "" && shouldTreatExternalBotMessageAsOOC(content) {
 		messageContextICMode = botContextICMode
@@ -2009,21 +2105,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if err != nil {
 		return nil, err
 	}
-
-	identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, data.IdentityID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
-	if identity == nil && len(channelId) < 30 {
-		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
-	}
-	variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
-	if err != nil {
-		return nil, err
-	}
-	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {
@@ -2628,6 +2709,8 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	FromTime        int64    `json:"from_time"`
 	ToTime          int64    `json:"to_time"`
 	ICOnly          bool     `json:"ic_only"`
+	OOCOnly         bool     `json:"ooc_only"`
+	WhisperOnly     bool     `json:"whisper_only"`
 	IncludeOOC      *bool    `json:"include_ooc"`
 	IncludeArchived bool     `json:"include_archived"`
 	ArchivedOnly    bool     `json:"archived_only"`
@@ -2681,8 +2764,13 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 	if data.ICOnly {
 		q = q.Where("ic_mode = ?", "ic")
+	} else if data.OOCOnly {
+		q = q.Where("ic_mode = ?", "ooc")
 	} else if !includeOOC {
 		q = q.Where("ic_mode <> ?", "ooc")
+	}
+	if data.WhisperOnly {
+		q = q.Where("is_whisper = ?", true)
 	}
 	if len(data.UserIDs) > 0 {
 		q = q.Where("user_id IN ?", data.UserIDs)

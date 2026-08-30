@@ -24,7 +24,8 @@ COPY --from=ui-builder /src/ui/dist ./ui/dist
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/go/pkg/mod \
+  --mount=type=cache,target=/root/.cache/go-build \
   test -n "${TARGETOS}" && test -n "${TARGETARCH}" && \
   CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
@@ -54,6 +55,7 @@ WORKDIR /app
 ARG TARGETARCH
 
 COPY --from=go-builder /out/sealchat-server /app/sealchat-server
+COPY --from=go-builder /src/builtin /app/builtin
 COPY --from=webp-assets /out/bin /app/bin
 COPY --from=webp-assets /out/LICENSE /app/LICENSE
 RUN set -eux; \

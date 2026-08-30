@@ -42,6 +42,9 @@ type FilterState = {
   icFilter: 'all' | 'ic' | 'ooc';
   showArchived: boolean;
   roleIds: string[];
+  whisperOnly: boolean;
+  fromTime: number | null;
+  toTime: number | null;
 };
 
 type RoleOption = { id: string; label?: string; name?: string };
@@ -166,7 +169,14 @@ const actionRibbonVisible = ref(false);
 const drawerVisible = ref(false);
 const sidebarCollapsed = ref(false);
 const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
-const defaultFilterState: FilterState = { icFilter: 'all', showArchived: false, roleIds: [] };
+const defaultFilterState: FilterState = {
+  icFilter: 'all',
+  showArchived: false,
+  roleIds: [],
+  whisperOnly: false,
+  fromTime: null,
+  toTime: null,
+};
 const normalizeFilterState = (filters: FilterState): FilterState => {
   const rawRoleIds = Array.isArray(filters.roleIds) ? toRaw(filters.roleIds) : [];
   const roleIds = Array.isArray(rawRoleIds) ? rawRoleIds.map((id) => String(id ?? '')).filter(Boolean) : [];
@@ -175,6 +185,9 @@ const normalizeFilterState = (filters: FilterState): FilterState => {
     icFilter,
     showArchived: !!filters.showArchived,
     roleIds,
+    whisperOnly: !!filters.whisperOnly,
+    fromTime: typeof filters.fromTime === 'number' && Number.isFinite(filters.fromTime) ? filters.fromTime : null,
+    toTime: typeof filters.toTime === 'number' && Number.isFinite(filters.toTime) ? filters.toTime : null,
   };
 };
 const storagePrefix = 'sealchat.split.pane';
@@ -564,7 +577,7 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (msg.presenceMap && typeof msg.presenceMap === 'object') target.presenceMap = msg.presenceMap;
     if (typeof msg.currentChannelUnread === 'number') target.currentChannelUnread = msg.currentChannelUnread;
     if (typeof msg.audioStudioDrawerVisible === 'boolean') target.audioStudioDrawerVisible = msg.audioStudioDrawerVisible;
-    if (msg.filterState) target.filterState = { ...msg.filterState };
+    if (msg.filterState) target.filterState = normalizeFilterState(msg.filterState);
     if (typeof msg.identityId === 'string') target.identityId = msg.identityId;
     if (typeof msg.identityVariantId === 'string') target.identityVariantId = msg.identityVariantId;
     if (Array.isArray(msg.roleOptions)) target.roleOptions = msg.roleOptions;

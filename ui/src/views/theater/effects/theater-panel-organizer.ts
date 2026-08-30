@@ -1,4 +1,6 @@
-export type TheaterPanelDomain = 'audio' | 'effect'
+import type { TheaterImageFolderPreset } from './theater-image-folder-preset'
+
+export type TheaterPanelDomain = 'audio' | 'effect' | 'image'
 
 export interface TheaterPanelFolder {
   id: string
@@ -7,6 +9,7 @@ export interface TheaterPanelFolder {
   name: string
   sortOrder: number
   collapsed: boolean
+  preset?: TheaterImageFolderPreset
 }
 
 export interface TheaterPanelItem {

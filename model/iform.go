@@ -25,6 +25,132 @@ type ChannelIFormMediaOptions struct {
 	AllowVideo bool `json:"allowVideo"`
 }
 
+// ChannelIFormBridgePolicy controls the host-mediated embed runtime. Empty
+// legacy values stay disabled for backwards compatibility.
+type ChannelIFormBridgePolicy struct {
+	Enabled        bool     `json:"enabled"`
+	AllowedOrigins []string `json:"allowedOrigins"`
+	Capabilities   []string `json:"capabilities"`
+}
+
+// ChannelIFormTemplateOverrides stores only fields explicitly customized by a
+// channel reference. Pointer fields preserve false/zero/empty overrides.
+type ChannelIFormTemplateOverrides struct {
+	Name             *string                   `json:"name,omitempty"`
+	DefaultWidth     *int                      `json:"defaultWidth,omitempty"`
+	DefaultHeight    *int                      `json:"defaultHeight,omitempty"`
+	DefaultCollapsed *bool                     `json:"defaultCollapsed,omitempty"`
+	DefaultFloating  *bool                     `json:"defaultFloating,omitempty"`
+	AllowPopout      *bool                     `json:"allowPopout,omitempty"`
+	MediaOptions     *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
+	BridgePolicy     *ChannelIFormBridgePolicy `json:"bridgePolicy,omitempty"`
+}
+
+func (overrides ChannelIFormTemplateOverrides) Value() (driver.Value, error) {
+	data, err := json.Marshal(overrides)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
+}
+
+func (overrides *ChannelIFormTemplateOverrides) Scan(value interface{}) error {
+	if value == nil {
+		*overrides = ChannelIFormTemplateOverrides{}
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return errors.New("unsupported channel iForm template overrides type")
+	}
+	if len(data) == 0 {
+		*overrides = ChannelIFormTemplateOverrides{}
+		return nil
+	}
+	return json.Unmarshal(data, overrides)
+}
+
+// ChannelIFormTemplateModel is a platform-managed template. Builtin tools are
+// represented by stable keys and never stored in this table.
+type ChannelIFormTemplateModel struct {
+	StringPKBaseModel
+	Name             string                   `json:"name"`
+	Description      string                   `json:"description"`
+	Url              string                   `json:"url"`
+	EmbedCode        string                   `json:"embedCode"`
+	DefaultWidth     int                      `json:"defaultWidth"`
+	DefaultHeight    int                      `json:"defaultHeight"`
+	DefaultCollapsed bool                     `json:"defaultCollapsed"`
+	DefaultFloating  bool                     `json:"defaultFloating"`
+	AllowPopout      bool                     `json:"allowPopout"`
+	MediaOptions     ChannelIFormMediaOptions `json:"mediaOptions" gorm:"type:json"`
+	BridgePolicy     ChannelIFormBridgePolicy `json:"bridgePolicy" gorm:"type:json"`
+	Enabled          bool                     `json:"enabled"`
+	Archived         bool                     `json:"archived"`
+	CreatedBy        string                   `json:"createdBy"`
+	UpdatedBy        string                   `json:"updatedBy"`
+}
+
+func (*ChannelIFormTemplateModel) TableName() string { return "channel_iform_templates" }
+
+func (m *ChannelIFormTemplateModel) BeforeSave(tx *gorm.DB) error {
+	m.Normalize()
+	return nil
+}
+
+func (m *ChannelIFormTemplateModel) Normalize() {
+	m.Name = strings.TrimSpace(m.Name)
+	m.Description = strings.TrimSpace(m.Description)
+	m.Url = strings.TrimSpace(m.Url)
+	m.EmbedCode = strings.TrimSpace(m.EmbedCode)
+	if m.DefaultWidth <= 0 {
+		m.DefaultWidth = defaultIFormWidth
+	}
+	if m.DefaultHeight <= 0 {
+		m.DefaultHeight = defaultIFormHeight
+	}
+	if m.DefaultWidth > 1920 {
+		m.DefaultWidth = 1920
+	}
+	if m.DefaultHeight > 1440 {
+		m.DefaultHeight = 1440
+	}
+}
+
+func (policy ChannelIFormBridgePolicy) Value() (driver.Value, error) {
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
+}
+
+func (policy *ChannelIFormBridgePolicy) Scan(value interface{}) error {
+	if value == nil {
+		*policy = ChannelIFormBridgePolicy{}
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return errors.New("unsupported bridge policy type")
+	}
+	if len(data) == 0 {
+		*policy = ChannelIFormBridgePolicy{}
+		return nil
+	}
+	return json.Unmarshal(data, policy)
+}
+
 func (opts ChannelIFormMediaOptions) Value() (driver.Value, error) {
 	data, err := json.Marshal(opts)
 	if err != nil {
@@ -62,19 +188,22 @@ func (opts *ChannelIFormMediaOptions) Scan(value interface{}) error {
 
 type ChannelIFormModel struct {
 	StringPKBaseModel
-	ChannelID        string                   `json:"channelId" gorm:"index;not null"`
-	Name             string                   `json:"name"`
-	Url              string                   `json:"url"`
-	EmbedCode        string                   `json:"embedCode"`
-	DefaultWidth     int                      `json:"defaultWidth"`
-	DefaultHeight    int                      `json:"defaultHeight"`
-	DefaultCollapsed bool                     `json:"defaultCollapsed"`
-	DefaultFloating  bool                     `json:"defaultFloating"`
-	AllowPopout      bool                     `json:"allowPopout"`
-	OrderIndex       int                      `json:"orderIndex"`
-	CreatedBy        string                   `json:"createdBy"`
-	UpdatedBy        string                   `json:"updatedBy"`
-	MediaOptions     ChannelIFormMediaOptions `json:"mediaOptions" gorm:"type:json"`
+	ChannelID         string                        `json:"channelId" gorm:"index;not null"`
+	Name              string                        `json:"name"`
+	Url               string                        `json:"url"`
+	EmbedCode         string                        `json:"embedCode"`
+	DefaultWidth      int                           `json:"defaultWidth"`
+	DefaultHeight     int                           `json:"defaultHeight"`
+	DefaultCollapsed  bool                          `json:"defaultCollapsed"`
+	DefaultFloating   bool                          `json:"defaultFloating"`
+	AllowPopout       bool                          `json:"allowPopout"`
+	OrderIndex        int                           `json:"orderIndex"`
+	CreatedBy         string                        `json:"createdBy"`
+	UpdatedBy         string                        `json:"updatedBy"`
+	MediaOptions      ChannelIFormMediaOptions      `json:"mediaOptions" gorm:"type:json"`
+	BridgePolicy      ChannelIFormBridgePolicy      `json:"bridgePolicy" gorm:"type:json"`
+	TemplateRef       string                        `json:"templateRef,omitempty" gorm:"size:160;index"`
+	TemplateOverrides ChannelIFormTemplateOverrides `json:"templateOverrides,omitempty" gorm:"type:json"`
 }
 
 func (*ChannelIFormModel) TableName() string {
@@ -90,17 +219,20 @@ func (m *ChannelIFormModel) Normalize() {
 	m.Name = strings.TrimSpace(m.Name)
 	m.Url = strings.TrimSpace(m.Url)
 	m.EmbedCode = strings.TrimSpace(m.EmbedCode)
-	if m.DefaultWidth <= 0 {
-		m.DefaultWidth = defaultIFormWidth
-	}
-	if m.DefaultWidth > 1920 {
-		m.DefaultWidth = 1920
-	}
-	if m.DefaultHeight <= 0 {
-		m.DefaultHeight = defaultIFormHeight
-	}
-	if m.DefaultHeight > 1440 {
-		m.DefaultHeight = 1440
+	m.TemplateRef = strings.TrimSpace(m.TemplateRef)
+	if m.TemplateRef == "" {
+		if m.DefaultWidth <= 0 {
+			m.DefaultWidth = defaultIFormWidth
+		}
+		if m.DefaultWidth > 1920 {
+			m.DefaultWidth = 1920
+		}
+		if m.DefaultHeight <= 0 {
+			m.DefaultHeight = defaultIFormHeight
+		}
+		if m.DefaultHeight > 1440 {
+			m.DefaultHeight = 1440
+		}
 	}
 	m.OrderIndex = normalizeOrderIndex(m.OrderIndex)
 }
@@ -134,6 +266,11 @@ func ChannelIFormCreate(form *ChannelIFormModel) error {
 	if form == nil {
 		return errors.New("form is nil")
 	}
+	if strings.TrimSpace(form.TemplateRef) == "" {
+		form.TemplateOverrides = ChannelIFormTemplateOverrides{}
+	} else if strings.TrimSpace(form.Url) != "" || strings.TrimSpace(form.EmbedCode) != "" {
+		return errors.New("模板引用控件的 URL 和 EmbedCode 由模板管理")
+	}
 	form.Normalize()
 	if form.OrderIndex == 0 {
 		var max int
@@ -150,6 +287,21 @@ func ChannelIFormUpdate(channelID, formID string, updates map[string]interface{}
 	if len(updates) == 0 {
 		return nil
 	}
+	var current ChannelIFormModel
+	if err := db.Where("channel_id = ? AND id = ?", channelID, formID).First(&current).Error; err == nil && strings.TrimSpace(current.TemplateRef) != "" {
+		if _, ok := updates["url"]; ok {
+			return errors.New("模板引用控件的 URL 由模板管理")
+		}
+		if _, ok := updates["embed_code"]; ok {
+			return errors.New("模板引用控件的 EmbedCode 由模板管理")
+		}
+		if _, ok := updates["template_ref"]; ok {
+			return errors.New("模板引用控件不可切换模板")
+		}
+		if _, ok := updates["templateRef"]; ok {
+			return errors.New("模板引用控件不可切换模板")
+		}
+	}
 	updates["updated_at"] = time.Now()
 	return db.Model(&ChannelIFormModel{}).
 		Where("channel_id = ? AND id = ?", channelID, formID).
@@ -157,8 +309,19 @@ func ChannelIFormUpdate(channelID, formID string, updates map[string]interface{}
 }
 
 func ChannelIFormDelete(channelID, formID string) error {
-	return db.Where("channel_id = ? AND id = ?", channelID, formID).
-		Delete(&ChannelIFormModel{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		return ChannelIFormDeleteTx(tx, channelID, formID)
+	})
+}
+
+func ChannelIFormDeleteTx(tx *gorm.DB, channelID, formID string) error {
+	if tx == nil {
+		return errors.New("db transaction is nil")
+	}
+	if err := tx.Unscoped().Where("channel_id = ? AND id = ?", channelID, formID).Delete(&ChannelIFormModel{}).Error; err != nil {
+		return err
+	}
+	return ChannelIFormStorageDeleteByFormIDTx(tx, formID)
 }
 
 func ChannelIFormCloneToChannel(source *ChannelIFormModel, targetChannelID, actor string) (*ChannelIFormModel, error) {

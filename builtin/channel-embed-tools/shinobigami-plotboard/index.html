@@ -1,0 +1,2373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>忍神谋位 · Velocity System</title>
+  <style>
+    :root {
+      /* 忍神主题配色：墨、血、和纸 */
+      --ink: #111111;
+      --ink-2: #333333;
+      --paper: #e4ddcf;       /* 传统和纸底色 */
+      --paper-2: #f4f1ea;     /* 面板底色 */
+      --paper-3: #ffffff;     /* 高光底色 */
+      --line: #c4b9a8;
+      --danger: #b31b1b;      /* 猩红/血色 */
+      --success: #2b6144;
+      --shadow: 4px 4px 0 var(--ink);      /* 漫画风硬阴影 */
+      --shadow-hover: 6px 6px 0 var(--ink);
+      --radius: 0px;          /* 绝对直角 */
+
+      /* 字体：强调和风衬线体 */
+      --font-serif: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+      --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--paper); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: var(--font-sans);
+      user-select: none;
+      -webkit-user-select: none;
+      overflow-x: hidden;
+      background-color: var(--paper);
+      /* 细腻的战术网格背景 */
+      background-image:
+        linear-gradient(rgba(17, 17, 17, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(17, 17, 17, 0.05) 1px, transparent 1px);
+      background-size: 24px 24px;
+      background-position: center top;
+    }
+
+    /* 滚动条定制化 */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: var(--paper); border-left: 2px solid var(--ink); border-top: 2px solid var(--ink); }
+    ::-webkit-scrollbar-thumb { background: var(--ink); border: 1px solid var(--paper); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--danger); }
+
+    button, input { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    [hidden] { display: none !important; }
+
+    .shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* 顶部导航：暗黑肃杀感 */
+    .masthead {
+      position: relative;
+      z-index: 2;
+      padding: 8px clamp(10px, 2vw, 20px);
+      color: #fff;
+      background: var(--ink);
+      border-bottom: 2px solid var(--danger);
+    }
+
+    .masthead-inner {
+      max-width: 1600px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .brand { min-width: 0; }
+    .brand-kicker {
+      font-family: var(--font-serif);
+      font-size: clamp(18px, 3vw, 28px);
+      font-weight: 900;
+      line-height: .95;
+      letter-spacing: .08em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+    }
+    .brand-sub {
+      margin-top: 3px;
+      font-size: 10px;
+      font-weight: bold;
+      letter-spacing: .35em;
+      text-transform: uppercase;
+      color: var(--danger);
+    }
+
+    .top-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: var(--radius);
+      font-size: 11px;
+      font-weight: bold;
+      color: #fff;
+      background: transparent;
+      letter-spacing: .05em;
+    }
+    .status-dot { width: 8px; height: 8px; background: #666; transform: rotate(45deg); }
+    .status-pill[data-state="connected"] .status-dot { background: var(--success); box-shadow: 0 0 0 2px rgba(43, 97, 68, 0.4); }
+    .status-pill[data-state="reconnecting"] .status-dot { background: #d4aa5b; }
+    .status-pill[data-state="offline"] .status-dot { background: var(--danger); }
+
+    /* 按钮规范化：硬核排版风格 */
+    .ghost-button, .primary-button, .danger-button, .secondary-button {
+      min-height: 30px;
+      border-radius: var(--radius);
+      padding: 5px 10px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all .1s ease;
+      letter-spacing: .03em;
+    }
+    button:disabled { cursor: not-allowed; opacity: .4; box-shadow: none !important; transform: none !important; }
+    button:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none !important; }
+
+    .ghost-button {
+      color: #fff;
+      border: 2px solid #fff;
+      background: transparent;
+    }
+    .ghost-button:hover:not(:disabled) { background: #fff; color: var(--ink); }
+
+    .icon-button {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.45);
+      color: #fff;
+      background: transparent;
+      cursor: pointer;
+      font-size: 17px;
+      line-height: 1;
+    }
+    .icon-button:hover,
+    .icon-button[aria-pressed="true"] { color: var(--ink); background: #fff; }
+
+    .primary-button {
+      color: #fff;
+      border: 2px solid var(--ink);
+      background: var(--ink);
+      box-shadow: 1px 1px 0 var(--danger);
+    }
+    .primary-button:hover:not(:disabled) {
+      background: var(--danger);
+      border-color: var(--danger);
+      box-shadow: 1px 1px 0 var(--ink);
+    }
+
+    .secondary-button {
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      background: var(--paper-3);
+      box-shadow: 1px 1px 0 var(--ink);
+    }
+    .secondary-button:hover:not(:disabled) { background: var(--paper); }
+
+    .danger-button {
+      color: #fff;
+      border: 2px solid var(--danger);
+      background: var(--danger);
+      box-shadow: 1px 1px 0 var(--ink);
+    }
+    .danger-button:hover:not(:disabled) { background: #8a1313; border-color: #8a1313; }
+
+    main {
+      width: min(1600px, 100%);
+      margin: 0 auto;
+      padding: clamp(10px, 1.5vw, 18px);
+      flex: 1;
+    }
+
+    /* 核心战况横幅：强视觉焦点 */
+    .phase-banner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: clamp(12px, 1.8vw, 20px);
+      border: 2px solid var(--ink);
+      border-left: 6px solid var(--danger);
+      background: var(--paper-2);
+      box-shadow: 2px 2px 0 var(--ink);
+      position: relative;
+      overflow: hidden;
+    }
+    .phase-kicker { font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: var(--danger); }
+    .phase-title { margin: 4px 0 5px; font: 900 clamp(24px, 3vw, 36px)/1.1 var(--font-serif); letter-spacing: .02em; }
+    .phase-copy { margin: 0; max-width: 780px; color: var(--ink-2); font-size: 12px; font-weight: 500; line-height: 1.45; }
+    .admin-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 1; }
+
+    /* 谋位控制台 */
+    .command-deck {
+      margin-top: 12px;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(140px, 220px) minmax(240px, 1fr) auto;
+      align-items: end;
+      gap: 10px;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+    }
+    .field-label { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: var(--ink); letter-spacing: .06em; }
+    .nickname-input {
+      width: 100%;
+      min-height: 36px;
+      padding: 6px 8px;
+      border: 2px solid var(--ink);
+      font-weight: 700;
+      color: var(--ink);
+      background: var(--paper-3);
+      outline: none;
+      transition: all .1s;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .nickname-input:focus { border-color: var(--danger); box-shadow: 3px 3px 0 var(--danger); }
+
+    .speed-picker {
+      display: grid;
+      grid-template-columns: minmax(76px, 94px) minmax(0, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+    .speed-zero-choice { display: grid; }
+    .speed-choices { display: grid; grid-template-columns: repeat(6, minmax(42px, 1fr)); gap: 6px; }
+    .speed-choice {
+      min-height: 42px;
+      border: 2px solid var(--ink);
+      color: var(--ink);
+      background: var(--paper-3);
+      cursor: pointer;
+      position: relative;
+      font-family: var(--font-serif);
+      font-size: 20px;
+      font-weight: 900;
+      box-shadow: 2px 2px 0 rgba(17,17,17,.15);
+      transition: all .1s;
+    }
+    .speed-choice small { display: block; font-family: var(--font-sans); font-size: 8px; font-weight: 800; margin-top: 1px; text-transform: uppercase; letter-spacing: 0; }
+    .speed-choice.active {
+      color: #fff;
+      background: var(--ink);
+      border-color: var(--ink);
+      box-shadow: 2px 2px 0 var(--danger);
+      transform: translate(-2px, -2px);
+    }
+    .speed-zero-choice .speed-choice {
+      min-height: 42px;
+      border-color: var(--danger);
+      box-shadow: 2px 2px 0 rgba(179,27,27,.25);
+    }
+    .speed-zero-choice .speed-choice::before {
+      content: 'SPECIAL';
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      color: var(--danger);
+      font: 700 7px/1 var(--font-sans);
+      letter-spacing: .08em;
+    }
+    .speed-zero-choice .speed-choice.active::before { color: #fff; }
+
+    .submit-button { min-width: 110px; min-height: 36px; font-size: 13px; }
+    .command-hint { grid-column: 1 / -1; margin-top: 2px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+
+    /* 大厅网格区 */
+    .lobby-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .panel {
+      min-height: 120px;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+    }
+    .panel-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      border-bottom: 2px solid var(--ink);
+      background: var(--paper-3);
+    }
+    .panel-title {
+      margin: 0;
+      font: 900 16px/1.2 var(--font-serif);
+      padding-left: 10px;
+      border-left: 5px solid var(--danger);
+    }
+    .panel-meta { font-size: 13px; font-weight: 700; color: var(--ink-2); }
+    .panel-body { padding: 8px 12px 12px; }
+    #mySubmissions, #otherStatus {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 14px;
+      align-content: start;
+    }
+    #mySubmissions > .empty, #otherStatus > .empty { grid-column: 1 / -1; }
+    .empty { padding: 30px 0; color: var(--ink-2); font-size: 14px; font-weight: bold; text-align: center; }
+
+    /* 列表项定制 */
+    .submission-row, .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    .submission-row:last-child, .status-row:last-child { border-bottom: 0; }
+    .row-main { position: relative; min-width: 0; flex: 1; padding-left: 22px; }
+    .status-row > .row-title { min-width: 0; flex: 1; }
+    .row-title {
+      min-width: 0;
+      font-size: clamp(12px, 1.3vw, 14px);
+      font-weight: 800;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .row-main::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 5px;
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--ink);
+      background: var(--dot, #e6a0a5);
+      transform: translateY(-50%) rotate(45deg);
+    }
+    .row-sub { margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-2); }
+    .mini-delete {
+      width: 32px;
+      height: 32px;
+      border: 2px solid var(--ink);
+      color: var(--ink);
+      background: var(--paper-3);
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all .1s;
+    }
+    .mini-delete:hover:not(:disabled) { color: #fff; background: var(--danger); border-color: var(--danger); box-shadow: 2px 2px 0 var(--ink); }
+
+    /* 结果展示区 */
+    .results-section { margin-top: 16px; }
+    .results-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .results-title { margin: 0; font: 900 22px/1.2 var(--font-serif); border-left: 4px solid var(--danger); padding-left: 8px; }
+    .results-meta { margin-top: 4px; color: var(--ink-2); font-size: 11px; font-weight: 700; margin-left: 12px; }
+    .toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .board-scroll {
+      overflow-x: hidden;
+      padding: 0 0 16px;
+      scrollbar-gutter: stable;
+    }
+
+    /* 谋位跑道矩阵：厚重规则书表格感 */
+    .velocity-board {
+      width: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(var(--lane-count, 6), minmax(0, 1fr));
+      gap: 2px; /* 栏目间粗线分割 */
+      background: var(--ink);
+      border: 2px solid var(--ink);
+      box-shadow: var(--shadow);
+    }
+
+    .lane {
+      min-width: 0;
+      min-height: 360px;
+      display: flex;
+      flex-direction: column;
+      background: var(--paper-2);
+      position: relative;
+    }
+    .lane.drag-over,
+    .lane.move-target { background: #e0d7c6; }
+    .lane.move-target { outline: 2px dashed var(--danger); outline-offset: -4px; cursor: pointer; }
+
+    .lane-head {
+      min-height: 130px;
+      position: relative;
+      padding: 12px 10px;
+      border-bottom: 2px solid var(--ink);
+      background: var(--paper-3);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+    }
+    /* 跑道大字背景水印 */
+    .lane-kanji {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: var(--font-serif);
+      font-size: clamp(40px, 6vw, 80px);
+      font-weight: 900;
+      color: rgba(17, 17, 17, 0.04);
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .lane-en, .lane-zh, .lane-mark { position: relative; z-index: 1; min-width: 0; text-align: center; }
+    .lane-en { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-size: 12px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+    .lane-zh { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger); font-family: var(--font-serif); font-size: 12px; font-weight: 900; letter-spacing: .16em; margin-top: 3px; }
+    .lane-mark {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 8px;
+      width: 100%;
+    }
+    .lane-number { font: 900 42px/.8 var(--font-serif); color: var(--ink); }
+
+    .pips { width: 44px; height: 44px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 3px; align-content: center; transform: rotate(45deg); }
+    .pip { width: 8px; height: 8px; background: var(--danger); align-self: center; justify-self: center; }
+
+    /* 0 与 7 对应规则表两端的特殊谋位，用暗色表头与普通谋位拉开层级。 */
+    .lane[data-speed="0"] .lane-head,
+    .lane[data-speed="7"] .lane-head {
+      color: #fff;
+      background: var(--ink);
+    }
+    .lane[data-speed="0"] .lane-zh,
+    .lane[data-speed="7"] .lane-zh { color: var(--paper); }
+    .lane[data-speed="0"] .lane-number,
+    .lane[data-speed="7"] .lane-number { color: #fff; }
+    .lane[data-speed="0"] .lane-kanji,
+    .lane[data-speed="7"] .lane-kanji { color: rgba(255,255,255,.08); }
+    .lane[data-speed="0"] .pip,
+    .lane[data-speed="7"] .pip { background: #fff; }
+
+    .lane-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; position: relative; overflow: hidden; }
+    /* 谋位阴文直接作为 DOM 字符绘制，避免伪元素/缓存造成旧的一二三四五六残留。 */
+    .lane-watermark {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      z-index: 0;
+      transform: translate(-50%, -50%) scaleY(1.08);
+      transform-origin: center;
+      font-family: "STXingkai", "华文行楷", "FZShuTi", "方正舒体", "STKaiti", "华文楷体", "Kaiti SC", "KaiTi", "楷体", cursive;
+      font-size: clamp(64px, 8vw, 126px);
+      font-weight: 900;
+      font-style: normal;
+      line-height: .92;
+      letter-spacing: .02em;
+      color: rgba(17, 17, 17, 0.075);
+      white-space: nowrap;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      text-shadow:
+        1px 0 0 rgba(17,17,17,.018),
+        -1px 1px 0 rgba(17,17,17,.014),
+        0 -1px 0 rgba(17,17,17,.012);
+      filter: saturate(.75) contrast(1.08);
+    }
+    .lane[data-speed="7"] .lane-watermark { letter-spacing: .12em; }
+    .lane-body > :not(.lane-watermark) { position: relative; z-index: 1; }
+    .lane-body.drag-over,
+    .lane-body.move-target { background: #e0d7c6; }
+    .lane-body.move-target { outline: 2px dashed var(--danger); outline-offset: -4px; cursor: pointer; }
+    .lane-empty { margin: auto; color: var(--ink-2); font-size: 13px; font-weight: bold; text-align: center; padding: 40px 12px; }
+
+    /* 每个谋位底部自带一块大失败区：只需切分底部一块，并用阴文提示。 */
+    .lane-fumble {
+      position: relative;
+      min-height: 88px;
+      padding: 8px;
+      border-top: 2px solid var(--danger);
+      background:
+        linear-gradient(rgba(179,27,27,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(179,27,27,.045) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(179,27,27,.08), rgba(179,27,27,.02));
+      background-size: 18px 18px, 18px 18px, 100% 100%;
+      overflow: hidden;
+    }
+    .lane-fumble::before {
+      content: '大失败';
+      position: absolute;
+      inset: 50% auto auto 50%;
+      transform: translate(-50%, -50%);
+      font: 900 30px/1 var(--font-serif);
+      letter-spacing: .22em;
+      color: rgba(179,27,27,.08);
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .lane-fumble.drag-over,
+    .lane-fumble.move-target { background-color: #ead6d0; }
+    .lane-fumble.move-target {
+      outline: 2px dashed var(--danger);
+      outline-offset: -4px;
+      cursor: pointer;
+    }
+    .lane-fumble-label {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 6px;
+      color: var(--danger);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .14em;
+      font-family: var(--font-serif);
+    }
+    .lane-fumble-body {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 48px;
+    }
+    .lane-fumble-empty {
+      margin: auto;
+      padding: 10px 6px;
+      color: rgba(17,17,17,.6);
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    /* 角色谋位块：实体卡牌感 */
+    .token {
+      position: relative;
+      display: grid;
+      grid-template-columns: 12px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      padding: 0 10px 0 0;
+      border: 2px solid var(--ink);
+      background: var(--paper-3);
+      box-shadow: 2px 2px 0 var(--ink);
+      cursor: grab;
+      user-select: none;
+      transition: transform .1s;
+    }
+    .token:active { cursor: grabbing; transform: translate(1px, 1px); box-shadow: 2px 2px 0 var(--ink); }
+    .token.is-selected { border-color: var(--danger); box-shadow: 3px 3px 0 var(--danger); outline: 2px solid var(--danger); outline-offset: -4px; }
+    .token-accent {
+      width: 12px;
+      align-self: stretch;
+      background: var(--accent);
+      border-right: 2px solid var(--ink);
+    }
+    .token-main { min-width: 0; padding: 6px 0; }
+    .token-name {
+      font-size: clamp(11px, 1.4vw, 14px);
+      font-weight: 900;
+      line-height: 1.35;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      color: var(--ink);
+    }
+    .token-delete {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      z-index: 2;
+      width: 22px;
+      height: 22px;
+      border: 1px solid transparent;
+      color: var(--ink-2);
+      background: transparent;
+      font-weight: 900;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all .1s;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .token:hover .token-delete,
+    .token:focus-within .token-delete,
+    .token.show-actions .token-delete {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .token-delete:hover:not(:disabled) { background: var(--danger); color: #fff; border-color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+
+    /* 竖排模式：8 个谋位改为规则书式单列卡片，避免窄 iframe 出现过密的八栏表格。 */
+    body.is-vertical-layout .board-scroll { overflow-x: visible; }
+    body.is-vertical-layout .velocity-board {
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+    }
+    body.is-vertical-layout .lane {
+      min-height: 0;
+      border: 2px solid var(--ink);
+      box-shadow: 2px 2px 0 var(--ink);
+    }
+    body.is-vertical-layout .lane-head {
+      min-height: 58px;
+      padding: 7px 9px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "en mark"
+        "zh mark";
+      column-gap: 10px;
+      row-gap: 1px;
+      align-items: center;
+    }
+    body.is-vertical-layout .lane-en {
+      grid-area: en;
+      align-self: end;
+      text-align: left;
+      font-size: 11px;
+    }
+    body.is-vertical-layout .lane-zh {
+      grid-area: zh;
+      align-self: start;
+      margin-top: 0;
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: .08em;
+    }
+    body.is-vertical-layout .lane-mark {
+      grid-area: mark;
+      width: auto;
+      margin: 0;
+      gap: 5px;
+    }
+    body.is-vertical-layout .lane-kanji {
+      left: 26px;
+      transform: translate(0, -50%);
+      font-size: 54px;
+    }
+    body.is-vertical-layout .lane-number { font-size: 30px; }
+    body.is-vertical-layout .pips { width: 30px; height: 30px; gap: 2px; }
+    body.is-vertical-layout .pip { width: 6px; height: 6px; }
+    body.is-vertical-layout .lane-body {
+      min-height: 54px;
+      padding: 7px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-content: start;
+      gap: 6px;
+    }
+    body.is-vertical-layout .lane-watermark { font-size: 72px; }
+    body.is-vertical-layout .lane-empty { grid-column: 1 / -1; padding: 12px; }
+    body.is-vertical-layout .lane-fumble {
+      min-height: 64px;
+      padding: 7px;
+    }
+    body.is-vertical-layout .lane-fumble::before {
+      font-size: 28px;
+      letter-spacing: .18em;
+    }
+    body.is-vertical-layout .lane-fumble-label {
+      margin-bottom: 5px;
+      font-size: 10px;
+    }
+    body.is-vertical-layout .lane-fumble-body {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      min-height: 36px;
+    }
+    body.is-vertical-layout .lane-fumble-empty { grid-column: 1 / -1; padding: 10px 6px; }
+
+    body.is-compact-layout:not(.is-vertical-layout) .lane-head { min-height: 104px; padding: 8px 5px; }
+    body.is-compact-layout:not(.is-vertical-layout) .lane-en,
+    body.is-compact-layout:not(.is-vertical-layout) .lane-zh { font-size: 10px; letter-spacing: .02em; }
+    body.is-compact-layout:not(.is-vertical-layout) .lane-mark { gap: 3px; margin-top: 4px; }
+    body.is-compact-layout:not(.is-vertical-layout) .lane-number { font-size: 34px; }
+    body.is-compact-layout:not(.is-vertical-layout) .pips { width: 34px; height: 34px; gap: 2px; }
+    body.is-compact-layout:not(.is-vertical-layout) .pip { width: 6px; height: 6px; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .lane-head { min-height: 82px; padding: 4px 2px; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .lane-en,
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .lane-zh { font-size: 8px; letter-spacing: 0; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .lane-mark { gap: 1px; margin-top: 2px; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .lane-number { font-size: 24px; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .pips { width: 24px; height: 24px; gap: 1px; }
+    body.is-ultra-compact-layout:not(.is-vertical-layout) .pip { width: 4px; height: 4px; }
+
+    /* 浮动提示组件 */
+    .toast-stack {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: min(380px, calc(100vw - 48px));
+      pointer-events: none;
+    }
+    .toast {
+      padding: 14px 16px;
+      border: 2px solid var(--ink);
+      color: #fff;
+      background: var(--ink);
+      box-shadow: 4px 4px 0 var(--danger);
+      font-size: 14px;
+      font-weight: 800;
+      animation: toast-in .2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+    .toast.error { background: var(--danger); box-shadow: 4px 4px 0 var(--ink); }
+    @keyframes toast-in { from { transform: translateX(100%) skewX(-10deg); opacity: 0; } to { transform: translateX(0) skewX(0); opacity: 1; } }
+
+    /* 对话框：规则书硬派风格 */
+    dialog {
+      width: min(500px, calc(100vw - 40px));
+      padding: 0;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+      box-shadow: 8px 8px 0 var(--ink);
+    }
+    dialog::backdrop { background: rgba(17, 17, 17, 0.7); backdrop-filter: blur(4px); }
+    .dialog-head { padding: 24px 28px 16px; border-bottom: 2px solid var(--ink); background: var(--paper-3); }
+    .dialog-title { margin: 0; font: 900 28px/1.2 var(--font-serif); border-left: 6px solid var(--danger); padding-left: 12px; }
+    .dialog-copy { margin: 12px 0 0; color: var(--ink-2); font-size: 13px; font-weight: 600; line-height: 1.7; }
+    .dialog-body { padding: 20px 28px 10px; display: grid; gap: 14px; }
+    .dialog-body input {
+      width: 100%; min-height: 48px; padding: 10px 14px;
+      border: 2px solid var(--ink); font-weight: 700; background: var(--paper-3);
+    }
+    .dialog-body input:focus { border-color: var(--danger); box-shadow: 3px 3px 0 var(--danger); outline: none; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 28px 24px; }
+
+    .security-note {
+      margin: 0; padding: 12px 14px;
+      border: 2px dashed var(--danger); background: transparent;
+      color: var(--danger); font-size: 12px; font-weight: 700; line-height: 1.6;
+    }
+
+    /* 致命错误页 */
+    .fatal {
+      margin: 40px auto;
+      max-width: 780px;
+      padding: 24px;
+      border: 4px solid var(--danger);
+      background: var(--paper-3);
+      box-shadow: 6px 6px 0 var(--ink);
+      color: var(--danger);
+    }
+    .fatal strong { font-size: 24px; font-family: var(--font-serif); }
+    .fatal pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-sans); font-weight: bold; margin-top: 16px; color: var(--ink); }
+
+    /* 嵌入诊断：连接失败时不再只能依赖 DevTools */
+    .diagnostics {
+      margin-top: 12px;
+      border: 2px solid var(--ink);
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+    }
+    .diagnostics summary {
+      cursor: pointer;
+      padding: 8px 12px;
+      color: #fff;
+      background: var(--ink);
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+    .diagnostics-body { padding: 8px 12px 12px; }
+    .diagnostics-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 10px; }
+    .diagnostics-log {
+      min-height: 120px;
+      max-height: 300px;
+      margin: 0;
+      padding: 12px;
+      overflow: auto;
+      border: 2px solid var(--line);
+      color: var(--ink);
+      background: var(--paper-3);
+      font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .diagnostics-note { margin: 10px 0 0; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+
+    @media (max-width: 980px) {
+      .masthead-inner { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+      .phase-banner { grid-template-columns: 1fr; }
+      .admin-controls { justify-content: flex-start; }
+      .command-deck { grid-template-columns: 1fr; align-items: stretch; }
+      .command-hint { grid-column: 1; }
+    }
+
+    @media (max-width: 720px) {
+      main { padding: 10px; }
+      .lobby-grid { grid-template-columns: 1fr; }
+      .speed-picker { grid-template-columns: minmax(70px, 84px) minmax(0, 1fr); }
+      .speed-choices { grid-template-columns: repeat(3, 1fr); }
+      .lane-fumble-body { gap: 6px; }
+    }
+
+    @media (max-width: 420px) {
+      body.is-vertical-layout .lane-body,
+      body.is-vertical-layout .lane-fumble-body { grid-template-columns: minmax(0, 1fr); }
+      body.is-vertical-layout .lane-empty,
+      body.is-vertical-layout .lane-fumble-empty { grid-column: 1; }
+      .speed-picker { grid-template-columns: 68px minmax(0, 1fr); gap: 6px; }
+      .speed-choice { min-height: 40px; font-size: 18px; }
+    }
+
+    @media (max-width: 380px) {
+      #mySubmissions, #otherStatus { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="masthead-inner">
+        <div class="brand">
+          <div class="brand-kicker">VELOCITY SYSTEM</div>
+          <div class="brand-sub">SHINOBIGAMI · PLOT BOARD</div>
+        </div>
+        <div class="top-actions">
+          <span class="status-pill" id="connectionPill" data-state="offline"><span class="status-dot"></span><span id="connectionText">未连接</span></span>
+          <button class="icon-button" id="debugButton" type="button" aria-label="打开调试模式" aria-pressed="false" title="调试模式">⚙</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="appMain">
+      <section class="phase-banner" id="phaseBanner">
+        <div>
+          <div class="phase-kicker" id="phaseKicker">READY</div>
+          <h1 class="phase-title" id="phaseTitle">等待开始谋位</h1>
+          <p class="phase-copy" id="phaseCopy">World 管理员开始后，每位玩家可提交一个或多个谋位；其他玩家只会看到“已提交”状态，不会看到具体结果。</p>
+        </div>
+        <div class="admin-controls" id="adminControls" hidden>
+          <button class="primary-button" id="startButton" type="button">开始谋位</button>
+          <button class="primary-button" id="revealButton" type="button" hidden>宣布结果</button>
+          <button class="danger-button" id="resetButton" type="button" hidden>清空并开启新一轮</button>
+        </div>
+      </section>
+
+      <details class="diagnostics" id="diagnosticsPanel" hidden>
+        <summary>连接诊断日志</summary>
+        <div class="diagnostics-body">
+          <div class="diagnostics-toolbar">
+            <button class="secondary-button" id="copyDiagnosticsButton" type="button">复制日志</button>
+            <button class="secondary-button" id="clearDiagnosticsButton" type="button">清空</button>
+          </div>
+          <pre class="diagnostics-log" id="diagnosticsLog">正在启动诊断…</pre>
+          <p class="diagnostics-note">日志不会包含 token 或敏感凭据。重点检查 `injected`、`hostOrigin`、`sdkUrl`、`handshake`、`context`、`storage`。</p>
+        </div>
+      </details>
+
+      <section class="command-deck" aria-label="谋位提交">
+        <label>
+          <span class="field-label">谋位昵称</span>
+          <input class="nickname-input" id="nicknameInput" type="text" maxlength="24" autocomplete="off" placeholder="默认读取当前频道角色">
+        </label>
+
+        <div>
+          <span class="field-label">选择谋位（可多选）</span>
+          <div class="speed-picker">
+            <div class="speed-zero-choice" id="speedZeroChoice" role="group" aria-label="特殊谋位 0"></div>
+            <div class="speed-choices" id="speedChoices" role="group" aria-label="谋位 1 到 6"></div>
+          </div>
+        </div>
+
+        <button class="primary-button submit-button" id="submitButton" type="button">提交谋位</button>
+        <div class="command-hint" id="commandHint">等待连接 SealChat…</div>
+      </section>
+
+      <section class="lobby-grid" id="lobbyGrid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">我的提交</h2>
+            <span class="panel-meta" id="mySubmissionMeta">0 条</span>
+          </div>
+          <div class="panel-body" id="mySubmissions"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">其他提交者</h2>
+          </div>
+          <div class="panel-body" id="otherStatus"></div>
+        </article>
+      </section>
+
+      <section class="results-section" id="resultsSection" hidden>
+        <div class="results-toolbar">
+          <div>
+            <h2 class="results-title">谋位结果</h2>
+            <div class="results-meta" id="resultsMeta">—</div>
+          </div>
+          <div class="toolbar-actions">
+            <button class="secondary-button" id="specialLanesButton" type="button" aria-pressed="false">显示 0 / 7</button>
+            <button class="secondary-button" id="layoutButton" type="button" aria-pressed="false">竖排显示</button>
+            <button class="secondary-button" id="exportButton" type="button">导出 JSON</button>
+          </div>
+        </div>
+        <div class="board-scroll">
+          <div class="velocity-board" id="velocityBoard" aria-label="公开谋位结果"></div>
+        </div>
+      </section>
+
+      <section class="fatal" id="fatalBox" hidden>
+        <strong>无法启动谋位面板</strong>
+        <pre id="fatalText"></pre>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <dialog id="resetDialog" aria-labelledby="resetDialogTitle">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="resetDialogTitle">开启新一轮</h2>
+      <p class="dialog-copy">确定清除当前全部谋位，并立即开启下一轮吗？此操作不可撤销。</p>
+    </div>
+    <div class="dialog-body">
+      <p class="security-note">当前回合的所有提交都会被清除，其他玩家也会立即看到新回合。</p>
+    </div>
+    <form class="dialog-actions" method="dialog">
+      <button class="secondary-button" value="cancel" type="submit">取消</button>
+      <button class="danger-button" value="confirm" type="submit">清空并开启</button>
+    </form>
+  </dialog>
+
+  <script>
+    (() => {
+      'use strict'
+
+      const STORAGE_KEY = 'shinobigami:plot-board:v1'
+      // 每个角色独立 actorKey；每条 entry 保留提交时昵称，避免覆盖。
+      const BOARD_SCHEMA = 4
+      const MAX_MUTATION_RETRIES = 5
+      const MAX_ENTRIES_PER_USER = 20
+      const MAX_TOTAL_ENTRIES = 120
+
+      const SPEEDS = [
+        { id: 0, en: 'Mundain',     zh: '静止的时间', brush: '零',   watermark: '零', submit: true },
+        { id: 1, en: 'Ghost Walk',  zh: '幽灵步',     brush: '幽步', watermark: '壹', submit: true },
+        { id: 2, en: 'Shadow Run',  zh: '影走',       brush: '影走', watermark: '贰', submit: true },
+        { id: 3, en: 'Neuro Speed', zh: '思考速度',   brush: '思速', watermark: '叁', submit: true },
+        { id: 4, en: 'Sonic Speed', zh: '音速',       brush: '音速', watermark: '肆', submit: true },
+        { id: 5, en: 'Bullet Speed',zh: '弹速',       brush: '弹速', watermark: '伍', submit: true },
+        { id: 6, en: 'Light Speed', zh: '光速',       brush: '光速', watermark: '陆', submit: true },
+        { id: 7, en: 'F.T.L.',      zh: '超光速',     brush: '死地', watermark: '死地', submit: false }
+      ]
+      const SUBMIT_SPEEDS = SPEEDS.filter(speed => speed.submit)
+      const FAILURE_POSITION = 'failure'
+
+      const $ = selector => document.querySelector(selector)
+      const ui = {
+        connectionPill: $('#connectionPill'),
+        connectionText: $('#connectionText'),
+        debugButton: $('#debugButton'),
+        diagnosticsPanel: $('#diagnosticsPanel'),
+        phaseKicker: $('#phaseKicker'),
+        phaseTitle: $('#phaseTitle'),
+        phaseCopy: $('#phaseCopy'),
+        adminControls: $('#adminControls'),
+        startButton: $('#startButton'),
+        revealButton: $('#revealButton'),
+        resetButton: $('#resetButton'),
+        nicknameInput: $('#nicknameInput'),
+        speedZeroChoice: $('#speedZeroChoice'),
+        speedChoices: $('#speedChoices'),
+        submitButton: $('#submitButton'),
+        commandHint: $('#commandHint'),
+        lobbyGrid: $('#lobbyGrid'),
+        mySubmissionMeta: $('#mySubmissionMeta'),
+        mySubmissions: $('#mySubmissions'),
+        otherStatus: $('#otherStatus'),
+        resultsSection: $('#resultsSection'),
+        resultsMeta: $('#resultsMeta'),
+        velocityBoard: $('#velocityBoard'),
+        specialLanesButton: $('#specialLanesButton'),
+        layoutButton: $('#layoutButton'),
+        exportButton: $('#exportButton'),
+        fatalBox: $('#fatalBox'),
+        fatalText: $('#fatalText'),
+        diagnosticsLog: $('#diagnosticsLog'),
+        copyDiagnosticsButton: $('#copyDiagnosticsButton'),
+        clearDiagnosticsButton: $('#clearDiagnosticsButton'),
+        toastStack: $('#toastStack'),
+        resetDialog: $('#resetDialog')
+      }
+
+      let client = null
+      let connecting = null
+      let boardDoc = null
+      let embedContext = null
+      let actorId = null
+      let nicknameDirty = false
+      let selectedChoices = new Set()
+      let selectedPlacement = null
+      let reconnectTimer = 0
+      let reconnectDelay = 1000
+      let connectionGeneration = 0
+      let storageRefreshTimer = 0
+      let unsubscribe = []
+      let manuallyClosed = false
+      let diagnostics = []
+      let debugMode = false
+      let layoutOverride = null
+      let showSpecialLanes = false
+      let measuredEmbedWidth = 0
+      let resetConfirmationPromise = null
+
+      function errorSummary(error) {
+        if (!error) return 'unknown error'
+        const code = error.code ? `${error.code}: ` : ''
+        return `${code}${error.message || String(error)}`
+      }
+
+      function logEvent(event, detail = '') {
+        const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+        const line = `[${stamp}] ${event}${detail ? ` · ${detail}` : ''}`
+        diagnostics.push(line)
+        if (diagnostics.length > 200) diagnostics = diagnostics.slice(-200)
+        if (ui.diagnosticsLog) {
+          ui.diagnosticsLog.textContent = diagnostics.join('\n')
+          ui.diagnosticsLog.scrollTop = ui.diagnosticsLog.scrollHeight
+        }
+        try { console.info('[Shinobigami Embed]', line) } catch {}
+      }
+
+      function setDebugMode(enabled) {
+        debugMode = Boolean(enabled)
+        ui.diagnosticsPanel.hidden = !debugMode
+        ui.diagnosticsPanel.open = debugMode
+        ui.debugButton.setAttribute('aria-pressed', debugMode ? 'true' : 'false')
+        ui.debugButton.setAttribute('aria-label', debugMode ? '关闭调试模式' : '打开调试模式')
+        ui.debugButton.title = debugMode ? '关闭调试模式' : '打开调试模式'
+      }
+
+      function updateLayoutButton(isVertical) {
+        if (!ui.layoutButton) return
+        ui.layoutButton.textContent = isVertical ? '横排显示' : '竖排显示'
+        ui.layoutButton.setAttribute('aria-pressed', isVertical ? 'true' : 'false')
+        ui.layoutButton.setAttribute('aria-label', isVertical ? '切换为横排显示' : '切换为竖排显示')
+        ui.layoutButton.title = isVertical ? '切换为横排显示' : '切换为竖排显示'
+      }
+
+      function updatePlacementSelection() {
+        const selection = selectedPlacement
+        document.querySelectorAll('.token').forEach(token => {
+          const isSelected = Boolean(selection &&
+            token.dataset.actorKey === selection.actorKey &&
+            token.dataset.entryId === selection.entryId &&
+            token.dataset.sourcePosition === String(selection.fromPosition) &&
+            (token.dataset.failureId || '') === (selection.failureId || '') &&
+            (token.dataset.failureSpeed || '') === (selection.failureSpeed == null ? '' : String(selection.failureSpeed)))
+          token.classList.toggle('is-selected', isSelected)
+          token.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
+        })
+        ui.velocityBoard.querySelectorAll('.lane-main-drop').forEach(zone => {
+          const speed = String(zone.dataset.speed || '')
+          const isSameMain = Boolean(selection && selection.fromPosition !== FAILURE_POSITION && speed === String(selection.fromPosition))
+          zone.classList.toggle('move-target', Boolean(selection && !isSameMain))
+        })
+        ui.velocityBoard.querySelectorAll('.lane-fumble-drop').forEach(zone => {
+          const speed = String(zone.dataset.speed || '')
+          const isSameFailure = Boolean(selection && selection.fromPosition === FAILURE_POSITION && speed === String(selection.failureSpeed ?? ''))
+          zone.classList.toggle('move-target', Boolean(selection && !isSameFailure))
+        })
+      }
+
+      function updateResultLayout(width) {
+        const measuredWidth = Number(width)
+        const fallbackWidth = window.innerWidth || document.documentElement.clientWidth || 0
+        const actualWidth = Number.isFinite(measuredWidth) && measuredWidth > 0 ? measuredWidth : fallbackWidth
+        if (actualWidth > 0) measuredEmbedWidth = actualWidth
+        const autoVertical = actualWidth > 0 && actualWidth <= 300
+        const nextVertical = layoutOverride == null ? autoVertical : layoutOverride
+        const wasVertical = document.body.classList.contains('is-vertical-layout')
+        document.body.classList.toggle('is-compact-layout', actualWidth > 0 && actualWidth <= 900)
+        document.body.classList.toggle('is-ultra-compact-layout', actualWidth > 0 && actualWidth <= 480)
+        document.body.classList.toggle('is-vertical-layout', nextVertical)
+        updateLayoutButton(nextVertical)
+        if (wasVertical !== nextVertical && boardDoc && !ui.resultsSection.hidden) renderResults(currentBoard())
+      }
+
+      let layoutObserver = null
+      updateResultLayout()
+      if (typeof ResizeObserver === 'function') {
+        layoutObserver = new ResizeObserver(entries => {
+          updateResultLayout(entries[0]?.contentRect?.width)
+        })
+        layoutObserver.observe(document.documentElement)
+      } else {
+        window.addEventListener('resize', () => updateResultLayout())
+      }
+
+      window.addEventListener('error', event => {
+        const source = event?.filename ? `; source=${event.filename}:${event.lineno || 0}:${event.colno || 0}` : ''
+        logEvent('runtime-error', `${event?.message || '未知脚本错误'}${source}`)
+      })
+      window.addEventListener('unhandledrejection', event => {
+        logEvent('unhandled-rejection', errorSummary(event?.reason))
+      })
+
+      function inferAncestorOrigin() {
+        try {
+          const origins = location.ancestorOrigins
+          if (origins && origins.length) return origins[origins.length - 1]
+        } catch {}
+        try {
+          if (window.parent !== window) return window.parent.location.origin
+        } catch {}
+        return ''
+      }
+
+      const query = new URLSearchParams(location.search)
+      const injectedConfig = window.__SEALCHAT_EMBED_CONFIG__
+      const embedConfig = injectedConfig && typeof injectedConfig === 'object' ? injectedConfig : {}
+      const ancestorOrigin = inferAncestorOrigin()
+      const configSource = query.has('hostOrigin') || query.has('sdkUrl')
+        ? 'query'
+        : injectedConfig
+          ? 'window.__SEALCHAT_EMBED_CONFIG__'
+          : ancestorOrigin
+            ? 'ancestor-origin-fallback'
+            : 'none'
+      const rawHost = query.get('hostOrigin') || embedConfig.hostOrigin || ancestorOrigin || ''
+      const HOST_ORIGIN = (() => {
+        try {
+          if (!rawHost) return ''
+          const url = new URL(rawHost)
+          if (!['http:', 'https:'].includes(url.protocol)) return ''
+          return url.origin
+        } catch { return '' }
+      })()
+      const inferredSdkUrl = (() => {
+        try {
+          // Builtin assets live below /api/v1/channel-embed-tools. Derive the
+          // configured web prefix before that marker; a relative ../ URL stays
+          // below the asset route and cannot reach the SDK endpoint.
+          const marker = '/api/v1/channel-embed-tools/'
+          const markerIndex = location.pathname.indexOf(marker)
+          const webPrefix = markerIndex >= 0 ? location.pathname.slice(0, markerIndex) : ''
+          return `${HOST_ORIGIN || location.origin}${webPrefix}/api/v1/channel-embed-sdk.js`
+        } catch {}
+        return ''
+      })()
+      const SDK_URL = query.get('sdkUrl') || embedConfig.sdkUrl || inferredSdkUrl
+      const RETRYABLE_CODES = new Set(['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'])
+
+      logEvent('boot', `iframe=${window.parent !== window}; origin=${location.origin}; configSource=${configSource}`)
+      logEvent('config', `injected=${Boolean(injectedConfig)}; keys=${Object.keys(embedConfig).join(',') || '-'}; ancestorOrigin=${ancestorOrigin || '(empty)'}; hostOrigin=${HOST_ORIGIN || '(empty)'}; sdkUrl=${SDK_URL || '(empty)'}`)
+      if (injectedConfig && (typeof injectedConfig !== 'object' || Array.isArray(injectedConfig))) logEvent('config-error', 'window.__SEALCHAT_EMBED_CONFIG__ 不是普通对象')
+      if (rawHost && !HOST_ORIGIN) logEvent('config-error', 'hostOrigin 不是有效的 http/https origin')
+      window.setTimeout(() => {
+        if (!client && !connecting) logEvent('connect-not-started', '3 秒内没有进入 connect()；请检查 runtime-error 或 boot-stage-error')
+      }, 3000)
+
+      window.addEventListener('message', event => {
+        const type = event?.data?.type
+        if (!['sealchat.embed.handshake', 'sealchat.embed.handshake.ack', 'sealchat.embed.event'].includes(type)) return
+        const code = event.data?.error?.code ? `; code=${event.data.error.code}` : ''
+        logEvent('postMessage', `${type}; origin=${event.origin}; ok=${event.data?.ok == null ? '-' : event.data.ok}${code}`)
+      })
+      logEvent('boot-stage', '诊断监听器已安装')
+
+      function freshBoard() {
+        return {
+          schema: BOARD_SCHEMA,
+          round: 1,
+          phase: 'idle',
+          submissions: {},
+          startedAt: null,
+          revealedAt: null,
+          updatedAt: Date.now()
+        }
+      }
+
+      function normalizeSubmissionActor(key, actor) {
+        if (!actor || typeof actor !== 'object') return null
+        const actorNickname = String(actor.nickname || actor.memberName || '未命名忍者').slice(0, 24)
+        const entries = Array.isArray(actor.entries) ? actor.entries.map(entry => {
+          const choices = sanitizeChoices(entry?.choices)
+          return {
+            id: String(entry?.id || makeEntryId()),
+            choices,
+            failures: sanitizeFailures(entry?.failures, choices[0] ?? 0),
+            nickname: String(entry?.nickname || actorNickname).slice(0, 24),
+            createdAt: Number(entry?.createdAt) || now(),
+            updatedAt: Number(entry?.updatedAt) || Number(entry?.createdAt) || now()
+          }
+        }).filter(entry => entry.choices.length || entry.failures.length) : []
+        if (!entries.length) return null
+        return {
+          actorKey: String(actor.actorKey || key),
+          userId: String(actor.userId || key),
+          characterId: actor.characterId == null ? null : String(actor.characterId),
+          memberName: String(actor.memberName || ''),
+          nickname: actorNickname,
+          color: safeColor(actor.color),
+          avatar: actor.avatar || null,
+          entries
+        }
+      }
+
+      function normalizeBoard(value) {
+        if (!value || typeof value !== 'object' || ![1, 2, 3, BOARD_SCHEMA].includes(value.schema)) return freshBoard()
+        const submissions = {}
+        Object.entries(value.submissions && typeof value.submissions === 'object' ? value.submissions : {}).forEach(([key, actor]) => {
+          const normalized = normalizeSubmissionActor(key, actor)
+          if (normalized) submissions[normalized.actorKey] = normalized
+        })
+        return {
+          schema: BOARD_SCHEMA,
+          round: Number.isFinite(value.round) && value.round > 0 ? Math.floor(value.round) : 1,
+          phase: ['idle', 'collecting', 'revealed'].includes(value.phase) ? value.phase : 'idle',
+          submissions,
+          startedAt: value.startedAt || null,
+          revealedAt: value.revealedAt || null,
+          updatedAt: value.updatedAt || Date.now()
+        }
+      }
+
+      function currentBoard() { return normalizeBoard(boardDoc?.value) }
+      function clone(value) { return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)) }
+      function now() { return Date.now() }
+
+      function formatTime(ms) {
+        if (!ms) return '—'
+        try { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(ms)) }
+        catch { return new Date(ms).toLocaleTimeString() }
+      }
+
+      function safeColor(value) {
+        if (typeof value !== 'string' || !value.trim()) return '#6b665f'
+        return CSS.supports('color', value.trim()) ? value.trim() : '#6b665f'
+      }
+
+      function getDefaultNickname() {
+        return embedContext?.currentCharacter?.displayName
+          || embedContext?.currentMember?.displayName
+          || embedContext?.currentUser?.displayName
+          || ''
+      }
+
+      function getActorColor() {
+        return safeColor(embedContext?.currentCharacter?.color || '#6b665f')
+      }
+
+      function getActorAvatar() {
+        return embedContext?.currentCharacter?.avatar || embedContext?.currentMember?.avatar || embedContext?.currentUser?.avatar || null
+      }
+
+      function getCurrentUserId() {
+        const id = embedContext?.currentUser?.id || embedContext?.currentMember?.userId || null
+        return id == null ? null : String(id)
+      }
+
+      function getCurrentCharacterId() {
+        const id = embedContext?.currentCharacter?.id || null
+        return id == null ? null : String(id)
+      }
+
+      function getActorKey() {
+        const userId = getCurrentUserId()
+        const characterId = getCurrentCharacterId()
+        if (!userId && !characterId) return null
+        return characterId ? `${userId || 'anonymous'}::character:${characterId}` : String(userId)
+      }
+
+      function isWorldAdmin() {
+        const permissions = embedContext?.permissions
+        return permissions?.isWorldAdmin === true
+          || permissions?.worldRole === 'owner'
+          || permissions?.worldRole === 'admin'
+      }
+
+      function makeEntryId() {
+        return typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      }
+
+      function getCapabilities() { return Array.isArray(embedContext?.capabilities) ? embedContext.capabilities : null }
+      function capabilityAllowed(name) {
+        const caps = getCapabilities()
+        return caps ? caps.includes(name) : true
+      }
+      function canReadStorage() {
+        return capabilityAllowed('storage.read') && embedContext?.permissions?.canReadStorage !== false
+      }
+      function canWriteStorage() {
+        return capabilityAllowed('storage.write') && embedContext?.permissions?.canWriteStorage !== false
+      }
+
+      function toast(message, type = '') {
+        const el = document.createElement('div')
+        el.className = `toast${type ? ` ${type}` : ''}`
+        el.textContent = message
+        ui.toastStack.appendChild(el)
+        window.setTimeout(() => el.remove(), 3200)
+      }
+
+      function confirmResetRound() {
+        if (resetConfirmationPromise) return resetConfirmationPromise
+        const dialog = ui.resetDialog
+        if (!dialog || typeof dialog.showModal !== 'function') return Promise.resolve(false)
+
+        resetConfirmationPromise = new Promise(resolve => {
+          const finish = accepted => {
+            resetConfirmationPromise = null
+            resolve(accepted)
+          }
+          dialog.addEventListener('close', () => finish(dialog.returnValue === 'confirm'), { once: true })
+          try {
+            dialog.showModal()
+          } catch {
+            finish(false)
+          }
+        })
+        return resetConfirmationPromise
+      }
+
+      function showFatal(error) {
+        ui.fatalBox.hidden = false
+        const detail = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error))
+        ui.fatalText.textContent = `${detail}\n\n请确认 iForm 已启用 Embed API，并授予 context.read、storage.read、storage.write。频道 srcdoc 应由宿主注入 window.__SEALCHAT_EMBED_CONFIG__；外部 URL 请通过 ?hostOrigin=https://你的SealChat域名 与 ?sdkUrl=完整SDK地址 指定连接信息。不要依赖 document.referrer。`
+        logEvent('fatal', errorSummary(error))
+      }
+
+      function setConnectionState(state, detail = '') {
+        const normalized = ['connected', 'reconnecting', 'offline'].includes(state) ? state : 'offline'
+        ui.connectionPill.dataset.state = normalized
+        const map = { connected: '已连接', reconnecting: '重连中', offline: '离线' }
+        ui.connectionText.textContent = detail ? `${map[normalized]} · ${detail}` : map[normalized]
+      }
+
+      function scheduleReconnect(error) {
+        if (manuallyClosed || reconnectTimer) return
+        const code = error?.code || ''
+        if (code && !RETRYABLE_CODES.has(code)) {
+          setConnectionState('offline', code)
+          logEvent('reconnect-stop', errorSummary(error))
+          if (code === 'CONFIG_ERROR' || code === 'ORIGIN_DENIED' || code === 'CAPABILITY_DENIED') showFatal(error)
+          return
+        }
+        client = null
+        cleanupSubscriptions()
+        setConnectionState('reconnecting', error?.code || '等待重连')
+        logEvent('reconnect-scheduled', `${errorSummary(error)}; delay=${reconnectDelay}ms`)
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = 0
+          void connect().catch(() => {})
+        }, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+      }
+
+      async function loadSdk() {
+        if (window.SealChatEmbed) {
+          logEvent('sdk', 'window.SealChatEmbed 已存在')
+          return
+        }
+        if (!SDK_URL) {
+          const error = new Error('缺少 sdkUrl；请由宿主注入 Embed 配置或填写 ?sdkUrl=完整SDK地址')
+          error.code = 'CONFIG_ERROR'
+          logEvent('sdk-error', errorSummary(error))
+          throw error
+        }
+        logEvent('sdk-load', SDK_URL)
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = SDK_URL
+          script.async = true
+          script.onload = () => {
+            logEvent('sdk-loaded', window.SealChatEmbed ? 'window.SealChatEmbed 已出现' : '脚本完成但全局对象缺失')
+            resolve()
+          }
+          script.onerror = () => {
+            const error = new Error(`无法加载 SealChat Embed SDK：${SDK_URL}`)
+            logEvent('sdk-error', errorSummary(error))
+            reject(error)
+          }
+          document.head.appendChild(script)
+        })
+        if (!window.SealChatEmbed) {
+          const error = new Error('SealChatEmbed 未出现在 window 上')
+          logEvent('sdk-error', errorSummary(error))
+          throw error
+        }
+      }
+
+      function cleanupSubscriptions() {
+        for (const off of unsubscribe.splice(0)) {
+          try { off?.() } catch {}
+        }
+      }
+
+      async function connect() {
+        if (client) return client
+        if (connecting) return connecting
+
+        manuallyClosed = false
+        setConnectionState('reconnecting')
+        logEvent('connect-start', `targetOrigin=${HOST_ORIGIN || '(SDK default)'}`)
+        connecting = (async () => {
+          await loadSdk()
+          const next = await window.SealChatEmbed.connect({ targetOrigin: HOST_ORIGIN || undefined, timeoutMs: 10000 })
+          client = next
+          reconnectDelay = 1000
+          logEvent('handshake-ok', 'Embed Session 已建立')
+          const generation = ++connectionGeneration
+          cleanupSubscriptions()
+
+          if (next.connection?.onChanged) {
+            unsubscribe.push(next.connection.onChanged(state => {
+              if (generation !== connectionGeneration) return
+              setConnectionState(state.state, state.latencyMs == null ? '' : `${state.latencyMs} ms`)
+              logEvent('connection.changed', `${state.state}${state.latencyMs == null ? '' : `; latency=${state.latencyMs}ms`}`)
+            }))
+          }
+          if (next.context?.onChanged) {
+            unsubscribe.push(next.context.onChanged(ctx => {
+              if (generation !== connectionGeneration) return
+              applyContext(ctx)
+              render()
+              logEvent('context.changed', `capabilities=${Array.isArray(ctx?.capabilities) ? ctx.capabilities.join(',') || '-' : '(unknown)'}`)
+            }))
+          }
+          if (next.storage?.onChanged) {
+            unsubscribe.push(next.storage.onChanged(() => {
+              if (generation !== connectionGeneration) return
+              queueBoardRefresh()
+            }))
+          }
+          if (next.session?.onClosed) {
+            unsubscribe.push(next.session.onClosed(() => {
+              if (generation !== connectionGeneration || manuallyClosed) return
+              logEvent('session.closed', '旧 Embed Session 已失效')
+              scheduleReconnect({ code: 'SESSION_EXPIRED', message: 'Embed session closed' })
+            }))
+          }
+
+          const [ctx, state, conn] = await Promise.all([
+            next.context.get(),
+            next.channel.getState(),
+            next.connection.getState()
+          ])
+          embedContext = ctx
+          applyContext(ctx)
+          setConnectionState(conn.state, conn.latencyMs == null ? '' : `${conn.latencyMs} ms`)
+          logEvent('context', `channel=${state?.id || '(unknown)'}; user=${ctx?.currentUser?.id || '(none)'}; member=${ctx?.currentMember?.id || '(none)'}; capabilities=${Array.isArray(ctx?.capabilities) ? ctx.capabilities.join(',') || '-' : '(unknown)'}`)
+          logEvent('connection', `${conn.state}${conn.latencyMs == null ? '' : `; latency=${conn.latencyMs}ms`}`)
+
+          if (!canReadStorage()) {
+            const error = new Error('当前 iForm 未授予 storage.read，无法读取共享谋位状态。')
+            error.code = 'CAPABILITY_DENIED'
+            throw error
+          }
+          boardDoc = await next.storage.get(STORAGE_KEY)
+          logEvent('storage.get', boardDoc ? `ok; revision=${boardDoc.revision ?? '-'}` : 'ok; empty')
+          ui.fatalBox.hidden = true
+          render()
+          return next
+        })().catch(error => {
+          logEvent('connect-error', errorSummary(error))
+          scheduleReconnect(error)
+          if (error?.code === 'CONFIG_ERROR' || error?.code === 'ORIGIN_DENIED' || error?.code === 'CAPABILITY_DENIED') showFatal(error)
+          throw error
+        }).finally(() => { connecting = null })
+
+        return connecting
+      }
+
+      async function useClient(operation) {
+        try {
+          return await operation(await connect())
+        } catch (error) {
+          const code = error?.code
+          if (RETRYABLE_CODES.has(code)) scheduleReconnect(error)
+          throw error
+        }
+      }
+
+      function applyContext(ctx) {
+        embedContext = ctx || embedContext
+        actorId = getActorKey()
+        if (!nicknameDirty || !ui.nicknameInput.value.trim()) ui.nicknameInput.value = getDefaultNickname()
+      }
+
+      function queueBoardRefresh() {
+        window.clearTimeout(storageRefreshTimer)
+        storageRefreshTimer = window.setTimeout(() => void refreshBoard().catch(() => {}), 90)
+      }
+
+      async function refreshBoard() {
+        logEvent('storage.refresh', '读取共享状态')
+        boardDoc = await useClient(api => api.storage.get(STORAGE_KEY))
+        logEvent('storage.refresh-ok', boardDoc ? `revision=${boardDoc.revision ?? '-'}` : 'empty')
+        render()
+      }
+
+      async function mutateBoard(mutator) {
+        if (!canWriteStorage()) throw new Error('当前 iForm 未授予 storage.write，无法修改谋位状态。')
+
+        for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
+          const current = await useClient(api => api.storage.get(STORAGE_KEY))
+          const draft = clone(normalizeBoard(current?.value))
+          await mutator(draft)
+          draft.updatedAt = now()
+          try {
+            const saved = await useClient(api => api.storage.set(
+              STORAGE_KEY,
+              draft,
+              current ? { ifRevision: current.revision } : undefined
+            ))
+            boardDoc = saved?.value ? saved : await useClient(api => api.storage.get(STORAGE_KEY))
+            render()
+            return boardDoc
+          } catch (error) {
+            if (error?.code === 'REVISION_CONFLICT') continue
+            throw error
+          }
+        }
+        throw new Error('多人同时修改导致冲突，请再次尝试。')
+      }
+
+      function totalEntries(board) {
+        return Object.values(board.submissions).reduce((sum, actor) => sum + (Array.isArray(actor?.entries) ? actor.entries.length : 0), 0)
+      }
+
+      function sanitizeChoices(choices) {
+        return [...new Set((choices || []).map(Number).filter(v => Number.isInteger(v) && v >= 0 && v <= 7))].sort((a, b) => a - b)
+      }
+
+      function sanitizeFailures(failures, fallbackSpeed = 0) {
+        if (!Array.isArray(failures)) return []
+        const normalizedFallback = Number.isInteger(Number(fallbackSpeed)) && Number(fallbackSpeed) >= 0 && Number(fallbackSpeed) <= 7 ? Number(fallbackSpeed) : 0
+        const rows = []
+        const seen = new Set()
+        failures.forEach(value => {
+          const source = value && typeof value === 'object' ? value : { id: value, speed: normalizedFallback }
+          const id = String(source?.id || source?.failureId || '')
+          const speed = Number(source?.speed)
+          const laneSpeed = Number.isInteger(speed) && speed >= 0 && speed <= 7 ? speed : normalizedFallback
+          if (!id) return
+          const key = `${laneSpeed}:${id}`
+          if (seen.has(key)) return
+          seen.add(key)
+          rows.push({ id, speed: laneSpeed })
+        })
+        return rows.sort((a, b) => a.speed - b.speed || String(a.id).localeCompare(String(b.id), 'zh-CN'))
+      }
+
+      function renderSpeedChoices() {
+        ui.speedZeroChoice.textContent = ''
+        ui.speedChoices.textContent = ''
+        for (const speed of SUBMIT_SPEEDS) {
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'speed-choice'
+          button.dataset.speed = String(speed.id)
+          button.setAttribute('aria-pressed', selectedChoices.has(speed.id) ? 'true' : 'false')
+          button.classList.toggle('active', selectedChoices.has(speed.id))
+          button.append(document.createTextNode(String(speed.id)))
+          const small = document.createElement('small')
+          small.textContent = speed.en
+          button.appendChild(small)
+          button.onclick = () => {
+            if (button.disabled) return
+            if (selectedChoices.has(speed.id)) selectedChoices.delete(speed.id)
+            else selectedChoices.add(speed.id)
+            renderSpeedChoices()
+            updateCommandState()
+          }
+          ;(speed.id === 0 ? ui.speedZeroChoice : ui.speedChoices).appendChild(button)
+        }
+        updateCommandState()
+      }
+
+      function updateCommandState() {
+        const board = currentBoard()
+        const canSubmitPhase = board.phase === 'collecting' || board.phase === 'revealed'
+        const writable = canWriteStorage()
+        const identityOk = Boolean(actorId)
+        const enabled = canSubmitPhase && writable && identityOk
+        ui.nicknameInput.disabled = !enabled
+        ui.submitButton.disabled = !enabled || selectedChoices.size === 0 || !ui.nicknameInput.value.trim()
+        ui.speedZeroChoice.querySelectorAll('button').forEach(button => { button.disabled = !enabled })
+        ui.speedChoices.querySelectorAll('button').forEach(button => { button.disabled = !enabled })
+
+        if (!client) ui.commandHint.textContent = '等待连接 SealChat…'
+        else if (!identityOk) ui.commandHint.textContent = '当前用户/成员身份不可用：可查看状态，但不能提交。'
+        else if (!writable) ui.commandHint.textContent = '当前 iForm 没有 storage.write 权限：处于只读状态。'
+        else if (board.phase === 'idle') ui.commandHint.textContent = '等待管理员点击“开始谋位”。'
+        else if (board.phase === 'collecting') ui.commandHint.textContent = '可多选 0–6；谋位 0 独立显示。谋位 7 与各谋位底部的大失败区仅在公开后手动移动进入。'
+        else ui.commandHint.textContent = '结果已公开：可继续提交 0–6；谋位 7 与各谋位底部的大失败区需手动移动进入。点击落点后再点目标区域，或直接拖动。'
+      }
+
+      function isCurrentActor(actor, key) {
+        const userId = getCurrentUserId()
+        return (userId && actor?.userId === userId) || (!userId && key === actorId)
+      }
+
+      function renderLobby(board) {
+        const myEntries = Object.entries(board.submissions)
+          .filter(([key, actor]) => isCurrentActor(actor, key) && Array.isArray(actor.entries))
+          .flatMap(([key, actor]) => actor.entries.map(entry => ({ key, actor, entry })))
+          .sort((a, b) => (a.entry.createdAt || 0) - (b.entry.createdAt || 0))
+        ui.mySubmissionMeta.textContent = `${myEntries.length} 条`
+        ui.mySubmissions.textContent = ''
+
+        if (!myEntries.length) {
+          const empty = document.createElement('div')
+          empty.className = 'empty'
+          empty.textContent = board.phase === 'idle' ? '尚未开始谋位' : '你还没有提交谋位'
+          ui.mySubmissions.appendChild(empty)
+        } else {
+          myEntries.forEach(({ key, actor, entry }, index) => {
+            const row = document.createElement('div')
+            row.className = 'submission-row'
+            row.style.setProperty('--dot', safeColor(actor.color))
+            const main = document.createElement('div')
+            main.className = 'row-main'
+            const title = document.createElement('div')
+            title.className = 'row-title'
+            const name = entry.nickname || actor.nickname || actor.memberName || '未命名忍者'
+            title.textContent = `${name} · 谋位 ${sanitizeChoices(entry.choices).join(' / ')}`
+            const sub = document.createElement('div')
+            sub.className = 'row-sub'
+            sub.textContent = `提交于 ${formatTime(entry.createdAt)}`
+            main.append(title, sub)
+            const del = document.createElement('button')
+            del.type = 'button'
+            del.className = 'mini-delete'
+            del.title = '删除这条谋位'
+            del.textContent = '×'
+            del.disabled = !canWriteStorage() || board.phase === 'idle'
+            del.onclick = () => void deleteEntry(key, entry.id).catch(handleActionError)
+            row.append(main, del)
+            ui.mySubmissions.appendChild(row)
+          })
+        }
+
+        ui.otherStatus.textContent = ''
+        const others = Object.entries(board.submissions)
+          .filter(([key, actor]) => !isCurrentActor(actor, key) && actor && Array.isArray(actor.entries) && actor.entries.length)
+          .flatMap(([key, actor]) => actor.entries.map(entry => ({ key, actor, entry })))
+          .sort((a, b) => {
+            const nameA = a.entry.nickname || a.actor.nickname || a.actor.memberName || ''
+            const nameB = b.entry.nickname || b.actor.nickname || b.actor.memberName || ''
+            const byName = String(nameA).localeCompare(String(nameB), 'zh-CN')
+            return byName || ((a.entry.createdAt || 0) - (b.entry.createdAt || 0))
+          })
+
+        if (!others.length) {
+          const empty = document.createElement('div')
+          empty.className = 'empty'
+          empty.textContent = '还没有其他提交者'
+          ui.otherStatus.appendChild(empty)
+        } else {
+          for (const { actor, entry } of others) {
+            const row = document.createElement('div')
+            row.className = 'status-row'
+            row.style.setProperty('--dot', safeColor(actor.color))
+            const main = document.createElement('div')
+            main.className = 'row-main'
+            const title = document.createElement('div')
+            title.className = 'row-title'
+            const name = entry.nickname || actor.nickname || actor.memberName || '未命名忍者'
+            title.textContent = name
+            const sub = document.createElement('div')
+            sub.className = 'row-sub'
+            sub.textContent = `提交于 ${formatTime(entry.createdAt)}`
+            main.append(title, sub)
+            row.append(main)
+            ui.otherStatus.appendChild(row)
+          }
+        }
+      }
+
+      function makePips(count) {
+        const wrap = document.createElement('div')
+        wrap.className = 'pips'
+        const positions = {
+          0: [4],
+          1: [4],
+          2: [0, 8],
+          3: [0, 4, 8],
+          4: [0, 2, 6, 8],
+          5: [0, 2, 4, 6, 8],
+          6: [0, 2, 3, 5, 6, 8],
+          7: [0, 2, 3, 4, 5, 6, 8]
+        }
+        const active = positions[count] || []
+        for (let i = 0; i < 9; i++) {
+          const slot = document.createElement('span')
+          if (active.includes(i)) slot.className = 'pip'
+          wrap.appendChild(slot)
+        }
+        return wrap
+      }
+
+      function collectPlacements(board, speed) {
+        const rows = []
+        for (const [actorKey, actor] of Object.entries(board.submissions)) {
+          if (!actor || !Array.isArray(actor.entries)) continue
+          actor.entries.forEach((entry, entryIndex) => {
+            const choices = sanitizeChoices(entry.choices)
+            if (!choices.includes(speed)) return
+            rows.push({ actorKey, actor, entry, entryIndex, speed })
+          })
+        }
+        return rows.sort((a, b) => {
+          const byName = String(a.entry.nickname || a.actor.nickname || '').localeCompare(String(b.entry.nickname || b.actor.nickname || ''), 'zh-CN')
+          if (byName) return byName
+          const byUser = String(a.actor.userId || '').localeCompare(String(b.actor.userId || ''))
+          if (byUser) return byUser
+          return (a.entry.createdAt || 0) - (b.entry.createdAt || 0)
+        })
+      }
+
+      function collectFailurePlacements(board, speed) {
+        const rows = []
+        for (const [actorKey, actor] of Object.entries(board.submissions)) {
+          if (!actor || !Array.isArray(actor.entries)) continue
+          actor.entries.forEach((entry, entryIndex) => {
+            const choices = sanitizeChoices(entry.choices)
+            const failures = sanitizeFailures(entry.failures, choices[0] ?? speed)
+            for (const failure of failures) {
+              if (failure.speed !== speed) continue
+              rows.push({
+                actorKey,
+                actor,
+                entry,
+                entryIndex,
+                position: FAILURE_POSITION,
+                failureId: failure.id,
+                failureSpeed: failure.speed
+              })
+            }
+          })
+        }
+        return rows.sort((a, b) => {
+          const byName = String(a.entry.nickname || a.actor.nickname || '').localeCompare(String(b.entry.nickname || b.actor.nickname || ''), 'zh-CN')
+          if (byName) return byName
+          const byUser = String(a.actor.userId || '').localeCompare(String(b.actor.userId || ''))
+          if (byUser) return byUser
+          return (a.entry.createdAt || 0) - (b.entry.createdAt || 0)
+        })
+      }
+
+      function hasSpecialLaneData(board) {
+        for (const actor of Object.values(board.submissions || {})) {
+          if (!actor || !Array.isArray(actor.entries)) continue
+          for (const entry of actor.entries) {
+            const choices = sanitizeChoices(entry?.choices)
+            if (choices.includes(0) || choices.includes(7)) return true
+            const failures = sanitizeFailures(entry?.failures, choices[0] ?? 0)
+            if (failures.some(item => item.speed === 0 || item.speed === 7)) return true
+          }
+        }
+        return false
+      }
+
+      function updateSpecialLanesButton(board) {
+        if (!ui.specialLanesButton) return
+        const autoVisible = hasSpecialLaneData(board)
+        const visible = autoVisible || showSpecialLanes
+        ui.specialLanesButton.setAttribute('aria-pressed', visible ? 'true' : 'false')
+        if (autoVisible) {
+          ui.specialLanesButton.textContent = '0 / 7 自动显示'
+          ui.specialLanesButton.title = '谋位 0 或 7 中已有数据，因此所有用户端自动显示'
+        } else if (showSpecialLanes) {
+          ui.specialLanesButton.textContent = '隐藏 0 / 7'
+          ui.specialLanesButton.title = '仅在当前用户端隐藏谋位 0 与 7'
+        } else {
+          ui.specialLanesButton.textContent = '显示 0 / 7'
+          ui.specialLanesButton.title = '仅在当前用户端显示谋位 0 与 7；一旦其中出现数据，其他用户端也会自动显示'
+        }
+      }
+
+      function renderResults(board) {
+        selectedPlacement = null
+        ui.velocityBoard.textContent = ''
+        let placementCount = 0
+        let failureCount = 0
+        const showSpecial = showSpecialLanes || hasSpecialLaneData(board)
+        const visibleSpeeds = showSpecial ? SPEEDS : SPEEDS.filter(speed => speed.id !== 0 && speed.id !== 7)
+        const displaySpeeds = document.body.classList.contains('is-vertical-layout') ? [...visibleSpeeds].reverse() : visibleSpeeds
+        ui.velocityBoard.style.setProperty('--lane-count', String(displaySpeeds.length))
+        updateSpecialLanesButton(board)
+        for (const speed of displaySpeeds) {
+          const placements = collectPlacements(board, speed.id)
+          const failures = collectFailurePlacements(board, speed.id)
+          placementCount += placements.length + failures.length
+          failureCount += failures.length
+
+          const lane = document.createElement('section')
+          lane.className = 'lane'
+          lane.dataset.speed = String(speed.id)
+
+          const head = document.createElement('header')
+          head.className = 'lane-head'
+          const brush = document.createElement('div')
+          brush.className = 'lane-kanji'
+          brush.textContent = speed.brush
+          const en = document.createElement('div')
+          en.className = 'lane-en'
+          en.textContent = speed.en
+          const zh = document.createElement('div')
+          zh.className = 'lane-zh'
+          zh.textContent = speed.zh
+          const mark = document.createElement('div')
+          mark.className = 'lane-mark'
+          const num = document.createElement('div')
+          num.className = 'lane-number'
+          num.textContent = String(speed.id)
+          mark.append(makePips(speed.id), num)
+          head.append(brush, en, zh, mark)
+
+          const body = document.createElement('div')
+          body.className = 'lane-body lane-main-drop'
+          body.dataset.speed = String(speed.id)
+          const watermark = document.createElement('div')
+          watermark.className = 'lane-watermark'
+          watermark.textContent = speed.watermark
+          body.appendChild(watermark)
+          if (placements.length) {
+            for (const item of placements) body.appendChild(makeToken({ ...item, position: speed.id, failureId: null, failureSpeed: null }, board))
+          }
+
+          body.addEventListener('dragover', event => {
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            body.classList.add('drag-over')
+          })
+          body.addEventListener('dragleave', () => body.classList.remove('drag-over'))
+          body.addEventListener('drop', event => {
+            body.classList.remove('drag-over')
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            try {
+              const payload = JSON.parse(event.dataTransfer.getData('text/plain'))
+              if (!payload?.actorKey || !payload?.entryId || payload?.fromPosition == null) return
+              void movePlacement(
+                payload.actorKey,
+                payload.entryId,
+                payload.fromPosition,
+                speed.id,
+                {
+                  failureId: payload.failureId || null,
+                  sourceFailureSpeed: payload.failureSpeed,
+                  targetFailureSpeed: null
+                }
+              ).catch(handleActionError)
+            } catch {}
+          })
+          body.addEventListener('click', event => {
+            if (!selectedPlacement || (event.target instanceof Element && event.target.closest('.token'))) return
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            const selection = selectedPlacement
+            selectedPlacement = null
+            updatePlacementSelection()
+            if (selection.fromPosition !== FAILURE_POSITION && String(selection.fromPosition) === String(speed.id)) return
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              speed.id,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: null
+              }
+            ).catch(handleActionError)
+          })
+
+          const fumble = document.createElement('div')
+          fumble.className = 'lane-fumble lane-fumble-drop'
+          fumble.dataset.speed = String(speed.id)
+          const fumbleLabel = document.createElement('div')
+          fumbleLabel.className = 'lane-fumble-label'
+          fumbleLabel.textContent = '大失败'
+          const fumbleBody = document.createElement('div')
+          fumbleBody.className = 'lane-fumble-body'
+          if (failures.length) {
+            for (const item of failures) fumbleBody.appendChild(makeToken(item, board))
+          }
+          fumble.append(fumbleLabel, fumbleBody)
+
+          fumble.addEventListener('dragover', event => {
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            fumble.classList.add('drag-over')
+          })
+          fumble.addEventListener('dragleave', () => fumble.classList.remove('drag-over'))
+          fumble.addEventListener('drop', event => {
+            fumble.classList.remove('drag-over')
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            event.preventDefault()
+            try {
+              const payload = JSON.parse(event.dataTransfer.getData('text/plain'))
+              if (!payload?.actorKey || !payload?.entryId || payload?.fromPosition == null) return
+              void movePlacement(
+                payload.actorKey,
+                payload.entryId,
+                payload.fromPosition,
+                FAILURE_POSITION,
+                {
+                  failureId: payload.failureId || null,
+                  sourceFailureSpeed: payload.failureSpeed,
+                  targetFailureSpeed: speed.id
+                }
+              ).catch(handleActionError)
+            } catch {}
+          })
+          fumble.addEventListener('click', event => {
+            if (!selectedPlacement || (event.target instanceof Element && event.target.closest('.token'))) return
+            if (board.phase !== 'revealed' || !canWriteStorage()) return
+            const selection = selectedPlacement
+            selectedPlacement = null
+            updatePlacementSelection()
+            if (selection.fromPosition === FAILURE_POSITION && String(selection.failureSpeed) === String(speed.id)) return
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              FAILURE_POSITION,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: speed.id
+              }
+            ).catch(handleActionError)
+          })
+
+          lane.append(head, body, fumble)
+          ui.velocityBoard.appendChild(lane)
+        }
+
+        const users = Object.values(board.submissions).filter(actor => Array.isArray(actor?.entries) && actor.entries.length).length
+        const failureMeta = failureCount ? ` · 大失败 ${failureCount}` : ''
+        ui.resultsMeta.textContent = `${users} 名提交者 · ${totalEntries(board)} 条谋位 · ${placementCount} 个落点${failureMeta} · 公布于 ${formatTime(board.revealedAt)}`
+        updatePlacementSelection()
+      }
+
+      function makeToken(item, board) {
+        const token = document.createElement('div')
+        token.className = 'token'
+        token.draggable = board.phase === 'revealed' && canWriteStorage()
+        token.style.setProperty('--accent', safeColor(item.actor.color))
+        token.dataset.actorKey = item.actorKey
+        token.dataset.entryId = item.entry.id
+        token.dataset.sourcePosition = String(item.position)
+        if (item.failureId) token.dataset.failureId = item.failureId
+        if (item.failureSpeed != null) token.dataset.failureSpeed = String(item.failureSpeed)
+        token.title = '点击选择后，点击其他谋位或对应底部大失败区可修改；也可拖动'
+        token.tabIndex = 0
+        token.setAttribute('aria-pressed', 'false')
+
+        const toggleActions = () => token.classList.toggle('show-actions')
+        token.addEventListener('click', event => {
+          if (event.target instanceof Element && event.target.closest('.token-delete')) return
+          const sameSourcePosition = selectedPlacement &&
+            String(selectedPlacement.fromPosition) === String(item.position) &&
+            String(selectedPlacement.failureSpeed ?? '') === String(item.failureSpeed ?? '')
+          if (selectedPlacement && !sameSourcePosition && board.phase === 'revealed' && canWriteStorage()) {
+            const selection = selectedPlacement
+            selectedPlacement = null
+            updatePlacementSelection()
+            void movePlacement(
+              selection.actorKey,
+              selection.entryId,
+              selection.fromPosition,
+              item.position,
+              {
+                failureId: selection.failureId || null,
+                sourceFailureSpeed: selection.failureSpeed,
+                targetFailureSpeed: item.position === FAILURE_POSITION ? item.failureSpeed : null
+              }
+            ).catch(handleActionError)
+            return
+          }
+          if (board.phase === 'revealed' && canWriteStorage()) {
+            const isSelected = selectedPlacement?.actorKey === item.actorKey &&
+              selectedPlacement?.entryId === item.entry.id &&
+              String(selectedPlacement?.fromPosition) === String(item.position) &&
+              (selectedPlacement?.failureId || '') === (item.failureId || '') &&
+              String(selectedPlacement?.failureSpeed ?? '') === String(item.failureSpeed ?? '')
+            selectedPlacement = isSelected
+              ? null
+              : {
+                  actorKey: item.actorKey,
+                  entryId: item.entry.id,
+                  fromPosition: item.position,
+                  failureId: item.failureId || null,
+                  failureSpeed: item.failureSpeed == null ? null : item.failureSpeed
+                }
+            updatePlacementSelection()
+          }
+          toggleActions()
+        })
+        token.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          toggleActions()
+        })
+
+        token.addEventListener('dragstart', event => {
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', JSON.stringify({
+            actorKey: item.actorKey,
+            entryId: item.entry.id,
+            fromPosition: item.position,
+            failureId: item.failureId || null,
+            failureSpeed: item.failureSpeed == null ? null : item.failureSpeed
+          }))
+        })
+
+        const accent = document.createElement('span')
+        accent.className = 'token-accent'
+        const main = document.createElement('div')
+        main.className = 'token-main'
+        const name = document.createElement('div')
+        name.className = 'token-name'
+        name.textContent = item.entry.nickname || item.actor.nickname || item.actor.memberName || '未命名忍者'
+        main.append(name)
+        const del = document.createElement('button')
+        del.type = 'button'
+        del.className = 'token-delete'
+        del.textContent = '×'
+        del.title = '删除整条谋位'
+        del.disabled = !canWriteStorage()
+        del.onclick = event => {
+          event.stopPropagation()
+          void deleteEntry(item.actorKey, item.entry.id).catch(handleActionError)
+        }
+        token.append(accent, main, del)
+        return token
+      }
+
+      function render() {
+        const board = currentBoard()
+        const admin = isWorldAdmin()
+        document.body.dataset.phase = board.phase
+
+        ui.adminControls.hidden = !admin
+
+        if (board.phase === 'idle') {
+          ui.phaseKicker.textContent = 'READY'
+          ui.phaseTitle.textContent = '收集谋位中'
+          ui.phaseCopy.textContent = '每位玩家可提交一个或多个谋位；其他玩家只会看到“已提交”状态，不会看到具体结果。'
+        } else if (board.phase === 'collecting') {
+          ui.phaseKicker.textContent = 'PLOTTING'
+          ui.phaseTitle.textContent = '谋位进行中'
+          ui.phaseCopy.textContent = '正在收集谋位。你的具体谋位只对自己可见，其他人仅能看到提交状态。'
+        } else {
+          ui.phaseKicker.textContent = 'REVEALED'
+          ui.phaseTitle.textContent = '谋位已公开'
+          ui.phaseCopy.textContent = ''
+        }
+
+        ui.startButton.hidden = board.phase !== 'idle'
+        ui.revealButton.hidden = board.phase !== 'collecting'
+        ui.resetButton.hidden = board.phase === 'idle'
+        ui.startButton.disabled = !canWriteStorage()
+        ui.revealButton.disabled = !canWriteStorage()
+        ui.resetButton.disabled = !canWriteStorage()
+
+        ui.lobbyGrid.hidden = board.phase === 'revealed'
+        ui.resultsSection.hidden = board.phase !== 'revealed'
+        renderLobby(board)
+        if (board.phase === 'revealed') renderResults(board)
+        updateCommandState()
+      }
+
+      async function submitPlot() {
+        const board = currentBoard()
+        if (!['collecting', 'revealed'].includes(board.phase)) throw new Error('当前尚未开始谋位。')
+        if (!actorId) throw new Error('无法识别当前用户或成员身份。')
+        const nickname = ui.nicknameInput.value.trim().slice(0, 24)
+        const choices = sanitizeChoices([...selectedChoices])
+        if (!nickname) throw new Error('请填写谋位昵称。')
+        if (!choices.length) throw new Error('请至少选择一个谋位。')
+
+        await mutateBoard(draft => {
+          if (!['collecting', 'revealed'].includes(draft.phase)) throw new Error('当前阶段已变化，请刷新后重试。')
+          if (totalEntries(draft) >= MAX_TOTAL_ENTRIES) throw new Error(`本轮最多保存 ${MAX_TOTAL_ENTRIES} 条谋位。`)
+          const currentActor = draft.submissions[actorId] || {
+            actorKey: actorId,
+            userId: getCurrentUserId(),
+            characterId: getCurrentCharacterId(),
+            memberName: embedContext?.currentMember?.displayName || embedContext?.currentUser?.displayName || '',
+            nickname,
+            color: getActorColor(),
+            avatar: getActorAvatar(),
+            entries: []
+          }
+          if (!Array.isArray(currentActor.entries)) currentActor.entries = []
+          if (currentActor.entries.length >= MAX_ENTRIES_PER_USER) throw new Error(`每位用户每轮最多提交 ${MAX_ENTRIES_PER_USER} 条谋位。`)
+          currentActor.actorKey = actorId
+          currentActor.userId = getCurrentUserId() || currentActor.userId
+          currentActor.characterId = getCurrentCharacterId()
+          currentActor.nickname = nickname
+          currentActor.memberName = embedContext?.currentMember?.displayName || embedContext?.currentUser?.displayName || currentActor.memberName || ''
+          currentActor.color = getActorColor()
+          currentActor.avatar = getActorAvatar()
+          currentActor.entries.push({
+            id: makeEntryId(),
+            nickname,
+            characterId: getCurrentCharacterId(),
+            choices,
+            failures: [],
+            createdAt: now(),
+            updatedAt: now()
+          })
+          draft.submissions[actorId] = currentActor
+        })
+
+        selectedChoices.clear()
+        renderSpeedChoices()
+        const placementLabel = choices.map(speed => `谋位 ${speed}`).join('、')
+        toast(`${nickname} 置于 ${placementLabel}`)
+      }
+
+      async function deleteEntry(actorKey, entryId) {
+        const board = currentBoard()
+        if (board.phase === 'idle') throw new Error('当前尚未开始谋位。')
+        if (board.phase !== 'revealed' && !isCurrentActor(board.submissions?.[actorKey], actorKey)) throw new Error('结果公开前只能删除自己的谋位。')
+
+        await mutateBoard(draft => {
+          const actor = draft.submissions[actorKey]
+          if (!actor || !Array.isArray(actor.entries)) return
+          actor.entries = actor.entries.filter(entry => entry.id !== entryId)
+          if (!actor.entries.length) delete draft.submissions[actorKey]
+        })
+        toast('已删除谋位')
+      }
+
+      async function movePlacement(actorKey, entryId, fromPosition, toPosition, options = {}) {
+        const normalizePosition = value => value === FAILURE_POSITION ? FAILURE_POSITION : Number(value)
+        const normalizeSpeed = value => {
+          const speed = Number(value)
+          return Number.isInteger(speed) && speed >= 0 && speed <= 7 ? speed : null
+        }
+        const sourcePosition = normalizePosition(fromPosition)
+        const targetPosition = normalizePosition(toPosition)
+        const sourceFailureSpeed = normalizeSpeed(options?.sourceFailureSpeed)
+        const targetFailureSpeed = normalizeSpeed(options?.targetFailureSpeed)
+        const failureId = String(options?.failureId || '')
+
+        if (sourcePosition !== FAILURE_POSITION && (!Number.isInteger(sourcePosition) || sourcePosition < 0 || sourcePosition > 7)) return
+        if (targetPosition !== FAILURE_POSITION && (!Number.isInteger(targetPosition) || targetPosition < 0 || targetPosition > 7)) return
+        if (sourcePosition === FAILURE_POSITION && sourceFailureSpeed == null) return
+        if (targetPosition === FAILURE_POSITION && targetFailureSpeed == null) return
+
+        const sameTarget = targetPosition === FAILURE_POSITION
+          ? sourcePosition === FAILURE_POSITION && sourceFailureSpeed === targetFailureSpeed
+          : sourcePosition !== FAILURE_POSITION && String(sourcePosition) === String(targetPosition)
+        if (sameTarget) return
+
+        const board = currentBoard()
+        if (board.phase !== 'revealed') throw new Error('只有结果公开后才能手动调整谋位。')
+        const sourceActor = board.submissions?.[actorKey]
+        const sourceEntry = sourceActor?.entries?.find(item => item.id === entryId)
+        const displayName = sourceEntry?.nickname || sourceActor?.nickname || sourceActor?.memberName || '未命名忍者'
+
+        await mutateBoard(draft => {
+          if (draft.phase !== 'revealed') throw new Error('结果状态已变化。')
+          const actor = draft.submissions[actorKey]
+          const entry = actor?.entries?.find(item => item.id === entryId)
+          if (!entry) throw new Error('这条谋位已被其他人修改或删除。')
+
+          const choices = new Set(sanitizeChoices(entry.choices))
+          const failures = sanitizeFailures(entry.failures, [...choices][0] ?? targetFailureSpeed ?? sourceFailureSpeed ?? 0)
+
+          if (sourcePosition === FAILURE_POSITION) {
+            const index = failures.findIndex(item => item.id === failureId && item.speed === sourceFailureSpeed)
+            if (index < 0) throw new Error('这条大失败落点已被其他人修改。')
+            failures.splice(index, 1)
+          } else {
+            if (!choices.has(sourcePosition)) throw new Error('原谋位已被其他人修改。')
+            choices.delete(sourcePosition)
+          }
+
+          if (targetPosition === FAILURE_POSITION) {
+            failures.push({ id: makeEntryId(), speed: targetFailureSpeed })
+          } else {
+            if (choices.has(targetPosition)) throw new Error(`谋位 ${targetPosition} 已有同一条提交，不能合并落点。`)
+            choices.add(targetPosition)
+          }
+
+          entry.choices = [...choices].sort((a, b) => a - b)
+          entry.failures = sanitizeFailures(failures, targetFailureSpeed ?? sourceFailureSpeed ?? [...choices][0] ?? 0)
+          entry.updatedAt = now()
+        })
+
+        const targetLabel = targetPosition === FAILURE_POSITION ? `谋位 ${targetFailureSpeed} 的大失败区` : `谋位 ${targetPosition}`
+        toast(`${displayName} 变更为 ${targetLabel}`)
+      }
+
+      async function startRound() {
+        requireWorldAdmin()
+        await mutateBoard(draft => {
+          if (draft.phase !== 'idle') throw new Error('当前已经不是等待开始状态。')
+          draft.phase = 'collecting'
+          draft.submissions = {}
+          draft.startedAt = now()
+          draft.revealedAt = null
+        })
+        toast('已开始谋位')
+      }
+
+      async function revealRound() {
+        requireWorldAdmin()
+        await mutateBoard(draft => {
+          if (draft.phase !== 'collecting') throw new Error('只有谋位进行中才能宣布结果。')
+          draft.phase = 'revealed'
+          draft.revealedAt = now()
+        })
+        toast('谋位结果已公开')
+      }
+
+      async function resetRound() {
+        requireWorldAdmin()
+        if (!await confirmResetRound()) return
+        await mutateBoard(draft => {
+          draft.round = Math.max(1, Number(draft.round) || 1) + 1
+          draft.phase = 'collecting'
+          draft.submissions = {}
+          draft.startedAt = now()
+          draft.revealedAt = null
+        })
+        selectedChoices.clear()
+        renderSpeedChoices()
+        toast('已清空并开启新一轮')
+      }
+
+      function requireWorldAdmin() {
+        if (!isWorldAdmin()) throw new Error('需要 World 管理员权限。')
+      }
+
+      function exportJson() {
+        const board = currentBoard()
+        if (board.phase !== 'revealed') return
+        const blob = new Blob([JSON.stringify(board, null, 2)], { type: 'application/json;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `shinobigami-plot-round-${board.round}.json`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      }
+
+      function handleActionError(error) {
+        console.error(error)
+        logEvent('action-error', errorSummary(error))
+        toast(error?.message || error?.code || String(error), 'error')
+      }
+
+      logEvent('boot-stage', '开始绑定按钮事件')
+      ui.nicknameInput.addEventListener('input', () => {
+        nicknameDirty = true
+        updateCommandState()
+      })
+      ui.submitButton.onclick = () => void submitPlot().catch(handleActionError)
+      ui.startButton.onclick = () => void startRound().catch(handleActionError)
+      ui.revealButton.onclick = () => void revealRound().catch(handleActionError)
+      ui.resetButton.onclick = () => void resetRound().catch(handleActionError)
+      ui.debugButton.onclick = () => setDebugMode(!debugMode)
+      ui.specialLanesButton.onclick = () => {
+        const board = currentBoard()
+        if (hasSpecialLaneData(board)) {
+          updateSpecialLanesButton(board)
+          toast('谋位 0 / 7 中已有数据，已自动显示')
+          return
+        }
+        showSpecialLanes = !showSpecialLanes
+        if (board.phase === 'revealed') renderResults(board)
+        else updateSpecialLanesButton(board)
+      }
+      ui.layoutButton.onclick = () => {
+        layoutOverride = !document.body.classList.contains('is-vertical-layout')
+        updateResultLayout(measuredEmbedWidth)
+      }
+      window.addEventListener('keydown', event => {
+        if (event.key !== 'Escape' || !selectedPlacement) return
+        selectedPlacement = null
+        updatePlacementSelection()
+      })
+      ui.exportButton.onclick = exportJson
+      ui.copyDiagnosticsButton.onclick = async () => {
+        const text = diagnostics.join('\n')
+        try {
+          await navigator.clipboard.writeText(text)
+          toast('诊断日志已复制')
+        } catch (error) {
+          logEvent('diagnostics-copy-error', errorSummary(error))
+          toast('无法访问剪贴板，请手动复制日志', 'error')
+        }
+      }
+      ui.clearDiagnosticsButton.onclick = () => {
+        diagnostics = []
+        logEvent('diagnostics-cleared')
+      }
+      logEvent('boot-stage', '按钮事件绑定完成')
+
+      logEvent('boot-stage', '开始绑定 UI')
+      try {
+        renderSpeedChoices()
+        render()
+        logEvent('boot-stage', 'UI 初始化完成')
+      } catch (error) {
+        logEvent('boot-stage-error', errorSummary(error))
+        showFatal(error)
+      }
+
+      window.setInterval(() => {
+        if (!client) return void connect().catch(() => {})
+        void useClient(api => api.connection.getState())
+          .then(state => setConnectionState(state.state, state.latencyMs == null ? '' : `${state.latencyMs} ms`))
+          .catch(() => {})
+      }, 15000)
+
+      window.addEventListener('online', () => void connect().catch(() => {}))
+      window.addEventListener('beforeunload', () => {
+        manuallyClosed = true
+        layoutObserver?.disconnect()
+        cleanupSubscriptions()
+        try { client?.close?.() } catch {}
+      })
+
+      logEvent('boot-stage', '开始调用 connect()')
+      void connect().catch(() => {})
+    })()
+  </script>
+</body>
+</html>

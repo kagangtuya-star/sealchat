@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="frameRoot"
     class="iform-frame"
     :class="{
       'has-embed': hasEmbed,
@@ -16,6 +17,7 @@
       allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
       sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads"
       referrerpolicy="no-referrer"
+      loading="lazy"
     ></iframe>
     <iframe
       v-else-if="form?.url"
@@ -24,6 +26,7 @@
       allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
       sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups"
       referrerpolicy="no-referrer"
+      loading="lazy"
     ></iframe>
     <div v-else class="iform-frame__empty">
       <n-empty description="未配置 URL 或嵌入代码" size="small" />
@@ -32,14 +35,72 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import type { ChannelIForm } from '@/types/iform';
+import { useChatStore } from '@/stores/chat';
+import { useUserStore } from '@/stores/user';
+import { urlBase } from '@/stores/_config';
+import { createChannelEmbedHost } from '@/bridge/channelEmbedHost';
 
-const props = defineProps<{ form?: ChannelIForm | null }>();
+const props = defineProps<{ form?: ChannelIForm | null; enableChannelEmbed?: boolean; channelId?: string | null }>();
+const frameRoot = ref<HTMLElement | null>(null);
+const chat = useChatStore();
+const user = useUserStore();
+let embedHost: ReturnType<typeof createChannelEmbedHost> | null = null;
 
 const embedCode = computed(() => props.form?.embedCode?.trim() || '');
 const hasEmbed = computed(() => embedCode.value.length > 0);
+
+const getEmbedConfig = () => {
+  if (typeof window === 'undefined' || !props.enableChannelEmbed || !props.form?.bridgePolicy?.enabled) return '';
+  let sdkUrl = `${window.location.origin}/api/v1/channel-embed-sdk.js`;
+  try {
+    const base = new URL(urlBase || '/', window.location.href);
+    const path = base.pathname.replace(/\/+$/, '');
+    sdkUrl = `${base.origin}${path}/api/v1/channel-embed-sdk.js`;
+  } catch {
+    // Keep same-origin default when deployment base cannot be resolved.
+  }
+  return {
+    hostOrigin: window.location.origin,
+    sdkUrl,
+  };
+};
+
+const embedBootstrap = () => {
+  const config = getEmbedConfig();
+  if (!config) return '';
+  const serialized = JSON.stringify(config).replace(/</g, '\\u003c');
+  return `<script>window.__SEALCHAT_EMBED_CONFIG__=${serialized};<\/script>`;
+};
+
+const injectIframeConfig = (raw: string) => {
+  const config = getEmbedConfig();
+  if (!config || typeof DOMParser === 'undefined') return raw;
+  try {
+    const document = new DOMParser().parseFromString(raw, 'text/html');
+    const iframe = document.body.querySelector('iframe');
+    const source = iframe?.getAttribute('src');
+    if (!iframe || !source) return raw;
+    const url = new URL(source, window.location.href);
+    if (!['http:', 'https:'].includes(url.protocol)) return raw;
+    if (!url.searchParams.has('hostOrigin')) url.searchParams.set('hostOrigin', config.hostOrigin);
+    if (!url.searchParams.has('sdkUrl')) url.searchParams.set('sdkUrl', config.sdkUrl);
+    iframe.setAttribute('src', url.toString());
+    return document.body.innerHTML;
+  } catch {
+    return raw;
+  }
+};
+
+const injectEmbedBootstrap = (raw: string) => {
+  const bootstrap = embedBootstrap();
+  if (!bootstrap) return raw;
+  if (/<head\b/i.test(raw)) return raw.replace(/(<head\b[^>]*>)/i, `$1${bootstrap}`);
+  if (/<body\b/i.test(raw)) return raw.replace(/(<body\b[^>]*>)/i, `$1${bootstrap}`);
+  return `${bootstrap}${raw}`;
+};
 
 const isSingleIframeEmbed = computed(() => {
   if (!hasEmbed.value) {
@@ -53,10 +114,11 @@ const sanitizedIframeEmbed = computed(() => {
   if (!isSingleIframeEmbed.value) {
     return '';
   }
-  return DOMPurify.sanitize(embedCode.value, {
+  const sanitized = DOMPurify.sanitize(embedCode.value, {
     ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'referrerpolicy', 'loading'],
     ADD_TAGS: ['iframe'],
   });
+  return injectIframeConfig(sanitized);
 });
 
 const isSrcDocEmbed = computed(() => hasEmbed.value && !isSingleIframeEmbed.value);
@@ -68,7 +130,7 @@ const embedSrcDoc = computed(() => {
   if (isSingleIframeEmbed.value) {
     return '';
   }
-  const raw = embedCode.value;
+  const raw = injectEmbedBootstrap(embedCode.value);
   const hasHtmlShell = /<(?:!doctype|html|head|body)\b/i.test(raw);
   if (hasHtmlShell) {
     return raw;
@@ -90,6 +152,40 @@ const embedSrcDoc = computed(() => {
     '</body></html>',
   ].join('');
 });
+
+const setupChannelEmbed = async () => {
+  embedHost?.stop();
+  embedHost = null;
+  if (!props.enableChannelEmbed || !props.form?.id || !props.form.bridgePolicy?.enabled || !props.channelId) return;
+  await nextTick();
+  if (!user.info?.id || !props.enableChannelEmbed || !props.form?.id || !props.form.bridgePolicy?.enabled || !props.channelId) return;
+  const iframe = frameRoot.value?.querySelector('iframe');
+  if (!(iframe instanceof HTMLIFrameElement)) return;
+  embedHost = createChannelEmbedHost({
+    chat,
+    user,
+    form: props.form,
+    iframe,
+    worldId: String(chat.currentWorldId || ''),
+    channelId: props.channelId,
+  });
+};
+
+onMounted(() => { void setupChannelEmbed(); });
+watch(() => [props.form?.id, props.form?.url, props.form?.embedCode, props.form?.bridgePolicy, props.channelId] as const, () => { void setupChannelEmbed(); });
+watch(() => user.info.id, (userId, previousUserId) => {
+  if (!userId) {
+    embedHost?.stop();
+    embedHost = null;
+  } else if (previousUserId && previousUserId !== userId) {
+    embedHost?.stop();
+    embedHost = null;
+    void setupChannelEmbed();
+  } else if (!embedHost) {
+    void setupChannelEmbed();
+  }
+});
+onBeforeUnmount(() => { embedHost?.stop(); embedHost = null; });
 </script>
 
 <style scoped>

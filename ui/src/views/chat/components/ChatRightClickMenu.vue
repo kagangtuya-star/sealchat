@@ -14,6 +14,7 @@ import { restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { contentUnescape } from '@/utils/tools';
 import { useDisplayStore } from '@/stores/display';
 import { generateMessageLink } from '@/utils/messageLink';
+import { navigateToMessageTarget } from '@/utils/messageJump';
 import { copyTextWithFallback } from '@/utils/clipboard';
 const ReactionQuickPicker = defineAsyncComponent(() => import('./ReactionQuickPicker.vue'));
 const EmojiPickerModal = defineAsyncComponent(() => import('./EmojiPickerModal.vue'));
@@ -29,6 +30,7 @@ const user = useUserStore()
 const gallery = useGalleryStore()
 
 const showEmojiPicker = ref(false);
+const jumpingToChannelStart = ref(false);
 
 const contextMenuClass = computed(() => (display.palette === 'night' ? 'chat-menu--night' : 'chat-menu--day'))
 const contextMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
@@ -752,6 +754,39 @@ const clickCopyMessageLink = async () => {
   chat.messageMenu.show = false;
 };
 
+const clickJumpToChannelStart = async () => {
+  const targetChannelId = String(chat.curChannel?.id || '').trim();
+  const targetWorldId = String(chat.currentWorldId || '').trim();
+  if (!targetChannelId || !targetWorldId || jumpingToChannelStart.value) {
+    return;
+  }
+
+  jumpingToChannelStart.value = true;
+  chat.messageMenu.show = false;
+  try {
+    const target = await chat.messageFirst(targetChannelId);
+    if (chat.curChannel?.id !== targetChannelId || chat.currentWorldId !== targetWorldId) {
+      return;
+    }
+    if (!target?.id) {
+      message.info('当前频道暂无消息');
+      return;
+    }
+    await navigateToMessageTarget(chat, {
+      worldId: targetWorldId,
+      channelId: targetChannelId,
+      messageId: target.id,
+      createdAt: target.created_at,
+      displayOrder: target.display_order,
+    });
+  } catch (error) {
+    message.error((error as Error)?.message || '跳转频道首条消息失败');
+  } finally {
+    jumpingToChannelStart.value = false;
+    chat.messageMenu.show = false;
+  }
+};
+
 const summarizeMessageForInsertTarget = (raw?: any) => {
   const content = String(raw?.content || '').trim();
   if (!content) {
@@ -857,6 +892,10 @@ const clickArchiveMessagesBefore = () => {
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
     <context-menu-group label="更多">
+      <context-menu-item
+        label="跳转到频道首条消息"
+        @click="clickJumpToChannelStart"
+      />
       <context-menu-item
         label="归档该消息前的所有消息"
         :disabled="!canArchiveMessagesBefore"

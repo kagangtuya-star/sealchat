@@ -60,6 +60,32 @@ store.selectScene(nextScene.id)
 assert.equal(store.activeObjects.value[sceneText.id], undefined)
 assert.equal(store.activeObjects.value[fixedText.id]?.id, fixedText.id)
 assert.equal(store.activeObjects.value[fixedImage.id]?.id, fixedImage.id)
+
+const droppedImage = store.addObject('image')
+assert.equal(store.setObjectImage(droppedImage.id, 'https://example.com/portrait.webp', 'resource-portrait', 'image/webp', false, undefined, { width: 100, height: 200 }), true)
+assert.deepEqual({ width: droppedImage.transform.width, height: droppedImage.transform.height }, { width: 3, height: 6 })
+
+const imageHistoryStore = createTheaterStageStore()
+const imageHistoryObject = imageHistoryStore.addObject('image')
+assert.equal(imageHistoryStore.setObjectImage(imageHistoryObject.id, 'https://example.com/portrait.webp', 'resource-portrait', 'image/webp', false, undefined, { width: 100, height: 200 }), true)
+assert.equal(imageHistoryStore.undo(), true)
+const imageAfterUndo = imageHistoryStore.activeObjects.value[imageHistoryObject.id]
+assert.ok(imageAfterUndo)
+assert.equal(imageAfterUndo.image, undefined)
+assert.deepEqual({ width: imageAfterUndo.transform.width, height: imageAfterUndo.transform.height }, { width: 3, height: 6 })
+assert.equal(imageHistoryStore.undo(), true)
+assert.equal(imageHistoryStore.activeObjects.value[imageHistoryObject.id], undefined)
+
+const nestedImageHistoryStore = createTheaterStageStore()
+const nestedImage = nestedImageHistoryStore.addObject('image')
+nestedImageHistoryStore.beginObjectEdit('外层编辑')
+assert.equal(nestedImageHistoryStore.setObjectImage(nestedImage.id, 'https://example.com/portrait.webp', 'resource-portrait', 'image/webp', false, undefined, { width: 100, height: 200 }), true)
+nestedImageHistoryStore.commitObjectEdit()
+assert.equal(nestedImageHistoryStore.undo(), true)
+const nestedImageAfterUndo = nestedImageHistoryStore.activeObjects.value[nestedImage.id]
+assert.ok(nestedImageAfterUndo)
+assert.deepEqual({ width: nestedImageAfterUndo.transform.width, height: nestedImageAfterUndo.transform.height }, { width: 3, height: 6 })
+
 store.selectObject(fixedText.id)
 assert.equal(store.copySelectedObject(), true)
 const pastedFixedText = store.pasteObject()

@@ -1,5 +1,6 @@
 export type AudioTrackType = 'music' | 'ambience' | 'sfx';
 export type AudioAssetScope = 'common' | 'world';
+export type AudioLibraryMode = 'database' | 's3';
 
 export interface AudioAsset {
   id: string;
@@ -156,6 +157,7 @@ export interface AudioAssetBatchDeleteSummary {
 
 export interface AudioAssetMutationPayload {
   name?: string;
+  contentType?: string;
   description?: string;
   tags?: string[];
   visibility?: 'public' | 'restricted';

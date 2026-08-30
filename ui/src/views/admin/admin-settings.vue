@@ -11,9 +11,11 @@ import AdminSettingsStorageOptimization from './admin-settings-storage-optimizat
 import AdminSettingsThemeStyle from './admin-settings-theme-style.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
 import AdminSettingsUpdate from './admin-settings-update.vue'
+import AdminSettingsChannelEmbedTools from './admin-settings-channel-embed-tools.vue'
+import AdminSettingsCharacterCardTemplates from './admin-settings-character-card-templates.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate'
+type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate' | 'channel-embed-tools' | 'character-card-templates'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
@@ -138,6 +140,12 @@ const saveCurrentTab = async () => {
           @open-usage-management="openAIOpsDrawer"
           @open-quota-management="openAIQuotaModal"
         />
+      </n-tab-pane>
+      <n-tab-pane name="channel-embed-tools" tab="频道嵌入工具">
+        <AdminSettingsChannelEmbedTools />
+      </n-tab-pane>
+      <n-tab-pane name="character-card-templates" tab="人物卡模板">
+        <AdminSettingsCharacterCardTemplates />
       </n-tab-pane>
       <n-tab-pane name="certificate" tab="IP证书管理">
         <admin-settings-certificate ref="certificateSettingsRef" />

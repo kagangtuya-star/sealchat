@@ -27,6 +27,7 @@ import type {
 } from '@/services/theme/themeTypes'
 import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messageSoundMode'
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
+import { isMobileBrowserRuntime } from '@/utils/windowFocusState'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
@@ -88,6 +89,7 @@ export interface DisplaySettings {
   mergeNeighbors: boolean
   battleReportCardExpandedByDefault: boolean
   showPinnedMessages: boolean
+  historyNavigationOpacity: number
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
   maxExportMessages: number
@@ -107,6 +109,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  autoCorrectPunctuation: boolean
   mobileMinimalInputEnabled: boolean
   channelAggregateBadgeEnabled: boolean
   enableIcToggleHotkey: boolean
@@ -164,6 +167,7 @@ export const FAVORITE_CHANNEL_LIMIT = 4
 
 const STORAGE_KEY = 'sealchat_display_settings'
 const DISPLAY_SETTINGS_DEFAULT_MIGRATION_KEY = 'sealchat_display_settings_defaults_v2_done'
+const MOBILE_MINIMAL_INPUT_MIGRATION_KEY = 'sealchat_mobile_minimal_input_default_v1_done'
 
 const SLICE_LIMIT_DEFAULT = 5000
 const SLICE_LIMIT_MIN = 1000
@@ -171,6 +175,9 @@ const SLICE_LIMIT_MAX = 20000
 const CONCURRENCY_DEFAULT = 2
 const CONCURRENCY_MIN = 1
 const CONCURRENCY_MAX = 8
+const HISTORY_NAVIGATION_OPACITY_DEFAULT = 65
+const HISTORY_NAVIGATION_OPACITY_MIN = 20
+const HISTORY_NAVIGATION_OPACITY_MAX = 100
 
 const FONT_SIZE_DEFAULT = 15
 const FONT_SIZE_MIN = 12
@@ -519,6 +526,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   mergeNeighbors: true,
   battleReportCardExpandedByDefault: false,
   showPinnedMessages: true,
+  historyNavigationOpacity: HISTORY_NAVIGATION_OPACITY_DEFAULT,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
@@ -538,7 +546,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
-  mobileMinimalInputEnabled: false,
+  autoCorrectPunctuation: true,
+  mobileMinimalInputEnabled: isMobileBrowserRuntime(),
   channelAggregateBadgeEnabled: true,
   enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
@@ -769,6 +778,12 @@ const parseStoredSettingsInternal = (
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       battleReportCardExpandedByDefault: coerceBoolean((parsed as any)?.battleReportCardExpandedByDefault ?? false),
       showPinnedMessages: coerceBoolean((parsed as any)?.showPinnedMessages ?? true),
+      historyNavigationOpacity: coerceNumberInRange(
+        (parsed as any)?.historyNavigationOpacity,
+        HISTORY_NAVIGATION_OPACITY_DEFAULT,
+        HISTORY_NAVIGATION_OPACITY_MIN,
+        HISTORY_NAVIGATION_OPACITY_MAX,
+      ),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
       maxExportMessages: coerceNumberInRange(
@@ -833,6 +848,7 @@ const parseStoredSettingsInternal = (
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       channelAggregateBadgeEnabled: coerceBoolean((parsed as any)?.channelAggregateBadgeEnabled ?? true),
       enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
@@ -960,7 +976,23 @@ const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
     return defaultSettings()
   }
-  return resolveStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+  const settings = resolveStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+  if (
+    isMobileBrowserRuntime()
+    && window.localStorage.getItem(MOBILE_MINIMAL_INPUT_MIGRATION_KEY) !== '1'
+  ) {
+    const migrated = !settings.mobileMinimalInputEnabled
+    settings.mobileMinimalInputEnabled = true
+    try {
+      if (migrated) {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+      }
+      window.localStorage.setItem(MOBILE_MINIMAL_INPUT_MIGRATION_KEY, '1')
+    } catch (error) {
+      console.warn('移动端简洁输入框默认值迁移失败，继续使用当前设置', error)
+    }
+  }
+  return settings
 }
 
 let storageSyncBound = false
@@ -1034,6 +1066,15 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showPinnedMessages')
       ? coerceBoolean((patch as any)?.showPinnedMessages)
       : base.showPinnedMessages,
+  historyNavigationOpacity:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'historyNavigationOpacity')
+      ? coerceNumberInRange(
+        (patch as any)?.historyNavigationOpacity,
+        HISTORY_NAVIGATION_OPACITY_DEFAULT,
+        HISTORY_NAVIGATION_OPACITY_MIN,
+        HISTORY_NAVIGATION_OPACITY_MAX,
+      )
+      : base.historyNavigationOpacity,
   alwaysShowTimestamp:
     patch && Object.prototype.hasOwnProperty.call(patch, 'alwaysShowTimestamp')
       ? coerceBoolean((patch as any)?.alwaysShowTimestamp)
@@ -1145,6 +1186,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  autoCorrectPunctuation:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'autoCorrectPunctuation')
+      ? coerceBoolean((patch as any).autoCorrectPunctuation)
+      : base.autoCorrectPunctuation,
   mobileMinimalInputEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)

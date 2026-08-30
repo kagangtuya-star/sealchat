@@ -15,7 +15,9 @@ type ChannelIdentityVariantModel struct {
 	SharedVariantID    string `json:"sharedVariantId,omitempty" gorm:"size:100;default:null;uniqueIndex:udx_identity_variant_shared_channel,priority:1"`
 	SharedRevision     int64  `json:"sharedRevision,omitempty" gorm:"not null;default:0"`
 	SelectorEmoji      string `json:"selectorEmoji" gorm:"size:64"`
-	Keyword            string `json:"keyword" gorm:"size:64;index"`
+	Keyword            string `json:"keyword" gorm:"size:255;index"`
+	MatchMode          string `json:"matchMode" gorm:"size:16;not null;default:'prefix'"`
+	MatchConfig        string `json:"matchConfig" gorm:"size:32;not null;default:'='"`
 	Note               string `json:"note" gorm:"size:255"`
 	AvatarAttachmentID string `json:"avatarAttachmentId" gorm:"size:100"`
 	DisplayName        string `json:"displayName" gorm:"size:64"`

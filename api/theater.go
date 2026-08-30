@@ -161,12 +161,20 @@ func TheaterPanelFolderPatch(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
 	var body struct {
-		Name string `json:"name"`
+		Name   *string         `json:"name"`
+		Preset json.RawMessage `json:"preset"`
 	}
-	if err := decodeTheaterBody(c, &body, 8<<10); err != nil {
+	if err := decodeTheaterBody(c, &body, 16<<10); err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
-	folder, err := service.UpdateTheaterPanelFolder(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("folderId"), body.Name)
+	folder, err := service.UpdateTheaterPanelFolder(
+		c.Context(),
+		user.ID,
+		c.Params("worldId"),
+		c.Params("channelId"),
+		c.Params("folderId"),
+		service.TheaterPanelFolderPatch{Name: body.Name, PresetSet: body.Preset != nil, PresetJSON: body.Preset},
+	)
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}

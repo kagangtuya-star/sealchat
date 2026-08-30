@@ -194,8 +194,10 @@ const managedTemplateOptions = computed(() => {
   return templateStore.getTemplatesBySheetType(sheetType).map(item => ({
     label: item.access === 'world_shared'
       ? `${item.name}${item.sharedByNickname ? ` [世界共享:${item.sharedByNickname}]` : ' [世界共享]'}`
+      : item.access === 'platform'
+        ? `${item.name} [平台]`
       : `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
-    value: item.id,
+    value: templateStore.getTemplateRef(item),
   }));
 });
 

@@ -41,6 +41,10 @@ type ChannelIdentityInput struct {
 	IsDefault                  bool
 	IsTemporary                bool
 	BotAppearanceMode          string
+	VariantResetMatchMode      string
+	VariantResetMatchConfig    string
+	VariantResetMatchContent   string
+	VariantResetMatchSet       bool
 	ICOOCOnActivate            string
 	FolderIDs                  []string
 	TheaterPresentation        *protocol.TheaterPresentation
@@ -159,6 +163,11 @@ func validateIdentityInput(input *ChannelIdentityInput) error {
 		return errors.New("文件夹数量过多")
 	}
 	input.ICOOCOnActivate = normalizeTemporaryIdentityActivateMode(input.ICOOCOnActivate)
+	if input.VariantResetMatchSet {
+		if err := normalizeChannelIdentityResetMatch(input); err != nil {
+			return err
+		}
+	}
 	if input.TheaterPresentation != nil {
 		if err := protocol.ValidateTheaterPresentation(*input.TheaterPresentation); err != nil {
 			return fmt.Errorf("演出外观无效: %w", err)
@@ -218,16 +227,19 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 	}
 
 	item := &model.ChannelIdentityModel{
-		ChannelID:           input.ChannelID,
-		UserID:              ownerUserID,
-		DisplayName:         strings.TrimSpace(input.DisplayName),
-		Color:               input.Color,
-		AvatarAttachmentID:  input.AvatarAttachmentID,
-		AvatarDecorations:   avatarDecorations,
-		SortOrder:           sortMax + 1,
-		IsDefault:           input.IsDefault,
-		IsTemporary:         input.IsTemporary,
-		TheaterPresentation: cloneTheaterPresentation(input.TheaterPresentation),
+		ChannelID:                input.ChannelID,
+		UserID:                   ownerUserID,
+		DisplayName:              strings.TrimSpace(input.DisplayName),
+		Color:                    input.Color,
+		AvatarAttachmentID:       input.AvatarAttachmentID,
+		AvatarDecorations:        avatarDecorations,
+		SortOrder:                sortMax + 1,
+		IsDefault:                input.IsDefault,
+		IsTemporary:              input.IsTemporary,
+		VariantResetMatchMode:    input.VariantResetMatchMode,
+		VariantResetMatchConfig:  input.VariantResetMatchConfig,
+		VariantResetMatchContent: input.VariantResetMatchContent,
+		TheaterPresentation:      cloneTheaterPresentation(input.TheaterPresentation),
 	}
 	if item.IsDefault {
 		if err := model.ChannelIdentityEnsureSingleDefault(item.ChannelID, item.UserID, ""); err != nil {
@@ -345,6 +357,11 @@ func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID strin
 		}
 		if input.BotAppearanceMode != "" {
 			values["bot_appearance_mode"] = input.BotAppearanceMode
+		}
+		if input.VariantResetMatchSet {
+			values["variant_reset_match_mode"] = input.VariantResetMatchMode
+			values["variant_reset_match_config"] = input.VariantResetMatchConfig
+			values["variant_reset_match_content"] = input.VariantResetMatchContent
 		}
 		if input.TheaterPresentationSet || input.TheaterPresentation != nil {
 			values["theater_presentation"] = input.TheaterPresentation
@@ -509,6 +526,11 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 	}
 	if input.BotAppearanceMode != "" {
 		values["bot_appearance_mode"] = input.BotAppearanceMode
+	}
+	if input.VariantResetMatchSet {
+		values["variant_reset_match_mode"] = input.VariantResetMatchMode
+		values["variant_reset_match_config"] = input.VariantResetMatchConfig
+		values["variant_reset_match_content"] = input.VariantResetMatchContent
 	}
 	if !delegatedShared && !sharedOwnerUpdate && (input.TheaterPresentationSet || input.TheaterPresentation != nil) {
 		values["theater_presentation"] = input.TheaterPresentation
@@ -728,6 +750,9 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityFolderMemberModel{}).Error; err != nil {
 			return err
 		}
+		if err := model.CharacterRemarkDeleteByIdentityTx(tx, identity.ChannelID, identity.ID); err != nil {
+			return err
+		}
 		if err := tx.Where("id = ?", identity.ID).Delete(&model.ChannelIdentityModel{}).Error; err != nil {
 			return err
 		}
@@ -811,6 +836,9 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 	if err := model.ChannelIdentityVariantDeleteByIdentityIDs([]string{identity.ID}); err != nil {
 		return err
 	}
+	if err := model.CharacterRemarkDeleteByIdentityTx(model.GetDB(), channelID, identity.ID); err != nil {
+		return err
+	}
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
 	}
@@ -892,22 +920,25 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":                  item.ID,
-		"channelId":           item.ChannelID,
-		"userId":              item.UserID,
-		"sharedIdentityId":    item.SharedIdentityID,
-		"sharedRevision":      item.SharedRevision,
-		"displayName":         item.DisplayName,
-		"color":               item.Color,
-		"avatarAttachmentId":  item.AvatarAttachmentID,
-		"avatarDecorations":   item.AvatarDecorations,
-		"theaterPresentation": item.TheaterPresentation,
-		"isDefault":           item.IsDefault,
-		"isTemporary":         item.IsTemporary,
-		"botAppearanceMode":   item.BotAppearanceMode,
-		"icOocOnActivate":     item.ICOOCOnActivate,
-		"sortOrder":           item.SortOrder,
-		"folderIds":           item.FolderIDs,
+		"id":                       item.ID,
+		"channelId":                item.ChannelID,
+		"userId":                   item.UserID,
+		"sharedIdentityId":         item.SharedIdentityID,
+		"sharedRevision":           item.SharedRevision,
+		"displayName":              item.DisplayName,
+		"color":                    item.Color,
+		"avatarAttachmentId":       item.AvatarAttachmentID,
+		"avatarDecorations":        item.AvatarDecorations,
+		"theaterPresentation":      item.TheaterPresentation,
+		"isDefault":                item.IsDefault,
+		"isTemporary":              item.IsTemporary,
+		"botAppearanceMode":        item.BotAppearanceMode,
+		"variantResetMatchMode":    item.VariantResetMatchMode,
+		"variantResetMatchConfig":  item.VariantResetMatchConfig,
+		"variantResetMatchContent": item.VariantResetMatchContent,
+		"icOocOnActivate":          item.ICOOCOnActivate,
+		"sortOrder":                item.SortOrder,
+		"folderIds":                item.FolderIDs,
 	}
 }
 

@@ -630,12 +630,14 @@ export const useIFormStore = defineStore('iform', {
       state.minimized = !state.minimized;
       this.bringFloatingToFront(windowId);
     },
-    updateFloatingPosition(windowId: string, x: number, y: number) {
+    updateFloatingPosition(windowId: string, x: number, y: number, minimizedSize?: { width: number; height: number }) {
       const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
-      const clamped = clampPosition(x, y, state.width, state.height);
+      const clampWidth = state.minimized ? minimizedSize?.width || FLOATING_BADGE_SIZE : state.width;
+      const clampHeight = state.minimized ? minimizedSize?.height || FLOATING_BADGE_SIZE : state.height;
+      const clamped = clampPosition(x, y, clampWidth, clampHeight);
       state.x = clamped.x;
       state.y = clamped.y;
     },
@@ -1011,6 +1013,7 @@ const FLOATING_MIN_HEIGHT = 200;
 const FLOATING_PADDING_X = 16;
 const FLOATING_PADDING_Y = 16;
 const FLOATING_MIN_Y = 48;
+const FLOATING_BADGE_SIZE = 48;
 const MOBILE_VIEWPORT_WIDTH = 768;
 const DEFAULT_WINDOW_SUFFIX = 'default';
 

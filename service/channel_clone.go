@@ -310,6 +310,7 @@ func cleanupClonedChannel(channelID string) {
 	db.Where("channel_id = ?", channelID).Delete(&model.StickyNoteModel{})
 
 	db.Where("channel_id = ?", channelID).Delete(&model.MemberModel{})
+	db.Where("channel_id = ?", channelID).Delete(&model.ChannelCharacterRemarkModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityFolderModel{})
 	db.Where("channel_id = ?", channelID).Delete(&model.ChannelIdentityFolderMemberModel{})
@@ -632,18 +633,21 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			return nil, err
 		}
 		clone := model.ChannelIdentityModel{
-			StringPKBaseModel:   model.StringPKBaseModel{ID: newID},
-			ChannelID:           targetID,
-			UserID:              identity.UserID,
-			DisplayName:         identity.DisplayName,
-			Color:               identity.Color,
-			AvatarAttachmentID:  avatarAttachmentID,
-			AvatarDecorations:   avatarDecorations,
-			IsDefault:           identity.IsDefault,
-			IsTemporary:         identity.IsTemporary,
-			IsHidden:            identity.IsHidden,
-			SortOrder:           identity.SortOrder,
-			TheaterPresentation: presentation,
+			StringPKBaseModel:        model.StringPKBaseModel{ID: newID},
+			ChannelID:                targetID,
+			UserID:                   identity.UserID,
+			DisplayName:              identity.DisplayName,
+			Color:                    identity.Color,
+			AvatarAttachmentID:       avatarAttachmentID,
+			AvatarDecorations:        avatarDecorations,
+			IsDefault:                identity.IsDefault,
+			IsTemporary:              identity.IsTemporary,
+			IsHidden:                 identity.IsHidden,
+			VariantResetMatchMode:    identity.VariantResetMatchMode,
+			VariantResetMatchConfig:  identity.VariantResetMatchConfig,
+			VariantResetMatchContent: identity.VariantResetMatchContent,
+			SortOrder:                identity.SortOrder,
+			TheaterPresentation:      presentation,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
@@ -795,6 +799,8 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			UserID:             variant.UserID,
 			SelectorEmoji:      variant.SelectorEmoji,
 			Keyword:            variant.Keyword,
+			MatchMode:          variant.MatchMode,
+			MatchConfig:        variant.MatchConfig,
 			Note:               variant.Note,
 			AvatarAttachmentID: avatarAttachmentID,
 			DisplayName:        variant.DisplayName,

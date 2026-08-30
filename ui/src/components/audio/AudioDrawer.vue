@@ -60,8 +60,7 @@
             <ScenePlaylist />
           </n-tab-pane>
           <n-tab-pane v-if="audio.canManage" name="library" tab="素材库">
-            <AudioS3AssetManager v-if="s3Library.enabled" />
-            <AudioAssetManager v-else />
+            <AudioAssetManager />
           </n-tab-pane>
         </n-tabs>
 
@@ -78,12 +77,9 @@ import TransportBar from './TransportBar.vue';
 import TrackMixerCard from './TrackMixerCard.vue';
 import ScenePlaylist from './ScenePlaylist.vue';
 import AudioAssetManager from './AudioAssetManager.vue';
-import AudioS3AssetManager from './AudioS3AssetManager.vue';
 import FFmpegMissingAlert from './FFmpegMissingAlert.vue';
-import { useAudioS3LibraryStore } from '@/stores/audioS3Library';
 
 const audio = useAudioStudioStore();
-const s3Library = useAudioS3LibraryStore();
 type AudioTab = 'player' | 'playlist' | 'library';
 const tracks = computed(() => Object.values(audio.tracks || {}));
 const viewportWidth = ref(typeof window === 'undefined' ? 0 : window.innerWidth);
@@ -103,12 +99,8 @@ const handleTabChange = (val: string | number) => {
   audio.selectTab((val as AudioTab) || 'player');
 };
 
-onMounted(async () => {
-  await s3Library.ensureSettings();
-  if (s3Library.enabled) {
-    await Promise.all([s3Library.fetchFolders(), s3Library.fetchSelectableAssets()]);
-  }
-  void audio.ensureInitialized();
+onMounted(() => {
+  audio.ensureInitialized();
   updateWidth();
   window.addEventListener('resize', updateWidth);
 });

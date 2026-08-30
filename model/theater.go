@@ -55,6 +55,7 @@ type TheaterSceneModel struct {
 	Name          string `json:"name" gorm:"size:512;not null"`
 	SwitchText    string `json:"switchText" gorm:"type:text;not null;default:''"`
 	SortOrder     int64  `json:"sortOrder" gorm:"not null;index:idx_theater_scene_room_sort,priority:2"`
+	FolderID      string `json:"folderId,omitempty" gorm:"size:100;index"`
 	Locked        bool   `json:"locked" gorm:"not null;default:false"`
 	StateJSON     string `json:"stateJson" gorm:"not null"`
 	SchemaVersion int    `json:"schemaVersion" gorm:"not null"`
@@ -110,16 +111,37 @@ func (*TheaterGroupEditorStateModel) TableName() string { return "theater_group_
 
 type TheaterPanelFolderModel struct {
 	StringPKBaseModel
-	RoomID    string `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_name,priority:1;index:idx_theater_panel_folder_order,priority:1"`
-	Domain    string `json:"domain" gorm:"size:16;not null;uniqueIndex:udx_theater_panel_folder_name,priority:2;index:idx_theater_panel_folder_order,priority:2"`
-	Name      string `json:"name" gorm:"size:128;not null;uniqueIndex:udx_theater_panel_folder_name,priority:3"`
-	SortOrder int64  `json:"sortOrder" gorm:"not null;default:0;index:idx_theater_panel_folder_order,priority:3"`
-	CreatedBy string `json:"createdBy" gorm:"size:100;index"`
-	UpdatedBy string `json:"updatedBy" gorm:"size:100"`
-	Collapsed bool   `json:"collapsed" gorm:"-"`
+	RoomID     string                    `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_name,priority:1;index:idx_theater_panel_folder_order,priority:1"`
+	Domain     string                    `json:"domain" gorm:"size:16;not null;uniqueIndex:udx_theater_panel_folder_name,priority:2;index:idx_theater_panel_folder_order,priority:2"`
+	Name       string                    `json:"name" gorm:"size:128;not null;uniqueIndex:udx_theater_panel_folder_name,priority:3"`
+	SortOrder  int64                     `json:"sortOrder" gorm:"not null;default:0;index:idx_theater_panel_folder_order,priority:3"`
+	PresetJSON string                    `json:"-" gorm:"type:text"`
+	CreatedBy  string                    `json:"createdBy" gorm:"size:100;index"`
+	UpdatedBy  string                    `json:"updatedBy" gorm:"size:100"`
+	Collapsed  bool                      `json:"collapsed" gorm:"-"`
+	Preset     *TheaterImageObjectPreset `json:"preset,omitempty" gorm:"-"`
 }
 
 func (*TheaterPanelFolderModel) TableName() string { return "theater_panel_folders" }
+
+type TheaterImageObjectPreset struct {
+	Version           int                         `json:"version"`
+	Width             *float64                    `json:"width,omitempty"`
+	Height            *float64                    `json:"height,omitempty"`
+	Visible           *bool                       `json:"visible,omitempty"`
+	Interactive       *bool                       `json:"interactive,omitempty"`
+	Editable          *bool                       `json:"editable,omitempty"`
+	Locked            *bool                       `json:"locked,omitempty"`
+	AspectRatioLocked *bool                       `json:"aspectRatioLocked,omitempty"`
+	Entrance          *TheaterStageEntranceConfig `json:"entrance,omitempty"`
+}
+
+type TheaterImageFolderPreset = TheaterImageObjectPreset
+
+type TheaterStageEntranceConfig struct {
+	Preset     string `json:"preset"`
+	DurationMS int    `json:"durationMs"`
+}
 
 type TheaterPanelItemModel struct {
 	StringPKBaseModel
@@ -141,6 +163,18 @@ type TheaterPanelFolderStateModel struct {
 }
 
 func (*TheaterPanelFolderStateModel) TableName() string { return "theater_panel_folder_states" }
+
+type TheaterImageAssetModel struct {
+	StringPKBaseModel
+	RoomID     string `json:"roomId" gorm:"size:100;not null;index"`
+	Name       string `json:"name" gorm:"size:255;not null"`
+	ResourceID string `json:"resourceId" gorm:"size:100;not null;index"`
+	PresetJSON string `json:"-" gorm:"type:text"`
+	CreatedBy  string `json:"createdBy" gorm:"size:100;index"`
+	UpdatedBy  string `json:"updatedBy" gorm:"size:100"`
+}
+
+func (*TheaterImageAssetModel) TableName() string { return "theater_image_assets" }
 
 type TheaterResourceModel struct {
 	StringPKBaseModel
@@ -282,6 +316,7 @@ func theaterModels() []any {
 		&TheaterPanelFolderModel{},
 		&TheaterPanelItemModel{},
 		&TheaterPanelFolderStateModel{},
+		&TheaterImageAssetModel{},
 		&TheaterResourceModel{},
 		&TheaterResourceVariantModel{},
 		&TheaterResourceJobModel{},

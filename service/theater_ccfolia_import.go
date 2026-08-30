@@ -591,10 +591,18 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 		}
 		roomUpdates := map[string]any{}
 		if sceneCount == int64(len(conversion.Snapshot.Scenes)) && conversion.Snapshot.ActiveSceneID != nil {
+			stateRaw := defaultJSON(conversion.Snapshot.LiveState, `{}`)
+			var liveState map[string]any
+			if json.Unmarshal([]byte(stateRaw), &liveState) != nil || liveState == nil {
+				liveState = map[string]any{}
+			}
+			liveState["sceneFolders"] = currentSnapshot.SceneFolders
+			stateBytes, _ := json.Marshal(liveState)
+			stateRaw = string(stateBytes)
 			roomUpdates["active_scene_id"] = *conversion.Snapshot.ActiveSceneID
-			roomUpdates["state_json"] = defaultJSON(conversion.Snapshot.LiveState, `{}`)
+			roomUpdates["state_json"] = stateRaw
 			current.ActiveSceneID = *conversion.Snapshot.ActiveSceneID
-			current.StateJSON = defaultJSON(conversion.Snapshot.LiveState, `{}`)
+			current.StateJSON = string(stateRaw)
 		}
 		nextRevision := current.Revision + 1
 		roomUpdates["revision"] = nextRevision

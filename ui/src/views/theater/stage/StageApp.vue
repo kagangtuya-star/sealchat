@@ -19,10 +19,12 @@ import {
   CloudDownload,
   Copy,
   Cut,
+  Dots,
   Edit,
   Eye,
   EyeOff,
   Filter,
+  Folder,
   FolderPlus,
   Focus,
   GripVertical,
@@ -30,7 +32,6 @@ import {
   LetterT,
   Lock,
   LockOpen,
-  Magnet,
   Message,
   Photo,
   Pencil,
@@ -82,6 +83,7 @@ import {
   type StageObjectFit,
   type StagePointerTrace,
   type StagePointerTraceInput,
+  type SceneFolder,
   type StageScene,
   type StageSceneTransition,
   type StageSceneTransitionPhase,
@@ -96,6 +98,7 @@ import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
 import { stageSceneTransitionKeyframes, stageSceneTransitionOptions } from './stage-scene-transition'
+import { snapStageResizeBox, type StageGridResizeSession } from './stage-grid-resize'
 import {
   resolveTheaterStageMediaLocation,
   theaterResourceContentPath,
@@ -104,6 +107,7 @@ import {
 } from './stage-media'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
 import StageCopyToolbar from './StageCopyToolbar.vue'
+import StageGridToolbar from './StageGridToolbar.vue'
 import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
@@ -117,6 +121,7 @@ import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import type { TheaterPresentation } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
@@ -129,6 +134,13 @@ import {
   type TheaterPanelFolder,
   type TheaterPanelOrganizerSnapshot,
 } from '../effects/theater-panel-organizer'
+import {
+  applyImageObjectPreset,
+  resolveImageObjectPreset,
+  type TheaterImageFolderPreset,
+  type TheaterImageObjectPreset,
+} from '../effects/theater-image-folder-preset'
+import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from '../effects/theater-image-assets'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -137,6 +149,7 @@ const props = defineProps<{
   scopeType?: 'channel' | 'world'
   characterSnapshot: ChatCharactersSnapshotPayload
   chatBridgeOnline: boolean
+  chatBridgeStatus: TheaterChatBridgeStatus
   chatVisible: boolean
   syncReady: boolean
   syncing: boolean
@@ -162,6 +175,8 @@ const emit = defineEmits<{
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
   openCharacterCard: [identityId: string]
   toggleChat: []
+  disconnectChatBridge: []
+  reconnectChatBridge: []
   resetLayout: []
   exitTheater: []
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
@@ -174,6 +189,17 @@ const emit = defineEmits<{
   updateSceneDialogueEnabled: [enabled: boolean]
   updateSceneAudioEnabled: [enabled: boolean]
 }>()
+
+const chatBridgeStatusLabel = computed(() => {
+  switch (props.chatBridgeStatus) {
+    case 'connected': return '已连接'
+    case 'connecting': return '连接中'
+    case 'reconnecting': return '重连中'
+    case 'manual-disconnected': return '已手动断开'
+    case 'error': return '连接异常'
+    default: return '未连接'
+  }
+})
 
 const stageActionDescriptions: Record<StageAction['type'], string> = {
   'chat.send': '发送消息',
@@ -228,6 +254,12 @@ const theaterAudioQuota = ref<AudioQuotaSummary | null>(null)
 const theaterAudioLoading = ref(false)
 const theaterAudioUploading = ref(false)
 const theaterAudioError = ref('')
+const theaterImageAssets = ref<TheaterImageAsset[]>([])
+const theaterImageLoading = ref(false)
+const theaterImageUploading = ref(false)
+const theaterImageError = ref('')
+let theaterImageFetchGeneration = 0
+let theaterImageUploadGeneration = 0
 const theaterPanelOrganizer = ref<TheaterPanelOrganizerSnapshot>(emptyTheaterPanelOrganizer())
 const duplicatingScene = ref(false)
 const theaterAudioPlayers = new Map<string, Howl>()
@@ -291,6 +323,24 @@ const packageMenuOptions = computed<DropdownOption[]>(() => [
 
 const theaterPackagePath = (suffix: string) => `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/packages/${suffix}`
 
+type TheaterRequestScope = {
+  worldId: string
+  channelId: string
+  scopeType?: 'channel' | 'world'
+}
+
+const captureTheaterRequestScope = (): TheaterRequestScope => ({
+  worldId: props.worldId,
+  channelId: props.channelId,
+  scopeType: props.scopeType,
+})
+
+const isCurrentTheaterRequestScope = (scope: TheaterRequestScope) => (
+  scope.worldId === props.worldId
+  && scope.channelId === props.channelId
+  && scope.scopeType === props.scopeType
+)
+
 const theaterEditorStatePath = (objectId = '') => {
   const base = props.scopeType === 'world'
     ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/editor-state/groups`
@@ -298,11 +348,18 @@ const theaterEditorStatePath = (objectId = '') => {
   return objectId ? `${base}/${encodeURIComponent(objectId)}` : base
 }
 
-const theaterPanelOrganizerPath = (suffix = '') => {
-  const base = props.scopeType === 'world'
-    ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/panel-organizer`
-    : `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/panel-organizer`
+const theaterPanelOrganizerPath = (suffix = '', scope = captureTheaterRequestScope()) => {
+  const base = scope.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(scope.worldId)}/theater/panel-organizer`
+    : `api/v1/worlds/${encodeURIComponent(scope.worldId)}/channels/${encodeURIComponent(scope.channelId)}/theater/panel-organizer`
   return suffix ? `${base}/${suffix}` : base
+}
+
+const theaterImageAssetPath = (assetId = '', scope = captureTheaterRequestScope()) => {
+  const base = scope.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(scope.worldId)}/theater/image-assets`
+    : `api/v1/worlds/${encodeURIComponent(scope.worldId)}/channels/${encodeURIComponent(scope.channelId)}/theater/image-assets`
+  return assetId ? `${base}/${encodeURIComponent(assetId)}` : base
 }
 
 const stopPackagePolling = () => {
@@ -533,6 +590,74 @@ const theaterAudioErrorMessage = (error: unknown, fallback: string) => {
   return value?.message || fallback
 }
 
+const withTheaterImageAssetURL = (asset: Omit<TheaterImageAsset, 'url'>, scope = captureTheaterRequestScope()): TheaterImageAsset => {
+  const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+  const variant = asset.resource.playbackVariant || 'original'
+  return {
+    ...asset,
+    url: `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(scope), asset.resourceId, variant)}`,
+  }
+}
+
+const fetchTheaterImageAssets = async () => {
+  const generation = ++theaterImageFetchGeneration
+  const scope = captureTheaterRequestScope()
+  if (!props.worldId || (props.scopeType !== 'world' && !props.channelId) || !props.syncReady) {
+    theaterImageAssets.value = []
+    theaterImageLoading.value = false
+    return
+  }
+  theaterImageLoading.value = true
+  try {
+    const response = await api.get<{ items?: Omit<TheaterImageAsset, 'url'>[] }>(theaterImageAssetPath('', scope))
+    if (generation !== theaterImageFetchGeneration || !isCurrentTheaterRequestScope(scope)) return
+    theaterImageAssets.value = (response.data?.items || []).map((asset) => withTheaterImageAssetURL(asset, scope))
+    theaterImageError.value = ''
+  } catch (error) {
+    if (generation !== theaterImageFetchGeneration || !isCurrentTheaterRequestScope(scope)) return
+    theaterImageError.value = theaterAudioErrorMessage(error, '读取图片素材失败')
+  } finally {
+    if (generation === theaterImageFetchGeneration) theaterImageLoading.value = false
+  }
+}
+
+const renameTheaterImageAsset = async (assetId: string, name: string) => {
+  try {
+    await api.patch(theaterImageAssetPath(assetId), { name })
+    await fetchTheaterImageAssets()
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, '重命名图片素材失败')
+  }
+}
+
+const updateTheaterImageAssetPreset = async (assetId: string, preset: TheaterImageObjectPreset | null) => {
+  if (!canEditAllObjects.value) return
+  try {
+    await api.patch(theaterImageAssetPath(assetId), { preset })
+    await fetchTheaterImageAssets()
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, preset ? '保存素材预设失败' : '清除素材预设失败')
+  }
+}
+
+const deleteTheaterImageAsset = async (asset: TheaterImageAsset) => {
+  if (!canDeleteResources.value || !window.confirm(`删除图片素材“${asset.name}”？舞台上的图片组件不会受影响。`)) return
+  try {
+    await api.delete(theaterImageAssetPath(asset.id))
+    await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, '删除图片素材失败')
+  }
+}
+
+const deleteTheaterImageAssetsBatch = async (assets: TheaterImageAsset[]) => {
+  if (!canDeleteResources.value || !assets.length || !window.confirm(`删除选中的 ${assets.length} 个图片素材？舞台上的图片组件不会受影响。`)) return
+  const results = await Promise.allSettled(assets.map((asset) => api.delete(theaterImageAssetPath(asset.id))))
+  await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  const failed = results.filter((result) => result.status === 'rejected')
+  if (failed.length) theaterImageError.value = `${assets.length - failed.length} 个删除成功，${failed.length} 个删除失败`
+}
+
 const fetchTheaterPanelOrganizer = async () => {
   if (!props.worldId || (props.scopeType !== 'world' && !props.channelId) || !props.syncReady) {
     theaterPanelOrganizer.value = emptyTheaterPanelOrganizer()
@@ -566,6 +691,16 @@ const renameTheaterPanelFolder = async (folderId: string, name: string) => {
     await fetchTheaterPanelOrganizer()
   } catch (error) {
     stageMessage.error(theaterAudioErrorMessage(error, '重命名文件夹失败'))
+  }
+}
+
+const updateTheaterImageFolderPreset = async (folderId: string, preset: TheaterImageFolderPreset | null) => {
+  if (!canEditAllObjects.value) return
+  try {
+    await api.patch(theaterPanelOrganizerPath(`folders/${encodeURIComponent(folderId)}`), { preset })
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, preset ? '保存图片文件夹预设失败' : '清除图片文件夹预设失败'))
   }
 }
 
@@ -1372,6 +1507,45 @@ const sceneTransitionTypeOptions = stageSceneTransitionTypes.map((type) => ({
   } satisfies Record<StageSceneTransitionType, string>)[type],
 }))
 const sceneListRef = ref<HTMLDivElement | null>(null)
+const collapsedSceneFolders = ref(new Set<string>())
+const sceneFolderCollapseKey = (folderId: string) => `folder:${folderId}`
+const uncategorizedSceneFolderCollapseKey = 'virtual:uncategorized'
+type SceneFolderDialogMode = 'create' | 'rename'
+const sceneFolderDialogVisible = ref(false)
+const sceneFolderDialogMode = ref<SceneFolderDialogMode>('create')
+const sceneFolderDialogFolderId = ref<string | null>(null)
+const sceneFolderNameDraft = ref('')
+type SceneListEntry =
+  | { kind: 'scene', key: string, scene: StageScene, nested: boolean }
+  | { kind: 'folder', key: string, folder: SceneFolder, scenes: StageScene[], collapsed: boolean }
+  | { kind: 'uncategorized', key: string, scenes: StageScene[], collapsed: boolean }
+const sceneListEntries = computed<SceneListEntry[]>(() => {
+  const folders = props.store.state.sceneFolders || []
+  const scenes = props.store.scenes.value
+  const folderIDs = new Set(folders.map((folder) => folder.id))
+  const grouped = new Map<string, StageScene[]>()
+  const uncategorized: StageScene[] = []
+  scenes.forEach((scene) => {
+    const folderId = scene.folderId && folderIDs.has(scene.folderId) ? scene.folderId : ''
+    if (!folderId) uncategorized.push(scene)
+    else {
+      const bucket = grouped.get(folderId)
+      if (bucket) bucket.push(scene)
+      else grouped.set(folderId, [scene])
+    }
+  })
+  const entries: SceneListEntry[] = []
+  folders.forEach((folder) => {
+    const scenesInFolder = grouped.get(folder.id) || []
+    const collapsed = collapsedSceneFolders.value.has(sceneFolderCollapseKey(folder.id))
+    entries.push({ kind: 'folder', key: `folder:${folder.id}`, folder, scenes: scenesInFolder, collapsed })
+    if (!collapsed) scenesInFolder.forEach((scene) => entries.push({ kind: 'scene', key: scene.id, scene, nested: true }))
+  })
+  const uncategorizedCollapsed = collapsedSceneFolders.value.has(uncategorizedSceneFolderCollapseKey)
+  entries.push({ kind: 'uncategorized', key: 'virtual-folder:uncategorized', scenes: uncategorized, collapsed: uncategorizedCollapsed })
+  if (!uncategorizedCollapsed) uncategorized.forEach((scene) => entries.push({ kind: 'scene', key: scene.id, scene, nested: true }))
+  return entries
+})
 const draggedSceneId = ref<string | null>(null)
 type SceneDropPlacement = 'before' | 'after'
 const sceneDropTarget = ref<{ id: string, placement: SceneDropPlacement } | null>(null)
@@ -1584,6 +1758,113 @@ const finishScenePointerDrag = (event: PointerEvent, cancelled = false) => {
   draggedSceneId.value = null
   setSceneDropTarget(null)
   if (!cancelled && dropTarget) props.store.reorderScenes(session.sceneId, dropTarget.id, dropTarget.placement)
+}
+
+const toggleSceneFolder = (folderId: string) => {
+  const next = new Set(collapsedSceneFolders.value)
+  if (next.has(folderId)) next.delete(folderId)
+  else next.add(folderId)
+  collapsedSceneFolders.value = next
+}
+
+const openSceneFolderDialog = (mode: SceneFolderDialogMode, folderId: string | null = null) => {
+  if (!canEditAllObjects.value) return
+  const folder = mode === 'rename' && folderId
+    ? props.store.state.sceneFolders.find((item) => item.id === folderId)
+    : null
+  if (mode === 'rename' && !folder) return
+  sceneFolderDialogMode.value = mode
+  sceneFolderDialogFolderId.value = folder?.id || null
+  sceneFolderNameDraft.value = folder?.name || ''
+  sceneFolderDialogVisible.value = true
+}
+
+const createSceneFolder = () => openSceneFolderDialog('create')
+
+const closeSceneFolderDialog = () => {
+  sceneFolderDialogVisible.value = false
+}
+
+const submitSceneFolderDialog = () => {
+  const name = sceneFolderNameDraft.value.trim()
+  if (!name) {
+    stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+    return
+  }
+  if (sceneFolderDialogMode.value === 'create') {
+    if (props.store.state.sceneFolders.length >= 200) {
+      stageMessage.warning('场景文件夹最多创建 200 个')
+      return
+    }
+    const folder = props.store.createSceneFolder(name)
+    if (!folder) {
+      stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+      return
+    }
+    const next = new Set(collapsedSceneFolders.value)
+    next.delete(sceneFolderCollapseKey(folder.id))
+    collapsedSceneFolders.value = next
+    closeSceneFolderDialog()
+    return
+  }
+  const folderId = sceneFolderDialogFolderId.value
+  const folder = folderId ? props.store.state.sceneFolders.find((item) => item.id === folderId) : null
+  if (!folder) {
+    closeSceneFolderDialog()
+    return
+  }
+  if (name === folder.name) {
+    closeSceneFolderDialog()
+    return
+  }
+  if (!props.store.renameSceneFolder(folder.id, name)) {
+    stageMessage.warning('文件夹名称不能为空、不能重复或过长')
+    return
+  }
+  closeSceneFolderDialog()
+}
+
+const handleSceneFolderDialogKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing || event.key !== 'Enter') return
+  event.preventDefault()
+  submitSceneFolderDialog()
+}
+
+const sceneFolderMenuOptions: DropdownOption[] = [
+  { label: '重命名', key: 'rename' },
+  { label: '删除', key: 'delete' },
+]
+
+const handleSceneFolderMenu = (key: string | number, folderId: string) => {
+  const folder = props.store.state.sceneFolders.find((item) => item.id === folderId)
+  if (!folder) return
+  if (key === 'rename') {
+    openSceneFolderDialog('rename', folder.id)
+    return
+  }
+  if (key === 'delete') {
+    confirmDelete('删除文件夹', `删除文件夹“${folder.name}”不会删除其中的场景，场景将移动到未分类。`, () => {
+      props.store.deleteSceneFolder(folderId)
+      const collapseKey = sceneFolderCollapseKey(folderId)
+      collapsedSceneFolders.value = new Set([...collapsedSceneFolders.value].filter((id) => id !== collapseKey))
+    })
+  }
+}
+
+const sceneMoveOptions = (scene: StageScene): DropdownOption[] => [
+  { label: '移动到未分类', key: 'move:', disabled: !scene.folderId },
+  ...props.store.state.sceneFolders.map((folder) => ({
+    label: `移动到：${folder.name}`,
+    key: `move:${folder.id}`,
+    disabled: scene.folderId === folder.id,
+  })),
+]
+
+const moveSceneFromMenu = (key: string | number, sceneId: string) => {
+  const value = String(key)
+  if (!value.startsWith('move:')) return
+  const folderId = value.slice('move:'.length) || null
+  props.store.moveSceneToFolder(sceneId, folderId)
 }
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -1946,17 +2227,20 @@ let backgroundLayer: Konva.Layer | null = null
 let worldLayer: Konva.Layer | null = null
 let worldOverlayLayer: Konva.Layer | null = null
 let foregroundLayer: Konva.Layer | null = null
+let gridTopLayer: Konva.Layer | null = null
 let interactionLayer: Konva.Layer | null = null
 let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
 let worldOverlayCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
+let gridTopCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
 const objectRootLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group }>()
 const rootStackingOrder = ref<Record<string, number>>({})
 const OBJECT_ROOT_LAYER_Z_BASE = 100
 const WORLD_OVERLAY_LAYER_Z = 8990
+const GRID_TOP_LAYER_Z = 9990
 let sceneMorphStage: Konva.Stage | null = null
 const sceneMorphLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }>()
 const sceneMorphTextCameras = new Map<string, HTMLDivElement>()
@@ -1980,14 +2264,34 @@ let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
 let gridCoverage: { minX: number, maxX: number, minY: number, maxY: number } | null = null
 let gridSyncFrame: number | null = null
+let gridNodeSnapSession: {
+  node: Konva.Node
+  camera: Konva.Group
+  offsetX: number
+  offsetY: number
+  lockedX: number | null
+  lockedY: number | null
+} | null = null
+let gridResizeSession: StageGridResizeSession | null = null
 
 const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
+const gridDisplayEnabled = computed(() => props.store.state.liveState.displayGrid)
+const gridOnTopEnabled = computed(() => props.store.state.liveState.gridOnTop)
 const toggleGridSnap = () => {
   if (!canEditAllObjects.value) return
   props.store.state.liveState.alignWithGrid = !props.store.state.liveState.alignWithGrid
 }
+const toggleGridDisplay = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.displayGrid = !props.store.state.liveState.displayGrid
+}
+const toggleGridOnTop = () => {
+  if (!canEditAllObjects.value) return
+  props.store.state.liveState.gridOnTop = !props.store.state.liveState.gridOnTop
+}
 
 const setGridSnapPreview = (active: boolean) => {
+  if (!active) gridNodeSnapSession = null
   if (gridSnapPreviewActive.value === active) return
   gridSnapPreviewActive.value = active
   scheduleGridSync()
@@ -1997,12 +2301,14 @@ const finishGridSnapPreview = () => {
   if (gridSnapPreviewActive.value) setGridSnapPreview(false)
 }
 
+const stageGridStep = () => Math.max(0.25, props.store.state.liveState.gridSize) * WORLD_UNIT_PX
+
 const snapStageCoordinate = (value: number, axis: 'x' | 'y') => {
   const liveState = props.store.state.liveState
   if (!liveState.alignWithGrid) return value
   const fieldSize = axis === 'x' ? liveState.fieldWidth : liveState.fieldHeight
   const origin = -fieldSize * WORLD_UNIT_PX / 2
-  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  const step = stageGridStep()
   return origin + Math.round((value - origin) / step) * step
 }
 
@@ -2011,24 +2317,119 @@ const snapStagePosition = (position: { x: number, y: number }) => ({
   y: snapStageCoordinate(position.y, 'y'),
 })
 
-const snapNodeToGrid = (node: Konva.Node) => {
-  if (!gridSnapEnabled.value || !worldCameraGroup) return { x: 0, y: 0 }
-  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
-  const camera = worldCameraGroup.absolutePosition()
-  const current = node.absolutePosition()
-  const world = {
-    x: (current.x - camera.x) / zoom,
-    y: (current.y - camera.y) / zoom,
+const snapDrawingPoint = (tool: StageDrawingTool, position: { x: number, y: number }) => (
+  tool === 'pen' || tool === 'highlighter' ? position : snapStagePosition(position)
+)
+
+const cameraForNode = (node: Konva.Node) => {
+  let ancestor = node.getParent()
+  while (ancestor && ancestor.getParent() && !(ancestor.getParent() instanceof Konva.Layer)) {
+    ancestor = ancestor.getParent()
   }
-  const snapped = snapStagePosition(world)
+  return ancestor instanceof Konva.Group ? ancestor : worldCameraGroup
+}
+
+const beginNodeGridSnap = (node: Konva.Node) => {
+  const cameraGroup = cameraForNode(node)
+  if (!gridSnapEnabled.value || !cameraGroup) {
+    gridNodeSnapSession = null
+    return
+  }
+  const zoom = Math.max(0.01, cameraGroup.scaleX())
+  const camera = cameraGroup.absolutePosition()
+  const current = node.absolutePosition()
+  const origin = { x: (current.x - camera.x) / zoom, y: (current.y - camera.y) / zoom }
+  const bounds = node.getClientRect({
+    relativeTo: cameraGroup,
+    skipStroke: true,
+    skipShadow: true,
+  })
+  gridNodeSnapSession = {
+    node,
+    camera: cameraGroup,
+    offsetX: bounds.x - origin.x,
+    offsetY: bounds.y - origin.y,
+    lockedX: null,
+    lockedY: null,
+  }
+}
+
+const snapStageCoordinateWithHysteresis = (
+  value: number,
+  axis: 'x' | 'y',
+  locked: number | null,
+) => locked !== null && Math.abs(value - locked) <= stageGridStep() * 0.6
+  ? locked
+  : snapStageCoordinate(value, axis)
+
+const snapNodeToGrid = (node: Konva.Node) => {
+  if (!gridSnapEnabled.value) return { x: 0, y: 0 }
+  if (gridNodeSnapSession?.node !== node) beginNodeGridSnap(node)
+  const session = gridNodeSnapSession
+  if (!session) return { x: 0, y: 0 }
+  const zoom = Math.max(0.01, session.camera.scaleX())
+  const camera = session.camera.absolutePosition()
+  const current = node.absolutePosition()
+  const bounds = {
+    x: (current.x - camera.x) / zoom + session.offsetX,
+    y: (current.y - camera.y) / zoom + session.offsetY,
+  }
+  const snapped = {
+    x: snapStageCoordinateWithHysteresis(bounds.x, 'x', session.lockedX),
+    y: snapStageCoordinateWithHysteresis(bounds.y, 'y', session.lockedY),
+  }
+  session.lockedX = snapped.x
+  session.lockedY = snapped.y
   const correction = {
-    x: (snapped.x - world.x) * zoom,
-    y: (snapped.y - world.y) * zoom,
+    x: (snapped.x - bounds.x) * zoom,
+    y: (snapped.y - bounds.y) * zoom,
   }
   if (correction.x || correction.y) {
     node.absolutePosition({ x: current.x + correction.x, y: current.y + correction.y })
   }
   return correction
+}
+
+const beginGridResize = () => {
+  gridResizeSession = null
+  if (!gridSnapEnabled.value || !transformer || !worldCameraGroup || isBatchSelection.value) return
+  const object = selectedObject.value
+  const anchor = transformer.getActiveAnchor()
+  if (
+    !object
+    || object.type === 'group'
+    || object.type === 'effect'
+    || object.aspectRatioLocked
+    || !anchor
+    || anchor === 'rotater'
+  ) return
+  const node = objectNodes.get(object.id)
+  const baseBoxWidth = Math.abs(transformer.width())
+  const baseBoxHeight = Math.abs(transformer.height())
+  if (!node || baseBoxWidth <= 0 || baseBoxHeight <= 0) return
+  const liveState = props.store.state.liveState
+  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
+  const camera = worldCameraGroup.absolutePosition()
+  gridResizeSession = {
+    anchor,
+    gridSize: liveState.gridSize,
+    baseWidth: Math.max(0.5, object.transform.width * Math.abs(node.scaleX())),
+    baseHeight: Math.max(0.5, object.transform.height * Math.abs(node.scaleY())),
+    baseBoxWidth,
+    baseBoxHeight,
+    gridOriginX: camera.x - liveState.fieldWidth * WORLD_UNIT_PX * zoom / 2,
+    gridOriginY: camera.y - liveState.fieldHeight * WORLD_UNIT_PX * zoom / 2,
+    gridStepPx: stageGridStep() * zoom,
+    lockedWidthCells: null,
+    lockedHeightCells: null,
+  }
+  setGridSnapPreview(true)
+}
+
+const finishGridResize = () => {
+  if (!gridResizeSession) return
+  gridResizeSession = null
+  setGridSnapPreview(false)
 }
 
 interface DrawingSession {
@@ -2206,11 +2607,13 @@ const drawWorldLayers = (immediate = false) => {
     worldLayer?.draw()
     objectRootLayers.forEach(({ layer }) => layer.draw())
     worldOverlayLayer?.draw()
+    gridTopLayer?.draw()
     return
   }
   worldLayer?.batchDraw()
   objectRootLayers.forEach(({ layer }) => layer.batchDraw())
   worldOverlayLayer?.batchDraw()
+  gridTopLayer?.batchDraw()
 }
 
 interface SurfaceSlot {
@@ -3093,10 +3496,10 @@ const applyCamera = () => {
     y: stage.height() / 2 + props.store.state.camera.y,
   }
   const scale = { x: props.store.state.camera.zoom, y: props.store.state.camera.zoom }
-  // Background fills viewport independently; world and foreground follow camera.
+  // Background fills viewport independently; world, foreground, and top grid follow camera.
   backgroundCameraGroup?.position({ x: 0, y: 0 })
   backgroundCameraGroup?.scale({ x: 1, y: 1 })
-  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup]) {
+  for (const group of [worldCameraGroup, worldOverlayCameraGroup, foregroundCameraGroup, gridTopCameraGroup]) {
     group?.position(position)
     group?.scale(scale)
   }
@@ -3193,6 +3596,7 @@ const updateTransformer = () => {
     const nodes = selectedMovementNodes().map(({ node }) => node)
     const proportional = batchBooleanObjects('aspectRatioLocked').some((object) => object.aspectRatioLocked)
     transformer.nodes(nodes)
+    transformer.ignoreStroke(selectedObjects.value.some((object) => object.type === 'drawing'))
     transformer.visible(Boolean(nodes.length))
     transformer.padding(8)
     transformer.borderStrokeWidth(2)
@@ -3218,6 +3622,7 @@ const updateTransformer = () => {
   const object = selectedObject.value
   const node = object && canEditObject(object) && !object.locked ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
+  transformer.ignoreStroke(object?.type === 'drawing')
   transformer.visible(Boolean(node))
   const groupSelected = object?.type === 'group'
   const proportional = object?.aspectRatioLocked !== false
@@ -3279,11 +3684,11 @@ const toggleBulkSelectionMode = () => {
 
 const isVideoSource = (source: StageMediaSource): source is HTMLVideoElement => source instanceof HTMLVideoElement
 
-const theaterMediaScope = () => ({
+const theaterMediaScope = (scope = captureTheaterRequestScope()) => ({
   urlBase: String(urlBase),
-  worldId: props.worldId,
-  channelId: props.channelId,
-  scopeType: props.scopeType,
+  worldId: scope.worldId,
+  channelId: scope.channelId,
+  scopeType: scope.scopeType,
 })
 
 const resolveTheaterStageMedia = (imageRef: StageImageRef) => resolveTheaterStageMediaLocation(imageRef, theaterMediaScope())
@@ -3297,13 +3702,14 @@ const syncMediaAnimation = () => {
     mediaAnimation?.stop()
     return
   }
-  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer) {
+  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer && gridTopLayer) {
     mediaAnimation = new Konva.Animation(() => {}, [
       backgroundLayer,
       worldLayer,
       ...[...objectRootLayers.values()].map(({ layer }) => layer),
       worldOverlayLayer,
       foregroundLayer,
+      gridTopLayer,
     ])
   }
   mediaAnimation?.start()
@@ -4822,12 +5228,23 @@ const updateSurfaceSlot = (
   })
 }
 
+const syncGridLayer = () => {
+  if (!gridGroup) return false
+  const target = props.store.state.liveState.gridOnTop ? gridTopCameraGroup : worldCameraGroup
+  if (!target || gridGroup.getParent() === target) return false
+  const previousLayer = gridGroup.getLayer()
+  gridGroup.moveTo(target)
+  previousLayer?.batchDraw()
+  target.getLayer()?.batchDraw()
+  return true
+}
+
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
   if (!gridGroup) return false
   const liveState = props.store.state.liveState
   const camera = props.store.state.camera
   const gridVisible = liveState.displayGrid || gridSnapPreviewActive.value
-  const signature = [
+  const baseSignature = [
     fieldX,
     fieldY,
     fieldWidth,
@@ -4836,15 +5253,19 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
     liveState.gridSize,
   ].join(':')
   if (!gridVisible) {
-    const changed = gridSignature !== signature || gridGroup.children.length > 0
+    const changed = gridSignature !== baseSignature || gridGroup.children.length > 0
     if (changed) gridGroup.destroyChildren()
-    gridSignature = signature
+    gridSignature = baseSignature
     gridCoverage = null
     return changed
   }
 
-  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
   const zoom = Math.max(0.01, camera.zoom)
+  const snapStep = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  // Keep rendered lines legible and bounded while preserving the finer snap interval.
+  const gridLineStepMultiplier = Math.max(1, Math.ceil(8 / (snapStep * zoom)))
+  const step = snapStep * gridLineStepMultiplier
+  const signature = `${baseSignature}:${gridLineStepMultiplier}`
   const visibleLeft = (-viewportSize.value.width / 2 - camera.x) / zoom
   const visibleRight = (viewportSize.value.width / 2 - camera.x) / zoom
   const visibleTop = (-viewportSize.value.height / 2 - camera.y) / zoom
@@ -4895,11 +5316,15 @@ const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHe
 
 const syncGrid = () => {
   if (!gridGroup) return
+  const moved = syncGridLayer()
   const liveState = props.store.state.liveState
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
-  if (rebuildGrid(box.x, box.y, width, height)) worldLayer?.batchDraw()
+  if (rebuildGrid(box.x, box.y, width, height) || moved) {
+    worldLayer?.batchDraw()
+    gridTopLayer?.batchDraw()
+  }
 }
 
 const scheduleGridSync = () => {
@@ -4944,6 +5369,8 @@ const createDrawingNode = (drawing: StageDrawing, width: number, height: number)
     name: 'theater-object-drawing',
     stroke: style.stroke,
     strokeWidth: style.strokeWidth,
+    // Keep line width constant while parent node is resized.
+    strokeScaleEnabled: false,
     opacity: style.opacity,
     dash: drawingDash(style),
     lineCap: 'round' as const,
@@ -5009,8 +5436,9 @@ const createDrawingNode = (drawing: StageDrawing, width: number, height: number)
 const drawingBounds = (session: DrawingSession) => {
   let end = { ...session.current }
   const delta = { x: end.x - session.start.x, y: end.y - session.start.y }
+  const lineLike = session.tool === 'line' || session.tool === 'arrow'
   if (session.shiftKey) {
-    if (session.tool === 'line' || session.tool === 'arrow') {
+    if (lineLike) {
       const length = Math.hypot(delta.x, delta.y)
       const angle = Math.round(Math.atan2(delta.y, delta.x) / (Math.PI / 4)) * (Math.PI / 4)
       end = { x: session.start.x + Math.cos(angle) * length, y: session.start.y + Math.sin(angle) * length }
@@ -5022,16 +5450,25 @@ const drawingBounds = (session: DrawingSession) => {
       }
     }
   }
+  if (lineLike && session.shiftKey) end = snapStagePosition(end)
   const start = session.altKey
     ? { x: session.start.x - (end.x - session.start.x), y: session.start.y - (end.y - session.start.y) }
     : session.start
-  const minimum = 12
-  if (Math.abs(end.x - start.x) < minimum) end.x = start.x + Math.sign(end.x - start.x || 1) * minimum
-  if (Math.abs(end.y - start.y) < minimum) end.y = start.y + Math.sign(end.y - start.y || 1) * minimum
-  const x = Math.min(start.x, end.x)
-  const y = Math.min(start.y, end.y)
-  const width = Math.max(minimum, Math.abs(end.x - start.x))
-  const height = Math.max(minimum, Math.abs(end.y - start.y))
+  const minimum = gridSnapEnabled.value ? Math.max(12, stageGridStep()) : 12
+  if (!lineLike) {
+    if (Math.abs(end.x - start.x) < minimum) end.x = start.x + Math.sign(end.x - start.x || 1) * minimum
+    if (Math.abs(end.y - start.y) < minimum) end.y = start.y + Math.sign(end.y - start.y || 1) * minimum
+  }
+  const deltaX = Math.abs(end.x - start.x)
+  const deltaY = Math.abs(end.y - start.y)
+  const width = Math.max(minimum, deltaX)
+  const height = Math.max(minimum, deltaY)
+  const x = lineLike && deltaX < minimum
+    ? (start.x + end.x - width) / 2
+    : Math.min(start.x, end.x)
+  const y = lineLike && deltaY < minimum
+    ? (start.y + end.y - height) / 2
+    : Math.min(start.y, end.y)
   return { start, end, x, y, width, height }
 }
 
@@ -5112,8 +5549,10 @@ const renderDrawingDraft = () => {
 }
 
 const cancelDrawingSession = () => {
+  const hadSession = Boolean(drawingSession)
   drawingSession = null
   drawingDraftRoot?.destroyChildren()
+  if (hadSession) setGridSnapPreview(false)
   drawWorldLayers()
 }
 
@@ -5369,10 +5808,12 @@ const createObjectNode = (object: StageObject) => {
       const driverStart = nodes.get(object.id)?.absolute
       if (!driverStart) return
       multiDrag = { driverId: object.id, driverStart, nodes }
+      beginNodeGridSnap(wrapper)
       setGridSnapPreview(gridSnapEnabled.value)
       props.store.beginObjectEdit('批量移动对象')
       return
     }
+    beginNodeGridSnap(wrapper)
     setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('移动对象')
   })
@@ -5650,6 +6091,7 @@ const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
   roots.forEach((object) => objectRootLayers.get(object.id)?.layer.moveToTop())
   worldOverlayLayer?.moveToTop()
   foregroundLayer?.moveToTop()
+  gridTopLayer?.moveToTop()
   interactionLayer?.moveToTop()
   rootStackingOrder.value = stackingOrder
   if (changed) {
@@ -5840,15 +6282,17 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (isDrawingTool(activeCanvasTool.value) && canEditAllObjects.value && event.evt.button === 0) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
     if (!pointer) return
+    const drawingPointer = snapDrawingPoint(activeCanvasTool.value, pointer)
     event.evt.preventDefault()
     drawingSession = {
       tool: activeCanvasTool.value,
-      start: pointer,
-      current: pointer,
-      points: [pointer.x, pointer.y],
+      start: drawingPointer,
+      current: drawingPointer,
+      points: [drawingPointer.x, drawingPointer.y],
       shiftKey: event.evt.shiftKey,
       altKey: event.evt.altKey,
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     renderDrawingDraft()
     return
   }
@@ -5877,13 +6321,14 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (drawingSession) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
     if (!pointer) return
-    drawingSession.current = pointer
+    const drawingPointer = snapDrawingPoint(drawingSession.tool, pointer)
+    drawingSession.current = drawingPointer
     drawingSession.shiftKey = event.evt.shiftKey
     drawingSession.altKey = event.evt.altKey
     if (drawingSession.tool === 'pen' || drawingSession.tool === 'highlighter') {
       const points = drawingSession.points
       const previous = { x: points[points.length - 2], y: points[points.length - 1] }
-      if (Math.hypot(pointer.x - previous.x, pointer.y - previous.y) >= 2) points.push(pointer.x, pointer.y)
+      if (Math.hypot(drawingPointer.x - previous.x, drawingPointer.y - previous.y) >= 2) points.push(drawingPointer.x, drawingPointer.y)
     }
     renderDrawingDraft()
     return
@@ -6010,13 +6455,13 @@ const applyImageUrl = (
   return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, loopCount, dimensions)
 }
 
-const theaterResourcePath = (resourceId = '') => {
-  return buildTheaterResourcePath(theaterMediaScope(), resourceId)
+const theaterResourcePath = (resourceId = '', scope = captureTheaterRequestScope()) => {
+  return buildTheaterResourcePath(theaterMediaScope(scope), resourceId)
 }
 
-const waitForResource = async (resourceId: string) => {
+const waitForResource = async (resourceId: string, scope = captureTheaterRequestScope()) => {
   for (let attempt = 0; attempt < 240; attempt += 1) {
-    const response = await api.get<TheaterResourceResponse>(theaterResourcePath(resourceId))
+    const response = await api.get<TheaterResourceResponse>(theaterResourcePath(resourceId, scope))
     const resource = response.data?.resource
     const status = resource?.status
     if (status === 'ready') return resource
@@ -6091,41 +6536,138 @@ const theaterMediaDimensions = (file: File): Promise<{ width: number, height: nu
   image.src = url
 })
 
+const uploadTheaterImageResource = async (file: File, targetObjectId = '', scope = captureTheaterRequestScope()) => {
+  if (!scope.worldId || !scope.channelId) throw new Error('缺少小剧场频道信息')
+  const prepared = await prepareTheaterMedia(file)
+  const formData = new FormData()
+  formData.append('file', prepared)
+  formData.append('mediaKind', 'image')
+  formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  if (!canUploadResources.value && targetObjectId) formData.append('targetObjectId', targetObjectId)
+  const response = await api.post<TheaterResourceResponse>(theaterResourcePath('', scope), formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  let resource = response.data?.resource
+  const resourceId = resource?.id
+  if (!resourceId) throw new Error('上传响应缺少资源 ID')
+  if (resource?.status !== 'ready') resource = await waitForResource(resourceId, scope)
+  const variant = resource?.playbackVariant || 'original'
+  const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
+  const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+  return {
+    resource,
+    resourceId,
+    prepared,
+    url: `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(scope), resourceId, variant)}`,
+    mimeType,
+  }
+}
+
 const uploadImage = async (file: File, target: ImageTarget) => {
   if (!canUploadImageTarget(target)) throw new Error('缺少小剧场图片编辑权限')
   if (!props.worldId || !props.channelId) throw new Error('缺少小剧场频道信息')
   resourceUploading.value = true
   resourceError.value = ''
   try {
-    const prepared = await prepareTheaterMedia(file)
     const targetObject = target.kind === 'object' ? props.store.activeObjects.value[target.objectId] : null
     const targetEffectConfig = isTheaterEffectObject(targetObject) ? theaterEffectConfigFromObject(targetObject) : null
-    const dimensions = targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
-      ? await theaterMediaDimensions(prepared)
+    const uploaded = await uploadTheaterImageResource(file, target.kind === 'object' ? target.objectId : '')
+    const dimensions = (
+      targetObject?.type === 'image' && !targetObject.image
+    ) || (
+      targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
+    )
+      ? await theaterMediaDimensions(uploaded.prepared)
       : undefined
-    const formData = new FormData()
-    formData.append('file', prepared)
-    formData.append('mediaKind', 'image')
-    formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-    if (!canUploadResources.value && target.kind === 'object') formData.append('targetObjectId', target.objectId)
-    const response = await api.post<TheaterResourceResponse>(theaterResourcePath(), formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    let resource = response.data?.resource
-    const resourceId = resource?.id
-    if (!resourceId) throw new Error('上传响应缺少资源 ID')
-    if (resource?.status !== 'ready') resource = await waitForResource(resourceId)
-    const variant = resource?.playbackVariant || 'original'
-    const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
-    const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
-    const url = `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(), resourceId, variant)}`
-    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
+    if (!applyImageUrl(target, uploaded.url, uploaded.resourceId, uploaded.mimeType, uploaded.resource?.animated === true, uploaded.resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
     throw error
   } finally {
     resourceUploading.value = false
   }
+}
+
+const uploadTheaterImageAssets = async (files: File[], folderId: string) => {
+  if (!canUploadResources.value || !files.length) return
+  const generation = ++theaterImageUploadGeneration
+  const scope = captureTheaterRequestScope()
+  const finishUpload = () => {
+    if (generation === theaterImageUploadGeneration) theaterImageUploading.value = false
+  }
+  theaterImageUploading.value = true
+  theaterImageError.value = ''
+  let succeeded = 0
+  const errors: string[] = []
+  const createdIds: string[] = []
+  const imageItems = new Map(theaterPanelOrganizer.value.items
+    .filter((item) => item.domain === 'image')
+    .map((item) => [item.targetId, item]))
+  const existingIds = theaterImageAssets.value
+    .filter((asset) => (imageItems.get(asset.id)?.folderId || '') === folderId)
+    .sort((left, right) => {
+      const leftOrder = imageItems.get(left.id)?.sortOrder ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = imageItems.get(right.id)?.sortOrder ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder || left.name.localeCompare(right.name)
+    })
+    .map((asset) => asset.id)
+  for (const file of files) {
+    if (!isCurrentTheaterRequestScope(scope)) {
+      finishUpload()
+      return
+    }
+    try {
+      const uploaded = await uploadTheaterImageResource(file, '', scope)
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      const name = file.name.replace(/\.[^.]+$/, '').trim() || '未命名图片'
+      const response = await api.post<{ item?: { id?: string } }>(theaterImageAssetPath('', scope), { resourceId: uploaded.resourceId, name })
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      if (response.data?.item?.id) createdIds.push(response.data.item.id)
+      succeeded += 1
+    } catch (error) {
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+      errors.push(error instanceof Error ? error.message : '图片素材导入失败')
+    }
+  }
+  let organizerError = ''
+  if (!isCurrentTheaterRequestScope(scope)) {
+    finishUpload()
+    return
+  }
+  if (createdIds.length) {
+    try {
+      await api.put(theaterPanelOrganizerPath('item-order', scope), {
+        domain: 'image',
+        folderId,
+        targetIds: [...existingIds, ...createdIds],
+      })
+      if (!isCurrentTheaterRequestScope(scope)) {
+        finishUpload()
+        return
+      }
+    } catch (error) {
+      organizerError = theaterAudioErrorMessage(error, '上传成功，但整理到当前文件夹失败')
+    }
+  }
+  if (!isCurrentTheaterRequestScope(scope)) {
+    finishUpload()
+    return
+  }
+  await Promise.all([fetchTheaterImageAssets(), fetchTheaterPanelOrganizer()])
+  const messages: string[] = []
+  if (errors.length) messages.push(files.length === 1 ? errors[0] : `${succeeded} 个成功，${errors.length} 个失败：${errors[0]}${errors.length > 1 ? ' 等' : ''}`)
+  if (organizerError) messages.push(organizerError)
+  if (messages.length) theaterImageError.value = messages.join('；')
+  finishUpload()
 }
 
 const requestImageUpload = (target: ImageTarget) => {
@@ -6191,32 +6733,84 @@ const saveEditedImage = async (file: File) => {
   }
 }
 
-const handleCanvasDrop = async (event: DragEvent) => {
-  if (!canEditAllObjects.value || !canUploadResources.value) return
+const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetIndex = 0) => {
   const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return
+  if (!rect) return false
+  const { x: cameraX, y: cameraY, zoom } = props.store.state.camera
+  const step = 24 / zoom / WORLD_UNIT_PX
+  object.transform.x = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX + offsetIndex * step
+  object.transform.y = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX + offsetIndex * step
+  if (gridSnapEnabled.value) {
+    const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
+    const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+    const center = { x: object.transform.x * WORLD_UNIT_PX, y: object.transform.y * WORLD_UNIT_PX }
+    const topLeft = { x: center.x - width / 2, y: center.y - height / 2 }
+    const snapped = snapStagePosition(topLeft)
+    object.transform.x = (center.x + snapped.x - topLeft.x) / WORLD_UNIT_PX
+    object.transform.y = (center.y + snapped.y - topLeft.y) / WORLD_UNIT_PX
+  }
+  return true
+}
+
+const handleCanvasDrop = async (event: DragEvent) => {
+  const imageAssetId = event.dataTransfer?.getData(THEATER_IMAGE_ASSET_DRAG_TYPE)?.trim() || ''
+  if (imageAssetId) {
+    if (!canEditAllObjects.value) return
+    let asset = theaterImageAssets.value.find((item) => item.id === imageAssetId)
+    if (!asset) {
+      await fetchTheaterImageAssets()
+      asset = theaterImageAssets.value.find((item) => item.id === imageAssetId)
+    }
+    if (!asset || asset.resource.status !== 'ready') {
+      theaterImageError.value = '图片素材不存在或资源不可用'
+      return
+    }
+    const object = props.store.addObject('image')
+    object.name = asset.name
+    const dimensions = Number.isFinite(asset.resource.width) && Number.isFinite(asset.resource.height)
+      && (asset.resource.width || 0) > 0 && (asset.resource.height || 0) > 0
+      ? { width: asset.resource.width!, height: asset.resource.height! }
+      : undefined
+    if (!props.store.setObjectImage(
+      object.id,
+      asset.url,
+      asset.resourceId,
+      asset.resource.playbackMimeType || asset.resource.mimeType,
+      asset.resource.animated === true,
+      asset.resource.loopCount || undefined,
+      dimensions,
+    )) {
+      props.store.removeObjects([object.id], false)
+      theaterImageError.value = '图片组件创建失败'
+      return
+    }
+    const organizerItem = theaterPanelOrganizer.value.items.find((item) => item.domain === 'image' && item.targetId === asset.id)
+    const folderPreset = organizerItem?.folderId
+      ? theaterPanelOrganizer.value.folders.find((folder) => folder.domain === 'image' && folder.id === organizerItem.folderId)?.preset
+      : undefined
+    const resolvedPreset = resolveImageObjectPreset(folderPreset, asset.preset)
+    applyImageObjectPreset(object, resolvedPreset)
+    if (!placeCanvasDropObject(object, event)) {
+      props.store.removeObjects([object.id], false)
+      return
+    }
+    props.store.setSelectedObjectIds([object.id], object.id)
+    theaterImageError.value = ''
+    return
+  }
+  if (!canEditAllObjects.value || !canUploadResources.value) return
   const files = Array.from(event.dataTransfer?.files || [])
     .filter((item) => supportedTheaterMedia.has(normalizedFileType(item)))
   if (!files.length) return
 
-  const { x: cameraX, y: cameraY, zoom } = props.store.state.camera
-  const baseX = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX
-  const baseY = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX
-  const step = 24 / zoom / WORLD_UNIT_PX
   const createdIds: string[] = []
   const errors: string[] = []
 
   for (let i = 0; i < files.length; i += 1) {
     const object = props.store.addObject('image')
-    object.transform.x = baseX + i * step
-    object.transform.y = baseY + i * step
-    if (gridSnapEnabled.value) {
-      const snapped = snapStagePosition({
-        x: object.transform.x * WORLD_UNIT_PX,
-        y: object.transform.y * WORLD_UNIT_PX,
-      })
-      object.transform.x = snapped.x / WORLD_UNIT_PX
-      object.transform.y = snapped.y / WORLD_UNIT_PX
+    if (!placeCanvasDropObject(object, event, i)) {
+      props.store.removeObjects([object.id], false)
+      continue
     }
     try {
       await uploadImage(files[i], { kind: 'object', objectId: object.id })
@@ -6517,11 +7111,13 @@ onMounted(() => {
   worldLayer = new Konva.Layer()
   worldOverlayLayer = new Konva.Layer({ listening: false })
   foregroundLayer = new Konva.Layer({ listening: false })
+  gridTopLayer = new Konva.Layer({ listening: false })
   interactionLayer = new Konva.Layer()
   backgroundCameraGroup = new Konva.Group()
   worldCameraGroup = new Konva.Group()
   worldOverlayCameraGroup = new Konva.Group()
   foregroundCameraGroup = new Konva.Group()
+  gridTopCameraGroup = new Konva.Group()
   gridGroup = new Konva.Group({ listening: false })
   objectRoot = new Konva.Group()
   drawingDraftRoot = new Konva.Group({ listening: false })
@@ -6536,8 +7132,12 @@ onMounted(() => {
     anchorStroke: '#38bdf8',
     anchorFill: '#0f172a',
     anchorSize: 9,
+    boundBoxFunc: (_oldBox, newBox) => gridResizeSession
+      ? snapStageResizeBox(newBox, gridResizeSession)
+      : newBox,
   })
   transformer.on('transformstart', () => {
+    beginGridResize()
     if (!isBatchSelection.value || batchMoveBlocked.value) return
     const rootIds = [...selectedMovementRootIds()]
     if (!rootIds.length) return
@@ -6551,6 +7151,7 @@ onMounted(() => {
     selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
   })
   transformer.on('transformend', () => {
+    finishGridResize()
     const rootIds = batchTransformRootIds
     batchTransformRootIds = null
     if (!rootIds) return
@@ -6625,6 +7226,8 @@ onMounted(() => {
       start: selectionGroupHitArea!.position(),
       nodes,
     }
+    const anchor = nodes.values().next().value as { node: Konva.Group, absolute: { x: number, y: number } } | undefined
+    if (anchor) beginNodeGridSnap(anchor.node)
     setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('批量移动对象')
   })
@@ -6682,19 +7285,22 @@ onMounted(() => {
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot)
   worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
+  gridTopLayer.add(gridTopCameraGroup)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   worldOverlayLayer.add(worldOverlayCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
-  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, interactionLayer)
+  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, gridTopLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
   worldLayer.getCanvas()._canvas.style.zIndex = '10'
   worldOverlayLayer.getCanvas()._canvas.style.zIndex = String(WORLD_OVERLAY_LAYER_Z)
   foregroundLayer.getCanvas()._canvas.style.zIndex = '9000'
+  gridTopLayer.getCanvas()._canvas.style.zIndex = String(GRID_TOP_LAYER_Z)
   interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
   worldOverlayLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  gridTopLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
@@ -6777,6 +7383,7 @@ watch(() => ({
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
   displayGrid: props.store.state.liveState.displayGrid,
+  gridOnTop: props.store.state.liveState.gridOnTop,
   gridSize: props.store.state.liveState.gridSize,
   alignWithGrid: props.store.state.liveState.alignWithGrid,
 }), scheduleGridSync, { deep: true })
@@ -6821,8 +7428,9 @@ watch(() => [props.syncReady, ...props.permissions], () => {
     assetPanelOpen.value = false
     theaterAudioAssets.value = []
     theaterAudioQuota.value = null
+    theaterImageAssets.value = []
   } else {
-    void fetchTheaterAudioAssets()
+    void Promise.all([fetchTheaterAudioAssets(), fetchTheaterImageAssets()])
   }
   syncObjects()
   if (props.syncReady) playPendingSceneEntrances(props.store.state.activeSceneId)
@@ -6839,6 +7447,7 @@ watch(
 )
 watch([effectPanelOpen, assetPanelOpen], ([effectOpen, assetOpen]) => {
   if (effectOpen || assetOpen) void fetchTheaterPanelOrganizer()
+  if (assetOpen) void fetchTheaterImageAssets()
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
@@ -6855,7 +7464,7 @@ watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, asse
   observeOpenPanels()
 })
 watch(() => [props.worldId, props.channelId], () => {
-  if (canManageResources.value) void fetchTheaterAudioAssets()
+  if (canManageResources.value) void Promise.all([fetchTheaterAudioAssets(), fetchTheaterImageAssets()])
 })
 watch(theaterAudioMasterVolume, (volume) => {
   const normalized = Math.max(0, Math.min(1, volume))
@@ -6942,6 +7551,9 @@ onBeforeUnmount(() => {
   stage = null
   objectRootLayers.clear()
   rootStackingOrder.value = {}
+  gridTopLayer = null
+  gridTopCameraGroup = null
+  gridGroup = null
   worldOverlayLayer = null
   worldOverlayCameraGroup = null
   drawingDraftRoot = null
@@ -7031,11 +7643,67 @@ onBeforeUnmount(() => {
           {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
         </n-tooltip>
       </n-button-group>
-      <span
-        class="theater-sync-status"
-        :class="{ 'is-online': syncReady && !syncing, 'is-syncing': syncing }"
-        :title="syncing ? '正在同步' : syncReady ? '后端同步已连接' : '后端同步未连接'"
-      />
+      <n-popover
+        trigger="click"
+        placement="bottom-start"
+        :show-arrow="false"
+        :width="220"
+        :theme-overrides="theaterPopoverThemeOverrides"
+        class="theater-secondary-surface"
+      >
+        <template #trigger>
+          <n-button
+            class="theater-bridge-status"
+            :class="{
+              'is-connected': chatBridgeStatus === 'connected',
+              'is-reconnecting': chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting',
+              'is-manual-disconnected': chatBridgeStatus === 'manual-disconnected',
+              'is-error': chatBridgeStatus === 'error' || chatBridgeStatus === 'disconnected',
+            }"
+            quaternary
+            circle
+            size="tiny"
+            :aria-label="`聊天桥接：${chatBridgeStatusLabel}`"
+            :title="`聊天桥接：${chatBridgeStatusLabel}`"
+          >
+            <template #icon><n-icon><component :is="chatBridgeStatus === 'manual-disconnected' ? BoltOff : Bolt" /></n-icon></template>
+          </n-button>
+        </template>
+        <div class="theater-bridge-popover">
+          <div class="theater-bridge-popover__heading">聊天桥接</div>
+          <div class="theater-bridge-popover__status">
+            <span
+              class="theater-bridge-popover__dot"
+              :class="{
+                'is-connected': chatBridgeStatus === 'connected',
+                'is-reconnecting': chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting',
+                'is-manual-disconnected': chatBridgeStatus === 'manual-disconnected',
+                'is-error': chatBridgeStatus === 'error' || chatBridgeStatus === 'disconnected',
+              }"
+            />
+            {{ chatBridgeStatusLabel }}
+          </div>
+          <div class="theater-bridge-popover__actions">
+            <n-button
+              v-if="chatBridgeStatus === 'connected'"
+              size="tiny"
+              secondary
+              @click="emit('disconnectChatBridge')"
+            >断开桥接</n-button>
+            <n-button
+              v-else
+              size="tiny"
+              type="primary"
+              :loading="chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting'"
+              :disabled="chatBridgeStatus === 'connecting' || chatBridgeStatus === 'reconnecting'"
+              @click="emit('reconnectChatBridge')"
+            >重连桥接</n-button>
+          </div>
+          <div class="theater-bridge-popover__sync">
+            舞台同步：{{ syncing ? '同步中' : syncReady ? '已连接' : '未连接' }}
+          </div>
+        </div>
+      </n-popover>
       <n-tooltip trigger="hover">
         <template #trigger>
           <n-button
@@ -7081,20 +7749,15 @@ onBeforeUnmount(() => {
           @copy="copySelectedObjects"
           @select-mode="copyMode = $event"
         />
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button
-              class="theater-grid-snap-tool"
-              :class="{ 'is-active': gridSnapEnabled }"
-              :aria-pressed="gridSnapEnabled"
-              aria-label="网格吸附"
-              @click="toggleGridSnap"
-            >
-              <template #icon><n-icon><Magnet /></n-icon></template>
-            </n-button>
-          </template>
-          {{ gridSnapEnabled ? '关闭网格吸附' : '网格吸附' }}
-        </n-tooltip>
+        <StageGridToolbar
+          :snap-enabled="gridSnapEnabled"
+          :display-grid="gridDisplayEnabled"
+          :grid-on-top="gridOnTopEnabled"
+          :disabled="!canEditAllObjects"
+          @toggle-snap="toggleGridSnap"
+          @toggle-display-grid="toggleGridDisplay"
+          @toggle-grid-on-top="toggleGridOnTop"
+        />
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-badge
@@ -7229,31 +7892,49 @@ onBeforeUnmount(() => {
               预加载全部场景到所有设备
             </n-tooltip>
             <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" :disabled="sceneEditMode" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
+            <n-button v-if="canEditAllObjects" text size="tiny" aria-label="新建场景文件夹" :disabled="sceneEditMode" @click="createSceneFolder"><n-icon><FolderPlus /></n-icon></n-button>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
         <div ref="sceneListRef" class="theater-scene-list">
+          <template v-for="entry in sceneListEntries" :key="entry.key">
           <div
-            v-for="scene in store.scenes.value"
-            :key="scene.id"
+            v-if="entry.kind === 'folder' || entry.kind === 'uncategorized'"
+            class="theater-scene-folder"
+            :class="{ 'is-collapsed': entry.collapsed, 'is-virtual': entry.kind === 'uncategorized' }"
+          >
+            <button type="button" class="theater-scene-folder__main" @click="toggleSceneFolder(entry.kind === 'folder' ? sceneFolderCollapseKey(entry.folder.id) : uncategorizedSceneFolderCollapseKey)">
+              <n-icon :component="entry.collapsed ? ChevronRight : ChevronDown" />
+              <n-icon><Folder /></n-icon>
+              <strong>{{ entry.kind === 'folder' ? entry.folder.name : '未分类' }}</strong>
+              <small>{{ entry.scenes.length }}</small>
+            </button>
+            <n-dropdown v-if="entry.kind === 'folder' && canEditAllObjects" trigger="click" :options="sceneFolderMenuOptions" :menu-props="theaterSecondaryMenuProps" @select="handleSceneFolderMenu($event, entry.folder.id)">
+              <n-button quaternary circle size="tiny" aria-label="文件夹操作" @click.stop><template #icon><n-icon><Dots /></n-icon></template></n-button>
+            </n-dropdown>
+          </div>
+          <div
+            v-else
+            :data-scene-id="entry.scene.id"
             class="theater-scene-row"
             :class="{
-              'has-preload-pulse': scenePreloadPulse[scene.id],
+              'has-preload-pulse': scenePreloadPulse[entry.scene.id],
+              'is-nested': entry.nested,
               'is-edit-mode': sceneEditMode,
               'is-batch-mode': sceneBatchMode,
-              'is-dragging': draggedSceneId === scene.id,
-              'is-drop-before': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'before',
-              'is-drop-after': sceneDropTarget?.id === scene.id && sceneDropTarget.placement === 'after',
+              'has-scene-move-actions': canEditAllObjects,
+              'is-dragging': draggedSceneId === entry.scene.id,
+              'is-drop-before': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'before',
+              'is-drop-after': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'after',
             }"
-            :data-scene-id="scene.id"
           >
             <n-checkbox
               v-if="sceneBatchMode && canEditAllObjects"
               class="theater-scene-row__select"
-              :checked="isSceneBatchSelected(scene.id)"
-              :aria-label="`选择场景 ${scene.name}`"
+              :checked="isSceneBatchSelected(entry.scene.id)"
+              :aria-label="`选择场景 ${entry.scene.name}`"
               @click.stop
-              @update:checked="setSceneBatchSelected(scene.id, $event)"
+              @update:checked="setSceneBatchSelected(entry.scene.id, $event)"
             />
             <span
               v-if="sceneEditMode && canEditAllObjects"
@@ -7261,7 +7942,7 @@ onBeforeUnmount(() => {
               aria-label="拖动调整场景顺序"
               role="button"
               tabindex="0"
-              @pointerdown.stop="startScenePointerDrag($event, scene.id)"
+              @pointerdown.stop="startScenePointerDrag($event, entry.scene.id)"
               @pointermove.stop="moveScenePointerDrag"
               @pointerup.stop="finishScenePointerDrag($event)"
               @pointercancel.stop="finishScenePointerDrag($event, true)"
@@ -7270,7 +7951,7 @@ onBeforeUnmount(() => {
               <n-icon><GripVertical /></n-icon>
             </span>
             <n-popover
-            :show="sceneEditMode && editingSceneId === scene.id"
+            :show="sceneEditMode && editingSceneId === entry.scene.id"
             trigger="manual"
             :placement="sceneEditorPlacement"
             :show-arrow="false"
@@ -7281,13 +7962,13 @@ onBeforeUnmount(() => {
             <template #trigger>
               <button
                 class="theater-scene-card"
-                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id, 'is-selected': isSceneBatchSelected(scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(scene.id) }"
-                :aria-pressed="sceneBatchMode ? isSceneBatchSelected(scene.id) : undefined"
+                :class="{ 'is-active': entry.scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === entry.scene.id, 'is-selected': isSceneBatchSelected(entry.scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(entry.scene.id) }"
+                :aria-pressed="sceneBatchMode ? isSceneBatchSelected(entry.scene.id) : undefined"
                 :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canSwitchScene"
-                @click="handleSceneClick(scene)"
+                @click="handleSceneClick(entry.scene)"
               >
-                <span class="theater-scene-card__title">{{ scene.name }}</span>
-                <n-icon v-if="constructionSceneId === scene.id" class="theater-scene-card__construction" aria-label="施工模式锁定场景"><Lock /></n-icon>
+                <span class="theater-scene-card__title">{{ entry.scene.name }}</span>
+                <n-icon v-if="constructionSceneId === entry.scene.id" class="theater-scene-card__construction" aria-label="施工模式锁定场景"><Lock /></n-icon>
               </button>
             </template>
             <div class="theater-scene-editor">
@@ -7405,15 +8086,19 @@ onBeforeUnmount(() => {
               </div>
             </div>
             </n-popover>
-            <div v-if="canSwitchScene && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
+            <div v-if="(canSwitchScene || canEditAllObjects) && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
+              <n-dropdown v-if="canEditAllObjects" trigger="click" :options="sceneMoveOptions(entry.scene)" :menu-props="theaterSecondaryMenuProps" @select="moveSceneFromMenu($event, entry.scene.id)">
+                <n-button quaternary circle size="tiny" aria-label="移动场景到文件夹" @click.stop><template #icon><n-icon><Dots /></n-icon></template></n-button>
+              </n-dropdown>
               <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
                 <template #trigger>
-                  <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
+                  <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[entry.scene.id] }" text size="tiny" :type="scenePreloadStatus[entry.scene.id] === 'ready' ? 'success' : scenePreloadStatus[entry.scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[entry.scene.id] === 'loading'" :aria-label="`预加载场景 ${entry.scene.name}`" @click="requestScenePreload([entry.scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
                 </template>
                 在所有设备预加载此场景
               </n-tooltip>
             </div>
           </div>
+          </template>
         </div>
         <div v-if="canSwitchScene || canEditAllObjects" class="theater-scene-actions">
           <n-tooltip v-if="canEditAllObjects" trigger="hover">
@@ -8096,18 +8781,23 @@ onBeforeUnmount(() => {
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('asset', $event)">
           <span>素材管理器</span>
           <div class="theater-panel-heading__actions">
-            <small>{{ theaterAudioAssets.length }}</small>
+            <small>{{ theaterImageAssets.length + theaterAudioAssets.length }}</small>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭素材管理器" @click="assetPanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
         <TheaterAssetManager
           :assets="theaterAudioAssets"
+          :image-assets="theaterImageAssets"
+          :image-loading="theaterImageLoading"
+          :image-uploading="theaterImageUploading"
+          :image-error="theaterImageError"
           :quota="theaterAudioQuota"
           :loading="theaterAudioLoading"
           :uploading="theaterAudioUploading"
           :error="theaterAudioError"
           :can-upload="canUploadResources"
           :can-delete="canDeleteResources"
+          :can-edit-objects="canEditAllObjects"
           :referenced-asset-ids="referencedTheaterAudioAssetIds"
           :master-volume="theaterAudioMasterVolume"
           :organizer-folders="theaterPanelOrganizer.folders"
@@ -8118,6 +8808,16 @@ onBeforeUnmount(() => {
           @preview="previewTheaterAudio"
           @delete="deleteTheaterAudio"
           @delete-batch="deleteTheaterAudioBatch"
+          @refresh-images="fetchTheaterImageAssets"
+          @upload-images="uploadTheaterImageAssets"
+          @rename-image="renameTheaterImageAsset"
+          @delete-image="deleteTheaterImageAsset"
+          @delete-image-batch="deleteTheaterImageAssetsBatch"
+          @create-image-folder="done => createTheaterPanelFolder('image', done)"
+          @update-image-folder-preset="updateTheaterImageFolderPreset"
+          @update-image-asset-preset="updateTheaterImageAssetPreset"
+          @reorder-image-folders="folderIds => reorderTheaterPanelFolders('image', folderIds)"
+          @reorder-image-items="(folderId, targetIds) => reorderTheaterPanelItems('image', folderId, targetIds)"
           @create-folder="done => createTheaterPanelFolder('audio', done)"
           @rename-folder="renameTheaterPanelFolder"
           @delete-folder="deleteTheaterPanelFolder"
@@ -8158,6 +8858,36 @@ onBeforeUnmount(() => {
       :action="editingRandomTableAction"
       @save="saveRandomTable"
     />
+    <n-modal
+      :show="sceneFolderDialogVisible"
+      :mask-closable="false"
+      :close-on-esc="true"
+      @update:show="value => { if (!value) closeSceneFolderDialog() }"
+    >
+      <section class="theater-scene-folder-dialog" role="dialog" aria-modal="true" :aria-label="sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹'">
+        <header class="theater-scene-folder-dialog__header">
+          <div>
+            <strong>{{ sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹' }}</strong>
+            <small>文件夹仅用于整理场景列表</small>
+          </div>
+          <n-button text aria-label="关闭文件夹弹窗" @click="closeSceneFolderDialog"><n-icon><X /></n-icon></n-button>
+        </header>
+        <div class="theater-scene-folder-dialog__body">
+          <n-input
+            v-model:value="sceneFolderNameDraft"
+            autofocus
+            maxlength="128"
+            show-count
+            placeholder="输入文件夹名称"
+            @keydown="handleSceneFolderDialogKeydown"
+          />
+        </div>
+        <footer class="theater-scene-folder-dialog__footer">
+          <n-button @click="closeSceneFolderDialog">取消</n-button>
+          <n-button type="primary" @click="submitSceneFolderDialog">确定</n-button>
+        </footer>
+      </section>
+    </n-modal>
     <n-modal v-model:show="packageProgressVisible" :mask-closable="false" :closable="false" preset="card" title="小剧场导入进度" class="theater-package-progress-modal">
       <div class="theater-package-progress">
         <n-progress type="line" :percentage="Math.round(packageDisplayedProgress * 100)" :status="packageProgressJob?.status === 'failed' ? 'error' : packageProgressJob?.status === 'done' ? 'success' : 'default'" />
@@ -8228,6 +8958,30 @@ onBeforeUnmount(() => {
   z-index: 10004 !important;
 }
 .theater-image-input { display: none; }
+.theater-scene-folder-dialog {
+  width: min(420px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16));
+  border-radius: 7px;
+  color: var(--sc-text-primary, #f4f4f5);
+  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(8px) saturate(110%);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+}
+.theater-scene-folder-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08));
+}
+.theater-scene-folder-dialog__header div { min-width: 0; display: grid; gap: 3px; }
+.theater-scene-folder-dialog__header strong { font-size: 15px; }
+.theater-scene-folder-dialog__header small { color: var(--sc-text-secondary, #b5b5c5); font-size: 10px; }
+.theater-scene-folder-dialog__body { padding: 16px; }
+.theater-scene-folder-dialog__footer { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 14px; }
 .theater-package-progress-modal {
   width: min(460px, calc(100vw - 32px));
   background: color-mix(in srgb, var(--sc-bg-surface, #262626) 72%, transparent) !important;
@@ -8288,15 +9042,44 @@ onBeforeUnmount(() => {
   color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
+.theater-stage-object-actions :deep(.theater-copy-trigger--primary),
+.theater-stage-object-actions :deep(.theater-scene-fixed-trigger--primary),
+.theater-stage-object-actions :deep(.theater-grid-trigger--primary),
+.theater-stage-object-actions :deep(.theater-drawing-trigger--primary) {
+  --n-width: 30px !important;
+  --n-padding: 0 !important;
+  width: 30px;
+  min-width: 30px;
+}
+.theater-stage-object-actions :deep(.theater-copy-trigger--menu),
+.theater-stage-object-actions :deep(.theater-scene-fixed-trigger--menu),
+.theater-stage-object-actions :deep(.theater-grid-trigger--menu),
+.theater-stage-object-actions :deep(.theater-drawing-trigger--menu) {
+  --n-width: 18px !important;
+  --n-padding: 0 !important;
+  width: 18px;
+  min-width: 18px;
+}
 .theater-bulk-select-badge { display: inline-flex; }
 .theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }
 .theater-toolbar-divider { width: 1px; height: 22px; flex: 0 0 1px; margin: 0 2px; background: var(--theater-border); }
-.theater-sync-status { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--sc-fg-muted, #71717a); }
-.theater-sync-status.is-online { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
-.theater-sync-status.is-syncing { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .12); }
+.theater-bridge-status { width: 28px; min-width: 28px; height: 28px; flex: 0 0 28px; padding: 0; color: var(--sc-fg-muted, #71717a); }
+.theater-bridge-status.is-connected { color: #22c55e; }
+.theater-bridge-status.is-reconnecting { color: #f59e0b; }
+.theater-bridge-status.is-manual-disconnected { color: var(--sc-fg-muted, #71717a); }
+.theater-bridge-status.is-error { color: #ef4444; }
+.theater-bridge-popover { display: grid; gap: 8px; min-width: 184px; font-size: 12px; }
+.theater-bridge-popover__heading { color: var(--sc-text-primary, #f4f4f5); font-weight: 600; }
+.theater-bridge-popover__status { display: flex; align-items: center; gap: 7px; color: var(--sc-text-secondary, rgba(255, 255, 255, .72)); }
+.theater-bridge-popover__dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--sc-fg-muted, #71717a); }
+.theater-bridge-popover__dot.is-connected { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
+.theater-bridge-popover__dot.is-reconnecting { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .12); }
+.theater-bridge-popover__dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .12); }
+.theater-bridge-popover__actions { display: flex; justify-content: flex-end; }
+.theater-bridge-popover__sync { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-muted, rgba(255, 255, 255, .52)); }
 .theater-stage-character-bridge {
   width: 218px; flex: 0 0 218px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px;
   padding: 3px 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px;
@@ -8379,6 +9162,7 @@ onBeforeUnmount(() => {
 }
 .theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
 .theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
+.theater-scene-row.has-scene-move-actions:hover .theater-scene-card, .theater-scene-row.has-scene-move-actions:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-scene-move-actions.has-preload-pulse .theater-scene-card { padding-right: 66px; }
 .theater-scene-row.is-dragging { opacity: .36; }
 .theater-scene-row.is-drag-preview {
   position: fixed; z-index: 10003; top: 0; left: 0; pointer-events: none; opacity: .92;
@@ -8392,6 +9176,13 @@ onBeforeUnmount(() => {
 .theater-scene-row.is-drop-after::after { bottom: 0; }
 .theater-scene-row__grip { width: 16px; height: 100%; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; touch-action: none; user-select: none; }
 .theater-scene-row__grip:active { cursor: grabbing; }
+.theater-scene-folder { display: flex; align-items: center; gap: 2px; min-height: 32px; padding: 1px 2px; color: var(--sc-text-secondary, #b5b5c5); }
+.theater-scene-folder__main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 5px; padding: 6px 6px; border: 0; border-radius: 5px; color: inherit; background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
+.theater-scene-folder__main:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
+.theater-scene-folder__main strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theater-scene-folder__main small { margin-left: auto; color: var(--sc-fg-muted, #71717a); font-size: 10px; }
+.theater-scene-folder.is-virtual { margin-top: 3px; border-top: 1px solid color-mix(in srgb, var(--theater-border) 70%, transparent); }
+.theater-scene-row.is-nested .theater-scene-card { padding-left: 24px; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;

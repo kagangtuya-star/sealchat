@@ -32,6 +32,10 @@ var defaultAIModelPricingByModel = map[string]AIModelPricingConfig{
 	},
 }
 
+var defaultAIModelPricingAliases = map[string]string{
+	"deepseek-v4-flash-vision-exp": "deepseek-v4-flash",
+}
+
 type LogUploadConfig struct {
 	Enabled        bool     `json:"enabled" yaml:"enabled"`
 	Endpoint       string   `json:"endpoint" yaml:"endpoint"`
@@ -45,19 +49,27 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir               string   `json:"storageDir" yaml:"storageDir"`
-	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
-	ImportDir                string   `json:"importDir" yaml:"importDir"`
-	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	UserQuotaMB              int64    `json:"userQuotaMB" yaml:"userQuotaMB"`
-	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps       int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates        []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath               string   `json:"ffmpegPath" yaml:"ffmpegPath"`
-	AllowWorldAudioWorkbench bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
-	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
+	StorageDir                  string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                     string   `json:"tempDir" yaml:"tempDir"`
+	ImportDir                   string   `json:"importDir" yaml:"importDir"`
+	MaxUploadSizeMB             int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	UserQuotaMB                 int64    `json:"userQuotaMB" yaml:"userQuotaMB"`
+	AllowedMimeTypes            []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode             bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps          int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates           []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath                  string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench    bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	AllowWorldAudioS3DirectRead bool     `json:"allowWorldAudioS3DirectRead" yaml:"allowWorldAudioS3DirectRead"`
+	AllowNonAdminCreateWorld    bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
+
+type AudioLibraryMode string
+
+const (
+	AudioLibraryModeDatabase AudioLibraryMode = "database"
+	AudioLibraryModeS3       AudioLibraryMode = "s3"
+)
 
 type TheaterMediaConfig struct {
 	Enabled                 bool  `json:"enabled" yaml:"enabled"`
@@ -108,6 +120,7 @@ const (
 	defaultLogUploadNote                 = "默认上传到海豹染色器获取 BBcode/Docx"
 	defaultBackupPath                    = "./backups"
 	defaultBackupIntervalHours           = 12
+	defaultBackupMinIntervalMinutes      = 10
 	defaultBackupRetentionCount          = 5
 	defaultAuthTokenMaxAgeDays           = 15
 	defaultAuthRefreshThresholdDays      = 7
@@ -246,10 +259,11 @@ type EmailAuthConfig struct {
 
 // BackupConfig SQLite 备份配置
 type BackupConfig struct {
-	Enabled        bool   `json:"enabled" yaml:"enabled"`
-	IntervalHours  int    `json:"intervalHours" yaml:"intervalHours"`
-	RetentionCount int    `json:"retentionCount" yaml:"retentionCount"`
-	Path           string `json:"path" yaml:"path"`
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	IntervalHours      int    `json:"intervalHours" yaml:"intervalHours"`
+	MinIntervalMinutes int    `json:"minIntervalMinutes" yaml:"minIntervalMinutes"`
+	RetentionCount     int    `json:"retentionCount" yaml:"retentionCount"`
+	Path               string `json:"path" yaml:"path"`
 }
 
 // AuthSessionConfig 登录会话配置
@@ -542,18 +556,19 @@ func ReadConfig() *AppConfig {
 			Note:           defaultLogUploadNote,
 		},
 		Audio: AudioConfig{
-			StorageDir:               "./static/audio",
-			TempDir:                  "./data/audio-temp",
-			ImportDir:                "./static/audio/import",
-			MaxUploadSizeMB:          80,
-			UserQuotaMB:              150,
-			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
-			EnableTranscode:          true,
-			DefaultBitrateKbps:       96,
-			AlternateBitrates:        []int{64, 128},
-			FFmpegPath:               "",
-			AllowWorldAudioWorkbench: false,
-			AllowNonAdminCreateWorld: true,
+			StorageDir:                  "./static/audio",
+			TempDir:                     "./data/audio-temp",
+			ImportDir:                   "./static/audio/import",
+			MaxUploadSizeMB:             80,
+			UserQuotaMB:                 150,
+			AllowedMimeTypes:            []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
+			EnableTranscode:             true,
+			DefaultBitrateKbps:          96,
+			AlternateBitrates:           []int{64, 128},
+			FFmpegPath:                  "",
+			AllowWorldAudioWorkbench:    false,
+			AllowWorldAudioS3DirectRead: false,
+			AllowNonAdminCreateWorld:    true,
 		},
 		TheaterMedia: TheaterMediaConfig{
 			Enabled:                 true,
@@ -643,10 +658,11 @@ func ReadConfig() *AppConfig {
 			DownloadProxy: "https://sealchat-update.aivu.top/",
 		},
 		Backup: BackupConfig{
-			Enabled:        true,
-			IntervalHours:  defaultBackupIntervalHours,
-			RetentionCount: defaultBackupRetentionCount,
-			Path:           defaultBackupPath,
+			Enabled:            true,
+			IntervalHours:      defaultBackupIntervalHours,
+			MinIntervalMinutes: defaultBackupMinIntervalMinutes,
+			RetentionCount:     defaultBackupRetentionCount,
+			Path:               defaultBackupPath,
 		},
 		AuthSession: AuthSessionConfig{
 			MaxAgeDays:           defaultAuthTokenMaxAgeDays,
@@ -963,10 +979,16 @@ func normalizeAIIdentifierList(values []string) []string {
 }
 
 func resolveDefaultAIModelPricing(model string) (AIModelPricingConfig, bool) {
-	item, ok := defaultAIModelPricingByModel[strings.TrimSpace(model)]
+	model = strings.TrimSpace(model)
+	lookupModel := model
+	if baseModel, ok := defaultAIModelPricingAliases[model]; ok {
+		lookupModel = baseModel
+	}
+	item, ok := defaultAIModelPricingByModel[lookupModel]
 	if !ok {
 		return AIModelPricingConfig{}, false
 	}
+	item.Model = model
 	return item, true
 }
 
@@ -1104,7 +1126,9 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	}
 
 	for _, provider := range result.Providers {
+		providerModels := make(map[string]struct{}, len(provider.Models))
 		for _, model := range provider.Models {
+			providerModels[model] = struct{}{}
 			defaultPricing, ok := resolveDefaultAIModelPricing(model)
 			if !ok {
 				continue
@@ -1116,6 +1140,27 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 			result.Pricing = append(result.Pricing, AIModelPricingConfig{
 				ProviderID:                 provider.ID,
 				Model:                      model,
+				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
+				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
+				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
+			})
+			pricingIndexByKey[key] = len(result.Pricing) - 1
+		}
+		for aliasModel, baseModel := range defaultAIModelPricingAliases {
+			if _, exists := providerModels[baseModel]; !exists {
+				continue
+			}
+			key := provider.ID + "::" + aliasModel
+			if _, exists := pricingIndexByKey[key]; exists {
+				continue
+			}
+			defaultPricing, ok := resolveDefaultAIModelPricing(aliasModel)
+			if !ok {
+				continue
+			}
+			result.Pricing = append(result.Pricing, AIModelPricingConfig{
+				ProviderID:                 provider.ID,
+				Model:                      aliasModel,
 				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
 				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
 				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
@@ -1544,6 +1589,9 @@ func applyBackupDefaults(cfg *BackupConfig) {
 	if cfg.IntervalHours <= 0 {
 		cfg.IntervalHours = defaultBackupIntervalHours
 	}
+	if cfg.MinIntervalMinutes <= 0 {
+		cfg.MinIntervalMinutes = defaultBackupMinIntervalMinutes
+	}
 	if cfg.RetentionCount <= 0 {
 		cfg.RetentionCount = defaultBackupRetentionCount
 	}
@@ -1704,6 +1752,7 @@ func WriteConfig(config *AppConfig) {
 		config.AI = NormalizeAIConfig(config.AI)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
+		applyBackupDefaults(&config.Backup)
 		applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
@@ -1793,7 +1842,9 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
+		_ = k.Set("audio.allowWorldAudioS3DirectRead", config.Audio.AllowWorldAudioS3DirectRead)
 		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
+		k.Delete("audio.s3Library")
 		_ = k.Set("sqlite.wal", config.SQLite.EnableWAL)
 		_ = k.Set("sqlite.busyTimeout", config.SQLite.BusyTimeoutMS)
 		_ = k.Set("sqlite.cacheSizeKB", config.SQLite.CacheSizeKB)
@@ -1887,6 +1938,7 @@ func WriteConfig(config *AppConfig) {
 		// 备份配置
 		_ = k.Set("backup.enabled", config.Backup.Enabled)
 		_ = k.Set("backup.intervalHours", config.Backup.IntervalHours)
+		_ = k.Set("backup.minIntervalMinutes", config.Backup.MinIntervalMinutes)
 		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
 		_ = k.Set("backup.path", config.Backup.Path)
 

@@ -23,6 +23,9 @@ type channelIdentityPayload struct {
 	IsDefault                  bool                                 `json:"isDefault"`
 	IsTemporary                bool                                 `json:"isTemporary"`
 	BotAppearanceMode          string                               `json:"botAppearanceMode"`
+	VariantResetMatchMode      *string                              `json:"variantResetMatchMode"`
+	VariantResetMatchConfig    *string                              `json:"variantResetMatchConfig"`
+	VariantResetMatchContent   *string                              `json:"variantResetMatchContent"`
 	ICOOCOnActivate            string                               `json:"icOocOnActivate"`
 	FolderIDs                  []string                             `json:"folderIds"`
 	TheaterPresentation        protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
@@ -127,6 +130,10 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:                  payload.IsDefault,
 		IsTemporary:                payload.IsTemporary,
+		VariantResetMatchMode:      channelIdentityOptionalString(payload.VariantResetMatchMode),
+		VariantResetMatchConfig:    channelIdentityOptionalString(payload.VariantResetMatchConfig),
+		VariantResetMatchContent:   channelIdentityOptionalString(payload.VariantResetMatchContent),
+		VariantResetMatchSet:       payload.VariantResetMatchMode != nil || payload.VariantResetMatchConfig != nil || payload.VariantResetMatchContent != nil,
 		ICOOCOnActivate:            payload.ICOOCOnActivate,
 		FolderIDs:                  payload.FolderIDs,
 		TheaterPresentation:        payload.TheaterPresentation.Value,
@@ -192,6 +199,10 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		IsDefault:                  payload.IsDefault,
 		IsTemporary:                payload.IsTemporary,
 		BotAppearanceMode:          payload.BotAppearanceMode,
+		VariantResetMatchMode:      channelIdentityOptionalString(payload.VariantResetMatchMode),
+		VariantResetMatchConfig:    channelIdentityOptionalString(payload.VariantResetMatchConfig),
+		VariantResetMatchContent:   channelIdentityOptionalString(payload.VariantResetMatchContent),
+		VariantResetMatchSet:       payload.VariantResetMatchMode != nil || payload.VariantResetMatchConfig != nil || payload.VariantResetMatchContent != nil,
 		ICOOCOnActivate:            payload.ICOOCOnActivate,
 		FolderIDs:                  payload.FolderIDs,
 		TheaterPresentation:        payload.TheaterPresentation.Value,
@@ -404,4 +415,11 @@ func resolveChannelIdentityPayloadDecorations(payload channelIdentityPayload) pr
 		return protocol.AvatarDecorationList{*payload.AvatarDecoration}
 	}
 	return nil
+}
+
+func channelIdentityOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

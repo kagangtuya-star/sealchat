@@ -27,6 +27,7 @@ import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLast
 import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, resolveChannelSessionRestoreStrategy as resolveChannelSessionRestoreState, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
 import { isMobileBrowserRuntime, resolveWindowFocusState, shouldSuppressExternalNotification } from '@/utils/windowFocusState';
 import { canCreateChannelSession } from '@/utils/channelCreateGuard';
+import { buildAutoCorrectPunctuationExportPayload } from '@/utils/exportPunctuationOption';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -254,6 +255,9 @@ interface ChatState {
     icFilter: 'all' | 'ic' | 'ooc';
     showArchived: boolean;
     roleIds: string[];
+    whisperOnly: boolean;
+    fromTime: number | null;
+    toTime: number | null;
   };
   channelSessionRestoreFilterOverride: 'all' | 'ic' | 'ooc';
   channelRoleCache: Record<string, string[]>;
@@ -1227,6 +1231,9 @@ export const useChatStore = defineStore({
       icFilter: 'all',
       showArchived: false,
       roleIds: [],
+      whisperOnly: false,
+      fromTime: null,
+      toTime: null,
     },
     channelSessionRestoreFilterOverride: 'all',
     channelRoleCache: {},
@@ -1380,7 +1387,14 @@ export const useChatStore = defineStore({
       this.observerChannelId = effectiveChannelId;
       this.observerSlug = normalizedObserverSlug;
       if (!wasObserver || prevObserverSlug !== normalizedObserverSlug) {
-        this.setFilterState({ icFilter: 'ic', showArchived: false, roleIds: [] });
+        this.setFilterState({
+          icFilter: 'ic',
+          showArchived: false,
+          roleIds: [],
+          whisperOnly: false,
+          fromTime: null,
+          toTime: null,
+        });
       }
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
@@ -1411,6 +1425,7 @@ export const useChatStore = defineStore({
       this.observerChannelId = '';
       this.observerSlug = '';
       this.joinedWorldIds = [];
+      this.setFilterState({ whisperOnly: false, fromTime: null, toTime: null });
       if (this.subject) {
         this.disconnect('observer-disable');
         this.connect();
@@ -1474,6 +1489,7 @@ export const useChatStore = defineStore({
       }
       this.subject = null;
       this.connectState = 'disconnected';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       this.lastGatewayAckAt = 0;
     },
 
@@ -1550,6 +1566,7 @@ export const useChatStore = defineStore({
         }
         // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
         this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
+        chatEvent.emit('connection.changed' as any, { state: this.connectState });
 
         // 'ws://localhost:3212/ws/seal'
         // const subject = webSocket(`ws:${urlBase}/ws/seal`);
@@ -1611,6 +1628,7 @@ export const useChatStore = defineStore({
             rejectPendingApiRequests('ws connection error');
             this.subject = null;
             this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            chatEvent.emit('connection.changed' as any, { state: this.connectState });
             clearForegroundProbeTimer();
             this.stopPingLoop();
             this.lastGatewayAckAt = 0;
@@ -1649,6 +1667,7 @@ export const useChatStore = defineStore({
             rejectPendingApiRequests('ws connection closed');
             this.subject = null;
             this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            chatEvent.emit('connection.changed' as any, { state: this.connectState });
             clearForegroundProbeTimer();
             this.stopPingLoop();
             this.lastGatewayAckAt = 0;
@@ -1691,6 +1710,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'reconnecting';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       let remain = Math.max(0, Math.floor(secs));
       this.iReconnectAfterTime = remain;
 
@@ -1721,6 +1741,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'connected';
+      chatEvent.emit('connection.changed' as any, { state: this.connectState });
       this.markGatewayActivity();
       clearWsReconnectTimer(this);
 
@@ -3304,6 +3325,8 @@ export const useChatStore = defineStore({
       identityId: string;
       selectorEmoji: string;
       keyword: string;
+      matchMode: 'prefix' | 'keyword' | 'regex';
+      matchConfig: string;
       note: string;
       avatarAttachmentId: string;
       displayName?: string;
@@ -3325,6 +3348,8 @@ export const useChatStore = defineStore({
       identityId: string;
       selectorEmoji: string;
       keyword: string;
+      matchMode: 'prefix' | 'keyword' | 'regex';
+      matchConfig: string;
       note: string;
       avatarAttachmentId: string;
       displayName?: string;
@@ -3366,7 +3391,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; variantResetMatchMode?: 'prefix' | 'keyword' | 'regex' | ''; variantResetMatchConfig?: string; variantResetMatchContent?: string; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
@@ -3374,7 +3399,7 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; promoteToShared?: boolean; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; botAppearanceMode?: 'inherit' | 'custom' | ''; variantResetMatchMode?: 'prefix' | 'keyword' | 'regex' | ''; variantResetMatchConfig?: string; variantResetMatchContent?: string; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; promoteToShared?: boolean; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
@@ -4256,6 +4281,10 @@ export const useChatStore = defineStore({
       includeOoc?: boolean;
       archivedOnly?: boolean;
       icOnly?: boolean;
+      oocOnly?: boolean;
+      whisperOnly?: boolean;
+      fromTime?: number;
+      toTime?: number;
       userIds?: string[];
       roleIds?: string[];
       includeRoleless?: boolean;
@@ -4280,6 +4309,21 @@ export const useChatStore = defineStore({
         }
         if (typeof options.icOnly === 'boolean') {
           payload.ic_only = options.icOnly;
+        }
+        if (typeof options.oocOnly === 'boolean') {
+          payload.ooc_only = options.oocOnly;
+        }
+        if (typeof options.whisperOnly === 'boolean') {
+          payload.whisper_only = options.whisperOnly;
+        }
+        if (typeof options.fromTime === 'number' || typeof options.toTime === 'number') {
+          payload.type = 'time';
+          if (typeof options.fromTime === 'number') {
+            payload.from_time = options.fromTime;
+          }
+          if (typeof options.toTime === 'number') {
+            payload.to_time = options.toTime;
+          }
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
@@ -4309,6 +4353,8 @@ export const useChatStore = defineStore({
       includeArchived?: boolean;
       includeOoc?: boolean;
       icOnly?: boolean;
+      oocOnly?: boolean;
+      whisperOnly?: boolean;
       userIds?: string[];
       roleIds?: string[];
       includeRoleless?: boolean;
@@ -4329,6 +4375,12 @@ export const useChatStore = defineStore({
         }
         if (typeof options.icOnly === 'boolean') {
           payload.ic_only = options.icOnly;
+        }
+        if (typeof options.oocOnly === 'boolean') {
+          payload.ooc_only = options.oocOnly;
+        }
+        if (typeof options.whisperOnly === 'boolean') {
+          payload.whisper_only = options.whisperOnly;
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
@@ -4546,6 +4598,11 @@ export const useChatStore = defineStore({
 
     async messageGetById(channel_id: string, message_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
       const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.get', { channel_id, message_id });
+      return (resp as any)?.data || null;
+    },
+
+    async messageFirst(channel_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
+      const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.first', { channel_id } as APIMessage);
       return (resp as any)?.data || null;
     },
 
@@ -4851,17 +4908,19 @@ export const useChatStore = defineStore({
       quote_id?: string,
       whisper_to?: string,
       clientId?: string,
-      identityId?: string,
+      identityId?: string | null,
       displayOrder?: number,
       whisperTargetIds?: string[],
       typingDurationMs?: number,
       position?: { beforeId?: string; afterId?: string },
       identityVariantId?: string,
+      icMode?: 'ic' | 'ooc',
+      channelIdOverride?: string,
     ) {
       const payload: Record<string, any> = {
-        channel_id: this.curChannel?.id,
+        channel_id: channelIdOverride || this.curChannel?.id,
         content,
-        ic_mode: this.icMode,
+        ic_mode: icMode || this.icMode,
       };
       if (quote_id) {
         payload.quote_id = quote_id;
@@ -4881,11 +4940,11 @@ export const useChatStore = defineStore({
       if (clientId) {
         payload.client_id = clientId;
       }
-      const resolvedIdentityId = identityId || this.getActiveIdentityId(this.curChannel?.id);
+      const resolvedIdentityId = identityId === null ? '' : identityId || this.getActiveIdentityId(this.curChannel?.id);
       if (resolvedIdentityId) {
         payload.identity_id = resolvedIdentityId;
       }
-      const resolvedIdentityVariantId = identityVariantId || this.getActiveIdentityVariantId(this.curChannel?.id, resolvedIdentityId);
+      const resolvedIdentityVariantId = identityId === null ? '' : identityVariantId || this.getActiveIdentityVariantId(this.curChannel?.id, resolvedIdentityId);
       if (resolvedIdentityVariantId) {
         payload.identity_variant_id = resolvedIdentityVariantId;
       }
@@ -5314,8 +5373,14 @@ export const useChatStore = defineStore({
       if (!channelId) {
         return { items: [], total: 0 };
       }
+      const observerMode = this.observerMode;
+      const observerSlug = observerMode ? String(this.observerSlug || '').trim() : '';
+      const endpoint = observerMode
+        ? `api/v1/public/ob/channels/${channelId}/speaker-options`
+        : `api/v1/channels/${channelId}/speaker-options`;
       const resp = await api.get<{ items: Array<{ id: string; label: string; color?: string }>; total: number }>(
-        `api/v1/channels/${channelId}/speaker-options`,
+        endpoint,
+        { params: observerMode ? { ob_slug: observerSlug } : undefined },
       );
       return resp.data;
     },
@@ -5936,7 +6001,14 @@ export const useChatStore = defineStore({
       this.lastPingSentAt = null;
     },
 
-    setFilterState(filters: Partial<{ icFilter: 'all' | 'ic' | 'ooc'; showArchived: boolean; roleIds: string[] }>) {
+    setFilterState(filters: Partial<{
+      icFilter: 'all' | 'ic' | 'ooc';
+      showArchived: boolean;
+      roleIds: string[];
+      whisperOnly: boolean;
+      fromTime: number | null;
+      toTime: number | null;
+    }>) {
       this.filterState = {
         ...this.filterState,
         ...filters,
@@ -6191,6 +6263,7 @@ export const useChatStore = defineStore({
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
+      autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
       sliceLimit?: number;
       maxConcurrency?: number;
@@ -6208,6 +6281,7 @@ export const useChatStore = defineStore({
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
+        ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };
       if (params.displayName) {
         payload.display_name = params.displayName;
@@ -6253,6 +6327,7 @@ export const useChatStore = defineStore({
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
+      autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
       sliceLimit?: number;
       maxConcurrency?: number;
@@ -6271,6 +6346,7 @@ export const useChatStore = defineStore({
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
+        ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };
       if (params.displayName) payload.display_name = params.displayName;
       if (params.timeRange?.length === 2) payload.time_range = params.timeRange;

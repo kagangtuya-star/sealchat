@@ -68,6 +68,7 @@ func MergeTheaterRoomsToWorld(worldID string) error {
 			Characters:        map[string]TheaterObjectSnapshot{},
 			Resources:         map[string]TheaterResourcePublic{},
 		}
+		mergedFolders := []TheaterSceneFolder{}
 		usedScenes := map[string]struct{}{}
 		usedObjects := map[string]struct{}{}
 		primaryActive := ""
@@ -78,6 +79,8 @@ func MergeTheaterRoomsToWorld(worldID string) error {
 			if err != nil {
 				return err
 			}
+			var folderRemap map[string]string
+			mergedFolders, folderRemap = mergeTheaterSceneFolders(mergedFolders, snapshot.SceneFolders)
 			sceneIDs := make(map[string]string, len(snapshot.Scenes))
 			keys := make([]string, 0, len(snapshot.Scenes))
 			for id := range snapshot.Scenes {
@@ -100,6 +103,9 @@ func MergeTheaterRoomsToWorld(worldID string) error {
 				usedScenes[newID] = struct{}{}
 				scene := snapshot.Scenes[oldID]
 				scene.ID = newID
+				if scene.FolderID != "" {
+					scene.FolderID = folderRemap[scene.FolderID]
+				}
 				scene.Order = nextSceneOrder
 				nextSceneOrder++
 				merged.Scenes[newID] = scene
@@ -211,6 +217,7 @@ func MergeTheaterRoomsToWorld(worldID string) error {
 		if len(merged.LiveState) == 0 {
 			merged.LiveState = json.RawMessage(`{}`)
 		}
+		merged.SceneFolders = mergedFolders
 		for _, room := range rooms {
 			if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id = ?", room.ID).Update("room_id", worldRoom.ID).Error; err != nil {
 				return err

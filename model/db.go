@@ -152,6 +152,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&OneBotIDMappingModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&SharedChannelIdentityModel{}, &SharedChannelIdentityWorldPresentationModel{}, &SharedChannelIdentitySyncRetryModel{}, &ChannelIdentityModel{})
+	db.AutoMigrate(&ChannelCharacterRemarkModel{})
 	if err := MigrateSharedChannelIdentityWorldScope(); err != nil {
 		log.Printf("迁移共享角色世界作用域失败: %v", err)
 	}
@@ -162,6 +163,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
+	db.AutoMigrate(&PlatformCharacterCardTemplateModel{})
 	db.AutoMigrate(&CharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&WorldCharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
@@ -178,7 +180,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&BattleReportModel{}, &BattleReportDisplayChannelModel{}, &BattleReportDisplayEmbedModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
+	db.AutoMigrate(&ChannelIFormTemplateModel{})
 	db.AutoMigrate(&WorldIFormBindingModel{})
+	db.AutoMigrate(&ChannelIFormStorageNamespaceModel{}, &ChannelIFormStorageDocumentModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldMemberDice3DProfileModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldArchiveModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
 	db.AutoMigrate(&ExternalGlossaryLibraryModel{}, &ExternalGlossaryTermModel{}, &ExternalGlossaryCategoryModel{}, &WorldExternalGlossaryBindingModel{})
 	db.AutoMigrate(&AnnouncementModel{}, &AnnouncementUserStateModel{})

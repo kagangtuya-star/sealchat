@@ -22,11 +22,15 @@ import {
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
+import ObserverFilterModal from '../../components/ObserverFilterModal.vue'
 
 interface FilterState {
   icFilter: 'all' | 'ic' | 'ooc'
   showArchived: boolean
   roleIds: string[]
+  whisperOnly: boolean
+  fromTime: number | null
+  toTime: number | null
 }
 
 interface RoleOption {
@@ -99,6 +103,7 @@ const emit = defineEmits<Emits>()
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
 const actionMeasureRef = ref<HTMLElement | null>(null)
+const filterModalVisible = ref(false)
 const roleSelectExpanded = ref(false)
 
 // Number of visible buttons (dynamically calculated)
@@ -437,6 +442,8 @@ const activeFiltersCount = computed(() => {
   if (props.filters.icFilter !== 'all') count++
   if (props.filters.showArchived) count++
   if (props.filters.roleIds.length > 0) count++
+  if (props.filters.whisperOnly) count++
+  if (props.filters.fromTime !== null || props.filters.toTime !== null) count++
   return count
 })
 
@@ -483,14 +490,12 @@ const cycleIcFilter = () => {
       </div>
 
       <div class="filter-group">
-        <n-switch
-          :value="filters.showArchived"
-          @update:value="updateFilter('showArchived', $event)"
+        <n-button
           size="small"
+          @click="filterModalVisible = true"
         >
-          <template #checked>显示归档</template>
-          <template #unchecked>隐藏归档</template>
-        </n-switch>
+          更多筛选
+        </n-button>
       </div>
 
       <div class="filter-group">
@@ -626,6 +631,13 @@ const cycleIcFilter = () => {
       </div>
     </div>
 
+    <ObserverFilterModal
+      v-model:show="filterModalVisible"
+      :filters="filters"
+      :roles="roleSelectOptions"
+      @apply="emit('update:filters', $event)"
+    />
+
     <!-- 筛选摘要 -->
     <div class="ribbon-section ribbon-section--summary">
       <div v-if="activeFiltersCount > 0" class="filter-summary">
@@ -672,33 +684,6 @@ const cycleIcFilter = () => {
   flex: 0 0 auto;
 }
 
-.ribbon-section--actions {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  justify-content: flex-start;
-  position: relative;
-  gap: 0.5rem;
-  flex-wrap: nowrap;
-}
-
-.ribbon-section--summary {
-  flex-shrink: 0;
-  min-width: 0;
-  margin-left: auto;
-  justify-content: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.filter-group:last-child {
-  flex: 0 0 auto;
-}
-
 .ribbon-role-select {
   width: 7.25rem;
   min-width: 7.25rem;
@@ -732,6 +717,33 @@ const cycleIcFilter = () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.filter-group:last-child {
+  flex: 0 0 auto;
+}
+
+.ribbon-section--actions {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+  position: relative;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.ribbon-section--summary {
+  flex-shrink: 0;
+  min-width: 0;
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .filter-summary {

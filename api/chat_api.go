@@ -22,6 +22,10 @@ func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatCo
 
 	err := json.Unmarshal(msg, &data)
 	if err != nil {
+		_ = c.WriteJSON(&struct {
+			Echo string `json:"echo"`
+			Err  string `json:"err"`
+		}{ctx.Echo, "INVALID_PARAMS"})
 		return
 	}
 

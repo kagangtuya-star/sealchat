@@ -83,6 +83,7 @@
               <p>{{ selectedScene.description || '暂无描述' }}</p>
             </div>
             <n-tag size="small" v-if="selectedScene.channelScope">频道限定</n-tag>
+            <n-tag size="small" type="info" v-if="selectedSceneIsS3DirectRead">S3直读</n-tag>
           </header>
           <section class="scene-board__detail-section">
             <strong>标签</strong>
@@ -100,8 +101,8 @@
             </ul>
           </section>
           <section class="scene-board__detail-actions">
-            <n-button size="small" type="primary" @click="applyScene(selectedScene, true)">加载并播放</n-button>
-            <n-button size="small" tertiary @click="applyScene(selectedScene, false)">仅加载</n-button>
+            <n-button size="small" type="primary" @click="applyScene(selectedScene, true)">切换并播放</n-button>
+            <n-button size="small" tertiary @click="applyScene(selectedScene, false)">切换到此列表</n-button>
             <n-button v-if="audio.canManage" size="small" @click="openEditDrawer(selectedScene)">编辑</n-button>
           </section>
         </template>
@@ -151,11 +152,9 @@ import {
   type FormRules,
 } from 'naive-ui';
 import type { AudioScene } from '@/types/audio';
-import { useAudioStudioStore } from '@/stores/audioStudio';
-import { useAudioS3LibraryStore } from '@/stores/audioS3Library';
+import { sceneUsesS3DirectRead, useAudioStudioStore } from '@/stores/audioStudio';
 
 const audio = useAudioStudioStore();
-const s3Library = useAudioS3LibraryStore();
 const message = useMessage();
 const dialog = useDialog();
 
@@ -178,6 +177,7 @@ const sceneFormRules: FormRules = {
 
 const sceneData = computed(() => audio.scenes);
 const selectedScene = computed(() => audio.selectedScene);
+const selectedSceneIsS3DirectRead = computed(() => sceneUsesS3DirectRead(selectedScene.value));
 const hasSelection = computed(() => checkedSceneIds.value.length > 0);
 
 const columns = computed<DataTableColumns<AudioScene>>(() => [
@@ -200,8 +200,8 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
     key: 'tags',
     minWidth: 120,
     render: (row) =>
-      row.tags.length
-        ? row.tags.map((tag) => h(NTag, { size: 'tiny', bordered: false, key: tag }, { default: () => tag }))
+      sceneTags(row).length
+        ? sceneTags(row).map((tag) => h(NTag, { size: 'tiny', bordered: false, key: tag }, { default: () => tag }))
         : '-',
   },
   {
@@ -219,7 +219,7 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 160,
+    width: 220,
     render: (row) =>
       h(
         'div',
@@ -228,12 +228,12 @@ const columns = computed<DataTableColumns<AudioScene>>(() => [
           h(
             NButton,
             { size: 'tiny', type: 'primary', ghost: true, onClick: () => applyScene(row, true) },
-            { default: () => '播放' }
+            { default: () => '切换并播放' }
           ),
           h(
             NButton,
             { size: 'tiny', quaternary: true, onClick: () => applyScene(row, false) },
-            { default: () => '加载' }
+            { default: () => '切换到此列表' }
           ),
           audio.canManage
             ? h(
@@ -347,12 +347,24 @@ function confirmBatchDelete() {
 }
 
 async function applyScene(scene: AudioScene, autoPlay: boolean) {
-  await audio.applyScene(scene.id, { autoPlay });
-  if (autoPlay) {
-    message.success(`已套用并播放「${scene.name}」`);
-  } else {
-    message.success(`已加载「${scene.name}」，等待播放`);
+  try {
+    await audio.applyScene(scene.id, { autoPlay });
+    if (autoPlay) {
+      message.success(`已切换并播放「${scene.name}」`);
+    } else {
+      message.success(`已切换到「${scene.name}」`);
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '播放列表模式不匹配，无法切换或播放');
   }
+}
+
+function sceneTags(scene: AudioScene): string[] {
+  const tags = [...scene.tags];
+  if (sceneUsesS3DirectRead(scene) && !tags.includes('S3直读')) {
+    tags.push('S3直读');
+  }
+  return tags;
 }
 
 function trackLabel(type: string) {
@@ -361,10 +373,7 @@ function trackLabel(type: string) {
 
 function findAssetName(assetId: string | null) {
   if (!assetId) return '未绑定';
-  return audio.assets.find((asset) => asset.id === assetId)?.name
-    || audio.trackSelectableAssets.find((asset) => asset.id === assetId)?.name
-    || s3Library.selectableAssets.find((asset) => asset.id === assetId)?.name
-    || '未知素材';
+  return [...audio.assets, ...audio.trackSelectableAssets, ...Object.values(audio.audioLibraryResolveCache)].find((asset) => asset.id === assetId)?.name || '源对象不存在';
 }
 
 const drawerTitle = computed(() => {
@@ -510,6 +519,7 @@ onMounted(() => {
 .scene-board__row-actions {
   display: flex;
   gap: 0.25rem;
+  flex-wrap: wrap;
 }
 
 :deep(.is-selected-row td) {

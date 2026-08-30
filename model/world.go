@@ -47,6 +47,9 @@ type WorldModel struct {
 	AllowManageOtherUserChannelIdentities bool       `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
 	AllowMemberEditKeywords               bool       `json:"allowMemberEditKeywords" gorm:"default:false"`               // 允许成员编辑世界术语
 	StrictWhisperPrivacy                  bool       `json:"strictWhisperPrivacy" gorm:"default:true"`                   // 悄悄话严格保密：开启后管理员不可旁路查看
+	AudioLibraryMode                      string     `json:"audioLibraryMode" gorm:"size:16;default:database"`           // database/s3，按世界配置
+	AudioLibraryPrefix                    string     `json:"audioLibraryPrefix" gorm:"size:512"`                         // 世界音频 S3 prefix
+	AudioLibrarySelectorDepth             int        `json:"audioLibrarySelectorDepth" gorm:"not null;default:2"`        // S3 音乐控制台选择器递归深度
 	ChannelDefaultDiceMode                string     `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
 	ChannelDefaultBotID                   string     `json:"channelDefaultBotId" gorm:"size:100"`
 	ChannelDefaultBotIDsJSON              string     `json:"-" gorm:"type:text"`
@@ -176,6 +179,12 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 	if strings.TrimSpace(m.ChannelDefaultDiceMode) == "" {
 		m.ChannelDefaultDiceMode = WorldChannelDefaultDiceModeBuiltin
 	}
+	if strings.TrimSpace(m.AudioLibraryMode) == "" {
+		m.AudioLibraryMode = "database"
+	}
+	if m.AudioLibrarySelectorDepth <= 0 || m.AudioLibrarySelectorDepth > 5 {
+		m.AudioLibrarySelectorDepth = 2
+	}
 	return nil
 }
 
@@ -295,6 +304,9 @@ func BackfillWorldData() error {
 	_ = db.Model(&WorldModel{}).
 		Where("channel_default_dice_mode = '' OR channel_default_dice_mode IS NULL").
 		Update("channel_default_dice_mode", WorldChannelDefaultDiceModeBuiltin)
+	_ = db.Model(&WorldModel{}).
+		Where("audio_library_mode = '' OR audio_library_mode IS NULL").
+		Update("audio_library_mode", "database")
 
 	// 如果默认世界没有默认频道记录，尝试写入一个已有频道
 	if strings.TrimSpace(world.DefaultChannelID) == "" {

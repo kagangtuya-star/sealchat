@@ -375,6 +375,7 @@ export interface ServerAudioConfig {
   alternateBitrates?: number[];
   ffmpegPath?: string;
   allowWorldAudioWorkbench?: boolean;
+  allowWorldAudioS3DirectRead?: boolean;
   allowNonAdminCreateWorld?: boolean;
 }
 
@@ -385,6 +386,7 @@ export interface ServerStorageConfig {
 export interface BackupConfig {
   enabled: boolean;
   intervalHours: number;
+  minIntervalMinutes: number;
   retentionCount: number;
   path: string;
 }
@@ -1052,6 +1054,9 @@ export interface ChannelIdentity {
   isDefault: boolean;
   isTemporary: boolean;
   botAppearanceMode?: 'inherit' | 'custom' | '';
+  variantResetMatchMode?: 'prefix' | 'keyword' | 'regex' | '';
+  variantResetMatchConfig?: string;
+  variantResetMatchContent?: string;
   icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];
@@ -1067,6 +1072,8 @@ export interface ChannelIdentityVariant {
   sharedRevision?: number;
   selectorEmoji: string;
   keyword: string;
+  matchMode: 'prefix' | 'keyword' | 'regex';
+  matchConfig: string;
   note: string;
   avatarAttachmentId: string;
   displayName?: string;

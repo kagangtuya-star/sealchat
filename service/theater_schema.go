@@ -27,16 +27,18 @@ func defaultTheaterImageAnnotation(text string) map[string]any {
 }
 
 const (
-	theaterMaxSnapshotBytes  = 4 << 20
-	theaterMaxPayloadBytes   = 128 << 10
-	theaterMaxScenes         = 200
-	theaterMaxObjects        = 5000
-	theaterMaxSceneObjects   = 2000
-	theaterMaxBatchUpdates   = 200
-	theaterMaxActions        = 32
-	theaterMaxActionDelayMS  = 10_000
-	theaterActionDelayStepMS = 100
-	theaterMaxSwitchText     = 10_000
+	theaterMaxSnapshotBytes   = 4 << 20
+	theaterMaxPayloadBytes    = 128 << 10
+	theaterMaxScenes          = 200
+	theaterMaxObjects         = 5000
+	theaterMaxSceneObjects    = 2000
+	theaterMaxBatchUpdates    = 200
+	theaterMaxActions         = 32
+	theaterMaxActionDelayMS   = 10_000
+	theaterActionDelayStepMS  = 100
+	theaterMaxSwitchText      = 10_000
+	theaterMaxSceneFolders    = 200
+	theaterMaxSceneFolderName = 128
 )
 
 type theaterSceneCreatePayload struct {
@@ -44,6 +46,7 @@ type theaterSceneCreatePayload struct {
 	Name       string         `json:"name"`
 	SwitchText string         `json:"switchText"`
 	Order      int64          `json:"order"`
+	FolderID   string         `json:"folderId,omitempty"`
 	State      map[string]any `json:"state"`
 }
 
@@ -59,6 +62,15 @@ type theaterSceneReorderPayload struct {
 type theaterSceneDeletePayload struct {
 	SceneID         string `json:"sceneId"`
 	FallbackSceneID string `json:"fallbackSceneId"`
+}
+
+type theaterSceneFolderInput struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type theaterSceneFoldersUpdatePayload struct {
+	Folders []theaterSceneFolderInput `json:"folders"`
 }
 
 type theaterSceneApplyPayload struct {
@@ -169,6 +181,8 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 		target = &theaterSceneDeletePayload{}
 	case TheaterMutationSceneApply:
 		target = &theaterSceneApplyPayload{}
+	case TheaterMutationSceneFoldersUpdate:
+		target = &theaterSceneFoldersUpdatePayload{}
 	case TheaterMutationRoomConstructionSet:
 		target = &theaterRoomConstructionSetPayload{}
 	case TheaterMutationObjectCreate:
@@ -226,6 +240,11 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 		if err := validateTheaterSwitchText(payload.SwitchText); err != nil {
 			return err
 		}
+		if payload.FolderID != "" {
+			if err := validateTheaterID(payload.FolderID, "folderId"); err != nil {
+				return err
+			}
+		}
 		return validateSceneState(payload.State)
 	case *theaterSceneUpdatePayload:
 		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
@@ -249,6 +268,31 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 		return nil
 	case *theaterSceneDeletePayload:
 		return validateTheaterID(payload.SceneID, "sceneId")
+	case *theaterSceneFoldersUpdatePayload:
+		if len(payload.Folders) > theaterMaxSceneFolders {
+			return theaterPayloadError("scene folders 数量超限")
+		}
+		seenIDs := make(map[string]struct{}, len(payload.Folders))
+		seenNames := make(map[string]struct{}, len(payload.Folders))
+		for _, folder := range payload.Folders {
+			if err := validateTheaterID(folder.ID, "folder.id"); err != nil {
+				return err
+			}
+			id := strings.TrimSpace(folder.ID)
+			name := strings.TrimSpace(folder.Name)
+			if name == "" || len([]rune(name)) > theaterMaxSceneFolderName {
+				return theaterPayloadError("folder.name 无效")
+			}
+			if _, exists := seenIDs[id]; exists {
+				return theaterPayloadError("folder.id 不能重复")
+			}
+			if _, exists := seenNames[name]; exists {
+				return theaterPayloadError("folder.name 不能重复")
+			}
+			seenIDs[id] = struct{}{}
+			seenNames[name] = struct{}{}
+		}
+		return nil
 	case *theaterSceneApplyPayload:
 		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
 			return err
@@ -373,9 +417,8 @@ func validateTheaterSwitchText(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "switchAudio": true, "musicSnapshot": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
-		if !allowed[key] {
+		if !isTheaterSceneStateKeyAllowed(key) {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
 		}
 		if err := rejectUnsafeTheaterJSON(value); err != nil {
@@ -580,7 +623,7 @@ func validateSceneFields(fields map[string]any) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "state": true}
+	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "folderId": true, "state": true}
 	for key := range fields {
 		if !allowed[key] {
 			return theaterPayloadError("scene fields 包含禁止字段: " + key)
@@ -598,6 +641,17 @@ func validateSceneFields(fields map[string]any) error {
 		}
 		if err := validateTheaterSwitchText(switchText); err != nil {
 			return err
+		}
+	}
+	if value, present := fields["folderId"]; present {
+		folderID, ok := value.(string)
+		if !ok {
+			return theaterPayloadError("folderId 无效")
+		}
+		if folderID != "" {
+			if err := validateTheaterID(folderID, "folderId"); err != nil {
+				return err
+			}
 		}
 	}
 	if state, ok := fields["state"].(map[string]any); ok {

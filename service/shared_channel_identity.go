@@ -1100,6 +1100,9 @@ func SharedChannelIdentityDelete(ownerUserID, operatorUserID, identityID string)
 		ids := make([]string, 0, len(copies))
 		for _, copy := range copies {
 			ids = append(ids, copy.ID)
+			if err := model.CharacterRemarkDeleteByIdentityTx(tx, copy.ChannelID, copy.ID); err != nil {
+				return err
+			}
 			if err := model.ChannelIdentityModeConfigClearIdentityReferencesTx(tx, ownerUserID, copy.ChannelID, copy.ID); err != nil {
 				return err
 			}

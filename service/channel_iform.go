@@ -4,19 +4,36 @@ import (
 	"errors"
 	"strings"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/pm"
 )
 
+// ChannelIFormPermanentDelete removes form and every storage namespace owned by form ID.
+func ChannelIFormPermanentDelete(channelID, formID string) error {
+	channelID = strings.TrimSpace(channelID)
+	formID = strings.TrimSpace(formID)
+	if channelID == "" || formID == "" {
+		return errors.New("控件ID不能为空")
+	}
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		return model.ChannelIFormDeleteTx(tx, channelID, formID)
+	})
+}
+
 type ChannelIFormView struct {
 	*model.ChannelIFormModel
-	SourceChannelID string
-	WorldShared     bool
-	SharedRef       bool
-	SharedWorldID   string
-	Readonly        bool
+	SourceChannelID  string
+	WorldShared      bool
+	SharedRef        bool
+	SharedWorldID    string
+	Readonly         bool
+	TemplateOrigin   string
+	TemplateName     string
+	TemplateMissing  bool
+	TemplateArchived bool
 }
 
 func normalizeIFormIDs(ids []string) []string {
@@ -76,7 +93,7 @@ func ListEffectiveChannelIForms(channelID string) ([]*ChannelIFormView, error) {
 
 	worldID := strings.TrimSpace(channel.WorldID)
 	if worldID == "" {
-		return result, nil
+		return resolveChannelIFormViews(result)
 	}
 
 	var bindings []model.WorldIFormBindingModel
@@ -88,7 +105,7 @@ func ListEffectiveChannelIForms(channelID string) ([]*ChannelIFormView, error) {
 		return nil, err
 	}
 	if len(bindings) == 0 {
-		return result, nil
+		return resolveChannelIFormViews(result)
 	}
 
 	sharedFormIDs := make([]string, 0, len(bindings))
@@ -112,7 +129,7 @@ func ListEffectiveChannelIForms(channelID string) ([]*ChannelIFormView, error) {
 	}
 
 	if len(sharedFormIDs) == 0 {
-		return result, nil
+		return resolveChannelIFormViews(result)
 	}
 
 	var sharedForms []*model.ChannelIFormModel
@@ -144,7 +161,37 @@ func ListEffectiveChannelIForms(channelID string) ([]*ChannelIFormView, error) {
 		})
 	}
 
-	return result, nil
+	return resolveChannelIFormViews(result)
+}
+
+func resolveChannelIFormViews(items []*ChannelIFormView) ([]*ChannelIFormView, error) {
+	raw := make([]*model.ChannelIFormModel, 0, len(items))
+	for _, item := range items {
+		if item != nil && item.ChannelIFormModel != nil {
+			raw = append(raw, item.ChannelIFormModel)
+		}
+	}
+	resolved, err := ResolveChannelIForms(raw)
+	if err != nil {
+		return nil, err
+	}
+	index := 0
+	for _, item := range items {
+		if item == nil || item.ChannelIFormModel == nil {
+			continue
+		}
+		if index >= len(resolved) {
+			break
+		}
+		value := resolved[index]
+		index++
+		item.ChannelIFormModel = value.Form
+		item.TemplateOrigin = value.Metadata.Origin
+		item.TemplateName = value.Metadata.Name
+		item.TemplateMissing = value.Metadata.TemplateMissing
+		item.TemplateArchived = value.Metadata.Archived
+	}
+	return items, nil
 }
 
 func SetWorldSharedChannelIForms(channelID, actorID string, formIDs []string, enabled bool) error {

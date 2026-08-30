@@ -1,8 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -15,6 +19,7 @@ import (
 const (
 	TheaterPanelDomainAudio  = "audio"
 	TheaterPanelDomainEffect = "effect"
+	TheaterPanelDomainImage  = "image"
 )
 
 type TheaterPanelOrganizerSnapshot struct {
@@ -22,16 +27,22 @@ type TheaterPanelOrganizerSnapshot struct {
 	Items   []model.TheaterPanelItemModel   `json:"items"`
 }
 
+type TheaterPanelFolderPatch struct {
+	Name       *string
+	PresetSet  bool
+	PresetJSON []byte
+}
+
 func normalizeTheaterPanelDomain(domain string) (string, error) {
 	domain = strings.TrimSpace(domain)
-	if domain != TheaterPanelDomainAudio && domain != TheaterPanelDomainEffect {
+	if domain != TheaterPanelDomainAudio && domain != TheaterPanelDomainEffect && domain != TheaterPanelDomainImage {
 		return "", theaterPayloadError("domain 无效")
 	}
 	return domain, nil
 }
 
 func requireTheaterPanelWrite(actorID, worldID, channelID, domain string) error {
-	if domain == TheaterPanelDomainAudio {
+	if domain == TheaterPanelDomainAudio || domain == TheaterPanelDomainImage {
 		if !CanManageTheaterResources(actorID, worldID, channelID) {
 			return newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 素材管理权限", 403, nil)
 		}
@@ -69,6 +80,7 @@ func GetTheaterPanelOrganizer(_ context.Context, actorID, worldID, channelID str
 	}
 	for index := range folders {
 		_, folders[index].Collapsed = collapsed[folders[index].ID]
+		hydrateTheaterImageFolderPreset(&folders[index])
 	}
 	return &TheaterPanelOrganizerSnapshot{Folders: folders, Items: items}, nil
 }
@@ -137,7 +149,7 @@ func nextTheaterPanelFolderName(roomID, domain string) (string, error) {
 	}
 }
 
-func UpdateTheaterPanelFolder(_ context.Context, actorID, worldID, channelID, folderID, name string) (*model.TheaterPanelFolderModel, error) {
+func UpdateTheaterPanelFolder(_ context.Context, actorID, worldID, channelID, folderID string, patch TheaterPanelFolderPatch) (*model.TheaterPanelFolderModel, error) {
 	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
 	if err != nil {
 		return nil, err
@@ -146,29 +158,97 @@ func UpdateTheaterPanelFolder(_ context.Context, actorID, worldID, channelID, fo
 	if err != nil {
 		return nil, err
 	}
-	if err := requireTheaterPanelWrite(actorID, worldID, channelID, folder.Domain); err != nil {
-		return nil, err
+	if patch.Name == nil && !patch.PresetSet {
+		return nil, theaterPayloadError("没有可更新的文件夹字段")
 	}
-	name = strings.TrimSpace(name)
-	if name == "" || len([]rune(name)) > 128 {
-		return nil, theaterPayloadError("文件夹名称长度必须为 1-128")
+	updates := map[string]any{"updated_by": actorID}
+	if patch.Name != nil {
+		if err := requireTheaterPanelWrite(actorID, worldID, channelID, folder.Domain); err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(*patch.Name)
+		if name == "" || len([]rune(name)) > 128 {
+			return nil, theaterPayloadError("文件夹名称长度必须为 1-128")
+		}
+		var duplicateCount int64
+		if err := model.GetDB().Model(&model.TheaterPanelFolderModel{}).Where("room_id = ? AND domain = ? AND name = ? AND id <> ?", room.ID, folder.Domain, name, folder.ID).Count(&duplicateCount).Error; err != nil {
+			return nil, err
+		}
+		if duplicateCount > 0 {
+			return nil, theaterPayloadError("同名文件夹已存在")
+		}
+		updates["name"] = name
 	}
-	var duplicateCount int64
-	if err := model.GetDB().Model(&model.TheaterPanelFolderModel{}).Where("room_id = ? AND domain = ? AND name = ? AND id <> ?", room.ID, folder.Domain, name, folder.ID).Count(&duplicateCount).Error; err != nil {
-		return nil, err
+	if patch.PresetSet {
+		if folder.Domain != TheaterPanelDomainImage {
+			return nil, theaterPayloadError("只有图片文件夹支持预设")
+		}
+		if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionObjectEdit); err != nil {
+			return nil, err
+		}
+		preset, presetJSON, err := normalizeTheaterImageObjectPresetJSON(patch.PresetJSON)
+		if err != nil {
+			return nil, err
+		}
+		updates["preset_json"] = presetJSON
+		folder.Preset = preset
+		folder.PresetJSON = presetJSON
 	}
-	if duplicateCount > 0 {
-		return nil, theaterPayloadError("同名文件夹已存在")
-	}
-	if err := model.GetDB().Model(folder).Updates(map[string]any{"name": name, "updated_by": actorID}).Error; err != nil {
+	if err := model.GetDB().Model(folder).Updates(updates).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return nil, theaterPayloadError("同名文件夹已存在")
 		}
 		return nil, err
 	}
-	folder.Name = name
+	if name, ok := updates["name"].(string); ok {
+		folder.Name = name
+	}
 	folder.UpdatedBy = actorID
 	return folder, nil
+}
+
+func normalizeTheaterImageObjectPresetJSON(raw []byte) (*model.TheaterImageObjectPreset, string, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, "", nil
+	}
+	var preset model.TheaterImageObjectPreset
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&preset); err != nil {
+		return nil, "", theaterPayloadError("图片预设无效: " + err.Error())
+	}
+	if preset.Version != 1 {
+		return nil, "", theaterPayloadError("图片预设 version 必须为 1")
+	}
+	for name, value := range map[string]*float64{"width": preset.Width, "height": preset.Height} {
+		if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0.5 || *value > 10_000) {
+			return nil, "", theaterPayloadError(fmt.Sprintf("图片预设 %s 必须在 0.5-10000 之间", name))
+		}
+	}
+	if entrance := preset.Entrance; entrance != nil {
+		if entrance.Preset != "none" && entrance.Preset != "fade" && entrance.Preset != "slide" && entrance.Preset != "zoom" && entrance.Preset != "mask" {
+			return nil, "", theaterPayloadError("图片预设 entrance.preset 无效")
+		}
+		if entrance.DurationMS < 150 || entrance.DurationMS > 5_000 {
+			return nil, "", theaterPayloadError("图片预设 entrance.durationMs 必须在 150-5000 之间")
+		}
+	}
+	encoded, err := json.Marshal(&preset)
+	if err != nil {
+		return nil, "", err
+	}
+	return &preset, string(encoded), nil
+}
+
+func hydrateTheaterImageFolderPreset(folder *model.TheaterPanelFolderModel) {
+	folder.Preset = nil
+	if folder.Domain != TheaterPanelDomainImage || strings.TrimSpace(folder.PresetJSON) == "" {
+		return
+	}
+	preset, _, err := normalizeTheaterImageObjectPresetJSON([]byte(folder.PresetJSON))
+	if err == nil {
+		folder.Preset = preset
+	}
 }
 
 func DeleteTheaterPanelFolder(_ context.Context, actorID, worldID, channelID, folderID string) error {
@@ -295,6 +375,7 @@ func loadTheaterPanelFolder(roomID, folderID string) (*model.TheaterPanelFolderM
 		}
 		return nil, err
 	}
+	hydrateTheaterImageFolderPreset(&folder)
 	return &folder, nil
 }
 
@@ -326,6 +407,16 @@ func validateTheaterPanelTargets(roomID, worldID, channelID, domain string, targ
 		}
 		if count != int64(len(targetIDs)) {
 			return newTheaterError(TheaterErrorNotFound, "部分特效不存在", 404, nil)
+		}
+		return nil
+	}
+	if domain == TheaterPanelDomainImage {
+		var count int64
+		if err := model.GetDB().Model(&model.TheaterImageAssetModel{}).Where("room_id = ? AND id IN ?", roomID, targetIDs).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != int64(len(targetIDs)) {
+			return newTheaterError(TheaterErrorResourceNotFound, "部分图片素材不存在", 404, nil)
 		}
 		return nil
 	}

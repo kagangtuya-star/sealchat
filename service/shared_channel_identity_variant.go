@@ -94,6 +94,8 @@ func createSharedVariantCopiesTx(tx *gorm.DB, sourceIdentity *model.ChannelIdent
 			SharedRevision:     source.SharedRevision,
 			SelectorEmoji:      source.SelectorEmoji,
 			Keyword:            source.Keyword,
+			MatchMode:          source.MatchMode,
+			MatchConfig:        source.MatchConfig,
 			Note:               source.Note,
 			AvatarAttachmentID: source.AvatarAttachmentID,
 			DisplayName:        source.DisplayName,
@@ -245,7 +247,7 @@ func syncSharedChannelIdentityVariant(sourceIdentity *model.ChannelIdentityModel
 				return err
 			}
 			values := map[string]any{
-				"selector_emoji": source.SelectorEmoji, "keyword": source.Keyword, "note": source.Note,
+				"selector_emoji": source.SelectorEmoji, "keyword": source.Keyword, "match_mode": source.MatchMode, "match_config": source.MatchConfig, "note": source.Note,
 				"avatar_attachment_id": source.AvatarAttachmentID, "display_name": source.DisplayName, "color": source.Color,
 				"appearance_json": appearanceJSON, "enabled": source.Enabled, "shared_revision": nextRevision,
 			}

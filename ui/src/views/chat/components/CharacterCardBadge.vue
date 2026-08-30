@@ -42,6 +42,7 @@ const worldTemplate = computed(() => {
 
 const template = computed(() => {
   const worldId = chatStore.currentWorldId;
+  if (badgeEntry.value?.platformTemplateRef) return badgeEntry.value.template;
   if (worldTemplate.value) return worldTemplate.value;
   return badgeEntry.value?.template
     || displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId]

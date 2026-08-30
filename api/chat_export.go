@@ -23,24 +23,29 @@ import (
 )
 
 type chatExportRequest struct {
-	ChannelID           string            `json:"channel_id"`
-	ChannelIDs          []string          `json:"channel_ids"`
-	Format              string            `json:"format"`
-	DisplayName         string            `json:"display_name"`
-	TimeRange           []int64           `json:"time_range"`
-	IncludeOOC          *bool             `json:"include_ooc"`
-	IncludeArchived     *bool             `json:"include_archived"`
-	IncludeImages       *bool             `json:"include_images"`
-	IncludeDiceCommand  *bool             `json:"include_dice_commands"`
-	WithoutTimestamp    *bool             `json:"without_timestamp"`
-	MergeMessages       *bool             `json:"merge_messages"`
-	Users               []string          `json:"users"`
-	DisplaySettings     map[string]any    `json:"display_settings"`
-	SliceLimit          int               `json:"slice_limit"`
-	MaxConcurrency      int               `json:"max_concurrency"`
-	TextColorizeBBCode  *bool             `json:"text_bbcode_colorize"`
-	TextColorizeMap     map[string]string `json:"text_bbcode_color_map"`
-	TextColorizeNameMap map[string]string `json:"text_bbcode_name_map"`
+	ChannelID              string            `json:"channel_id"`
+	ChannelIDs             []string          `json:"channel_ids"`
+	Format                 string            `json:"format"`
+	DisplayName            string            `json:"display_name"`
+	TimeRange              []int64           `json:"time_range"`
+	IncludeOOC             *bool             `json:"include_ooc"`
+	IncludeArchived        *bool             `json:"include_archived"`
+	IncludeImages          *bool             `json:"include_images"`
+	IncludeDiceCommand     *bool             `json:"include_dice_commands"`
+	WithoutTimestamp       *bool             `json:"without_timestamp"`
+	MergeMessages          *bool             `json:"merge_messages"`
+	AutoCorrectPunctuation *bool             `json:"auto_correct_punctuation"`
+	Users                  []string          `json:"users"`
+	DisplaySettings        map[string]any    `json:"display_settings"`
+	SliceLimit             int               `json:"slice_limit"`
+	MaxConcurrency         int               `json:"max_concurrency"`
+	TextColorizeBBCode     *bool             `json:"text_bbcode_colorize"`
+	TextColorizeMap        map[string]string `json:"text_bbcode_color_map"`
+	TextColorizeNameMap    map[string]string `json:"text_bbcode_name_map"`
+}
+
+func (req *chatExportRequest) shouldAutoCorrectPunctuation() bool {
+	return req == nil || req.AutoCorrectPunctuation == nil || *req.AutoCorrectPunctuation
 }
 
 type chatExportResponse struct {
@@ -256,6 +261,7 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 		IncludeDiceCommand:        includeDiceCommand,
 		WithoutTimestamp:          withoutTimestamp,
 		MergeMessages:             mergeMessages,
+		AutoCorrectPunctuation:    req.shouldAutoCorrectPunctuation(),
 		TextColorizeBBCode:        textColorizeBBCode,
 		TextColorizeBBCodeMap:     textColorizeMap,
 		TextColorizeBBCodeNameMap: textColorizeNameMap,
@@ -407,6 +413,7 @@ func execChatExportBatchCreate(userID string, req *chatExportRequest) (*chatExpo
 		IncludeDiceCommand:        includeDiceCommand,
 		WithoutTimestamp:          withoutTimestamp,
 		MergeMessages:             mergeMessages,
+		AutoCorrectPunctuation:    req.shouldAutoCorrectPunctuation(),
 		TextColorizeBBCode:        textColorizeBBCode,
 		TextColorizeBBCodeMap:     textColorizeMap,
 		TextColorizeBBCodeNameMap: textColorizeNameMap,

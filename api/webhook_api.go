@@ -378,25 +378,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	if content == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"ok": false, "error": "bad_request", "message": "message.content 不能为空"})
 	}
-
-	// BOT 入站：CQ 码转换为 Satori XML
-	content = service.ConvertCQToSatori(content)
-	content = fillBotMentionNames(channel.ID, content)
-	content = protocol.EscapeSatoriText(content)
-
-	icMode := strings.ToLower(strings.TrimSpace(req.Message.ICMode))
-	if isExternalBotIncomingUser(botUser) {
-		icMode = resolveExternalBotIncomingICMode(icMode, content)
-	}
-	if icMode == "" {
-		icMode = "ic"
-	}
-	if icMode != "ic" && icMode != "ooc" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"ok": false, "error": "bad_request", "message": "message.icMode 仅支持 ic/ooc"})
-	}
-
 	source, externalID := webhookResolveExternalRef(req)
-
 	identityID := ""
 	externalActorID := ""
 	if req.Identity != nil {
@@ -416,15 +398,40 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		identityID = id
 		externalActorID = actorID
 	}
+	member, err := model.MemberGetByUserIDAndChannelIDBase(botUser.ID, channel.ID, botUser.Nickname, true)
+	if err != nil {
+		return wrapError(c, err, "创建频道成员失败")
+	}
+	identity, err := service.ChannelIdentityValidateMessageIdentity(botUser.ID, channel.ID, identityID)
+	if err != nil {
+		return wrapError(c, err, "身份校验失败")
+	}
+	variant, matchedContent, err := service.ChannelIdentityVariantMatchMessage(identity, content)
+	if err != nil {
+		return wrapError(c, err, "差分匹配失败")
+	}
+	content = matchedContent
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
+
+	// BOT 入站：CQ 码转换为 Satori XML
+	content = service.ConvertCQToSatori(content)
+	content = fillBotMentionNames(channel.ID, content)
+	content = protocol.EscapeSatoriText(content)
+
+	icMode := strings.ToLower(strings.TrimSpace(req.Message.ICMode))
+	if isExternalBotIncomingUser(botUser) {
+		icMode = resolveExternalBotIncomingICMode(icMode, content)
+	}
+	if icMode == "" {
+		icMode = "ic"
+	}
+	if icMode != "ic" && icMode != "ooc" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"ok": false, "error": "bad_request", "message": "message.icMode 仅支持 ic/ooc"})
+	}
 
 	quoteID, err := webhookResolveQuoteID(channel.ID, source, req.Message.QuoteExternalID, req.Message.QuoteMessageID)
 	if err != nil {
 		return wrapError(c, err, "解析引用消息失败")
-	}
-
-	member, err := model.MemberGetByUserIDAndChannelIDBase(botUser.ID, channel.ID, botUser.Nickname, true)
-	if err != nil {
-		return wrapError(c, err, "创建频道成员失败")
 	}
 
 	now := time.Now()
@@ -457,23 +464,23 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		SenderMemberName:  member.Nickname,
 	}
 
-	if identityID != "" {
-		identity, err := service.ChannelIdentityValidateMessageIdentity(botUser.ID, channel.ID, identityID)
-		if err != nil {
-			return wrapError(c, err, "身份校验失败")
-		}
-		if identity != nil {
-			msg.SenderRoleID = identity.ID
-			msg.SenderIdentityID = identity.ID
-			msg.SenderIdentityName = identity.DisplayName
-			msg.SenderIdentityColor = identity.Color
-			msg.SenderIdentityAvatarID = identity.AvatarAttachmentID
-			if identity.DisplayName != "" {
-				msg.SenderMemberName = identity.DisplayName
+	if identity != nil {
+		msg.SenderRoleID = identity.ID
+		msg.SenderIdentityID = identity.ID
+		msg.SenderIdentityIsTemporary = identity.IsTemporary
+		if appearance != nil {
+			msg.SenderIdentityVariantID = appearance.VariantID
+			msg.SenderIdentityName = appearance.DisplayName
+			msg.SenderIdentityColor = appearance.Color
+			msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			msg.SenderIdentityDecorations = appearance.AvatarDecorations
+			msg.SenderTheaterPresentation = appearance.TheaterPresentation
+			if appearance.DisplayName != "" {
+				msg.SenderMemberName = appearance.DisplayName
 			}
 		}
 	}
-	if identityID == "" && botUser.IsBot && strings.TrimSpace(botUser.NickColor) != "" {
+	if identity == nil && botUser.IsBot && strings.TrimSpace(botUser.NickColor) != "" {
 		msg.SenderIdentityColor = strings.TrimSpace(botUser.NickColor)
 	}
 
