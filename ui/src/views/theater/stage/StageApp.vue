@@ -6393,7 +6393,11 @@ const uploadImage = async (file: File, target: ImageTarget) => {
     const targetObject = target.kind === 'object' ? props.store.activeObjects.value[target.objectId] : null
     const targetEffectConfig = isTheaterEffectObject(targetObject) ? theaterEffectConfigFromObject(targetObject) : null
     const uploaded = await uploadTheaterImageResource(file, target.kind === 'object' ? target.objectId : '')
-    const dimensions = targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
+    const dimensions = (
+      targetObject?.type === 'image' && !targetObject.image
+    ) || (
+      targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
+    )
       ? await theaterMediaDimensions(uploaded.prepared)
       : undefined
     if (!applyImageUrl(target, uploaded.url, uploaded.resourceId, uploaded.mimeType, uploaded.resource?.animated === true, uploaded.resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
@@ -6588,6 +6592,10 @@ const handleCanvasDrop = async (event: DragEvent) => {
       return
     }
     object.name = asset.name
+    const dimensions = Number.isFinite(asset.resource.width) && Number.isFinite(asset.resource.height)
+      && (asset.resource.width || 0) > 0 && (asset.resource.height || 0) > 0
+      ? { width: asset.resource.width!, height: asset.resource.height! }
+      : undefined
     if (!props.store.setObjectImage(
       object.id,
       asset.url,
@@ -6595,6 +6603,7 @@ const handleCanvasDrop = async (event: DragEvent) => {
       asset.resource.playbackMimeType || asset.resource.mimeType,
       asset.resource.animated === true,
       asset.resource.loopCount || undefined,
+      dimensions,
     )) {
       props.store.removeObjects([object.id], false)
       theaterImageError.value = '图片组件创建失败'

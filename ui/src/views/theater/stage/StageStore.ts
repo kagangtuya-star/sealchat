@@ -1380,6 +1380,15 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const effectConfig = object.type === 'effect'
       ? normalizeTheaterEffectConfig(object.content?.effect)
       : null
+    const initializeImageFrame = Boolean(
+      object.type === 'image'
+      && !object.image
+      && dimensions
+      && Number.isFinite(dimensions.width)
+      && Number.isFinite(dimensions.height)
+      && dimensions.width > 0
+      && dimensions.height > 0,
+    )
     const initializeMediaFrame = Boolean(
       effectConfig?.kind === 'media'
       && !object.image
@@ -1392,6 +1401,24 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     )
     object.image = image
     if (object.type === 'image') {
+      if (initializeImageFrame && dimensions) {
+        const frameWidth = Math.max(0.5, object.transform.width)
+        const frameHeight = Math.max(0.5, object.transform.height)
+        const scale = Math.min(frameWidth / dimensions.width, frameHeight / dimensions.height)
+        object.transform = {
+          ...object.transform,
+          width: Number(Math.max(0.5, dimensions.width * scale).toFixed(6)),
+          height: Number(Math.max(0.5, dimensions.height * scale).toFixed(6)),
+        }
+        // Initial frame fitting is setup state; keep it out of object edit history.
+        const beforeObject = state.persistentObjects[object.id]
+          ? transaction?.before.persistentObjects[object.id]
+          : transaction?.before.sceneObjects[object.id]
+        if (beforeObject) {
+          beforeObject.transform.width = object.transform.width
+          beforeObject.transform.height = object.transform.height
+        }
+      }
       object.content = { ...object.content, image }
     } else if (effectConfig) {
       effectConfig.media = image
