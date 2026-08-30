@@ -95,6 +95,7 @@ import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
 import { stageSceneTransitionKeyframes, stageSceneTransitionOptions } from './stage-scene-transition'
+import { snapStageResizeBox, type StageGridResizeSession } from './stage-grid-resize'
 import {
   resolveTheaterStageMediaLocation,
   theaterResourceContentPath,
@@ -2088,6 +2089,15 @@ let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
 let gridCoverage: { minX: number, maxX: number, minY: number, maxY: number } | null = null
 let gridSyncFrame: number | null = null
+let gridNodeSnapSession: {
+  node: Konva.Node
+  camera: Konva.Group
+  offsetX: number
+  offsetY: number
+  lockedX: number | null
+  lockedY: number | null
+} | null = null
+let gridResizeSession: StageGridResizeSession | null = null
 
 const gridSnapEnabled = computed(() => props.store.state.liveState.alignWithGrid)
 const gridDisplayEnabled = computed(() => props.store.state.liveState.displayGrid)
@@ -2106,6 +2116,7 @@ const toggleGridOnTop = () => {
 }
 
 const setGridSnapPreview = (active: boolean) => {
+  if (!active) gridNodeSnapSession = null
   if (gridSnapPreviewActive.value === active) return
   gridSnapPreviewActive.value = active
   scheduleGridSync()
@@ -2115,12 +2126,14 @@ const finishGridSnapPreview = () => {
   if (gridSnapPreviewActive.value) setGridSnapPreview(false)
 }
 
+const stageGridStep = () => Math.max(0.25, props.store.state.liveState.gridSize) * WORLD_UNIT_PX
+
 const snapStageCoordinate = (value: number, axis: 'x' | 'y') => {
   const liveState = props.store.state.liveState
   if (!liveState.alignWithGrid) return value
   const fieldSize = axis === 'x' ? liveState.fieldWidth : liveState.fieldHeight
   const origin = -fieldSize * WORLD_UNIT_PX / 2
-  const step = Math.max(0.25, liveState.gridSize) * WORLD_UNIT_PX
+  const step = stageGridStep()
   return origin + Math.round((value - origin) / step) * step
 }
 
@@ -2129,24 +2142,119 @@ const snapStagePosition = (position: { x: number, y: number }) => ({
   y: snapStageCoordinate(position.y, 'y'),
 })
 
-const snapNodeToGrid = (node: Konva.Node) => {
-  if (!gridSnapEnabled.value || !worldCameraGroup) return { x: 0, y: 0 }
-  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
-  const camera = worldCameraGroup.absolutePosition()
-  const current = node.absolutePosition()
-  const world = {
-    x: (current.x - camera.x) / zoom,
-    y: (current.y - camera.y) / zoom,
+const snapDrawingPoint = (tool: StageDrawingTool, position: { x: number, y: number }) => (
+  tool === 'pen' || tool === 'highlighter' ? position : snapStagePosition(position)
+)
+
+const cameraForNode = (node: Konva.Node) => {
+  let ancestor = node.getParent()
+  while (ancestor && ancestor.getParent() && !(ancestor.getParent() instanceof Konva.Layer)) {
+    ancestor = ancestor.getParent()
   }
-  const snapped = snapStagePosition(world)
+  return ancestor instanceof Konva.Group ? ancestor : worldCameraGroup
+}
+
+const beginNodeGridSnap = (node: Konva.Node) => {
+  const cameraGroup = cameraForNode(node)
+  if (!gridSnapEnabled.value || !cameraGroup) {
+    gridNodeSnapSession = null
+    return
+  }
+  const zoom = Math.max(0.01, cameraGroup.scaleX())
+  const camera = cameraGroup.absolutePosition()
+  const current = node.absolutePosition()
+  const origin = { x: (current.x - camera.x) / zoom, y: (current.y - camera.y) / zoom }
+  const bounds = node.getClientRect({
+    relativeTo: cameraGroup,
+    skipStroke: true,
+    skipShadow: true,
+  })
+  gridNodeSnapSession = {
+    node,
+    camera: cameraGroup,
+    offsetX: bounds.x - origin.x,
+    offsetY: bounds.y - origin.y,
+    lockedX: null,
+    lockedY: null,
+  }
+}
+
+const snapStageCoordinateWithHysteresis = (
+  value: number,
+  axis: 'x' | 'y',
+  locked: number | null,
+) => locked !== null && Math.abs(value - locked) <= stageGridStep() * 0.6
+  ? locked
+  : snapStageCoordinate(value, axis)
+
+const snapNodeToGrid = (node: Konva.Node) => {
+  if (!gridSnapEnabled.value) return { x: 0, y: 0 }
+  if (gridNodeSnapSession?.node !== node) beginNodeGridSnap(node)
+  const session = gridNodeSnapSession
+  if (!session) return { x: 0, y: 0 }
+  const zoom = Math.max(0.01, session.camera.scaleX())
+  const camera = session.camera.absolutePosition()
+  const current = node.absolutePosition()
+  const bounds = {
+    x: (current.x - camera.x) / zoom + session.offsetX,
+    y: (current.y - camera.y) / zoom + session.offsetY,
+  }
+  const snapped = {
+    x: snapStageCoordinateWithHysteresis(bounds.x, 'x', session.lockedX),
+    y: snapStageCoordinateWithHysteresis(bounds.y, 'y', session.lockedY),
+  }
+  session.lockedX = snapped.x
+  session.lockedY = snapped.y
   const correction = {
-    x: (snapped.x - world.x) * zoom,
-    y: (snapped.y - world.y) * zoom,
+    x: (snapped.x - bounds.x) * zoom,
+    y: (snapped.y - bounds.y) * zoom,
   }
   if (correction.x || correction.y) {
     node.absolutePosition({ x: current.x + correction.x, y: current.y + correction.y })
   }
   return correction
+}
+
+const beginGridResize = () => {
+  gridResizeSession = null
+  if (!gridSnapEnabled.value || !transformer || !worldCameraGroup || isBatchSelection.value) return
+  const object = selectedObject.value
+  const anchor = transformer.getActiveAnchor()
+  if (
+    !object
+    || object.type === 'group'
+    || object.type === 'effect'
+    || object.aspectRatioLocked
+    || !anchor
+    || anchor === 'rotater'
+  ) return
+  const node = objectNodes.get(object.id)
+  const baseBoxWidth = Math.abs(transformer.width())
+  const baseBoxHeight = Math.abs(transformer.height())
+  if (!node || baseBoxWidth <= 0 || baseBoxHeight <= 0) return
+  const liveState = props.store.state.liveState
+  const zoom = Math.max(0.01, worldCameraGroup.scaleX())
+  const camera = worldCameraGroup.absolutePosition()
+  gridResizeSession = {
+    anchor,
+    gridSize: liveState.gridSize,
+    baseWidth: Math.max(0.5, object.transform.width * Math.abs(node.scaleX())),
+    baseHeight: Math.max(0.5, object.transform.height * Math.abs(node.scaleY())),
+    baseBoxWidth,
+    baseBoxHeight,
+    gridOriginX: camera.x - liveState.fieldWidth * WORLD_UNIT_PX * zoom / 2,
+    gridOriginY: camera.y - liveState.fieldHeight * WORLD_UNIT_PX * zoom / 2,
+    gridStepPx: stageGridStep() * zoom,
+    lockedWidthCells: null,
+    lockedHeightCells: null,
+  }
+  setGridSnapPreview(true)
+}
+
+const finishGridResize = () => {
+  if (!gridResizeSession) return
+  gridResizeSession = null
+  setGridSnapPreview(false)
 }
 
 interface DrawingSession {
@@ -5149,8 +5257,9 @@ const createDrawingNode = (drawing: StageDrawing, width: number, height: number)
 const drawingBounds = (session: DrawingSession) => {
   let end = { ...session.current }
   const delta = { x: end.x - session.start.x, y: end.y - session.start.y }
+  const lineLike = session.tool === 'line' || session.tool === 'arrow'
   if (session.shiftKey) {
-    if (session.tool === 'line' || session.tool === 'arrow') {
+    if (lineLike) {
       const length = Math.hypot(delta.x, delta.y)
       const angle = Math.round(Math.atan2(delta.y, delta.x) / (Math.PI / 4)) * (Math.PI / 4)
       end = { x: session.start.x + Math.cos(angle) * length, y: session.start.y + Math.sin(angle) * length }
@@ -5162,16 +5271,25 @@ const drawingBounds = (session: DrawingSession) => {
       }
     }
   }
+  if (lineLike && session.shiftKey) end = snapStagePosition(end)
   const start = session.altKey
     ? { x: session.start.x - (end.x - session.start.x), y: session.start.y - (end.y - session.start.y) }
     : session.start
-  const minimum = 12
-  if (Math.abs(end.x - start.x) < minimum) end.x = start.x + Math.sign(end.x - start.x || 1) * minimum
-  if (Math.abs(end.y - start.y) < minimum) end.y = start.y + Math.sign(end.y - start.y || 1) * minimum
-  const x = Math.min(start.x, end.x)
-  const y = Math.min(start.y, end.y)
-  const width = Math.max(minimum, Math.abs(end.x - start.x))
-  const height = Math.max(minimum, Math.abs(end.y - start.y))
+  const minimum = gridSnapEnabled.value ? Math.max(12, stageGridStep()) : 12
+  if (!lineLike) {
+    if (Math.abs(end.x - start.x) < minimum) end.x = start.x + Math.sign(end.x - start.x || 1) * minimum
+    if (Math.abs(end.y - start.y) < minimum) end.y = start.y + Math.sign(end.y - start.y || 1) * minimum
+  }
+  const deltaX = Math.abs(end.x - start.x)
+  const deltaY = Math.abs(end.y - start.y)
+  const width = Math.max(minimum, deltaX)
+  const height = Math.max(minimum, deltaY)
+  const x = lineLike && deltaX < minimum
+    ? (start.x + end.x - width) / 2
+    : Math.min(start.x, end.x)
+  const y = lineLike && deltaY < minimum
+    ? (start.y + end.y - height) / 2
+    : Math.min(start.y, end.y)
   return { start, end, x, y, width, height }
 }
 
@@ -5252,8 +5370,10 @@ const renderDrawingDraft = () => {
 }
 
 const cancelDrawingSession = () => {
+  const hadSession = Boolean(drawingSession)
   drawingSession = null
   drawingDraftRoot?.destroyChildren()
+  if (hadSession) setGridSnapPreview(false)
   drawWorldLayers()
 }
 
@@ -5509,10 +5629,12 @@ const createObjectNode = (object: StageObject) => {
       const driverStart = nodes.get(object.id)?.absolute
       if (!driverStart) return
       multiDrag = { driverId: object.id, driverStart, nodes }
+      beginNodeGridSnap(wrapper)
       setGridSnapPreview(gridSnapEnabled.value)
       props.store.beginObjectEdit('批量移动对象')
       return
     }
+    beginNodeGridSnap(wrapper)
     setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('移动对象')
   })
@@ -5981,15 +6103,17 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (isDrawingTool(activeCanvasTool.value) && canEditAllObjects.value && event.evt.button === 0) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
     if (!pointer) return
+    const drawingPointer = snapDrawingPoint(activeCanvasTool.value, pointer)
     event.evt.preventDefault()
     drawingSession = {
       tool: activeCanvasTool.value,
-      start: pointer,
-      current: pointer,
-      points: [pointer.x, pointer.y],
+      start: drawingPointer,
+      current: drawingPointer,
+      points: [drawingPointer.x, drawingPointer.y],
       shiftKey: event.evt.shiftKey,
       altKey: event.evt.altKey,
     }
+    setGridSnapPreview(gridSnapEnabled.value)
     renderDrawingDraft()
     return
   }
@@ -6018,13 +6142,14 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (drawingSession) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
     if (!pointer) return
-    drawingSession.current = pointer
+    const drawingPointer = snapDrawingPoint(drawingSession.tool, pointer)
+    drawingSession.current = drawingPointer
     drawingSession.shiftKey = event.evt.shiftKey
     drawingSession.altKey = event.evt.altKey
     if (drawingSession.tool === 'pen' || drawingSession.tool === 'highlighter') {
       const points = drawingSession.points
       const previous = { x: points[points.length - 2], y: points[points.length - 1] }
-      if (Math.hypot(pointer.x - previous.x, pointer.y - previous.y) >= 2) points.push(pointer.x, pointer.y)
+      if (Math.hypot(drawingPointer.x - previous.x, drawingPointer.y - previous.y) >= 2) points.push(drawingPointer.x, drawingPointer.y)
     }
     renderDrawingDraft()
     return
@@ -6433,12 +6558,13 @@ const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetInde
   object.transform.x = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX + offsetIndex * step
   object.transform.y = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX + offsetIndex * step
   if (gridSnapEnabled.value) {
-    const snapped = snapStagePosition({
-      x: object.transform.x * WORLD_UNIT_PX,
-      y: object.transform.y * WORLD_UNIT_PX,
-    })
-    object.transform.x = snapped.x / WORLD_UNIT_PX
-    object.transform.y = snapped.y / WORLD_UNIT_PX
+    const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
+    const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+    const center = { x: object.transform.x * WORLD_UNIT_PX, y: object.transform.y * WORLD_UNIT_PX }
+    const topLeft = { x: center.x - width / 2, y: center.y - height / 2 }
+    const snapped = snapStagePosition(topLeft)
+    object.transform.x = (center.x + snapped.x - topLeft.x) / WORLD_UNIT_PX
+    object.transform.y = (center.y + snapped.y - topLeft.y) / WORLD_UNIT_PX
   }
   return true
 }
@@ -6812,8 +6938,12 @@ onMounted(() => {
     anchorStroke: '#38bdf8',
     anchorFill: '#0f172a',
     anchorSize: 9,
+    boundBoxFunc: (_oldBox, newBox) => gridResizeSession
+      ? snapStageResizeBox(newBox, gridResizeSession)
+      : newBox,
   })
   transformer.on('transformstart', () => {
+    beginGridResize()
     if (!isBatchSelection.value || batchMoveBlocked.value) return
     const rootIds = [...selectedMovementRootIds()]
     if (!rootIds.length) return
@@ -6827,6 +6957,7 @@ onMounted(() => {
     selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
   })
   transformer.on('transformend', () => {
+    finishGridResize()
     const rootIds = batchTransformRootIds
     batchTransformRootIds = null
     if (!rootIds) return
@@ -6901,6 +7032,8 @@ onMounted(() => {
       start: selectionGroupHitArea!.position(),
       nodes,
     }
+    const anchor = nodes.values().next().value as { node: Konva.Group, absolute: { x: number, y: number } } | undefined
+    if (anchor) beginNodeGridSnap(anchor.node)
     setGridSnapPreview(gridSnapEnabled.value)
     props.store.beginObjectEdit('批量移动对象')
   })

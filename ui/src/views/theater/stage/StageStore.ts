@@ -126,10 +126,25 @@ const snapObjectToGrid = (
   object: StageObject,
   liveState: StageLiveState,
   objects: Record<string, StageObject>,
+  anchor: 'center' | 'bounds' = 'center',
 ) => {
   // Effects use an independent 1920x1080 design canvas, not world coordinates.
   if (!liveState.alignWithGrid || object.type === 'effect') return
   const world = objectWorldPosition(object, objects)
+  if (anchor === 'bounds' && object.type !== 'group') {
+    const angle = object.transform.rotation * Math.PI / 180
+    const halfWidth = Math.max(0.5, object.transform.width) * Math.abs(object.transform.scaleX || 1) / 2
+    const halfHeight = Math.max(0.5, object.transform.height) * Math.abs(object.transform.scaleY || 1) / 2
+    const extentX = Math.abs(Math.cos(angle)) * halfWidth + Math.abs(Math.sin(angle)) * halfHeight
+    const extentY = Math.abs(Math.sin(angle)) * halfWidth + Math.abs(Math.cos(angle)) * halfHeight
+    const left = world.x - extentX
+    const top = world.y - extentY
+    setObjectWorldPosition(object, objects, {
+      x: world.x + snapStageCoordinate(left, liveState.fieldWidth, liveState.gridSize) - left,
+      y: world.y + snapStageCoordinate(top, liveState.fieldHeight, liveState.gridSize) - top,
+    })
+    return
+  }
   setObjectWorldPosition(object, objects, {
     x: snapStageCoordinate(world.x, liveState.fieldWidth, liveState.gridSize),
     y: snapStageCoordinate(world.y, liveState.fieldHeight, liveState.gridSize),
@@ -888,7 +903,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     )
     objects[object.id] = object
     placeObjectAbove(object, objects)
-    snapObjectToGrid(object, state.liveState, activeObjects.value)
+    snapObjectToGrid(object, state.liveState, activeObjects.value, 'bounds')
     setSelectedObjectIds([object.id], object.id)
     return object
   })
@@ -919,7 +934,6 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
     objects[object.id] = object
     placeObjectAbove(object, objects)
-    snapObjectToGrid(object, state.liveState, activeObjects.value)
     setSelectedObjectIds([object.id], object.id)
     return object
   })
