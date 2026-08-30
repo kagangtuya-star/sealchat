@@ -3421,6 +3421,7 @@ const updateTransformer = () => {
     const nodes = selectedMovementNodes().map(({ node }) => node)
     const proportional = batchBooleanObjects('aspectRatioLocked').some((object) => object.aspectRatioLocked)
     transformer.nodes(nodes)
+    transformer.ignoreStroke(selectedObjects.value.some((object) => object.type === 'drawing'))
     transformer.visible(Boolean(nodes.length))
     transformer.padding(8)
     transformer.borderStrokeWidth(2)
@@ -3446,6 +3447,7 @@ const updateTransformer = () => {
   const object = selectedObject.value
   const node = object && canEditObject(object) && !object.locked ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
+  transformer.ignoreStroke(object?.type === 'drawing')
   transformer.visible(Boolean(node))
   const groupSelected = object?.type === 'group'
   const proportional = object?.aspectRatioLocked !== false
@@ -5192,6 +5194,8 @@ const createDrawingNode = (drawing: StageDrawing, width: number, height: number)
     name: 'theater-object-drawing',
     stroke: style.stroke,
     strokeWidth: style.strokeWidth,
+    // Keep line width constant while parent node is resized.
+    strokeScaleEnabled: false,
     opacity: style.opacity,
     dash: drawingDash(style),
     lineCap: 'round' as const,
