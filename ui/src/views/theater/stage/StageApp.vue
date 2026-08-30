@@ -134,6 +134,12 @@ import {
   type TheaterPanelFolder,
   type TheaterPanelOrganizerSnapshot,
 } from '../effects/theater-panel-organizer'
+import {
+  applyImageObjectPreset,
+  resolveImageObjectPreset,
+  type TheaterImageFolderPreset,
+  type TheaterImageObjectPreset,
+} from '../effects/theater-image-folder-preset'
 import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from '../effects/theater-image-assets'
 
 const props = defineProps<{
@@ -624,6 +630,16 @@ const renameTheaterImageAsset = async (assetId: string, name: string) => {
   }
 }
 
+const updateTheaterImageAssetPreset = async (assetId: string, preset: TheaterImageObjectPreset | null) => {
+  if (!canEditAllObjects.value) return
+  try {
+    await api.patch(theaterImageAssetPath(assetId), { preset })
+    await fetchTheaterImageAssets()
+  } catch (error) {
+    theaterImageError.value = theaterAudioErrorMessage(error, preset ? '保存素材预设失败' : '清除素材预设失败')
+  }
+}
+
 const deleteTheaterImageAsset = async (asset: TheaterImageAsset) => {
   if (!canDeleteResources.value || !window.confirm(`删除图片素材“${asset.name}”？舞台上的图片组件不会受影响。`)) return
   try {
@@ -675,6 +691,16 @@ const renameTheaterPanelFolder = async (folderId: string, name: string) => {
     await fetchTheaterPanelOrganizer()
   } catch (error) {
     stageMessage.error(theaterAudioErrorMessage(error, '重命名文件夹失败'))
+  }
+}
+
+const updateTheaterImageFolderPreset = async (folderId: string, preset: TheaterImageFolderPreset | null) => {
+  if (!canEditAllObjects.value) return
+  try {
+    await api.patch(theaterPanelOrganizerPath(`folders/${encodeURIComponent(folderId)}`), { preset })
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, preset ? '保存图片文件夹预设失败' : '清除图片文件夹预设失败'))
   }
 }
 
@@ -6740,10 +6766,6 @@ const handleCanvasDrop = async (event: DragEvent) => {
       return
     }
     const object = props.store.addObject('image')
-    if (!placeCanvasDropObject(object, event)) {
-      props.store.removeObjects([object.id], false)
-      return
-    }
     object.name = asset.name
     const dimensions = Number.isFinite(asset.resource.width) && Number.isFinite(asset.resource.height)
       && (asset.resource.width || 0) > 0 && (asset.resource.height || 0) > 0
@@ -6760,6 +6782,16 @@ const handleCanvasDrop = async (event: DragEvent) => {
     )) {
       props.store.removeObjects([object.id], false)
       theaterImageError.value = '图片组件创建失败'
+      return
+    }
+    const organizerItem = theaterPanelOrganizer.value.items.find((item) => item.domain === 'image' && item.targetId === asset.id)
+    const folderPreset = organizerItem?.folderId
+      ? theaterPanelOrganizer.value.folders.find((folder) => folder.domain === 'image' && folder.id === organizerItem.folderId)?.preset
+      : undefined
+    const resolvedPreset = resolveImageObjectPreset(folderPreset, asset.preset)
+    applyImageObjectPreset(object, resolvedPreset)
+    if (!placeCanvasDropObject(object, event)) {
+      props.store.removeObjects([object.id], false)
       return
     }
     props.store.setSelectedObjectIds([object.id], object.id)
@@ -8765,6 +8797,7 @@ onBeforeUnmount(() => {
           :error="theaterAudioError"
           :can-upload="canUploadResources"
           :can-delete="canDeleteResources"
+          :can-edit-objects="canEditAllObjects"
           :referenced-asset-ids="referencedTheaterAudioAssetIds"
           :master-volume="theaterAudioMasterVolume"
           :organizer-folders="theaterPanelOrganizer.folders"
@@ -8781,6 +8814,8 @@ onBeforeUnmount(() => {
           @delete-image="deleteTheaterImageAsset"
           @delete-image-batch="deleteTheaterImageAssetsBatch"
           @create-image-folder="done => createTheaterPanelFolder('image', done)"
+          @update-image-folder-preset="updateTheaterImageFolderPreset"
+          @update-image-asset-preset="updateTheaterImageAssetPreset"
           @reorder-image-folders="folderIds => reorderTheaterPanelFolders('image', folderIds)"
           @reorder-image-items="(folderId, targetIds) => reorderTheaterPanelItems('image', folderId, targetIds)"
           @create-folder="done => createTheaterPanelFolder('audio', done)"

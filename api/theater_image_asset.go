@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/service"
@@ -37,12 +39,20 @@ func TheaterImageAssetUpdate(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
 	var body struct {
-		Name string `json:"name"`
+		Name   *string         `json:"name"`
+		Preset json.RawMessage `json:"preset"`
 	}
 	if err := decodeTheaterBody(c, &body, 16<<10); err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
-	item, err := service.UpdateTheaterImageAsset(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("assetId"), body.Name)
+	item, err := service.UpdateTheaterImageAsset(
+		c.Context(),
+		user.ID,
+		c.Params("worldId"),
+		c.Params("channelId"),
+		c.Params("assetId"),
+		service.TheaterImageAssetPatch{Name: body.Name, PresetSet: body.Preset != nil, PresetJSON: body.Preset},
+	)
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}

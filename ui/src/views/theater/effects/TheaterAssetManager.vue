@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Edit, Folder, GripVertical, Music, PlayerPla
 
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import TheaterImageAssetPanel from './TheaterImageAssetPanel.vue'
+import type { TheaterImageFolderPreset, TheaterImageObjectPreset } from './theater-image-folder-preset'
 import type { TheaterImageAsset } from './theater-image-assets'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { useTheaterPointerSort, type TheaterPointerDrag, type TheaterPointerTarget } from './useTheaterPointerSort'
@@ -21,6 +22,7 @@ const props = defineProps<{
   error: string
   canUpload: boolean
   canDelete: boolean
+  canEditObjects: boolean
   referencedAssetIds: string[]
   masterVolume: number
   organizerFolders: TheaterPanelFolder[]
@@ -39,6 +41,8 @@ const emit = defineEmits<{
   deleteImage: [asset: TheaterImageAsset]
   deleteImageBatch: [assets: TheaterImageAsset[]]
   createImageFolder: [done: (folder: TheaterPanelFolder | null) => void]
+  updateImageFolderPreset: [folderId: string, preset: TheaterImageFolderPreset | null]
+  updateImageAssetPreset: [assetId: string, preset: TheaterImageObjectPreset | null]
   reorderImageFolders: [folderIds: string[]]
   reorderImageItems: [folderId: string, targetIds: string[]]
   createFolder: [done: (folder: TheaterPanelFolder | null) => void]
@@ -186,6 +190,7 @@ const assetStatus = (asset: AudioAsset) => {
           :error="imageError"
           :can-upload="canUpload"
           :can-edit="canUpload || canDelete"
+          :can-edit-preset="canEditObjects"
           :can-delete="canDelete"
           :organizer-folders="organizerFolders"
           :organizer-items="organizerItems"
@@ -195,6 +200,8 @@ const assetStatus = (asset: AudioAsset) => {
           @delete="emit('deleteImage', $event)"
           @delete-batch="emit('deleteImageBatch', $event)"
           @create-folder="emit('createImageFolder', $event)"
+          @update-folder-preset="(folderId, preset) => emit('updateImageFolderPreset', folderId, preset)"
+          @update-asset-preset="(assetId, preset) => emit('updateImageAssetPreset', assetId, preset)"
           @rename-folder="(folderId, name) => emit('renameFolder', folderId, name)"
           @delete-folder="emit('deleteFolder', $event)"
           @reorder-folders="emit('reorderImageFolders', $event)"

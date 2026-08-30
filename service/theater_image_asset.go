@@ -14,12 +14,55 @@ import (
 )
 
 type TheaterImageAssetPublic struct {
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	ResourceID string                `json:"resourceId"`
-	CreatedAt  time.Time             `json:"createdAt"`
-	UpdatedAt  time.Time             `json:"updatedAt"`
-	Resource   TheaterResourcePublic `json:"resource"`
+	ID         string                          `json:"id"`
+	Name       string                          `json:"name"`
+	ResourceID string                          `json:"resourceId"`
+	Preset     *model.TheaterImageObjectPreset `json:"preset,omitempty"`
+	CreatedAt  time.Time                       `json:"createdAt"`
+	UpdatedAt  time.Time                       `json:"updatedAt"`
+	Resource   TheaterResourcePublic           `json:"resource"`
+}
+
+type TheaterImageAssetPatch struct {
+	Name       *string
+	PresetSet  bool
+	PresetJSON []byte
+}
+
+func theaterImageAssetPatchUpdates(actorID string, patch TheaterImageAssetPatch) (map[string]any, error) {
+	if patch.Name == nil && !patch.PresetSet {
+		return nil, theaterPayloadError("没有可更新的图片素材字段")
+	}
+	updates := map[string]any{"updated_by": actorID}
+	if patch.Name != nil {
+		if strings.TrimSpace(*patch.Name) == "" {
+			return nil, theaterPayloadError("素材名称长度必须为 1-255")
+		}
+		name, err := theaterImageAssetName(*patch.Name, "")
+		if err != nil {
+			return nil, err
+		}
+		updates["name"] = name
+	}
+	if patch.PresetSet {
+		_, presetJSON, err := normalizeTheaterImageObjectPresetJSON(patch.PresetJSON)
+		if err != nil {
+			return nil, err
+		}
+		updates["preset_json"] = presetJSON
+	}
+	return updates, nil
+}
+
+func theaterImageAssetPreset(asset model.TheaterImageAssetModel) *model.TheaterImageObjectPreset {
+	if strings.TrimSpace(asset.PresetJSON) == "" {
+		return nil
+	}
+	preset, _, err := normalizeTheaterImageObjectPresetJSON([]byte(asset.PresetJSON))
+	if err != nil {
+		return nil
+	}
+	return preset
 }
 
 func theaterImageAssetName(requestedName, fallback string) (string, error) {
@@ -51,7 +94,7 @@ func theaterImageAssetPublic(conn *gorm.DB, asset model.TheaterImageAssetModel) 
 	}
 	return &TheaterImageAssetPublic{
 		ID: asset.ID, Name: asset.Name, ResourceID: asset.ResourceID,
-		CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Resource: publicResource,
+		Preset: theaterImageAssetPreset(asset), CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Resource: publicResource,
 	}, nil
 }
 
@@ -131,9 +174,18 @@ func CreateTheaterImageAsset(_ context.Context, actorID, worldID, channelID, res
 	return theaterImageAssetPublic(model.GetDB(), asset)
 }
 
-func UpdateTheaterImageAsset(_ context.Context, actorID, worldID, channelID, assetID, requestedName string) (*TheaterImageAssetPublic, error) {
-	if !CanManageTheaterResources(actorID, worldID, channelID) {
+func UpdateTheaterImageAsset(_ context.Context, actorID, worldID, channelID, assetID string, patch TheaterImageAssetPatch) (*TheaterImageAssetPublic, error) {
+	if patch.Name != nil && !CanManageTheaterResources(actorID, worldID, channelID) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 素材管理权限", 403, nil)
+	}
+	if patch.PresetSet {
+		if _, _, permissionErr := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionObjectEdit); permissionErr != nil {
+			return nil, permissionErr
+		}
+	}
+	updates, err := theaterImageAssetPatchUpdates(actorID, patch)
+	if err != nil {
+		return nil, err
 	}
 	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
 	if err != nil {
@@ -143,18 +195,9 @@ func UpdateTheaterImageAsset(_ context.Context, actorID, worldID, channelID, ass
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(requestedName) == "" {
-		return nil, theaterPayloadError("素材名称长度必须为 1-255")
-	}
-	name, err := theaterImageAssetName(requestedName, "")
-	if err != nil {
+	if err := model.GetDB().Model(asset).Updates(updates).Error; err != nil {
 		return nil, err
 	}
-	if err := model.GetDB().Model(asset).Updates(map[string]any{"name": name, "updated_by": actorID}).Error; err != nil {
-		return nil, err
-	}
-	asset.Name = name
-	asset.UpdatedBy = actorID
 	if err := model.GetDB().Where("room_id = ? AND id = ?", room.ID, asset.ID).First(asset).Error; err != nil {
 		return nil, err
 	}

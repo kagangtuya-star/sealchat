@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { NButton, NCheckbox, NDropdown, NIcon, NTooltip } from 'naive-ui'
-import { Dots, Edit, Photo, Plus, Refresh, Trash, Upload } from '@vicons/tabler'
+import { NButton, NCheckbox, NDropdown, NIcon, NPopover, NTooltip } from 'naive-ui'
+import { Adjustments, Dots, Edit, Photo, Plus, Refresh, Trash, Upload } from '@vicons/tabler'
 
+import TheaterImageFolderPresetEditor from './TheaterImageFolderPresetEditor.vue'
+import type { TheaterImageFolderPreset, TheaterImageObjectPreset } from './theater-image-folder-preset'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from './theater-image-assets'
 
@@ -15,6 +17,7 @@ const props = defineProps<{
   error: string
   canUpload: boolean
   canEdit: boolean
+  canEditPreset: boolean
   canDelete: boolean
   organizerFolders: TheaterPanelFolder[]
   organizerItems: TheaterPanelItem[]
@@ -29,6 +32,8 @@ const emit = defineEmits<{
   createFolder: [done: (folder: TheaterPanelFolder | null) => void]
   renameFolder: [folderId: string, name: string]
   deleteFolder: [folderId: string]
+  updateFolderPreset: [folderId: string, preset: TheaterImageFolderPreset | null]
+  updateAssetPreset: [assetId: string, preset: TheaterImageObjectPreset | null]
   reorderFolders: [folderIds: string[]]
   reorderItems: [folderId: string, targetIds: string[]]
 }>()
@@ -73,6 +78,11 @@ const moveOptions = computed(() => [
   ...imageFolders.value.map((folder) => ({ label: folder.name, key: folder.id })),
 ].map((option) => ({ ...option, disabled: option.key === activeFolderId.value })))
 const activeFolder = computed(() => imageFolders.value.find((folder) => folder.id === activeFolderId.value) || null)
+const folderPresetForAsset = (asset: TheaterImageAsset) => {
+  const folderId = imageItemMap.value.get(asset.id)?.folderId
+  if (!folderId) return undefined
+  return imageFolders.value.find((folder) => folder.id === folderId)?.preset
+}
 const folderMenuOptions = [
   { label: '重命名', key: 'rename' },
   { label: '删除', key: 'delete' },
@@ -295,6 +305,16 @@ const clearDragState = () => {
     <div class="theater-image-assets__toolbar">
       <span>拖入图片，或点击上传</span>
       <div class="theater-image-assets__toolbar-actions">
+        <n-popover v-if="activeFolder && canEditPreset" trigger="click" placement="right-start" :show-arrow="false" class="theater-secondary-surface">
+          <template #trigger>
+            <n-button size="tiny" secondary><template #icon><n-icon><Adjustments /></n-icon></template>预设</n-button>
+          </template>
+          <TheaterImageFolderPresetEditor
+            :preset="activeFolder.preset"
+            @save="emit('updateFolderPreset', activeFolder.id, $event)"
+            @clear="emit('updateFolderPreset', activeFolder.id, null)"
+          />
+        </n-popover>
         <n-tooltip trigger="hover"><template #trigger><n-button quaternary circle size="tiny" :loading="loading" aria-label="刷新图片素材" @click="emit('refresh')"><template #icon><n-icon><Refresh /></n-icon></template></n-button></template>刷新</n-tooltip>
         <n-button v-if="canUpload" size="tiny" secondary :loading="uploading" @click="pickFiles"><template #icon><n-icon><Upload /></n-icon></template>上传</n-button>
         <div class="theater-image-assets__density" aria-label="缩略图大小">
@@ -322,6 +342,18 @@ const clearDragState = () => {
           </div>
           <n-checkbox class="theater-image-assets__check" :checked="checkedIds.includes(asset.id)" @click.stop @update:checked="updateChecked(asset.id, $event)" />
           <div class="theater-image-assets__card-actions">
+            <n-popover v-if="canEditPreset" trigger="click" placement="right-start" :show-arrow="false" class="theater-secondary-surface">
+              <template #trigger>
+                <n-button quaternary circle size="tiny" aria-label="编辑素材预设" @click.stop><template #icon><n-icon><Adjustments /></n-icon></template></n-button>
+              </template>
+              <TheaterImageFolderPresetEditor
+                mode="asset"
+                :preset="asset.preset"
+                :inherited-preset="folderPresetForAsset(asset)"
+                @save="emit('updateAssetPreset', asset.id, $event)"
+                @clear="emit('updateAssetPreset', asset.id, null)"
+              />
+            </n-popover>
             <n-button v-if="canEdit" quaternary circle size="tiny" aria-label="重命名素材" @click.stop="startAssetRename(asset)"><template #icon><n-icon><Edit /></n-icon></template></n-button>
             <n-button v-if="canDelete" quaternary circle size="tiny" type="error" aria-label="删除素材" @click.stop="emit('delete', asset)"><template #icon><n-icon><Trash /></n-icon></template></n-button>
           </div>
