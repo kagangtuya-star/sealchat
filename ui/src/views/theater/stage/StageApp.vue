@@ -8993,7 +8993,7 @@ onBeforeUnmount(() => {
       :close-on-esc="true"
       @update:show="value => { if (!value) closeSceneFolderDialog() }"
     >
-      <section class="theater-scene-folder-dialog" role="dialog" aria-modal="true" :aria-label="sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹'">
+      <div class="theater-scene-folder-dialog" role="dialog" aria-modal="true" :aria-label="sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹'">
         <header class="theater-scene-folder-dialog__header">
           <div>
             <strong>{{ sceneFolderDialogMode === 'create' ? '新建场景文件夹' : '重命名场景文件夹' }}</strong>
@@ -9015,7 +9015,7 @@ onBeforeUnmount(() => {
           <n-button @click="closeSceneFolderDialog">取消</n-button>
           <n-button type="primary" @click="submitSceneFolderDialog">确定</n-button>
         </footer>
-      </section>
+      </div>
     </n-modal>
     <n-modal v-model:show="packageProgressVisible" :mask-closable="false" :closable="false" preset="card" title="小剧场导入进度" class="theater-package-progress-modal">
       <div class="theater-package-progress">
