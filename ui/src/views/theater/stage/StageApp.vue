@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Components,
   CloudDownload,
+  CloudRain,
   Copy,
   Cut,
   Dots,
@@ -126,6 +127,7 @@ import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/c
 import type { TheaterPresentation } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
+import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
 import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
 import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
 import {
@@ -241,11 +243,13 @@ let imageAnnotationTimer: number | null = null
 let imageAnnotationPendingObjectId = ''
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
+const overlayPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
+const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
 const TheaterAssetManager = defineAsyncComponent(() => import('../effects/TheaterAssetManager.vue'))
 const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
 const audioStudio = useAudioStudioStore()
@@ -1228,7 +1232,7 @@ const saveImageAnnotation = (annotation: StageImageAnnotation) => {
   closeImageAnnotationEditor()
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset'
 
 const canOpenPanel = (id: PanelId) => {
   if (id === 'scene') return canEditAllObjects.value || canSwitchScene.value
@@ -1996,6 +2000,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   inspector: { width: 240, height: 240 },
   layer: { width: 280, height: 220 },
   effect: { width: 320, height: 320 },
+  overlay: { width: 520, height: 360 },
   asset: { width: 320, height: 280 },
 }
 const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
@@ -2015,7 +2020,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'effect' || id === 'asset' ? 340 : 300
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'effect' || id === 'asset' ? 340 : 300
   const height = Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
@@ -2091,12 +2096,19 @@ const bringPanelToFront = (id: PanelId) => {
   frontPanelId.value = id
 }
 
+const openOverlayPanel = () => {
+  if (!canOpenPanel('overlay')) return
+  overlayPanelOpen.value = true
+  bringPanelToFront('overlay')
+}
+
 const togglePanel = (id: PanelId) => {
   if (!canOpenPanel(id)) return
   if (id === 'scene') scenePanelOpen.value = !scenePanelOpen.value
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
   else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
+  else if (id === 'overlay') overlayPanelOpen.value = !overlayPanelOpen.value
   else assetPanelOpen.value = !assetPanelOpen.value
 
   const isOpen = id === 'scene'
@@ -2107,7 +2119,9 @@ const togglePanel = (id: PanelId) => {
         ? layerPanelOpen.value
         : id === 'effect'
           ? effectPanelOpen.value
-          : assetPanelOpen.value
+          : id === 'overlay'
+            ? overlayPanelOpen.value
+            : assetPanelOpen.value
   if (isOpen) bringPanelToFront(id)
 }
 
@@ -2121,6 +2135,7 @@ const resetWorkspaceLayout = async () => {
     ['inspector', inspectorPanelOpen.value],
     ['layer', layerPanelOpen.value],
     ['effect', effectPanelOpen.value],
+    ['overlay', overlayPanelOpen.value],
     ['asset', assetPanelOpen.value],
   ]
   openPanels.forEach(([id, open]) => {
@@ -2161,7 +2176,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'asset']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -7424,6 +7439,7 @@ watch(() => [props.syncReady, ...props.permissions], () => {
   if (!canOpenPanel('inspector')) inspectorPanelOpen.value = false
   if (!canOpenPanel('layer')) layerPanelOpen.value = false
   if (!canOpenPanel('effect')) effectPanelOpen.value = false
+  if (!canOpenPanel('overlay')) overlayPanelOpen.value = false
   if (!canOpenPanel('asset')) {
     assetPanelOpen.value = false
     theaterAudioAssets.value = []
@@ -7455,9 +7471,9 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   else syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, assetPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, overlayPanelOpen, assetPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'asset']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
@@ -7625,6 +7641,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           特效层
+        </n-tooltip>
+        <n-tooltip v-if="canEditAllObjects" trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': overlayPanelOpen }" aria-label="切换场景叠加管理面板" @click="togglePanel('overlay')">
+              <template #icon><n-icon><CloudRain /></n-icon></template>
+            </n-button>
+          </template>
+          场景叠加
         </n-tooltip>
         <n-tooltip v-if="canManageResources" trigger="hover">
           <template #trigger>
@@ -7818,6 +7842,7 @@ onBeforeUnmount(() => {
       >
         <div ref="sceneVisualRef" class="theater-scene-visual">
           <div ref="containerRef" class="theater-stage-canvas" />
+          <SceneOverlayStageHost :scene-id="store.state.activeSceneId" :overlays="store.state.liveState.sceneOverlays" />
           <StageTextOverlay
             :objects="stageObjects"
             :camera="store.state.camera"
@@ -8556,6 +8581,13 @@ onBeforeUnmount(() => {
               <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState[surface.target]" @click="clearImage({ kind: 'scene', target: surface.target })">清除</n-button>
             </div>
           </template>
+          <div class="theater-scene-overlay-settings-row">
+            <label>场景叠加效果</label>
+            <div class="theater-image-actions">
+              <small>{{ store.state.liveState.sceneOverlays.length }} 个 · {{ store.state.liveState.sceneOverlays.filter(item => item.enabled).length }} 已启用</small>
+              <n-button size="tiny" quaternary aria-label="配置场景叠加效果" @click="openOverlayPanel"><template #icon><n-icon><Settings /></n-icon></template></n-button>
+            </div>
+          </div>
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
         </div>
         <div class="theater-panel-heading theater-layer-list-heading">
@@ -8775,6 +8807,17 @@ onBeforeUnmount(() => {
           @reorder-folders="folderIds => reorderTheaterPanelFolders('effect', folderIds)"
           @reorder-items="(folderId, targetIds) => reorderTheaterPanelItems('effect', folderId, targetIds)"
         />
+      </aside>
+
+      <aside v-if="overlayPanelOpen && canOpenPanel('overlay')" class="theater-floating-panel theater-overlay-panel" data-panel-id="overlay" :style="panelStyle('overlay')" @pointerdown.capture="bringPanelToFront('overlay')" @focusin="bringPanelToFront('overlay')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('overlay', $event)">
+          <span>场景叠加管理</span>
+          <div class="theater-panel-heading__actions">
+            <small>{{ store.state.liveState.sceneOverlays.length }}</small>
+            <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景叠加管理面板" @click="overlayPanelOpen = false"><n-icon><X /></n-icon></n-button>
+          </div>
+        </div>
+        <SceneOverlayManagerPanel :store="store" :can-edit="canEditAllObjects" />
       </aside>
 
       <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')" @pointerdown.capture="bringPanelToFront('asset')" @focusin="bringPanelToFront('asset')">
@@ -9143,6 +9186,7 @@ onBeforeUnmount(() => {
 .theater-object-inspector > .theater-inspector { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
+.theater-overlay-panel { min-width: min(520px, 100%); min-height: min(360px, 100%); }
 .theater-asset-panel { min-width: min(320px, 100%); min-height: min(280px, 100%); }
 .theater-panel-heading {
   height: 32px; flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px;
@@ -9234,6 +9278,9 @@ onBeforeUnmount(() => {
 .theater-media-settings { display: grid; gap: 5px; padding: 9px; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-media-settings label, .theater-inspector label { color: var(--sc-fg-muted, #71717a); font-size: 10px; }
 .theater-image-actions { display: flex; align-items: center; gap: 4px; }
+.theater-scene-overlay-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 3px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-scene-overlay-settings-row .theater-image-actions { min-width: 0; }
+.theater-scene-overlay-settings-row small { overflow: hidden; color: var(--sc-text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .theater-entrance-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
 .theater-surface-settings > * { min-width: 0; }

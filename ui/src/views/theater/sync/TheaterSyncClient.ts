@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { SceneFolder, StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
@@ -244,6 +244,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
     transition: normalizeStageSceneTransition(raw.transition),
     switchAudio: normalizeStageAudioRef(raw.switchAudio),
     musicSnapshot: normalizeStageMusicSnapshot(raw.musicSnapshot),
+    sceneOverlays: normalizeStageSceneOverlays(raw.sceneOverlays),
     serverState: sceneStateExtensionsFromRaw(raw),
   }
 }
@@ -266,6 +267,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
   transition: state.transition,
   switchAudio: state.switchAudio,
   musicSnapshot: state.musicSnapshot,
+  sceneOverlays: clone(state.sceneOverlays),
 })
 
 const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {

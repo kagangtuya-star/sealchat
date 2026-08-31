@@ -8,6 +8,7 @@ import {
   normalizeStageEntranceConfig,
   normalizeStageAudioRef,
   normalizeStageMusicSnapshot,
+  normalizeStageSceneOverlays,
   normalizeStageSceneTransition,
   normalizeStageActionSchedule,
   normalizeStageSurfaceStyle,
@@ -23,6 +24,7 @@ import {
   type StageObjectTransform,
   type StageObjectType,
   type StageScene,
+  type StageSceneOverlayBinding,
   type SceneFolder,
   type StageSceneTransition,
   type StageSurfaceStylePatch,
@@ -247,6 +249,7 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
   transition: createDefaultStageSceneTransition(),
   switchAudio: null,
   musicSnapshot: null,
+  sceneOverlays: [],
 })
 
 const createScene = (name: string, order: number, color: string): StageScene => {
@@ -460,6 +463,7 @@ const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallback
   musicSnapshot: normalizeStageMusicSnapshot(input && Object.prototype.hasOwnProperty.call(input, 'musicSnapshot')
     ? input.musicSnapshot
     : input?.serverState?.musicSnapshot),
+  sceneOverlays: normalizeStageSceneOverlays(input?.sceneOverlays),
   serverState: input?.serverState && typeof input.serverState === 'object' ? input.serverState : {},
 })
 
@@ -485,6 +489,7 @@ export interface TheaterStageStore {
   updateSceneTransition: (sceneId: string, transition: StageSceneTransition) => boolean
   updateSceneSwitchAudio: (sceneId: string, audio: StageAudioRef | null) => boolean
   updateSceneMusicSnapshot: (sceneId: string, snapshot: StageMusicSnapshot | null) => boolean
+  updateSceneOverlays: (sceneId: string, overlays: StageSceneOverlayBinding[]) => boolean
   createSceneFolder: (name: string) => SceneFolder | null
   renameSceneFolder: (folderId: string, name: string) => boolean
   deleteSceneFolder: (folderId: string) => boolean
@@ -784,6 +789,16 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (JSON.stringify(scene.state.musicSnapshot) === JSON.stringify(normalized)) return false
     scene.state.musicSnapshot = normalized
     if (sceneId === state.activeSceneId) state.liveState.musicSnapshot = clone(normalized)
+    return true
+  }
+
+  const updateSceneOverlays = (sceneId: string, overlays: StageSceneOverlayBinding[]) => {
+    const scene = state.scenes[sceneId]
+    if (!scene) return false
+    const normalized = normalizeStageSceneOverlays(overlays)
+    if (JSON.stringify(scene.state.sceneOverlays) === JSON.stringify(normalized)) return false
+    scene.state.sceneOverlays = normalized
+    if (sceneId === state.activeSceneId) state.liveState.sceneOverlays = clone(normalized)
     return true
   }
 
@@ -1605,6 +1620,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     updateSceneTransition,
     updateSceneSwitchAudio,
     updateSceneMusicSnapshot,
+    updateSceneOverlays,
     createSceneFolder,
     renameSceneFolder,
     deleteSceneFolder,

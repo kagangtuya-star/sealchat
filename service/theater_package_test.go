@@ -16,6 +16,36 @@ import (
 	"sealchat/utils"
 )
 
+func TestCanonicalizeTheaterSceneStateKeepsSceneOverlays(t *testing.T) {
+	raw := []byte(`{"sceneOverlays":[{"version":1,"id":"rain-1","effectId":"weather.rain.light","name":"小雨","enabled":true,"opacity":0.65,"blendMode":"screen","layer":"aboveCharacters","params":{"intensity":1.2,"color":"#b9dcff"}}],"unknownTopLevel":{"discard":true}}`)
+	canonical, removed, changed, err := canonicalizeTheaterSceneStateJSON(raw)
+	if err != nil {
+		t.Fatalf("canonicalize state: %v", err)
+	}
+	if !changed || len(removed) != 1 || removed[0] != "unknownTopLevel" {
+		t.Fatalf("unexpected canonicalization metadata: changed=%v removed=%v", changed, removed)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(canonical, &state); err != nil {
+		t.Fatalf("decode canonical state: %v", err)
+	}
+	if _, ok := state["unknownTopLevel"]; ok {
+		t.Fatal("unknown top-level key survived canonicalization")
+	}
+	overlays, ok := state["sceneOverlays"].([]any)
+	if !ok || len(overlays) != 1 {
+		t.Fatalf("sceneOverlays lost: %#v", state["sceneOverlays"])
+	}
+	binding, ok := overlays[0].(map[string]any)
+	if !ok || binding["effectId"] != "weather.rain.light" || binding["blendMode"] != "screen" {
+		t.Fatalf("sceneOverlays content changed: %#v", overlays[0])
+	}
+	params, ok := binding["params"].(map[string]any)
+	if !ok || params["intensity"] != 1.2 || params["color"] != "#b9dcff" {
+		t.Fatalf("sceneOverlays params changed: %#v", binding["params"])
+	}
+}
+
 func TestExtractTheaterPackageZIPRejectsTraversalAndSymlink(t *testing.T) {
 	tests := []struct {
 		name string
