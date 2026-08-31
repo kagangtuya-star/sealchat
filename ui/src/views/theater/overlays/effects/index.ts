@@ -1,5 +1,6 @@
 import { registerSceneOverlayEffect } from '../scene-overlay-registry'
 import { colorWashEffect } from './color-wash'
+import { customMediaEffect } from './custom-media'
 import { duskEffect } from './dusk'
 import { dustEffect } from './dust'
 import { embersEffect } from './embers'
@@ -13,6 +14,7 @@ import { sandstormEffect } from './sandstorm'
 import { snowEffect } from './snow'
 
 const builtInSceneOverlayEffects = [
+  customMediaEffect,
   rainLightEffect,
   rainHeavyEffect,
   snowEffect,

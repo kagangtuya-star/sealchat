@@ -144,6 +144,8 @@ import {
 } from '../effects/theater-image-folder-preset'
 import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from '../effects/theater-image-assets'
 
+const sceneOverlayImageFolderName = '场景叠加'
+
 const props = defineProps<{
   store: TheaterStageStore
   worldId: string
@@ -1062,6 +1064,21 @@ const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
 const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
 const canDeleteResources = computed(() => hasPermission('stage.resource.delete'))
 const canManageResources = computed(() => canUploadResources.value || canDeleteResources.value)
+const sceneOverlayImageFolder = computed(() => theaterPanelOrganizer.value.folders.find(
+  (folder) => folder.domain === 'image' && folder.name.trim() === sceneOverlayImageFolderName,
+))
+const sceneOverlayImageAssets = computed(() => {
+  const folderId = sceneOverlayImageFolder.value?.id
+  if (!folderId) return []
+  const itemOrder = new Map(theaterPanelOrganizer.value.items
+    .filter((item) => item.domain === 'image' && item.folderId === folderId)
+    .map((item) => [item.targetId, item.sortOrder]))
+  return theaterImageAssets.value
+    .filter((asset) => itemOrder.has(asset.id))
+    .sort((left, right) => (itemOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+      - (itemOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      || left.name.localeCompare(right.name))
+})
 const referencedTheaterAudioAssetIds = computed(() => [...new Set([
   ...Object.values(props.store.state.scenes).flatMap((scene) => [
     scene.state.switchAudio?.assetId,
@@ -3706,6 +3723,13 @@ const theaterMediaScope = (scope = captureTheaterRequestScope()) => ({
   scopeType: scope.scopeType,
 })
 
+const resolveTheaterResourceUrl = (resourceId: string, variant = 'original') => {
+  const normalizedResourceId = resourceId.trim()
+  if (!normalizedResourceId) return ''
+  const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+  return `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(), normalizedResourceId, variant || 'original')}`
+}
+
 const resolveTheaterStageMedia = (imageRef: StageImageRef) => resolveTheaterStageMediaLocation(imageRef, theaterMediaScope())
 
 const stageMediaDimensions = (source: StageMediaSource) => isVideoSource(source)
@@ -3952,15 +3976,30 @@ const pulseScenePreload = (sceneId: string) => {
 const collectSceneMediaItems = (sceneId: string) => {
   const scene = props.store.state.scenes[sceneId]
   if (!scene) return []
-  const refs: Array<{ key: string, imageRef: StageImageRef }> = []
-  if (scene.state.background) refs.push({ key: 'surface:background', imageRef: scene.state.background })
-  if (scene.state.foreground) refs.push({ key: 'surface:foreground', imageRef: scene.state.foreground })
+  const refs: Array<{ key: string, imageRef: StageImageRef, blocksSceneReveal: boolean }> = []
+  if (scene.state.background) refs.push({ key: 'surface:background', imageRef: scene.state.background, blocksSceneReveal: true })
+  if (scene.state.foreground) refs.push({ key: 'surface:foreground', imageRef: scene.state.foreground, blocksSceneReveal: true })
   Object.values({ ...scene.state.sceneObjects, ...props.store.state.persistentObjects })
     .filter((object) => object.type === 'image' && Boolean(object.image))
-    .forEach((object) => refs.push({ key: `object:${object.id}`, imageRef: object.image! }))
-  return refs.flatMap(({ key, imageRef }) => {
+    .forEach((object) => refs.push({ key: `object:${object.id}`, imageRef: object.image!, blocksSceneReveal: true }))
+  scene.state.sceneOverlays.forEach((binding) => {
+    const media = binding.media
+    if (!media?.resourceId) return
+    refs.push({
+      key: `overlay:${binding.id}`,
+      imageRef: {
+        resourceId: media.resourceId,
+        url: resolveTheaterResourceUrl(media.resourceId, media.variant),
+        mimeType: media.mimeType,
+        animated: media.animated,
+        loopCount: media.loopCount,
+      },
+      blocksSceneReveal: false,
+    })
+  })
+  return refs.flatMap(({ key, imageRef, blocksSceneReveal }) => {
     const location = resolveTheaterStageMedia(imageRef)
-    return location ? [{ key, imageRef, location }] : []
+    return location ? [{ key, imageRef, location, blocksSceneReveal }] : []
   })
 }
 
@@ -4730,7 +4769,7 @@ const beginSceneMediaBatch = (sceneId: string, captureCurrent = true, previousSc
   queueSceneEntrances(sceneId, !captureCurrent)
   sceneMediaBatch = {
     sceneId,
-    expected: new Map(collectSceneMediaItems(sceneId).map((item) => [item.key, item.location.url])),
+    expected: new Map(collectSceneMediaItems(sceneId).filter((item) => item.blocksSceneReveal).map((item) => [item.key, item.location.url])),
     settled: new Set(),
     reveals: [],
     activations: [],
@@ -6685,6 +6724,36 @@ const uploadTheaterImageAssets = async (files: File[], folderId: string) => {
   finishUpload()
 }
 
+const uploadSceneOverlayMedia = async (files: File[]) => {
+  if (!canUploadResources.value || !files.length) return
+  theaterImageError.value = ''
+  let folder = sceneOverlayImageFolder.value
+  if (!folder) {
+    const scope = captureTheaterRequestScope()
+    let createError: unknown
+    try {
+      const response = await api.post<{ folder?: TheaterPanelFolder }>(
+        theaterPanelOrganizerPath('folders', scope),
+        { domain: 'image', name: sceneOverlayImageFolderName },
+      )
+      if (!isCurrentTheaterRequestScope(scope)) return
+      folder = response.data?.folder
+    } catch (error) {
+      createError = error
+    }
+    if (!folder) {
+      await fetchTheaterPanelOrganizer()
+      if (!isCurrentTheaterRequestScope(scope)) return
+      folder = sceneOverlayImageFolder.value
+    }
+    if (!folder) {
+      theaterImageError.value = theaterAudioErrorMessage(createError, `创建“${sceneOverlayImageFolderName}”文件夹失败`)
+      return
+    }
+  }
+  await uploadTheaterImageAssets(files, folder.id)
+}
+
 const requestImageUpload = (target: ImageTarget) => {
   pendingImageTarget.value = target
   imageInputRef.value?.click()
@@ -7461,9 +7530,9 @@ watch(
   () => { void fetchTheaterPanelOrganizer() },
   { immediate: true },
 )
-watch([effectPanelOpen, assetPanelOpen], ([effectOpen, assetOpen]) => {
-  if (effectOpen || assetOpen) void fetchTheaterPanelOrganizer()
-  if (assetOpen) void fetchTheaterImageAssets()
+watch([effectPanelOpen, overlayPanelOpen, assetPanelOpen], ([effectOpen, overlayOpen, assetOpen]) => {
+  if (effectOpen || overlayOpen || assetOpen) void fetchTheaterPanelOrganizer()
+  if (overlayOpen || assetOpen) void fetchTheaterImageAssets()
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
@@ -7842,7 +7911,11 @@ onBeforeUnmount(() => {
       >
         <div ref="sceneVisualRef" class="theater-scene-visual">
           <div ref="containerRef" class="theater-stage-canvas" />
-          <SceneOverlayStageHost :scene-id="store.state.activeSceneId" :overlays="store.state.liveState.sceneOverlays" />
+          <SceneOverlayStageHost
+            :scene-id="store.state.activeSceneId"
+            :overlays="store.state.liveState.sceneOverlays"
+            :resolve-resource-url="resolveTheaterResourceUrl"
+          />
           <StageTextOverlay
             :objects="stageObjects"
             :camera="store.state.camera"
@@ -8817,7 +8890,20 @@ onBeforeUnmount(() => {
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景叠加管理面板" @click="overlayPanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
-        <SceneOverlayManagerPanel :store="store" :can-edit="canEditAllObjects" />
+        <SceneOverlayManagerPanel
+          :store="store"
+          :can-edit="canEditAllObjects"
+          :image-assets="sceneOverlayImageAssets"
+          :image-loading="theaterImageLoading"
+          :image-uploading="theaterImageUploading"
+          :image-error="theaterImageError"
+          :can-upload-media="canUploadResources"
+          :can-edit-media="canUploadResources || canDeleteResources"
+          :can-delete-media="canDeleteResources"
+          @upload-media="uploadSceneOverlayMedia"
+          @rename-media="renameTheaterImageAsset"
+          @delete-media="deleteTheaterImageAsset"
+        />
       </aside>
 
       <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')" @pointerdown.capture="bringPanelToFront('asset')" @focusin="bringPanelToFront('asset')">

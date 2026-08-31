@@ -429,6 +429,14 @@ export type StageSceneOverlayLayer = typeof stageSceneOverlayLayers[number]
 export type StageSceneOverlayParamValue = string | number | boolean | null
 export type StageSceneOverlayParams = Record<string, StageSceneOverlayParamValue>
 
+export interface StageSceneOverlayMediaRef {
+  resourceId: string
+  variant?: string
+  mimeType?: string
+  animated?: boolean
+  loopCount?: number
+}
+
 export interface StageSceneOverlayBinding {
   version: 1
   id: string
@@ -438,6 +446,7 @@ export interface StageSceneOverlayBinding {
   opacity: number
   blendMode: StageSceneOverlayBlendMode
   layer: StageSceneOverlayLayer
+  media?: StageSceneOverlayMediaRef
   params: StageSceneOverlayParams
 }
 
@@ -456,6 +465,34 @@ const normalizeStageSceneOverlayParams = (input: unknown): StageSceneOverlayPara
     else if (typeof value === 'boolean' || value === null) params[key] = value
   })
   return params
+}
+
+const normalizeStageSceneOverlayMedia = (input: unknown): StageSceneOverlayMediaRef | undefined => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const prototype = Object.getPrototypeOf(input)
+  if (prototype !== Object.prototype && prototype !== null) return undefined
+  const value = input as Partial<StageSceneOverlayMediaRef>
+  const resourceId = typeof value.resourceId === 'string' ? value.resourceId.trim() : ''
+  if (!resourceId || Array.from(resourceId).length > 128) return undefined
+  const variant = typeof value.variant === 'string'
+    ? truncateSceneOverlayText(value.variant.trim(), 64) || 'original'
+    : 'original'
+  const mimeType = typeof value.mimeType === 'string'
+    ? truncateSceneOverlayText(value.mimeType.trim(), 128)
+    : ''
+  const loopCount = typeof value.loopCount === 'number'
+    && Number.isFinite(value.loopCount)
+    && Number.isInteger(value.loopCount)
+    && value.loopCount > 0
+    ? Math.min(65_535, value.loopCount)
+    : undefined
+  return {
+    resourceId,
+    variant,
+    ...(mimeType ? { mimeType } : {}),
+    ...(typeof value.animated === 'boolean' ? { animated: value.animated } : {}),
+    ...(loopCount ? { loopCount } : {}),
+  }
 }
 
 export const normalizeStageSceneOverlays = (input: unknown): StageSceneOverlayBinding[] => {
@@ -484,6 +521,7 @@ export const normalizeStageSceneOverlays = (input: unknown): StageSceneOverlayBi
       layer: stageSceneOverlayLayers.includes(value.layer as StageSceneOverlayLayer)
         ? value.layer as StageSceneOverlayLayer
         : 'aboveCharacters',
+      media: normalizeStageSceneOverlayMedia(value.media),
       params: normalizeStageSceneOverlayParams(value.params),
     }]
   }).slice(0, 32)

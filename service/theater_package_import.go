@@ -927,8 +927,8 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 		"identityId": {}, "identityVariantId": {}, "characterId": {}, "targetUserId": {},
 		"ownerUserId": {}, "userId": {},
 	}
-	var walk func(any) any
-	walk = func(current any) any {
+	var walk func(any, bool) any
+	walk = func(current any, sceneOverlayBinding bool) any {
 		switch typed := current.(type) {
 		case map[string]any:
 			for key, child := range typed {
@@ -946,9 +946,14 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 					case "sceneId":
 						knownReference = true
 						mapped = remap.scenes[text]
-					case "objectId", "parentId", "effectId":
+					case "objectId", "parentId":
 						knownReference = true
 						mapped = remap.objects[text]
+					case "effectId":
+						if !sceneOverlayBinding {
+							knownReference = true
+							mapped = remap.objects[text]
+						}
 					case "resourceId", "posterResourceId":
 						knownReference = true
 						mapped = remap.resources[text]
@@ -985,20 +990,20 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 					}
 					continue
 				}
-				typed[key] = walk(child)
+				typed[key] = walk(child, key == "sceneOverlays")
 			}
 			canonicalizeImportedTheaterResourceURL(typed, remap)
 			return typed
 		case []any:
 			for index, child := range typed {
-				typed[index] = walk(child)
+				typed[index] = walk(child, sceneOverlayBinding)
 			}
 			return typed
 		default:
 			return current
 		}
 	}
-	value = walk(value)
+	value = walk(value, false)
 	result, err := json.Marshal(value)
 	return result, changed, err
 }

@@ -10,6 +10,7 @@ import { SceneOverlayRuntime } from './scene-overlay-runtime'
 const props = defineProps<{
   sceneId: string
   overlays: StageSceneOverlayBinding[]
+  resolveResourceUrl: (resourceId: string, variant?: string) => string
 }>()
 
 registerBuiltInSceneOverlayEffects()
@@ -26,6 +27,7 @@ onMounted(() => {
     aboveCharactersHost: aboveCharactersRef.value,
     buildContext: () => ({
       reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+      resolveResourceUrl: props.resolveResourceUrl,
     }),
   })
   runtime.reconcile(props.overlays, props.sceneId)

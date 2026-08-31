@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NButton, NColorPicker, NInput, NInputNumber, NSelect, NSlider, NSwitch } from 'naive-ui'
 
+import type { TheaterImageAsset } from '../effects/theater-image-assets'
 import {
   normalizeStageSceneOverlays,
   stageSceneOverlayBlendModes,
@@ -14,12 +15,14 @@ import type { SceneOverlayControl, SceneOverlayEffectDefinition } from './scene-
 const props = defineProps<{
   binding: StageSceneOverlayBinding
   definition?: SceneOverlayEffectDefinition
+  mediaAsset?: TheaterImageAsset
   canEdit: boolean
 }>()
 
 const emit = defineEmits<{
   update: [binding: StageSceneOverlayBinding]
   remove: []
+  replaceMedia: []
 }>()
 
 const blendModeLabels: Record<StageSceneOverlayBlendMode, string> = {
@@ -82,6 +85,9 @@ const updateParam = (control: SceneOverlayControl, value: StageSceneOverlayParam
 }
 
 const title = computed(() => props.definition?.name || '未知效果')
+const mediaTypeLabel = computed(() => props.binding.media?.animated === true || props.binding.media?.mimeType === 'video/webm'
+  ? '动态素材'
+  : '静态素材')
 </script>
 
 <template>
@@ -109,6 +115,18 @@ const title = computed(() => props.definition?.name || '未知效果')
 
       <label>覆盖角色</label>
       <n-switch :value="binding.layer === 'aboveCharacters'" size="small" :disabled="!canEdit" @update:value="patchBinding({ layer: $event ? 'aboveCharacters' : 'belowCharacters' })" />
+    </div>
+
+    <div v-if="binding.media" class="scene-overlay-inspector__parameters">
+      <h3>素材</h3>
+      <div class="scene-overlay-inspector__form">
+        <label>当前素材</label>
+        <strong class="scene-overlay-inspector__media-name">{{ mediaAsset?.name || '资源已绑定' }}</strong>
+        <label>类型</label>
+        <span class="scene-overlay-inspector__media-type">{{ mediaTypeLabel }}</span>
+        <span />
+        <n-button size="small" secondary :disabled="!canEdit" @click="emit('replaceMedia')">更换素材</n-button>
+      </div>
     </div>
 
     <div v-if="definition" class="scene-overlay-inspector__parameters">
@@ -175,6 +193,8 @@ const title = computed(() => props.definition?.name || '未知效果')
 .scene-overlay-inspector__number { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .scene-overlay-inspector__number :deep(.n-input-number) { min-width: 0; flex: 1; }
 .scene-overlay-inspector__number small { color: var(--sc-text-secondary); font-size: 9px; white-space: nowrap; }
+.scene-overlay-inspector__media-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.scene-overlay-inspector__media-type { color: var(--sc-text-secondary); font-size: 10px; }
 .scene-overlay-inspector__unknown { margin: 10px; color: #fbbf24; font-size: 11px; line-height: 1.5; }
 .scene-overlay-inspector__remove { align-self: flex-end; margin: auto 10px 10px; }
 </style>

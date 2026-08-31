@@ -75,7 +75,7 @@ export class SceneOverlayRuntime {
         continue
       }
       const context = this.options.buildContext()
-      const descriptor = definition.buildRenderDescriptor(binding.params, context)
+      const descriptor = definition.buildRenderDescriptor(binding.params, context, binding)
       const renderer = getSceneOverlayRenderer(descriptor.renderer)
       if (!renderer) {
         const existing = this.instances.get(binding.id)
@@ -89,6 +89,7 @@ export class SceneOverlayRuntime {
         effectId: binding.effectId,
         renderer: descriptor.renderer,
         config: descriptor.config,
+        media: binding.media,
         reducedMotion: context.reducedMotion,
       })
       let instance = this.instances.get(binding.id)

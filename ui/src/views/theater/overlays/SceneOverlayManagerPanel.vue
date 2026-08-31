@@ -3,29 +3,50 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NSwitch, useDialog } from 'naive-ui'
 import { ArrowDown, ArrowUp, Copy, Edit, Plus, Trash } from '@vicons/tabler'
 
+import type { TheaterImageAsset } from '../effects/theater-image-assets'
 import type { StageSceneOverlayBinding } from '../shared/stage-types'
 import type { TheaterStageStore } from '../stage/StageStore'
 import { cloneStageData } from '../stage/stage-editing'
 import { registerBuiltInSceneOverlayEffects } from './effects'
-import { getSceneOverlayEffect } from './scene-overlay-registry'
+import { createSceneOverlayBinding, getSceneOverlayEffect } from './scene-overlay-registry'
+import SceneOverlayCustomMediaPicker from './SceneOverlayCustomMediaPicker.vue'
 import SceneOverlayEffectCatalog from './SceneOverlayEffectCatalog.vue'
 import SceneOverlayInspector from './SceneOverlayInspector.vue'
 
 const props = defineProps<{
   store: TheaterStageStore
   canEdit: boolean
+  imageAssets: TheaterImageAsset[]
+  imageLoading: boolean
+  imageUploading: boolean
+  imageError: string
+  canUploadMedia: boolean
+  canEditMedia: boolean
+  canDeleteMedia: boolean
+}>()
+
+const emit = defineEmits<{
+  uploadMedia: [files: File[]]
+  renameMedia: [assetId: string, name: string]
+  deleteMedia: [asset: TheaterImageAsset]
 }>()
 
 registerBuiltInSceneOverlayEffects()
 
 const dialog = useDialog()
 const catalogOpen = ref(false)
+const customPickerOpen = ref(false)
+const replacingMediaOverlayId = ref<string | null>(null)
 const selectedOverlayId = ref<string | null>(null)
 const activeSceneId = computed(() => props.store.state.activeSceneId)
 const activeScene = computed(() => props.store.state.scenes[activeSceneId.value])
 const overlays = computed(() => props.store.state.liveState.sceneOverlays)
 const displayOverlays = computed(() => [...overlays.value].reverse())
 const selectedOverlay = computed(() => overlays.value.find((binding) => binding.id === selectedOverlayId.value) || null)
+const selectedMediaAsset = computed(() => {
+  const resourceId = selectedOverlay.value?.media?.resourceId
+  return resourceId ? props.imageAssets.find((asset) => asset.resourceId === resourceId) : undefined
+})
 
 watch([activeSceneId, overlays], () => {
   if (selectedOverlayId.value && !overlays.value.some((binding) => binding.id === selectedOverlayId.value)) {
@@ -43,6 +64,54 @@ const addOverlay = (binding: StageSceneOverlayBinding) => {
   commit([...cloneStageData(overlays.value), binding])
   selectedOverlayId.value = binding.id
   catalogOpen.value = false
+  customPickerOpen.value = false
+  replacingMediaOverlayId.value = null
+}
+
+const mediaRefFromAsset = (asset: TheaterImageAsset) => ({
+  resourceId: asset.resourceId,
+  variant: asset.resource.playbackVariant || 'original',
+  mimeType: asset.resource.playbackMimeType || asset.resource.mimeType,
+  animated: asset.resource.animated === true,
+  ...(Number.isInteger(asset.resource.loopCount) && (asset.resource.loopCount || 0) > 0
+    ? { loopCount: asset.resource.loopCount! }
+    : {}),
+})
+
+const selectCustomMedia = (asset: TheaterImageAsset) => {
+  const replacement = replacingMediaOverlayId.value
+    ? overlays.value.find((binding) => binding.id === replacingMediaOverlayId.value)
+    : undefined
+  if (replacement) {
+    updateOverlay({ ...cloneStageData(replacement), media: mediaRefFromAsset(asset) })
+    selectedOverlayId.value = replacement.id
+    customPickerOpen.value = false
+    replacingMediaOverlayId.value = null
+    return
+  }
+  const binding = createSceneOverlayBinding('custom.media')
+  binding.name = asset.name.slice(0, 128)
+  binding.media = mediaRefFromAsset(asset)
+  addOverlay(binding)
+}
+
+const toggleCustomPicker = () => {
+  replacingMediaOverlayId.value = null
+  catalogOpen.value = false
+  customPickerOpen.value = !customPickerOpen.value
+}
+
+const toggleCatalog = () => {
+  customPickerOpen.value = false
+  replacingMediaOverlayId.value = null
+  catalogOpen.value = !catalogOpen.value
+}
+
+const replaceSelectedMedia = () => {
+  if (!selectedOverlay.value?.media) return
+  replacingMediaOverlayId.value = selectedOverlay.value.id
+  catalogOpen.value = false
+  customPickerOpen.value = true
 }
 
 const updateOverlay = (binding: StageSceneOverlayBinding) => {
@@ -103,16 +172,34 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
 <template>
   <div class="scene-overlay-manager">
     <div class="scene-overlay-manager__summary">
-      <div>
+      <div class="scene-overlay-manager__summary-copy">
         <strong>{{ activeScene?.name || '当前场景' }}</strong>
         <small>{{ overlays.length }} 个叠加 · {{ overlays.filter(item => item.enabled).length }} 已启用</small>
       </div>
-      <n-button size="small" type="primary" secondary :disabled="!canEdit || overlays.length >= 32" @click="catalogOpen = !catalogOpen">
-        <template #icon><n-icon><Plus /></n-icon></template>
-        添加效果
-      </n-button>
+      <div class="scene-overlay-manager__summary-actions">
+        <n-button size="small" secondary :disabled="!canEdit || overlays.length >= 32" @click="toggleCustomPicker">自定义效果</n-button>
+        <n-button size="small" type="primary" secondary :disabled="!canEdit || overlays.length >= 32" @click="toggleCatalog">
+          <template #icon><n-icon><Plus /></n-icon></template>
+          添加效果
+        </n-button>
+      </div>
     </div>
 
+    <SceneOverlayCustomMediaPicker
+      v-if="customPickerOpen"
+      :assets="imageAssets"
+      :loading="imageLoading"
+      :uploading="imageUploading"
+      :error="imageError"
+      :can-upload="canUploadMedia"
+      :can-edit="canEditMedia"
+      :can-delete="canDeleteMedia"
+      @select="selectCustomMedia"
+      @upload="emit('uploadMedia', $event)"
+      @rename="(assetId, name) => emit('renameMedia', assetId, name)"
+      @delete="emit('deleteMedia', $event)"
+      @close="customPickerOpen = false; replacingMediaOverlayId = null"
+    />
     <SceneOverlayEffectCatalog v-if="catalogOpen" @add="addOverlay" />
 
     <div class="scene-overlay-manager__body" :class="{ 'has-inspector': selectedOverlay }">
@@ -144,9 +231,11 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
         v-if="selectedOverlay"
         :binding="selectedOverlay"
         :definition="getSceneOverlayEffect(selectedOverlay.effectId)"
+        :media-asset="selectedMediaAsset"
         :can-edit="canEdit"
         @update="updateOverlay"
         @remove="removeOverlay(selectedOverlay)"
+        @replace-media="replaceSelectedMedia"
       />
     </div>
   </div>
@@ -154,10 +243,11 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
 
 <style scoped>
 .scene-overlay-manager { min-height: 0; display: flex; flex: 1; flex-direction: column; overflow: hidden; }
-.scene-overlay-manager__summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--theater-border); }
-.scene-overlay-manager__summary > div { min-width: 0; display: grid; gap: 1px; }
+.scene-overlay-manager__summary { min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--theater-border); }
+.scene-overlay-manager__summary-copy { min-width: 0; display: grid; gap: 1px; }
 .scene-overlay-manager__summary strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .scene-overlay-manager__summary small { color: var(--sc-text-secondary); font-size: 10px; }
+.scene-overlay-manager__summary-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-left: auto; }
 .scene-overlay-manager__body { min-height: 0; display: grid; flex: 1; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
 .scene-overlay-manager__body.has-inspector { grid-template-columns: minmax(230px, .9fr) minmax(270px, 1.1fr); }
 .scene-overlay-manager__list { min-width: 0; overflow: auto; }

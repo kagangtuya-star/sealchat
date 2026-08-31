@@ -17,7 +17,7 @@ import (
 )
 
 func TestCanonicalizeTheaterSceneStateKeepsSceneOverlays(t *testing.T) {
-	raw := []byte(`{"sceneOverlays":[{"version":1,"id":"rain-1","effectId":"weather.rain.light","name":"小雨","enabled":true,"opacity":0.65,"blendMode":"screen","layer":"aboveCharacters","params":{"intensity":1.2,"color":"#b9dcff"}}],"unknownTopLevel":{"discard":true}}`)
+	raw := []byte(`{"sceneOverlays":[{"version":1,"id":"rain-1","effectId":"weather.rain.light","name":"小雨","enabled":true,"opacity":0.65,"blendMode":"screen","layer":"aboveCharacters","media":{"resourceId":"resource-overlay","variant":"playback","mimeType":"video/webm","animated":true},"params":{"intensity":1.2,"color":"#b9dcff"}}],"unknownTopLevel":{"discard":true}}`)
 	canonical, removed, changed, err := canonicalizeTheaterSceneStateJSON(raw)
 	if err != nil {
 		t.Fatalf("canonicalize state: %v", err)
@@ -43,6 +43,61 @@ func TestCanonicalizeTheaterSceneStateKeepsSceneOverlays(t *testing.T) {
 	params, ok := binding["params"].(map[string]any)
 	if !ok || params["intensity"] != 1.2 || params["color"] != "#b9dcff" {
 		t.Fatalf("sceneOverlays params changed: %#v", binding["params"])
+	}
+	media, ok := binding["media"].(map[string]any)
+	if !ok || media["resourceId"] != "resource-overlay" || media["variant"] != "playback" {
+		t.Fatalf("sceneOverlays media changed: %#v", binding["media"])
+	}
+}
+
+func TestSceneOverlayMediaResourceCollectionAndPackageRemap(t *testing.T) {
+	document := map[string]any{
+		"scenes": map[string]any{
+			"scene-old": map[string]any{
+				"state": map[string]any{
+					"sceneOverlays": []any{map[string]any{
+						"version": 1, "id": "overlay-old", "effectId": "custom.media", "name": "雨幕",
+						"enabled": true, "opacity": 1, "blendMode": "normal", "layer": "aboveCharacters",
+						"media":  map[string]any{"resourceId": "resource-old", "variant": "playback", "mimeType": "video/webm"},
+						"params": map[string]any{"fit": "cover"},
+					}},
+				},
+			},
+		},
+	}
+	references := collectJSONFieldStrings(document, "resourceId")
+	if _, ok := references["resource-old"]; !ok {
+		t.Fatalf("scene overlay media resource not collected: %#v", references)
+	}
+
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remapped, changed, err := remapTheaterPackageJSON(raw, theaterPackageRemap{
+		scenes: map[string]string{}, objects: map[string]string{}, resources: map[string]string{"resource-old": "resource-new"},
+		audio: map[string]string{}, appearance: map[string]string{}, attachments: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected scene overlay media resource remap")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(remapped, &result); err != nil {
+		t.Fatal(err)
+	}
+	scenes := result["scenes"].(map[string]any)
+	scene := scenes["scene-old"].(map[string]any)
+	state := scene["state"].(map[string]any)
+	overlay := state["sceneOverlays"].([]any)[0].(map[string]any)
+	if overlay["effectId"] != "custom.media" {
+		t.Fatalf("scene overlay effectId changed: %#v", overlay["effectId"])
+	}
+	media := overlay["media"].(map[string]any)
+	if media["resourceId"] != "resource-new" {
+		t.Fatalf("scene overlay resourceId not remapped: %#v", media["resourceId"])
 	}
 }
 

@@ -36,6 +36,7 @@ export type SceneOverlayControl =
 
 export interface SceneOverlayBuildContext {
   reducedMotion: boolean
+  resolveResourceUrl(resourceId: string, variant?: string): string
 }
 
 export interface SceneOverlayRenderDescriptor {
@@ -48,6 +49,7 @@ export interface SceneOverlayEffectDefinition {
   name: string
   description?: string
   category: SceneOverlayCategory
+  catalog?: boolean
   defaultParams: StageSceneOverlayParams
   controls: SceneOverlayControl[]
   defaultOpacity?: number
@@ -56,6 +58,7 @@ export interface SceneOverlayEffectDefinition {
   buildRenderDescriptor(
     params: StageSceneOverlayParams,
     context: SceneOverlayBuildContext,
+    binding: StageSceneOverlayBinding,
   ): SceneOverlayRenderDescriptor
 }
 

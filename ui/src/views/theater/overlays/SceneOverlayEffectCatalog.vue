@@ -24,7 +24,7 @@ const categories: SceneOverlayCategory[] = ['weather', 'environment', 'lighting'
 const groupedEffects = computed(() => categories.map((category) => ({
   category,
   label: categoryLabels[category],
-  effects: listSceneOverlayEffects().filter((definition) => definition.category === category),
+  effects: listSceneOverlayEffects().filter((definition) => definition.catalog !== false && definition.category === category),
 })))
 </script>
 
