@@ -12,22 +12,27 @@ import {
   type SceneOverlayPresetCategory,
   type SceneOverlayPresetApplyMode,
 } from './presets'
+import type { TheaterSceneOverlayPreset } from './scene-overlay-preset-api'
 
 const props = withDefaults(defineProps<{
   currentOverlayCount: number
   maximumOverlayCount?: number
+  customPresets?: TheaterSceneOverlayPreset[]
 }>(), {
   maximumOverlayCount: 32,
+  customPresets: () => [],
 })
 
 const emit = defineEmits<{
   apply: [presetId: string, mode: SceneOverlayPresetApplyMode]
+  edit: [preset: TheaterSceneOverlayPreset]
+  delete: [preset: TheaterSceneOverlayPreset]
   close: []
 }>()
 
 registerBuiltInSceneOverlayPresets()
 
-const selectedCategory = ref<'all' | SceneOverlayPresetCategory>('all')
+const selectedCategory = ref<'custom' | 'all' | SceneOverlayPresetCategory>('custom')
 const keyword = ref('')
 const applyMode = ref<SceneOverlayPresetApplyMode>('append')
 const visibleCount = ref(24)
@@ -35,8 +40,12 @@ const categoryScroller = ref<HTMLElement | null>(null)
 const categoryDrag = ref<{ pointerId: number, startX: number, startScrollLeft: number, moved: boolean } | null>(null)
 let suppressCategoryClick = false
 const presets = listSceneOverlayPresets()
+const allPresets = computed(() => [
+  ...props.customPresets.map((preset) => ({ ...preset, category: 'custom' as const })),
+  ...presets,
+])
 const normalizedKeyword = computed(() => keyword.value.trim().toLocaleLowerCase())
-const filteredPresets = computed(() => presets.filter((preset) => {
+const filteredPresets = computed(() => allPresets.value.filter((preset) => {
   if (selectedCategory.value !== 'all' && preset.category !== selectedCategory.value) return false
   if (!normalizedKeyword.value) return true
   return [preset.name, preset.description, ...(preset.tags || [])]
@@ -90,7 +99,7 @@ const cancelCategoryDrag = (event: PointerEvent) => {
   if (scroller.hasPointerCapture(event.pointerId)) scroller.releasePointerCapture(event.pointerId)
 }
 
-const selectCategory = (category: 'all' | SceneOverlayPresetCategory) => {
+const selectCategory = (category: 'custom' | 'all' | SceneOverlayPresetCategory) => {
   if (suppressCategoryClick) {
     suppressCategoryClick = false
     return
@@ -131,6 +140,7 @@ const capacityAllows = (overlayCount: number) => (
       @pointercancel="cancelCategoryDrag"
       @lostpointercapture="cancelCategoryDrag"
     >
+      <n-button size="tiny" :type="selectedCategory === 'custom' ? 'primary' : 'default'" :secondary="selectedCategory === 'custom'" @click="selectCategory('custom')">自制</n-button>
       <n-button size="tiny" :type="selectedCategory === 'all' ? 'primary' : 'default'" :secondary="selectedCategory === 'all'" @click="selectCategory('all')">全部</n-button>
       <n-button
         v-for="category in sceneOverlayPresetCategories"
@@ -157,7 +167,7 @@ const capacityAllows = (overlayCount: number) => (
           <div class="scene-overlay-preset-catalog__title">
             <n-icon><Stack2 /></n-icon>
             <strong>{{ preset.name }}</strong>
-            <small>{{ sceneOverlayPresetCategoryLabels[preset.category] }}</small>
+            <small>{{ preset.category === 'custom' ? '自制' : sceneOverlayPresetCategoryLabels[preset.category] }}</small>
           </div>
           <p>{{ preset.description }}</p>
           <span>{{ effectNames(preset.overlays.map(item => item.effectId)) }}<template v-if="preset.overlays.length > 3"> 等</template></span>
@@ -167,6 +177,10 @@ const capacityAllows = (overlayCount: number) => (
         </div>
         <div class="scene-overlay-preset-catalog__apply">
           <small>{{ preset.overlays.length }} 个效果</small>
+          <template v-if="preset.category === 'custom'">
+            <n-button size="tiny" secondary @click="emit('edit', preset)">编辑</n-button>
+            <n-button size="tiny" tertiary type="error" @click="emit('delete', preset)">删除</n-button>
+          </template>
           <n-button
             size="small"
             type="primary"

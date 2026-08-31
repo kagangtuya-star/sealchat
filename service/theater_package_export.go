@@ -75,6 +75,27 @@ func exportTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		organizerFile.Path = "effects/organizer.json"
 		manifest.EffectOrganizer = &organizerFile
 	}
+	var presetRows []model.TheaterSceneOverlayPresetModel
+	if err := model.GetDB().Where("room_id = ?", room.ID).Order("created_at ASC, id ASC").Find(&presetRows).Error; err != nil {
+		return summary, err
+	}
+	if len(presetRows) > 0 {
+		document := TheaterPackageSceneOverlayPresetsDocument{Version: 1, Presets: make([]TheaterSceneOverlayPreset, 0, len(presetRows))}
+		for index := range presetRows {
+			preset, err := theaterSceneOverlayPresetFromModel(&presetRows[index])
+			if err != nil {
+				return summary, err
+			}
+			document.Presets = append(document.Presets, *preset)
+		}
+		file, err := writeJSONFile(filepath.Join(stagingDir, "presets", "scene-overlay.json"), document)
+		if err != nil {
+			return summary, err
+		}
+		file.Path = "presets/scene-overlay.json"
+		manifest.SceneOverlayPresets = &file
+		summary.SceneOverlayPresets = len(document.Presets)
+	}
 
 	updateTheaterPackageProgress(job.ID, 0.1)
 	var resources []model.TheaterResourceModel

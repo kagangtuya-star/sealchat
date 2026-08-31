@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	theaterPackageVersion          = 3
+	theaterPackageVersion          = 4
 	theaterPackageMinimumVersion   = 1
 	theaterPackageMaxArchiveBytes  = int64(2 << 30)
 	theaterPackageMaxExpandedBytes = int64(4 << 30)
@@ -124,6 +124,7 @@ type TheaterPackageManifest struct {
 	Document             TheaterPackageFile              `json:"document"`
 	EffectOrganizer      *TheaterPackageFile             `json:"effectOrganizer,omitempty"`
 	WorldPresentation    *TheaterPackageFile             `json:"worldPresentation,omitempty"`
+	SceneOverlayPresets  *TheaterPackageFile             `json:"sceneOverlayPresets,omitempty"`
 	Resources            []TheaterPackageResource        `json:"resources"`
 	Audio                []TheaterPackageAudio           `json:"audio"`
 	AppearanceAssets     []TheaterPackageAppearanceAsset `json:"appearanceAssets,omitempty"`
@@ -174,7 +175,13 @@ type TheaterPackageSummary struct {
 	SourceVersion             string   `json:"sourceVersion,omitempty"`
 	CurrentRoomObjects        int      `json:"currentRoomObjects,omitempty"`
 	AnimatedResources         int      `json:"animatedResources,omitempty"`
+	SceneOverlayPresets       int      `json:"sceneOverlayPresets,omitempty"`
 	UnsupportedEntities       []string `json:"unsupportedEntities,omitempty"`
+}
+
+type TheaterPackageSceneOverlayPresetsDocument struct {
+	Version int                         `json:"version"`
+	Presets []TheaterSceneOverlayPreset `json:"presets"`
 }
 
 type theaterPackageWorkerConfig struct {

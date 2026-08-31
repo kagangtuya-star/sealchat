@@ -240,6 +240,11 @@ func normalizeTheaterImageObjectPresetJSON(raw []byte) (*model.TheaterImageObjec
 	return &preset, string(encoded), nil
 }
 
+// Kept for compatibility with existing callers and persisted folder presets.
+func normalizeTheaterImageFolderPresetJSON(raw []byte) (*model.TheaterImageFolderPreset, string, error) {
+	return normalizeTheaterImageObjectPresetJSON(raw)
+}
+
 func hydrateTheaterImageFolderPreset(folder *model.TheaterPanelFolderModel) {
 	folder.Preset = nil
 	if folder.Domain != TheaterPanelDomainImage || strings.TrimSpace(folder.PresetJSON) == "" {

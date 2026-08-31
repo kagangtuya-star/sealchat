@@ -1,6 +1,7 @@
 import type {
   StageSceneOverlayBlendMode,
   StageSceneOverlayLayer,
+  StageSceneOverlayMediaRef,
   StageSceneOverlayParams,
 } from '../../shared/stage-types'
 
@@ -10,6 +11,7 @@ export const sceneOverlayPresetCategories = [
 ] as const
 
 export type SceneOverlayPresetCategory = typeof sceneOverlayPresetCategories[number]
+export type SceneOverlayPresetDisplayCategory = SceneOverlayPresetCategory | 'custom'
 export type SceneOverlayPresetApplyMode = 'append' | 'replace'
 
 export const sceneOverlayPresetCategoryLabels: Record<SceneOverlayPresetCategory, string> = {
@@ -24,6 +26,7 @@ export interface SceneOverlayPresetItem {
   opacity?: number
   blendMode?: StageSceneOverlayBlendMode
   layer?: StageSceneOverlayLayer
+  media?: StageSceneOverlayMediaRef
   params?: StageSceneOverlayParams
 }
 

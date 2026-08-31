@@ -4,6 +4,7 @@ import {
   type StageSceneOverlayBinding,
   type StageSceneOverlayParamValue,
 } from '../../shared/stage-types'
+import { cloneStageData } from '../../stage/stage-editing'
 import {
   createSceneOverlayBinding,
   getSceneOverlayEffect,
@@ -70,10 +71,16 @@ export const instantiateSceneOverlayPreset = (presetId: string): StageSceneOverl
     reportRuntimeError(`Unknown scene overlay preset: ${presetId}`)
     return []
   }
+  return instantiateSceneOverlayPresetDefinition(preset)
+}
+
+export const instantiateSceneOverlayPresetDefinition = (preset: SceneOverlayPresetDefinition, options?: { skipUnknownEffects?: boolean }): StageSceneOverlayBinding[] => {
   const bindings: StageSceneOverlayBinding[] = []
   for (const item of preset.overlays) {
     if (!getSceneOverlayEffect(item.effectId)) {
-      reportRuntimeError(`Unknown scene overlay effect in preset ${presetId}: ${item.effectId}`)
+      const message = `Unknown scene overlay effect in preset ${preset.id}: ${item.effectId}`
+      if (options?.skipUnknownEffects) console.warn(message)
+      else reportRuntimeError(message)
       continue
     }
     const binding = createSceneOverlayBinding(item.effectId)
@@ -84,7 +91,8 @@ export const instantiateSceneOverlayPreset = (presetId: string): StageSceneOverl
       ...(item.opacity !== undefined ? { opacity: Math.min(1, Math.max(0, item.opacity)) } : {}),
       ...(item.blendMode !== undefined ? { blendMode: item.blendMode } : {}),
       ...(item.layer !== undefined ? { layer: item.layer } : {}),
-      params: { ...binding.params, ...(item.params ? structuredClone(item.params) : {}) },
+      ...(item.media !== undefined ? { media: cloneStageData(item.media) } : {}),
+      params: { ...binding.params, ...(item.params ? cloneStageData(item.params) : {}) },
     })
   }
   return bindings

@@ -140,6 +140,61 @@ func TheaterPanelOrganizerGet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "folders": state.Folders, "items": state.Items})
 }
 
+func TheaterSceneOverlayPresetList(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	presets, err := service.ListTheaterSceneOverlayPresets(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "presets": presets})
+}
+
+func TheaterSceneOverlayPresetPost(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body service.TheaterSceneOverlayPresetInput
+	if err := decodeTheaterBody(c, &body, 256<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	preset, err := service.CreateTheaterSceneOverlayPreset(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), body)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "requestId": requestID, "preset": preset})
+}
+
+func TheaterSceneOverlayPresetPatch(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Name        *string                                  `json:"name"`
+		Description *string                                  `json:"description"`
+		Tags        *[]string                                `json:"tags"`
+		Overlays    *[]service.TheaterSceneOverlayPresetItem `json:"overlays"`
+		Revision    int64                                    `json:"revision"`
+	}
+	if err := decodeTheaterBody(c, &body, 256<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	preset, err := service.UpdateTheaterSceneOverlayPreset(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("presetId"), service.TheaterSceneOverlayPresetPatch{
+		Name: body.Name, Description: body.Description, Tags: body.Tags, Overlays: body.Overlays, Revision: body.Revision,
+	})
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "preset": preset})
+}
+
+func TheaterSceneOverlayPresetDelete(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	if err := service.DeleteTheaterSceneOverlayPreset(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("presetId")); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.Status(fiber.StatusNoContent).Send(nil)
+}
+
 func TheaterPanelFolderPost(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)

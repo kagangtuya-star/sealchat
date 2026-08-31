@@ -13,9 +13,18 @@ import SceneOverlayCustomMediaPicker from './SceneOverlayCustomMediaPicker.vue'
 import SceneOverlayEffectCatalog from './SceneOverlayEffectCatalog.vue'
 import SceneOverlayInspector from './SceneOverlayInspector.vue'
 import SceneOverlayPresetCatalog from './SceneOverlayPresetCatalog.vue'
+import SceneOverlayPresetEditorModal from './SceneOverlayPresetEditorModal.vue'
+import {
+  createTheaterSceneOverlayPreset,
+  deleteTheaterSceneOverlayPreset,
+  listTheaterSceneOverlayPresets,
+  updateTheaterSceneOverlayPreset,
+  type TheaterSceneOverlayPreset,
+} from './scene-overlay-preset-api'
 import {
   getSceneOverlayPreset,
   instantiateSceneOverlayPreset,
+  instantiateSceneOverlayPresetDefinition,
   registerBuiltInSceneOverlayPresets,
   type SceneOverlayPresetApplyMode,
 } from './presets'
@@ -30,6 +39,10 @@ const props = defineProps<{
   canUploadMedia: boolean
   canEditMedia: boolean
   canDeleteMedia: boolean
+  worldId: string
+  channelId: string
+  scopeType?: 'channel' | 'world'
+  presetRefreshToken?: number
 }>()
 
 const emit = defineEmits<{
@@ -48,6 +61,10 @@ const customPickerOpen = ref(false)
 const presetCatalogOpen = ref(false)
 const replacingMediaOverlayId = ref<string | null>(null)
 const selectedOverlayId = ref<string | null>(null)
+const customPresets = ref<TheaterSceneOverlayPreset[]>([])
+const presetEditorOpen = ref(false)
+const editingPreset = ref<TheaterSceneOverlayPreset | null>(null)
+let customPresetRequestVersion = 0
 const activeSceneId = computed(() => props.store.state.activeSceneId)
 const activeScene = computed(() => props.store.state.scenes[activeSceneId.value])
 const overlays = computed(() => props.store.state.liveState.sceneOverlays)
@@ -63,10 +80,77 @@ watch([activeSceneId, overlays], () => {
     selectedOverlayId.value = null
   }
 })
+watch(() => props.presetRefreshToken, () => { if (presetCatalogOpen.value) void loadCustomPresets() })
+watch(() => [props.worldId, props.channelId, props.scopeType], () => {
+  customPresetRequestVersion += 1
+  customPresets.value = []
+  if (presetCatalogOpen.value) void loadCustomPresets()
+})
 
 const commit = (next: StageSceneOverlayBinding[]) => {
   if (!props.canEdit) return false
   return props.store.updateSceneOverlays(activeSceneId.value, next)
+}
+
+const loadCustomPresets = async () => {
+  const requestVersion = ++customPresetRequestVersion
+  const scope = { worldId: props.worldId, channelId: props.channelId, scopeType: props.scopeType }
+  try {
+    const presets = await listTheaterSceneOverlayPresets(scope)
+    if (requestVersion !== customPresetRequestVersion) return
+    customPresets.value = presets
+  } catch {
+    if (requestVersion !== customPresetRequestVersion) return
+    message.error('加载自制场景预设失败')
+  }
+}
+
+const openPresetEditor = (preset: TheaterSceneOverlayPreset | null = null) => {
+  if (!props.canEdit || (!preset && !overlays.value.length)) return
+  editingPreset.value = preset
+  presetEditorOpen.value = true
+}
+
+const presetOverlaysFromBindings = (bindings: StageSceneOverlayBinding[]) => bindings.map(({ id: _id, version: _version, ...binding }) => binding)
+
+const savePreset = async (payload: { name: string, description: string, tags: string[], overlays: StageSceneOverlayBinding[] }) => {
+  const scope = { worldId: props.worldId, channelId: props.channelId, scopeType: props.scopeType }
+  try {
+    if (editingPreset.value) {
+      const updated = await updateTheaterSceneOverlayPreset(scope, editingPreset.value.id, {
+        name: payload.name, description: payload.description, tags: payload.tags,
+        revision: editingPreset.value.revision,
+      })
+      customPresets.value = customPresets.value.map((item) => item.id === updated.id ? updated : item)
+    } else {
+      const created = await createTheaterSceneOverlayPreset(scope, {
+        name: payload.name, description: payload.description, tags: payload.tags,
+        overlays: presetOverlaysFromBindings(payload.overlays),
+      })
+      customPresets.value = [created, ...customPresets.value]
+    }
+    presetEditorOpen.value = false
+    editingPreset.value = null
+    message.success('场景预设已保存')
+  } catch {
+    message.error('保存场景预设失败')
+  }
+}
+
+const editPreset = (preset: TheaterSceneOverlayPreset) => openPresetEditor(preset)
+
+const removePreset = (preset: TheaterSceneOverlayPreset) => {
+  dialog.warning({
+    title: '删除场景预设', content: `确定删除“${preset.name}”？`, positiveText: '确认删除', negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteTheaterSceneOverlayPreset({ worldId: props.worldId, channelId: props.channelId, scopeType: props.scopeType }, preset.id)
+        customPresets.value = customPresets.value.filter((item) => item.id !== preset.id)
+      } catch {
+        message.error('删除场景预设失败')
+      }
+    },
+  })
 }
 
 const addOverlay = (binding: StageSceneOverlayBinding) => {
@@ -124,15 +208,22 @@ const togglePresetCatalog = () => {
   catalogOpen.value = false
   replacingMediaOverlayId.value = null
   presetCatalogOpen.value = !presetCatalogOpen.value
+  if (presetCatalogOpen.value) void loadCustomPresets()
 }
 
 const applyPreset = (presetId: string, mode: SceneOverlayPresetApplyMode) => {
-  const preset = getSceneOverlayPreset(presetId)
+  const preset = getSceneOverlayPreset(presetId) || customPresets.value.find((item) => item.id === presetId)
   if (!preset) {
     message.error('场景预设不可用')
     return
   }
-  const bindings = instantiateSceneOverlayPreset(presetId)
+  const bindings = getSceneOverlayPreset(presetId)
+    ? instantiateSceneOverlayPreset(presetId)
+    : instantiateSceneOverlayPresetDefinition({ ...preset, category: 'city' }, { skipUnknownEffects: true })
+  if (!bindings.length) {
+    message.warning('预设中的效果已不可用')
+    return
+  }
   const next = mode === 'replace'
     ? bindings
     : [...cloneStageData(overlays.value), ...bindings]
@@ -231,14 +322,25 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
           <template #icon><n-icon><Plus /></n-icon></template>
           添加效果
         </n-button>
+        <n-button size="small" secondary :disabled="!canEdit || !overlays.length" @click="openPresetEditor()">保存场景预设</n-button>
       </div>
     </div>
 
     <SceneOverlayPresetCatalog
       v-if="presetCatalogOpen"
       :current-overlay-count="overlays.length"
+      :custom-presets="customPresets"
       @apply="applyPreset"
+      @edit="editPreset"
+      @delete="removePreset"
       @close="presetCatalogOpen = false"
+    />
+    <SceneOverlayPresetEditorModal
+      :show="presetEditorOpen"
+      :preset="editingPreset"
+      :overlays="overlays"
+      @close="presetEditorOpen = false; editingPreset = null"
+      @save="savePreset"
     />
     <SceneOverlayCustomMediaPicker
       v-if="customPickerOpen"

@@ -75,6 +75,9 @@ func cleanupTheaterChannels(tx *gorm.DB, channelIDs []string) error {
 	if err := tx.Unscoped().Where("room_id IN ?", roomIDs).Delete(&model.TheaterImageAssetModel{}).Error; err != nil {
 		return err
 	}
+	if err := tx.Unscoped().Where("room_id IN ?", roomIDs).Delete(&model.TheaterSceneOverlayPresetModel{}).Error; err != nil {
+		return err
+	}
 	now := time.Now()
 	if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id IN ?", roomIDs).Updates(map[string]any{
 		"status":             "deleting",

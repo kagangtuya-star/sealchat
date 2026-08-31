@@ -293,6 +293,7 @@ const stageMessage = useMessage()
 const packageDialog = useDialog()
 const stageDialog = useDialog()
 const packageBusy = ref(false)
+const sceneOverlayPresetRefreshToken = ref(0)
 const packageProgressVisible = ref(false)
 const packageProgressJob = ref<TheaterPackageJob | null>(null)
 const packageProgressError = ref('')
@@ -316,7 +317,7 @@ type TheaterPackageJob = {
   progressStage?: string
   outputFileName?: string
   errorMessage?: string
-  summary?: { packageKind?: 'theater' | 'effects', effects?: number, scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
+  summary?: { packageKind?: 'theater' | 'effects', effects?: number, scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, sceneOverlayPresets?: number, warnings?: string[] }
 }
 
 const canManagePackages = computed(() => props.syncReady && props.permissions.includes('stage.admin.restore'))
@@ -486,6 +487,7 @@ const importTheaterPackageFile = async (file: File) => {
     const job = await pollTheaterPackageJob(response.data.job.id)
     await fetchTheaterAudioAssets()
     await fetchTheaterPanelOrganizer()
+    sceneOverlayPresetRefreshToken.value += 1
     const warnings = job.summary?.warnings?.filter(Boolean) || []
     packageMessage.success(job.summary?.packageKind === 'effects'
       ? `已导入 ${job.summary?.effects ?? job.summary?.objects ?? 0} 个特效`
@@ -8892,6 +8894,10 @@ onBeforeUnmount(() => {
         </div>
         <SceneOverlayManagerPanel
           :store="store"
+          :world-id="props.worldId"
+          :channel-id="props.channelId"
+          :scope-type="props.scopeType"
+          :preset-refresh-token="sceneOverlayPresetRefreshToken"
           :can-edit="canEditAllObjects"
           :image-assets="sceneOverlayImageAssets"
           :image-loading="theaterImageLoading"
