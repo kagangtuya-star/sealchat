@@ -3,6 +3,7 @@ import type { SceneOverlayEffectDefinition, SceneOverlayRenderer } from './scene
 
 const effectDefinitions = new Map<string, SceneOverlayEffectDefinition>()
 const renderers = new Map<string, SceneOverlayRenderer>()
+const effectRegistrationIssues: string[] = []
 
 const createId = () => {
   const value = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -13,7 +14,9 @@ const createId = () => {
 
 export const registerSceneOverlayEffect = (definition: SceneOverlayEffectDefinition) => {
   if (effectDefinitions.has(definition.id)) {
-    if (import.meta.env.DEV) throw new Error(`Duplicate scene overlay effect: ${definition.id}`)
+    const message = `Duplicate scene overlay effect: ${definition.id}`
+    effectRegistrationIssues.push(message)
+    if (import.meta.env.DEV) throw new Error(message)
     return
   }
   effectDefinitions.set(definition.id, definition)
@@ -22,6 +25,17 @@ export const registerSceneOverlayEffect = (definition: SceneOverlayEffectDefinit
 export const getSceneOverlayEffect = (id: string) => effectDefinitions.get(id)
 
 export const listSceneOverlayEffects = () => [...effectDefinitions.values()]
+
+export const validateSceneOverlayEffectRegistry = () => {
+  const issues: string[] = [...effectRegistrationIssues]
+  const ids = new Set<string>()
+  for (const definition of effectDefinitions.values()) {
+    if (!definition.id.trim()) issues.push('Scene overlay effect id cannot be empty')
+    if (ids.has(definition.id)) issues.push(`Duplicate scene overlay effect: ${definition.id}`)
+    ids.add(definition.id)
+  }
+  return issues
+}
 
 export const createSceneOverlayBinding = (effectId: string): StageSceneOverlayBinding => {
   const definition = getSceneOverlayEffect(effectId)

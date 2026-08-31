@@ -3,6 +3,7 @@ import type { Container, Engine, ISourceOptions } from '@tsparticles/engine'
 import type { SceneOverlayRenderer } from '../scene-overlay-types'
 
 let enginePromise: Promise<Engine> | null = null
+let nextContainerId = 0
 
 const loadEngine = () => {
   if (!enginePromise) {
@@ -28,7 +29,9 @@ export const particlesSceneOverlayRenderer: SceneOverlayRenderer = {
     host.style.height = '100%'
     host.style.pointerEvents = 'none'
     const engine = await loadEngine()
+    const id = `scene-overlay-particles-${++nextContainerId}`
     let container: Container | undefined = await engine.load({
+      id,
       element: host,
       options: particleOptions(config),
     })

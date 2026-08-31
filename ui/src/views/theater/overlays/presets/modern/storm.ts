@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'modern.storm', name: '现代暴雨', description: '雷电照亮阴天现代暴雨。', category: 'modern', tags: ['现代', '暴雨', '雷电'], overlays: [item('weather.rain.heavy', 0.92, { intensity: 0.88, speed: 1.3, windDirection: 160, windStrength: 0.38, spread: 0.08 }), item('special.lightning', 0.84, { frequency: 0.14, strength: 0.85 }), item('lighting.overcast', 0.44)] })

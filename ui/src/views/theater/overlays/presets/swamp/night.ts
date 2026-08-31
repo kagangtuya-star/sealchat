@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'swamp.night', name: '夜间沼泽', description: '月光薄雾中萤火虫零星闪烁。', category: 'swamp', tags: ['沼泽', '夜晚', '萤火虫'], overlays: [item('weather.mist', 0.35, { intensity: 0.34, speed: 0.25 }), item('environment.fireflies', 0.72, { intensity: 0.34, speed: 0.35, spread: 0.98 }), item('lighting.moonlight', 0.36)] })

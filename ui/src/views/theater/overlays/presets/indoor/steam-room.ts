@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'indoor.steam-room', name: '蒸汽房', description: '上升蒸汽与低层薄雾交错。', category: 'indoor', tags: ['室内', '蒸汽', '潮湿'], overlays: [item('environment.steam', 0.52, { intensity: 0.48, speed: 0.7, windStrength: 0.12, spread: 0.78 }), item('weather.mist', 0.32, { intensity: 0.3, speed: 0.3, windStrength: 0.08 })] })

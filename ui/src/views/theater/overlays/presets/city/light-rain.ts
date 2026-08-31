@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'city.light-rain', name: '小雨街道', description: '清晰小雨、阴天与轻雾组合。', category: 'city', tags: ['城市', '小雨', '街道'], overlays: [item('weather.rain.light', 0.72, { intensity: 0.48, speed: 0.95, windDirection: 120, windStrength: 0.14, spread: 0.06 }), item('lighting.overcast', 0.36), item('weather.mist', 0.16, { intensity: 0.16, speed: 0.35 })] })

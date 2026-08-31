@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.holy-arrival', name: '圣光降临', description: '金白圣光粒子随强光闪烁降临暖昼。', category: 'magic', tags: ['魔法', '圣光', '降临'], overlays: [item('magic.holy', 0.94, { intensity: 0.72, speed: 0.65, windStrength: 0.04, spread: 0.55 }), item('special.flash', 0.9, { strength: 0.95, frequency: 0.06 }), item('lighting.warm-day', 0.36)] })

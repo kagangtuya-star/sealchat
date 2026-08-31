@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dream.peaceful', name: '美梦', description: '花瓣与柔和魔法光点漂过粉青梦境。', category: 'dream', tags: ['梦境', '美梦', '花瓣'], overlays: [item('environment.petals', 0.72, { intensity: 0.45, speed: 0.5, windStrength: 0.18, spread: 0.72 }), item('magic.motes', 0.7, { intensity: 0.4, speed: 0.42, spread: 0.92 }), item('lighting.dream', 0.44)] })

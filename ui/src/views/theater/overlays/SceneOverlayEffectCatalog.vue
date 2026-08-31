@@ -17,10 +17,11 @@ registerBuiltInSceneOverlayEffects()
 const categoryLabels: Record<SceneOverlayCategory, string> = {
   weather: '天气',
   environment: '环境',
+  magic: '魔法',
   lighting: '光照',
   special: '特殊',
 }
-const categories: SceneOverlayCategory[] = ['weather', 'environment', 'lighting', 'special']
+const categories: SceneOverlayCategory[] = ['weather', 'environment', 'magic', 'lighting', 'special']
 const groupedEffects = computed(() => categories.map((category) => ({
   category,
   label: categoryLabels[category],

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'horror.psychic', name: '精神污染', description: '精神与虚空微粒在梦境色调中剧烈失序。', category: 'horror', tags: ['恐怖', '精神', '污染'], overlays: [item('magic.psychic', 0.9, { intensity: 0.7, speed: 1.25, windStrength: 0.45, spread: 1 }), item('magic.void', 0.72, { intensity: 0.46, speed: 0.8, spread: 0.98 }), item('lighting.dream', 0.48)] })

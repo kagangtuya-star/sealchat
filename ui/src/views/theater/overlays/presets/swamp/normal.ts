@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'swamp.normal', name: '普通沼泽', description: '薄雾与孢子覆盖微弱毒绿沼泽。', category: 'swamp', tags: ['沼泽', '薄雾', '孢子'], overlays: [item('weather.mist', 0.36, { intensity: 0.38, speed: 0.28 }), item('environment.spores', 0.55, { intensity: 0.45, speed: 0.38, spread: 0.9 }), item('lighting.toxic', 0.22)] })

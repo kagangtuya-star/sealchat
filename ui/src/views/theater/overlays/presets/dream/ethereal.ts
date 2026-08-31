@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dream.ethereal', name: '梦境世界', description: '魔法微粒与白色羽毛缓慢穿行梦境。', category: 'dream', tags: ['梦境', '空灵', '羽毛'], overlays: [item('magic.motes', 0.78, { intensity: 0.48, speed: 0.45, spread: 0.94 }), item('environment.feathers', 0.68, { intensity: 0.35, speed: 0.45, windStrength: 0.2, spread: 0.85 }), item('lighting.dream', 0.46)] })

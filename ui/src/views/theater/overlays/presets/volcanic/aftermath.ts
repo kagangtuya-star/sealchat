@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'volcanic.aftermath', name: '喷发之后', description: '缓慢落灰、黑灰与残烟覆盖昏暗大地。', category: 'volcanic', tags: ['火山', '余波', '荒凉'], overlays: [item('weather.ashfall', 0.58, { intensity: 0.45, speed: 0.55, windStrength: 0.2 }), item('environment.soot', 0.5, { intensity: 0.4, speed: 0.55 }), item('environment.smoke', 0.4, { intensity: 0.3, speed: 0.45 }), item('lighting.dusk', 0.48)] })

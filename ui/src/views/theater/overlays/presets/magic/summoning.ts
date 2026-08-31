@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.summoning', name: '召唤仪式', description: '奥术粒子与余烬被召唤脉冲卷起。', category: 'magic', tags: ['魔法', '召唤', '仪式'], overlays: [item('magic.arcane', 0.82, { intensity: 0.6, speed: 1, spread: 0.8 }), item('environment.embers', 0.68, { intensity: 0.42, speed: 0.95, windStrength: 0.18 }), item('special.pulse-magic', 0.56, { strength: 0.52, frequency: 0.58 })] })

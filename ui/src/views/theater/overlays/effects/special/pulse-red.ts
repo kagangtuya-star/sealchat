@@ -1,0 +1,4 @@
+import type { SceneOverlayEffectDefinition } from '../../scene-overlay-types'
+import { colorParam, numberParam } from '../effect-helpers'
+
+export default { id: 'special.pulse-red', name: '红光脉冲', description: '缓慢起伏的深红警示光。', category: 'special', defaultParams: { strength: 0.65, frequency: 0.35, color: '#d21f32' }, controls: [{ type: 'number', key: 'strength', label: '亮度', min: 0.05, max: 1, step: 0.05 }, { type: 'number', key: 'frequency', label: '频率', min: 0.03, max: 2, step: 0.01, suffix: '次/秒' }, { type: 'color', key: 'color', label: '颜色' }], defaultBlendMode: 'soft-light', buildRenderDescriptor(params) { return { renderer: 'color', config: { mode: 'pulse', color: colorParam(params, 'color', '#d21f32'), strength: numberParam(params, 'strength', 0.65, 0.05, 1), frequency: numberParam(params, 'frequency', 0.35, 0.03, 2) } } } } satisfies SceneOverlayEffectDefinition

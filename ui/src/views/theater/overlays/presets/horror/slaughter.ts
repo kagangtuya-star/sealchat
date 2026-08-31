@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'horror.slaughter', name: '血腥现场', description: '血色微粒缓慢沉降，低强度血月光穿过薄雾。', category: 'horror', tags: ['恐怖', '血腥', '现场'], overlays: [item('magic.blood', 0.8, { intensity: 0.6, speed: 0.7, windStrength: 0.12, spread: 0.5 }), item('lighting.blood-moon', 0.26), item('weather.mist', 0.28, { intensity: 0.26, speed: 0.25 })] })

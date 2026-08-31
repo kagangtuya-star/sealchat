@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'swamp.cursed', name: '诅咒沼泽', description: '死灵微粒与孢子从毒绿浓雾中升起。', category: 'swamp', tags: ['沼泽', '诅咒', '死灵'], overlays: [item('magic.necrotic', 0.72, { intensity: 0.5, speed: 0.6, spread: 0.84 }), item('environment.spores', 0.55, { intensity: 0.42, speed: 0.38 }), item('weather.fog', 0.5, { intensity: 0.52, speed: 0.25 }), item('lighting.toxic', 0.46)] })

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'planar.astral', name: '星界', description: '奥术粒子与柔光微粒漂浮在蓝紫星界。', category: 'planar', tags: ['位面', '星界', '奥术'], overlays: [item('magic.arcane', 0.78, { intensity: 0.5, speed: 0.85, spread: 0.82 }), item('magic.motes', 0.78, { intensity: 0.5, speed: 0.45, spread: 0.94 }), item('lighting.twilight', 0.5)] })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NIcon, NSwitch, useDialog } from 'naive-ui'
-import { ArrowDown, ArrowUp, Copy, Edit, Plus, Trash } from '@vicons/tabler'
+import { NButton, NIcon, NSwitch, useDialog, useMessage } from 'naive-ui'
+import { ArrowDown, ArrowUp, Copy, Edit, Plus, Stack2, Trash } from '@vicons/tabler'
 
 import type { TheaterImageAsset } from '../effects/theater-image-assets'
 import type { StageSceneOverlayBinding } from '../shared/stage-types'
@@ -12,6 +12,13 @@ import { createSceneOverlayBinding, getSceneOverlayEffect } from './scene-overla
 import SceneOverlayCustomMediaPicker from './SceneOverlayCustomMediaPicker.vue'
 import SceneOverlayEffectCatalog from './SceneOverlayEffectCatalog.vue'
 import SceneOverlayInspector from './SceneOverlayInspector.vue'
+import SceneOverlayPresetCatalog from './SceneOverlayPresetCatalog.vue'
+import {
+  getSceneOverlayPreset,
+  instantiateSceneOverlayPreset,
+  registerBuiltInSceneOverlayPresets,
+  type SceneOverlayPresetApplyMode,
+} from './presets'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -32,10 +39,13 @@ const emit = defineEmits<{
 }>()
 
 registerBuiltInSceneOverlayEffects()
+registerBuiltInSceneOverlayPresets()
 
 const dialog = useDialog()
+const message = useMessage()
 const catalogOpen = ref(false)
 const customPickerOpen = ref(false)
+const presetCatalogOpen = ref(false)
 const replacingMediaOverlayId = ref<string | null>(null)
 const selectedOverlayId = ref<string | null>(null)
 const activeSceneId = computed(() => props.store.state.activeSceneId)
@@ -98,19 +108,54 @@ const selectCustomMedia = (asset: TheaterImageAsset) => {
 const toggleCustomPicker = () => {
   replacingMediaOverlayId.value = null
   catalogOpen.value = false
+  presetCatalogOpen.value = false
   customPickerOpen.value = !customPickerOpen.value
 }
 
 const toggleCatalog = () => {
   customPickerOpen.value = false
+  presetCatalogOpen.value = false
   replacingMediaOverlayId.value = null
   catalogOpen.value = !catalogOpen.value
+}
+
+const togglePresetCatalog = () => {
+  customPickerOpen.value = false
+  catalogOpen.value = false
+  replacingMediaOverlayId.value = null
+  presetCatalogOpen.value = !presetCatalogOpen.value
+}
+
+const applyPreset = (presetId: string, mode: SceneOverlayPresetApplyMode) => {
+  const preset = getSceneOverlayPreset(presetId)
+  if (!preset) {
+    message.error('场景预设不可用')
+    return
+  }
+  const bindings = instantiateSceneOverlayPreset(presetId)
+  const next = mode === 'replace'
+    ? bindings
+    : [...cloneStageData(overlays.value), ...bindings]
+  if (next.length > 32) {
+    message.warning('场景叠加效果最多 32 个')
+    return
+  }
+  if (!commit(next)) {
+    message.error('无法更新当前场景叠加效果')
+    return
+  }
+  selectedOverlayId.value = bindings.at(-1)?.id || null
+  presetCatalogOpen.value = false
+  message.success(mode === 'replace'
+    ? `已应用场景预设：${preset.name}`
+    : `已添加场景预设：${preset.name}`)
 }
 
 const replaceSelectedMedia = () => {
   if (!selectedOverlay.value?.media) return
   replacingMediaOverlayId.value = selectedOverlay.value.id
   catalogOpen.value = false
+  presetCatalogOpen.value = false
   customPickerOpen.value = true
 }
 
@@ -177,6 +222,10 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
         <small>{{ overlays.length }} 个叠加 · {{ overlays.filter(item => item.enabled).length }} 已启用</small>
       </div>
       <div class="scene-overlay-manager__summary-actions">
+        <n-button size="small" secondary :disabled="!canEdit" @click="togglePresetCatalog">
+          <template #icon><n-icon><Stack2 /></n-icon></template>
+          场景预设
+        </n-button>
         <n-button size="small" secondary :disabled="!canEdit || overlays.length >= 32" @click="toggleCustomPicker">自定义效果</n-button>
         <n-button size="small" type="primary" secondary :disabled="!canEdit || overlays.length >= 32" @click="toggleCatalog">
           <template #icon><n-icon><Plus /></n-icon></template>
@@ -185,6 +234,12 @@ const overlayIndex = (binding: StageSceneOverlayBinding) => overlays.value.findI
       </div>
     </div>
 
+    <SceneOverlayPresetCatalog
+      v-if="presetCatalogOpen"
+      :current-overlay-count="overlays.length"
+      @apply="applyPreset"
+      @close="presetCatalogOpen = false"
+    />
     <SceneOverlayCustomMediaPicker
       v-if="customPickerOpen"
       :assets="imageAssets"

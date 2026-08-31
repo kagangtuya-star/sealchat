@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cave.ice', name: '冰洞', description: '寒霜碎光、冷蓝岩壁与轻薄冰雾。', category: 'cave', tags: ['洞穴', '冰雪', '寒霜'], overlays: [item('magic.frost', 0.72, { intensity: 0.42, speed: 0.55, windStrength: 0.18 }), item('lighting.cold', 0.48), item('weather.mist', 0.2, { intensity: 0.18, speed: 0.25 })] })

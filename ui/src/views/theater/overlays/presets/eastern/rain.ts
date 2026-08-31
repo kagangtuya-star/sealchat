@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'eastern.rain', name: '古城细雨', description: '细雨与薄雾覆盖低饱和东方古城。', category: 'eastern', tags: ['东方', '古城', '细雨'], overlays: [item('weather.drizzle', 0.66, { intensity: 0.42, speed: 0.68, windDirection: 120, windStrength: 0.14, spread: 0.48 }), item('weather.mist', 0.26, { intensity: 0.24, speed: 0.28, windDirection: 120, windStrength: 0.08 }), item('lighting.overcast', 0.4)] })

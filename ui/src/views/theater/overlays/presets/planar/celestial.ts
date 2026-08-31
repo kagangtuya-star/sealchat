@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'planar.celestial', name: '天界', description: '圣光粒子与洁白羽毛沐浴暖昼。', category: 'planar', tags: ['位面', '天界', '圣光'], overlays: [item('magic.holy', 0.9, { intensity: 0.62, speed: 0.5, spread: 0.6 }), item('environment.feathers', 0.72, { intensity: 0.38, speed: 0.45, windStrength: 0.15, spread: 0.82 }), item('lighting.warm-day', 0.36)] })

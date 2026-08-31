@@ -1,0 +1,2 @@
+import tavern from './tavern'; import banquetHall from './banquet-hall'; import abandonedHouse from './abandoned-house'; import burningHouse from './burning-house'; import basement from './basement'; import library from './library'; import workshop from './workshop'; import steamRoom from './steam-room'
+export const indoorSceneOverlayPresets = [tavern, banquetHall, abandonedHouse, burningHouse, basement, library, workshop, steamRoom]

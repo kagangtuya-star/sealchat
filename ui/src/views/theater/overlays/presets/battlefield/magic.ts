@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'battlefield.magic', name: '魔法战场', description: '奥术粒子、火星与烟尘响应魔力脉冲。', category: 'battlefield', tags: ['战场', '魔法', '奥术'], overlays: [item('magic.arcane', 0.84, { intensity: 0.62, speed: 1.15, spread: 0.8 }), item('environment.sparks', 0.58, { intensity: 0.32, speed: 1.35 }), item('environment.smoke', 0.32, { intensity: 0.22, speed: 0.5 }), item('special.pulse-magic', 0.5, { strength: 0.48, frequency: 0.5 })] })

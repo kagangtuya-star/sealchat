@@ -20,18 +20,15 @@ export const colorParam = (params: StageSceneOverlayParams, key: string, fallbac
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
 }
 
-type ParticleDirection = 'top' | 'top-right' | 'right' | 'bottom-right' | 'bottom' | 'bottom-left' | 'left' | 'top-left' | 'none'
-
 interface ParticleConfigInput {
   count: number
   color: string
   opacity: { min: number, max: number }
   size: { min: number, max: number }
   speed: number
-  direction: ParticleDirection
+  direction: number
+  spread: number
   shape?: 'circle' | 'line' | 'square' | 'star'
-  straight?: boolean
-  random?: boolean
   opacityAnimationSpeed?: number
   sizeAnimationSpeed?: number
   fpsLimit?: number
@@ -45,11 +42,16 @@ export const particleConfig = (input: ParticleConfigInput): ISourceOptions => ({
   interactivity: { events: {} },
   particles: {
     number: {
-      value: Math.round(input.count),
+      value: Math.max(0, Math.round(input.count)),
       density: { enable: true, width: 1280, height: 720 },
     },
-    color: { value: input.color },
     shape: { type: input.shape || 'circle' },
+    paint: {
+      color: { value: input.color },
+      fill: { enable: input.shape !== 'line' },
+      ...(input.shape === 'line' ? { stroke: { width: 1 } } : {}),
+    },
+    ...(input.shape === 'line' ? { rotate: { path: true } } : {}),
     opacity: {
       value: input.opacity,
       animation: input.opacityAnimationSpeed
@@ -66,16 +68,10 @@ export const particleConfig = (input: ParticleConfigInput): ISourceOptions => ({
       enable: true,
       speed: input.speed,
       direction: input.direction,
-      random: input.random === true,
-      straight: input.straight === true,
+      angle: { offset: 0, value: Math.max(1, input.spread * 100) },
+      random: false,
+      straight: input.spread <= 0.02,
       outModes: { default: 'out' },
     },
   },
 })
-
-export const verticalDirection = (wind: number, downward = true): ParticleDirection => {
-  if (downward) return wind < -0.15 ? 'bottom-left' : wind > 0.15 ? 'bottom-right' : 'bottom'
-  return wind < -0.15 ? 'top-left' : wind > 0.15 ? 'top-right' : 'top'
-}
-
-export const horizontalDirection = (wind: number): ParticleDirection => wind < 0 ? 'left' : 'right'

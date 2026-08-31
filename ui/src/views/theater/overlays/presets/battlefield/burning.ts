@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'battlefield.burning', name: '燃烧战场', description: '浓烟、余烬与火星在战场火光中翻涌。', category: 'battlefield', tags: ['战场', '燃烧', '火灾'], overlays: [item('environment.smoke', 0.58, { intensity: 0.52, speed: 0.8, windStrength: 0.3 }), item('environment.embers', 0.78, { intensity: 0.55, speed: 1, windStrength: 0.22 }), item('environment.sparks', 0.68, { intensity: 0.4, speed: 1.3 }), item('lighting.firelight', 0.52)] })

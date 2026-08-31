@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'ocean.coast-storm', name: '海边风暴', description: '斜向暴雨与雷电笼罩冷色海岸。', category: 'ocean', tags: ['海洋', '风暴', '雷电'], overlays: [item('weather.rain.heavy', 0.92, { intensity: 0.9, speed: 1.35, windDirection: 160, windStrength: 0.48, spread: 0.1 }), item('special.lightning', 0.86, { frequency: 0.16, strength: 0.88 }), item('lighting.cold', 0.48)] })

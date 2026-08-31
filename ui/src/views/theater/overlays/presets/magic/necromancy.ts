@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.necromancy', name: '死灵仪式', description: '浓雾托起死灵幽光，毒绿照明压低生气。', category: 'magic', tags: ['魔法', '死灵', '仪式'], overlays: [item('magic.necrotic', 0.88, { intensity: 0.68, speed: 0.72, spread: 0.86 }), item('weather.fog', 0.5, { intensity: 0.5, speed: 0.25 }), item('lighting.toxic', 0.5)] })

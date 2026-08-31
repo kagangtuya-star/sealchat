@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'indoor.workshop', name: '工坊', description: '火星切开带烟的暖色工坊。', category: 'indoor', tags: ['室内', '工坊', '火星'], overlays: [item('environment.sparks', 0.68, { intensity: 0.38, speed: 1.2, spread: 0.58 }), item('environment.smoke', 0.28, { intensity: 0.2, speed: 0.45, windStrength: 0.12 }), item('lighting.firelight', 0.38)] })

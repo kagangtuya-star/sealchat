@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'horror.void-corruption', name: '异界侵蚀', description: '虚空碎屑侵入暮色薄雾。', category: 'horror', tags: ['恐怖', '虚空', '异界'], overlays: [item('magic.void', 0.88, { intensity: 0.68, speed: 0.85, windStrength: 0.32, spread: 1 }), item('lighting.twilight', 0.5), item('weather.mist', 0.28, { intensity: 0.26, speed: 0.3 })] })

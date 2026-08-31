@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'ocean.magic', name: '魔法海域', description: '气泡与紫蓝魔法光点漂浮在青色海域。', category: 'ocean', tags: ['海洋', '魔法', '气泡'], overlays: [item('environment.bubbles', 0.68, { intensity: 0.42, speed: 0.6 }), item('magic.motes', 0.76, { intensity: 0.46, speed: 0.48, spread: 0.92 }), item('lighting.underwater', 0.48)] })

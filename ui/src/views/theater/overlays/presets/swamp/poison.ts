@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'swamp.poison', name: '毒沼', description: '毒性光点在浓雾与病态绿光中扩散。', category: 'swamp', tags: ['沼泽', '毒素', '危险'], overlays: [item('magic.poison', 0.82, { intensity: 0.68, speed: 0.55, windStrength: 0.18, spread: 0.9 }), item('weather.fog', 0.48, { intensity: 0.48, speed: 0.25 }), item('lighting.toxic', 0.5)] })

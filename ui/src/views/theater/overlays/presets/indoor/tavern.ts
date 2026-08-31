@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'indoor.tavern', name: '酒馆', description: '暖烛光中混有少量烟与浮尘。', category: 'indoor', tags: ['室内', '酒馆', '烛光'], overlays: [item('lighting.candlelight', 0.34), item('environment.smoke', 0.22, { intensity: 0.15, speed: 0.3, windDirection: 280, windStrength: 0.1, spread: 0.65 }), item('environment.dust', 0.18, { intensity: 0.12, speed: 0.3 })] })

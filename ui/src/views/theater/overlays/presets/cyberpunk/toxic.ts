@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cyberpunk.toxic', name: '污染区', description: '毒性微粒从烟尘与绿光污染区中扩散。', category: 'cyberpunk', tags: ['赛博', '污染', '毒素'], overlays: [item('magic.poison', 0.82, { intensity: 0.62, speed: 0.62, spread: 0.9 }), item('environment.smoke', 0.45, { intensity: 0.36, speed: 0.58, windStrength: 0.22 }), item('lighting.toxic', 0.52)] })

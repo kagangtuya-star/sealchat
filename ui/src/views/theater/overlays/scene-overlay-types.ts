@@ -5,7 +5,7 @@ import type {
   StageSceneOverlayParams,
 } from '../shared/stage-types'
 
-export type SceneOverlayCategory = 'weather' | 'environment' | 'lighting' | 'special'
+export type SceneOverlayCategory = 'weather' | 'environment' | 'magic' | 'lighting' | 'special'
 
 export type SceneOverlayControl =
   | {
@@ -16,6 +16,14 @@ export type SceneOverlayControl =
       max: number
       step: number
       suffix?: string
+    }
+  | {
+      type: 'angle'
+      key: string
+      label: string
+      min: number
+      max: number
+      step: number
     }
   | {
       type: 'color'

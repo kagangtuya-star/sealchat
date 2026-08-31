@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'snow.blizzard', name: '暴风雪', description: '强风暴雪与低能见度冷雾。', category: 'snow', tags: ['雪地', '暴雪', '风暴'], overlays: [item('weather.blizzard', 0.96, { intensity: 1, speed: 1.4, windDirection: 170, windStrength: 0.8, spread: 0.4 }), item('weather.fog', 0.2, { intensity: 0.22, speed: 0.55, windDirection: 170, windStrength: 0.45 }), item('lighting.cold', 0.5)] })

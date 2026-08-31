@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'volcanic.active', name: '活火山', description: '落灰、余烬与火星围绕活跃火山。', category: 'volcanic', tags: ['火山', '活跃', '火焰'], overlays: [item('weather.ashfall', 0.7, { intensity: 0.58, speed: 0.8, windStrength: 0.32 }), item('environment.embers', 0.8, { intensity: 0.55, speed: 1.05, windStrength: 0.2 }), item('environment.sparks', 0.66, { intensity: 0.36, speed: 1.25 }), item('lighting.firelight', 0.52)] })

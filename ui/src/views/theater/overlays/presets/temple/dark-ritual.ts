@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'temple.dark-ritual', name: '邪神祭坛', description: '血色与虚空微粒围绕无月祭坛脉动。', category: 'temple', tags: ['神殿', '祭坛', '邪神'], overlays: [item('magic.blood', 0.76, { intensity: 0.52, speed: 0.65, spread: 0.52 }), item('magic.void', 0.8, { intensity: 0.58, speed: 0.8, spread: 0.98 }), item('special.pulse-red', 0.55, { strength: 0.5, frequency: 0.32 }), item('lighting.moonless', 0.62)] })

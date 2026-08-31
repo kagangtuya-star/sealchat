@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'horror.blood-moon', name: '血月之夜', description: '血月染透薄雾，少量血色微粒沉降。', category: 'horror', tags: ['恐怖', '血月', '夜晚'], overlays: [item('lighting.blood-moon', 0.62), item('weather.mist', 0.34, { intensity: 0.32, speed: 0.25 }), item('magic.blood', 0.32, { intensity: 0.18, speed: 0.45, spread: 0.48 })] })

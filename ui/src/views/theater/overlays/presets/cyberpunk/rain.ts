@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cyberpunk.rain', name: '霓虹雨夜', description: '中雨穿过蓝紫霓虹，极少精神光点闪动。', category: 'cyberpunk', tags: ['赛博', '雨夜', '霓虹'], overlays: [item('weather.rain.medium', 0.86, { intensity: 0.7, speed: 1.15, windDirection: 120, windStrength: 0.22, spread: 0.06 }), item('lighting.twilight', 0.52), item('magic.psychic', 0.18, { intensity: 0.08, speed: 0.55, spread: 0.95 })] })

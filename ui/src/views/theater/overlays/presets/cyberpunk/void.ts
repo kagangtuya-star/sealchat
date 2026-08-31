@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cyberpunk.void', name: '异常空间', description: '虚空与精神微粒响应异常魔力脉冲。', category: 'cyberpunk', tags: ['赛博', '异常', '虚空'], overlays: [item('magic.void', 0.84, { intensity: 0.6, speed: 0.9, spread: 1 }), item('magic.psychic', 0.84, { intensity: 0.58, speed: 1.15, spread: 1 }), item('special.pulse-magic', 0.56, { strength: 0.52, frequency: 0.55 })] })

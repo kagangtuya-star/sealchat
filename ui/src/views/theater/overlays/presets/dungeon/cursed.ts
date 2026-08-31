@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dungeon.cursed', name: '被诅咒地下城', description: '死灵幽光、薄雾与病态毒绿照明。', category: 'dungeon', tags: ['地牢', '诅咒', '死灵'], overlays: [item('magic.necrotic', 0.78, { intensity: 0.55, speed: 0.65, spread: 0.82 }), item('weather.mist', 0.28, { intensity: 0.28, speed: 0.3 }), item('lighting.toxic', 0.46)] })

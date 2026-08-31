@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'battlefield.active', name: '激烈战场', description: '尘土、烟尘与飞散火星覆盖交战区域。', category: 'battlefield', tags: ['战场', '战斗', '烟尘'], overlays: [item('environment.dust', 0.62, { intensity: 0.58, speed: 0.9, windDirection: 180, windStrength: 0.5 }), item('environment.smoke', 0.46, { intensity: 0.38, speed: 0.65, windStrength: 0.28 }), item('environment.sparks', 0.48, { intensity: 0.26, speed: 1.2 })] })

@@ -1,0 +1,4 @@
+import type { SceneOverlayEffectDefinition } from '../../scene-overlay-types'
+import { colorParam, numberParam } from '../effect-helpers'
+
+export default { id: 'special.flash', name: '强光闪烁', description: '低频、高亮度的强光闪烁。', category: 'special', defaultParams: { strength: 1, frequency: 0.08, color: '#fffbea' }, controls: [{ type: 'number', key: 'strength', label: '亮度', min: 0.05, max: 1, step: 0.05 }, { type: 'number', key: 'frequency', label: '频率', min: 0.03, max: 1, step: 0.01, suffix: '次/秒' }, { type: 'color', key: 'color', label: '颜色' }], defaultBlendMode: 'screen', buildRenderDescriptor(params) { return { renderer: 'color', config: { mode: 'lightning', color: colorParam(params, 'color', '#fffbea'), strength: numberParam(params, 'strength', 1, 0.05, 1), frequency: numberParam(params, 'frequency', 0.08, 0.03, 1) } } } } satisfies SceneOverlayEffectDefinition

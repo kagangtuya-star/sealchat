@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.frost-ritual', name: '寒霜仪式', description: '寒霜碎光穿过冷蓝薄雾。', category: 'magic', tags: ['魔法', '寒霜', '仪式'], overlays: [item('magic.frost', 0.88, { intensity: 0.65, speed: 0.7, windDirection: 160, windStrength: 0.3, spread: 0.72 }), item('weather.mist', 0.34, { intensity: 0.35, speed: 0.3 }), item('lighting.cold', 0.5)] })

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'planar.hell', name: '地狱', description: '余烬、火星与烟尘充满灼热火光位面。', category: 'planar', tags: ['位面', '地狱', '火焰'], overlays: [item('environment.embers', 0.86, { intensity: 0.65, speed: 1.1, windDirection: 305, windStrength: 0.22, spread: 0.5 }), item('environment.sparks', 0.72, { intensity: 0.42, speed: 1.3, spread: 0.62 }), item('environment.smoke', 0.46, { intensity: 0.36, speed: 0.65, windStrength: 0.2 }), item('lighting.firelight', 0.62)] })

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cyberpunk.blackout', name: '城市停电', description: '城市陷入无月黑暗，薄雾随断电脉冲显现。', category: 'cyberpunk', tags: ['赛博', '停电', '城市'], overlays: [item('lighting.moonless', 0.76), item('weather.mist', 0.32, { intensity: 0.3, speed: 0.3 }), item('special.blackout', 0.84, { strength: 0.9, frequency: 0.12 })] })

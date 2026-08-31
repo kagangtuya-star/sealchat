@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dungeon.torch', name: '火把地牢', description: '火把暖光照出灰尘与少量余烬。', category: 'dungeon', tags: ['地牢', '火把', '暖光'], overlays: [item('lighting.firelight', 0.42), item('environment.dust', 0.32, { intensity: 0.28, speed: 0.3 }), item('environment.embers', 0.2, { intensity: 0.1, speed: 0.5, windStrength: 0.06 })] })

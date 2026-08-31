@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dream.surreal', name: '超现实梦境', description: '精神波动与魔法微粒以不同节奏穿过暮色。', category: 'dream', tags: ['梦境', '超现实', '精神'], overlays: [item('magic.psychic', 0.78, { intensity: 0.5, speed: 1, spread: 1 }), item('magic.motes', 0.66, { intensity: 0.38, speed: 0.45, spread: 0.9 }), item('lighting.twilight', 0.48)] })

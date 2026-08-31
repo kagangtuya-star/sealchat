@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'forest.fairy', name: '妖精森林', description: '萤火虫与紫蓝魔法微粒点亮梦境森林。', category: 'forest', tags: ['森林', '妖精', '萤火虫', '魔法', '奇幻'], overlays: [item('environment.fireflies', 0.88, { intensity: 0.5, speed: 0.42, spread: 0.98 }), item('magic.motes', 0.72, { intensity: 0.42, speed: 0.5, windStrength: 0.08, spread: 0.9 }), item('lighting.dream', 0.4)] })

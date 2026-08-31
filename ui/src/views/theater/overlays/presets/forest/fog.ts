@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'forest.fog', name: '雾之森林', description: '冷雾封林，枝叶间残留微弱自然灵光。', category: 'forest', tags: ['森林', '浓雾', '神秘'], overlays: [item('weather.fog', 0.58, { intensity: 0.62, speed: 0.3, windStrength: 0.12 }), item('lighting.cold', 0.38), item('magic.nature', 0.18, { intensity: 0.08, speed: 0.3 })] })

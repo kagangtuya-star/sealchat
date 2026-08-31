@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'horror.haunted-house', name: '鬼屋', description: '积尘与薄雾中升起死灵微光，屋内近乎无光。', category: 'horror', tags: ['恐怖', '鬼屋', '死灵'], overlays: [item('weather.mist', 0.34, { intensity: 0.32, speed: 0.22 }), item('environment.dust', 0.38, { intensity: 0.34, speed: 0.25 }), item('magic.necrotic', 0.62, { intensity: 0.38, speed: 0.55 }), item('lighting.moonless', 0.66)] })

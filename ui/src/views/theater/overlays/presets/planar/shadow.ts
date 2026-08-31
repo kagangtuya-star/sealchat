@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'planar.shadow', name: '阴影位面', description: '死灵粒子从无月浓雾中缓慢升起。', category: 'planar', tags: ['位面', '阴影', '死灵'], overlays: [item('magic.necrotic', 0.76, { intensity: 0.5, speed: 0.62, spread: 0.86 }), item('weather.fog', 0.58, { intensity: 0.62, speed: 0.22 }), item('lighting.moonless', 0.7)] })

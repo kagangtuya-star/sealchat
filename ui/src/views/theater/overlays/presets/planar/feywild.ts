@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'planar.feywild', name: '妖精荒野', description: '萤火虫、花瓣与自然灵光充满梦境荒野。', category: 'planar', tags: ['位面', '妖精', '自然'], overlays: [item('environment.fireflies', 0.82, { intensity: 0.45, speed: 0.4, spread: 0.98 }), item('environment.petals', 0.72, { intensity: 0.42, speed: 0.55, windStrength: 0.2 }), item('magic.nature', 0.74, { intensity: 0.44, speed: 0.5, spread: 0.84 }), item('lighting.dream', 0.44)] })

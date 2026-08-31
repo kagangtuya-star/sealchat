@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.portal', name: '传送门环境', description: '两种速度的魔法粒子交叠在蓝紫暮色中。', category: 'magic', tags: ['魔法', '传送门', '奥术'], overlays: [item('magic.motes', 0.72, { intensity: 0.42, speed: 0.5, spread: 0.92 }), item('magic.arcane', 0.84, { intensity: 0.58, speed: 1.25, spread: 0.75 }), item('lighting.twilight', 0.5)] })

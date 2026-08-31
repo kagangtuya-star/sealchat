@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'battlefield.rain', name: '雨中战场', description: '中雨冲刷仍在飘散的战场烟尘。', category: 'battlefield', tags: ['战场', '雨', '阴天'], overlays: [item('weather.rain.medium', 0.84, { intensity: 0.7, speed: 1.1, windDirection: 135, windStrength: 0.25, spread: 0.08 }), item('environment.smoke', 0.34, { intensity: 0.24, speed: 0.5, windStrength: 0.22 }), item('lighting.overcast', 0.42)] })

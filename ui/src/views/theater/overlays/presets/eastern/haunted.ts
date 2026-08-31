@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'eastern.haunted', name: '幽冥古宅', description: '死灵幽光从无月古宅浓雾中升起。', category: 'eastern', tags: ['东方', '古宅', '幽冥'], overlays: [item('weather.fog', 0.56, { intensity: 0.58, speed: 0.24 }), item('magic.necrotic', 0.74, { intensity: 0.5, speed: 0.6, spread: 0.85 }), item('lighting.moonless', 0.68)] })

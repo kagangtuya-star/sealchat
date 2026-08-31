@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'modern.disaster', name: '灾难现场', description: '扬尘与残烟覆盖阴沉灾难区域。', category: 'modern', tags: ['现代', '灾难', '烟尘'], overlays: [item('environment.dust', 0.58, { intensity: 0.52, speed: 0.75, windStrength: 0.38 }), item('environment.smoke', 0.48, { intensity: 0.4, speed: 0.6, windStrength: 0.24 }), item('lighting.overcast', 0.46)] })

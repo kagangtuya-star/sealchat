@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'cave.magma', name: '熔岩洞穴', description: '熔岩火光托起余烬与飞散火星。', category: 'cave', tags: ['洞穴', '熔岩', '火焰'], overlays: [item('environment.embers', 0.82, { intensity: 0.58, speed: 0.9, windDirection: 300, windStrength: 0.14 }), item('environment.sparks', 0.68, { intensity: 0.38, speed: 1.15 }), item('lighting.firelight', 0.58)] })

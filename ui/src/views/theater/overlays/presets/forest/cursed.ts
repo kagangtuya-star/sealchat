@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'forest.cursed', name: '诅咒森林', description: '浓雾、死灵微粒与毒绿光侵蚀森林。', category: 'forest', tags: ['森林', '诅咒', '死灵'], overlays: [item('weather.fog', 0.56, { intensity: 0.58, speed: 0.28 }), item('magic.necrotic', 0.72, { intensity: 0.48, speed: 0.62, spread: 0.84 }), item('lighting.toxic', 0.44)] })

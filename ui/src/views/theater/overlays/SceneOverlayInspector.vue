@@ -45,7 +45,7 @@ const patchBinding = (patch: Partial<StageSceneOverlayBinding>) => {
   if (normalized) emit('update', normalized)
 }
 
-const numberControlValue = (control: Extract<SceneOverlayControl, { type: 'number' }>) => {
+const numberControlValue = (control: Extract<SceneOverlayControl, { type: 'number' | 'angle' }>) => {
   const value = props.binding.params[control.key]
   const fallback = props.definition?.defaultParams[control.key]
   return typeof value === 'number' ? value : typeof fallback === 'number' ? fallback : control.min
@@ -57,7 +57,7 @@ const controlValue = (control: SceneOverlayControl) => {
 }
 
 const normalizeControlValue = (control: SceneOverlayControl, value: StageSceneOverlayParamValue) => {
-  if (control.type === 'number') {
+  if (control.type === 'number' || control.type === 'angle') {
     const numeric = typeof value === 'number' && Number.isFinite(value) ? value : numberControlValue(control)
     const stepped = control.min + Math.round((numeric - control.min) / control.step) * control.step
     return Number(Math.min(control.max, Math.max(control.min, stepped)).toFixed(6))
@@ -146,6 +146,30 @@ const mediaTypeLabel = computed(() => props.binding.media?.animated === true || 
             />
             <small v-if="control.suffix">{{ control.suffix }}</small>
           </div>
+          <div v-else-if="control.type === 'angle'" class="scene-overlay-inspector__angle">
+            <div class="scene-overlay-inspector__angle-inputs">
+              <n-slider
+                :value="numberControlValue(control)"
+                :min="control.min"
+                :max="control.max"
+                :step="control.step"
+                :disabled="!canEdit"
+                @update:value="updateParam(control, $event)"
+              />
+              <n-input-number
+                :value="numberControlValue(control)"
+                :min="control.min"
+                :max="control.max"
+                :step="control.step"
+                :disabled="!canEdit"
+                size="small"
+                @update:value="$event !== null && updateParam(control, $event)"
+              >
+                <template #suffix>°</template>
+              </n-input-number>
+            </div>
+            <small>0° →　90° ↓　180° ←　270° ↑</small>
+          </div>
           <n-color-picker
             v-else-if="control.type === 'color'"
             :value="String(controlValue(control))"
@@ -193,6 +217,9 @@ const mediaTypeLabel = computed(() => props.binding.media?.animated === true || 
 .scene-overlay-inspector__number { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .scene-overlay-inspector__number :deep(.n-input-number) { min-width: 0; flex: 1; }
 .scene-overlay-inspector__number small { color: var(--sc-text-secondary); font-size: 9px; white-space: nowrap; }
+.scene-overlay-inspector__angle { min-width: 0; display: grid; gap: 3px; }
+.scene-overlay-inspector__angle-inputs { min-width: 0; display: grid; grid-template-columns: minmax(80px, 1fr) 92px; align-items: center; gap: 7px; }
+.scene-overlay-inspector__angle small { color: var(--sc-text-secondary); font-size: 9px; white-space: nowrap; }
 .scene-overlay-inspector__media-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .scene-overlay-inspector__media-type { color: var(--sc-text-secondary); font-size: 10px; }
 .scene-overlay-inspector__unknown { margin: 10px; color: #fbbf24; font-size: 11px; line-height: 1.5; }

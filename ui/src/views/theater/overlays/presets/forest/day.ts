@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'forest.day', name: '日间森林', description: '暖昼树影中漂浮花粉与极淡自然灵光。', category: 'forest', tags: ['森林', '白昼', '自然'], overlays: [item('environment.pollen', 0.42, { intensity: 0.32, speed: 0.35, spread: 0.9 }), item('magic.nature', 0.2, { intensity: 0.1, speed: 0.35 }), item('lighting.warm-day', 0.22)] })

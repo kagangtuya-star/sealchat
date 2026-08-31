@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'volcanic.lava-cave', name: '熔岩洞穴', description: '烟尘、余烬与火星在熔岩火光中上升。', category: 'volcanic', tags: ['火山', '洞穴', '熔岩'], overlays: [item('environment.embers', 0.82, { intensity: 0.58, speed: 0.95, windStrength: 0.16 }), item('environment.sparks', 0.7, { intensity: 0.4, speed: 1.2 }), item('environment.smoke', 0.4, { intensity: 0.3, speed: 0.55, windStrength: 0.14 }), item('lighting.firelight', 0.58)] })

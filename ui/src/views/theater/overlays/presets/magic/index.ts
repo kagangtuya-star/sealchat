@@ -1,0 +1,2 @@
+import arcaneRitual from './arcane-ritual'; import summoning from './summoning'; import portal from './portal'; import holyArrival from './holy-arrival'; import necromancy from './necromancy'; import frostRitual from './frost-ritual'; import natureRitual from './nature-ritual'
+export const magicSceneOverlayPresets = [arcaneRitual, summoning, portal, holyArrival, necromancy, frostRitual, natureRitual]

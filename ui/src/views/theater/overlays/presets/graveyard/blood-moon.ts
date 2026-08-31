@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'graveyard.blood-moon', name: '血月墓地', description: '血月染红薄雾，死灵微粒缓慢升起。', category: 'graveyard', tags: ['墓地', '血月', '死灵'], overlays: [item('weather.mist', 0.32, { intensity: 0.3, speed: 0.25 }), item('magic.necrotic', 0.72, { intensity: 0.48, speed: 0.6, spread: 0.82 }), item('lighting.blood-moon', 0.58)] })

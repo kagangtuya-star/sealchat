@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dream.nightmare', name: '噩梦', description: '虚空与血色微粒在无月浓雾中纠缠。', category: 'dream', tags: ['梦境', '噩梦', '虚空'], overlays: [item('weather.fog', 0.52, { intensity: 0.54, speed: 0.25 }), item('magic.void', 0.78, { intensity: 0.52, speed: 0.85, spread: 1 }), item('magic.blood', 0.68, { intensity: 0.42, speed: 0.65 }), item('lighting.moonless', 0.66)] })

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'temple.corrupted', name: '腐化神殿', description: '死灵与虚空微粒浸透毒绿神殿。', category: 'temple', tags: ['神殿', '腐化', '虚空'], overlays: [item('magic.necrotic', 0.72, { intensity: 0.48, speed: 0.62 }), item('magic.void', 0.72, { intensity: 0.44, speed: 0.75, spread: 0.96 }), item('lighting.toxic', 0.5)] })

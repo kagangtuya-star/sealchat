@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'graveyard.haunted', name: '闹鬼墓地', description: '死灵幽光从月下浓雾中升起。', category: 'graveyard', tags: ['墓地', '闹鬼', '死灵'], overlays: [item('weather.fog', 0.54, { intensity: 0.55, speed: 0.25 }), item('magic.necrotic', 0.78, { intensity: 0.55, speed: 0.65, spread: 0.85 }), item('lighting.moonlight', 0.38)] })

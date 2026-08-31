@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'battlefield.aftermath', name: '战后战场', description: '残烟与黑灰漂过昏黄战后大地。', category: 'battlefield', tags: ['战场', '战后', '荒凉'], overlays: [item('environment.smoke', 0.4, { intensity: 0.3, speed: 0.42, windStrength: 0.15 }), item('environment.soot', 0.46, { intensity: 0.38, speed: 0.5 }), item('lighting.dusk', 0.46)] })

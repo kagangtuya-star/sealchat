@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'dungeon.abandoned', name: '废弃地下城', description: '浓雾与厚尘掩埋冷色遗迹。', category: 'dungeon', tags: ['地牢', '废弃', '浓雾'], overlays: [item('weather.fog', 0.48, { intensity: 0.5, speed: 0.25, windStrength: 0.1 }), item('environment.dust', 0.38, { intensity: 0.36, speed: 0.25 }), item('lighting.cold', 0.44)] })

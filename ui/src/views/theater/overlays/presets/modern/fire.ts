@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'modern.fire', name: '火灾现场', description: '浓烟、余烬与火星被火场红光照亮。', category: 'modern', tags: ['现代', '火灾', '现场'], overlays: [item('environment.smoke', 0.62, { intensity: 0.58, speed: 0.85, windStrength: 0.28 }), item('environment.embers', 0.78, { intensity: 0.52, speed: 1.05, windStrength: 0.2 }), item('environment.sparks', 0.66, { intensity: 0.38, speed: 1.3 }), item('lighting.firelight', 0.54)] })

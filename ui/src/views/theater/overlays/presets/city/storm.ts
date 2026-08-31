@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'city.storm', name: '暴雨街道', description: '强风暴雨、低频闪电、阴天与薄雾。', category: 'city', tags: ['雨', '暴雨', '城市', '雷电', '天气'], overlays: [item('weather.rain.heavy', 0.9, { intensity: 0.85, speed: 1.3, windDirection: 165, windStrength: 0.35, spread: 0.08 }), item('special.lightning', 0.82, { frequency: 0.12, strength: 0.82 }), item('lighting.overcast', 0.4), item('weather.mist', 0.18, { intensity: 0.18, speed: 0.5, windDirection: 165, windStrength: 0.22 })] })

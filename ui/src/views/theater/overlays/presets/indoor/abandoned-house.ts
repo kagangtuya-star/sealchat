@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'indoor.abandoned-house', name: '废弃房屋', description: '冷色废屋中积尘浮动、薄雾渗入。', category: 'indoor', tags: ['室内', '废弃', '阴冷'], overlays: [item('environment.dust', 0.42, { intensity: 0.4, speed: 0.3, spread: 0.82 }), item('lighting.cold', 0.4), item('weather.mist', 0.12, { intensity: 0.1, speed: 0.2 })] })

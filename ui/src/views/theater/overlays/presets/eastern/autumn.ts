@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'eastern.autumn', name: '秋日古道', description: '夕阳古道上暖色秋叶斜落。', category: 'eastern', tags: ['东方', '秋日', '古道'], overlays: [item('environment.autumn-leaves', 0.82, { intensity: 0.62, speed: 0.82, windDirection: 160, windStrength: 0.38, spread: 0.58 }), item('lighting.sunset', 0.42)] })

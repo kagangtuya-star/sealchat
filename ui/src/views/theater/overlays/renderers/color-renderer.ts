@@ -1,7 +1,7 @@
 import type { SceneOverlayRenderer } from '../scene-overlay-types'
 
 interface ColorRendererConfig {
-  mode?: 'solid' | 'fog' | 'lightning'
+  mode?: 'solid' | 'fog' | 'lightning' | 'pulse'
   color?: string
   secondaryColor?: string
   strength?: number
@@ -48,7 +48,7 @@ export const colorSceneOverlayRenderer: SceneOverlayRenderer = {
     const apply = (input: unknown) => {
       cleanupMotion()
       const value = input && typeof input === 'object' ? input as ColorRendererConfig : {}
-      const mode = value.mode === 'fog' || value.mode === 'lightning' ? value.mode : 'solid'
+      const mode = value.mode === 'fog' || value.mode === 'lightning' || value.mode === 'pulse' ? value.mode : 'solid'
       const color = safeColor(value.color, '#000000')
       const secondaryColor = safeColor(value.secondaryColor, color)
       layer.style.opacity = String(finiteRange(value.strength, 1, 0, 1))
@@ -92,6 +92,21 @@ export const colorSceneOverlayRenderer: SceneOverlayRenderer = {
           }, delay)
         }
         schedule()
+      }
+
+      if (mode === 'pulse') {
+        if (context.reducedMotion) return
+        const strength = finiteRange(value.strength, 0.65, 0.05, 1)
+        const frequency = finiteRange(value.frequency, 0.3, 0.03, 2)
+        trackAnimation(layer.animate([
+          { opacity: strength * 0.12 },
+          { opacity: strength },
+          { opacity: strength * 0.12 },
+        ], {
+          duration: 1_000 / frequency,
+          iterations: Infinity,
+          easing: 'ease-in-out',
+        }))
       }
     }
 

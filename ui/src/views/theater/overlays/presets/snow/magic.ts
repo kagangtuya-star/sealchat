@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'snow.magic', name: '魔法冰原', description: '飘雪与寒霜碎光交叠的魔法冰原。', category: 'snow', tags: ['雪地', '魔法', '寒霜'], overlays: [item('weather.snow', 0.78, { intensity: 0.48, speed: 0.75, windStrength: 0.22 }), item('magic.frost', 0.8, { intensity: 0.5, speed: 0.62, windStrength: 0.2, spread: 0.75 }), item('lighting.cold', 0.46)] })

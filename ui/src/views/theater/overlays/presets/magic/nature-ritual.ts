@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.nature-ritual', name: '自然仪式', description: '翠绿灵光与金色花粉充满梦境色林地。', category: 'magic', tags: ['魔法', '自然', '仪式'], overlays: [item('magic.nature', 0.86, { intensity: 0.62, speed: 0.62, spread: 0.82 }), item('environment.pollen', 0.68, { intensity: 0.5, speed: 0.45, spread: 0.92 }), item('lighting.dream', 0.38)] })

@@ -1,0 +1,2 @@
+import { defineSceneOverlayPreset as preset, presetItem as item } from '../preset-helpers'
+export default preset({ id: 'magic.arcane-ritual', name: '奥术仪式', description: '高活性奥术粒子在暮色中随魔力脉冲共振。', category: 'magic', tags: ['魔法', '奥术', '仪式'], overlays: [item('magic.arcane', 0.88, { intensity: 0.68, speed: 1.1, windDirection: 45, windStrength: 0.2, spread: 0.78 }), item('lighting.twilight', 0.46), item('special.pulse-magic', 0.52, { strength: 0.48, frequency: 0.5 })] })
