@@ -249,6 +249,7 @@ const overlayPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
+const componentActionsExpanded = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
@@ -7838,12 +7839,20 @@ onBeforeUnmount(() => {
       </n-button-group>
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
-        <StageCopyToolbar
-          :mode="copyMode"
-          :disabled="!store.canCopy.value"
-          @copy="copySelectedObjects"
-          @select-mode="copyMode = $event"
-        />
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              class="theater-component-actions-toggle"
+              :class="{ 'is-active': componentActionsExpanded }"
+              :aria-expanded="componentActionsExpanded"
+              aria-label="组件操作"
+              @click="componentActionsExpanded = !componentActionsExpanded"
+            >
+              <template #icon><n-icon><Components /></n-icon></template>
+            </n-button>
+          </template>
+          组件操作
+        </n-tooltip>
         <StageGridToolbar
           :snap-enabled="gridSnapEnabled"
           :display-grid="gridDisplayEnabled"
@@ -7852,6 +7861,35 @@ onBeforeUnmount(() => {
           @toggle-snap="toggleGridSnap"
           @toggle-display-grid="toggleGridDisplay"
           @toggle-grid-on-top="toggleGridOnTop"
+        />
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
+      </n-button-group>
+      <n-tooltip trigger="hover">
+        <template #trigger>
+          <n-button class="theater-stage-reset-camera" size="small" quaternary aria-label="复位视角" @click="store.resetCamera">
+            <template #icon><n-icon><Focus /></n-icon></template>
+          </n-button>
+        </template>
+        复位视角
+      </n-tooltip>
+      <span class="theater-stage-zoom">{{ Math.round(store.state.camera.zoom * 100) }}%</span>
+    </header>
+
+    <div
+      v-if="canEditAllObjects && componentActionsExpanded"
+      class="theater-component-actions-toolbar"
+      :class="{ 'is-controls-visible': toolbarColorsVisible }"
+      @pointerenter="revealToolbarColors"
+      @pointerleave="hideToolbarColors"
+      @focusin="revealToolbarColors"
+      @focusout="handleToolbarFocusOut"
+    >
+      <n-button-group class="theater-stage-object-actions" size="small">
+        <StageCopyToolbar
+          :mode="copyMode"
+          :disabled="!store.canCopy.value"
+          @copy="copySelectedObjects"
+          @select-mode="copyMode = $event"
         />
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -7889,19 +7927,9 @@ onBeforeUnmount(() => {
         </n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切所选组件" @click="store.cutSelectedObjects"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切所选组件 Ctrl+X</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
-        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="removeSelectedObjectsWithConfirm"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
       </n-button-group>
-      <n-tooltip trigger="hover">
-        <template #trigger>
-          <n-button class="theater-stage-reset-camera" size="small" quaternary aria-label="复位视角" @click="store.resetCamera">
-            <template #icon><n-icon><Focus /></n-icon></template>
-          </n-button>
-        </template>
-        复位视角
-      </n-tooltip>
-      <span class="theater-stage-zoom">{{ Math.round(store.state.camera.zoom * 100) }}%</span>
-    </header>
+    </div>
 
     <div ref="workspaceRef" class="theater-stage-workspace">
       <div
@@ -9144,7 +9172,29 @@ onBeforeUnmount(() => {
 .theater-stage-toolbar :deep(.n-button) {
   transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
-.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)) {
+.theater-component-actions-toolbar {
+  position: absolute; z-index: 9999; top: 46px; right: 180px; box-sizing: border-box; min-width: 0; width: max-content;
+  max-width: calc(100% - 188px); height: 40px; display: flex; align-items: center; gap: 7px; padding: 0 8px;
+  overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid transparent;
+  background: transparent; box-shadow: none; scrollbar-width: none;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.theater-component-actions-toolbar.is-controls-visible {
+  border-bottom-color: var(--sc-border-mute, rgba(255, 255, 255, .08));
+  background: color-mix(in srgb, var(--sc-bg-header, #262626) 92%, transparent);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.theater-component-actions-toolbar::-webkit-scrollbar { display: none; }
+.theater-component-actions-toolbar > .theater-stage-object-actions { margin-left: auto; }
+.theater-component-actions-toolbar :deep(.n-button) {
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+@media (max-width: 700px) {
+  .theater-component-actions-toolbar { right: 8px; max-width: calc(100% - 16px); }
+}
+.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)),
+.theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)) {
   --n-color: transparent !important;
   --n-color-hover: transparent !important;
   --n-color-pressed: transparent !important;
@@ -9162,7 +9212,8 @@ onBeforeUnmount(() => {
   border-color: transparent !important;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72));
 }
-.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
+.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)),
+.theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
   box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
 }
 .theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
@@ -9196,7 +9247,7 @@ onBeforeUnmount(() => {
   min-width: 18px;
 }
 .theater-bulk-select-badge { display: inline-flex; }
-.theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
+.theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-component-actions-toggle.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }
