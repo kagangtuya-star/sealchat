@@ -1,4 +1,8 @@
-import { registerSceneOverlayEffect, validateSceneOverlayEffectRegistry } from '../scene-overlay-registry'
+import {
+  registerSceneOverlayEffect,
+  unregisterSceneOverlayEffect,
+  validateSceneOverlayEffectRegistry,
+} from '../scene-overlay-registry'
 import customMedia from './custom-media'
 import ashfall from './weather/ashfall'
 import blizzard from './weather/blizzard'
@@ -77,10 +81,21 @@ let registered = false
 
 export const registerBuiltInSceneOverlayEffects = () => {
   if (registered) return
-  registered = true
-  builtInSceneOverlayEffects.forEach(registerSceneOverlayEffect)
-  if (import.meta.env.DEV) {
-    const issues = validateSceneOverlayEffectRegistry()
-    if (issues.length) throw new Error(issues.join('\n'))
+  try {
+    builtInSceneOverlayEffects.forEach(registerSceneOverlayEffect)
+    if (import.meta.env.DEV) {
+      const issues = validateSceneOverlayEffectRegistry()
+      if (issues.length) throw new Error(issues.join('\n'))
+    }
+    registered = true
+  } catch (error) {
+    registered = false
+    throw error
   }
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    builtInSceneOverlayEffects.forEach(unregisterSceneOverlayEffect)
+  })
 }

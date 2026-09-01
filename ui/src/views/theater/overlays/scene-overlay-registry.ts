@@ -26,6 +26,15 @@ export const getSceneOverlayEffect = (id: string) => effectDefinitions.get(id)
 
 export const listSceneOverlayEffects = () => [...effectDefinitions.values()]
 
+export const unregisterSceneOverlayEffect = (definition: SceneOverlayEffectDefinition) => {
+  if (effectDefinitions.get(definition.id) !== definition) return
+  effectDefinitions.delete(definition.id)
+  const message = `Duplicate scene overlay effect: ${definition.id}`
+  for (let index = effectRegistrationIssues.length - 1; index >= 0; index -= 1) {
+    if (effectRegistrationIssues[index] === message) effectRegistrationIssues.splice(index, 1)
+  }
+}
+
 export const validateSceneOverlayEffectRegistry = () => {
   const issues: string[] = [...effectRegistrationIssues]
   const ids = new Set<string>()

@@ -13,6 +13,9 @@ const loadEngine = () => {
     ]).then(async ([engineModule, slimModule]) => {
       await slimModule.loadSlim(engineModule.tsParticles)
       return engineModule.tsParticles
+    }).catch((error) => {
+      enginePromise = null
+      throw error
     })
   }
   return enginePromise
