@@ -91,7 +91,14 @@
                 </div>
                 <div class="iform-card__actions">
                   <n-button quaternary size="tiny" @click="iform.openPanel(form.id)">面板</n-button>
-                  <n-button quaternary size="tiny" @click="openFloating(form.id)">弹出</n-button>
+                  <n-button
+                    quaternary
+                    size="tiny"
+                    :disabled="form.allowPopout === false"
+                    @click="popoutInternalLink(form)"
+                  >
+                    <template #icon><n-icon :component="OpenOutline" /></template>
+                  </n-button>
                   <n-tooltip trigger="hover">
                     <template #trigger>
                       <n-button quaternary size="tiny" @click="copyInternalLink(form)">
@@ -264,11 +271,15 @@ import { useIFormStore } from '@/stores/iform';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { useMessage, useDialog } from 'naive-ui';
-import { CopyOutline, TrashOutline } from '@vicons/ionicons5';
+import { CopyOutline, OpenOutline, TrashOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink';
+import {
+  generateInternalSurfaceLink,
+  openInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+} from '@/utils/internalSurfaceLink';
 import { api } from '@/stores/_config';
 import type { ChannelIFormTemplateCatalogItem } from '@/types/iform';
 
@@ -523,14 +534,6 @@ const confirmDelete = (form: ChannelIForm) => {
   });
 };
 
-const openFloating = (formId: string) => {
-  if (!formId) {
-    return;
-  }
-  const windowId = iform.createWindowId(formId);
-  iform.openFloating(formId, { windowId });
-};
-
 const resolveEmbedLinkBase = () => {
   const domain = utils.config?.domain?.trim() || '';
   if (!domain) {
@@ -572,19 +575,37 @@ const copyEmbedLink = async (form: ChannelIForm) => {
   }
 };
 
-const copyInternalLink = async (form: ChannelIForm) => {
+const getInternalLink = (form: ChannelIForm) => {
   const worldId = String(chat.currentWorldId || '').trim();
   const channelId = String(iform.visibleChannelId || chat.curChannel?.id || '').trim();
   if (!worldId || !channelId || !form?.id) {
     message.warning('无法生成外部链接');
-    return;
+    return null;
   }
-  const copied = await copyTextWithFallback(generateInternalSurfaceLink({
+  return generateInternalSurfaceLink({
     type: 'iform',
     id: form.id,
     worldId,
     channelId,
-  }, { base: resolveInternalSurfaceLinkBase(utils.config) }));
+  }, { base: resolveInternalSurfaceLinkBase(utils.config) });
+};
+
+const popoutInternalLink = (form: ChannelIForm) => {
+  const link = getInternalLink(form);
+  if (!link) return;
+  const opened = openInternalSurfaceLink(link, {
+    width: form.defaultWidth,
+    height: form.defaultHeight,
+  });
+  if (!opened) {
+    message.error('弹出失败，请允许浏览器弹窗');
+  }
+};
+
+const copyInternalLink = async (form: ChannelIForm) => {
+  const link = getInternalLink(form);
+  if (!link) return;
+  const copied = await copyTextWithFallback(link);
   copied ? message.success('外部链接已复制') : message.error('复制失败');
 };
 

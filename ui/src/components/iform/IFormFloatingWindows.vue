@@ -20,6 +20,21 @@
         <div class="iform-floating__actions" @pointerdown.stop>
           <n-tooltip trigger="hover">
             <template #trigger>
+              <n-button
+                quaternary
+                size="tiny"
+                :disabled="resolveForm(window.formId)?.allowPopout === false"
+                @click.stop="popoutInternalLink(window)"
+              >
+                <template #icon>
+                  <n-icon :component="OpenOutline" />
+                </template>
+              </n-button>
+            </template>
+            <span>弹出</span>
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
               <n-button quaternary size="tiny" @click.stop="copyInternalLink(window.formId)">
                 <template #icon>
                   <n-icon :component="CopyOutline" />
@@ -139,13 +154,17 @@ import {
   updateFloatingBadgeGesture,
   type FloatingBadgeGestureState,
 } from './floatingBadgeGesture';
-import { CloseOutline, ContractOutline, CopyOutline, ExpandOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
+import { CloseOutline, ContractOutline, CopyOutline, ExpandOutline, OpenOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { useMessage } from 'naive-ui';
 import { copyTextWithFallback } from '@/utils/clipboard';
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink';
+import {
+  generateInternalSurfaceLink,
+  openInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+} from '@/utils/internalSurfaceLink';
 
 const iform = useIFormStore();
 const chat = useChatStore();
@@ -168,19 +187,37 @@ const resolveForm = (formId: string) => formMap.value.get(formId);
 
 const formTitle = (formId: string) => resolveForm(formId)?.name?.trim() || '嵌入窗口';
 
-const copyInternalLink = async (formId: string) => {
+const getInternalLink = (formId: string) => {
   const worldId = String(chat.currentWorldId || '').trim();
   const channelId = String(iform.visibleChannelId || chat.curChannel?.id || '').trim();
   if (!worldId || !channelId || !formId) {
     message.warning('无法生成外部链接');
-    return;
+    return null;
   }
-  const copied = await copyTextWithFallback(generateInternalSurfaceLink({
+  return generateInternalSurfaceLink({
     type: 'iform',
     id: formId,
     worldId,
     channelId,
-  }, { base: resolveInternalSurfaceLinkBase(utils.config) }));
+  }, { base: resolveInternalSurfaceLinkBase(utils.config) });
+};
+
+const popoutInternalLink = (windowState: (typeof floatingWindows.value)[number]) => {
+  const link = getInternalLink(windowState.formId);
+  if (!link) return;
+  const opened = openInternalSurfaceLink(link, {
+    width: windowState.width,
+    height: windowState.height,
+  });
+  if (!opened) {
+    message.error('弹出失败，请允许浏览器弹窗');
+  }
+};
+
+const copyInternalLink = async (formId: string) => {
+  const link = getInternalLink(formId);
+  if (!link) return;
+  const copied = await copyTextWithFallback(link);
   copied ? message.success('外部链接已复制') : message.error('复制失败');
 };
 

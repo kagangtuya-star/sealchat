@@ -1,3 +1,5 @@
+import { isMobileBrowserRuntime } from './windowFocusState';
+
 export const INTERNAL_SURFACE_TYPES = ['iform', 'note', 'character'] as const;
 
 export type InternalSurfaceType = typeof INTERNAL_SURFACE_TYPES[number];
@@ -48,6 +50,54 @@ export function generateInternalSurfaceLink(
     channel: params.channelId,
   });
   return `${base}/#/internal/${encodeURIComponent(params.type)}/${encodeURIComponent(params.id)}?${search.toString()}`;
+}
+
+export interface InternalSurfacePopoutOptions {
+  width?: number;
+  height?: number;
+}
+
+const normalizePopupDimension = (value: number | undefined, fallback: number, min: number, max: number) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+};
+
+export function openInternalSurfaceLink(
+  link: string,
+  options?: InternalSurfacePopoutOptions,
+): Window | null {
+  if (typeof window === 'undefined' || !link) return null;
+
+  let opened: Window | null;
+  if (isMobileBrowserRuntime()) {
+    opened = window.open(link, '_blank');
+  } else {
+    const width = normalizePopupDimension(options?.width, 960, 320, 1920);
+    const height = normalizePopupDimension(options?.height, 720, 240, 1200);
+    const features = [
+      'resizable=yes',
+      'scrollbars=yes',
+      `width=${width}`,
+      `height=${height}`,
+    ];
+    if (window.screen?.availWidth && window.screen?.availHeight) {
+      features.push(
+        `left=${Math.max(0, Math.round((window.screen.availWidth - width) / 2))}`,
+        `top=${Math.max(0, Math.round((window.screen.availHeight - height) / 2))}`,
+      );
+    }
+    opened = window.open(link, '_blank', features.join(','));
+  }
+
+  if (opened) {
+    try {
+      opened.opener = null;
+    } catch {
+      // Cross-origin WindowProxy may reject opener assignment.
+    }
+  }
+  return opened;
 }
 
 export function parseInternalSurfaceLink(value: string): InternalSurfaceLinkParams | null {

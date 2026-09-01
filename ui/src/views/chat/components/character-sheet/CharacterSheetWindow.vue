@@ -29,6 +29,15 @@
       <div class="sheet-window__controls">
         <button
           class="sheet-window__control-btn"
+          title="弹出"
+          aria-label="弹出"
+          @click="popoutInternalSurface"
+          @pointerdown.stop
+        >
+          <n-icon :component="ExternalLink" :size="14" />
+        </button>
+        <button
+          class="sheet-window__control-btn"
           title="复制外部链接"
           @click="copyInternalSurfaceLink"
           @pointerdown.stop
@@ -167,7 +176,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NIcon, NTabs, NTabPane, NInput, NButton, NSelect, useMessage } from 'naive-ui';
 import { Close, Remove as Minus, Create as Edit, Eye, ChevronBack } from '@vicons/ionicons5';
-import { Copy, User } from '@vicons/tabler';
+import { Copy, ExternalLink, User } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
@@ -175,7 +184,11 @@ import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from '@
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import IframeSandbox, { type SealChatEvent } from './IframeSandbox.vue';
 import { copyTextWithFallback } from '@/utils/clipboard';
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink';
+import {
+  generateInternalSurfaceLink,
+  openInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+} from '@/utils/internalSurfaceLink';
 
 const props = defineProps<{
   windowId: string;
@@ -290,20 +303,36 @@ const handlePointerDown = () => {
   sheetStore.bringToFront(props.windowId);
 };
 
-const copyInternalSurfaceLink = async () => {
+const getInternalSurfaceLink = () => {
   const win = windowData.value;
   const worldId = String(win?.worldId || chatStore.currentWorldId || '').trim();
   const channelId = String(win?.channelId || chatStore.curChannel?.id || '').trim();
   if (!win?.cardId || !worldId || !channelId) {
     message.warning('无法生成外部链接');
-    return;
+    return null;
   }
-  const copied = await copyTextWithFallback(generateInternalSurfaceLink({
+  return generateInternalSurfaceLink({
     type: 'character',
     id: win.cardId,
     worldId,
     channelId,
-  }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }));
+  }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) });
+};
+
+const popoutInternalSurface = () => {
+  const link = getInternalSurfaceLink();
+  if (!link) return;
+  const win = windowData.value;
+  const opened = openInternalSurfaceLink(link, { width: win?.width, height: win?.height });
+  if (!opened) {
+    message.error('弹出失败，请允许浏览器弹窗');
+  }
+};
+
+const copyInternalSurfaceLink = async () => {
+  const link = getInternalSurfaceLink();
+  if (!link) return;
+  const copied = await copyTextWithFallback(link);
   copied ? message.success('外部链接已复制') : message.error('复制失败');
 };
 
