@@ -1,13 +1,17 @@
 <template>
   <Teleport to="body">
     <div
-      v-if="note && !userState?.minimized && backgroundImageReady"
+      v-if="note && (internalSurface || !userState?.minimized) && backgroundImageReady"
       ref="noteEl"
       class="sticky-note"
       data-sc-font-surface="true"
       :class="[
         `sticky-note--${getStickyNoteColorTheme(pendingColor || note.color)}`,
-        { 'sticky-note--editing': isEditing, 'sticky-note--highlight': isHighlighted }
+        {
+          'sticky-note--editing': isEditing,
+          'sticky-note--highlight': isHighlighted,
+          'sticky-note--internal-surface': internalSurface,
+        }
       ]"
       :style="noteStyle"
       @pointerdown="handlePointerDown"
@@ -36,6 +40,15 @@
           </span>
         </div>
         <div class="sticky-note__actions">
+          <button
+            class="sticky-note__action-btn"
+            :disabled="!defaultInternalSurfaceLink"
+            :title="defaultInternalSurfaceLink ? '复制外部链接' : '无法生成外部链接'"
+            @click="copyInternalSurfaceLink"
+            @pointerdown.stop
+          >
+            <n-icon :component="Copy" :size="14" />
+          </button>
           <button
             class="sticky-note__action-btn"
             :class="{ 'sticky-note__action-btn--disabled': isLockedByOther }"
@@ -116,6 +129,7 @@
             </svg>
           </button>
           <button
+            v-if="!internalSurface"
             class="sticky-note__action-btn"
             title="最小化"
             @click="minimize"
@@ -137,6 +151,7 @@
             </svg>
           </button>
           <button
+            v-if="!internalSurface"
             class="sticky-note__action-btn sticky-note__action-btn--close"
             title="关闭"
             @click="close"
@@ -271,6 +286,7 @@
 
       <!-- 调整大小手柄 -->
       <div
+        v-if="!internalSurface"
         class="sticky-note__resize-handle"
         @pointerdown.stop="startResize"
       ></div>
@@ -280,8 +296,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
-import { useMessage, type MentionOption } from 'naive-ui'
+import { NIcon, useMessage, type MentionOption } from 'naive-ui'
 import { nanoid } from 'nanoid'
+import { Copy } from '@vicons/tabler'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore, chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
@@ -289,6 +306,7 @@ import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver'
 import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
+import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { copyTextWithFallback, copyTextWithResult } from '@/utils/clipboard'
 import {
   STICKY_NOTE_PRESET_COLORS,
@@ -325,6 +343,7 @@ const typeComponentMap: Record<StickyNoteType, ReturnType<typeof defineAsyncComp
 
 const props = defineProps<{
   noteId: string
+  internalSurface?: boolean
 }>()
 
 const stickyNoteStore = useStickyNoteStore()
@@ -472,6 +491,28 @@ const defaultStickyNoteEmbedLink = computed(() => {
     { base: resolveIFormEmbedLinkBase() },
   )
 })
+
+const defaultInternalSurfaceLink = computed(() => {
+  const currentNote = note.value
+  const worldId = String(currentNote?.worldId || chatStore.currentWorldId || '').trim()
+  const channelId = String(currentNote?.channelId || chatStore.curChannel?.id || '').trim()
+  if (!currentNote?.id || !worldId || !channelId) return ''
+  return generateInternalSurfaceLink({
+    type: 'note',
+    id: currentNote.id,
+    worldId,
+    channelId,
+  }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) })
+})
+
+const copyInternalSurfaceLink = async () => {
+  if (!defaultInternalSurfaceLink.value) {
+    message.warning('无法生成外部链接')
+    return
+  }
+  const copied = await copyTextWithFallback(defaultInternalSurfaceLink.value)
+  copied ? message.success('外部链接已复制') : message.error('复制失败')
+}
 
 const copyStickyNoteEmbedLink = async () => {
   const link = defaultStickyNoteEmbedLink.value
@@ -1077,12 +1118,7 @@ const noteStyle = computed(() => {
   const attachmentId = normalizeAttachmentId(background?.attachmentId || '')
   const fit = background?.fit || 'cover'
 
-  return {
-    left: `${x}px`,
-    top: `${y}px`,
-    width: `${w}px`,
-    height: `${h}px`,
-    zIndex: z,
+  const appearanceStyle = {
     '--sticky-note-bg-image': attachmentId ? `url("/api/v1/attachment/${attachmentId}")` : 'none',
     '--sticky-note-bg-opacity': String(background?.opacity ?? 0),
     '--sticky-note-bg-size': fit === 'stretch' ? '100% 100%' : fit === 'tile' ? 'auto' : fit,
@@ -1090,6 +1126,25 @@ const noteStyle = computed(() => {
     '--sticky-note-bg-position': `${background?.positionX ?? 50}% ${background?.positionY ?? 50}%`,
     '--sticky-note-bg-wash': String(background?.contentWashOpacity ?? 0),
     '--sticky-note-custom-color': getStickyNoteSurfaceColor(pendingColor.value || n?.color)
+  }
+
+  if (props.internalSurface) {
+    return {
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
+      zIndex: 1,
+      ...appearanceStyle,
+    }
+  }
+
+  return {
+    left: `${x}px`,
+    top: `${y}px`,
+    width: `${w}px`,
+    height: `${h}px`,
+    zIndex: z,
+    ...appearanceStyle,
   }
 })
 
@@ -1123,6 +1178,7 @@ function formatTime(timestamp: number): string {
 // 事件处理
 function handlePointerDown(e: PointerEvent) {
   if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (props.internalSurface) return
   stickyNoteStore.bringToFront(props.noteId)
 }
 
@@ -1236,6 +1292,7 @@ function deleteNote() {
 
 // 拖拽逻辑
 function startDrag(e: PointerEvent) {
+  if (props.internalSurface) return
   if (!noteEl.value) return
   if (e.pointerType === 'mouse' && e.button !== 0) return
 
@@ -1286,6 +1343,7 @@ function stopDrag(e: PointerEvent) {
 
 // 调整大小逻辑
 function startResize(e: PointerEvent) {
+  if (props.internalSurface) return
   if (!noteEl.value) return
   if (e.pointerType === 'mouse' && e.button !== 0) return
 
@@ -1418,6 +1476,17 @@ if (typeof window !== 'undefined') {
   user-select: none;
   transition: box-shadow 0.2s;
   isolation: isolate;
+}
+
+.sticky-note--internal-surface {
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.sticky-note--internal-surface .sticky-note__header {
+  cursor: default;
 }
 
 .sticky-note::before,

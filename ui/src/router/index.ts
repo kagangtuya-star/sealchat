@@ -1,5 +1,4 @@
 import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
 import UserSigninVue from '@/views/user/sign-in-view.vue'
 import UserSignupVue from '@/views/user/sign-up-view.vue'
 import UserPasswordResetView from '@/views/user/password-reset-view.vue'
@@ -9,6 +8,8 @@ import WorldPrivateHint from '@/views/world/WorldPrivateHint.vue'
 import InviteConsume from '@/views/invite/InviteConsume.vue'
 import ObserverEntry from '@/views/observer/ObserverEntry.vue'
 
+
+const HomeView = () => import('../views/HomeView.vue')
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -95,6 +96,12 @@ const router = createRouter({
       path: '/status/perf',
       name: 'status-perf',
       component: () => import('@/views/status/StatusPerfDashboard.vue'),
+    },
+    {
+      path: '/internal/:type/:id',
+      name: 'internal-surface',
+      component: () => import('@/views/internal/InternalSurfaceView.vue'),
+      meta: { internalSurface: true },
     },
     {
       path: '/:worldId/:channelId?',

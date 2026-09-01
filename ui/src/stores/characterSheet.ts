@@ -15,6 +15,7 @@ export interface CharacterSheetWindow {
   channelId: string;
   worldId?: string;
   readOnly?: boolean;
+  ephemeral?: boolean;
   sheetType?: string;
   attrs: Record<string, any>;
   template: string;
@@ -53,8 +54,8 @@ const ATTRS_SYNC_THROTTLE = 600;
 
 const isOnlinePreviewCardId = (cardId?: string) => String(cardId || '').startsWith('online:');
 
-const isEphemeralWindowState = (state?: { cardId?: string; readOnly?: boolean }) => (
-  !!state?.readOnly || isOnlinePreviewCardId(state?.cardId)
+const isEphemeralWindowState = (state?: { cardId?: string; readOnly?: boolean; ephemeral?: boolean }) => (
+  !!state?.readOnly || !!state?.ephemeral || isOnlinePreviewCardId(state?.cardId)
 );
 
 const isAttrsEqual = (a: Record<string, any>, b: Record<string, any>) => {
@@ -955,6 +956,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       templateId?: string;
       templateText?: string;
       readOnly?: boolean;
+      ephemeral?: boolean;
+      reuse?: boolean;
       worldId?: string;
       placement?: 'right';
     }
@@ -963,9 +966,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     const managedTemplate = templateMeta?.templateMode === 'managed' && templateMeta.templateId
       ? templateStore.getTemplateById(templateMeta.templateId)
       : null;
-    const existingId = activeWindowIds.value.find(
-      id => windows.value[id]?.cardId === card.id
-    );
+    const existingId = templateMeta?.reuse === false
+      ? undefined
+      : activeWindowIds.value.find(id => windows.value[id]?.cardId === card.id);
     if (existingId) {
       const existing = windows.value[existingId];
       const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
@@ -1077,6 +1080,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       channelId,
       worldId: templateMeta?.worldId,
       readOnly: !!templateMeta?.readOnly,
+      ephemeral: !!templateMeta?.ephemeral,
       sheetType: resolvedSheetType || undefined,
       attrs: cardData?.attrs || card.attrs || {},
       template: initialTemplate,

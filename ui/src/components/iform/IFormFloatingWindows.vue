@@ -20,6 +20,16 @@
         <div class="iform-floating__actions" @pointerdown.stop>
           <n-tooltip trigger="hover">
             <template #trigger>
+              <n-button quaternary size="tiny" @click.stop="copyInternalLink(window.formId)">
+                <template #icon>
+                  <n-icon :component="CopyOutline" />
+                </template>
+              </n-button>
+            </template>
+            <span>复制外部链接</span>
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
               <n-button quaternary size="tiny" @click.stop="dockToPanel(window.windowId, window.formId)">
                 <template #icon>
                   <n-icon :component="ReturnUpBackOutline" />
@@ -129,10 +139,18 @@ import {
   updateFloatingBadgeGesture,
   type FloatingBadgeGestureState,
 } from './floatingBadgeGesture';
-import { CloseOutline, ContractOutline, ExpandOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
+import { CloseOutline, ContractOutline, CopyOutline, ExpandOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
+import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
+import { useMessage } from 'naive-ui';
+import { copyTextWithFallback } from '@/utils/clipboard';
+import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink';
 
 const iform = useIFormStore();
+const chat = useChatStore();
+const utils = useUtilsStore();
+const message = useMessage();
 iform.bootstrap();
 
 const floatingWindows = computed(() => iform.currentFloatingWindows);
@@ -149,6 +167,22 @@ const formMap = computed<Map<string, ChannelIForm>>(() => {
 const resolveForm = (formId: string) => formMap.value.get(formId);
 
 const formTitle = (formId: string) => resolveForm(formId)?.name?.trim() || '嵌入窗口';
+
+const copyInternalLink = async (formId: string) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(iform.visibleChannelId || chat.curChannel?.id || '').trim();
+  if (!worldId || !channelId || !formId) {
+    message.warning('无法生成外部链接');
+    return;
+  }
+  const copied = await copyTextWithFallback(generateInternalSurfaceLink({
+    type: 'iform',
+    id: formId,
+    worldId,
+    channelId,
+  }, { base: resolveInternalSurfaceLinkBase(utils.config) }));
+  copied ? message.success('外部链接已复制') : message.error('复制失败');
+};
 
 const floatingStyle = (windowState: (typeof floatingWindows.value)[number]) => ({
   left: `${windowState.x}px`,

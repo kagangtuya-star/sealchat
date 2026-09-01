@@ -1,13 +1,15 @@
 <template>
   <Teleport to="body">
-    <div class="character-sheet-overlay" data-sc-font-surface="true" v-if="sheetStore.activeWindowIds.length > 0">
+    <div class="character-sheet-overlay" data-sc-font-surface="true" v-if="managedWindowIds.length > 0">
       <CharacterSheetWindow
         v-for="windowId in expandedWindowIds"
         :key="windowId"
         :window-id="windowId"
+        :standalone="standalone"
         @roll-request="handleRollRequest"
       />
       <CharacterSheetBubble
+        v-if="!standalone"
         v-for="win in minimizedWindows"
         :key="`bubble-${win.id}`"
         :window-id="win.id"
@@ -45,15 +47,26 @@ import { buildRollExpression } from './rollExpression';
 const sheetStore = useCharacterSheetStore();
 const chatStore = useChatStore();
 
+const props = defineProps<{
+  windowId?: string;
+  standalone?: boolean;
+}>();
+
 const popoverVisible = ref(false);
 const pendingRoll = ref<SealChatEventPayload['roll'] | null>(null);
 
+const managedWindowIds = computed(() => (
+  props.windowId
+    ? sheetStore.activeWindowIds.filter(id => id === props.windowId)
+    : sheetStore.activeWindowIds
+));
+
 const minimizedWindows = computed(() =>
-  sheetStore.activeWindows.filter(w => w.isMinimized)
+  sheetStore.activeWindows.filter(w => managedWindowIds.value.includes(w.id) && w.isMinimized)
 );
 
 const expandedWindowIds = computed(() =>
-  sheetStore.activeWindowIds.filter(id => !sheetStore.windows[id]?.isMinimized)
+  managedWindowIds.value.filter(id => !sheetStore.windows[id]?.isMinimized)
 );
 
 const executeRollDirectly = (payload: SealChatEventPayload['roll']) => {
@@ -85,10 +98,14 @@ const POLL_INTERVAL = 10000;
 const startPolling = () => {
   if (pollTimer) return;
   pollTimer = setInterval(async () => {
-    if (pollInFlight || sheetStore.activeWindowIds.length === 0) return;
+    if (pollInFlight || managedWindowIds.value.length === 0) return;
     pollInFlight = true;
     try {
-      await sheetStore.refreshAllWindows();
+      if (props.windowId) {
+        await sheetStore.refreshWindowAttrs(props.windowId);
+      } else {
+        await sheetStore.refreshAllWindows();
+      }
     } finally {
       pollInFlight = false;
     }
@@ -102,8 +119,9 @@ const stopPolling = () => {
 };
 
 onMounted(() => {
-  if (sheetStore.activeWindowIds.length > 0) {
-    void sheetStore.refreshAllWindows();
+  if (managedWindowIds.value.length > 0) {
+    if (props.windowId) void sheetStore.refreshWindowAttrs(props.windowId);
+    else void sheetStore.refreshAllWindows();
     startPolling();
   }
 });
@@ -111,14 +129,15 @@ onMounted(() => {
 watch(
   () => chatStore.curChannel?.id,
   () => {
-    if (sheetStore.activeWindowIds.length > 0) {
-      void sheetStore.refreshAllWindows();
+    if (managedWindowIds.value.length > 0) {
+      if (props.windowId) void sheetStore.refreshWindowAttrs(props.windowId);
+      else void sheetStore.refreshAllWindows();
     }
   }
 );
 
 watch(
-  () => sheetStore.activeWindowIds.length,
+  () => managedWindowIds.value.length,
   (len) => {
     if (len > 0) {
       startPolling();

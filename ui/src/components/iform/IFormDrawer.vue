@@ -92,6 +92,14 @@
                 <div class="iform-card__actions">
                   <n-button quaternary size="tiny" @click="iform.openPanel(form.id)">面板</n-button>
                   <n-button quaternary size="tiny" @click="openFloating(form.id)">弹出</n-button>
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button quaternary size="tiny" @click="copyInternalLink(form)">
+                        <template #icon><n-icon :component="CopyOutline" /></template>
+                      </n-button>
+                    </template>
+                    <span>复制外部链接</span>
+                  </n-tooltip>
                   <n-button quaternary size="tiny" @click="copyEmbedLink(form)">复制嵌入</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canBroadcast" @click="pushSingle(form)">推送</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canManage || !canEditForm(form)" @click="openFormModal(form)">编辑</n-button>
@@ -256,10 +264,11 @@ import { useIFormStore } from '@/stores/iform';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { useMessage, useDialog } from 'naive-ui';
-import { TrashOutline } from '@vicons/ionicons5';
+import { CopyOutline, TrashOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink';
 import { api } from '@/stores/_config';
 import type { ChannelIFormTemplateCatalogItem } from '@/types/iform';
 
@@ -561,6 +570,22 @@ const copyEmbedLink = async (form: ChannelIForm) => {
   } else {
     message.error('复制失败');
   }
+};
+
+const copyInternalLink = async (form: ChannelIForm) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(iform.visibleChannelId || chat.curChannel?.id || '').trim();
+  if (!worldId || !channelId || !form?.id) {
+    message.warning('无法生成外部链接');
+    return;
+  }
+  const copied = await copyTextWithFallback(generateInternalSurfaceLink({
+    type: 'iform',
+    id: form.id,
+    worldId,
+    channelId,
+  }, { base: resolveInternalSurfaceLinkBase(utils.config) }));
+  copied ? message.success('外部链接已复制') : message.error('复制失败');
 };
 
 const pushSingle = async (form: ChannelIForm) => {

@@ -30,6 +30,7 @@ import AvatarVue from '@/components/avatar.vue';
 import AvatarEditor from '@/components/AvatarEditor.vue';
 import type { ChannelIdentity } from '@/types';
 import type { MessageVisibilityScope } from '@/stores/displayAvatarVisibility';
+import { openCharacterSheetRuntime } from './character-sheet/openCharacterSheetRuntime';
 
 const props = defineProps<{
   visible: boolean;
@@ -1791,110 +1792,25 @@ const openCharacterSheetWindow = async (
   }
 
   closeChannelSheetWindows(channelId, card.id);
-
-  if (characterApiDisabled.value) {
-    const avatarUrl = resolveCardAvatarToken(card);
-    const windowId = sheetStore.openSheet(card, channelId, {
-      name: card.name,
-      type: card.sheetType,
-      attrs: card.attrs || {},
-      avatarUrl: avatarUrl || undefined,
-    }, {
-      worldId: currentWorldId.value || undefined,
-    });
-    upsertChannelSheetSwitchState(channelId, {
-      cardId: card.id,
-      windowId,
-      switching: false,
-      restoreToCurrentBinding: false,
-    });
-    if (mode === 'edit') {
-      sheetStore.setMode(windowId, 'edit');
-    }
-    if (isMobile.value) {
-      handleClose();
-    }
-    return;
+  const wasCharacterApiDisabled = characterApiDisabled.value;
+  const windowId = await openCharacterSheetRuntime({
+    card,
+    channelId,
+    worldId: currentWorldId.value || undefined,
+  });
+  upsertChannelSheetSwitchState(channelId, {
+    cardId: card.id,
+    windowId,
+    switching: false,
+    restoreToCurrentBinding: wasCharacterApiDisabled
+      ? false
+      : !!options?.restoreToCurrentBinding,
+  });
+  if (mode === 'edit') {
+    sheetStore.setMode(windowId, 'edit');
   }
-
-  try {
-    let cardData = cardStore.activeCards[channelId];
-    const activeCardId = cardStore.getActiveCardId(channelId);
-    const shouldUseActiveCardData = activeCardId === card.id;
-    if (!cardData || shouldUseActiveCardData) {
-      await cardStore.getActiveCard(channelId);
-      cardData = cardStore.activeCards[channelId];
-    }
-    const effectiveCardData = cardStore.getActiveCardId(channelId) === card.id ? cardData : undefined;
-    await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
-    await templateStore.ensureBindingsLoaded(channelId);
-    const resolvedSheetType = (effectiveCardData?.type || card.sheetType || '').trim();
-    const fallbackTemplate = sheetStore.getTemplate(card.id, resolvedSheetType);
-    const ensured = await templateStore.ensureCardBinding({
-      channelId,
-      externalCardId: card.id,
-      cardName: card.name,
-      sheetType: resolvedSheetType,
-      fallbackTemplate,
-    });
-    const binding = templateStore.getBinding(channelId, card.id) || ensured;
-    if (binding?.mode) {
-      card.templateMode = binding.mode;
-      card.templateId = binding.templateId || undefined;
-      card.templateSnapshot = binding.templateSnapshot || undefined;
-    }
-    const managedTemplateContent = binding?.mode === 'managed' && binding.templateId
-      ? templateStore.getTemplateById(binding.templateId)?.content
-      : undefined;
-    const avatarUrl = resolveCardAvatarToken(card, effectiveCardData?.avatarUrl || '');
-    const windowId = sheetStore.openSheet(card, channelId, {
-      name: effectiveCardData?.name || card.name,
-      type: effectiveCardData?.type || card.sheetType,
-      attrs: effectiveCardData?.attrs || card.attrs || {},
-      avatarUrl: avatarUrl || undefined,
-    }, {
-      templateMode: binding?.mode,
-      templateId: binding?.templateId || undefined,
-      templateText: binding?.mode === 'detached'
-        ? binding.templateSnapshot
-        : managedTemplateContent,
-      worldId: currentWorldId.value || undefined,
-    });
-    upsertChannelSheetSwitchState(channelId, {
-      cardId: card.id,
-      windowId,
-      switching: false,
-      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
-    });
-    if (mode === 'edit') {
-      sheetStore.setMode(windowId, 'edit');
-    }
-    if (isMobile.value) {
-      handleClose();
-    }
-  } catch (e: any) {
-    console.warn('Failed to open character preview', e);
-    const avatarUrl = resolveCardAvatarToken(card);
-    const windowId = sheetStore.openSheet(card, channelId, {
-      name: card.name,
-      type: card.sheetType,
-      attrs: card.attrs || {},
-      avatarUrl: avatarUrl || undefined,
-    }, {
-      worldId: currentWorldId.value || undefined,
-    });
-    upsertChannelSheetSwitchState(channelId, {
-      cardId: card.id,
-      windowId,
-      switching: false,
-      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
-    });
-    if (mode === 'edit') {
-      sheetStore.setMode(windowId, 'edit');
-    }
-    if (isMobile.value) {
-      handleClose();
-    }
+  if (isMobile.value) {
+    handleClose();
   }
 };
 

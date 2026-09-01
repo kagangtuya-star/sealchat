@@ -2124,13 +2124,13 @@ export const useChatStore = defineStore({
       return this.favoriteWorldIds.includes(worldId);
     },
 
-    async joinWorld(worldId: string) {
+    async joinWorld(worldId: string, options?: { autoSwitch?: boolean }) {
       await api.post(`/api/v1/worlds/${worldId}/join`, {});
       if (!this.joinedWorldIds.includes(worldId)) {
         this.joinedWorldIds.push(worldId);
       }
       this.setCurrentWorld(worldId);
-      await this.channelList(worldId, true);
+      await this.channelList(worldId, true, { autoSwitch: options?.autoSwitch });
     },
 
     async leaveWorld(worldId: string) {
@@ -2360,7 +2360,7 @@ export const useChatStore = defineStore({
       return tree;
     },
 
-    async switchWorld(worldId: string, options?: { force?: boolean }) {
+    async switchWorld(worldId: string, options?: { force?: boolean; autoSwitch?: boolean }) {
       if (!worldId) {
         return;
       }
@@ -2370,7 +2370,7 @@ export const useChatStore = defineStore({
         return;
       }
       if (!this.joinedWorldIds.includes(worldId)) {
-        await this.joinWorld(worldId);
+        await this.joinWorld(worldId, { autoSwitch: false });
       } else {
         this.setCurrentWorld(worldId);
         await this.channelList(worldId, options?.force ?? true, { autoSwitch: false });
@@ -2379,15 +2379,17 @@ export const useChatStore = defineStore({
       if (currentChannelId && !findChannelByIdFromTree(this.channelTree, currentChannelId)) {
         this.clearCurrentChannelContext('switchWorld:currentChannelNotInTargetTree');
       }
-      const targetChannelId = resolvePreferredChannelForWorld({
-        worldId,
-        tree: this.channelTree,
-        defaultChannelId: this.worldMap[worldId]?.defaultChannelId,
-        lastChannelByWorld: this._lastChannelByWorld,
-        fallbackLastChannel: this._lastChannel,
-      });
-      if (targetChannelId) {
-        await this.channelSwitchTo(targetChannelId);
+      if (options?.autoSwitch !== false) {
+        const targetChannelId = resolvePreferredChannelForWorld({
+          worldId,
+          tree: this.channelTree,
+          defaultChannelId: this.worldMap[worldId]?.defaultChannelId,
+          lastChannelByWorld: this._lastChannelByWorld,
+          fallbackLastChannel: this._lastChannel,
+        });
+        if (targetChannelId) {
+          await this.channelSwitchTo(targetChannelId);
+        }
       }
     },
 
