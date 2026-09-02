@@ -891,6 +891,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/bot-token-batch-delete", BotTokenBatchDelete)
 	v1AuthAdmin.Post("/admin/system-bots/cleanup-orphaned", CleanupOrphanSystemBots)
 	v1AuthAdmin.Get("/admin/user-list", AdminUserList)
+	v1AuthAdmin.Get("/admin/user-detail", AdminUserDetail)
 	v1AuthAdmin.Post("/admin/user-disable", AdminUserDisable)
 	v1AuthAdmin.Post("/admin/user-enable", AdminUserEnable)
 	v1AuthAdmin.Post("/admin/user-delete", AdminUserDelete)

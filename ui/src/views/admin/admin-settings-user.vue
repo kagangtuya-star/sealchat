@@ -1,7 +1,8 @@
 <script setup lang="tsx">
+import Avatar from '@/components/avatar.vue';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
-import type { ServerConfig, UserInfo } from '@/types';
+import type { AdminUserDetailStats, ServerConfig, UserInfo } from '@/types';
 import { Refresh, Search, UserPlus } from '@vicons/tabler';
 import { cloneDeep } from 'lodash-es';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
@@ -186,6 +187,48 @@ const tryUserDelete = (i: UserInfo) => {
   })
 }
 
+const showUserDetailModal = ref(false);
+const userDetail = ref<UserInfo | null>(null);
+const userDetailStats = ref<AdminUserDetailStats | null>(null);
+const userDetailLoading = ref(false);
+let userDetailRequestId = 0;
+
+const formatDateTime = (timeStr?: string | null) => {
+  if (!timeStr) return '-';
+  const date = new Date(timeStr);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN');
+};
+
+const formatRoleNames = (roleIds?: string[]) => {
+  const roleNames: Record<string, string> = {
+    'sys-admin': '管理员',
+    'sys-user': '普通用户',
+  };
+  return roleIds?.map(roleId => roleNames[roleId] || roleId).join('、') || '-';
+};
+
+const openUserDetail = async (row: UserInfo) => {
+  const requestId = ++userDetailRequestId;
+  userDetail.value = row;
+  userDetailStats.value = null;
+  showUserDetailModal.value = true;
+  userDetailLoading.value = true;
+  try {
+    const resp = await utils.adminUserDetail(row.id);
+    if (requestId !== userDetailRequestId) return;
+    userDetail.value = resp.data.user || row;
+    userDetailStats.value = resp.data.stats;
+  } catch {
+    if (requestId === userDetailRequestId) {
+      message.error('获取用户详情失败');
+    }
+  } finally {
+    if (requestId === userDetailRequestId) {
+      userDetailLoading.value = false;
+    }
+  }
+};
+
 const handleRoleChange = async (userId: string, roleLst: string[], oldRoleLst: string[]) => {
   // 计算需要移除和添加的成员
   const toRemove = oldRoleLst.filter(id => !roleLst.includes(id));
@@ -303,6 +346,7 @@ const columns = ref([
     render: (row: UserInfo) => {
       const isDisabled = row.disabled;
       return <div class="flex space-x-2">
+        <n-button size="small" onClick={() => void openUserDetail(row)}>详情</n-button>
         <n-button type="warning" size="small" onClick={() => tryUserResetPassword(row)}>重置密码</n-button>
         {!isDisabled ? <n-button type="error" size="small" onClick={() => tryUserDisable(row)}>停用</n-button> :
           <>
@@ -405,6 +449,71 @@ const columns = ref([
       <n-button @click="close">关闭</n-button>
     </div>
 
+    <n-modal
+      v-model:show="showUserDetailModal"
+      preset="card"
+      title="用户详情"
+      :style="{ width: 'min(620px, 92vw)' }"
+    >
+      <n-spin :show="userDetailLoading">
+        <div v-if="userDetail" class="user-management__detail">
+          <div class="user-management__detail-header">
+            <Avatar
+              :src="userDetail.avatar"
+              :size="80"
+              :fallback-text="userDetail.nick || userDetail.username"
+              use-text-fallback
+            />
+            <div class="user-management__detail-heading">
+              <strong>{{ userDetail.nick || userDetail.username }}</strong>
+              <span>@{{ userDetail.username }}</span>
+            </div>
+          </div>
+
+          <n-descriptions label-placement="top" :column="2" size="small" bordered>
+            <n-descriptions-item label="SealChat ID">
+              {{ userDetail.id }}
+            </n-descriptions-item>
+            <n-descriptions-item label="用户类型">
+              {{ userDetail.is_bot ? 'BOT' : '用户' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="邮箱">
+              {{ userDetail.email || '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="邮箱状态">
+              <n-tag :type="userDetail.emailVerified ? 'success' : 'warning'" size="small">
+                {{ userDetail.email ? (userDetail.emailVerified ? '已验证' : '未验证') : '未绑定' }}
+              </n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item label="系统角色">
+              {{ formatRoleNames(userDetail.roleIds) }}
+            </n-descriptions-item>
+            <n-descriptions-item label="状态">
+              <n-tag :type="userDetail.disabled ? 'error' : 'success'" size="small">
+                {{ userDetail.disabled ? '已禁用' : '正常' }}
+              </n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item label="加入世界数">
+              {{ userDetailStats?.joinedWorldCount ?? '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="创建世界数">
+              {{ userDetailStats?.createdWorldCount ?? '-' }}
+            </n-descriptions-item>
+            <n-descriptions-item label="注册时间">
+              {{ formatDateTime(userDetail.createdAt) }}
+            </n-descriptions-item>
+            <n-descriptions-item label="更新时间">
+              {{ formatDateTime(userDetail.updatedAt) }}
+            </n-descriptions-item>
+            <n-descriptions-item :span="2" label="简介">
+              {{ userDetail.brief || '-' }}
+            </n-descriptions-item>
+          </n-descriptions>
+        </div>
+        <n-empty v-else description="没有可查看的用户信息" />
+      </n-spin>
+    </n-modal>
+
     <!-- 新增用户模态框 -->
     <UserCreateModal
       v-model:show="showUserCreateModal"
@@ -439,6 +548,27 @@ const columns = ref([
 
 .user-management__stats {
   font-size: 14px;
+  color: var(--n-text-color-3);
+}
+
+.user-management__detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.user-management__detail-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-management__detail-heading strong {
+  font-size: 18px;
+}
+
+.user-management__detail-heading span {
   color: var(--n-text-color-3);
 }
 

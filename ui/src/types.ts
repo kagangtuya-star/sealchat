@@ -781,6 +781,16 @@ export interface UserInfo {
   emailVerifiedAt?: string;
 }
 
+export interface AdminUserDetailStats {
+  joinedWorldCount: number;
+  createdWorldCount: number;
+}
+
+export interface AdminUserDetailResponse {
+  user: UserInfo;
+  stats: AdminUserDetailStats;
+}
+
 export interface AvatarDecorationSettings {
   scale?: number;
   offsetX?: number;
