@@ -3,6 +3,111 @@
   position: relative;
 }
 
+.channel-favorite-recommendation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute, rgba(148, 163, 184, 0.28)) 88%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sc-bg-elevated, var(--sc-bg-surface, transparent)) 88%, transparent);
+  color: var(--sc-text-primary);
+  box-shadow: 0 5px 16px color-mix(in srgb, #000 9%, transparent);
+}
+
+.channel-favorite-recommendation__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.16rem;
+}
+
+.channel-favorite-recommendation__copy strong {
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.channel-favorite-recommendation__copy span {
+  overflow: hidden;
+  color: var(--sc-text-secondary);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-favorite-recommendation__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.channel-favorite-recommendation__actions button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.channel-favorite-recommendation__primary {
+  padding: 0.35rem 0.58rem;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--primary-color, #3388de) 16%, var(--sc-bg-elevated, transparent));
+  color: var(--primary-color, #3388de);
+  font-size: 0.76rem !important;
+  font-weight: 600;
+}
+
+.channel-favorite-recommendation__primary:hover {
+  background: color-mix(in srgb, var(--primary-color, #3388de) 25%, var(--sc-bg-elevated, transparent));
+}
+
+.channel-favorite-recommendation__dismiss {
+  padding: 0.25rem 0.1rem;
+  background: transparent;
+  color: var(--sc-text-secondary);
+  font-size: 0.72rem !important;
+}
+
+.channel-favorite-recommendation__dismiss:hover {
+  color: var(--sc-text-primary);
+}
+
+.channel-favorite-recommendation-enter-active,
+.channel-favorite-recommendation-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.channel-favorite-recommendation-enter-from,
+.channel-favorite-recommendation-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (max-width: 560px) {
+  .channel-favorite-recommendation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .channel-favorite-recommendation__copy span {
+    white-space: normal;
+  }
+
+  .channel-favorite-recommendation__actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .channel-favorite-recommendation-enter-active,
+  .channel-favorite-recommendation-leave-active {
+    transition-duration: 1ms;
+  }
+}
+
 .chat-root-container--embed {
   min-height: 0;
   overflow: hidden;

@@ -145,6 +145,7 @@ export interface DisplaySettings {
   quickGalleryLinkedEmojiSendDirectly: boolean
   quickGalleryPageSize: number
   messageSoundMode: MessageSoundMode
+  worldMessageToastEnabled: boolean
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
@@ -579,6 +580,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   quickGalleryLinkedEmojiSendDirectly: false,
   quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
   messageSoundMode: 'away',
+  worldMessageToastEnabled: true,
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeSettingsExpanded: true,
   characterCardBadgeEnabled: true,
@@ -898,6 +900,7 @@ const parseStoredSettingsInternal = (
       quickGalleryLinkedEmojiSendDirectly: coerceBoolean((parsed as any)?.quickGalleryLinkedEmojiSendDirectly ?? false),
       quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
       messageSoundMode: coerceMessageSoundMode((parsed as any)?.messageSoundMode),
+      worldMessageToastEnabled: coerceBoolean((parsed as any)?.worldMessageToastEnabled ?? true),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeSettingsExpanded: normalizeCharacterCardBadgeSettingsExpanded(
         (parsed as any)?.characterCardBadgeSettingsExpanded,
@@ -1325,6 +1328,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'messageSoundMode')
       ? coerceMessageSoundMode((patch as any).messageSoundMode)
       : base.messageSoundMode,
+  worldMessageToastEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldMessageToastEnabled')
+      ? coerceBoolean((patch as any).worldMessageToastEnabled)
+      : base.worldMessageToastEnabled,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)

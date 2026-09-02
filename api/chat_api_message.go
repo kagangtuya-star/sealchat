@@ -2642,12 +2642,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 					continue
 				}
 				_ = model.ChannelReadInit(data.ChannelID, uid)
-				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
+				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID))
 			}
 		} else if channel.PermType == "private" {
 			if privateOtherUser != "" {
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
-				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser))
+				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser, m.ID, channel.WorldID))
 			}
 		} else {
 			// 给当前在线人都通知一遍
@@ -2670,20 +2670,16 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
 
 			// 发送快速更新通知
-			onlineSet := make(map[string]struct{}, len(uidsOnline))
-			for _, uid := range uidsOnline {
-				if uid != "" {
-					onlineSet[uid] = struct{}{}
-				}
-			}
 			for _, uid := range uids {
 				if uid == "" {
 					continue
 				}
-				if _, isOnlineInChannel := onlineSet[uid]; isOnlineInChannel {
-					continue
-				}
-				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
+				broadcastMessageCreatedNoticeOutsideChannel(
+					ctx,
+					uid,
+					data.ChannelID,
+					buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID),
+				)
 			}
 		}
 
@@ -4456,6 +4452,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 				Channel: channelData,
 				User:    userData,
 			})
+			broadcastMessageCreatedNoticeToUsers(ctx, data.ChannelID, m.Content, m.ID, channelData.WorldID)
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
@@ -4695,6 +4692,7 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 			Channel: channelData,
 			User:    userData,
 		})
+		broadcastMessageCreatedNoticeToUsers(ctx, targetChannelID, msg.Content, m.ID, channelData.WorldID)
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 	notifyAppMessageCreated(m.ID)

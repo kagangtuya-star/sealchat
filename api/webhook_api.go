@@ -536,6 +536,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	}
 	broadcast.BroadcastEventInChannel(channel.ID, ev)
 	broadcast.BroadcastEventInChannelForBot(channel.ID, ev)
+	broadcastMessageCreatedNoticeToUsers(broadcast, channel.ID, msg.Content, msg.ID, channel.WorldID)
 
 	channel.UpdateRecentSent()
 	member.UpdateRecentSent()

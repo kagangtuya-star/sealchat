@@ -8,6 +8,7 @@ import { useMessage } from 'naive-ui'
 import { Plus as PlusIcon, Trash as TrashIcon, Star as StarIcon } from '@vicons/tabler'
 import { useEventListener } from '@vueuse/core'
 import { buildHotkeyDescriptor, formatHotkeyCombo } from '@/utils/hotkey'
+import { markChannelFavoritesEverUsed } from '@/utils/channelFavoriteTip'
 
 interface Props {
   show: boolean
@@ -116,6 +117,7 @@ const handleAddFavorite = () => {
     message.error('已达到收藏上限')
     return
   }
+  markChannelFavoritesEverUsed()
   display.addFavoriteChannel(channelId, currentWorldId.value)
   if (newFavoriteHotkey.value) {
     const result = display.setFavoriteHotkey(channelId, newFavoriteHotkey.value, currentWorldId.value)
@@ -211,6 +213,9 @@ const clearPendingHotkey = () => {
 }
 
 const handleToggleBar = (value: boolean) => {
+  if (value) {
+    markChannelFavoritesEverUsed()
+  }
   display.setFavoriteBarEnabled(value)
 }
 
@@ -234,7 +239,7 @@ watch(
   ([visible, worldId], prevValue) => {
     if (!visible) return
     const prevWorldId = prevValue?.[1]
-    const worldChanged = worldId && worldId !== prevWorldId
+    const worldChanged = Boolean(worldId && worldId !== prevWorldId)
     if (worldChanged) {
       favoriteCandidates.value = []
     }

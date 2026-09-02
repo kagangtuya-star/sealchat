@@ -325,7 +325,7 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 				log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
 			}
 		}(item.target.channel.ID, *item.message)
-		notifyForwardMessageCreated(ctx, item.target.channel.ID, item.message.Content)
+		notifyForwardMessageCreated(ctx, item.target.channel.ID, item.message.Content, item.message.ID, item.target.channel.WorldID)
 	}
 
 	return &struct {
@@ -341,7 +341,7 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 	}, nil
 }
 
-func notifyForwardMessageCreated(ctx *ChatContext, channelID, content string) {
+func notifyForwardMessageCreated(ctx *ChatContext, channelID, content, messageID, worldID string) {
 	if ctx == nil || ctx.UserId2ConnInfo == nil || channelID == "" {
 		return
 	}
@@ -361,17 +361,15 @@ func notifyForwardMessageCreated(ctx *ChatContext, channelID, content string) {
 	}
 	_ = model.ChannelReadInitInBatches(channelID, userIDs)
 	_ = model.ChannelReadSetInBatch([]string{channelID}, onlineUserIDs)
-	onlineSet := make(map[string]struct{}, len(onlineUserIDs))
-	for _, userID := range onlineUserIDs {
-		onlineSet[userID] = struct{}{}
-	}
 	for _, userID := range userIDs {
 		if userID == "" {
 			continue
 		}
-		if _, online := onlineSet[userID]; online {
-			continue
-		}
-		ctx.BroadcastToUserJSON(userID, buildMessageCreatedNoticePayload(channelID, content, userID))
+		broadcastMessageCreatedNoticeOutsideChannel(
+			ctx,
+			userID,
+			channelID,
+			buildMessageCreatedNoticePayload(channelID, content, userID, messageID, worldID),
+		)
 	}
 }

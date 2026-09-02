@@ -9,6 +9,7 @@ const RESERVED_CHAT_ROUTE_SEGMENTS = new Set([
   'about',
   'embed',
   'invite',
+  'internal',
   'ob',
   'split',
   'status',

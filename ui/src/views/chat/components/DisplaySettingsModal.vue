@@ -19,6 +19,7 @@ import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
 import AvatarStylePanel from './AvatarStylePanel.vue'
 import FontSettingsPanel from './FontSettingsPanel.vue'
+import MessageNotificationSettingsPanel from './MessageNotificationSettingsPanel.vue'
 import {
   buildDisplaySettingsDraftSavePayload,
   syncDisplaySettingsDraft,
@@ -28,6 +29,7 @@ import type { AvatarVisibilityScope } from '@/stores/displayAvatarVisibility'
 interface Props {
   visible: boolean
   settings: DisplaySettings
+  initialCategory?: DisplaySettingsCategory
 }
 
 const props = defineProps<Props>()
@@ -60,13 +62,14 @@ const transferMenuOptions = [
   { label: '导出当前配置', key: 'export' },
   { label: '导入 JSON / ZIP', key: 'import' },
 ]
-type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'other'
+type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'notifications' | 'other'
 const displaySettingsCategoryOptions: Array<{ label: string; value: DisplaySettingsCategory }> = [
   { label: '外观', value: 'appearance' },
   { label: '阅读', value: 'reading' },
   { label: '输入', value: 'input' },
   { label: '角色', value: 'role' },
   { label: '术语', value: 'terms' },
+  { label: '消息提示', value: 'notifications' },
   { label: '其他', value: 'other' },
 ]
 const activeSettingsCategory = ref<DisplaySettingsCategory>('appearance')
@@ -238,6 +241,15 @@ watch(
   { deep: true, immediate: true },
 )
 
+watch(
+  () => [props.visible, props.initialCategory] as const,
+  ([visible, category]) => {
+    if (!visible || !category) return
+    activeSettingsCategory.value = category
+  },
+  { immediate: true },
+)
+
 const previewClasses = computed(() => [
   'display-preview',
   `display-preview--${draft.followSystemTheme ? display.palette : draft.palette}`,
@@ -299,6 +311,10 @@ const handleRestoreDefaults = () => {
   syncTriggerDrafts(defaults)
   syncFavoriteBar(props.settings)
   display.setThemeSelectionMode('inherit')
+}
+
+const handleNotificationSettingsUpdate = (patch: Partial<DisplaySettings>) => {
+  Object.assign(draft, patch)
 }
 
 const handleClose = () => emit('update:visible', false)
@@ -740,6 +756,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           <template #checked>显示徽标</template>
           <template #unchecked>隐藏徽标</template>
         </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'notifications'" class="display-settings__section display-settings__section--wide">
+        <header>
+          <div>
+            <p class="section-title">消息提示</p>
+            <p class="section-desc">集中管理聊天区域提醒、提示音与浏览器通知。</p>
+          </div>
+        </header>
+        <MessageNotificationSettingsPanel
+          :settings="draft"
+          @update="handleNotificationSettingsUpdate"
+        />
       </section>
 
       <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">

@@ -19,6 +19,7 @@ import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ChatAiPolishDock from './components/ChatAiPolishDock.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
+import WorldMessageToastStack, { type WorldMessageToastPayload } from './components/WorldMessageToastStack.vue'
 import ChannelRemarkManager from './components/ChannelRemarkManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import IcOocRoleConfigPanel from './components/IcOocRoleConfigPanel.vue'
@@ -66,7 +67,12 @@ import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
-import { useDisplayStore } from '@/stores/display';
+import {
+  FAVORITE_CHANNEL_LIMIT,
+  useDisplayStore,
+  type DisplaySettings,
+  type ToolbarHotkeyKey,
+} from '@/stores/display';
 import { normalizeMessageIcMode, resolveAvatarRenderState } from '@/stores/displayAvatarVisibility';
 import { useCharacterRemarkStore } from '@/stores/characterRemark';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
@@ -89,7 +95,6 @@ import { resolveAttachmentUrl, fetchAttachmentMetaById, fetchAttachmentFileById,
 import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
-import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml, serializePlainTextFromDomNode } from '@/utils/plainQuickFormat';
 import { isSmartLinkNode, smartLinkToPlainText } from '@/utils/tiptapSmartLink';
@@ -99,6 +104,15 @@ import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcM
 import { normalizePunctuationForMessageSend } from '@/utils/punctuationNormalizer';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
+import { navigateToMessageTarget } from '@/utils/messageJump';
+import {
+  hasExistingFavoriteChannels,
+  hasShownChannelFavoriteRecommendation,
+  markChannelFavoriteRecommendationShown,
+  markChannelFavoritesEverUsed,
+  readChannelFavoriteTipState,
+  recordWorldMessageToastJump,
+} from '@/utils/channelFavoriteTip';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore, type ChannelSearchResult } from '@/stores/channelSearch';
@@ -216,6 +230,15 @@ iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
 const pushStore = usePushNotificationStore();
+watch(
+  () => [display.settings.favoriteChannelBarEnabled, display.settings.favoriteChannelIdsByWorld] as const,
+  ([enabled, favoriteIdsByWorld]) => {
+    if (enabled || hasExistingFavoriteChannels(favoriteIdsByWorld)) {
+      markChannelFavoritesEverUsed();
+    }
+  },
+  { deep: true, immediate: true },
+);
 const isEditing = computed(() => !!chat.editing);
 const isEditingCurrentChannel = computed(() => {
   const channelId = String(chat.curChannel?.id || '').trim();
@@ -504,7 +527,7 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       void openGalleryPanel();
       return;
     case 'display':
-      displaySettingsVisible.value = true;
+      openDisplaySettings('appearance');
       return;
     case 'dice3d':
       openDice3DSettings();
@@ -896,6 +919,8 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'notifications' | 'other';
+const displaySettingsInitialCategory = ref<DisplaySettingsCategory>('appearance');
 const characterRemarkManagerVisible = ref(false);
 const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
@@ -1584,6 +1609,19 @@ const exportManagerRefreshVersion = ref(0);
 const exportManagerRevealVersion = ref(0);
 const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
+const worldMessageToastStackRef = ref<{
+  enqueue: (payload: WorldMessageToastPayload) => void;
+  dismiss: (key: string) => void;
+  dismissAll: () => void;
+  dismissChannel: (worldId: string, channelId: string) => void;
+} | null>(null);
+const worldMessageNoticeTasks = new Map<string, Promise<void>>();
+interface ChannelFavoriteRecommendation {
+  worldId: string;
+  channelId: string;
+  channelName: string;
+}
+const channelFavoriteRecommendation = ref<ChannelFavoriteRecommendation | null>(null);
 const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
 const importJobId = ref('');
@@ -1767,9 +1805,14 @@ const handleActionRibbonStateRequest = () => {
   syncActionRibbonState();
 };
 
-const handleOpenDisplaySettings = () => {
+const openDisplaySettings = (category: DisplaySettingsCategory = 'appearance') => {
+  displaySettingsInitialCategory.value = category;
   showActionRibbon.value = true;
   displaySettingsVisible.value = true;
+};
+
+const handleOpenDisplaySettings = (payload?: { category?: DisplaySettingsCategory }) => {
+  openDisplaySettings(payload?.category || 'appearance');
 };
 
 const handleDisplaySettingsSave = (settings: Partial<DisplaySettings>) => {
@@ -1858,6 +1901,117 @@ const channelImagesPanelVisible = computed(() => channelImages.panelVisible);
 const message = useMessage()
 const dialog = useDialog()
 const { t } = useI18n();
+
+const maybeShowChannelFavoriteRecommendation = (
+  payload: WorldMessageToastPayload,
+  jumpCount: number,
+) => {
+  const worldId = String(payload.worldId || '').trim();
+  const channelId = String(payload.channelId || '').trim();
+  if (
+    jumpCount < 3
+    || !worldId
+    || !channelId
+    || String(chat.currentWorldId || '').trim() !== worldId
+    || String(chat.curChannel?.id || '').trim() !== channelId
+  ) {
+    return;
+  }
+
+  const favoriteIds = display.getFavoriteChannelIds(worldId);
+  if (favoriteIds.includes(channelId)) {
+    markChannelFavoritesEverUsed();
+    return;
+  }
+  const tipState = readChannelFavoriteTipState();
+  if (
+    tipState.everUsed
+    || hasExistingFavoriteChannels(display.settings.favoriteChannelIdsByWorld)
+    || hasShownChannelFavoriteRecommendation(worldId, channelId)
+  ) {
+    return;
+  }
+
+  markChannelFavoriteRecommendationShown(worldId, channelId);
+  channelFavoriteRecommendation.value = {
+    worldId,
+    channelId,
+    channelName: String(payload.channelName || chat.curChannel?.name || '当前频道').trim() || '当前频道',
+  };
+};
+
+const handleWorldMessageToastSelect = async (payload: WorldMessageToastPayload) => {
+  try {
+    const jumped = await navigateToMessageTarget(chat, payload);
+    if (!jumped) {
+      return;
+    }
+    const jumpCount = recordWorldMessageToastJump(payload.worldId, payload.channelId);
+    maybeShowChannelFavoriteRecommendation(payload, jumpCount);
+  } catch (error: any) {
+    message.error(error?.message || '无法定位消息');
+  }
+};
+
+const dismissChannelFavoriteRecommendation = () => {
+  channelFavoriteRecommendation.value = null;
+};
+
+const channelFavoriteRecommendationAtLimit = computed(() => {
+  const recommendation = channelFavoriteRecommendation.value;
+  if (!recommendation) {
+    return false;
+  }
+  return display.getFavoriteChannelIds(recommendation.worldId).length >= FAVORITE_CHANNEL_LIMIT;
+});
+
+const handleChannelFavoriteRecommendationAction = () => {
+  const recommendation = channelFavoriteRecommendation.value;
+  if (!recommendation) {
+    return;
+  }
+  if (channelFavoriteRecommendationAtLimit.value) {
+    channelFavoritesVisible.value = true;
+    dismissChannelFavoriteRecommendation();
+    return;
+  }
+  display.addFavoriteChannel(recommendation.channelId, recommendation.worldId);
+  markChannelFavoritesEverUsed();
+  dismissChannelFavoriteRecommendation();
+};
+
+watch(
+  () => [chat.currentWorldId, chat.curChannel?.id] as const,
+  ([worldId, channelId]) => {
+    const recommendation = channelFavoriteRecommendation.value;
+    if (!recommendation) {
+      return;
+    }
+    if (String(worldId || '').trim() !== recommendation.worldId || String(channelId || '').trim() !== recommendation.channelId) {
+      dismissChannelFavoriteRecommendation();
+    }
+  },
+);
+
+watch(
+  () => [chat.currentWorldId, chat.curChannel?.id] as const,
+  ([worldId, channelId], [previousWorldId]) => {
+    if (worldId !== previousWorldId) {
+      worldMessageToastStackRef.value?.dismissAll();
+      return;
+    }
+    if (worldId && channelId) {
+      worldMessageToastStackRef.value?.dismissChannel(worldId, channelId);
+    }
+  },
+);
+
+watch(() => display.settings.worldMessageToastEnabled, (enabled) => {
+  if (!enabled) {
+    worldMessageToastStackRef.value?.dismissAll();
+  }
+});
+
 const {
   emojiLoading,
   emojiItems,
@@ -6494,6 +6648,7 @@ const handleExportMessages = async (params: {
       includeImages: params.includeImages,
       includeDiceCommands: !params.removeDiceCommands,
       withoutTimestamp: params.withoutTimestamp,
+      withoutOocParentheses: params.withoutOocParentheses,
       mergeMessages: params.mergeMessages,
       autoCorrectPunctuation: params.autoCorrectPunctuation,
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
@@ -13226,6 +13381,190 @@ const handleMessageRemoved = (e?: Event) => {
     }
   };
 
+const enqueueWorldMessageToast = (incoming: Message, event?: any) => {
+  const incomingChannelId = String(
+    event?.channel?.id
+      || (incoming as any)?.channel?.id
+      || (incoming as any)?.channel_id
+      || '',
+  ).trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  const currentWorldId = String(chat.currentWorldId || routeWorldId.value || (chat.curChannel as any)?.worldId || '').trim();
+  if (!display.settings.worldMessageToastEnabled || !currentWorldId || !incomingChannelId || incomingChannelId === currentChannelId) {
+    return;
+  }
+
+  const eventChannel = event?.channel || (incoming as any)?.channel || null;
+  const knownChannel = chat.findChannelById(incomingChannelId) as any;
+  const incomingWorldId = String(
+    event?.worldId
+      || event?.world_id
+      || eventChannel?.worldId
+      || eventChannel?.world_id
+      || knownChannel?.worldId
+      || knownChannel?.world_id
+      || event?.message?.worldId
+      || event?.message?.world_id
+      || (incoming as any)?.worldId
+      || (incoming as any)?.world_id
+      || event?.guild?.id
+      || (incoming as any)?.guild?.id
+      || '',
+  ).trim();
+  if (!incomingWorldId || incomingWorldId !== currentWorldId) {
+    return;
+  }
+
+  const currentUserId = String(user.info.id || '').trim();
+  const incomingSenderId = String(getMessageAuthorId(incoming) || event?.user?.id || '').trim();
+  if ((!!currentUserId && incomingSenderId === currentUserId) || !incoming.id) {
+    return;
+  }
+
+  const speakerName = String(
+    (incoming as any)?.identity?.displayName
+      || (incoming as any)?.sender_identity_name
+      || (incoming as any)?.senderIdentityName
+      || (incoming as any)?.sender_member_name
+      || incoming.member?.nick
+      || incoming.user?.nick
+      || incoming.user?.name
+      || '未知',
+  ).trim() || '未知';
+  const channelName = String(eventChannel?.name || knownChannel?.name || (incoming as any)?.channel?.name || '未知频道').trim() || '未知频道';
+  const preview = extractPushNotificationPreviewText(incoming.content || '');
+  const createdAt = normalizeTimestamp(incoming.createdAt)
+    ?? normalizeTimestamp(event?.timestamp)
+    ?? Date.now();
+  worldMessageToastStackRef.value?.enqueue({
+    worldId: currentWorldId,
+    channelId: incomingChannelId,
+    messageId: String(incoming.id),
+    channelName,
+    speakerName,
+    preview,
+    createdAt,
+  });
+};
+
+const handleMessageCreatedNotice = (event?: any) => {
+  const channelId = String(
+    event?.channel?.id || event?.channelId || event?.channel_id || '',
+  ).trim();
+  const messageId = String(
+    event?.message?.id
+      || event?.message?.messageId
+      || event?.message?.message_id
+      || event?.messageId
+      || event?.message_id
+      || '',
+  ).trim();
+  const currentWorldId = String(chat.currentWorldId || routeWorldId.value || (chat.curChannel as any)?.worldId || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId || !currentWorldId || channelId === currentChannelId || !display.settings.worldMessageToastEnabled) {
+    return;
+  }
+
+  const taskKey = `${channelId}:${messageId || 'latest'}`;
+  if (worldMessageNoticeTasks.has(taskKey)) {
+    return;
+  }
+  const task = (async () => {
+    let channel = chat.findChannelById(channelId) as any;
+    let channelWorldId = String(
+      event?.worldId
+        || event?.world_id
+        || event?.channel?.worldId
+        || event?.channel?.world_id
+        || event?.message?.channel?.worldId
+        || event?.message?.channel?.world_id
+        || event?.message?.worldId
+        || event?.message?.world_id
+        || channel?.worldId
+        || channel?.world_id
+        || '',
+    ).trim();
+    if (!channelWorldId && typeof chat.channelInfoGet === 'function') {
+      try {
+        const response = await chat.channelInfoGet(channelId);
+        channel = response?.item || channel;
+        channelWorldId = String(channel?.worldId || channel?.world_id || '').trim();
+      } catch {
+        channelWorldId = '';
+      }
+    }
+    if (!channelWorldId || channelWorldId !== currentWorldId) {
+      return;
+    }
+
+    const activeWorldId = String(chat.currentWorldId || routeWorldId.value || (chat.curChannel as any)?.worldId || '').trim();
+    if (currentWorldId !== activeWorldId) {
+      return;
+    }
+
+    const noticeMessage = event?.message;
+    if (noticeMessage && typeof noticeMessage === 'object') {
+      const incoming = normalizeMessageShape(noticeMessage);
+      if (!incoming.id && messageId) {
+        incoming.id = messageId;
+      }
+      if (incoming.id) {
+        enqueueWorldMessageToast(incoming, {
+          ...event,
+          channel: event?.channel || channel,
+        });
+        return;
+      }
+    }
+
+    let rawMessage: any = null;
+    if (messageId) {
+      try {
+        const context = await chat.messageContext(channelId, messageId, {
+          before: 1,
+          after: 1,
+          includeArchived: true,
+          includeOoc: true,
+        });
+        const contextItems = Array.isArray(context?.data)
+          ? context.data
+          : (Array.isArray((context?.data as any)?.data) ? (context?.data as any).data : []);
+        rawMessage = contextItems.find((item: any) => String(item?.id || item?.message_id || item?.messageId || '').trim() === messageId) || null;
+      } catch {
+        rawMessage = null;
+      }
+    } else {
+      // Older servers omit messageId from notice. Time-mode list avoids marking channel read.
+      try {
+        const response = await chat.messageList(channelId, undefined, {
+          limit: 1,
+          fromTime: 1,
+          includeArchived: true,
+          includeOoc: true,
+        });
+        const items = Array.isArray(response?.data) ? response.data : [];
+        rawMessage = items.length > 0 ? items[items.length - 1] : null;
+      } catch {
+        rawMessage = null;
+      }
+    }
+    if (!rawMessage) {
+      return;
+    }
+    const incoming = normalizeMessageShape(rawMessage);
+    if (messageId && String(incoming.id || '').trim() !== messageId) {
+      return;
+    }
+    enqueueWorldMessageToast(incoming, {
+      ...event,
+      channel: event?.channel || channel,
+    });
+  })().catch(() => undefined).finally(() => {
+    worldMessageNoticeTasks.delete(taskKey);
+  });
+  worldMessageNoticeTasks.set(taskKey, task);
+};
+
 const handleMessageCreated = (e?: Event) => {
   if (!e?.message) {
     return;
@@ -13245,12 +13584,13 @@ const handleMessageCreated = (e?: Event) => {
 			dice3dRuntime.play(payload);
 		}
 	}
-  const isSelf = incoming.user?.id === user.info.id;
-  const content = incoming.content || '';
-  const currentUserId = user.info.id;
-  const mentionIds = !isSelf ? collectMentionIdsFromContent(content) : new Set<string>();
-  const isMentioned = !isSelf && (mentionIds.has(currentUserId) || mentionIds.has('all'));
-  if (!isCurrentChannelMessage) {
+	const isSelf = incoming.user?.id === user.info.id;
+	const content = incoming.content || '';
+	const currentUserId = String(user.info.id || '').trim();
+	const mentionIds = !isSelf ? collectMentionIdsFromContent(content) : new Set<string>();
+	const isMentioned = !isSelf && (mentionIds.has(currentUserId) || mentionIds.has('all'));
+	enqueueWorldMessageToast(incoming, e);
+	if (!isCurrentChannelMessage) {
     if (incomingChannelId && isMentioned) {
       chat.setChannelMentionState(incomingChannelId, true);
     }
@@ -13434,6 +13774,7 @@ const handleMessageUpdated = (e?: Event) => {
 
 const chatViewMessageHandlers = {
   created: handleMessageCreated,
+  notice: handleMessageCreatedNotice,
   updated: handleMessageUpdated,
   removed: handleMessageRemoved,
 };
@@ -13444,16 +13785,21 @@ const chatEventWithMessageOwner = chatEvent as typeof chatEvent & {
 const previousChatViewMessageHandlers = chatEventWithMessageOwner.__chatViewMessageHandlers;
 if (previousChatViewMessageHandlers) {
   chatEvent.off('message-created', previousChatViewMessageHandlers.created);
+  if (previousChatViewMessageHandlers.notice) {
+    chatEvent.off('message-created-notice', previousChatViewMessageHandlers.notice);
+  }
   chatEvent.off('message-updated', previousChatViewMessageHandlers.updated);
   chatEvent.off('message-removed', previousChatViewMessageHandlers.removed);
 }
 chatEventWithMessageOwner.__chatViewMessageHandlers = chatViewMessageHandlers;
 chatEvent.on('message-created', chatViewMessageHandlers.created);
+chatEvent.on('message-created-notice', chatViewMessageHandlers.notice);
 chatEvent.on('message-updated', chatViewMessageHandlers.updated);
 chatEvent.on('message-removed', chatViewMessageHandlers.removed);
 disposeChatMessageHandlers = () => {
   if (chatEventWithMessageOwner.__chatViewMessageHandlers !== chatViewMessageHandlers) return;
   chatEvent.off('message-created', chatViewMessageHandlers.created);
+  chatEvent.off('message-created-notice', chatViewMessageHandlers.notice);
   chatEvent.off('message-updated', chatViewMessageHandlers.updated);
   chatEvent.off('message-removed', chatViewMessageHandlers.removed);
   delete chatEventWithMessageOwner.__chatViewMessageHandlers;
@@ -14724,6 +15070,10 @@ onBeforeUnmount(() => {
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
+    <WorldMessageToastStack
+      ref="worldMessageToastStackRef"
+      @select="handleWorldMessageToastSelect"
+    />
     <!-- 功能面板 -->
     <transition name="slide-down">
       <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode)" class="chat-top-toolbar-stack">
@@ -14765,7 +15115,7 @@ onBeforeUnmount(() => {
           @open-import="importDialogVisible = true"
           @open-identity-manager="openIdentityManager"
           @open-gallery="openGalleryPanel"
-          @open-display-settings="displaySettingsVisible = true"
+          @open-display-settings="openDisplaySettings('appearance')"
           @open-favorites="channelFavoritesVisible = true"
           @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
@@ -15322,6 +15672,35 @@ onBeforeUnmount(() => {
     <div v-if="display.favoriteBarEnabled" class="favorite-bar-wrapper px-4">
       <ChannelFavoriteBar @manage="channelFavoritesVisible = true" />
     </div>
+
+    <Transition name="channel-favorite-recommendation">
+      <div
+        v-if="channelFavoriteRecommendation"
+        class="channel-favorite-recommendation mx-4"
+        role="status"
+      >
+        <div class="channel-favorite-recommendation__copy">
+          <strong>经常查看这个频道？</strong>
+          <span>{{ channelFavoriteRecommendation.channelName }}收藏后可以快速切换。</span>
+        </div>
+        <div class="channel-favorite-recommendation__actions">
+          <button
+            type="button"
+            class="channel-favorite-recommendation__primary"
+            @click="handleChannelFavoriteRecommendationAction"
+          >
+            {{ channelFavoriteRecommendationAtLimit ? '管理收藏' : '收藏频道' }}
+          </button>
+          <button
+            type="button"
+            class="channel-favorite-recommendation__dismiss"
+            @click="dismissChannelFavoriteRecommendation"
+          >
+            不再提示
+          </button>
+        </div>
+      </div>
+    </Transition>
 
     <IFormEmbedInstances />
     <IFormPanelHost />
@@ -17748,6 +18127,7 @@ onBeforeUnmount(() => {
   <DisplaySettingsModal
     v-model:visible="displaySettingsVisible"
     :settings="display.settings"
+    :initial-category="displaySettingsInitialCategory"
     @save="handleDisplaySettingsSave"
   />
 

@@ -5,7 +5,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline, PhonePortraitOutline } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, EarthOutline, BookOutline, MegaphoneOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
@@ -25,14 +25,12 @@ import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
 import ChannelSortModal from './ChannelSortModal.vue';
 import ChannelArchiveModal from './ChannelArchiveModal.vue';
-import { usePushNotificationStore } from '@/stores/pushNotification';
 import AdminEditNoticeModal from '@/components/AdminEditNoticeModal.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
 import { useAnnouncementStore } from '@/stores/announcement';
 import type { AnnouncementItem } from '@/models/announcement';
 import { shouldRenderChannelSidebarList } from '@/stores/chatChannelSelection';
-import { MESSAGE_SOUND_MODE_LABELS, type MessageSoundMode } from '@/utils/messageSoundMode';
 import { useUtilsStore } from '@/stores/utils';
 import { generateChannelLink } from '@/utils/messageLink';
 import { copyTextWithFallback } from '@/utils/clipboard';
@@ -53,7 +51,6 @@ const canCreateChannel = computed(() => canCreateChannelSession({
 const user = useUserStore();
 const utils = useUtilsStore();
 const worldGlossary = useWorldGlossaryStore();
-const pushStore = usePushNotificationStore();
 const announcementStore = useAnnouncementStore();
 const props = withDefaults(defineProps<{
   sidebarWidthResizeAvailable?: boolean;
@@ -68,40 +65,6 @@ const emit = defineEmits<{
 const handleToggleSidebarWidthResize = () => {
   emit('toggle-sidebar-width-resize');
 };
-
-const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel', 'background-all'];
-
-const cycleMessageSoundMode = () => {
-  const current = display.settings.messageSoundMode;
-  const currentIndex = MESSAGE_SOUND_MODE_ORDER.indexOf(current);
-  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % MESSAGE_SOUND_MODE_ORDER.length : 0;
-  display.updateSettings({ messageSoundMode: MESSAGE_SOUND_MODE_ORDER[nextIndex] });
-};
-
-const messageSoundButtonLabel = computed(() => `提示音 ${MESSAGE_SOUND_MODE_LABELS[display.settings.messageSoundMode] || '离页时'}`);
-
-const messageSoundButtonIcon = computed(() => {
-  if (display.settings.messageSoundMode === 'off') {
-    return VolumeMuteOutline;
-  }
-  if (display.settings.messageSoundMode === 'away') {
-    return VolumeMediumOutline;
-  }
-  return VolumeHighOutline;
-});
-
-const messageSoundTooltip = computed(() => {
-  if (display.settings.messageSoundMode === 'off') {
-    return '关闭所有新消息提示音';
-  }
-  if (display.settings.messageSoundMode === 'away') {
-    return '仅当前频道在离开页面时播放提示音';
-  }
-  if (display.settings.messageSoundMode === 'world-other-channel') {
-    return '仅当前世界内的其他频道来新消息时播放提示音';
-  }
-  return '页面处于后台时，任意频道收到新消息均播放提示音';
-});
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -488,8 +451,8 @@ const toggleSubChannelDisplay = () => {
   }
 };
 
-const openAppNotificationSettings = () => {
-  chatEvent.emit('open-app-notification-settings');
+const openMessageNotificationSettings = () => {
+  chatEvent.emit('open-display-settings', { category: 'notifications' });
 };
 
 const toggleChannelNameWrap = () => {
@@ -965,55 +928,16 @@ const handleAckWorldAnnouncement = async () => {
               <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
             </n-tooltip>
 
-            <!-- 推送通知开关 -->
             <n-tooltip placement="top" trigger="hover">
               <template #trigger>
-                <n-button
-                  size="tiny"
-                  block
-                  tertiary
-                  :class="{ 'sidebar-toggle-active': pushStore.enabled }"
-                  @click="pushStore.toggle()"
-                  :disabled="!pushStore.supported"
-                >
+                <n-button size="tiny" block tertiary class="sidebar-toggle-active" @click="openMessageNotificationSettings">
                   <template #icon>
-                    <n-icon :component="pushStore.enabled ? Notifications : NotificationsOff" />
+                    <n-icon :component="NotificationsOutline" />
                   </template>
-                  {{ pushStore.enabled ? '推送已开启' : '推送已关闭' }}
+                  消息提醒设置
                 </n-button>
               </template>
-              <span v-if="pushStore.supported">开启后，切换标签页或最小化时可收到新消息通知</span>
-              <span v-else>您的浏览器不支持通知功能</span>
-            </n-tooltip>
-
-            <n-tooltip placement="top" trigger="hover">
-              <template #trigger>
-                <n-button size="tiny" block tertiary class="sidebar-toggle-active" @click="openAppNotificationSettings">
-                  <template #icon>
-                    <n-icon :component="PhonePortraitOutline" />
-                  </template>
-                  APP 推送设置
-                </n-button>
-              </template>
-              <span>配置移动端消息推送</span>
-            </n-tooltip>
-
-            <n-tooltip placement="top" trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  block
-                  tertiary
-                  :class="{ 'sidebar-toggle-active': display.settings.messageSoundMode !== 'off' }"
-                  @click="cycleMessageSoundMode"
-                >
-                  <template #icon>
-                    <n-icon :component="messageSoundButtonIcon" />
-                  </template>
-                  {{ messageSoundButtonLabel }}
-                </n-button>
-              </template>
-              <span>{{ messageSoundTooltip }}</span>
+              <span>配置世界内提醒、提示音与浏览器通知</span>
             </n-tooltip>
 
             <div class="sidebar-footer-row">
