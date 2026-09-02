@@ -48,6 +48,7 @@ type ExportJobOptions struct {
 	IncludeImages             bool
 	IncludeDiceCommand        bool
 	WithoutTimestamp          bool
+	WithoutOOCParentheses     bool
 	MergeMessages             bool
 	AutoCorrectPunctuation    bool
 	StartTime                 *time.Time
@@ -70,6 +71,7 @@ type exportExtraOptions struct {
 	AutoCorrectPunctuation    bool              `json:"auto_correct_punctuation"`
 	IncludeImages             bool              `json:"include_images"`
 	IncludeDiceCommand        bool              `json:"include_dice_commands"`
+	WithoutOOCParentheses     bool              `json:"without_ooc_parentheses,omitempty"`
 	BatchChannelIDs           []string          `json:"batch_channel_ids,omitempty"`
 	BatchFormat               string            `json:"batch_format,omitempty"`
 }
@@ -513,7 +515,7 @@ func mergeSequentialMessagesForExport(messages []*model.MessageModel, extra *exp
 			continue
 		}
 
-		formatted := formatContentForMerge(msg)
+		formatted := formatContentForMergeWithOption(msg, extra != nil && extra.WithoutOOCParentheses)
 		if current == nil {
 			current = cloneMessage(msg)
 			current.Content = formatted
@@ -650,6 +652,7 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		AutoCorrectPunctuation:    opts.AutoCorrectPunctuation,
 		IncludeImages:             opts.IncludeImages,
 		IncludeDiceCommand:        opts.IncludeDiceCommand,
+		WithoutOOCParentheses:     opts.WithoutOOCParentheses,
 	}
 	if len(opts.DisplaySettings) > 0 {
 		extra.DisplaySettings = opts.DisplaySettings
@@ -660,6 +663,7 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		!extra.TextColorizeBBCode &&
 		len(extra.TextColorizeBBCodeMap) == 0 &&
 		len(extra.TextColorizeBBCodeNameMap) == 0 &&
+		!extra.WithoutOOCParentheses &&
 		extra.AutoCorrectPunctuation &&
 		extra.IncludeImages &&
 		extra.IncludeDiceCommand {
@@ -724,10 +728,14 @@ func cloneMessage(msg *model.MessageModel) *model.MessageModel {
 }
 
 func formatContentForMerge(msg *model.MessageModel) string {
+	return formatContentForMergeWithOption(msg, false)
+}
+
+func formatContentForMergeWithOption(msg *model.MessageModel, withoutOOCParentheses bool) string {
 	if msg == nil {
 		return ""
 	}
-	if strings.EqualFold(normalizeIcMode(msg.ICMode), "ooc") {
+	if !withoutOOCParentheses && strings.EqualFold(normalizeIcMode(msg.ICMode), "ooc") {
 		return ensureOOCWrapped(msg.Content)
 	}
 	return msg.Content
@@ -873,6 +881,7 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 		IncludeOOC:             job.IncludeOOC,
 		IncludeArchived:        job.IncludeArchived,
 		WithoutTimestamp:       job.WithoutTimestamp,
+		WithoutOOCParentheses:  extra.WithoutOOCParentheses,
 		MergeMessages:          job.MergeMessages,
 		AutoCorrectPunctuation: extra.AutoCorrectPunctuation,
 		StartTime:              job.StartTime,

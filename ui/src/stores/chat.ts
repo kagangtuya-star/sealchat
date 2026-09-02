@@ -6264,6 +6264,7 @@ export const useChatStore = defineStore({
       includeImages?: boolean;
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
+      withoutOocParentheses?: boolean;
       mergeMessages?: boolean;
       autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
@@ -6282,6 +6283,7 @@ export const useChatStore = defineStore({
         include_images: params.includeImages ?? true,
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
+        without_ooc_parentheses: params.withoutOocParentheses ?? false,
         merge_messages: params.mergeMessages ?? true,
         ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };
@@ -6328,6 +6330,7 @@ export const useChatStore = defineStore({
       includeImages?: boolean;
       includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
+      withoutOocParentheses?: boolean;
       mergeMessages?: boolean;
       autoCorrectPunctuation?: boolean;
       textColorizeBBCode?: boolean;
@@ -6347,6 +6350,7 @@ export const useChatStore = defineStore({
         include_images: params.includeImages ?? true,
         include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
+        without_ooc_parentheses: params.withoutOocParentheses ?? false,
         merge_messages: params.mergeMessages ?? true,
         ...buildAutoCorrectPunctuationExportPayload(params.autoCorrectPunctuation),
       };

@@ -37,21 +37,22 @@ type payloadContext struct {
 }
 
 type ExportMessage struct {
-	ID               string    `json:"id"`
-	SenderID         string    `json:"sender_id"`
-	SenderIdentityID string    `json:"sender_identity_id,omitempty"`
-	SenderName       string    `json:"sender_name"`
-	SenderColor      string    `json:"sender_color"`
-	SenderAvatar     string    `json:"sender_avatar,omitempty"`
-	IsMerged         bool      `json:"is_merged,omitempty"`
-	IcMode           string    `json:"ic_mode"`
-	IsWhisper        bool      `json:"is_whisper"`
-	IsArchived       bool      `json:"is_archived"`
-	IsBot            bool      `json:"is_bot"`
-	CreatedAt        time.Time `json:"created_at"`
-	Content          string    `json:"content"`
-	ContentHTML      string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
-	WhisperTargets   []string  `json:"whisper_targets"`
+	ID                    string    `json:"id"`
+	SenderID              string    `json:"sender_id"`
+	SenderIdentityID      string    `json:"sender_identity_id,omitempty"`
+	SenderName            string    `json:"sender_name"`
+	SenderColor           string    `json:"sender_color"`
+	SenderAvatar          string    `json:"sender_avatar,omitempty"`
+	IsMerged              bool      `json:"is_merged,omitempty"`
+	IcMode                string    `json:"ic_mode"`
+	IsWhisper             bool      `json:"is_whisper"`
+	IsArchived            bool      `json:"is_archived"`
+	IsBot                 bool      `json:"is_bot"`
+	WithoutOOCParentheses bool      `json:"-"`
+	CreatedAt             time.Time `json:"created_at"`
+	Content               string    `json:"content"`
+	ContentHTML           string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
+	WhisperTargets        []string  `json:"whisper_targets"`
 }
 
 type ExportPayload struct {
@@ -163,21 +164,22 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			htmlContent = stripImageTagsFromHTML(htmlContent)
 		}
 		exportMessages = append(exportMessages, ExportMessage{
-			ID:               msg.ID,
-			SenderID:         msg.UserID,
-			SenderIdentityID: strings.TrimSpace(msg.SenderIdentityID),
-			SenderName:       resolveSenderName(msg),
-			SenderColor:      msg.SenderIdentityColor,
-			SenderAvatar:     resolveSenderAvatar(msg),
-			IsMerged:         msg.MergedMessages > 1,
-			IcMode:           fallbackIcMode(msg.ICMode),
-			IsWhisper:        msg.IsWhisper,
-			IsArchived:       msg.IsArchived,
-			IsBot:            msg.User != nil && msg.User.IsBot,
-			CreatedAt:        msg.CreatedAt,
-			Content:          exportContent,
-			ContentHTML:      htmlContent,
-			WhisperTargets:   extractWhisperTargets(msg, job.ChannelID, identityResolver),
+			ID:                    msg.ID,
+			SenderID:              msg.UserID,
+			SenderIdentityID:      strings.TrimSpace(msg.SenderIdentityID),
+			SenderName:            resolveSenderName(msg),
+			SenderColor:           msg.SenderIdentityColor,
+			SenderAvatar:          resolveSenderAvatar(msg),
+			IsMerged:              msg.MergedMessages > 1,
+			IcMode:                fallbackIcMode(msg.ICMode),
+			IsWhisper:             msg.IsWhisper,
+			IsArchived:            msg.IsArchived,
+			IsBot:                 msg.User != nil && msg.User.IsBot,
+			WithoutOOCParentheses: extra != nil && extra.WithoutOOCParentheses,
+			CreatedAt:             msg.CreatedAt,
+			Content:               exportContent,
+			ContentHTML:           htmlContent,
+			WhisperTargets:        extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
 
@@ -2517,7 +2519,7 @@ func buildBBCodeBody(msg *ExportMessage, includeImages bool) string {
 	if options.DisableAll {
 		body := resolveBotCommandRawText(raw)
 		body = applyImageVisibilityToPlain(body, includeImages)
-		body = wrapOOCContent(msg.IcMode, body)
+		body = wrapOOCContentForExport(msg, body)
 		parts := make([]string, 0, 3)
 		if msg.IsArchived {
 			parts = append(parts, "[已归档]")
@@ -2556,7 +2558,7 @@ func buildBBCodeBody(msg *ExportMessage, includeImages bool) string {
 	}
 
 	body = applyImageVisibilityToPlain(body, includeImages)
-	body = wrapOOCContent(msg.IcMode, body)
+	body = wrapOOCContentForExport(msg, body)
 	parts := make([]string, 0, 3)
 	if msg.IsArchived {
 		parts = append(parts, "[已归档]")
@@ -3079,6 +3081,13 @@ func isHexDigits(input string) bool {
 	return true
 }
 
+func wrapOOCContentForExport(msg *ExportMessage, content string) string {
+	if msg == nil || msg.WithoutOOCParentheses {
+		return content
+	}
+	return wrapOOCContent(msg.IcMode, content)
+}
+
 func wrapOOCContent(icMode string, content string) string {
 	if strings.EqualFold(strings.TrimSpace(icMode), "ooc") {
 		trimmed := strings.TrimSpace(content)
@@ -3140,7 +3149,7 @@ func buildContentBody(msg *ExportMessage, includeImages bool) string {
 		return ""
 	}
 	clean := buildFilteredPlainContent(msg.Content, includeImages)
-	clean = wrapOOCContent(msg.IcMode, clean)
+	clean = wrapOOCContentForExport(msg, clean)
 	var parts []string
 	if msg.IsArchived {
 		parts = append(parts, "[已归档]")

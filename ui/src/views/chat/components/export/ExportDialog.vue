@@ -22,6 +22,7 @@ interface ExportParams {
   includeImages: boolean
   removeDiceCommands: boolean
   withoutTimestamp: boolean
+  withoutOocParentheses: boolean
   mergeMessages: boolean
   autoCorrectPunctuation: boolean
   textColorizeBBCode: boolean
@@ -165,6 +166,7 @@ const form = reactive<ExportParams>({
   includeImages: false,
   removeDiceCommands: true,
   withoutTimestamp: false,
+  withoutOocParentheses: false,
   mergeMessages: true,
   autoCorrectPunctuation: true,
   textColorizeBBCode: false,
@@ -896,6 +898,7 @@ const handleClose = () => {
   form.includeImages = false
   form.removeDiceCommands = true
   form.withoutTimestamp = false
+  form.withoutOocParentheses = false
   form.mergeMessages = true
   form.autoCorrectPunctuation = true
   form.textColorizeBBCode = false
@@ -1100,6 +1103,14 @@ onBeforeUnmount(() => {
               </n-checkbox>
             </template>
             导出的文本中移除每条消息的时间前缀，适合整理剧本或公开内容。
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.withoutOocParentheses">
+                场外不加括号
+              </n-checkbox>
+            </template>
+            开启后，导出场外消息不会自动添加括号；已有括号会保留。
           </n-tooltip>
           <n-tooltip trigger="hover">
             <template #trigger>

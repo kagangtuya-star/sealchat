@@ -6454,6 +6454,7 @@ const handleExportMessages = async (params: {
   includeImages: boolean;
   removeDiceCommands: boolean;
   withoutTimestamp: boolean;
+  withoutOocParentheses: boolean;
   mergeMessages: boolean;
   autoCorrectPunctuation: boolean;
   textColorizeBBCode: boolean;
