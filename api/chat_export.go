@@ -33,6 +33,7 @@ type chatExportRequest struct {
 	IncludeImages          *bool             `json:"include_images"`
 	IncludeDiceCommand     *bool             `json:"include_dice_commands"`
 	WithoutTimestamp       *bool             `json:"without_timestamp"`
+	WithoutOOCParentheses  *bool             `json:"without_ooc_parentheses"`
 	MergeMessages          *bool             `json:"merge_messages"`
 	AutoCorrectPunctuation *bool             `json:"auto_correct_punctuation"`
 	Users                  []string          `json:"users"`
@@ -227,6 +228,10 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 	if req.MergeMessages != nil {
 		mergeMessages = *req.MergeMessages
 	}
+	withoutOOCParentheses := false
+	if req.WithoutOOCParentheses != nil {
+		withoutOOCParentheses = *req.WithoutOOCParentheses
+	}
 
 	textColorizeBBCode := false
 	if req.TextColorizeBBCode != nil && strings.EqualFold(format, "txt") {
@@ -260,6 +265,7 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 		IncludeImages:             includeImages,
 		IncludeDiceCommand:        includeDiceCommand,
 		WithoutTimestamp:          withoutTimestamp,
+		WithoutOOCParentheses:     withoutOOCParentheses,
 		MergeMessages:             mergeMessages,
 		AutoCorrectPunctuation:    req.shouldAutoCorrectPunctuation(),
 		TextColorizeBBCode:        textColorizeBBCode,
@@ -385,6 +391,7 @@ func execChatExportBatchCreate(userID string, req *chatExportRequest) (*chatExpo
 	includeImages := req.IncludeImages == nil || *req.IncludeImages
 	includeDiceCommand := req.IncludeDiceCommand == nil || *req.IncludeDiceCommand
 	withoutTimestamp := req.WithoutTimestamp != nil && *req.WithoutTimestamp
+	withoutOOCParentheses := req.WithoutOOCParentheses != nil && *req.WithoutOOCParentheses
 	mergeMessages := req.MergeMessages == nil || *req.MergeMessages
 	textColorizeBBCode := req.TextColorizeBBCode != nil && *req.TextColorizeBBCode && strings.EqualFold(format, "txt")
 	textColorizeMap := map[string]string{}
@@ -412,6 +419,7 @@ func execChatExportBatchCreate(userID string, req *chatExportRequest) (*chatExpo
 		IncludeImages:             includeImages,
 		IncludeDiceCommand:        includeDiceCommand,
 		WithoutTimestamp:          withoutTimestamp,
+		WithoutOOCParentheses:     withoutOOCParentheses,
 		MergeMessages:             mergeMessages,
 		AutoCorrectPunctuation:    req.shouldAutoCorrectPunctuation(),
 		TextColorizeBBCode:        textColorizeBBCode,
