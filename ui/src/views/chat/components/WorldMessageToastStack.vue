@@ -30,7 +30,8 @@ interface ToastItem extends WorldMessageToastPayload {
 }
 
 const TOAST_DURATION_MS = 5000
-const MAX_TOASTS = 4
+const MAX_TOASTS_DESKTOP = 3
+const MOBILE_TOAST_MEDIA_QUERY = '(max-width: 520px), (pointer: coarse)'
 const SWIPE_THRESHOLD_PX = 56
 const MAX_TEXT_LENGTH = 120
 const hoverCapable = typeof window === 'undefined' || typeof window.matchMedia !== 'function'
@@ -42,6 +43,13 @@ const emit = defineEmits<{
 }>()
 
 const items = ref<ToastItem[]>([])
+
+const getMaxToasts = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return MAX_TOASTS_DESKTOP
+  }
+  return window.matchMedia(MOBILE_TOAST_MEDIA_QUERY).matches ? 1 : MAX_TOASTS_DESKTOP
+}
 
 const normalizeText = (value: unknown, fallback: string, maxLength = MAX_TEXT_LENGTH) => {
   const text = String(value ?? '').trim()
@@ -123,7 +131,7 @@ const enqueue = (payload: WorldMessageToastPayload) => {
   }
   items.value = [...items.value, item]
   scheduleDismiss(item)
-  if (items.value.length > MAX_TOASTS) {
+  while (items.value.length > getMaxToasts()) {
     dismiss(items.value[0].key)
   }
 }
@@ -296,11 +304,27 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .world-message-toast-stack {
+  --world-toast-surface: var(--sc-bg-elevated, var(--sc-bg-surface, Canvas));
+  --world-toast-text-primary: var(--sc-text-primary, CanvasText);
+  --world-toast-text-secondary: var(
+    --sc-text-secondary,
+    color-mix(in srgb, var(--world-toast-text-primary) 68%, transparent)
+  );
+  --world-toast-border: var(
+    --sc-border-strong,
+    color-mix(in srgb, var(--world-toast-text-primary) 18%, transparent)
+  );
+  --world-toast-accent: var(--primary-color, var(--world-toast-text-primary));
+  --world-toast-danger: var(
+    --n-error-color,
+    var(--sc-danger, var(--world-toast-accent))
+  );
+  --world-toast-shadow: var(--chat-message-shadow, none);
   position: absolute;
   top: max(0.75rem, env(safe-area-inset-top));
   right: 0.75rem;
   z-index: 30;
-  width: min(340px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px));
   pointer-events: none;
 }
 
@@ -312,27 +336,27 @@ onBeforeUnmount(() => {
 
 .world-message-toast {
   position: relative;
-  min-height: 58px;
+  min-height: 52px;
   box-sizing: border-box;
-  padding: 10px 36px 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 72%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--sc-bg-elevated) 94%, transparent);
-  color: var(--sc-text-primary);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 16%, transparent);
-  backdrop-filter: blur(10px);
+  padding: 9px 34px 9px 11px;
+  border: 1px solid var(--world-toast-border);
+  border-radius: 11px;
+  background: var(--world-toast-surface);
+  color: var(--world-toast-text-primary);
+  box-shadow: var(--world-toast-shadow);
   cursor: pointer;
   pointer-events: auto;
   touch-action: pan-y;
   user-select: none;
   outline: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .world-message-toast:hover,
 .world-message-toast:focus-visible {
-  border-color: color-mix(in srgb, var(--primary-color, #3b82f6) 48%, var(--sc-border-strong));
-  box-shadow: 0 10px 28px color-mix(in srgb, #000 22%, transparent);
+  border-color: color-mix(in srgb, var(--world-toast-accent) 46%, var(--world-toast-border));
+  background: color-mix(in srgb, var(--world-toast-surface) 92%, var(--world-toast-accent) 8%);
+  box-shadow: var(--world-toast-shadow);
 }
 
 .world-message-toast.is-dragging {
@@ -342,7 +366,7 @@ onBeforeUnmount(() => {
 .world-message-toast__channel {
   min-width: 0;
   overflow: hidden;
-  color: var(--sc-text-secondary);
+  color: var(--world-toast-text-secondary);
   font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -351,6 +375,8 @@ onBeforeUnmount(() => {
 
 .world-message-toast__message {
   display: flex;
+  align-items: baseline;
+  gap: 0.2rem;
   min-width: 0;
   margin-top: 3px;
   font-size: 13px;
@@ -366,55 +392,65 @@ onBeforeUnmount(() => {
 
 .world-message-toast__speaker {
   flex: 0 1 auto;
-  max-width: 45%;
-  color: var(--sc-text-primary);
+  max-width: 42%;
+  color: var(--world-toast-text-primary);
   font-weight: 650;
 }
 
 .world-message-toast__preview {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--sc-text-secondary);
+  color: var(--world-toast-text-secondary);
 }
 
 .world-message-toast__close {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 6px;
+  right: 6px;
   display: inline-flex;
-  width: 19px;
-  height: 19px;
+  width: 20px;
+  height: 20px;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 50%;
-  background: #dc2626;
-  color: #fff;
+  background: transparent;
+  color: var(--world-toast-text-secondary);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 140ms ease, background-color 140ms ease;
-}
-
-.world-message-toast:hover .world-message-toast__close,
-.world-message-toast:focus-within .world-message-toast__close,
-.world-message-toast__close:focus-visible {
-  opacity: 1;
+  opacity: 0.76;
+  transition: opacity 140ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
 .world-message-toast__close:hover {
-  background: #b91c1c;
+  border-color: color-mix(in srgb, var(--world-toast-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--world-toast-danger) 12%, var(--world-toast-surface));
+  color: var(--world-toast-danger);
+  opacity: 1;
+}
+
+.world-message-toast__close:focus-visible {
+  border-color: color-mix(in srgb, var(--world-toast-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--world-toast-accent) 8%, var(--world-toast-surface));
+  color: var(--world-toast-text-secondary);
+  opacity: 1;
+  outline: 2px solid color-mix(in srgb, var(--world-toast-accent) 42%, transparent);
+  outline-offset: 1px;
 }
 
 .world-message-toast-enter-active,
 .world-message-toast-leave-active {
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition: opacity 220ms ease, transform 220ms ease;
 }
 
-.world-message-toast-enter-from,
+.world-message-toast-enter-from {
+  opacity: 0;
+  transform: translate3d(calc(100% + 12px), 0, 0);
+}
+
 .world-message-toast-leave-to {
   opacity: 0;
-  transform: translate3d(8px, 0, 0);
+  transform: translate3d(12px, 0, 0);
 }
 
 .world-message-toast-leave-active {
@@ -428,19 +464,31 @@ onBeforeUnmount(() => {
 
 @media (hover: none), (pointer: coarse) {
   .world-message-toast__close {
-    opacity: 1;
+    opacity: 0.9;
   }
 }
 
 @media (max-width: 520px) {
   .world-message-toast-stack {
     right: 12px;
-    width: min(340px, calc(100vw - 24px));
+    width: min(360px, calc(100vw - 24px));
   }
 }
 
-:root[data-display-palette='night'] .world-message-toast {
-  box-shadow: 0 10px 28px color-mix(in srgb, #000 38%, transparent);
+@supports ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .world-message-toast {
+    background: color-mix(in srgb, var(--world-toast-surface) 94%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .world-message-toast {
+    background: var(--world-toast-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
