@@ -4055,7 +4055,7 @@ const handleRetrySend = () => {
           >
             <div class="editing-preview__body" :class="{ 'is-placeholder': otherEditingPreview?.indicatorOnly }">
             <template v-if="otherEditingPreview?.indicatorOnly">
-              正在更新内容...
+              正在编辑…
             </template>
             <template v-else>
               <div

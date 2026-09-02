@@ -906,7 +906,8 @@ let lastEditingMessageId = '';
 let lastEditingWhisperTargetId: string | null = null;
 
 const sendEditingPreview = throttle((channelId: string, messageId: string, content: string) => {
-  if (typingPreviewMode.value !== 'content') {
+  const state = typingPreviewMode.value;
+  if (state === 'silent') {
     return;
   }
   const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
@@ -928,7 +929,7 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
   if (whisperTargetId) {
     extra.whisperTo = whisperTargetId;
   }
-  chat.messageTyping('content', content, channelId, extra);
+  chat.messageTyping(state, state === 'content' ? content : '', channelId, extra);
   editingPreviewActive.value = true;
   lastEditingChannelId = channelId;
   lastEditingMessageId = messageId;
@@ -1018,7 +1019,7 @@ const emitEditingPreview = () => {
     return;
   }
   const messageId = chat.editing.messageId;
-  const raw = textToSend.value;
+  const raw = chat.editing.draft || '';
   // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
   const isRichMode = chat.editing.mode === 'rich' || isTipTapJson(raw);
   const truncated = isRichMode ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
@@ -1163,11 +1164,9 @@ const typingToggleClass = computed(() => ({
         stopTypingPreviewNow();
       }
     }
-    if (mode === 'content' && isEditing.value) {
+    if (isEditing.value) {
       emitEditingPreview();
-    }
-    if (mode !== 'content' && editingPreviewActive.value) {
-      stopEditingPreviewNow();
+      return;
     }
   });
 
