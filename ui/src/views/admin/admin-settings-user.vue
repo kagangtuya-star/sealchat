@@ -322,7 +322,7 @@ const columns = ref([
       <div class="user-management__search">
         <n-input
           v-model:value="keyword"
-          placeholder="搜索用户名/昵称"
+          placeholder="搜索用户名/昵称/邮箱"
           clearable
           @input="handleSearch"
           @clear="handleSearch"

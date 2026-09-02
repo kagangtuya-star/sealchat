@@ -49,8 +49,8 @@ func AdminUserList(c *fiber.Ctx) error {
 
 	// 搜索过滤
 	if keyword != "" {
-		query = query.Where("username LIKE ? OR nickname LIKE ?",
-			"%"+keyword+"%", "%"+keyword+"%")
+		query = query.Where("username LIKE ? OR nickname LIKE ? OR email LIKE ?",
+			"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 	}
 
 	// 用户类型过滤
