@@ -16,6 +16,16 @@ import (
 	"sealchat/pm"
 )
 
+var (
+	ErrChannelMoveNotFound          = errors.New("channel move channel not found")
+	ErrChannelMoveParentNotFound    = errors.New("channel move parent not found")
+	ErrChannelMoveCrossWorld        = errors.New("channel move cannot cross worlds")
+	ErrChannelMoveParentNotTopLevel = errors.New("channel move parent must be top-level")
+	ErrChannelMoveSelfParent        = errors.New("channel move cannot use itself as parent")
+	ErrChannelMoveHasChildren       = errors.New("channel with children cannot become a child")
+	ErrChannelMoveForbidden         = errors.New("channel move forbidden")
+)
+
 // ChannelIdList 获取可见的频道ID，这个函数是下面的修改版，理论上会更精确，等待实际验证。可能有些调用代价，后面可以考虑使用memoize，也可能使用层级权限是更好的方式。
 func ChannelIdList(userId string) ([]string, error) {
 	// 包括如下内容:
@@ -196,6 +206,89 @@ func ChannelListByWorld(worldID string) ([]*model.ChannelModel, error) {
 		Order("created_at ASC").
 		Find(&items).Error
 	return items, err
+}
+
+// ChannelMove moves channel to another top-level channel or to world root.
+// Channel hierarchy is intentionally limited to two levels.
+func ChannelMove(channelID, parentID, actorID string) error {
+	channelID = strings.TrimSpace(channelID)
+	parentID = strings.TrimSpace(parentID)
+	actorID = strings.TrimSpace(actorID)
+	if channelID == "" {
+		return ErrChannelMoveNotFound
+	}
+
+	db := model.GetDB()
+	var channelRef model.ChannelModel
+	if err := db.Where("id = ?", channelID).Limit(1).Find(&channelRef).Error; err != nil {
+		return err
+	}
+	if strings.TrimSpace(channelRef.ID) == "" || channelRef.IsPrivate ||
+		strings.EqualFold(strings.TrimSpace(channelRef.PermType), "private") ||
+		strings.ToLower(strings.TrimSpace(channelRef.Status)) != model.ChannelStatusActive ||
+		strings.TrimSpace(channelRef.WorldID) == "" {
+		return ErrChannelMoveNotFound
+	}
+	if !IsWorldAdmin(channelRef.WorldID, actorID) && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) {
+		return ErrChannelMoveForbidden
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var channel model.ChannelModel
+		if err := tx.Where("id = ?", channelID).Limit(1).Find(&channel).Error; err != nil {
+			return err
+		}
+		if strings.TrimSpace(channel.ID) == "" {
+			return ErrChannelMoveNotFound
+		}
+		if channel.IsPrivate || strings.EqualFold(strings.TrimSpace(channel.PermType), "private") ||
+			strings.ToLower(strings.TrimSpace(channel.Status)) != model.ChannelStatusActive ||
+			strings.TrimSpace(channel.WorldID) == "" {
+			return ErrChannelMoveNotFound
+		}
+
+		if parentID != "" {
+			if parentID == channelID {
+				return ErrChannelMoveSelfParent
+			}
+			var parent model.ChannelModel
+			if err := tx.Where("id = ?", parentID).Limit(1).Find(&parent).Error; err != nil {
+				return err
+			}
+			if strings.TrimSpace(parent.ID) == "" {
+				return ErrChannelMoveParentNotFound
+			}
+			if strings.TrimSpace(parent.WorldID) != strings.TrimSpace(channel.WorldID) {
+				return ErrChannelMoveCrossWorld
+			}
+			if parent.IsPrivate || strings.EqualFold(strings.TrimSpace(parent.PermType), "private") ||
+				strings.ToLower(strings.TrimSpace(parent.Status)) != model.ChannelStatusActive {
+				return ErrChannelMoveParentNotFound
+			}
+			if strings.TrimSpace(parent.ParentID) != "" || strings.TrimSpace(parent.RootId) != "" {
+				return ErrChannelMoveParentNotTopLevel
+			}
+
+			if strings.TrimSpace(channel.ParentID) != parentID {
+				var children int64
+				if err := tx.Model(&model.ChannelModel{}).
+					Where("parent_id = ? AND status <> ?", channelID, model.ChannelStatusDeleted).
+					Count(&children).Error; err != nil {
+					return err
+				}
+				if children > 0 {
+					return ErrChannelMoveHasChildren
+				}
+			}
+		}
+
+		return tx.Model(&model.ChannelModel{}).
+			Where("id = ?", channelID).
+			Updates(map[string]any{
+				"parent_id": parentID,
+				"root_id":   parentID,
+			}).Error
+	})
 }
 
 func ChannelListPublicByWorld(worldID string) ([]*model.ChannelModel, error) {

@@ -5530,6 +5530,13 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    async channelMove(channelId: string, parentId?: string | null) {
+      const resp = await api.post<{ message: string }>(`api/v1/channels/${channelId}/move`, {
+        parentId: parentId || '',
+      });
+      return resp?.data;
+    },
+
     // 编辑频道背景
     async channelBackgroundEdit(id: string, updates: {
       backgroundAttachmentId?: string;

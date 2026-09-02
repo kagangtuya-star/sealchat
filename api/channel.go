@@ -323,6 +323,49 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 	})
 }
 
+// ChannelMove moves a channel between the world root and a top-level channel.
+func ChannelMove(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "缺少频道ID"})
+	}
+
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+
+	var body struct {
+		ParentID string `json:"parentId"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+
+	if err := service.ChannelMove(channelID, body.ParentID, user.ID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrChannelMoveNotFound),
+			errors.Is(err, service.ErrChannelMoveParentNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		case errors.Is(err, service.ErrChannelMoveHasChildren):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "含有子频道的频道不能移动为子频道"})
+		case errors.Is(err, service.ErrChannelMoveForbidden):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "仅世界管理员可移动频道"})
+		case errors.Is(err, service.ErrChannelMoveCrossWorld),
+			errors.Is(err, service.ErrChannelMoveParentNotTopLevel),
+			errors.Is(err, service.ErrChannelMoveSelfParent):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "频道层级关系无效"})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "移动频道失败"})
+		}
+	}
+
+	if channel, err := model.ChannelGet(channelID); err == nil {
+		broadcastChannelTreeInvalidated(user, channel, "move")
+	}
+	return c.JSON(fiber.Map{"message": "频道移动成功"})
+}
+
 // ChannelBackgroundEdit 处理频道背景编辑请求
 func ChannelBackgroundEdit(c *fiber.Ctx) error {
 	channelId := c.Query("id")

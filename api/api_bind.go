@@ -764,6 +764,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Delete("/channels/:channelId/export-color-profile", ExportColorProfileDelete)
 	v1Auth.Post("/channels/:channelId/copy", ChannelCopy)
 	v1Auth.Delete("/channels/:channelId", ChannelDissolve)
+	v1Auth.Post("/channels/:channelId/move", ChannelMove)
 	v1Auth.Post("/channel-background-edit", ChannelBackgroundEdit)
 	v1Auth.Post("/channel-info-edit", ChannelInfoEdit)
 	v1Auth.Get("/channel-info", ChannelInfoGet)
