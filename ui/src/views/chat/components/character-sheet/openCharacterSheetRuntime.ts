@@ -10,6 +10,7 @@ interface OpenCharacterSheetRuntimeOptions {
   worldId?: string;
   ephemeral?: boolean;
   reuse?: boolean;
+  isContextCurrent?: () => boolean;
 }
 
 export async function openCharacterSheetRuntime({
@@ -18,18 +19,22 @@ export async function openCharacterSheetRuntime({
   worldId,
   ephemeral,
   reuse,
+  isContextCurrent,
 }: OpenCharacterSheetRuntimeOptions): Promise<string> {
   const cardStore = useCharacterCardStore();
   const avatarStore = useCharacterCardAvatarStore();
   const templateStore = useCharacterCardTemplateStore();
   const sheetStore = useCharacterSheetStore();
 
-  const openFallback = () => sheetStore.openSheet(card, channelId, {
-    name: card.name,
-    type: card.sheetType,
-    attrs: card.attrs || {},
-    avatarUrl: avatarStore.resolveCardAvatar(card.id, channelId) || undefined,
-  }, { worldId, ephemeral, reuse });
+  const openFallback = () => {
+    if (isContextCurrent && !isContextCurrent()) return '';
+    return sheetStore.openSheet(card, channelId, {
+      name: card.name,
+      type: card.sheetType,
+      attrs: card.attrs || {},
+      avatarUrl: avatarStore.resolveCardAvatar(card.id, channelId) || undefined,
+    }, { worldId, ephemeral, reuse });
+  };
 
   if (cardStore.isBotCharacterDisabled(channelId)) {
     return openFallback();
@@ -55,6 +60,7 @@ export async function openCharacterSheetRuntime({
       sheetType: resolvedSheetType,
       fallbackTemplate,
     });
+    if (isContextCurrent && !isContextCurrent()) return '';
     const binding = templateStore.getBinding(channelId, card.id) || ensured;
     if (binding?.mode) {
       card.templateMode = binding.mode;

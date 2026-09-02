@@ -161,10 +161,12 @@ import { useUtilsStore } from '@/stores/utils';
 import { useMessage } from 'naive-ui';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import {
+  buildInternalSurfaceResourceKey,
   generateInternalSurfaceLink,
   openInternalSurfaceLink,
   resolveInternalSurfaceLinkBase,
 } from '@/utils/internalSurfaceLink';
+import { requestTheaterFloatingTakeover } from '@/utils/theaterFloatingBridge';
 
 const iform = useIFormStore();
 const chat = useChatStore();
@@ -187,20 +189,27 @@ const resolveForm = (formId: string) => formMap.value.get(formId);
 
 const formTitle = (formId: string) => resolveForm(formId)?.name?.trim() || '嵌入窗口';
 
-const getInternalLink = (formId: string) => {
+const getInternalResource = (formId: string) => {
   const worldId = String(chat.currentWorldId || '').trim();
   const channelId = String(iform.visibleChannelId || chat.curChannel?.id || '').trim();
   if (!worldId || !channelId || !formId) {
     message.warning('无法生成外部链接');
     return null;
   }
-  return generateInternalSurfaceLink({
+  const params = {
     type: 'iform',
     id: formId,
     worldId,
     channelId,
-  }, { base: resolveInternalSurfaceLinkBase(utils.config) });
+  } as const;
+  return {
+    key: buildInternalSurfaceResourceKey(params),
+    url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utils.config) }),
+    title: formTitle(formId),
+  };
 };
+
+const getInternalLink = (formId: string) => getInternalResource(formId)?.url || null;
 
 const popoutInternalLink = (windowState: (typeof floatingWindows.value)[number]) => {
   const link = getInternalLink(windowState.formId);
@@ -387,11 +396,42 @@ const clearPointerState = (event: PointerEvent) => {
       : null;
     if (result.action === 'toggle') {
       iform.toggleFloatingMinimize(current.windowId);
+    } else if (event.type === 'pointerup') {
+      const state = iform.getFloatingState(current.windowId);
+      const resource = getInternalResource(state?.formId || '');
+      if (resource) {
+        void requestTheaterFloatingTakeover({
+          ...resource,
+          presentation: {
+            minimized: true,
+            width: state?.width,
+            height: state?.height,
+          },
+        }, event).then((accepted) => {
+          if (accepted) closeFloating(current.windowId);
+        });
+      }
     }
   }
   if (dragging.value?.pointerId === event.pointerId) {
-    dragging.value?.captureTarget?.releasePointerCapture?.(event.pointerId);
+    const completed = event.type === 'pointerup' ? dragging.value : null;
+    dragging.value.captureTarget?.releasePointerCapture?.(event.pointerId);
     dragging.value = null;
+    if (completed) {
+      const state = iform.getFloatingState(completed.windowId);
+      const resource = getInternalResource(state?.formId || '');
+      if (resource) {
+        void requestTheaterFloatingTakeover({
+          ...resource,
+          presentation: {
+            width: state?.width,
+            height: state?.height,
+          },
+        }, event).then((accepted) => {
+          if (accepted) closeFloating(completed.windowId);
+        });
+      }
+    }
   }
   if (resizing.value?.pointerId === event.pointerId) {
     resizing.value?.captureTarget?.releasePointerCapture?.(event.pointerId);

@@ -306,7 +306,8 @@ import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver'
 import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
+import { buildInternalSurfaceResourceKey, generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
+import { requestTheaterFloatingTakeover } from '@/utils/theaterFloatingBridge'
 import { copyTextWithFallback, copyTextWithResult } from '@/utils/clipboard'
 import {
   STICKY_NOTE_PRESET_COLORS,
@@ -503,6 +504,19 @@ const defaultInternalSurfaceLink = computed(() => {
     worldId,
     channelId,
   }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) })
+})
+
+const theaterFloatingResource = computed(() => {
+  const currentNote = note.value
+  const worldId = String(currentNote?.worldId || chatStore.currentWorldId || '').trim()
+  const channelId = String(currentNote?.channelId || chatStore.curChannel?.id || '').trim()
+  if (!currentNote?.id || !worldId || !channelId || !defaultInternalSurfaceLink.value) return null
+  const params = { type: 'note', id: currentNote.id, worldId, channelId } as const
+  return {
+    key: buildInternalSurfaceResourceKey(params),
+    url: defaultInternalSurfaceLink.value,
+    title: currentNote.title?.trim() || '无标题便签',
+  }
 })
 
 const copyInternalSurfaceLink = async () => {
@@ -1303,6 +1317,7 @@ function startDrag(e: PointerEvent) {
     x: e.clientX - rect.left,
     y: e.clientY - rect.top
   }
+  ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
 
   document.addEventListener('pointermove', onDrag)
   document.addEventListener('pointerup', stopDrag)
@@ -1333,12 +1348,29 @@ function stopDrag(e: PointerEvent) {
   document.removeEventListener('pointermove', onDrag)
   document.removeEventListener('pointerup', stopDrag)
   document.removeEventListener('pointercancel', stopDrag)
+  try {
+    headerEl.value?.releasePointerCapture?.(e.pointerId)
+  } catch {
+    // Pointer capture can already be released by browser.
+  }
 
   const rect = noteEl.value.getBoundingClientRect()
   stickyNoteStore.updateUserState(props.noteId, {
     positionX: Math.round(rect.left),
     positionY: Math.round(rect.top)
   })
+  const resource = theaterFloatingResource.value
+  if (e.type === 'pointerup' && resource) {
+    void requestTheaterFloatingTakeover({
+      ...resource,
+      presentation: {
+        width: rect.width,
+        height: rect.height,
+      },
+    }, e).then((accepted) => {
+      if (accepted) close()
+    })
+  }
 }
 
 // 调整大小逻辑

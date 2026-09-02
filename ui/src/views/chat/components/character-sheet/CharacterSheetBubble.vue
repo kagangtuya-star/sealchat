@@ -18,7 +18,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
+import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import {
+  buildInternalSurfaceResourceKey,
+  generateInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+} from '@/utils/internalSurfaceLink';
+import { requestTheaterFloatingTakeover } from '@/utils/theaterFloatingBridge';
 
 const props = defineProps<{
   windowId: string;
@@ -34,9 +42,13 @@ const emit = defineEmits<{
 }>();
 
 const sheetStore = useCharacterSheetStore();
+const chatStore = useChatStore();
+const utilsStore = useUtilsStore();
 
 const isDragging = ref(false);
 const hasMoved = ref(false);
+const dragPointerId = ref<number | null>(null);
+let dragTarget: HTMLElement | null = null;
 const dragStart = ref({ x: 0, y: 0, bubbleX: 0, bubbleY: 0 });
 
 const DRAG_THRESHOLD = 5;
@@ -55,22 +67,52 @@ const bubbleStyle = computed(() => ({
   zIndex: props.zIndex,
 }));
 
+const getInternalSurfaceResource = () => {
+  const win = sheetStore.windows[props.windowId];
+  const worldId = String(win?.worldId || chatStore.currentWorldId || '').trim();
+  const channelId = String(win?.channelId || chatStore.curChannel?.id || '').trim();
+  if (!win?.cardId || !worldId || !channelId) return null;
+  const params = {
+    type: 'character',
+    id: win.cardId,
+    worldId,
+    channelId,
+  } as const;
+  return {
+    key: buildInternalSurfaceResourceKey(params),
+    url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }),
+    title: win.cardName?.trim() || '人物卡',
+    presentation: {
+      minimized: true,
+      avatarUrl: resolvedAvatarUrl.value || props.avatarUrl || undefined,
+      width: win.width,
+      height: win.height,
+    },
+  };
+};
+
 const handlePointerDown = (e: PointerEvent) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
   isDragging.value = true;
   hasMoved.value = false;
+  dragPointerId.value = e.pointerId;
+  dragTarget = e.currentTarget as HTMLElement | null;
   dragStart.value = {
     x: e.clientX,
     y: e.clientY,
     bubbleX: props.bubbleX,
     bubbleY: props.bubbleY,
   };
+  dragTarget?.setPointerCapture?.(e.pointerId);
   document.addEventListener('pointermove', handlePointerMove);
   document.addEventListener('pointerup', handlePointerUp);
+  document.addEventListener('pointercancel', handlePointerUp);
 };
 
 const handlePointerMove = (e: PointerEvent) => {
   if (!isDragging.value) return;
+  if (dragPointerId.value !== e.pointerId) return;
   const dx = e.clientX - dragStart.value.x;
   const dy = e.clientY - dragStart.value.y;
   if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
@@ -83,10 +125,32 @@ const handlePointerMove = (e: PointerEvent) => {
   );
 };
 
-const handlePointerUp = () => {
+const handlePointerUp = (e?: PointerEvent) => {
+  if (e && dragPointerId.value !== e.pointerId) return;
+  const moved = hasMoved.value;
+  const target = dragTarget;
+  const pointerId = dragPointerId.value;
   isDragging.value = false;
+  dragPointerId.value = null;
+  dragTarget = null;
+  if (target && pointerId !== null) {
+    try {
+      target.releasePointerCapture?.(pointerId);
+    } catch (_) {
+      // Pointer capture can already be released by browser.
+    }
+  }
   document.removeEventListener('pointermove', handlePointerMove);
   document.removeEventListener('pointerup', handlePointerUp);
+  document.removeEventListener('pointercancel', handlePointerUp);
+  if (e?.type === 'pointerup' && moved) {
+    const resource = getInternalSurfaceResource();
+    if (resource) {
+      void requestTheaterFloatingTakeover(resource, e).then((accepted) => {
+        if (accepted) sheetStore.closeSheet(props.windowId);
+      });
+    }
+  }
 };
 
 const handleClick = () => {

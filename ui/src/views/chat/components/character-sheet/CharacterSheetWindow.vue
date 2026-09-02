@@ -185,10 +185,12 @@ import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import IframeSandbox, { type SealChatEvent } from './IframeSandbox.vue';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import {
+  buildInternalSurfaceResourceKey,
   generateInternalSurfaceLink,
   openInternalSurfaceLink,
   resolveInternalSurfaceLinkBase,
 } from '@/utils/internalSurfaceLink';
+import { requestTheaterFloatingTakeover } from '@/utils/theaterFloatingBridge';
 
 const props = defineProps<{
   windowId: string;
@@ -303,7 +305,7 @@ const handlePointerDown = () => {
   sheetStore.bringToFront(props.windowId);
 };
 
-const getInternalSurfaceLink = () => {
+const getInternalSurfaceResource = () => {
   const win = windowData.value;
   const worldId = String(win?.worldId || chatStore.currentWorldId || '').trim();
   const channelId = String(win?.channelId || chatStore.curChannel?.id || '').trim();
@@ -311,13 +313,25 @@ const getInternalSurfaceLink = () => {
     message.warning('无法生成外部链接');
     return null;
   }
-  return generateInternalSurfaceLink({
+  const params = {
     type: 'character',
     id: win.cardId,
     worldId,
     channelId,
-  }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) });
+  } as const;
+  return {
+    key: buildInternalSurfaceResourceKey(params),
+    url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }),
+    title: win.cardName?.trim() || '人物卡',
+    presentation: {
+      avatarUrl: iframeData.value.avatarUrl || undefined,
+      width: win.width,
+      height: win.height,
+    },
+  };
 };
+
+const getInternalSurfaceLink = () => getInternalSurfaceResource()?.url || null;
 
 const popoutInternalSurface = () => {
   const link = getInternalSurfaceLink();
@@ -453,6 +467,14 @@ const stopDrag = (e?: Event) => {
     unbindDragListeners(target);
   }
   clearPointerInteractionStyle();
+  if (e instanceof PointerEvent && e.type === 'pointerup') {
+    const resource = getInternalSurfaceResource();
+    if (resource) {
+      void requestTheaterFloatingTakeover(resource, e).then((accepted) => {
+        if (accepted) sheetStore.closeSheet(props.windowId);
+      });
+    }
+  }
 };
 
 const startResize = (e: PointerEvent) => {

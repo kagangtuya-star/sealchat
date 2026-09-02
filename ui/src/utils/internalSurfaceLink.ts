@@ -11,6 +11,10 @@ export interface InternalSurfaceLinkParams {
   channelId: string;
 }
 
+export const buildInternalSurfaceResourceKey = (params: InternalSurfaceLinkParams): string => (
+  `${params.type}:${params.id}:${params.worldId}:${params.channelId}`
+);
+
 interface InternalSurfaceLinkConfig {
   domain?: string | null;
   webUrl?: string | null;

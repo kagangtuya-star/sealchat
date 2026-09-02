@@ -47,6 +47,7 @@ import { dice3dRuntime } from '@/features/dice3d/runtime';
 import { resolveDice3DPlaybackPayload } from '@/features/dice3d/playbackProfile';
 import type { Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
+import TheaterFloatingReturnReceiver from './components/TheaterFloatingReturnReceiver.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { usePushNotificationStore } from '@/stores/pushNotification';
@@ -18179,6 +18180,7 @@ onBeforeUnmount(() => {
 
   <!-- 人物卡预览窗口 -->
   <CharacterSheetManager />
+  <TheaterFloatingReturnReceiver />
 </template>
 
 <style lang="scss" scoped src="./styles/chat.scoped.scss"></style>

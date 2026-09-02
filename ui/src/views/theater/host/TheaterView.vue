@@ -22,6 +22,7 @@ import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
+import TheaterFloatingHost from './TheaterFloatingHost.vue'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import { useDisplayStore } from '@/stores/display'
 import { activateWorldTheater, isTheaterActivationRequired } from '@/services/theaterActivation'
@@ -783,6 +784,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
+		<TheaterFloatingHost :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" />
       </section>
 
       <div
