@@ -628,6 +628,9 @@ export const useIFormStore = defineStore('iform', {
         return;
       }
       state.minimized = !state.minimized;
+      if (!state.minimized) {
+        this.updateFloatingPosition(windowId, state.x, state.y);
+      }
       this.bringFloatingToFront(windowId);
     },
     updateFloatingPosition(windowId: string, x: number, y: number, minimizedSize?: { width: number; height: number }) {
