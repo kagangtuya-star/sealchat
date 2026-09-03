@@ -44,6 +44,7 @@ interface TheaterSceneSnapshot {
   order: number
   folderId?: string
   locked: boolean
+  published: boolean
   state: JsonObject
   objects: Record<string, TheaterObjectSnapshot>
 }
@@ -175,9 +176,16 @@ const mergeThreeWay = (base: unknown, local: unknown, remote: unknown): unknown 
   return result
 }
 
-const rebaseDocument = (base: TheaterDocument, local: TheaterDocument, remote: TheaterDocument): TheaterDocument => (
-  mergeThreeWay(base, local, remote) as TheaterDocument
-)
+const rebaseDocument = (base: TheaterDocument, local: TheaterDocument, remote: TheaterDocument): TheaterDocument => {
+  const result = mergeThreeWay(base, local, remote) as TheaterDocument
+  if (!result.activeSceneId || !result.scenes[result.activeSceneId]) {
+    result.activeSceneId = remote.activeSceneId && result.scenes[remote.activeSceneId]
+      ? remote.activeSceneId
+      : Object.values(result.scenes).sort((left, right) => left.order - right.order)[0]?.id || null
+    if (result.activeSceneId === remote.activeSceneId) result.liveState = clone(remote.liveState)
+  }
+  return result
+}
 
 const imageRef = (value: unknown): StageImageRef | null => {
   const raw = asObject(value)
@@ -380,6 +388,7 @@ const normalizeDocument = (snapshot: TheaterSnapshotResponse['snapshot']): Theat
     id,
     switchText: normalizeSwitchText(scene.switchText),
     folderId: typeof scene.folderId === 'string' && scene.folderId.trim() ? scene.folderId.trim() : undefined,
+    published: scene.published === true,
     state: serverStateFromStage(stageStateFromServer(scene.state, {})),
     objects: normalizeObjectSnapshots(scene.objects, id),
   }])),
@@ -397,6 +406,7 @@ const documentFromWorkspace = (workspace: StageWorkspaceState): TheaterDocument 
     order: scene.order,
     ...(scene.folderId ? { folderId: scene.folderId } : {}),
     locked: scene.locked,
+    published: scene.published,
     state: serverStateFromStage(scene.state),
     objects: Object.fromEntries(Object.values(scene.state.sceneObjects).map((object) => [
       object.id,
@@ -427,6 +437,7 @@ const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState =
       order: scene.order,
       ...(scene.folderId ? { folderId: scene.folderId } : {}),
       locked: scene.locked,
+      published: scene.published,
       state: stageStateFromServer(scene.state, objects),
     }
     return [scene.id, value]
@@ -566,11 +577,18 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
   Object.values(after.scenes)
     .filter((scene) => !before.scenes[scene.id])
     .sort((left, right) => left.order - right.order)
-    .forEach((scene) => mutations.push({
-      type: 'scene.create',
-      permission: 'stage.object.edit',
-      payload: { sceneId: scene.id, name: scene.name, switchText: scene.switchText, order: scene.order, ...(scene.folderId ? { folderId: scene.folderId } : {}), state: scene.state },
-    }))
+    .forEach((scene) => {
+      mutations.push({
+        type: 'scene.create',
+        permission: 'stage.object.edit',
+        payload: { sceneId: scene.id, name: scene.name, switchText: scene.switchText, order: scene.order, ...(scene.folderId ? { folderId: scene.folderId } : {}), state: scene.state },
+      })
+      if (scene.published) mutations.push({
+        type: 'scene.update',
+        permission: 'stage.object.edit',
+        payload: { sceneId: scene.id, fields: { published: true } },
+      })
+    })
 
   Object.values(after.scenes).forEach((scene) => {
     const previous = before.scenes[scene.id]
@@ -581,6 +599,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     if ((scene.folderId || '') !== (previous.folderId || '')) fields.folderId = scene.folderId || ''
     if (!sceneOrderChanged && scene.order !== previous.order) fields.order = scene.order
     if (scene.locked !== previous.locked) fields.locked = scene.locked
+    if (scene.published !== previous.published) fields.published = scene.published
     if (!same(scene.state, previous.state)) fields.state = scene.state
     if (Object.keys(fields).length) mutations.push({
       type: 'scene.update',
@@ -674,6 +693,12 @@ const canApplyMutation = (mutation: TheaterMutation, permissions: string[], base
     return !object.locked || Object.keys(fields).every((field) => delegatedLockedObjectFields.has(field))
   })
 }
+
+const filterLocalSceneBrowsingMutations = (mutations: TheaterMutation[], permissions: string[]) => (
+  permissions.includes('stage.scene.switch')
+    ? mutations
+    : mutations.filter((mutation) => mutation.type !== 'scene.apply')
+)
 
 const filterDelegatedMutation = (mutation: TheaterMutation, baseDocument: TheaterDocument): TheaterMutation | null => {
   if (mutation.type !== 'object.update' && mutation.type !== 'object.batchUpdate') return null
@@ -1221,6 +1246,7 @@ export class TheaterSyncClient {
     const desired = documentFromWorkspace(this.options.store.getSnapshot())
     const baseAtFlush = clone(this.baseDocument)
     let mutations = diffDocuments(this.baseDocument, desired)
+    mutations = filterLocalSceneBrowsingMutations(mutations, this.permissions)
     if (this.permissions.includes('stage.object.edit.delegated') && !this.permissions.includes('stage.object.edit')) {
       mutations = mutations.flatMap((mutation) => {
         const filtered = filterDelegatedMutation(mutation, this.baseDocument)
@@ -1258,7 +1284,9 @@ export class TheaterSyncClient {
         if (!this.started) return
         this.revision = finite(response.data?.revision, this.revision + 1)
       }
-      this.baseDocument = desired
+      this.baseDocument = this.permissions.includes('stage.scene.switch')
+        ? desired
+        : { ...desired, activeSceneId: baseAtFlush.activeSceneId, liveState: baseAtFlush.liveState }
       this.consecutiveConflicts = 0
     } catch (error) {
       if (!this.started) return
@@ -1284,9 +1312,13 @@ export class TheaterSyncClient {
       this.options.onSyncingChange?.(false)
       const shouldReload = this.pendingRemoteRevision > this.revision
       this.pendingRemoteRevision = 0
+      const remainingMutations = filterLocalSceneBrowsingMutations(
+        diffDocuments(this.baseDocument, documentFromWorkspace(this.options.store.getSnapshot())),
+        this.permissions,
+      )
       const hasLocalChanges = this.flushAgain
         || Boolean(this.flushTimer)
-        || diffDocuments(this.baseDocument, documentFromWorkspace(this.options.store.getSnapshot())).length > 0
+        || remainingMutations.length > 0
       if (shouldReload && !hasLocalChanges) await this.reload()
       if (this.flushAgain) {
         this.flushAgain = false
@@ -1300,6 +1332,7 @@ export const theaterSyncTesting = {
   canApplyMutation,
   diffDocuments,
   documentFromWorkspace,
+  filterLocalSceneBrowsingMutations,
   normalizeDocument,
   rebaseDocument,
   serverStateFromStage,

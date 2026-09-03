@@ -691,6 +691,10 @@ func TestMergeTheaterRoomsToWorld(t *testing.T) {
 func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
 	activeSceneID := "scene-active"
 	hiddenSceneID := "scene-hidden"
+	publishedSceneID := "scene-published"
+	activeFolderID := "folder-active"
+	hiddenFolderID := "folder-hidden"
+	publishedFolderID := "folder-published"
 	visible := TheaterObjectSnapshot{
 		ID: "visible", Kind: "button", Name: "幕后线索按钮", Visible: true, Interactive: true,
 		Content: json.RawMessage(`{"image":{"resourceId":"resource-visible"}}`),
@@ -708,23 +712,37 @@ func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
 		ID: "delegated", Kind: "text", Name: "授权编辑组件", Visible: false, Editable: true,
 		Content: json.RawMessage(`{"text":"可编辑"}`), Actions: json.RawMessage(`[]`), Metadata: json.RawMessage(`{}`),
 	}
+	publishedVisible := TheaterObjectSnapshot{
+		ID: "published-visible", Kind: "image", Name: "已发布图片", Visible: true,
+		Content: json.RawMessage(`{"image":{"resourceId":"resource-published"}}`), Actions: json.RawMessage(`[]`), Metadata: json.RawMessage(`{}`),
+	}
 	snapshot := TheaterSharedSnapshot{
 		ActiveSceneID: &activeSceneID,
 		LiveState:     json.RawMessage(`{}`),
+		SceneFolders: []TheaterSceneFolder{
+			{ID: publishedFolderID, Name: "已发布剧情"},
+			{ID: hiddenFolderID, Name: "隐藏剧情"},
+			{ID: activeFolderID, Name: "当前剧情"},
+		},
 		Scenes: map[string]TheaterSceneSnapshot{
 			activeSceneID: {
-				ID: activeSceneID, Name: "当前场景", SwitchText: "切换台词", State: json.RawMessage(`{}`),
+				ID: activeSceneID, Name: "当前场景", SwitchText: "切换台词", FolderID: activeFolderID, State: json.RawMessage(`{}`),
 				Objects: map[string]TheaterObjectSnapshot{visible.ID: visible, hidden.ID: hidden, delegated.ID: delegated},
 			},
+			publishedSceneID: {
+				ID: publishedSceneID, Name: "已发布场景", SwitchText: "未触发台词", FolderID: publishedFolderID, Published: true, State: json.RawMessage(`{}`),
+				Objects: map[string]TheaterObjectSnapshot{publishedVisible.ID: publishedVisible},
+			},
 			hiddenSceneID: {
-				ID: hiddenSceneID, Name: "最终真相", State: json.RawMessage(`{}`), Objects: map[string]TheaterObjectSnapshot{},
+				ID: hiddenSceneID, Name: "最终真相", FolderID: hiddenFolderID, State: json.RawMessage(`{"resourceId":"resource-hidden"}`), Objects: map[string]TheaterObjectSnapshot{},
 			},
 		},
 		PersistentObjects: map[string]TheaterObjectSnapshot{},
 		Characters:        map[string]TheaterObjectSnapshot{"character-secret": hidden},
 		Resources: map[string]TheaterResourcePublic{
-			"resource-visible": {},
-			"resource-hidden":  {},
+			"resource-visible":   {},
+			"resource-published": {},
+			"resource-hidden":    {},
 		},
 	}
 
@@ -732,12 +750,21 @@ func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
 	if checksum == "" {
 		t.Fatal("projected snapshot checksum must not be empty")
 	}
-	if len(projected.Scenes) != 1 {
-		t.Fatalf("member must receive only active scene, got %d", len(projected.Scenes))
+	if len(projected.Scenes) != 2 {
+		t.Fatalf("member must receive active and published scenes, got %d", len(projected.Scenes))
+	}
+	if _, ok := projected.Scenes[hiddenSceneID]; ok {
+		t.Fatal("unpublished scene leaked")
+	}
+	if len(projected.SceneFolders) != 2 || projected.SceneFolders[0].ID != publishedFolderID || projected.SceneFolders[1].ID != activeFolderID {
+		t.Fatalf("member scene folders = %#v", projected.SceneFolders)
 	}
 	scene := projected.Scenes[activeSceneID]
 	if scene.SwitchText != "" {
 		t.Fatal("member snapshot must hide scene switch text")
+	}
+	if projected.Scenes[publishedSceneID].SwitchText != "" {
+		t.Fatal("published scene switch text leaked")
 	}
 	if _, ok := scene.Objects[hidden.ID]; ok {
 		t.Fatal("hidden uneditable object leaked")
@@ -754,6 +781,9 @@ func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
 	if _, ok := projected.Resources["resource-visible"]; !ok {
 		t.Fatal("referenced resource missing")
 	}
+	if _, ok := projected.Resources["resource-published"]; !ok {
+		t.Fatal("published scene resource missing")
+	}
 	if _, ok := projected.Resources["resource-hidden"]; ok {
 		t.Fatal("unreferenced resource leaked")
 	}
@@ -767,5 +797,74 @@ func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
 	}
 	if actions[1]["payload"].(map[string]any)["sceneId"] != "redacted" {
 		t.Fatal("scene action target leaked")
+	}
+	publishedScene := snapshot.Scenes[publishedSceneID]
+	publishedScene.Published = false
+	snapshot.Scenes[publishedSceneID] = publishedScene
+	fallback, _ := projectTheaterSnapshotForMember(snapshot)
+	if len(fallback.Scenes) != 1 || fallback.Scenes[activeSceneID].ID != activeSceneID {
+		t.Fatalf("member without published scenes must retain active scene: %#v", fallback.Scenes)
+	}
+}
+
+func TestTheaterScenePublishedUpdateAndSnapshotRoundTrip(t *testing.T) {
+	actorID, worldID, _ := initWorldTheaterServiceTest(t)
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "published-create", WorldID: worldID, Type: TheaterMutationSceneCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene-published", "name": "Scene", "order": 1, "state": map[string]any{}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatalf("create scene: %v", err)
+	}
+	if !model.GetDB().Migrator().HasColumn(&model.TheaterSceneModel{}, "published") {
+		t.Fatal("theater_scenes missing published column")
+	}
+	var created model.TheaterSceneModel
+	if err := model.GetDB().First(&created, "id = ?", "scene-published").Error; err != nil {
+		t.Fatalf("read created scene: %v", err)
+	}
+	if created.Published {
+		t.Fatal("new scene unexpectedly published")
+	}
+	if err := validateSceneFields(map[string]any{"published": "true"}); err == nil {
+		t.Fatal("non-boolean published accepted")
+	}
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "published-update", WorldID: worldID, ExpectedRevision: 1, Type: TheaterMutationSceneUpdate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene-published", "fields": map[string]any{"published": true}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatalf("publish scene: %v", err)
+	}
+	room, err := model.TheaterRoomFindByWorld(worldID)
+	if err != nil || room == nil {
+		t.Fatalf("find room: %#v, %v", room, err)
+	}
+	snapshot, _, err := buildTheaterSnapshot(model.GetDB(), room, true)
+	if err != nil {
+		t.Fatalf("build snapshot: %v", err)
+	}
+	if !snapshot.Scenes["scene-published"].Published {
+		t.Fatal("published missing from snapshot")
+	}
+	if err := replaceTheaterRows(model.GetDB(), room, actorID, snapshot); err != nil {
+		t.Fatalf("replace snapshot rows: %v", err)
+	}
+	var restored model.TheaterSceneModel
+	if err := model.GetDB().First(&restored, "id = ?", "scene-published").Error; err != nil {
+		t.Fatalf("read restored scene: %v", err)
+	}
+	if !restored.Published {
+		t.Fatal("published lost during snapshot replace")
+	}
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "published-clear", WorldID: worldID, ExpectedRevision: 2, Type: TheaterMutationSceneUpdate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene-published", "fields": map[string]any{"published": false}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatalf("unpublish scene: %v", err)
+	}
+	if err := model.GetDB().First(&restored, "id = ?", "scene-published").Error; err != nil {
+		t.Fatalf("read unpublished scene: %v", err)
+	}
+	if restored.Published {
+		t.Fatal("scene remained published after false update")
 	}
 }

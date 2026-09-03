@@ -301,7 +301,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 			scene := remappedSnapshot.Scenes[id]
 			if err := tx.Create(&model.TheaterSceneModel{
 				StringPKBaseModel: model.StringPKBaseModel{ID: scene.ID}, RoomID: current.ID,
-				Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: maxOrder + int64(index) + 1, FolderID: scene.FolderID, Locked: scene.Locked,
+				Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: maxOrder + int64(index) + 1, FolderID: scene.FolderID, Locked: scene.Locked, Published: scene.Published,
 				StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion,
 				CreatedBy: job.ActorUserID, UpdatedBy: job.ActorUserID,
 			}).Error; err != nil {
@@ -859,7 +859,7 @@ func remapTheaterPackageSnapshot(snapshot TheaterSharedSnapshot, remap theaterPa
 		if scene.FolderID != "" {
 			folderID = remap.folders[scene.FolderID]
 		}
-		newScene := TheaterSceneSnapshot{ID: newID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.Order, FolderID: folderID, Locked: scene.Locked, State: state, Objects: map[string]TheaterObjectSnapshot{}}
+		newScene := TheaterSceneSnapshot{ID: newID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.Order, FolderID: folderID, Locked: scene.Locked, Published: scene.Published, State: state, Objects: map[string]TheaterObjectSnapshot{}}
 		for objectID, object := range scene.Objects {
 			mapped, objectChanged, err := remapTheaterPackageObject(object, remap)
 			if err != nil {

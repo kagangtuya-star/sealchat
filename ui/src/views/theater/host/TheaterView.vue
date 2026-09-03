@@ -364,7 +364,7 @@ const clearSceneMusic = async (sceneId: string) => {
 const requestSceneSwitch = (sceneId: string) => {
   if (constructionSceneId.value && !isWorldAdmin.value && sceneId !== constructionSceneId.value) return
   if (!stageStore.applyScene(sceneId)) return
-  void runSceneSwitchSideEffects(sceneId)
+  if (theaterPermissions.value.includes('stage.scene.switch')) void runSceneSwitchSideEffects(sceneId)
 }
 
 const canFollowSceneSwitch = () => !constructionSceneId.value || isWorldAdmin.value

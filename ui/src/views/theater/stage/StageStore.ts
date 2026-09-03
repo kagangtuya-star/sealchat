@@ -268,6 +268,7 @@ const createScene = (name: string, order: number, color: string): StageScene => 
     switchText: '',
     order,
     locked: false,
+    published: false,
     state: createLiveState(color, {
       [title.id]: title,
     }),
@@ -501,6 +502,7 @@ export interface TheaterStageStore {
   renameSceneFolder: (folderId: string, name: string) => boolean
   deleteSceneFolder: (folderId: string) => boolean
   moveSceneToFolder: (sceneId: string, folderId: string | null) => boolean
+  setScenePublished: (sceneId: string, published: boolean) => boolean
   reorderScenes: (sceneId: string, targetId: string, placement: 'before' | 'after') => boolean
   addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
@@ -850,6 +852,13 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
+  const setScenePublished = (sceneId: string, published: boolean) => {
+    const scene = state.scenes[sceneId]
+    if (!scene || scene.published === published) return false
+    scene.published = published
+    return true
+  }
+
   const reorderScenes = (sceneId: string, targetId: string, placement: 'before' | 'after') => {
     if (sceneId === targetId) return false
     const ordered = [...scenes.value]
@@ -901,6 +910,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       id: sceneId,
       name: `${source.name} 副本`,
       order: scenes.value.reduce((highest, item) => Math.max(highest, item.order), -1) + 1,
+      published: false,
       state: { ...clone(source.state), sceneObjects: objects },
     }
     state.scenes[scene.id] = scene
@@ -1634,6 +1644,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     renameSceneFolder,
     deleteSceneFolder,
     moveSceneToFolder,
+    setScenePublished,
     reorderScenes,
     addScene,
     duplicateScene,

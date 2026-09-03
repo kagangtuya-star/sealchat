@@ -79,6 +79,7 @@ type TheaterSceneSnapshot struct {
 	Order      int64                            `json:"order"`
 	FolderID   string                           `json:"folderId,omitempty"`
 	Locked     bool                             `json:"locked"`
+	Published  bool                             `json:"published"`
 	State      json.RawMessage                  `json:"state"`
 	Objects    map[string]TheaterObjectSnapshot `json:"objects"`
 }

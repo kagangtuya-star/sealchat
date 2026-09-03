@@ -623,7 +623,7 @@ func validateSceneFields(fields map[string]any) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "folderId": true, "state": true}
+	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "published": true, "folderId": true, "state": true}
 	for key := range fields {
 		if !allowed[key] {
 			return theaterPayloadError("scene fields 包含禁止字段: " + key)
@@ -652,6 +652,11 @@ func validateSceneFields(fields map[string]any) error {
 			if err := validateTheaterID(folderID, "folderId"); err != nil {
 				return err
 			}
+		}
+	}
+	if value, present := fields["published"]; present {
+		if _, ok := value.(bool); !ok {
+			return theaterPayloadError("published 无效")
 		}
 	}
 	if state, ok := fields["state"].(map[string]any); ok {

@@ -508,6 +508,8 @@ func applyTheaterSceneUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 			updates["sort_order"] = jsonNumberInt64(value)
 		case "locked":
 			updates["locked"] = value
+		case "published":
+			updates["published"] = value
 		case "folderId":
 			updates["folder_id"] = strings.TrimSpace(fmt.Sprint(value))
 		case "state":

@@ -1072,6 +1072,7 @@ let layerHierarchyMovePending = false
 let layerHierarchyUpdatedObjectIds = new Set<string>()
 const workspaceRef = ref<HTMLDivElement | null>(null)
 const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
+const canBrowseScenes = computed(() => hasPermission('stage.view'))
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
 const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.delegated'))
 const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
@@ -1267,7 +1268,7 @@ const saveImageAnnotation = (annotation: StageImageAnnotation) => {
 type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset'
 
 const canOpenPanel = (id: PanelId) => {
-  if (id === 'scene') return canEditAllObjects.value || canSwitchScene.value
+  if (id === 'scene') return canBrowseScenes.value
   if (id === 'inspector') return canEditAllObjects.value || canEditDelegatedObjects.value
   if (id === 'asset') return canManageResources.value
   return canEditAllObjects.value
@@ -1580,7 +1581,9 @@ const sceneListEntries = computed<SceneListEntry[]>(() => {
   const uncategorizedCollapsed = collapsedSceneFolders.value.has(uncategorizedSceneFolderCollapseKey)
   entries.push({ kind: 'uncategorized', key: 'virtual-folder:uncategorized', scenes: uncategorized, collapsed: uncategorizedCollapsed })
   if (!uncategorizedCollapsed) uncategorized.forEach((scene) => entries.push({ kind: 'scene', key: scene.id, scene, nested: true }))
-  return entries
+  return canEditAllObjects.value || canSwitchScene.value
+    ? entries
+    : entries.filter((entry) => entry.kind === 'scene' || entry.scenes.length > 0)
 })
 const draggedSceneId = ref<string | null>(null)
 type SceneDropPlacement = 'before' | 'after'
@@ -1682,7 +1685,7 @@ const handleSceneClick = (scene: StageScene) => {
     beginSceneEdit(scene)
     return
   }
-  if (canSwitchScene.value) emit('sceneSwitchRequested', scene.id)
+  if (canBrowseScenes.value) emit('sceneSwitchRequested', scene.id)
 }
 
 const saveSceneDetails = () => {
@@ -7906,7 +7909,7 @@ onBeforeUnmount(() => {
       </n-dropdown>
       <div v-else class="theater-stage-title" :title="store.activeScene.value.name">{{ store.activeScene.value.name }}</div>
       <n-button-group class="theater-panel-switches" size="small">
-        <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
+        <n-tooltip v-if="canBrowseScenes" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': scenePanelOpen }" aria-label="切换场景面板" @click="togglePanel('scene')">
               <template #icon><n-icon><LayoutSidebarLeftExpand /></n-icon></template>
@@ -8331,6 +8334,7 @@ onBeforeUnmount(() => {
               'is-edit-mode': sceneEditMode,
               'is-batch-mode': sceneBatchMode,
               'has-scene-move-actions': canEditAllObjects,
+              'has-scene-publish-actions': canEditAllObjects && canSwitchScene,
               'is-dragging': draggedSceneId === entry.scene.id,
               'is-drop-before': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'before',
               'is-drop-after': sceneDropTarget?.id === entry.scene.id && sceneDropTarget.placement === 'after',
@@ -8372,7 +8376,7 @@ onBeforeUnmount(() => {
                 class="theater-scene-card"
                 :class="{ 'is-active': entry.scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === entry.scene.id, 'is-selected': isSceneBatchSelected(entry.scene.id), 'is-construction-selected': sceneBatchMode === 'construction' && isSceneBatchSelected(entry.scene.id) }"
                 :aria-pressed="sceneBatchMode ? isSceneBatchSelected(entry.scene.id) : undefined"
-                :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canSwitchScene"
+                :disabled="sceneEditMode || sceneBatchMode ? !canEditAllObjects : !canBrowseScenes"
                 @click="handleSceneClick(entry.scene)"
               >
                 <span class="theater-scene-card__title">{{ entry.scene.name }}</span>
@@ -8495,6 +8499,12 @@ onBeforeUnmount(() => {
             </div>
             </n-popover>
             <div v-if="(canSwitchScene || canEditAllObjects) && !sceneEditMode && !sceneBatchMode" class="theater-scene-row__actions">
+              <n-tooltip v-if="canEditAllObjects" trigger="hover">
+                <template #trigger>
+                  <n-button quaternary circle size="tiny" :type="entry.scene.published ? 'primary' : 'default'" :aria-pressed="entry.scene.published" aria-label="展示给玩家" @click.stop="store.setScenePublished(entry.scene.id, !entry.scene.published)"><n-icon><Eye /></n-icon></n-button>
+                </template>
+                展示给玩家
+              </n-tooltip>
               <n-dropdown v-if="canEditAllObjects" trigger="click" :options="sceneMoveOptions(entry.scene)" :menu-props="theaterSecondaryMenuProps" @select="moveSceneFromMenu($event, entry.scene.id)">
                 <n-button quaternary circle size="tiny" aria-label="移动场景到文件夹" @click.stop><template #icon><n-icon><Dots /></n-icon></template></n-button>
               </n-dropdown>
@@ -9688,6 +9698,7 @@ onBeforeUnmount(() => {
 .theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
 .theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
 .theater-scene-row.has-scene-move-actions:hover .theater-scene-card, .theater-scene-row.has-scene-move-actions:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-scene-move-actions.has-preload-pulse .theater-scene-card { padding-right: 66px; }
+.theater-scene-row.has-scene-publish-actions:hover .theater-scene-card, .theater-scene-row.has-scene-publish-actions:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-scene-publish-actions.has-preload-pulse .theater-scene-card { padding-right: 96px; }
 .theater-scene-row.is-dragging { opacity: .36; }
 .theater-scene-row.is-drag-preview {
   position: fixed; z-index: 10003; top: 0; left: 0; pointer-events: none; opacity: .92;

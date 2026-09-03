@@ -719,6 +719,7 @@ export interface StageScene {
   switchText: string
   order: number
   locked: boolean
+  published: boolean
   folderId?: string
   state: StageSceneState
 }
