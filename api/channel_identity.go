@@ -180,9 +180,6 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	if ctx.IsBotTarget {
-		if _, ownershipErr := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, identityID); ownershipErr != nil {
-			return handleChannelIdentityActorErr(c, ownershipErr)
-		}
 		payload.IsDefault = true
 		payload.IsTemporary = false
 		payload.FolderIDs = nil
@@ -190,7 +187,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 	if payload.PromoteToShared && ctx.OperatorUserID != ctx.TargetUserID {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": service.ErrSharedChannelIdentityOwnerOnly.Error()})
 	}
-	updateResult, err := service.ChannelIdentityUpdateDetailedWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
+	updateInput := &service.ChannelIdentityInput{
 		ChannelID:                  payload.ChannelID,
 		DisplayName:                payload.DisplayName,
 		Color:                      payload.Color,
@@ -208,7 +205,13 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		TheaterPresentation:        payload.TheaterPresentation.Value,
 		TheaterPresentationSet:     payload.TheaterPresentation.Set,
 		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
-	}, payload.PromoteToShared)
+	}
+	var updateResult *service.ChannelIdentityUpdateResult
+	if ctx.IsBotTarget {
+		updateResult, err = service.BotManagedChannelIdentityUpdate(ctx, identityID, updateInput)
+	} else {
+		updateResult, err = service.ChannelIdentityUpdateDetailedWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, updateInput, payload.PromoteToShared)
+	}
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrSharedChannelIdentityOwnerOnly) || errors.Is(err, service.ErrSharedChannelIdentitySynchronizedFieldsReadOnly) {
@@ -219,7 +222,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		})
 	}
 	item := updateResult.Item
-	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-update")
+	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "identity-update", ctx.IsBotTarget)
 	return c.JSON(fiber.Map{
 		"item":       item,
 		"sharedSync": updateResult.SharedSync,
@@ -280,7 +283,7 @@ func SharedChannelIdentityTheaterPresentationSet(c *fiber.Ctx) error {
 	if item == nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "共享角色当前频道投影不存在"})
 	}
-	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "shared-theater-presentation-update")
+	broadcastUpdatedSharedChannelIdentityCopies(item, ctx.TargetUserID, ctx.OperatorUserID, "shared-theater-presentation-update", false)
 	return c.JSON(fiber.Map{
 		"item":         item,
 		"presentation": result.Template.TheaterPresentation,
@@ -332,8 +335,8 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 	})
 }
 
-func broadcastUpdatedSharedChannelIdentityCopies(item *model.ChannelIdentityModel, targetUserID, operatorUserID, reason string) {
-	if item == nil || item.SharedIdentityID == "" || targetUserID != operatorUserID {
+func broadcastUpdatedSharedChannelIdentityCopies(item *model.ChannelIdentityModel, targetUserID, operatorUserID, reason string, botManaged bool) {
+	if item == nil || item.SharedIdentityID == "" || (targetUserID != operatorUserID && !botManaged) {
 		if item != nil {
 			broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{ChannelID: item.ChannelID, TargetUserID: targetUserID, OperatorUserID: operatorUserID, Reason: reason})
 		}

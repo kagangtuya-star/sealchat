@@ -87,7 +87,10 @@ func ResolveChannelIdentityActor(channelID, operatorUserID, requestedTargetUserI
 		return nil, ErrChannelPermissionDenied
 	}
 	targetRank := resolveChannelIdentityUserRank(channel, roleMap, targetUserID)
-	targetIsBot := isBoundChannelBot(roleMap, channelID, targetUserID)
+	targetIsBot, err := isBoundChannelBot(channelID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
 	if targetRank <= 0 && !targetIsBot {
 		return nil, ErrChannelIdentityTargetNotInChannel
 	}
@@ -125,18 +128,21 @@ func ResolveChannelIdentityActor(channelID, operatorUserID, requestedTargetUserI
 	return ctx, nil
 }
 
-func isBoundChannelBot(roleMap map[string][]string, channelID, userID string) bool {
+func isBoundChannelBot(channelID, userID string) (bool, error) {
 	user := model.UserGet(strings.TrimSpace(userID))
 	if user == nil || !user.IsBot {
-		return false
+		return false, nil
 	}
-	targetRoleID := "ch-" + strings.TrimSpace(channelID) + "-bot"
-	for _, roleID := range roleMap[user.ID] {
-		if strings.TrimSpace(roleID) == targetRoleID {
-			return true
+	boundIDs, err := BoundBotIDsByChannelId(channelID)
+	if err != nil {
+		return false, err
+	}
+	for _, boundID := range boundIDs {
+		if boundID == user.ID {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func ValidateChannelIdentityActorIdentity(actor *ChannelIdentityActorContext, channelID, identityID string) (*model.ChannelIdentityModel, error) {

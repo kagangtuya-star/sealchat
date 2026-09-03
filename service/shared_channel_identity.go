@@ -31,12 +31,17 @@ var (
 )
 
 type SharedChannelIdentitySyncInput struct {
-	DisplayName            string
-	Color                  string
-	AvatarAttachmentID     string
-	AvatarDecorations      protocol.AvatarDecorationList
-	TheaterPresentation    *protocol.TheaterPresentation
-	TheaterPresentationSet bool
+	DisplayName              string
+	Color                    string
+	AvatarAttachmentID       string
+	AvatarDecorations        protocol.AvatarDecorationList
+	TheaterPresentation      *protocol.TheaterPresentation
+	TheaterPresentationSet   bool
+	BotAppearanceMode        string
+	VariantResetMatchMode    string
+	VariantResetMatchConfig  string
+	VariantResetMatchContent string
+	BotSettingsSet           bool
 }
 
 type SharedChannelIdentitySyncResult struct {
@@ -47,9 +52,61 @@ type SharedChannelIdentitySyncResult struct {
 	RetryScheduleError string                            `json:"retryScheduleError,omitempty"`
 }
 
+type sharedChannelIdentityBotSettings struct {
+	BotAppearanceMode        string `json:"botAppearanceMode"`
+	VariantResetMatchMode    string `json:"variantResetMatchMode"`
+	VariantResetMatchConfig  string `json:"variantResetMatchConfig"`
+	VariantResetMatchContent string `json:"variantResetMatchContent"`
+}
+
+func sharedChannelIdentityBotSettingsFromCopy(item *model.ChannelIdentityModel) *sharedChannelIdentityBotSettings {
+	if item == nil {
+		return nil
+	}
+	appearanceMode := strings.ToLower(strings.TrimSpace(item.BotAppearanceMode))
+	if appearanceMode != "custom" {
+		appearanceMode = "inherit"
+	}
+	return &sharedChannelIdentityBotSettings{
+		BotAppearanceMode:        appearanceMode,
+		VariantResetMatchMode:    item.VariantResetMatchMode,
+		VariantResetMatchConfig:  item.VariantResetMatchConfig,
+		VariantResetMatchContent: item.VariantResetMatchContent,
+	}
+}
+
+func sharedChannelIdentityBotSettingsFromData(raw string) (*sharedChannelIdentityBotSettings, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	document := map[string]json.RawMessage{}
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return nil, err
+	}
+	hasBotSettings := false
+	for _, key := range []string{"botAppearanceMode", "variantResetMatchMode", "variantResetMatchConfig", "variantResetMatchContent"} {
+		if _, exists := document[key]; exists {
+			hasBotSettings = true
+			break
+		}
+	}
+	if !hasBotSettings {
+		return nil, nil
+	}
+	var settings sharedChannelIdentityBotSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return nil, err
+	}
+	settings.BotAppearanceMode = strings.ToLower(strings.TrimSpace(settings.BotAppearanceMode))
+	if settings.BotAppearanceMode != "custom" {
+		settings.BotAppearanceMode = "inherit"
+	}
+	return &settings, nil
+}
+
 // serializeSharedChannelIdentityData keeps unknown keys from a newer server build.
 // Known fields remain queryable columns; document is forward-compatible authority data.
-func serializeSharedChannelIdentityData(previous string, item *model.SharedChannelIdentityModel) (string, error) {
+func serializeSharedChannelIdentityData(previous string, item *model.SharedChannelIdentityModel, botSettings *sharedChannelIdentityBotSettings) (string, error) {
 	document := map[string]json.RawMessage{}
 	if strings.TrimSpace(previous) != "" {
 		if err := json.Unmarshal([]byte(previous), &document); err != nil {
@@ -65,12 +122,22 @@ func serializeSharedChannelIdentityData(previous string, item *model.SharedChann
 		return nil
 	}
 	for key, value := range map[string]any{
-		"version": 1, "displayName": item.DisplayName, "color": item.Color,
+		"version": 2, "displayName": item.DisplayName, "color": item.Color,
 		"avatarAttachmentId": item.AvatarAttachmentID, "avatarDecorations": item.AvatarDecorations,
 		"theaterPresentation": item.TheaterPresentation,
 	} {
 		if err := put(key, value); err != nil {
 			return "", err
+		}
+	}
+	if botSettings != nil {
+		for key, value := range map[string]string{
+			"botAppearanceMode": botSettings.BotAppearanceMode, "variantResetMatchMode": botSettings.VariantResetMatchMode,
+			"variantResetMatchConfig": botSettings.VariantResetMatchConfig, "variantResetMatchContent": botSettings.VariantResetMatchContent,
+		} {
+			if err := put(key, value); err != nil {
+				return "", err
+			}
 		}
 	}
 	raw, err := json.Marshal(document)
@@ -89,6 +156,16 @@ func sharedChannelIdentityCopyValues(template *model.SharedChannelIdentityModel,
 		"display_name": template.DisplayName, "color": template.Color,
 		"avatar_attachment_id": template.AvatarAttachmentID,
 		"avatar_decoration":    string(decorations), "shared_revision": template.Revision,
+	}
+	botSettings, err := sharedChannelIdentityBotSettingsFromData(template.SharedDataJSON)
+	if err != nil {
+		return nil, err
+	}
+	if botSettings != nil {
+		values["bot_appearance_mode"] = botSettings.BotAppearanceMode
+		values["variant_reset_match_mode"] = botSettings.VariantResetMatchMode
+		values["variant_reset_match_config"] = botSettings.VariantResetMatchConfig
+		values["variant_reset_match_content"] = botSettings.VariantResetMatchContent
 	}
 	if presentation == nil {
 		values["theater_presentation"] = nil
@@ -125,6 +202,23 @@ func ensureSharedChannelIdentityEligibleTx(conn *gorm.DB, identity *model.Channe
 		return err
 	}
 	if strings.TrimSpace(user.ID) == "" || user.IsBot {
+		return ErrSharedChannelIdentityUnsupported
+	}
+	return nil
+}
+
+func ensureBotManagedSharedChannelIdentityEligibleTx(conn *gorm.DB, identity *model.ChannelIdentityModel) error {
+	if identity == nil || identity.IsTemporary || identity.IsHidden || !identity.IsDefault {
+		return ErrSharedChannelIdentityUnsupported
+	}
+	if conn == nil {
+		conn = model.GetDB()
+	}
+	var user model.UserModel
+	if err := conn.Select("id", "is_bot").Where("id = ?", identity.UserID).Take(&user).Error; err != nil {
+		return err
+	}
+	if !user.IsBot {
 		return ErrSharedChannelIdentityUnsupported
 	}
 	return nil
@@ -220,43 +314,97 @@ func sharedChannelIdentityChannelsTx(tx *gorm.DB, source *model.ChannelIdentityM
 	return channels, err
 }
 
+type sharedChannelIdentityCopyOptions struct {
+	reuseDefaultProjection bool
+	repairExisting         bool
+	botManaged              bool
+	orphanAssetIDs         *[]string
+}
+
 func createSharedChannelIdentityCopiesTx(tx *gorm.DB, source *model.ChannelIdentityModel, template *model.SharedChannelIdentityModel) error {
-	channels, err := sharedChannelIdentityChannelsTx(tx, source, template.WorldID)
+	return createSharedChannelIdentityCopiesWithOptionsTx(tx, source, template, sharedChannelIdentityCopyOptions{})
+}
+
+func createSharedChannelIdentityCopiesWithOptionsTx(tx *gorm.DB, source *model.ChannelIdentityModel, template *model.SharedChannelIdentityModel, options sharedChannelIdentityCopyOptions) error {
+	var channels []model.ChannelModel
+	var err error
+	if options.botManaged {
+		channels, err = botBoundChannelsInWorldTx(tx, source.UserID, template.WorldID)
+	} else {
+		channels, err = sharedChannelIdentityChannelsTx(tx, source, template.WorldID)
+	}
 	if err != nil {
 		return err
 	}
 	for _, channel := range channels {
-		if channel.ID == source.ChannelID {
+		if channel.ID == source.ChannelID && !options.reuseDefaultProjection {
 			continue
 		}
-		var existing int64
-		if err := tx.Model(&model.ChannelIdentityModel{}).
-			Where("shared_identity_id = ? AND channel_id = ?", template.ID, channel.ID).Count(&existing).Error; err != nil {
+		var copy model.ChannelIdentityModel
+		if err := tx.Where("shared_identity_id = ? AND channel_id = ? AND user_id = ?", template.ID, channel.ID, source.UserID).
+			Limit(1).Find(&copy).Error; err != nil {
 			return err
 		}
-		if existing > 0 {
+		if copy.ID != "" && !options.repairExisting {
 			continue
 		}
-		var maxSort int
-		if err := tx.Model(&model.ChannelIdentityModel{}).Where("channel_id = ? AND user_id = ?", channel.ID, source.UserID).
-			Select("coalesce(max(sort_order), 0)").Scan(&maxSort).Error; err != nil {
-			return err
+		attachedExisting := false
+		if copy.ID == "" && options.reuseDefaultProjection {
+			if err := tx.Where("channel_id = ? AND user_id = ? AND is_default = ?", channel.ID, source.UserID, true).
+				Limit(1).Find(&copy).Error; err != nil {
+				return err
+			}
+			if copy.ID != "" {
+				if copy.SharedIdentityID != "" && copy.SharedIdentityID != template.ID {
+					return ErrChannelIdentityAlreadyShared
+				}
+				attachedExisting = copy.SharedIdentityID == ""
+			}
 		}
-		var defaultCount int64
-		if err := tx.Model(&model.ChannelIdentityModel{}).Where("channel_id = ? AND user_id = ? AND is_default = ?", channel.ID, source.UserID, true).
-			Count(&defaultCount).Error; err != nil {
-			return err
+		if attachedExisting && options.orphanAssetIDs != nil {
+			*options.orphanAssetIDs = append(*options.orphanAssetIDs, theaterPresentationAssetIDs(copy.TheaterPresentation)...)
+			var localVariants []*model.ChannelIdentityVariantModel
+			if err := tx.Where("identity_id = ? AND (shared_variant_id = '' OR shared_variant_id IS NULL)", copy.ID).
+				Find(&localVariants).Error; err != nil {
+				return err
+			}
+			for _, variant := range localVariants {
+				if patch, exists := variantTheaterPresentationPatch(variant); exists {
+					*options.orphanAssetIDs = append(*options.orphanAssetIDs, theaterPresentationPatchAssetIDs(patch)...)
+				}
+			}
 		}
-		copy := &model.ChannelIdentityModel{
-			ChannelID: channel.ID, UserID: source.UserID, SharedIdentityID: template.ID, SharedRevision: template.Revision,
-			DisplayName: template.DisplayName, Color: template.Color, AvatarAttachmentID: template.AvatarAttachmentID,
-			AvatarDecorations: append(protocol.AvatarDecorationList(nil), template.AvatarDecorations...),
-			IsDefault:         defaultCount == 0, SortOrder: maxSort + 1,
+		if copy.ID == "" {
+			var maxSort int
+			if err := tx.Model(&model.ChannelIdentityModel{}).Where("channel_id = ? AND user_id = ?", channel.ID, source.UserID).
+				Select("coalesce(max(sort_order), 0)").Scan(&maxSort).Error; err != nil {
+				return err
+			}
+			var defaultCount int64
+			if err := tx.Model(&model.ChannelIdentityModel{}).Where("channel_id = ? AND user_id = ? AND is_default = ?", channel.ID, source.UserID, true).
+				Count(&defaultCount).Error; err != nil {
+				return err
+			}
+			copy = model.ChannelIdentityModel{
+				ChannelID: channel.ID, UserID: source.UserID, SharedIdentityID: template.ID, SharedRevision: template.Revision,
+				DisplayName: template.DisplayName, Color: template.Color, AvatarAttachmentID: template.AvatarAttachmentID,
+				AvatarDecorations: append(protocol.AvatarDecorationList(nil), template.AvatarDecorations...),
+				IsDefault:         defaultCount == 0, SortOrder: maxSort + 1,
+			}
+			if err := tx.Create(&copy).Error; err != nil {
+				return err
+			}
+		} else if attachedExisting {
+			if err := tx.Model(&copy).Updates(map[string]any{
+				"shared_identity_id": template.ID,
+				"shared_revision":    template.Revision,
+			}).Error; err != nil {
+				return err
+			}
+			copy.SharedIdentityID = template.ID
+			copy.SharedRevision = template.Revision
 		}
-		if err := tx.Create(copy).Error; err != nil {
-			return err
-		}
-		mapped, err := mapSharedTheaterPresentationTx(tx, template.SourceChannelID, template.SourceIdentityID, copy, template.TheaterPresentation)
+		mapped, err := mapSharedTheaterPresentationTx(tx, template.SourceChannelID, template.SourceIdentityID, &copy, template.TheaterPresentation)
 		if err != nil {
 			return err
 		}
@@ -264,10 +412,18 @@ func createSharedChannelIdentityCopiesTx(tx *gorm.DB, source *model.ChannelIdent
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(copy).Updates(values).Error; err != nil {
+		if options.reuseDefaultProjection {
+			values["shared_identity_id"] = template.ID
+		}
+		if err := tx.Model(&copy).Updates(values).Error; err != nil {
 			return err
 		}
-		copy.TheaterPresentation = mapped
+		if attachedExisting {
+			if err := tx.Where("identity_id = ? AND (shared_variant_id = '' OR shared_variant_id IS NULL)", copy.ID).
+				Delete(&model.ChannelIdentityVariantModel{}).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -277,12 +433,19 @@ func MaterializeSharedChannelIdentitiesForUserTx(tx *gorm.DB, userID string) err
 	if tx == nil || userID == "" {
 		return nil
 	}
+	var user model.UserModel
+	if err := tx.Select("id", "is_bot").Where("id = ?", userID).Limit(1).Find(&user).Error; err != nil {
+		return err
+	}
 	var templates []*model.SharedChannelIdentityModel
 	if err := tx.Where("user_id = ?", userID).Order("created_at ASC").Find(&templates).Error; err != nil {
 		return err
 	}
 	for _, template := range templates {
 		if strings.TrimSpace(template.WorldID) == "" {
+			continue
+		}
+		if user.IsBot {
 			continue
 		}
 		var source model.ChannelIdentityModel
@@ -327,7 +490,11 @@ func MaterializeSharedChannelIdentitiesForUser(userID string) error {
 	})
 }
 
-func sharedChannelIdentityCreateFromCopyTx(tx *gorm.DB, ownerUserID, identityID string, result *SharedChannelIdentitySyncResult) error {
+func sharedChannelIdentityCreateFromCopyTx(tx *gorm.DB, ownerUserID, identityID string, result *SharedChannelIdentitySyncResult, botManaged bool) error {
+	return sharedChannelIdentityCreateFromCopyTxWithOrphans(tx, ownerUserID, identityID, result, botManaged, nil)
+}
+
+func sharedChannelIdentityCreateFromCopyTxWithOrphans(tx *gorm.DB, ownerUserID, identityID string, result *SharedChannelIdentitySyncResult, botManaged bool, orphanAssetIDs *[]string) error {
 	var identity model.ChannelIdentityModel
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", strings.TrimSpace(identityID), ownerUserID).Take(&identity).Error; err != nil {
 		return err
@@ -335,8 +502,14 @@ func sharedChannelIdentityCreateFromCopyTx(tx *gorm.DB, ownerUserID, identityID 
 	if identity.SharedIdentityID != "" {
 		return ErrChannelIdentityAlreadyShared
 	}
-	if err := ensureSharedChannelIdentityEligibleTx(tx, &identity); err != nil {
-		return err
+	if botManaged {
+		if err := ensureBotManagedSharedChannelIdentityEligibleTx(tx, &identity); err != nil {
+			return err
+		}
+	} else {
+		if err := ensureSharedChannelIdentityEligibleTx(tx, &identity); err != nil {
+			return err
+		}
 	}
 	worldID, err := sharedChannelIdentityRequireWorldIDTx(tx, identity.ChannelID)
 	if err != nil {
@@ -350,7 +523,11 @@ func sharedChannelIdentityCreateFromCopyTx(tx *gorm.DB, ownerUserID, identityID 
 		TheaterPresentation: cloneTheaterPresentation(identity.TheaterPresentation), Revision: 1,
 	}
 	var dataErr error
-	template.SharedDataJSON, dataErr = serializeSharedChannelIdentityData("", template)
+	var botSettings *sharedChannelIdentityBotSettings
+	if botManaged {
+		botSettings = sharedChannelIdentityBotSettingsFromCopy(&identity)
+	}
+	template.SharedDataJSON, dataErr = serializeSharedChannelIdentityData("", template, botSettings)
 	if dataErr != nil {
 		return dataErr
 	}
@@ -365,8 +542,14 @@ func sharedChannelIdentityCreateFromCopyTx(tx *gorm.DB, ownerUserID, identityID 
 	if err := upsertSharedChannelIdentityWorldPresentationTx(tx, template, &identity); err != nil {
 		return err
 	}
-	if err := createSharedChannelIdentityCopiesTx(tx, &identity, template); err != nil {
-		return err
+	if botManaged {
+		if err := materializeBotSharedChannelIdentityCopiesTxWithOrphans(tx, &identity, template, orphanAssetIDs); err != nil {
+			return err
+		}
+	} else {
+		if err := createSharedChannelIdentityCopiesTx(tx, &identity, template); err != nil {
+			return err
+		}
 	}
 	if err := promoteSharedChannelIdentityVariantsTx(tx, &identity, template); err != nil {
 		return err
@@ -385,7 +568,7 @@ func SharedChannelIdentityCreateFromCopy(ownerUserID, operatorUserID, identityID
 	}
 	var result SharedChannelIdentitySyncResult
 	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
-		return sharedChannelIdentityCreateFromCopyTx(tx, ownerUserID, identityID, &result)
+		return sharedChannelIdentityCreateFromCopyTx(tx, ownerUserID, identityID, &result, false)
 	})
 	if err != nil {
 		return nil, err
@@ -433,6 +616,16 @@ func SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, identityID s
 	if err := ensureSharedChannelIdentityOwner(ownerUserID, operatorUserID); err != nil {
 		return nil, err
 	}
+	return sharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, identityID, input, sharedChannelIdentitySyncOptions{})
+}
+
+type sharedChannelIdentitySyncOptions struct {
+	botManaged             bool
+	trustStoredAvatar      bool
+	trustStoredDecorations bool
+}
+
+func sharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, identityID string, input *SharedChannelIdentitySyncInput, options sharedChannelIdentitySyncOptions) (*SharedChannelIdentitySyncResult, error) {
 	if input == nil {
 		return nil, errors.New("参数不能为空")
 	}
@@ -450,15 +643,26 @@ func SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, identityID s
 	if identity.SharedIdentityID == "" {
 		return nil, ErrChannelIdentityNotShared
 	}
-	if err := ensureSharedChannelIdentityEligible(identity); err != nil {
-		return nil, err
+	if options.botManaged {
+		if err := ensureBotManagedSharedChannelIdentityEligibleTx(model.GetDB(), identity); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := ensureSharedChannelIdentityEligible(identity); err != nil {
+			return nil, err
+		}
 	}
-	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, identity.ChannelID, input.AvatarAttachmentID); err != nil {
-		return nil, err
+	avatarDecorations := append(protocol.AvatarDecorationList(nil), input.AvatarDecorations...)
+	if !options.trustStoredAvatar {
+		if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, identity.ChannelID, input.AvatarAttachmentID); err != nil {
+			return nil, err
+		}
 	}
-	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, identity.ChannelID, input.AvatarDecorations)
-	if err != nil {
-		return nil, err
+	if !options.trustStoredDecorations {
+		avatarDecorations, err = NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, identity.ChannelID, input.AvatarDecorations)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if input.TheaterPresentationSet && input.TheaterPresentation != nil {
 		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), identity.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
@@ -488,7 +692,14 @@ func SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, identityID s
 			template.SourceChannelID, template.SourceIdentityID = identity.ChannelID, identity.ID
 		}
 		template.Revision++
-		template.SharedDataJSON, err = serializeSharedChannelIdentityData(template.SharedDataJSON, &template)
+		var botSettings *sharedChannelIdentityBotSettings
+		if input.BotSettingsSet {
+			botSettings = &sharedChannelIdentityBotSettings{
+				BotAppearanceMode: input.BotAppearanceMode, VariantResetMatchMode: input.VariantResetMatchMode,
+				VariantResetMatchConfig: input.VariantResetMatchConfig, VariantResetMatchContent: input.VariantResetMatchContent,
+			}
+		}
+		template.SharedDataJSON, err = serializeSharedChannelIdentityData(template.SharedDataJSON, &template, botSettings)
 		if err != nil {
 			return err
 		}
@@ -604,7 +815,7 @@ func SharedChannelIdentityTheaterPresentationSet(ownerUserID, operatorUserID, id
 		template.SourceChannelID = source.ChannelID
 		template.SourceIdentityID = source.ID
 		template.Revision++
-		template.SharedDataJSON, err = serializeSharedChannelIdentityData(template.SharedDataJSON, &template)
+		template.SharedDataJSON, err = serializeSharedChannelIdentityData(template.SharedDataJSON, &template, nil)
 		if err != nil {
 			return err
 		}

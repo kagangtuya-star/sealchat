@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -308,7 +309,7 @@ func ChannelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 			return channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID, identity, input)
 		}
 	}
-	return channelIdentityUpdateDetailedWithAccess(ownerUserID, operatorUserID, identityID, input)
+	return channelIdentityUpdateDetailedWithAccess(ownerUserID, operatorUserID, identityID, input, false)
 }
 
 func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID string, identity *model.ChannelIdentityModel, input *ChannelIdentityInput) (*ChannelIdentityUpdateResult, error) {
@@ -413,7 +414,7 @@ func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID strin
 			return err
 		}
 		sharedResult := &SharedChannelIdentitySyncResult{}
-		if err := sharedChannelIdentityCreateFromCopyTx(tx, ownerUserID, updated.ID, sharedResult); err != nil {
+		if err := sharedChannelIdentityCreateFromCopyTx(tx, ownerUserID, updated.ID, sharedResult, false); err != nil {
 			return err
 		}
 		for _, copy := range sharedResult.Copies {
@@ -443,7 +444,7 @@ func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID strin
 	return result, nil
 }
 
-func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityUpdateResult, error) {
+func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput, botManaged bool) (*ChannelIdentityUpdateResult, error) {
 	if input == nil {
 		return nil, errors.New("参数不能为空")
 	}
@@ -479,7 +480,7 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 	if strings.TrimSpace(operatorUserID) == "" {
 		operatorUserID = ownerUserID
 	}
-	delegatedShared := identity.SharedIdentityID != "" && operatorUserID != ownerUserID
+	delegatedShared := identity.SharedIdentityID != "" && operatorUserID != ownerUserID && !botManaged
 	sharedOwnerUpdate := identity.SharedIdentityID != "" && !delegatedShared
 	var sharedResult *SharedChannelIdentitySyncResult
 	avatarDecorations := append(protocol.AvatarDecorationList(nil), identity.AvatarDecorations...)
@@ -488,8 +489,10 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 			return nil, err
 		}
 	} else {
-		if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
-			return nil, err
+		if !(botManaged && input.BotAppearanceMode == "inherit") {
+			if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+				return nil, err
+			}
 		}
 		avatarDecorations, err = NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
 		if err != nil {
@@ -501,12 +504,16 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 			}
 		}
 	}
-	// Shared theater presentation has a dedicated authority endpoint. Generic
-	// identity updates only synchronize the remaining shared appearance fields.
+	// User-owned shared theater presentation has a dedicated authority endpoint.
+	// BOT-managed updates synchronize it through the same shared transaction.
 	sharedSyncChanged := sharedOwnerUpdate && (strings.TrimSpace(input.DisplayName) != identity.DisplayName ||
 		input.Color != identity.Color ||
 		strings.TrimSpace(input.AvatarAttachmentID) != identity.AvatarAttachmentID ||
-		!sharedAvatarDecorationsEqual(avatarDecorations, identity.AvatarDecorations))
+		!sharedAvatarDecorationsEqual(avatarDecorations, identity.AvatarDecorations) ||
+		botManaged && input.TheaterPresentationSet && !reflect.DeepEqual(input.TheaterPresentation, identity.TheaterPresentation) ||
+		botManaged && input.BotAppearanceMode != "" && input.BotAppearanceMode != identity.BotAppearanceMode ||
+		botManaged && input.VariantResetMatchSet && (input.VariantResetMatchMode != identity.VariantResetMatchMode ||
+			input.VariantResetMatchConfig != identity.VariantResetMatchConfig || input.VariantResetMatchContent != identity.VariantResetMatchContent))
 	if sharedSyncChanged {
 		copies, copiesErr := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
 		if copiesErr != nil {
@@ -524,10 +531,10 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 		values["avatar_attachment_id"] = input.AvatarAttachmentID
 		values["avatar_decoration"] = avatarDecorations
 	}
-	if input.BotAppearanceMode != "" {
+	if input.BotAppearanceMode != "" && !(botManaged && sharedOwnerUpdate) {
 		values["bot_appearance_mode"] = input.BotAppearanceMode
 	}
-	if input.VariantResetMatchSet {
+	if input.VariantResetMatchSet && !(botManaged && sharedOwnerUpdate) {
 		values["variant_reset_match_mode"] = input.VariantResetMatchMode
 		values["variant_reset_match_config"] = input.VariantResetMatchConfig
 		values["variant_reset_match_content"] = input.VariantResetMatchContent
@@ -581,14 +588,36 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 	if sharedSyncChanged {
 		folderIDs := append([]string(nil), updated.FolderIDs...)
 		icOocOnActivate := updated.ICOOCOnActivate
-		sharedResult, err = SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, updated.ID, &SharedChannelIdentitySyncInput{
+		sharedInput := &SharedChannelIdentitySyncInput{
 			DisplayName:            strings.TrimSpace(input.DisplayName),
 			Color:                  input.Color,
 			AvatarAttachmentID:     input.AvatarAttachmentID,
 			AvatarDecorations:      avatarDecorations,
-			TheaterPresentation:    nil,
-			TheaterPresentationSet: false,
-		})
+			TheaterPresentation:    input.TheaterPresentation,
+			TheaterPresentationSet: botManaged && input.TheaterPresentationSet,
+		}
+		if botManaged {
+			sharedInput.BotAppearanceMode = updated.BotAppearanceMode
+			if input.BotAppearanceMode != "" {
+				sharedInput.BotAppearanceMode = input.BotAppearanceMode
+			}
+			sharedInput.VariantResetMatchMode = updated.VariantResetMatchMode
+			sharedInput.VariantResetMatchConfig = updated.VariantResetMatchConfig
+			sharedInput.VariantResetMatchContent = updated.VariantResetMatchContent
+			if input.VariantResetMatchSet {
+				sharedInput.VariantResetMatchMode = input.VariantResetMatchMode
+				sharedInput.VariantResetMatchConfig = input.VariantResetMatchConfig
+				sharedInput.VariantResetMatchContent = input.VariantResetMatchContent
+			}
+			sharedInput.BotSettingsSet = true
+			sharedResult, err = sharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, updated.ID, sharedInput, sharedChannelIdentitySyncOptions{
+				botManaged:        true,
+				trustStoredAvatar: input.BotAppearanceMode == "inherit",
+			})
+		} else {
+			sharedInput.TheaterPresentation = nil
+			sharedResult, err = SharedChannelIdentitySyncFromCopy(ownerUserID, operatorUserID, updated.ID, sharedInput)
+		}
 		if err != nil {
 			return nil, err
 		}

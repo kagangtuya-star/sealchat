@@ -3447,7 +3447,7 @@ const identityFolderMembership = computed<Record<string, string[]>>(() => (
 ));
 const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
 const isDelegatedSharedIdentity = computed(() => (
-  isManagingOtherUserIdentity.value && Boolean(editingIdentity.value?.sharedIdentityId)
+  isManagingOtherUserIdentity.value && !isManagingBotIdentity.value && Boolean(editingIdentity.value?.sharedIdentityId)
 ));
 const sharedSynchronizedFieldsDisabled = computed(() => botBaseAppearanceInherited.value || isDelegatedSharedIdentity.value);
 const canPromoteEditingIdentityToShared = computed(() => (
@@ -5353,7 +5353,7 @@ const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
 const openIdentityTheaterPresentationEditor = async () => {
   if (isDelegatedSharedIdentity.value) return;
   if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
-  if (editingIdentity.value?.sharedIdentityId && editingIdentity.value.id && chat.curChannel?.id) {
+  if (editingIdentity.value?.sharedIdentityId && !isManagingBotIdentity.value && editingIdentity.value.id && chat.curChannel?.id) {
     try {
       await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
       const refreshed = chat.getScopedChannelIdentities(chat.curChannel.id, currentIdentityTargetUserId.value)
@@ -5406,7 +5406,7 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
     } else {
       const submittedPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
       identityForm.theaterPresentation = submittedPresentation;
-      if (editingIdentity.value?.sharedIdentityId && editingIdentity.value.id && chat.curChannel?.id) {
+      if (editingIdentity.value?.sharedIdentityId && !isManagingBotIdentity.value && editingIdentity.value.id && chat.curChannel?.id) {
         try {
           const savedIdentity = await chat.sharedChannelIdentityTheaterPresentationSet(editingIdentity.value.id, {
             channelId: chat.curChannel.id,
@@ -6014,7 +6014,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     avatarAttachmentId: identityForm.avatarAttachmentId,
     avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
       .filter(item => item.resourceAttachmentId),
-    theaterPresentation: editingIdentity.value?.sharedIdentityId
+    theaterPresentation: editingIdentity.value?.sharedIdentityId && !isManagingBotIdentity.value
       ? undefined
       : identityForm.theaterPresentation
         ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
@@ -17118,9 +17118,9 @@ onBeforeUnmount(() => {
             @update:value="identityForm.botAppearanceMode = $event ? 'inherit' : 'custom'"
           >
             <template #checked>跟随 BOT 全局资料</template>
-            <template #unchecked>使用频道自定义资料</template>
+            <template #unchecked>使用自定义资料</template>
           </n-switch>
-          <n-text depth="3">仅控制昵称、颜色、头像；头像装饰与小剧场演出始终按当前频道保存。</n-text>
+          <n-text depth="3">BOT 角色设置会在当前世界的所有频道同步；“跟随”仅控制昵称、颜色、头像来源。</n-text>
         </div>
       </n-form-item>
       <n-form-item label="频道昵称">

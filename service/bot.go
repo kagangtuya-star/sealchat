@@ -135,12 +135,7 @@ func BoundBotIDsByChannelId(channelId string) ([]string, error) {
 		return selected, nil
 	}
 
-	roleIDs := []string{
-		fmt.Sprintf("ch-%s-%s", channelId, "bot"),
-	}
-	if channel.RootId != "" {
-		roleIDs = append(roleIDs, fmt.Sprintf("ch-%s-%s", channel.RootId, "bot"))
-	}
+	roleIDs := botEffectiveBindingRoleIDs(channel)
 	result := make([]string, 0)
 	for _, roleID := range roleIDs {
 		ids, _ := model.UserRoleMappingUserIdListByRoleId(roleID)
@@ -154,6 +149,108 @@ func BoundBotIDsByChannelId(channelId string) ([]string, error) {
 	result = lo.Uniq(result)
 	sort.Strings(result)
 	return result, nil
+}
+
+func botEffectiveBindingRoleIDs(channel *model.ChannelModel) []string {
+	if channel == nil {
+		return nil
+	}
+	channelID := strings.TrimSpace(channel.ID)
+	if channelID == "" {
+		return nil
+	}
+	roleIDs := []string{fmt.Sprintf("ch-%s-bot", channelID)}
+	if rootID := strings.TrimSpace(channel.RootId); rootID != "" && rootID != channelID {
+		roleIDs = append(roleIDs, fmt.Sprintf("ch-%s-bot", rootID))
+	}
+	return roleIDs
+}
+
+func botChannelBindingRoleSetTx(tx *gorm.DB, botID string) (map[string]struct{}, error) {
+	if tx == nil {
+		tx = model.GetDB()
+	}
+	var roleIDs []string
+	if err := tx.Model(&model.UserRoleMappingModel{}).
+		Where("user_id = ? AND role_type = ?", strings.TrimSpace(botID), "channel").
+		Pluck("role_id", &roleIDs).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]struct{}, len(roleIDs))
+	for _, roleID := range roleIDs {
+		if roleID = strings.TrimSpace(roleID); roleID != "" {
+			result[roleID] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func botIsEffectivelyBoundToChannelWithRoleSet(botID string, channel *model.ChannelModel, roleSet map[string]struct{}) bool {
+	if channel == nil {
+		return false
+	}
+	botID = strings.TrimSpace(botID)
+	if botID == "" {
+		return false
+	}
+	if channel.IsPrivate || strings.EqualFold(strings.TrimSpace(channel.PermType), "private") {
+		for _, id := range channel.GetPrivateUserIDs() {
+			if strings.TrimSpace(id) == botID {
+				return true
+			}
+		}
+		return false
+	}
+	for _, roleID := range botEffectiveBindingRoleIDs(channel) {
+		if _, exists := roleSet[roleID]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func botBoundChannelsInWorldTx(tx *gorm.DB, botID, worldID string) ([]model.ChannelModel, error) {
+	botID = strings.TrimSpace(botID)
+	worldID = strings.TrimSpace(worldID)
+	if tx == nil {
+		tx = model.GetDB()
+	}
+	if botID == "" || worldID == "" {
+		return nil, nil
+	}
+	var user model.UserModel
+	if err := tx.Select("id", "is_bot").Where("id = ?", botID).Limit(1).Find(&user).Error; err != nil {
+		return nil, err
+	}
+	if user.ID == "" || !user.IsBot {
+		return nil, nil
+	}
+	roleSet, err := botChannelBindingRoleSetTx(tx, botID)
+	if err != nil {
+		return nil, err
+	}
+	var channels []model.ChannelModel
+	if err := tx.Where("world_id = ? AND (status IS NULL OR status <> ?)", worldID, model.ChannelStatusDeleted).
+		Order("id ASC").Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	result := make([]model.ChannelModel, 0, len(channels))
+	for index := range channels {
+		if botIsEffectivelyBoundToChannelWithRoleSet(botID, &channels[index], roleSet) {
+			result = append(result, channels[index])
+		}
+	}
+	return result, nil
+}
+
+func botBoundChannelsInWorld(botID, worldID string) ([]model.ChannelModel, error) {
+	var channels []model.ChannelModel
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var err error
+		channels, err = botBoundChannelsInWorldTx(tx, botID, worldID)
+		return err
+	})
+	return channels, err
 }
 
 func EventBotIDsByChannelId(channelId string) ([]string, error) {
@@ -337,38 +434,63 @@ func SyncBotChannelAppearance(token *model.BotTokenModel) (*BotAppearanceSyncRes
 	result := &BotAppearanceSyncResult{
 		UpdatedIdentities: []*model.ChannelIdentityModel{},
 	}
+	if err := ensureBoundBotSharedChannelIdentities(token.ID); err != nil {
+		return nil, err
+	}
+	var managedIdentities []*model.ChannelIdentityModel
+	if err := model.GetDB().Where("user_id = ? AND (is_hidden = ? OR is_default = ?)", token.ID, true, true).
+		Order("shared_revision DESC, created_at ASC").Find(&managedIdentities).Error; err != nil {
+		return nil, err
+	}
+	sharedAuthorities := map[string]*model.ChannelIdentityModel{}
+	localIdentities := make([]*model.ChannelIdentityModel, 0, len(managedIdentities))
+	for _, identity := range managedIdentities {
+		if identity == nil || identity.ID == "" || strings.EqualFold(strings.TrimSpace(identity.BotAppearanceMode), "custom") {
+			continue
+		}
+		if identity.IsDefault && identity.SharedIdentityID != "" {
+			if sharedAuthorities[identity.SharedIdentityID] == nil {
+				sharedAuthorities[identity.SharedIdentityID] = identity
+			}
+			continue
+		}
+		localIdentities = append(localIdentities, identity)
+	}
+	for _, identity := range sharedAuthorities {
+		copies, err := model.SharedChannelIdentityCopies(identity.SharedIdentityID)
+		if err != nil {
+			return nil, err
+		}
+		if identity.DisplayName != displayName || identity.Color != color || identity.AvatarAttachmentID != avatar {
+			syncResult, syncErr := sharedChannelIdentitySyncFromCopy(token.ID, token.ID, identity.ID, &SharedChannelIdentitySyncInput{
+				DisplayName: displayName, Color: color, AvatarAttachmentID: avatar,
+				AvatarDecorations: identity.AvatarDecorations,
+			}, sharedChannelIdentitySyncOptions{
+				botManaged:             true,
+				trustStoredAvatar:      true,
+				trustStoredDecorations: true,
+			})
+			if syncErr != nil {
+				return nil, syncErr
+			}
+			copies = syncResult.Copies
+		}
+		result.UpdatedIdentities = append(result.UpdatedIdentities, copies...)
+	}
 
 	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
-		var managedIdentities []*model.ChannelIdentityModel
-		if err := tx.Where("user_id = ? AND (is_hidden = ? OR is_default = ?)", token.ID, true, true).Find(&managedIdentities).Error; err != nil {
-			return err
+		for _, identity := range localIdentities {
+			identity.DisplayName = displayName
+			identity.Color = color
+			identity.AvatarAttachmentID = avatar
+			if err := tx.Model(&model.ChannelIdentityModel{}).Where("id = ?", identity.ID).Updates(map[string]any{
+				"display_name": displayName, "color": color, "avatar_attachment_id": avatar,
+			}).Error; err != nil {
+				return err
+			}
+			result.UpdatedIdentities = append(result.UpdatedIdentities, identity)
 		}
-
-		for _, identity := range managedIdentities {
-			if identity == nil || identity.ID == "" {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(identity.BotAppearanceMode), "custom") {
-				continue
-			}
-			updates := map[string]any{}
-			if identity.DisplayName != displayName {
-				updates["display_name"] = displayName
-				identity.DisplayName = displayName
-			}
-			if identity.Color != color {
-				updates["color"] = color
-				identity.Color = color
-			}
-			if identity.AvatarAttachmentID != avatar {
-				updates["avatar_attachment_id"] = avatar
-				identity.AvatarAttachmentID = avatar
-			}
-			if len(updates) > 0 {
-				if err := tx.Model(&model.ChannelIdentityModel{}).Where("id = ?", identity.ID).Updates(updates).Error; err != nil {
-					return err
-				}
-			}
+		for _, identity := range result.UpdatedIdentities {
 			if err := tx.Model(&model.MessageModel{}).
 				Where("channel_id = ? AND sender_identity_id = ?", identity.ChannelID, identity.ID).
 				Updates(map[string]any{
@@ -379,9 +501,7 @@ func SyncBotChannelAppearance(token *model.BotTokenModel) (*BotAppearanceSyncRes
 				}).Error; err != nil {
 				return err
 			}
-			result.UpdatedIdentities = append(result.UpdatedIdentities, identity)
 		}
-
 		return tx.Model(&model.MessageModel{}).
 			Where("user_id = ? AND (sender_identity_id = '' OR sender_identity_id IS NULL)", token.ID).
 			Updates(map[string]any{
@@ -397,7 +517,49 @@ func SyncBotChannelAppearance(token *model.BotTokenModel) (*BotAppearanceSyncRes
 	return result, nil
 }
 
-// EnsureBotChannelIdentity creates a default channel identity for bot users once they join a channel.
+func ensureBoundBotSharedChannelIdentities(userID string) error {
+	var roleMappings []model.UserRoleMappingModel
+	if err := model.GetDB().Where("user_id = ? AND role_type = ?", userID, "channel").Order("role_id ASC").Find(&roleMappings).Error; err != nil {
+		return err
+	}
+	worldIDs := make(map[string]struct{}, len(roleMappings))
+	for _, mapping := range roleMappings {
+		channelID := strings.TrimSpace(model.ExtractChIdFromRoleId(mapping.RoleID))
+		if channelID == "" || mapping.RoleID != fmt.Sprintf("ch-%s-bot", channelID) {
+			continue
+		}
+		channel, err := model.ChannelGet(channelID)
+		if err != nil {
+			return err
+		}
+		if channel == nil || channel.Status == model.ChannelStatusDeleted {
+			continue
+		}
+		if worldID := strings.TrimSpace(channel.WorldID); worldID != "" {
+			worldIDs[worldID] = struct{}{}
+		}
+	}
+	orderedWorldIDs := make([]string, 0, len(worldIDs))
+	for worldID := range worldIDs {
+		orderedWorldIDs = append(orderedWorldIDs, worldID)
+	}
+	sort.Strings(orderedWorldIDs)
+	for _, worldID := range orderedWorldIDs {
+		channels, err := botBoundChannelsInWorld(userID, worldID)
+		if err != nil {
+			return err
+		}
+		if len(channels) == 0 {
+			continue
+		}
+		if err := EnsureBotChannelIdentity(userID, channels[0].ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureBotChannelIdentity creates or materializes the world's canonical default BOT identity.
 func EnsureBotChannelIdentity(userID, channelID string) error {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
@@ -418,26 +580,7 @@ func EnsureBotChannelIdentity(userID, channelID string) error {
 	if _, err := model.MemberGetByUserIDAndChannelIDBase(user.ID, channelID, displayName, true); err != nil {
 		return err
 	}
-	if existing, err := model.ChannelIdentityFindDefault(channelID, user.ID); err == nil && existing != nil {
-		return nil
-	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	sortOrder, err := model.ChannelIdentityMaxSort(channelID, user.ID)
-	if err != nil {
-		return err
-	}
-	identity := &model.ChannelIdentityModel{
-		ChannelID:          channelID,
-		UserID:             user.ID,
-		DisplayName:        displayName,
-		Color:              model.ChannelIdentityNormalizeColor(user.NickColor),
-		AvatarAttachmentID: strings.TrimSpace(user.Avatar),
-		SortOrder:          sortOrder + 1,
-		IsDefault:          true,
-		BotAppearanceMode:  "inherit",
-	}
-	return model.ChannelIdentityUpsert(identity)
+	return ensureBotSharedChannelIdentity(user, channelID)
 }
 
 // EnsureBotFriendships ensures every bot account is already a confirmed friend for the given user.
