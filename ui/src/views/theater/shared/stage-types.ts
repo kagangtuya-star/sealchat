@@ -3,7 +3,7 @@ export const WORLD_UNIT_PX = 24
 export type StageObjectFit = 'fill' | 'cover' | 'contain'
 export type StageSurfaceFit = StageObjectFit | 'tile' | 'center'
 export type StageSurfaceTarget = 'background' | 'foreground'
-export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' | 'character' | 'video' | 'effect'
+export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' | 'character' | 'video' | 'effect' | 'iframe'
 export type StageDrawingTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon'
 export type StageDrawingDash = 'solid' | 'dashed' | 'dotted'
 
@@ -11,6 +11,38 @@ export interface StageAudioRef {
   assetId: string
   name: string
   volume: number
+}
+
+export interface StageIframeContent {
+  url: string
+  scale: number
+}
+
+export const STAGE_IFRAME_MIN_SCALE = 0.25
+export const STAGE_IFRAME_MAX_SCALE = 5
+
+export const normalizeStageIframeContent = (input: unknown): StageIframeContent => {
+  const value = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Partial<StageIframeContent>
+    : {}
+  const scale = typeof value.scale === 'number' && Number.isFinite(value.scale)
+    ? Math.min(STAGE_IFRAME_MAX_SCALE, Math.max(STAGE_IFRAME_MIN_SCALE, value.scale))
+    : 1
+  return {
+    url: typeof value.url === 'string' ? value.url.trim() : '',
+    scale,
+  }
+}
+
+export const resolveSafeStageIframeUrl = (value: string) => {
+  const normalized = value.trim()
+  if (!normalized) return ''
+  try {
+    const url = new URL(normalized)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? normalized : ''
+  } catch {
+    return ''
+  }
 }
 
 export type StageMusicTrackType = 'music' | 'ambience' | 'sfx'

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { h, type Component } from 'vue'
 import { NButton, NDropdown, NIcon, NTooltip, type DropdownOption } from 'naive-ui'
-import { ChevronDown, LetterT, Photo, Pin } from '@vicons/tabler'
+import { ChevronDown, LetterT, Photo, Pin, World } from '@vicons/tabler'
 
-type SceneFixedObjectType = 'text' | 'image'
+type SceneFixedObjectType = 'text' | 'image' | 'iframe'
 
 const emit = defineEmits<{
   add: [type: SceneFixedObjectType]
@@ -13,10 +13,11 @@ const renderIcon = (icon: Component) => () => h(NIcon, null, { default: () => h(
 const options: DropdownOption[] = [
   { key: 'text', label: '场景固定文字', icon: renderIcon(LetterT) },
   { key: 'image', label: '场景固定图片', icon: renderIcon(Photo) },
+  { key: 'iframe', label: '场景固定网页', icon: renderIcon(World) },
 ]
 
 const addSelected = (key: string | number) => {
-  if (key === 'text' || key === 'image') emit('add', key)
+  if (key === 'text' || key === 'image' || key === 'iframe') emit('add', key)
 }
 const theaterSecondaryMenuProps = () => ({ class: 'theater-secondary-surface' })
 </script>

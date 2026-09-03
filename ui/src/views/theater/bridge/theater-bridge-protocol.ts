@@ -377,7 +377,7 @@ const stageDrawingSchema = z.strictObject({
 const stageObjectSchema = z.strictObject({
   id: nonEmptyIdSchema,
   parentId: nonEmptyIdSchema.nullable(),
-  type: z.enum(['group', 'drawing', 'text', 'image', 'button', 'effect']),
+  type: z.enum(['group', 'drawing', 'text', 'image', 'button', 'effect', 'iframe']),
   name: z.string().max(512),
   transform: stageObjectTransformSchema,
   visible: z.boolean(),

@@ -14,6 +14,7 @@ const props = defineProps<{
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: string[]
   stackingOrder: Record<string, number>
+  iframeEditingObjectIds: Set<string>
 }>()
 
 const attrs = useAttrs()
@@ -25,16 +26,16 @@ const roots = computed(() => Object.values(props.objects)
   ))
   .sort(compareStageLayersBottomToTop))
 
-const hasTextDescendant = (object: StageObject, visited = new Set<string>()): boolean => {
-  if (object.type === 'text') return true
+const hasDomVisualDescendant = (object: StageObject, visited = new Set<string>()): boolean => {
+  if (object.type === 'text' || object.type === 'iframe') return true
   if (visited.has(object.id)) return false
   visited.add(object.id)
   return Object.values(props.objects).some((child) => (
-    child.parentId === object.id && hasTextDescendant(child, visited)
+    child.parentId === object.id && hasDomVisualDescendant(child, visited)
   ))
 }
 
-const textRoots = computed(() => roots.value.filter((object) => hasTextDescendant(object)))
+const domVisualRoots = computed(() => roots.value.filter((object) => hasDomVisualDescendant(object)))
 
 const cameraStyle = computed(() => ({
   transform: `translate(${props.viewportWidth / 2 + props.camera.x}px, ${props.viewportHeight / 2 + props.camera.y}px) scale(${props.camera.zoom})`,
@@ -48,7 +49,7 @@ const rootStyle = (object: StageObject) => ({
 <template>
   <div class="theater-text-overlay-stack">
     <div
-      v-for="object in textRoots"
+      v-for="object in domVisualRoots"
       :key="object.id"
       class="theater-text-overlay"
       :class="attrs.class"
@@ -61,6 +62,7 @@ const rootStyle = (object: StageObject) => ({
           :objects="props.objects"
           :entrance-playbacks="props.entrancePlaybacks"
           :hidden-object-ids="hiddenObjectIds"
+          :iframe-editing-object-ids="props.iframeEditingObjectIds"
         />
       </div>
     </div>

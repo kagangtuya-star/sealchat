@@ -46,6 +46,7 @@ import {
   Stack2,
   Trash,
   Upload,
+  World,
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
@@ -58,13 +59,17 @@ import {
   STAGE_ACTION_DELAY_STEP_MS,
   STAGE_ACTION_MAX_DELAY_MS,
   STAGE_ENTRANCE_MAX_DURATION_MS,
+  STAGE_IFRAME_MAX_SCALE,
+  STAGE_IFRAME_MIN_SCALE,
   createDefaultStageActionSchedule,
   createDefaultStageImageAnnotation,
   normalizeStageImageAnnotation,
+  normalizeStageIframeContent,
   normalizeStageAudioRef,
   normalizeStageMusicSnapshot,
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
+  resolveSafeStageIframeUrl,
   stageSceneTransitionTypes,
   type StageEntranceConfig,
   type StageEntrancePlayback,
@@ -2678,6 +2683,47 @@ const selectedObject = computed(() => {
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 
+const iframeUrlDraft = ref('')
+watch(
+  () => [
+    selectedObject.value?.id,
+    selectedObject.value?.type === 'iframe'
+      ? normalizeStageIframeContent(selectedObject.value.content?.iframe).url
+      : '',
+  ] as const,
+  ([, url]) => { iframeUrlDraft.value = url },
+  { immediate: true },
+)
+
+const commitSelectedIframeUrl = () => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  const draftUrl = iframeUrlDraft.value.trim()
+  const url = resolveSafeStageIframeUrl(draftUrl)
+  if (draftUrl && !url) return
+  const iframe = normalizeStageIframeContent(object.content?.iframe)
+  if (iframe.url === url) return
+  props.store.beginObjectEdit('修改网页 URL')
+  object.content = { ...object.content, iframe: { ...iframe, url } }
+  props.store.commitObjectEdit()
+}
+
+const selectedIframeScalePercent = computed(() => {
+  const object = selectedObject.value
+  return object?.type === 'iframe'
+    ? normalizeStageIframeContent(object.content?.iframe).scale * 100
+    : 100
+})
+
+const updateSelectedIframeScalePercent = (value: number | null) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe' || !canEditAllObjects.value || value === null || !Number.isFinite(value)) return
+  const iframe = normalizeStageIframeContent(object.content?.iframe)
+  const scale = normalizeStageIframeContent({ ...iframe, scale: value / 100 }).scale
+  if (iframe.scale === scale) return
+  object.content = { ...object.content, iframe: { ...iframe, scale } }
+}
+
 const isStaticImageObject = (object: StageObject | null | undefined): object is StageObject & { type: 'image' } => (
   object?.type === 'image'
   && Boolean(object.image)
@@ -2984,6 +3030,13 @@ const stageObjects = computed<Record<string, StageObject>>(() => ({
   ))),
   ...departingStageObjects,
 }))
+const iframeEditingObjectIds = computed(() => new Set(
+  Object.values(stageObjects.value)
+    .filter((object) => object.type === 'iframe' && (
+      viewToolActive.value ? canDragObject(object) : canEditObject(object)
+    ))
+    .map((object) => object.id),
+))
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
@@ -3258,6 +3311,7 @@ const layerPreviewIcon = (object: StageObject) => {
   if (object.type === 'drawing') return Pencil
   if (object.type === 'text') return LetterT
   if (object.type === 'button') return Bolt
+  if (object.type === 'iframe') return World
   return Photo
 }
 
@@ -5637,7 +5691,7 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     wrapper.add(createDrawingNode(object.drawing, width, height))
     return
   }
-  if (object.type === 'text') {
+  if (object.type === 'text' || object.type === 'iframe') {
     wrapper.add(new Konva.Rect({
       name: 'theater-object-content',
       width,
@@ -6086,7 +6140,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   })
   if (object.type === 'drawing') {
     return
-  } else if (object.type === 'text') {
+  } else if (object.type === 'text' || object.type === 'iframe') {
     wrapper.findOne<Konva.Rect>('.theater-object-content')?.setAttrs({
       width,
       height,
@@ -7829,6 +7883,7 @@ onBeforeUnmount(() => {
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('text')"><template #icon><n-icon><LetterT /></n-icon></template></n-button></template>添加文字</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image')"><template #icon><n-icon><Photo /></n-icon></template></n-button></template>添加图片面板</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('iframe')"><template #icon><n-icon><World /></n-icon></template></n-button></template>添加网页</n-tooltip>
       </n-button-group>
       <StageSceneFixedToolbar
         v-if="canEditAllObjects"
@@ -7954,6 +8009,7 @@ onBeforeUnmount(() => {
             :entrance-playbacks="textEntrancePlaybacks"
             :hidden-object-ids="pendingTextEntranceIds"
             :stacking-order="rootStackingOrder"
+            :iframe-editing-object-ids="iframeEditingObjectIds"
           />
           <div
             v-if="imageAnnotationOverlay.visible"
@@ -8359,6 +8415,31 @@ onBeforeUnmount(() => {
               <label>内容</label>
               <n-input v-model:value="selectedObject.text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
             </template>
+            <template v-else-if="selectedObject.type === 'iframe' && canEditAllObjects">
+              <label>URL</label>
+              <div @focusin.stop @focusout.stop>
+                <n-input
+                  :value="iframeUrlDraft"
+                  size="small"
+                  placeholder="https://example.com"
+                  @update:value="iframeUrlDraft = $event"
+                  @blur="commitSelectedIframeUrl"
+                  @keyup.enter="commitSelectedIframeUrl"
+                />
+              </div>
+              <label>网页缩放</label>
+              <n-input-number
+                :value="selectedIframeScalePercent"
+                :min="STAGE_IFRAME_MIN_SCALE * 100"
+                :max="STAGE_IFRAME_MAX_SCALE * 100"
+                :step="5"
+                :precision="0"
+                size="small"
+                @update:value="updateSelectedIframeScalePercent"
+              >
+                <template #suffix>%</template>
+              </n-input-number>
+            </template>
             <template v-if="selectedObject.type === 'image' && canEditObject(selectedObject)">
               <label>图片</label>
               <div class="theater-image-actions">
@@ -8460,7 +8541,7 @@ onBeforeUnmount(() => {
                 <n-input-number v-model:value="selectedObject.drawing.sides" :min="5" :max="12" />
               </template>
             </template>
-            <template v-if="!['text', 'image', 'group', 'drawing'].includes(selectedObject.type)">
+            <template v-if="!['text', 'image', 'iframe', 'group', 'drawing'].includes(selectedObject.type)">
               <label>颜色</label>
               <n-input v-model:value="selectedObject.fill" />
             </template>

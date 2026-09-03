@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 
+import { normalizeStageIframeContent, resolveSafeStageIframeUrl } from '../src/views/theater/shared/stage-types'
 import { createTheaterStageStore } from '../src/views/theater/stage/StageStore'
 import { setTheaterEffectConfig, theaterEffectConfigFromObject } from '../src/views/theater/effects/theater-effect-types'
+import { theaterSyncTesting } from '../src/views/theater/sync/TheaterSyncClient'
 
 const store = createTheaterStageStore()
 assert.equal(store.state.camera.zoom, 0.5)
@@ -23,6 +25,46 @@ for (const [index, type] of menuObjectTypes.entries()) {
 }
 const fixedMenuImage = menuObjectStore.addObject('image', 'scene-fixed')
 assert.deepEqual({ x: fixedMenuImage.transform.x, y: fixedMenuImage.transform.y }, { x: 0, y: 0 })
+
+const iframeStore = createTheaterStageStore()
+const iframeObject = iframeStore.addObject('iframe')
+assert.equal(iframeObject.type, 'iframe')
+assert.equal(iframeStore.activeObjects.value[iframeObject.id]?.type, 'iframe')
+assert.equal(iframeObject.name, '新建网页')
+assert.deepEqual({ width: iframeObject.transform.width, height: iframeObject.transform.height }, { width: 16, height: 9 })
+assert.equal(iframeObject.aspectRatioLocked, false)
+assert.equal(iframeObject.visible, true)
+assert.equal(iframeObject.locked, false)
+assert.equal(iframeObject.interactive, true)
+assert.equal(iframeObject.editable, false)
+assert.deepEqual(iframeObject.content, { iframe: { url: '', scale: 1 } })
+assert.deepEqual(normalizeStageIframeContent({ url: ' https://example.com ', scale: 0.1 }), { url: 'https://example.com', scale: 0.25 })
+assert.deepEqual(normalizeStageIframeContent({ url: '', scale: 6 }), { url: '', scale: 5 })
+assert.deepEqual(normalizeStageIframeContent({ url: '', scale: Number.NaN }), { url: '', scale: 1 })
+const iframeUrl = 'https://example.com/stage'
+assert.equal(resolveSafeStageIframeUrl(iframeUrl), iframeUrl)
+assert.equal(resolveSafeStageIframeUrl('http://example.com/stage'), 'http://example.com/stage')
+for (const url of ['javascript:alert(1)', 'data:text/html,test', 'file:///tmp/test', 'blob:https://example.com/id']) {
+  assert.equal(resolveSafeStageIframeUrl(url), '')
+}
+iframeObject.content = { iframe: { url: iframeUrl, scale: 0.75 } }
+assert.equal(iframeStore.copySelectedObject(), true)
+const pastedIframeObject = iframeStore.pasteObject()
+assert.ok(pastedIframeObject)
+assert.equal(pastedIframeObject.type, 'iframe')
+assert.deepEqual(pastedIframeObject.content, { iframe: { url: iframeUrl, scale: 0.75 } })
+
+const iframeDocument = theaterSyncTesting.documentFromWorkspace(iframeStore.getSnapshot())
+const iframeServerObject = iframeDocument.scenes[iframeStore.state.activeSceneId].objects[iframeObject.id]
+assert.equal(iframeServerObject.kind, 'iframe')
+assert.deepEqual(iframeServerObject.content.iframe, { url: iframeUrl, scale: 0.75 })
+const iframeRoundTripWorkspace = theaterSyncTesting.workspaceFromDocument(
+  theaterSyncTesting.normalizeDocument(iframeDocument),
+)
+const iframeRoundTripDocument = theaterSyncTesting.documentFromWorkspace(iframeRoundTripWorkspace)
+const iframeRoundTripObject = iframeRoundTripDocument.scenes[iframeStore.state.activeSceneId].objects[iframeObject.id]
+assert.equal(iframeRoundTripObject.kind, 'iframe')
+assert.deepEqual(iframeRoundTripObject.content.iframe, { url: iframeUrl, scale: 0.75 })
 
 const activeScene = store.activeScene.value
 assert.equal(activeScene.switchText, '')

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,45 @@ func worldTheaterPayload(t *testing.T, value any) json.RawMessage {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestTheaterIframeObjectSchemaAndUnsafeURLs(t *testing.T) {
+	object := func(url string) map[string]any {
+		return map[string]any{
+			"id": "iframe-test", "kind": "iframe", "name": "Web",
+			"width": 16, "height": 9, "orderKey": "1",
+			"content": map[string]any{"iframe": map[string]any{"url": url}},
+			"actions": []any{}, "metadata": map[string]any{},
+		}
+	}
+
+	if _, _, err := decodeTheaterPayload(
+		TheaterMutationObjectCreate,
+		worldTheaterPayload(t, map[string]any{"object": object("https://example.com/stage")}),
+	); err != nil {
+		t.Fatalf("valid iframe object rejected: %v", err)
+	}
+
+	for _, url := range []string{"javascript:alert(1)", "data:text/html,test", "file:///tmp/test", "blob:https://example.com/id"} {
+		t.Run(url[:strings.IndexByte(url, ':')], func(t *testing.T) {
+			if _, _, err := decodeTheaterPayload(
+				TheaterMutationObjectCreate,
+				worldTheaterPayload(t, map[string]any{"object": object(url)}),
+			); !IsTheaterErrorCode(err, TheaterErrorPayloadInvalid) {
+				t.Fatalf("unsafe iframe URL error = %v", err)
+			}
+		})
+	}
+
+	if _, _, err := decodeTheaterPayload(
+		TheaterMutationObjectUpdate,
+		worldTheaterPayload(t, map[string]any{
+			"objectId": "iframe-test",
+			"fields":   map[string]any{"content": map[string]any{"iframe": map[string]any{"url": "javascript:alert(1)"}}},
+		}),
+	); !IsTheaterErrorCode(err, TheaterErrorPayloadInvalid) {
+		t.Fatalf("unsafe iframe update URL error = %v", err)
+	}
 }
 
 func validTheaterEffectContent(t *testing.T) json.RawMessage {
