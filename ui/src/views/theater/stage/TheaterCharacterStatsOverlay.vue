@@ -3,8 +3,16 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { Minus } from '@vicons/tabler';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { resolveTemplateValue } from '@/utils/characterCardTemplate';
+import {
+  buildInternalSurfaceResourceKey,
+  generateInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+  type InternalSurfaceLinkParams,
+} from '@/utils/internalSurfaceLink';
+import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useUtilsStore } from '@/stores/utils';
 import {
   useChannelCharacterSnapshotStore,
   type CharacterSnapshotNumericSource,
@@ -18,7 +26,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  openCharacterCard: [identityId: string];
+  openCharacterCard: [payload: { resource: TheaterFloatingResource; clientX: number; clientY: number }];
 }>();
 
 interface OverlayLayout {
@@ -54,6 +62,7 @@ interface ResolvedCharacter {
 const rootRef = ref<HTMLElement | null>(null);
 const chatStore = useChatStore();
 const userStore = useUserStore();
+const utilsStore = useUtilsStore();
 const snapshotStore = useChannelCharacterSnapshotStore();
 const layout = reactive<OverlayLayout>({ x: 12, y: 54, width: 300, height: 280 });
 const controlsVisible = ref(false);
@@ -356,6 +365,30 @@ const resolveCharacter = (item: ChannelCharacterSnapshotItem): ResolvedCharacter
   };
 };
 
+const openCharacterCard = (character: ResolvedCharacter, event: MouseEvent) => {
+  const worldId = String(props.worldId || '').trim();
+  const channelId = String(props.channelId || '').trim();
+  const params: InternalSurfaceLinkParams = {
+    type: 'character',
+    id: String(character.item.sourceCardId || '').trim()
+      || `snapshot:${channelId}:${character.item.identityId}`,
+    worldId,
+    channelId,
+  };
+  emit('openCharacterCard', {
+    resource: {
+      key: buildInternalSurfaceResourceKey(params),
+      url: generateInternalSurfaceLink(params, {
+        base: resolveInternalSurfaceLinkBase(utilsStore.config),
+      }),
+      title: character.item.data.card?.name || character.name || '人物卡',
+      presentation: character.avatarUrl ? { avatarUrl: character.avatarUrl } : undefined,
+    },
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+};
+
 const resolvedCharacters = computed(() => snapshotItems.value
   .map(resolveCharacter)
   .filter((item): item is ResolvedCharacter => !!item));
@@ -493,7 +526,7 @@ onBeforeUnmount(() => {
               type="button"
               class="theater-character-stat-card__avatar"
               :title="`打开 ${character.name} 的人物卡`"
-              @click="emit('openCharacterCard', character.item.identityId)"
+              @click.stop="openCharacterCard(character, $event)"
             >
               <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name">
               <span v-else>{{ character.name.slice(0, 1) || '?' }}</span>

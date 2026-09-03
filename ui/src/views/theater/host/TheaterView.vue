@@ -23,6 +23,7 @@ import { theaterPresentationSchema, type TheaterPresentation } from '@/types/the
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
+import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import { useDisplayStore } from '@/stores/display'
 import { activateWorldTheater, isTheaterActivationRequired } from '@/services/theaterActivation'
@@ -53,6 +54,7 @@ installTheaterBridgeDebugConsoleCommand()
 const layoutRef = ref<HTMLDivElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const stageAppRef = ref<InstanceType<typeof StageApp> | null>(null)
+const theaterFloatingHostRef = ref<InstanceType<typeof TheaterFloatingHost> | null>(null)
 const stageSurfaceRef = ref<HTMLElement | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
@@ -256,14 +258,13 @@ const selectChatCharacterVariant = async (payload: { identityId: string, variant
   }
 }
 
-const openCharacterCard = async (identityId: string) => {
-  chatHidden.value = false
-  if (isNarrow.value) mobileTab.value = 'chat'
-  try {
-    const result = await theaterBridge?.openCharacterCard(identityId)
-    if (result && !result.ok) message.warning(result.error.message)
-  } catch (error) {
-    message.warning(error instanceof Error ? error.message : '打开人物卡失败')
+const openCharacterCard = (payload: {
+  resource: TheaterFloatingResource
+  clientX: number
+  clientY: number
+}) => {
+  if (!theaterFloatingHostRef.value?.openResource(payload.resource, payload)) {
+    message.warning('人物卡浮窗打开失败')
   }
 }
 
@@ -784,7 +785,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-		<TheaterFloatingHost :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" />
+		<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" />
       </section>
 
       <div

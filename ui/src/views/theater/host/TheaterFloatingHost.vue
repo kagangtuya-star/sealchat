@@ -7,9 +7,11 @@ import {
   type InternalSurfaceType,
 } from '@/utils/internalSurfaceLink'
 import {
+  THEATER_FLOATING_TAKEOVER_REQUEST,
   THEATER_FLOATING_TAKEOVER_ACK,
   isTheaterFloatingTakeoverRequest,
   requestChatFloatingTakeover,
+  type TheaterFloatingResource,
   type TheaterFloatingTakeoverAck,
   type TheaterFloatingTakeoverRequest,
 } from '@/utils/theaterFloatingBridge'
@@ -254,6 +256,31 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
   return true
 }
 
+const openResource = (
+  resource: TheaterFloatingResource,
+  point?: { clientX: number; clientY: number },
+) => {
+  const rect = hostRect()
+  if (!rect) return false
+  const fallbackPoint = {
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+  }
+  const clientX = point && point.clientX >= rect.left && point.clientX <= rect.right
+    ? point.clientX
+    : fallbackPoint.clientX
+  const clientY = point && point.clientY >= rect.top && point.clientY <= rect.bottom
+    ? point.clientY
+    : fallbackPoint.clientY
+  return acceptTakeover({
+    type: THEATER_FLOATING_TAKEOVER_REQUEST,
+    requestId: `theater-floating-direct-${Date.now()}`,
+    resource,
+    clientX,
+    clientY,
+  })
+}
+
 const postAck = (event: MessageEvent, requestId: string, accepted: boolean) => {
   const target = props.chatFrame?.contentWindow
   if (!target || event.source !== target) return
@@ -414,6 +441,8 @@ onBeforeUnmount(() => {
   mounted = false
   window.removeEventListener('message', handleTakeoverMessage)
 })
+
+defineExpose({ openResource })
 </script>
 
 <template>

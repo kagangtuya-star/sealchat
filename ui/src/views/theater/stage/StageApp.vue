@@ -132,6 +132,7 @@ import { createStageSequenceAction, isStageSequenceAction } from '../shared/stag
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
+import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
@@ -188,7 +189,7 @@ const emit = defineEmits<{
   pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
-  openCharacterCard: [identityId: string]
+  openCharacterCard: [payload: { resource: TheaterFloatingResource; clientX: number; clientY: number }]
   toggleChat: []
   disconnectChatBridge: []
   reconnectChatBridge: []
