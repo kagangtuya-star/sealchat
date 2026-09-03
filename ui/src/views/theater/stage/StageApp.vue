@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTabPane, NTabs, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -50,6 +50,12 @@ import {
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
+import { useIFormStore } from '@/stores/iform'
+import { useStickyNoteStore } from '@/stores/stickyNote'
+import { useCharacterCardStore } from '@/stores/characterCard'
+import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot'
+import { useUtilsStore } from '@/stores/utils'
+import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
@@ -2683,6 +2689,160 @@ const selectedObject = computed(() => {
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 
+type QuickToolTab = 'iform' | 'note' | 'character'
+interface QuickToolOption {
+  id: string
+  name: string
+  description: string
+  url: string
+}
+
+const iformStore = useIFormStore()
+const stickyNoteStore = useStickyNoteStore()
+const characterCardStore = useCharacterCardStore()
+const snapshotStore = useChannelCharacterSnapshotStore()
+const utilsStore = useUtilsStore()
+const quickToolPickerOpen = ref(false)
+const quickToolPickerTab = ref<QuickToolTab>('iform')
+const quickToolPickerLoading = ref(false)
+const quickToolPickerError = ref('')
+const quickToolSelection = ref<{ tab: QuickToolTab; option: QuickToolOption } | null>(null)
+let quickToolPickerEpoch = 0
+
+const quickToolTabs: Array<{ value: QuickToolTab; label: string }> = [
+  { value: 'iform', label: '频道嵌入' },
+  { value: 'note', label: '便签' },
+  { value: 'character', label: '人物卡' },
+]
+
+const quickToolUrl = (type: 'iform' | 'note' | 'character', id: string) => (
+  generateInternalSurfaceLink({
+    type,
+    id,
+    worldId: props.worldId,
+    channelId: props.channelId,
+  }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) })
+)
+
+const truncateQuickToolDescription = (value: unknown) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text
+}
+
+const quickToolOptionsFor = (tab: QuickToolTab): QuickToolOption[] => {
+  if (tab === 'iform') {
+    return (iformStore.formsByChannel[props.channelId] || []).map((form) => ({
+      id: form.id,
+      name: form.name?.trim() || '未命名嵌入',
+      description: form.url ? 'URL 嵌入' : '嵌入代码',
+      url: quickToolUrl('iform', form.id),
+    }))
+  }
+  if (tab === 'note') {
+    return Object.values(stickyNoteStore.notes)
+      .filter((note) => note.channelId === props.channelId)
+      .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
+      .map((note) => ({
+        id: note.id,
+        name: note.title?.trim() || '无标题便签',
+        description: truncateQuickToolDescription(note.contentText || note.noteType),
+        url: quickToolUrl('note', note.id),
+      }))
+  }
+
+  const snapshotItems = snapshotStore.getChannelItems(props.channelId).filter((item) => !!item.data.card)
+  const snapshots = snapshotItems.map((item) => ({
+    id: `snapshot:${props.channelId}:${item.identityId}`,
+    name: item.data.card?.name?.trim() || item.data.identity.displayName?.trim() || item.identityId,
+    description: `人物卡快照 · ${item.data.card?.sheetType || '未分类'}`,
+    url: quickToolUrl('character', `snapshot:${props.channelId}:${item.identityId}`),
+  }))
+  const snapshotCardIds = new Set(snapshotItems.map((item) => item.sourceCardId).filter(Boolean))
+  const cards = characterCardStore.cards
+    .filter((card) => !snapshotCardIds.has(card.id))
+    .map((card) => ({
+      id: card.id,
+      name: card.name?.trim() || '未命名人物卡',
+      description: `人物卡 · ${card.sheetType || '未分类'}`,
+      url: quickToolUrl('character', card.id),
+    }))
+  return [...snapshots, ...cards]
+}
+
+const quickToolPickerStyle = computed(() => {
+  const width = Math.min(440, Math.max(320, (workspaceRef.value?.clientWidth || 960) - 24))
+  const height = Math.min(500, Math.max(320, (workspaceRef.value?.clientHeight || 640) - panelTopInset - 12))
+  const workspaceWidth = workspaceRef.value?.clientWidth || 960
+  return {
+    left: `${Math.max(12, Math.round((workspaceWidth - width) / 2))}px`,
+    top: `${panelTopInset}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+    zIndex: '10002',
+  }
+})
+
+const selectQuickTool = (tab: QuickToolTab, option: QuickToolOption) => {
+  quickToolSelection.value = { tab, option }
+}
+
+const isQuickToolOptionSelected = (tab: QuickToolTab, option: QuickToolOption) => {
+  const selection = quickToolSelection.value
+  return selection?.tab === tab && selection.option.id === option.id
+}
+
+const openQuickToolPicker = async () => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  const epoch = ++quickToolPickerEpoch
+  quickToolPickerOpen.value = true
+  quickToolPickerTab.value = 'iform'
+  quickToolSelection.value = null
+  quickToolPickerError.value = ''
+  quickToolPickerLoading.value = true
+  const worldId = props.worldId
+  const channelId = props.channelId
+  iformStore.bootstrap()
+  const results = await Promise.allSettled([
+    iformStore.ensureForms(channelId),
+    stickyNoteStore.loadChannelNotes(channelId),
+    snapshotStore.initializeChannel(channelId),
+    characterCardStore.loadCards(channelId),
+  ])
+  if (epoch !== quickToolPickerEpoch) return
+  if (worldId !== props.worldId || channelId !== props.channelId) {
+    quickToolPickerLoading.value = false
+    quickToolPickerOpen.value = false
+    return
+  }
+  if (results.some((result) => result.status === 'rejected')) {
+    quickToolPickerError.value = '部分内置工具加载失败，请稍后重试'
+  }
+  quickToolPickerLoading.value = false
+}
+
+const closeQuickToolPicker = () => {
+  quickToolPickerEpoch += 1
+  quickToolPickerOpen.value = false
+  quickToolPickerLoading.value = false
+  quickToolSelection.value = null
+}
+
+const handleQuickToolTabChange = (value: string) => {
+  if (value !== 'iform' && value !== 'note' && value !== 'character') return
+  quickToolPickerTab.value = value
+  quickToolSelection.value = null
+}
+
+const applyQuickToolSelection = () => {
+  const selected = quickToolSelection.value?.option
+  const object = selectedObject.value
+  if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  iframeUrlDraft.value = selected.url
+  closeQuickToolPicker()
+  commitSelectedIframeUrl()
+}
+
 const iframeUrlDraft = ref('')
 watch(
   () => [
@@ -2694,6 +2854,10 @@ watch(
   ([, url]) => { iframeUrlDraft.value = url },
   { immediate: true },
 )
+
+watch(() => selectedObject.value?.id, () => {
+  if (quickToolPickerOpen.value) closeQuickToolPicker()
+})
 
 const commitSelectedIframeUrl = () => {
   const object = selectedObject.value
@@ -7606,6 +7770,7 @@ watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, over
   observeOpenPanels()
 })
 watch(() => [props.worldId, props.channelId], () => {
+  if (quickToolPickerOpen.value) closeQuickToolPicker()
   if (canManageResources.value) void Promise.all([fetchTheaterAudioAssets(), fetchTheaterImageAssets()])
 })
 watch(theaterAudioMasterVolume, (volume) => {
@@ -7621,6 +7786,8 @@ watch(theaterAudioMasterVolume, (volume) => {
 })
 
 onBeforeUnmount(() => {
+  quickToolPickerEpoch += 1
+  quickToolPickerOpen.value = false
   hideImageAnnotation()
   if (actionDragFrame !== null) window.cancelAnimationFrame(actionDragFrame)
   actionDragFrame = null
@@ -8065,6 +8232,57 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <aside
+        v-if="quickToolPickerOpen"
+        class="theater-floating-panel theater-tool-picker"
+        :style="quickToolPickerStyle"
+        @pointerdown.stop
+      >
+        <div class="theater-panel-heading">
+          <span>快速添加内置工具</span>
+          <n-button class="theater-panel-close" text size="tiny" aria-label="关闭快速添加内置工具" @click="closeQuickToolPicker"><n-icon><X /></n-icon></n-button>
+        </div>
+        <div class="theater-tool-picker__body">
+          <n-tabs
+            :value="quickToolPickerTab"
+            type="line"
+            size="small"
+            animated
+            class="theater-tool-picker__tabs"
+            @update:value="handleQuickToolTabChange"
+          >
+            <n-tab-pane v-for="tab in quickToolTabs" :key="tab.value" :name="tab.value" :tab="tab.label">
+              <div class="theater-tool-picker__list">
+                <button
+                  v-for="option in quickToolOptionsFor(tab.value)"
+                  :key="option.id"
+                  type="button"
+                  class="theater-tool-picker__option"
+                  :class="{ 'is-selected': isQuickToolOptionSelected(tab.value, option) }"
+                  @click="selectQuickTool(tab.value, option)"
+                >
+                  <span class="theater-tool-picker__option-main">
+                    <strong>{{ option.name }}</strong>
+                    <small>{{ option.description || '内置工具' }}</small>
+                  </span>
+                  <n-icon v-if="isQuickToolOptionSelected(tab.value, option)"><Select /></n-icon>
+                </button>
+                <div v-if="!quickToolOptionsFor(tab.value).length" class="theater-tool-picker__empty">
+                  暂无可用{{ tab.label }}
+                </div>
+              </div>
+            </n-tab-pane>
+          </n-tabs>
+          <div v-if="quickToolPickerLoading" class="theater-tool-picker__status">正在读取可用工具…</div>
+          <div v-else-if="quickToolPickerError" class="theater-tool-picker__status is-error">{{ quickToolPickerError }}</div>
+          <div class="theater-tool-picker__footer">
+            <small v-if="quickToolSelection">已选择：{{ quickToolSelection.option.name }}</small>
+            <span v-else />
+            <n-button size="small" type="primary" :disabled="!quickToolSelection || quickToolPickerLoading" @click="applyQuickToolSelection">确定</n-button>
+          </div>
+        </div>
+      </aside>
+
       <aside v-if="scenePanelOpen && canOpenPanel('scene')" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')" @pointerdown.capture="bringPanelToFront('scene')" @focusin="bringPanelToFront('scene')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('scene', $event)">
           <span>场景</span>
@@ -8427,6 +8645,16 @@ onBeforeUnmount(() => {
                   @keyup.enter="commitSelectedIframeUrl"
                 />
               </div>
+              <n-button
+                class="theater-quick-tool-button"
+                size="small"
+                secondary
+                :loading="quickToolPickerLoading"
+                @click="openQuickToolPicker"
+              >
+                <template #icon><n-icon><Plus /></n-icon></template>
+                快速添加内置工具
+              </n-button>
               <label>网页缩放</label>
               <n-input-number
                 :value="selectedIframeScalePercent"
@@ -9408,6 +9636,29 @@ onBeforeUnmount(() => {
 .theater-scene-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 6px; }
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow: hidden; }
 .theater-object-inspector > .theater-inspector { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.theater-tool-picker { min-width: min(320px, 100%); min-height: min(320px, 100%); }
+.theater-tool-picker__body { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.theater-tool-picker__tabs { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+.theater-tool-picker__tabs :deep(.n-tabs-nav) { flex: 0 0 auto; }
+.theater-tool-picker__tabs :deep(.n-tabs-content) { min-height: 0; flex: 1 1 auto; overflow: hidden; }
+.theater-tool-picker__tabs :deep(.n-tabs-pane-wrapper) { min-height: 0; flex: 1 1 auto; overflow: hidden; }
+.theater-tool-picker__tabs :deep(.n-tab-pane) { height: 100%; }
+.theater-tool-picker__list { height: 100%; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding-top: 8px; }
+.theater-tool-picker__option {
+  width: 100%; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .1)); border-radius: 5px;
+  color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-panel) 78%, transparent); text-align: left; cursor: pointer; transition: border-color .14s ease, background .14s ease;
+}
+.theater-tool-picker__option:hover { border-color: color-mix(in srgb, var(--theater-accent) 55%, transparent); background: color-mix(in srgb, var(--theater-accent) 10%, var(--theater-panel)); }
+.theater-tool-picker__option.is-selected { border-color: var(--theater-accent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
+.theater-tool-picker__option > .n-icon { flex: 0 0 auto; color: var(--theater-accent, #38bdf8); }
+.theater-tool-picker__option-main { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.theater-tool-picker__option-main strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.theater-tool-picker__option-main small { overflow: hidden; color: var(--sc-text-secondary, #b5b5c5); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.theater-tool-picker__empty, .theater-tool-picker__status { padding: 28px 12px; color: var(--sc-fg-muted, #71717a); font-size: 11px; text-align: center; }
+.theater-tool-picker__status { padding: 4px 0; }
+.theater-tool-picker__status.is-error { color: #fbbf24; }
+.theater-tool-picker__footer { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-tool-picker__footer small { min-width: 0; overflow: hidden; color: var(--sc-text-secondary, #b5b5c5); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
 .theater-overlay-panel { min-width: min(520px, 100%); min-height: min(360px, 100%); }
