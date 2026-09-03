@@ -12,7 +12,6 @@ const props = defineProps<{
   objects: Record<string, StageObject>
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: Set<string>
-  iframeEditingObjectIds: Set<string>
 }>()
 
 const contentRef = ref<HTMLElement | null>(null)
@@ -132,7 +131,6 @@ onBeforeUnmount(() => {
     <StageIframeVisualObject
       v-else-if="props.object.type === 'iframe'"
       :object="props.object"
-      :editing="props.iframeEditingObjectIds.has(props.object.id)"
     />
     <StageTextVisualObject
       v-for="child in children"
@@ -141,7 +139,6 @@ onBeforeUnmount(() => {
       :objects="props.objects"
       :entrance-playbacks="props.entrancePlaybacks"
       :hidden-object-ids="props.hiddenObjectIds"
-      :iframe-editing-object-ids="props.iframeEditingObjectIds"
     />
   </div>
 </template>

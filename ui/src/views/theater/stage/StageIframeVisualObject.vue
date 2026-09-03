@@ -4,14 +4,13 @@ import { normalizeStageIframeContent, resolveSafeStageIframeUrl, type StageObjec
 
 const props = defineProps<{
   object: StageObject
-  editing: boolean
 }>()
 
 const iframeContent = computed(() => normalizeStageIframeContent(props.object.content?.iframe))
 const configuredUrl = computed(() => iframeContent.value.url)
 const iframeSrc = computed(() => resolveSafeStageIframeUrl(configuredUrl.value))
 const pointerEvents = computed<'auto' | 'none'>(() => (
-  props.editing || !props.object.interactive ? 'none' : 'auto'
+  props.object.interactive ? 'auto' : 'none'
 ))
 const frameStyle = computed<CSSProperties>(() => ({
   width: `${100 / iframeContent.value.scale}%`,
@@ -29,13 +28,14 @@ const frameStyle = computed<CSSProperties>(() => ({
       class="theater-iframe-visual-object__frame"
       :src="iframeSrc"
       :title="props.object.name || '网页内容'"
+      :data-stage-object-id="props.object.id"
       :style="frameStyle"
       allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
       sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups"
       referrerpolicy="no-referrer"
       loading="lazy"
     ></iframe>
-    <span v-else-if="props.editing" class="theater-iframe-visual-object__placeholder">
+    <span v-else class="theater-iframe-visual-object__placeholder">
       {{ configuredUrl ? '仅支持 HTTP/HTTPS URL' : '请配置 URL' }}
     </span>
   </div>

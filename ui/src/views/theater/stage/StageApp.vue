@@ -3195,13 +3195,6 @@ const stageObjects = computed<Record<string, StageObject>>(() => ({
   ))),
   ...departingStageObjects,
 }))
-const iframeEditingObjectIds = computed(() => new Set(
-  Object.values(stageObjects.value)
-    .filter((object) => object.type === 'iframe' && (
-      viewToolActive.value ? canDragObject(object) : canEditObject(object)
-    ))
-    .map((object) => object.id),
-))
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
@@ -3902,6 +3895,17 @@ const selectObject = (objectId: string | null, additive = false) => {
   if (viewToolActive.value) return
   if (objectId && !canEditObject(getObject(objectId))) return
   props.store.selectObject(objectId, additive)
+  nextTick(updateTransformer)
+}
+
+const handleTheaterWindowBlur = () => {
+  const activeElement = document.activeElement
+  if (!(activeElement instanceof HTMLIFrameElement)) return
+  if (!inspectorPanelOpen.value || !canOpenPanel('inspector')) return
+  const objectId = activeElement.dataset.stageObjectId
+  const object = objectId ? getObject(objectId) : null
+  if (!object || object.type !== 'iframe' || !object.interactive) return
+  props.store.selectObject(objectId)
   nextTick(updateTransformer)
 }
 
@@ -7624,6 +7628,7 @@ onMounted(() => {
   window.addEventListener('pointermove', movePanel)
   window.addEventListener('pointerup', stopPanelDrag)
   window.addEventListener('pointercancel', stopPanelDrag)
+  window.addEventListener('blur', handleTheaterWindowBlur)
   window.addEventListener('keydown', handleStageShortcut)
   if (canManageResources.value) void fetchTheaterAudioAssets()
 })
@@ -7815,6 +7820,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', movePanel)
   window.removeEventListener('pointerup', stopPanelDrag)
   window.removeEventListener('pointercancel', stopPanelDrag)
+  window.removeEventListener('blur', handleTheaterWindowBlur)
   window.removeEventListener('keydown', handleStageShortcut)
   document.removeEventListener('pointerdown', unlockTheaterAudio, true)
   document.removeEventListener('touchstart', unlockTheaterAudio, true)
@@ -8177,7 +8183,6 @@ onBeforeUnmount(() => {
             :entrance-playbacks="textEntrancePlaybacks"
             :hidden-object-ids="pendingTextEntranceIds"
             :stacking-order="rootStackingOrder"
-            :iframe-editing-object-ids="iframeEditingObjectIds"
           />
           <div
             v-if="imageAnnotationOverlay.visible"

@@ -14,7 +14,6 @@ const props = defineProps<{
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: string[]
   stackingOrder: Record<string, number>
-  iframeEditingObjectIds: Set<string>
 }>()
 
 const attrs = useAttrs()
@@ -62,7 +61,6 @@ const rootStyle = (object: StageObject) => ({
           :objects="props.objects"
           :entrance-playbacks="props.entrancePlaybacks"
           :hidden-object-ids="hiddenObjectIds"
-          :iframe-editing-object-ids="props.iframeEditingObjectIds"
         />
       </div>
     </div>
