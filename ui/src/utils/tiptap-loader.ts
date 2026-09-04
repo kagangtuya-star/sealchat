@@ -2,6 +2,7 @@ import { createSpoilerExtension } from './tiptap-spoiler';
 import { createRubyExtension } from './tiptap-ruby';
 import { createPerformanceExtension } from './tiptap-performance-mark';
 import { createPerformanceCommandExtension } from './tiptap-performance-node';
+import { createMessageActionExtension } from './tiptap-message-action';
 
 type TiptapCoreModule = typeof import('@tiptap/core');
 type TiptapVueModule = typeof import('@tiptap/vue-3');
@@ -23,6 +24,7 @@ export interface TipTapBundle {
   Ruby: ReturnType<typeof createRubyExtension>;
   Performance: ReturnType<typeof createPerformanceExtension>;
   PerformanceCommand: ReturnType<typeof createPerformanceCommandExtension>;
+  MessageAction: ReturnType<typeof createMessageActionExtension>;
 }
 
 let tiptapBundlePromise: Promise<TipTapBundle> | null = null;
@@ -55,6 +57,7 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
       Ruby: createRubyExtension(tiptapCore),
       Performance: createPerformanceExtension(tiptapCore),
       PerformanceCommand: createPerformanceCommandExtension(tiptapCore),
+      MessageAction: createMessageActionExtension(tiptapCore),
     }));
   }
 

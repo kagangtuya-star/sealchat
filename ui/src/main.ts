@@ -10,6 +10,7 @@ import { installSealChatBridgeRuntime } from './bridge/sealchatBridgeInstaller'
 import { useDisplayStore } from './stores/display'
 import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 import { preloadPlatformFontsFromDom } from './services/font/platformFontRegistry'
+import { installRichTextMessageActionRuntime } from './utils/richTextMessageAction'
 
 const installMobileViewportGuards = () => {
   if (typeof document === 'undefined') {
@@ -41,6 +42,7 @@ app.use(pinia)
 app.use(router)
 
 installSealChatBridgeRuntime({ pinia, router })
+installRichTextMessageActionRuntime({ pinia })
 
 import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
 import ContextMenu from '@imengyu/vue3-context-menu'

@@ -67,6 +67,51 @@
   --audio-progress-buffer: rgba(15, 23, 42, 0.16);
 }
 
+.tiptap-message-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.tiptap-message-action--button {
+  margin: 0 0.12em;
+  padding: 0.22em 0.72em;
+  line-height: 1.35;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 0.55em;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.tiptap-message-action--text {
+  display: inline;
+  border-radius: 0;
+}
+
+.tiptap-message-action--button:hover {
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.tiptap-message-action[aria-disabled='true'] {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.tiptap-editor .tiptap-message-action {
+  cursor: default;
+}
+
 :root[data-display-palette='night'] {
   --chat-stage-bg: #0f1117;
   --chat-ic-bg: #3f3f46;

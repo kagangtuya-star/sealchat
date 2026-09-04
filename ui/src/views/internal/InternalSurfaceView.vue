@@ -89,7 +89,11 @@ onErrorCaptured((error) => {
 </script>
 
 <template>
-  <main class="internal-surface">
+  <main
+    class="internal-surface"
+    :data-rich-message-world-id="worldId"
+    :data-rich-message-channel-id="channelId"
+  >
     <n-result
       v-if="errorTitle"
       status="error"

@@ -5,6 +5,8 @@
       ref="noteEl"
       class="sticky-note"
       data-sc-font-surface="true"
+      :data-rich-message-world-id="note.worldId || chatStore.currentWorldId || undefined"
+      :data-rich-message-channel-id="note.channelId || chatStore.curChannel?.id || undefined"
       :class="[
         `sticky-note--${getStickyNoteColorTheme(pendingColor || note.color)}`,
         {

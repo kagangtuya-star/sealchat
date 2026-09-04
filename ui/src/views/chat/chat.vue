@@ -92,6 +92,7 @@ import {
 import { useI18n } from 'vue-i18n';
 import { useAIStore } from '@/stores/ai';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { isPrivateChatChannel } from '@/utils/channelSendPermission';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, fetchAttachmentFileById, normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
@@ -1059,26 +1060,6 @@ const diceModeTooltip = computed(() => {
 });
 const channelSendAllowed = ref(true);
 let sendPermissionSeq = 0;
-const isPrivateChatChannel = (channel?: SChannel | null) => {
-  if (!channel) {
-    return false;
-  }
-  if (channel.isPrivate) {
-    return true;
-  }
-  if (channel.friendInfo) {
-    return true;
-  }
-  const permType = typeof channel.permType === 'string' ? channel.permType.toLowerCase() : '';
-  if (permType === 'private') {
-    return true;
-  }
-  const typeValue = (channel as any)?.type;
-  if (typeof typeValue === 'number' && typeValue === 3) {
-    return true;
-  }
-  return false;
-};
 const isBotPrivateChatChannel = (channel?: SChannel | null) => {
   if (!isPrivateChatChannel(channel)) {
     return false;
@@ -15067,6 +15048,8 @@ onBeforeUnmount(() => {
     ref="chatRootContainerRef"
     class="flex flex-col h-full justify-between chat-root-container"
     :class="{ 'chat-root-container--embed': isEmbedMode }"
+    :data-rich-message-world-id="chat.currentWorldId || undefined"
+    :data-rich-message-channel-id="chat.curChannel?.id || undefined"
   >
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>

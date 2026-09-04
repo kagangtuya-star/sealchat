@@ -1,5 +1,6 @@
 import { normalizePerformanceEffect, type PerformanceEffect, type PerformanceEnterMode, type PerformanceScale } from './tiptap-performance-mark';
 import type { PerformanceCommandType } from './tiptap-performance-node';
+import { MESSAGE_ACTION_NODE_TYPE, normalizeMessageActionAttrs } from './tiptap-message-action';
 
 export type PerformanceInstruction =
   | {
@@ -98,6 +99,19 @@ export const parsePerformanceInstructions = (input: TipTapNode | string): Perfor
       instructions.push({
         type: 'break',
         index: instructions.length,
+      });
+      return;
+    }
+
+    if (node.type === MESSAGE_ACTION_NODE_TYPE) {
+      const label = normalizeMessageActionAttrs(node.attrs)?.label || '';
+      Array.from(label).forEach((char) => {
+        instructions.push({
+          type: 'char',
+          char,
+          effects: {},
+          index: instructions.length,
+        });
       });
       return;
     }

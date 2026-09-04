@@ -414,6 +414,8 @@ onBeforeUnmount(() => {
 .twin-layer-message.is-completed .twin-layer-message__base {
   opacity: 1;
   filter: none;
+  pointer-events: auto;
+  user-select: auto;
 }
 
 .twin-layer-message__overlay {

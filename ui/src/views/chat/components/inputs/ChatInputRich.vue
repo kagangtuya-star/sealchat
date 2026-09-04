@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef,
 import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
-import { Plugin } from 'prosemirror-state';
+import { NodeSelection, Plugin, TextSelection } from 'prosemirror-state';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
 import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry';
@@ -28,6 +28,11 @@ import {
 } from '@/utils/tiptapSmartLink';
 import { normalizePerformanceEffect, type PerformanceEffect, type PerformanceEnterMode } from '@/utils/tiptap-performance-mark';
 import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
+import { MessageCircle } from '@vicons/tabler';
+import {
+  MESSAGE_ACTION_NODE_TYPE,
+  normalizeMessageActionAttrs,
+} from '@/utils/tiptap-message-action';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -673,12 +678,18 @@ const fontSizePopoverShow = ref(false);
 const performancePopoverShow = ref(false);
 const underlineStylePopoverShow = ref(false);
 const strikeStylePopoverShow = ref(false);
+const messageActionModalShow = ref(false);
 
 // 链接弹窗状态
 const linkModalShow = ref(false);
 const linkText = ref('');
 const linkUrl = ref('');
 const linkOpenInNewTab = ref(false);
+const messageActionLabel = ref('');
+const messageActionMessage = ref('');
+const messageActionButton = ref(true);
+const messageActionSelection = ref<{ from: number; to: number } | null>(null);
+const messageActionEditTarget = ref<{ pos: number; nodeSize: number } | null>(null);
 const linkTextType = ref<SmartLinkTextType>('text');
 const linkUrlType = ref<SmartLinkUrlType>('url');
 const linkTextImage = ref('');
@@ -1479,6 +1490,7 @@ const initEditor = async () => {
       Ruby,
       Performance,
       PerformanceCommand,
+      MessageAction,
     } = await loadTipTapBundle();
 
     EditorContent = EditorContentComp;
@@ -1747,6 +1759,7 @@ const initEditor = async () => {
         Ruby,
         Performance,
         PerformanceCommand,
+        MessageAction,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
         }),
@@ -2650,6 +2663,108 @@ const unsetLink = () => {
   editor.value?.chain().focus().unsetLink().run();
 };
 
+const findSelectedMessageAction = () => {
+  const ed = editor.value;
+  if (!ed) return null as { node: any; pos: number } | null;
+  const selection = ed.state.selection;
+  if (selection instanceof NodeSelection) {
+    const node = selection.node;
+    return node?.type?.name === MESSAGE_ACTION_NODE_TYPE
+      ? { node, pos: selection.from }
+      : null;
+  }
+  if (!(selection instanceof TextSelection)) {
+    return null;
+  }
+
+  const { from, to } = selection;
+  if (from === to) {
+    return null;
+  }
+
+  let result: { node: any; pos: number } | null = null;
+  ed.state.doc.descendants((node: any, pos: number) => {
+    if (node.type?.name !== MESSAGE_ACTION_NODE_TYPE) return true;
+    if (pos < to && pos + node.nodeSize > from) {
+      result = { node, pos };
+      return false;
+    }
+    return true;
+  });
+  return result;
+};
+
+const openMessageActionModal = () => {
+  const ed = editor.value;
+  if (!ed) return;
+  rememberEditorSelection();
+  messageActionLabel.value = '';
+  messageActionMessage.value = '';
+  messageActionButton.value = true;
+  messageActionEditTarget.value = null;
+
+  const selectedNode = findSelectedMessageAction();
+  if (selectedNode) {
+    const attrs = normalizeMessageActionAttrs(selectedNode.node.attrs);
+    if (attrs) {
+      messageActionLabel.value = attrs.label;
+      messageActionMessage.value = attrs.message;
+      messageActionButton.value = attrs.button;
+      messageActionEditTarget.value = { pos: selectedNode.pos, nodeSize: selectedNode.node.nodeSize };
+    }
+  }
+
+  const { from, to } = ed.state.selection;
+  messageActionSelection.value = { from, to };
+  if (!selectedNode && from !== to) {
+    messageActionMessage.value = ed.state.doc.textBetween(from, to, ' ').trim();
+  }
+  messageActionModalShow.value = true;
+};
+
+const closeMessageActionModal = () => {
+  messageActionModalShow.value = false;
+  messageActionSelection.value = null;
+  messageActionEditTarget.value = null;
+};
+
+const confirmMessageAction = () => {
+  const ed = editor.value;
+  const attrs = normalizeMessageActionAttrs({
+    label: messageActionLabel.value,
+    message: messageActionMessage.value,
+    button: messageActionButton.value,
+  });
+  if (!ed || !attrs) {
+    message.warning('请填写显示文本和消息文本');
+    return;
+  }
+
+  const editTarget = messageActionEditTarget.value;
+  if (editTarget) {
+    const tr = ed.state.tr.setNodeMarkup(editTarget.pos, undefined, attrs);
+    ed.view.dispatch(tr);
+    ed.commands.focus();
+    bumpEditorStateVersion();
+    closeMessageActionModal();
+    return;
+  }
+
+  const range = messageActionSelection.value;
+  if (range) {
+    const docSize = ed.state.doc.content.size;
+    ed.chain().focus().setTextSelection({
+      from: clamp(range.from, 0, docSize),
+      to: clamp(range.to, 0, docSize),
+    }).insertContent({ type: MESSAGE_ACTION_NODE_TYPE, attrs }).run();
+  } else {
+    ed.chain().focus().insertContent({ type: MESSAGE_ACTION_NODE_TYPE, attrs }).run();
+  }
+  rememberEditorSelection();
+  bumpEditorStateVersion();
+  closeMessageActionModal();
+};
+
 const getSelectedPlainText = () => {
   const ed = editor.value;
   if (!ed) {
@@ -2874,6 +2989,7 @@ const hasOpenOverlay = () => {
     || desktopFontSelectorExpanded.value
     || linkModalShow.value
     || rubyModalShow.value
+    || messageActionModalShow.value
     || quickIFormModalShow.value;
 };
 
@@ -3580,6 +3696,14 @@ defineExpose({
           >
             🖼
           </n-button>
+          <n-button
+            size="small"
+            text
+            @click="openMessageActionModal"
+            title="插入消息按钮"
+          >
+            <n-icon size="17"><MessageCircle /></n-icon>
+          </n-button>
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button
@@ -4003,7 +4127,47 @@ defineExpose({
       </Transition>
     </Teleport>
 
-    <!-- 链接插入弹窗 -->
+    <!-- 消息按钮配置 -->
+    <n-modal
+      v-model:show="messageActionModalShow"
+      preset="card"
+      :bordered="false"
+      title="消息按钮"
+      style="width: 360px; max-width: 90vw;"
+      :mask-closable="true"
+      @pointerdown.stop="markOverlayInteraction"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="显示文本">
+          <n-input v-model:value="messageActionLabel" placeholder="按钮显示内容" />
+        </n-form-item>
+        <n-form-item label="消息文本">
+          <n-input
+            v-model:value="messageActionMessage"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+            placeholder="点击后发送的消息"
+            @keydown.ctrl.enter="confirmMessageAction"
+          />
+        </n-form-item>
+        <n-form-item label="按钮样式">
+          <n-switch v-model:value="messageActionButton" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <n-button @click="closeMessageActionModal">取消</n-button>
+          <n-button
+            type="primary"
+            :disabled="!messageActionLabel.trim() || !messageActionMessage.trim()"
+            @click="confirmMessageAction"
+          >
+            确定
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
+
     <n-modal
       v-model:show="linkModalShow"
       preset="card"

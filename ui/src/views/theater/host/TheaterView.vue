@@ -702,7 +702,11 @@ function handleDice3DMessage(event: MessageEvent) {
 </script>
 
 <template>
-  <main class="theater-host">
+  <main
+    class="theater-host"
+    :data-rich-message-world-id="worldId || undefined"
+    :data-rich-message-channel-id="channelId || undefined"
+  >
     <n-modal
       v-model:show="theaterActivationVisible"
       preset="dialog"

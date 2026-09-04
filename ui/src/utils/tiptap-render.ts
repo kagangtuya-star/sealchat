@@ -14,6 +14,11 @@ import {
   normalizeSmartLinkAttrs,
   smartLinkToPlainText,
 } from './tiptapSmartLink';
+import {
+  MESSAGE_ACTION_DATA_ATTR,
+  MESSAGE_ACTION_NODE_TYPE,
+  normalizeMessageActionAttrs,
+} from './tiptap-message-action';
 
 interface TipTapNode {
   type: string;
@@ -492,6 +497,46 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
   // 渲染块级节点
   switch (node.type) {
+    case MESSAGE_ACTION_NODE_TYPE: {
+      const attrs = normalizeMessageActionAttrs(node.attrs);
+      if (!attrs) return '';
+      const className = attrs.button
+        ? 'tiptap-message-action tiptap-message-action--button'
+        : 'tiptap-message-action tiptap-message-action--text';
+      let html = `<button type="button" class="${className}" ${MESSAGE_ACTION_DATA_ATTR}="true" data-label="${escapeHtml(attrs.label)}" data-message="${escapeHtml(attrs.message)}" data-button="${attrs.button ? 'true' : 'false'}">${escapeHtml(attrs.label)}</button>`;
+      if (node.marks?.length) {
+        html = applyCombinedTextStyle(html, node.marks);
+        node.marks.forEach((mark) => {
+          switch (mark.type) {
+            case 'performance':
+              html = applyPerformanceMark(html, mark);
+              break;
+            case 'ruby':
+              html = applyRubyMark(html, mark);
+              break;
+            case 'bold':
+              html = `<strong>${html}</strong>`;
+              break;
+            case 'italic':
+              html = `<em>${html}</em>`;
+              break;
+            case 'underline':
+              html = `<u>${html}</u>`;
+              break;
+            case 'strike':
+              html = `<s>${html}</s>`;
+              break;
+            case 'code':
+              html = `<code>${html}</code>`;
+              break;
+            case 'spoiler':
+              html = `<span class="tiptap-spoiler" data-spoiler="true">${html}</span>`;
+              break;
+          }
+        });
+      }
+      return html;
+    }
     case SMART_LINK_NODE_TYPE: {
       const attrs = normalizeSmartLinkAttrs(node.attrs);
       if (!attrs) {
@@ -684,6 +729,10 @@ function extractText(node: TipTapNode): string {
 
   if (node.type === SMART_LINK_NODE_TYPE) {
     return smartLinkToPlainText(node.attrs);
+  }
+
+  if (node.type === MESSAGE_ACTION_NODE_TYPE) {
+    return normalizeMessageActionAttrs(node.attrs)?.label || '';
   }
 
   if (node.content && node.content.length > 0) {
