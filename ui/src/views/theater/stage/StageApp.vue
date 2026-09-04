@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTabPane, NTabs, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
@@ -12,6 +12,7 @@ import {
   Archive,
   Bolt,
   BoltOff,
+  Check,
   Clipboard,
   ChevronDown,
   ChevronRight,
@@ -262,6 +263,7 @@ const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
+const iframeInteractionDisabled = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
@@ -969,6 +971,14 @@ const theaterPopoverThemeOverrides = {
   boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
 }
 const theaterSecondaryMenuProps = () => ({ class: 'theater-secondary-surface' })
+const iframeInteractionOptions = computed<DropdownOption[]>(() => [{
+  key: 'disable-interaction',
+  label: '禁用交互',
+  icon: () => h(NIcon, { style: { opacity: iframeInteractionDisabled.value ? 1 : 0 } }, { default: () => h(Check) }),
+}])
+const toggleIframeInteraction = (key: string | number) => {
+  if (key === 'disable-interaction') iframeInteractionDisabled.value = !iframeInteractionDisabled.value
+}
 
 const revealToolbarColors = () => { toolbarColorsVisible.value = true }
 const hideToolbarColors = () => { toolbarColorsVisible.value = false }
@@ -1132,6 +1142,7 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && canTriggerActions.value
   && object.visible
   && object.interactive
+  && !(iframeInteractionDisabled.value && object.type === 'iframe')
   && hasConfiguredObjectAction(object)
   && isStageActionTarget(object.type),
 )
@@ -3902,6 +3913,7 @@ const selectObject = (objectId: string | null, additive = false) => {
 }
 
 const handleTheaterWindowBlur = () => {
+  if (iframeInteractionDisabled.value) return
   const activeElement = document.activeElement
   if (!(activeElement instanceof HTMLIFrameElement)) return
   if (!inspectorPanelOpen.value || !canOpenPanel('inspector')) return
@@ -8061,7 +8073,26 @@ onBeforeUnmount(() => {
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('text')"><template #icon><n-icon><LetterT /></n-icon></template></n-button></template>添加文字</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image')"><template #icon><n-icon><Photo /></n-icon></template></n-button></template>添加图片面板</n-tooltip>
-        <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('iframe')"><template #icon><n-icon><World /></n-icon></template></n-button></template>添加网页</n-tooltip>
+        <span class="theater-iframe-trigger-group">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button class="theater-iframe-trigger theater-iframe-trigger--primary" aria-label="添加网页" @click="store.addObject('iframe')">
+                <template #icon><n-icon><World /></n-icon></template>
+              </n-button>
+            </template>
+            添加网页
+          </n-tooltip>
+          <n-dropdown trigger="click" :options="iframeInteractionOptions" :menu-props="theaterSecondaryMenuProps" @select="toggleIframeInteraction">
+            <n-button
+              class="theater-iframe-trigger theater-iframe-trigger--menu"
+              :class="{ 'is-active': iframeInteractionDisabled }"
+              :aria-pressed="iframeInteractionDisabled"
+              aria-label="网页组件调整选项"
+            >
+              <template #icon><n-icon><ChevronDown /></n-icon></template>
+            </n-button>
+          </n-dropdown>
+        </span>
       </n-button-group>
       <StageSceneFixedToolbar
         v-if="canEditAllObjects"
@@ -8168,7 +8199,7 @@ onBeforeUnmount(() => {
       <div
         ref="viewportRef"
         class="theater-stage-viewport"
-        :class="{ 'is-viewing': viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive }"
+        :class="{ 'is-viewing': viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive, 'is-iframe-interaction-disabled': iframeInteractionDisabled }"
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
       >
@@ -9557,6 +9588,7 @@ onBeforeUnmount(() => {
 .theater-stage-object-actions :deep(.theater-copy-trigger--primary),
 .theater-stage-object-actions :deep(.theater-scene-fixed-trigger--primary),
 .theater-stage-object-actions :deep(.theater-grid-trigger--primary),
+.theater-stage-object-actions :deep(.theater-iframe-trigger--primary),
 .theater-stage-object-actions :deep(.theater-drawing-trigger--primary) {
   --n-width: 30px !important;
   --n-padding: 0 !important;
@@ -9566,11 +9598,19 @@ onBeforeUnmount(() => {
 .theater-stage-object-actions :deep(.theater-copy-trigger--menu),
 .theater-stage-object-actions :deep(.theater-scene-fixed-trigger--menu),
 .theater-stage-object-actions :deep(.theater-grid-trigger--menu),
+.theater-stage-object-actions :deep(.theater-iframe-trigger--menu),
 .theater-stage-object-actions :deep(.theater-drawing-trigger--menu) {
   --n-width: 18px !important;
   --n-padding: 0 !important;
   width: 18px;
   min-width: 18px;
+}
+.theater-iframe-trigger-group { display: inline-flex; flex: 0 0 auto; }
+.theater-stage-object-actions :deep(.theater-iframe-trigger) { padding: 0; border-radius: 0; }
+.theater-stage-object-actions :deep(.theater-iframe-trigger--primary) { border-radius: 3px 0 0 3px; }
+.theater-stage-object-actions :deep(.theater-iframe-trigger--menu) { margin-left: -1px; border-radius: 0 3px 3px 0; }
+.theater-stage-object-actions :deep(.theater-iframe-trigger--menu.is-active) {
+  color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-bulk-select-badge { display: inline-flex; }
 .theater-grid-snap-tool.is-active, .theater-bulk-select-tool.is-active, .theater-component-actions-toggle.is-active, .theater-panel-switches :deep(.n-button.is-active) {
@@ -9606,6 +9646,8 @@ onBeforeUnmount(() => {
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
+.theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object),
+.theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object__frame) { pointer-events: none !important; }
 .theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }
