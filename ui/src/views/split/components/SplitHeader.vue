@@ -1,10 +1,10 @@
 <script setup lang="tsx">
-import { computed, defineAsyncComponent, h, ref, shallowRef, type Component } from 'vue';
+import { computed, defineAsyncComponent, h, ref, shallowRef, watch, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { NDropdown, NIcon, NPopover, NTooltip, useDialog, type DropdownOption } from 'naive-ui';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Link, Refresh, Users } from '@vicons/tabler';
-import { SearchOutline, UnlinkOutline, AppsOutline, MusicalNotesOutline, BrowsersOutline } from '@vicons/ionicons5';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Users } from '@vicons/tabler';
+import { SearchOutline, AppsOutline, MusicalNotesOutline, BrowsersOutline } from '@vicons/ionicons5';
 import Notif from '@/views/notif.vue';
 import UserProfile from '@/views/components/user-profile.vue';
 import UserPresencePopover from '@/views/chat/components/UserPresencePopover.vue';
@@ -84,6 +84,8 @@ const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
 const inputStatsComponent = shallowRef<any>(null);
 const presencePopoverVisible = ref(false);
+const connectionRecoveryPulseKey = ref(0);
+const onlineBadgeAnimationKey = ref(0);
 
 const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
 
@@ -92,16 +94,46 @@ const sidebarToggleIcon = computed(() => props.sidebarCollapsed ? LayoutSidebarL
 const connectionStatus = computed(() => {
   switch (props.connectState) {
     case 'connected':
-      return { icon: Link, label: '已连接', classes: 'is-connected', spinning: false };
+      return { state: 'connected' as const, label: '已连接', spinning: false };
     case 'reconnecting':
-      return { icon: Refresh, label: '重连中', classes: 'is-reconnecting', spinning: true };
+      return { state: 'reconnecting' as const, label: '重连中', spinning: true };
     case 'disconnected':
-      return { icon: UnlinkOutline, label: '已断开', classes: 'is-disconnected', spinning: false };
+      return { state: 'disconnected' as const, label: '已断开', spinning: false };
     case 'connecting':
     default:
-      return { icon: Refresh, label: '连接中', classes: 'is-connecting', spinning: true };
+      return { state: 'connecting' as const, label: '连接中', spinning: true };
   }
 });
+
+const connectionLatencyMs = computed(() => {
+  const latency = Number(chat.lastLatencyMs);
+  return Number.isFinite(latency) && latency > 0 ? Math.round(latency) : undefined;
+});
+
+const presenceTooltipLabel = computed(() => {
+  if (connectionStatus.value.state === 'disconnected') {
+    return connectionStatus.value.label;
+  }
+  return `${connectionStatus.value.label} · ${props.onlineMembersCount} 人在线`;
+});
+
+watch(
+  () => props.connectState,
+  (state, previousState) => {
+    if (state === 'connected' && previousState && previousState !== 'connected') {
+      connectionRecoveryPulseKey.value += 1;
+    }
+  },
+);
+
+watch(
+  () => props.onlineMembersCount,
+  (count, previousCount) => {
+    if (typeof previousCount === 'number' && count !== previousCount) {
+      onlineBadgeAnimationKey.value += 1;
+    }
+  },
+);
 
 const options = computed(() => {
   const items: DropdownOption[] = [
@@ -222,36 +254,55 @@ const handleSelect = async (key: string | number) => {
     </div>
 
     <div class="sc-actions flex items-center">
-      <n-tooltip placement="bottom" trigger="hover">
-        <template #trigger>
-          <button
-            type="button"
-            class="sc-icon-button sc-connection-icon"
-            :class="connectionStatus.classes"
-            :aria-label="connectionStatus.label"
-            tabindex="-1"
-          >
-            <n-icon
-              :component="connectionStatus.icon"
-              size="16"
-              :class="{ 'sc-connection-icon--spin': connectionStatus.spinning }"
-            />
-          </button>
-        </template>
-        <span>{{ connectionStatus.label }}</span>
-      </n-tooltip>
-
       <n-popover trigger="click" placement="bottom-end" :show="presencePopoverVisible"
         @update:show="presencePopoverVisible = $event">
         <template #trigger>
-          <button type="button" class="sc-icon-button sc-online-button" aria-label="查看在线成员">
-            <n-icon :component="Users" size="16" />
-            <span class="online-badge">{{ onlineMembersCount }}</span>
-          </button>
+          <n-tooltip placement="bottom" trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="sc-icon-button sc-online-button"
+                :class="{ 'sc-online-button--busy': connectionStatus.spinning }"
+                :aria-label="presenceTooltipLabel"
+              >
+                <n-icon :component="Users" size="16" class="sc-online-button__members-icon" />
+                <span
+                  :key="`online-${onlineBadgeAnimationKey}`"
+                  class="online-badge"
+                  :class="{ 'online-badge--changed': onlineBadgeAnimationKey > 0 }"
+                >
+                  {{ onlineMembersCount }}
+                </span>
+                <span
+                  :key="`status-${connectionRecoveryPulseKey}`"
+                  class="sc-online-button__status-dot"
+                  :class="{
+                    'is-connected': connectionStatus.state === 'connected',
+                    'is-connecting': connectionStatus.state === 'connecting',
+                    'is-reconnecting': connectionStatus.state === 'reconnecting',
+                    'is-disconnected': connectionStatus.state === 'disconnected',
+                    'is-busy': connectionStatus.spinning,
+                    'is-recovering': connectionStatus.state === 'connected' && connectionRecoveryPulseKey > 0,
+                  }"
+                  aria-hidden="true"
+                >
+                  <span
+                    v-if="connectionStatus.spinning"
+                    class="sc-online-button__status-ring"
+                    aria-hidden="true"
+                  ></span>
+                </span>
+              </button>
+            </template>
+            <span>{{ presenceTooltipLabel }}</span>
+          </n-tooltip>
         </template>
         <UserPresencePopover
           :members="presenceMembers"
           :presence-map="presenceMap"
+          :connect-state="connectionStatus.state"
+          :connection-label="connectionStatus.label"
+          :latency-ms="connectionLatencyMs"
           @request-refresh="emit('request-presence-refresh')"
         />
       </n-popover>
@@ -472,16 +523,121 @@ const handleSelect = async (key: string | number) => {
   }
 }
 
-.sc-connection-icon--spin {
-  animation: sc-connection-spin 1s linear infinite;
+.sc-online-button--busy .sc-online-button__members-icon {
+  opacity: 0.68;
 }
 
-@keyframes sc-connection-spin {
+.sc-online-button__members-icon {
+  transition: opacity 0.2s ease;
+}
+
+.sc-online-button__status-dot {
+  position: absolute;
+  right: 0.08rem;
+  bottom: 0.08rem;
+  width: 0.48rem;
+  height: 0.48rem;
+  display: block;
+  z-index: 2;
+  border: 1px solid var(--sc-bg-header, #fff);
+  border-radius: 9999px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.16);
+  color: #22c55e;
+  background-color: currentColor;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sc-online-button__status-dot.is-connecting {
+  color: #0ea5e9;
+}
+
+.sc-online-button__status-dot.is-reconnecting {
+  color: #f97316;
+}
+
+.sc-online-button__status-dot.is-disconnected {
+  color: #ef4444;
+}
+
+.sc-online-button__status-ring {
+  position: absolute;
+  inset: -0.22rem;
+  display: block;
+  pointer-events: none;
+  transform-origin: center;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  opacity: 0.9;
+  animation: sc-online-status-spin 0.9s linear infinite;
+}
+
+.sc-online-button__status-dot.is-busy {
+  animation: sc-online-status-breathe 1.2s ease-in-out infinite;
+}
+
+.sc-online-button__status-dot.is-recovering {
+  animation: sc-online-status-pulse 0.5s ease-out;
+}
+
+@keyframes sc-online-status-spin {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes sc-online-status-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes sc-online-status-pulse {
+  0% {
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.16), 0 0 0 0 currentColor;
+  }
+
+  55% {
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.16), 0 0 0 0.28rem transparent;
+  }
+
+  100% {
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.16), 0 0 0 0 currentColor;
+  }
+}
+
+.online-badge--changed {
+  animation: sc-online-badge-pop 0.2s ease-out;
+}
+
+@keyframes sc-online-badge-pop {
+  0% {
+    transform: scale(0.9);
+  }
+
+  65% {
+    transform: scale(1.06);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-online-button__status-dot.is-recovering,
+  .sc-online-button__status-dot.is-busy,
+  .online-badge--changed {
+    animation: none;
   }
 }
 

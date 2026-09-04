@@ -20,9 +20,14 @@ interface Member {
   }
 }
 
+type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+
 interface Props {
   members: Member[]
   presenceMap: Record<string, PresenceData>
+  connectState: ConnectState
+  connectionLabel: string
+  latencyMs?: number
 }
 
 interface Emits {
@@ -53,6 +58,16 @@ const getLatency = (memberId: string) => {
   return presence?.latencyMs || 0
 }
 
+const connectionSummary = computed(() => {
+  const latency = Number(props.latencyMs)
+  if (props.connectState === 'connected' && Number.isFinite(latency) && latency > 0) {
+    return `${props.connectionLabel} · ${Math.round(latency)}ms`
+  }
+  return props.connectionLabel
+})
+
+const connectionBusy = computed(() => props.connectState === 'connecting' || props.connectState === 'reconnecting')
+
 const isFocused = (memberId: string) => {
   const presence = props.presenceMap[memberId]
   return presence?.isFocused || false
@@ -65,6 +80,25 @@ const handleRefresh = () => {
 
 <template>
   <div class="presence-popover">
+    <div
+      class="presence-connection-status"
+      :class="`is-${connectState}`"
+      role="status"
+    >
+      <span
+        class="presence-connection-status__dot"
+        :class="{ 'is-busy': connectionBusy }"
+        aria-hidden="true"
+      >
+        <span
+          v-if="connectionBusy"
+          class="presence-connection-status__ring"
+          aria-hidden="true"
+        ></span>
+      </span>
+      <span>{{ connectionSummary }}</span>
+    </div>
+
     <div class="presence-header">
       <div class="presence-heading">
         <span class="presence-title">在线成员</span>
@@ -129,6 +163,76 @@ const handleRefresh = () => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.presence-connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.25rem;
+  color: var(--sc-text-secondary, #6b7280);
+  font-size: 0.78rem;
+}
+
+.presence-connection-status__dot {
+  position: relative;
+  width: 0.48rem;
+  height: 0.48rem;
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 9999px;
+  color: #22c55e;
+  background-color: #22c55e;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.16);
+}
+
+.presence-connection-status.is-connecting .presence-connection-status__dot {
+  color: #0ea5e9;
+  background-color: #0ea5e9;
+}
+
+.presence-connection-status.is-reconnecting .presence-connection-status__dot {
+  color: #f97316;
+  background-color: #f97316;
+}
+
+.presence-connection-status.is-disconnected .presence-connection-status__dot {
+  color: #ef4444;
+  background-color: #ef4444;
+}
+
+.presence-connection-status__ring {
+  position: absolute;
+  inset: -0.22rem;
+  display: block;
+  pointer-events: none;
+  transform-origin: center;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  opacity: 0.9;
+  animation: presence-connection-spin 0.9s linear infinite;
+}
+
+.presence-connection-status__dot.is-busy {
+  animation: presence-connection-breathe 1.2s ease-in-out infinite;
+}
+
+@keyframes presence-connection-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes presence-connection-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .presence-heading {
@@ -206,6 +310,10 @@ const handleRefresh = () => {
   color: #fff;
 }
 
+:global([data-display-palette='night']) .presence-popover .presence-connection-status {
+  color: #cbd5e1;
+}
+
 :global([data-display-palette='night']) .presence-popover .presence-count {
   background: rgba(96, 165, 250, 0.2);
   color: #93c5fd;
@@ -239,5 +347,11 @@ const handleRefresh = () => {
   color: #9ca3af;
   font-size: 0.875rem;
   padding: 1.5rem 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presence-connection-status__dot.is-busy {
+    animation: none;
+  }
 }
 </style>
