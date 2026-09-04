@@ -29,6 +29,8 @@ console.log(context.currentCharacter)
 
 ## 2. 接入
 
+### 2.1 内部接入
+
 SealChat 后端提供无需登录的 SDK 地址。频道 `srcdoc` 嵌入会自动注入 `window.__SEALCHAT_EMBED_CONFIG__`；频道 iForm 使用单独 `<iframe src>` 时，宿主会自动追加 `hostOrigin` 与 `sdkUrl` 查询参数；脱离 SealChat 宿主的外部 URL iframe 则需自行提供实际地址：
 
 ```js
@@ -77,6 +79,72 @@ iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需
 
 - SealChat WebSocket 暂时离线：保留 SDK Client，监听 `connection.onChanged()`；宿主负责 WebSocket 重连。
 - Embed Session 失效：监听 `client.session.onClosed()`，丢弃旧 Client，再调用 `SealChatEmbed.connect()` 建立新 Session。重连必须重新握手，不能复用旧 `sessionId`。
+
+### 2.2 外部接入SDK
+
+Channel Embed API 不要求工具源码托管在 SealChat 内。部署在其他域名的第三方网页同样可以作为频道 iForm 的 iframe 工具接入 SealChat API。
+
+外部工具需要加载当前 SealChat 实例提供的 SDK：
+
+```html
+<script src="https://chat.example.com/api/v1/channel-embed-sdk.js"></script>
+```
+
+如果 SealChat 配置了 `WebUrl` 前缀，应使用包含该前缀的实际 SDK 地址。
+
+随后通过父级 SealChat 的 origin 建立 Embed Session：
+
+```js
+const sealchat = await SealChatEmbed.connect({
+  targetOrigin: 'https://chat.example.com'
+})
+
+const context = await sealchat.context.get()
+const currentCard = await sealchat.characterCard.getCurrent()
+```
+
+外部网址工具需要同时满足以下条件：
+
+- 该网页通过 SealChat 的频道 iForm / iframe 打开；
+- iForm 已启用 Embed API；
+- iForm 的 `allowedOrigins` 允许外部网页所在的 origin；
+- iForm 已授予工具实际需要的 Capability，例如 `context.read`、`characterCard.read`、`characterCard.write`、`storage.read` 等。
+
+例如，工具部署在：
+
+```text
+https://tool.example.com
+```
+
+则应在对应 iForm 的 Embed API 策略中允许：
+
+```text
+https://tool.example.com
+```
+
+外部工具与内置工具使用完全相同的 SDK 和 Capability 模型。它不会获得 SealChat 的 Cookie、Token、原始 WebSocket 或内部 Store，只能调用宿主明确授予的 Embed API。
+
+因此可以使用外部网页实现角色卡面板、战斗面板、地图、骰点工具、音乐控制器等功能，而无需为每个工具单独实现 SealChat 通讯桥接。
+
+需要注意：SDK 不是独立的远程 SealChat 客户端。Embed Session 依赖父级 SealChat iframe 宿主完成握手，因此单独在普通浏览器标签页打开第三方网页，即使加载了 SDK，也无法直接建立 Embed Session。
+
+如果外部工具需要同时兼容“SealChat 内嵌模式”和“普通网页独立模式”，可以检测是否存在宿主配置后再初始化 SDK：
+
+```js
+const config = window.__SEALCHAT_EMBED_CONFIG__
+
+if (window.parent !== window && config?.hostOrigin) {
+  const sealchat = await SealChatEmbed.connect({
+    targetOrigin: config.hostOrigin
+  })
+
+  // SealChat 内嵌模式
+} else {
+  // 普通独立网页模式
+}
+```
+
+对于通过 SealChat 创建的外部 URL iForm，宿主会提供 `hostOrigin` 与 `sdkUrl` 等接入信息；第三方工具应优先使用宿主提供的实际配置，不要硬编码某个固定 SealChat 实例地址。
 
 ## 3. API 一览
 
