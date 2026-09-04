@@ -71,7 +71,7 @@ const sealchat = await SealChatEmbed.connect({
 
 `SealChatEmbed.connect()` resolve 表示 Embed Session 握手成功，但不要把“握手成功”等同于“已经收到一次连接状态事件”。新建 Session 时，宿主不保证主动补发 `connection.changed`；`connection.onChanged()` 用于监听后续变化，客户端应在握手成功后主动调用一次 `connection.getState()` 初始化 UI 和本地状态。推荐先注册监听，再读取初始状态，以避免只依赖事件导致状态栏长期停留在“连接中”。
 
-iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需 Capability。`world.admins.read` 已加入新建 iForm 默认能力；旧 iForm 的已保存 policy 不会自动升级，请在编辑器的“能力”字段追加 `world.admins.read` 后保存。
+iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需 Capability。`world.admins.read`、`characterCard.read` 和 `characterCard.write` 已加入新建 iForm 默认能力；旧 iForm 的已保存 policy 不会自动升级，请在编辑器的“能力”字段手工追加所需能力后保存。
 
 连接断开分两类：
 
@@ -152,6 +152,74 @@ interface SafeCharacter {
 
 `character` 是频道 identity，不是 Guild 权限 Role。不要在业务代码中把它命名为 `role`。
 
+### 人物卡属性与人物卡快照
+
+`characters.*` 是频道 identity API；`characterCard.*` 才是人物卡属性 API。两者命名空间和权限独立。
+
+| API | Capability | 说明 |
+| --- | --- | --- |
+| `characterCard.getStatus()` | `characterCard.read` | 读取当前频道 BOT 人物卡 API 可用状态及禁用原因 |
+| `characterCard.getCurrent()` | `characterCard.read` | 读取当前用户在当前频道的实时活动人物卡 |
+| `characterCard.listSnapshots()` | `characterCard.read` | 读取当前频道已授权的人物卡快照 |
+| `characterCard.getSnapshot({ identityId })` | `characterCard.read` | 按 `identityId` 读取当前频道单个快照 |
+| `characterCard.updateAttrs(attrsPatch)` | `characterCard.write` | 更新当前登录用户自己的当前活动人物卡 |
+
+当前用户实时活动人物卡的数据链路：
+
+```text
+Embed API
+→ characterCard Store
+→ character.get / character.set
+→ 当前频道主控 BOT / SealDice
+```
+
+当前频道其他用户人物卡的数据链路：
+
+```text
+Embed API
+→ ChannelCharacterSnapshot Store
+→ character.snapshot.list
+→ SealChat 服务端快照
+```
+
+`getCurrent()` 返回当前用户的实时 BOT 人物卡。BOT 人物卡 API 未开启、不支持或不可用时，`status.available` 为 `false`，`status.reason` 保留 SealChat 现有提示文本，`card` 为 `null`。这与 API 可用但没有活动人物卡是两种状态。
+
+`listSnapshots()` 和 `getSnapshot()` 返回当前频道经服务端授权的快照。用户没有发布人物卡时，快照仍可能包含 identity 和用户信息，但 `card` 为 `null`。快照不会向 BOT 查询其他用户的实时人物卡。BOT 人物卡 API 未开启时，快照读取仍可工作；只有实时当前人物卡读取和写入受 availability 影响。
+
+Embed API 不允许指定任意 `user_id`、`channelId` 或人物卡名称。`updateAttrs()` 只能修改当前登录用户自己的当前活动人物卡。无频道成员身份或处于 observer mode 时，`characterCard.write` 不会出现在 effective capabilities 中。Capability 不会跳过现有人物卡或频道权限检查。
+
+`attrsPatch` 使用根级浅合并。`{ hp: 8 }` 只覆盖根属性 `hp`，不删除其他根属性。嵌套对象不做 deep merge；修改 `$忍神` 一类根节点时，调用方必须提交该根节点的完整对象。
+
+```js
+const client = await SealChatEmbed.connect({
+  targetOrigin: HOST_ORIGIN
+})
+
+const status = await client.characterCard.getStatus()
+const current = await client.characterCard.getCurrent()
+const snapshots = await client.characterCard.listSnapshots()
+const another = await client.characterCard.getSnapshot({
+  identityId: 'identity-id'
+})
+
+await client.characterCard.updateAttrs({
+  hp: 8,
+  san: 42
+})
+```
+
+不可用状态处理：
+
+```js
+const current = await client.characterCard.getCurrent()
+
+if (!current.status.available) {
+  console.log(current.status.reason)
+}
+```
+
+旧 iForm 不会自动获得 `characterCard.read` / `characterCard.write`；管理员需在能力字段手工追加后保存。
+
 ### 权限与连接
 
 | API | Capability | 结果 / 用途 |
@@ -172,6 +240,8 @@ interface EmbedPermissionSummary {
   canSendMessage: boolean
   canReadMembers: boolean
   canReadCharacters: boolean
+  canReadCharacterCard: boolean
+  canWriteCharacterCard: boolean
   canReadStorage: boolean
   canWriteStorage: boolean
   canPublishEvents: boolean

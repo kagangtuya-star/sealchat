@@ -60,6 +60,17 @@ export interface CharacterCardData {
   templateText?: string;
 }
 
+export interface CharacterCardApiStatus {
+  available: boolean;
+  reason?: string;
+}
+
+export interface CharacterCardAttrsPatchResult {
+  updated: boolean;
+  status: CharacterCardApiStatus;
+  message?: string;
+}
+
 export interface CharacterCardBadgeEntry {
   identityId: string;
   channelId: string;
@@ -291,6 +302,16 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       return false;
     }
     return !isBotCharacterDisabled(normalizedChannelId);
+  };
+
+  const getCharacterApiStatus = (channelId: string): CharacterCardApiStatus => {
+    if (isCharacterApiReady(channelId)) {
+      return { available: true };
+    }
+    return {
+      available: false,
+      reason: getCharacterApiDisabledReason(channelId),
+    };
   };
 
   const getBindingsStorageKey = () => {
@@ -850,7 +871,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   // Load character card list from SealDice via WebSocket
-  const loadCardList = async (channelId?: string) => {
+  const loadCardList = async (channelId?: string, options?: { throwOnError?: boolean }) => {
+    const throwOnError = options?.throwOnError === true;
     const userId = getUserId();
     if (!userId) {
       if (isDebugEnabled()) {
@@ -883,8 +905,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       }
       if (resp?.data?.ok && Array.isArray(resp.data.list)) {
         cardList.value = resp.data.list.map(toUICard);
+      } else if (resp?.data?.ok === false && throwOnError && !isBotCharacterDisabled(resolvedChannelId)) {
+        throw new Error(resp?.data?.error || 'INTERNAL_ERROR');
       }
     } catch (e) {
+      if (throwOnError) {
+        throw e;
+      }
       console.warn('Failed to load character card list', e);
     } finally {
       loading.value = false;
@@ -901,7 +928,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   // Get active card for a channel
-  const getActiveCard = async (channelId: string) => {
+  const getActiveCard = async (channelId: string, options?: { throwOnError?: boolean }) => {
+    const throwOnError = options?.throwOnError === true;
     const userId = getUserId();
     if (!userId || !channelId) return null;
     if (shouldSkipCharacterApi(channelId, 'getActiveCard')) {
@@ -948,7 +976,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         });
         return cardData;
       }
+      if (resp?.data?.ok === false && !isBotCharacterDisabled(channelId) && throwOnError) {
+        throw new Error(resp?.data?.error || 'INTERNAL_ERROR');
+      }
     } catch (e) {
+      if (throwOnError) {
+        throw e;
+      }
       console.warn('Failed to get active card', e);
     }
     return null;
@@ -1134,6 +1168,67 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       console.warn('Failed to update character card', e);
     }
     return false;
+  };
+
+  const updateCardStrict = async (channelId: string, name: string, attrs: Record<string, any>) => {
+    const userId = getUserId();
+    if (!userId || !channelId) return false;
+    if (shouldSkipCharacterApi(channelId, 'updateCardStrict')) {
+      return false;
+    }
+
+    await chatStore.ensureConnectionReady();
+    const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string } }>('character.set', {
+      group_id: channelId,
+      user_id: userId,
+      name,
+      attrs,
+    });
+    maybeDisableFromResponse(channelId, resp);
+    if (resp?.data?.ok) {
+      await getActiveCard(channelId, { throwOnError: true });
+      await loadCardList(channelId, { throwOnError: true });
+      return true;
+    }
+    if (resp?.data?.ok === false && isBotCharacterDisabled(channelId)) {
+      return false;
+    }
+    if (resp?.data?.ok === false) {
+      throw new Error(resp?.data?.error || 'INTERNAL_ERROR');
+    }
+    throw new Error('INTERNAL_ERROR');
+  };
+
+  const patchActiveCardAttrs = async (
+    channelId: string,
+    attrsPatch: Record<string, any>,
+  ): Promise<CharacterCardAttrsPatchResult> => {
+    let status = getCharacterApiStatus(channelId);
+    if (!status.available) {
+      return { updated: false, status, message: status.reason };
+    }
+
+    const current = await getActiveCard(channelId, { throwOnError: true });
+    status = getCharacterApiStatus(channelId);
+    if (!status.available) {
+      return { updated: false, status, message: status.reason };
+    }
+    if (!current) {
+      return { updated: false, status, message: '当前频道没有活动人物卡' };
+    }
+
+    const nextAttrs = {
+      ...(current.attrs || {}),
+      ...attrsPatch,
+    };
+    const updated = await updateCardStrict(channelId, current.name, nextAttrs);
+    status = getCharacterApiStatus(channelId);
+    if (!status.available) {
+      return { updated: false, status, message: status.reason };
+    }
+    return updated
+      ? { updated: true, status }
+      : { updated: false, status, message: '人物卡属性更新失败' };
   };
 
   // Bind/unbind card to channel (character.tag)
@@ -1700,6 +1795,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     loadCardList,
     loadCards,
     getActiveCard,
+    patchActiveCardAttrs,
     createCard,
     saveCard,
     updateCard,
@@ -1730,6 +1826,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     markCharacterApiHealthy,
     hasSuccessfulCharacterApiSession,
     isCharacterApiReady,
+    getCharacterApiStatus,
     ensureCharacterApiReadyForBotCommand,
     isBotCharacterDisabled,
     getCharacterApiDisabledReason,

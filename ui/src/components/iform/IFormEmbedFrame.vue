@@ -40,6 +40,8 @@ import DOMPurify from 'dompurify';
 import type { ChannelIForm } from '@/types/iform';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useCharacterCardStore } from '@/stores/characterCard';
+import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import { urlBase } from '@/stores/_config';
 import { createChannelEmbedHost } from '@/bridge/channelEmbedHost';
 
@@ -47,6 +49,8 @@ const props = defineProps<{ form?: ChannelIForm | null; enableChannelEmbed?: boo
 const frameRoot = ref<HTMLElement | null>(null);
 const chat = useChatStore();
 const user = useUserStore();
+const characterCard = useCharacterCardStore();
+const characterSnapshot = useChannelCharacterSnapshotStore();
 let embedHost: ReturnType<typeof createChannelEmbedHost> | null = null;
 
 const embedCode = computed(() => props.form?.embedCode?.trim() || '');
@@ -164,6 +168,8 @@ const setupChannelEmbed = async () => {
   embedHost = createChannelEmbedHost({
     chat,
     user,
+    characterCard,
+    characterSnapshot,
     form: props.form,
     iframe,
     worldId: String(chat.currentWorldId || ''),

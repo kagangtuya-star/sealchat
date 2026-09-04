@@ -327,7 +327,7 @@ const formModel = reactive({
   bridgePolicy: {
     enabled: false,
     allowedOrigins: '',
-    capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
+    capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send,characterCard.read,characterCard.write',
   },
 });
 
@@ -382,7 +382,7 @@ const resetFormModel = () => {
     bridgePolicy: {
       enabled: false,
       allowedOrigins: '',
-      capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send',
+      capabilities: 'context.read,user.read,members.read,world.admins.read,characters.read,permissions.read,storage.read,storage.write,events.subscribe,events.publish,messages.send,characterCard.read,characterCard.write',
     },
   });
 };

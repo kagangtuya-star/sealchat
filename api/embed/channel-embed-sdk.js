@@ -52,6 +52,13 @@
         getCurrent: () => this.request('characters.getCurrent'),
         onChanged: handler => this.on('characters.changed', handler)
       }
+      this.characterCard = {
+        getStatus: () => this.request('characterCard.getStatus'),
+        getCurrent: () => this.request('characterCard.getCurrent'),
+        listSnapshots: () => this.request('characterCard.listSnapshots'),
+        getSnapshot: params => this.request('characterCard.getSnapshot', params),
+        updateAttrs: attrsPatch => this.request('characterCard.updateAttrs', { attrs: attrsPatch })
+      }
       this.permissions = {
         getCurrent: () => this.request('permissions.getCurrent'),
         onChanged: handler => this.on('permissions.changed', handler)

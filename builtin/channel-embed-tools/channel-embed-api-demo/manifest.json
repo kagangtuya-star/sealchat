@@ -10,6 +10,6 @@
   "mediaOptions": { "allowAudio": false, "allowVideo": false },
   "bridgePolicy": {
     "enabled": true,
-    "capabilities": ["context.read", "user.read", "members.read", "world.admins.read", "characters.read", "permissions.read", "storage.read", "storage.write", "events.subscribe", "events.publish", "messages.send"]
+    "capabilities": ["context.read", "user.read", "members.read", "world.admins.read", "characters.read", "characterCard.read", "characterCard.write", "permissions.read", "storage.read", "storage.write", "events.subscribe", "events.publish", "messages.send"]
   }
 }

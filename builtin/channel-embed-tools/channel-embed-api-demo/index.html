@@ -417,6 +417,38 @@
       </fieldset>
     </div>
 
+    <!-- 人物卡属性与快照 -->
+    <fieldset>
+      <legend>人物卡属性与快照 (Character Card)</legend>
+      <div class="grid-2col">
+        <div>
+          <div class="flex-row" style="margin-bottom:6px;">
+            <button data-character-card="status">BOT API 状态</button>
+            <button data-character-card="current">读取自己活动人物卡</button>
+            <button data-character-card="listSnapshots">读取频道快照</button>
+          </div>
+          <label for="characterSnapshotIdentity">指定快照 identityId:</label>
+          <select id="characterSnapshotIdentity" style="width:100%">
+            <option value="">先读取频道快照</option>
+          </select>
+          <div style="margin-top:6px;">
+            <button data-character-card="getSnapshot">读取选中快照</button>
+          </div>
+        </div>
+        <div>
+          <label for="characterAttrsPatch">attrs 根级浅合并 Patch:</label>
+          <textarea id="characterAttrsPatch">{
+  "hp": 8,
+  "san": 42
+}</textarea>
+          <div style="margin-top:6px;">
+            <button data-character-card="updateAttrs">写入自己活动人物卡</button>
+          </div>
+        </div>
+      </div>
+      <pre id="characterCardResult" class="result">-</pre>
+    </fieldset>
+
     <!-- JSON KV 存储 -->
     <fieldset>
       <legend>JSON 键值存储 (Storage)</legend>
@@ -512,7 +544,10 @@
     <fieldset>
       <legend>多端验收步骤 (Checklist)</legend>
       <ol class="hint" style="margin: 0; padding-left: 20px; line-height: 1.6;">
-        <li>在 iForm policy 中启用 Embed API；测试 World 管理员列表时，额外打开 <code>members.read,world.admins.read</code>。</li>
+        <li>在 iForm policy 中启用 Embed API；测试 World 管理员列表时打开 <code>members.read,world.admins.read</code>，测试人物卡时打开 <code>characterCard.read,characterCard.write</code>。</li>
+        <li>读取 BOT API 状态和自己活动人物卡；未开启时应显示具体 <code>reason</code>。</li>
+        <li>读取频道快照，选择其他用户 identity，确认只显示服务端快照；未发布人物卡时 <code>card</code> 为 <code>null</code>。</li>
+        <li>写入 <code>{ "hp": 5 }</code> 后重新读取，其他 attrs 应保留；嵌套根节点应整体覆盖，不做 deep merge。</li>
         <li>打开本页两个实例，确认两个 handshake 的 session 独立，但 storage namespace 相同。</li>
         <li>A 点击 <b>set</b>，B 应收到 <code>storage.changed</code>，seq 递增；B 再执行 get/snapshot 验证内容。</li>
         <li>两个实例读取同一 revision 后同时 set：一个成功，另一个应得到 <code>REVISION_CONFLICT</code>。</li>
@@ -680,6 +715,13 @@
     member = { getCurrent: () => this.request('member.getCurrent') }
     members = { list: (params) => this.request('members.list', params), onChanged: (handler) => this.on('members.changed', handler) }
     characters = { list: () => this.request('characters.list'), getCurrent: () => this.request('characters.getCurrent'), onChanged: (handler) => this.on('characters.changed', handler) }
+    characterCard = {
+      getStatus: () => this.request('characterCard.getStatus'),
+      getCurrent: () => this.request('characterCard.getCurrent'),
+      listSnapshots: () => this.request('characterCard.listSnapshots'),
+      getSnapshot: (params) => this.request('characterCard.getSnapshot', params),
+      updateAttrs: (attrsPatch) => this.request('characterCard.updateAttrs', { attrs: attrsPatch }),
+    }
     permissions = { getCurrent: () => this.request('permissions.getCurrent'), onChanged: (handler) => this.on('permissions.changed', handler) }
     channel = { getState: () => this.request('channel.getState') }
     connection = { getState: () => this.request('connection.getState'), onChanged: (handler) => this.on('connection.changed', handler) }
@@ -918,6 +960,47 @@
     const name = button.dataset.call
     const output = name === 'connection' ? 'connectionResult' : 'identityResult'
     try { await call(name, actions[name], output) } catch {}
+  }))
+
+  const updateCharacterSnapshotOptions = (items) => {
+    const select = $('characterSnapshotIdentity')
+    const selected = select.value
+    select.replaceChildren()
+    const placeholder = document.createElement('option')
+    placeholder.value = ''
+    placeholder.textContent = items.length ? '选择频道 identity' : '当前频道没有快照'
+    select.appendChild(placeholder)
+    items.forEach((item) => {
+      const option = document.createElement('option')
+      option.value = item.identityId
+      const displayName = item.identity?.displayName || item.identityId
+      option.textContent = `${displayName} (${item.identityId}) - ${item.card?.name || '无人物卡'}`
+      select.appendChild(option)
+    })
+    if (items.some((item) => item.identityId === selected)) select.value = selected
+  }
+
+  document.querySelectorAll('[data-character-card]').forEach((button) => button.addEventListener('click', async () => {
+    const operation = button.dataset.characterCard
+    try {
+      if (operation === 'status') {
+        await call('characterCard.getStatus', () => sealchat.characterCard.getStatus(), 'characterCardResult')
+      } else if (operation === 'current') {
+        await call('characterCard.getCurrent', () => sealchat.characterCard.getCurrent(), 'characterCardResult')
+      } else if (operation === 'listSnapshots') {
+        const items = await call('characterCard.listSnapshots', () => sealchat.characterCard.listSnapshots(), 'characterCardResult')
+        updateCharacterSnapshotOptions(Array.isArray(items) ? items : [])
+      } else if (operation === 'getSnapshot') {
+        const identityId = $('characterSnapshotIdentity').value
+        await call('characterCard.getSnapshot', () => sealchat.characterCard.getSnapshot({ identityId }), 'characterCardResult')
+      } else if (operation === 'updateAttrs') {
+        await call('characterCard.updateAttrs', () => {
+          const attrsPatch = parseJSON('characterAttrsPatch')
+          if (!attrsPatch || typeof attrsPatch !== 'object' || Array.isArray(attrsPatch)) throw new Error('attrs Patch 必须是 JSON object')
+          return sealchat.characterCard.updateAttrs(attrsPatch)
+        }, 'characterCardResult')
+      }
+    } catch {}
   }))
 
   document.querySelectorAll('[data-storage]').forEach((button) => button.addEventListener('click', async () => {

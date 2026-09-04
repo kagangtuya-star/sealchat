@@ -37,10 +37,45 @@ export interface EmbedWorldAdmin {
   avatar?: string
   role: 'owner' | 'admin'
 }
+export interface EmbedCharacterCardApiStatus {
+  available: boolean
+  reason?: string
+}
+export interface EmbedCharacterCard {
+  name: string
+  sheetType: string
+  attrs: Record<string, any>
+  avatar?: string
+}
+export interface EmbedCharacterCardSnapshot {
+  identityId: string
+  userId: string
+  identity: {
+    id: string
+    userId: string
+    displayName?: string
+    color?: string
+    avatar?: string
+  }
+  card: EmbedCharacterCard | null
+  revision: number
+  updatedAt?: number
+}
+export interface EmbedCharacterCardCurrentResult {
+  status: EmbedCharacterCardApiStatus
+  card: EmbedCharacterCard | null
+}
+export interface EmbedCharacterCardUpdateResult {
+  updated: boolean
+  status: EmbedCharacterCardApiStatus
+  message?: string
+}
 export interface EmbedPermissionSummary {
   canSendMessage: boolean
   canReadMembers: boolean
   canReadCharacters: boolean
+  canReadCharacterCard: boolean
+  canWriteCharacterCard: boolean
   canReadStorage: boolean
   canWriteStorage: boolean
   canPublishEvents: boolean
@@ -173,6 +208,13 @@ export class ChannelEmbedClient {
   readonly member = { getCurrent: () => this.request('member.getCurrent') }
   readonly members = { list: (params: { scope: EmbedMemberListScope; cursor?: string }) => this.request<EmbedSafeMember[] | EmbedWorldAdmin[]>('members.list', params), onChanged: (handler: EventHandler) => this.on('members.changed', handler) }
   readonly characters = { list: () => this.request('characters.list'), getCurrent: () => this.request('characters.getCurrent'), onChanged: (handler: EventHandler) => this.on('characters.changed', handler) }
+  readonly characterCard = {
+    getStatus: () => this.request<EmbedCharacterCardApiStatus>('characterCard.getStatus'),
+    getCurrent: () => this.request<EmbedCharacterCardCurrentResult>('characterCard.getCurrent'),
+    listSnapshots: () => this.request<EmbedCharacterCardSnapshot[]>('characterCard.listSnapshots'),
+    getSnapshot: (params: { identityId: string }) => this.request<EmbedCharacterCardSnapshot | null>('characterCard.getSnapshot', params),
+    updateAttrs: (attrsPatch: Record<string, any>) => this.request<EmbedCharacterCardUpdateResult>('characterCard.updateAttrs', { attrs: attrsPatch }),
+  }
   readonly permissions = { getCurrent: () => this.request<EmbedPermissionSummary>('permissions.getCurrent'), onChanged: (handler: EventHandler) => this.on('permissions.changed', handler) }
   readonly channel = { getState: () => this.request('channel.getState') }
   readonly connection = { getState: () => this.request('connection.getState'), onChanged: (handler: EventHandler) => this.on('connection.changed', handler) }
