@@ -555,11 +555,12 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				if user.IsBot {
 					closedCount := 0
 					m.Range(func(conn *WsSyncConn, _ *ConnInfo) bool {
-						conn.Close()
-						m.Delete(conn)
-						closedCount++
-						if collector := metrics.Get(); collector != nil {
-							collector.RecordConnectionClosed(user.ID)
+						if _, deleted := m.LoadAndDelete(conn); deleted {
+							conn.Close()
+							closedCount++
+							if collector := metrics.Get(); collector != nil {
+								collector.RecordConnectionClosed(user.ID)
+							}
 						}
 						return true
 					})
@@ -584,11 +585,12 @@ func websocketWorks(app *fiber.App, webUrl string) {
 						return true
 					})
 					if oldestConn != nil {
-						log.Printf("[WS] 用户 %s 连接数超限，关闭最旧连接", user.ID)
-						oldestConn.Close()
-						m.Delete(oldestConn)
-						if collector := metrics.Get(); collector != nil {
-							collector.RecordConnectionClosed(user.ID)
+						if _, deleted := m.LoadAndDelete(oldestConn); deleted {
+							log.Printf("[WS] 用户 %s 连接数超限，关闭最旧连接", user.ID)
+							oldestConn.Close()
+							if collector := metrics.Get(); collector != nil {
+								collector.RecordConnectionClosed(user.ID)
+							}
 						}
 					} else {
 						break
@@ -697,12 +699,13 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				})
 
 				for _, entry := range staleConns {
-					log.Printf("[WS] 健康检查：关闭用户 %s 的僵尸连接（无心跳超 %d 秒）", userId, entry.timeoutSeconds)
-					entry.conn.Close()
-					connMap.Delete(entry.conn)
-					cleanedCount++
-					if collector := metrics.Get(); collector != nil {
-						collector.RecordConnectionClosed(userId)
+					if _, deleted := connMap.LoadAndDelete(entry.conn); deleted {
+						log.Printf("[WS] 健康检查：关闭用户 %s 的僵尸连接（无心跳超 %d 秒）", userId, entry.timeoutSeconds)
+						entry.conn.Close()
+						cleanedCount++
+						if collector := metrics.Get(); collector != nil {
+							collector.RecordConnectionClosed(userId)
+						}
 					}
 				}
 				return true
