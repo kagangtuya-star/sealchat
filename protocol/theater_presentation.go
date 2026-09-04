@@ -95,9 +95,10 @@ type TheaterSpacing struct {
 }
 
 type TheaterTextLayer struct {
-	Enabled   bool             `json:"enabled"`
-	Transform TheaterTransform `json:"transform"`
-	FontScale float64          `json:"fontScale"`
+	Enabled     bool             `json:"enabled"`
+	Transform   TheaterTransform `json:"transform"`
+	FontScale   float64          `json:"fontScale"`
+	FontAssetID string           `json:"fontAssetId,omitempty"`
 }
 
 type TheaterNarrationStyle struct {
@@ -554,12 +555,14 @@ func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationT
 		if template.Speaker.FontScale < 0.25 || template.Speaker.FontScale > 4 {
 			problems = append(problems, errors.New("speaker.fontScale is invalid"))
 		}
+		problems = appendError(problems, validateTheaterFontAssetID(template.Speaker.FontAssetID, "speaker"))
 	}
 	if template.Content != nil {
 		problems = appendError(problems, validateTheaterTextTransform(template.Content.Transform, "content.transform"))
 		if template.Content.FontScale < 0.25 || template.Content.FontScale > 4 {
 			problems = append(problems, errors.New("content.fontScale is invalid"))
 		}
+		problems = appendError(problems, validateTheaterFontAssetID(template.Content.FontAssetID, "content"))
 	}
 	if template.Dialogue != nil {
 		dialogue := DefaultTheaterDialogueStyle()
@@ -804,9 +807,11 @@ func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 	if !finiteInRange(dialogue.Speaker.FontScale, 0.25, 4) {
 		problems = append(problems, errors.New("dialogue.speaker.fontScale must be finite and between 0.25 and 4"))
 	}
+	problems = appendError(problems, validateTheaterFontAssetID(dialogue.Speaker.FontAssetID, "dialogue.speaker"))
 	if !finiteInRange(dialogue.Content.FontScale, 0.25, 4) {
 		problems = append(problems, errors.New("dialogue.content.fontScale must be finite and between 0.25 and 4"))
 	}
+	problems = appendError(problems, validateTheaterFontAssetID(dialogue.Content.FontAssetID, "dialogue.content"))
 	if !validTheaterColor(dialogue.ContentColor) {
 		problems = append(problems, errors.New("dialogue.contentColor must be a hex color"))
 	}
@@ -854,6 +859,16 @@ func validTheaterColor(value string) bool {
 		}
 	}
 	return true
+}
+
+func validateTheaterFontAssetID(value, path string) error {
+	if value == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(value) > 128 {
+		return fmt.Errorf("%s.fontAssetId must contain at most 128 characters", path)
+	}
+	return nil
 }
 
 func validateTheaterLayer(layer TheaterVisualLayer, expectedSpace TheaterLayerSpace, path string) error {

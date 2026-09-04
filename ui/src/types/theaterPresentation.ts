@@ -73,6 +73,7 @@ export const theaterTextLayerSchema = z.strictObject({
   enabled: z.boolean(),
   transform: theaterTextTransformSchema,
   fontScale: z.number().finite().min(0.25).max(4).default(1),
+  fontAssetId: z.string().min(1).max(128).optional(),
 })
 
 const theaterSpeakerTextLayerSchema = theaterTextLayerSchema.extend({

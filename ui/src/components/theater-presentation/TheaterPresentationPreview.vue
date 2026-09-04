@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, type CSSProperties } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
 import { resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformLayoutStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from './theaterPresentationEditorState'
 import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
 import './theaterComposition.css'
@@ -41,6 +42,43 @@ let gesture: Gesture | null = null
 let pendingEvent: PointerEvent | null = null
 let frame = 0
 const resizeCorners: ResizeCorner[] = ['nw', 'ne', 'sw', 'se']
+const speakerFontFamily = ref('')
+const contentFontFamily = ref('')
+let speakerFontLoadGeneration = 0
+let contentFontLoadGeneration = 0
+
+const refreshSpeakerFontFamily = (fontAssetId: string | undefined) => {
+  const generation = ++speakerFontLoadGeneration
+  const normalizedId = String(fontAssetId || '').trim()
+  if (!normalizedId) {
+    speakerFontFamily.value = ''
+    return
+  }
+  speakerFontFamily.value = ''
+  void resolvePlatformFontFamily(normalizedId).then((family) => {
+    if (generation === speakerFontLoadGeneration) speakerFontFamily.value = family
+  }).catch(() => {
+    if (generation === speakerFontLoadGeneration) speakerFontFamily.value = ''
+  })
+}
+
+const refreshContentFontFamily = (fontAssetId: string | undefined) => {
+  const generation = ++contentFontLoadGeneration
+  const normalizedId = String(fontAssetId || '').trim()
+  if (!normalizedId) {
+    contentFontFamily.value = ''
+    return
+  }
+  contentFontFamily.value = ''
+  void resolvePlatformFontFamily(normalizedId).then((family) => {
+    if (generation === contentFontLoadGeneration) contentFontFamily.value = family
+  }).catch(() => {
+    if (generation === contentFontLoadGeneration) contentFontFamily.value = ''
+  })
+}
+
+watch(() => props.draft.dialogue.speaker.fontAssetId, refreshSpeakerFontFamily, { immediate: true })
+watch(() => props.draft.dialogue.content.fontAssetId, refreshContentFontFamily, { immediate: true })
 
 const sameSelection = (left: TheaterSelection, right: TheaterSelection) => (
   left.kind === right.kind && (left.kind !== 'decoration' || right.kind !== 'decoration' || left.id === right.id)
@@ -139,6 +177,8 @@ const endGesture = () => {
 }
 
 onBeforeUnmount(() => {
+  speakerFontLoadGeneration += 1
+  contentFontLoadGeneration += 1
   window.removeEventListener('pointermove', handlePointerMove)
   if (frame) cancelAnimationFrame(frame)
 })
@@ -173,6 +213,17 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
   display: props.draft.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   '--theater-font-scale': String(props.draft.dialogue[kind].fontScale),
 }) as CSSProperties
+const speakerTextStyle = computed<CSSProperties>(() => ({
+  ...textLayerStyle('speaker'),
+  display: props.draft.narration.enabled ? 'none' : textLayerStyle('speaker').display,
+  ...(speakerFontFamily.value ? { fontFamily: speakerFontFamily.value } : {}),
+}))
+const contentTextStyle = computed<CSSProperties>(() => ({
+  ...textLayerStyle('content'),
+  textAlign: props.draft.dialogue.textAlign,
+  color: props.draft.dialogue.contentColor,
+  ...(contentFontFamily.value ? { fontFamily: contentFontFamily.value } : {}),
+}))
 const narrationStyle = computed<CSSProperties>(() => ({
   backgroundColor: resolveTheaterBackdropColor(
     props.draft.narration.backdropColor,
@@ -239,7 +290,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
           data-transform-target
           class="theater-preview__dialogue-content theater-preview__name"
           :class="{ 'is-selected': selection.kind === 'speaker', 'is-locked': activeSection !== 'speaker' }"
-          :style="{ ...textLayerStyle('speaker'), display: draft.narration.enabled ? 'none' : textLayerStyle('speaker').display }"
+          :style="speakerTextStyle"
           @pointerdown="beginGesture($event, 'drag', { kind: 'speaker' }, draft.dialogue.speaker.transform)"
         >
           <span class="theater-preview__name-value">{{ previewName || '角色名' }}</span>
@@ -252,7 +303,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
           data-transform-target
           class="theater-preview__dialogue-content theater-preview__text"
           :class="{ 'is-selected': selection.kind === 'content', 'is-locked': activeSection !== 'content' }"
-          :style="{ ...textLayerStyle('content'), textAlign: draft.dialogue.textAlign, color: draft.dialogue.contentColor }"
+          :style="contentTextStyle"
           @pointerdown="beginGesture($event, 'drag', { kind: 'content' }, draft.dialogue.content.transform)"
         >
           {{ previewText || '夜色正好，我们该出发了。' }}

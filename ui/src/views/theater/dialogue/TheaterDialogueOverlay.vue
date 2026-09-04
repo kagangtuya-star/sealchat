@@ -6,6 +6,7 @@ import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
 import { isTipTapJson } from '@/utils/tiptap-render'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import {
@@ -40,6 +41,10 @@ let bodyContentObserver: { disconnect: () => void } | null = null
 let motionQuery: MediaQueryList | null = null
 let invalidateAppearance: ((event: Event) => void) | null = null
 let appearanceRequestGeneration = 0
+const speakerFontFamily = ref('')
+const contentFontFamily = ref('')
+let speakerFontLoadGeneration = 0
+let contentFontLoadGeneration = 0
 
 /** Keep the latest revealed line visible while dialogue text grows. */
 const stickDialogueBodyToBottom = () => {
@@ -110,10 +115,58 @@ const textLayerStyle = (kind: 'speaker' | 'content'): CSSProperties => ({
   textAlign: presentation.value.dialogue.textAlign,
   '--theater-font-scale': String(presentation.value.dialogue[kind].fontScale),
 })
+const speakerStyle = computed<CSSProperties>(() => ({
+  ...textLayerStyle('speaker'),
+  color: speakerColor.value,
+  ...(speakerFontFamily.value ? { fontFamily: speakerFontFamily.value } : {}),
+}))
 const contentStyle = computed<CSSProperties>(() => ({
   ...textLayerStyle('content'),
   color: presentation.value.dialogue.contentColor,
+  ...(contentFontFamily.value ? { fontFamily: contentFontFamily.value } : {}),
 }))
+
+const refreshSpeakerFontFamily = (fontAssetId: string | undefined) => {
+  const generation = ++speakerFontLoadGeneration
+  const normalizedId = String(fontAssetId || '').trim()
+  if (!normalizedId) {
+    speakerFontFamily.value = ''
+    return
+  }
+  speakerFontFamily.value = ''
+  void resolvePlatformFontFamily(normalizedId).then((family) => {
+    if (generation === speakerFontLoadGeneration) speakerFontFamily.value = family
+  }).catch(() => {
+    if (generation === speakerFontLoadGeneration) speakerFontFamily.value = ''
+  })
+}
+
+const refreshContentFontFamily = (fontAssetId: string | undefined) => {
+  const generation = ++contentFontLoadGeneration
+  const normalizedId = String(fontAssetId || '').trim()
+  if (!normalizedId) {
+    contentFontFamily.value = ''
+    return
+  }
+  contentFontFamily.value = ''
+  void resolvePlatformFontFamily(normalizedId).then((family) => {
+    if (generation === contentFontLoadGeneration) contentFontFamily.value = family
+  }).catch(() => {
+    if (generation === contentFontLoadGeneration) contentFontFamily.value = ''
+  })
+}
+
+watch(
+  () => presentation.value.dialogue.speaker.fontAssetId,
+  refreshSpeakerFontFamily,
+  { immediate: true },
+)
+
+watch(
+  () => presentation.value.dialogue.content.fontAssetId,
+  refreshContentFontFamily,
+  { immediate: true },
+)
 
 watch(
   () => presentation.value.dialogue.charactersPerSecond,
@@ -248,6 +301,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  speakerFontLoadGeneration += 1
+  contentFontLoadGeneration += 1
   appearanceRequestGeneration += 1
   unsubscribe?.()
   intersectionObserver?.disconnect()
@@ -298,7 +353,7 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="theater-dialogue-content" @click="completeCurrent">
-          <div v-if="!narration.enabled" class="theater-dialogue-speaker" :style="{ ...textLayerStyle('speaker'), color: speakerColor }">
+          <div v-if="!narration.enabled" class="theater-dialogue-speaker" :style="speakerStyle">
             <span class="theater-dialogue-speaker__value">{{ message?.actor.displayName || '角色' }}</span>
           </div>
           <div ref="bodyRef" class="theater-dialogue-body" :style="contentStyle">

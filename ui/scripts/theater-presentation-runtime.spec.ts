@@ -42,6 +42,7 @@ assert.equal(defaults.dialogue.speaker.enabled, true)
 assert.equal(defaults.dialogue.content.enabled, true)
 assert.equal(defaults.dialogue.speaker.fontScale, 0.85)
 assert.equal(defaults.dialogue.content.fontScale, 1.2)
+assert.equal(defaults.dialogue.content.fontAssetId, undefined)
 assert.equal(defaults.dialogue.contentColor, '#F4F4F5')
 assert.equal(defaults.dialogue.charactersPerSecond, 10)
 assert.deepEqual(defaults.narration, { enabled: false, backdropColor: '#000000', backdropOpacity: 1 })
@@ -83,6 +84,9 @@ assert.equal(theaterPresentationSchema.safeParse({
   ...defaults,
   dialogue: { ...defaults.dialogue, speaker: { ...defaults.dialogue.speaker, fontScale: 5 } },
 }).success, false)
+const withContentFont = structuredClone(defaults)
+withContentFont.dialogue.content.fontAssetId = 'platform-font-1'
+assert.equal(theaterPresentationSchema.parse(withContentFont).dialogue.content.fontAssetId, 'platform-font-1')
 assert.equal(theaterPresentationSchema.safeParse({
   ...defaults,
   portrait: {

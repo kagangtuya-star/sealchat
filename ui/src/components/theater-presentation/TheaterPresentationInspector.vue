@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, h, onMounted, ref, watch, type VNodeChild } from 'vue'
 import { ArrowDown, ArrowUp, Refresh, Trash } from '@vicons/tabler'
+import type { SelectOption } from 'naive-ui'
+import { listPlatformFonts } from '@/services/font/platformFontApi'
+import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
+import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
 import type { TheaterPresentation, TheaterTransform, TheaterVisualLayer } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSectionMode, TheaterSelection } from './theaterPresentationEditorState'
 
@@ -48,6 +52,30 @@ const setTransform = (key: keyof TheaterTransform, value: number | null) => {
 const textLayer = computed(() => props.selection.kind === 'speaker' || props.selection.kind === 'content'
   ? props.draft.dialogue[props.selection.kind]
   : null)
+const platformFonts = ref<PlatformFontAsset[]>([])
+const loadingPlatformFonts = ref(false)
+const selectedPlatformFontId = ref<string | null>(null)
+const {
+  platformFontOptions,
+  renderPlatformFontLabel,
+  renderPlatformFontOption,
+  handleDropdownVisible: handlePlatformFontDropdownVisible,
+  primeSelectedPreview: primePlatformFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: selectedPlatformFontId,
+  menuClass: 'theater-inspector-platform-font-select__menu',
+})
+const platformFontSelectOptions = computed(() => [
+  { label: '跟随默认字体', value: '' },
+  ...platformFontOptions.value,
+])
+const renderFontLabel = (option: SelectOption) => option.value === ''
+  ? h('span', { title: '跟随默认字体' }, '跟随默认字体')
+  : renderPlatformFontLabel(option)
+const renderFontOption = ({ node, option }: { node: VNodeChild; option: SelectOption }) => option.value === ''
+  ? node
+  : renderPlatformFontOption({ node, option })
 const textLayerCanMoveAboveViewport = computed(() => props.selection.kind === 'speaker' || props.selection.kind === 'content')
 const setRotation = (value: number) => setTransform('rotation', value)
 const setOpacity = (value: number) => setTransform('opacity', value)
@@ -57,6 +85,10 @@ const setPlaybackRate = (value: number | null) => {
 }
 const setFontScale = (value: number) => {
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fontScale', value }, { transient: true })
+}
+const setFontAssetId = (value: string | null) => {
+  if (props.selection.kind !== 'speaker' && props.selection.kind !== 'content') return
+  emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fontAssetId', value: value || '' })
 }
 const setContentColor = (value: string) => {
   emit('dispatch', { type: 'set-dialogue-property', property: 'contentColor', value })
@@ -86,6 +118,26 @@ const reorder = (direction: -1 | 1) => {
     : props.draft.portraitDecorations[nextIndex + 1]?.id || null
   emit('dispatch', { type: 'reorder-decoration', id: props.selection.id, beforeId })
 }
+
+const refreshPlatformFonts = async () => {
+  loadingPlatformFonts.value = true
+  try {
+    platformFonts.value = await listPlatformFonts()
+    primePlatformFontPreview(selectedPlatformFontId.value)
+  } catch {
+    platformFonts.value = []
+  } finally {
+    loadingPlatformFonts.value = false
+  }
+}
+
+watch(
+  () => textLayer.value?.fontAssetId,
+  (value) => { selectedPlatformFontId.value = value || null },
+  { immediate: true },
+)
+
+onMounted(() => { void refreshPlatformFonts() })
 </script>
 
 <template>
@@ -162,6 +214,20 @@ const reorder = (direction: -1 | 1) => {
         />
         <span>{{ Math.round(textLayer.fontScale * 100) }}%</span>
       </div>
+      <div class="theater-inspector__label">默认字体</div>
+      <n-select
+        :value="selectedPlatformFontId"
+        filterable
+        clearable
+        :loading="loadingPlatformFonts"
+        :options="platformFontSelectOptions"
+        placeholder="跟随默认字体"
+        :render-label="renderFontLabel"
+        :render-option="renderFontOption"
+        content-class="theater-inspector-platform-font-select__menu"
+        @update:value="setFontAssetId"
+        @update:show="handlePlatformFontDropdownVisible"
+      />
       <template v-if="selection.kind === 'content'">
         <div class="theater-inspector__label">播放速度</div>
         <n-input-number

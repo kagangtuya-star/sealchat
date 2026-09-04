@@ -32,7 +32,7 @@ export type TheaterEditorCommand =
   | { type: 'select'; target: TheaterSelection }
   | { type: 'set-transform'; target: TheaterSelection; transform: Partial<TheaterTransform> }
   | { type: 'set-media'; target: TheaterSelection; media: TheaterMediaRef | null }
-  | { type: 'set-layer-property'; target: TheaterSelection; property: 'enabled' | 'fit' | 'blendMode' | 'playbackRate' | 'fontScale'; value: boolean | string | number }
+  | { type: 'set-layer-property'; target: TheaterSelection; property: 'enabled' | 'fit' | 'blendMode' | 'playbackRate' | 'fontScale' | 'fontAssetId'; value: boolean | string | number }
   | { type: 'add-decoration'; layer: TheaterVisualLayer }
   | { type: 'remove-decoration'; id: string }
   | { type: 'reorder-decoration'; id: string; beforeId: string | null }
@@ -205,6 +205,10 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
         state.draft.dialogue[command.target.kind].enabled = Boolean(command.value)
       } else if (command.property === 'fontScale' && typeof command.value === 'number') {
         state.draft.dialogue[command.target.kind].fontScale = command.value
+      } else if (command.property === 'fontAssetId' && typeof command.value === 'string') {
+        const layer = state.draft.dialogue[command.target.kind]
+        if (command.value) layer.fontAssetId = command.value
+        else delete layer.fontAssetId
       } else {
         return false
       }
