@@ -27,6 +27,16 @@ export interface TheaterDialogueRuntimeSnapshot {
   phase: TheaterDialoguePlaybackPhase
   reducedMotion: boolean
 }
+
+export interface TheaterDialogueRuntimeController {
+  getSnapshot(): TheaterDialogueRuntimeSnapshot
+  subscribe(listener: (snapshot: TheaterDialogueRuntimeSnapshot) => void): () => void
+  completeCurrent(messageId?: string): void
+  skip(): void
+  close(): void
+  setReducedMotion(value: boolean): void
+  setCharactersPerSecond(value: number): void
+}
 interface TheaterDialogueScheduler {
   setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
   clearTimeout(timer: ReturnType<typeof setTimeout>): void

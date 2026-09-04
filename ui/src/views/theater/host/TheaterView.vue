@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWindowSize } from '@vueuse/core'
 import { NButton, NIcon, useMessage } from 'naive-ui'
@@ -17,8 +17,19 @@ import {
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
-import { stageMusicSnapshotHasContent, type StagePointerTraceInput } from '../shared/stage-types'
-import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StagePointerTraceInput } from '../shared/stage-types'
+import {
+  hasTheaterDialoguePerformanceContent,
+  TheaterDialogueRuntime,
+} from '../dialogue/theater-dialogue-runtime'
+import {
+  THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES,
+  isTheaterDialogueSurfaceCommandMessage,
+  isTheaterDialogueSurfaceDisposeMessage,
+  isTheaterDialogueSurfaceReadyMessage,
+  parseTheaterDialogueSurfaceUrl,
+  type TheaterDialogueSurfaceContext,
+} from '../dialogue/theater-dialogue-surface'
 import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
@@ -120,6 +131,8 @@ let theaterBridge: TheaterHostBridge | null = null
 let theaterBridgeGeneration = 0
 let theaterSync: TheaterSyncClient | null = null
 let theaterSyncGeneration = 0
+const dialogueSurfaceTargets = new Map<Window, TheaterDialogueSurfaceContext>()
+let unsubscribeDialogueSurfaceRuntime: (() => void) | null = null
 const theaterActivationVisible = ref(false)
 const theaterActivationCode = ref('')
 const theaterActivationError = ref('')
@@ -401,6 +414,178 @@ const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
   characters: [],
 })
 
+const dialogueSurfaceContextMatches = (context: TheaterDialogueSurfaceContext) => (
+  context.worldId === worldId.value && context.channelId === channelId.value
+)
+
+const findDialogueSurfaceFrame = (
+  source: MessageEventSource | null,
+  identityId = '',
+): { target: Window; context: TheaterDialogueSurfaceContext } | null => {
+  if (!source) return null
+  const frames = stageSurfaceRef.value?.querySelectorAll<HTMLIFrameElement>('.theater-iframe-visual-object__frame') || []
+  for (const frame of frames) {
+    const target = frame.contentWindow
+    if (!target || target !== source) continue
+    const context = parseTheaterDialogueSurfaceUrl(frame.src)
+    if (!context || !dialogueSurfaceContextMatches(context) || (identityId && context.identityId !== identityId)) return null
+    return { target, context }
+  }
+  return null
+}
+
+const postDialogueSurfaceRuntime = (
+  target: Window,
+  context: TheaterDialogueSurfaceContext,
+  snapshot = dialogueRuntime.getSnapshot(),
+) => {
+  target.postMessage({
+    type: THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES.runtime,
+    ...context,
+    sessionId,
+    snapshot: toRaw(snapshot),
+  }, window.location.origin)
+}
+
+const postDialogueSurfaceCharacters = (
+  target: Window,
+  context: TheaterDialogueSurfaceContext,
+  snapshot = characterSnapshot.value,
+) => {
+  target.postMessage({
+    type: THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES.characters,
+    ...context,
+    sessionId,
+    snapshot: toRaw(snapshot),
+  }, window.location.origin)
+}
+
+const forEachDialogueSurface = (visit: (target: Window, context: TheaterDialogueSurfaceContext) => void) => {
+  for (const [target, registration] of dialogueSurfaceTargets) {
+    const current = findDialogueSurfaceFrame(target, registration.identityId)
+    if (!current) {
+      dialogueSurfaceTargets.delete(target)
+      continue
+    }
+    visit(current.target, current.context)
+  }
+}
+
+const getConfiguredDialogueSurfaceIdentityIds = () => {
+  const identityIds = new Set<string>()
+  for (const object of Object.values(stageStore.activeObjects.value)) {
+    if (object.type !== 'iframe') continue
+    const context = parseTheaterDialogueSurfaceUrl(normalizeStageIframeContent(object.content?.iframe).url)
+    if (context && dialogueSurfaceContextMatches(context)) identityIds.add(context.identityId)
+  }
+  return identityIds
+}
+
+const hasAnyConfiguredDialogueSurface = () => getConfiguredDialogueSurfaceIdentityIds().size > 0
+
+const isStageObjectEffectivelyVisible = (objectId: string) => {
+  const objects = stageStore.activeObjects.value
+  let current = objects[objectId]
+  const visited = new Set<string>()
+
+  while (current) {
+    if (!current.visible) return false
+    if (!current.parentId) return true
+    if (visited.has(current.id)) return false
+    visited.add(current.id)
+    current = objects[current.parentId]
+  }
+
+  return false
+}
+
+const hasRenderableDialogueSurfaceForIdentity = (identityId: string | null) => {
+  if (!identityId) return false
+  const objects = stageStore.activeObjects.value
+  for (const object of Object.values(objects)) {
+    if (object.type !== 'iframe' || !isStageObjectEffectivelyVisible(object.id)) continue
+    const context = parseTheaterDialogueSurfaceUrl(normalizeStageIframeContent(object.content?.iframe).url)
+    if (context && dialogueSurfaceContextMatches(context) && context.identityId === identityId) return true
+  }
+  return false
+}
+
+const ensureUnrenderedPerformanceDialogueProgress = () => {
+  const snapshot = dialogueRuntime.getSnapshot()
+  const current = snapshot.queue.current
+  if (
+    !hasAnyConfiguredDialogueSurface()
+    || !current
+    || snapshot.phase !== 'typing'
+    || !hasTheaterDialoguePerformanceContent(current.message)
+    || hasRenderableDialogueSurfaceForIdentity(current.message.actor.identityId)
+  ) return
+  dialogueRuntime.completeCurrent(current.message.messageId)
+}
+
+const broadcastDialogueRuntime = (snapshot = dialogueRuntime.getSnapshot()) => {
+  forEachDialogueSurface((target, context) => postDialogueSurfaceRuntime(target, context, snapshot))
+  ensureUnrenderedPerformanceDialogueProgress()
+}
+
+const broadcastDialogueCharacters = (snapshot = characterSnapshot.value) => {
+  forEachDialogueSurface((target, context) => postDialogueSurfaceCharacters(target, context, snapshot))
+}
+
+const handleDialogueSurfaceMessage = (event: MessageEvent) => {
+  if (event.origin !== window.location.origin) return
+  if (isTheaterDialogueSurfaceReadyMessage(event.data)) {
+    if (!dialogueSurfaceContextMatches(event.data)) return
+    const surface = findDialogueSurfaceFrame(event.source, event.data.identityId)
+    if (!surface) return
+    dialogueSurfaceTargets.set(surface.target, surface.context)
+    postDialogueSurfaceRuntime(surface.target, surface.context)
+    postDialogueSurfaceCharacters(surface.target, surface.context)
+    return
+  }
+  if (isTheaterDialogueSurfaceDisposeMessage(event.data)) {
+    if (!dialogueSurfaceContextMatches(event.data)) return
+    for (const [target, registration] of dialogueSurfaceTargets) {
+      if (target === event.source && registration.identityId === event.data.identityId) {
+        dialogueSurfaceTargets.delete(target)
+        break
+      }
+    }
+    return
+  }
+  if (!isTheaterDialogueSurfaceCommandMessage(event.data)) return
+  if (event.data.sessionId !== sessionId || !dialogueSurfaceContextMatches(event.data)) return
+  const surface = findDialogueSurfaceFrame(event.source, event.data.identityId)
+  if (!surface || dialogueSurfaceTargets.get(surface.target)?.identityId !== surface.context.identityId) return
+  const command = event.data.command
+  if (command.name === 'set-reduced-motion') {
+    dialogueRuntime.setReducedMotion(command.value)
+    return
+  }
+  if (dialogueRuntime.getSnapshot().queue.current?.message.actor.identityId !== surface.context.identityId) return
+  if (command.name === 'complete-current') dialogueRuntime.completeCurrent(command.messageId)
+  else if (command.name === 'skip') dialogueRuntime.skip()
+  else if (command.name === 'close') dialogueRuntime.close()
+  else dialogueRuntime.setCharactersPerSecond(command.value)
+}
+
+watch(characterSnapshot, snapshot => broadcastDialogueCharacters(snapshot))
+watch(
+  () => stageStore.state.activeSceneId,
+  () => {
+    void nextTick(() => {
+      forEachDialogueSurface(() => undefined)
+      ensureUnrenderedPerformanceDialogueProgress()
+    })
+  },
+  { flush: 'post' },
+)
+watch(
+  () => stageStore.activeObjects.value,
+  () => { ensureUnrenderedPerformanceDialogueProgress() },
+  { deep: true, flush: 'post' },
+)
+
 const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
   const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
   const canControlMusic = (memberRole === 'owner' || memberRole === 'admin')
@@ -411,6 +596,7 @@ const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
 const startTheaterBridge = () => {
   if (!worldId.value || !channelId.value || typeof window === 'undefined') return
   const generation = ++theaterBridgeGeneration
+  dialogueSurfaceTargets.clear()
   dialogueRuntime.reset()
   theaterBridge?.stop()
   theaterBridge = null
@@ -672,7 +858,9 @@ onMounted(async () => {
     }
     startTheaterBridge()
     window.addEventListener('message', handleTheaterContext)
+    window.addEventListener('message', handleDialogueSurfaceMessage)
 	window.addEventListener('message', handleDice3DMessage)
+    unsubscribeDialogueSurfaceRuntime = dialogueRuntime.subscribe(broadcastDialogueRuntime)
     await startTheaterSync()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
@@ -683,7 +871,11 @@ onBeforeUnmount(() => {
   theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
   window.removeEventListener('message', handleTheaterContext)
+  window.removeEventListener('message', handleDialogueSurfaceMessage)
 	window.removeEventListener('message', handleDice3DMessage)
+  unsubscribeDialogueSurfaceRuntime?.()
+  unsubscribeDialogueSurfaceRuntime = null
+  dialogueSurfaceTargets.clear()
   appearancePreview.value = null
   theaterBridge?.stop()
   theaterBridge = null

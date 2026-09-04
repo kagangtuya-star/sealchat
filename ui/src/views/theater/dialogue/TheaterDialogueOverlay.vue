@@ -12,7 +12,7 @@ import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-pro
 import {
   hasTheaterDialoguePerformanceContent,
   resolveTheaterDialoguePresentation,
-  type TheaterDialogueRuntime,
+  type TheaterDialogueRuntimeController,
   type TheaterDialogueRuntimeSnapshot,
 } from './theater-dialogue-runtime'
 import '@/components/theater-presentation/theaterComposition.css'
@@ -21,10 +21,11 @@ import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import { isTheaterBridgeDebugEnabled, logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
 
 const props = defineProps<{
-  runtime: TheaterDialogueRuntime
+  runtime: TheaterDialogueRuntimeController
   characterSnapshot: ChatCharactersSnapshotPayload
   worldId: string
   channelId: string
+  fillContainer?: boolean
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -72,8 +73,20 @@ const stickDialogueBodyToBottom = () => {
 const current = computed(() => snapshot.value.queue.current)
 const message = computed(() => current.value?.message || null)
 const presentation = computed(() => livePresentation.value || resolveTheaterDialoguePresentation(message.value, props.characterSnapshot))
+const effectiveDialogueTransform = computed(() => (
+  props.fillContainer
+    ? {
+        ...presentation.value.dialogue.transform,
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        rotation: 0,
+      }
+    : presentation.value.dialogue.transform
+))
 const dialogueStyle = computed<CSSProperties>(() => ({
-  ...resolveTheaterTransformStyle(presentation.value.dialogue.transform),
+  ...resolveTheaterTransformStyle(effectiveDialogueTransform.value),
 }))
 const dialogueControlsStyle = computed<CSSProperties>(() => ({ ...dialogueStyle.value, zIndex: '1000' }))
 const portrait = computed(() => presentation.value.portrait?.enabled ? presentation.value.portrait : null)
@@ -317,7 +330,7 @@ onBeforeUnmount(() => {
   <div
     ref="rootRef"
     class="theater-dialogue-overlay theater-composition-host"
-    :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion }"
+    :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion, 'is-fill-container': fillContainer }"
     aria-live="polite"
   >
     <div v-if="current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
@@ -421,6 +434,12 @@ onBeforeUnmount(() => {
 
 .theater-dialogue-overlay > .theater-composition {
   z-index: 1;
+}
+
+.theater-dialogue-overlay.is-fill-container > .theater-composition {
+  width: 100cqw;
+  height: 100cqh;
+  aspect-ratio: auto;
 }
 
 .theater-dialogue-portrait,

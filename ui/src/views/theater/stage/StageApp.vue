@@ -132,6 +132,10 @@ import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
+import {
+  buildTheaterDialogueSurfaceUrl,
+  parseTheaterDialogueSurfaceUrl,
+} from '../dialogue/theater-dialogue-surface'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
@@ -2704,7 +2708,13 @@ const selectedObject = computed(() => {
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 
-type QuickToolTab = 'iform' | 'note' | 'character'
+const hasCharacterDialogueSurface = computed(() => Object.values(props.store.activeObjects.value).some((object) => {
+  if (object.type !== 'iframe') return false
+  const context = parseTheaterDialogueSurfaceUrl(normalizeStageIframeContent(object.content?.iframe).url)
+  return context?.worldId === props.worldId && context.channelId === props.channelId
+}))
+
+type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue'
 interface QuickToolOption {
   id: string
   name: string
@@ -2722,12 +2732,14 @@ const quickToolPickerTab = ref<QuickToolTab>('iform')
 const quickToolPickerLoading = ref(false)
 const quickToolPickerError = ref('')
 const quickToolSelection = ref<{ tab: QuickToolTab; option: QuickToolOption } | null>(null)
+const quickToolCharacterQuery = ref('')
 let quickToolPickerEpoch = 0
 
 const quickToolTabs: Array<{ value: QuickToolTab; label: string }> = [
   { value: 'iform', label: '频道嵌入' },
   { value: 'note', label: '便签' },
   { value: 'character', label: '人物卡' },
+  { value: 'dialogue', label: '角色对话框' },
 ]
 
 const quickToolUrl = (type: 'iform' | 'note' | 'character', id: string) => (
@@ -2744,7 +2756,57 @@ const truncateQuickToolDescription = (value: unknown) => {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text
 }
 
+const dialogueCharacterName = (character: ChatCharactersSnapshotPayload['characters'][number]) => (
+  character.resolvedAppearance.displayName.trim()
+  || character.activeVariantDisplayName?.trim()
+  || character.displayName.trim()
+  || character.identityId
+)
+
+const dialogueCharacterNames = (character: ChatCharactersSnapshotPayload['characters'][number]) => [...new Set([
+  character.displayName,
+  character.resolvedAppearance.displayName,
+  character.activeVariantDisplayName,
+  character.baseAppearance.displayName,
+].map(value => value?.trim()).filter((value): value is string => Boolean(value)))]
+
+const dialogueCharacterOptions = computed<QuickToolOption[]>(() => {
+  const query = quickToolCharacterQuery.value.trim()
+  const characters = props.characterSnapshot.characters
+  let matches = characters
+  if (query) {
+    const identityMatches = characters.filter(character => character.identityId === query)
+    const displayNameMatches = characters.filter(character => character.displayName.trim() === query)
+    const aliasMatches = characters.filter(character => dialogueCharacterNames(character).includes(query))
+    const normalizedQuery = query.toLocaleLowerCase()
+    const fuzzyMatches = characters.filter(character => dialogueCharacterNames(character).some(
+      name => name.toLocaleLowerCase().includes(normalizedQuery),
+    ))
+    matches = identityMatches.length
+      ? identityMatches
+      : displayNameMatches.length
+        ? displayNameMatches
+        : aliasMatches.length
+          ? aliasMatches
+          : fuzzyMatches
+  }
+  return matches.map((character) => {
+    const name = dialogueCharacterName(character)
+    return {
+      id: character.identityId,
+      name,
+      description: `${name} · ${character.identityId}`,
+      url: buildTheaterDialogueSurfaceUrl({
+        identityId: character.identityId,
+        worldId: props.worldId,
+        channelId: props.channelId,
+      }),
+    }
+  })
+})
+
 const quickToolOptionsFor = (tab: QuickToolTab): QuickToolOption[] => {
+  if (tab === 'dialogue') return dialogueCharacterOptions.value
   if (tab === 'iform') {
     return (iformStore.formsByChannel[props.channelId] || []).map((form) => ({
       id: form.id,
@@ -2796,6 +2858,7 @@ const quickToolPickerStyle = computed(() => {
     zIndex: '10002',
   }
 })
+const quickToolActiveLoading = computed(() => quickToolPickerTab.value !== 'dialogue' && quickToolPickerLoading.value)
 
 const selectQuickTool = (tab: QuickToolTab, option: QuickToolOption) => {
   quickToolSelection.value = { tab, option }
@@ -2813,6 +2876,7 @@ const openQuickToolPicker = async () => {
   quickToolPickerOpen.value = true
   quickToolPickerTab.value = 'iform'
   quickToolSelection.value = null
+  quickToolCharacterQuery.value = ''
   quickToolPickerError.value = ''
   quickToolPickerLoading.value = true
   const worldId = props.worldId
@@ -2841,18 +2905,45 @@ const closeQuickToolPicker = () => {
   quickToolPickerOpen.value = false
   quickToolPickerLoading.value = false
   quickToolSelection.value = null
+  quickToolCharacterQuery.value = ''
 }
 
 const handleQuickToolTabChange = (value: string) => {
-  if (value !== 'iform' && value !== 'note' && value !== 'character') return
+  if (value !== 'iform' && value !== 'note' && value !== 'character' && value !== 'dialogue') return
   quickToolPickerTab.value = value
   quickToolSelection.value = null
 }
 
 const applyQuickToolSelection = () => {
-  const selected = quickToolSelection.value?.option
+  const selection = quickToolSelection.value
+  const selected = selection?.option
   const object = selectedObject.value
   if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  if (selection.tab === 'dialogue') {
+    const character = props.characterSnapshot.characters.find(item => item.identityId === selected.id)
+    if (!character) {
+      quickToolSelection.value = null
+      quickToolPickerError.value = '未找到角色'
+      return
+    }
+    const url = resolveSafeStageIframeUrl(selected.url)
+    if (!url) return
+    const name = dialogueCharacterName(character)
+    props.store.beginObjectEdit('添加角色对话框')
+    object.name = `${name} 对话框`
+    object.interactive = true
+    object.aspectRatioLocked = false
+    object.transform = {
+      ...object.transform,
+      width: Number((640 / WORLD_UNIT_PX).toFixed(6)),
+      height: Number((240 / WORLD_UNIT_PX).toFixed(6)),
+    }
+    object.content = { ...object.content, iframe: { url, scale: 1 } }
+    props.store.commitObjectEdit()
+    iframeUrlDraft.value = url
+    closeQuickToolPicker()
+    return
+  }
   iframeUrlDraft.value = selected.url
   closeQuickToolPicker()
   commitSelectedIframeUrl()
@@ -8245,7 +8336,7 @@ onBeforeUnmount(() => {
           :channel-id="channelId"
           @open-character-card="emit('openCharacterCard', $event)"
         />
-        <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
+        <TheaterDialogueOverlay v-if="!hasCharacterDialogueSurface" :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
         <TheaterEffectOverlay
           :playbacks="effectPlaybacks"
           :selected-object="selectedEffectObject"
@@ -8293,6 +8384,15 @@ onBeforeUnmount(() => {
             @update:value="handleQuickToolTabChange"
           >
             <n-tab-pane v-for="tab in quickToolTabs" :key="tab.value" :name="tab.value" :tab="tab.label">
+              <div v-if="tab.value === 'dialogue'" class="theater-tool-picker__search" @focusin.stop @focusout.stop>
+                <n-input
+                  v-model:value="quickToolCharacterQuery"
+                  size="small"
+                  clearable
+                  placeholder="输入角色名称或角色 ID"
+                  aria-label="搜索角色名称或角色 ID"
+                />
+              </div>
               <div class="theater-tool-picker__list">
                 <button
                   v-for="option in quickToolOptionsFor(tab.value)"
@@ -8309,17 +8409,17 @@ onBeforeUnmount(() => {
                   <n-icon v-if="isQuickToolOptionSelected(tab.value, option)"><Select /></n-icon>
                 </button>
                 <div v-if="!quickToolOptionsFor(tab.value).length" class="theater-tool-picker__empty">
-                  暂无可用{{ tab.label }}
+                  {{ tab.value === 'dialogue' ? '未找到角色' : `暂无可用${tab.label}` }}
                 </div>
               </div>
             </n-tab-pane>
           </n-tabs>
-          <div v-if="quickToolPickerLoading" class="theater-tool-picker__status">正在读取可用工具…</div>
+          <div v-if="quickToolActiveLoading" class="theater-tool-picker__status">正在读取可用工具…</div>
           <div v-else-if="quickToolPickerError" class="theater-tool-picker__status is-error">{{ quickToolPickerError }}</div>
           <div class="theater-tool-picker__footer">
             <small v-if="quickToolSelection">已选择：{{ quickToolSelection.option.name }}</small>
             <span v-else />
-            <n-button size="small" type="primary" :disabled="!quickToolSelection || quickToolPickerLoading" @click="applyQuickToolSelection">确定</n-button>
+            <n-button size="small" type="primary" :disabled="!quickToolSelection || quickToolActiveLoading" @click="applyQuickToolSelection">确定</n-button>
           </div>
         </div>
       </aside>
@@ -9701,8 +9801,9 @@ onBeforeUnmount(() => {
 .theater-tool-picker__tabs :deep(.n-tabs-nav) { flex: 0 0 auto; }
 .theater-tool-picker__tabs :deep(.n-tabs-content) { min-height: 0; flex: 1 1 auto; overflow: hidden; }
 .theater-tool-picker__tabs :deep(.n-tabs-pane-wrapper) { min-height: 0; flex: 1 1 auto; overflow: hidden; }
-.theater-tool-picker__tabs :deep(.n-tab-pane) { height: 100%; }
-.theater-tool-picker__list { height: 100%; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding-top: 8px; }
+.theater-tool-picker__tabs :deep(.n-tab-pane) { height: 100%; display: flex; flex-direction: column; }
+.theater-tool-picker__search { flex: 0 0 auto; padding-top: 8px; }
+.theater-tool-picker__list { min-height: 0; flex: 1 1 auto; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding-top: 8px; }
 .theater-tool-picker__option {
   width: 100%; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .1)); border-radius: 5px;
   color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-panel) 78%, transparent); text-align: left; cursor: pointer; transition: border-color .14s ease, background .14s ease;

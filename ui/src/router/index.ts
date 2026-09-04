@@ -98,6 +98,12 @@ const router = createRouter({
       component: () => import('@/views/status/StatusPerfDashboard.vue'),
     },
     {
+      path: '/internal/theater-dialogue/:identityId',
+      name: 'theater-dialogue-surface',
+      component: () => import('@/views/theater/dialogue/TheaterDialogueInternalView.vue'),
+      meta: { internalSurface: true },
+    },
+    {
       path: '/internal/:type/:id',
       name: 'internal-surface',
       component: () => import('@/views/internal/InternalSurfaceView.vue'),
