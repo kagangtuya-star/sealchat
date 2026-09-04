@@ -6356,6 +6356,7 @@ const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
     let entry = objectRootLayers.get(object.id)
     if (!entry) {
       const layer = new Konva.Layer()
+      layer.getNativeCanvasElement().style.pointerEvents = 'none'
       const camera = new Konva.Group()
       layer.add(camera)
       stage!.add(layer)
@@ -6365,7 +6366,7 @@ const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
     }
     entry.camera.position(worldCameraGroup.position())
     entry.camera.scale(worldCameraGroup.scale())
-    entry.layer.getCanvas()._canvas.style.zIndex = String(canvasZIndex)
+    entry.layer.getNativeCanvasElement().style.zIndex = String(canvasZIndex)
     const node = objectNodes.get(object.id)
     if (node && node.getParent() !== entry.camera) node.moveTo(entry.camera)
   })
