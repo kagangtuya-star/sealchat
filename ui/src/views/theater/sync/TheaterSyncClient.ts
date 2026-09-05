@@ -742,6 +742,7 @@ const isPermissionDenied = (error: unknown) => {
 }
 
 export class TheaterSyncClient {
+  private inputChannelId: string
   private revision = 0
   private schemaVersion = 1
   private permissions: string[] = []
@@ -894,7 +895,13 @@ export class TheaterSyncClient {
     void this.subscribe()
   }
 
-  constructor(private readonly options: TheaterSyncOptions) {}
+  constructor(private readonly options: TheaterSyncOptions) {
+    this.inputChannelId = options.inputChannelId || options.channelId
+  }
+
+  setInputChannelId(channelId: string) {
+    this.inputChannelId = channelId.trim()
+  }
 
   async start() {
     if (this.started) return
@@ -1054,7 +1061,7 @@ export class TheaterSyncClient {
     await this.options.sendGatewayAPI('theater.pointer', {
       worldId: this.options.worldId,
       channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
-      inputChannelId: this.options.inputChannelId || this.options.channelId,
+      inputChannelId: this.inputChannelId || this.options.channelId,
       traceId: trace.traceId,
       identityId: trace.identityId,
       variantId: trace.variantId || '',
@@ -1109,7 +1116,7 @@ export class TheaterSyncClient {
       objectId: payload.objectId,
       actionId: payload.actionId,
       ...(payload.stepId ? { stepId: payload.stepId } : {}),
-      inputChannelId: this.options.inputChannelId || this.options.channelId,
+      inputChannelId: this.inputChannelId || this.options.channelId,
       expectedRevision: this.revision,
     })
   }

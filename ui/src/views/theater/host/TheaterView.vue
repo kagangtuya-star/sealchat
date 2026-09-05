@@ -807,15 +807,16 @@ const startTheaterSync = async () => {
   if (!isCurrent()) return
   await chat.worldDetail(targetWorldId)
   if (!isCurrent()) return
-  if (chat.curChannel?.id !== targetChannelId) {
-    const switched = await chat.channelSwitchTo(targetChannelId)
+  const currentChannelId = channelId.value
+  if (chat.curChannel?.id !== currentChannelId) {
+    const switched = await chat.channelSwitchTo(currentChannelId)
     if (!isCurrent()) return
     if (!switched) throw new Error('无法进入小剧场频道')
   }
   const client = new TheaterSyncClient({
     worldId: targetWorldId,
     channelId: '',
-    inputChannelId: targetChannelId,
+    inputChannelId: channelId.value,
     scopeType: 'world',
     store: stageStore,
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
@@ -908,6 +909,7 @@ const handleTheaterContext = (event: MessageEvent) => {
   const nextWorldId = data.worldId.trim()
   const nextChannelId = data.channelId.trim()
   if (!nextWorldId || !nextChannelId || (nextWorldId === worldId.value && nextChannelId === channelId.value)) return
+  const worldChanged = nextWorldId !== worldId.value
   worldId.value = nextWorldId
   channelId.value = nextChannelId
   void router.replace({
@@ -915,9 +917,16 @@ const handleTheaterContext = (event: MessageEvent) => {
     query: { ...route.query, worldId: nextWorldId, channelId: nextChannelId },
   })
   startTheaterBridge()
-  void startTheaterSync().catch((error) => {
-    message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
-  })
+  if (worldChanged) {
+    void startTheaterSync().catch((error) => {
+      message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
+    })
+  } else {
+    theaterSync?.setInputChannelId(nextChannelId)
+    if (chat.curChannel?.id !== nextChannelId) {
+      void chat.channelSwitchTo(nextChannelId)
+    }
+  }
 }
 
 const sendAppearancePreviewCommand = (command: TheaterEditorCommand, transient = false) => {
