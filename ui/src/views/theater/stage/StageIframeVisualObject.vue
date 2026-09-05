@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const chat = useChatStore()
 const iformStore = useIFormStore()
+iformStore.bootstrap()
 const iframeContent = computed(() => normalizeStageIframeContent(props.object.content?.iframe))
 const configuredUrl = computed(() => iframeContent.value.url)
 const iframeSrc = computed(() => resolveSafeStageIframeUrl(configuredUrl.value))
@@ -56,8 +57,17 @@ watch(
     if (!formId || !channelId || !contextMatches) return
     directIFormState.value = 'loading'
     try {
+      const hadCachedForms = iformStore.hasLoadedForms(channelId)
       await iformStore.ensureForms(channelId)
       if (epoch !== loadEpoch) return
+      const hasTargetForm = () => (
+        (iformStore.formsByChannel[channelId] || [])
+          .some(item => item.id === formId)
+      )
+      if (hadCachedForms && !hasTargetForm()) {
+        await iformStore.ensureForms(channelId, true)
+        if (epoch !== loadEpoch) return
+      }
       directIFormState.value = 'loaded'
     } catch {
       if (epoch !== loadEpoch) return
