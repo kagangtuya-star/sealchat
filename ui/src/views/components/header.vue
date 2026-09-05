@@ -1241,20 +1241,20 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     @apply="applyObserverFilters"
   />
 
-  <div v-if="userProfileShow" style="background-color: var(--n-color); margin-left: -1.5rem;"
+  <div v-if="userProfileShow" style="background-color: var(--n-color, var(--sc-bg-surface, #fff)); margin-left: -1.5rem;"
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer">
     <user-profile :openAISettingsOnMount="userProfileOpenAISettings" @close="() => { userProfileShow = false; userProfileOpenAISettings = false; }" />
   </div>
   <div
     v-if="adminShow"
-    style="background-color: var(--n-color); margin-left: -1.5rem;"
+    style="background-color: var(--n-color, var(--sc-bg-surface, #fff)); margin-left: -1.5rem;"
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer"
   >
     <AdminSettings :initial-tab="adminInitialTab" @close="adminShow = false" />
   </div>
   <div
     v-if="inputStatsShow"
-    style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
+    style="background-color: var(--n-color, var(--sc-bg-surface, #fff)); margin-left: -1.5rem; padding-top: 2rem;"
     class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
   >
     <component
