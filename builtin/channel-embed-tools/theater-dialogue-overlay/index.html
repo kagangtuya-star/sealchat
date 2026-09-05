@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>小剧场透明角色对话框</title>
+<style>html,body{margin:0;background:transparent}</style>
+<script>
+  const params = new URLSearchParams(location.search)
+  const sdk = new URL(params.get('sdkUrl') || '../../../../channel-embed-sdk.js', location.href)
+  const base = new URL(sdk.href.replace(/api\/v1\/channel-embed-sdk\.js(?:\?.*)?$/, ''))
+  base.hash = '/internal/theater-dialogue-embed?' + new URLSearchParams({ hostOrigin: params.get('hostOrigin') || sdk.origin })
+  location.replace(base.href)
+</script>
+</html>

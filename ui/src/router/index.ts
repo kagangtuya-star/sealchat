@@ -104,6 +104,12 @@ const router = createRouter({
       meta: { internalSurface: true },
     },
     {
+      path: '/internal/theater-dialogue-embed',
+      name: 'theater-dialogue-embed',
+      component: () => import('@/views/theater/dialogue/TheaterDialogueEmbedView.vue'),
+      meta: { internalSurface: true },
+    },
+    {
       path: '/internal/:type/:id',
       name: 'internal-surface',
       component: () => import('@/views/internal/InternalSurfaceView.vue'),

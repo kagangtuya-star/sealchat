@@ -52,6 +52,13 @@
         getCurrent: () => this.request('characters.getCurrent'),
         onChanged: handler => this.on('characters.changed', handler)
       }
+      this.theater = { dialogue: {
+        subscribe: params => this.request('theater.dialogue.subscribe', params),
+        unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
+        onCreated: handler => this.on('theater.dialogue.created', handler),
+        onUpdated: handler => this.on('theater.dialogue.updated', handler),
+        onRemoved: handler => this.on('theater.dialogue.removed', handler)
+      } }
       this.characterCard = {
         getStatus: () => this.request('characterCard.getStatus'),
         getCurrent: () => this.request('characterCard.getCurrent'),
@@ -193,6 +200,9 @@
 
     close(event) {
       if (this.closed) return
+      if (!event) {
+        try { this.port.postMessage({ type: CHANNEL_EMBED_REQUEST, version: 1, sessionId: this.sessionId, requestId: randomEmbedId('close'), method: 'session.close', contextVersion: this.contextVersion }) } catch (_) { /* already detached */ }
+      }
       this.closed = true
       this.pending.forEach(pending => {
         clearTimeout(pending.timer)
@@ -203,6 +213,7 @@
         try { handler(event) } catch (_) { /* subscriber errors must not break cleanup */ }
       })
       this.closedHandlers.clear()
+      this.handlers.clear()
       this.port.close()
     }
   }

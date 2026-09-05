@@ -1,0 +1,15 @@
+{
+  "name": "小剧场透明角色对话框",
+  "description": "独立绑定频道角色的透明对话组件，可重复安装",
+  "entry": "index.html",
+  "defaultWidth": 640,
+  "defaultHeight": 240,
+  "defaultCollapsed": false,
+  "defaultFloating": false,
+  "allowPopout": true,
+  "mediaOptions": { "allowAudio": false, "allowVideo": false },
+  "bridgePolicy": {
+    "enabled": true,
+    "capabilities": ["context.read", "characters.read", "permissions.read", "storage.read", "storage.write", "theater.dialogue.subscribe"]
+  }
+}

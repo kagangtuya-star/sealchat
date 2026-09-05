@@ -1,3 +1,4 @@
+import type { TheaterDialogueMessagePayload, TheaterDialogueMessageRemovedPayload } from '../views/theater/bridge/theater-bridge-protocol'
 import {
   CHANNEL_EMBED_EVENT,
   CHANNEL_EMBED_HANDSHAKE,
@@ -193,6 +194,9 @@ export class ChannelEmbedClient {
   }
   close(event?: EmbedEvent) {
     if (this.closed) return
+    if (!event) {
+      try { this.port.postMessage({ type: CHANNEL_EMBED_REQUEST, version: 1, sessionId: this.sessionId, requestId: randomEmbedId('close'), method: 'session.close', contextVersion: this.contextVersion }) } catch { /* already detached */ }
+    }
     this.closed = true
     this.pending.forEach((pending) => { clearTimeout(pending.timer); pending.reject(new SealChatEmbedError({ code: 'SESSION_EXPIRED', message: 'Embed session closed' })) })
     this.pending.clear()
@@ -200,10 +204,18 @@ export class ChannelEmbedClient {
       try { handler(event) } catch { /* subscriber errors must not break cleanup */ }
     })
     this.closedHandlers.clear()
+    this.handlers.clear()
     this.port.close()
   }
 
   readonly context = { get: () => this.request('context.get'), onChanged: (handler: EventHandler) => this.on('context.changed', handler) }
+  readonly theater = { dialogue: {
+    subscribe: (params: { identityId: string }) => this.request<{ identityId: string }>('theater.dialogue.subscribe', params),
+    unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
+    onCreated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.created', handler),
+    onUpdated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.updated', handler),
+    onRemoved: (handler: (payload: TheaterDialogueMessageRemovedPayload) => void) => this.on('theater.dialogue.removed', handler),
+  } }
   readonly user = { getCurrent: () => this.request('user.getCurrent') }
   readonly member = { getCurrent: () => this.request('member.getCurrent') }
   readonly members = { list: (params: { scope: EmbedMemberListScope; cursor?: string }) => this.request<EmbedSafeMember[] | EmbedWorldAdmin[]>('members.list', params), onChanged: (handler: EventHandler) => this.on('members.changed', handler) }

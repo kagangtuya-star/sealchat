@@ -3,6 +3,7 @@ import { chatEvent } from '@/stores/chat'
 import type { CharacterCardApiStatus, CharacterCardAttrsPatchResult, CharacterCardData } from '@/stores/characterCard'
 import type { ChannelCharacterSnapshotItem } from '@/stores/channelCharacterSnapshot'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
+import { createChannelEmbedTheaterDialogue } from './channelEmbedTheaterDialogue'
 import {
   CHANNEL_EMBED_EVENT,
   CHANNEL_EMBED_HANDSHAKE_ACK,
@@ -16,6 +17,9 @@ import {
 
 const defaultCapabilities = ['context.read', 'user.read', 'members.read', 'world.admins.read', 'characters.read', 'characterCard.read', 'characterCard.write', 'permissions.read', 'storage.read', 'storage.write', 'events.subscribe', 'events.publish', 'messages.send']
 const publicErrorCodes = new Set(['ORIGIN_DENIED', 'HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'CAPABILITY_DENIED', 'PERMISSION_DENIED', 'INVALID_PARAMS', 'NOT_FOUND', 'REVISION_CONFLICT', 'QUOTA_EXCEEDED', 'PAYLOAD_TOO_LARGE', 'RATE_LIMITED', 'WS_OFFLINE', 'TIMEOUT', 'INTERNAL_ERROR'])
+
+const dialogueSource = createChannelEmbedTheaterDialogue(chatEvent, resolveAttachmentUrl)
+type EmbedSession = { port: MessagePort; source: WindowProxy; origin: string; disposeDialogue?: () => void }
 
 type HostDeps = {
   chat: any
@@ -126,7 +130,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
   let policy = normalizedPolicy(deps.form.bridgePolicy)
   let sessionId = randomEmbedId('session')
   const nonceSeen = new Set<string>()
-  const sessions = new Map<string, { port: MessagePort; source: WindowProxy; origin: string }>()
+  const sessions = new Map<string, EmbedSession>()
   const listeners: Array<() => void> = []
   const seenGatewayEvents = new Set<string>()
   const authenticatedUserId = safeString(deps.user?.info?.id, 100)
@@ -169,7 +173,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
   }
   const currentActiveIdentityId = () => safeString(deps.chat.activeChannelIdentity?.[deps.channelId], 100)
   const effectiveCapabilities = () => policy.capabilities.filter((capability) => {
-    if (!defaultCapabilities.includes(capability)) return false
+    if (!defaultCapabilities.includes(capability) && capability !== 'theater.dialogue.subscribe') return false
     if (['members.read', 'characterCard.write', 'storage.write', 'events.publish', 'messages.send'].includes(capability) && (!deps.chat.curMember || deps.chat.observerMode)) return false
     return true
   })
@@ -249,6 +253,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
   }
   const closeActiveSessions = () => {
     sessions.forEach((session) => {
+      session.disposeDialogue?.()
       try {
         session.port.postMessage({ type: CHANNEL_EMBED_EVENT, version: 1, sessionId, eventId: randomEmbedId('event'), topic: 'session.closed', contextVersion, payload: null, at: Date.now() })
       } catch { /* ignore closed ports */ }
@@ -374,7 +379,13 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     ensureSessionContext()
     if (mutating && request.contextVersion !== contextVersion) throw new Error('CONTEXT_CHANGED')
   }
-  const dispatchRequest = async (request: EmbedRequest, session: { port: MessagePort }) => {
+  const dispatchRequest = async (request: EmbedRequest, session: EmbedSession) => {
+    if (request.method === 'session.close') {
+      session.disposeDialogue?.()
+      session.disposeDialogue = undefined
+      sessions.delete(request.sessionId)
+      return null
+    }
     ensureSessionContext()
     const params = requestParams(request)
     const method = request.method
@@ -387,6 +398,26 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     const contextSensitive = method.startsWith('storage.') || method === 'members.list' || method === 'member.getCurrent' || method.startsWith('characters.') || method.startsWith('characterCard.') || method === 'permissions.getCurrent' || method === 'events.publish' || method === 'events.subscribe' || method === 'messages.send'
     requireContext(request, contextSensitive)
     switch (method) {
+      case 'theater.dialogue.subscribe': {
+        if (!has('theater.dialogue.subscribe')) throw new Error('CAPABILITY_DENIED')
+        if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
+        const identityId = boundedString(params.identityId, 100, true)
+        if (!getIdentities().some((identity: { id: string }) => identity.id === identityId)) throw new Error('NOT_FOUND: identity')
+        session.disposeDialogue?.()
+        session.disposeDialogue = dialogueSource.subscribe(deps.channelId, identityId, ({ topic, payload }) => {
+          if (closed || sessions.get(request.sessionId) !== session || !has('theater.dialogue.subscribe')) return
+          try {
+            ensureSessionContext()
+            session.port.postMessage({ type: CHANNEL_EMBED_EVENT, version: 1, sessionId: request.sessionId, eventId: randomEmbedId('event'), topic, contextVersion, payload, at: Date.now() } satisfies EmbedEvent)
+          } catch { session.disposeDialogue?.(); session.disposeDialogue = undefined }
+        })
+        return { identityId }
+      }
+      case 'theater.dialogue.unsubscribe':
+        if (!has('theater.dialogue.subscribe')) throw new Error('CAPABILITY_DENIED')
+        session.disposeDialogue?.()
+        session.disposeDialogue = undefined
+        return null
       case 'context.get': if (!has('context.read')) throw new Error('CAPABILITY_DENIED'); return getContext()
       case 'user.getCurrent': if (!has('user.read')) throw new Error('CAPABILITY_DENIED'); return safeUser(deps.user.info)
       case 'member.getCurrent': if (!has('context.read')) throw new Error('CAPABILITY_DENIED'); return safeMember(deps.chat.curMember)
@@ -463,9 +494,11 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
       default: throw new Error('NOT_FOUND: method')
     }
   }
-  const handlePortMessage = (session: { port: MessagePort; source: WindowProxy; origin: string }, value: unknown) => {
-    if (closed || !isEmbedRequest(value) || value.sessionId !== sessionId) return
+  const handlePortMessage = (session: EmbedSession, value: unknown) => {
+    if (closed || !isEmbedRequest(value) || value.sessionId !== sessionId || sessions.get(sessionId) !== session) return
     void dispatchRequest(value, session).then((result) => session.port.postMessage({ type: CHANNEL_EMBED_RESPONSE, version: 1, sessionId, requestId: value.requestId, ok: true, result }), (error) => session.port.postMessage({ type: CHANNEL_EMBED_RESPONSE, version: 1, sessionId, requestId: value.requestId, ok: false, error: publicError(error) }))
+      .catch(() => { session.disposeDialogue?.(); session.disposeDialogue = undefined })
+      .finally(() => { if (value.method === 'session.close') session.port.close() })
   }
   const handleHandshake = (event: MessageEvent) => {
     if (closed || !authenticatedUserId || event.source !== deps.iframe.contentWindow || !isEmbedHandshakeRequest(event.data) || nonceSeen.has(event.data.nonce)) return
@@ -473,6 +506,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     nonceSeen.add(event.data.nonce)
     const previousSessionId = sessionId
     sessions.forEach((previousSession) => {
+      previousSession.disposeDialogue?.()
       try {
         previousSession.port.postMessage({ type: CHANNEL_EMBED_EVENT, version: 1, sessionId: previousSessionId, eventId: randomEmbedId('event'), topic: 'session.closed', contextVersion, payload: null, at: Date.now() })
       } catch { /* ignore closed ports */ }

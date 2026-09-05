@@ -19,6 +19,7 @@ import '@/components/theater-presentation/theaterComposition.css'
 import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCache'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import { isTheaterBridgeDebugEnabled, logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
+import type { TheaterDialogueEmbedSettings } from './theater-dialogue-embed-settings'
 
 const props = defineProps<{
   runtime: TheaterDialogueRuntimeController
@@ -26,6 +27,8 @@ const props = defineProps<{
   worldId: string
   channelId: string
   fillContainer?: boolean
+  textOnly?: boolean
+  textOverrides?: TheaterDialogueEmbedSettings
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -72,7 +75,18 @@ const stickDialogueBodyToBottom = () => {
 
 const current = computed(() => snapshot.value.queue.current)
 const message = computed(() => current.value?.message || null)
-const presentation = computed(() => livePresentation.value || resolveTheaterDialoguePresentation(message.value, props.characterSnapshot))
+const presentation = computed(() => {
+  const base = livePresentation.value || resolveTheaterDialoguePresentation(message.value, props.characterSnapshot)
+  const overrides = props.textOverrides
+  if (!overrides) return base
+  return { ...base, dialogue: {
+    ...base.dialogue,
+    contentColor: overrides.contentColor || base.dialogue.contentColor,
+    charactersPerSecond: overrides.charactersPerSecond ?? base.dialogue.charactersPerSecond,
+    speaker: { ...base.dialogue.speaker, enabled: overrides.showSpeaker, fontAssetId: overrides.fontAssetId || base.dialogue.speaker.fontAssetId },
+    content: { ...base.dialogue.content, fontAssetId: overrides.fontAssetId || base.dialogue.content.fontAssetId },
+  } }
+})
 const effectiveDialogueTransform = computed(() => (
   props.fillContainer
     ? {
@@ -119,14 +133,16 @@ const useRichPlayback = computed(() => {
 const showRichContent = computed(() => Boolean(richContent.value && (!typing.value || useRichPlayback.value)))
 const mediaActive = computed(() => Boolean(current.value && typing.value && visibleInViewport.value))
 const speakerColor = computed(() => {
+  if (props.textOverrides?.speakerColor) return props.textOverrides.speakerColor
   const color = String(message.value?.actor.color || '').trim()
   return typeof CSS !== 'undefined' && CSS.supports('color', color) ? color : 'var(--sc-text-primary, #f4f4f5)'
 })
 const textLayerStyle = (kind: 'speaker' | 'content'): CSSProperties => ({
-  ...resolveTheaterTextTransformStyle(presentation.value.dialogue[kind].transform),
+  ...(props.textOnly ? {} : resolveTheaterTextTransformStyle(presentation.value.dialogue[kind].transform)),
   display: presentation.value.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   textAlign: presentation.value.dialogue.textAlign,
   '--theater-font-scale': String(presentation.value.dialogue[kind].fontScale),
+  ...(props.textOnly && props.textOverrides ? { fontSize: `${props.textOverrides.fontSize}px`, '--theater-font-scale': '1' } : {}),
 })
 const speakerStyle = computed<CSSProperties>(() => ({
   ...textLayerStyle('speaker'),
@@ -330,12 +346,12 @@ onBeforeUnmount(() => {
   <div
     ref="rootRef"
     class="theater-dialogue-overlay theater-composition-host"
-    :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion, 'is-fill-container': fillContainer }"
+    :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion, 'is-fill-container': fillContainer, 'is-text-only': textOnly }"
     aria-live="polite"
   >
-    <div v-if="current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
+    <div v-if="!textOnly && current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
     <div v-if="current" class="theater-composition">
-      <div v-if="portrait && !narration.enabled" class="theater-dialogue-portrait" :style="portraitStyle">
+      <div v-if="!textOnly && portrait && !narration.enabled" class="theater-dialogue-portrait" :style="portraitStyle">
         <TheaterPresentationMedia
           class="theater-dialogue-portrait__base"
           :media="portrait.media"
@@ -357,8 +373,8 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="theater-dialogue-shell" :style="dialogueStyle">
-        <div v-if="!frame && !narration.enabled" class="theater-dialogue-shell__default" />
-        <div v-if="frame && !narration.enabled" class="theater-dialogue-frame" :style="frameStyle">
+        <div v-if="!textOnly && !frame && !narration.enabled" class="theater-dialogue-shell__default" />
+        <div v-if="!textOnly && frame && !narration.enabled" class="theater-dialogue-frame" :style="frameStyle">
           <TheaterPresentationMedia
             :media="frame.media"
             :playback-rate="frame.playbackRate"
@@ -366,7 +382,7 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="theater-dialogue-content" @click="completeCurrent">
-          <div v-if="!narration.enabled" class="theater-dialogue-speaker" :style="speakerStyle">
+          <div v-if="textOnly || !narration.enabled" class="theater-dialogue-speaker" :style="speakerStyle">
             <span class="theater-dialogue-speaker__value">{{ message?.actor.displayName || '角色' }}</span>
           </div>
           <div ref="bodyRef" class="theater-dialogue-body" :style="contentStyle">
@@ -389,7 +405,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
-      <div class="theater-dialogue-controls" :style="dialogueControlsStyle">
+      <div v-if="!textOnly" class="theater-dialogue-controls" :style="dialogueControlsStyle">
         <div class="theater-dialogue-actions">
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -414,6 +430,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.is-text-only .theater-dialogue-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.is-text-only .theater-dialogue-speaker { container-type: normal; flex: none; }
+.is-text-only .theater-dialogue-speaker__value { font-size: inherit; line-height: 1.3; }
+.is-text-only .theater-dialogue-body { flex: 1; }
+
 .theater-dialogue-overlay {
   position: absolute;
   z-index: 9500;

@@ -36,6 +36,11 @@ type BuiltinChannelIFormToolRegistration struct {
 // Keep this list in sync with directories under builtin/channel-embed-tools.
 var builtinChannelIFormTools = []BuiltinChannelIFormToolRegistration{
 	{
+		Key: "theater-dialogue-overlay", Directory: "theater-dialogue-overlay", Name: "小剧场透明角色对话框",
+		Description: "独立绑定频道角色的透明对话组件", DefaultWidth: 640, DefaultHeight: 240,
+		AllowPopout: true,
+	},
+	{
 		Key: "channel-embed-api-demo", Directory: "channel-embed-api-demo", Name: "Demo测试",
 		Description: "SealChat Channel Embed API 多端测试工具", DefaultWidth: 960, DefaultHeight: 760,
 		AllowPopout: true,
