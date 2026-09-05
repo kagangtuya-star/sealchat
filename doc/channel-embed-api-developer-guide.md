@@ -29,6 +29,24 @@ console.log(context.currentCharacter)
 
 ## 2. 接入
 
+### 小剧场透明角色对话订阅
+
+`theater.dialogue.subscribe` 是非默认、只读的 Host 本地 capability。普通模板及旧 iForm 不会自动获得它；需要在实例策略中显式授予。内置模板 `builtin:theater-dialogue-overlay` 可在同一频道重复安装，每个实例通过自身 Storage 绑定一个 identity。
+
+```js
+const offCreated = sealchat.theater.dialogue.onCreated(message => { /* 入队播放 */ })
+const offUpdated = sealchat.theater.dialogue.onUpdated(message => { /* 更新或移除失效消息 */ })
+const offRemoved = sealchat.theater.dialogue.onRemoved(({ messageId }) => { /* 移除 */ })
+await sealchat.theater.dialogue.subscribe({ identityId: '频道角色 ID' })
+// 切换角色前清空本地播放队列；重复 subscribe 会替换旧订阅。
+await sealchat.theater.dialogue.unsubscribe()
+offCreated(); offUpdated(); offRemoved()
+```
+
+事件为 `theater.dialogue.created`、`theater.dialogue.updated`、`theater.dialogue.removed`。前两者复用现有 `TheaterDialogueMessagePayload`，removed 仅含 `{ messageId }`。created 只包含可进入小剧场队列的公开、未归档、未删除 IC 角色消息；updated 若变成 whisper、OOC、归档、删除或空正文，接收方应从 runtime 移除。created/updated 只定向发送给匹配频道与 identity 的 session；removed 在当前频道的 dialogue 订阅内分发。每个 session 同时最多订阅一个 identity，session 关闭或策略变化会释放订阅，重新握手后需重新订阅。
+
+此能力复用宿主已经存在的聊天连接，不建立额外 WebSocket、不轮询、不读取消息历史。仅在实际订阅后监听宿主聊天事件，多实例共享一次消息序列化；最后一个订阅释放后解绑监听。
+
 ### 2.1 内部接入
 
 SealChat 后端提供无需登录的 SDK 地址。频道 `srcdoc` 嵌入会自动注入 `window.__SEALCHAT_EMBED_CONFIG__`；频道 iForm 使用单独 `<iframe src>` 时，宿主会自动追加 `hostOrigin` 与 `sdkUrl` 查询参数；脱离 SealChat 宿主的外部 URL iframe 则需自行提供实际地址：
