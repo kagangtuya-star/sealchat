@@ -654,9 +654,9 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async adminBackupDelete(filename: string) {
+    async adminBackupDelete(filename: string, storage: 'local' | 's3') {
       const user = useUserStore();
-      const resp = await api.post('api/v1/admin/backup/delete', { filename }, {
+      const resp = await api.post('api/v1/admin/backup/delete', { filename, storage }, {
         headers: { 'Authorization': user.token }
       })
       return resp

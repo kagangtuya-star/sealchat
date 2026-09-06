@@ -37,6 +37,8 @@ const defaultBackupConfig = (): BackupConfig => ({
   minIntervalMinutes: 10,
   retentionCount: 5,
   path: './backups',
+  s3Enabled: false,
+  s3Prefix: 'backups',
 })
 
 const defaultSQLiteConfig = (): SQLiteConfig => ({
@@ -51,6 +53,8 @@ const normalizeBackupConfig = (value?: BackupConfig | null): BackupConfig => ({
     value?.minIntervalMinutes && value.minIntervalMinutes > 0 ? value.minIntervalMinutes : 10,
   retentionCount: value?.retentionCount && value.retentionCount > 0 ? value.retentionCount : 5,
   path: value?.path || './backups',
+  s3Enabled: value?.s3Enabled ?? false,
+  s3Prefix: value?.s3Prefix?.trim() || 'backups',
 })
 
 const normalizeSQLiteConfig = (value?: SQLiteConfig | null): SQLiteConfig => ({
@@ -262,7 +266,7 @@ const executeMessageVisibleCharCountRepair = async () => {
 
 const deleteBackup = async (row: BackupInfo) => {
   try {
-    await utils.adminBackupDelete(row.filename)
+    await utils.adminBackupDelete(row.filename, row.storage)
     message.success('删除成功')
     await fetchBackupList()
   } catch (error: any) {
@@ -272,6 +276,11 @@ const deleteBackup = async (row: BackupInfo) => {
 
 const backupColumns = [
   { title: '文件名', key: 'filename' },
+  {
+    title: '存储位置',
+    key: 'storage',
+    render: (row: BackupInfo) => (row.storage === 's3' ? 'S3' : '本地'),
+  },
   { title: '大小', key: 'size', render: (row: BackupInfo) => formatBytes(row.size) },
   { title: '创建时间', key: 'createdAt', render: (row: BackupInfo) => dayjs(row.createdAt * 1000).format('YYYY-MM-DD HH:mm:ss') },
   {
@@ -440,6 +449,15 @@ onMounted(async () => {
           </n-form-item>
           <n-form-item label="备份路径" feedback="服务端存储备份文件的绝对路径">
             <n-input v-model:value="backupConfig.path" placeholder="./backups" />
+          </n-form-item>
+          <n-form-item
+            label="备份至 S3"
+            feedback="复用平台 S3 配置。备份先在本地生成，确认上传成功后删除本地文件；上传失败时保留本地备份。"
+          >
+            <n-switch v-model:value="backupConfig.s3Enabled" />
+          </n-form-item>
+          <n-form-item label="S3 目录">
+            <n-input v-model:value="backupConfig.s3Prefix" placeholder="backups" :disabled="!backupConfig.s3Enabled" />
           </n-form-item>
           <n-form-item label="手动备份">
             <div class="flex flex-col gap-2 w-full">

@@ -56,6 +56,7 @@ func AdminBackupDelete(c *fiber.Ctx) error {
 	}
 	var payload struct {
 		Filename string `json:"filename"`
+		Storage  string `json:"storage"`
 	}
 	if err := c.BodyParser(&payload); err != nil {
 		return wrapErrorStatus(c, http.StatusBadRequest, err, "请求体解析失败")
@@ -68,10 +69,12 @@ func AdminBackupDelete(c *fiber.Ctx) error {
 	if cfg == nil {
 		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "配置未加载")
 	}
-	if err := service.DeleteBackup(cfg.Backup, filename); err != nil {
+	if err := service.DeleteBackup(cfg.Backup, filename, strings.TrimSpace(payload.Storage)); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, service.ErrBackupProtected) {
 			status = http.StatusConflict
+		} else if errors.Is(err, service.ErrBackupInvalidStorage) {
+			status = http.StatusBadRequest
 		}
 		return wrapErrorStatus(c, status, err, "删除备份失败")
 	}

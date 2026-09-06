@@ -122,6 +122,7 @@ const (
 	defaultBackupIntervalHours           = 12
 	defaultBackupMinIntervalMinutes      = 10
 	defaultBackupRetentionCount          = 5
+	defaultBackupS3Prefix                = "backups"
 	defaultAuthTokenMaxAgeDays           = 15
 	defaultAuthRefreshThresholdDays      = 7
 	defaultCertificateStorageDir         = "./data/certmagic"
@@ -264,6 +265,8 @@ type BackupConfig struct {
 	MinIntervalMinutes int    `json:"minIntervalMinutes" yaml:"minIntervalMinutes"`
 	RetentionCount     int    `json:"retentionCount" yaml:"retentionCount"`
 	Path               string `json:"path" yaml:"path"`
+	S3Enabled          bool   `json:"s3Enabled" yaml:"s3Enabled"`
+	S3Prefix           string `json:"s3Prefix" yaml:"s3Prefix"`
 }
 
 // AuthSessionConfig 登录会话配置
@@ -663,6 +666,8 @@ func ReadConfig() *AppConfig {
 			MinIntervalMinutes: defaultBackupMinIntervalMinutes,
 			RetentionCount:     defaultBackupRetentionCount,
 			Path:               defaultBackupPath,
+			S3Enabled:          false,
+			S3Prefix:           defaultBackupS3Prefix,
 		},
 		AuthSession: AuthSessionConfig{
 			MaxAgeDays:           defaultAuthTokenMaxAgeDays,
@@ -1598,6 +1603,10 @@ func applyBackupDefaults(cfg *BackupConfig) {
 	if strings.TrimSpace(cfg.Path) == "" {
 		cfg.Path = defaultBackupPath
 	}
+	cfg.S3Prefix = strings.Trim(strings.TrimSpace(cfg.S3Prefix), "/")
+	if cfg.S3Prefix == "" {
+		cfg.S3Prefix = defaultBackupS3Prefix
+	}
 }
 
 func applyAuthSessionDefaults(cfg *AuthSessionConfig) {
@@ -1941,6 +1950,8 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("backup.minIntervalMinutes", config.Backup.MinIntervalMinutes)
 		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
 		_ = k.Set("backup.path", config.Backup.Path)
+		_ = k.Set("backup.s3Enabled", config.Backup.S3Enabled)
+		_ = k.Set("backup.s3Prefix", config.Backup.S3Prefix)
 
 		// 登录会话配置
 		_ = k.Set("authSession.maxAgeDays", config.AuthSession.MaxAgeDays)

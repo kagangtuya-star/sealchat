@@ -2,12 +2,14 @@ package service
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"sealchat/model"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
@@ -24,12 +27,14 @@ type BackupInfo struct {
 	Size      int64  `json:"size"`
 	CreatedAt int64  `json:"createdAt"`
 	Protected bool   `json:"protected"`
+	Storage   string `json:"storage"`
 }
 
 var (
-	ErrBackupRunning     = errors.New("backup is already running")
-	ErrBackupUnsupported = errors.New("backup only supported for sqlite")
-	ErrBackupProtected   = errors.New("backup is protected by retention policy")
+	ErrBackupRunning        = errors.New("backup is already running")
+	ErrBackupUnsupported    = errors.New("backup only supported for sqlite")
+	ErrBackupProtected      = errors.New("backup is protected by retention policy")
+	ErrBackupInvalidStorage = errors.New("invalid backup storage")
 
 	backupState struct {
 		mu      sync.Mutex
@@ -37,6 +42,13 @@ var (
 	}
 
 	backupNow = time.Now
+)
+
+const (
+	backupStorageLocal       = "local"
+	backupStorageS3          = "s3"
+	defaultBackupS3Prefix    = "backups"
+	backupS3OperationTimeout = 30 * time.Second
 )
 
 type backupFile struct {
@@ -72,7 +84,7 @@ func executeBackup(cfg *utils.AppConfig, respectMinInterval bool) (*BackupInfo, 
 	}
 	now := backupNow()
 	if respectMinInterval && cfg.Backup.MinIntervalMinutes > 0 {
-		recent, err := hasRecentBackup(backupDir, cfg.Backup.MinIntervalMinutes, now)
+		recent, err := hasRecentBackup(cfg.Backup, cfg.Backup.MinIntervalMinutes, now)
 		if err != nil {
 			return nil, err
 		}
@@ -124,35 +136,98 @@ func executeBackup(cfg *utils.AppConfig, respectMinInterval bool) (*BackupInfo, 
 		return nil, err
 	}
 
-	if cfg.Backup.RetentionCount > 0 {
-		if err := pruneBackups(backupDir, cfg.Backup.IntervalHours, cfg.Backup.RetentionCount, now); err != nil {
-			log.Printf("backup: cleanup failed: %v", err)
-		}
-	}
-
 	info, err := os.Stat(targetPath)
 	if err != nil {
 		return nil, err
+	}
+	localInfo := &BackupInfo{
+		Filename:  filename,
+		Size:      info.Size(),
+		CreatedAt: info.ModTime().Unix(),
+		Protected: false,
+		Storage:   backupStorageLocal,
+	}
+
+	if !cfg.Backup.S3Enabled {
+		pruneLocalBackups(cfg.Backup, now, filename)
+		return localInfo, nil
+	}
+
+	manager := GetStorageManager()
+	if manager == nil || !manager.HasRemote() {
+		log.Printf("backup: S3 unavailable; local backup retained: %s", targetPath)
+		pruneLocalBackups(cfg.Backup, now, filename)
+		return localInfo, nil
+	}
+
+	objectKey := path.Join(normalizeBackupS3Prefix(cfg.Backup.S3Prefix), filename)
+	if err := uploadBackupToS3(manager, targetPath, objectKey, info.Size()); err != nil {
+		log.Printf("backup: S3 upload or verification failed; local backup retained: %s: %v", targetPath, err)
+		pruneLocalBackups(cfg.Backup, now, filename)
+		return localInfo, nil
+	}
+	remoteItems, err := listS3Backups(context.Background(), manager, cfg.Backup.S3Prefix)
+	if err != nil {
+		log.Printf("backup: S3 upload succeeded, but remote backups could not be listed; local ZIP retained and storage not switched to remote: %v", err)
+		pruneLocalBackups(cfg.Backup, now, filename)
+		return localInfo, nil
+	}
+	foundCurrent := false
+	for _, item := range remoteItems {
+		if item.Filename == filename {
+			foundCurrent = true
+			break
+		}
+	}
+	if !foundCurrent {
+		log.Printf("backup: S3 upload succeeded, but uploaded backup was not visible in remote listing; local ZIP retained and storage not switched to remote: %s", filename)
+		pruneLocalBackups(cfg.Backup, now, filename)
+		return localInfo, nil
+	}
+
+	removeErr := os.Remove(targetPath)
+	if removeErr != nil {
+		log.Printf("backup: S3 backup succeeded, but local copy could not be removed; local copy retained: %s: %v", targetPath, removeErr)
+		pruneLocalBackups(cfg.Backup, now, filename)
+	}
+
+	if cfg.Backup.RetentionCount > 0 {
+		if err := pruneS3Backups(context.Background(), manager, cfg.Backup, now); err != nil {
+			log.Printf("backup: S3 cleanup failed: %v", err)
+		}
 	}
 	return &BackupInfo{
 		Filename:  filename,
 		Size:      info.Size(),
 		CreatedAt: info.ModTime().Unix(),
 		Protected: false,
+		Storage:   backupStorageS3,
 	}, nil
 }
 
-func hasRecentBackup(dir string, minIntervalMinutes int, now time.Time) (bool, error) {
-	items, err := listBackups(dir)
+func hasRecentBackup(cfg utils.BackupConfig, minIntervalMinutes int, now time.Time) (bool, error) {
+	items, err := listBackups(strings.TrimSpace(cfg.Path))
 	if err != nil {
 		return false, err
 	}
-	if len(items) == 0 {
+	if hasRecentBackupIn(items, minIntervalMinutes, now) {
+		return true, nil
+	}
+	if !cfg.S3Enabled {
 		return false, nil
 	}
-	minimumInterval := time.Duration(minIntervalMinutes) * time.Minute
-	latest := time.Unix(items[0].CreatedAt, 0)
-	return now.Before(latest.Add(minimumInterval)), nil
+
+	manager := GetStorageManager()
+	if manager == nil || !manager.HasRemote() {
+		log.Printf("backup: S3 unavailable while checking recent backups; using local backups only")
+		return false, nil
+	}
+	s3Items, err := listS3Backups(context.Background(), manager, cfg.S3Prefix)
+	if err != nil {
+		log.Printf("backup: failed to check recent S3 backups; using local backups only: %v", err)
+		return false, nil
+	}
+	return hasRecentBackupIn(s3Items, minIntervalMinutes, now), nil
 }
 
 func ListBackups(cfg utils.BackupConfig) ([]BackupInfo, error) {
@@ -164,11 +239,55 @@ func ListBackups(cfg utils.BackupConfig) ([]BackupInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	applyProtectedFlags(items, cfg.IntervalHours, cfg.RetentionCount, backupNow())
+	now := backupNow()
+	applyProtectedFlags(items, cfg.IntervalHours, cfg.RetentionCount, now)
+
+	manager := GetStorageManager()
+	if manager != nil && manager.HasRemote() {
+		s3Items, listErr := listS3Backups(context.Background(), manager, cfg.S3Prefix)
+		if listErr != nil {
+			log.Printf("backup: failed to list S3 backups; returning local backups only: %v", listErr)
+		} else {
+			applyProtectedFlags(s3Items, cfg.IntervalHours, cfg.RetentionCount, now)
+			items = append(items, s3Items...)
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].CreatedAt > items[j].CreatedAt
+			})
+		}
+	}
 	return items, nil
 }
 
-func DeleteBackup(cfg utils.BackupConfig, filename string) error {
+func DeleteBackup(cfg utils.BackupConfig, filename, storageLocation string) error {
+	storageLocation = strings.ToLower(strings.TrimSpace(storageLocation))
+	if storageLocation == "" {
+		storageLocation = backupStorageLocal
+	}
+	if storageLocation == backupStorageS3 {
+		name, err := normalizeBackupFilename(filename)
+		if err != nil {
+			return err
+		}
+		manager := GetStorageManager()
+		if manager == nil || !manager.HasRemote() {
+			return errors.New("S3 storage is unavailable")
+		}
+		items, err := listS3Backups(context.Background(), manager, cfg.S3Prefix)
+		if err != nil {
+			return err
+		}
+		protected := protectedBackupSet(items, cfg.IntervalHours, cfg.RetentionCount, backupNow())
+		if _, ok := protected[name]; ok {
+			return ErrBackupProtected
+		}
+		deleteCtx, cancel := context.WithTimeout(context.Background(), backupS3OperationTimeout)
+		defer cancel()
+		return manager.Delete(deleteCtx, storage.BackendS3, path.Join(normalizeBackupS3Prefix(cfg.S3Prefix), name))
+	}
+	if storageLocation != backupStorageLocal {
+		return fmt.Errorf("%w: %q", ErrBackupInvalidStorage, storageLocation)
+	}
+
 	backupDir := strings.TrimSpace(cfg.Path)
 	if backupDir == "" {
 		return errors.New("backup path is empty")
@@ -182,7 +301,7 @@ func DeleteBackup(cfg utils.BackupConfig, filename string) error {
 		return err
 	}
 	protected := protectedBackupSet(items, cfg.IntervalHours, cfg.RetentionCount, backupNow())
-	if _, ok := protected[filename]; ok {
+	if _, ok := protected[filepath.Base(target)]; ok {
 		return ErrBackupProtected
 	}
 	return os.Remove(target)
@@ -234,6 +353,14 @@ func resolveSQLitePath(dsn string) (string, error) {
 }
 
 func resolveBackupFilePath(dir, filename string) (string, error) {
+	name, err := normalizeBackupFilename(filename)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
+}
+
+func normalizeBackupFilename(filename string) (string, error) {
 	name := strings.TrimSpace(filename)
 	if name == "" {
 		return "", errors.New("filename is empty")
@@ -244,7 +371,7 @@ func resolveBackupFilePath(dir, filename string) (string, error) {
 	if !strings.HasPrefix(name, "backup-") || !strings.HasSuffix(name, ".zip") {
 		return "", errors.New("invalid backup filename")
 	}
-	return filepath.Join(dir, name), nil
+	return name, nil
 }
 
 func listBackups(dir string) ([]BackupInfo, error) {
@@ -272,6 +399,7 @@ func listBackups(dir string) ([]BackupInfo, error) {
 			Filename:  name,
 			Size:      info.Size(),
 			CreatedAt: info.ModTime().Unix(),
+			Storage:   backupStorageLocal,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -280,7 +408,120 @@ func listBackups(dir string) ([]BackupInfo, error) {
 	return items, nil
 }
 
-func pruneBackups(dir string, intervalHours, retentionCount int, now time.Time) error {
+func normalizeBackupS3Prefix(prefix string) string {
+	trimmed := strings.Trim(strings.TrimSpace(prefix), "/")
+	if trimmed == "" {
+		return defaultBackupS3Prefix
+	}
+	normalized := strings.Trim(path.Clean(trimmed), "/")
+	if normalized == "" || normalized == "." {
+		return defaultBackupS3Prefix
+	}
+	return normalized
+}
+
+func listS3Backups(ctx context.Context, manager *storage.Manager, prefix string) ([]BackupInfo, error) {
+	normalizedPrefix := normalizeBackupS3Prefix(prefix)
+	objects, err := manager.ListS3Prefix(ctx, normalizedPrefix+"/")
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]BackupInfo, 0, len(objects))
+	for _, object := range objects {
+		name := path.Base(object.ObjectKey)
+		if _, err := normalizeBackupFilename(name); err != nil {
+			continue
+		}
+		if object.ObjectKey != path.Join(normalizedPrefix, name) {
+			continue
+		}
+		items = append(items, BackupInfo{
+			Filename:  name,
+			Size:      object.Size,
+			CreatedAt: object.ModifiedAt.Unix(),
+			Storage:   backupStorageS3,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt > items[j].CreatedAt
+	})
+	return items, nil
+}
+
+func hasRecentBackupIn(items []BackupInfo, minIntervalMinutes int, now time.Time) bool {
+	if len(items) == 0 {
+		return false
+	}
+	minimumInterval := time.Duration(minIntervalMinutes) * time.Minute
+	latest := time.Unix(items[0].CreatedAt, 0)
+	return now.Before(latest.Add(minimumInterval))
+}
+
+func uploadBackupToS3(manager *storage.Manager, localPath, objectKey string, localSize int64) error {
+	result, err := manager.UploadToS3(context.Background(), storage.UploadInput{
+		ObjectKey:   objectKey,
+		LocalPath:   localPath,
+		ContentType: "application/zip",
+	})
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return errors.New("S3 upload returned no result")
+	}
+
+	existsCtx, cancel := context.WithTimeout(context.Background(), backupS3OperationTimeout)
+	defer cancel()
+	exists, err := manager.Exists(existsCtx, storage.BackendS3, objectKey)
+	if err != nil {
+		return fmt.Errorf("verify S3 object existence: %w", err)
+	}
+	if !exists {
+		return errors.New("uploaded S3 backup does not exist")
+	}
+	if result.Size > 0 && result.Size != localSize {
+		return fmt.Errorf("uploaded S3 backup size mismatch: got %d, want %d", result.Size, localSize)
+	}
+	return nil
+}
+
+func pruneLocalBackups(cfg utils.BackupConfig, now time.Time, currentFilename string) {
+	if cfg.RetentionCount <= 0 {
+		return
+	}
+	if err := pruneBackups(strings.TrimSpace(cfg.Path), cfg.IntervalHours, cfg.RetentionCount, now, currentFilename); err != nil {
+		log.Printf("backup: local cleanup failed: %v", err)
+	}
+}
+
+func pruneS3Backups(ctx context.Context, manager *storage.Manager, cfg utils.BackupConfig, now time.Time) error {
+	if cfg.RetentionCount <= 0 {
+		return nil
+	}
+	items, err := listS3Backups(ctx, manager, cfg.S3Prefix)
+	if err != nil {
+		return err
+	}
+	if len(items) <= cfg.RetentionCount {
+		return nil
+	}
+	keep := retainedBackupSet(items, cfg.IntervalHours, cfg.RetentionCount, now)
+	for _, item := range items {
+		if _, ok := keep[item.Filename]; ok {
+			continue
+		}
+		deleteCtx, cancel := context.WithTimeout(ctx, backupS3OperationTimeout)
+		err := manager.Delete(deleteCtx, storage.BackendS3, path.Join(normalizeBackupS3Prefix(cfg.S3Prefix), item.Filename))
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func pruneBackups(dir string, intervalHours, retentionCount int, now time.Time, currentFilename string) error {
 	if retentionCount <= 0 {
 		return nil
 	}
@@ -292,6 +533,9 @@ func pruneBackups(dir string, intervalHours, retentionCount int, now time.Time) 
 		return nil
 	}
 	keep := retainedBackupSet(items, intervalHours, retentionCount, now)
+	if currentFilename != "" {
+		keep[currentFilename] = struct{}{}
+	}
 	for _, item := range items {
 		if _, ok := keep[item.Filename]; ok {
 			continue

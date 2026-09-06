@@ -389,6 +389,8 @@ export interface BackupConfig {
   minIntervalMinutes: number;
   retentionCount: number;
   path: string;
+  s3Enabled: boolean;
+  s3Prefix: string;
 }
 
 export interface SQLiteConfig {
@@ -401,6 +403,7 @@ export interface BackupInfo {
   size: number;
   createdAt: number;
   protected: boolean;
+  storage: 'local' | 's3';
 }
 
 export interface ThemeManagementConfig {

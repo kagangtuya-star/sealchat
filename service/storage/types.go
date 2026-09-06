@@ -29,6 +29,12 @@ type UploadResult struct {
 	PublicURL string
 }
 
+type ObjectInfo struct {
+	ObjectKey  string
+	Size       int64
+	ModifiedAt time.Time
+}
+
 var unsafeNamePattern = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 func BuildAttachmentObjectKey(hashHex string, size int64, now time.Time) string {

@@ -237,6 +237,13 @@ func (m *Manager) DeletePrefix(ctx context.Context, backend BackendType, objectK
 	}
 }
 
+func (m *Manager) ListS3Prefix(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	if m == nil || m.remote == nil {
+		return nil, fmt.Errorf("S3 存储未初始化")
+	}
+	return m.remote.listPrefix(ctx, prefix)
+}
+
 func (m *Manager) DownloadToPath(ctx context.Context, backend BackendType, objectKey string, targetPath string) error {
 	switch backend {
 	case BackendS3:
