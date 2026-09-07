@@ -1043,6 +1043,18 @@ let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
 let wsConnectInFlight = false;
 let wsReconnectSuppressedEpoch = 0;
+let observerSessionInitInFlight: {
+  epoch: number;
+  worldId: string;
+  observerSlug: string;
+  promise: Promise<boolean>;
+} | null = null;
+let observerSessionInitialized: {
+  epoch: number;
+  worldId: string;
+  observerSlug: string;
+  channelId: string;
+} | null = null;
 let channelSwitchEpoch = 0;
 const channelSwitchGuard: {
   recent: Array<{ id: string; at: number }>;
@@ -1420,6 +1432,7 @@ export const useChatStore = defineStore({
       if (!this.observerMode) {
         return;
       }
+      observerSessionInitialized = null;
       this.observerMode = false;
       this.observerWorldId = '';
       this.observerChannelId = '';
@@ -1432,43 +1445,106 @@ export const useChatStore = defineStore({
       }
     },
 
-    async initObserverSession() {
+    async initObserverSession(options?: { connectionEpoch?: number }) {
       const worldId = this.observerWorldId ? this.observerWorldId.trim() : '';
       if (!worldId) {
         return false;
       }
-      try {
-        const detail = await this.worldDetail(worldId);
-        if (!detail) {
+      const observerSlug = this.observerSlug ? this.observerSlug.trim() : '';
+      const epoch = typeof options?.connectionEpoch === 'number'
+        ? options.connectionEpoch
+        : wsConnectionEpoch;
+      const initialized = observerSessionInitialized;
+      if (
+        initialized
+        && initialized.epoch === epoch
+        && initialized.worldId === worldId
+        && initialized.observerSlug === observerSlug
+        && initialized.channelId === (this.observerChannelId ? this.observerChannelId.trim() : '')
+      ) {
+        return true;
+      }
+      if (
+        observerSessionInitInFlight
+        && observerSessionInitInFlight.epoch === epoch
+        && observerSessionInitInFlight.worldId === worldId
+        && observerSessionInitInFlight.observerSlug === observerSlug
+      ) {
+        return observerSessionInitInFlight.promise;
+      }
+
+      const isCurrentSession = () => (
+        this.observerMode
+        && this.observerWorldId.trim() === worldId
+        && this.observerSlug.trim() === observerSlug
+        && (typeof options?.connectionEpoch !== 'number' || options.connectionEpoch === wsConnectionEpoch)
+      );
+      const task = (async () => {
+        try {
+          if (!isCurrentSession()) {
+            return false;
+          }
+          const detail = await this.worldDetail(worldId);
+          if (!detail || !isCurrentSession()) {
+            return false;
+          }
+          this.setCurrentWorld(worldId);
+          if (!this.joinedWorldIds.includes(worldId)) {
+            this.joinedWorldIds = [worldId];
+          }
+          await this.channelList(worldId, true);
+          if (!isCurrentSession()) {
+            return false;
+          }
+          let targetChannel = this.observerChannelId ? this.observerChannelId.trim() : '';
+          if (!targetChannel) {
+            targetChannel = readObserverSessionChannel(observerSlug, worldId);
+          }
+          const world = this.worldMap[worldId];
+          const firstChannelId = findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
+          const fallbackChannel = firstChannelId || world?.defaultChannelId || '';
+          if (!targetChannel) {
+            targetChannel = fallbackChannel;
+          }
+          if (targetChannel) {
+            this.observerChannelId = targetChannel;
+            let switched = await this.channelSwitchTo(targetChannel);
+            if (!isCurrentSession()) {
+              return false;
+            }
+            if (!switched && fallbackChannel && fallbackChannel !== targetChannel) {
+              this.observerChannelId = fallbackChannel;
+              switched = await this.channelSwitchTo(fallbackChannel);
+              if (!isCurrentSession()) {
+                return false;
+              }
+            }
+            if (!switched) {
+              return false;
+            }
+          }
+          if (!isCurrentSession()) {
+            return false;
+          }
+          observerSessionInitialized = {
+            epoch,
+            worldId,
+            observerSlug,
+            channelId: this.observerChannelId ? this.observerChannelId.trim() : '',
+          };
+          return true;
+        } catch (err) {
+          console.warn('[observer] init failed', err);
           return false;
         }
-        this.setCurrentWorld(worldId);
-        if (!this.joinedWorldIds.includes(worldId)) {
-          this.joinedWorldIds = [worldId];
+      })();
+      observerSessionInitInFlight = { epoch, worldId, observerSlug, promise: task };
+      try {
+        return await task;
+      } finally {
+        if (observerSessionInitInFlight?.promise === task) {
+          observerSessionInitInFlight = null;
         }
-        await this.channelList(worldId, true);
-        let targetChannel = this.observerChannelId ? this.observerChannelId.trim() : '';
-        if (!targetChannel) {
-          targetChannel = readObserverSessionChannel(this.observerSlug, worldId);
-        }
-        const world = this.worldMap[worldId];
-        const firstChannelId = findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
-        const fallbackChannel = firstChannelId || world?.defaultChannelId || '';
-        if (!targetChannel) {
-          targetChannel = fallbackChannel;
-        }
-        if (targetChannel) {
-          this.observerChannelId = targetChannel;
-          const switched = await this.channelSwitchTo(targetChannel);
-          if (!switched && fallbackChannel && fallbackChannel !== targetChannel) {
-            this.observerChannelId = fallbackChannel;
-            await this.channelSwitchTo(fallbackChannel);
-          }
-        }
-        return true;
-      } catch (err) {
-        console.warn('[observer] init failed', err);
-        return false;
       }
     },
 
@@ -1750,7 +1826,7 @@ export const useChatStore = defineStore({
       this.sendPresencePing(true);
 
       if (this.observerMode) {
-        await this.initObserverSession();
+        await this.initObserverSession({ connectionEpoch: epoch });
         resolvePendingConnectResolvers();
         return;
       }

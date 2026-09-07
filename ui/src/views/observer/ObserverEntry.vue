@@ -16,13 +16,17 @@ const slug = computed(() => {
 const status = ref<'pending' | 'processing' | 'ready' | 'invalid' | 'error'>('pending');
 const errorMessage = ref('');
 const lastResolvedSlug = ref('');
+let resolveTaskEpoch = 0;
 
 const resolveAndEnter = async () => {
   const targetSlug = slug.value;
+  const taskEpoch = ++resolveTaskEpoch;
+  const isCurrentTask = () => taskEpoch === resolveTaskEpoch && slug.value === targetSlug;
   if (targetSlug && lastResolvedSlug.value === targetSlug && status.value === 'ready') {
     return;
   }
   if (!slug.value) {
+    if (!isCurrentTask()) return;
     chat.disableObserverMode();
     status.value = 'invalid';
     errorMessage.value = '缺少旁观链接标识';
@@ -30,7 +34,8 @@ const resolveAndEnter = async () => {
   }
   status.value = 'processing';
   try {
-    const resp = await chat.resolveObserverLink(slug.value);
+    const resp = await chat.resolveObserverLink(targetSlug);
+    if (!isCurrentTask()) return;
     const worldId = typeof resp?.worldId === 'string' ? resp.worldId.trim() : '';
     const channelId = typeof resp?.channelId === 'string' ? resp.channelId.trim() : '';
     if (!worldId) {
@@ -40,9 +45,19 @@ const resolveAndEnter = async () => {
     }
     chat.enableObserverMode(worldId, channelId, targetSlug);
     await chat.ensureConnectionReady();
+    if (!isCurrentTask()) return;
+    const initialized = await chat.initObserverSession();
+    if (!isCurrentTask()) return;
+    if (!initialized) {
+      chat.disableObserverMode();
+      status.value = 'error';
+      errorMessage.value = '进入旁观模式失败，请稍后重试';
+      return;
+    }
     lastResolvedSlug.value = targetSlug;
     status.value = 'ready';
   } catch (error: any) {
+    if (!isCurrentTask()) return;
     chat.disableObserverMode();
     const code = error?.response?.status;
     if (code === 404) {
