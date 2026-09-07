@@ -42,7 +42,7 @@
       </Transition>
 
       <!-- 折叠栏 -->
-      <div class="sticky-note-rail">
+      <div class="sticky-note-rail" :style="railStyle">
         <div
           ref="railPanelRef"
           class="sticky-note-rail__panel"
@@ -51,7 +51,7 @@
           @mouseleave="closeRail"
         >
           <!-- 便签文字角标 -->
-          <div class="sticky-note-rail__badge">便签</div>
+          <div class="sticky-note-rail__badge" @pointerdown.stop="startRailDrag">便签</div>
           <div class="sticky-note-rail__body">
             <div class="sticky-note-rail__header">
               <span>便签</span>
@@ -493,6 +493,10 @@ const pushPopupStyle = ref<Record<string, string>>({})
 const pushPopupAnchor = ref<DOMRect | null>(null)
 const pushPopupRef = ref<HTMLElement | null>(null)
 const railPanelRef = ref<HTMLElement | null>(null)
+const railPosition = ref<number | null>(null)
+const railDragging = ref(false)
+const railDragPointerId = ref<number | null>(null)
+const railDragOffset = ref(0)
 const migrationModalVisible = ref(false)
 const backgroundModalVisible = ref(false)
 const backgroundTargetNoteId = ref('')
@@ -510,6 +514,7 @@ const minimizedBarDragOffset = ref({ x: 0, y: 0 })
 const minimizedBarDragStart = ref({ x: 0, y: 0 })
 
 const MINIMIZED_BAR_STORAGE_PREFIX = 'sealchat_sticky_note_minimized_bar'
+const RAIL_STORAGE_PREFIX = 'sealchat_sticky_note_rail'
 const MINIMIZED_BAR_PADDING = 8
 const MINIMIZED_BAR_DEFAULT_RIGHT = 24
 const MINIMIZED_BAR_DEFAULT_BOTTOM = 140
@@ -614,6 +619,11 @@ const minimizedBarStyle = computed(() => {
     right: 'auto',
     bottom: 'auto'
   }
+})
+
+const railStyle = computed(() => {
+  if (railPosition.value === null) return {}
+  return { top: `${railPosition.value}px` }
 })
 
 // 未分类便签
@@ -1055,6 +1065,85 @@ async function handleMigration() {
   }
 }
 
+function buildRailStorageKey() {
+  const userId = userStore.info?.id
+  if (!userId || !props.channelId) return ''
+  return `${RAIL_STORAGE_PREFIX}:${userId}:${props.channelId}`
+}
+
+function clampRailPosition(position: number) {
+  if (typeof window === 'undefined') return position
+  const halfHeight = Math.min((railPanelRef.value?.getBoundingClientRect().height || 0) / 2, window.innerHeight / 2)
+  const padding = Math.max(8, halfHeight)
+  const max = Math.max(padding, window.innerHeight - padding)
+  return Math.min(Math.max(padding, Math.round(position)), max)
+}
+
+function readRailPosition() {
+  if (typeof window === 'undefined') return
+  const key = buildRailStorageKey()
+  railPosition.value = null
+  if (!key) return
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as { y?: number } | number | null
+    const y = typeof parsed === 'number' ? parsed : parsed?.y
+    if (Number.isFinite(y)) railPosition.value = y as number
+  } catch {
+    railPosition.value = null
+  }
+}
+
+function persistRailPosition() {
+  if (typeof window === 'undefined') return
+  const key = buildRailStorageKey()
+  if (!key || railPosition.value === null) return
+  try {
+    localStorage.setItem(key, JSON.stringify({ y: railPosition.value }))
+  } catch {
+    // ignore
+  }
+}
+
+function startRailDrag(e: PointerEvent) {
+  if (e.button !== 0 || !railPanelRef.value || railDragging.value) return
+  const panelRect = railPanelRef.value.getBoundingClientRect()
+  const center = panelRect.top + panelRect.height / 2
+  railPosition.value = clampRailPosition(railPosition.value ?? center)
+  railDragOffset.value = e.clientY - railPosition.value
+  railDragging.value = true
+  railDragPointerId.value = e.pointerId
+  e.preventDefault()
+  const target = e.currentTarget as HTMLElement | null
+  target?.setPointerCapture?.(e.pointerId)
+  document.addEventListener('pointermove', onRailDrag)
+  document.addEventListener('pointerup', stopRailDrag)
+  document.addEventListener('pointercancel', stopRailDrag)
+}
+
+function onRailDrag(e: PointerEvent) {
+  if (!railDragging.value || railDragPointerId.value !== e.pointerId) return
+  e.preventDefault()
+  railPosition.value = clampRailPosition(e.clientY - railDragOffset.value)
+}
+
+function stopRailDrag(e: PointerEvent) {
+  if (!railDragging.value || railDragPointerId.value !== e.pointerId) return
+  railDragging.value = false
+  railDragPointerId.value = null
+  document.removeEventListener('pointermove', onRailDrag)
+  document.removeEventListener('pointerup', stopRailDrag)
+  document.removeEventListener('pointercancel', stopRailDrag)
+  persistRailPosition()
+}
+
+function handleRailResize() {
+  if (railPosition.value === null) return
+  railPosition.value = clampRailPosition(railPosition.value)
+  persistRailPosition()
+}
+
 function buildMinimizedBarStorageKey() {
   const userId = userStore.info?.id
   if (!userId || !props.channelId) return ''
@@ -1205,8 +1294,12 @@ watch(() => props.channelId, (newChannelId) => {
 
 watch(() => [props.channelId, userStore.info?.id], () => {
   readMinimizedBarPosition()
+  readRailPosition()
   nextTick(() => {
     initMinimizedBarPositionIfNeeded()
+    if (railPosition.value !== null) {
+      railPosition.value = clampRailPosition(railPosition.value)
+    }
   })
 }, { immediate: true })
 
@@ -1252,6 +1345,7 @@ onMounted(() => {
   chatEvent.on('sticky-note-pushed', handleEvent)
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', handleMinimizedBarResize)
+    window.addEventListener('resize', handleRailResize)
   }
   lockNowTimer = setInterval(() => {
     lockNow.value = Date.now()
@@ -1267,8 +1361,12 @@ onUnmounted(() => {
   document.removeEventListener('pointermove', onMinimizedBarDrag)
   document.removeEventListener('pointerup', stopMinimizedBarDrag)
   document.removeEventListener('pointercancel', stopMinimizedBarDrag)
+  document.removeEventListener('pointermove', onRailDrag)
+  document.removeEventListener('pointerup', stopRailDrag)
+  document.removeEventListener('pointercancel', stopRailDrag)
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', handleMinimizedBarResize)
+    window.removeEventListener('resize', handleRailResize)
   }
   if (lockNowTimer) {
     clearInterval(lockNowTimer)
@@ -1358,8 +1456,14 @@ onUnmounted(() => {
   letter-spacing: 2px;
   border-radius: 6px 0 0 6px;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
-  pointer-events: none;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
   user-select: none;
+}
+
+.sticky-note-rail__badge:active {
+  cursor: grabbing;
 }
 
 .sticky-note-rail__body {

@@ -409,9 +409,14 @@ function startMove(event: PointerEvent) {
   const startX = event.clientX, startY = event.clientY, originX = preference.x, originY = preference.y
   const movingPanel = store.uiVisible && preference.expanded
   if (movingPanel) event.preventDefault()
+  const target = event.currentTarget as HTMLElement | null
+  target?.setPointerCapture?.(event.pointerId)
   panelWasDragged.value = false
   const move = (next: PointerEvent) => {
-    if (Math.abs(next.clientX - startX) > 3 || Math.abs(next.clientY - startY) > 3) panelWasDragged.value = true
+    if (Math.abs(next.clientX - startX) > 3 || Math.abs(next.clientY - startY) > 3) {
+      panelWasDragged.value = true
+      next.preventDefault()
+    }
     if (movingPanel) {
       preference.x = Math.max(panelMargin, Math.min(window.innerWidth - preference.width - panelMargin, originX + next.clientX - startX))
       preference.y = Math.max(panelMargin, Math.min(window.innerHeight - preference.height - panelMargin, originY + next.clientY - startY))
@@ -420,9 +425,14 @@ function startMove(event: PointerEvent) {
     }
   }
   pointerCleanup?.()
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); pointerCleanup = null }
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', up)
+    pointerCleanup = null
+  }
   pointerCleanup = up
-  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up)
 }
 onMounted(() => {
   readPreference()
@@ -584,8 +594,8 @@ onMounted(() => {
 .clue-box__media-placeholder .n-icon { font-size: 24px; }
 .clue-box__item-actions { display: flex; min-height: 30px; flex-wrap: wrap; align-items: center; gap: 3px; margin: 10px -4px -5px; padding-top: 8px; border-top: 1px solid var(--sc-border-mute); }
 .clue-box__empty { margin: auto; }
-.clue-box-tab { position: fixed; right: 0; z-index: 999; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; }
+.clue-box-tab { position: fixed; right: 0; z-index: 999; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
 .clue-box-tab :deep(.n-badge-sup) { top: -18px; right: 50%; transform: translateX(50%); writing-mode: horizontal-tb; }
 .clue-box :deep(.n-input) { --n-box-shadow-hover: none !important; --n-box-shadow-focus: none !important; --n-box-shadow-active: none !important; --n-box-shadow-hover-warning: none !important; --n-box-shadow-focus-warning: none !important; --n-box-shadow-active-warning: none !important; --n-box-shadow-hover-error: none !important; --n-box-shadow-focus-error: none !important; --n-box-shadow-active-error: none !important; }
-@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } .clue-box-tab { top: 35% !important; } }
+@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } }
 </style>
