@@ -294,8 +294,7 @@ async function batchSet(value: Override) {
   if (batchSubmitting.value || (value === 'edit' && selectedHasSpectator.value)) return
   batchSubmitting.value = true
   const ids = [...selected.value]
-  const results = await Promise.allSettled(ids.map(id => setAccess(id, value)))
-  if (results.some(result => result.status === 'rejected')) message.error('部分成员权限更新失败')
+  await Promise.all(ids.map(id => setAccess(id, value)))
   batchSubmitting.value = false
 }
 
