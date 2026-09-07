@@ -1,6 +1,7 @@
 import type { TheaterImageObjectPreset } from './theater-image-folder-preset'
 
 export const THEATER_IMAGE_ASSET_DRAG_TYPE = 'application/x-sealchat-theater-image-asset'
+export const THEATER_IMAGE_ASSET_SCOPE_DRAG_TYPE = 'application/x-sealchat-theater-image-asset-scope'
 
 export interface TheaterImageAssetResource {
   id: string

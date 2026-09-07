@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { NButton, NCheckbox, NDropdown, NIcon, NPopover, NTooltip } from 'naive-ui'
-import { Adjustments, Dots, Edit, Photo, Plus, Refresh, Trash, Upload } from '@vicons/tabler'
+import { Adjustments, Dots, Edit, Photo, Pin, Plus, Refresh, Trash, Upload } from '@vicons/tabler'
 
 import TheaterImageFolderPresetEditor from './TheaterImageFolderPresetEditor.vue'
 import type { TheaterImageFolderPreset, TheaterImageObjectPreset } from './theater-image-folder-preset'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
-import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from './theater-image-assets'
+import {
+  THEATER_IMAGE_ASSET_DRAG_TYPE,
+  THEATER_IMAGE_ASSET_SCOPE_DRAG_TYPE,
+  type TheaterImageAsset,
+} from './theater-image-assets'
 
 type ImageDensity = 'small' | 'medium' | 'large'
 
@@ -55,6 +59,7 @@ const draggingAssetIds = ref<string[]>([])
 const draggingFolderId = ref('')
 const dragOverFolderId = ref<string | null>(null)
 const dragOverAssetId = ref<string | null>(null)
+const dragAsSceneFixed = ref(false)
 
 const imageFolders = computed(() => props.organizerFolders
   .filter((folder) => folder.domain === 'image')
@@ -205,6 +210,10 @@ const moveChecked = (folderId: string | number) => {
 const beginAssetDrag = (event: DragEvent, asset: TheaterImageAsset) => {
   draggingAssetIds.value = checkedIds.value.includes(asset.id) ? checkedIds.value : [asset.id]
   event.dataTransfer?.setData(THEATER_IMAGE_ASSET_DRAG_TYPE, asset.id)
+  event.dataTransfer?.setData(
+    THEATER_IMAGE_ASSET_SCOPE_DRAG_TYPE,
+    dragAsSceneFixed.value ? 'scene-fixed' : 'scene',
+  )
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove'
 }
 const beginFolderDrag = (event: DragEvent, folderId: string) => {
@@ -315,6 +324,22 @@ const clearDragState = () => {
             @clear="emit('updateFolderPreset', activeFolder.id, null)"
           />
         </n-popover>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              quaternary
+              circle
+              size="tiny"
+              :type="dragAsSceneFixed ? 'primary' : 'default'"
+              :aria-pressed="dragAsSceneFixed"
+              :aria-label="dragAsSceneFixed ? '固定元件拖入已开启' : '拖入为固定元件'"
+              @click="dragAsSceneFixed = !dragAsSceneFixed"
+            >
+              <template #icon><n-icon><Pin /></n-icon></template>
+            </n-button>
+          </template>
+          {{ dragAsSceneFixed ? '固定元件拖入已开启' : '拖入为固定元件' }}
+        </n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button quaternary circle size="tiny" :loading="loading" aria-label="刷新图片素材" @click="emit('refresh')"><template #icon><n-icon><Refresh /></n-icon></template></n-button></template>刷新</n-tooltip>
         <n-button v-if="canUpload" size="tiny" secondary :loading="uploading" @click="pickFiles"><template #icon><n-icon><Upload /></n-icon></template>上传</n-button>
         <div class="theater-image-assets__density" aria-label="缩略图大小">

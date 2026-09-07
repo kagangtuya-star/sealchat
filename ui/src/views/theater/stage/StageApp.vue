@@ -159,7 +159,11 @@ import {
   type TheaterImageFolderPreset,
   type TheaterImageObjectPreset,
 } from '../effects/theater-image-folder-preset'
-import { THEATER_IMAGE_ASSET_DRAG_TYPE, type TheaterImageAsset } from '../effects/theater-image-assets'
+import {
+  THEATER_IMAGE_ASSET_DRAG_TYPE,
+  THEATER_IMAGE_ASSET_SCOPE_DRAG_TYPE,
+  type TheaterImageAsset,
+} from '../effects/theater-image-assets'
 
 const sceneOverlayImageFolderName = '场景叠加'
 
@@ -7172,6 +7176,9 @@ const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetInde
 const handleCanvasDrop = async (event: DragEvent) => {
   const imageAssetId = event.dataTransfer?.getData(THEATER_IMAGE_ASSET_DRAG_TYPE)?.trim() || ''
   if (imageAssetId) {
+    const scope = event.dataTransfer?.getData(THEATER_IMAGE_ASSET_SCOPE_DRAG_TYPE) === 'scene-fixed'
+      ? 'scene-fixed'
+      : 'scene'
     if (!canEditAllObjects.value) return
     let asset = theaterImageAssets.value.find((item) => item.id === imageAssetId)
     if (!asset) {
@@ -7182,7 +7189,7 @@ const handleCanvasDrop = async (event: DragEvent) => {
       theaterImageError.value = '图片素材不存在或资源不可用'
       return
     }
-    const object = props.store.addObject('image')
+    const object = props.store.addObject('image', scope)
     object.name = asset.name
     const dimensions = Number.isFinite(asset.resource.width) && Number.isFinite(asset.resource.height)
       && (asset.resource.width || 0) > 0 && (asset.resource.height || 0) > 0
