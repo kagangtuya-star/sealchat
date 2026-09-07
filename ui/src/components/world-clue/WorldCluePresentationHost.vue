@@ -125,6 +125,7 @@ async function closeActive() {
   const current = active.value
   active.value = null
   if (current && !current.request.manual) {
+    void store.markSeen(current.request.worldId, current.request.clueId).catch(() => undefined)
     await store.acknowledgePresented(current.request).catch(() => undefined)
   }
   void showNext()

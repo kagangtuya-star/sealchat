@@ -255,7 +255,7 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     }
   }
 
-  async function fetchDetail(worldId: string, clueId: string, markSeen = true) {
+  async function fetchDetail(worldId: string, clueId: string, shouldMarkSeen = true) {
     const response = await api.get(`api/v1/worlds/${worldId}/clues/${clueId}`)
     const item = response.data?.item as WorldClueDetail
     const stillCurrent = currentWorldId.value === worldId
@@ -264,13 +264,16 @@ export const useWorldClueStore = defineStore('worldClue', () => {
       summariesByWorld.value[worldId] ||= {}
       summariesByWorld.value[worldId][clueId] = summaryFromDetail(item)
     }
-    if (markSeen && stillCurrent) {
-      void api.post(`api/v1/worlds/${worldId}/clues/${clueId}/seen`).then(() => {
-        const summary = summariesByWorld.value[worldId]?.[clueId]
-        if (summary) summary.unread = false
-      }).catch(() => undefined)
+    if (shouldMarkSeen && stillCurrent) {
+      void markSeen(worldId, clueId).catch(() => undefined)
     }
     return item
+  }
+
+  async function markSeen(worldId: string, clueId: string) {
+    await api.post(`api/v1/worlds/${worldId}/clues/${clueId}/seen`)
+    const summary = summariesByWorld.value[worldId]?.[clueId]
+    if (summary) summary.unread = false
   }
 
   async function saveClue(worldId: string, clueId: string | null, payload: Record<string, unknown>) {
@@ -493,7 +496,7 @@ export const useWorldClueStore = defineStore('worldClue', () => {
   return {
     currentWorldId, summariesByWorld, foldersByWorld, rosterByWorld, editLocksByClue, detail, resolveCache, presentationQueue, uiVisible, loading,
     summaries, folders, roster, unreadCount, setWorld, setVisible, toggleVisible, loadWorld, loadRoster, addRosterMember, removeRosterMember, fetchDetail, saveClue,
-    removeClue, publish, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented,
+    removeClue, publish, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen,
     invalidate, handleChanged, requestResolve, loadEditLocks, acquireEditLock, releaseEditLock,
   }
 })
