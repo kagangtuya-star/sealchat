@@ -691,7 +691,7 @@ func worldClueSummaryDTO(clue *model.WorldClueModel, role string, accessRow *mod
 		Kind: clue.Kind, ContentText: contentText, ImageAttachmentID: clue.ImageAttachmentID,
 		ImageURL: clue.ImageURL, EffectiveAccess: access, Status: clue.Status, Revision: clue.Revision,
 		PublishSeq: clue.PublishSeq, OrderIndex: clue.OrderIndex, PrivateRevision: privateRevision,
-		HasPrivateContent: hasPrivate, Unread: clue.Revision > seenRevision || privateRevision > seenPrivateRevision,
+		HasPrivateContent: hasPrivate, Unread: clue.Status == model.WorldClueStatusPublished && (clue.Revision > seenRevision || privateRevision > seenPrivateRevision),
 		UserState: worldClueStateDTO(state), CreatorID: clue.CreatorID, UpdatedAt: clue.UpdatedAt.UnixMilli(),
 	}
 	if worldClueIsAdminRole(role) {
