@@ -25,6 +25,7 @@ type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
 interface Props {
   members: Member[]
   presenceMap: Record<string, PresenceData>
+  observerCount: number
   connectState: ConnectState
   connectionLabel: string
   latencyMs?: number
@@ -34,7 +35,9 @@ interface Emits {
   (e: 'request-refresh'): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  observerCount: 0,
+})
 const emit = defineEmits<Emits>()
 
 const onlineMembers = computed(() => {
@@ -103,6 +106,9 @@ const handleRefresh = () => {
       <div class="presence-heading">
         <span class="presence-title">在线成员</span>
         <span class="presence-count">{{ onlineMembers.length }}</span>
+        <span class="presence-observer-separator" aria-hidden="true">·</span>
+        <span class="presence-observer-label">OB</span>
+        <span class="presence-count presence-count--observer">{{ observerCount }}</span>
       </div>
       <n-button size="tiny" secondary class="presence-refresh" @click="handleRefresh">
         刷新状态
@@ -262,6 +268,21 @@ const handleRefresh = () => {
   font-weight: 600;
 }
 
+.presence-observer-separator,
+.presence-observer-label {
+  color: var(--sc-text-secondary, #6b7280);
+  font-size: 0.78rem;
+}
+
+.presence-observer-label {
+  font-weight: 600;
+}
+
+.presence-count--observer {
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--sc-text-secondary, #6b7280);
+}
+
 .presence-refresh {
   flex-shrink: 0;
 }
@@ -317,6 +338,11 @@ const handleRefresh = () => {
 :global([data-display-palette='night']) .presence-popover .presence-count {
   background: rgba(96, 165, 250, 0.2);
   color: #93c5fd;
+}
+
+:global([data-display-palette='night']) .presence-popover .presence-count--observer {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
 }
 
 .presence-meta {

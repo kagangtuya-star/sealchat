@@ -74,6 +74,31 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 	return results
 }
 
+func countChannelObservers(channelID string, userConnMap *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]) int {
+	if channelID == "" || userConnMap == nil {
+		return 0
+	}
+	count := 0
+	userConnMap.Range(func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		if connMap == nil {
+			return true
+		}
+		isObserver := false
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info != nil && info.IsObserver && info.ChannelId == channelID {
+				isObserver = true
+				return false
+			}
+			return true
+		})
+		if isObserver {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
 func (ctx *ChatContext) BroadcastChannelPresence(channelID string) {
 	scheduleChannelPresenceBroadcast(ctx, channelID)
 }
@@ -115,9 +140,11 @@ func ChannelPresence(c *fiber.Ctx) error {
 		}
 	}
 
-	snapshot := buildChannelPresenceSnapshot(channelID, getChannelUsersMap(), getUserConnInfoMap())
+	userConnMap := getUserConnInfoMap()
+	snapshot := buildChannelPresenceSnapshot(channelID, getChannelUsersMap(), userConnMap)
 	return c.JSON(fiber.Map{
-		"data":       snapshot,
-		"updated_at": time.Now().UnixMilli(),
+		"data":           snapshot,
+		"observer_count": countChannelObservers(channelID, userConnMap),
+		"updated_at":     time.Now().UnixMilli(),
 	})
 }

@@ -563,6 +563,7 @@ const newChannel = async () => {
 }
 
 const presencePopoverVisible = ref(false);
+const observerCount = ref(0);
 const actionRibbonActive = ref(false);
 const onlineMembersCount = computed(() => chat.curChannelUsers.length);
 const connectionRecoveryPulseKey = ref(0);
@@ -660,6 +661,7 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
     try {
       const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
       if (!channelId) {
+        observerCount.value = 0;
         chat.curChannelUsers = [];
         chat.clearPresenceMap();
         if (!silent) {
@@ -669,10 +671,20 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
       }
 
       const onlineResp = await chat.sendAPI<any>('channel.member.list.online', { channel_id: channelId } as any);
+      if (String(chat.curChannel?.id || '') !== channelId) {
+        return;
+      }
       const onlineItems = Array.isArray(onlineResp?.data?.data) ? onlineResp.data.data : [];
       chat.curChannelUsers = onlineItems;
 
-      const data = await chat.getChannelPresence();
+      const data = await chat.getChannelPresence(channelId);
+      if (String(chat.curChannel?.id || '') !== channelId) {
+        return;
+      }
+      const rawObserverCount = Number(data?.observer_count);
+      observerCount.value = Number.isFinite(rawObserverCount) && rawObserverCount > 0
+        ? Math.floor(rawObserverCount)
+        : 0;
       const updatedAt = typeof data?.updated_at === 'number' ? data.updated_at : undefined;
       if (typeof updatedAt === 'number') {
         chat.syncServerTime(updatedAt);
@@ -874,7 +886,11 @@ watch(presencePopoverVisible, (visible, oldVisible) => {
 watch(
   () => chat.curChannel?.id,
   (channelId, prevChannelId) => {
-    if (!channelId || channelId === prevChannelId) {
+    if (channelId === prevChannelId) {
+      return;
+    }
+    observerCount.value = 0;
+    if (!channelId) {
       return;
     }
     chat.clearPresenceMap();
@@ -1050,6 +1066,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <UserPresencePopover
           :members="chat.curChannelUsers"
           :presence-map="chat.presenceMap"
+          :observer-count="observerCount"
           :connect-state="connectionStatus.state"
           :connection-label="connectionStatus.label"
           :latency-ms="connectionLatencyMs"

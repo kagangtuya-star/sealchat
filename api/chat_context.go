@@ -49,18 +49,49 @@ func writeConnJSONAndPrune(connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], conn 
 	return true
 }
 
-func (ctx *ChatContext) rangeChannelConnMaps(channelId string, f func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool) {
+func (ctx *ChatContext) rangeChannelConnMaps(channelId string, f func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool, includeUnindexedObservers ...bool) {
 	if ctx == nil || ctx.UserId2ConnInfo == nil || channelId == "" || f == nil {
 		return
 	}
+	includeObservers := len(includeUnindexedObservers) > 0 && includeUnindexedObservers[0]
 	if ctx.ChannelUsersMap != nil {
 		if userSet, ok := ctx.ChannelUsersMap.Load(channelId); ok && userSet != nil {
+			visitedUserIDs := make(map[string]struct{})
+			shouldContinue := true
 			userSet.Range(func(userId string) bool {
 				connMap, ok := ctx.UserId2ConnInfo.Load(userId)
 				if !ok || connMap == nil {
 					return true
 				}
-				return f(userId, connMap, true)
+				visitedUserIDs[userId] = struct{}{}
+				shouldContinue = f(userId, connMap, true)
+				return shouldContinue
+			})
+			if !shouldContinue {
+				return
+			}
+			if !includeObservers {
+				return
+			}
+			ctx.UserId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+				if connMap == nil {
+					return true
+				}
+				if _, visited := visitedUserIDs[userId]; visited {
+					return true
+				}
+				hasObserver := false
+				connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+					if info != nil && info.IsObserver && info.ChannelId == channelId {
+						hasObserver = true
+						return false
+					}
+					return true
+				})
+				if !hasObserver {
+					return true
+				}
+				return f(userId, connMap, false)
 			})
 			return
 		}
@@ -235,7 +266,7 @@ func (ctx *ChatContext) BroadcastEventInChannel(channelId string, data *protocol
 			return true
 		})
 		return true
-	})
+	}, true)
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *protocol.Event) {
@@ -545,7 +576,7 @@ func (ctx *ChatContext) BroadcastEventInChannelExcept(channelId string, ignoredU
 			return true
 		})
 		return true
-	})
+	}, false)
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelToUsers(channelId string, userIds []string, data *protocol.Event) {
