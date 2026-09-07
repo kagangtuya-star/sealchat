@@ -774,6 +774,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/role-perms-apply", RolePermApply)
 
 	worldGroup := v1Auth.Group("/worlds")
+	BindWorldClueRoutes(worldGroup)
 	worldGroup.Get("/", WorldList)
 	worldGroup.Get("", WorldList)
 	worldGroup.Post("/", WorldCreateHandler)

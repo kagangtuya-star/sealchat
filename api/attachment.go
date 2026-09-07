@@ -180,8 +180,15 @@ func AttachmentGet(c *fiber.Ctx) error {
 			"message": "附件不存在",
 		})
 	}
+	if att.RootIDType == "world_clue" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
+	}
+	return serveAttachmentRecord(c, &att)
+}
+
+func serveAttachmentRecord(c *fiber.Ctx, att *model.AttachmentModel) error {
 	if att.StorageType == model.StorageS3 {
-		if redirected := redirectAttachmentToRemote(c, &att); redirected {
+		if redirected := redirectAttachmentToRemote(c, att); redirected {
 			return nil
 		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -192,7 +199,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 	if strings.TrimSpace(att.ObjectKey) != "" {
 		if path, err := service.ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
 			if _, err := os.Stat(path); err == nil {
-				return serveLocalAttachment(c, path, &att)
+				return serveLocalAttachment(c, path, att)
 			}
 		}
 	}
@@ -211,7 +218,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 		}
 		return wrapError(c, err, "读取附件失败")
 	}
-	return serveLocalAttachment(c, fullPath, &att)
+	return serveLocalAttachment(c, fullPath, att)
 }
 
 func serveLocalAttachment(c *fiber.Ctx, path string, att *model.AttachmentModel) error {
@@ -257,6 +264,13 @@ func AttachmentMeta(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "附件不存在",
 		})
+	}
+	if att.RootIDType == "world_clue" {
+		user := getCurUser(c)
+		allowed, err := service.WorldClueCanAccessAttachment(att.RootID, att.ID, user.ID)
+		if err != nil || !allowed {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
+		}
 	}
 
 	publicURL := service.AttachmentReadURL(c.Context(), &att)

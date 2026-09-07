@@ -125,6 +125,7 @@ declare module 'vue' {
     RichTextEditor: typeof import('./src/components/rich-text/RichTextEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SandboxedUrlFrame: typeof import('./src/components/world-clue/SandboxedUrlFrame.vue')['default']
     ScenePlaylist: typeof import('./src/components/audio/ScenePlaylist.vue')['default']
     SlashSuggestPanel: typeof import('./src/components/chat/SlashSuggestPanel.vue')['default']
     TheaterPresentationEditorModal: typeof import('./src/components/theater-presentation/TheaterPresentationEditorModal.vue')['default']
@@ -138,6 +139,9 @@ declare module 'vue' {
     UserAvatarDecoration: typeof import('./src/components/user-avatar-decoration.vue')['default']
     UserLabel: typeof import('./src/components/UserLabel.vue')['default']
     UserLabelV: typeof import('./src/components/UserLabelV.vue')['default']
+    WorldClueContentView: typeof import('./src/components/world-clue/WorldClueContentView.vue')['default']
+    WorldCluePresentationHost: typeof import('./src/components/world-clue/WorldCluePresentationHost.vue')['default']
+    WorldCluePresentationOverlay: typeof import('./src/components/world-clue/WorldCluePresentationOverlay.vue')['default']
     WorldLobbyAnnouncementTicker: typeof import('./src/components/announcement/WorldLobbyAnnouncementTicker.vue')['default']
   }
 }

@@ -19,6 +19,7 @@ import {
   Id as CharacterCardIcon,
   Message2 as CharacterRemarkIcon,
 	Dice as Dice3DIcon,
+  Bulb as ClueBoxIcon,
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
@@ -61,6 +62,9 @@ interface Props {
   icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
   stickyNoteActive?: boolean
+  clueBoxEnabled?: boolean
+  clueBoxActive?: boolean
+  clueBoxAttention?: boolean
 	dice3dEnabled?: boolean
 	dice3dActive?: boolean
   webhookEnabled?: boolean
@@ -88,6 +92,7 @@ interface Emits {
   (e: 'open-theater'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
+  (e: 'toggle-clue-box'): void
 	(e: 'open-dice3d'): void
   (e: 'open-webhook'): void
   (e: 'open-bridge-status'): void
@@ -141,6 +146,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     { key: 'export', label: '导出记录', icon: DownloadIcon, emitEvent: 'open-export', activeKey: 'exportActive' },
     { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
     { key: 'channel-images', label: '图片浏览', icon: PhotoIcon, emitEvent: 'open-channel-images', activeKey: 'channelImagesActive' },
+    { key: 'clue-box', label: props.clueBoxAttention ? '线索箱 ·' : '线索箱', icon: ClueBoxIcon, emitEvent: 'toggle-clue-box', activeKey: 'clueBoxActive', disabled: () => props.clueBoxEnabled === false },
     { key: 'battle-summary', label: '战报总结', icon: DocumentTextOutline, emitEvent: 'open-battle-summary', activeKey: 'battleSummaryActive', disabled: () => props.battleSummaryEnabled === false },
     { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
     { key: 'character-remark', label: '角色备注', icon: CharacterRemarkIcon, emitEvent: 'open-character-remark', activeKey: 'characterRemarkActive' },

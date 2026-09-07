@@ -58,6 +58,9 @@ func AttachmentThumb(c *fiber.Ctx) error {
 			"message": "附件不存在",
 		})
 	}
+	if att.RootIDType == "world_clue" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
+	}
 
 	// If original is small enough, just serve it directly
 	if att.Size < thumbnailSizeThreshold {

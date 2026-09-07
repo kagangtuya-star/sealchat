@@ -2163,6 +2163,8 @@
 }
 
 .chat-top-toolbar-stack {
+  position: relative;
+  z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;

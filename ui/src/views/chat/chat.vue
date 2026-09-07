@@ -39,6 +39,7 @@ import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
+import WorldClueBox from './components/clue-box/WorldClueBox.vue';
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue';
 import DiceSettingsDrawer from '@/features/dice3d/components/DiceSettingsDrawer.vue';
 import DiceDock from '@/features/dice3d/components/DiceDock.vue';
@@ -49,6 +50,7 @@ import type { Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import TheaterFloatingReturnReceiver from './components/TheaterFloatingReturnReceiver.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
+import { useWorldClueStore } from '@/stores/worldClue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { usePushNotificationStore } from '@/stores/pushNotification';
 import {
@@ -222,6 +224,13 @@ const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
+const worldClueStore = useWorldClueStore();
+watch(() => stickyNoteStore.uiVisible, (visible) => {
+  if (visible) worldClueStore.setVisible(false);
+});
+watch(() => worldClueStore.uiVisible, (visible) => {
+  if (visible) stickyNoteStore.setVisible(false);
+});
 const dice3dSettingsVisible = ref(false);
 const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
@@ -390,7 +399,15 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
 };
 
 const toggleStickyNotes = () => {
-  stickyNoteStore.toggleVisible();
+  const next = !stickyNoteStore.uiVisible;
+  stickyNoteStore.setVisible(next);
+  if (next) worldClueStore.setVisible(false);
+};
+
+const toggleWorldClueBox = () => {
+  const next = !worldClueStore.uiVisible;
+  worldClueStore.setVisible(next);
+  if (next) stickyNoteStore.setVisible(false);
 };
 
 const openDice3DSettings = () => {
@@ -401,6 +418,12 @@ const canManageDice3DWorld = computed(() => {
   const worldId = String(chat.currentWorldId || '').trim();
   const role = worldId ? chat.worldDetailMap[worldId]?.memberRole : '';
   return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
+});
+
+const canManageWorldClues = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const role = worldId ? chat.worldDetailMap[worldId]?.memberRole : '';
+  return !chat.observerMode && (role === 'owner' || role === 'admin');
 });
 
 const refreshDice3DSettings = async () => {
@@ -506,7 +529,8 @@ type ExternalPanelKey =
   | 'world-glossary'
   | 'world-announcement'
   | 'character-card'
-  | 'sticky-note';
+  | 'sticky-note'
+  | 'clue-box';
 
 const openPanelForShell = (panel: ExternalPanelKey) => {
   switch (panel) {
@@ -559,6 +583,9 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'sticky-note':
       setStickyNoteVisible(true);
       return;
+    case 'clue-box':
+      setClueBoxVisible(true);
+      return;
     default:
       return;
   }
@@ -578,6 +605,12 @@ const setFiltersForShell = (filters: any) => {
 
 const setStickyNoteVisible = (visible: boolean) => {
   stickyNoteStore.setVisible(visible);
+  if (visible) worldClueStore.setVisible(false);
+};
+
+const setClueBoxVisible = (visible: boolean) => {
+  worldClueStore.setVisible(visible);
+  if (visible) stickyNoteStore.setVisible(false);
 };
 
 const setCharacterCardVisible = (visible: boolean) => {
@@ -589,6 +622,7 @@ const setCharacterCardVisible = (visible: boolean) => {
 };
 
 const getStickyNoteVisible = () => stickyNoteStore.uiVisible;
+const getClueBoxVisible = () => worldClueStore.uiVisible;
 
 const getCharacterCardVisible = () => characterCardPanelVisible.value;
 
@@ -868,8 +902,10 @@ defineExpose({
   setSearchPanelVisibleForShell,
   setFiltersForShell,
   setStickyNoteVisible,
+  setClueBoxVisible,
   setCharacterCardVisible,
   getStickyNoteVisible,
+  getClueBoxVisible,
   getCharacterCardVisible,
   sendMessageForTheater,
   insertComposerForTheater,
@@ -10989,6 +11025,12 @@ const insertComposerText = (content: string) => {
   });
 };
 
+const handleWorldClueInsertLink = (payload?: { link?: string }) => {
+  const link = String(payload?.link || '').trim();
+  if (link) insertComposerText(link);
+};
+chatEvent.on('world-clue-insert-link' as any, handleWorldClueInsertLink as any);
+
 const moveInputCursorToEnd = () => {
   if (textInputRef.value?.moveCursorToEnd) {
     textInputRef.value.moveCursorToEnd();
@@ -15034,6 +15076,7 @@ onBeforeUnmount(() => {
   chatEvent.off('open-battle-summary' as any, handleOpenBattleSummaryEvent as any);
   chatEvent.off('world-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
   chatEvent.off('world-member-dice3d-updated' as any, handleDice3DSettingsUpdated as any);
+  chatEvent.off('world-clue-insert-link' as any, handleWorldClueInsertLink as any);
   revokeIdentityObjectURL();
   revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
@@ -15084,6 +15127,9 @@ onBeforeUnmount(() => {
           :ic-ooc-split-active="false"
           :sticky-note-enabled="true"
           :sticky-note-active="stickyNoteStore.uiVisible"
+          :clue-box-enabled="!chat.observerMode && !!chat.currentWorldId"
+          :clue-box-active="worldClueStore.uiVisible"
+          :clue-box-attention="worldClueStore.unreadCount > 0"
 		  :dice3d-enabled="!chat.observerMode"
 		  :dice3d-active="dice3dSettingsVisible"
           :webhook-enabled="webhookManageAllowed"
@@ -15108,6 +15154,7 @@ onBeforeUnmount(() => {
           @open-theater="openTheaterView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
+          @toggle-clue-box="toggleWorldClueBox"
 		  @open-dice3d="openDice3DSettings"
           @open-webhook="webhookDrawerVisible = true"
           @open-bridge-status="bridgeStatusDrawerVisible = true"
@@ -18141,6 +18188,12 @@ onBeforeUnmount(() => {
   <StickyNoteManager
     v-if="chat.curChannel?.id"
     :channel-id="chat.curChannel.id"
+  />
+  <WorldClueBox
+    v-if="chat.curChannel?.id && chat.currentWorldId && !chat.observerMode"
+    :world-id="chat.currentWorldId"
+    :channel-id="chat.curChannel.id"
+    :can-manage="canManageWorldClues"
   />
 
 	<DiceOverlayLoader v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled" :surface-element="messagesListRef" />

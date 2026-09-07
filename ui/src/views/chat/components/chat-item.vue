@@ -38,6 +38,7 @@ import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/
 import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { parseSingleWorldClueEmbedLinkText } from '@/utils/worldClueEmbedLink'
 import { normalizeStickyNoteHexColor } from '@/utils/stickyNoteColor'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
@@ -58,6 +59,7 @@ import MessageReactions from './MessageReactions.vue'
 import TwinLayerMessage from '@/components/chat/TwinLayerMessage.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
 import BattleReportEmbedCard from './BattleReportEmbedCard.vue'
+import ClueMessageEmbedCard from './clue-box/ClueMessageEmbedCard.vue'
 import type { ChannelIForm } from '@/types/iform';
 import {
   resolveIdentityMetaHostBackground,
@@ -345,6 +347,12 @@ const resolveSingleStickyNoteLinkFromContent = (content: string) => {
   return singleStickyNoteLink;
 };
 
+const resolveSingleWorldClueLinkFromContent = (content: string) => {
+  let link = parseSingleWorldClueEmbedLinkText(content);
+  if (!link && isTipTapJson(content)) link = parseSingleWorldClueEmbedLinkText(tiptapJsonToPlainText(content));
+  return link;
+};
+
 const resolveSingleBattleReportLinkFromContent = (content: string) => {
   let singleBattleReportLink = parseSingleBattleReportEmbedLinkText(content);
   if (!singleBattleReportLink && isTipTapJson(content)) {
@@ -399,6 +407,16 @@ const parseContent = (payload: any, overrideContent?: string) => {
   }
 
   const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
+
+  const singleWorldClueLink = resolveSingleWorldClueLinkFromContent(content);
+  if (singleWorldClueLink && singleWorldClueLink.worldId === String(chat.currentWorldId || '')) {
+    return h(ClueMessageEmbedCard, {
+      worldId: singleWorldClueLink.worldId,
+      clueId: singleWorldClueLink.clueId,
+      rawLink: singleWorldClueLink.rawLink,
+    });
+  }
+
   if (singleStickyNoteLink) {
     const isCurrentChannel = chat.curChannel?.id === singleStickyNoteLink.channelId;
     if (isCurrentChannel) {

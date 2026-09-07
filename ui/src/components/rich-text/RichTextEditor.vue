@@ -203,21 +203,36 @@ defineExpose({
 <style scoped>
 .rich-text-editor {
   width: 100%;
-  --rich-text-editor-min-height: 220px;
+  --rich-text-editor-min-height: 320px;
 }
 
 .rich-text-editor__file-input {
   display: none;
 }
 
+:deep(.rich-text-editor__input--default),
 :deep(.rich-text-editor__input--keyword),
 :deep(.rich-text-editor__input--announcement) {
   min-height: var(--rich-text-editor-min-height);
 }
 
+:deep(.rich-text-editor__input--default .tiptap-wrapper),
 :deep(.rich-text-editor__input--keyword .tiptap-wrapper),
 :deep(.rich-text-editor__input--announcement .tiptap-wrapper) {
   min-height: var(--rich-text-editor-min-height);
+}
+
+:deep(.rich-text-editor__input--default .tiptap-editor-wrapper),
+:deep(.rich-text-editor__input--keyword .tiptap-editor-wrapper),
+:deep(.rich-text-editor__input--announcement .tiptap-editor-wrapper) {
+  min-height: calc(var(--rich-text-editor-min-height) - 56px);
+  max-height: min(60vh, 640px);
+}
+
+:deep(.rich-text-editor__input--default .tiptap-content),
+:deep(.rich-text-editor__input--keyword .tiptap-content),
+:deep(.rich-text-editor__input--announcement .tiptap-content) {
+  min-height: calc(var(--rich-text-editor-min-height) - 56px);
 }
 
 .rich-text-editor--sticky-note {

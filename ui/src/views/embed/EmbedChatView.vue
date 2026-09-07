@@ -653,6 +653,7 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     channelTree: normalizeChannelTree(buildChannelTree()),
     searchPanelVisible: !!channelSearch.panelVisible,
     stickyNoteVisible: !!chatViewRef.value?.getStickyNoteVisible?.(),
+    clueBoxVisible: !!chatViewRef.value?.getClueBoxVisible?.(),
     characterCardVisible: !!chatViewRef.value?.getCharacterCardVisible?.(),
     characterCardEnabled: !!channelId && chat.curChannel?.characterApiEnabled !== false,
     characterCardReason: typeof chat.curChannel?.characterApiReason === 'string' ? chat.curChannel.characterApiReason : '',
@@ -776,6 +777,14 @@ const handleMessage = async (event: MessageEvent) => {
     return;
   }
 
+  if (data.type === 'sealchat.embed.setClueBoxVisible') {
+    if (typeof data.visible === 'boolean' && chatViewRef.value?.setClueBoxVisible) {
+      chatViewRef.value.setClueBoxVisible(data.visible);
+    }
+    postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
   if (data.type === 'sealchat.embed.setCharacterCardVisible') {
     if (typeof data.visible === 'boolean' && chatViewRef.value?.setCharacterCardVisible) {
       chatViewRef.value.setCharacterCardVisible(data.visible);
@@ -854,6 +863,9 @@ const handleMessage = async (event: MessageEvent) => {
       }
       if (chatViewRef.value?.setStickyNoteVisible) {
         chatViewRef.value.setStickyNoteVisible(!!snapshot.stickyNoteVisible);
+      }
+      if (chatViewRef.value?.setClueBoxVisible) {
+        chatViewRef.value.setClueBoxVisible(!!snapshot.clueBoxVisible);
       }
       if (chatViewRef.value?.setCharacterCardVisible) {
         chatViewRef.value.setCharacterCardVisible(!!snapshot.characterCardVisible);

@@ -11,6 +11,7 @@ import { useDisplayStore } from '@/stores/display'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
+import WorldCluePresentationHost from '@/components/world-clue/WorldCluePresentationHost.vue'
 import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
 import { installMessageSoundNotifier } from '@/services/messageSoundNotifier'
 
@@ -98,6 +99,7 @@ onUnmounted(() => {
         <RouterView />
         <GlobalLobbyAnnouncementHost v-if="!isInternalSurface" />
         <QuickLoginApprovalHost v-if="!isInternalSurface" />
+        <WorldCluePresentationHost v-if="!isInternalSurface" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

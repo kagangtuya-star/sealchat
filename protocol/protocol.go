@@ -444,6 +444,8 @@ const (
 	EventWorldUpdated                   EventName = "world-updated"
 	EventWorldDice3DUpdated             EventName = "world-dice3d-updated"
 	EventWorldMemberDice3DUpdated       EventName = "world-member-dice3d-updated"
+	EventWorldCluePublished             EventName = "world-clue-published"
+	EventWorldClueChanged               EventName = "world-clue-changed"
 	EventLobbyAnnouncementUpdated       EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
@@ -547,6 +549,7 @@ type Event struct {
 	IForm                       *ChannelIFormEventPayload           `json:"iform,omitempty"`
 	ChannelImageLayout          *ChannelImageLayoutEventPayload     `json:"channelImageLayout,omitempty"`
 	StickyNote                  *StickyNoteEventPayload             `json:"stickyNote,omitempty"`
+	WorldClue                   *WorldClueEventPayload              `json:"worldClue,omitempty"`
 	CharacterCard               *CharacterCardEventPayload          `json:"characterCard,omitempty"`
 	CharacterCardBadge          *CharacterCardBadgeEventPayload     `json:"characterCardBadge,omitempty"`
 	CharacterCardBadgeSnapshot  *CharacterCardBadgeSnapshotPayload  `json:"characterCardBadgeSnapshot,omitempty"`

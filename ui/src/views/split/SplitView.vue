@@ -72,6 +72,7 @@ type EmbedStateMessage = {
   channelTree?: SplitChannelNode[];
   searchPanelVisible?: boolean;
   stickyNoteVisible?: boolean;
+  clueBoxVisible?: boolean;
   characterCardVisible?: boolean;
   characterCardEnabled?: boolean;
   characterCardReason?: string;
@@ -135,6 +136,7 @@ interface PaneState {
   channelTree: SplitChannelNode[];
   searchPanelVisible: boolean;
   stickyNoteVisible: boolean;
+  clueBoxVisible: boolean;
   characterCardVisible: boolean;
   characterCardEnabled: boolean;
   characterCardReason: string;
@@ -191,7 +193,7 @@ const normalizeFilterState = (filters: FilterState): FilterState => {
   };
 };
 const storagePrefix = 'sealchat.split.pane';
-const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url' | 'stickyNoteVisible' | 'characterCardVisible') => `${storagePrefix}.${paneId}.${key}`;
+const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url' | 'stickyNoteVisible' | 'clueBoxVisible' | 'characterCardVisible') => `${storagePrefix}.${paneId}.${key}`;
 const resolveScopeWorldIdFromRoute = () => {
   const scopeWorldId = typeof route.query.scopeWorldId === 'string' ? route.query.scopeWorldId.trim() : '';
   if (scopeWorldId) return scopeWorldId;
@@ -229,6 +231,8 @@ const loadPaneStorage = (pane: PaneState) => {
   if (stickyVisible === 'true' || stickyVisible === 'false') {
     pane.stickyNoteVisible = stickyVisible === 'true';
   }
+  const clueBoxVisible = window.localStorage.getItem(paneStorageKey(pane.id, 'clueBoxVisible'));
+  if (clueBoxVisible !== null) pane.clueBoxVisible = clueBoxVisible === 'true';
   const cardVisible = window.localStorage.getItem(paneStorageKey(pane.id, 'characterCardVisible'));
   if (cardVisible === 'true' || cardVisible === 'false') {
     pane.characterCardVisible = cardVisible === 'true';
@@ -239,6 +243,7 @@ const persistPaneStorage = (pane: PaneState) => {
   window.localStorage.setItem(paneStorageKey(pane.id, 'mode'), pane.mode);
   window.localStorage.setItem(paneStorageKey(pane.id, 'url'), pane.webUrl);
   window.localStorage.setItem(paneStorageKey(pane.id, 'stickyNoteVisible'), String(!!pane.stickyNoteVisible));
+  window.localStorage.setItem(paneStorageKey(pane.id, 'clueBoxVisible'), String(!!pane.clueBoxVisible));
   window.localStorage.setItem(paneStorageKey(pane.id, 'characterCardVisible'), String(!!pane.characterCardVisible));
 };
 const splitScopeWorldId = ref(resolveScopeWorldIdFromRoute());
@@ -278,6 +283,7 @@ const paneA = reactive<PaneState>({
   channelTree: [],
   searchPanelVisible: false,
   stickyNoteVisible: false,
+  clueBoxVisible: false,
   characterCardVisible: false,
   characterCardEnabled: false,
   characterCardReason: characterApiUnsupportedText,
@@ -313,6 +319,7 @@ const paneB = reactive<PaneState>({
   channelTree: [],
   searchPanelVisible: false,
   stickyNoteVisible: false,
+  clueBoxVisible: false,
   characterCardVisible: false,
   characterCardEnabled: false,
   characterCardReason: characterApiUnsupportedText,
@@ -357,6 +364,7 @@ const activePanePresenceMap = computed(() => (activePane.value.mode === 'chat' ?
 const activePaneAudioStudioActive = computed(() => activePane.value.mode === 'chat' && activePane.value.audioStudioDrawerVisible);
 const activePaneSearchActive = computed(() => activePane.value.mode === 'chat' && activePane.value.searchPanelVisible);
 const activePaneStickyNoteActive = computed(() => activePane.value.mode === 'chat' && activePane.value.stickyNoteVisible);
+const activePaneClueBoxActive = computed(() => activePane.value.mode === 'chat' && activePane.value.clueBoxVisible);
 const activePaneCharacterCardEnabled = computed(
   () => activePane.value.mode === 'chat' && !!activePane.value.channelId && activePane.value.characterCardEnabled !== false,
 );
@@ -453,6 +461,7 @@ const buildPaneSessionSnapshot = (pane: PaneState): SplitSessionPaneSnapshot => 
   identityVariantId: pane.identityVariantId || '',
   searchPanelVisible: !!pane.searchPanelVisible,
   stickyNoteVisible: !!pane.stickyNoteVisible,
+  clueBoxVisible: !!pane.clueBoxVisible,
   characterCardVisible: !!pane.characterCardVisible,
   audioStudioDrawerVisible: !!pane.audioStudioDrawerVisible,
   embedPanelActive: !!pane.embedPanelActive,
@@ -512,6 +521,7 @@ const applyPaneSnapshotToState = (pane: PaneState, snapshot: SplitSessionPaneSna
   pane.identityVariantId = snapshot.identityVariantId || '';
   pane.searchPanelVisible = !!snapshot.searchPanelVisible;
   pane.stickyNoteVisible = !!snapshot.stickyNoteVisible;
+  pane.clueBoxVisible = !!snapshot.clueBoxVisible;
   pane.characterCardVisible = !!snapshot.characterCardVisible;
   pane.audioStudioDrawerVisible = !!snapshot.audioStudioDrawerVisible;
   pane.embedPanelActive = !!snapshot.embedPanelActive;
@@ -586,6 +596,7 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (typeof msg.searchPanelVisible === 'boolean') target.searchPanelVisible = msg.searchPanelVisible;
     if (!isReadyMessage) {
       if (typeof msg.stickyNoteVisible === 'boolean') target.stickyNoteVisible = msg.stickyNoteVisible;
+      if (typeof msg.clueBoxVisible === 'boolean') target.clueBoxVisible = msg.clueBoxVisible;
       if (typeof msg.characterCardVisible === 'boolean') target.characterCardVisible = msg.characterCardVisible;
     }
     if (typeof msg.characterCardEnabled === 'boolean') target.characterCardEnabled = msg.characterCardEnabled;
@@ -668,6 +679,11 @@ const syncPanePanelVisibility = (pane: PaneState) => {
     type: 'sealchat.embed.setStickyNoteVisible',
     paneId: pane.id,
     visible: !!pane.stickyNoteVisible,
+  });
+  postToPane(pane.id, {
+    type: 'sealchat.embed.setClueBoxVisible',
+    paneId: pane.id,
+    visible: !!pane.clueBoxVisible,
   });
   if (pane.characterCardVisible && pane.characterCardEnabled) {
     postToPane(pane.id, {
@@ -809,6 +825,13 @@ const setStickyNoteVisibleForActivePane = (visible: boolean) => {
 const toggleStickyNoteForActivePane = () => {
   setStickyNoteVisibleForActivePane(!activePane.value.stickyNoteVisible);
 };
+
+const setClueBoxVisibleForActivePane = (visible: boolean) => {
+  if (!activePaneHasChannel.value || !canOperateChatPane(activePaneId.value)) return;
+  postToPane(activePaneId.value, { type: 'sealchat.embed.setClueBoxVisible', paneId: activePaneId.value, visible });
+};
+
+const toggleClueBoxForActivePane = () => setClueBoxVisibleForActivePane(!activePane.value.clueBoxVisible);
 
 const openCharacterCardForActivePane = () => {
   if (!activePaneHasChannel.value) {
@@ -1076,6 +1099,8 @@ watch(
               :split-active="false"
               :sticky-note-enabled="activePaneHasChannel"
               :sticky-note-active="activePaneStickyNoteActive"
+              :clue-box-enabled="activePaneHasChannel"
+              :clue-box-active="activePaneClueBoxActive"
               :dice3d-enabled="activePaneHasChannel"
               :dice3d-active="false"
               :character-card-enabled="activePaneHasChannel"
@@ -1092,6 +1117,7 @@ watch(
               @open-channel-images="openPanel('channel-images')"
               @open-character-remark="openPanel('character-remark')"
               @toggle-sticky-note="toggleStickyNoteForActivePane"
+              @toggle-clue-box="toggleClueBoxForActivePane"
               @open-dice3d="openPanel('dice3d')"
               @open-character-card="openCharacterCardForActivePane"
             />

@@ -21,6 +21,7 @@ export interface SplitSessionPaneSnapshot {
   identityVariantId: string
   searchPanelVisible: boolean
   stickyNoteVisible: boolean
+  clueBoxVisible: boolean
   characterCardVisible: boolean
   audioStudioDrawerVisible: boolean
   embedPanelActive: boolean
@@ -75,6 +76,7 @@ export const createDefaultSplitSessionPaneSnapshot = (): SplitSessionPaneSnapsho
   identityVariantId: '',
   searchPanelVisible: false,
   stickyNoteVisible: false,
+  clueBoxVisible: false,
   characterCardVisible: false,
   audioStudioDrawerVisible: false,
   embedPanelActive: false,
@@ -264,6 +266,7 @@ const normalizePaneSnapshot = (value: unknown): SplitSessionPaneSnapshot => {
     identityVariantId: normalizeOptionalId(raw.identityVariantId),
     searchPanelVisible: !!raw.searchPanelVisible,
     stickyNoteVisible: !!raw.stickyNoteVisible,
+    clueBoxVisible: !!raw.clueBoxVisible,
     characterCardVisible: !!raw.characterCardVisible,
     audioStudioDrawerVisible: !!raw.audioStudioDrawerVisible,
     embedPanelActive: !!raw.embedPanelActive,
