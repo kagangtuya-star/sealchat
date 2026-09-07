@@ -350,7 +350,13 @@ onBeforeUnmount(() => {
       <chat-header :sidebar-collapsed="computedCollapsed" @toggle-sidebar="toggleSidebar" />
     </n-layout-header>
 
-    <n-layout class="sc-layout-root" has-sider position="absolute" style="margin-top: 3.5rem;">
+    <n-layout
+      class="sc-layout-root"
+      :class="{ 'sc-layout-root--observer': chat.isObserver }"
+      has-sider
+      position="absolute"
+      style="margin-top: 3.5rem;"
+    >
       <n-layout-sider
         class="sc-layout-sider"
         collapse-mode="width"
@@ -403,6 +409,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style lang="scss">
+@media (max-width: 640px) {
+  .sc-layout-root--observer {
+    margin-top: 5rem !important;
+  }
+}
+
+@media (max-width: 400px) {
+  .sc-layout-root--observer {
+    margin-top: 7.25rem !important;
+  }
+}
+
 .sc-layout-sider-resize-handle {
   position: relative;
   width: 8px;

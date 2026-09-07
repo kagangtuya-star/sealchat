@@ -975,9 +975,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 </script>
 
 <template>
-  <div class="sc-header flex justify-between items-center w-full px-2" style="height: 3.5rem;">
-    <div>
-      <div class="flex items-center">
+  <div
+    class="sc-header flex justify-between items-center w-full px-2"
+    :class="{ 'sc-header--observer': isObserver }"
+    style="height: 3.5rem;"
+  >
+    <div class="sc-channel-heading">
+      <div class="sc-channel-heading__row flex items-center">
         <button
           type="button"
           class="sc-icon-button sc-sidebar-toggle-button mr-2"
@@ -988,7 +992,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           <n-icon :component="sidebarToggleIcon" size="20" />
         </button>
         <div class="sc-channel-title-group">
-          <span class="text-sm font-bold sm:text-xl">{{ channelTitle }}</span>
+          <span class="sc-channel-title text-sm font-bold sm:text-xl">{{ channelTitle }}</span>
           <span
             v-if="channelAggregateBadge.visible"
             class="sc-channel-aggregate-badge"
@@ -1244,7 +1248,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <template #icon>
           <n-icon :component="DocumentTextOutline" size="16" />
         </template>
-        查看战报
+        <span class="sc-ob-battle-report-label">查看战报</span>
       </n-button>
       <n-button size="small" type="primary" @click="goLogin">登录</n-button>
     </div>
@@ -1570,11 +1574,29 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   gap: 0.45rem;
 }
 
+.sc-channel-heading {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.sc-channel-heading__row {
+  min-width: 0;
+}
+
 .sc-channel-title-group {
   min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.sc-channel-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-channel-aggregate-badge {
@@ -1868,23 +1890,56 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     gap: 0.32rem;
   }
 
-  .sc-actions--observer {
+  .sc-header--observer {
+    height: auto !important;
+    min-height: 3.5rem;
     flex-wrap: wrap;
-    row-gap: 0.4rem;
+    align-content: center;
+    row-gap: 0.35rem;
+    padding-block: 0.35rem;
+  }
+
+  .sc-header--observer .sc-channel-heading {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .sc-actions--observer {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    overflow: visible;
+    row-gap: 0.32rem;
+  }
+
+  .sc-actions--observer > * {
+    flex: 0 0 auto;
   }
 
   .sc-ob-filters {
-    width: 100%;
+    width: auto;
+    flex: 0 0 auto;
     margin-right: 0;
     justify-content: flex-end;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     overflow: visible;
   }
 
   .sc-ob-role-select {
-    flex: 1 1 130px;
-    min-width: 130px;
-    max-width: none;
+    display: none;
+  }
+
+  .sc-ob-battle-report-button {
+    width: 1.95rem;
+    min-width: 1.95rem;
+    height: 1.95rem;
+    padding: 0;
+    border-radius: 9999px;
+  }
+
+  .sc-ob-battle-report-label {
+    display: none;
   }
 
   .sc-user-button {
