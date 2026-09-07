@@ -354,20 +354,32 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     return item
   }
 
+  function presentationKey(request: WorldCluePresentationRequest) {
+    if (!request.worldId || !request.clueId || request.publishSeq <= 0) return ''
+    return `${request.worldId}:${request.clueId}:${request.publishSeq}`
+  }
+
+  function rememberPresentation(request: WorldCluePresentationRequest) {
+    const key = presentationKey(request)
+    if (key) presentationKeys.add(key)
+  }
+
   function enqueuePresentation(request: WorldCluePresentationRequest) {
-    if (!request.worldId || !request.clueId || request.publishSeq <= 0) return
-    const key = `${request.worldId}:${request.clueId}:${request.publishSeq}`
+    const key = presentationKey(request)
+    if (!key) return
     if (presentationKeys.has(key)) return
     presentationKeys.add(key)
     presentationQueue.value.push(request)
   }
 
-  async function loadPendingPresentations(worldId: string) {
+  async function loadPendingPresentations(worldId: string, enteredAt?: number) {
     if (!worldId) return
     const response = await api.get(`api/v1/worlds/${worldId}/clues/pending-presentations`)
     if (currentWorldId.value !== worldId) return
     for (const item of (response.data?.items || []) as WorldClueDetail[]) {
-      enqueuePresentation({ worldId, clueId: item.id, publishSeq: item.publishSeq })
+      const request = { worldId, clueId: item.id, publishSeq: item.publishSeq }
+      if (enteredAt !== undefined && Number(item.publishedAt || 0) <= enteredAt) rememberPresentation(request)
+      else enqueuePresentation(request)
     }
   }
 

@@ -10,6 +10,11 @@ const store = useWorldClueStore()
 const active = ref<{ request: WorldCluePresentationRequest; clue: WorldClueDetail } | null>(null)
 const loading = ref(false)
 let loadEpoch = 0
+let enteredAt = 0
+let pendingBaselineEpoch = 0
+let pendingBaselineReady = false
+let pendingBaselineLoading = false
+let pendingReconnect = false
 const currentWorldId = computed(() => String(route.params.worldId || route.query.worldId || route.query.scopeWorldId || '').trim())
 
 function normalizePayload(event: any) {
@@ -72,6 +77,30 @@ const handleMessage = (event: MessageEvent) => {
   store.enqueuePresentation({ worldId, clueId, publishSeq })
 }
 
+function startPendingBaseline(worldId: string, baselineAt: number, epoch: number) {
+  pendingBaselineLoading = true
+  void store.loadPendingPresentations(worldId, baselineAt).then(() => {
+    if (epoch !== pendingBaselineEpoch || currentWorldId.value !== worldId || enteredAt !== baselineAt) return
+    pendingBaselineReady = true
+    if (!pendingReconnect) return
+    pendingReconnect = false
+    void store.loadPendingPresentations(worldId).catch(() => undefined)
+  }).catch(() => undefined).finally(() => {
+    if (epoch === pendingBaselineEpoch) pendingBaselineLoading = false
+  })
+}
+
+const handleConnected = () => {
+  const worldId = currentWorldId.value
+  if (!worldId) return
+  if (!pendingBaselineReady) {
+    pendingReconnect = true
+    if (!pendingBaselineLoading) startPendingBaseline(worldId, enteredAt, pendingBaselineEpoch)
+    return
+  }
+  void store.loadPendingPresentations(worldId).catch(() => undefined)
+}
+
 async function showNext(): Promise<void> {
   if (active.value || loading.value || !store.presentationQueue.length) return
   const request = store.presentationQueue.shift()!
@@ -106,20 +135,31 @@ watch(currentWorldId, worldId => {
   loadEpoch++
   active.value = null
   loading.value = false
+  pendingBaselineEpoch++
+  pendingBaselineReady = false
+  pendingBaselineLoading = false
+  pendingReconnect = false
   store.setWorld(worldId)
-  if (!worldId) return
+  if (!worldId) {
+    enteredAt = 0
+    return
+  }
+  enteredAt = Date.now()
+  startPendingBaseline(worldId, enteredAt, pendingBaselineEpoch)
 }, { immediate: true })
 
 onMounted(() => {
   chatEvent.on('world-clue-published' as any, handlePublished as any)
   chatEvent.on('world-clue-changed' as any, handleChanged as any)
   chatEvent.on('world-clue-open' as any, handleOpen as any)
+  chatEvent.on('connected', handleConnected)
   window.addEventListener('message', handleMessage)
 })
 onBeforeUnmount(() => {
   chatEvent.off('world-clue-published' as any, handlePublished as any)
   chatEvent.off('world-clue-changed' as any, handleChanged as any)
   chatEvent.off('world-clue-open' as any, handleOpen as any)
+  chatEvent.off('connected', handleConnected)
   window.removeEventListener('message', handleMessage)
 })
 </script>
