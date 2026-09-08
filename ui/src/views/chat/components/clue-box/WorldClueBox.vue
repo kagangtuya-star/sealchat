@@ -23,6 +23,7 @@ const editorVisible = ref(false)
 const editingClue = ref<WorldClueDetail | null>(null)
 const dragging = ref<{ type: 'clue' | 'folder'; id: string } | null>(null)
 const dragOverTarget = ref('')
+const dragOverClueTarget = ref('')
 const inlineFolderMode = ref<'create' | 'rename' | null>(null)
 const editingFolderId = ref('')
 const folderNameDraft = ref('')
@@ -237,12 +238,18 @@ async function moveToFolder(summary: WorldClueSummary, folderId: string) {
 }
 function startDrag(event: DragEvent, type: 'clue' | 'folder', id: string) {
   dragging.value = { type, id }
+  dragOverTarget.value = ''
+  dragOverClueTarget.value = ''
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', id)
   }
 }
-function endDrag() { dragging.value = null; dragOverTarget.value = '' }
+function endDrag() {
+  dragging.value = null
+  dragOverTarget.value = ''
+  dragOverClueTarget.value = ''
+}
 function reorderedIDs(ids: string[], sourceId: string, targetId: string) {
   const next = ids.filter(id => id !== sourceId)
   const targetIndex = next.indexOf(targetId)
@@ -267,6 +274,15 @@ async function dropClue(targetId: string) {
     })
     await store.loadWorld(props.worldId, keyword.value)
   } catch (error: any) { message.error(error?.response?.data?.message || '线索排序失败') }
+}
+function markClueDropTarget(event: DragEvent, targetId: string) {
+  if (!canReorderCurrentScope.value || dragging.value?.type !== 'clue' || dragging.value.id === targetId) {
+    dragOverClueTarget.value = ''
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverClueTarget.value = targetId
 }
 async function reorderFolder(sourceId: string, targetId: string) {
   if (!canReorderCurrentScope.value || sourceId === targetId) return
@@ -295,6 +311,7 @@ function canAcceptDrop(targetFolderId: string, allowFolderReorder = false) {
   return !!source && !!target && (source.parentId || '') === (target.parentId || '')
 }
 function markDropTarget(event: DragEvent, key: string, targetFolderId: string, allowFolderReorder = false) {
+  dragOverClueTarget.value = ''
   if (!canAcceptDrop(targetFolderId, allowFolderReorder)) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
@@ -528,40 +545,46 @@ onMounted(() => {
       </div>
     </div>
     <div v-if="visibleItems.length" class="clue-box__items" :class="`clue-box__items--${preference.layout}`">
-      <article
-        v-for="item in visibleItems" :key="item.id" class="clue-box__item" :class="{ 'clue-box__item--unread': item.unread }"
-        :draggable="canReorderCurrentScope" @dragstart="startDrag($event, 'clue', item.id)" @dragend="endDrag"
-        @dragover.prevent @drop.prevent="dropClue(item.id)" @dblclick="openClue(item)"
+      <div
+        v-for="item in visibleItems" :key="item.id" class="clue-box__item-wrap"
+        :class="{ 'clue-box__item-wrap--drop-target': dragging?.type === 'clue' && dragOverClueTarget === item.id }"
+        @dragover="markClueDropTarget($event, item.id)" @drop.prevent="dropClue(item.id)"
       >
-        <div v-if="preference.mediaPreview" class="clue-box__media">
-          <img
-            v-if="mediaState(item) === 'image'" :src="clueMediaUrl(item)" :alt="item.title" loading="lazy"
-            :referrerpolicy="item.imageAttachmentId ? undefined : 'no-referrer'" @error="useVideoFallback(item)"
-          />
-          <video v-else-if="mediaState(item) === 'video'" :src="clueMediaUrl(item)" muted playsinline preload="metadata" @error="useMediaPlaceholder(item)" />
-          <div v-else class="clue-box__media-placeholder">
-            <NIcon><component :is="item.kind === 'iframe' ? World : item.kind === 'image' ? Photo : FileText" /></NIcon>
-            <span>{{ item.kind === 'iframe' ? item.embedDomain || '网页线索' : item.kind === 'image' ? '媒体不可预览' : '文档线索' }}</span>
+        <article
+          class="clue-box__item" :class="{ 'clue-box__item--unread': item.unread }"
+          :draggable="canReorderCurrentScope" @dragstart="startDrag($event, 'clue', item.id)" @dragend="endDrag"
+          @dblclick="openClue(item)"
+        >
+          <div v-if="preference.mediaPreview" class="clue-box__media">
+            <img
+              v-if="mediaState(item) === 'image'" :src="clueMediaUrl(item)" :alt="item.title" loading="lazy"
+              :referrerpolicy="item.imageAttachmentId ? undefined : 'no-referrer'" @error="useVideoFallback(item)"
+            />
+            <video v-else-if="mediaState(item) === 'video'" :src="clueMediaUrl(item)" muted playsinline preload="metadata" @error="useMediaPlaceholder(item)" />
+            <div v-else class="clue-box__media-placeholder">
+              <NIcon><component :is="item.kind === 'iframe' ? World : item.kind === 'image' ? Photo : FileText" /></NIcon>
+              <span>{{ item.kind === 'iframe' ? item.embedDomain || '网页线索' : item.kind === 'image' ? '媒体不可预览' : '文档线索' }}</span>
+            </div>
           </div>
-        </div>
-        <div class="clue-box__item-heading">
-          <NIcon><component :is="clueKindIcon(item)" /></NIcon><strong>{{ item.title }}</strong><span v-if="item.status === 'draft'">草稿</span>
-          <NButton
-            class="clue-box__favorite" :class="{ 'clue-box__favorite--active': isFavorite(item) }"
-            circle quaternary size="tiny" :type="isFavorite(item) ? 'primary' : 'default'" :loading="favoriteSubmitting[item.id] === true"
-            :aria-pressed="isFavorite(item)" :title="isFavorite(item) ? '取消收藏' : '收藏'" @click.stop="toggleFavorite(item)" @dblclick.stop
-          ><template #icon><NIcon><Star /></NIcon></template></NButton>
-        </div>
-        <p v-if="!preference.mediaPreview">{{ item.contentText || (item.kind === 'iframe' ? item.embedDomain : '暂无摘要') }}</p>
-        <div class="clue-box__item-actions">
-          <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
-          <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
-          <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
-          <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
-          <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
-          <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
-        </div>
-      </article>
+          <div class="clue-box__item-heading">
+            <NIcon><component :is="clueKindIcon(item)" /></NIcon><strong>{{ item.title }}</strong><span v-if="item.status === 'draft'">草稿</span>
+            <NButton
+              class="clue-box__favorite" :class="{ 'clue-box__favorite--active': isFavorite(item) }"
+              circle quaternary size="tiny" :type="isFavorite(item) ? 'primary' : 'default'" :loading="favoriteSubmitting[item.id] === true"
+              :aria-pressed="isFavorite(item)" :title="isFavorite(item) ? '取消收藏' : '收藏'" @click.stop="toggleFavorite(item)" @dblclick.stop
+            ><template #icon><NIcon><Star /></NIcon></template></NButton>
+          </div>
+          <p v-if="!preference.mediaPreview">{{ item.contentText || (item.kind === 'iframe' ? item.embedDomain : '暂无摘要') }}</p>
+          <div class="clue-box__item-actions">
+            <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
+            <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
+            <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
+            <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
+            <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
+            <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
+          </div>
+        </article>
+      </div>
     </div>
     <NEmpty v-else class="clue-box__empty" description="这里还没有可见线索" />
   </aside>
@@ -599,6 +622,8 @@ onMounted(() => {
 .clue-box__items { min-height: 0; overflow: auto; padding: 0 14px 14px; }
 .clue-box__items--grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .clue-box__items--list { display: grid; gap: 7px; }
+.clue-box__item-wrap { position: relative; min-width: 0; }
+.clue-box__item-wrap--drop-target::before { position: absolute; z-index: 1; top: 5px; bottom: 5px; left: -5px; width: 2px; border-radius: 999px; background: var(--primary-color, #3388de); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 18%, transparent); content: ''; pointer-events: none; }
 .clue-box__drag { color: var(--sc-text-secondary); cursor: grab; }
 .clue-box__item { min-width: 0; overflow: hidden; padding: 12px; color: var(--sc-text-primary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 2%); transition: border-color .14s ease, background-color .14s ease, transform .14s ease; }
 .clue-box__item:hover { border-color: color-mix(in srgb, var(--primary-color, #3388de) 34%, var(--sc-border-mute)); background: color-mix(in srgb, var(--sc-bg-elevated) 90%, var(--primary-color, #3388de) 5%); transform: translateY(-1px); }
