@@ -354,16 +354,21 @@ const handleSelect = async (key: string | number) => {
         <span>频道嵌入窗</span>
       </n-tooltip>
 
-      <button
-        type="button"
-        class="sc-icon-button action-toggle-button"
-        :class="{ 'is-active': actionRibbonActive }"
-        @click="emit('toggle-action-ribbon')"
-        :aria-pressed="actionRibbonActive"
-        aria-label="切换功能面板"
-      >
-        <n-icon :component="AppsOutline" size="18" />
-      </button>
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button action-toggle-button"
+            :class="{ 'is-active': actionRibbonActive }"
+            @click="emit('toggle-action-ribbon')"
+            :aria-pressed="actionRibbonActive"
+            aria-label="更多跑团功能"
+          >
+            <n-icon :component="AppsOutline" size="18" />
+          </button>
+        </template>
+        <span>更多跑团功能</span>
+      </n-tooltip>
 
       <n-dropdown placement="bottom-end" trigger="click" :options="options" @select="handleSelect">
         <n-tooltip trigger="hover">

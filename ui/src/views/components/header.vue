@@ -1125,10 +1125,15 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <span>频道嵌入窗</span>
       </n-tooltip>
 
-      <button type="button" class="sc-icon-button action-toggle-button" :class="{ 'is-active': actionRibbonActive }"
-        @click="toggleActionRibbon" :aria-pressed="actionRibbonActive" aria-label="切换功能面板">
-        <n-icon :component="AppsOutline" size="18" />
-      </button>
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button type="button" class="sc-icon-button action-toggle-button" :class="{ 'is-active': actionRibbonActive }"
+            @click="toggleActionRibbon" :aria-pressed="actionRibbonActive" aria-label="更多跑团功能">
+            <n-icon :component="AppsOutline" size="18" />
+          </button>
+        </template>
+        <span>更多跑团功能</span>
+      </n-tooltip>
 
       <n-tooltip v-if="showNotifBell" placement="bottom" trigger="hover">
         <template #trigger>
