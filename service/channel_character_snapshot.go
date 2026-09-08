@@ -538,14 +538,16 @@ func applyEffectiveCharacterSnapshotTemplates(item *protocol.CharacterSnapshotIt
 	if item == nil {
 		return
 	}
+	hasExplicitChannelSettings := settings != nil && strings.TrimSpace(settings.ID) != ""
 	item.BadgeTemplate = settings.BadgeTemplate
 	item.BadgeTemplateDisabled = false
 	item.TheaterOverlayTemplateJSON = settings.TheaterOverlayTemplateJSON
 	if item.TheaterOverlayTemplateJSON == "" {
 		item.TheaterOverlayTemplateJSON = defaultCharacterOverlayTemplate
 	}
+	allowTheaterOverlayFallback := !hasExplicitChannelSettings
 	if preference == nil {
-		applyPlatformCharacterSnapshotTemplate(item, nil, platformTemplateCache...)
+		applyPlatformCharacterSnapshotTemplate(item, nil, allowTheaterOverlayFallback, platformTemplateCache...)
 		return
 	}
 	switch preference.BadgeTemplateMode {
@@ -558,13 +560,15 @@ func applyEffectiveCharacterSnapshotTemplates(item *protocol.CharacterSnapshotIt
 	switch preference.TheaterOverlayTemplateMode {
 	case "off":
 		item.TheaterOverlayTemplateJSON = ""
+		allowTheaterOverlayFallback = false
 	case "custom":
 		item.TheaterOverlayTemplateJSON = preference.TheaterOverlayTemplateJSON
+		allowTheaterOverlayFallback = false
 	}
-	applyPlatformCharacterSnapshotTemplate(item, preference, platformTemplateCache...)
+	applyPlatformCharacterSnapshotTemplate(item, preference, allowTheaterOverlayFallback, platformTemplateCache...)
 }
 
-func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, preference *model.ChannelCharacterSnapshotPreferenceModel, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
+func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, preference *model.ChannelCharacterSnapshotPreferenceModel, allowTheaterOverlayFallback bool, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
 	if item == nil || item.Data.Card == nil {
 		return
 	}
@@ -599,10 +603,8 @@ func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem
 			item.BadgeTemplate = resolved.BadgeTemplateOverride
 		}
 	}
-	if preference == nil || preference.TheaterOverlayTemplateMode != "off" {
-		if resolved.TheaterOverlayTemplateJSON != "" {
-			item.TheaterOverlayTemplateJSON = resolved.TheaterOverlayTemplateJSON
-		}
+	if allowTheaterOverlayFallback && resolved.TheaterOverlayTemplateJSON != "" {
+		item.TheaterOverlayTemplateJSON = resolved.TheaterOverlayTemplateJSON
 	}
 }
 
