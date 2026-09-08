@@ -56,7 +56,7 @@ static/
 .codannaignore
 .fastembed_cache
 /.gopath
-!bin/win-x64/*.exe
+bin/win-x64/*.exe
 /sealchat-data
 .ace-tool/
 /.claude
@@ -78,3 +78,7 @@ skills-lock.json
 /data11
 /testdata
 /.chatgpt
+
+# Do not apply the general ignore rules to files under bin/
+!bin/**
+/bin/cn-font-split
