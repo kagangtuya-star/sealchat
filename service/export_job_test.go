@@ -361,6 +361,51 @@ func TestMergeSequentialMessagesCollapsesBoundaryBlankLines(t *testing.T) {
 	}
 }
 
+func TestExportEmbedMessagesRemainMergeBoundaries(t *testing.T) {
+	now := time.Now()
+	clue := "https://sealchat.example/#/world-a/channel-a?clue=clue-1"
+	messages := []*model.MessageModel{
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "plain-before", CreatedAt: now}, UserID: "user-a", Content: "普通正文", ICMode: "ic"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "clue", CreatedAt: now.Add(time.Second)}, UserID: "user-a", Content: clue, ICMode: "ic"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "plain-after", CreatedAt: now.Add(2 * time.Second)}, UserID: "user-a", Content: "另一条正文", ICMode: "ic"},
+	}
+	merged := mergeSequentialMessagesForExport(messages, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true}, true)
+	if len(merged) != 3 {
+		t.Fatalf("standalone clue should isolate adjacent messages, got %d: %+v", len(merged), merged)
+	}
+	if !isStandaloneExportEmbedMessage(clue) || isStandaloneExportEmbedMessage("普通正文") {
+		t.Fatal("standalone embed classification mismatch")
+	}
+	sticky := "https://sealchat.example/#/world-a/channel-a?snote=note-1"
+	if !isStandaloneExportEmbedMessage(sticky) {
+		t.Fatal("standalone sticky-note classification mismatch")
+	}
+	ordinary := mergeSequentialMessagesForExport([]*model.MessageModel{
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ordinary-a", CreatedAt: now}, UserID: "user-a", Content: "连续甲", ICMode: "ic"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ordinary-b", CreatedAt: now.Add(time.Second)}, UserID: "user-a", Content: "连续乙", ICMode: "ic"},
+	}, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true}, true)
+	if len(ordinary) != 1 || !strings.Contains(ordinary[0].Content, "连续甲\n连续乙") {
+		t.Fatalf("ordinary sequential messages should still merge: %+v", ordinary)
+	}
+
+	clue1 := "https://sealchat.example/#/world-a/channel-a?clue=clue-1"
+	clue2 := "https://sealchat.example/#/world-a/channel-a?clue=clue-2"
+	wrappedTargets, ok := parseOnlyWorldClueEmbedTargets("（" + clue1 + "\n" + clue2 + "）")
+	if !ok || len(wrappedTargets) != 2 {
+		t.Fatalf("wrapped multi-clue embed should parse as two targets: ok=%v targets=%+v", ok, wrappedTargets)
+	}
+	mergedOOC := mergeSequentialMessagesForExport([]*model.MessageModel{
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ooc-clues", CreatedAt: now}, UserID: "user-a", Content: clue1 + "\n" + clue2, ICMode: "ooc"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ooc-ordinary", CreatedAt: now.Add(time.Second)}, UserID: "user-a", Content: "OOC 普通文本", ICMode: "ooc"},
+	}, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true, WithoutOOCParentheses: false}, true)
+	if len(mergedOOC) != 2 {
+		t.Fatalf("OOC multi-clue embed should remain a merge boundary, got %d: %+v", len(mergedOOC), mergedOOC)
+	}
+	if !isStandaloneExportEmbedMessage(mergedOOC[0].Content) {
+		t.Fatalf("wrapped OOC multi-clue embed should remain standalone: %q", mergedOOC[0].Content)
+	}
+}
+
 func createExportTestUser(t *testing.T, id, username, nickname string) *model.UserModel {
 	t.Helper()
 	user := &model.UserModel{

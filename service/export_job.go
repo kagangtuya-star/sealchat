@@ -530,7 +530,8 @@ func mergeSequentialMessagesForExport(messages []*model.MessageModel, extra *exp
 		}
 
 		allowFilteredOOCGapMerge := sawFilteredOOCGap && !sawOtherFilteredGap
-		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow, allowFilteredOOCGapMerge) {
+		if !isStandaloneExportEmbedMessage(current.Content) && !isStandaloneExportEmbedMessage(msg.Content) &&
+			canMerge(current, currentIcMode, lastTime, msg, mergeWindow, allowFilteredOOCGapMerge) {
 			nextContent := strings.TrimLeft(formatted, "\r\n")
 			trimmed := strings.TrimRight(current.Content, " \r\n\t")
 			if trimmed == "" {

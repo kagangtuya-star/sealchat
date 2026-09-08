@@ -8,6 +8,8 @@ import (
 
 	docx "github.com/mmonterroca/docxgo/v2"
 	"github.com/mmonterroca/docxgo/v2/domain"
+
+	"sealchat/model"
 )
 
 const docxContentMaxWidthPx = 605 // approximately 6.3in at 96 DPI
@@ -89,6 +91,14 @@ func renderDocxMessage(doc domain.Document, payload *ExportPayload, msg *ExportM
 			}
 		}
 	}
+	if len(msg.WorldClues) > 0 {
+		for _, clue := range msg.WorldClues {
+			if err := renderDocxWorldClue(doc, payload, clue, resolver, roleColor); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	docContent := msg.ContentRich
 	if docContent == nil {
 		built := buildRichDocumentForExport(msg.Content, payload.IncludeImages)
@@ -109,6 +119,131 @@ func renderDocxMessage(doc domain.Document, payload *ExportPayload, msg *ExportM
 		}
 	}
 	return nil
+}
+
+func renderDocxWorldClue(doc domain.Document, payload *ExportPayload, clue WorldClueExportBlock, resolver *docxImageResolver, fallback domain.Color) error {
+	if doc == nil || payload == nil {
+		return nil
+	}
+	header, err := doc.AddParagraph()
+	if err != nil {
+		return err
+	}
+	labelRun, err := header.AddRun()
+	if err != nil {
+		return err
+	}
+	if err := labelRun.SetText("线索 "); err != nil {
+		return err
+	}
+	if err := labelRun.SetBold(true); err != nil {
+		return err
+	}
+	_ = labelRun.SetSize(22)
+	_ = labelRun.SetColor(fallback)
+	titleRun, err := header.AddRun()
+	if err != nil {
+		return err
+	}
+	title := strings.TrimSpace(clue.Title)
+	if title == "" {
+		title = "未命名线索"
+	}
+	if err := titleRun.SetText(title); err != nil {
+		return err
+	}
+	if err := titleRun.SetBold(true); err != nil {
+		return err
+	}
+	_ = titleRun.SetSize(24)
+	_ = titleRun.SetColor(fallback)
+	if kind := strings.TrimSpace(clue.Kind); kind != "" {
+		if err := addDocxRun(header, " ["+worldClueExportKindLabel(kind)+"]", nil, fallback); err != nil {
+			return err
+		}
+	}
+
+	bodyDocument, mediaDocument := splitWorldCluePublicDocument(clue.Public)
+	if payload.IncludeImages {
+		if err := renderDocxRichDocument(doc, mediaDocument, resolver, fallback); err != nil {
+			return err
+		}
+	}
+	if err := renderDocxRichDocument(doc, bodyDocument, resolver, fallback); err != nil {
+		return err
+	}
+	if payload.IncludeImages && worldClueImageAttachmentToken(clue) == "" {
+		if imageURL := safeExportHTTPURL(clue.ImageURL); imageURL != "" {
+			if err := addDocxSourceLink(doc, "图片来源: ", imageURL, fallback); err != nil {
+				return err
+			}
+		}
+	}
+	if strings.TrimSpace(clue.Kind) == model.WorldClueKindIframe {
+		if source := safeExportHTTPURL(clue.IframeSourceURL); source != "" {
+			if err := addDocxSourceLink(doc, "网页线索/来源: ", source, fallback); err != nil {
+				return err
+			}
+		}
+	}
+	for _, section := range clue.Private {
+		privatePara, err := doc.AddParagraph()
+		if err != nil {
+			return err
+		}
+		_ = privatePara.SetIndentLeft(360)
+		name := strings.TrimSpace(section.MemberName)
+		if name == "" {
+			name = "成员"
+		}
+		nameRun, err := privatePara.AddRun()
+		if err != nil {
+			return err
+		}
+		if err := nameRun.SetText("专属信息 · " + name); err != nil {
+			return err
+		}
+		if err := nameRun.SetBold(true); err != nil {
+			return err
+		}
+		if err := renderDocxRichDocument(doc, section.Content, resolver, fallback); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderDocxRichDocument(doc domain.Document, content AgentRichDocument, resolver *docxImageResolver, fallback domain.Color) error {
+	for _, block := range content.Blocks {
+		var para domain.Paragraph
+		var err error
+		if block.Type != "bullet_list" && block.Type != "ordered_list" {
+			para, err = doc.AddParagraph()
+			if err != nil {
+				return err
+			}
+		}
+		if err := renderDocxBlock(doc, para, block, resolver, fallback, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addDocxSourceLink(doc domain.Document, prefix, source string, fallback domain.Color) error {
+	para, err := doc.AddParagraph()
+	if err != nil {
+		return err
+	}
+	_ = para.SetIndentLeft(180)
+	if err := addDocxRun(para, prefix, nil, fallback); err != nil {
+		return err
+	}
+	run, err := para.AddHyperlink(source, source)
+	if err != nil {
+		return err
+	}
+	return applyDocxRunMarks(run, []AgentRichMark{{Type: "underline"}}, fallback)
 }
 
 func addDocxRun(para domain.Paragraph, text string, marks []AgentRichMark, fallback domain.Color) error {

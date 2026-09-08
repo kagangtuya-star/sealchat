@@ -1,12 +1,20 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"sealchat/model"
+	"sealchat/utils"
 )
 
 func TestNormalizeDomainToURLIPv6(t *testing.T) {
@@ -648,5 +656,279 @@ func TestBuildExportPayloadMarksMergedMessages(t *testing.T) {
 	}
 	if !payload.Messages[0].IsMerged {
 		t.Fatalf("expected merged export message flag, got %+v", payload.Messages[0])
+	}
+}
+
+func TestParseOnlyWorldClueEmbedTargets(t *testing.T) {
+	first := "https://sealchat.example/#/world-a/channel-a?clue=clue-1"
+	second := "https://sealchat.example/#/world-a/channel-a?clue=clue-2"
+	targets, ok := parseOnlyWorldClueEmbedTargets(first + "\n" + second)
+	if !ok || len(targets) != 2 || targets[0].ClueID != "clue-1" || targets[1].ClueID != "clue-2" {
+		t.Fatalf("unexpected clue targets: ok=%v targets=%+v", ok, targets)
+	}
+	tiptap := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"` + first + `","marks":[{"type":"link","attrs":{"href":"` + first + `"}}]}]}]}`
+	targets, ok = parseOnlyWorldClueEmbedTargets(tiptap)
+	if !ok || len(targets) != 1 || targets[0].ClueID != "clue-1" {
+		t.Fatalf("TipTap clue target mismatch: ok=%v targets=%+v", ok, targets)
+	}
+	if _, ok := parseOnlyWorldClueEmbedTargets(first + " 普通正文"); ok {
+		t.Fatal("clue link mixed with ordinary text must not be recognized")
+	}
+}
+
+func createWorldClueExportImageAttachment(t *testing.T, id, userID, worldID string) {
+	t.Helper()
+	cfg := utils.ReadConfig()
+	oldUploadDir := cfg.Storage.Local.UploadDir
+	uploadDir := t.TempDir()
+	cfg.Storage.Local.UploadDir = uploadDir
+	t.Cleanup(func() {
+		cfg.Storage.Local.UploadDir = oldUploadDir
+	})
+	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatalf("decode clue png fixture failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(uploadDir, id), imageData, 0644); err != nil {
+		t.Fatalf("write clue image fixture failed: %v", err)
+	}
+	hash := sha256.Sum256(imageData)
+	attachment := &model.AttachmentModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: id, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		Hash:              model.ByteArray(hash[:]),
+		Filename:          "clue.png",
+		Size:              int64(len(imageData)),
+		MimeType:          "image/png",
+		UserID:            userID,
+		StorageType:       model.StorageLocal,
+		ObjectKey:         id,
+		RootID:            worldID,
+		RootIDType:        "world_clue",
+		IsTemp:            true,
+	}
+	if err := model.GetDB().Create(attachment).Error; err != nil {
+		t.Fatalf("create clue image attachment failed: %v", err)
+	}
+}
+
+func TestWorldClueExportResolverHonorsScopeAndPrivateVisibility(t *testing.T) {
+	users := setupWorldClueTest(t)
+	channelID := "clue-export-channel"
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID}, WorldID: users.worldID,
+		Name: "线索导出频道", PermType: "public", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("create clue export channel: %v", err)
+	}
+	clue := createWorldClueForTest(t, users, model.WorldClueAccessView)
+	if _, err := WorldCluePublish(users.worldID, clue.ID, users.owner, clue.PublishSeq); err != nil {
+		t.Fatalf("publish clue: %v", err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberA, model.WorldClueContentPlain, "member A secret", 0); err != nil {
+		t.Fatalf("put member A private content: %v", err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberB, model.WorldClueContentPlain, "member B secret", 0); err != nil {
+		t.Fatalf("put member B private content: %v", err)
+	}
+	link := "https://sealchat.example/#/" + users.worldID + "/" + channelID + "?clue=" + clue.ID
+	memberRender, ok := newWorldClueExportResolver(channelID, users.memberA).render(link, true)
+	if !ok || !strings.Contains(memberRender.Plain, "member A secret") || strings.Contains(memberRender.Plain, "member B secret") {
+		t.Fatalf("member private visibility mismatch: ok=%v plain=%q", ok, memberRender.Plain)
+	}
+	adminRender, ok := newWorldClueExportResolver(channelID, users.owner).render(link, true)
+	if !ok || !strings.Contains(adminRender.Plain, "member A secret") || !strings.Contains(adminRender.Plain, "member B secret") || !strings.Contains(adminRender.Plain, "Ancient Key") || strings.Contains(adminRender.Plain, "manager secret") {
+		t.Fatalf("admin clue export mismatch: ok=%v plain=%q", ok, adminRender.Plain)
+	}
+	wrongWorld := "https://sealchat.example/#/other-world/" + channelID + "?clue=" + clue.ID
+	if _, ok := newWorldClueExportResolver(channelID, users.memberA).render(wrongWorld, true); ok {
+		t.Fatal("cross-world clue link must not expand")
+	}
+}
+
+func TestWorldClueExportHTMLRenderingHonorsImagesAndIframeSafety(t *testing.T) {
+	block := WorldClueExportBlock{
+		Title:           "资料 <一>",
+		Kind:            model.WorldClueKindIframe,
+		Public:          AgentRichDocument{Type: "document", Blocks: []AgentRichNode{{Type: "paragraph", Children: []AgentRichNode{{Type: "text", Text: "正文"}, {Type: "image", Attrs: map[string]string{"src": "https://cdn.example/image.png", "alt": "图片"}}}}}},
+		Private:         []WorldClueExportPrivateSection{{MemberName: "成员甲", Content: buildRichDocumentForExport("专属内容", true)}},
+		IframeSourceURL: "https://example.com/source?a=1&b=2",
+	}
+	html := renderWorldClueHTML(block, true)
+	for _, expected := range []string{"export-world-clue", "资料 &lt;一&gt;", "正文", "<img", "成员甲", "https://example.com/source?a=1&amp;b=2"} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("clue html missing %q: %s", expected, html)
+		}
+	}
+	if strings.Contains(html, "<iframe") {
+		t.Fatalf("iframe clue must render a source link only: %s", html)
+	}
+	withoutImages := renderWorldClueHTML(block, false)
+	if strings.Contains(withoutImages, "<img") {
+		t.Fatalf("clue images must be omitted when disabled: %s", withoutImages)
+	}
+}
+
+func TestWorldClueExportHTMLAttachmentUsesInlineAsset(t *testing.T) {
+	users := setupWorldClueTest(t)
+	channelID := "clue-export-html-image-channel"
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID}, WorldID: users.worldID,
+		Name: "线索图片导出频道", PermType: "public", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("create clue export channel: %v", err)
+	}
+	const attachmentID = "clue-export-html-image"
+	createWorldClueExportImageAttachment(t, attachmentID, users.owner, users.worldID)
+	clue, err := WorldClueCreate(users.worldID, users.owner, WorldClueCreateInput{
+		Title: "主媒体线索", Kind: model.WorldClueKindImage, ContentFormat: model.WorldClueContentPlain,
+		Content: "线索正文", ImageAttachmentID: attachmentID, DefaultAccess: model.WorldClueAccessView,
+	})
+	if err != nil {
+		t.Fatalf("create image clue: %v", err)
+	}
+	if _, err := WorldCluePublish(users.worldID, clue.ID, users.owner, clue.PublishSeq); err != nil {
+		t.Fatalf("publish image clue: %v", err)
+	}
+	link := "https://sealchat.example/#/" + users.worldID + "/" + channelID + "?clue=" + clue.ID
+	job := &model.MessageExportJobModel{UserID: users.owner, ChannelID: channelID, Format: "html", IncludeOOC: true, IncludeArchived: true}
+	messages := []*model.MessageModel{{StringPKBaseModel: model.StringPKBaseModel{ID: "clue-html-image-message", CreatedAt: time.Now()}, UserID: users.owner, Content: link, ICMode: "ic"}}
+	payload := buildExportPayload(job, "线索图片导出频道", messages, nil, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true})
+	if payload == nil || len(payload.Messages) != 1 {
+		t.Fatalf("unexpected image clue payload: %+v", payload)
+	}
+	newInlineImageEmbedder().inlinePayload(payload)
+	html := payload.Messages[0].ContentHTML
+	for _, expected := range []string{`class="export-world-clue`, `class="export-world-clue__media"`, "<img", `src="scasset:`} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("clue html missing %q: %s", expected, html)
+		}
+	}
+	if len(payload.InlineAssets) == 0 {
+		t.Fatalf("expected clue attachment in inline assets: %+v", payload.InlineAssets)
+	}
+	if strings.Contains(html, "图片来源") {
+		t.Fatalf("attachment clue should render the image instead of a source-only fallback: %s", html)
+	}
+
+	withoutImages := buildExportPayload(job, "线索图片导出频道", messages, nil, &exportExtraOptions{IncludeImages: false, IncludeDiceCommand: true})
+	if withoutImages == nil || len(withoutImages.Messages) != 1 {
+		t.Fatalf("unexpected image-disabled clue payload: %+v", withoutImages)
+	}
+	if strings.Contains(withoutImages.Messages[0].ContentHTML, "export-world-clue__media") || strings.Contains(withoutImages.Messages[0].ContentHTML, "<img") {
+		t.Fatalf("clue main media should be omitted when images are disabled: %s", withoutImages.Messages[0].ContentHTML)
+	}
+}
+
+func TestWorldClueExportDocxRendering(t *testing.T) {
+	payload := &ExportPayload{
+		WithoutTimestamp: true,
+		Messages: []ExportMessage{{
+			SenderName:  "角色",
+			SenderColor: "#123456",
+			WorldClues: []WorldClueExportBlock{{
+				Title:           "线索标题",
+				Kind:            model.WorldClueKindIframe,
+				Public:          buildRichDocumentForExport("公共正文", true),
+				Private:         []WorldClueExportPrivateSection{{MemberName: "成员甲", Content: buildRichDocumentForExport("专属正文", true)}},
+				IframeSourceURL: "https://example.com/clue",
+			}},
+		}},
+	}
+	data, err := (docxFormatter{}).Build(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var documentXML string
+	for _, file := range reader.File {
+		if file.Name != "word/document.xml" {
+			continue
+		}
+		body, openErr := file.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		value, readErr := io.ReadAll(body)
+		_ = body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		documentXML = string(value)
+		break
+	}
+	for _, expected := range []string{"线索", "线索标题", "公共正文", "专属信息", "成员甲", "专属正文", "https://example.com/clue"} {
+		if !strings.Contains(documentXML, expected) {
+			t.Fatalf("document.xml missing clue text %q: %s", expected, documentXML)
+		}
+	}
+	if strings.Contains(documentXML, "<iframe") {
+		t.Fatalf("iframe clue must not be embedded as HTML: %s", documentXML)
+	}
+}
+
+func TestWorldClueExportDocxAttachmentEmbedsMedia(t *testing.T) {
+	users := setupWorldClueTest(t)
+	channelID := "clue-export-docx-image-channel"
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID}, WorldID: users.worldID,
+		Name: "线索图片 DOCX 频道", PermType: "public", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("create clue export channel: %v", err)
+	}
+	const attachmentID = "clue-export-docx-image"
+	createWorldClueExportImageAttachment(t, attachmentID, users.owner, users.worldID)
+	clue, err := WorldClueCreate(users.worldID, users.owner, WorldClueCreateInput{
+		Title: "DOCX 主媒体线索", Kind: model.WorldClueKindImage, ContentFormat: model.WorldClueContentPlain,
+		Content: "DOCX 线索正文", ImageAttachmentID: attachmentID, DefaultAccess: model.WorldClueAccessView,
+	})
+	if err != nil {
+		t.Fatalf("create image clue: %v", err)
+	}
+	if _, err := WorldCluePublish(users.worldID, clue.ID, users.owner, clue.PublishSeq); err != nil {
+		t.Fatalf("publish image clue: %v", err)
+	}
+	link := "https://sealchat.example/#/" + users.worldID + "/" + channelID + "?clue=" + clue.ID
+	job := &model.MessageExportJobModel{UserID: users.owner, ChannelID: channelID, Format: "docx", IncludeOOC: true, IncludeArchived: true}
+	messages := []*model.MessageModel{{StringPKBaseModel: model.StringPKBaseModel{ID: "clue-docx-image-message", CreatedAt: time.Now()}, UserID: users.owner, Content: link, ICMode: "ic"}}
+	payload := buildExportPayload(job, "线索图片 DOCX 频道", messages, nil, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true})
+	if payload == nil || len(payload.Messages) != 1 || len(payload.Messages[0].WorldClues) != 1 {
+		t.Fatalf("unexpected DOCX image clue payload: %+v", payload)
+	}
+	data, err := (docxFormatter{}).Build(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMedia := false
+	foundDocumentImageRef := false
+	for _, file := range reader.File {
+		if strings.HasPrefix(file.Name, "word/media/") {
+			foundMedia = true
+		}
+		if file.Name != "word/document.xml" {
+			continue
+		}
+		body, openErr := file.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		xml, readErr := io.ReadAll(body)
+		_ = body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		foundDocumentImageRef = strings.Contains(string(xml), "r:embed")
+	}
+	if !foundMedia {
+		t.Fatal("expected clue attachment bytes in word/media")
+	}
+	if !foundDocumentImageRef {
+		t.Fatal("expected document.xml to reference clue media")
 	}
 }

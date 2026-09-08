@@ -825,6 +825,114 @@ body[data-colorize='body'] .viewer-message__body {
   color: var(--text-muted);
 }
 
+.export-world-clue {
+  margin: 0.6rem 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  white-space: normal;
+}
+
+.export-world-clue__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin-bottom: 0.45rem;
+  font-family: var(--font-ui);
+}
+
+.export-world-clue__label {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.export-world-clue__title {
+  min-width: 0;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.export-world-clue__kind {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.export-world-clue__media {
+  margin-top: 0.7rem;
+}
+
+.export-world-clue__media img,
+.viewer-message__body .export-world-clue__media img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 24rem;
+  height: auto;
+  margin: 0;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.export-world-clue__body {
+  color: var(--text-primary);
+  line-height: 1.72;
+}
+
+.export-world-clue__body > :first-child,
+.export-world-clue__private-body > :first-child {
+  margin-top: 0;
+}
+
+.export-world-clue__body > :last-child,
+.export-world-clue__private-body > :last-child {
+  margin-bottom: 0;
+}
+
+.export-world-clue__empty {
+  color: var(--text-muted);
+}
+
+.export-world-clue__source {
+  margin-top: 0.55rem;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.export-world-clue__source a {
+  color: var(--accent);
+}
+
+.export-world-clue__private {
+  margin-top: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border-left: 2px solid var(--border-soft);
+  background: var(--surface-subtle);
+}
+
+.export-world-clue__private-title {
+  margin-bottom: 0.25rem;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.export-world-clue__private-body {
+  color: var(--text-primary);
+}
+
 .export-sticky-note-counter {
   display: flex;
   align-items: center;

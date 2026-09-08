@@ -54,6 +54,8 @@ type ExportMessage struct {
 	ContentHTML           string             `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
 	ContentRich           *AgentRichDocument `json:"-"`
 	WhisperTargets        []string           `json:"whisper_targets"`
+
+	WorldClues []WorldClueExportBlock `json:"-"`
 }
 
 type ExportPayload struct {
@@ -131,6 +133,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 	identityResolver := newIdentityResolver(job.ChannelID)
 	imageLayoutResolver := newExportImageLayoutResolver(job.ChannelID)
 	stickyNoteResolver := newStickyNoteExportResolver(job.ChannelID)
+	worldClueResolver := newWorldClueExportResolver(job.ChannelID, job.UserID)
 	exportMessages := make([]ExportMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
@@ -140,15 +143,20 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		exportContent := originalContent
 		var htmlContent string
 		var richContent *AgentRichDocument
+		var worldClues []WorldClueExportBlock
 		if expanded, ok := stickyNoteResolver.render(originalContent, includeImages, isDocx); ok {
 			exportContent = expanded.Plain
 			htmlContent = expanded.HTML
 			richContent = expanded.Rich
+		} else if expanded, ok := worldClueResolver.render(originalContent, includeImages); ok {
+			exportContent = expanded.Plain
+			htmlContent = expanded.HTML
+			worldClues = expanded.Blocks
 		}
 		if isDocx {
 			htmlContent = ""
 		}
-		if isDocx && richContent == nil {
+		if isDocx && richContent == nil && len(worldClues) == 0 {
 			doc := buildRichDocumentForExport(exportContent, includeImages)
 			richContent = &doc
 		}
@@ -192,6 +200,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			Content:               exportContent,
 			ContentHTML:           htmlContent,
 			ContentRich:           richContent,
+			WorldClues:            worldClues,
 			WhisperTargets:        extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
@@ -450,7 +459,7 @@ func parseStickyNoteEmbedTargetPart(candidate string) (stickyNoteEmbedTarget, bo
 }
 
 func splitStickyNoteEmbedOnlyParts(candidate string) []string {
-	candidate = strings.TrimSpace(candidate)
+	candidate = trimStickyNoteLinkWrapper(candidate)
 	if candidate == "" {
 		return nil
 	}
@@ -3473,6 +3482,20 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .export-sticky-note-list__item { display: flex; align-items: center; gap: 0.45em; padding: 0.18em 0; }
     .export-sticky-note-list__checkbox { width: 1em; height: 1em; flex: none; display: inline-grid; place-items: center; border-radius: 3px; border: 1px solid rgba(15,23,42,0.28); font-size: 0.78em; line-height: 1; }
     .export-sticky-note-list__item--checked .export-sticky-note-list__text { color: #64748b; text-decoration: line-through; }
+    .export-world-clue { --export-world-clue-accent: #3b82f6; margin: 0.7em 0; padding: 0.8em 0.95em; border: 1px solid color-mix(in srgb, var(--export-world-clue-accent) 22%, #cbd5e1); border-left: 4px solid var(--export-world-clue-accent); border-radius: 6px; background: color-mix(in srgb, var(--export-world-clue-accent) 6%, #fff); white-space: normal; }
+    .export-world-clue__header { display: flex; align-items: baseline; gap: 0.55em; margin-bottom: 0.45em; }
+    .export-world-clue__label { color: var(--export-world-clue-accent); font-size: 0.78em; font-weight: 700; letter-spacing: 0.08em; }
+    .export-world-clue__title { color: #111827; font-weight: 700; }
+    .export-world-clue__kind { margin-left: auto; color: #64748b; font-size: 0.78em; }
+    .export-world-clue__body { color: #1f2937; }
+    .export-world-clue__body > :first-child, .export-world-clue__private-body > :first-child { margin-top: 0; }
+    .export-world-clue__body > :last-child, .export-world-clue__private-body > :last-child { margin-bottom: 0; }
+    .export-world-clue__empty { color: #64748b; }
+    .export-world-clue__source { margin-top: 0.5em; color: #64748b; font-size: 0.86em; overflow-wrap: anywhere; }
+    .export-world-clue__source a { color: var(--export-world-clue-accent); }
+    .export-world-clue__private { margin-top: 0.7em; padding: 0.55em 0.7em; border-left: 2px solid color-mix(in srgb, var(--export-world-clue-accent) 32%, #cbd5e1); background: color-mix(in srgb, var(--export-world-clue-accent) 3%, transparent); }
+    .export-world-clue__private-title { margin-bottom: 0.25em; color: #374151; font-size: 0.86em; font-weight: 700; }
+    .export-world-clue__private-body { color: #374151; }
   </style>
 </head>
 <body>
