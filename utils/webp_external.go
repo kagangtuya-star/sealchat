@@ -152,6 +152,51 @@ func resolveBundledWebPTool(tool string) (string, error) {
 		return "", err
 	}
 
+	roots := bundledToolRoots()
+	var tried []string
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		candidate := filepath.Join(root, "bin", platformDir, name)
+		tried = append(tried, candidate)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("webp encoder tool %q not found for %s/%s (dir=%s), tried: %s", name, runtime.GOOS, runtime.GOARCH, platformDir, strings.Join(tried, ", "))
+}
+
+// ResolveBundledWebPTool locates a bundled WebP utility without making it a
+// startup dependency. Callers should resolve only when a conversion is needed.
+func ResolveBundledWebPTool(tool string) (string, error) {
+	return resolveBundledWebPTool(tool)
+}
+
+// ResolveBundledCJPEGTool locates the bundled cjpeg utility used by the DOCX
+// WebP compatibility path.
+func ResolveBundledCJPEGTool() (string, error) {
+	name := "cjpeg"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	platformDir, err := bundledWebPPlatformDir()
+	if err != nil {
+		return "", err
+	}
+	roots := bundledToolRoots()
+	var tried []string
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		candidate := filepath.Join(root, "bin", "cjpeg", platformDir, name)
+		tried = append(tried, candidate)
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("cjpeg tool not found for %s/%s, tried: %s", runtime.GOOS, runtime.GOARCH, strings.Join(tried, ", "))
+}
+
+func bundledToolRoots() []string {
 	roots := make([]string, 0, 3)
 	if cwd, err := os.Getwd(); err == nil && strings.TrimSpace(cwd) != "" {
 		roots = append(roots, cwd)
@@ -164,24 +209,17 @@ func resolveBundledWebPTool(tool string) (string, error) {
 			roots = append(roots, parent)
 		}
 	}
-
-	seen := map[string]struct{}{}
-	var tried []string
+	seen := make(map[string]struct{}, len(roots))
+	unique := roots[:0]
 	for _, root := range roots {
 		root = filepath.Clean(root)
 		if _, ok := seen[root]; ok {
 			continue
 		}
 		seen[root] = struct{}{}
-
-		candidate := filepath.Join(root, "bin", platformDir, name)
-		tried = append(tried, candidate)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
+		unique = append(unique, root)
 	}
-
-	return "", fmt.Errorf("webp encoder tool %q not found for %s/%s (dir=%s), tried: %s", name, runtime.GOOS, runtime.GOARCH, platformDir, strings.Join(tried, ", "))
+	return unique
 }
 
 func bundledWebPPlatformDir() (string, error) {

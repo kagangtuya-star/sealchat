@@ -108,6 +108,7 @@ jobs:
 
           if [ "${{ matrix.goos }}" = "linux" ]; then
             cp output/sealchat-server package/
+            CJPEG_NAME="cjpeg"
             if [ "${{ matrix.goarch }}" = "amd64" ]; then
               WEBP_DIR="linux-x64"
             elif [ "${{ matrix.goarch }}" = "arm64" ]; then
@@ -119,6 +120,7 @@ jobs:
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             cp output/sealchat-server.exe package/
             WEBP_DIR="win-x64"
+            CJPEG_NAME="cjpeg.exe"
           else
             echo "Unsupported OS: ${{ matrix.goos }}"
             exit 1
@@ -126,8 +128,11 @@ jobs:
 
           mkdir -p "package/bin/${WEBP_DIR}"
           cp -a "bin/${WEBP_DIR}/." "package/bin/${WEBP_DIR}/"
+          mkdir -p "package/bin/cjpeg/${WEBP_DIR}"
+          cp "bin/cjpeg/${WEBP_DIR}/${CJPEG_NAME}" "package/bin/cjpeg/${WEBP_DIR}/"
+          cp bin/cjpeg/LICENSE.md package/bin/cjpeg/LICENSE.md
           if [ "${{ matrix.goos }}" = "linux" ]; then
-            chmod +x "package/bin/${WEBP_DIR}/cwebp" "package/bin/${WEBP_DIR}/gif2webp"
+            chmod +x "package/bin/${WEBP_DIR}/cwebp" "package/bin/${WEBP_DIR}/gif2webp" "package/bin/${WEBP_DIR}/dwebp" "package/bin/cjpeg/${WEBP_DIR}/cjpeg"
           fi
           cp bin/LICENSE package/LICENSE
           cp config.yaml.example package/

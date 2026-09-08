@@ -193,9 +193,9 @@ const cloudUploadEnabled = computed(() => hasLogUploadEndpoints(logUploadConfig.
 const cloudUploadHint = computed(() => logUploadConfig.value?.note || '可上传到 DicePP 云端，获得海豹染色器 BBcode/Docx 文件。')
 const showCloudUploadOption = computed(() => cloudUploadEnabled.value && form.format === 'json')
 const cloudUploadDefaultName = '频道名_时间范围（例如：新的_20251107-20251108）'
-const isSealFormatter = computed(() => form.format === 'json')
+const isSealFormatter = computed(() => form.format === 'json' || form.format === 'docx')
 const showZipOptions = computed(() => form.format === 'html')
-const showColorProfileTrigger = computed(() => form.format === 'txt')
+const showColorProfileTrigger = computed(() => form.format === 'txt' || form.format === 'docx')
 const batchChannelOptions = computed(() => {
   const options: Array<{ label: string; value: string }> = []
   const visit = (channels: SChannel[], prefix = '') => {
@@ -756,8 +756,9 @@ watch(showColorProfileTrigger, (enabled) => {
 
 const formatOptions = [
   { label: '纯文本 (.txt)', value: 'txt' },
+  { label: 'Word 文档 (.docx)', value: 'docx' },
   { label: 'HTML (.html)', value: 'html' },
-  { label: '海豹染色器 (BBcode/Docx)', value: 'json' },
+  { label: '海豹染色器 JSON', value: 'json' },
 ]
 
 const timePresets = [
@@ -854,7 +855,7 @@ const handleExport = async () => {
   try {
     let colorMap: Record<string, string> | undefined
     let nameMap: Record<string, string> | undefined
-    if (form.textColorizeBBCode && form.format === 'txt') {
+    if ((form.textColorizeBBCode && form.format === 'txt') || form.format === 'docx') {
       try {
         const [speakerResp, profileResp] = await Promise.all([
           chat.channelSpeakerOptions(props.channelId),
@@ -957,7 +958,7 @@ onBeforeUnmount(() => {
         <p v-if="props.batchMode">每个频道按当前参数并行导出，完成后汇总为一个 ZIP 文件下载。</p>
         <p v-else>提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。</p>
         <p v-if="cloudUploadEnabled" class="cloud-tip">
-          云端染色已开放：JSON 导出可一键上传到 SealDice 云端，生成 docx/BBcode 渲染结果。
+          云端染色已开放：JSON 导出可一键上传到 SealDice 云端，生成 BBcode/Docx 渲染结果。
         </p>
       </n-alert>
     </div>
@@ -971,7 +972,8 @@ onBeforeUnmount(() => {
         />
         <template #feedback>
           <div v-if="isSealFormatter" class="seal-tip">
-            JSON 导出会生成海豹染色器专用格式，可在云端转换为 BBcode 或 Docx。
+            <span v-if="form.format === 'json'">JSON 导出供云端染色/兼容现有上传。</span>
+            <span v-else-if="form.format === 'docx'">SealChat 本地生成 Word 文档，可带图片。</span>
           </div>
         </template>
       </n-form-item>
@@ -1043,7 +1045,6 @@ onBeforeUnmount(() => {
           </p>
         </div>
       </n-form-item>
-
       <n-form-item label="时间范围">
         <div class="time-range">
           <ActiveDayDateRangePicker
@@ -1120,10 +1121,10 @@ onBeforeUnmount(() => {
             </template>
             按中文语境纠正每条消息正文中的标点，不修改原始消息。
           </n-tooltip>
-          <n-tooltip trigger="hover" v-if="form.format === 'txt'">
+          <n-tooltip trigger="hover" v-if="showColorProfileTrigger">
             <template #trigger>
               <n-space align="center" :wrap-item="false">
-                <n-checkbox v-model:checked="form.textColorizeBBCode">
+                <n-checkbox v-if="form.format === 'txt'" v-model:checked="form.textColorizeBBCode">
                   使用 BBCode 染色（昵称颜色）
                 </n-checkbox>
                 <n-button
@@ -1143,11 +1144,12 @@ onBeforeUnmount(() => {
                   :disabled="!props.channelId"
                   @click.stop="openColorProfilePanel"
                 >
-                  BBcode角色染色设置
+                  {{ form.format === 'docx' ? '角色染色设置' : 'BBcode 角色染色设置' }}
                 </n-button>
               </n-space>
             </template>
-            仅对纯文本导出生效，会使用 [color] 标签包裹角色名与内容，并引用频道内的昵称颜色。
+            <span v-if="form.format === 'txt'">仅对纯文本导出生效，会使用 [color] 标签包裹角色名与内容，并引用频道内的昵称颜色。</span>
+            <span v-else>DOCX 会使用角色颜色与名字覆盖配置渲染正文。</span>
           </n-tooltip>
           <n-text depth="3" v-if="showColorProfileTrigger">
             已保存 {{ colorProfileCount }} 条角色导出配置（颜色 / 名字）。

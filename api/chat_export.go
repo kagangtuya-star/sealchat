@@ -239,7 +239,7 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 	}
 	textColorizeMap := map[string]string{}
 	textColorizeNameMap := map[string]string{}
-	if textColorizeBBCode {
+	if textColorizeBBCode || strings.EqualFold(format, "docx") {
 		normalizedMap, err := normalizeExportColorMap(req.TextColorizeMap)
 		if err != nil {
 			return nil, err
@@ -396,7 +396,7 @@ func execChatExportBatchCreate(userID string, req *chatExportRequest) (*chatExpo
 	textColorizeBBCode := req.TextColorizeBBCode != nil && *req.TextColorizeBBCode && strings.EqualFold(format, "txt")
 	textColorizeMap := map[string]string{}
 	textColorizeNameMap := map[string]string{}
-	if textColorizeBBCode {
+	if textColorizeBBCode || strings.EqualFold(format, "docx") {
 		var err error
 		textColorizeMap, err = normalizeExportColorMap(req.TextColorizeMap)
 		if err != nil {
@@ -794,6 +794,9 @@ func streamExportFile(c *fiber.Ctx, job *model.MessageExportJobModel, fileName s
 
 	c.Attachment(fileName)
 	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(fileName)))
+	if strings.EqualFold(filepath.Ext(fileName), ".docx") {
+		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	}
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/octet-stream"
 	}

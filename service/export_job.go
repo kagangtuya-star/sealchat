@@ -35,6 +35,7 @@ var supportedExportFormats = map[string]struct{}{
 	"json": {},
 	"txt":  {},
 	"html": {},
+	"docx": {},
 }
 
 // ExportJobOptions 聚合创建导出任务所需的信息。
@@ -719,6 +720,30 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return cloned
 }
 
+// loadExportColorOverrides reads the existing profile format for DOCX batch
+// children. It is deliberately read-only and keeps the API package out of the
+// service layer.
+func loadExportColorOverrides(userID, channelID string) (map[string]string, map[string]string) {
+	if model.GetDB() == nil {
+		return nil, nil
+	}
+	colors := map[string]string{}
+	names := map[string]string{}
+	profiles, _, _, err := LoadExportColorProfile(userID, channelID)
+	if err != nil {
+		return nil, nil
+	}
+	for key, profile := range profiles {
+		if profile.Color != "" {
+			colors[key] = profile.Color
+		}
+		if profile.Name != "" {
+			names[key] = profile.Name
+		}
+	}
+	return colors, names
+}
+
 func cloneMessage(msg *model.MessageModel) *model.MessageModel {
 	if msg == nil {
 		return nil
@@ -892,6 +917,9 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 	opts.MaxConcurrency = extra.MaxConcurrency
 	opts.IncludeImages = extra.IncludeImages
 	opts.IncludeDiceCommand = extra.IncludeDiceCommand
+	opts.TextColorizeBBCode = extra.TextColorizeBBCode
+	opts.TextColorizeBBCodeMap = cloneStringMap(extra.TextColorizeBBCodeMap)
+	opts.TextColorizeBBCodeNameMap = cloneStringMap(extra.TextColorizeBBCodeNameMap)
 	if len(extra.BatchChannelIDs) > 0 {
 		opts.Format = extra.BatchFormat
 		return CreateBatchMessageExportJob(opts, extra.BatchChannelIDs)

@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/service"
 )
 
 const (
@@ -21,11 +21,7 @@ const (
 	exportColorProfileMaxOriginalRunes = 64
 )
 
-type exportColorProfileEntry struct {
-	Color        string `json:"color,omitempty"`
-	Name         string `json:"name,omitempty"`
-	OriginalName string `json:"originalName,omitempty"`
-}
+type exportColorProfileEntry = service.ExportColorProfileEntry
 
 type exportColorProfileDocument struct {
 	Version  int                                `json:"version,omitempty"`
@@ -49,35 +45,18 @@ func ExportColorProfileGet(c *fiber.Ctx) error {
 	if _, err := ensureExportColorProfileChannelAccess(user.ID, channelID); err != nil {
 		return handleChannelAccessErr(c, err)
 	}
-	record, err := model.ExportColorProfileGet(user.ID, channelID)
-	if err != nil {
-		return wrapError(c, err, "获取导出颜色配置失败")
-	}
-	if record == nil {
-		resolvedProfiles, resolveErr := resolveExportColorProfiles(user.ID, channelID, map[string]exportColorProfileEntry{})
-		if resolveErr != nil {
-			return wrapError(c, resolveErr, "获取导出颜色配置失败")
-		}
-		return c.JSON(fiber.Map{
-			"channelId": channelID,
-			"exists":    false,
-			"colors":    buildExportColorMapFromProfiles(resolvedProfiles),
-			"profiles":  resolvedProfiles,
-		})
-	}
-	profiles := parseExportColorProfileJSON(record.ColorsJSON)
-	resolvedProfiles, err := resolveExportColorProfiles(user.ID, channelID, profiles)
+	resolvedProfiles, exists, updatedAt, err := service.LoadExportColorProfile(user.ID, channelID)
 	if err != nil {
 		return wrapError(c, err, "获取导出颜色配置失败")
 	}
 	resp := fiber.Map{
 		"channelId": channelID,
-		"exists":    true,
+		"exists":    exists,
 		"colors":    buildExportColorMapFromProfiles(resolvedProfiles),
 		"profiles":  resolvedProfiles,
 	}
-	if !record.UpdatedAt.IsZero() {
-		resp["updatedAt"] = record.UpdatedAt.UnixMilli()
+	if !updatedAt.IsZero() {
+		resp["updatedAt"] = updatedAt.UnixMilli()
 	}
 	return c.JSON(resp)
 }
@@ -186,26 +165,7 @@ func encodeExportColorProfileJSON(profiles map[string]exportColorProfileEntry) (
 }
 
 func parseExportColorProfileJSON(raw string) map[string]exportColorProfileEntry {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return map[string]exportColorProfileEntry{}
-	}
-	var doc exportColorProfileDocument
-	if err := json.Unmarshal([]byte(trimmed), &doc); err == nil && len(doc.Profiles) > 0 {
-		normalized, err := normalizeExportColorProfiles(doc.Profiles)
-		if err == nil {
-			return normalized
-		}
-	}
-	var legacy map[string]string
-	if err := json.Unmarshal([]byte(trimmed), &legacy); err != nil {
-		return map[string]exportColorProfileEntry{}
-	}
-	normalized, err := normalizeExportColorMap(legacy)
-	if err != nil {
-		return map[string]exportColorProfileEntry{}
-	}
-	return buildProfilesFromColorMap(normalized)
+	return service.ParseExportColorProfileJSON(raw)
 }
 
 func normalizeExportColorMap(input map[string]string) (map[string]string, error) {
@@ -331,95 +291,14 @@ func normalizeExportProfileText(input string, maxRunes int, errMsg string) (stri
 	return value, nil
 }
 
+// resolveExportColorProfiles remains as a small compatibility shim for local
+// API tests/callers; the business implementation lives in service.
 func resolveExportColorProfiles(userID, channelID string, current map[string]exportColorProfileEntry) (map[string]exportColorProfileEntry, error) {
-	options, err := model.ChannelIdentityOptionListActive(channelID)
-	if err != nil {
-		return nil, err
-	}
-	matchIndex, err := buildReusableExportProfileMatchIndex(userID)
-	if err != nil {
-		return nil, err
-	}
-	resolved := make(map[string]exportColorProfileEntry)
-	for _, option := range options {
-		if option == nil {
-			continue
-		}
-		key := normalizeExportProfileKey("identity:" + strings.TrimSpace(option.ID))
-		if key == "" {
-			continue
-		}
-		originalName := strings.TrimSpace(option.Label)
-		if originalName == "" {
-			originalName = "未命名角色"
-		}
-		entry := current[key]
-		if entry.OriginalName == "" {
-			entry.OriginalName = originalName
-		}
-		if reusable, ok := matchIndex[normalizeExportProfileMatchName(originalName)]; ok {
-			if entry.Color == "" {
-				entry.Color = reusable.Color
-			}
-			if entry.Name == "" {
-				entry.Name = reusable.Name
-			}
-		}
-		if entry.Color == "" && entry.Name == "" {
-			continue
-		}
-		resolved[key] = entry
-	}
-	return resolved, nil
-}
-
-func buildReusableExportProfileMatchIndex(userID string) (map[string]exportColorProfileEntry, error) {
-	records, err := model.ExportColorProfileListByUser(userID)
-	if err != nil {
-		return nil, err
-	}
-	index := make(map[string]exportColorProfileEntry)
-	for _, record := range records {
-		if record == nil {
-			continue
-		}
-		profiles := parseExportColorProfileJSON(record.ColorsJSON)
-		if len(profiles) == 0 {
-			continue
-		}
-		keys := make([]string, 0, len(profiles))
-		for key := range profiles {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			entry := profiles[key]
-			if entry.Color == "" && entry.Name == "" {
-				continue
-			}
-			matchKey := normalizeExportProfileMatchName(entry.OriginalName)
-			if matchKey == "" {
-				continue
-			}
-			if _, exists := index[matchKey]; exists {
-				continue
-			}
-			index[matchKey] = exportColorProfileEntry{
-				Color:        entry.Color,
-				Name:         entry.Name,
-				OriginalName: entry.OriginalName,
-			}
-		}
-	}
-	return index, nil
+	return service.ResolveExportColorProfiles(userID, channelID, current)
 }
 
 func normalizeExportProfileMatchName(input string) string {
-	value := strings.TrimSpace(input)
-	if value == "" {
-		return ""
-	}
-	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+	return service.NormalizeExportProfileMatchName(input)
 }
 
 func normalizeHexColor(input string) (string, bool) {

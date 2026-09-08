@@ -10,6 +10,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -866,5 +867,106 @@ func TestTheaterScenePublishedUpdateAndSnapshotRoundTrip(t *testing.T) {
 	}
 	if restored.Published {
 		t.Fatal("scene remained published after false update")
+	}
+}
+
+func TestApplyEffectiveCharacterSnapshotTemplatesTheaterOverlayPriority(t *testing.T) {
+	platformTemplate := &model.PlatformCharacterCardTemplateModel{
+		StringPKBaseModel:          model.StringPKBaseModel{ID: "platform-1"},
+		Content:                    "platform-content",
+		BadgeTemplateOverride:      "platform-badge",
+		TheaterOverlayTemplateJSON: "platform-overlay",
+	}
+	platformTemplateCache := map[string]*model.PlatformCharacterCardTemplateModel{
+		platformTemplate.ID: platformTemplate,
+	}
+
+	newSettings := func(id, overlay string) *model.ChannelCharacterSnapshotSettingsModel {
+		return &model.ChannelCharacterSnapshotSettingsModel{
+			StringPKBaseModel:          model.StringPKBaseModel{ID: id},
+			BadgeTemplate:              "channel-badge",
+			TheaterOverlayTemplateJSON: overlay,
+		}
+	}
+	newPreference := func(theaterMode, theaterJSON string) *model.ChannelCharacterSnapshotPreferenceModel {
+		return &model.ChannelCharacterSnapshotPreferenceModel{
+			BadgeTemplateMode:          "custom",
+			BadgeTemplate:              "personal-badge",
+			TheaterOverlayTemplateMode: theaterMode,
+			TheaterOverlayTemplateJSON: theaterJSON,
+		}
+	}
+	newItem := func() *protocol.CharacterSnapshotItem {
+		return &protocol.CharacterSnapshotItem{
+			Data: protocol.CharacterSnapshotData{
+				Card: &protocol.CharacterSnapshotCard{
+					TemplateText:        "original-content",
+					PlatformTemplateRef: "platform:" + platformTemplate.ID,
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name              string
+		settings          *model.ChannelCharacterSnapshotSettingsModel
+		preference        *model.ChannelCharacterSnapshotPreferenceModel
+		wantOverlay       string
+		wantBadge         string
+		wantBadgeDisabled bool
+	}{
+		{
+			name:        "no channel settings and nil preference uses platform overlay",
+			settings:    newSettings("", defaultCharacterOverlayTemplate),
+			wantOverlay: platformTemplate.TheaterOverlayTemplateJSON,
+			wantBadge:   platformTemplate.BadgeTemplateOverride,
+		},
+		{
+			name:        "no channel settings and inherit preference uses platform overlay",
+			settings:    newSettings("", defaultCharacterOverlayTemplate),
+			preference:  newPreference("inherit", ""),
+			wantOverlay: platformTemplate.TheaterOverlayTemplateJSON,
+			wantBadge:   platformTemplate.BadgeTemplateOverride,
+		},
+		{
+			name:        "explicit channel settings keep channel overlay",
+			settings:    newSettings("settings-1", "channel-overlay"),
+			preference:  newPreference("inherit", ""),
+			wantOverlay: "channel-overlay",
+			wantBadge:   platformTemplate.BadgeTemplateOverride,
+		},
+		{
+			name:        "custom preference keeps personal overlay",
+			settings:    newSettings("", defaultCharacterOverlayTemplate),
+			preference:  newPreference("custom", "personal-overlay"),
+			wantOverlay: "personal-overlay",
+			wantBadge:   platformTemplate.BadgeTemplateOverride,
+		},
+		{
+			name:        "off preference keeps overlay empty",
+			settings:    newSettings("", defaultCharacterOverlayTemplate),
+			preference:  newPreference("off", "personal-overlay"),
+			wantOverlay: "",
+			wantBadge:   platformTemplate.BadgeTemplateOverride,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := newItem()
+			applyEffectiveCharacterSnapshotTemplates(item, tt.settings, tt.preference, platformTemplateCache)
+			if item.TheaterOverlayTemplateJSON != tt.wantOverlay {
+				t.Fatalf("overlay = %q, want %q", item.TheaterOverlayTemplateJSON, tt.wantOverlay)
+			}
+			if item.Data.Card.TemplateText != platformTemplate.Content {
+				t.Fatalf("content = %q, want %q", item.Data.Card.TemplateText, platformTemplate.Content)
+			}
+			if item.BadgeTemplate != tt.wantBadge {
+				t.Fatalf("badge = %q, want %q", item.BadgeTemplate, tt.wantBadge)
+			}
+			if item.BadgeTemplateDisabled != tt.wantBadgeDisabled {
+				t.Fatalf("badge disabled = %v, want %v", item.BadgeTemplateDisabled, tt.wantBadgeDisabled)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ require (
 	github.com/knadh/koanf/v2 v2.1.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mholt/acmez/v3 v3.1.6
+	github.com/mmonterroca/docxgo/v2 v2.12.0
 	github.com/mikespook/gorbac v2.3.0+incompatible
 	github.com/minio/minio-go/v7 v7.0.64
 	github.com/orisano/wyhash v1.1.0

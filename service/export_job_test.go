@@ -96,6 +96,21 @@ func TestLoadMessagesForExportHydratesMultiWhisperTargets(t *testing.T) {
 	}
 }
 
+func TestExportColorizeMapsSurviveExtraOptionRoundTrip(t *testing.T) {
+	raw, err := buildExportExtraOptions(&ExportJobOptions{
+		TextColorizeBBCode:        true,
+		TextColorizeBBCodeMap:     map[string]string{"identity:role-a": "#123456"},
+		TextColorizeBBCodeNameMap: map[string]string{"identity:role-a": "别名"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := parseExportExtraOptions(raw)
+	if extra == nil || !extra.TextColorizeBBCode || extra.TextColorizeBBCodeMap["identity:role-a"] != "#123456" || extra.TextColorizeBBCodeNameMap["identity:role-a"] != "别名" {
+		t.Fatalf("colorize maps were not preserved: %#v", extra)
+	}
+}
+
 func TestBuildExportPayloadUsesMappedWhisperTargetDisplayNames(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()

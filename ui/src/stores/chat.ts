@@ -6387,6 +6387,8 @@ export const useChatStore = defineStore({
       }
       if (params.textColorizeBBCode) {
         payload.text_bbcode_colorize = true;
+      }
+      if (params.textColorizeBBCode || params.format.toLowerCase() === 'docx') {
         if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
           payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
         }
@@ -6444,6 +6446,8 @@ export const useChatStore = defineStore({
       if (params.displaySettings) payload.display_settings = params.displaySettings;
       if (params.textColorizeBBCode) {
         payload.text_bbcode_colorize = true;
+      }
+      if (params.textColorizeBBCode || params.format.toLowerCase() === 'docx') {
         if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
           payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
         }

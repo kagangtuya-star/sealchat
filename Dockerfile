@@ -44,9 +44,15 @@ RUN set -eux; \
   mkdir -p /out/bin/"${WEBP_DIR}"; \
   install -m 0755 ./bin/"${WEBP_DIR}"/cwebp /out/bin/"${WEBP_DIR}"/cwebp; \
   install -m 0755 ./bin/"${WEBP_DIR}"/gif2webp /out/bin/"${WEBP_DIR}"/gif2webp; \
+  install -m 0755 ./bin/"${WEBP_DIR}"/dwebp /out/bin/"${WEBP_DIR}"/dwebp; \
+  mkdir -p /out/bin/cjpeg/"${WEBP_DIR}"; \
+  install -m 0755 ./bin/cjpeg/"${WEBP_DIR}"/cjpeg /out/bin/cjpeg/"${WEBP_DIR}"/cjpeg; \
+  cp ./bin/cjpeg/LICENSE.md /out/bin/cjpeg/LICENSE.md; \
   cp ./bin/LICENSE /out/LICENSE; \
   test -x /out/bin/"${WEBP_DIR}"/cwebp; \
-  test -x /out/bin/"${WEBP_DIR}"/gif2webp
+  test -x /out/bin/"${WEBP_DIR}"/gif2webp; \
+  test -x /out/bin/"${WEBP_DIR}"/dwebp; \
+  test -x /out/bin/cjpeg/"${WEBP_DIR}"/cjpeg
 
 FROM alpine:3.20
 ARG TARGETARCH
@@ -65,7 +71,7 @@ RUN set -eux; \
     arm64) WEBP_DIR="linux-arm64" ;; \
     *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
   esac; \
-  chmod +x /app/bin/"${WEBP_DIR}"/cwebp /app/bin/"${WEBP_DIR}"/gif2webp
+  chmod +x /app/bin/"${WEBP_DIR}"/cwebp /app/bin/"${WEBP_DIR}"/gif2webp /app/bin/"${WEBP_DIR}"/dwebp /app/bin/cjpeg/"${WEBP_DIR}"/cjpeg
 
 EXPOSE 3212
 ENTRYPOINT ["/app/sealchat-server"]

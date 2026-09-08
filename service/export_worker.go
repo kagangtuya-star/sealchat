@@ -131,6 +131,20 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 		ctx = &payloadContext{DisplayOptions: extraOptions.DisplaySettings}
 	}
 	payload := buildExportPayload(job, channelName, messages, ctx, extraOptions)
+	if strings.EqualFold(job.Format, "docx") {
+		if len(extraOptions.TextColorizeBBCodeMap) == 0 && len(extraOptions.TextColorizeBBCodeNameMap) == 0 {
+			extraOptions.TextColorizeBBCodeMap, extraOptions.TextColorizeBBCodeNameMap = loadExportColorOverrides(job.UserID, job.ChannelID)
+		}
+		if payload.ExtraMeta == nil {
+			payload.ExtraMeta = make(map[string]interface{})
+		}
+		if len(extraOptions.TextColorizeBBCodeMap) > 0 {
+			payload.ExtraMeta["text_colorize_bbcode_map"] = cloneStringMap(extraOptions.TextColorizeBBCodeMap)
+		}
+		if len(extraOptions.TextColorizeBBCodeNameMap) > 0 {
+			payload.ExtraMeta["text_colorize_bbcode_name_map"] = cloneStringMap(extraOptions.TextColorizeBBCodeNameMap)
+		}
+	}
 	if extraOptions != nil && extraOptions.TextColorizeBBCode {
 		if payload.ExtraMeta == nil {
 			payload.ExtraMeta = make(map[string]interface{})
@@ -237,6 +251,10 @@ func buildBatchExportEntry(parent *model.MessageExportJobModel, channelID, forma
 	childExtra := parseExportExtraOptions(parent.ExtraOptions)
 	childExtra.BatchChannelIDs = nil
 	childExtra.BatchFormat = ""
+	if strings.EqualFold(format, "docx") {
+		childExtra.TextColorizeBBCode = false
+		childExtra.TextColorizeBBCodeMap, childExtra.TextColorizeBBCodeNameMap = loadExportColorOverrides(parent.UserID, channelID)
+	}
 	encodedExtra, err := json.Marshal(childExtra)
 	if err != nil {
 		return batchExportEntry{}, err

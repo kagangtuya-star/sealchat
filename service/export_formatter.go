@@ -37,22 +37,23 @@ type payloadContext struct {
 }
 
 type ExportMessage struct {
-	ID                    string    `json:"id"`
-	SenderID              string    `json:"sender_id"`
-	SenderIdentityID      string    `json:"sender_identity_id,omitempty"`
-	SenderName            string    `json:"sender_name"`
-	SenderColor           string    `json:"sender_color"`
-	SenderAvatar          string    `json:"sender_avatar,omitempty"`
-	IsMerged              bool      `json:"is_merged,omitempty"`
-	IcMode                string    `json:"ic_mode"`
-	IsWhisper             bool      `json:"is_whisper"`
-	IsArchived            bool      `json:"is_archived"`
-	IsBot                 bool      `json:"is_bot"`
-	WithoutOOCParentheses bool      `json:"-"`
-	CreatedAt             time.Time `json:"created_at"`
-	Content               string    `json:"content"`
-	ContentHTML           string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
-	WhisperTargets        []string  `json:"whisper_targets"`
+	ID                    string             `json:"id"`
+	SenderID              string             `json:"sender_id"`
+	SenderIdentityID      string             `json:"sender_identity_id,omitempty"`
+	SenderName            string             `json:"sender_name"`
+	SenderColor           string             `json:"sender_color"`
+	SenderAvatar          string             `json:"sender_avatar,omitempty"`
+	IsMerged              bool               `json:"is_merged,omitempty"`
+	IcMode                string             `json:"ic_mode"`
+	IsWhisper             bool               `json:"is_whisper"`
+	IsArchived            bool               `json:"is_archived"`
+	IsBot                 bool               `json:"is_bot"`
+	WithoutOOCParentheses bool               `json:"-"`
+	CreatedAt             time.Time          `json:"created_at"`
+	Content               string             `json:"content"`
+	ContentHTML           string             `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
+	ContentRich           *AgentRichDocument `json:"-"`
+	WhisperTargets        []string           `json:"whisper_targets"`
 }
 
 type ExportPayload struct {
@@ -89,6 +90,7 @@ var formatterRegistry = map[string]exportFormatter{
 	"json": jsonFormatter{},
 	"txt":  textFormatter{},
 	"html": htmlFormatter{},
+	"docx": docxFormatter{},
 }
 
 type diceLogPayload struct {
@@ -119,6 +121,7 @@ func getFormatter(name string) (exportFormatter, bool) {
 }
 
 func buildExportPayload(job *model.MessageExportJobModel, channelName string, messages []*model.MessageModel, ctx *payloadContext, extra *exportExtraOptions) *ExportPayload {
+	isDocx := strings.EqualFold(job.Format, "docx")
 	includeImages := true
 	includeDiceCommand := true
 	if extra != nil {
@@ -136,19 +139,28 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		originalContent := msg.Content
 		exportContent := originalContent
 		var htmlContent string
-		if expanded, ok := stickyNoteResolver.render(originalContent, includeImages); ok {
+		var richContent *AgentRichDocument
+		if expanded, ok := stickyNoteResolver.render(originalContent, includeImages, isDocx); ok {
 			exportContent = expanded.Plain
 			htmlContent = expanded.HTML
+			richContent = expanded.Rich
+		}
+		if isDocx {
+			htmlContent = ""
+		}
+		if isDocx && richContent == nil {
+			doc := buildRichDocumentForExport(exportContent, includeImages)
+			richContent = &doc
 		}
 		plainContent := buildFilteredPlainContent(exportContent, includeImages)
-		if plainContent == "" {
+		if plainContent == "" && (!isDocx || !richDocumentHasContent(richContent)) {
 			continue
 		}
 		isBotMessage := msg.User != nil && msg.User.IsBot
 		if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
 			continue
 		}
-		if htmlContent == "" {
+		if htmlContent == "" && !isDocx {
 			if shouldDisableInlineCodeForBotCommand(originalContent) {
 				htmlContent = renderBotCommandRawHTML(originalContent)
 			} else if html, ok := convertTipTapToHTML(originalContent); ok {
@@ -179,10 +191,24 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			CreatedAt:             msg.CreatedAt,
 			Content:               exportContent,
 			ContentHTML:           htmlContent,
+			ContentRich:           richContent,
 			WhisperTargets:        extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
 
+	var extraMeta map[string]interface{}
+	if strings.EqualFold(job.Format, "docx") && extra != nil {
+		extraMeta = make(map[string]interface{})
+		if len(extra.TextColorizeBBCodeMap) > 0 {
+			extraMeta["text_colorize_bbcode_map"] = cloneStringMap(extra.TextColorizeBBCodeMap)
+		}
+		if len(extra.TextColorizeBBCodeNameMap) > 0 {
+			extraMeta["text_colorize_bbcode_name_map"] = cloneStringMap(extra.TextColorizeBBCodeNameMap)
+		}
+		if len(extraMeta) == 0 {
+			extraMeta = nil
+		}
+	}
 	return &ExportPayload{
 		ChannelID:        job.ChannelID,
 		ChannelName:      channelName,
@@ -199,6 +225,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		WithoutTimestamp: job.WithoutTimestamp,
 		IncludeImages:    includeImages,
 		IncludeDiceCmds:  includeDiceCommand,
+		ExtraMeta:        extraMeta,
 		Meta: map[string]bool{
 			"include_ooc":           job.IncludeOOC,
 			"include_archived":      job.IncludeArchived,
@@ -213,6 +240,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 type stickyNoteExportRender struct {
 	Plain string
 	HTML  string
+	Rich  *AgentRichDocument
 }
 
 type stickyNoteExportResolver struct {
@@ -287,16 +315,21 @@ func newStickyNoteExportResolver(channelID string) *stickyNoteExportResolver {
 	}
 }
 
-func (r *stickyNoteExportResolver) render(content string, includeImages bool) (stickyNoteExportRender, bool) {
+func (r *stickyNoteExportResolver) render(content string, includeImages bool, richOnly ...bool) (stickyNoteExportRender, bool) {
 	if r == nil {
 		return stickyNoteExportRender{}, false
 	}
+	richOnlyMode := len(richOnly) > 0 && richOnly[0]
 	targets, ok := parseOnlyStickyNoteEmbedTargets(content)
 	if !ok || len(targets) == 0 {
 		return stickyNoteExportRender{}, false
 	}
 	plainParts := make([]string, 0, len(targets))
 	htmlParts := make([]string, 0, len(targets))
+	var richParts []AgentRichDocument
+	if richOnlyMode {
+		richParts = make([]AgentRichDocument, 0, len(targets))
+	}
 	for _, target := range targets {
 		if target.ChannelID != r.channelID {
 			return stickyNoteExportRender{}, false
@@ -307,16 +340,42 @@ func (r *stickyNoteExportResolver) render(content string, includeImages bool) (s
 		}
 		adapter := resolveStickyNoteExportAdapter(note.NoteType)
 		plain := buildStickyNoteExportPlain(note, adapter, includeImages)
-		html := buildStickyNoteExportHTML(note, adapter, includeImages)
+		html := ""
+		if !richOnlyMode {
+			html = buildStickyNoteExportHTML(note, adapter, includeImages)
+		}
 		if strings.TrimSpace(plain) == "" && strings.TrimSpace(html) == "" {
 			return stickyNoteExportRender{}, false
 		}
 		plainParts = append(plainParts, plain)
 		htmlParts = append(htmlParts, html)
+		if richOnlyMode {
+			title := strings.TrimSpace(note.Title)
+			if title == "" {
+				title = "未命名便签"
+			}
+			richSource := plain
+			if note.NoteType == model.StickyNoteTypeText || note.NoteType == model.StickyNoteTypeChat {
+				raw := strings.TrimSpace(note.Content)
+				if raw == "" {
+					raw = strings.TrimSpace(note.ContentText)
+				}
+				if raw != "" {
+					richSource = "[便签: " + title + "]\n" + raw
+				}
+			}
+			richParts = append(richParts, buildRichDocumentForExport(richSource, includeImages))
+		}
+	}
+	var mergedRich *AgentRichDocument
+	if richOnlyMode {
+		merged := MergeAgentRichDocuments(richParts)
+		mergedRich = &merged
 	}
 	return stickyNoteExportRender{
 		Plain: strings.Join(plainParts, "\n\n"),
 		HTML:  strings.Join(htmlParts, ""),
+		Rich:  mergedRich,
 	}, true
 }
 
