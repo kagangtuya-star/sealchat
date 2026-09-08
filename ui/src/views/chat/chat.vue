@@ -225,12 +225,6 @@ const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
 const worldClueStore = useWorldClueStore();
-watch(() => stickyNoteStore.uiVisible, (visible) => {
-  if (visible) worldClueStore.setVisible(false);
-});
-watch(() => worldClueStore.uiVisible, (visible) => {
-  if (visible) stickyNoteStore.setVisible(false);
-});
 const dice3dSettingsVisible = ref(false);
 const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
@@ -401,13 +395,11 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
 const toggleStickyNotes = () => {
   const next = !stickyNoteStore.uiVisible;
   stickyNoteStore.setVisible(next);
-  if (next) worldClueStore.setVisible(false);
 };
 
 const toggleWorldClueBox = () => {
   const next = !worldClueStore.uiVisible;
   worldClueStore.setVisible(next);
-  if (next) stickyNoteStore.setVisible(false);
 };
 
 const openDice3DSettings = () => {
@@ -605,12 +597,10 @@ const setFiltersForShell = (filters: any) => {
 
 const setStickyNoteVisible = (visible: boolean) => {
   stickyNoteStore.setVisible(visible);
-  if (visible) worldClueStore.setVisible(false);
 };
 
 const setClueBoxVisible = (visible: boolean) => {
   worldClueStore.setVisible(visible);
-  if (visible) stickyNoteStore.setVisible(false);
 };
 
 const setCharacterCardVisible = (visible: boolean) => {
