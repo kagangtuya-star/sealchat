@@ -455,9 +455,15 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     if (payload.clueId) {
       try {
         const keyword = keywordsByWorld.value[worldId] || ''
-        const response = await api.get(`api/v1/worlds/${worldId}/clues`, { params: keyword ? { keyword } : undefined })
+        const [cluesResponse, foldersResponse] = await Promise.all([
+          api.get(`api/v1/worlds/${worldId}/clues`, { params: keyword ? { keyword } : undefined }),
+          api.get(`api/v1/worlds/${worldId}/clue-folders`).catch(() => null),
+        ])
         if (currentWorldId.value !== worldId || keywordsByWorld.value[worldId] !== keyword) return
-        const item = ((response.data?.items || []) as WorldClueSummary[]).find(candidate => candidate.id === payload.clueId)
+        if (foldersResponse) {
+          foldersByWorld.value[worldId] = (foldersResponse.data?.items || []) as WorldClueFolder[]
+        }
+        const item = ((cluesResponse.data?.items || []) as WorldClueSummary[]).find(candidate => candidate.id === payload.clueId)
         if (!item) {
           delete summariesByWorld.value[worldId]?.[payload.clueId]
           return
