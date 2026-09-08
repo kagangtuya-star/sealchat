@@ -1038,6 +1038,101 @@ func WorldCluePublish(worldID, clueID, actorID string, expectedPublishSeq int64)
 	return &WorldCluePublishResult{Clue: detail, RecipientIDs: recipientIDs}, nil
 }
 
+func WorldClueReveal(worldID, clueID, actorID string, userIDs []string, expectedPublishSeq int64) (*WorldCluePublishResult, error) {
+	db := model.GetDB()
+	recipientIDs := make([]string, 0, len(userIDs))
+	seenIDs := make(map[string]struct{}, len(userIDs))
+	for _, rawID := range userIDs {
+		userID := strings.TrimSpace(rawID)
+		if userID == "" {
+			continue
+		}
+		if _, ok := seenIDs[userID]; ok {
+			continue
+		}
+		seenIDs[userID] = struct{}{}
+		recipientIDs = append(recipientIDs, userID)
+	}
+	var publishSeq int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		role, err := worldClueRole(tx, worldID, actorID)
+		if err != nil {
+			return err
+		}
+		if !worldClueIsAdminRole(role) {
+			return ErrWorldClueDenied
+		}
+		var clue model.WorldClueModel
+		if err := tx.Where("world_id = ? AND id = ? AND status <> ?", worldID, clueID, model.WorldClueStatusArchived).Limit(1).Find(&clue).Error; err != nil {
+			return err
+		}
+		if clue.ID == "" {
+			return ErrWorldClueNotFound
+		}
+		if clue.PublishSeq != expectedPublishSeq {
+			return ErrWorldClueConflict
+		}
+		if len(recipientIDs) == 0 {
+			return fmt.Errorf("%w: at least one recipient is required", ErrWorldClueInvalid)
+		}
+		var members []model.WorldMemberModel
+		if err := tx.Where("world_id = ? AND user_id IN ?", worldID, recipientIDs).Find(&members).Error; err != nil {
+			return err
+		}
+		memberIDs := make(map[string]struct{}, len(members))
+		for _, member := range members {
+			memberIDs[member.UserID] = struct{}{}
+		}
+		if len(memberIDs) != len(recipientIDs) {
+			return fmt.Errorf("%w: recipient is not a world member", ErrWorldClueInvalid)
+		}
+		publishSeq = clue.PublishSeq + 1
+		now := time.Now()
+		result := tx.Model(&model.WorldClueModel{}).
+			Where("world_id = ? AND id = ? AND publish_seq = ? AND status <> ?", worldID, clueID, expectedPublishSeq, model.WorldClueStatusArchived).
+			Updates(map[string]any{"status": model.WorldClueStatusPublished, "publish_seq": publishSeq, "published_at": now, "published_by": actorID, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrWorldClueConflict
+		}
+		for _, userID := range recipientIDs {
+			row := model.WorldClueAccessModel{
+				WorldID: worldID, ClueID: clueID, UserID: userID,
+				AccessOverride: model.WorldClueAccessView, PrivateContentFormat: model.WorldClueContentPlain,
+				UpdatedBy: actorID,
+			}
+			row.ID = utils.NewID()
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "world_id"}, {Name: "clue_id"}, {Name: "user_id"}},
+				DoUpdates: clause.Assignments(map[string]any{"access_override": model.WorldClueAccessView, "updated_by": actorID, "updated_at": now}),
+			}).Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		for _, userID := range recipientIDs {
+			state := model.WorldClueUserStateModel{WorldID: worldID, ClueID: clueID, UserID: userID, AssignedPresentationSeq: publishSeq}
+			state.ID = utils.NewID()
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "world_id"}, {Name: "clue_id"}, {Name: "user_id"}},
+				DoUpdates: clause.Assignments(map[string]any{"assigned_presentation_seq": publishSeq, "updated_at": now}),
+			}).Create(&state).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	detail, err := WorldClueGet(worldID, clueID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	return &WorldCluePublishResult{Clue: detail, RecipientIDs: recipientIDs}, nil
+}
+
 func WorldClueUnpublish(worldID, clueID, actorID string, expectedPublishSeq int64) (*protocol.WorldClueDetail, error) {
 	db := model.GetDB()
 	role, err := worldClueRole(db, worldID, actorID)
@@ -1084,6 +1179,7 @@ func WorldCluePendingPresentations(worldID, actorID string) ([]protocol.WorldClu
 		if detail.Status != model.WorldClueStatusPublished || detail.PublishSeq < states[i].AssignedPresentationSeq {
 			continue
 		}
+		detail.PublishSeq = states[i].AssignedPresentationSeq
 		result = append(result, *detail)
 	}
 	sort.SliceStable(result, func(i, j int) bool {

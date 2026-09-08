@@ -30,6 +30,7 @@ const emit = defineEmits<{
   (event: 'update:defaultAccess', value: 'none' | 'view'): void
   (event: 'publish'): void
   (event: 'unpublish'): void
+  (event: 'revealed', clue: WorldClueDetail): void
   (event: 'private-preview', payload: {
     userId: string
     name: string
@@ -290,12 +291,38 @@ function toggleSelection(userId: string, checked: boolean, event?: MouseEvent) {
   lastSelectedIndex.value = index
 }
 const selectedHasSpectator = computed(() => [...selected.value].some(id => access.value[id]?.role === 'spectator'))
+const selectedSubmitting = computed(() => [...selected.value].some(id => submitting.value.has(id)))
 async function batchSet(value: Override) {
   if (batchSubmitting.value || (value === 'edit' && selectedHasSpectator.value)) return
   batchSubmitting.value = true
   const ids = [...selected.value]
   await Promise.all(ids.map(id => setAccess(id, value)))
   batchSubmitting.value = false
+}
+async function batchReveal() {
+  if (batchSubmitting.value || selectedSubmitting.value || !props.clue?.id || !selected.value.size) return
+  const worldId = props.worldId
+  const clueId = props.clue.id
+  const expectedPublishSeq = props.clue.publishSeq
+  const ids = [...selected.value]
+  batchSubmitting.value = true
+  try {
+    const result = await store.reveal(worldId, clueId, ids, expectedPublishSeq)
+    if (props.worldId === worldId && props.clue?.id === clueId) {
+      for (const userId of result.recipientIds) {
+        const item = access.value[userId]
+        if (item) access.value[userId] = { ...item, accessOverride: 'view' }
+      }
+      selected.value = new Set()
+      lastSelectedIndex.value = -1
+    }
+    emit('revealed', result.item)
+    message.success(`已向 ${result.recipientIds.length} 人揭示`)
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '揭示失败')
+  } finally {
+    batchSubmitting.value = false
+  }
 }
 
 const nameOf = (member: WorldClueRosterMember) => member.nickname || member.username || member.userId
@@ -475,7 +502,7 @@ onBeforeUnmount(() => {
           </article>
         </div>
       </div>
-      <div v-if="selected.size" class="batch-bar"><strong>已选择 {{ selected.size }} 人</strong><div><NButton v-for="stop in stops" :key="stop.value" size="small" :disabled="batchSubmitting || (stop.value==='edit' && selectedHasSpectator)" @click="batchSet(stop.value)">{{ stop.label }}</NButton></div><NButton text @click="selected=new Set()">清除选择</NButton></div>
+      <div v-if="selected.size" class="batch-bar"><strong>已选择 {{ selected.size }} 人</strong><div><NButton v-for="stop in stops" :key="stop.value" size="small" :disabled="batchSubmitting || (stop.value==='edit' && selectedHasSpectator)" @click="batchSet(stop.value)">{{ stop.label }}</NButton><NButton type="primary" secondary size="small" :disabled="batchSubmitting || selectedSubmitting" @click="batchReveal">揭示</NButton></div><NButton text @click="selected=new Set()">清除选择</NButton></div>
     </NSpin>
     <aside v-if="sheetMember" class="private-sheet">
       <header><div><strong>{{ nameOf(sheetMember) }}</strong><small>成员专属信息 · 仅该成员可见 <em v-if="privateDirty && !privateLoading">· 未保存</em></small><small v-if="getPrivateLock() && !ownsPrivateLock()" class="private-lock-hint">🔒 {{ privateLockOwnerName() }} 正在编辑此成员的专属信息</small><small v-else-if="privateAcquiringLock" class="private-lock-hint">正在获取编辑权…</small></div><div class="private-sheet__header-actions"><NButton circle quaternary size="small" title="保存" aria-label="保存专属信息" :type="privateDirty ? 'primary' : 'default'" :loading="privateSaving" :disabled="privateLoading" @click="flushPrivate()"><template #icon><NIcon><DeviceFloppy /></NIcon></template></NButton><NButton circle quaternary size="small" title="关闭" aria-label="关闭专属信息" :disabled="privateLoading || switchingPrivate" @click="closePrivate"><template #icon><NIcon><X /></NIcon></template></NButton></div></header>

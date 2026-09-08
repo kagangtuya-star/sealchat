@@ -690,6 +690,12 @@ async function unpublish() {
   } catch (error: any) { message.error(error?.response?.data?.message || '收回失败') }
   finally { publishing.value = false }
 }
+
+function handleDistributionRevealed(saved: WorldClueDetail) {
+  if (!workingClue.value || workingClue.value.worldId !== props.worldId || workingClue.value.id !== saved.id) return
+  workingClue.value = { ...workingClue.value, ...saved }
+  sessionChanged = true
+}
 </script>
 
 <template>
@@ -822,7 +828,7 @@ async function unpublish() {
           </aside>
         </div>
 
-        <WorldClueDistributionPanel v-else-if="activeTab === 'distribution' && canManage" ref="distributionPanel" :world-id="worldId" :clue="workingClue" :default-access="form.defaultAccess" :publishing="publishing" :lock-session-id="lockSessionId" @update:default-access="form.defaultAccess = $event" @private-preview="privatePreview = $event" @publish="publishOrPresent" @unpublish="unpublish" />
+        <WorldClueDistributionPanel v-else-if="activeTab === 'distribution' && canManage" ref="distributionPanel" :world-id="worldId" :clue="workingClue" :default-access="form.defaultAccess" :publishing="publishing" :lock-session-id="lockSessionId" @update:default-access="form.defaultAccess = $event" @private-preview="privatePreview = $event" @publish="publishOrPresent" @unpublish="unpublish" @revealed="handleDistributionRevealed" />
 
         <section v-else-if="activeTab === 'manager' && canManage" class="clue-editor__panel clue-editor__section-panel clue-editor__manager-panel" :class="fieldInputLockClass('managerNote')">
           <div class="clue-editor__section-title">管理备注</div>

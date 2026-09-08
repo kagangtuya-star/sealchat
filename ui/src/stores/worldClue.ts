@@ -137,6 +137,11 @@ export interface WorldCluePresentationRequest {
   manual?: boolean
 }
 
+export interface WorldClueRevealResult {
+  item: WorldClueDetail
+  recipientIds: string[]
+}
+
 type ResolveWaiter = { resolve: (value: WorldClueResolveItem) => void; reject: (reason?: unknown) => void }
 
 export const useWorldClueStore = defineStore('worldClue', () => {
@@ -348,6 +353,18 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     return item
   }
 
+  async function reveal(worldId: string, clueId: string, userIds: string[], expectedPublishSeq: number): Promise<WorldClueRevealResult> {
+    const response = await api.post(`api/v1/worlds/${worldId}/clues/${clueId}/reveal`, { userIds, expectedPublishSeq })
+    const received = response.data?.item as WorldClueDetail
+    const item = detail.value?.worldId === worldId && detail.value.id === clueId
+      ? { ...detail.value, ...received }
+      : received
+    summariesByWorld.value[worldId] ||= {}
+    summariesByWorld.value[worldId][clueId] = summaryFromDetail(item)
+    if (currentWorldId.value === worldId) detail.value = item
+    return { item, recipientIds: (response.data?.recipientIds || []) as string[] }
+  }
+
   async function unpublish(worldId: string, clueId: string, expectedPublishSeq: number) {
     const response = await api.post(`api/v1/worlds/${worldId}/clues/${clueId}/unpublish`, { expectedPublishSeq })
     const item = response.data?.item as WorldClueDetail
@@ -496,7 +513,7 @@ export const useWorldClueStore = defineStore('worldClue', () => {
   return {
     currentWorldId, summariesByWorld, foldersByWorld, rosterByWorld, editLocksByClue, detail, resolveCache, presentationQueue, uiVisible, loading,
     summaries, folders, roster, unreadCount, setWorld, setVisible, toggleVisible, loadWorld, loadRoster, addRosterMember, removeRosterMember, fetchDetail, saveClue,
-    removeClue, publish, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen,
+    removeClue, publish, reveal, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen,
     invalidate, handleChanged, requestResolve, loadEditLocks, acquireEditLock, releaseEditLock,
   }
 })

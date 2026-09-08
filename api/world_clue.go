@@ -27,6 +27,7 @@ func BindWorldClueRoutes(group fiber.Router) {
 	group.Patch("/:worldId/clues/:clueId", worldClueUpdateHandler)
 	group.Delete("/:worldId/clues/:clueId", worldClueDeleteHandler)
 	group.Post("/:worldId/clues/:clueId/publish", worldCluePublishHandler)
+	group.Post("/:worldId/clues/:clueId/reveal", worldClueRevealHandler)
 	group.Post("/:worldId/clues/:clueId/unpublish", worldClueUnpublishHandler)
 	group.Get("/:worldId/clues/:clueId/edit-locks", worldClueEditLocksListHandler)
 	group.Post("/:worldId/clues/:clueId/edit-lock/acquire", worldClueEditLockAcquireHandler)
@@ -340,6 +341,27 @@ func worldCluePublishHandler(c *fiber.Ctx) error {
 	broadcastWorldClueChanged(c.Params("worldId"), c.Params("clueId"), "upsert", result.Clue.Revision)
 	broadcastWorldCluePublished(c.Params("worldId"), c.Params("clueId"), result.Clue.PublishSeq, result.RecipientIDs)
 	return c.JSON(fiber.Map{"item": result.Clue})
+}
+
+func worldClueRevealHandler(c *fiber.Ctx) error {
+	userID, err := worldClueUser(c)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		UserIDs            []string `json:"userIds"`
+		ExpectedPublishSeq int64    `json:"expectedPublishSeq"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "请求格式错误"})
+	}
+	result, err := service.WorldClueReveal(c.Params("worldId"), c.Params("clueId"), userID, body.UserIDs, body.ExpectedPublishSeq)
+	if err != nil {
+		return worldClueError(c, err)
+	}
+	broadcastWorldClueChanged(c.Params("worldId"), c.Params("clueId"), "upsert", result.Clue.Revision)
+	broadcastWorldCluePublished(c.Params("worldId"), c.Params("clueId"), result.Clue.PublishSeq, result.RecipientIDs)
+	return c.JSON(fiber.Map{"item": result.Clue, "recipientIds": result.RecipientIDs})
 }
 
 func worldClueUnpublishHandler(c *fiber.Ctx) error {
