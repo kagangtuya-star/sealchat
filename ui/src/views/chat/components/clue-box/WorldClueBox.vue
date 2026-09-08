@@ -556,7 +556,7 @@ onMounted(() => {
         <div class="clue-box__item-actions">
           <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
           <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
-          <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '再次揭示' : '揭示' }}</NButton>
+          <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
           <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
           <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
           <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
