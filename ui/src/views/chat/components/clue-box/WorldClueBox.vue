@@ -179,6 +179,27 @@ async function publish(summary: WorldClueSummary) {
     },
   })
 }
+function deleteClue(summary: WorldClueSummary) {
+  dialog.warning({
+    title: '删除线索',
+    content: `确定删除「${summary.title}」吗？删除后成员将无法继续查看此线索。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await store.removeClue(props.worldId, summary.id)
+        if (editingClue.value?.id === summary.id) {
+          editingClue.value = null
+          editorVisible.value = false
+        }
+        message.success('线索已删除')
+      } catch (error: any) {
+        message.error(error?.response?.data?.message || '线索删除失败')
+        return false
+      }
+    },
+  })
+}
 function handleEditorSaved(saved: WorldClueDetail) {
   if (!editingClue.value || editingClue.value.id === saved.id) editingClue.value = saved
   void store.loadWorld(props.worldId, keyword.value)
@@ -536,6 +557,7 @@ onMounted(() => {
           <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
           <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
           <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '再次揭示' : '揭示' }}</NButton>
+          <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
           <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
           <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
         </div>
