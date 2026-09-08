@@ -38,8 +38,9 @@ const multiSelect = ref(false)
 const selectedClueIds = reactive(new Set<string>())
 const folderPopoverVisible = ref(false)
 const panelWasDragged = ref(false)
-const tabDismissed = ref(false)
-const preference = reactive({ x: 0, y: 80, width: 460, height: 720, expanded: true, pinned: true, layout: 'grid' as 'grid' | 'list', mediaPreview: false })
+// Keep the clue-box affordance hidden until a clue is pushed or the user opens it.
+const tabDismissed = ref(true)
+const preference = reactive({ x: 0, y: 80, width: 460, height: 720, expanded: false, pinned: true, layout: 'grid' as 'grid' | 'list', mediaPreview: false })
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let pointerCleanup: (() => void) | null = null
 
@@ -111,18 +112,24 @@ watch(() => [props.worldId, viewScope.value] as const, ([worldId, scope], previo
 })
 
 function readPreference() {
+  let expanded = false
+  let dismissed = true
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey.value) || '{}')
     preference.width = Number(value.width) || 460
     preference.height = Number(value.height) || Math.min(720, window.innerHeight - 96)
     preference.x = Number.isFinite(Number(value.x)) ? Number(value.x) : window.innerWidth - preference.width - 12
     preference.y = Number(value.y) || 80
-    preference.expanded = value.expanded !== false
+    expanded = value.expanded === true
+    dismissed = typeof value.tabDismissed === 'boolean' ? value.tabDismissed : true
     preference.pinned = value.pinned !== false
     preference.layout = value.layout === 'list' ? 'list' : 'grid'
     preference.mediaPreview = value.mediaPreview === true
   } catch { /* ignore invalid local state */ }
+  preference.expanded = expanded
+  tabDismissed.value = dismissed
   clampPanelGeometry()
+  return expanded
 }
 function clampPanelGeometry() {
   if (window.innerWidth <= 680) return
@@ -133,8 +140,8 @@ function clampPanelGeometry() {
   preference.x = Math.max(panelMargin, Math.min(window.innerWidth - preference.width - panelMargin, preference.x))
   preference.y = Math.max(panelMargin, Math.min(window.innerHeight - preference.height - panelMargin, preference.y))
 }
-function savePreference() { try { localStorage.setItem(preferenceKey.value, JSON.stringify(preference)) } catch { /* ignore */ } }
-watch(preference, savePreference, { deep: true })
+function savePreference() { try { localStorage.setItem(preferenceKey.value, JSON.stringify({ ...preference, tabDismissed: tabDismissed.value })) } catch { /* ignore */ } }
+watch([preference, tabDismissed], savePreference, { deep: true })
 watch(() => store.uiVisible, (visible, wasVisible) => {
   if (visible) {
     tabDismissed.value = false
@@ -147,10 +154,17 @@ watch(scopedFolders, folders => {
   if (selectedFolderId.value && !folders.some(folder => folder.id === selectedFolderId.value)) selectedFolderId.value = ''
 })
 watch(() => [props.worldId, props.channelId, props.canManage] as const, ([worldId, channelId, canManage], previous) => {
-  readPreference()
-  if (previous?.[1] && previous[1] !== channelId && !preference.pinned) close()
+  const contextChanged = !previous || previous[0] !== worldId || previous[1] !== channelId
+  const storedExpanded = contextChanged ? readPreference() : preference.expanded
+  const closeOnChannelChange = Boolean(previous?.[1] && previous[1] !== channelId && !preference.pinned)
   if (worldId) {
     void store.loadWorld(worldId)
+    if (contextChanged) {
+      if (closeOnChannelChange) close()
+      else {
+        store.setVisible(storedExpanded)
+      }
+    }
     if (canManage) void store.loadRoster(worldId).catch(() => undefined)
   }
 }, { immediate: true })
@@ -169,6 +183,15 @@ function openFromTab() {
   if (panelWasDragged.value) return
   store.setVisible(true)
   preference.expanded = true
+}
+function toggleVisibility() {
+  if (store.uiVisible) {
+    close()
+    tabDismissed.value = true
+    return
+  }
+  preference.expanded = false
+  tabDismissed.value = !tabDismissed.value
 }
 function handlePublished(event: any) {
   const payload = event?.worldClue || event?.argv?.options || event?.argv?.Options || {}
@@ -643,11 +666,11 @@ function startMove(event: PointerEvent) {
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up)
 }
 onMounted(() => {
-  readPreference()
   chatEvent.on('world-clue-published' as any, handlePublished as any)
   chatEvent.on('world-clue-edit' as any, handleEdit as any)
   window.addEventListener('resize', clampPanelGeometry)
 })
+defineExpose({ toggleVisibility })
 </script>
 
 <template>
@@ -787,7 +810,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.clue-box { position: fixed; z-index: 999; display: flex; min-width: 360px; min-height: 320px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); flex-direction: column; overflow: hidden; color: var(--sc-text-primary); border: 1px solid var(--sc-border-strong); border-radius: 6px; background: color-mix(in srgb, var(--sc-bg-surface) 96%, transparent); box-shadow: 0 18px 50px #0004; backdrop-filter: blur(14px); }
+.clue-box { position: fixed; z-index: 1200; display: flex; min-width: 360px; min-height: 320px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); flex-direction: column; overflow: hidden; color: var(--sc-text-primary); border: 1px solid var(--sc-border-strong); border-radius: 6px; background: color-mix(in srgb, var(--sc-bg-surface) 96%, transparent); box-shadow: 0 18px 50px #0004; backdrop-filter: blur(14px); }
 .clue-box__resize { position: absolute; z-index: 2; touch-action: none; }
 .clue-box__resize--left { inset: 0 auto 0 0; width: 7px; cursor: ew-resize; }
 .clue-box__resize--right { inset: 0 0 0 auto; width: 7px; cursor: ew-resize; }
@@ -846,7 +869,7 @@ onMounted(() => {
 .clue-box__folder-picker { display: grid; min-width: 150px; max-width: 230px; gap: 3px; padding: 4px; }
 .clue-box__folder-picker strong { padding: 3px 6px 5px; font-size: 12px; }
 .clue-box__empty { margin: auto; }
-.clue-box-tab { position: fixed; right: 0; z-index: 999; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
+.clue-box-tab { position: fixed; right: 0; z-index: 1200; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
 .clue-box-tab :deep(.n-badge-sup) { top: -18px; right: 50%; transform: translateX(50%); writing-mode: horizontal-tb; }
 .clue-box :deep(.n-input) { --n-box-shadow-hover: none !important; --n-box-shadow-focus: none !important; --n-box-shadow-active: none !important; --n-box-shadow-hover-warning: none !important; --n-box-shadow-focus-warning: none !important; --n-box-shadow-active-warning: none !important; --n-box-shadow-hover-error: none !important; --n-box-shadow-focus-error: none !important; --n-box-shadow-active-error: none !important; }
 @media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } }

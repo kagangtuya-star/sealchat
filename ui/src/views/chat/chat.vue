@@ -225,6 +225,7 @@ const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
 const worldClueStore = useWorldClueStore();
+const worldClueBoxRef = ref<InstanceType<typeof WorldClueBox> | null>(null);
 const dice3dSettingsVisible = ref(false);
 const dice3dConfig = ref<Dice3DWorldConfig | null>(null);
 const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
@@ -398,8 +399,12 @@ const toggleStickyNotes = () => {
 };
 
 const toggleWorldClueBox = () => {
-  const next = !worldClueStore.uiVisible;
-  worldClueStore.setVisible(next);
+  const toggle = worldClueBoxRef.value?.toggleVisibility;
+  if (typeof toggle === 'function') {
+    toggle();
+    return;
+  }
+  worldClueStore.toggleVisible();
 };
 
 const openDice3DSettings = () => {
@@ -18180,6 +18185,7 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel.id"
   />
   <WorldClueBox
+    ref="worldClueBoxRef"
     v-if="chat.curChannel?.id && chat.currentWorldId && !chat.observerMode"
     :world-id="chat.currentWorldId"
     :channel-id="chat.curChannel.id"
