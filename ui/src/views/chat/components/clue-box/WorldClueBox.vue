@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NSpace, useDialog, useMessage } from 'naive-ui'
-import { ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, List, MessagePlus, Photo, Pin, Pinned, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
+import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NPopover, NSpace, useDialog, useMessage } from 'naive-ui'
+import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, List, MessagePlus, Photo, Pin, Pinned, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
@@ -34,6 +34,9 @@ const inlineInputRef = ref<{ focus: () => void } | null>(null)
 const mediaFallback = reactive<Partial<Record<string, 'video' | 'failed'>>>({})
 const favoriteOverrides = reactive<Partial<Record<string, boolean>>>({})
 const favoriteSubmitting = reactive<Partial<Record<string, boolean>>>({})
+const multiSelect = ref(false)
+const selectedClueIds = reactive(new Set<string>())
+const folderPopoverVisible = ref(false)
 const panelWasDragged = ref(false)
 const tabDismissed = ref(false)
 const preference = reactive({ x: 0, y: 80, width: 460, height: 720, expanded: true, pinned: true, layout: 'grid' as 'grid' | 'list', mediaPreview: false })
@@ -70,6 +73,42 @@ function isFavorite(summary: WorldClueSummary) {
 const visibleItems = computed(() => viewScope.value === 'personal'
   ? currentFolderItems.value.filter(isFavorite)
   : currentFolderItems.value)
+const selectedItems = computed(() => visibleItems.value.filter(item => selectedClueIds.has(item.id)))
+const selectedCount = computed(() => selectedClueIds.size)
+const canReorderClues = computed(() => canReorderCurrentScope.value && !multiSelect.value)
+
+function clearSelectedClues() { selectedClueIds.clear() }
+function exitMultiSelect() {
+  multiSelect.value = false
+  folderPopoverVisible.value = false
+  clearSelectedClues()
+}
+function toggleMultiSelect() {
+  if (multiSelect.value) exitMultiSelect()
+  else multiSelect.value = true
+}
+function toggleClueSelection(summary: WorldClueSummary) {
+  if (!multiSelect.value) return
+  if (selectedClueIds.has(summary.id)) selectedClueIds.delete(summary.id)
+  else selectedClueIds.add(summary.id)
+}
+function handleClueClick(summary: WorldClueSummary) {
+  if (multiSelect.value) toggleClueSelection(summary)
+}
+function handleClueDblClick(summary: WorldClueSummary) {
+  if (!multiSelect.value) void openClue(summary)
+}
+function selectAllVisible() {
+  for (const item of visibleItems.value) selectedClueIds.add(item.id)
+}
+
+watch(visibleItems, items => {
+  const visibleIds = new Set(items.map(item => item.id))
+  for (const id of selectedClueIds) if (!visibleIds.has(id)) selectedClueIds.delete(id)
+})
+watch(() => [props.worldId, viewScope.value] as const, ([worldId, scope], previous) => {
+  if (previous && (previous[0] !== worldId || previous[1] !== scope)) exitMultiSelect()
+})
 
 function readPreference() {
   try {
@@ -209,9 +248,82 @@ async function copyLink(summary: WorldClueSummary) {
   await copyTextWithFallback(generateWorldClueEmbedLink({ worldId: props.worldId, channelId: props.channelId, clueId: summary.id }))
   message.success('嵌入链接已复制')
 }
-async function insertLink(summary: WorldClueSummary) {
+async function insertLink(summary: WorldClueSummary, emitEvent = true) {
   const link = generateWorldClueEmbedLink({ worldId: props.worldId, channelId: props.channelId, clueId: summary.id })
-  chatEvent.emit('world-clue-insert-link' as any, { link })
+  if (emitEvent) chatEvent.emit('world-clue-insert-link' as any, { link })
+  return link
+}
+function batchPublish() {
+  if (!props.canManage || !selectedItems.value.length) return
+  const worldId = props.worldId
+  const items = [...selectedItems.value]
+  dialog.warning({
+    title: '批量揭示线索',
+    content: `确定揭示已选 ${items.length} 项线索吗？`,
+    positiveText: '揭示',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+        for (const item of items) {
+          if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+          const saved = await store.publish(worldId, item.id, item.publishSeq)
+          selectedClueIds.delete(item.id)
+          if (editingClue.value?.id === saved.id) editingClue.value = saved
+        }
+        clearSelectedClues()
+        message.success(`已揭示 ${items.length} 项`)
+      } catch (error: any) {
+        message.error(error?.response?.data?.message || '揭示失败')
+      }
+    },
+  })
+}
+function batchDelete() {
+  if (!props.canManage || !selectedItems.value.length) return
+  const worldId = props.worldId
+  const items = [...selectedItems.value]
+  dialog.warning({
+    title: '批量删除线索',
+    content: `确定删除已选 ${items.length} 项线索吗？删除后成员将无法继续查看这些线索。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+        for (const item of items) {
+          if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+          await store.removeClue(worldId, item.id)
+          selectedClueIds.delete(item.id)
+          if (editingClue.value?.id === item.id) {
+            editingClue.value = null
+            editorVisible.value = false
+          }
+        }
+        clearSelectedClues()
+        message.success(`已删除 ${items.length} 项`)
+      } catch (error: any) {
+        message.error(error?.response?.data?.message || '线索删除失败')
+      }
+    },
+  })
+}
+async function insertSelectedLinks() {
+  const worldId = props.worldId
+  const items = [...selectedItems.value]
+  if (!items.length) return
+  try {
+    const links: string[] = []
+    for (const item of items) {
+      if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+      links.push(await insertLink(item, false))
+    }
+    chatEvent.emit('world-clue-insert-link' as any, { link: links.join('\n') })
+    clearSelectedClues()
+    message.success(`已插入 ${items.length} 项`)
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '插入聊天框失败')
+  }
 }
 async function toggleFavorite(summary: WorldClueSummary) {
   if (favoriteSubmitting[summary.id]) return
@@ -228,15 +340,58 @@ async function toggleFavorite(summary: WorldClueSummary) {
     message.error(error?.response?.data?.message || '收藏状态更新失败')
   } finally { delete favoriteSubmitting[summary.id] }
 }
-async function moveToFolder(summary: WorldClueSummary, folderId: string) {
+async function moveToFolder(summary: WorldClueSummary, folderId: string, reload = true) {
   if (viewScope.value === 'shared') {
     await store.saveClue(props.worldId, summary.id, { expectedRevision: summary.revision, sharedFolderId: folderId })
   } else {
     await api.patch(`api/v1/worlds/${props.worldId}/clues/${summary.id}/user-state`, { personalFolderId: folderId })
   }
-  await store.loadWorld(props.worldId, keyword.value)
+  if (reload) await store.loadWorld(props.worldId, keyword.value)
+}
+function folderDisplayName(folderId: string) {
+  if (!folderId) return '根目录'
+  return scopedFolders.value.find(folder => folder.id === folderId)?.name || '目标文件夹'
+}
+function batchMoveToFolder(folderId: string) {
+  if (folderId === selectedFolderId.value) return
+  folderPopoverVisible.value = false
+  if (!canManageCurrentScope.value || !selectedItems.value.length) return
+  const worldId = props.worldId
+  const scope = viewScope.value
+  const items = [...selectedItems.value]
+  dialog.warning({
+    title: '批量移动线索',
+    content: `确定将已选 ${items.length} 项移动到「${folderDisplayName(folderId)}」吗？`,
+    positiveText: '移动',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      let failed = false
+      try {
+        if (props.worldId !== worldId || viewScope.value !== scope) { message.error('目录已切换，请重新选择线索'); return }
+        for (const item of items) {
+          if (props.worldId !== worldId || viewScope.value !== scope) { message.error('目录已切换，请重新选择线索'); return }
+          try {
+            await moveToFolder(item, folderId, false)
+            selectedClueIds.delete(item.id)
+          } catch (error: any) {
+            message.error(error?.response?.data?.message || '线索移动失败')
+            failed = true
+            break
+          }
+        }
+        if (props.worldId === worldId && viewScope.value === scope) await store.loadWorld(worldId, keyword.value)
+        if (!failed) {
+          clearSelectedClues()
+          message.success(`已移动 ${items.length} 项`)
+        }
+      } catch (error: any) {
+        message.error(error?.response?.data?.message || '线索移动失败')
+      }
+    },
+  })
 }
 function startDrag(event: DragEvent, type: 'clue' | 'folder', id: string) {
+  if (type === 'clue' && !canReorderClues.value) return
   dragging.value = { type, id }
   dragOverTarget.value = ''
   dragOverClueTarget.value = ''
@@ -266,7 +421,7 @@ function reorderedClueIDs(sourceId: string, targetId: string) {
 async function dropClue(targetId: string) {
   const source = dragging.value
   endDrag()
-  if (!canReorderCurrentScope.value || source?.type !== 'clue' || source.id === targetId) return
+  if (!canReorderClues.value || source?.type !== 'clue' || source.id === targetId) return
   try {
     await api.post(`api/v1/worlds/${props.worldId}/clues/reorder`, {
       scope: viewScope.value, folderId: selectedFolderId.value,
@@ -276,7 +431,7 @@ async function dropClue(targetId: string) {
   } catch (error: any) { message.error(error?.response?.data?.message || '线索排序失败') }
 }
 function markClueDropTarget(event: DragEvent, targetId: string) {
-  if (!canReorderCurrentScope.value || dragging.value?.type !== 'clue' || dragging.value.id === targetId) {
+  if (!canReorderClues.value || dragging.value?.type !== 'clue' || dragging.value.id === targetId) {
     dragOverClueTarget.value = ''
     return
   }
@@ -304,7 +459,7 @@ async function reorderFolder(sourceId: string, targetId: string) {
 }
 function canAcceptDrop(targetFolderId: string, allowFolderReorder = false) {
   if (!canReorderCurrentScope.value || !dragging.value) return false
-  if (dragging.value.type === 'clue') return targetFolderId !== selectedFolderId.value
+  if (dragging.value.type === 'clue') return canReorderClues.value && targetFolderId !== selectedFolderId.value
   if (!allowFolderReorder || dragging.value.id === targetFolderId) return false
   const source = scopedFolders.value.find(folder => folder.id === dragging.value?.id)
   const target = scopedFolders.value.find(folder => folder.id === targetFolderId)
@@ -321,6 +476,7 @@ async function dropOnFolder(targetFolderId: string, reorderTargetId = '') {
   const source = dragging.value
   endDrag()
   if (!source || !canReorderCurrentScope.value) return
+  if (source.type === 'clue' && !canReorderClues.value) return
   if (source.type === 'folder') {
     if (reorderTargetId) await reorderFolder(source.id, reorderTargetId)
     return
@@ -357,6 +513,7 @@ function cancelInlineFolderEdit() {
 function switchScope(scope: 'shared' | 'personal') {
   if (folderSubmitting.value) return
   cancelInlineFolderEdit()
+  exitMultiSelect()
   viewScope.value = scope
   selectedFolderId.value = ''
 }
@@ -494,8 +651,15 @@ onMounted(() => {
     </header>
     <div class="clue-box__tools">
       <NInput v-model:value="keyword" clearable placeholder="搜索线索"><template #prefix><NIcon><Search /></NIcon></template></NInput>
-      <NButtonGroup><NButton :type="viewScope === 'shared' ? 'primary' : 'default'" :disabled="folderSubmitting" @click="switchScope('shared')">世界目录</NButton><NButton :type="viewScope === 'personal' ? 'primary' : 'default'" :disabled="folderSubmitting" @click="switchScope('personal')">我的收藏</NButton></NButtonGroup>
-      <div class="clue-box__view-row">
+      <div class="clue-box__scope-row">
+        <NButtonGroup><NButton :type="viewScope === 'shared' ? 'primary' : 'default'" :disabled="folderSubmitting" @click="switchScope('shared')">世界目录</NButton><NButton :type="viewScope === 'personal' ? 'primary' : 'default'" :disabled="folderSubmitting" @click="switchScope('personal')">我的收藏</NButton></NButtonGroup>
+        <div class="clue-box__display-tools">
+          <NButton quaternary size="small" :type="multiSelect ? 'primary' : 'default'" title="多选" @click="toggleMultiSelect"><template #icon><NIcon><Check /></NIcon></template>多选</NButton>
+          <NButton quaternary size="small" :title="preference.layout === 'grid' ? '列表' : '网格'" @click="preference.layout = preference.layout === 'grid' ? 'list' : 'grid'"><template #icon><NIcon><component :is="preference.layout === 'grid' ? List : GridDots" /></NIcon></template>{{ preference.layout === 'grid' ? '列表' : '网格' }}</NButton>
+          <NButton quaternary size="small" :type="preference.mediaPreview ? 'primary' : 'default'" :title="preference.mediaPreview ? '显示内容' : '显示媒体'" @click="preference.mediaPreview = !preference.mediaPreview"><template #icon><NIcon><Photo /></NIcon></template>{{ preference.mediaPreview ? '显示内容' : '显示媒体' }}</NButton>
+        </div>
+      </div>
+      <div class="clue-box__folder-row">
         <div class="clue-box__folder-tabs">
           <div
             v-if="selectedFolderId" class="clue-box__folder-tab clue-box__folder-tab--back"
@@ -538,10 +702,6 @@ onMounted(() => {
           </div>
           <NButton v-else-if="canManageCurrentScope" class="clue-box__folder-add" circle quaternary size="small" title="新建文件夹" @click="beginCreateFolder"><template #icon><NIcon><Plus /></NIcon></template></NButton>
         </div>
-        <div class="clue-box__display-tools">
-          <NButton circle quaternary :title="preference.layout === 'grid' ? '列表' : '网格'" @click="preference.layout = preference.layout === 'grid' ? 'list' : 'grid'"><template #icon><NIcon><component :is="preference.layout === 'grid' ? List : GridDots" /></NIcon></template></NButton>
-          <NButton circle quaternary :type="preference.mediaPreview ? 'primary' : 'default'" :title="preference.mediaPreview ? '显示内容' : '显示媒体'" @click="preference.mediaPreview = !preference.mediaPreview"><template #icon><NIcon><Photo /></NIcon></template></NButton>
-        </div>
       </div>
     </div>
     <div v-if="visibleItems.length" class="clue-box__items" :class="`clue-box__items--${preference.layout}`">
@@ -551,10 +711,11 @@ onMounted(() => {
         @dragover="markClueDropTarget($event, item.id)" @drop.prevent="dropClue(item.id)"
       >
         <article
-          class="clue-box__item" :class="{ 'clue-box__item--unread': item.unread }"
-          :draggable="canReorderCurrentScope" @dragstart="startDrag($event, 'clue', item.id)" @dragend="endDrag"
-          @dblclick="openClue(item)"
+          class="clue-box__item" :class="{ 'clue-box__item--unread': item.unread, 'clue-box__item--selected': selectedClueIds.has(item.id) }"
+          :draggable="canReorderClues" @dragstart="startDrag($event, 'clue', item.id)" @dragend="endDrag"
+          @click="handleClueClick(item)" @dblclick="handleClueDblClick(item)"
         >
+          <span v-if="multiSelect && selectedClueIds.has(item.id)" class="clue-box__selection-mark"><NIcon><Check /></NIcon></span>
           <div v-if="preference.mediaPreview" class="clue-box__media">
             <img
               v-if="mediaState(item) === 'image'" :src="clueMediaUrl(item)" :alt="item.title" loading="lazy"
@@ -568,14 +729,14 @@ onMounted(() => {
           </div>
           <div class="clue-box__item-heading">
             <NIcon><component :is="clueKindIcon(item)" /></NIcon><strong>{{ item.title }}</strong><span v-if="item.status === 'draft'">草稿</span>
-            <NButton
+            <NButton v-if="!multiSelect"
               class="clue-box__favorite" :class="{ 'clue-box__favorite--active': isFavorite(item) }"
               circle quaternary size="tiny" :type="isFavorite(item) ? 'primary' : 'default'" :loading="favoriteSubmitting[item.id] === true"
               :aria-pressed="isFavorite(item)" :title="isFavorite(item) ? '取消收藏' : '收藏'" @click.stop="toggleFavorite(item)" @dblclick.stop
             ><template #icon><NIcon><Star /></NIcon></template></NButton>
           </div>
           <p v-if="!preference.mediaPreview">{{ item.contentText || (item.kind === 'iframe' ? item.embedDomain : '暂无摘要') }}</p>
-          <div class="clue-box__item-actions">
+          <div v-if="!multiSelect" class="clue-box__item-actions">
             <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
             <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
             <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
@@ -587,6 +748,27 @@ onMounted(() => {
       </div>
     </div>
     <NEmpty v-else class="clue-box__empty" description="这里还没有可见线索" />
+    <div v-if="multiSelect" class="clue-box__batch-bar">
+      <div class="clue-box__batch-summary">
+        <strong>已选 {{ selectedCount }} 项</strong>
+        <NButton text size="tiny" @click="selectAllVisible">全选当前列表</NButton>
+        <NButton text size="tiny" :disabled="!selectedCount" @click="clearSelectedClues">清空</NButton>
+        <NButton text size="tiny" @click="exitMultiSelect">退出多选</NButton>
+      </div>
+      <div class="clue-box__batch-actions">
+        <NButton v-if="canManage" quaternary size="small" :disabled="!selectedCount" @click="batchPublish"><template #icon><NIcon><Presentation /></NIcon></template>揭示</NButton>
+        <NButton v-if="canManage" quaternary size="small" type="error" :disabled="!selectedCount" @click="batchDelete"><template #icon><NIcon><Trash /></NIcon></template>删除</NButton>
+        <NPopover v-if="canManageCurrentScope" v-model:show="folderPopoverVisible" trigger="click" placement="top-end">
+          <template #trigger><NButton quaternary size="small" :disabled="!selectedCount"><template #icon><NIcon><Folder /></NIcon></template>移动文件夹</NButton></template>
+          <div class="clue-box__folder-picker">
+            <strong>选择目标文件夹</strong>
+            <NButton v-if="selectedFolderId" text size="small" @click="batchMoveToFolder('')"><template #icon><NIcon><Folder /></NIcon></template>根目录</NButton>
+            <NButton v-for="folder in scopedFolders" :key="folder.id" text size="small" :disabled="folder.id === selectedFolderId" @click="batchMoveToFolder(folder.id)"><template #icon><NIcon><Folder /></NIcon></template>{{ folder.name }}</NButton>
+          </div>
+        </NPopover>
+        <NButton quaternary size="small" :disabled="!selectedCount" @click="insertSelectedLinks"><template #icon><NIcon><MessagePlus /></NIcon></template>插入聊天框</NButton>
+      </div>
+    </div>
   </aside>
   <WorldClueEditorModal v-model:show="editorVisible" :world-id="worldId" :channel-id="channelId" :clue="editingClue" :can-manage="!!canManage" @saved="handleEditorSaved" />
 </template>
@@ -601,7 +783,10 @@ onMounted(() => {
 .clue-box__header strong, .clue-box__header small { display: block; }
 .clue-box__header small { margin-top: 2px; color: var(--sc-text-secondary); font-size: 11px; }
 .clue-box__tools { display: grid; gap: 9px; padding: 12px 14px; }
-.clue-box__view-row { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.clue-box__scope-row { display: flex; min-width: 0; align-items: center; gap: 7px; flex-wrap: wrap; }
+.clue-box__display-tools { display: flex; flex: 0 0 auto; gap: 3px; margin-left: auto; padding-left: 7px; border-left: 1px solid var(--sc-border-mute); }
+.clue-box__display-tools .n-button { gap: 4px; }
+.clue-box__folder-row { min-width: 0; }
 .clue-box__folder-tabs { display: flex; min-width: 0; flex: 1; align-items: center; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
 .clue-box__folder-tab { display: inline-flex; height: 32px; min-width: max-content; max-width: 190px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; color: var(--sc-text-secondary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: transparent; transition: border-color .14s ease, background-color .14s ease, color .14s ease; }
 .clue-box__folder-tab:hover { color: var(--sc-text-primary); border-color: var(--sc-border-strong); background: color-mix(in srgb, var(--sc-bg-elevated) 78%, transparent); }
@@ -618,16 +803,17 @@ onMounted(() => {
 .clue-box__folder-input { width: 128px; }
 .clue-box__folder-tab--editing { padding: 0 4px; }
 .clue-box__folder-add { flex: 0 0 auto; }
-.clue-box__display-tools { display: flex; flex: 0 0 auto; gap: 3px; padding-left: 7px; border-left: 1px solid var(--sc-border-mute); }
-.clue-box__items { min-height: 0; overflow: auto; padding: 0 14px 14px; }
+.clue-box__items { min-height: 0; flex: 1; overflow: auto; padding: 0 14px 14px; }
 .clue-box__items--grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .clue-box__items--list { display: grid; gap: 7px; }
 .clue-box__item-wrap { position: relative; min-width: 0; }
 .clue-box__item-wrap--drop-target::before { position: absolute; z-index: 1; top: 5px; bottom: 5px; left: -5px; width: 2px; border-radius: 999px; background: var(--primary-color, #3388de); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 18%, transparent); content: ''; pointer-events: none; }
 .clue-box__drag { color: var(--sc-text-secondary); cursor: grab; }
-.clue-box__item { min-width: 0; overflow: hidden; padding: 12px; color: var(--sc-text-primary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 2%); transition: border-color .14s ease, background-color .14s ease, transform .14s ease; }
+.clue-box__item { position: relative; min-width: 0; overflow: hidden; padding: 12px; color: var(--sc-text-primary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 2%); transition: border-color .14s ease, background-color .14s ease, transform .14s ease; }
 .clue-box__item:hover { border-color: color-mix(in srgb, var(--primary-color, #3388de) 34%, var(--sc-border-mute)); background: color-mix(in srgb, var(--sc-bg-elevated) 90%, var(--primary-color, #3388de) 5%); transform: translateY(-1px); }
 .clue-box__item--unread { border-left: 3px solid var(--primary-color, #3388de); }
+.clue-box__item--selected { border-color: var(--primary-color, #3388de); background: color-mix(in srgb, var(--primary-color, #3388de) 12%, var(--sc-bg-elevated)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 30%, transparent); }
+.clue-box__selection-mark { position: absolute; z-index: 1; top: 8px; right: 8px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--sc-bg-surface); border-radius: 50%; background: var(--primary-color, #3388de); }
 .clue-box__item-heading { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 24px; align-items: center; gap: 5px; }
 .clue-box__item-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clue-box__item-heading span { color: var(--sc-text-secondary); font-size: 10px; }
@@ -640,9 +826,15 @@ onMounted(() => {
 .clue-box__media-placeholder { display: grid; max-width: 90%; place-items: center; gap: 5px; color: var(--sc-text-secondary); font-size: 11px; text-align: center; }
 .clue-box__media-placeholder .n-icon { font-size: 24px; }
 .clue-box__item-actions { display: flex; min-height: 30px; flex-wrap: wrap; align-items: center; gap: 3px; margin: 10px -4px -5px; padding-top: 8px; border-top: 1px solid var(--sc-border-mute); }
+.clue-box__batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 12px; padding: 9px 14px; border-top: 1px solid var(--sc-border-mute); background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 3%); }
+.clue-box__batch-summary, .clue-box__batch-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.clue-box__batch-summary { margin-right: auto; }
+.clue-box__batch-summary strong { font-size: 12px; }
+.clue-box__folder-picker { display: grid; min-width: 150px; max-width: 230px; gap: 3px; padding: 4px; }
+.clue-box__folder-picker strong { padding: 3px 6px 5px; font-size: 12px; }
 .clue-box__empty { margin: auto; }
 .clue-box-tab { position: fixed; right: 0; z-index: 999; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
 .clue-box-tab :deep(.n-badge-sup) { top: -18px; right: 50%; transform: translateX(50%); writing-mode: horizontal-tb; }
 .clue-box :deep(.n-input) { --n-box-shadow-hover: none !important; --n-box-shadow-focus: none !important; --n-box-shadow-active: none !important; --n-box-shadow-hover-warning: none !important; --n-box-shadow-focus-warning: none !important; --n-box-shadow-active-warning: none !important; --n-box-shadow-hover-error: none !important; --n-box-shadow-focus-error: none !important; --n-box-shadow-active-error: none !important; }
-@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } }
 </style>
