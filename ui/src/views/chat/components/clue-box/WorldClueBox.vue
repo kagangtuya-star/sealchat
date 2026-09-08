@@ -199,21 +199,34 @@ async function handleEdit(payload: { worldId?: string; clueId?: string }) {
     editorVisible.value = true
   } catch { message.warning('线索不可用或没有编辑权限') }
 }
-async function publish(summary: WorldClueSummary) {
+async function revealOrReplay(summary: WorldClueSummary) {
+  const worldId = props.worldId
+  const clueId = summary.id
+  const expectedPublishSeq = summary.publishSeq
+  const isPublished = summary.status === 'published'
   dialog.warning({
-    title: summary.status === 'published' ? '确认再次揭示' : '确认揭示线索',
-    content: summary.status === 'published'
-      ? `将再次向当前可见的世界成员揭示「${summary.title}」。`
-      : `将向世界成员揭示「${summary.title}」；明确设置为“不可见”的成员除外。`,
-    positiveText: summary.status === 'published' ? '再次揭示' : '揭示',
+    title: isPublished ? '确认重放线索' : '确认揭示线索',
+    content: isPublished
+      ? `将再次向当前可查看的世界成员展示「${summary.title}」，不会修改成员权限。`
+      : `将向世界内所有成员授权查看并立即展示「${summary.title}」。`,
+    positiveText: isPublished ? '重放' : '揭示',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        const saved = await store.publish(props.worldId, summary.id, summary.publishSeq)
+        let saved: WorldClueDetail
+        if (isPublished) {
+          saved = await store.publish(worldId, clueId, expectedPublishSeq)
+        } else {
+          const accessResponse = await api.get(`api/v1/worlds/${worldId}/clues/${clueId}/access`)
+          const userIds = ((accessResponse.data?.items || []) as Array<{ userId: string }>)
+            .map(item => item.userId)
+            .filter(userId => !!userId)
+          saved = (await store.reveal(worldId, clueId, userIds, expectedPublishSeq)).item
+        }
         if (editingClue.value?.id === saved.id) editingClue.value = saved
-        message.success(summary.status === 'published' ? '已再次揭示' : '已揭示')
+        message.success(isPublished ? '已重放' : '已揭示')
       } catch (error: any) {
-        message.error(error?.response?.data?.message || '揭示失败')
+        message.error(error?.response?.data?.message || (isPublished ? '重放失败' : '揭示失败'))
         return false
       }
     },
@@ -253,14 +266,14 @@ async function insertLink(summary: WorldClueSummary, emitEvent = true) {
   if (emitEvent) chatEvent.emit('world-clue-insert-link' as any, { link })
   return link
 }
-function batchPublish() {
+function batchPresent() {
   if (!props.canManage || !selectedItems.value.length) return
   const worldId = props.worldId
   const items = [...selectedItems.value]
   dialog.warning({
-    title: '批量揭示线索',
-    content: `确定揭示已选 ${items.length} 项线索吗？`,
-    positiveText: '揭示',
+    title: '批量展示线索',
+    content: `确定展示已选 ${items.length} 项线索吗？将按各线索当前权限展示，不会修改成员权限。`,
+    positiveText: '展示',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
@@ -272,9 +285,9 @@ function batchPublish() {
           if (editingClue.value?.id === saved.id) editingClue.value = saved
         }
         clearSelectedClues()
-        message.success(`已揭示 ${items.length} 项`)
+        message.success(`已展示 ${items.length} 项`)
       } catch (error: any) {
-        message.error(error?.response?.data?.message || '揭示失败')
+        message.error(error?.response?.data?.message || '展示失败')
       }
     },
   })
@@ -739,7 +752,7 @@ onMounted(() => {
           <div v-if="!multiSelect" class="clue-box__item-actions">
             <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
             <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
-            <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '再次揭示' : '揭示'" @click.stop="publish(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
+            <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '重放' : '揭示'" @click.stop="revealOrReplay(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
             <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
             <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
             <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
@@ -756,7 +769,7 @@ onMounted(() => {
         <NButton text size="tiny" @click="exitMultiSelect">退出多选</NButton>
       </div>
       <div class="clue-box__batch-actions">
-        <NButton v-if="canManage" quaternary size="small" :disabled="!selectedCount" @click="batchPublish"><template #icon><NIcon><Presentation /></NIcon></template>揭示</NButton>
+        <NButton v-if="canManage" quaternary size="small" :disabled="!selectedCount" @click="batchPresent"><template #icon><NIcon><Presentation /></NIcon></template>展示</NButton>
         <NButton v-if="canManage" quaternary size="small" type="error" :disabled="!selectedCount" @click="batchDelete"><template #icon><NIcon><Trash /></NIcon></template>删除</NButton>
         <NPopover v-if="canManageCurrentScope" v-model:show="folderPopoverVisible" trigger="click" placement="top-end">
           <template #trigger><NButton quaternary size="small" :disabled="!selectedCount"><template #icon><NIcon><Folder /></NIcon></template>移动文件夹</NButton></template>
