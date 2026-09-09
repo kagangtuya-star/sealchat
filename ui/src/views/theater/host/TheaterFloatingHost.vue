@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
+import { NIcon } from 'naive-ui'
+import { ExternalLink } from '@vicons/tabler'
+import { chatEvent } from '@/stores/chat'
+import { useUserStore } from '@/stores/user'
 import {
   buildInternalSurfaceResourceKey,
   parseInternalSurfaceLink,
+  openInternalSurfaceLink,
   type InternalSurfaceType,
 } from '@/utils/internalSurfaceLink'
 import {
@@ -28,14 +33,31 @@ interface TheaterFloatingWindowState {
   zIndex: number
   minimized: boolean
   resourceType: InternalSurfaceType
+  chrome: 'default' | 'minimal'
+  ownerUserId?: string
   avatarUrl?: string
 }
 
-const props = defineProps<{
-  chatFrame: HTMLIFrameElement | null
+interface InternalSurfaceFloatingOpenPayload {
+  resource?: TheaterFloatingResource
+  clientX?: number
+  clientY?: number
+  onOpened?: (accepted: boolean) => void
+}
+
+const props = withDefaults(defineProps<{
+  chatFrame?: HTMLIFrameElement | null
   worldId: string
   channelId: string
-}>()
+  hostMode?: 'stage' | 'viewport'
+}>(), {
+  chatFrame: null,
+  hostMode: 'stage',
+})
+
+const hostMode = computed(() => props.hostMode)
+const user = useUserStore()
+const currentUserId = computed(() => String(user.info?.id || '').trim())
 
 const hostRef = ref<HTMLElement | null>(null)
 const windows = ref<TheaterFloatingWindowState[]>([])
@@ -65,7 +87,8 @@ const EDGE_PADDING = 8
 const MINIMIZED_HEIGHT = 38
 const MINIMIZED_TITLE_WIDTH = 200
 const MINIMIZED_CHARACTER_SIZE = 52
-const STORAGE_PREFIX = 'sealchat:theater-floating-windows:v1:'
+const STAGE_STORAGE_PREFIX = 'sealchat:theater-floating-windows:v1:'
+const VIEWPORT_STORAGE_PREFIX = 'sealchat:internal-floating-windows:v1:'
 const MAX_PERSISTED_WINDOWS = 32
 const PERSIST_DELAY = 150
 
@@ -74,6 +97,7 @@ let restoring = false
 let restoreEpoch = 0
 let loadedWorldId = ''
 let loadedChannelId = ''
+let loadedUserId = ''
 let persistTimer: number | null = null
 
 const findWindow = (id: string) => windows.value.find(item => item.id === id)
@@ -87,7 +111,7 @@ const minimizedHeight = (item: TheaterFloatingWindowState) => (
 )
 
 const storageKey = (worldId: string, channelId: string) => (
-  `${STORAGE_PREFIX}${encodeURIComponent(worldId)}:${encodeURIComponent(channelId)}`
+  `${hostMode.value === 'viewport' ? VIEWPORT_STORAGE_PREFIX : STAGE_STORAGE_PREFIX}${encodeURIComponent(worldId)}:${encodeURIComponent(channelId)}`
 )
 
 const normalizeStoredWindow = (value: unknown, worldId: string, channelId: string): TheaterFloatingWindowState | null => {
@@ -103,6 +127,8 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
     || !key
     || buildInternalSurfaceResourceKey(parsed) !== key
   ) return null
+  const ownerUserId = typeof stored.ownerUserId === 'string' ? stored.ownerUserId.trim() : ''
+  if (parsed.type === 'clue' && (!currentUserId.value || !ownerUserId || ownerUserId !== currentUserId.value)) return null
   const finite = (input: unknown, fallback: number) => (
     typeof input === 'number' && Number.isFinite(input) ? input : fallback
   )
@@ -118,6 +144,8 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
     zIndex: Math.max(1, finite(stored.zIndex, 40)),
     minimized: stored.minimized === true,
     resourceType: parsed.type,
+    chrome: stored.chrome === 'minimal' ? 'minimal' : 'default',
+    ownerUserId: parsed.type === 'clue' ? ownerUserId : undefined,
     avatarUrl: typeof stored.avatarUrl === 'string' && stored.avatarUrl ? stored.avatarUrl : undefined,
   }
 }
@@ -142,7 +170,62 @@ const readStoredWindows = (worldId: string, channelId: string) => {
 const persistWindows = () => {
   if (restoring || !loadedWorldId || !loadedChannelId) return
   try {
-    window.localStorage.setItem(storageKey(loadedWorldId, loadedChannelId), JSON.stringify(windows.value))
+    const key = storageKey(loadedWorldId, loadedChannelId)
+    let storedEntries: unknown[] = []
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
+      if (Array.isArray(parsed)) storedEntries = parsed
+    } catch {
+      storedEntries = []
+    }
+
+    const merged: unknown[] = []
+    const nonClueKeys = new Set<string>()
+    const clueKeys = new Set<string>()
+    const addWindow = (entry: unknown) => {
+      if (!entry || typeof entry !== 'object') return
+      const stored = entry as Record<string, unknown>
+      const entryKey = typeof stored.key === 'string' ? stored.key : ''
+      if (!entryKey) return
+      if (stored.resourceType === 'clue') {
+        const ownerUserId = typeof stored.ownerUserId === 'string' ? stored.ownerUserId.trim() : ''
+        const dedupeKey = `${ownerUserId}\u0000${entryKey}`
+        if (clueKeys.has(dedupeKey)) return
+        clueKeys.add(dedupeKey)
+      } else {
+        if (nonClueKeys.has(entryKey)) return
+        nonClueKeys.add(entryKey)
+      }
+      merged.push(entry)
+    }
+
+    windows.value.forEach(addWindow)
+    const preservedClueKeys = new Set<string>()
+    storedEntries.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return
+      const stored = entry as Record<string, unknown>
+      if (stored.resourceType !== 'clue') return
+      const entryKey = typeof stored.key === 'string' ? stored.key : ''
+      const url = typeof stored.url === 'string' ? stored.url : ''
+      const ownerUserId = typeof stored.ownerUserId === 'string' ? stored.ownerUserId.trim() : ''
+      const parsed = parseInternalSurfaceLink(url)
+      if (
+        !entryKey
+        || !ownerUserId
+        || ownerUserId === loadedUserId
+        || !parsed
+        || parsed.type !== 'clue'
+        || parsed.worldId !== loadedWorldId
+        || parsed.channelId !== loadedChannelId
+        || buildInternalSurfaceResourceKey(parsed) !== entryKey
+      ) return
+      const dedupeKey = `${ownerUserId}\u0000${entryKey}`
+      if (clueKeys.has(dedupeKey) || preservedClueKeys.has(dedupeKey)) return
+      preservedClueKeys.add(dedupeKey)
+      addWindow(entry)
+    })
+
+    window.localStorage.setItem(key, JSON.stringify(merged.slice(0, MAX_PERSISTED_WINDOWS)))
   } catch {
     // Private browsing or storage policy may disable local persistence.
   }
@@ -195,6 +278,7 @@ const restoreWindows = async (worldId: string, channelId: string) => {
   restoring = true
   loadedWorldId = worldId.trim()
   loadedChannelId = channelId.trim()
+  loadedUserId = currentUserId.value
   windows.value = readStoredWindows(loadedWorldId, loadedChannelId)
   zCounter.value = Math.max(40, ...windows.value.map(item => item.zIndex))
   await nextTick()
@@ -226,6 +310,8 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
   if (existing) {
     existing.minimized = false
     existing.title = request.resource.title || existing.title
+    existing.chrome = request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default'
+    if (parsed.type === 'clue') existing.ownerUserId = currentUserId.value || undefined
     existing.avatarUrl = request.resource.presentation?.avatarUrl || existing.avatarUrl
     bringToFront(existing.id)
     clampWindowPosition(existing)
@@ -249,6 +335,8 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
     zIndex: ++zCounter.value,
     minimized: initiallyMinimized,
     resourceType: parsed.type,
+    chrome: request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default',
+    ownerUserId: parsed.type === 'clue' ? (currentUserId.value || undefined) : undefined,
     avatarUrl: request.resource.presentation?.avatarUrl || undefined,
   }
   clampWindowPosition(item)
@@ -281,6 +369,10 @@ const openResource = (
   })
 }
 
+const openExternal = (item: TheaterFloatingWindowState) => {
+  openInternalSurfaceLink(item.url, { width: item.width, height: item.height })
+}
+
 const postAck = (event: MessageEvent, requestId: string, accepted: boolean) => {
   const target = props.chatFrame?.contentWindow
   if (!target || event.source !== target) return
@@ -293,12 +385,24 @@ const postAck = (event: MessageEvent, requestId: string, accepted: boolean) => {
 }
 
 const handleTakeoverMessage = async (event: MessageEvent<unknown>) => {
+  if (hostMode.value !== 'stage') return
   if (event.origin !== window.location.origin) return
   if (event.source !== props.chatFrame?.contentWindow) return
   if (!isTheaterFloatingTakeoverRequest(event.data)) return
-  const accepted = acceptTakeover(event.data)
+  const accepted = event.data.intent === 'open'
+    ? openResource(event.data.resource, { clientX: event.data.clientX, clientY: event.data.clientY })
+    : acceptTakeover(event.data)
   if (accepted) await nextTick()
   postAck(event, event.data.requestId, accepted)
+}
+
+const handleInternalSurfaceFloatingOpen = (payload?: InternalSurfaceFloatingOpenPayload) => {
+  if (hostMode.value !== 'viewport' || !payload?.resource) return
+  const point = Number.isFinite(payload.clientX) && Number.isFinite(payload.clientY)
+    ? { clientX: Number(payload.clientX), clientY: Number(payload.clientY) }
+    : undefined
+  const accepted = openResource(payload.resource, point)
+  payload.onOpened?.(accepted)
 }
 
 const windowStyle = (item: TheaterFloatingWindowState) => {
@@ -382,12 +486,13 @@ const stopInteraction = (event: PointerEvent) => {
   }
   interaction.value = null
   const chatFrame = props.chatFrame
-  if (active.kind === 'drag' && event.type === 'pointerup' && item && chatFrame) {
+  if (hostMode.value === 'stage' && active.kind === 'drag' && event.type === 'pointerup' && item && chatFrame) {
     void requestChatFloatingTakeover({
       key: item.key,
       url: item.url,
       title: item.title,
       presentation: {
+        chrome: item.chrome,
         minimized: item.minimized,
         avatarUrl: item.avatarUrl,
         width: item.width,
@@ -423,7 +528,7 @@ const closeWindow = (id: string) => {
 }
 
 watch(windows, schedulePersist, { deep: true })
-watch(() => [props.worldId, props.channelId] as const, ([worldId, channelId]) => {
+watch(() => [props.worldId, props.channelId, hostMode.value, currentUserId.value] as const, ([worldId, channelId]) => {
   if (!mounted) return
   flushPersist()
   void restoreWindows(worldId, channelId)
@@ -433,20 +538,23 @@ useResizeObserver(hostRef, fitWindowsToHost)
 
 onMounted(() => {
   mounted = true
-  window.addEventListener('message', handleTakeoverMessage)
+  if (hostMode.value === 'stage') window.addEventListener('message', handleTakeoverMessage)
+  if (hostMode.value === 'viewport') chatEvent.on('internal-surface-floating-open' as any, handleInternalSurfaceFloatingOpen as any)
   void restoreWindows(props.worldId, props.channelId)
 })
 onBeforeUnmount(() => {
   flushPersist()
   mounted = false
-  window.removeEventListener('message', handleTakeoverMessage)
+  if (hostMode.value === 'stage') window.removeEventListener('message', handleTakeoverMessage)
+  if (hostMode.value === 'viewport') chatEvent.off('internal-surface-floating-open' as any, handleInternalSurfaceFloatingOpen as any)
 })
 
 defineExpose({ openResource })
 </script>
 
 <template>
-  <div ref="hostRef" class="theater-floating-host" aria-label="小剧场浮窗层">
+  <Teleport to="body" :disabled="hostMode !== 'viewport'">
+    <div ref="hostRef" class="theater-floating-host" :class="`theater-floating-host--${hostMode}`" aria-label="小剧场浮窗层">
     <section
       v-for="item in windows"
       :key="item.id"
@@ -454,6 +562,7 @@ defineExpose({ openResource })
       :class="{
         'is-minimized': item.minimized,
         'is-character': item.resourceType === 'character',
+        'is-minimal': item.chrome === 'minimal',
       }"
       :style="windowStyle(item)"
       @pointerdown="bringToFront(item.id)"
@@ -499,6 +608,9 @@ defineExpose({ openResource })
           <button type="button" :title="item.minimized ? '恢复' : '最小化'" @click="toggleMinimized(item)">
             {{ item.minimized ? '□' : '—' }}
           </button>
+          <button type="button" title="独立弹出" aria-label="独立弹出" @click="openExternal(item)">
+            <NIcon><ExternalLink /></NIcon>
+          </button>
           <button type="button" title="关闭" @click="closeWindow(item.id)">×</button>
         </span>
       </header>
@@ -520,27 +632,39 @@ defineExpose({ openResource })
         @pointercancel="stopInteraction"
       />
     </section>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .theater-floating-host { position: absolute; z-index: 30; inset: 0; overflow: hidden; pointer-events: none; }
+.theater-floating-host--stage { z-index: 10001; }
+.theater-floating-host--viewport { position: fixed; z-index: 23990; }
 .theater-floating-window { position: absolute; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 10px; background: var(--sc-bg-surface, #1b1b20); box-shadow: 0 14px 36px rgba(0, 0, 0, .32); }
+.theater-floating-window.is-minimal { border-color: transparent; border-radius: 5px; background: transparent; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }
 .theater-floating-window__header { box-sizing: border-box; display: flex; flex: 0 0 38px; align-items: center; justify-content: space-between; min-width: 0; padding: 0 6px 0 12px; color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 94%, transparent); cursor: move; touch-action: none; user-select: none; }
+.theater-floating-window.is-minimal .theater-floating-window__header { flex-basis: 20px; padding: 0 3px 0 7px; background: transparent; opacity: .35; }
+.theater-floating-window.is-minimal .theater-floating-window__header:hover, .theater-floating-window.is-minimal .theater-floating-window__header:focus-within { opacity: 1; }
 .theater-floating-window__header.is-hidden { display: none; }
 .theater-floating-window__title { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .theater-floating-window__actions { display: inline-flex; gap: 2px; }
 .theater-floating-window__actions button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
 .theater-floating-window__actions button:hover { background: var(--sc-bg-hover, rgba(255, 255, 255, .08)); }
+.theater-floating-window.is-minimal .theater-floating-window__actions { opacity: .7; }
+.theater-floating-window.is-minimal .theater-floating-window__actions button { width: 22px; height: 20px; }
+.theater-floating-window.is-minimal .theater-floating-window__actions button:hover, .theater-floating-window.is-minimal .theater-floating-window__actions button:focus-visible { background: var(--sc-bg-hover, rgba(255, 255, 255, .12)); opacity: 1; }
 .theater-floating-window__body { position: relative; flex: 1; min-height: 0; }
 .theater-floating-window__body.is-hidden { visibility: hidden; pointer-events: none; }
 .theater-floating-window__frame { display: block; width: 100%; height: 100%; margin: 0; border: 0; outline: 0; background: var(--sc-bg-surface, #fff); }
+.theater-floating-window.is-minimal .theater-floating-window__frame { background: transparent; }
 .theater-floating-window__resize { position: absolute; z-index: 2; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; }
 .theater-floating-window__resize.is-hidden { display: none; }
 .theater-floating-window.is-minimized { min-width: 0; }
 .theater-floating-window__title-badge,
 .theater-floating-window__character-badge { position: absolute; z-index: 3; inset: 0; box-sizing: border-box; width: 100%; height: 100%; padding: 0; border: 0; color: var(--sc-text-primary, #f4f4f5); background: transparent; cursor: move; touch-action: none; user-select: none; }
 .theater-floating-window__title-badge { overflow: hidden; padding: 0 14px; font-size: 13px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 94%, transparent); }
+.theater-floating-window.is-minimal .theater-floating-window__title-badge { background: transparent; opacity: .55; }
+.theater-floating-window.is-minimal .theater-floating-window__title-badge:hover, .theater-floating-window.is-minimal .theater-floating-window__title-badge:focus-visible { opacity: 1; }
 .theater-floating-window.is-character.is-minimized { border-radius: 50%; background: var(--sc-bg-elevated, #26262c); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .theater-floating-window__character-badge img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .theater-floating-window__character-badge span { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; }

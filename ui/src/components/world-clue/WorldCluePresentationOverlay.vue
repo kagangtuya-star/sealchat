@@ -8,11 +8,14 @@ import { urlBase } from '@/stores/_config'
 import type { WorldClueDetail } from '@/stores/worldClue'
 import WorldClueContentView from './WorldClueContentView.vue'
 
-const props = defineProps<{ clue: WorldClueDetail }>()
+const props = withDefaults(defineProps<{ clue: WorldClueDetail; mode?: 'presentation' | 'surface' }>(), {
+  mode: 'presentation',
+})
 const emit = defineEmits<{ (event: 'close'): void }>()
 const leaving = ref(false)
 const durationMS = computed(() => Math.max(0, Math.min(1000, props.clue.presentation?.animationDurationMs || 0)))
 const duration = computed(() => `${durationMS.value}ms`)
+const isSurface = computed(() => props.mode === 'surface')
 const mediaPlacement = computed(() => props.clue.presentation?.mediaPlacement || 'left')
 const customBackgroundUrl = computed(() => props.clue.presentation?.backgroundMediaEnabled
   ? (props.clue.presentation.backgroundMediaAttachmentId
@@ -78,7 +81,9 @@ const contentClue = computed<WorldClueDetail>(() => props.clue.kind === 'image'
   ? { ...props.clue, kind: 'text' }
   : props.clue)
 const animationClass = computed(() => leaving.value
+  && !isSurface.value
   ? `clue-overlay--leaving clue-overlay--exit-${props.clue.presentation?.exitAnimation || 'fade'}`
+  : isSurface.value ? 'clue-overlay--surface'
   : `clue-overlay--${props.clue.presentation?.enterAnimation || 'fade'}`)
 let closeTimer: number | undefined
 let imageViewer: Viewer | null = null
@@ -160,7 +165,7 @@ onBeforeUnmount(() => {
     </div>
     <img v-else-if="backdropUrl && !mainMediaIsVideo" class="clue-overlay__backdrop" :src="backdropUrl" alt="" aria-hidden="true" />
     <div v-if="clue.presentation?.backgroundColorEnabled" class="clue-overlay__background-color" :style="colorBackgroundStyle" aria-hidden="true" />
-    <NButton class="clue-overlay__close" circle quaternary size="large" aria-label="关闭" @click="requestClose"><template #icon><NIcon><CloseIcon /></NIcon></template></NButton>
+    <NButton v-if="!isSurface" class="clue-overlay__close" circle quaternary size="large" aria-label="关闭" @click="requestClose"><template #icon><NIcon><CloseIcon /></NIcon></template></NButton>
     <div class="clue-overlay__surface" :class="[`clue-overlay__surface--${mediaPlacement}`, `clue-overlay__surface--${clue.kind}`]">
       <header><span class="clue-overlay__kind">线索</span><h2 :style="{ color: clue.presentation?.titleColor || '#ffffff' }">{{ clue.title }}</h2></header>
       <div v-if="clue.kind === 'image' && backdropUrl" class="clue-overlay__media" :class="{ 'is-cover': clue.presentation?.objectFit === 'cover' }">
@@ -177,6 +182,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .clue-overlay { position: fixed; inset: 0; z-index: 24000; display: grid; box-sizing: border-box; height: 100dvh; place-items: center; overflow: hidden; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); color: #f5f7fa; background: transparent; backdrop-filter: blur(8px); animation: clue-fade var(--clue-duration) ease both; }
+.clue-overlay--surface { position: relative; inset: auto; z-index: auto; display: block; box-sizing: border-box; width: 100%; min-height: 100%; height: 100%; max-height: 100%; overflow: hidden; padding: 20px; background: transparent; backdrop-filter: none; animation: none; }
 .clue-overlay__backdrop { position: absolute; inset: -48px; z-index: 0; width: calc(100% + 96px); height: calc(100% + 96px); pointer-events: none; object-fit: cover; opacity: .42; filter: blur(34px) brightness(.72) saturate(.8); transform: scale(1.06); }
 .clue-overlay__background-media { position: absolute; inset: var(--clue-background-inset, 0); z-index: 0; overflow: hidden; pointer-events: none; }
 .clue-overlay__background-media > img, .clue-overlay__background-media > video, .clue-overlay__background-tile { display: block; width: 100%; height: 100%; pointer-events: none; }
@@ -184,6 +190,7 @@ onBeforeUnmount(() => {
 .clue-overlay__background-tile { background-position: center; background-repeat: repeat; }
 .clue-overlay__background-color { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .clue-overlay__surface { --clue-gap: clamp(30px, 5vw, 68px); position: relative; z-index: 2; display: grid; width: min(1180px, 100%); max-height: calc(100dvh - 48px); align-content: center; column-gap: var(--clue-gap); overflow: auto; padding: clamp(10px, 2vw, 28px); background: transparent; scrollbar-width: thin; }
+.clue-overlay--surface .clue-overlay__surface { width: 100%; min-height: 0; height: 100%; max-height: 100%; align-content: start; overflow: auto; padding: 0; }
 .clue-overlay__surface--left { grid-template-columns: minmax(0, calc(var(--clue-media-ratio) * 100%)) minmax(0, 1fr); }
 .clue-overlay__surface--right { grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--clue-media-ratio) * 100%)); }
 .clue-overlay__surface--top, .clue-overlay__surface--bottom { grid-template-columns: minmax(0, 1fr); row-gap: 22px; }
@@ -237,5 +244,6 @@ onBeforeUnmount(() => {
 @keyframes clue-right { from { opacity: 0; transform: translateX(32px); } }
 @keyframes clue-right-out { to { opacity: 0; transform: translateX(32px); } }
 @media (prefers-reduced-motion: reduce) { .clue-overlay, .clue-overlay__surface { animation: none !important; } }
-@media (max-width: 720px) { .clue-overlay { padding: 0; } .clue-overlay__surface, .clue-overlay__surface--left, .clue-overlay__surface--right { width: 100%; height: 100dvh; max-height: 100dvh; grid-template-columns: minmax(0, 1fr); align-content: start; row-gap: 18px; padding: max(56px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom)); } .clue-overlay__surface .clue-overlay__media, .clue-overlay__surface :deep(.world-clue-content__media) { grid-column: 1; grid-row: 1; width: min(86vw, 520px); max-height: 52dvh; } .clue-overlay__media.is-cover { height: 46dvh; } .clue-overlay__surface header, .clue-overlay__surface--left header, .clue-overlay__surface--right header { grid-column: 1; grid-row: 2; align-self: auto; margin: 0; text-align: center; } .clue-overlay__surface :deep(.world-clue-content__body), .clue-overlay__surface--left :deep(.world-clue-content__body), .clue-overlay__surface--right :deep(.world-clue-content__body) { grid-column: 1; grid-row: 3; text-align: center; } .clue-overlay__surface--text header { grid-row: 1; } .clue-overlay__surface--text :deep(.world-clue-content__body) { grid-row: 2; } .clue-overlay__surface h2 { font-size: clamp(28px, 9vw, 42px); } }
+@media (max-width: 720px) { .clue-overlay:not(.clue-overlay--surface) { padding: 0; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface, .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--left, .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--right { width: 100%; height: 100dvh; max-height: 100dvh; grid-template-columns: minmax(0, 1fr); align-content: start; row-gap: 18px; padding: max(56px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom)); } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface .clue-overlay__media, .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface :deep(.world-clue-content__media) { grid-column: 1; grid-row: 1; width: min(86vw, 520px); max-height: 52dvh; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__media.is-cover { height: 46dvh; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface header, .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--left header, .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--right header { grid-column: 1; grid-row: 2; align-self: auto; margin: 0; text-align: center; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface :deep(.world-clue-content__body), .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--left :deep(.world-clue-content__body), .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--right :deep(.world-clue-content__body) { grid-column: 1; grid-row: 3; text-align: center; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--text header { grid-row: 1; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface--text :deep(.world-clue-content__body) { grid-row: 2; } .clue-overlay:not(.clue-overlay--surface) .clue-overlay__surface h2 { font-size: clamp(28px, 9vw, 42px); } }
+@media (max-width: 460px) { .clue-overlay--surface { padding: 16px; } .clue-overlay--surface .clue-overlay__surface, .clue-overlay--surface .clue-overlay__surface--left, .clue-overlay--surface .clue-overlay__surface--right { width: 100%; grid-template-columns: minmax(0, 1fr); align-content: start; row-gap: 18px; padding: 0; } .clue-overlay--surface .clue-overlay__surface .clue-overlay__media, .clue-overlay--surface .clue-overlay__surface :deep(.world-clue-content__media) { grid-column: 1; grid-row: 1; width: 100%; } .clue-overlay--surface .clue-overlay__surface header, .clue-overlay--surface .clue-overlay__surface--left header, .clue-overlay--surface .clue-overlay__surface--right header { grid-column: 1; grid-row: 2; margin: 0; text-align: left; } .clue-overlay--surface .clue-overlay__surface :deep(.world-clue-content__body), .clue-overlay--surface .clue-overlay__surface--left :deep(.world-clue-content__body), .clue-overlay--surface .clue-overlay__surface--right :deep(.world-clue-content__body) { grid-column: 1; grid-row: 3; text-align: left; } }
 </style>

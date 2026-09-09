@@ -1,18 +1,26 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NPopover, NSpace, useDialog, useMessage } from 'naive-ui'
-import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, List, MessagePlus, Photo, Pin, Pinned, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
+import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { useWorldClueStore, type WorldClueDetail, type WorldClueSummary, type WorldClueUserState } from '@/stores/worldClue'
 import { generateWorldClueEmbedLink } from '@/utils/worldClueEmbedLink'
+import {
+  buildInternalSurfaceResourceKey,
+  generateInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+} from '@/utils/internalSurfaceLink'
+import { isTheaterChatFrame, requestTheaterFloatingOpen } from '@/utils/theaterFloatingBridge'
 import { copyTextWithFallback } from '@/utils/clipboard'
+import { useUtilsStore } from '@/stores/utils'
 import WorldClueEditorModal from './WorldClueEditorModal.vue'
 import WorldClueRosterPopover from './WorldClueRosterPopover.vue'
 
 const props = defineProps<{ worldId: string; channelId: string; canManage?: boolean }>()
 const store = useWorldClueStore()
+const utilsStore = useUtilsStore()
 const user = useUserStore()
 const message = useMessage()
 const dialog = useDialog()
@@ -96,8 +104,8 @@ function toggleClueSelection(summary: WorldClueSummary) {
 function handleClueClick(summary: WorldClueSummary) {
   if (multiSelect.value) toggleClueSelection(summary)
 }
-function handleClueDblClick(summary: WorldClueSummary) {
-  if (!multiSelect.value) void openClue(summary)
+function handleClueDblClick(summary: WorldClueSummary, event: MouseEvent) {
+  if (!multiSelect.value) void openClue(summary, event)
 }
 function selectAllVisible() {
   for (const item of visibleItems.value) selectedClueIds.add(item.id)
@@ -197,11 +205,43 @@ function handlePublished(event: any) {
   const payload = event?.worldClue || event?.argv?.options || event?.argv?.Options || {}
   if (String(payload.worldId || '') === props.worldId) tabDismissed.value = false
 }
-async function openClue(summary: WorldClueSummary) {
+function buildClueResource(clue: Pick<WorldClueDetail, 'id' | 'title'>) {
+  const params = { type: 'clue' as const, id: clue.id, worldId: props.worldId, channelId: props.channelId }
+  return {
+    key: buildInternalSurfaceResourceKey(params),
+    url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }),
+    title: clue.title || '线索',
+    presentation: { chrome: 'minimal' as const, width: 560, height: 460 },
+  }
+}
+async function openClue(summary: WorldClueSummary, event?: MouseEvent) {
   try {
     const clue = await store.fetchDetail(props.worldId, summary.id)
+    const resource = buildClueResource(clue)
+    if (event && await requestTheaterFloatingOpen(resource, event)) return
     chatEvent.emit('world-clue-open' as any, { worldId: props.worldId, clueId: clue.id })
   } catch { message.warning('线索不可用') }
+}
+async function openFloating(summary: WorldClueSummary, event: MouseEvent) {
+  if (summary.effectiveAccess === 'none') {
+    message.warning('线索不可用')
+    return
+  }
+  const resource = buildClueResource(summary)
+	if (isTheaterChatFrame()) {
+		if (await requestTheaterFloatingOpen(resource, event)) {
+			void store.markSeen(props.worldId, summary.id).catch(() => undefined)
+		} else message.warning('小剧场浮窗打开失败')
+		return
+	}
+	chatEvent.emit('internal-surface-floating-open' as any, {
+		resource,
+		clientX: event.clientX,
+		clientY: event.clientY,
+		onOpened: (accepted: boolean) => {
+			if (accepted) void store.markSeen(props.worldId, summary.id).catch(() => undefined)
+		},
+	})
 }
 async function editClue(summary?: WorldClueSummary) {
   if (editorVisible.value) return
@@ -749,7 +789,7 @@ defineExpose({ toggleVisibility })
         <article
           class="clue-box__item" :class="{ 'clue-box__item--unread': item.unread, 'clue-box__item--selected': selectedClueIds.has(item.id) }"
           :draggable="canReorderClues" @dragstart="startDrag($event, 'clue', item.id)" @dragend="endDrag"
-          @click="handleClueClick(item)" @dblclick="handleClueDblClick(item)"
+          @click="handleClueClick(item)" @dblclick="handleClueDblClick(item, $event)"
         >
           <span v-if="multiSelect && selectedClueIds.has(item.id)" class="clue-box__selection-mark"><NIcon><Check /></NIcon></span>
           <div v-if="preference.mediaPreview" class="clue-box__media">
@@ -765,15 +805,21 @@ defineExpose({ toggleVisibility })
           </div>
           <div class="clue-box__item-heading">
             <NIcon><component :is="clueKindIcon(item)" /></NIcon><strong>{{ item.title }}</strong><span v-if="item.status === 'draft'">草稿</span>
-            <NButton v-if="!multiSelect"
-              class="clue-box__favorite" :class="{ 'clue-box__favorite--active': isFavorite(item) }"
-              circle quaternary size="tiny" :type="isFavorite(item) ? 'primary' : 'default'" :loading="favoriteSubmitting[item.id] === true"
-              :aria-pressed="isFavorite(item)" :title="isFavorite(item) ? '取消收藏' : '收藏'" @click.stop="toggleFavorite(item)" @dblclick.stop
-            ><template #icon><NIcon><Star /></NIcon></template></NButton>
+            <span v-if="!multiSelect" class="clue-box__corner-actions">
+              <NButton
+                class="clue-box__float-open" circle quaternary size="tiny" title="悬浮打开" aria-label="悬浮打开"
+                @click.stop="openFloating(item, $event)" @dblclick.stop
+              ><template #icon><NIcon><PictureInPicture /></NIcon></template></NButton>
+              <NButton
+                class="clue-box__favorite" :class="{ 'clue-box__favorite--active': isFavorite(item) }"
+                circle quaternary size="tiny" :type="isFavorite(item) ? 'primary' : 'default'" :loading="favoriteSubmitting[item.id] === true"
+                :aria-pressed="isFavorite(item)" :title="isFavorite(item) ? '取消收藏' : '收藏'" @click.stop="toggleFavorite(item)" @dblclick.stop
+              ><template #icon><NIcon><Star /></NIcon></template></NButton>
+            </span>
           </div>
           <p v-if="!preference.mediaPreview">{{ item.contentText || (item.kind === 'iframe' ? item.embedDomain : '暂无摘要') }}</p>
           <div v-if="!multiSelect" class="clue-box__item-actions">
-            <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
+            <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item, $event)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
             <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
             <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '重放' : '揭示'" @click.stop="revealOrReplay(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
             <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
@@ -840,9 +886,9 @@ defineExpose({ toggleVisibility })
 .clue-box__folder-tab--editing { padding: 0 4px; }
 .clue-box__folder-add { flex: 0 0 auto; }
 .clue-box__items { min-height: 0; flex: 1; overflow: auto; padding: 0 14px 14px; }
-.clue-box__items--grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-.clue-box__items--list { display: grid; gap: 7px; }
-.clue-box__item-wrap { position: relative; min-width: 0; }
+.clue-box__items--grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; gap: 9px; }
+.clue-box__items--list { display: grid; align-content: start; grid-auto-rows: max-content; gap: 7px; }
+.clue-box__item-wrap { position: relative; min-width: 0; align-self: start; }
 .clue-box__item-wrap--drop-target::before { position: absolute; z-index: 1; top: 5px; bottom: 5px; left: -5px; width: 2px; border-radius: 999px; background: var(--primary-color, #3388de); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 18%, transparent); content: ''; pointer-events: none; }
 .clue-box__drag { color: var(--sc-text-secondary); cursor: grab; }
 .clue-box__item { position: relative; min-width: 0; overflow: hidden; padding: 12px; color: var(--sc-text-primary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 2%); transition: border-color .14s ease, background-color .14s ease, transform .14s ease; }
@@ -850,9 +896,12 @@ defineExpose({ toggleVisibility })
 .clue-box__item--unread { border-left: 3px solid var(--primary-color, #3388de); }
 .clue-box__item--selected { border-color: var(--primary-color, #3388de); background: color-mix(in srgb, var(--primary-color, #3388de) 12%, var(--sc-bg-elevated)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 30%, transparent); }
 .clue-box__selection-mark { position: absolute; z-index: 1; top: 8px; right: 8px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--sc-bg-surface); border-radius: 50%; background: var(--primary-color, #3388de); }
-.clue-box__item-heading { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 24px; align-items: center; gap: 5px; }
+.clue-box__corner-actions { display: inline-flex; align-items: center; gap: 2px; }
+.clue-box__float-open { width: 26px; height: 26px; color: var(--sc-text-secondary); opacity: .5; }
+.clue-box__item:hover .clue-box__float-open, .clue-box__item:focus-within .clue-box__float-open { color: var(--sc-text-primary); opacity: 1; }
+.clue-box__item-heading { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 5px; }
 .clue-box__item-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clue-box__item-heading span { color: var(--sc-text-secondary); font-size: 10px; }
+.clue-box__item-heading > span:not(.clue-box__corner-actions) { color: var(--sc-text-secondary); font-size: 10px; }
 .clue-box__item p { display: -webkit-box; min-height: 38px; margin: 7px 0; overflow: hidden; color: var(--sc-text-secondary); font-size: 12px; line-height: 1.45; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .clue-box__favorite { width: 26px; height: 26px; color: var(--sc-text-secondary); box-shadow: inset 0 0 0 1px var(--sc-border-mute); }
 .clue-box__favorite--active { color: var(--primary-color, #3388de); background: color-mix(in srgb, var(--primary-color, #3388de) 18%, var(--sc-bg-surface)) !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 65%, var(--sc-border-strong)); }
@@ -872,5 +921,5 @@ defineExpose({ toggleVisibility })
 .clue-box-tab { position: fixed; right: 0; z-index: 1200; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
 .clue-box-tab :deep(.n-badge-sup) { top: -18px; right: 50%; transform: translateX(50%); writing-mode: horizontal-tb; }
 .clue-box :deep(.n-input) { --n-box-shadow-hover: none !important; --n-box-shadow-focus: none !important; --n-box-shadow-active: none !important; --n-box-shadow-hover-warning: none !important; --n-box-shadow-focus-warning: none !important; --n-box-shadow-active-warning: none !important; --n-box-shadow-hover-error: none !important; --n-box-shadow-focus-error: none !important; --n-box-shadow-active-error: none !important; }
-@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } }
+@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__items--grid { grid-template-columns: 1fr; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } .clue-box__float-open { opacity: 1; } }
 </style>

@@ -8,6 +8,7 @@ export interface TheaterFloatingResource {
   url: string;
   title: string;
   presentation?: {
+    chrome?: 'default' | 'minimal';
     minimized?: boolean;
     avatarUrl?: string;
     width?: number;
@@ -19,6 +20,8 @@ export interface TheaterFloatingTakeoverRequest {
   type: typeof THEATER_FLOATING_TAKEOVER_REQUEST;
   requestId: string;
   resource: TheaterFloatingResource;
+  /** Missing intent is treated as a drag transfer for backwards compatibility. */
+  intent?: 'transfer' | 'open';
   clientX: number;
   clientY: number;
 }
@@ -47,7 +50,9 @@ export interface ChatFloatingTakeoverAck {
 
 let requestCounter = 0;
 
-const isTheaterChatFrame = () => {
+export type TheaterFloatingCoordinateEvent = Pick<MouseEvent, 'clientX' | 'clientY'>;
+
+export const isTheaterChatFrame = () => {
   if (typeof window === 'undefined' || window.parent === window) return false;
   const hash = window.location.hash;
   const queryIndex = hash.indexOf('?');
@@ -55,7 +60,7 @@ const isTheaterChatFrame = () => {
   return new URLSearchParams(hash.slice(queryIndex + 1)).get('mode') === 'theater';
 };
 
-const resolveParentPoint = (event: PointerEvent) => {
+const resolveParentPoint = (event: TheaterFloatingCoordinateEvent) => {
   const frame = window.frameElement;
   if (!frame || typeof frame.getBoundingClientRect !== 'function') return null;
   const rect = frame.getBoundingClientRect();
@@ -67,7 +72,7 @@ const resolveParentPoint = (event: PointerEvent) => {
 
 export const requestTheaterFloatingTakeover = (
   resource: TheaterFloatingResource,
-  event: PointerEvent,
+  event: TheaterFloatingCoordinateEvent,
 ): Promise<boolean> => {
   if (!isTheaterChatFrame()) return Promise.resolve(false);
   const point = resolveParentPoint(event);
@@ -78,6 +83,49 @@ export const requestTheaterFloatingTakeover = (
     type: THEATER_FLOATING_TAKEOVER_REQUEST,
     requestId,
     resource,
+    intent: 'transfer',
+    ...point,
+  };
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', handleMessage);
+      resolve(accepted);
+    };
+    const handleMessage = (message: MessageEvent<unknown>) => {
+      if (message.origin !== window.location.origin || message.source !== window.parent) return;
+      const data = message.data as Partial<TheaterFloatingTakeoverAck> | null;
+      if (
+        data?.type !== THEATER_FLOATING_TAKEOVER_ACK
+        || data.requestId !== requestId
+        || typeof data.accepted !== 'boolean'
+      ) return;
+      finish(data.accepted);
+    };
+    const timeoutId = window.setTimeout(() => finish(false), 800);
+    window.addEventListener('message', handleMessage);
+    window.parent.postMessage(request, window.location.origin);
+  });
+};
+
+export const requestTheaterFloatingOpen = (
+  resource: TheaterFloatingResource,
+  event: TheaterFloatingCoordinateEvent,
+): Promise<boolean> => {
+  if (!isTheaterChatFrame()) return Promise.resolve(false);
+  const point = resolveParentPoint(event);
+  if (!point) return Promise.resolve(false);
+
+  const requestId = `theater-floating-open-${Date.now()}-${++requestCounter}`;
+  const request: TheaterFloatingTakeoverRequest = {
+    type: THEATER_FLOATING_TAKEOVER_REQUEST,
+    requestId,
+    resource,
+    intent: 'open',
     ...point,
   };
 
@@ -168,6 +216,7 @@ export const isTheaterFloatingTakeoverRequest = (
   const validPresentation = presentation === undefined || (
     !!presentation
     && typeof presentation === 'object'
+    && (presentation.chrome === undefined || presentation.chrome === 'default' || presentation.chrome === 'minimal')
     && (presentation.minimized === undefined || typeof presentation.minimized === 'boolean')
     && (presentation.avatarUrl === undefined || typeof presentation.avatarUrl === 'string')
     && (presentation.width === undefined || (typeof presentation.width === 'number' && Number.isFinite(presentation.width)))
@@ -176,6 +225,7 @@ export const isTheaterFloatingTakeoverRequest = (
   return request.type === THEATER_FLOATING_TAKEOVER_REQUEST
     && typeof request.requestId === 'string'
     && !!request.requestId
+    && (request.intent === undefined || request.intent === 'transfer' || request.intent === 'open')
     && typeof request.clientX === 'number'
     && Number.isFinite(request.clientX)
     && typeof request.clientY === 'number'

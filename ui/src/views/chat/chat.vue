@@ -49,6 +49,7 @@ import { resolveDice3DPlaybackPayload } from '@/features/dice3d/playbackProfile'
 import type { Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import TheaterFloatingReturnReceiver from './components/TheaterFloatingReturnReceiver.vue';
+import TheaterFloatingHost from '@/views/theater/host/TheaterFloatingHost.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useWorldClueStore } from '@/stores/worldClue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -18213,6 +18214,13 @@ onBeforeUnmount(() => {
   <!-- 人物卡预览窗口 -->
   <CharacterSheetManager />
   <TheaterFloatingReturnReceiver />
+  <TheaterFloatingHost
+    v-if="!isEmbedMode && chat.curChannel?.id && chat.currentWorldId"
+    host-mode="viewport"
+    :chat-frame="null"
+    :world-id="chat.currentWorldId"
+    :channel-id="chat.curChannel.id"
+  />
 </template>
 
 <style lang="scss" scoped src="./styles/chat.scoped.scss"></style>

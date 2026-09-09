@@ -3,15 +3,19 @@ import { computed, onErrorCaptured, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NResult, NSpin } from 'naive-ui';
 import { useChatStore } from '@/stores/chat';
+import { useWorldClueStore, type WorldClueDetail } from '@/stores/worldClue';
+import WorldCluePresentationOverlay from '@/components/world-clue/WorldCluePresentationOverlay.vue';
 import { getInternalSurfaceComponent } from './internalSurfaceRegistry';
 
 const route = useRoute();
 const chat = useChatStore();
+const worldClue = useWorldClueStore();
 
 const contextReady = ref(false);
 const resourceReady = ref(false);
 const errorTitle = ref('');
 const errorDescription = ref('');
+const clueResource = ref<WorldClueDetail | null>(null);
 let taskEpoch = 0;
 let contextQueue: Promise<void> = Promise.resolve();
 
@@ -24,6 +28,7 @@ const id = computed(() => normalizeRouteValue(route.params.id));
 const worldId = computed(() => normalizeRouteValue(route.query.world));
 const channelId = computed(() => normalizeRouteValue(route.query.channel));
 const surfaceComponent = computed(() => getInternalSurfaceComponent(type.value));
+const isClueSurface = computed(() => type.value === 'clue');
 const surfaceKey = computed(() => `${type.value}:${id.value}:${worldId.value}:${channelId.value}`);
 
 const setError = (title: string, description: string) => {
@@ -33,7 +38,7 @@ const setError = (title: string, description: string) => {
 };
 
 const initializeContext = async (epoch: number) => {
-  if (!surfaceComponent.value) {
+  if (!surfaceComponent.value && !isClueSurface.value) {
     setError('不支持的内部窗口类型', type.value || '未提供 type');
     return;
   }
@@ -62,10 +67,27 @@ const initializeContext = async (epoch: number) => {
     ) {
       throw new Error('世界或频道上下文初始化失败');
     }
+    if (isClueSurface.value) {
+      const clue = await worldClue.fetchDetail(targetWorldId, id.value, false);
+      if (
+        epoch !== taskEpoch
+        || type.value !== 'clue'
+        || id.value !== clue.id
+        || worldId.value !== targetWorldId
+        || channelId.value !== targetChannelId
+        || String(chat.currentWorldId || '') !== targetWorldId
+        || String(chat.curChannel?.id || '') !== targetChannelId
+      ) return;
+      clueResource.value = clue;
+    }
     contextReady.value = true;
+    resourceReady.value = isClueSurface.value;
   } catch (error: any) {
     if (epoch !== taskEpoch) return;
-    setError('无法建立运行上下文', error?.response?.data?.error || error?.message || '世界或频道不可用');
+    setError(
+      isClueSurface.value ? '资源不可用' : '无法建立运行上下文',
+      error?.response?.data?.error || error?.message || (isClueSurface.value ? '线索不可用' : '世界或频道不可用'),
+    );
   }
 };
 
@@ -73,6 +95,7 @@ const queueContextInitialization = () => {
   const epoch = ++taskEpoch;
   contextReady.value = false;
   resourceReady.value = false;
+  clueResource.value = null;
   errorTitle.value = '';
   errorDescription.value = '';
   contextQueue = contextQueue
@@ -91,6 +114,7 @@ onErrorCaptured((error) => {
 <template>
   <main
     class="internal-surface"
+    :class="{ 'internal-surface--clue': isClueSurface }"
     :data-rich-message-world-id="worldId"
     :data-rich-message-channel-id="channelId"
   >
@@ -112,6 +136,11 @@ onErrorCaptured((error) => {
         @unavailable="setError('资源不可用', $event)"
         @error="setError('资源加载失败', $event)"
       />
+      <WorldCluePresentationOverlay
+        v-else-if="contextReady && isClueSurface && clueResource"
+        :clue="clueResource"
+        mode="surface"
+      />
       <div v-if="!contextReady || !resourceReady" class="internal-surface__loading">
         <n-spin size="large" />
       </div>
@@ -126,6 +155,10 @@ onErrorCaptured((error) => {
   height: 100vh;
   overflow: hidden;
   background: var(--sc-bg-surface, #fff);
+}
+
+.internal-surface--clue {
+  background: transparent;
 }
 
 .internal-surface :deep(.n-result) {
