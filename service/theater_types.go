@@ -202,6 +202,7 @@ type TheaterActionCommand struct {
 	ActionID         string `json:"actionId"`
 	StepID           string `json:"stepId"`
 	ExpectedRevision int64  `json:"expectedRevision"`
+	EntryID          string `json:"entryId"`
 }
 
 type TheaterActionBatchCommand struct {
@@ -219,6 +220,7 @@ type TheaterActionResult struct {
 	Descriptor json.RawMessage            `json:"descriptor,omitempty"`
 	Chat       *TheaterChatSendResult     `json:"chat,omitempty"`
 	Effect     *TheaterEffectActionResult `json:"effect,omitempty"`
+	Clue       *TheaterClueActionResult   `json:"clue,omitempty"`
 }
 
 type TheaterEffectActionResult struct {
@@ -227,6 +229,14 @@ type TheaterEffectActionResult struct {
 	SceneID   string `json:"sceneId,omitempty"`
 	RoomID    string `json:"roomId"`
 	Revision  int64  `json:"revision"`
+}
+
+type TheaterClueActionResult struct {
+	ClueID       string   `json:"clueId"`
+	PublishSeq   int64    `json:"publishSeq"`
+	RecipientIDs []string `json:"recipientIds"`
+	Revision     int64    `json:"revision"`
+	Status       string   `json:"status"`
 }
 
 type TheaterRestoreCommand struct {

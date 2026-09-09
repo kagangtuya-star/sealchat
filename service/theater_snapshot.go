@@ -224,6 +224,20 @@ func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {
 			action["payload"] = map[string]any{"effectId": "redacted"}
 		case TheaterMutationObjectToggle:
 			action["payload"] = map[string]any{"objectId": "redacted"}
+		case "clue.execute":
+			action["payload"] = redactedTheaterCluePayload()
+		case "action.sequence":
+			if payload, ok := action["payload"].(map[string]any); ok {
+				if steps, ok := payload["steps"].([]any); ok {
+					for _, rawStep := range steps {
+						if step, ok := rawStep.(map[string]any); ok {
+							if nested, ok := step["action"].(map[string]any); ok && nested["type"] == "clue.execute" {
+								step["action"] = map[string]any{"type": "clue.execute", "payload": redactedTheaterCluePayload()}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	result, err := json.Marshal(actions)
@@ -231,6 +245,10 @@ func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage(`[]`)
 	}
 	return result
+}
+
+func redactedTheaterCluePayload() map[string]any {
+	return map[string]any{"version": 1, "entries": []map[string]any{{"id": "redacted-entry", "clueId": "redacted-clue", "targets": []map[string]any{}, "present": false, "confirm": false}}}
 }
 
 func RestoreTheaterSnapshot(ctx context.Context, actorID string, command TheaterRestoreCommand, meta TheaterRequestMeta) (*TheaterMutationResult, error) {

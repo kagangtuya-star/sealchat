@@ -2,9 +2,10 @@ import { watch, type WatchStopHandle } from 'vue'
 
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
-import type { SceneFolder, StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
+import type { SceneFolder, StageAction, StageActionTriggeredPayload, StageClueActionEntry, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
 import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
+import { STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
 type JsonObject = Record<string, unknown>
@@ -123,6 +124,11 @@ interface TheaterSyncOptions {
   onSceneAudioTriggered?: (assetId: string, volume: number, triggerId: string, sceneId: string) => void
   onVisibilityTriggered?: (changes: TheaterVisibilityChange[], triggerId: string) => void
   onError?: (message: string) => void
+  confirmClueEntry?: (entry: StageClueActionEntry) => Promise<boolean>
+}
+
+type ClueStageActionTriggeredPayload = Omit<StageActionTriggeredPayload, 'action'> & {
+  action: Extract<StageAction, { type: 'clue.execute' }>
 }
 
 const clone = <T>(value: T): T => structuredClone(value)
@@ -762,6 +768,7 @@ export class TheaterSyncClient {
   private pendingEffectTriggers = new Map<string, { effectId: string, sceneId: string, revision: number, expiresAt: number }>()
   private pendingSceneAudioTriggers = new Map<string, { assetId: string, volume: number, sceneId: string, revision: number, expiresAt: number }>()
   private consecutiveConflicts = 0
+  private readonly runningClueExecutions = new Set<string>()
 
   private theaterBase() {
     if (this.options.scopeType === 'world' || !this.options.channelId) {
@@ -941,6 +948,7 @@ export class TheaterSyncClient {
     this.reconcileTimer = null
     this.pendingEffectTriggers.clear()
     this.pendingSceneAudioTriggers.clear()
+    this.runningClueExecutions.clear()
     chatEvent.off('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
@@ -958,6 +966,7 @@ export class TheaterSyncClient {
   }
 
   async triggerAction(payload: StageActionTriggeredPayload) {
+    if (payload.action.type === 'clue.execute') return this.triggerClueExecute(payload as ClueStageActionTriggeredPayload)
     if (payload.action.type !== 'scene.apply' && payload.action.type !== 'object.toggle' && payload.action.type !== 'effect.play') {
       return this.triggerActionNow(payload)
     }
@@ -1110,12 +1119,38 @@ export class TheaterSyncClient {
     return true
   }
 
-  private postAction(payload: StageActionTriggeredPayload) {
+  private async triggerClueExecute(payload: ClueStageActionTriggeredPayload) {
+    const key = `${payload.objectId}:${payload.actionId}:${payload.stepId || ''}`
+    if (this.runningClueExecutions.has(key)) return true
+    this.runningClueExecutions.add(key)
+    try {
+      for (const entry of payload.action.payload.entries) {
+        if (entry.confirm) {
+          const confirmed = this.options.confirmClueEntry
+            ? await this.options.confirmClueEntry(entry)
+            : false
+          if (!confirmed) return STAGE_ACTION_CANCELLED
+        }
+        await this.waitForSaving()
+        await this.flushNow()
+        await this.waitForSaving()
+        // Clue entries are intentionally not retried: a failed request stops the
+        // local sequence and must remain visible to the caller.
+        await this.postAction(payload, entry.id)
+      }
+      return true
+    } finally {
+      this.runningClueExecutions.delete(key)
+    }
+  }
+
+  private postAction(payload: StageActionTriggeredPayload, entryId?: string) {
     return api.post(`${this.theaterBase()}/actions/trigger`, {
       actionRequestId: mutationId('action'),
       objectId: payload.objectId,
       actionId: payload.actionId,
       ...(payload.stepId ? { stepId: payload.stepId } : {}),
+      ...(entryId ? { entryId } : {}),
       inputChannelId: this.inputChannelId || this.options.channelId,
       expectedRevision: this.revision,
     })

@@ -42,6 +42,8 @@ export const THEATER_CHAT_CAPABILITIES = [
   'chat.character.selected',
   'chat.character.appearance.updated',
   'chat.character.variant.selected',
+  'chat.clue.options.read',
+  'chat.clue.access.read',
   ...THEATER_CHAT_MESSAGE_EVENT_NAMES,
 ] as const
 
@@ -311,12 +313,44 @@ const objectToggleActionSchema = z.strictObject({
   payload: z.strictObject({ objectId: nonEmptyIdSchema }),
 })
 
+const clueAccessModeSchema = z.enum(['keep', 'inherit', 'none', 'view', 'edit'])
+const clueActionTargetSchema = z.strictObject({ userId: z.string().trim().min(1).max(128), access: clueAccessModeSchema })
+const clueActionEntrySchema = z.strictObject({
+  id: z.string().trim().min(1).max(128),
+  clueId: z.string().trim().min(1).max(128),
+  targets: z.array(clueActionTargetSchema).max(256),
+  present: z.boolean(),
+  confirm: z.boolean(),
+})
+const clueExecutePayloadSchema = z.strictObject({
+  version: z.literal(1),
+  entries: z.array(clueActionEntrySchema).min(1).max(32),
+}).superRefine((payload, context) => {
+  const entryIDs = new Set<string>()
+  payload.entries.forEach((entry, index) => {
+    if (entryIDs.has(entry.id)) context.addIssue({ code: 'custom', path: ['entries', index, 'id'], message: 'duplicate clue entry id' })
+    entryIDs.add(entry.id)
+    const targetIDs = new Set<string>()
+    entry.targets.forEach((target, targetIndex) => {
+      if (targetIDs.has(target.userId)) context.addIssue({ code: 'custom', path: ['entries', index, 'targets', targetIndex, 'userId'], message: 'duplicate clue target userId' })
+      targetIDs.add(target.userId)
+    })
+  })
+})
+const clueExecuteActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('clue.execute'),
+  schedule: stageActionScheduleSchema,
+  payload: clueExecutePayloadSchema,
+})
+
 const stageAtomicActionSchema = z.discriminatedUnion('type', [
   chatSendActionSchema,
   chatRandomTableActionSchema,
   chatInsertActionSchema,
   sceneApplyActionSchema,
   effectPlayActionSchema,
+  clueExecuteActionSchema,
   objectToggleActionSchema,
 ])
 
@@ -326,6 +360,7 @@ const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
   chatInsertActionSchema.omit({ id: true, schedule: true }),
   sceneApplyActionSchema.omit({ id: true, schedule: true }),
   effectPlayActionSchema.omit({ id: true, schedule: true }),
+  clueExecuteActionSchema.omit({ id: true, schedule: true }),
   objectToggleActionSchema.omit({ id: true, schedule: true }),
 ])
 
@@ -594,6 +629,41 @@ export const audioPlaybackSnapshotApplyResultSchema = z.union([
   bridgeErrorResultSchema,
 ])
 
+export const chatClueOptionsReadPayloadSchema = z.strictObject({})
+export const chatClueOptionsReadResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    clues: z.array(z.strictObject({
+      id: nonEmptyIdSchema,
+      title: z.string().max(512),
+      kind: z.string().max(32),
+      status: z.string().max(32),
+      publishSeq: z.number().int().nonnegative(),
+      sharedFolderId: nonEmptyIdSchema.optional(),
+    })).max(1_000),
+    roster: z.array(z.strictObject({
+      userId: nonEmptyIdSchema,
+      username: z.string().max(256),
+      nickname: z.string().max(256),
+      avatar: z.string().max(8_192),
+      role: z.string().max(32),
+    })).max(1_000),
+  }),
+  bridgeErrorResultSchema,
+])
+export const chatClueAccessReadPayloadSchema = z.strictObject({ clueId: z.string().trim().min(1).max(128) })
+export const chatClueAccessReadResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    items: z.array(z.strictObject({
+      userId: nonEmptyIdSchema,
+      accessOverride: z.enum(['inherit', 'none', 'view', 'edit']),
+      effectiveAccess: z.enum(['none', 'view', 'edit']),
+    })).max(1_000),
+  }),
+  bridgeErrorResultSchema,
+])
+
 export const stageActionTriggeredPayloadSchema = z.strictObject({
   objectId: nonEmptyIdSchema,
   actionId: nonEmptyIdSchema,
@@ -738,6 +808,10 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['result:chat.audio.playback.snapshot.read.result', audioPlaybackSnapshotReadResultSchema],
   ['command:chat.audio.playback.snapshot.apply', audioPlaybackSnapshotApplyPayloadSchema],
   ['result:chat.audio.playback.snapshot.apply.result', audioPlaybackSnapshotApplyResultSchema],
+  ['command:chat.clue.options.read', chatClueOptionsReadPayloadSchema],
+  ['result:chat.clue.options.read.result', chatClueOptionsReadResultSchema],
+  ['command:chat.clue.access.read', chatClueAccessReadPayloadSchema],
+  ['result:chat.clue.access.read.result', chatClueAccessReadResultSchema],
   ['event:stage.action.triggered', stageActionTriggeredPayloadSchema],
   ['command:chat.message.send', chatMessageSendPayloadSchema],
   ['result:chat.message.send.result', chatMessageSendResultSchema],
@@ -776,6 +850,8 @@ export type StageMusicSnapshotPayload = z.infer<typeof stageMusicSnapshotSchema>
 export type AudioPlaybackSnapshotReadResult = z.infer<typeof audioPlaybackSnapshotReadResultSchema>
 export type AudioPlaybackSnapshotApplyPayload = z.infer<typeof audioPlaybackSnapshotApplyPayloadSchema>
 export type AudioPlaybackSnapshotApplyResult = z.infer<typeof audioPlaybackSnapshotApplyResultSchema>
+export type ChatClueOptionsReadResult = z.infer<typeof chatClueOptionsReadResultSchema>
+export type ChatClueAccessReadResult = z.infer<typeof chatClueAccessReadResultSchema>
 export type StageAction = z.infer<typeof stageActionSchema>
 export type StageActionTriggeredPayload = z.infer<typeof stageActionTriggeredPayloadSchema>
 export type ChatMessageSendPayload = z.infer<typeof chatMessageSendPayloadSchema>

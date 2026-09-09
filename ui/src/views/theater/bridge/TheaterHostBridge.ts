@@ -1,7 +1,7 @@
 import type { TheaterStageStore } from '../stage/StageStore'
 import { isStageActionTarget, normalizeStageActionSchedule } from '../shared/stage-types'
 import { sequenceStepAction } from '../shared/stage-actions'
-import { runStageActionSequence } from '../stage/theater-action-sequence-runtime'
+import { runStageActionSequence, STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
@@ -18,6 +18,8 @@ import {
   type ChatCharactersSnapshotPayload,
   type ChatComposerInsertPayload,
   type ChatComposerInsertResult,
+  type ChatClueAccessReadResult,
+  type ChatClueOptionsReadResult,
   type ChatMessageSendPayload,
   type ChatMessageSendResult,
   type InitializePayload,
@@ -55,7 +57,7 @@ interface TheaterHostBridgeOptions {
   onChatMessageCreated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
-  triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean | StageAction>
+  triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean | StageAction | typeof STAGE_ACTION_CANCELLED>
   triggerStageActionBatch?: (payloads: readonly StageActionTriggeredPayload[]) => Promise<boolean>
   playStageEffect?: (effectId: string, triggerId?: string) => boolean
   onSceneApplied?: (sceneId: string) => void
@@ -87,6 +89,8 @@ const CHAT_COMMAND_PERMISSIONS: Record<string, string> = {
   'chat.character.card.open': 'chat.character.card.open',
   'chat.audio.playback.snapshot.read': 'chat.audio.playback.snapshot.read',
   'chat.audio.playback.snapshot.apply': 'chat.audio.playback.snapshot.apply',
+  'chat.clue.options.read': 'chat.clue.options.read',
+  'chat.clue.access.read': 'chat.clue.access.read',
 }
 
 const sameStageAction = (left: StageAction, right: StageAction) => {
@@ -112,6 +116,9 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
       return right.type === 'effect.play' && left.payload.effectId === right.payload.effectId
     case 'object.toggle':
       return right.type === 'object.toggle' && left.payload.objectId === right.payload.objectId
+    case 'clue.execute':
+      // Clue action payloads are redacted for ordinary members.
+      return right.type === 'clue.execute'
     case 'action.sequence':
       return right.type === 'action.sequence' && JSON.stringify(left.payload) === JSON.stringify(right.payload)
   }
@@ -120,12 +127,14 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
 export const mergeTheaterBridgePermissions = (
   stagePermissions: readonly string[],
   canControlStage = false,
+  canManageClues = false,
 ): string[] => [...new Set([
   ...(canControlStage ? [
     'stage.control',
     'chat.audio.playback.snapshot.read',
     'chat.audio.playback.snapshot.apply',
   ] : []),
+  ...(canManageClues ? ['chat.clue.options.read', 'chat.clue.access.read'] : []),
   ...stagePermissions,
   ...CHAT_BRIDGE_PERMISSIONS,
 ])]
@@ -341,6 +350,16 @@ export class TheaterHostBridge {
       'chat.character.card.open',
       { identityId },
     )
+  }
+
+  readClueOptions() {
+    this.assertChatBridgeEnabled()
+    return this.stageClient.request<Record<string, never>, ChatClueOptionsReadResult>('chat', 'chat.clue.options.read', {})
+  }
+
+  readClueAccess(clueId: string) {
+    this.assertChatBridgeEnabled()
+    return this.stageClient.request<{ clueId: string }, ChatClueAccessReadResult>('chat', 'chat.clue.access.read', { clueId })
   }
 
   private registerHandlers() {
@@ -602,6 +621,7 @@ export class TheaterHostBridge {
       }
       if (this.options.triggerStageAction) {
         const handled = await this.options.triggerStageAction(payload)
+        if (handled === STAGE_ACTION_CANCELLED) return
         if (handled === true) return
         if (handled) {
           await this.executeStageAction(handled)
@@ -632,6 +652,7 @@ export class TheaterHostBridge {
             stepId: step.id,
             action: atomicAction,
           })
+          if (handled === STAGE_ACTION_CANCELLED) return STAGE_ACTION_CANCELLED
           if (handled === true) return
           if (handled) {
             await this.executeStageAction(handled)
@@ -679,6 +700,9 @@ export class TheaterHostBridge {
     }
     if (action.type === 'chat.random-table') {
       throw new TheaterBridgeRequestError('UNSUPPORTED_ACTION', 'chat.random-table requires server execution')
+    }
+    if (action.type === 'clue.execute') {
+      throw new TheaterBridgeRequestError('UNSUPPORTED_ACTION', 'clue.execute requires server execution')
     }
     await this.stageClient.request<ChatComposerInsertPayload, ChatComposerInsertResult>(
       'chat',

@@ -227,6 +227,14 @@ type StageAtomicActionData =
   }
   | {
     id: string
+    type: 'clue.execute'
+    payload: {
+      version: 1
+      entries: StageClueActionEntry[]
+    }
+  }
+  | {
+    id: string
     type: 'object.toggle'
     payload: {
       objectId: string
@@ -235,6 +243,21 @@ type StageAtomicActionData =
 
 export type StageAtomicAction = StageAtomicActionData & {
   schedule: StageActionSchedule
+}
+
+export type StageClueAccessMode = 'keep' | 'inherit' | 'none' | 'view' | 'edit'
+
+export interface StageClueActionTarget {
+  userId: string
+  access: StageClueAccessMode
+}
+
+export interface StageClueActionEntry {
+  id: string
+  clueId: string
+  targets: StageClueActionTarget[]
+  present: boolean
+  confirm: boolean
 }
 
 export type StageAtomicActionDescriptor = StageAtomicActionData extends infer Action

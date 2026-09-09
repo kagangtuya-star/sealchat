@@ -63,6 +63,19 @@ type WorldCluePublishResult struct {
 	RecipientIDs []string
 }
 
+type WorldClueTheaterTarget struct {
+	UserID string
+	Access string
+}
+
+type WorldClueTheaterEntryResult struct {
+	ClueID       string
+	PublishSeq   int64
+	RecipientIDs []string
+	Revision     int64
+	Status       string
+}
+
 type WorldClueUserStateInput struct {
 	PersonalFolderID *string
 	PersonalOrder    *int
@@ -1279,6 +1292,125 @@ func WorldClueSetAccess(worldID, clueID, actorID, userID, accessOverride string)
 	}
 	item := worldClueAccessDTO(userID, targetRole, clue.DefaultAccess, accessOverride, stored)
 	return &item, nil
+}
+
+// WorldClueExecuteTheaterEntry applies one saved theater clue entry atomically.
+// It intentionally keeps private-content columns out of the upsert update set.
+func WorldClueExecuteTheaterEntry(worldID, clueID, actorID string, targets []WorldClueTheaterTarget, present bool) (*WorldClueTheaterEntryResult, error) {
+	db := model.GetDB()
+	result := &WorldClueTheaterEntryResult{ClueID: strings.TrimSpace(clueID), RecipientIDs: []string{}}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		role, err := worldClueRole(tx, worldID, actorID)
+		if err != nil {
+			return err
+		}
+		if !worldClueIsAdminRole(role) {
+			return ErrWorldClueDenied
+		}
+		var clue model.WorldClueModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("world_id = ? AND id = ? AND status <> ?", worldID, clueID, model.WorldClueStatusArchived).Take(&clue).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrWorldClueNotFound
+			}
+			return err
+		}
+		result.ClueID, result.Revision, result.Status, result.PublishSeq = clue.ID, clue.Revision, clue.Status, clue.PublishSeq
+		normalizedTargets := make([]WorldClueTheaterTarget, 0, len(targets))
+		seen := make(map[string]struct{}, len(targets))
+		for _, target := range targets {
+			userID := strings.TrimSpace(target.UserID)
+			if userID == "" {
+				return fmt.Errorf("%w: target userId is required", ErrWorldClueInvalid)
+			}
+			if _, exists := seen[userID]; exists {
+				return fmt.Errorf("%w: duplicate target userId", ErrWorldClueInvalid)
+			}
+			seen[userID] = struct{}{}
+			if target.Access != "keep" && target.Access != model.WorldClueAccessInherit && target.Access != model.WorldClueAccessNone && target.Access != model.WorldClueAccessView && target.Access != model.WorldClueAccessEdit {
+				return fmt.Errorf("%w: invalid access override", ErrWorldClueInvalid)
+			}
+			memberRole, err := worldClueRole(tx, worldID, userID)
+			if err != nil {
+				return err
+			}
+			if memberRole == "" {
+				return fmt.Errorf("%w: target is not a world member", ErrWorldClueInvalid)
+			}
+			normalizedTargets = append(normalizedTargets, WorldClueTheaterTarget{UserID: userID, Access: target.Access})
+		}
+		var accessRows []model.WorldClueAccessModel
+		if err := tx.Where("world_id = ? AND clue_id = ?", worldID, clueID).Find(&accessRows).Error; err != nil {
+			return err
+		}
+		overrides := make(map[string]string, len(accessRows))
+		for i := range accessRows {
+			overrides[accessRows[i].UserID] = accessRows[i].AccessOverride
+		}
+		now := time.Now()
+		for _, target := range normalizedTargets {
+			if target.Access == "keep" {
+				continue
+			}
+			userID := strings.TrimSpace(target.UserID)
+			row := model.WorldClueAccessModel{WorldID: worldID, ClueID: clueID, UserID: userID, AccessOverride: target.Access, PrivateContentFormat: model.WorldClueContentPlain, UpdatedBy: actorID}
+			row.ID = utils.NewID()
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "world_id"}, {Name: "clue_id"}, {Name: "user_id"}},
+				DoUpdates: clause.Assignments(map[string]any{"access_override": target.Access, "updated_by": actorID, "updated_at": now}),
+			}).Create(&row).Error; err != nil {
+				return err
+			}
+			overrides[userID] = target.Access
+		}
+		if !present {
+			return nil
+		}
+		for _, target := range normalizedTargets {
+			memberRole, err := worldClueRole(tx, worldID, target.UserID)
+			if err != nil {
+				return err
+			}
+			access := overrides[target.UserID]
+			if access == "" {
+				access = model.WorldClueAccessInherit
+			}
+			if effective := effectiveWorldClueAccess(memberRole, clue.DefaultAccess, access); effective == model.WorldClueAccessView || effective == model.WorldClueAccessEdit {
+				result.RecipientIDs = append(result.RecipientIDs, target.UserID)
+			}
+		}
+		if len(result.RecipientIDs) == 0 {
+			return nil
+		}
+		publishSeq := clue.PublishSeq + 1
+		updateResult := tx.Model(&model.WorldClueModel{}).
+			Where("world_id = ? AND id = ? AND publish_seq = ? AND status <> ?", worldID, clueID, clue.PublishSeq, model.WorldClueStatusArchived).
+			Updates(map[string]any{
+				"status":       model.WorldClueStatusPublished,
+				"publish_seq":  publishSeq,
+				"published_at": now,
+				"published_by": actorID,
+				"updated_at":   now,
+			})
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected != 1 {
+			return ErrWorldClueConflict
+		}
+		for _, userID := range result.RecipientIDs {
+			state := model.WorldClueUserStateModel{WorldID: worldID, ClueID: clueID, UserID: userID, AssignedPresentationSeq: publishSeq}
+			state.ID = utils.NewID()
+			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "world_id"}, {Name: "clue_id"}, {Name: "user_id"}}, DoUpdates: clause.Assignments(map[string]any{"assigned_presentation_seq": publishSeq, "updated_at": now})}).Create(&state).Error; err != nil {
+				return err
+			}
+		}
+		result.PublishSeq, result.Status = publishSeq, model.WorldClueStatusPublished
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func WorldClueListAccess(worldID, clueID, actorID string) ([]protocol.WorldClueAccess, error) {

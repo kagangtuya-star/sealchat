@@ -347,6 +347,12 @@ func TheaterActionTrigger(c *fiber.Ctx) error {
 	if err := publishTheaterEffectTriggered(command.WorldID, command.ChannelID, result.Effect); err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
+	if result.Clue != nil {
+		broadcastWorldClueChanged(command.WorldID, result.Clue.ClueID, "upsert", result.Clue.Revision)
+		if result.Clue.PublishSeq > 0 && len(result.Clue.RecipientIDs) > 0 {
+			broadcastWorldCluePublished(command.WorldID, result.Clue.ClueID, result.Clue.PublishSeq, result.Clue.RecipientIDs)
+		}
+	}
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
 }
 

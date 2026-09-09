@@ -8,6 +8,7 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 import { usePushNotificationStore } from '@/stores/pushNotification';
 import { useIFormStore } from '@/stores/iform';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { useWorldClueStore } from '@/stores/worldClue';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 import ChatHeader from '@/views/components/header.vue';
 import ChatSidebar from '@/views/components/sidebar.vue';
@@ -24,6 +25,8 @@ import {
   type ChatCharactersSnapshotPayload,
   type ChatComposerInsertPayload,
   type ChatComposerInsertResult,
+  type ChatClueAccessReadResult,
+  type ChatClueOptionsReadResult,
   type ChatMessageSendPayload,
   type ChatMessageSendResult,
   type InitializePayload,
@@ -92,6 +95,7 @@ const pushStore = usePushNotificationStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
 const audioStudio = useAudioStudioStore();
+const worldClue = useWorldClueStore();
 
 const paneId = computed(() => (typeof route.query.paneId === 'string' ? route.query.paneId : '') as PaneId | '');
 const initialWorldId = computed(() => (typeof route.query.worldId === 'string' ? route.query.worldId : ''));
@@ -391,6 +395,57 @@ const startTheaterBridge = async () => {
     }
     await audioStudio.applyStageMusicSnapshot(payload.snapshot);
     return { ok: true };
+  });
+  client.onCommand<Record<string, never>, ChatClueOptionsReadResult>('chat.clue.options.read', async (_payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.clue.options.read 仅接受舞台端命令' } };
+    }
+    if (!theaterBridgeInitialized || theaterBridgeClient !== client) {
+      return { ok: false, error: { code: 'BRIDGE_NOT_READY', message: '聊天桥接尚未初始化' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.clue.options.read') || !isOwnerOrAdmin.value) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少线索管理读取权限' } };
+    }
+    if (String(chat.curChannel?.id || '').trim() !== channelId || String(chat.currentWorldId || '').trim() !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    await Promise.all([worldClue.loadWorld(worldId), worldClue.loadRoster(worldId)]);
+    return {
+      ok: true,
+      clues: worldClue.summaries
+        .filter((clue) => clue.status !== 'archived')
+        .map((clue) => ({
+          id: clue.id,
+          title: clue.title,
+          kind: clue.kind,
+          status: clue.status,
+          publishSeq: clue.publishSeq,
+          ...(clue.sharedFolderId ? { sharedFolderId: clue.sharedFolderId } : {}),
+        })),
+      roster: worldClue.roster.map((member) => ({
+        userId: member.userId,
+        username: member.username,
+        nickname: member.nickname,
+        avatar: member.avatar,
+        role: member.role,
+      })),
+    };
+  });
+  client.onCommand<{ clueId: string }, ChatClueAccessReadResult>('chat.clue.access.read', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.clue.access.read 仅接受舞台端命令' } };
+    }
+    if (!theaterBridgeInitialized || theaterBridgeClient !== client) {
+      return { ok: false, error: { code: 'BRIDGE_NOT_READY', message: '聊天桥接尚未初始化' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.clue.access.read') || !isOwnerOrAdmin.value) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少线索管理读取权限' } };
+    }
+    if (String(chat.curChannel?.id || '').trim() !== channelId || String(chat.currentWorldId || '').trim() !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const items = await worldClue.loadAccess(worldId, payload.clueId);
+    return { ok: true, items };
   });
   client.onCommand<ChatMessageSendPayload, ChatMessageSendResult>('chat.message.send', async (payload, bridgeMessage) => {
     if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {

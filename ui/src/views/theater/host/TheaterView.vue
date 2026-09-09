@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWindowSize } from '@vueuse/core'
-import { NButton, NIcon, useMessage } from 'naive-ui'
+import { NButton, NIcon, useDialog, useMessage } from 'naive-ui'
 import { ArrowsMaximize, MessageOff } from '@vicons/tabler'
 import { useChatStore } from '@/stores/chat'
 import { useAudioStudioStore } from '@/stores/audioStudio'
@@ -15,9 +15,10 @@ import {
   type TheaterChatBridgeStatus,
 } from '../bridge/TheaterHostBridge'
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
-import type { ChatCharactersSnapshotPayload, TheaterDialogueMessagePayload } from '../bridge/theater-bridge-protocol'
+import type { ChatCharactersSnapshotPayload, ChatClueAccessReadResult, ChatClueOptionsReadResult, TheaterDialogueMessagePayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
-import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StagePointerTraceInput } from '../shared/stage-types'
+import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StageClueActionEntry, type StagePointerTraceInput } from '../shared/stage-types'
+import { dialogAskConfirm } from '@/utils/dialog'
 import {
   hasTheaterDialoguePerformanceContent,
   TheaterDialogueRuntime,
@@ -47,6 +48,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const chat = useChatStore()
 const user = useUserStore()
 const display = useDisplayStore()
@@ -685,7 +687,29 @@ const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
   const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
   const canControlMusic = (memberRole === 'owner' || memberRole === 'admin')
     || (stagePermissions.includes('stage.scene.switch') && stagePermissions.includes('stage.object.edit'))
-  return mergeTheaterBridgePermissions(stagePermissions, canControlMusic)
+  return mergeTheaterBridgePermissions(stagePermissions, canControlMusic, isWorldAdmin.value)
+}
+
+const readClueOptions = async (): Promise<ChatClueOptionsReadResult> => {
+  if (!theaterBridge) return { ok: false, error: { code: 'BRIDGE_NOT_READY', message: '聊天桥接尚未初始化' } }
+  return theaterBridge.readClueOptions()
+}
+
+const readClueAccess = async (clueId: string): Promise<ChatClueAccessReadResult> => {
+  if (!theaterBridge) return { ok: false, error: { code: 'BRIDGE_NOT_READY', message: '聊天桥接尚未初始化' } }
+  return theaterBridge.readClueAccess(clueId)
+}
+
+const confirmClueEntry = async (entry: StageClueActionEntry) => {
+  let clueName = entry.clueId
+  try {
+    const result = await readClueOptions()
+    if (result.ok) clueName = result.clues.find((clue) => clue.id === entry.clueId)?.title || entry.clueId
+  } catch {
+    // Fall back to the persisted clue id when the live title cannot be read.
+  }
+  const configuredCount = entry.targets.filter((target) => target.access !== 'keep').length
+  return (await dialogAskConfirm(dialog, '确认触发线索动作', `将触发线索“${clueName}”，并应用 ${configuredCount} 名成员的权限配置。`)) === true
 }
 
 const startTheaterBridge = () => {
@@ -851,6 +875,7 @@ const startTheaterSync = async () => {
     onError: (error) => {
       if (isCurrent() && theaterSync === client) message.warning(error)
     },
+    confirmClueEntry,
   })
   if (!isCurrent()) return
   theaterSync = client
@@ -1060,6 +1085,8 @@ function handleDice3DMessage(event: MessageEvent) {
           :scene-dialogue-enabled="sceneDialogueEnabled"
           :scene-audio-enabled="sceneAudioEnabled"
           :sync-before-organizer-write="flushTheaterSync"
+          :read-clue-options="readClueOptions"
+          :read-clue-access="readClueAccess"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"

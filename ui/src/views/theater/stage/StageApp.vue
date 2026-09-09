@@ -105,7 +105,7 @@ import {
   type StageSurfaceStyle,
   type StageSurfaceTarget,
 } from '../shared/stage-types'
-import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
+import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
 import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
@@ -128,6 +128,7 @@ import StageTextOverlay from './StageTextOverlay.vue'
 import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
+import TheaterClueActionEditor from './TheaterClueActionEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
@@ -192,6 +193,8 @@ const props = defineProps<{
   sceneDialogueEnabled: boolean
   sceneAudioEnabled: boolean
   syncBeforeOrganizerWrite: () => Promise<void>
+  readClueOptions?: () => Promise<ChatClueOptionsReadResult>
+  readClueAccess?: (clueId: string) => Promise<ChatClueAccessReadResult>
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
@@ -232,6 +235,7 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
   'chat.insert': '插入输入框',
   'scene.apply': '切换场景',
   'effect.play': '触发特效',
+  'clue.execute': '线索',
   'object.toggle': '显隐切换',
   'action.sequence': '组合动作',
 }
@@ -3271,6 +3275,30 @@ const saveRandomTable = (payload: Extract<StageAction, { type: 'chat.random-tabl
   object.interactive = true
   props.store.commitObjectEdit()
 }
+const clueEditorActionId = ref('')
+const clueEditorVisible = computed({
+  get: () => Boolean(clueEditorActionId.value && selectedObject.value),
+  set: (value) => { if (!value) clueEditorActionId.value = '' },
+})
+const editingClueAction = computed(() => {
+  const action = selectedObject.value?.actions.find((item) => item.id === clueEditorActionId.value)
+  return action?.type === 'clue.execute' ? action : null
+})
+const openClueEditor = (actionId: string) => {
+  const object = selectedObject.value
+  const action = object?.actions.find((item) => item.id === actionId)
+  if (!object || action?.type !== 'clue.execute' || !canEditAllObjects.value) return
+  clueEditorActionId.value = actionId
+}
+const saveClueAction = (payload: Extract<StageAction, { type: 'clue.execute' }>['payload']) => {
+  const object = selectedObject.value
+  const action = object?.actions.find((item) => item.id === clueEditorActionId.value)
+  if (!object || action?.type !== 'clue.execute') return
+  props.store.beginObjectEdit('编辑线索动作')
+  action.payload = payload
+  object.interactive = true
+  props.store.commitObjectEdit()
+}
 const selectedEffectObject = computed(() => {
   const id = props.store.state.selectedObjectId
   const object = id ? props.store.activeObjects.value[id] || null : null
@@ -3637,16 +3665,47 @@ const editableCanvasSelectionTarget = (objectId: string) => {
   return targetId && canEditObject(getObject(targetId)) ? targetId : null
 }
 
-const addAction = (type: StageAction['type']) => {
+const addAction = async (type: StageAction['type']) => {
   const object = selectedObject.value
   if (!object || !canEditAllObjects.value) return
-  object.interactive = true
   if (type === 'action.sequence') {
+    object.interactive = true
     const sequence = createStageSequenceAction(props.store.state.activeSceneId, object.id)
     props.store.addObjectAction(object.id, sequence)
     sequenceEditorActionId.value = sequence.id
     return
   }
+  if (type === 'clue.execute') {
+    const objectId = object.id
+    let result: ChatClueOptionsReadResult | undefined
+    try {
+      result = await props.readClueOptions?.()
+    } catch (error) {
+      stageMessage.warning(error instanceof Error ? error.message : '读取线索失败')
+      return
+    }
+    const currentObject = selectedObject.value
+    if (!currentObject || currentObject.id !== objectId || !canEditAllObjects.value) return
+    const clueId = result?.ok ? result.clues[0]?.id || '' : ''
+    if (!clueId) {
+      stageMessage.warning('当前世界暂无可用线索，无法添加线索动作')
+      return
+    }
+    const action: StageAction = {
+      id: actionId(),
+      type,
+      schedule: createDefaultStageActionSchedule(),
+      payload: {
+        version: 1,
+        entries: [{ id: `entry-${actionId()}`, clueId, targets: [], present: true, confirm: false }],
+      },
+    }
+    currentObject.interactive = true
+    if (!props.store.addObjectAction(currentObject.id, action)) return
+    clueEditorActionId.value = action.id
+    return
+  }
+  object.interactive = true
   const action: StageAction = type === 'chat.send'
     ? { id: actionId(), type, schedule: createDefaultStageActionSchedule(), payload: { content: '舞台消息' } }
     : type === 'chat.random-table'
@@ -8978,6 +9037,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" @click="addAction('chat.insert')">插入</n-button>
                 <n-button size="tiny" @click="addAction('scene.apply')">场景</n-button>
                 <n-button size="tiny" :disabled="!effectActionOptions.length" @click="addAction('effect.play')">特效</n-button>
+                <n-button size="tiny" @click="addAction('clue.execute')">线索</n-button>
                 <n-button size="tiny" @click="addAction('object.toggle')">显隐</n-button>
                 <n-button size="tiny" @click="addAction('action.sequence')">组合</n-button>
               </div>
@@ -9031,6 +9091,7 @@ onBeforeUnmount(() => {
                   <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" class="theater-action-row__target" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" class="theater-action-row__target" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-button v-else-if="action.type === 'clue.execute'" class="theater-action-row__target" size="tiny" secondary @click="openClueEditor(action.id)">编辑线索 · {{ action.payload.entries.length }} 条</n-button>
                   <n-button v-else class="theater-action-row__target" size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
                   <n-input-number
                     v-if="selectedObject.metadata.actionExecutionMode === 'sequential'"
@@ -9478,12 +9539,22 @@ onBeforeUnmount(() => {
       :scenes="store.scenes.value"
       :persistent-objects="store.state.persistentObjects"
       :active-scene-id="store.state.activeSceneId"
+      :read-clue-options="readClueOptions"
+      :read-clue-access="readClueAccess"
     />
     <TheaterRandomTableEditor
       v-model:show="randomTableEditorVisible"
       :component-name="selectedObject?.name || ''"
       :action="editingRandomTableAction"
       @save="saveRandomTable"
+    />
+    <TheaterClueActionEditor
+      v-model:show="clueEditorVisible"
+      :component-name="selectedObject?.name || ''"
+      :action="editingClueAction"
+      :read-options="readClueOptions"
+      :read-access="readClueAccess"
+      @save="saveClueAction"
     />
     <n-modal
       :show="sceneFolderDialogVisible"

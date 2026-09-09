@@ -7,6 +7,12 @@ export type WorldClueAccess = 'none' | 'view' | 'edit'
 export type WorldClueStatus = 'draft' | 'published' | 'archived'
 export type WorldClueContentFormat = 'plain' | 'tiptap'
 
+export interface WorldClueAccessItem {
+  userId: string
+  accessOverride: WorldClueAccess | 'inherit'
+  effectiveAccess: WorldClueAccess
+}
+
 export interface WorldCluePresentation {
   version: 1
   mediaPlacement: 'left' | 'right' | 'top' | 'bottom'
@@ -239,6 +245,21 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     const items = (response.data?.items || []) as WorldClueRosterMember[]
     if (currentWorldId.value === worldId) rosterByWorld.value[worldId] = items
     return items
+  }
+
+  async function loadAccess(worldId: string, clueId: string): Promise<WorldClueAccessItem[]> {
+    if (!worldId || !clueId) return []
+    const response = await api.get(`api/v1/worlds/${worldId}/clues/${clueId}/access`)
+    return ((response.data?.items || []) as Array<Partial<WorldClueAccessItem>>).flatMap((item) => {
+      const userId = typeof item.userId === 'string' ? item.userId : ''
+      const accessOverride = item.accessOverride === 'none' || item.accessOverride === 'view' || item.accessOverride === 'edit' || item.accessOverride === 'inherit'
+        ? item.accessOverride
+        : 'inherit'
+      const effectiveAccess = item.effectiveAccess === 'none' || item.effectiveAccess === 'view' || item.effectiveAccess === 'edit'
+        ? item.effectiveAccess
+        : 'none'
+      return userId ? [{ userId, accessOverride, effectiveAccess }] : []
+    })
   }
 
   async function addRosterMember(worldId: string, userId: string) {
@@ -518,7 +539,7 @@ export const useWorldClueStore = defineStore('worldClue', () => {
 
   return {
     currentWorldId, summariesByWorld, foldersByWorld, rosterByWorld, editLocksByClue, detail, resolveCache, presentationQueue, uiVisible, loading,
-    summaries, folders, roster, unreadCount, setWorld, setVisible, toggleVisible, loadWorld, loadRoster, addRosterMember, removeRosterMember, fetchDetail, saveClue,
+    summaries, folders, roster, unreadCount, setWorld, setVisible, toggleVisible, loadWorld, loadRoster, loadAccess, addRosterMember, removeRosterMember, fetchDetail, saveClue,
     removeClue, publish, reveal, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen,
     invalidate, handleChanged, requestResolve, loadEditLocks, acquireEditLock, releaseEditLock,
   }

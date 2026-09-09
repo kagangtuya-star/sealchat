@@ -3,10 +3,26 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"sealchat/model"
 )
+
+func theaterWorldClueActionError(err error) error {
+	switch {
+	case errors.Is(err, ErrWorldClueDenied):
+		return newTheaterError(TheaterErrorPermissionDenied, "无权执行线索动作", 403, nil)
+	case errors.Is(err, ErrWorldClueNotFound):
+		return newTheaterError(TheaterErrorNotFound, "线索不存在或不可用", 404, nil)
+	case errors.Is(err, ErrWorldClueInvalid):
+		return newTheaterError(TheaterErrorPayloadInvalid, "线索动作配置已失效", 400, nil)
+	case errors.Is(err, ErrWorldClueConflict):
+		return newTheaterError(TheaterErrorRevisionConflict, "线索已被其他操作更新", 409, nil)
+	default:
+		return err
+	}
+}
 
 type theaterStoredAction struct {
 	ID       string                       `json:"id"`
@@ -96,6 +112,9 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	} else if strings.TrimSpace(command.StepID) != "" {
 		return nil, theaterPayloadError("普通 StageAction 不能包含 stepId")
 	}
+	if selected.Type != "clue.execute" && strings.TrimSpace(command.EntryID) != "" {
+		return nil, theaterPayloadError("普通 StageAction 不能包含 entryId")
+	}
 	mutationID := strings.TrimSpace(command.ActionRequestID)
 	if mutationID == "" {
 		return nil, theaterPayloadError("actionRequestId 必填")
@@ -171,6 +190,34 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 			return nil, err
 		}
 		return &TheaterActionResult{Kind: "chat", Chat: chat}, nil
+	case "clue.execute":
+		entryID := strings.TrimSpace(command.EntryID)
+		if entryID == "" || len(entryID) > 128 {
+			return nil, theaterPayloadError("clue.execute 缺少 entryId")
+		}
+		var payload theaterClueExecutePayload
+		if err := decodeStrictJSON(selected.Payload, &payload); err != nil || payload.Version != 1 {
+			return nil, theaterPayloadError("clue.execute action payload 无效")
+		}
+		var entry *theaterClueActionEntry
+		for index := range payload.Entries {
+			if payload.Entries[index].ID == entryID {
+				entry = &payload.Entries[index]
+				break
+			}
+		}
+		if entry == nil {
+			return nil, newTheaterError(TheaterErrorNotFound, "clue.execute entry 不存在", 404, nil)
+		}
+		targets := make([]WorldClueTheaterTarget, 0, len(entry.Targets))
+		for _, target := range entry.Targets {
+			targets = append(targets, WorldClueTheaterTarget{UserID: target.UserID, Access: target.Access})
+		}
+		clue, err := WorldClueExecuteTheaterEntry(command.WorldID, entry.ClueID, actorID, targets, entry.Present != nil && *entry.Present)
+		if err != nil {
+			return nil, theaterWorldClueActionError(err)
+		}
+		return &TheaterActionResult{Kind: "clue", Clue: &TheaterClueActionResult{ClueID: clue.ClueID, PublishSeq: clue.PublishSeq, RecipientIDs: clue.RecipientIDs, Revision: clue.Revision, Status: clue.Status}}, nil
 	default:
 		return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "未知 StageAction", 400, map[string]any{"type": selected.Type})
 	}

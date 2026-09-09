@@ -2,6 +2,9 @@ import type {
   StageAction,
   StageAtomicAction,
   StageAtomicActionDescriptor,
+  StageClueAccessMode,
+  StageClueActionEntry,
+  StageClueActionTarget,
   StageSequenceAction,
   StageSequenceStep,
   StageSequenceTiming,
@@ -12,6 +15,8 @@ export const STAGE_SEQUENCE_MAX_STEPS = 32
 export const STAGE_SEQUENCE_MAX_DELAY_MS = 60_000
 export const STAGE_RANDOM_TABLE_MAX_ENTRIES = 1_000
 export const STAGE_RANDOM_TABLE_MAX_TEXT_LENGTH = 10_000
+export const STAGE_CLUE_MAX_ENTRIES = 32
+export const STAGE_CLUE_MAX_TARGETS = 256
 
 const stageSimpleDiceFormulaPattern = /^([1-9][0-9]*)d([1-9][0-9]*)(?:([+-])([0-9]+))?$/i
 
@@ -45,6 +50,13 @@ export const createStageAtomicActionDescriptor = (
   if (type === 'chat.insert') return { type, payload: { content: '舞台台词' } }
   if (type === 'scene.apply') return { type, payload: { sceneId } }
   if (type === 'effect.play') return { type, payload: { effectId: targetId } }
+  if (type === 'clue.execute') return {
+    type,
+    payload: {
+      version: 1,
+      entries: [{ id: `entry-${id('clue')}`, clueId: targetId, targets: [], present: true, confirm: false }],
+    },
+  }
   return { type, payload: { objectId: targetId } }
 }
 
@@ -120,6 +132,45 @@ export const normalizeStageRandomTablePayload = (value: unknown): Extract<StageA
   return { name, formula, entries }
 }
 
+const stageClueAccessModes: StageClueAccessMode[] = ['keep', 'inherit', 'none', 'view', 'edit']
+
+export const normalizeStageClueExecutePayload = (
+  value: unknown,
+): Extract<StageAtomicAction, { type: 'clue.execute' }>['payload'] | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const payload = value as { version?: unknown, entries?: unknown }
+  if (payload.version !== 1 || !Array.isArray(payload.entries) || !payload.entries.length || payload.entries.length > STAGE_CLUE_MAX_ENTRIES) return null
+  const seenEntries = new Set<string>()
+  const entries: StageClueActionEntry[] = []
+  for (const raw of payload.entries) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const item = raw as { id?: unknown, clueId?: unknown, targets?: unknown, present?: unknown, confirm?: unknown }
+    const id = typeof item.id === 'string' ? item.id.trim().slice(0, 128) : ''
+    const clueId = typeof item.clueId === 'string' ? item.clueId.trim().slice(0, 128) : ''
+    if (!id || !clueId || seenEntries.has(id) || !Array.isArray(item.targets) || item.targets.length > STAGE_CLUE_MAX_TARGETS) return null
+    seenEntries.add(id)
+    const seenTargets = new Set<string>()
+    const targets: StageClueActionTarget[] = []
+    for (const target of item.targets) {
+      if (!target || typeof target !== 'object' || Array.isArray(target)) return null
+      const candidate = target as { userId?: unknown, access?: unknown }
+      const userId = typeof candidate.userId === 'string' ? candidate.userId.trim().slice(0, 128) : ''
+      const access = candidate.access as StageClueAccessMode
+      if (!userId || seenTargets.has(userId) || !stageClueAccessModes.includes(access)) return null
+      seenTargets.add(userId)
+      targets.push({ userId, access })
+    }
+    entries.push({
+      id,
+      clueId,
+      targets,
+      present: item.present !== false,
+      confirm: item.confirm === true,
+    })
+  }
+  return { version: 1, entries }
+}
+
 export const rollStageRandomTable = (
   value: unknown,
   random: () => number = Math.random,
@@ -179,6 +230,10 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
   if (action.type === 'effect.play') {
     const effectId = typeof action.payload.effectId === 'string' ? action.payload.effectId.trim() : ''
     return effectId ? { type: action.type, payload: { effectId } } : null
+  }
+  if (action.type === 'clue.execute') {
+    const payload = normalizeStageClueExecutePayload(action.payload)
+    return payload ? { type: action.type, payload } : null
   }
   if (action.type === 'object.toggle') {
     const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''

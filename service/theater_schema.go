@@ -39,6 +39,8 @@ const (
 	theaterMaxSwitchText      = 10_000
 	theaterMaxSceneFolders    = 200
 	theaterMaxSceneFolderName = 128
+	theaterMaxClueEntries     = 32
+	theaterMaxClueTargets     = 256
 )
 
 type theaterSceneCreatePayload struct {
@@ -144,6 +146,24 @@ type theaterObjectDeletePayload struct {
 type theaterObjectTogglePayload struct {
 	ObjectID string `json:"objectId"`
 	Visible  *bool  `json:"visible,omitempty"`
+}
+
+type theaterClueActionTarget struct {
+	UserID string `json:"userId"`
+	Access string `json:"access"`
+}
+
+type theaterClueActionEntry struct {
+	ID      string                    `json:"id"`
+	ClueID  string                    `json:"clueId"`
+	Targets []theaterClueActionTarget `json:"targets"`
+	Present *bool                     `json:"present"`
+	Confirm *bool                     `json:"confirm"`
+}
+
+type theaterClueExecutePayload struct {
+	Version int                      `json:"version"`
+	Entries []theaterClueActionEntry `json:"entries"`
 }
 
 type theaterEffectPlayPayload struct {
@@ -1111,6 +1131,46 @@ func validateTheaterAtomicAction(action theaterStoredAction) error {
 		}
 		if err := rejectUnsafeTheaterJSON(payload); err != nil {
 			return err
+		}
+	case "clue.execute":
+		var payload theaterClueExecutePayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil || payload.Version != 1 {
+			return theaterPayloadError("clue.execute action payload 无效")
+		}
+		if len(payload.Entries) == 0 || len(payload.Entries) > theaterMaxClueEntries {
+			return theaterPayloadError("clue.execute entries 数量无效")
+		}
+		entryIDs := make(map[string]struct{}, len(payload.Entries))
+		for _, entry := range payload.Entries {
+			if err := validateTheaterID(entry.ID, "clue.execute entry.id"); err != nil {
+				return err
+			}
+			if err := validateTheaterID(entry.ClueID, "clue.execute clueId"); err != nil {
+				return err
+			}
+			if _, exists := entryIDs[entry.ID]; exists {
+				return theaterPayloadError("clue.execute entry.id 重复")
+			}
+			entryIDs[entry.ID] = struct{}{}
+			if entry.Targets == nil || entry.Present == nil || entry.Confirm == nil {
+				return theaterPayloadError("clue.execute entry 字段无效")
+			}
+			if len(entry.Targets) > theaterMaxClueTargets {
+				return theaterPayloadError("clue.execute targets 数量超限")
+			}
+			targetIDs := make(map[string]struct{}, len(entry.Targets))
+			for _, target := range entry.Targets {
+				if err := validateTheaterID(target.UserID, "clue.execute target.userId"); err != nil {
+					return err
+				}
+				if _, exists := targetIDs[target.UserID]; exists {
+					return theaterPayloadError("clue.execute target.userId 重复")
+				}
+				targetIDs[target.UserID] = struct{}{}
+				if target.Access != "keep" && target.Access != "inherit" && target.Access != "none" && target.Access != "view" && target.Access != "edit" {
+					return theaterPayloadError("clue.execute target.access 无效")
+				}
+			}
 		}
 	default:
 		return theaterPayloadError("action.type 无效")

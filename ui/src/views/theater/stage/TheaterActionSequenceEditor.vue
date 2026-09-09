@@ -4,6 +4,7 @@ import { NButton, NDropdown, NIcon, NInput, NInputNumber, NModal } from 'naive-u
 import { GripVertical, Plus, Trash, X } from '@vicons/tabler'
 import NSelect from '@/components/NSelect.vue'
 import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
+import TheaterClueActionEditor from './TheaterClueActionEditor.vue'
 import {
   createStageAtomicActionDescriptor,
   createStageSequenceStep,
@@ -16,6 +17,7 @@ import type {
   StageSequenceAction,
   StageSequenceStep,
 } from '../shared/stage-types'
+import type { ChatClueAccessReadResult, ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
 import { isTheaterEffectObject } from '../effects/theater-effect-types'
 
 const props = defineProps<{
@@ -25,6 +27,8 @@ const props = defineProps<{
   scenes: StageScene[]
   persistentObjects: Record<string, StageObject>
   activeSceneId: string
+  readClueOptions?: () => Promise<ChatClueOptionsReadResult>
+  readClueAccess?: (clueId: string) => Promise<ChatClueAccessReadResult>
 }>()
 
 const emit = defineEmits<{
@@ -37,6 +41,7 @@ const actionTypeOptions: Array<{ label: string, value: StageAtomicAction['type']
   { label: '插入输入框', value: 'chat.insert' },
   { label: '切换场景', value: 'scene.apply' },
   { label: '播放特效', value: 'effect.play' },
+  { label: '线索', value: 'clue.execute' },
   { label: '切换组件显隐', value: 'object.toggle' },
 ]
 const addActionOptions = actionTypeOptions.map(({ label, value }) => ({ label, key: value }))
@@ -111,20 +116,34 @@ const effectOptions = (sceneId: string | null) => {
 
 const firstObjectId = (sceneId: string | null) => objectOptions(sceneId)[0]?.value || ''
 
-const addStep = (type: StageAtomicAction['type']) => {
-  if (!props.action || props.action.payload.steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
+const addStep = async (type: StageAtomicAction['type']) => {
+  const action = props.action
+  if (!action || action.payload.steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
   const sceneId = props.activeSceneId || props.scenes[0]?.id || ''
   const targetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : firstObjectId(sceneId)
   if (type === 'effect.play' && !targetId) return
+  if (type === 'clue.execute' && !props.readClueOptions) return
   const step = createStageSequenceStep(sceneId, firstObjectId(sceneId))
   step.action = createStageAtomicActionDescriptor(type, sceneId, targetId)
-  props.action.payload.steps.push(step)
+  if (type === 'clue.execute' && props.readClueOptions) {
+    let result: ChatClueOptionsReadResult
+    try {
+      result = await props.readClueOptions()
+    } catch {
+      return
+    }
+    if (props.action !== action) return
+    if (action.payload.steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
+    if (!result.ok || !result.clues.length) return
+    step.action = createStageAtomicActionDescriptor(type, sceneId, result.clues[0].id)
+  }
+  action.payload.steps.push(step)
   if (type === 'chat.random-table') randomTableStepId.value = step.id
 }
 
 const handleAddStepSelect = (key: string | number) => {
   const type = String(key) as StageAtomicAction['type']
-  if (actionTypeOptions.some((option) => option.value === type)) addStep(type)
+  if (actionTypeOptions.some((option) => option.value === type)) void addStep(type)
 }
 
 const removeStep = (stepId: string) => {
@@ -148,6 +167,20 @@ const openRandomTableEditor = (stepId: string) => {
 const saveRandomTable = (payload: Extract<StageAtomicAction, { type: 'chat.random-table' }>['payload']) => {
   const action = editingRandomTableAction.value
   if (action) action.payload = payload
+}
+const clueStepId = ref('')
+const clueEditorVisible = computed({
+  get: () => Boolean(clueStepId.value && props.action),
+  set: value => { if (!value) clueStepId.value = '' },
+})
+const editingClueAction = computed(() => {
+  const step = props.action?.payload.steps.find(item => item.id === clueStepId.value)
+  return step?.action.type === 'clue.execute' ? step.action : null
+})
+const openClueEditor = (stepId: string) => { clueStepId.value = stepId }
+const saveClue = (payload: Extract<StageAtomicAction, { type: 'clue.execute' }>['payload']) => {
+  const step = props.action?.payload.steps.find(item => item.id === clueStepId.value)
+  if (step?.action.type === 'clue.execute') step.action.payload = payload
 }
 
 const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
@@ -348,6 +381,9 @@ onBeforeUnmount(() => {
               @update:show="updateSelectShow('effect', step, $event)"
               @update:value="updateStepEffect(step, $event)"
             />
+            <n-button v-else-if="step.action.type === 'clue.execute'" secondary @click="openClueEditor(step.id)">
+              编辑线索 · {{ step.action.payload.entries.length }} 条
+            </n-button>
             <span v-else class="theater-sequence-row__operation">切换至所选场景</span>
 
             <span class="theater-sequence-row__type">{{ actionTypeLabel(step.action.type) }}</span>
@@ -396,6 +432,14 @@ onBeforeUnmount(() => {
     :component-name="componentName"
     :action="editingRandomTableAction"
     @save="saveRandomTable"
+  />
+  <TheaterClueActionEditor
+    v-model:show="clueEditorVisible"
+    :component-name="componentName"
+    :action="editingClueAction"
+    :read-options="readClueOptions"
+    :read-access="readClueAccess"
+    @save="saveClue"
   />
 </template>
 
