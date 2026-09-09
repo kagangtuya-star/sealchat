@@ -84,6 +84,27 @@ const formSnapshot = computed(() => JSON.stringify({
   ...(props.canManage ? { defaultAccess: form.defaultAccess, managerNoteFormat: form.managerNoteFormat, managerNote: form.managerNote } : {}),
 }))
 const dirty = computed(() => formSnapshot.value !== savedSnapshot.value)
+function isValidHTTPURL(value: string, required = false) {
+  const trimmed = value.trim()
+  if (!trimmed) return !required
+  try {
+    const parsed = new URL(trimmed)
+    return !!parsed.host && (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+  } catch {
+    return false
+  }
+}
+function backgroundMediaNeedsSource() {
+  return form.presentation.backgroundMediaEnabled
+    && !form.presentation.backgroundMediaAttachmentId.trim()
+    && !form.presentation.backgroundMediaUrl.trim()
+}
+function saveValidationMessage() {
+  if (form.kind === 'iframe' && !isValidHTTPURL(form.embedUrl, true)) return '请输入有效的网页 URL'
+  if (form.kind === 'image' && form.imageUrl.trim() && !isValidHTTPURL(form.imageUrl)) return '请输入有效的图片 URL'
+  if (backgroundMediaNeedsSource()) return '请选择背景媒体或关闭媒体覆盖'
+  return ''
+}
 function clearAutosaveTimer() {
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = null
@@ -95,7 +116,7 @@ function scheduleAutosave() {
     enterRemoteConflict()
     return
   }
-  if (!autosaveReady.value || !dirty.value || saveFailed.value || imageUploading.value || backgroundMediaUploading.value) return
+  if (!autosaveReady.value || !dirty.value || saveFailed.value || imageUploading.value || backgroundMediaUploading.value || saveValidationMessage()) return
   autosaveTimer = setTimeout(() => { void flushAutosave(false) }, 700)
 }
 watch(formSnapshot, scheduleAutosave, { flush: 'sync' })
@@ -553,6 +574,7 @@ function clearBackgroundMedia() {
   selectedBackgroundMediaName.value = ''
   form.presentation.backgroundMediaAttachmentId = ''
   form.presentation.backgroundMediaUrl = ''
+  form.presentation.backgroundMediaEnabled = false
   if (backgroundMediaFileInput.value) backgroundMediaFileInput.value.value = ''
 }
 
@@ -578,6 +600,11 @@ async function flushAutosave(manual = true): Promise<boolean> {
     return false
   }
   if (!dirty.value) return true
+  const validationMessage = saveValidationMessage()
+  if (validationMessage) {
+    if (manual) message.warning(validationMessage)
+    return false
+  }
   if (!form.title.trim()) {
     if (manual) message.warning('请输入标题')
     return false
@@ -590,6 +617,11 @@ async function flushAutosave(manual = true): Promise<boolean> {
     try {
       while (dirty.value && !remoteConflict.value && autosaveReady.value && session === currentSession && props.worldId === sessionWorldId) {
         if (imageUploading.value || backgroundMediaUploading.value) return false
+        const validationMessage = saveValidationMessage()
+        if (validationMessage) {
+          if (manual) message.warning(validationMessage)
+          return false
+        }
         if (!form.title.trim()) { if (manual) message.warning('请输入标题'); return false }
         const snapshot = formSnapshot.value
         const payload = JSON.parse(snapshot)
