@@ -975,8 +975,8 @@ func runPreparedUpdate(cfg utils.UpdateCheckConfig, release *UpdateReleaseInfo, 
 	if runtime.GOOS == "windows" {
 		updatePackage = filepath.Join(stageDir, "sealchat-binary-update.zip")
 	}
-	if err := createSingleBinaryPackage(newBinary, exeName, updatePackage); err != nil {
-		fail(fmt.Errorf("生成单文件更新包失败: %w", err))
+	if err := createRuntimeUpdatePackage(packagePath, newBinary, exeName, updatePackage); err != nil {
+		fail(fmt.Errorf("生成受控更新包失败: %w", err))
 		return
 	}
 
@@ -1189,8 +1189,18 @@ func proxiedDownloadURL(proxy, source string) (string, error) {
 
 func archivePathSafe(name string) bool {
 	name = strings.ReplaceAll(name, "\\", "/")
-	if strings.HasPrefix(name, "/") {
+	if name == "" || strings.IndexByte(name, 0) >= 0 || strings.HasPrefix(name, "/") {
 		return false
+	}
+	// Archive member names are slash-separated even on Windows. Reject drive
+	// prefixes as well as root-relative paths so they cannot escape extraction.
+	if len(name) >= 2 && name[1] == ':' {
+		return false
+	}
+	for _, component := range strings.Split(name, "/") {
+		if component == ".." {
+			return false
+		}
 	}
 	clean := path.Clean(name)
 	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
@@ -1340,6 +1350,9 @@ func archiveMissingMemberError(archivePath string, wantedBases, entries []string
 }
 
 func writeExtractedFile(src io.Reader, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o700)
 	if err != nil {
 		return err
@@ -1347,27 +1360,226 @@ func writeExtractedFile(src io.Reader, destination string) error {
 	written, copyErr := io.Copy(file, io.LimitReader(src, updateMaxAssetSize+1))
 	closeErr := file.Close()
 	if copyErr != nil {
+		_ = os.Remove(destination)
 		return copyErr
 	}
 	if closeErr != nil {
+		_ = os.Remove(destination)
 		return closeErr
 	}
 	if written <= 0 || written > updateMaxAssetSize {
+		_ = os.Remove(destination)
 		return fmt.Errorf("invalid extracted binary size: %d", written)
 	}
 	return nil
 }
 
 func createSingleBinaryPackage(binaryPath, archiveName, destination string) error {
-	if runtime.GOOS == "windows" {
-		file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-		if err != nil {
-			return err
+	return createRuntimeUpdateArchive(binaryPath, archiveName, nil, destination)
+}
+
+type runtimeUpdateFile struct {
+	name string
+	path string
+	mode os.FileMode
+}
+
+// createRuntimeUpdatePackage converts a Release archive into the deliberately
+// small package consumed by sealupd. Only the new main binary and safe regular
+// files below bin/ are copied; all other Release files are ignored.
+func createRuntimeUpdatePackage(releaseArchive, binaryPath, archiveName, destination string) error {
+	binRoot, err := os.MkdirTemp(filepath.Dir(destination), ".sealchat-runtime-bin-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(binRoot)
+
+	binFiles, err := extractRuntimeBinFiles(releaseArchive, binRoot)
+	if err != nil {
+		return err
+	}
+	return createRuntimeUpdateArchive(binaryPath, archiveName, binFiles, destination)
+}
+
+func extractRuntimeBinFiles(archivePath, destinationRoot string) ([]runtimeUpdateFile, error) {
+	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+		return extractRuntimeBinFilesFromZip(archivePath, destinationRoot)
+	}
+	return extractRuntimeBinFilesFromTarGz(archivePath, destinationRoot)
+}
+
+func extractRuntimeBinFilesFromZip(archivePath, destinationRoot string) ([]runtimeUpdateFile, error) {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	files := make([]runtimeUpdateFile, 0)
+	seen := make(map[string]struct{})
+	for _, entry := range reader.File {
+		name, ok := runtimeBinMemberName(entry.Name)
+		if !ok || !entry.Mode().IsRegular() {
+			continue
 		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		destination, err := runtimeUpdateDestination(destinationRoot, name)
+		if err != nil {
+			return nil, err
+		}
+		src, err := entry.Open()
+		if err != nil {
+			return nil, err
+		}
+		writeErr := writeExtractedFile(src, destination)
+		closeErr := src.Close()
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		mode := runtimeUpdateFileMode(entry.Mode().Perm())
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(destination, mode.Perm()); err != nil {
+				return nil, err
+			}
+		}
+		seen[name] = struct{}{}
+		files = append(files, runtimeUpdateFile{name: name, path: destination, mode: mode})
+	}
+	return files, nil
+}
+
+func extractRuntimeBinFilesFromTarGz(archivePath, destinationRoot string) ([]runtimeUpdateFile, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	reader := tar.NewReader(gz)
+	files := make([]runtimeUpdateFile, 0)
+	seen := make(map[string]struct{})
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		name, ok := runtimeBinMemberName(header.Name)
+		if !ok || (header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) || header.Linkname != "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		destination, err := runtimeUpdateDestination(destinationRoot, name)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeExtractedFile(io.LimitReader(reader, updateMaxAssetSize+1), destination); err != nil {
+			return nil, err
+		}
+		mode := runtimeUpdateFileMode(os.FileMode(header.Mode).Perm())
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(destination, mode.Perm()); err != nil {
+				return nil, err
+			}
+		}
+		seen[name] = struct{}{}
+		files = append(files, runtimeUpdateFile{name: name, path: destination, mode: mode})
+	}
+	return files, nil
+}
+
+func runtimeBinMemberName(name string) (string, bool) {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if !archivePathSafe(name) {
+		return "", false
+	}
+	clean := path.Clean(name)
+	if !strings.HasPrefix(clean, "bin/") {
+		return "", false
+	}
+	relative := strings.TrimPrefix(clean, "bin/")
+	if relative == "" || relative == "." || strings.HasPrefix(relative, "../") {
+		return "", false
+	}
+	return "bin/" + relative, true
+}
+
+func runtimeUpdateDestination(root, name string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	destination := filepath.Join(root, filepath.FromSlash(name))
+	destinationAbs, err := filepath.Abs(destination)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, destinationAbs)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("runtime update path escapes bin directory")
+	}
+	return destinationAbs, nil
+}
+
+func runtimeUpdateFileMode(sourceMode os.FileMode) os.FileMode {
+	if runtime.GOOS == "windows" {
+		return 0
+	}
+	return sourceMode.Perm()
+}
+
+func createRuntimeUpdateArchive(binaryPath, archiveName string, binFiles []runtimeUpdateFile, destination string) error {
+	if !archivePathSafe(archiveName) || strings.Contains(strings.ReplaceAll(archiveName, "\\", "/"), "/") {
+		return errors.New("invalid runtime update binary name")
+	}
+	for _, binFile := range binFiles {
+		name, ok := runtimeBinMemberName(binFile.name)
+		if !ok || name != filepath.ToSlash(binFile.name) {
+			return fmt.Errorf("invalid runtime update member: %s", binFile.name)
+		}
+	}
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("runtime update binary is not a regular file")
+	}
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
 		writer := zip.NewWriter(file)
 		entry, err := writer.Create(archiveName)
 		if err == nil {
 			err = copyFileIntoWriter(binaryPath, entry)
+		}
+		if err == nil {
+			for _, binFile := range binFiles {
+				entry, entryErr := writer.Create(binFile.name)
+				if entryErr != nil {
+					err = entryErr
+					break
+				}
+				if err = copyFileIntoWriter(binFile.path, entry); err != nil {
+					break
+				}
+			}
 		}
 		closeZipErr := writer.Close()
 		closeFileErr := file.Close()
@@ -1379,19 +1591,32 @@ func createSingleBinaryPackage(binaryPath, archiveName, destination string) erro
 		}
 		return closeFileErr
 	}
-	info, err := os.Stat(binaryPath)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
+
 	gz := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gz)
 	err = tarWriter.WriteHeader(&tar.Header{Name: archiveName, Mode: 0o755, Size: info.Size(), ModTime: time.Now()})
 	if err == nil {
 		err = copyFileIntoWriter(binaryPath, tarWriter)
+	}
+	if err == nil {
+		for _, binFile := range binFiles {
+			binInfo, statErr := os.Stat(binFile.path)
+			if statErr != nil {
+				err = statErr
+				break
+			}
+			if !binInfo.Mode().IsRegular() {
+				err = fmt.Errorf("runtime update file is not regular: %s", binFile.name)
+				break
+			}
+			err = tarWriter.WriteHeader(&tar.Header{Name: binFile.name, Mode: int64(binFile.mode.Perm()), Size: binInfo.Size(), ModTime: time.Now()})
+			if err != nil {
+				break
+			}
+			if err = copyFileIntoWriter(binFile.path, tarWriter); err != nil {
+				break
+			}
+		}
 	}
 	closeTarErr := tarWriter.Close()
 	closeGzErr := gz.Close()
@@ -1418,6 +1643,45 @@ func copyFileIntoWriter(source string, destination io.Writer) error {
 	return err
 }
 
+func restoreBundledRuntimeExecutableModes(exeDir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+
+	platformDir := ""
+	switch runtime.GOARCH {
+	case "amd64":
+		platformDir = "linux-x64"
+	case "arm64":
+		platformDir = "linux-arm64"
+	default:
+		return nil
+	}
+
+	paths := []string{
+		filepath.Join(exeDir, "bin", platformDir, "cwebp"),
+		filepath.Join(exeDir, "bin", platformDir, "gif2webp"),
+		filepath.Join(exeDir, "bin", platformDir, "dwebp"),
+		filepath.Join(exeDir, "bin", "cjpeg", platformDir, "cjpeg"),
+	}
+	for _, filePath := range paths {
+		info, err := os.Lstat(filePath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("检查 bundled executable %s 失败: %w", filePath, err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if err := os.Chmod(filePath, 0o755); err != nil {
+			return fmt.Errorf("恢复 bundled executable %s 权限失败: %w", filePath, err)
+		}
+	}
+	return nil
+}
+
 func ReconcileUpdateJob(currentVersion string) {
 	currentVersion = strings.TrimSpace(currentVersion)
 	if currentVersion == "" {
@@ -1430,9 +1694,20 @@ func ReconcileUpdateJob(currentVersion string) {
 	job.FinishedAt = time.Now().UnixMilli()
 	job.Progress = 100
 	if job.TargetVersion == currentVersion {
-		job.Status = "succeeded"
-		job.Message = "更新完成"
-		job.Error = ""
+		exePath, resolveErr := resolveUpdateExecutablePath()
+		if resolveErr != nil {
+			job.Status = "failed"
+			job.Message = "更新后依赖权限修复失败"
+			job.Error = fmt.Errorf("获取更新后程序路径失败: %w", resolveErr).Error()
+		} else if permissionErr := restoreBundledRuntimeExecutableModes(filepath.Dir(exePath)); permissionErr != nil {
+			job.Status = "failed"
+			job.Message = "更新后依赖权限修复失败"
+			job.Error = permissionErr.Error()
+		} else {
+			job.Status = "succeeded"
+			job.Message = "更新完成"
+			job.Error = ""
+		}
 	} else {
 		job.Status = "failed"
 		job.Message = "更新后版本未生效"
