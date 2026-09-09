@@ -439,12 +439,12 @@ onBeforeUnmount(() => {
 function setRich(value: boolean) {
   rich.value = value
   form.contentFormat = value ? 'tiptap' : 'plain'
-  form.content = ''
+  form.content = value ? emptyTiptapDocument : ''
 }
 function setManagerRich(value: boolean) {
   managerRich.value = value
   form.managerNoteFormat = value ? 'tiptap' : 'plain'
-  form.managerNote = ''
+  form.managerNote = value ? emptyTiptapDocument : ''
 }
 
 const preview = computed<WorldClueDetail>(() => ({
@@ -592,8 +592,11 @@ async function flushAutosave(manual = true): Promise<boolean> {
         if (imageUploading.value || backgroundMediaUploading.value) return false
         if (!form.title.trim()) { if (manual) message.warning('请输入标题'); return false }
         const snapshot = formSnapshot.value
+        const payload = JSON.parse(snapshot)
+        if (payload.contentFormat === 'tiptap' && !payload.content.trim()) payload.content = emptyTiptapDocument
+        if (payload.managerNoteFormat === 'tiptap' && !payload.managerNote.trim()) payload.managerNote = emptyTiptapDocument
         const saved = await store.saveClue(sessionWorldId, workingClue.value?.id || null, {
-          ...JSON.parse(snapshot),
+          ...payload,
           ...(workingClue.value ? { expectedRevision: workingClue.value.revision } : {}),
         })
         if (session !== currentSession || !autosaveReady.value || props.worldId !== sessionWorldId) return false

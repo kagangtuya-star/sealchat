@@ -56,6 +56,7 @@ const privateFormat = ref<'plain' | 'tiptap'>('plain')
 const privateContent = ref('')
 const privateRevision = ref(0)
 const privateInitial = ref('')
+const emptyTiptapDocument = '{"type":"doc","content":[]}'
 const privateSnapshot = computed(() => JSON.stringify([privateFormat.value, privateContent.value]))
 const privateDirty = computed(() => privateSnapshot.value !== privateInitial.value)
 let privateTimer: ReturnType<typeof setTimeout> | null = null
@@ -377,8 +378,9 @@ async function flushPrivate(manual = true): Promise<boolean> {
     try {
       while (privateDirty.value && !disposed) {
         const snapshot = privateSnapshot.value
+        const payloadContent = privateFormat.value === 'tiptap' && !privateContent.value.trim() ? emptyTiptapDocument : privateContent.value
         const response = await api.put(`api/v1/worlds/${worldId}/clues/${clueId}/private/${userId}`, {
-          privateContentFormat: privateFormat.value, privateContent: privateContent.value, expectedRevision: privateRevision.value,
+          privateContentFormat: privateFormat.value, privateContent: payloadContent, expectedRevision: privateRevision.value,
         })
         if (disposed || props.worldId !== worldId || props.clue?.id !== clueId || sheetMember.value?.userId !== userId) return false
         privateRevision.value = response.data.item.privateRevision
@@ -507,7 +509,7 @@ onBeforeUnmount(() => {
     <aside v-if="sheetMember" class="private-sheet">
       <header><div><strong>{{ nameOf(sheetMember) }}</strong><small>成员专属信息 · 仅该成员可见 <em v-if="privateDirty && !privateLoading">· 未保存</em></small><small v-if="getPrivateLock() && !ownsPrivateLock()" class="private-lock-hint">🔒 {{ privateLockOwnerName() }} 正在编辑此成员的专属信息</small><small v-else-if="privateAcquiringLock" class="private-lock-hint">正在获取编辑权…</small></div><div class="private-sheet__header-actions"><NButton circle quaternary size="small" title="保存" aria-label="保存专属信息" :type="privateDirty ? 'primary' : 'default'" :loading="privateSaving" :disabled="privateLoading" @click="flushPrivate()"><template #icon><NIcon><DeviceFloppy /></NIcon></template></NButton><NButton circle quaternary size="small" title="关闭" aria-label="关闭专属信息" :disabled="privateLoading || switchingPrivate" @click="closePrivate"><template #icon><NIcon><X /></NIcon></template></NButton></div></header>
       <NSpin :show="privateLoading" class="private-sheet__body" :inert="privateLoading || switchingPrivate">
-        <label><span>内容格式</span><NSelect :value="privateFormat" :options="[{label:'纯文本',value:'plain'},{label:'富文本',value:'tiptap'}]" @update:value="value => { privateFormat=value; privateContent='' }" /></label>
+        <label><span>内容格式</span><NSelect :value="privateFormat" :options="[{label:'纯文本',value:'plain'},{label:'富文本',value:'tiptap'}]" @update:value="value => { privateFormat=value; privateContent=value === 'tiptap' ? emptyTiptapDocument : '' }" /></label>
         <div v-if="privateFormat==='tiptap'" class="private-rich-lock-gate" @pointerdown.capture="gatePrivatePointer" @keydown.capture="gatePrivateKeydown">
           <RichTextEditor ref="privateEditorRef" v-model="privateContent" :maxlength="50000" min-height="360px" @focus="beginPrivateEdit" @blur="finishPrivateEdit(privateEditorRef)" />
         </div>
