@@ -873,3 +873,9 @@ Internal Surface 的职责可以归纳为：
 > 能否先将该模块实现为一个 Internal Surface，再由不同 Host 复用？
 
 如果答案是可以，就不应重新实现另一套独立页面体系。
+
+## 19 嵌套内部界面框架问题
+
+SealChat 使用 Hash 路由。当运行在 iframe 中的页面再次打开另一个 Internal Surface iframe 时，不要只依赖 Hash 来区分子文档：Chromium 在执行自引用检查时，可能会比较不包含 URL Fragment（`#...`）的祖先页面 URL，从而导致嵌套 iframe 最终停留在 `about:blank`而无法显示。
+
+对于嵌套的 Internal Surface 链接，应保留 `internalSurfaceLink.ts` 中现有的、用于保障 iframe 安全的 Hash 前文档标记。仅当当前页面本身已经运行在 iframe 内时应用该标记；普通顶层页面生成的 Internal Surface URL 不应添加此标记。

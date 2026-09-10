@@ -378,5 +378,6 @@ Some frontend subsystems define more specific constraints.
 For example:
 
 - `src/views/chat/AGENTS.md` — chat subsystem invariants and lifecycle rules.
+- `doc\Internal_surface_architecture.md` - Documentation on Internal Surface Architecture.
 
 Follow those local instructions in addition to this file.
