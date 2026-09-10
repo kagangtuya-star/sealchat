@@ -46,7 +46,14 @@ export function generateInternalSurfaceLink(
   if (explicitBase) {
     prefix = `${explicitBase.replace(/\/+$/, '')}/#`;
   } else if (typeof window !== 'undefined') {
-    prefix = `${window.location.href.split('#', 1)[0]}#`;
+    const documentUrl = new URL(window.location.href.split('#', 1)[0]);
+    if (window.self !== window.top) {
+      documentUrl.searchParams.set(
+        '__sc_surface',
+        buildInternalSurfaceResourceKey(params),
+      );
+    }
+    prefix = `${documentUrl.toString()}#`;
   }
   const search = new URLSearchParams({
     world: params.worldId,
