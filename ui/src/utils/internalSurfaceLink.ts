@@ -37,23 +37,22 @@ export const resolveInternalSurfaceLinkBase = (
   return base;
 };
 
-const resolveLinkBase = (base?: string): string => {
-  const trimmed = (base || '').trim();
-  if (trimmed) return trimmed.replace(/\/+$/, '');
-  if (typeof window === 'undefined') return '';
-  return window.location.href.split('#', 1)[0].replace(/\/+$/, '');
-};
-
 export function generateInternalSurfaceLink(
   params: InternalSurfaceLinkParams,
   options?: { base?: string },
 ): string {
-  const base = resolveLinkBase(options?.base);
+  const explicitBase = (options?.base || '').trim();
+  let prefix = '';
+  if (explicitBase) {
+    prefix = `${explicitBase.replace(/\/+$/, '')}/#`;
+  } else if (typeof window !== 'undefined') {
+    prefix = `${window.location.href.split('#', 1)[0]}#`;
+  }
   const search = new URLSearchParams({
     world: params.worldId,
     channel: params.channelId,
   });
-  return `${base}/#/internal/${encodeURIComponent(params.type)}/${encodeURIComponent(params.id)}?${search.toString()}`;
+  return `${prefix}/internal/${encodeURIComponent(params.type)}/${encodeURIComponent(params.id)}?${search.toString()}`;
 }
 
 export interface InternalSurfacePopoutOptions {

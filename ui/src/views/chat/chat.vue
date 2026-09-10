@@ -18215,7 +18215,7 @@ onBeforeUnmount(() => {
   <CharacterSheetManager />
   <TheaterFloatingReturnReceiver />
   <TheaterFloatingHost
-    v-if="!isEmbedMode && chat.curChannel?.id && chat.currentWorldId"
+    v-if="chat.curChannel?.id && chat.currentWorldId"
     host-mode="viewport"
     :chat-frame="null"
     :world-id="chat.currentWorldId"

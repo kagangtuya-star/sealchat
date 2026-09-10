@@ -10,17 +10,14 @@ import { generateWorldClueEmbedLink } from '@/utils/worldClueEmbedLink'
 import {
   buildInternalSurfaceResourceKey,
   generateInternalSurfaceLink,
-  resolveInternalSurfaceLinkBase,
 } from '@/utils/internalSurfaceLink'
 import { isTheaterChatFrame, requestTheaterFloatingOpen } from '@/utils/theaterFloatingBridge'
 import { copyTextWithFallback } from '@/utils/clipboard'
-import { useUtilsStore } from '@/stores/utils'
 import WorldClueEditorModal from './WorldClueEditorModal.vue'
 import WorldClueRosterPopover from './WorldClueRosterPopover.vue'
 
 const props = defineProps<{ worldId: string; channelId: string; canManage?: boolean }>()
 const store = useWorldClueStore()
-const utilsStore = useUtilsStore()
 const user = useUserStore()
 const message = useMessage()
 const dialog = useDialog()
@@ -209,7 +206,7 @@ function buildClueResource(clue: Pick<WorldClueDetail, 'id' | 'title'>) {
   const params = { type: 'clue' as const, id: clue.id, worldId: props.worldId, channelId: props.channelId }
   return {
     key: buildInternalSurfaceResourceKey(params),
-    url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }),
+    url: generateInternalSurfaceLink(params),
     title: clue.title || '线索',
     presentation: { chrome: 'minimal' as const, width: 560, height: 460 },
   }

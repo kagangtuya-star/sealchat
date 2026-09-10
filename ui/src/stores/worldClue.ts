@@ -499,7 +499,8 @@ export const useWorldClueStore = defineStore('worldClue', () => {
 
   function requestResolve(worldId: string, clueId: string): Promise<WorldClueResolveItem> {
     const cached = resolveCache.value[worldId]?.[clueId]
-    if (cached) return Promise.resolve(cached)
+    if (cached?.accessible) return Promise.resolve(cached)
+    if (cached) delete resolveCache.value[worldId]?.[clueId]
     const key = `${worldId}:${clueId}`
     const promise = new Promise<WorldClueResolveItem>((resolve, reject) => {
       const waiters = resolveWaiters.get(key) || []
@@ -525,7 +526,11 @@ export const useWorldClueStore = defineStore('worldClue', () => {
       resolveCache.value[worldId] ||= {}
       for (const clueId of ids) {
         const item = (response.data?.items?.[clueId] || { accessible: false }) as WorldClueResolveItem
-        resolveCache.value[worldId][clueId] = item
+        if (item.accessible) {
+          resolveCache.value[worldId][clueId] = item
+        } else {
+          delete resolveCache.value[worldId]?.[clueId]
+        }
         for (const waiter of resolveWaiters.get(`${worldId}:${clueId}`) || []) waiter.resolve(item)
         resolveWaiters.delete(`${worldId}:${clueId}`)
       }

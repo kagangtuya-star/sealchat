@@ -5,24 +5,31 @@ import { Edit, ExternalLink, FileText, Photo, PictureInPicture, World } from '@v
 import { useWorldClueStore, type WorldClueResolveItem } from '@/stores/worldClue'
 import { chatEvent } from '@/stores/chat'
 import { urlBase } from '@/stores/_config'
-import { useUtilsStore } from '@/stores/utils'
 import {
   buildInternalSurfaceResourceKey,
   generateInternalSurfaceLink,
-  resolveInternalSurfaceLinkBase,
 } from '@/utils/internalSurfaceLink'
 import { isTheaterChatFrame, requestTheaterFloatingOpen } from '@/utils/theaterFloatingBridge'
 import { parseWorldClueEmbedLink } from '@/utils/worldClueEmbedLink'
 
 const props = defineProps<{ worldId: string; clueId: string; rawLink: string }>()
 const store = useWorldClueStore()
-const utilsStore = useUtilsStore()
 const message = useMessage()
 const item = ref<WorldClueResolveItem | null>(null)
 const loading = ref(true)
+let resolveEpoch = 0
+let resolveRetryUsed = false
+const canonicalContext = computed(() => {
+	const parsed = parseWorldClueEmbedLink(props.rawLink)
+	return {
+		worldId: parsed?.worldId || props.worldId,
+		channelId: parsed?.channelId || '',
+		clueId: parsed?.clueId || props.clueId,
+	}
+})
 const icon = computed(() => item.value?.kind === 'image' ? Photo : item.value?.kind === 'iframe' ? World : FileText)
 const thumbnail = computed(() => item.value?.thumbnailAttachmentId
-	? `${urlBase}/api/v1/worlds/${encodeURIComponent(props.worldId)}/clues/${encodeURIComponent(props.clueId)}/image?v=${encodeURIComponent(item.value.thumbnailAttachmentId)}`
+	? `${urlBase}/api/v1/worlds/${encodeURIComponent(canonicalContext.value.worldId)}/clues/${encodeURIComponent(canonicalContext.value.clueId)}/image?v=${encodeURIComponent(item.value.thumbnailAttachmentId)}`
   : item.value?.thumbnailUrl || '')
 const updatedLabel = computed(() => item.value?.updatedAt
   ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.value.updatedAt))
@@ -30,21 +37,47 @@ const updatedLabel = computed(() => item.value?.updatedAt
 const updatedISO = computed(() => item.value?.updatedAt ? new Date(item.value.updatedAt).toISOString() : '')
 
 async function resolveItem() {
+  const requestEpoch = ++resolveEpoch
   loading.value = true
-  try { item.value = await store.requestResolve(props.worldId, props.clueId) }
-  catch { item.value = { accessible: false } }
-  finally { loading.value = false }
+  const { worldId, clueId } = canonicalContext.value
+  try {
+    const resolved = await store.requestResolve(worldId, clueId)
+    if (requestEpoch !== resolveEpoch) return
+    item.value = resolved
+  } catch {
+    if (requestEpoch !== resolveEpoch) return
+    item.value = { accessible: false }
+  }
+  finally {
+    if (requestEpoch === resolveEpoch) loading.value = false
+  }
 }
 
-watch(() => [props.worldId, props.clueId] as const, () => void resolveItem(), { immediate: true })
+watch(() => [canonicalContext.value.worldId, canonicalContext.value.clueId] as const, () => {
+  resolveRetryUsed = false
+  void resolveItem()
+}, { immediate: true })
+
+watch(() => {
+  const { worldId, clueId } = canonicalContext.value
+  return [worldId, clueId, item.value?.accessible, store.summariesByWorld[worldId]?.[clueId]?.effectiveAccess] as const
+}, ([worldId, clueId, accessible, effectiveAccess], previous) => {
+  if (previous && (worldId !== previous[0] || clueId !== previous[1])) return
+  if (accessible !== false || resolveRetryUsed || !worldId || !clueId) return
+  if (effectiveAccess !== 'view' && effectiveAccess !== 'edit') return
+  resolveRetryUsed = true
+  store.invalidate(worldId, clueId)
+  void resolveItem()
+})
 
 function handleChanged(event: any) {
   const payload = event?.worldClue || event?.argv?.options || event?.argv?.Options || {}
-  if (String(payload.worldId || '') !== props.worldId) return
+  const { worldId, clueId: currentClueId } = canonicalContext.value
+  if (String(payload.worldId || '') !== worldId) return
   if (payload.action === 'edit-lock') return
   const clueId = String(payload.clueId || '')
-  if (clueId && clueId !== props.clueId) return
-  store.invalidate(props.worldId, clueId || undefined)
+  if (clueId && clueId !== currentClueId) return
+  store.invalidate(worldId, clueId || undefined)
   void resolveItem()
 }
 
@@ -52,12 +85,12 @@ onMounted(() => chatEvent.on('world-clue-changed' as any, handleChanged as any))
 onBeforeUnmount(() => chatEvent.off('world-clue-changed' as any, handleChanged as any))
 
 function getResource() {
-	const channelId = parseWorldClueEmbedLink(props.rawLink)?.channelId || ''
+	const { worldId, channelId, clueId } = canonicalContext.value
 	if (!channelId) return null
-	const params = { type: 'clue' as const, id: props.clueId, worldId: props.worldId, channelId }
+	const params = { type: 'clue' as const, id: clueId, worldId, channelId }
 	return {
 		key: buildInternalSurfaceResourceKey(params),
-		url: generateInternalSurfaceLink(params, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }),
+		url: generateInternalSurfaceLink(params),
 		title: item.value?.title || '线索',
 		presentation: { chrome: 'minimal' as const, width: 560, height: 460 },
 	}
@@ -69,11 +102,12 @@ async function open(event?: MouseEvent) {
 	if (resource && event) {
 		const accepted = await requestTheaterFloatingOpen(resource, event)
 		if (accepted) {
-			void store.markSeen(props.worldId, props.clueId).catch(() => undefined)
+			void store.markSeen(canonicalContext.value.worldId, canonicalContext.value.clueId).catch(() => undefined)
 			return
 		}
 	}
-	chatEvent.emit('world-clue-open' as any, { worldId: props.worldId, clueId: props.clueId })
+	const { worldId, clueId } = canonicalContext.value
+	chatEvent.emit('world-clue-open' as any, { worldId, clueId })
 }
 async function openFloating(event: MouseEvent) {
 	if (!item.value?.accessible) return
@@ -81,7 +115,7 @@ async function openFloating(event: MouseEvent) {
 	if (!resource) return
 	if (isTheaterChatFrame()) {
 		if (await requestTheaterFloatingOpen(resource, event)) {
-			void store.markSeen(props.worldId, props.clueId).catch(() => undefined)
+			void store.markSeen(canonicalContext.value.worldId, canonicalContext.value.clueId).catch(() => undefined)
 		} else message.warning('小剧场浮窗打开失败')
 		return
 	}
@@ -90,13 +124,14 @@ async function openFloating(event: MouseEvent) {
 		clientX: event.clientX,
 		clientY: event.clientY,
 		onOpened: (accepted: boolean) => {
-			if (accepted) void store.markSeen(props.worldId, props.clueId).catch(() => undefined)
+			if (accepted) void store.markSeen(canonicalContext.value.worldId, canonicalContext.value.clueId).catch(() => undefined)
 		},
 	})
 }
 function edit() {
   if (!item.value?.accessible || item.value.effectiveAccess !== 'edit') return
-  chatEvent.emit('world-clue-edit' as any, { worldId: props.worldId, clueId: props.clueId })
+  const { worldId, clueId } = canonicalContext.value
+  chatEvent.emit('world-clue-edit' as any, { worldId, clueId })
 }
 </script>
 

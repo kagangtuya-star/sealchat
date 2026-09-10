@@ -8,6 +8,7 @@ import { i18n } from './lang'
 import { ref, watch, computed, onMounted, onUnmounted, type WatchStopHandle } from 'vue'
 import dayjs from 'dayjs'
 import { useDisplayStore } from '@/stores/display'
+import { useChatStore } from '@/stores/chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
@@ -16,11 +17,13 @@ import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
 import { installMessageSoundNotifier } from '@/services/messageSoundNotifier'
 
 const display = useDisplayStore()
+const chat = useChatStore()
 const route = useRoute()
 useCursorThemeRuntime()
 let disposeMessageSoundNotifier: (() => void) | null = null
 let stopRuntimeModeWatch: WatchStopHandle | null = null
 const isInternalSurface = computed(() => route.meta.internalSurface === true)
+const worldClueHostWorldId = computed(() => route.name === 'embed' ? chat.currentWorldId : '')
 const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
 
 const naiveTheme = computed<GlobalTheme | null>(() => (display.palette === 'night' ? darkTheme : null))
@@ -99,7 +102,7 @@ onUnmounted(() => {
         <RouterView />
         <GlobalLobbyAnnouncementHost v-if="!isInternalSurface" />
         <QuickLoginApprovalHost v-if="!isInternalSurface" />
-        <WorldCluePresentationHost v-if="!isInternalSurface" />
+        <WorldCluePresentationHost v-if="!isInternalSurface" :world-id="worldClueHostWorldId" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

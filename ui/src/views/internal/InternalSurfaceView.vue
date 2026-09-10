@@ -50,6 +50,20 @@ const initializeContext = async (epoch: number) => {
   const targetWorldId = worldId.value;
   const targetChannelId = channelId.value;
   try {
+    if (isClueSurface.value) {
+      const clue = await worldClue.fetchDetail(targetWorldId, id.value, false);
+      if (
+        epoch !== taskEpoch
+        || type.value !== 'clue'
+        || id.value !== clue.id
+        || worldId.value !== targetWorldId
+        || channelId.value !== targetChannelId
+      ) return;
+      clueResource.value = clue;
+      contextReady.value = true;
+      resourceReady.value = true;
+      return;
+    }
     await chat.ensureWorldReady();
     if (epoch !== taskEpoch) return;
     if (String(chat.currentWorldId || '') !== targetWorldId) {
@@ -66,19 +80,6 @@ const initializeContext = async (epoch: number) => {
       || String(chat.curChannel?.id || '') !== targetChannelId
     ) {
       throw new Error('世界或频道上下文初始化失败');
-    }
-    if (isClueSurface.value) {
-      const clue = await worldClue.fetchDetail(targetWorldId, id.value, false);
-      if (
-        epoch !== taskEpoch
-        || type.value !== 'clue'
-        || id.value !== clue.id
-        || worldId.value !== targetWorldId
-        || channelId.value !== targetChannelId
-        || String(chat.currentWorldId || '') !== targetWorldId
-        || String(chat.curChannel?.id || '') !== targetChannelId
-      ) return;
-      clueResource.value = clue;
     }
     contextReady.value = true;
     resourceReady.value = isClueSurface.value;

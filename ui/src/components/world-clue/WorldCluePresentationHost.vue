@@ -5,6 +5,7 @@ import { chatEvent } from '@/stores/chat'
 import { useWorldClueStore, type WorldClueDetail, type WorldCluePresentationRequest } from '@/stores/worldClue'
 import WorldCluePresentationOverlay from './WorldCluePresentationOverlay.vue'
 
+const props = defineProps<{ worldId?: string }>()
 const route = useRoute()
 const store = useWorldClueStore()
 const active = ref<{ request: WorldCluePresentationRequest; clue: WorldClueDetail } | null>(null)
@@ -15,7 +16,7 @@ let pendingBaselineEpoch = 0
 let pendingBaselineReady = false
 let pendingBaselineLoading = false
 let pendingReconnect = false
-const currentWorldId = computed(() => String(route.params.worldId || route.query.worldId || route.query.scopeWorldId || '').trim())
+const currentWorldId = computed(() => String(props.worldId || route.params.worldId || route.query.worldId || route.query.scopeWorldId || '').trim())
 
 function normalizePayload(event: any) {
   const direct = event?.worldClue

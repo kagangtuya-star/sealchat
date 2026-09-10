@@ -308,6 +308,7 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
 
   const existing = windows.value.find(item => item.key === request.resource.key)
   if (existing) {
+    existing.url = request.resource.url
     existing.minimized = false
     existing.title = request.resource.title || existing.title
     existing.chrome = request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default'
