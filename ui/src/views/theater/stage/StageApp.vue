@@ -48,6 +48,7 @@ import {
   Trash,
   Upload,
   World,
+  AppWindow,
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
@@ -139,6 +140,7 @@ import {
 } from '../dialogue/theater-dialogue-surface'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
+import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '../host/theater-floating-window'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
@@ -170,6 +172,8 @@ const sceneOverlayImageFolderName = '场景叠加'
 
 const props = defineProps<{
   store: TheaterStageStore
+  floatingWindows?: TheaterFloatingWindowSummary[]
+  floatingChannelOptions?: { value: string; label: string }[]
   worldId: string
   channelId: string
   scopeType?: 'channel' | 'world'
@@ -197,6 +201,7 @@ const props = defineProps<{
   readClueAccess?: (clueId: string) => Promise<ChatClueAccessReadResult>
 }>()
 const emit = defineEmits<{
+  floatingWindowAction: [action: TheaterFloatingWindowAction]
   actionTriggered: [payload: StageActionTriggeredPayload]
   pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
@@ -271,6 +276,7 @@ let imageAnnotationPendingObjectId = ''
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
 const overlayPanelOpen = ref(false)
+const floatingPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
@@ -280,6 +286,7 @@ const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
 const TheaterAssetManager = defineAsyncComponent(() => import('../effects/TheaterAssetManager.vue'))
+const TheaterFloatingManagerPanel = defineAsyncComponent(() => import('./TheaterFloatingManagerPanel.vue'))
 const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
 const audioStudio = useAudioStudioStore()
 const theaterAudioAssets = ref<AudioAsset[]>([])
@@ -1288,9 +1295,10 @@ const saveImageAnnotation = (annotation: StageImageAnnotation) => {
   closeImageAnnotationEditor()
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset' | 'floating'
 
 const canOpenPanel = (id: PanelId) => {
+  if (id === 'floating') return true
   if (id === 'scene') return canBrowseScenes.value
   if (id === 'inspector') return canEditAllObjects.value || canEditDelegatedObjects.value
   if (id === 'asset') return canManageResources.value
@@ -2059,6 +2067,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   layer: { width: 280, height: 220 },
   effect: { width: 320, height: 320 },
   overlay: { width: 520, height: 360 },
+  floating: { width: 280, height: 220 },
   asset: { width: 320, height: 280 },
 }
 const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
@@ -2078,8 +2087,11 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'effect' || id === 'asset' ? 340 : 300
-  const height = Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'floating' ? 340 : id === 'effect' || id === 'asset' ? 340 : 300
+  const availableFloatingHeight = Math.max(1, workspaceHeight - panelTopInset - 12)
+  const height = id === 'floating'
+    ? Math.min(340, Math.max(240, Math.round(availableFloatingHeight * 0.5)))
+    : Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
     y: panelTopInset,
@@ -2106,7 +2118,19 @@ const clampPanelLayout = (id: PanelId, layout: PanelLayout): PanelLayout => {
 }
 
 const ensurePanelLayout = (id: PanelId) => {
-  const next = clampPanelLayout(id, panelLayouts.value[id] || panelDefaultLayout(id))
+  const stored = panelLayouts.value[id]
+  const floatingLegacyHeight = Math.max(
+    panelMinimums.floating.height,
+    (workspaceRef.value?.clientHeight || 640) - panelTopInset - 12,
+  )
+  const shouldMigrateFloatingDefault = Boolean(
+    id === 'floating'
+    && stored
+    && Number(stored.width) === 680
+    && Number.isFinite(Number(stored.height))
+    && Math.abs(Number(stored.height) - floatingLegacyHeight) <= 4,
+  )
+  const next = clampPanelLayout(id, shouldMigrateFloatingDefault ? panelDefaultLayout(id) : stored || panelDefaultLayout(id))
   panelLayouts.value = { ...panelLayouts.value, [id]: next }
   return next
 }
@@ -2127,7 +2151,8 @@ const panelStyle = (id: PanelId) => {
     top: `${layout.y}px`,
     width: `${layout.width}px`,
     height: `${layout.height}px`,
-    zIndex: frontPanelId.value === id ? '10001' : '10000',
+    // Keep window management reachable above the floating host (10001).
+    zIndex: id === 'floating' ? '10002' : frontPanelId.value === id ? '10001' : '10000',
   }
 }
 
@@ -2167,6 +2192,7 @@ const togglePanel = (id: PanelId) => {
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
   else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
   else if (id === 'overlay') overlayPanelOpen.value = !overlayPanelOpen.value
+  else if (id === 'floating') floatingPanelOpen.value = !floatingPanelOpen.value
   else assetPanelOpen.value = !assetPanelOpen.value
 
   const isOpen = id === 'scene'
@@ -2179,7 +2205,7 @@ const togglePanel = (id: PanelId) => {
           ? effectPanelOpen.value
           : id === 'overlay'
             ? overlayPanelOpen.value
-            : assetPanelOpen.value
+            : id === 'floating' ? floatingPanelOpen.value : assetPanelOpen.value
   if (isOpen) bringPanelToFront(id)
 }
 
@@ -2195,6 +2221,7 @@ const resetWorkspaceLayout = async () => {
     ['effect', effectPanelOpen.value],
     ['overlay', overlayPanelOpen.value],
     ['asset', assetPanelOpen.value],
+    ['floating', floatingPanelOpen.value],
   ]
   openPanels.forEach(([id, open]) => {
     if (open) ensurePanelLayout(id)
@@ -2234,7 +2261,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -7940,9 +7967,9 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   else syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, overlayPanelOpen, assetPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, overlayPanelOpen, assetPanelOpen, floatingPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
@@ -8130,6 +8157,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           素材管理器
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': floatingPanelOpen }" aria-label="悬浮窗管理" @click="togglePanel('floating')">
+              <template #icon><n-icon><AppWindow /></n-icon></template>
+            </n-button>
+          </template>
+          悬浮窗管理
         </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -9463,6 +9498,14 @@ onBeforeUnmount(() => {
           @rename-media="renameTheaterImageAsset"
           @delete-media="deleteTheaterImageAsset"
         />
+      </aside>
+
+      <aside v-if="floatingPanelOpen" class="theater-floating-panel" data-panel-id="floating" :style="panelStyle('floating')" @pointerdown.capture="bringPanelToFront('floating')" @focusin="bringPanelToFront('floating')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('floating', $event)">
+          <span>悬浮窗管理</span>
+          <n-button class="theater-panel-close" text size="tiny" aria-label="关闭悬浮窗管理" title="关闭悬浮窗管理" @click="floatingPanelOpen = false"><n-icon><X /></n-icon></n-button>
+        </div>
+        <TheaterFloatingManagerPanel :windows="floatingWindows || []" :channel-options="floatingChannelOptions || []" @action="emit('floatingWindowAction', $event)" />
       </aside>
 
       <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')" @pointerdown.capture="bringPanelToFront('asset')" @focusin="bringPanelToFront('asset')">

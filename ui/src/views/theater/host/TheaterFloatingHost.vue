@@ -5,6 +5,8 @@ import { NIcon } from 'naive-ui'
 import { ExternalLink } from '@vicons/tabler'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import { resolveSafeStageIframeUrl } from '../shared/stage-types'
+import type { TheaterFloatingCustomWindowInput, TheaterFloatingCustomWindowUpdate, TheaterFloatingWindowSummary } from './theater-floating-window'
 import {
   buildInternalSurfaceResourceKey,
   parseInternalSurfaceLink,
@@ -21,7 +23,7 @@ import {
   type TheaterFloatingTakeoverRequest,
 } from '@/utils/theaterFloatingBridge'
 
-interface TheaterFloatingWindowState {
+interface TheaterFloatingWindowState extends TheaterFloatingWindowSummary {
   id: string
   key: string
   url: string
@@ -32,7 +34,10 @@ interface TheaterFloatingWindowState {
   height: number
   zIndex: number
   minimized: boolean
-  resourceType: InternalSurfaceType
+  expandedX?: number
+  expandedY?: number
+  minimizedX?: number
+  minimizedY?: number
   chrome: 'default' | 'minimal'
   ownerUserId?: string
   avatarUrl?: string
@@ -56,6 +61,7 @@ const props = withDefaults(defineProps<{
 })
 
 const hostMode = computed(() => props.hostMode)
+const emit = defineEmits<{ 'windows-change': [windows: TheaterFloatingWindowSummary[]] }>()
 const user = useUserStore()
 const currentUserId = computed(() => String(user.info?.id || '').trim())
 
@@ -118,24 +124,42 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
   if (!value || typeof value !== 'object') return null
   const stored = value as Record<string, unknown>
   const key = typeof stored.key === 'string' ? stored.key : ''
-  const url = typeof stored.url === 'string' ? stored.url : ''
-  const parsed = parseInternalSurfaceLink(url)
-  if (
-    !parsed
-    || parsed.worldId !== worldId
-    || parsed.channelId !== channelId
-    || !key
-    || buildInternalSurfaceResourceKey(parsed) !== key
-  ) return null
+  let url = typeof stored.url === 'string' ? stored.url : ''
+  const source = stored.source === undefined ? 'internal' : stored.source
+  let resourceType: InternalSurfaceType | undefined
+  let targetChannelId: string | undefined
   const ownerUserId = typeof stored.ownerUserId === 'string' ? stored.ownerUserId.trim() : ''
-  if (parsed.type === 'clue' && (!currentUserId.value || !ownerUserId || ownerUserId !== currentUserId.value)) return null
+  if (source === 'internal') {
+    const parsed = parseInternalSurfaceLink(url)
+    if (!parsed || parsed.worldId !== worldId || parsed.channelId !== channelId
+      || !key || buildInternalSurfaceResourceKey(parsed) !== key) return null
+    resourceType = parsed.type
+    if (parsed.type === 'clue' && (!currentUserId.value || !ownerUserId || ownerUserId !== currentUserId.value)) return null
+  } else if (source === 'web') {
+    if (!key.startsWith('custom:') || !resolveSafeStageIframeUrl(url)) return null
+  } else if (source === 'chat') {
+    targetChannelId = typeof stored.targetChannelId === 'string' ? stored.targetChannelId.trim() : ''
+    if (!targetChannelId || key !== `chat:${worldId}:${targetChannelId}` || !resolveSafeStageIframeUrl(url)) return null
+    const embed = new URL(url)
+    const query = new URLSearchParams(embed.hash.slice('#/embed?'.length))
+    if (embed.origin !== window.location.origin || !embed.hash.startsWith('#/embed?')
+      || query.get('worldId') !== worldId || query.get('channelId') !== targetChannelId) return null
+    // Restore only the ordinary embed endpoint, with no bridge or audio ownership.
+    url = buildChatWindowUrl(worldId, targetChannelId)
+  } else return null
   const finite = (input: unknown, fallback: number) => (
     typeof input === 'number' && Number.isFinite(input) ? input : fallback
+  )
+  const finiteOptional = (input: unknown) => (
+    typeof input === 'number' && Number.isFinite(input) ? input : undefined
   )
   return {
     id: key,
     key,
     url,
+    source,
+    hidden: stored.hidden === true,
+    targetChannelId,
     title: typeof stored.title === 'string' && stored.title.trim() ? stored.title : '内部窗口',
     x: finite(stored.x, EDGE_PADDING),
     y: finite(stored.y, EDGE_PADDING),
@@ -143,9 +167,13 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
     height: Math.max(MIN_HEIGHT, finite(stored.height, DEFAULT_HEIGHT)),
     zIndex: Math.max(1, finite(stored.zIndex, 40)),
     minimized: stored.minimized === true,
-    resourceType: parsed.type,
+    expandedX: finiteOptional(stored.expandedX),
+    expandedY: finiteOptional(stored.expandedY),
+    minimizedX: finiteOptional(stored.minimizedX),
+    minimizedY: finiteOptional(stored.minimizedY),
+    resourceType,
     chrome: stored.chrome === 'minimal' ? 'minimal' : 'default',
-    ownerUserId: parsed.type === 'clue' ? ownerUserId : undefined,
+    ownerUserId: resourceType === 'clue' ? ownerUserId : undefined,
     avatarUrl: typeof stored.avatarUrl === 'string' && stored.avatarUrl ? stored.avatarUrl : undefined,
   }
 }
@@ -263,6 +291,32 @@ const clampWindowPosition = (item: TheaterFloatingWindowState) => {
   item.y = clamp(item.y, EDGE_PADDING, rect.height - visibleHeight - EDGE_PADDING)
 }
 
+const setMinimized = (item: TheaterFloatingWindowState, nextMinimized: boolean) => {
+  if (item.minimized !== nextMinimized) {
+    if (nextMinimized) {
+      item.expandedX = item.x
+      item.expandedY = item.y
+      if (typeof item.minimizedX === 'number' && Number.isFinite(item.minimizedX)
+        && typeof item.minimizedY === 'number' && Number.isFinite(item.minimizedY)) {
+        item.x = item.minimizedX
+        item.y = item.minimizedY
+      }
+      item.minimized = true
+    } else {
+      item.minimizedX = item.x
+      item.minimizedY = item.y
+      if (typeof item.expandedX === 'number' && Number.isFinite(item.expandedX)
+        && typeof item.expandedY === 'number' && Number.isFinite(item.expandedY)) {
+        item.x = item.expandedX
+        item.y = item.expandedY
+      }
+      item.minimized = false
+    }
+  }
+  bringToFront(item.id)
+  clampWindowPosition(item)
+}
+
 const fitWindowsToHost = () => {
   const rect = hostRect()
   if (!rect || rect.width <= 0 || rect.height <= 0) return
@@ -279,12 +333,14 @@ const restoreWindows = async (worldId: string, channelId: string) => {
   loadedWorldId = worldId.trim()
   loadedChannelId = channelId.trim()
   loadedUserId = currentUserId.value
+  windowSummarySignature = ''
   windows.value = readStoredWindows(loadedWorldId, loadedChannelId)
   zCounter.value = Math.max(40, ...windows.value.map(item => item.zIndex))
   await nextTick()
   if (epoch !== restoreEpoch) return
   fitWindowsToHost()
   restoring = false
+  publishWindowSummaries()
   schedulePersist()
 }
 
@@ -308,13 +364,13 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
 
   const existing = windows.value.find(item => item.key === request.resource.key)
   if (existing) {
+    existing.hidden = false
     existing.url = request.resource.url
-    existing.minimized = false
     existing.title = request.resource.title || existing.title
     existing.chrome = request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default'
     if (parsed.type === 'clue') existing.ownerUserId = currentUserId.value || undefined
     existing.avatarUrl = request.resource.presentation?.avatarUrl || existing.avatarUrl
-    bringToFront(existing.id)
+    setMinimized(existing, false)
     clampWindowPosition(existing)
     return true
   }
@@ -325,6 +381,8 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
   const height = clamp(requestedHeight ?? DEFAULT_HEIGHT, MIN_HEIGHT, rect.height - EDGE_PADDING * 2)
   const initiallyMinimized = request.resource.presentation?.minimized === true
   const item: TheaterFloatingWindowState = {
+    source: 'internal',
+    hidden: false,
     id: request.resource.key,
     key: request.resource.key,
     url: request.resource.url,
@@ -372,6 +430,84 @@ const openResource = (
 
 const openExternal = (item: TheaterFloatingWindowState) => {
   openInternalSurfaceLink(item.url, { width: item.width, height: item.height })
+}
+
+const buildChatWindowUrl = (worldId: string, channelId: string) => {
+  const url = new URL(window.location.href)
+  url.hash = `/embed?${new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0' })}`
+  return url.toString()
+}
+
+const focusWindow = (id: string) => {
+  const item = findWindow(id)
+  if (!item) return
+  item.hidden = false
+  bringToFront(id)
+}
+
+const openCustomWindow = (input: TheaterFloatingCustomWindowInput) => {
+  const rect = hostRect()
+  if (!rect || !props.worldId || !props.channelId) return false
+  const targetChannelId = input.source === 'chat' ? input.targetChannelId.trim() : undefined
+  if (input.source === 'chat' && !targetChannelId) return false
+  const url = input.source === 'chat'
+    ? buildChatWindowUrl(props.worldId, targetChannelId!)
+    : resolveSafeStageIframeUrl(input.url)
+  if (!url) return false
+  const key = input.source === 'chat'
+    ? `chat:${props.worldId}:${targetChannelId}`
+    : `custom:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+  const existing = windows.value.find(item => item.key === key)
+  if (existing) {
+    focusWindow(existing.id)
+    return true
+  }
+  const dimension = (value: number | undefined, fallback: number) => (
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  )
+  const width = clamp(input.source === 'web' ? dimension(input.width, DEFAULT_WIDTH) : DEFAULT_WIDTH, MIN_WIDTH, rect.width - EDGE_PADDING * 2)
+  const height = clamp(input.source === 'web' ? dimension(input.height, DEFAULT_HEIGHT) : DEFAULT_HEIGHT, MIN_HEIGHT, rect.height - EDGE_PADDING * 2)
+  const item: TheaterFloatingWindowState = {
+    id: key, key, url, source: input.source, targetChannelId,
+    title: input.title.trim() || (input.source === 'chat' ? '聊天' : '网页'),
+    x: (rect.width - width) / 2, y: (rect.height - height) / 2,
+    width, height, zIndex: ++zCounter.value, hidden: false, minimized: false, chrome: 'default',
+  }
+  clampWindowPosition(item)
+  windows.value.push(item)
+  return true
+}
+
+const updateCustomWindow = (input: TheaterFloatingCustomWindowUpdate) => {
+  const item = findWindow(input.id)
+  const rect = hostRect()
+  if (!item || !rect || item.source !== input.source) return false
+
+  if (input.source === 'web') {
+    const url = resolveSafeStageIframeUrl(input.url)
+    if (!url) return false
+    const dimension = (value: number | undefined, fallback: number) => (
+      typeof value === 'number' && Number.isFinite(value) ? value : fallback
+    )
+    item.title = input.title.trim() || '网页'
+    item.url = url
+    item.width = clamp(dimension(input.width, item.width), MIN_WIDTH, rect.width - EDGE_PADDING * 2)
+    item.height = clamp(dimension(input.height, item.height), MIN_HEIGHT, rect.height - EDGE_PADDING * 2)
+    clampWindowPosition(item)
+    return true
+  }
+
+  const targetChannelId = input.targetChannelId.trim()
+  if (!targetChannelId) return false
+  const key = `chat:${props.worldId}:${targetChannelId}`
+  if (windows.value.some(other => other.id !== item.id && other.key === key)) return false
+  item.id = key
+  item.key = key
+  item.url = buildChatWindowUrl(props.worldId, targetChannelId)
+  item.targetChannelId = targetChannelId
+  item.title = input.title.trim() || '聊天'
+  clampWindowPosition(item)
+  return true
 }
 
 const postAck = (event: MessageEvent, requestId: string, accepted: boolean) => {
@@ -487,7 +623,7 @@ const stopInteraction = (event: PointerEvent) => {
   }
   interaction.value = null
   const chatFrame = props.chatFrame
-  if (hostMode.value === 'stage' && active.kind === 'drag' && event.type === 'pointerup' && item && chatFrame) {
+  if (hostMode.value === 'stage' && active.kind === 'drag' && event.type === 'pointerup' && item?.source === 'internal' && chatFrame) {
     void requestChatFloatingTakeover({
       key: item.key,
       url: item.url,
@@ -509,9 +645,7 @@ const stopInteraction = (event: PointerEvent) => {
 }
 
 const toggleMinimized = (item: TheaterFloatingWindowState) => {
-  item.minimized = !item.minimized
-  bringToFront(item.id)
-  clampWindowPosition(item)
+  setMinimized(item, !item.minimized)
 }
 
 const restoreMinimized = (item: TheaterFloatingWindowState) => {
@@ -528,7 +662,49 @@ const closeWindow = (id: string) => {
   windows.value = windows.value.filter(item => item.id !== id)
 }
 
-watch(windows, schedulePersist, { deep: true })
+const setWindowHidden = (id: string, hidden: boolean) => {
+  const item = findWindow(id)
+  if (!item) return
+  item.hidden = hidden
+  if (!hidden) bringToFront(id)
+}
+const toggleWindowMinimized = (id: string) => {
+  const item = findWindow(id)
+  if (item) toggleMinimized(item)
+}
+const closeAllWindows = () => {
+  interaction.value = null
+  windows.value = []
+}
+
+const buildWindowSummaries = (): TheaterFloatingWindowSummary[] => windows.value.map((item) => ({
+  id: item.id,
+  key: item.key,
+  title: item.title,
+  source: item.source,
+  resourceType: item.resourceType,
+  targetChannelId: item.targetChannelId,
+  width: item.width,
+  height: item.height,
+  ...(item.source === 'web' ? { url: item.url } : {}),
+  hidden: item.hidden,
+  minimized: item.minimized,
+  zIndex: item.zIndex,
+}))
+
+let windowSummarySignature = ''
+const publishWindowSummaries = () => {
+  const summaries = buildWindowSummaries()
+  const signature = JSON.stringify(summaries)
+  if (signature === windowSummarySignature) return
+  windowSummarySignature = signature
+  emit('windows-change', summaries)
+}
+
+watch(windows, () => {
+  schedulePersist()
+  publishWindowSummaries()
+}, { deep: true })
 watch(() => [props.worldId, props.channelId, hostMode.value, currentUserId.value] as const, ([worldId, channelId]) => {
   if (!mounted) return
   flushPersist()
@@ -550,7 +726,7 @@ onBeforeUnmount(() => {
   if (hostMode.value === 'viewport') chatEvent.off('internal-surface-floating-open' as any, handleInternalSurfaceFloatingOpen as any)
 })
 
-defineExpose({ openResource })
+defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidden, toggleWindowMinimized, focusWindow, closeWindow, closeAllWindows })
 </script>
 
 <template>
@@ -558,6 +734,7 @@ defineExpose({ openResource })
     <div ref="hostRef" class="theater-floating-host" :class="`theater-floating-host--${hostMode}`" aria-label="小剧场浮窗层">
     <section
       v-for="item in windows"
+      v-show="!item.hidden"
       :key="item.id"
       class="theater-floating-window"
       :class="{

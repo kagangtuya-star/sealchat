@@ -36,6 +36,9 @@ import { theaterPresentationSchema, type TheaterPresentation } from '@/types/the
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
+import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from './theater-floating-window'
+import type { SChannel } from '@/types'
+import { formatSplitChannelDisplayName } from '@/views/split/splitChannelDisplay'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import { useDisplayStore } from '@/stores/display'
@@ -69,6 +72,65 @@ const layoutRef = ref<HTMLDivElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const stageAppRef = ref<InstanceType<typeof StageApp> | null>(null)
 const theaterFloatingHostRef = ref<InstanceType<typeof TheaterFloatingHost> | null>(null)
+const floatingWindows = ref<TheaterFloatingWindowSummary[]>([])
+const floatingChannelOptions = computed(() => {
+  const options: { value: string; label: string; title: string }[] = []
+  const walk = (nodes: SChannel[], parent = '') => {
+    for (const node of nodes) {
+      const title = formatSplitChannelDisplayName(node)
+      const label = parent ? `${parent} / ${title}` : title
+      if (node.id) options.push({ value: node.id, label, title })
+      if (node.children?.length) walk(node.children, label)
+    }
+  }
+  walk(chat.currentWorldId === worldId.value ? chat.channelTree : (chat.channelTreeByWorld[worldId.value] || []))
+  return options
+})
+const handleFloatingWindowAction = (action: TheaterFloatingWindowAction) => {
+  const host = theaterFloatingHostRef.value
+  if (!host) return
+  switch (action.type) {
+    case 'focus': host.focusWindow(action.id); break
+    case 'toggle-hidden': {
+      const item = floatingWindows.value.find(item => item.id === action.id)
+      if (item) host.setWindowHidden(item.id, !item.hidden)
+      break
+    }
+    case 'toggle-minimized': host.toggleWindowMinimized(action.id); break
+    case 'close': host.closeWindow(action.id); break
+    case 'close-all': host.closeAllWindows(); break
+    case 'add-web':
+      if (!host.openCustomWindow({ ...action, source: 'web' })) message.warning('网页浮窗打开失败，请检查 URL')
+      break
+    case 'add-chat': {
+      const channel = floatingChannelOptions.value.find(item => item.value === action.channelId)
+      if (!channel || !host.openCustomWindow({ source: 'chat', targetChannelId: channel.value, title: channel.title })) {
+        message.warning('聊天频道不可用')
+      }
+      break
+    }
+    case 'update-web':
+      if (!host.updateCustomWindow({
+        source: 'web',
+        id: action.id,
+        title: action.title,
+        url: action.url,
+        width: action.width,
+        height: action.height,
+      })) message.warning('网页浮窗更新失败，请检查 URL')
+      break
+    case 'update-chat': {
+      const channel = floatingChannelOptions.value.find(item => item.value === action.channelId)
+      if (!channel || !host.updateCustomWindow({
+        source: 'chat',
+        id: action.id,
+        targetChannelId: channel.value,
+        title: channel.title,
+      })) message.warning('聊天频道不可用')
+      break
+    }
+  }
+}
 const stageSurfaceRef = ref<HTMLElement | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
@@ -1069,6 +1131,9 @@ function handleDice3DMessage(event: MessageEvent) {
         <StageApp
           ref="stageAppRef"
           :store="stageStore"
+          :floating-windows="floatingWindows"
+          :floating-channel-options="floatingChannelOptions"
+          @floating-window-action="handleFloatingWindowAction"
           :world-id="worldId"
           :channel-id="channelId"
           scope-type="world"
@@ -1113,7 +1178,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-		<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" />
+		<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
       </section>
 
       <div
