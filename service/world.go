@@ -835,6 +835,9 @@ func WorldDelete(worldID, actorID string) error {
 		if err := archiveWorldClues(tx, worldID); err != nil {
 			return err
 		}
+		if err := CleanupWorldClueBoardsForWorld(tx, worldID); err != nil {
+			return err
+		}
 		return nil
 	})
 }
@@ -893,6 +896,9 @@ func WorldLeave(worldID, userID string) error {
 			return err
 		}
 		if err := cleanupWorldCluesForMember(tx, worldID, userID); err != nil {
+			return err
+		}
+		if err := CleanupWorldClueBoardForMember(tx, worldID, userID); err != nil {
 			return err
 		}
 		return nil

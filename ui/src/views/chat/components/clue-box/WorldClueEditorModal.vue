@@ -665,15 +665,16 @@ async function flushAutosave(manual = true): Promise<boolean> {
 }
 
 async function requestClose() {
-  if (closing.value || publishing.value) return
+  if (closing.value || publishing.value) return false
   closing.value = true
   try {
-    if (!remoteConflict.value && !await flushAutosave() && !remoteConflict.value) return
-    if (distributionPanel.value && !await distributionPanel.value.flushPrivate()) return
+    if (!remoteConflict.value && !await flushAutosave() && !remoteConflict.value) return false
+    if (distributionPanel.value && !await distributionPanel.value.flushPrivate()) return false
     if (distributionPanel.value) await distributionPanel.value.closePrivate()
     await releaseAllFieldLocks()
     if (!remoteConflict.value && workingClue.value && sessionChanged) emit('saved', workingClue.value)
     emit('update:show', false)
+    return true
   } finally { closing.value = false }
 }
 
@@ -731,6 +732,12 @@ function handleDistributionRevealed(saved: WorldClueDetail) {
   workingClue.value = { ...workingClue.value, ...saved }
   sessionChanged = true
 }
+
+// Secondary surfaces (the personal clue board iframe in particular) need to
+// request the same guarded close path as the editor's own close button. Expose
+// only the existing lifecycle operation; the editor's form and lock internals
+// remain private.
+defineExpose({ requestClose, flushAutosave })
 </script>
 
 <template>

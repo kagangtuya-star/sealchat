@@ -296,6 +296,14 @@ export const useWorldClueStore = defineStore('worldClue', () => {
     return item
   }
 
+  // Read-only detail lookup for secondary surfaces such as the personal clue
+  // board. It deliberately does not mutate detail, summaries, unread state,
+  // or the presentation queue; callers can choose when to open/mark a clue.
+  async function fetchDetailReadonly(worldId: string, clueId: string, signal?: AbortSignal) {
+    const response = await api.get(`api/v1/worlds/${worldId}/clues/${clueId}`, { signal })
+    return response.data?.item as WorldClueDetail
+  }
+
   async function markSeen(worldId: string, clueId: string) {
     await api.post(`api/v1/worlds/${worldId}/clues/${clueId}/seen`)
     const summary = summariesByWorld.value[worldId]?.[clueId]
@@ -545,7 +553,7 @@ export const useWorldClueStore = defineStore('worldClue', () => {
   return {
     currentWorldId, summariesByWorld, foldersByWorld, rosterByWorld, editLocksByClue, detail, resolveCache, presentationQueue, uiVisible, loading,
     summaries, folders, roster, unreadCount, setWorld, setVisible, toggleVisible, loadWorld, loadRoster, loadAccess, addRosterMember, removeRosterMember, fetchDetail, saveClue,
-    removeClue, publish, reveal, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen,
+    removeClue, publish, reveal, unpublish, enqueuePresentation, loadPendingPresentations, acknowledgePresented, markSeen, fetchDetailReadonly,
     invalidate, handleChanged, requestResolve, loadEditLocks, acquireEditLock, releaseEditLock,
   }
 })

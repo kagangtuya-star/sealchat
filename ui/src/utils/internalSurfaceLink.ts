@@ -1,6 +1,6 @@
 import { isMobileBrowserRuntime } from './windowFocusState';
 
-export const INTERNAL_SURFACE_TYPES = ['iform', 'note', 'character', 'clue'] as const;
+export const INTERNAL_SURFACE_TYPES = ['iform', 'note', 'character', 'clue', 'clue-board'] as const;
 
 export type InternalSurfaceType = typeof INTERNAL_SURFACE_TYPES[number];
 

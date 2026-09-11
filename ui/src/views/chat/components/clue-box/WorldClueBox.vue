@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NPopover, NSpace, useDialog, useMessage } from 'naive-ui'
-import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
+import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, LayoutBoard, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
@@ -15,6 +15,8 @@ import { isTheaterChatFrame, requestTheaterFloatingOpen } from '@/utils/theaterF
 import { copyTextWithFallback } from '@/utils/clipboard'
 import WorldClueEditorModal from './WorldClueEditorModal.vue'
 import WorldClueRosterPopover from './WorldClueRosterPopover.vue'
+import WorldClueBoardEmbedLayer from './WorldClueBoardEmbedLayer.vue'
+import { openWorldClueBoardLink } from '@/utils/worldClueBoardLink'
 
 const props = defineProps<{ worldId: string; channelId: string; canManage?: boolean }>()
 const store = useWorldClueStore()
@@ -42,6 +44,7 @@ const favoriteSubmitting = reactive<Partial<Record<string, boolean>>>({})
 const multiSelect = ref(false)
 const selectedClueIds = reactive(new Set<string>())
 const folderPopoverVisible = ref(false)
+const boardEmbedVisible = ref(false)
 const panelWasDragged = ref(false)
 // Keep the clue-box affordance hidden until a clue is pushed or the user opens it.
 const tabDismissed = ref(true)
@@ -184,6 +187,21 @@ onBeforeUnmount(() => {
 })
 
 function close() { preference.expanded = false; store.setVisible(false) }
+function openBoard() {
+  if (!props.worldId || !props.channelId) {
+    message.warning('没有可用的同世界频道上下文，无法打开线索板')
+    return
+  }
+  boardEmbedVisible.value = true
+}
+function openBoardStandalone() {
+  if (!props.worldId || !props.channelId) {
+    message.warning('没有可用的同世界频道上下文，无法打开线索板')
+    return
+  }
+  const result = openWorldClueBoardLink({ worldId: props.worldId, channelId: props.channelId })
+  if (!result.window) message.warning('无法打开独立窗口，请允许浏览器弹窗')
+}
 function openFromTab() {
   if (panelWasDragged.value) return
   store.setVisible(true)
@@ -720,7 +738,7 @@ defineExpose({ toggleVisibility })
     <div class="clue-box__resize clue-box__resize--bottom" @pointerdown="startResize($event, 'bottom')" />
     <header class="clue-box__header" @pointerdown="startMove">
       <div><strong>线索箱</strong><small>{{ store.unreadCount ? `${store.unreadCount} 条未读` : '世界资料' }}</small></div>
-      <NSpace @pointerdown.stop><WorldClueRosterPopover v-if="canManage" :world-id="worldId" /><NButton circle quaternary size="small" :title="preference.pinned ? '取消固定' : '固定面板'" @click.stop="preference.pinned = !preference.pinned"><template #icon><NIcon><component :is="preference.pinned ? Pinned : Pin" /></NIcon></template></NButton><NButton v-if="canManage" circle quaternary size="small" title="新建线索" @click.stop="editClue()"><template #icon><NIcon><Plus /></NIcon></template></NButton><NButton circle quaternary size="small" title="关闭" @click.stop="close"><template #icon><NIcon><X /></NIcon></template></NButton></NSpace>
+      <NSpace @pointerdown.stop><WorldClueRosterPopover v-if="canManage" :world-id="worldId" /><NButton quaternary size="small" :disabled="!worldId || !channelId" :title="worldId && channelId ? '打开线索板' : '没有可用的同世界频道上下文'" @pointerdown.stop @click.stop="openBoard"><template #icon><NIcon><LayoutBoard /></NIcon></template>线索板</NButton><NButton quaternary size="small" :disabled="!worldId || !channelId" title="独立打开线索板" @pointerdown.stop @click.stop="openBoardStandalone"><template #icon><NIcon><ExternalLink /></NIcon></template></NButton><NButton circle quaternary size="small" :title="preference.pinned ? '取消固定' : '固定面板'" @click.stop="preference.pinned = !preference.pinned"><template #icon><NIcon><component :is="preference.pinned ? Pinned : Pin" /></NIcon></template></NButton><NButton v-if="canManage" circle quaternary size="small" title="新建线索" @click.stop="editClue()"><template #icon><NIcon><Plus /></NIcon></template></NButton><NButton circle quaternary size="small" title="关闭" @click.stop="close"><template #icon><NIcon><X /></NIcon></template></NButton></NSpace>
     </header>
     <div class="clue-box__tools">
       <NInput v-model:value="keyword" clearable placeholder="搜索线索"><template #prefix><NIcon><Search /></NIcon></template></NInput>
@@ -850,6 +868,7 @@ defineExpose({ toggleVisibility })
     </div>
   </aside>
   <WorldClueEditorModal v-model:show="editorVisible" :world-id="worldId" :channel-id="channelId" :clue="editingClue" :can-manage="!!canManage" @saved="handleEditorSaved" />
+  <WorldClueBoardEmbedLayer v-model:show="boardEmbedVisible" :world-id="worldId" :channel-id="channelId" />
 </template>
 
 <style scoped>

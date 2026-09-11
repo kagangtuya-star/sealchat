@@ -775,6 +775,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	worldGroup := v1Auth.Group("/worlds")
 	BindWorldClueRoutes(worldGroup)
+	BindWorldClueBoardRoutes(worldGroup)
 	worldGroup.Get("/", WorldList)
 	worldGroup.Get("", WorldList)
 	worldGroup.Post("/", WorldCreateHandler)

@@ -193,6 +193,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&DigestPushRuleModel{}, &DigestWindowVisitorModel{}, &DigestWindowSpeakerModel{}, &DigestRecordModel{}, &DigestDeliveryLogModel{})
 	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{}, &StickyNoteFolderModel{})
 	db.AutoMigrate(&WorldClueModel{}, &WorldClueAccessModel{}, &WorldClueRosterMemberModel{}, &WorldClueFolderModel{}, &WorldClueUserStateModel{}, &WorldClueEditLockModel{})
+	db.AutoMigrate(&WorldClueBoardModel{})
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&CaptchaCapChallengeModel{}, &CaptchaCapTokenModel{})
