@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon, NTooltip, useMessage } from 'naive-ui'
-import { Copy, ExternalLink, Maximize, X } from '@vicons/tabler'
+import { Copy, ExternalLink, LayoutBoard, Maximize, Minus, X } from '@vicons/tabler'
 import { useUserStore } from '@/stores/user'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { openInternalSurfaceLink } from '@/utils/internalSurfaceLink'
@@ -21,8 +21,18 @@ const panel = ref<HTMLElement | null>(null)
 const geometry = ref({ x: 0, y: 0, width: 900, height: 700 })
 const gesture = ref<{ pointerId: number; edge: string; x: number; y: number; start: typeof geometry.value } | null>(null)
 const mobile = ref(false)
+const minimized = ref(false)
+const miniPanel = ref<HTMLElement | null>(null)
+const miniPosition = ref({ x: 0, y: 0 })
+const miniGesture = ref<{ pointerId: number; x: number; y: number; originX: number; originY: number; moved: boolean } | null>(null)
+const restoringFromStorage = ref(false)
+const MINI_WIDTH = 120
+const MINI_HEIGHT = 38
 const storageKey = computed(() => `sealchat_clue_board_panel_v1:${String(user.info.id || '')}:${surfaceWorldId.value || props.worldId}`)
+const miniStorageKey = computed(() => `sealchat_clue_board_mini_v1:${String(user.info.id || '')}:${surfaceWorldId.value || props.worldId}`)
+const stateStorageKey = computed(() => `sealchat_clue_board_state_v1:${String(user.info.id || '')}:${surfaceWorldId.value || props.worldId}`)
 const panelStyle = computed(() => mobile.value ? {} : { left: `${geometry.value.x}px`, top: `${geometry.value.y}px`, width: `${geometry.value.width}px`, height: `${geometry.value.height}px` })
+const miniStyle = computed(() => ({ left: `${miniPosition.value.x}px`, top: `${miniPosition.value.y}px`, width: `${MINI_WIDTH}px`, height: `${MINI_HEIGHT}px` }))
 const resizeEdges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
 
 function clampGeometry() {
@@ -41,11 +51,105 @@ function restoreGeometry() {
   clampGeometry()
 }
 
+function clampMiniPosition() {
+  const maxX = Math.max(0, window.innerWidth - MINI_WIDTH)
+  const maxY = Math.max(0, window.innerHeight - MINI_HEIGHT)
+  miniPosition.value = {
+    x: Math.max(0, Math.min(maxX, miniPosition.value.x)),
+    y: Math.max(0, Math.min(maxY, miniPosition.value.y)),
+  }
+}
+
+function restoreMiniPosition() {
+  miniPosition.value = {
+    x: Math.max(0, window.innerWidth - MINI_WIDTH - 24),
+    y: 24,
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(miniStorageKey.value) || 'null')
+    if (saved && typeof saved.x === 'number' && Number.isFinite(saved.x) && typeof saved.y === 'number' && Number.isFinite(saved.y)) {
+      miniPosition.value = { x: saved.x, y: saved.y }
+    }
+  } catch { /* Storage may be unavailable in private browsing. */ }
+  clampMiniPosition()
+}
+
+function saveMiniPosition() {
+  try { localStorage.setItem(miniStorageKey.value, JSON.stringify({ x: miniPosition.value.x, y: miniPosition.value.y })) } catch { /* Keep in-memory position. */ }
+}
+
+function saveBoardState() {
+  try {
+    localStorage.setItem(stateStorageKey.value, JSON.stringify({ open: true, minimized: minimized.value }))
+  } catch { /* Keep in-memory state. */ }
+}
+
+function clearBoardState() {
+  try { localStorage.removeItem(stateStorageKey.value) } catch { /* Ignore unavailable storage. */ }
+}
+
+function restoreBoardState() {
+  if (props.show) return
+  try {
+    const saved = JSON.parse(localStorage.getItem(stateStorageKey.value) || 'null')
+    if (saved?.open !== true) return
+    restoringFromStorage.value = true
+    minimized.value = saved.minimized === true
+    emit('update:show', true)
+  } catch { /* Storage may be unavailable in private browsing. */ }
+}
+
 function startGesture(event: PointerEvent, edge = '') {
   if (mobile.value || event.button !== 0 || (event.target instanceof Element && event.target.closest('button'))) return
   event.preventDefault()
   gesture.value = { pointerId: event.pointerId, edge, x: event.clientX, y: event.clientY, start: { ...geometry.value } }
   panel.value?.setPointerCapture(event.pointerId)
+}
+
+function startMiniGesture(event: PointerEvent) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  event.preventDefault()
+  const target = event.currentTarget as HTMLElement | null
+  miniGesture.value = {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    originX: miniPosition.value.x,
+    originY: miniPosition.value.y,
+    moved: false,
+  }
+  target?.setPointerCapture?.(event.pointerId)
+}
+
+function moveMiniGesture(event: PointerEvent) {
+  const active = miniGesture.value
+  if (!active || active.pointerId !== event.pointerId) return
+  const dx = event.clientX - active.x
+  const dy = event.clientY - active.y
+  if (!active.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) active.moved = true
+  if (!active.moved) return
+  event.preventDefault()
+  miniPosition.value = { x: active.originX + dx, y: active.originY + dy }
+  clampMiniPosition()
+}
+
+function finishMiniGesture(cancelled = false) {
+  const active = miniGesture.value
+  if (!active) return
+  miniGesture.value = null
+  if (miniPanel.value?.hasPointerCapture(active.pointerId)) miniPanel.value.releasePointerCapture(active.pointerId)
+  if (active.moved || !cancelled) saveMiniPosition()
+  if (!cancelled && !active.moved) minimized.value = false
+}
+
+function handleMiniKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  minimized.value = false
+}
+
+function restoreBoard() {
+  minimized.value = false
 }
 
 function moveGesture(event: PointerEvent) {
@@ -75,7 +179,7 @@ function finishGesture() {
   try { localStorage.setItem(storageKey.value, JSON.stringify(geometry.value)) } catch { /* Keep in-memory geometry. */ }
 }
 
-function onResize() { mobile.value = window.innerWidth <= 680; clampGeometry() }
+function onResize() { mobile.value = window.innerWidth <= 680; clampGeometry(); clampMiniPosition() }
 function fitContent() {
   iframe.value?.contentWindow?.postMessage({ type: 'sealchat.world-clue-board.lifecycle', state: 'fit-content' }, window.location.origin)
 }
@@ -109,7 +213,10 @@ function onMessage(event: MessageEvent) {
     if (closeTimer) clearTimeout(closeTimer)
     closeTimer = null
     closing.value = false
-    if (event.data.accepted === true) emit('update:show', false)
+    if (event.data.accepted === true) {
+      clearBoardState()
+      emit('update:show', false)
+    }
     else message.warning('线索板仍有未完成的编辑，已保留窗口')
   }
 }
@@ -117,11 +224,13 @@ function onMessage(event: MessageEvent) {
 function requestClose() {
   if (closing.value) return
   if (!link.value || !iframe.value?.contentWindow) {
+    clearBoardState()
     emit('update:show', false)
     return
   }
   if (!ready.value) {
     // Board App 尚未进入可编辑 ready 状态，无需 flush。
+    clearBoardState()
     emit('update:show', false)
     return
   }
@@ -149,12 +258,19 @@ function openStandalone() {
 
 watch(() => props.show, visible => {
   if (!visible) return
+  const restoring = restoringFromStorage.value
+  restoringFromStorage.value = false
+  if (!restoring) minimized.value = false
   surfaceWorldId.value = props.worldId
   surfaceChannelId.value = props.channelId
   restoreGeometry()
+  restoreMiniPosition()
   loadLink()
+  saveBoardState()
 }, { immediate: true })
 watch(storageKey, () => { if (props.show) restoreGeometry() })
+watch(miniStorageKey, () => { if (props.show) restoreMiniPosition() })
+watch(minimized, () => { if (props.show) saveBoardState() })
 watch(() => props.worldId, (worldId, previousWorldId) => {
   if (props.show && worldId !== previousWorldId) requestClose()
 })
@@ -163,18 +279,25 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (closeTimer) clearTimeout(closeTimer)
 })
-onMounted(() => { window.addEventListener('message', onMessage); window.addEventListener('resize', onResize) })
+onMounted(() => {
+  window.addEventListener('message', onMessage)
+  window.addEventListener('resize', onResize)
+  restoreBoardState()
+})
+
+defineExpose({ restoreBoard })
 </script>
 
 <template>
   <Teleport to="body">
-  <section v-if="show" ref="panel" class="world-clue-board-embed" :class="{ 'is-moving': gesture }" :style="panelStyle" role="dialog" aria-label="线索板" @pointermove="moveGesture" @pointerup="finishGesture" @pointercancel="finishGesture" @lostpointercapture="finishGesture">
+  <section v-if="show" v-show="!minimized" ref="panel" class="world-clue-board-embed" :class="{ 'is-moving': gesture }" :style="panelStyle" role="dialog" aria-label="线索板" @pointermove="moveGesture" @pointerup="finishGesture" @pointercancel="finishGesture" @lostpointercapture="finishGesture">
     <header class="world-clue-board-embed__header" @pointerdown="startGesture($event)">
       <strong>线索板</strong>
       <div class="world-clue-board-embed__actions">
         <NTooltip><template #trigger><NButton quaternary circle size="small" aria-label="复制链接" :disabled="!link" @click="copyLink"><template #icon><NIcon><Copy /></NIcon></template></NButton></template>复制链接</NTooltip>
         <NTooltip><template #trigger><NButton quaternary circle size="small" aria-label="独立打开" :disabled="!link" @click="openStandalone"><template #icon><NIcon><ExternalLink /></NIcon></template></NButton></template>独立打开</NTooltip>
         <NTooltip><template #trigger><NButton quaternary circle size="small" aria-label="适配内容" :disabled="!ready" @click="fitContent"><template #icon><NIcon><Maximize /></NIcon></template></NButton></template>适配内容</NTooltip>
+        <NTooltip><template #trigger><NButton quaternary circle size="small" aria-label="最小化" @click="minimized = true"><template #icon><NIcon><Minus /></NIcon></template></NButton></template>最小化</NTooltip>
         <NTooltip><template #trigger><NButton quaternary circle size="small" aria-label="关闭" :disabled="closing" @click="requestClose"><template #icon><NIcon><X /></NIcon></template></NButton></template>关闭</NTooltip>
       </div>
     </header>
@@ -182,6 +305,24 @@ onMounted(() => { window.addEventListener('message', onMessage); window.addEvent
     <iframe v-else ref="iframe" class="world-clue-board-embed__frame" :src="link" title="线索板" />
     <div v-for="edge in resizeEdges" :key="edge" class="world-clue-board-embed__resize" :class="`edge-${edge}`" @pointerdown.stop="startGesture($event, edge)" />
   </section>
+  <div
+    v-if="show && minimized"
+    ref="miniPanel"
+    class="world-clue-board-mini"
+    :class="{ 'is-moving': miniGesture }"
+    :style="miniStyle"
+    role="button"
+    tabindex="0"
+    aria-label="线索板"
+    @pointerdown="startMiniGesture"
+    @pointermove="moveMiniGesture"
+    @pointerup="finishMiniGesture()"
+    @pointercancel="finishMiniGesture(true)"
+    @lostpointercapture="finishMiniGesture(true)"
+    @keydown="handleMiniKeydown"
+  >
+    <NIcon><LayoutBoard /></NIcon><span>线索板</span>
+  </div>
   </Teleport>
 </template>
 
@@ -201,5 +342,7 @@ onMounted(() => { window.addEventListener('message', onMessage); window.addEvent
 .edge-ne { top: -4px; right: -4px; } .edge-nw { top: -4px; left: -4px; }
 .edge-se { bottom: -4px; right: -4px; } .edge-sw { bottom: -4px; left: -4px; }
 .world-clue-board-embed__empty { display: grid; min-height: 360px; place-items: center; color: var(--sc-text-secondary); }
+.world-clue-board-mini { position: fixed; z-index: 2101; display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--sc-border-strong); border-radius: 8px; padding: 0 8px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12); font-size: .78rem; font-weight: 500; cursor: grab; touch-action: none; user-select: none; }
+.world-clue-board-mini.is-moving { cursor: grabbing; }
 @media (max-width: 680px) { .world-clue-board-embed { inset: 0; width: 100vw; height: 100dvh; border-radius: 0; } .world-clue-board-embed__frame { border-radius: 0; } .world-clue-board-embed__resize { display: none; } }
 </style>

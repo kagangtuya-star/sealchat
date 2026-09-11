@@ -408,6 +408,10 @@ const toggleWorldClueBox = () => {
   worldClueStore.toggleVisible();
 };
 
+const openWorldClueBoard = () => {
+  worldClueBoxRef.value?.openBoard();
+};
+
 const openDice3DSettings = () => {
   dice3dSettingsVisible.value = true;
 };
@@ -15126,6 +15130,7 @@ onBeforeUnmount(() => {
           :clue-box-enabled="!chat.observerMode && !!chat.currentWorldId"
           :clue-box-active="worldClueStore.uiVisible"
           :clue-box-attention="worldClueStore.unreadCount > 0"
+		  :clue-board-enabled="!chat.observerMode && !!chat.currentWorldId && !!chat.curChannel?.id"
 		  :dice3d-enabled="!chat.observerMode"
 		  :dice3d-active="dice3dSettingsVisible"
           :webhook-enabled="webhookManageAllowed"
@@ -15151,6 +15156,7 @@ onBeforeUnmount(() => {
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
           @toggle-clue-box="toggleWorldClueBox"
+		  @open-clue-board="openWorldClueBoard"
 		  @open-dice3d="openDice3DSettings"
           @open-webhook="webhookDrawerVisible = true"
           @open-bridge-status="bridgeStatusDrawerVisible = true"

@@ -45,6 +45,7 @@ const multiSelect = ref(false)
 const selectedClueIds = reactive(new Set<string>())
 const folderPopoverVisible = ref(false)
 const boardEmbedVisible = ref(false)
+const boardEmbedRef = ref<InstanceType<typeof WorldClueBoardEmbedLayer> | null>(null)
 const panelWasDragged = ref(false)
 // Keep the clue-box affordance hidden until a clue is pushed or the user opens it.
 const tabDismissed = ref(true)
@@ -190,6 +191,10 @@ function close() { preference.expanded = false; store.setVisible(false) }
 function openBoard() {
   if (!props.worldId || !props.channelId) {
     message.warning('没有可用的同世界频道上下文，无法打开线索板')
+    return
+  }
+  if (boardEmbedVisible.value) {
+    boardEmbedRef.value?.restoreBoard()
     return
   }
   boardEmbedVisible.value = true
@@ -725,7 +730,7 @@ onMounted(() => {
   chatEvent.on('world-clue-edit' as any, handleEdit as any)
   window.addEventListener('resize', clampPanelGeometry)
 })
-defineExpose({ toggleVisibility })
+defineExpose({ toggleVisibility, openBoard })
 </script>
 
 <template>
@@ -868,7 +873,7 @@ defineExpose({ toggleVisibility })
     </div>
   </aside>
   <WorldClueEditorModal v-model:show="editorVisible" :world-id="worldId" :channel-id="channelId" :clue="editingClue" :can-manage="!!canManage" @saved="handleEditorSaved" />
-  <WorldClueBoardEmbedLayer v-model:show="boardEmbedVisible" :world-id="worldId" :channel-id="channelId" />
+  <WorldClueBoardEmbedLayer ref="boardEmbedRef" v-model:show="boardEmbedVisible" :world-id="worldId" :channel-id="channelId" />
 </template>
 
 <style scoped>
