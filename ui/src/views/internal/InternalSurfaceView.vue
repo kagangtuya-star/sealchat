@@ -29,6 +29,7 @@ const worldId = computed(() => normalizeRouteValue(route.query.world));
 const channelId = computed(() => normalizeRouteValue(route.query.channel));
 const surfaceComponent = computed(() => getInternalSurfaceComponent(type.value));
 const isClueSurface = computed(() => type.value === 'clue');
+const isClueBoardSurface = computed(() => type.value === 'clue-board');
 const surfaceKey = computed(() => `${type.value}:${id.value}:${worldId.value}:${channelId.value}`);
 
 const setError = (title: string, description: string) => {
@@ -69,6 +70,13 @@ const initializeContext = async (epoch: number) => {
     if (String(chat.currentWorldId || '') !== targetWorldId) {
       await chat.switchWorld(targetWorldId, { force: true, autoSwitch: false });
       if (epoch !== taskEpoch) return;
+    }
+    if (isClueBoardSurface.value) {
+      if (String(chat.currentWorldId || '') !== targetWorldId) {
+        throw new Error('世界上下文初始化失败');
+      }
+      contextReady.value = true;
+      return;
     }
     if (String(chat.curChannel?.id || '') !== targetChannelId) {
       const switched = await chat.channelSwitchTo(targetChannelId);
