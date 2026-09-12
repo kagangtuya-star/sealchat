@@ -94,6 +94,7 @@ const TOOL_OPTIONS: Array<{ id: ToolId; label: string; title: string }> = [
   { id: 'note', label: '便签', title: '添加便签（N）' },
   { id: 'laser', label: '激光笔', title: '临时激光笔' },
 ]
+const KEYBOARD_ZOOM_FACTOR = 1.05
 const toolIcons = { select: Select, hand: HandStop, draw: Pencil, highlight: Highlight, eraser: Eraser, line: Line, geo: Shape, arrow: ArrowUpRight, text: Typography, note: Note, laser: Flare }
 const inspectorOpen = ref(true)
 const inspectorCollapsed = ref(false)
@@ -829,6 +830,12 @@ function onDropCapture(event: DragEvent) {
   void importImageFiles(files, pagePointFor(event))
 }
 
+function zoomAt(clientX: number, clientY: number, multiplier: number) {
+  const qd = adapter.value
+  if (!qd || !Number.isFinite(multiplier) || multiplier <= 0) return
+  qd.camera.zoomAt(qd.camera.clientToLocal(clientX, clientY), multiplier)
+}
+
 function onKeyDownCapture(event: KeyboardEvent) {
   if (isToolbarTarget(event.target) || event.isComposing) return
   if (props.interactionLocked) {
@@ -838,9 +845,19 @@ function onKeyDownCapture(event: KeyboardEvent) {
     }
     return
   }
+  const key = event.key.toLowerCase()
+  if ((event.metaKey || event.ctrlKey) && (key === '=' || key === '+' || key === '-')) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const qd = adapter.value
+    if (!qd) return
+    const { w, h } = qd.editor.viewSize()
+    qd.camera.zoomAt({ x: w / 2, y: h / 2 }, key === '-' ? 1 / KEYBOARD_ZOOM_FACTOR : KEYBOARD_ZOOM_FACTOR)
+    emit('focus')
+    return
+  }
   if (props.readonly) return
   if (!(event.metaKey || event.ctrlKey)) return
-  const key = event.key.toLowerCase()
   if (key !== 'v' && key !== 'x') return
   // On older browsers the native paste event is the only image path; leave
   // Ctrl/Cmd+V to Quickdraw so its paste listener can receive the files.
@@ -1011,6 +1028,7 @@ defineExpose({
   fitBoard,
   focusElement,
   pan,
+  zoomAt,
   hitEndpoint,
   getSnapshot,
   importImageFiles,

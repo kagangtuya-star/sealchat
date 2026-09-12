@@ -57,6 +57,8 @@ const panGesture = ref<{ pointerId: number; x: number; y: number } | null>(null)
 const drawingUnsaved = ref(false)
 const drawingError = ref('')
 const interactionLocked = ref(false)
+const WHEEL_ZOOM_FACTOR = 1.05
+const WHEEL_DELTA_PER_STEP = 100
 let clearingDrawingSelection = false
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let focusListener: (() => void) | null = null
@@ -416,6 +418,23 @@ function onBoardPointerMove(event: PointerEvent) {
   setConnectionCursor({ x: event.clientX - rect.left, y: event.clientY - rect.top })
   const id = drawingRef.value?.hitEndpoint(event.clientX, event.clientY) || ''
   hoveredDrawingId.value = connection.value.source.kind === 'quickdraw' && connection.value.source.id === id ? '' : id
+}
+
+function onBoardWheel(event: WheelEvent) {
+  if (isBoardControl(event.target)) return
+  if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return
+  const drawing = drawingRef.value
+  if (!drawing) return
+  const delta = event.deltaMode === 1
+    ? event.deltaY * 16
+    : event.deltaMode === 2
+      ? event.deltaY * Math.max(window.innerHeight, 1)
+      : event.deltaY
+  const multiplier = Math.pow(WHEEL_ZOOM_FACTOR, -delta / WHEEL_DELTA_PER_STEP)
+  if (!Number.isFinite(multiplier) || multiplier <= 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  drawing.zoomAt(event.clientX, event.clientY, multiplier)
 }
 
 function isBoardControl(target: EventTarget | null) {
@@ -881,7 +900,7 @@ onBeforeUnmount(() => {
       {{ boardError }}
 	      <template #action><NSpace size="small"><NButton v-if="boardConflict || scope === 'shared'" size="small" :disabled="interactionLocked || switchingScope" @click="discardAndReload">放弃本地修改并重载</NButton><NButton v-if="session?.canRetry" size="small" @click="retryLoad"><Refresh /> 重试</NButton></NSpace></template>
     </NAlert>
-    <main ref="boardBody" class="world-clue-board-app__body" :class="{ 'is-panning': panGesture }" @dragover="onBoardDragOver" @drop="onBoardDrop" @pointerdown.capture="onBoardPointerDown" @pointermove.capture="onBoardPointerMove" @pointerup.capture="onBoardPointerUp" @pointercancel.capture="onBoardPointerUp" @lostpointercapture="panGesture = null" @contextmenu.capture="onBoardContextMenu">
+    <main ref="boardBody" class="world-clue-board-app__body" :class="{ 'is-panning': panGesture }" @dragover="onBoardDragOver" @drop="onBoardDrop" @wheel.capture="onBoardWheel" @pointerdown.capture="onBoardPointerDown" @pointermove.capture="onBoardPointerMove" @pointerup.capture="onBoardPointerUp" @pointercancel.capture="onBoardPointerUp" @lostpointercapture="panGesture = null" @contextmenu.capture="onBoardContextMenu">
       <div v-if="initialLoading" class="world-clue-board-app__loading">正在载入线索板…</div>
       <template v-else>
         <ClueBoardDrawingSurface
