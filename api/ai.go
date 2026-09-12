@@ -97,10 +97,14 @@ func AITaskRun(ctx *fiber.Ctx) error {
 		return ctx.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
 	result := output.Result
-	return ctx.JSON(fiber.Map{
+	response := fiber.Map{
 		"featureKey": result.FeatureKey,
 		"result":     result.Result,
 		"model":      result.Model,
 		"providerId": result.ProviderID,
-	})
+	}
+	if warning := strings.TrimSpace(output.Warning); warning != "" {
+		response["warning"] = warning
+	}
+	return ctx.JSON(response)
 }

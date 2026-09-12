@@ -1,4 +1,5 @@
-import { computed, reactive, ref, type Ref } from 'vue';
+import { computed, h, reactive, ref, type Ref } from 'vue';
+import { NButton } from 'naive-ui';
 import { urlBase } from '@/stores/_config';
 import { useAIStore, isUserAISettingsRequiredMessage } from '@/stores/ai';
 import { chatEvent, useChatStore } from '@/stores/chat';
@@ -71,23 +72,48 @@ export const useChatAIPolish = ({
     return true;
   };
 
+  const showAIRequestFailure = (errMsg: string) => {
+    message.error(() => h('div', {
+      style: 'display:flex;flex-direction:column;gap:4px;',
+    }, [
+      h('div', errMsg),
+      h(NButton, {
+        text: true,
+        size: 'small',
+        type: 'primary',
+        onClick: () => {
+          chatEvent.emit('open-user-profile', { openAISettings: true } as any);
+        },
+      }, { default: () => '可使用本地API请求' }),
+    ]));
+  };
+
   const runAIPolishTask = async (input: string, preferredSlotIndex?: number) => {
     const { slotIndex, requestId } = prepareAIPolishTask(aiPolishDockState, input, preferredSlotIndex);
+    const effectiveSource = aiStore.resolveEffectiveSource('polish', aiStore.currentSource);
     try {
       const resp = await aiStore.runTask('polish', {
         worldId: chat.currentWorldId ? String(chat.currentWorldId) : '',
         channelId: chat.curChannel?.id || '',
         input,
-        source: aiStore.currentSource,
+        source: effectiveSource,
       });
       finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''));
+      const warning = String(resp.data?.warning || '').trim();
+      if (warning) {
+        message.warning(warning);
+      }
     } catch (error: any) {
       const errMsg = error?.response?.data?.message || error?.message || '润色失败';
       finishAIPolishTaskError(aiPolishDockState, slotIndex, requestId, errMsg);
       if (showSettingsRequiredDialog(errMsg)) {
         return;
       }
-      message.error(errMsg);
+      if (effectiveSource === 'platform') {
+        showAIRequestFailure(errMsg);
+      } else {
+        message.error(errMsg);
+      }
     }
   };
 

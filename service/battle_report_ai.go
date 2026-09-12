@@ -167,7 +167,7 @@ func runBattleReportSummaryTask(ctx context.Context, reportID string, opts Battl
 		"content":         result,
 		"content_preview": model.BuildBattleReportPreview(result, 200),
 		"status":          model.BattleReportStatusReady,
-		"error_message":   "",
+		"error_message":   strings.TrimSpace(output.Warning),
 		"ai_source":       strings.TrimSpace(opts.Source),
 		"ai_provider_id":  output.Result.ProviderID,
 		"ai_model":        output.Result.Model,

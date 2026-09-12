@@ -98,7 +98,7 @@ func ResolvePricing(cfg utils.AIConfig, providerID, model string) (*utils.AIMode
 			return &copyPricing, nil
 		}
 	}
-	return nil, fmt.Errorf("AI pricing 未配置: %s / %s", providerID, model)
+	return nil, &AIPricingNotConfiguredError{ProviderID: providerID, Model: model}
 }
 
 func CalculateUsageCost(usage RunUsage, pricing utils.AIModelPricingConfig) UsageCostBreakdown {
@@ -260,10 +260,12 @@ func EstimatePlatformReservation(cfg utils.AIConfig, featureKey string, input st
 	}
 	maxCost := -1.0
 	selectedProviderID := ""
+	enabledProviderCount := 0
 	for _, provider := range cfg.Providers {
 		if !provider.Enabled {
 			continue
 		}
+		enabledProviderCount++
 		pricing, err := ResolvePricing(cfg, provider.ID, modelName)
 		if err != nil {
 			continue
@@ -277,8 +279,11 @@ func EstimatePlatformReservation(cfg utils.AIConfig, featureKey string, input st
 			selectedProviderID = provider.ID
 		}
 	}
+	if enabledProviderCount == 0 {
+		return "", "", 0, fmt.Errorf("no ai provider available")
+	}
 	if selectedProviderID == "" || maxCost < 0 {
-		return "", "", 0, fmt.Errorf("AI pricing 未配置: %s", modelName)
+		return "", "", 0, &AIPricingNotConfiguredError{Model: modelName}
 	}
 	return selectedProviderID, modelName, maxCost, nil
 }

@@ -26,8 +26,9 @@ type BilledRunInput struct {
 }
 
 type BilledRunOutput struct {
-	Result RunResult
-	Billed bool
+	Result  RunResult
+	Billed  bool
+	Warning string
 }
 
 func RunTaskWithBilling(ctx context.Context, input BilledRunInput) (BilledRunOutput, error) {
@@ -44,11 +45,16 @@ func RunTaskWithBilling(ctx context.Context, input BilledRunInput) (BilledRunOut
 	source := strings.TrimSpace(input.Source)
 
 	var reservation *model.AIQuotaReservationModel
+	pricingMissingAtReservation := false
 	if strings.EqualFold(source, "platform") {
 		var err error
 		reservation, err = ReserveQuotaForPlatformRun(input.Config, input.User.ID, input.FeatureKey, input.Input, now)
 		if err != nil {
-			return BilledRunOutput{}, err
+			var pricingErr *AIPricingNotConfiguredError
+			if !errors.As(err, &pricingErr) {
+				return BilledRunOutput{}, err
+			}
+			pricingMissingAtReservation = true
 		}
 	}
 
@@ -72,14 +78,42 @@ func RunTaskWithBilling(ctx context.Context, input BilledRunInput) (BilledRunOut
 	if !strings.EqualFold(source, "platform") {
 		return BilledRunOutput{Result: result}, nil
 	}
-	if !UsageAvailable(result.Usage) {
-		return BilledRunOutput{}, errors.New("ai usage unavailable")
+	if pricingMissingAtReservation {
+		return BilledRunOutput{
+			Result:  result,
+			Billed:  false,
+			Warning: FormatAIPricingWarning(result.Model),
+		}, nil
 	}
 	pricing, err := ResolvePricing(input.Config, result.ProviderID, result.Model)
 	if err != nil {
+		var pricingErr *AIPricingNotConfiguredError
+		if errors.As(err, &pricingErr) {
+			return BilledRunOutput{
+				Result:  result,
+				Billed:  false,
+				Warning: FormatAIPricingWarning(result.Model),
+			}, nil
+		}
 		return BilledRunOutput{}, err
 	}
+	if !UsageAvailable(result.Usage) {
+		return BilledRunOutput{}, errors.New("ai usage unavailable")
+	}
 	cost := CalculateUsageCost(result.Usage, *pricing)
+	if reservation == nil {
+		var reserveErr error
+		reserveErr = withAIQuotaUserLock(input.User.ID, func() error {
+			if err := EnsureQuotaAvailable(input.Config, input.User.ID, cost.TotalCost, now); err != nil {
+				return err
+			}
+			reservation, reserveErr = ReserveQuota(input.User.ID, input.FeatureKey, result.ProviderID, result.Model, cost.TotalCost, now)
+			return reserveErr
+		})
+		if reserveErr != nil {
+			return BilledRunOutput{}, reserveErr
+		}
+	}
 	startedAt := result.StartedAt
 	finishedAt := result.FinishedAt
 	if startedAt.IsZero() {

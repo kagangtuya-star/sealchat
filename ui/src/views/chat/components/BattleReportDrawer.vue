@@ -113,6 +113,10 @@ const statusText = (item: BattleReport) => ({
 
 const previewText = (item: BattleReport) => (item.contentPreview || item.content || '暂无内容').slice(0, 200)
 
+const openUserAISettings = () => {
+  chatEvent.emit('open-user-profile', { openAISettings: true } as any)
+}
+
 const resetCreateForm = () => {
   createMode.value = 'ai'
   createForm.title = ''
@@ -590,9 +594,24 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
                 <span class="battle-report-meta">
                   {{ formatPeriod(item) }} · {{ statusText(item) }}
                 </span>
-                <span v-if="item.status === 'failed'" class="battle-report-error">
-                  {{ item.errorMessage || '生成失败' }}
-                </span>
+                <template v-if="item.status === 'failed'">
+                  <span class="battle-report-error">
+                    {{ item.errorMessage || '生成失败' }}
+                  </span>
+                  <n-button
+                    v-if="item.aiSource === 'platform'"
+                    text
+                    type="primary"
+                    size="small"
+                    class="battle-report-local-ai-action"
+                    @click.stop="openUserAISettings"
+                  >
+                    可使用本地API请求
+                  </n-button>
+                </template>
+                <n-text v-else-if="item.status === 'ready' && item.errorMessage" type="warning" class="battle-report-warning">
+                  {{ item.errorMessage }}
+                </n-text>
               </div>
               <div class="battle-report-actions" @click.stop @dblclick.stop>
                 <n-button quaternary circle size="tiny" title="跳转到战报开头" :loading="jumpingEdge?.reportId === item.id && jumpingEdge?.edge === 'start'" :disabled="Boolean(jumpingEdge)" @click="jumpToEdge(item, 'start')">
@@ -857,6 +876,19 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 
 .battle-report-error {
   color: #dc2626;
+}
+
+.battle-report-warning {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.battle-report-local-ai-action {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  font-size: 12px;
 }
 
 .battle-report-actions {
