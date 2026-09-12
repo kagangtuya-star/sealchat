@@ -8,6 +8,7 @@ import type { BoardDrawingEndpoint } from './boardTypes'
 
 const props = defineProps<{
   relation: WorldClueBoardRelation
+  readonly?: boolean
   summaries: WorldClueSummary[]
   drawingEndpoints?: BoardDrawingEndpoint[]
 }>()
@@ -38,10 +39,12 @@ watch(() => props.relation, (relation) => {
 }, { immediate: true })
 
 function commitLabel() {
+  if (props.readonly) return
   emit('update', { id: props.relation.id, label: label.value.trim() })
 }
 
 function changeKind(value: WorldClueBoardRelationKind) {
+  if (props.readonly) return
   kind.value = value
   emit('update', { id: props.relation.id, kind: value })
 }
@@ -54,10 +57,10 @@ function changeKind(value: WorldClueBoardRelationKind) {
       <span :title="sourceName">{{ sourceName }}</span><span class="clue-board-inspector__arrow">{{ kind === 'related' || kind === 'contradicts' ? '—' : '→' }}</span><span :title="targetName">{{ targetName }}</span>
     </div>
     <NSpace vertical size="small">
-      <NSelect :value="kind" :options="kindOptions" @update:value="changeKind" />
-      <NInput v-model:value="label" maxlength="500" placeholder="关系标签（可选）" @blur="commitLabel" @keyup.enter="commitLabel" />
-      <NButton type="error" secondary size="small" @click="emit('remove', relation.id)">删除关系</NButton>
-      <NButton v-if="kind !== 'related' && kind !== 'contradicts'" size="small" @click="emit('reverse', relation.id)">翻转方向</NButton>
+      <NSelect :value="kind" :options="kindOptions" :disabled="readonly" @update:value="changeKind" />
+      <NInput v-model:value="label" :readonly="readonly" maxlength="500" placeholder="关系标签（可选）" @blur="commitLabel" @keyup.enter="commitLabel" />
+      <NButton v-if="!readonly" type="error" secondary size="small" @click="emit('remove', relation.id)">删除关系</NButton>
+      <NButton v-if="!readonly && kind !== 'related' && kind !== 'contradicts'" size="small" @click="emit('reverse', relation.id)">翻转方向</NButton>
     </NSpace>
   </NCard>
 </template>

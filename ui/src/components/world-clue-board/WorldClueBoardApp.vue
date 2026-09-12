@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { NAlert, NButton, NButtonGroup, NCheckbox, NDropdown, NIcon, NInput, NSpace, NTag, NTooltip, useMessage } from 'naive-ui'
-import { Folder, LayoutBoard, Refresh, Rotate2, Search, Star } from '@vicons/tabler'
+import { AlertCircle, CircleCheck, CloudLock, CloudUpload, Folder, LayoutBoard, Refresh, Rotate2, Search, Star } from '@vicons/tabler'
 import { api } from '@/stores/_config'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import { useDisplayStore } from '@/stores/display'
 import { useUserStore } from '@/stores/user'
 import { useWorldClueStore, type WorldClueDetail, type WorldClueSummary } from '@/stores/worldClue'
-import { useWorldClueBoardStore, type WorldClueBoardPlacement, type WorldClueBoardRelation, type WorldClueBoardRelationEndpointRef, type WorldClueBoardRelationKind } from '@/stores/worldClueBoard'
+import { useWorldClueBoardStore, type WorldClueBoardEventPayload, type WorldClueBoardScope, type WorldClueBoardPlacement, type WorldClueBoardRelation, type WorldClueBoardRelationEndpointRef, type WorldClueBoardRelationKind } from '@/stores/worldClueBoard'
 import WorldCluePresentationHost from '@/components/world-clue/WorldCluePresentationHost.vue'
 import WorldClueEditorModal from '@/views/chat/components/clue-box/WorldClueEditorModal.vue'
 import ClueBoardCanvas from './ClueBoardCanvas.vue'
@@ -17,7 +17,7 @@ import ClueBoardRelationQuickBar from './ClueBoardRelationQuickBar.vue'
 import { arrangeLayouts, buildNodeLayouts } from './boardLayout'
 import type { BoardCamera, BoardDrawingEndpoint } from './boardTypes'
 import { QUICKDRAW_ENGINE_VERSION } from './quickdraw-adapter'
-import type { Snapshot } from '@quickdrawjs/core'
+import type { Diff, Snapshot } from '@quickdrawjs/core'
 import { useClueBoardInteraction } from './useClueBoardInteraction'
 
 const props = defineProps<{ resourceId: string; worldId: string; channelId: string }>()
@@ -75,6 +75,47 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 const session = computed(() => board.current)
+const scope = ref<WorldClueBoardScope>('personal')
+const switchingScope = ref(false)
+const boardReadonly = computed(() => !session.value?.canWrite)
+const scopePreferenceKey = () => `sealchat_clue_board_scope_v1:${String(user.info.id || '')}:${props.worldId}`
+
+async function prepareSharedRealtime() {
+  // InternalSurfaceView deliberately skips channel entry for personal boards.
+  // The existing gateway sets its world context through channel.enter.
+  const worldId = props.worldId
+  const channelId = props.channelId
+  const userId = String(user.info.id || '')
+  try {
+    await chat.ensureConnectionReady()
+    if (props.worldId !== worldId || props.channelId !== channelId || String(user.info.id || '') !== userId) return false
+    if (chat.curChannel?.id === channelId) return true
+    return await chat.channelSwitchTo(channelId)
+  } catch { return false }
+}
+
+async function switchScope(next: WorldClueBoardScope) {
+  if (next === scope.value || switchingScope.value) return
+  switchingScope.value = true
+  const worldId = props.worldId
+  const userId = String(user.info.id || '')
+  try {
+    if (!await flushBoard()) { message.warning('当前画板尚未同步，无法切换'); return }
+    if (props.worldId !== worldId || String(user.info.id || '') !== userId) return
+    if (next === 'shared' && !await prepareSharedRealtime()) { message.warning('无法建立协作连接'); return }
+    if (props.worldId !== worldId || String(user.info.id || '') !== userId) return
+    scope.value = next
+    clearSelection()
+    cancelConnection()
+    temporaryPlacementMap.clear()
+    layoutBackup = null
+    await board.load(worldId, { scope: next, force: next === 'shared' })
+    if (props.worldId !== worldId || String(user.info.id || '') !== userId || scope.value !== next) return
+    await nextTick()
+    drawingRef.value?.reloadSnapshot()
+    try { localStorage.setItem(scopePreferenceKey(), next) } catch { /* Storage may be unavailable. */ }
+  } finally { switchingScope.value = false }
+}
 const summaries = computed(() => worldClue.currentWorldId === props.worldId ? worldClue.summaries : [])
 const allSummaryIds = computed(() => new Set(summaries.value.map(item => item.id)))
 const folders = computed(() => worldClue.currentWorldId === props.worldId ? worldClue.folders : [])
@@ -96,11 +137,16 @@ const nodeLayouts = computed(() => buildNodeLayouts(
   allSummaryIds.value,
 ))
 const drawingSnapshot = computed<Snapshot | null>(() => {
-  const snapshot = session.value?.document.quickdraw?.snapshot
+  const current = session.value
+  if (!current) return null
+  // Shared canvas changes travel as diffs; only GET replaces its snapshot.
+  const snapshot = current.scope === 'shared'
+    ? (current.snapshotVersion, toRaw(current).document.quickdraw?.snapshot)
+    : current.document.quickdraw?.snapshot
   return snapshot && typeof snapshot === 'object' ? snapshot as Snapshot : null
 })
 const drawingTheme = computed<'light' | 'dark'>(() => display.palette === 'night' ? 'dark' : 'light')
-const drawingReadonly = computed(() => !session.value?.loaded || !!session.value?.loadFailed || props.resourceId !== 'main')
+const drawingReadonly = computed(() => !session.value?.loaded || !!session.value?.loadFailed || props.resourceId !== 'main' || boardReadonly.value || switchingScope.value)
 const drawingPreferenceKey = computed(() => `sealchat_clue_board_ui_v1:${String(user.info.id || '')}:${props.worldId}`)
 const hiddenIds = computed(() => {
   if (!onlySearchResults.value || !matchingIds.value) return new Set<string>()
@@ -118,6 +164,13 @@ const loadedCount = computed(() => summaries.value.length)
 const hasDirty = computed(() => !!session.value?.dirty || drawingUnsaved.value)
 const boardError = computed(() => session.value?.error || '')
 const boardConflict = computed(() => session.value?.status === 'conflict')
+const sharedSyncStatus = computed(() => {
+  if (boardReadonly.value) return { label: '只读', icon: CloudLock, className: 'is-readonly' }
+  if (boardError.value) return { label: '待重试', icon: AlertCircle, className: 'is-error' }
+  const current = session.value
+  if (current?.needsResync || current?.status === 'loading' || current?.status === 'saving' || current?.sharedSending || current?.sharedQueue.length || hasDirty.value) return { label: '同步中', icon: CloudUpload, className: 'is-syncing' }
+  return { label: '已同步', icon: CircleCheck, className: 'is-synced' }
+})
 const clueOptions = computed(() => folders.value.map(folder => ({ label: `${folder.scope === 'personal' ? '我的' : '世界'}：${folder.name}`, value: folder.id })))
 const folderDropdownOptions = computed(() => [
   { label: '全部文件夹', key: '' },
@@ -233,19 +286,21 @@ async function focusSearchResult(item: WorldClueSummary) {
 }
 
 function updateBoard(mutator: (draft: NonNullable<typeof session.value>['document']) => void) {
-  if (!session.value?.loaded || session.value.loadFailed) return false
+  if (!session.value?.loaded || session.value.loadFailed || boardReadonly.value) return false
   return board.updateDocument((draft) => mutator(draft))
 }
 
 function applyPlacement(value: { id: string; placement: { x: number; y: number; width?: number; pinned?: boolean } }) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
+  if (scope.value === 'shared') { board.putSharedPlacements({ [value.id]: { ...value.placement } }); return }
   updateBoard(document => { document.placements[value.id] = { ...value.placement } })
 }
 
 function togglePin(id: string) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const current = nodeLayouts.value.find(node => node.id === id)
   if (!current) return
+  if (scope.value === 'shared') { board.putSharedPlacements({ [id]: { x: current.x, y: current.y, width: current.width, pinned: !current.pinned } }); return }
   updateBoard(document => { document.placements[id] = { x: current.x, y: current.y, width: current.width, pinned: !current.pinned } })
 }
 
@@ -288,6 +343,10 @@ function onDrawingToolChange() {
 }
 
 function onDrawingSnapshot(snapshot: Snapshot) {
+  if (scope.value === 'shared') {
+    if (board.syncSharedSnapshot(snapshot)) { drawingUnsaved.value = false; drawingError.value = '' }
+    return
+  }
   drawingUnsaved.value = true
   const accepted = updateBoard(document => {
     document.quickdraw = { engineVersion: QUICKDRAW_ENGINE_VERSION, snapshot }
@@ -315,10 +374,18 @@ function onDrawingLoaded() {
 
 function onDrawingPending(pending: boolean) {
   drawingUnsaved.value = pending
+  board.setDrawingPending(pending)
+}
+
+function onDrawingDiff(diff: Diff) {
+  if (!board.applySharedQuickdrawDiff(diff)) {
+    drawingUnsaved.value = true
+    drawingError.value = '绘图操作尚未提交，请重试或重新载入'
+  }
 }
 
 function onBoardDrop(event: DragEvent) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const files = [...(event.dataTransfer?.files || [])].filter(file => file.type.startsWith('image/'))
   if (!files.length) return
   // A drop on a Vue clue node does not bubble through the sibling Quickdraw
@@ -330,7 +397,7 @@ function onBoardDrop(event: DragEvent) {
 }
 
 function onBoardDragOver(event: DragEvent) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   if ([...(event.dataTransfer?.types || [])].includes('Files')) event.preventDefault()
 }
 
@@ -416,7 +483,7 @@ async function editNode(id: string) {
 }
 
 function addRelation(value: { sourceRef: WorldClueBoardRelationEndpointRef; targetRef: WorldClueBoardRelationEndpointRef; kind: WorldClueBoardRelationKind; label?: string }) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   if (value.sourceRef.kind === value.targetRef.kind && value.sourceRef.id === value.targetRef.id) return
   const relation: WorldClueBoardRelation = {
     id: relationId(value.sourceRef.id, value.targetRef.id, value.kind, value.label || ''),
@@ -425,12 +492,13 @@ function addRelation(value: { sourceRef: WorldClueBoardRelationEndpointRef; targ
     kind: value.kind,
     ...(value.label ? { label: value.label } : {}),
   }
-  updateBoard(document => { document.relations = [...document.relations, relation] })
+  if (scope.value === 'shared') board.putSharedRelation(relation)
+  else updateBoard(document => { document.relations = [...document.relations, relation] })
   selectInteractionRelation(relation.id)
 }
 
 function startRelation(value: { id: string; kind: WorldClueBoardRelationKind }) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   clearDrawingSelection()
   drawingRef.value?.setTool('select')
   beginConnection({ kind: 'clue', id: value.id }, value.kind)
@@ -439,7 +507,7 @@ function startRelation(value: { id: string; kind: WorldClueBoardRelationKind }) 
 }
 
 function startDrawingRelation(kind: WorldClueBoardRelationKind) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const node = selectedDrawing.value
   if (!node) return
   drawingRef.value?.setTool('select')
@@ -453,7 +521,7 @@ function finishRelation(targetId: string) {
 }
 
 function finishEndpoint(target: WorldClueBoardRelationEndpointRef) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const active = connection.value
   if (!active || (active.source.kind === target.kind && active.source.id === target.id)) return
   addRelation({ sourceRef: active.source, targetRef: target, kind: active.kind })
@@ -463,7 +531,12 @@ function finishEndpoint(target: WorldClueBoardRelationEndpointRef) {
 }
 
 function reverseRelation(id: string) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
+  if (scope.value === 'shared') {
+    const relation = relations.value.find(item => item.id === id)
+    if (relation && relation.kind !== 'related' && relation.kind !== 'contradicts') board.putSharedRelation({ ...relation, sourceRef: relation.targetRef, targetRef: relation.sourceRef })
+    return
+  }
   updateBoard(document => {
     const relation = document.relations.find(item => item.id === id)
     if (!relation || relation.kind === 'related' || relation.kind === 'contradicts') return
@@ -472,12 +545,19 @@ function reverseRelation(id: string) {
 }
 
 function updateRelationLabel(id: string, label: string) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const relation = relations.value.find(item => item.id === id)
   if (!relation) return
   const nextLabel = label.trim()
   const currentLabel = relation.label?.trim() ?? ''
   if (currentLabel === nextLabel) return
+  if (scope.value === 'shared') {
+    const next = { ...relation }
+    if (nextLabel) next.label = nextLabel
+    else delete next.label
+    board.putSharedRelation(next)
+    return
+  }
   updateBoard(document => {
     const nextRelation = document.relations.find(item => item.id === id)
     if (!nextRelation) return
@@ -487,9 +567,10 @@ function updateRelationLabel(id: string, label: string) {
 }
 
 function updateRelationKind(id: string, kind: WorldClueBoardRelationKind) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const relation = relations.value.find(item => item.id === id)
   if (!relation || relation.kind === kind) return
+  if (scope.value === 'shared') { board.putSharedRelation({ ...relation, kind }); return }
   updateBoard(document => {
     const nextRelation = document.relations.find(item => item.id === id)
     if (nextRelation) nextRelation.kind = kind
@@ -502,57 +583,68 @@ function updateRelation(value: { id: string; kind?: WorldClueBoardRelationKind; 
 }
 
 function removeRelation(id: string) {
-  if (interactionLocked.value) return
-  updateBoard(document => { document.relations = document.relations.filter(item => item.id !== id) })
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
+  if (scope.value === 'shared') board.removeSharedRelation(id)
+  else updateBoard(document => { document.relations = document.relations.filter(item => item.id !== id) })
   closeInspector()
 }
 
 function arrangeCurrent() {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   const targets = new Set(nodeLayouts.value.filter(node => !hiddenIds.value.has(node.id)).map(node => node.id))
   arrangeFor(targets)
 }
 
 function arrangeSelected() {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   arrangeFor(new Set([...selectedIds.value].filter(id => nodeLayouts.value.some(node => node.id === id) && !hiddenIds.value.has(id))))
 }
 
 function arrangeFor(targetIds: Set<string>) {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   if (!targetIds.size) return
-  if (!layoutBackup) layoutBackup = { ...(session.value?.document.placements || {}) }
+  if (!layoutBackup) layoutBackup = scope.value === 'shared'
+    ? Object.fromEntries(nodeLayouts.value.map(node => [node.id, { x: node.x, y: node.y, width: node.width, pinned: node.pinned }]))
+    : { ...(session.value?.document.placements || {}) }
   const visibleNodes = nodeLayouts.value.filter(node => !hiddenIds.value.has(node.id))
   const positions = arrangeLayouts(visibleNodes, targetIds, relations.value)
+  if (scope.value === 'shared') { if (positions.size) board.putSharedPlacements(Object.fromEntries(positions)); return }
   updateBoard(document => {
     for (const [id, placement] of positions) document.placements[id] = placement
   })
 }
 
 function restoreLayout() {
-  if (interactionLocked.value) return
+  if (interactionLocked.value || boardReadonly.value || switchingScope.value) return
   if (!layoutBackup) return
   const backup = layoutBackup
   layoutBackup = null
+  if (scope.value === 'shared') { board.putSharedPlacements(backup); return }
   updateBoard(document => { document.placements = { ...backup } })
 }
 
 async function retryLoad() {
   if (session.value?.loaded) await board.retry()
-  else await board.load(props.worldId, { force: true })
+  else await board.load(props.worldId, { force: true, scope: scope.value })
 }
 
 async function discardAndReload() {
+  const key = session.value?.key
+  if (scope.value === 'shared' && drawingRef.value && !await drawingRef.value.flush()) return
+  if (session.value?.key !== key) return
   await board.discardLocalAndReload()
+  if (session.value?.key !== key) return
   drawingRef.value?.reloadSnapshot()
 }
 
 async function flushBoard() {
+  const key = session.value?.key
   const drawing = drawingRef.value
   if (drawing) {
     const finalized = await drawing.flush()
     if (!finalized || drawingUnsaved.value) return false
   }
+  if (session.value?.key !== key) return false
   return board.flush()
 }
 
@@ -630,7 +722,14 @@ async function initialLoad() {
     return
   }
   initialLoading.value = true
-  const [, loaded] = await Promise.all([refreshSource(), board.load(props.worldId)])
+  try { scope.value = localStorage.getItem(scopePreferenceKey()) === 'shared' ? 'shared' : 'personal' } catch { scope.value = 'personal' }
+  if (scope.value === 'shared' && !await prepareSharedRealtime()) {
+    if (epoch !== initialEpoch) return
+    scope.value = 'personal'
+    message.warning('无法建立协作连接，已打开个人画板')
+  }
+  if (epoch !== initialEpoch) return
+  const [, loaded] = await Promise.all([refreshSource(), board.load(props.worldId, { scope: scope.value, force: scope.value === 'shared' })])
   if (epoch !== initialEpoch) return
   if (loaded.status === 'error' && !loaded.loaded) {
     // Keep the surface visible so the user can explicitly retry; importantly,
@@ -683,14 +782,44 @@ watch(() => [props.worldId, user.info.id] as const, () => {
 })
 
 onMounted(() => {
+  board.startRealtime()
   void initialLoad()
   const handleConnected = () => { void refreshSource(); if (!drawingUnsaved.value) void board.refreshOnFocus() }
   const handleFocus = () => { void refreshSource(); if (!drawingUnsaved.value) void board.refreshOnFocus() }
   chatEvent.on('connected', handleConnected)
+  const handleBoardChanged = (event: { worldClueBoard?: WorldClueBoardEventPayload }) => {
+    if (!event.worldClueBoard) return
+    const operations = board.handleBoardChanged(event.worldClueBoard)
+    for (const operation of operations) {
+      if (operation.type === 'quickdraw.diff' && !drawingRef.value?.applyRemoteDiff(operation.quickdrawDiff)) {
+        board.requestSharedRefresh()
+        break
+      }
+    }
+  }
+  const handleClueChanged = async (event: { worldClue?: { worldId: string } }) => {
+    if (event.worldClue?.worldId !== props.worldId) return
+    const key = session.value?.key
+    await refreshSourceForced()
+    if (session.value?.key === key) board.requestSharedRefresh()
+  }
+  chatEvent.on('world-clue-board-changed' as any, handleBoardChanged)
+  chatEvent.on('world-clue-changed' as any, handleClueChanged)
+  const handleChannelEntered = () => {
+    if (chat.currentWorldId === props.worldId) board.requestSharedRefresh()
+  }
+  chatEvent.on('channel-switch-to', handleChannelEntered)
   window.addEventListener('focus', handleFocus)
   window.addEventListener('message', handleLifecycle)
   window.addEventListener('beforeunload', handleBeforeUnload)
-  focusListener = () => { chatEvent.off('connected', handleConnected); window.removeEventListener('focus', handleFocus) }
+  focusListener = () => {
+    chatEvent.off('connected', handleConnected)
+    chatEvent.off('world-clue-board-changed' as any, handleBoardChanged)
+    chatEvent.off('world-clue-changed' as any, handleClueChanged)
+    chatEvent.off('channel-switch-to', handleChannelEntered)
+    board.stopRealtime()
+    window.removeEventListener('focus', handleFocus)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -711,11 +840,22 @@ onBeforeUnmount(() => {
     <header class="world-clue-board-app__toolbar">
       <div class="world-clue-board-app__title">
         <strong>线索板</strong><span>已载入 {{ loadedCount }} 条</span>
+        <NButtonGroup><NButton size="small" :type="scope === 'personal' ? 'primary' : 'default'" :disabled="switchingScope" @click="switchScope('personal')">个人</NButton><NButton size="small" :type="scope === 'shared' ? 'primary' : 'default'" :disabled="switchingScope" @click="switchScope('shared')">协作</NButton></NButtonGroup>
+        <NTooltip v-if="scope === 'shared'">
+          <template #trigger>
+            <span class="world-clue-board-app__sync-status" :class="sharedSyncStatus.className" :aria-label="sharedSyncStatus.label" role="status">
+              <NIcon :size="17"><component :is="sharedSyncStatus.icon" /></NIcon>
+            </span>
+          </template>
+          {{ sharedSyncStatus.label }}
+        </NTooltip>
+        <NTag v-if="scope === 'personal' && hasDirty" type="warning" size="small">
+          未保存
+        </NTag>
         <NDropdown trigger="click" :options="folderDropdownOptions" :value="selectedFolderId" @select="selectFolder">
           <NTooltip><template #trigger><button type="button" class="world-clue-board-app__filter-button" :class="{ 'is-active': selectedFolderId }" :aria-label="selectedFolderLabel"><NIcon :size="18"><Folder /></NIcon></button></template>{{ selectedFolderLabel }}</NTooltip>
         </NDropdown>
         <NTooltip><template #trigger><button type="button" class="world-clue-board-app__filter-button" :class="{ 'is-active': favoritesOnly }" :aria-pressed="favoritesOnly" aria-label="只看收藏" @click="favoritesOnly = !favoritesOnly"><NIcon :size="18"><Star /></NIcon></button></template>{{ favoritesOnly ? '只看收藏：已开启' : '只看收藏' }}</NTooltip>
-        <NTag v-if="hasDirty" type="warning" size="small">未保存</NTag>
       </div>
       <div class="world-clue-board-app__toolbar-actions">
         <div class="world-clue-board-app__search">
@@ -729,9 +869,9 @@ onBeforeUnmount(() => {
         </div>
         <NCheckbox v-model:checked="onlySearchResults">仅显示结果</NCheckbox>
         <NButtonGroup>
-          <NButton size="small" :disabled="interactionLocked" @click="arrangeCurrent"><template #icon><LayoutBoard /></template>整理当前视图</NButton>
-          <NButton size="small" :disabled="interactionLocked || !selectedIds.size" @click="arrangeSelected">整理所选</NButton>
-          <NButton size="small" :disabled="interactionLocked || !layoutBackup" @click="restoreLayout"><template #icon><Rotate2 /></template>恢复</NButton>
+          <NButton size="small" :disabled="interactionLocked || boardReadonly || switchingScope" @click="arrangeCurrent"><template #icon><LayoutBoard /></template>整理当前视图</NButton>
+          <NButton size="small" :disabled="interactionLocked || boardReadonly || switchingScope || !selectedIds.size" @click="arrangeSelected">整理所选</NButton>
+          <NButton size="small" :disabled="interactionLocked || boardReadonly || switchingScope || !layoutBackup" @click="restoreLayout"><template #icon><Rotate2 /></template>恢复</NButton>
         </NButtonGroup>
       </div>
     </header>
@@ -739,7 +879,7 @@ onBeforeUnmount(() => {
     <NAlert v-if="drawingError" type="error" :show-icon="false">{{ drawingError }}</NAlert>
     <NAlert v-if="boardError" type="error" :show-icon="false">
       {{ boardError }}
-	      <template #action><NSpace size="small"><NButton v-if="boardConflict" size="small" :disabled="interactionLocked" @click="discardAndReload">放弃本地修改并重载</NButton><NButton v-if="session?.canRetry" size="small" @click="retryLoad"><Refresh /> 重试</NButton></NSpace></template>
+	      <template #action><NSpace size="small"><NButton v-if="boardConflict || scope === 'shared'" size="small" :disabled="interactionLocked || switchingScope" @click="discardAndReload">放弃本地修改并重载</NButton><NButton v-if="session?.canRetry" size="small" @click="retryLoad"><Refresh /> 重试</NButton></NSpace></template>
     </NAlert>
     <main ref="boardBody" class="world-clue-board-app__body" :class="{ 'is-panning': panGesture }" @dragover="onBoardDragOver" @drop="onBoardDrop" @pointerdown.capture="onBoardPointerDown" @pointermove.capture="onBoardPointerMove" @pointerup.capture="onBoardPointerUp" @pointercancel.capture="onBoardPointerUp" @lostpointercapture="panGesture = null" @contextmenu.capture="onBoardContextMenu">
       <div v-if="initialLoading" class="world-clue-board-app__loading">正在载入线索板…</div>
@@ -750,7 +890,9 @@ onBeforeUnmount(() => {
           :theme="drawingTheme"
           :preference-key="drawingPreferenceKey"
           :readonly="drawingReadonly"
-          :interaction-locked="interactionLocked"
+          :realtime-diff-enabled="scope === 'shared' && !boardReadonly"
+          @user-diff="onDrawingDiff"
+          :interaction-locked="interactionLocked || boardReadonly || switchingScope"
           @camera-change="camera = $event"
           @snapshot-change="onDrawingSnapshot"
           @snapshot-loaded="onDrawingLoaded"
@@ -771,7 +913,7 @@ onBeforeUnmount(() => {
           :hidden-ids="hiddenIds"
           :dimmed-ids="dimmedIds"
           :connection="connection"
-          :interaction-locked="interactionLocked"
+          :interaction-locked="interactionLocked || boardReadonly || switchingScope"
           @select="selectNode"
           @select-relation="selectRelation"
           @start-connection="startRelation"
@@ -786,11 +928,12 @@ onBeforeUnmount(() => {
         <template v-for="item in drawingEndpoints" :key="item.id">
           <div v-if="connection && hoveredDrawingId === item.id" class="world-clue-board-app__drawing-target" :style="drawingOverlayStyle(item)" />
         </template>
-        <ClueBoardRelationQuickBar v-if="!interactionLocked && selectedDrawing && !connection && !selectedIds.size && !inspectorVisible" class="world-clue-board-app__drawing-launcher" :style="{ left: `${(selectedDrawing.x + selectedDrawing.width / 2) * camera.zoom + camera.offsetX}px`, top: `${(selectedDrawing.y + selectedDrawing.height) * camera.zoom + camera.offsetY + 10}px` }" @start="startDrawingRelation" />
+        <ClueBoardRelationQuickBar v-if="!interactionLocked && !boardReadonly && selectedDrawing && !connection && !selectedIds.size && !inspectorVisible" class="world-clue-board-app__drawing-launcher" :style="{ left: `${(selectedDrawing.x + selectedDrawing.width / 2) * camera.zoom + camera.offsetX}px`, top: `${(selectedDrawing.y + selectedDrawing.height) * camera.zoom + camera.offsetY + 10}px` }" @start="startDrawingRelation" />
       </template>
       <ClueBoardRelationInspector
         v-if="!interactionLocked && inspectorVisible && selectedRelation"
         :relation="selectedRelation"
+        :readonly="boardReadonly || switchingScope"
         :summaries="summaries"
         :drawing-endpoints="drawingEndpoints"
         @update="updateRelation"
@@ -809,6 +952,11 @@ onBeforeUnmount(() => {
 .world-clue-board-app__toolbar { position: relative; z-index: 70; display: flex; min-height: 54px; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--sc-border-mute); background: color-mix(in srgb, var(--sc-bg-elevated) 94%, transparent); }
 .world-clue-board-app__title { display: flex; min-width: max-content; align-items: center; gap: 8px; }
 .world-clue-board-app__title span { color: var(--sc-text-secondary); font-size: 12px; }
+.world-clue-board-app__sync-status { display: inline-grid; width: 24px; height: 28px; flex: 0 0 24px; place-items: center; color: var(--sc-text-secondary); }
+.world-clue-board-app__sync-status.is-readonly { color: var(--sc-text-secondary); }
+.world-clue-board-app__sync-status.is-error { color: var(--error-color, #d03050); }
+.world-clue-board-app__sync-status.is-syncing { color: var(--warning-color, #f0a020); }
+.world-clue-board-app__sync-status.is-synced { color: var(--success-color, #18a058); }
 .world-clue-board-app__toolbar-actions { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 .world-clue-board-app__filter-button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; color: var(--sc-text-secondary); border: 1px solid transparent; border-radius: 7px; background: transparent; cursor: pointer; }
 .world-clue-board-app__filter-button:hover, .world-clue-board-app__filter-button.is-active { color: var(--primary-color, #3388de); border-color: color-mix(in srgb, var(--primary-color, #3388de) 45%, transparent); background: color-mix(in srgb, var(--primary-color, #3388de) 14%, transparent); }

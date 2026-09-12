@@ -52,6 +52,10 @@ export class QuickdrawAdapter {
     return this.store.getSnapshot()
   }
 
+  applyDiff(diff: Diff): void {
+    this.store.applyDiff(diff, 'remote')
+  }
+
   /** Load is explicitly remote so it never becomes a user undo entry. */
   loadSnapshot(snapshot: Snapshot): void {
     this.store.loadSnapshot(snapshot, 'remote')

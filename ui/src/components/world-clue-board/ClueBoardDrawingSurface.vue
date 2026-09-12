@@ -10,6 +10,9 @@ import ClueBoardDrawingInspector from './ClueBoardDrawingInspector.vue'
 import '@quickdrawjs/core/quickdraw.css'
 import {
   COLOR_IDS,
+  composeDiff,
+  isDiffEmpty,
+  type Diff,
   pageBounds,
   DASH_IDS,
   FILL_IDS,
@@ -36,15 +39,18 @@ const props = withDefaults(defineProps<{
   grid?: GridId
   preferenceKey: string
   readonly?: boolean
+  realtimeDiffEnabled?: boolean
   interactionLocked?: boolean
 }>(), {
   snapshot: null,
   grid: 'dots',
   readonly: false,
+  realtimeDiffEnabled: false,
   interactionLocked: false,
 })
 
 const emit = defineEmits<{
+  'user-diff': [diff: Diff]
   'snapshot-change': [snapshot: Snapshot]
   'snapshot-loaded': []
   'drawing-pending': [pending: boolean]
@@ -135,6 +141,28 @@ const pickerInputs = new Map<HTMLInputElement, () => void>()
 let unsubs: Array<() => void> = []
 let finalizeQueued = false
 let pendingUserChange = false
+let pendingRealtimeDiff: Diff | null = null
+let realtimeDiffTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushRealtimeDiff() {
+  if (realtimeDiffTimer) clearTimeout(realtimeDiffTimer)
+  realtimeDiffTimer = null
+  const diff = pendingRealtimeDiff
+  pendingRealtimeDiff = null
+  if (diff && !isDiffEmpty(diff)) emit('user-diff', diff)
+}
+
+function applyRemoteDiff(diff: Diff) {
+  if (!adapter.value || pendingUserChange || pendingRealtimeDiff || pendingImports.size || pendingOperations.size) return false
+  adapter.value.applyDiff(diff)
+  lastCommittedSnapshot = snapshotJSON(adapter.value.getSnapshot())
+  lastAppliedSnapshot = lastCommittedSnapshot
+  publishEndpoints()
+  syncSelectionDetails()
+  syncHistory()
+  adapter.value.editor.requestRender()
+  return true
+}
 let destroyed = false
 let lastAppliedSnapshot = ''
 let lastEmittedSnapshot = ''
@@ -367,6 +395,7 @@ function hasValue<T extends string>(value: unknown, values: readonly T[]): value
 }
 
 function emitFinalSnapshot() {
+  flushRealtimeDiff()
   const current = adapter.value?.getSnapshot()
   if (!current) {
     pendingUserChange = false
@@ -435,7 +464,7 @@ async function waitForPendingWork() {
   }
 }
 
-function onStoreChange(_diff: unknown, source: string) {
+function onStoreChange(diff: Diff, source: string) {
   publishEndpoints()
   syncSelectionDetails()
   if (source !== 'user') return
@@ -444,6 +473,10 @@ function onStoreChange(_diff: unknown, source: string) {
   emit('focus')
   emit('drawing-pending', true)
   pendingUserChange = true
+  if (props.realtimeDiffEnabled && !props.readonly) {
+    pendingRealtimeDiff = pendingRealtimeDiff ? composeDiff(pendingRealtimeDiff, diff) : diff
+    if (!realtimeDiffTimer) realtimeDiffTimer = setTimeout(flushRealtimeDiff, 50)
+  }
   queueFinalize()
 }
 
@@ -736,6 +769,7 @@ async function flush(): Promise<boolean> {
   commitText()
   await waitForPendingWork()
   await Promise.resolve()
+  flushRealtimeDiff()
   if (activePointers.size || textEditing.value) return false
   finalizePending()
   return !pendingUserChange
@@ -833,6 +867,7 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerUp(event: PointerEvent) {
+  flushRealtimeDiff()
   activePointers.delete(event.pointerId)
   activePointerTypes.delete(event.pointerId)
   if (!activePointers.size) queueFinalize()
@@ -942,6 +977,7 @@ onBeforeUnmount(() => {
   commitText()
   finalizePending()
   destroyed = true
+  flushRealtimeDiff()
   stopFloatingDrag()
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -967,6 +1003,7 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
+  applyRemoteDiff,
   clearSelection,
   commitText,
   flush,

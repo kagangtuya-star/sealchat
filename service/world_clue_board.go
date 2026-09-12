@@ -19,6 +19,310 @@ import (
 )
 
 const WorldClueBoardMaxDocumentBytes = 8 << 20
+const WorldClueBoardRealtimeEventMaxBytes = 256 << 10
+
+type WorldClueBoardOperationInput struct {
+	Scope     string                           `json:"scope"`
+	ClientID  string                           `json:"clientId"`
+	Operation protocol.WorldClueBoardOperation `json:"operation"`
+}
+
+type WorldClueBoardOperationResult struct {
+	protocol.WorldClueBoardWriteResult
+	Changed         bool                             `json:"changed"`
+	RemovedRelation *protocol.WorldClueBoardRelation `json:"-"`
+}
+
+type worldClueBoardQuickdrawDiff struct {
+	Added   map[string]json.RawMessage   `json:"added"`
+	Removed map[string]json.RawMessage   `json:"removed"`
+	Updated map[string][]json.RawMessage `json:"updated"`
+}
+
+func applyWorldClueBoardQuickdrawDiff(document *protocol.WorldClueBoardDocument, raw json.RawMessage) error {
+	var diff worldClueBoardQuickdrawDiff
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &diff) != nil {
+		return ErrWorldClueBoardInvalid
+	}
+	if diff.Added == nil || diff.Removed == nil || diff.Updated == nil {
+		return ErrWorldClueBoardInvalid
+	}
+	for id := range diff.Added {
+		if _, exists := diff.Removed[id]; exists {
+			return ErrWorldClueBoardInvalid
+		}
+		if _, exists := diff.Updated[id]; exists {
+			return ErrWorldClueBoardInvalid
+		}
+	}
+	for id := range diff.Removed {
+		if _, exists := diff.Updated[id]; exists {
+			return ErrWorldClueBoardInvalid
+		}
+	}
+	for _, pair := range diff.Updated {
+		if len(pair) != 2 {
+			return ErrWorldClueBoardInvalid
+		}
+	}
+	if document.Quickdraw == nil {
+		document.Quickdraw = &protocol.WorldClueBoardQuickdraw{EngineVersion: protocol.WorldClueBoardQuickdrawV020, Snapshot: json.RawMessage(`{"document":{"store":{}}}`)}
+	}
+	var snapshot map[string]json.RawMessage
+	var drawing map[string]json.RawMessage
+	var records map[string]json.RawMessage
+	if json.Unmarshal(document.Quickdraw.Snapshot, &snapshot) != nil || json.Unmarshal(snapshot["document"], &drawing) != nil || json.Unmarshal(drawing["store"], &records) != nil || records == nil {
+		return ErrWorldClueBoardUnsupported
+	}
+	// Validate even removed/old records, so malformed diffs cannot be broadcast.
+	validateRecord := func(id string, record json.RawMessage) error {
+		store, err := json.Marshal(map[string]json.RawMessage{id: record})
+		if err != nil {
+			return ErrWorldClueBoardInvalid
+		}
+		return validateQuickdrawSnapshot(&protocol.WorldClueBoardQuickdraw{EngineVersion: protocol.WorldClueBoardQuickdrawV020, Snapshot: json.RawMessage(`{"document":{"store":` + string(store) + `}}`)})
+	}
+	for id, record := range diff.Removed {
+		if err := validateRecord(id, record); err != nil {
+			return err
+		}
+		delete(records, id)
+	}
+	for id, pair := range diff.Updated {
+		for _, record := range pair {
+			if err := validateRecord(id, record); err != nil {
+				return err
+			}
+		}
+		records[id] = pair[1]
+	}
+	for id, record := range diff.Added {
+		if err := validateRecord(id, record); err != nil {
+			return err
+		}
+		records[id] = record
+	}
+	drawing["store"], _ = json.Marshal(records)
+	snapshot["document"], _ = json.Marshal(drawing)
+	document.Quickdraw.Snapshot, _ = json.Marshal(snapshot)
+	return nil
+}
+
+func applyWorldClueBoardOperation(document *protocol.WorldClueBoardDocument, operation protocol.WorldClueBoardOperation, visible map[string]bool) (*protocol.WorldClueBoardRelation, error) {
+	if err := validateBoardText(operation.ID, "operation id", 160, true); err != nil {
+		return nil, err
+	}
+	switch operation.Type {
+	case protocol.WorldClueBoardPlacementsPut:
+		if len(operation.Placements) == 0 || operation.Relation != nil || operation.RelationID != "" || len(operation.QuickdrawDiff) != 0 {
+			return nil, ErrWorldClueBoardInvalid
+		}
+		for id, placement := range operation.Placements {
+			if visible != nil && !visible[id] {
+				return nil, ErrWorldClueBoardDenied
+			}
+			document.Placements[id] = placement
+		}
+	case protocol.WorldClueBoardRelationPut:
+		if operation.Relation == nil || len(operation.Placements) != 0 || operation.RelationID != "" || len(operation.QuickdrawDiff) != 0 {
+			return nil, ErrWorldClueBoardInvalid
+		}
+		if !worldClueBoardRelationVisible(*operation.Relation, visible) {
+			return nil, ErrWorldClueBoardDenied
+		}
+		for index, relation := range document.Relations {
+			if relation.ID == operation.Relation.ID {
+				// Replacing a guessed hidden relation ID must not overwrite it either.
+				if !worldClueBoardRelationVisible(relation, visible) {
+					return nil, ErrWorldClueBoardDenied
+				}
+				document.Relations[index] = *operation.Relation
+				return nil, nil
+			}
+		}
+		document.Relations = append(document.Relations, *operation.Relation)
+	case protocol.WorldClueBoardRelationRemove:
+		if err := validateBoardText(operation.RelationID, "relation id", 160, true); err != nil {
+			return nil, err
+		}
+		if operation.Relation != nil || len(operation.Placements) != 0 || len(operation.QuickdrawDiff) != 0 {
+			return nil, ErrWorldClueBoardInvalid
+		}
+		for index, relation := range document.Relations {
+			if relation.ID == operation.RelationID {
+				if !worldClueBoardRelationVisible(relation, visible) {
+					return nil, ErrWorldClueBoardDenied
+				}
+				document.Relations = append(document.Relations[:index], document.Relations[index+1:]...)
+				return &relation, nil
+			}
+		}
+	case protocol.WorldClueBoardQuickdrawDiff:
+		if operation.Relation != nil || operation.RelationID != "" || len(operation.Placements) != 0 {
+			return nil, ErrWorldClueBoardInvalid
+		}
+		return nil, applyWorldClueBoardQuickdrawDiff(document, operation.QuickdrawDiff)
+	default:
+		return nil, ErrWorldClueBoardInvalid
+	}
+	return nil, nil
+}
+
+func WorldClueBoardApplyOperation(worldID, boardKey, actorID string, input WorldClueBoardOperationInput) (*WorldClueBoardOperationResult, error) {
+	if err := validateWorldClueBoardScope(boardKey); err != nil {
+		return nil, err
+	}
+	if input.Scope != protocol.WorldClueBoardScopeShared {
+		return nil, ErrWorldClueBoardInvalid
+	}
+	_, canWrite, err := worldClueBoardAccess(worldID, actorID, input.Scope, false)
+	if err != nil {
+		return nil, err
+	}
+	if !canWrite {
+		return nil, ErrWorldClueBoardDenied
+	}
+	if err := validateBoardText(input.ClientID, "client id", 160, true); err != nil {
+		return nil, err
+	}
+	needsClueVisibility := false
+	switch input.Operation.Type {
+	case protocol.WorldClueBoardPlacementsPut, protocol.WorldClueBoardRelationPut, protocol.WorldClueBoardRelationRemove:
+		needsClueVisibility = true
+	case protocol.WorldClueBoardQuickdrawDiff:
+	default:
+		return nil, ErrWorldClueBoardInvalid
+	}
+	db := model.GetDB()
+	for attempt := 0; attempt < 5; attempt++ {
+		var row model.WorldClueBoardModel
+		if err := db.Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ?", worldID, boardKey, input.Scope, "").Limit(1).Find(&row).Error; err != nil {
+			return nil, err
+		}
+		document := EmptyWorldClueBoardDocument()
+		currentCanonical, _ := json.Marshal(document)
+		if row.ID != "" {
+			document, currentCanonical, err = validateWorldClueBoardDocument([]byte(row.DocumentJSON))
+			if err != nil {
+				return nil, err
+			}
+		}
+		var visible map[string]bool
+		if needsClueVisibility {
+			visible, err = worldClueBoardVisibleClues(worldID, actorID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		removed, err := applyWorldClueBoardOperation(&document, input.Operation, visible)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(document)
+		if err != nil {
+			return nil, ErrWorldClueBoardInvalid
+		}
+		_, canonical, err := validateWorldClueBoardDocument(raw)
+		if err != nil {
+			return nil, err
+		}
+		result := &WorldClueBoardOperationResult{WorldClueBoardWriteResult: protocol.WorldClueBoardWriteResult{WorldID: worldID, BoardKey: boardKey, Scope: input.Scope, Revision: row.Revision}, RemovedRelation: removed}
+		if !row.UpdatedAt.IsZero() {
+			result.UpdatedAt = row.UpdatedAt.UnixMilli()
+		}
+		if bytes.Equal(canonical, currentCanonical) {
+			return result, nil
+		}
+		if row.Revision == math.MaxInt64 {
+			return nil, ErrWorldClueBoardConflict
+		}
+		_, canWrite, err = worldClueBoardAccess(worldID, actorID, input.Scope, false)
+		if err != nil {
+			return nil, err
+		}
+		if !canWrite {
+			return nil, ErrWorldClueBoardDenied
+		}
+		now := time.Now()
+		var written *gorm.DB
+		if row.ID == "" {
+			row = model.WorldClueBoardModel{WorldID: worldID, BoardKey: boardKey, Scope: input.Scope, OwnerUserID: "", Revision: 1, DocumentJSON: string(canonical), UpdatedBy: actorID}
+			row.Init()
+			row.CreatedAt, row.UpdatedAt = now, now
+			written = db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+		} else {
+			written = db.Model(&model.WorldClueBoardModel{}).Where("id = ? AND revision = ?", row.ID, row.Revision).Updates(map[string]any{"document_json": string(canonical), "revision": row.Revision + 1, "updated_by": actorID, "updated_at": now})
+		}
+		if written.Error != nil {
+			if errors.Is(written.Error, gorm.ErrDuplicatedKey) {
+				continue
+			}
+			return nil, written.Error
+		}
+		if written.RowsAffected != 1 {
+			continue
+		}
+		result.Revision++
+		result.UpdatedAt, result.Changed = now.UnixMilli(), true
+		return result, nil
+	}
+	return nil, ErrWorldClueBoardConflict
+}
+
+// FilterWorldClueBoardOperationForActor returns only recipient-visible fields.
+// Errors are fail-closed: the caller must not send the unfiltered operation.
+func FilterWorldClueBoardOperationForActor(worldID, actorID string, operation *protocol.WorldClueBoardOperation, removed *protocol.WorldClueBoardRelation) (*protocol.WorldClueBoardOperation, error) {
+	if _, _, err := worldClueBoardAccess(worldID, actorID, protocol.WorldClueBoardScopeShared, false); err != nil {
+		return nil, err
+	}
+	if operation == nil {
+		return nil, nil
+	}
+	filtered := *operation
+	switch operation.Type {
+	case protocol.WorldClueBoardPlacementsPut:
+		visible, err := worldClueBoardVisibleClues(worldID, actorID)
+		if err != nil {
+			return nil, err
+		}
+		filtered.Placements = make(map[string]protocol.WorldClueBoardPlacement)
+		for id, placement := range operation.Placements {
+			if visible == nil || visible[id] {
+				filtered.Placements[id] = placement
+			}
+		}
+		if len(filtered.Placements) == 0 {
+			return nil, nil
+		}
+	case protocol.WorldClueBoardRelationPut:
+		visible, err := worldClueBoardVisibleClues(worldID, actorID)
+		if err != nil {
+			return nil, err
+		}
+		if operation.Relation == nil || !worldClueBoardRelationVisible(*operation.Relation, visible) {
+			return nil, nil
+		}
+	case protocol.WorldClueBoardRelationRemove:
+		visible, err := worldClueBoardVisibleClues(worldID, actorID)
+		if err != nil {
+			return nil, err
+		}
+		if removed == nil || !worldClueBoardRelationVisible(*removed, visible) {
+			return nil, nil
+		}
+	case protocol.WorldClueBoardQuickdrawDiff:
+	default:
+		return nil, nil
+	}
+	raw, err := json.Marshal(filtered)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > WorldClueBoardRealtimeEventMaxBytes {
+		return nil, nil
+	}
+	return &filtered, nil
+}
 
 var (
 	ErrWorldClueBoardInvalid     = errors.New("world clue board invalid")
@@ -29,6 +333,7 @@ var (
 )
 
 type WorldClueBoardPutInput struct {
+	Scope string
 	// A pointer is intentional: revision zero is a valid first-create value,
 	// while an omitted field is a malformed request.
 	ExpectedRevision *int64
@@ -380,21 +685,123 @@ func boardResponse(row *model.WorldClueBoardModel, document protocol.WorldClueBo
 	}
 }
 
-func WorldClueBoardGet(worldID, boardKey, actorID string) (*protocol.WorldClueBoardResponse, error) {
+func worldClueBoardAccess(worldID, actorID, scope string, wholeWrite bool) (string, bool, error) {
+	if scope == "" {
+		scope = protocol.WorldClueBoardScopePersonal
+	}
+	if scope != protocol.WorldClueBoardScopePersonal && scope != protocol.WorldClueBoardScopeShared {
+		return "", false, ErrWorldClueBoardInvalid
+	}
+	if err := ensureWorldClueBoardMember(model.GetDB(), worldID, actorID); err != nil {
+		return "", false, err
+	}
+	if scope == protocol.WorldClueBoardScopePersonal {
+		return actorID, true, nil
+	}
+	role, err := worldClueRole(model.GetDB(), worldID, actorID)
+	if err != nil {
+		return "", false, err
+	}
+	if wholeWrite && !worldClueIsAdminRole(role) {
+		return "", false, ErrWorldClueBoardDenied
+	}
+	return "", worldClueIsAdminRole(role) || role == model.WorldRoleMember, nil
+}
+
+func worldClueBoardVisibleClues(worldID, actorID string) (map[string]bool, error) {
+	db := model.GetDB()
+	role, err := worldClueRole(db, worldID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	if worldClueIsAdminRole(role) {
+		return nil, nil
+	}
+	if role == "" {
+		return nil, ErrWorldClueDenied
+	}
+	var clues []model.WorldClueModel
+	if err := db.Select("id", "status", "default_access").Where("world_id = ? AND status <> ?", worldID, model.WorldClueStatusArchived).Find(&clues).Error; err != nil {
+		return nil, err
+	}
+	var accessRows []model.WorldClueAccessModel
+	if err := db.Select("clue_id", "access_override").Where("world_id = ? AND user_id = ?", worldID, actorID).Find(&accessRows).Error; err != nil {
+		return nil, err
+	}
+	accessByClue := make(map[string]string, len(accessRows))
+	for _, row := range accessRows {
+		accessByClue[row.ClueID] = row.AccessOverride
+	}
+	visible := make(map[string]bool, len(clues))
+	for i := range clues {
+		override := model.WorldClueAccessInherit
+		if access, exists := accessByClue[clues[i].ID]; exists {
+			override = access
+		}
+		access := effectiveWorldClueAccess(role, clues[i].DefaultAccess, override)
+		if canViewWorldClue(&clues[i], role, access) {
+			visible[clues[i].ID] = true
+		}
+	}
+	return visible, nil
+}
+
+func worldClueBoardRelationVisible(relation protocol.WorldClueBoardRelation, visible map[string]bool) bool {
+	if visible == nil {
+		return true
+	}
+	for _, endpoint := range []protocol.WorldClueBoardRelationEndpointRef{relation.SourceRef, relation.TargetRef} {
+		if endpoint.Kind == protocol.WorldClueBoardRelationEndpointClue && !visible[endpoint.ID] {
+			return false
+		}
+	}
+	return true
+}
+
+func filterWorldClueBoardDocumentForActor(worldID, actorID string, document protocol.WorldClueBoardDocument) (protocol.WorldClueBoardDocument, error) {
+	visible, err := worldClueBoardVisibleClues(worldID, actorID)
+	if err != nil {
+		return document, err
+	}
+	if visible == nil {
+		return document, nil
+	}
+	placements := make(map[string]protocol.WorldClueBoardPlacement)
+	for id, placement := range document.Placements {
+		if visible[id] {
+			placements[id] = placement
+		}
+	}
+	relations := make([]protocol.WorldClueBoardRelation, 0)
+	for _, relation := range document.Relations {
+		if worldClueBoardRelationVisible(relation, visible) {
+			relations = append(relations, relation)
+		}
+	}
+	document.Placements, document.Relations = placements, relations
+	return document, nil
+}
+
+func WorldClueBoardGet(worldID, boardKey, actorID string, scopes ...string) (*protocol.WorldClueBoardResponse, error) {
 	if err := validateWorldClueBoardScope(boardKey); err != nil {
 		return nil, err
 	}
-	db := model.GetDB()
-	if err := ensureWorldClueBoardMember(db, worldID, actorID); err != nil {
+	scope := protocol.WorldClueBoardScopePersonal
+	if len(scopes) > 0 && scopes[0] != "" {
+		scope = scopes[0]
+	}
+	ownerID, canWrite, err := worldClueBoardAccess(worldID, actorID, scope, false)
+	if err != nil {
 		return nil, err
 	}
+	db := model.GetDB()
 	var row model.WorldClueBoardModel
-	if err := db.Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ?", worldID, boardKey, protocol.WorldClueBoardScopePersonal, actorID).Limit(1).Find(&row).Error; err != nil {
+	if err := db.Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ?", worldID, boardKey, scope, ownerID).Limit(1).Find(&row).Error; err != nil {
 		return nil, err
 	}
 	if row.ID == "" {
 		document := EmptyWorldClueBoardDocument()
-		return &protocol.WorldClueBoardResponse{WorldID: worldID, BoardKey: boardKey, Scope: protocol.WorldClueBoardScopePersonal, OwnerUserID: actorID, Revision: 0, Document: document}, nil
+		return &protocol.WorldClueBoardResponse{WorldID: worldID, BoardKey: boardKey, Scope: scope, OwnerUserID: ownerID, Revision: 0, Document: document, CanWrite: canWrite}, nil
 	}
 	document, _, err := validateWorldClueBoardDocument([]byte(row.DocumentJSON))
 	if err != nil {
@@ -402,7 +809,15 @@ func WorldClueBoardGet(worldID, boardKey, actorID string) (*protocol.WorldClueBo
 		// into an empty document that could be overwritten by a later PUT.
 		return nil, err
 	}
-	return boardResponse(&row, document), nil
+	if scope == protocol.WorldClueBoardScopeShared {
+		document, err = filterWorldClueBoardDocumentForActor(worldID, actorID, document)
+		if err != nil {
+			return nil, err
+		}
+	}
+	response := boardResponse(&row, document)
+	response.CanWrite = canWrite
+	return response, nil
 }
 
 func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPutInput) (*protocol.WorldClueBoardWriteResult, error) {
@@ -411,7 +826,12 @@ func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPu
 	}
 	// Authorize before parsing an attacker-controlled document so anonymous or
 	// non-member callers cannot use validation/size errors as a write oracle.
-	if err := ensureWorldClueBoardMember(model.GetDB(), worldID, actorID); err != nil {
+	scope := input.Scope
+	if scope == "" {
+		scope = protocol.WorldClueBoardScopePersonal
+	}
+	ownerID, _, err := worldClueBoardAccess(worldID, actorID, scope, true)
+	if err != nil {
 		return nil, err
 	}
 	if input.ExpectedRevision == nil || *input.ExpectedRevision < 0 || *input.ExpectedRevision == int64(^uint64(0)>>1) {
@@ -427,12 +847,21 @@ func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPu
 		if err := ensureWorldClueBoardMember(tx, worldID, actorID); err != nil {
 			return err
 		}
+		if scope == protocol.WorldClueBoardScopeShared {
+			role, err := worldClueRole(tx, worldID, actorID)
+			if err != nil {
+				return err
+			}
+			if !worldClueIsAdminRole(role) {
+				return ErrWorldClueBoardDenied
+			}
+		}
 		// Never let a PUT turn an unreadable persisted document into a clean
 		// replacement. A scoped read is used only to validate the existing
 		// snapshot; the actual write below still relies on the revision predicate
 		// and RowsAffected for optimistic concurrency.
 		var current model.WorldClueBoardModel
-		if err := tx.Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ?", worldID, boardKey, protocol.WorldClueBoardScopePersonal, actorID).Limit(1).Find(&current).Error; err != nil {
+		if err := tx.Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ?", worldID, boardKey, scope, ownerID).Limit(1).Find(&current).Error; err != nil {
 			return err
 		}
 		if current.ID != "" {
@@ -444,8 +873,8 @@ func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPu
 		if expected == 0 {
 			now := time.Now()
 			row := &model.WorldClueBoardModel{
-				WorldID: worldID, BoardKey: boardKey, Scope: protocol.WorldClueBoardScopePersonal,
-				OwnerUserID: actorID, Revision: 1, DocumentJSON: string(canonical), UpdatedBy: actorID,
+				WorldID: worldID, BoardKey: boardKey, Scope: scope,
+				OwnerUserID: ownerID, Revision: 1, DocumentJSON: string(canonical), UpdatedBy: actorID,
 			}
 			row.Init()
 			row.CreatedAt = now
@@ -460,12 +889,12 @@ func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPu
 			if created.RowsAffected != 1 {
 				return ErrWorldClueBoardConflict
 			}
-			result = protocol.WorldClueBoardWriteResult{WorldID: worldID, BoardKey: boardKey, Scope: protocol.WorldClueBoardScopePersonal, Revision: 1, UpdatedAt: now.UnixMilli()}
+			result = protocol.WorldClueBoardWriteResult{WorldID: worldID, BoardKey: boardKey, Scope: scope, Revision: 1, UpdatedAt: now.UnixMilli()}
 			return nil
 		}
 		now := time.Now()
 		updated := tx.Model(&model.WorldClueBoardModel{}).
-			Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ? AND revision = ?", worldID, boardKey, protocol.WorldClueBoardScopePersonal, actorID, expected).
+			Where("world_id = ? AND board_key = ? AND scope = ? AND owner_user_id = ? AND revision = ?", worldID, boardKey, scope, ownerID, expected).
 			Updates(map[string]any{"document_json": string(canonical), "revision": expected + 1, "updated_by": actorID, "updated_at": now})
 		if updated.Error != nil {
 			return updated.Error
@@ -473,7 +902,7 @@ func WorldClueBoardPut(worldID, boardKey, actorID string, input WorldClueBoardPu
 		if updated.RowsAffected != 1 {
 			return ErrWorldClueBoardConflict
 		}
-		result = protocol.WorldClueBoardWriteResult{WorldID: worldID, BoardKey: boardKey, Scope: protocol.WorldClueBoardScopePersonal, Revision: expected + 1, UpdatedAt: now.UnixMilli()}
+		result = protocol.WorldClueBoardWriteResult{WorldID: worldID, BoardKey: boardKey, Scope: scope, Revision: expected + 1, UpdatedAt: now.UnixMilli()}
 		return nil
 	})
 	if err != nil {

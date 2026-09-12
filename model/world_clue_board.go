@@ -1,6 +1,6 @@
 package model
 
-// WorldClueBoardModel stores one personal board document per world/member.
+// WorldClueBoardModel stores personal member boards and shared world boards.
 // The document is deliberately opaque to the persistence layer; validation and
 // protocol semantics live in the board service.
 type WorldClueBoardModel struct {

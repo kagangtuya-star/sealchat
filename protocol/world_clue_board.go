@@ -1,9 +1,69 @@
 package protocol
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
+type WorldClueBoardEventPayload struct {
+	Operation *WorldClueBoardOperation `json:"operation,omitempty"`
+	WorldID   string                   `json:"worldId"`
+	BoardKey  string                   `json:"boardKey"`
+	Scope     string                   `json:"scope"`
+	Revision  int64                    `json:"revision"`
+	UpdatedBy string                   `json:"updatedBy,omitempty"`
+	ClientID  string                   `json:"clientId,omitempty"`
+}
+
+type WorldClueBoardOperationType string
+
+const (
+	WorldClueBoardPlacementsPut  WorldClueBoardOperationType = "placements.put"
+	WorldClueBoardRelationPut    WorldClueBoardOperationType = "relation.put"
+	WorldClueBoardRelationRemove WorldClueBoardOperationType = "relation.remove"
+	WorldClueBoardQuickdrawDiff  WorldClueBoardOperationType = "quickdraw.diff"
+)
+
+type WorldClueBoardOperation struct {
+	ID            string                             `json:"id"`
+	Type          WorldClueBoardOperationType        `json:"type"`
+	Placements    map[string]WorldClueBoardPlacement `json:"placements,omitempty"`
+	Relation      *WorldClueBoardRelation            `json:"relation,omitempty"`
+	RelationID    string                             `json:"relationId,omitempty"`
+	QuickdrawDiff json.RawMessage                    `json:"quickdrawDiff,omitempty"`
+}
+
+// Preserve required-coordinate validation before decoding into zero-valued floats.
+func (operation *WorldClueBoardOperation) UnmarshalJSON(data []byte) error {
+	type operationAlias WorldClueBoardOperation
+	var decoded operationAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Type == WorldClueBoardPlacementsPut {
+		var raw struct {
+			Placements map[string]map[string]json.RawMessage `json:"placements"`
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		for _, fields := range raw.Placements {
+			for _, name := range []string{"x", "y"} {
+				value := fields[name]
+				if len(value) == 0 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+					return fmt.Errorf("placement %s is required", name)
+				}
+			}
+		}
+	}
+	*operation = WorldClueBoardOperation(decoded)
+	return nil
+}
 
 const (
 	WorldClueBoardScopePersonal = "personal"
+	WorldClueBoardScopeShared   = "shared"
 	WorldClueBoardKeyMain       = "main"
 	WorldClueBoardVersion       = 1
 	WorldClueBoardQuickdrawV020 = "@quickdrawjs/core@0.2.0"
@@ -85,6 +145,7 @@ type WorldClueBoardDocument struct {
 }
 
 type WorldClueBoardResponse struct {
+	CanWrite    bool                   `json:"canWrite"`
 	WorldID     string                 `json:"worldId"`
 	BoardKey    string                 `json:"boardKey"`
 	Scope       string                 `json:"scope"`
