@@ -47,6 +47,9 @@ func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
 	incoming.AI = body.Config
 	merged := mergeConfigForWrite(current, &incoming)
 	merged.AI = utils.NormalizeAIConfig(merged.AI)
+	if enrichedAI, pricingErr := aiService.FillMissingPricingFromModelsDev(ctx.Context(), merged.AI); pricingErr == nil {
+		merged.AI = enrichedAI
+	}
 	if err := utils.ValidateAIConfig(merged.AI); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 	}
