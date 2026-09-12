@@ -858,6 +858,16 @@ function onKeyDownCapture(event: KeyboardEvent) {
   }
   if (props.readonly) return
   if (!(event.metaKey || event.ctrlKey)) return
+  if (key === 'z') {
+    // Quickdraw's own key listener is intentionally bypassed here so the
+    // board's capture handler also works when the canvas is embedded in a
+    // host that handles keyboard shortcuts on the same element.
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    emit('focus')
+    event.shiftKey ? redo() : undo()
+    return
+  }
   if (key !== 'v' && key !== 'x') return
   // On older browsers the native paste event is the only image path; leave
   // Ctrl/Cmd+V to Quickdraw so its paste listener can receive the files.
