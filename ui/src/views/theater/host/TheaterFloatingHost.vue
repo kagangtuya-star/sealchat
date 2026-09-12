@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import { NIcon } from 'naive-ui'
 import { ExternalLink } from '@vicons/tabler'
+import { AppsOutline } from '@vicons/ionicons5'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { resolveSafeStageIframeUrl } from '../shared/stage-types'
@@ -67,6 +68,7 @@ const currentUserId = computed(() => String(user.info?.id || '').trim())
 
 const hostRef = ref<HTMLElement | null>(null)
 const windows = ref<TheaterFloatingWindowState[]>([])
+const chatIframeRefs = new Map<string, HTMLIFrameElement>()
 const zCounter = ref(40)
 const interaction = ref<{
   kind: 'drag' | 'resize'
@@ -139,11 +141,17 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
     if (!key.startsWith('custom:') || !resolveSafeStageIframeUrl(url)) return null
   } else if (source === 'chat') {
     targetChannelId = typeof stored.targetChannelId === 'string' ? stored.targetChannelId.trim() : ''
-    if (!targetChannelId || key !== `chat:${worldId}:${targetChannelId}` || !resolveSafeStageIframeUrl(url)) return null
-    const embed = new URL(url)
-    const query = new URLSearchParams(embed.hash.slice('#/embed?'.length))
-    if (embed.origin !== window.location.origin || !embed.hash.startsWith('#/embed?')
-      || query.get('worldId') !== worldId || query.get('channelId') !== targetChannelId) return null
+    const isLegacyChatKey = key === `chat:${worldId}:${targetChannelId}`
+    const isChatWindowKey = key.startsWith('chat-window:')
+    if (!targetChannelId || (!isLegacyChatKey && !isChatWindowKey) || !resolveSafeStageIframeUrl(url)) return null
+    try {
+      const embed = new URL(url)
+      const query = new URLSearchParams(embed.hash.slice('#/embed?'.length))
+      if (embed.origin !== window.location.origin || !embed.hash.startsWith('#/embed?')
+        || query.get('worldId') !== worldId || query.get('channelId') !== targetChannelId) return null
+    } catch {
+      return null
+    }
     // Restore only the ordinary embed endpoint, with no bridge or audio ownership.
     url = buildChatWindowUrl(worldId, targetChannelId)
   } else return null
@@ -429,12 +437,17 @@ const openResource = (
 }
 
 const openExternal = (item: TheaterFloatingWindowState) => {
-  openInternalSurfaceLink(item.url, { width: item.width, height: item.height })
+  const url = item.source === 'chat' && item.targetChannelId
+    ? buildChatWindowUrl(props.worldId, item.targetChannelId, false)
+    : item.url
+  openInternalSurfaceLink(url, { width: item.width, height: item.height })
 }
 
-const buildChatWindowUrl = (worldId: string, channelId: string) => {
+const buildChatWindowUrl = (worldId: string, channelId: string, floatingChat = true) => {
   const url = new URL(window.location.href)
-  url.hash = `/embed?${new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0', toolbar: '1' })}`
+  const params = new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0', toolbar: '1' })
+  if (floatingChat) params.set('floatingChat', '1')
+  url.hash = `/embed?${params}`
   return url.toString()
 }
 
@@ -455,12 +468,14 @@ const openCustomWindow = (input: TheaterFloatingCustomWindowInput) => {
     : resolveSafeStageIframeUrl(input.url)
   if (!url) return false
   const key = input.source === 'chat'
-    ? `chat:${props.worldId}:${targetChannelId}`
+    ? `chat-window:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
     : `custom:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
-  const existing = windows.value.find(item => item.key === key)
-  if (existing) {
-    focusWindow(existing.id)
-    return true
+  if (input.source !== 'chat') {
+    const existing = windows.value.find(item => item.key === key)
+    if (existing) {
+      focusWindow(existing.id)
+      return true
+    }
   }
   const dimension = (value: number | undefined, fallback: number) => (
     typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -499,10 +514,6 @@ const updateCustomWindow = (input: TheaterFloatingCustomWindowUpdate) => {
 
   const targetChannelId = input.targetChannelId.trim()
   if (!targetChannelId) return false
-  const key = `chat:${props.worldId}:${targetChannelId}`
-  if (windows.value.some(other => other.id !== item.id && other.key === key)) return false
-  item.id = key
-  item.key = key
   item.url = buildChatWindowUrl(props.worldId, targetChannelId)
   item.targetChannelId = targetChannelId
   item.title = input.title.trim() || '聊天'
@@ -659,7 +670,23 @@ const restoreMinimized = (item: TheaterFloatingWindowState) => {
 
 const closeWindow = (id: string) => {
   if (interaction.value?.id === id) interaction.value = null
+  chatIframeRefs.delete(id)
   windows.value = windows.value.filter(item => item.id !== id)
+}
+
+const setChatIframeRef = (id: string, element: Element | null) => {
+  if (findWindow(id)?.source === 'chat' && element instanceof HTMLIFrameElement) {
+    chatIframeRefs.set(id, element)
+  } else {
+    chatIframeRefs.delete(id)
+  }
+}
+
+const toggleChatActionRibbon = (item: TheaterFloatingWindowState) => {
+  if (item.source !== 'chat') return
+  const targetWindow = chatIframeRefs.get(item.id)?.contentWindow
+  if (!targetWindow) return
+  targetWindow.postMessage({ type: 'sealchat.embed.toggleActionRibbon' }, window.location.origin)
 }
 
 const setWindowHidden = (id: string, hidden: boolean) => {
@@ -674,6 +701,7 @@ const toggleWindowMinimized = (id: string) => {
 }
 const closeAllWindows = () => {
   interaction.value = null
+  chatIframeRefs.clear()
   windows.value = []
 }
 
@@ -721,6 +749,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   flushPersist()
+  chatIframeRefs.clear()
   mounted = false
   if (hostMode.value === 'stage') window.removeEventListener('message', handleTakeoverMessage)
   if (hostMode.value === 'viewport') chatEvent.off('internal-surface-floating-open' as any, handleInternalSurfaceFloatingOpen as any)
@@ -741,6 +770,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
         'is-minimized': item.minimized,
         'is-character': item.resourceType === 'character',
         'is-minimal': item.chrome === 'minimal',
+        'is-chat': item.source === 'chat',
       }"
       :style="windowStyle(item)"
       @pointerdown="bringToFront(item.id)"
@@ -783,6 +813,9 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
       >
         <span class="theater-floating-window__title">{{ item.title }}</span>
         <span v-if="!item.minimized" class="theater-floating-window__actions" @pointerdown.stop>
+          <button v-if="item.source === 'chat'" type="button" title="更多跑团功能" aria-label="更多跑团功能" @click="toggleChatActionRibbon(item)">
+            <NIcon><AppsOutline /></NIcon>
+          </button>
           <button type="button" :title="item.minimized ? '恢复' : '最小化'" @click="toggleMinimized(item)">
             {{ item.minimized ? '□' : '—' }}
           </button>
@@ -795,6 +828,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
       <div class="theater-floating-window__body" :class="{ 'is-hidden': item.minimized }">
         <iframe
           class="theater-floating-window__frame"
+          :ref="element => setChatIframeRef(item.id, element)"
           :src="item.url"
           :title="item.title"
           frameborder="0"
@@ -821,12 +855,15 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
 .theater-floating-window { position: absolute; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 10px; background: var(--sc-bg-surface, #1b1b20); box-shadow: 0 14px 36px rgba(0, 0, 0, .32); }
 .theater-floating-window.is-minimal { border-color: transparent; border-radius: 5px; background: transparent; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }
 .theater-floating-window__header { box-sizing: border-box; display: flex; flex: 0 0 38px; align-items: center; justify-content: space-between; min-width: 0; padding: 0 6px 0 12px; color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 94%, transparent); cursor: move; touch-action: none; user-select: none; }
+.theater-floating-window.is-chat { border-radius: 12px; }
+.theater-floating-window.is-chat .theater-floating-window__header { flex-basis: 36px; padding: 0 6px 0 10px; }
 .theater-floating-window.is-minimal .theater-floating-window__header { flex-basis: 20px; padding: 0 3px 0 7px; background: transparent; opacity: .35; }
 .theater-floating-window.is-minimal .theater-floating-window__header:hover, .theater-floating-window.is-minimal .theater-floating-window__header:focus-within { opacity: 1; }
 .theater-floating-window__header.is-hidden { display: none; }
 .theater-floating-window__title { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .theater-floating-window__actions { display: inline-flex; gap: 2px; }
 .theater-floating-window__actions button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
+.theater-floating-window.is-chat .theater-floating-window__actions button { width: 26px; height: 26px; border-radius: 6px; }
 .theater-floating-window__actions button:hover { background: var(--sc-bg-hover, rgba(255, 255, 255, .08)); }
 .theater-floating-window.is-minimal .theater-floating-window__actions { opacity: .7; }
 .theater-floating-window.is-minimal .theater-floating-window__actions button { width: 22px; height: 20px; }

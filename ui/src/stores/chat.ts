@@ -916,11 +916,19 @@ interface SearchJumpEvent {
   createdAt?: string | number | Date;
 }
 
+export interface InlineChatSplitOpenPayload {
+  worldId: string;
+  channelId: string;
+  title?: string;
+  forceOoc?: boolean;
+}
+
 interface ChatEventMap {
   [event: string]: (...args: any[]) => void;
   'channel-identity-updated': (payload?: ChannelIdentityUpdatedEvent) => void;
   'channel-identities-updated': (event?: ChannelIdentitiesGatewayEvent) => void;
   'search-jump': (payload?: SearchJumpEvent) => void;
+  'inline-chat-split-open': (payload: InlineChatSplitOpenPayload) => void;
 }
 
 export const chatEvent = new Emitter<ChatEventMap>();

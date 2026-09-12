@@ -169,6 +169,17 @@ const handleAddSplit = async (channel: SChannel) => {
   });
 };
 
+const handleAddInlineSplit = (channel: SChannel) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(channel?.id || '').trim();
+  if (!worldId || !channelId) return;
+  chatEvent.emit('inline-chat-split-open', {
+    worldId,
+    channelId,
+    title: channel.name?.trim() || '页内分屏',
+  });
+};
+
 const handleOpenMemberSettings = () => {
   if (!chat.curChannel) {
     return;
@@ -419,6 +430,9 @@ const handleSelect = async (key: string, data: any) => {
       break;
     case 'addSplit':
       await handleAddSplit(data.item as SChannel);
+      break;
+    case 'addInlineSplit':
+      handleAddInlineSplit(data.item as SChannel);
       break;
     case 'leave':
       // 实现退出频道的逻辑
@@ -827,6 +841,7 @@ const handleAckWorldAnnouncement = async () => {
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
                       { label: '复制频道链接', key: 'copyLink', item: i },
                       { label: '添加分屏', key: 'addSplit', item: i },
+                      { label: '添加页内分屏', key: 'addInlineSplit', item: i },
                       { label: '频道设置', key: 'manage', item: i },
                       { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
@@ -890,6 +905,7 @@ const handleAckWorldAnnouncement = async () => {
                           { label: '进入', key: 'enter', item: child },
                           { label: '复制频道链接', key: 'copyLink', item: child },
                           { label: '添加分屏', key: 'addSplit', item: child },
+                          { label: '添加页内分屏', key: 'addInlineSplit', item: child },
                           { label: '频道设置', key: 'manage', item: child },
                           { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },

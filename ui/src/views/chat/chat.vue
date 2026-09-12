@@ -3,7 +3,7 @@ import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import MessageForwardDialog from './components/MessageForwardDialog.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
-import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
+import { chatEvent, useChatStore, type InlineChatSplitOpenPayload, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
 import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
@@ -16,6 +16,7 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import InlineChatSplitWindow from './components/InlineChatSplitWindow.vue'
 import ChatAiPolishDock from './components/ChatAiPolishDock.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
@@ -257,7 +258,66 @@ const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode 
 const isToolbarEmbedMode = computed(
   () => isEmbedMode.value && route.query.toolbar === '1',
 );
+const isInlineSplitEmbedMode = computed(
+  () => isEmbedMode.value && route.query.inlineSplit === '1',
+);
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+
+interface InlineChatSplitState extends InlineChatSplitOpenPayload {
+  paneId: string;
+  zIndex: number;
+  cascadeIndex: number;
+}
+
+const inlineChatSplits = ref<InlineChatSplitState[]>([]);
+let inlineChatSplitZIndex = 4100;
+let inlineChatSplitCascadeIndex = 0;
+
+const handleInlineChatSplitOpen = (payload: InlineChatSplitOpenPayload) => {
+  if (isEmbedMode.value) return;
+  const worldId = String(payload?.worldId || '').trim();
+  const channelId = String(payload?.channelId || '').trim();
+  if (!worldId || !channelId) return;
+  const cascadeIndex = inlineChatSplitCascadeIndex++;
+  inlineChatSplits.value.push({
+    worldId,
+    channelId,
+    forceOoc: payload.forceOoc === true,
+    title: payload.title?.trim() || '页内分屏',
+    paneId: `inline-chat-${nanoid(10)}`,
+    zIndex: ++inlineChatSplitZIndex,
+    cascadeIndex,
+  });
+};
+
+const openInlineIcOocSplit = () => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!worldId || !channelId) {
+    message.warning('请先进入频道');
+    return;
+  }
+  chat.setIcMode('ic', channelId);
+  if (chat.editing) chat.updateEditingIcMode('ic');
+  chat.autoSwitchRoleOnIcOocChange('ic');
+  chat.setFilterState({ icFilter: 'ic' });
+  chatEvent.emit('inline-chat-split-open', {
+    worldId,
+    channelId,
+    forceOoc: true,
+    title: chat.curChannel?.name?.trim() || '页内分屏',
+  });
+};
+
+const closeInlineChatSplit = (paneId: string) => {
+  inlineChatSplits.value = inlineChatSplits.value.filter(split => split.paneId !== paneId);
+};
+
+const focusInlineChatSplit = (paneId: string) => {
+  const split = inlineChatSplits.value.find(item => item.paneId === paneId);
+  if (!split) return;
+  split.zIndex = ++inlineChatSplitZIndex;
+};
 const routeWorldId = computed(() => typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '');
 const theaterEntryEnabled = computed(() => {
   if (['/embed', '/split', '/theater'].includes(route.path)) return false;
@@ -13325,6 +13385,7 @@ function handleOpenBattleSummaryEvent() {
 }
 
 onMounted(async () => {
+  chatEvent.on('inline-chat-split-open', handleInlineChatSplitOpen);
   chatEvent.on('open-battle-summary' as any, handleOpenBattleSummaryEvent as any);
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -15072,6 +15133,7 @@ onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
+  chatEvent.off('inline-chat-split-open', handleInlineChatSplitOpen);
   chatEvent.off('channel-context-cleared', handleChannelContextCleared as any);
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   chatEvent.off('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
@@ -15106,7 +15168,7 @@ onBeforeUnmount(() => {
     />
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode || isToolbarEmbedMode)" class="chat-top-toolbar-stack">
+      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode || isToolbarEmbedMode || isInlineSplitEmbedMode)" class="chat-top-toolbar-stack">
         <ChatActionRibbon
           :filters="chat.filterState"
           :roles="ribbonRoleOptions"
@@ -15157,6 +15219,7 @@ onBeforeUnmount(() => {
           @open-split="openSplitView"
           @open-theater="openTheaterView"
           @open-ic-ooc-split="openIcOocSplitView"
+          @open-inline-chat-split="openInlineIcOocSplit"
           @toggle-sticky-note="toggleStickyNotes"
           @toggle-clue-box="toggleWorldClueBox"
 		  @open-clue-board="openWorldClueBoard"
@@ -18158,6 +18221,20 @@ onBeforeUnmount(() => {
     </template>
   </DiceTrayFloatingWindow>
   <IFormFloatingWindows />
+  <InlineChatSplitWindow
+    v-for="split in inlineChatSplits"
+    :key="split.paneId"
+    :world-id="split.worldId"
+    :channel-id="split.channelId"
+    :pane-id="split.paneId"
+    :title="split.title"
+    :persist-layout="split.paneId === inlineChatSplits[0]?.paneId"
+    :force-ooc="split.forceOoc === true"
+    :z-index="split.zIndex"
+    :cascade-index="split.cascadeIndex"
+    @close="closeInlineChatSplit(split.paneId)"
+    @focus="focusInlineChatSplit(split.paneId)"
+  />
   <IFormDrawer />
 
   <DisplaySettingsModal

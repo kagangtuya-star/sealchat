@@ -108,7 +108,12 @@ const initialAudioOwner = computed(() => {
 });
 const theaterMode = computed(() => route.query.mode === 'theater');
 const embeddedToolbar = computed(() => route.query.toolbar === '1');
-const showChatHeader = computed(() => theaterMode.value || embeddedToolbar.value);
+const floatingChatMode = computed(() => route.query.floatingChat === '1');
+const inlineSplitMode = computed(() => route.query.inlineSplit === '1');
+const inlineSplitForceOoc = computed(
+  () => inlineSplitMode.value && route.query.forceOoc === '1',
+);
+const showChatHeader = computed(() => theaterMode.value || (embeddedToolbar.value && !floatingChatMode.value));
 const theaterSessionId = computed(() => (typeof route.query.sessionId === 'string' ? route.query.sessionId.trim() : ''));
 const chatViewRef = ref<any>(null);
 
@@ -809,6 +814,22 @@ const handleMessage = async (event: MessageEvent) => {
     return;
   }
 
+  if (data.type === 'sealchat.embed.setIcMode') {
+    const mode = data.icMode === 'ooc' ? 'ooc' : data.icMode === 'ic' ? 'ic' : null;
+    const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+    if (mode && channelId) {
+      chat.setIcMode(mode, channelId, undefined, { persist: false });
+      if (chat.editing) chat.updateEditingIcMode(mode);
+      postStateThrottled('sealchat.embed.state');
+    }
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.toggleActionRibbon') {
+    chatEvent.emit('action-ribbon-toggle');
+    return;
+  }
+
   if (data.type === 'sealchat.embed.openPanel') {
     const panel = typeof data.panel === 'string' ? data.panel : '';
     if (panel && chatViewRef.value?.openPanelForShell) {
@@ -958,6 +979,9 @@ const initialize = async () => {
   initializing.value = true;
   try {
     pushStore.setEmbedNotifyOwner(initialNotifyOwner.value);
+    if (inlineSplitForceOoc.value) {
+      chat.setChannelSessionRestoreFilterOverride('ooc');
+    }
     await chat.ensureWorldReady();
     if (initialWorldId.value) {
       chat.setCurrentWorld(initialWorldId.value);
@@ -968,8 +992,18 @@ const initialize = async () => {
     if (initialChannelId.value) {
       await chat.channelSwitchTo(initialChannelId.value);
     }
+    if (inlineSplitForceOoc.value && chat.curChannel?.id) {
+      const channelId = String(chat.curChannel.id);
+      try {
+        await chat.loadChannelIdentities(channelId, false);
+      } catch (error) {
+        console.warn('[embed] inline split identity initialization failed', error);
+      }
+      chat.setIcMode('ooc', channelId, undefined, { persist: false });
+      chat.setFilterState({ ...chat.filterState, icFilter: 'ooc' });
+    }
     await fetchRoleOptions(chat.curChannel?.id ? String(chat.curChannel.id) : '');
-    postStateThrottled('sealchat.embed.ready');
+    postState('sealchat.embed.ready');
   } finally {
     initializing.value = false;
   }

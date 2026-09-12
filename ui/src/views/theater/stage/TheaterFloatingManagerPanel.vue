@@ -117,15 +117,6 @@ const updateWeb = () => {
 
 const updateChat = () => {
   if (!editingWindowId.value || !channelId.value || !editingWindow.value) return
-  const channelAlreadyOpen = props.windows.some(item => (
-    item.source === 'chat'
-    && item.targetChannelId === channelId.value
-    && item.id !== editingWindowId.value
-  ))
-  if (channelAlreadyOpen) {
-    message.warning('该频道已经打开')
-    return
-  }
   emit('action', { type: 'update-chat', id: editingWindowId.value, channelId: channelId.value })
   closeInspector()
 }
