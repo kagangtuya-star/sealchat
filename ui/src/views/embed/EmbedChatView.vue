@@ -107,6 +107,8 @@ const initialAudioOwner = computed(() => {
   return route.query.audioOwner === '1' || route.query.audioOwner === 'true';
 });
 const theaterMode = computed(() => route.query.mode === 'theater');
+const embeddedToolbar = computed(() => route.query.toolbar === '1');
+const showChatHeader = computed(() => theaterMode.value || embeddedToolbar.value);
 const theaterSessionId = computed(() => (typeof route.query.sessionId === 'string' ? route.query.sessionId.trim() : ''));
 const chatViewRef = ref<any>(null);
 
@@ -724,7 +726,7 @@ const postStateThrottled = throttle((type: 'sealchat.embed.ready' | 'sealchat.em
 });
 
 const syncAudioStudioContext = () => {
-  if (!audioOwner.value) return;
+  if (!audioOwner.value && !embeddedToolbar.value) return;
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   audioStudio.setCurrentWorld(chat.currentWorldId || null);
   audioStudio.setActiveChannel(channelId || null);
@@ -1118,7 +1120,7 @@ watch(
 watch(
   () => chat.curChannel?.id,
   (channelId) => {
-    if (!audioOwner.value) return;
+    if (!audioOwner.value && !embeddedToolbar.value) return;
     audioStudio.setActiveChannel(channelId ? String(channelId) : null);
   },
   { immediate: true },
@@ -1127,7 +1129,7 @@ watch(
 watch(
   () => chat.currentWorldId,
   (worldId) => {
-    if (!audioOwner.value) return;
+    if (!audioOwner.value && !embeddedToolbar.value) return;
     audioStudio.setCurrentWorld(worldId || null);
   },
   { immediate: true },
@@ -1190,7 +1192,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="sc-embed-root">
     <ChatHeader
-      v-if="theaterMode"
+      v-if="showChatHeader"
       :sidebar-collapsed="true"
       @toggle-sidebar="handleTheaterHeaderSidebarToggle"
     />

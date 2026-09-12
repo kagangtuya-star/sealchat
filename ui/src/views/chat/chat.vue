@@ -254,6 +254,9 @@ const isEditingCurrentChannel = computed(() => {
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
+const isToolbarEmbedMode = computed(
+  () => isEmbedMode.value && route.query.toolbar === '1',
+);
 const splitEntryEnabled = computed(() => route.path !== '/embed');
 const routeWorldId = computed(() => typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '');
 const theaterEntryEnabled = computed(() => {
@@ -15103,7 +15106,7 @@ onBeforeUnmount(() => {
     />
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode)" class="chat-top-toolbar-stack">
+      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode || isToolbarEmbedMode)" class="chat-top-toolbar-stack">
         <ChatActionRibbon
           :filters="chat.filterState"
           :roles="ribbonRoleOptions"

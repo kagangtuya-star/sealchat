@@ -39,7 +39,12 @@ import TheaterFloatingHost from './TheaterFloatingHost.vue'
 import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from './theater-floating-window'
 import type { SChannel } from '@/types'
 import { formatSplitChannelDisplayName } from '@/views/split/splitChannelDisplay'
-import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
+import {
+  THEATER_CHAT_FLOATING_OPEN_ACK,
+  THEATER_CHAT_FLOATING_OPEN_REQUEST,
+  isTheaterChatFloatingOpenRequest,
+  type TheaterFloatingResource,
+} from '@/utils/theaterFloatingBridge'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import { useDisplayStore } from '@/stores/display'
 import { activateWorldTheater, isTheaterActivationRequired } from '@/services/theaterActivation'
@@ -963,6 +968,21 @@ const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
   const data = event.data as Record<string, unknown> | null
   if (!data) return
+  if (data.type === THEATER_CHAT_FLOATING_OPEN_REQUEST) {
+    if (!isTheaterChatFloatingOpenRequest(data)) return
+    const channel = floatingChannelOptions.value.find(item => item.value === data.channelId.trim())
+    const accepted = !!channel && theaterFloatingHostRef.value?.openCustomWindow({
+      source: 'chat',
+      targetChannelId: channel.value,
+      title: channel.title,
+    }) === true
+    iframeRef.value?.contentWindow?.postMessage({
+      type: THEATER_CHAT_FLOATING_OPEN_ACK,
+      requestId: data.requestId,
+      accepted,
+    }, window.location.origin)
+    return
+  }
   if (data.type === 'sealchat.theater.appearance-preview.stop') {
     appearancePreview.value = null
     return

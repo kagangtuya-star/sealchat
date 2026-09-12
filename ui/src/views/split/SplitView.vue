@@ -641,6 +641,42 @@ const handleEmbedMessage = (event: MessageEvent) => {
 
 const initialize = () => {
   splitScopeWorldId.value = resolveScopeWorldIdFromRoute();
+  if (route.query.quick === 'channel-pair') {
+    const worldId = typeof route.query.worldId === 'string' ? route.query.worldId.trim() : '';
+    const channelA = typeof route.query.a === 'string' ? route.query.a.trim() : '';
+    const channelB = typeof route.query.b === 'string' ? route.query.b.trim() : '';
+    const existingSnapshot = readSplitSessionSnapshot(splitScopeWorldId.value);
+    if (existingSnapshot) {
+      activePaneId.value = existingSnapshot.shell.activePaneId;
+      operationTarget.value = existingSnapshot.shell.operationTarget;
+      audioPlaybackTarget.value = existingSnapshot.shell.audioPlaybackTarget;
+      lockSameWorld.value = existingSnapshot.shell.lockSameWorld;
+      notifyOwnerPaneId.value = existingSnapshot.shell.notifyOwnerPaneId;
+      webTargetPaneId.value = existingSnapshot.shell.webTargetPaneId;
+      sidebarCollapsed.value = existingSnapshot.shell.sidebarCollapsed;
+      splitRatio.value = existingSnapshot.shell.splitRatio;
+      actionRibbonVisible.value = existingSnapshot.shell.actionRibbonVisible;
+    }
+    paneA.mode = 'chat';
+    paneB.mode = 'chat';
+    paneA.worldId = worldId;
+    paneB.worldId = worldId;
+    paneA.channelId = channelA;
+    paneB.channelId = channelB;
+    paneA.webUrl = '';
+    paneB.webUrl = '';
+    initialSessionSnapshot = null;
+    restoringSession.value = false;
+    restorePendingByPane.A = false;
+    restorePendingByPane.B = false;
+    restoreFilterSentByPane.A = false;
+    restoreFilterSentByPane.B = false;
+    refreshPaneSrc(paneA);
+    refreshPaneSrc(paneB);
+    persistRouteQuery();
+    finalizeRestoreIfReady();
+    return;
+  }
   initialSessionSnapshot = readSplitSessionSnapshot(splitScopeWorldId.value);
   if (initialSessionSnapshot) {
     restoringSession.value = true;

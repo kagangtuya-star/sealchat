@@ -34,6 +34,7 @@ import { shouldRenderChannelSidebarList } from '@/stores/chatChannelSelection';
 import { useUtilsStore } from '@/stores/utils';
 import { generateChannelLink } from '@/utils/messageLink';
 import { copyTextWithFallback } from '@/utils/clipboard';
+import { isTheaterChatFrame, requestTheaterChatFloatingOpen } from '@/utils/theaterFloatingBridge';
 
 const { t } = useI18n()
 
@@ -142,6 +143,30 @@ const handleChannelCopyLink = async (channel: SChannel) => {
     return;
   }
   message.success('频道链接已复制');
+};
+
+const handleAddSplit = async (channel: SChannel) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  const targetChannelId = String(channel?.id || '').trim();
+  if (!worldId || !currentChannelId || !targetChannelId) return;
+
+  if (isTheaterChatFrame()) {
+    const accepted = await requestTheaterChatFloatingOpen(targetChannelId);
+    if (!accepted) message.warning('聊天浮窗打开失败');
+    return;
+  }
+
+  await router.push({
+    name: 'split',
+    query: {
+      scopeWorldId: worldId,
+      worldId,
+      a: currentChannelId,
+      b: targetChannelId,
+      quick: 'channel-pair',
+    },
+  });
 };
 
 const handleOpenMemberSettings = () => {
@@ -391,6 +416,9 @@ const handleSelect = async (key: string, data: any) => {
       break;
     case 'copyLink':
       await handleChannelCopyLink(data.item as SChannel);
+      break;
+    case 'addSplit':
+      await handleAddSplit(data.item as SChannel);
       break;
     case 'leave':
       // 实现退出频道的逻辑
@@ -798,6 +826,7 @@ const handleAckWorldAnnouncement = async () => {
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
                       { label: '复制频道链接', key: 'copyLink', item: i },
+                      { label: '添加分屏', key: 'addSplit', item: i },
                       { label: '频道设置', key: 'manage', item: i },
                       { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
@@ -860,6 +889,7 @@ const handleAckWorldAnnouncement = async () => {
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
                           { label: '复制频道链接', key: 'copyLink', item: child },
+                          { label: '添加分屏', key: 'addSplit', item: child },
                           { label: '频道设置', key: 'manage', item: child },
                           { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },

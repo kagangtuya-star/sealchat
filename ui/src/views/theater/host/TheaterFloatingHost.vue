@@ -434,7 +434,7 @@ const openExternal = (item: TheaterFloatingWindowState) => {
 
 const buildChatWindowUrl = (worldId: string, channelId: string) => {
   const url = new URL(window.location.href)
-  url.hash = `/embed?${new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0' })}`
+  url.hash = `/embed?${new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0', toolbar: '1' })}`
   return url.toString()
 }
 

@@ -2,6 +2,8 @@ export const THEATER_FLOATING_TAKEOVER_REQUEST = 'sealchat:theater-floating-take
 export const THEATER_FLOATING_TAKEOVER_ACK = 'sealchat:theater-floating-takeover-ack:v1' as const;
 export const CHAT_FLOATING_TAKEOVER_REQUEST = 'sealchat:chat-floating-takeover-request:v1' as const;
 export const CHAT_FLOATING_TAKEOVER_ACK = 'sealchat:chat-floating-takeover-ack:v1' as const;
+export const THEATER_CHAT_FLOATING_OPEN_REQUEST = 'sealchat:theater-chat-floating-open-request:v1' as const;
+export const THEATER_CHAT_FLOATING_OPEN_ACK = 'sealchat:theater-chat-floating-open-ack:v1' as const;
 
 export interface TheaterFloatingResource {
   key: string;
@@ -44,6 +46,18 @@ export interface ChatFloatingTakeoverRequest {
 
 export interface ChatFloatingTakeoverAck {
   type: typeof CHAT_FLOATING_TAKEOVER_ACK;
+  requestId: string;
+  accepted: boolean;
+}
+
+export interface TheaterChatFloatingOpenRequest {
+  type: typeof THEATER_CHAT_FLOATING_OPEN_REQUEST;
+  requestId: string;
+  channelId: string;
+}
+
+export interface TheaterChatFloatingOpenAck {
+  type: typeof THEATER_CHAT_FLOATING_OPEN_ACK;
   requestId: string;
   accepted: boolean;
 }
@@ -154,6 +168,43 @@ export const requestTheaterFloatingOpen = (
   });
 };
 
+export const requestTheaterChatFloatingOpen = (channelId: string): Promise<boolean> => {
+  if (!isTheaterChatFrame()) return Promise.resolve(false);
+  const normalizedChannelId = channelId.trim();
+  if (!normalizedChannelId) return Promise.resolve(false);
+
+  const requestId = `theater-chat-floating-open-${Date.now()}-${++requestCounter}`;
+  const request: TheaterChatFloatingOpenRequest = {
+    type: THEATER_CHAT_FLOATING_OPEN_REQUEST,
+    requestId,
+    channelId: normalizedChannelId,
+  };
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', handleMessage);
+      resolve(accepted);
+    };
+    const handleMessage = (message: MessageEvent<unknown>) => {
+      if (message.origin !== window.location.origin || message.source !== window.parent) return;
+      const data = message.data as Partial<TheaterChatFloatingOpenAck> | null;
+      if (
+        data?.type !== THEATER_CHAT_FLOATING_OPEN_ACK
+        || data.requestId !== requestId
+        || typeof data.accepted !== 'boolean'
+      ) return;
+      finish(data.accepted);
+    };
+    const timeoutId = window.setTimeout(() => finish(false), 800);
+    window.addEventListener('message', handleMessage);
+    window.parent.postMessage(request, window.location.origin);
+  });
+};
+
 export const requestChatFloatingTakeover = (
   resource: TheaterFloatingResource,
   event: PointerEvent,
@@ -252,4 +303,16 @@ export const isChatFloatingTakeoverRequest = (
       ...request,
       type: THEATER_FLOATING_TAKEOVER_REQUEST,
     });
+};
+
+export const isTheaterChatFloatingOpenRequest = (
+  value: unknown,
+): value is TheaterChatFloatingOpenRequest => {
+  if (!value || typeof value !== 'object') return false;
+  const request = value as Partial<TheaterChatFloatingOpenRequest>;
+  return request.type === THEATER_CHAT_FLOATING_OPEN_REQUEST
+    && typeof request.requestId === 'string'
+    && !!request.requestId
+    && typeof request.channelId === 'string'
+    && !!request.channelId.trim();
 };
