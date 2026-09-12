@@ -1122,6 +1122,7 @@ defineExpose({
         @align="setTextAlign"
         @bend="setLineBend"
         @copy="copyDrawing"
+        @cut="startCutDrawing"
         @delete="deleteDrawingSelection"
         @front="bringDrawingToFront"
         @back="sendDrawingToBack"

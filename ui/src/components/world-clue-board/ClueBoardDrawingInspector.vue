@@ -4,7 +4,7 @@ import { NIcon, NTooltip } from 'naive-ui'
 import {
   AlignCenter, AlignLeft, AlignRight, ArrowBackUp, ArrowBarToDown, ArrowBarToUp,
   ArrowForwardUp, ChevronDown, ChevronUp, Circle, Clipboard, Copy, Diamond, Focus2,
-  GridDots, GripHorizontal, Hexagon, Minus, Send, Square, Star, Trash, TrashX,
+  Cut, GridDots, GripHorizontal, Hexagon, Minus, Send, Square, Star, Trash, TrashX,
   Triangle, X,
 } from '@vicons/tabler'
 import {
@@ -50,6 +50,7 @@ const emit = defineEmits<{
   align: [value: 'start' | 'middle' | 'end']
   bend: [value: number]
   copy: []
+  cut: []
   delete: []
   front: []
   back: []
@@ -209,13 +210,14 @@ function colorStyle(id: ColorId) {
       <section class="inspector-section inspector-section--actions">
         <h4>对象与历史</h4>
         <div class="inspector-grid inspector-grid--six">
-          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="复制" @click="emit('copy')"><NIcon :size="18"><Copy /></NIcon></button></template>复制所选</NTooltip>
-          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="删除" @click="emit('delete')"><NIcon :size="18"><Trash /></NIcon></button></template>删除所选</NTooltip>
+          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="复制" @click="emit('copy')"><NIcon :size="18"><Copy /></NIcon></button></template>复制所选（Ctrl/Cmd+C）</NTooltip>
+          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="剪切" @click="emit('cut')"><NIcon :size="18"><Cut /></NIcon></button></template>剪切所选（Ctrl/Cmd+X）</NTooltip>
+          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled" aria-label="粘贴" @click="emit('paste')"><NIcon :size="18"><Clipboard /></NIcon></button></template>粘贴绘图或图片（Ctrl/Cmd+V）</NTooltip>
+          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="删除" @click="emit('delete')"><NIcon :size="18"><Trash /></NIcon></button></template>删除所选（Del）</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="置于顶层" @click="emit('front')"><NIcon :size="18"><ArrowBarToUp /></NIcon></button></template>置于顶层</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !hasSelection" aria-label="置于底层" @click="emit('back')"><NIcon :size="18"><ArrowBarToDown /></NIcon></button></template>置于底层</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !canUndo" aria-label="撤销" @click="emit('undo')"><NIcon :size="18"><ArrowBackUp /></NIcon></button></template>撤销（Ctrl/Cmd+Z）</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled || !canRedo" aria-label="重做" @click="emit('redo')"><NIcon :size="18"><ArrowForwardUp /></NIcon></button></template>重做</NTooltip>
-          <NTooltip><template #trigger><button type="button" class="inspector-tile" :disabled="disabled" aria-label="粘贴" @click="emit('paste')"><NIcon :size="18"><Clipboard /></NIcon></button></template>粘贴绘图或图片</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile" aria-label="适配内容" @click="emit('fit')"><NIcon :size="18"><Focus2 /></NIcon></button></template>适配绘图内容</NTooltip>
           <NTooltip><template #trigger><button type="button" class="inspector-tile is-danger" :disabled="disabled" aria-label="清空绘图" @click="emit('clear')"><NIcon :size="18"><TrashX /></NIcon></button></template>清空绘图，不影响线索卡片、位置和关系</NTooltip>
         </div>
