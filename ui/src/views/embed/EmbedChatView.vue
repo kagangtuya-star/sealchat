@@ -113,6 +113,10 @@ const inlineSplitMode = computed(() => route.query.inlineSplit === '1');
 const inlineSplitForceOoc = computed(
   () => inlineSplitMode.value && route.query.forceOoc === '1',
 );
+const compactFloatingChat = computed(
+  () => inlineSplitMode.value || floatingChatMode.value,
+);
+const floatingChatActive = ref(false);
 const showChatHeader = computed(() => theaterMode.value || (embeddedToolbar.value && !floatingChatMode.value));
 const theaterSessionId = computed(() => (typeof route.query.sessionId === 'string' ? route.query.sessionId.trim() : ''));
 const chatViewRef = ref<any>(null);
@@ -775,7 +779,24 @@ const postFocus = () => {
   postToParent({ type: 'sealchat.embed.focus', paneId: paneId.value });
 };
 
-const handleInteraction = () => postFocus();
+const handleInteraction = () => {
+  if (compactFloatingChat.value) {
+    floatingChatActive.value = true;
+  }
+  postFocus();
+};
+
+const handleFloatingFocus = () => {
+  if (compactFloatingChat.value) {
+    floatingChatActive.value = true;
+  }
+};
+
+const handleFloatingBlur = () => {
+  if (compactFloatingChat.value) {
+    floatingChatActive.value = false;
+  }
+};
 
 const handleDrawerShow = () => {
   if (!paneId.value) return;
@@ -1201,6 +1222,8 @@ onMounted(async () => {
   window.addEventListener('message', handleMessage);
   document.addEventListener('pointerdown', handleInteraction, { capture: true });
   document.addEventListener('keydown', handleInteraction, { capture: true });
+  window.addEventListener('focus', handleFloatingFocus);
+  window.addEventListener('blur', handleFloatingBlur);
   await initialize();
   try {
     await startTheaterBridge();
@@ -1220,6 +1243,8 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener('pointerdown', handleInteraction, { capture: true } as any);
   document.removeEventListener('keydown', handleInteraction, { capture: true } as any);
+  window.removeEventListener('focus', handleFloatingFocus);
+  window.removeEventListener('blur', handleFloatingBlur);
 });
 </script>
 
@@ -1230,7 +1255,12 @@ onBeforeUnmount(() => {
       :sidebar-collapsed="true"
       @toggle-sidebar="handleTheaterHeaderSidebarToggle"
     />
-    <Chat ref="chatViewRef" class="sc-embed-chat" @drawer-show="handleDrawerShow" />
+    <Chat
+      ref="chatViewRef"
+      class="sc-embed-chat"
+      :hide-composer="compactFloatingChat && !floatingChatActive"
+      @drawer-show="handleDrawerShow"
+    />
     <AudioDrawer />
     <n-drawer v-model:show="theaterSidebarVisible" placement="left" :width="'min(360px, 88vw)'">
       <n-drawer-content closable body-content-style="padding: 0">

@@ -208,6 +208,14 @@ import {
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
+interface ChatProps {
+  hideComposer?: boolean;
+}
+
+const props = withDefaults(defineProps<ChatProps>(), {
+  hideComposer: false,
+});
+
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
 // )
@@ -16218,7 +16226,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="chat-input-wrapper flex flex-col w-full relative">
+      <div v-show="!props.hideComposer" class="chat-input-wrapper flex flex-col w-full relative">
         <transition name="fade">
           <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop @pointerdown.stop>
             <div class="whisper-panel__title">
