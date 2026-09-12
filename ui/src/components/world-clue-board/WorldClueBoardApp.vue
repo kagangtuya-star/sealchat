@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
 import { NAlert, NButton, NButtonGroup, NCheckbox, NDropdown, NIcon, NInput, NSpace, NTag, NTooltip, useMessage } from 'naive-ui'
 import { AlertCircle, CircleCheck, CloudLock, CloudUpload, Folder, LayoutBoard, Refresh, Rotate2, Search, Star } from '@vicons/tabler'
 import { api } from '@/stores/_config'
@@ -52,6 +52,7 @@ const drawingRef = ref<InstanceType<typeof ClueBoardDrawingSurface> | null>(null
 const drawingEndpoints = ref<BoardDrawingEndpoint[]>([])
 const selectedDrawing = computed(() => drawingEndpoints.value.find(item => item.selected))
 const hoveredDrawingId = ref('')
+const pendingDrawingSnapshot = shallowRef<Snapshot | null>(null)
 const boardBody = ref<HTMLElement | null>(null)
 const panGesture = ref<{ pointerId: number; x: number; y: number } | null>(null)
 const drawingUnsaved = ref(false)
@@ -142,9 +143,11 @@ const drawingSnapshot = computed<Snapshot | null>(() => {
   const current = session.value
   if (!current) return null
   // Shared canvas changes travel as diffs; only GET replaces its snapshot.
-  const snapshot = current.scope === 'shared'
-    ? (current.snapshotVersion, toRaw(current).document.quickdraw?.snapshot)
-    : current.document.quickdraw?.snapshot
+  const snapshot = current.scope === 'personal' && pendingDrawingSnapshot.value
+    ? pendingDrawingSnapshot.value
+    : current.scope === 'shared'
+      ? (current.snapshotVersion, toRaw(current).document.quickdraw?.snapshot)
+      : current.document.quickdraw?.snapshot
   return snapshot && typeof snapshot === 'object' ? snapshot as Snapshot : null
 })
 const drawingTheme = computed<'light' | 'dark'>(() => display.palette === 'night' ? 'dark' : 'light')
@@ -357,6 +360,7 @@ function onDrawingSnapshot(snapshot: Snapshot) {
   // document. Quickdraw keeps the drawing in memory, while the visible Board
   // error and dirty flag make it explicit that it is not persisted yet.
   if (accepted) {
+    pendingDrawingSnapshot.value = null
     drawingUnsaved.value = false
     drawingError.value = ''
   } else {
@@ -366,10 +370,12 @@ function onDrawingSnapshot(snapshot: Snapshot) {
     drawingError.value = session.value?.errorKind === 'too-large'
       ? '绘图未保存：画板文档超过 8MiB，请删除部分内容后再保存'
       : '绘图未保存：画板文档尚未就绪或修改被拒绝'
+    if (session.value?.errorKind === 'too-large') pendingDrawingSnapshot.value = snapshot
   }
 }
 
 function onDrawingLoaded() {
+  pendingDrawingSnapshot.value = null
   drawingUnsaved.value = false
   drawingError.value = ''
 }
@@ -748,7 +754,7 @@ async function initialLoad() {
     message.warning('无法建立协作连接，已打开个人画板')
   }
   if (epoch !== initialEpoch) return
-  const [, loaded] = await Promise.all([refreshSource(), board.load(props.worldId, { scope: scope.value, force: scope.value === 'shared' })])
+  const [, loaded] = await Promise.all([refreshSource(), board.load(props.worldId, { scope: scope.value, force: scope.value === 'shared', surfaceInit: scope.value === 'personal' })])
   if (epoch !== initialEpoch) return
   if (loaded.status === 'error' && !loaded.loaded) {
     // Keep the surface visible so the user can explicitly retry; importantly,

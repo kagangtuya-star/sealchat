@@ -237,7 +237,13 @@ function errorDetails(error: any): { message: string; kind: BoardErrorKind; retr
   if (status === 409) return { message: '画板版本冲突：保留本地修改，请先重新载入或处理冲突', kind: 'conflict', retry: false }
   if (status === 413) return { message: '画板文档超过 8MiB，请删除部分内容后再保存', kind: 'too-large', retry: true }
   if (status >= 400 && status < 500) return { message: error?.response?.data?.message || '画板文档无法保存', kind: 'invalid', retry: false }
-  return { message: '画板网络请求失败，请检查连接后重试', kind: 'network', retry: true }
+  if (error?.isAxiosError === true && !error?.response) return { message: '画板网络请求失败，请检查连接后重试', kind: 'network', retry: true }
+  return { message: error?.message || '画板请求失败', kind: 'unknown', retry: true }
+}
+
+function documentErrorDetails(error: unknown): { message: string; kind: BoardErrorKind; retry: boolean } {
+  const message = error instanceof Error && error.message.trim() ? error.message : '画板文档解析失败'
+  return { message, kind: error instanceof Error ? 'invalid' : 'unknown', retry: false }
 }
 
 export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
@@ -299,7 +305,7 @@ export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
     return sessions[key] === session && session.key === activeKey.value && session.epoch === epoch
   }
 
-  async function load(worldId: string, options?: { force?: boolean; userId?: string; scope?: WorldClueBoardScope }): Promise<WorldClueBoardSession> {
+  async function load(worldId: string, options?: { force?: boolean; surfaceInit?: boolean; userId?: string; scope?: WorldClueBoardScope }): Promise<WorldClueBoardSession> {
     const session = ensureSession(worldId, WORLD_CLUE_BOARD_KEY, options?.userId, options?.scope)
     if (!session.worldId || !session.userId) {
       session.status = 'error'
@@ -307,7 +313,23 @@ export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
       session.loadFailed = true
       return session
     }
-    if (session.loaded && !options?.force) return session
+    if (options?.surfaceInit && session.scope === 'personal') {
+      // A newly mounted surface must start from the server baseline, not from
+      // transient state left by a previous personal surface instance.
+      if (session.inFlight) await session.inFlight.catch(() => false)
+      if (session.saveTimer) clearTimeout(session.saveTimer)
+      session.saveTimer = null
+      session.canWrite = false
+      session.status = 'idle'
+      session.error = ''
+      session.errorKind = null
+      session.loaded = false
+      session.loadFailed = false
+      session.dirty = false
+      session.pendingSave = false
+      session.canRetry = false
+    }
+    if (session.loaded && !options?.force && !options?.surfaceInit) return session
     // A focus refresh is intentionally skipped while the user has local work.
     if (session.dirty && options?.force) return session
     if (session.scope === 'shared' && session.localDrawingPending) { requestSharedRefresh(); return session }
@@ -316,32 +338,9 @@ export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
     session.status = 'loading'
     session.error = ''
     session.errorKind = null
+    let response: { data: WorldClueBoardResponse }
     try {
-      const response = await api.get(`api/v1/worlds/${encodeURIComponent(session.worldId)}/clue-boards/${encodeURIComponent(session.boardKey)}`, { params: { scope: session.scope } })
-      if (!isCurrent(session, session.key, epoch)) return session
-      const data = response.data as WorldClueBoardResponse
-      const document = normalizeDocument(data.document)
-      // A focus/connected refresh must never replace an edit that started
-      // while its GET was in flight. The local document remains dirty and the
-      // normal save path keeps its original expected revision.
-      if (session.dirty || session.localDrawingPending || session.editVersion !== requestedEditVersion) {
-        if (session.scope === 'shared') requestSharedRefresh()
-        return session
-      }
-      session.document = document
-      session.snapshotVersion++
-      session.canWrite = data.canWrite === true
-      session.revision = Number(data.revision) || 0
-      session.needsResync = session.remoteRevision > session.revision
-      session.updatedAt = Number(data.updatedAt) || 0
-      session.loaded = true
-      session.loadFailed = false
-      session.dirty = false
-      session.pendingSave = false
-      session.status = 'ready'
-      session.canRetry = false
-      if (session.needsResync) requestSharedRefresh()
-      return session
+      response = await api.get(`api/v1/worlds/${encodeURIComponent(session.worldId)}/clue-boards/${encodeURIComponent(session.boardKey)}`, { params: { scope: session.scope } })
     } catch (error) {
       if (isCurrent(session, session.key, epoch)) {
         if (session.dirty || session.localDrawingPending || session.editVersion !== requestedEditVersion) {
@@ -352,11 +351,50 @@ export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
         session.status = 'error'
         session.error = details.message
         session.errorKind = details.kind
-        session.canRetry = true
-        session.loadFailed = true
+        session.canRetry = details.retry
+        session.loadFailed = !session.loaded
       }
       return session
     }
+    if (!isCurrent(session, session.key, epoch)) return session
+    const data = response?.data as WorldClueBoardResponse
+    let document: WorldClueBoardDocument
+    try {
+      document = normalizeDocument(data?.document)
+    } catch (error) {
+      if (session.dirty || session.localDrawingPending || session.editVersion !== requestedEditVersion) {
+        if (session.scope === 'shared') requestSharedRefresh()
+        return session
+      }
+      const details = documentErrorDetails(error)
+      session.status = 'error'
+      session.error = details.message
+      session.errorKind = details.kind
+      session.canRetry = details.retry
+      session.loadFailed = !session.loaded
+      return session
+    }
+    // A focus/connected refresh must never replace an edit that started
+    // while its GET was in flight. The local document remains dirty and the
+    // normal save path keeps its original expected revision.
+    if (session.dirty || session.localDrawingPending || session.editVersion !== requestedEditVersion) {
+      if (session.scope === 'shared') requestSharedRefresh()
+      return session
+    }
+    session.document = document
+    session.snapshotVersion++
+    session.canWrite = data.canWrite === true
+    session.revision = Number(data.revision) || 0
+    session.needsResync = session.remoteRevision > session.revision
+    session.updatedAt = Number(data.updatedAt) || 0
+    session.loaded = true
+    session.loadFailed = false
+    session.dirty = false
+    session.pendingSave = false
+    session.status = 'ready'
+    session.canRetry = false
+    if (session.needsResync) requestSharedRefresh()
+    return session
   }
 
   function markChanged(session: WorldClueBoardSession, document: WorldClueBoardDocument) {
@@ -492,16 +530,16 @@ export const useWorldClueBoardStore = defineStore('worldClueBoard', () => {
   async function retry() {
     const session = current.value
     if (!session || !session.canRetry || session.status === 'conflict') return false
-    if (session.loadFailed) {
-      // A focus/connected refresh can fail after an older document was
-      // already loaded.  Retrying must issue the GET again; treating it as a
-      // save retry would incorrectly mark the stale document ready.
+    if (session.loadFailed || (session.loaded && !session.dirty && session.status === 'error')) {
+      // A refresh can fail after an older document was already loaded.
+      // Retrying must issue the GET again; treating it as a save retry would
+      // incorrectly mark the stale document ready.
       session.status = 'idle'
       session.error = ''
       session.errorKind = null
       session.canRetry = false
       await load(session.worldId, { force: true, userId: session.userId, scope: session.scope })
-      return !session.loadFailed
+      return !session.loadFailed && session.status !== 'error'
     }
     session.error = ''
     session.status = 'ready'
