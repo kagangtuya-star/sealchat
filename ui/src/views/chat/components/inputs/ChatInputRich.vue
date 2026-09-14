@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef,
 import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
+import type { JSONContent } from '@tiptap/core';
 import { NodeSelection, Plugin, TextSelection } from 'prosemirror-state';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
@@ -304,6 +305,17 @@ const parseIncomingRichContent = (value: string) => {
   } catch {
     return normalizeMentionTokensInDoc(plainTextToTiptapJson(value));
   }
+};
+
+const normalizeRichDocumentForComparison = (ed: Editor, content: JSONContent) => {
+  const normalizedNode = ed.schema.nodeFromJSON(content);
+  const canonicalNode = normalizedNode.type === ed.schema.topNodeType
+    ? ed.schema.topNodeType.createAndFill(normalizedNode.attrs, normalizedNode.content, normalizedNode.marks)
+    : normalizedNode;
+  if (!canonicalNode) {
+    throw new RangeError('无法规范化 TipTap 文档');
+  }
+  return serializeMentionNodesToTokens(canonicalNode.toJSON());
 };
 
 const parseMentionOption = (option: MentionOption) => {
@@ -1921,21 +1933,23 @@ watch(() => props.modelValue, (newValue) => {
   if (!editor.value || editor.value.isDestroyed) return;
   if (isSyncingFromProps.value) return;
 
-  if (!newValue || newValue.trim() === '') {
-    editor.value.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
-    editor.value.commands.setTextSelection(0);
-    bumpEditorStateVersion();
-    return;
-  }
-
   try {
     const normalizedIncoming = parseIncomingRichContent(newValue);
-    const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
-    const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
-    if (currentSerialized !== incomingSerialized) {
-      editor.value.commands.setContent(normalizedIncoming, SILENT_SET_CONTENT_OPTIONS);
-      bumpEditorStateVersion();
+    const currentComparable = JSON.stringify(normalizeRichDocumentForComparison(editor.value, editor.value.getJSON()));
+    const incomingComparable = JSON.stringify(normalizeRichDocumentForComparison(editor.value, normalizedIncoming));
+    if (currentComparable === incomingComparable) {
+      return;
     }
+
+    if (!newValue || newValue.trim() === '') {
+      editor.value.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
+      editor.value.commands.setTextSelection(0);
+      bumpEditorStateVersion();
+      return;
+    }
+
+    editor.value.commands.setContent(normalizedIncoming, SILENT_SET_CONTENT_OPTIONS);
+    bumpEditorStateVersion();
   } catch {
     // ignore
   }
