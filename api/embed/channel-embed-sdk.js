@@ -25,10 +25,11 @@
   }
 
   class ChannelEmbedClient {
-    constructor(port, sessionId, contextVersion) {
+    constructor(port, sessionId, contextVersion, capabilities) {
       this.port = port
       this.sessionId = sessionId
       this.contextVersion = contextVersion
+      this.capabilities = Array.isArray(capabilities) ? [...capabilities] : []
       this.requestCounter = 0
       this.pending = new Map()
       this.handlers = new Map()
@@ -52,13 +53,21 @@
         getCurrent: () => this.request('characters.getCurrent'),
         onChanged: handler => this.on('characters.changed', handler)
       }
-      this.theater = { dialogue: {
-        subscribe: params => this.request('theater.dialogue.subscribe', params),
-        unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
-        onCreated: handler => this.on('theater.dialogue.created', handler),
-        onUpdated: handler => this.on('theater.dialogue.updated', handler),
-        onRemoved: handler => this.on('theater.dialogue.removed', handler)
-      } }
+      this.theater = {
+        dialogue: {
+          subscribe: params => this.request('theater.dialogue.subscribe', params),
+          unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
+          onCreated: handler => this.on('theater.dialogue.created', handler),
+          onUpdated: handler => this.on('theater.dialogue.updated', handler),
+          onRemoved: handler => this.on('theater.dialogue.removed', handler)
+        },
+        character: {
+          get: params => this.request('theater.character.get', params),
+          subscribe: params => this.request('theater.character.subscribe', params),
+          unsubscribe: () => this.request('theater.character.unsubscribe'),
+          onChanged: handler => this.on('theater.character.changed', handler)
+        }
+      }
       this.characterCard = {
         getStatus: () => this.request('characterCard.getStatus'),
         getCurrent: () => this.request('characterCard.getCurrent'),
@@ -259,7 +268,7 @@
             reject(new SealChatEmbedError(event.data.error || { code: 'HANDSHAKE_FAILED', message: 'Embed handshake rejected' }))
             return
           }
-          resolve(new ChannelEmbedClient(event.ports[0], event.data.sessionId, event.data.contextVersion || 0))
+          resolve(new ChannelEmbedClient(event.ports[0], event.data.sessionId, event.data.contextVersion || 0, event.data.capabilities || []))
         }
         global.addEventListener('message', onMessage)
         global.parent.postMessage({ type: CHANNEL_EMBED_HANDSHAKE, version: CHANNEL_EMBED_VERSION, nonce }, targetOrigin)

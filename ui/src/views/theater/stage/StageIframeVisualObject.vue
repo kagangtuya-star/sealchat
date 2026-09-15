@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
+import { computed, onBeforeUnmount, ref, toRaw, watch, type CSSProperties } from 'vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import type { ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHost'
 import { useChatStore } from '@/stores/chat'
 import { useIFormStore } from '@/stores/iform'
 import { parseInternalSurfaceLink } from '@/utils/internalSurfaceLink'
 import { normalizeStageIframeContent, resolveSafeStageIframeUrl, type StageObject } from '../shared/stage-types'
+import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 
 const props = defineProps<{
   object: StageObject
+  characterSnapshot: ChatCharactersSnapshotPayload
 }>()
 
 const chat = useChatStore()
@@ -43,6 +46,24 @@ const directIForm = computed(() => {
 })
 const directIFormState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let loadEpoch = 0
+const theaterCharacterSourceStops = new Set<() => void>()
+const cloneCharacterSnapshot = (snapshot: ChatCharactersSnapshotPayload) => structuredClone(toRaw(snapshot))
+const theaterCharacterSource: ChannelEmbedTheaterCharacterSource = {
+  getSnapshot: () => cloneCharacterSnapshot(props.characterSnapshot),
+  subscribe: (listener) => {
+    const stopWatch = watch(
+      () => props.characterSnapshot,
+      snapshot => listener(cloneCharacterSnapshot(snapshot)),
+      { flush: 'sync' },
+    )
+    const stop = () => {
+      stopWatch()
+      theaterCharacterSourceStops.delete(stop)
+    }
+    theaterCharacterSourceStops.add(stop)
+    return stop
+  },
+}
 
 watch(
   () => [
@@ -77,7 +98,10 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => { loadEpoch += 1 })
+onBeforeUnmount(() => {
+  loadEpoch += 1
+  Array.from(theaterCharacterSourceStops).forEach(stop => stop())
+})
 
 const pointerEvents = computed<'auto' | 'none'>(() => (
   props.object.interactive ? 'auto' : 'none'
@@ -99,6 +123,7 @@ const frameStyle = computed<CSSProperties>(() => ({
       :form="directIForm"
       :channel-id="internalIFormTarget.channelId"
       :enable-channel-embed="true"
+      :theater-character-source="theaterCharacterSource"
       :style="frameStyle"
     />
     <span

@@ -53,11 +53,12 @@ import {
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { useIFormStore } from '@/stores/iform'
+import { useChatStore } from '@/stores/chat'
 import { useStickyNoteStore } from '@/stores/stickyNote'
 import { useCharacterCardStore } from '@/stores/characterCard'
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot'
 import { useUtilsStore } from '@/stores/utils'
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
+import { generateInternalSurfaceLink, parseInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
@@ -138,6 +139,10 @@ import {
   buildTheaterDialogueSurfaceUrl,
   parseTheaterDialogueSurfaceUrl,
 } from '../dialogue/theater-dialogue-surface'
+import {
+  normalizeTheaterCharacterPortraitEmbedSettings,
+  THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
+} from '../portrait/theater-character-portrait-embed-settings'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '../host/theater-floating-window'
@@ -2743,13 +2748,26 @@ const selectedObject = computed(() => {
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 
+const iformStore = useIFormStore()
+const chatStore = useChatStore()
+const stickyNoteStore = useStickyNoteStore()
+const characterCardStore = useCharacterCardStore()
+const snapshotStore = useChannelCharacterSnapshotStore()
+const utilsStore = useUtilsStore()
+
 const hasCharacterDialogueSurface = computed(() => Object.values(props.store.activeObjects.value).some((object) => {
   if (object.type !== 'iframe') return false
-  const context = parseTheaterDialogueSurfaceUrl(normalizeStageIframeContent(object.content?.iframe).url)
-  return context?.worldId === props.worldId && context.channelId === props.channelId
+  const url = normalizeStageIframeContent(object.content?.iframe).url
+  const dialogueContext = parseTheaterDialogueSurfaceUrl(url)
+  if (dialogueContext?.worldId === props.worldId && dialogueContext.channelId === props.channelId) return true
+  const surface = parseInternalSurfaceLink(url)
+  if (surface?.type !== 'iform' || surface.worldId !== props.worldId || surface.channelId !== props.channelId) return false
+  return (iformStore.formsByChannel[props.channelId] || []).some(
+    form => form.id === surface.id && form.templateRef === 'builtin:theater-dialogue-overlay',
+  )
 }))
 
-type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue'
+type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue' | 'portrait'
 interface QuickToolOption {
   id: string
   name: string
@@ -2757,14 +2775,10 @@ interface QuickToolOption {
   url: string
 }
 
-const iformStore = useIFormStore()
-const stickyNoteStore = useStickyNoteStore()
-const characterCardStore = useCharacterCardStore()
-const snapshotStore = useChannelCharacterSnapshotStore()
-const utilsStore = useUtilsStore()
 const quickToolPickerOpen = ref(false)
 const quickToolPickerTab = ref<QuickToolTab>('iform')
 const quickToolPickerLoading = ref(false)
+const quickToolPickerApplying = ref(false)
 const quickToolPickerError = ref('')
 const quickToolSelection = ref<{ tab: QuickToolTab; option: QuickToolOption } | null>(null)
 const quickToolCharacterQuery = ref('')
@@ -2775,6 +2789,7 @@ const quickToolTabs: Array<{ value: QuickToolTab; label: string }> = [
   { value: 'note', label: '便签' },
   { value: 'character', label: '人物卡' },
   { value: 'dialogue', label: '角色对话框' },
+  { value: 'portrait', label: '角色立绘' },
 ]
 
 const quickToolUrl = (type: 'iform' | 'note' | 'character', id: string) => (
@@ -2841,7 +2856,7 @@ const dialogueCharacterOptions = computed<QuickToolOption[]>(() => {
 })
 
 const quickToolOptionsFor = (tab: QuickToolTab): QuickToolOption[] => {
-  if (tab === 'dialogue') return dialogueCharacterOptions.value
+  if (tab === 'dialogue' || tab === 'portrait') return dialogueCharacterOptions.value
   if (tab === 'iform') {
     return (iformStore.formsByChannel[props.channelId] || []).map((form) => ({
       id: form.id,
@@ -2893,9 +2908,14 @@ const quickToolPickerStyle = computed(() => {
     zIndex: '10002',
   }
 })
-const quickToolActiveLoading = computed(() => quickToolPickerTab.value !== 'dialogue' && quickToolPickerLoading.value)
+const quickToolActiveLoading = computed(() => (
+  quickToolPickerTab.value !== 'dialogue'
+  && quickToolPickerTab.value !== 'portrait'
+  && quickToolPickerLoading.value
+))
 
 const selectQuickTool = (tab: QuickToolTab, option: QuickToolOption) => {
+  if (quickToolPickerApplying.value) return
   quickToolSelection.value = { tab, option }
 }
 
@@ -2914,6 +2934,7 @@ const openQuickToolPicker = async () => {
   quickToolCharacterQuery.value = ''
   quickToolPickerError.value = ''
   quickToolPickerLoading.value = true
+  quickToolPickerApplying.value = false
   const worldId = props.worldId
   const channelId = props.channelId
   iformStore.bootstrap()
@@ -2944,16 +2965,87 @@ const closeQuickToolPicker = () => {
 }
 
 const handleQuickToolTabChange = (value: string) => {
-  if (value !== 'iform' && value !== 'note' && value !== 'character' && value !== 'dialogue') return
+  if (quickToolPickerApplying.value) return
+  if (value !== 'iform' && value !== 'note' && value !== 'character' && value !== 'dialogue' && value !== 'portrait') return
   quickToolPickerTab.value = value
   quickToolSelection.value = null
 }
 
-const applyQuickToolSelection = () => {
+const quickAddCharacterPortrait = async (identityId: string) => {
+  const character = props.characterSnapshot.characters.find(item => item.identityId === identityId)
+  const object = selectedObject.value
+  if (!character || !object || object.type !== 'iframe') throw new Error('未找到角色')
+  if (iformStore.visibleChannelId !== props.channelId) throw new Error('当前频道尚未就绪')
+  const epoch = quickToolPickerEpoch
+  const objectId = object.id
+  const worldId = props.worldId
+  const channelId = props.channelId
+  const name = dialogueCharacterName(character)
+  const isCurrent = () => (
+    epoch === quickToolPickerEpoch
+    && worldId === props.worldId
+    && channelId === props.channelId
+    && selectedObject.value?.id === objectId
+  )
+  let formId = ''
+  let attached = false
+  const cleanupForm = async () => {
+    if (!formId) return
+    try {
+      await api.delete(`api/v1/channels/${channelId}/iforms/${formId}`)
+      await iformStore.ensureForms(channelId, true)
+    } catch {
+      // Keep the original quick-add error; cleanup is best effort.
+    }
+  }
+  try {
+    const form = await iformStore.createForm({
+      name: '',
+      templateRef: 'builtin:theater-character-portrait',
+    })
+    formId = form?.id || ''
+    if (!formId) throw new Error('内置工具安装失败')
+    if (!isCurrent()) {
+      await cleanupForm()
+      return
+    }
+    await chatStore.sendAPI('iform.storage.set', {
+      channel_id: channelId,
+      form_id: formId,
+      key: THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
+      value: normalizeTheaterCharacterPortraitEmbedSettings({ version: 1, identityId }),
+    } as any)
+    if (!isCurrent()) {
+      await cleanupForm()
+      return
+    }
+    const url = resolveSafeStageIframeUrl(quickToolUrl('iform', formId))
+    if (!url) throw new Error('内置工具地址无效')
+    props.store.beginObjectEdit('添加角色立绘')
+    object.name = `${name} 立绘`
+    object.interactive = true
+    object.aspectRatioLocked = false
+    object.transform = {
+      ...object.transform,
+      width: Number((480 / WORLD_UNIT_PX).toFixed(6)),
+      height: Number((720 / WORLD_UNIT_PX).toFixed(6)),
+    }
+    object.content = { ...object.content, iframe: { url, scale: 1 } }
+    props.store.commitObjectEdit()
+    attached = true
+    iframeUrlDraft.value = url
+    closeQuickToolPicker()
+  } catch (error) {
+    if (!attached) await cleanupForm()
+    throw error
+  }
+}
+
+const applyQuickToolSelection = async () => {
   const selection = quickToolSelection.value
   const selected = selection?.option
   const object = selectedObject.value
-  if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value || quickToolPickerApplying.value) return
   if (selection.tab === 'dialogue') {
     const character = props.characterSnapshot.characters.find(item => item.identityId === selected.id)
     if (!character) {
@@ -2977,6 +3069,26 @@ const applyQuickToolSelection = () => {
     props.store.commitObjectEdit()
     iframeUrlDraft.value = url
     closeQuickToolPicker()
+    return
+  }
+  if (selection.tab === 'portrait') {
+    const applyEpoch = quickToolPickerEpoch
+    quickToolPickerApplying.value = true
+    quickToolPickerError.value = ''
+    try {
+      await quickAddCharacterPortrait(selected.id)
+    } catch (error) {
+      if (quickToolPickerEpoch === applyEpoch) {
+        quickToolPickerError.value = error instanceof Error ? error.message : '添加内置工具失败'
+        if (quickToolPickerError.value === '未找到角色') {
+          quickToolSelection.value = null
+        }
+      }
+    } finally {
+      if (quickToolPickerEpoch === applyEpoch) {
+        quickToolPickerApplying.value = false
+      }
+    }
     return
   }
   iframeUrlDraft.value = selected.url
@@ -8410,6 +8522,7 @@ onBeforeUnmount(() => {
             :entrance-playbacks="textEntrancePlaybacks"
             :hidden-object-ids="pendingTextEntranceIds"
             :stacking-order="rootStackingOrder"
+            :character-snapshot="characterSnapshot"
           />
           <div
             v-if="imageAnnotationOverlay.visible"
@@ -8485,7 +8598,7 @@ onBeforeUnmount(() => {
             @update:value="handleQuickToolTabChange"
           >
             <n-tab-pane v-for="tab in quickToolTabs" :key="tab.value" :name="tab.value" :tab="tab.label">
-              <div v-if="tab.value === 'dialogue'" class="theater-tool-picker__search" @focusin.stop @focusout.stop>
+              <div v-if="tab.value === 'dialogue' || tab.value === 'portrait'" class="theater-tool-picker__search" @focusin.stop @focusout.stop>
                 <n-input
                   v-model:value="quickToolCharacterQuery"
                   size="small"
@@ -8501,6 +8614,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="theater-tool-picker__option"
                   :class="{ 'is-selected': isQuickToolOptionSelected(tab.value, option) }"
+                  :disabled="quickToolPickerApplying"
                   @click="selectQuickTool(tab.value, option)"
                 >
                   <span class="theater-tool-picker__option-main">
@@ -8510,7 +8624,7 @@ onBeforeUnmount(() => {
                   <n-icon v-if="isQuickToolOptionSelected(tab.value, option)"><Select /></n-icon>
                 </button>
                 <div v-if="!quickToolOptionsFor(tab.value).length" class="theater-tool-picker__empty">
-                  {{ tab.value === 'dialogue' ? '未找到角色' : `暂无可用${tab.label}` }}
+                  {{ tab.value === 'dialogue' || tab.value === 'portrait' ? '未找到角色' : `暂无可用${tab.label}` }}
                 </div>
               </div>
             </n-tab-pane>
@@ -8520,7 +8634,7 @@ onBeforeUnmount(() => {
           <div class="theater-tool-picker__footer">
             <small v-if="quickToolSelection">已选择：{{ quickToolSelection.option.name }}</small>
             <span v-else />
-            <n-button size="small" type="primary" :disabled="!quickToolSelection || quickToolActiveLoading" @click="applyQuickToolSelection">确定</n-button>
+            <n-button size="small" type="primary" :loading="quickToolPickerApplying" :disabled="!quickToolSelection || quickToolActiveLoading" @click="applyQuickToolSelection">确定</n-button>
           </div>
         </div>
       </aside>

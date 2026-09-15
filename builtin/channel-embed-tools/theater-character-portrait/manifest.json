@@ -1,0 +1,15 @@
+{
+  "name": "小剧场透明角色立绘",
+  "description": "独立绑定频道角色的透明立绘组件，可重复安装",
+  "entry": "index.html",
+  "defaultWidth": 480,
+  "defaultHeight": 720,
+  "defaultCollapsed": false,
+  "defaultFloating": false,
+  "allowPopout": true,
+  "mediaOptions": { "allowAudio": false, "allowVideo": false },
+  "bridgePolicy": {
+    "enabled": true,
+    "capabilities": ["context.read", "characters.read", "permissions.read", "storage.read", "storage.write", "theater.character.read"]
+  }
+}

@@ -47,6 +47,31 @@ offCreated(); offUpdated(); offRemoved()
 
 此能力复用宿主已经存在的聊天连接，不建立额外 WebSocket、不轮询、不读取消息历史。仅在实际订阅后监听宿主聊天事件，多实例共享一次消息序列化；最后一个订阅释放后解绑监听。
 
+### 小剧场角色快照
+
+`theater.character.read` 仅在“小剧场幕布中的直接 iForm”运行上下文中可用。普通频道 iForm 即使策略中写入该 capability，宿主没有提供小剧场角色数据源时也不会在握手结果中宣告它；调用方必须检查 handshake 返回的 `capabilities`，不能假定该能力存在。裸第三方舞台 iframe 不会获得 Channel Embed Session。
+
+| API / 事件 | Capability | 说明 |
+| --- | --- | --- |
+| `theater.character.get({ identityId })` | `theater.character.read` | 读取指定 identity 的当前 Theater character snapshot |
+| `theater.character.subscribe({ identityId })` | `theater.character.read` | 订阅指定 identity，并返回当前 snapshot；identity 不存在时返回 `NOT_FOUND` |
+| `theater.character.unsubscribe()` | `theater.character.read` | 清除当前 Session 的角色订阅 |
+| `theater.character.onChanged(handler)` / `theater.character.changed` | `theater.character.read` | 订阅角色快照变化；返回取消事件监听的函数 |
+
+```ts
+interface EmbedTheaterCharacterSnapshot {
+  revision: number
+  updatedAt: number
+  activeIdentityId: string | null
+  identityId: string
+  character: ChatCharacterSnapshot | null
+}
+```
+
+返回值直接复用小剧场的 `ChatCharacterSnapshot`。其中 `character.resolvedAppearance.theaterPresentation` 是指定角色已应用当前差分后的演出外观；角色在订阅后被删除时，`theater.character.changed` 仍会定向发送，且 `character` 为 `null`。每个 Session 同时只订阅一个 identity，重复 `subscribe` 会替换旧订阅，Session 关闭或宿主卸载时订阅会释放。
+
+外部组件可以用 `theater.character` 获取角色立绘、装饰与播放配置，但不能假定自己拥有舞台 `StageObject` 的坐标、尺寸、旋转或 `z-index`；这些由宿主舞台管理。此能力复用 `TheaterView` 已有角色快照，不建立新的 Store、WebSocket 或角色事件通道。
+
 ### 2.1 内部接入
 
 SealChat 后端提供无需登录的 SDK 地址。频道 `srcdoc` 嵌入会自动注入 `window.__SEALCHAT_EMBED_CONFIG__`；频道 iForm 使用单独 `<iframe src>` 时，宿主会自动追加 `hostOrigin` 与 `sdkUrl` 查询参数；脱离 SealChat 宿主的外部 URL iframe 则需自行提供实际地址：
@@ -89,7 +114,7 @@ const sealchat = await SealChatEmbed.connect({
 - `timeoutMs`：握手超时，默认 `10000`。
 - `targetOrigin`：父级 SealChat origin。生产环境应传明确 origin；默认 `*` 只适合无法提前确定 origin 的场景。
 
-`SealChatEmbed.connect()` resolve 表示 Embed Session 握手成功，但不要把“握手成功”等同于“已经收到一次连接状态事件”。新建 Session 时，宿主不保证主动补发 `connection.changed`；`connection.onChanged()` 用于监听后续变化，客户端应在握手成功后主动调用一次 `connection.getState()` 初始化 UI 和本地状态。推荐先注册监听，再读取初始状态，以避免只依赖事件导致状态栏长期停留在“连接中”。
+`SealChatEmbed.connect()` resolve 表示 Embed Session 握手成功，返回的 Client 通过只读 `capabilities` 数组暴露本次 handshake 的有效能力。不要把“握手成功”等同于“已经收到一次连接状态事件”。新建 Session 时，宿主不保证主动补发 `connection.changed`；`connection.onChanged()` 用于监听后续变化，客户端应在握手成功后主动调用一次 `connection.getState()` 初始化 UI 和本地状态。推荐先注册监听，再读取初始状态，以避免只依赖事件导致状态栏长期停留在“连接中”。
 
 iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需 Capability。`world.admins.read`、`characterCard.read`、`characterCard.write` 和 `attachments.upload` 已加入新建 iForm 默认能力。
 
@@ -97,7 +122,7 @@ iForm 管理员必须启用 Embed API、允许嵌入页 origin，并授予所需
 
 常用 Channel Embed capability 包括：`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`characterCard.write`、`permissions.read`、`storage.read`、`storage.write`、`events.subscribe`、`events.publish`、`messages.send`、`attachments.upload`。
 
-另外，SealChat 内置小剧场工具还使用专用 capability：`theater.dialogue.subscribe`。
+另外，SealChat 内置小剧场工具还使用专用 capability：`theater.dialogue.subscribe` 和 `theater.character.read`。后者还要求宿主处于小剧场幕布直接 iForm 上下文。
 
 连接断开分两类：
 

@@ -4,6 +4,7 @@ import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import { WORLD_UNIT_PX, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop } from './stage-layer-order'
 import StageIframeVisualObject from './StageIframeVisualObject.vue'
+import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 
 defineOptions({ name: 'StageTextVisualObject' })
 
@@ -12,6 +13,7 @@ const props = defineProps<{
   objects: Record<string, StageObject>
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: Set<string>
+  characterSnapshot: ChatCharactersSnapshotPayload
 }>()
 
 const contentRef = ref<HTMLElement | null>(null)
@@ -131,6 +133,7 @@ onBeforeUnmount(() => {
     <StageIframeVisualObject
       v-else-if="props.object.type === 'iframe'"
       :object="props.object"
+      :character-snapshot="props.characterSnapshot"
     />
     <StageTextVisualObject
       v-for="child in children"
@@ -139,6 +142,7 @@ onBeforeUnmount(() => {
       :objects="props.objects"
       :entrance-playbacks="props.entrancePlaybacks"
       :hidden-object-ids="props.hiddenObjectIds"
+      :character-snapshot="props.characterSnapshot"
     />
   </div>
 </template>
