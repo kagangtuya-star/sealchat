@@ -425,6 +425,7 @@ type AIConfig struct {
 	Enabled          bool                       `json:"enabled" yaml:"enabled"`
 	Routing          AIRoutingConfig            `json:"routing" yaml:"routing"`
 	Retry            AIRetryConfig              `json:"retry" yaml:"retry"`
+	RequestTimeoutSeconds int                    `json:"requestTimeoutSeconds" yaml:"requestTimeoutSeconds"`
 	Providers        []AIProviderConfig         `json:"providers" yaml:"providers"`
 	Features         map[string]AIFeatureConfig `json:"features" yaml:"features"`
 	Pricing          []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
@@ -1008,6 +1009,7 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 		Enabled:          cfg.Enabled,
 		Routing:          cfg.Routing,
 		Retry:            cfg.Retry,
+		RequestTimeoutSeconds: cfg.RequestTimeoutSeconds,
 		Providers:        make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
 		Features:         make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
 		Pricing:          make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
@@ -1025,6 +1027,9 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	}
 	if result.Retry.MaxDelayMs <= 0 {
 		result.Retry.MaxDelayMs = 3000
+	}
+	if result.RequestTimeoutSeconds <= 0 {
+		result.RequestTimeoutSeconds = 60
 	}
 	if result.LogRetentionDays <= 0 {
 		result.LogRetentionDays = 30
@@ -1197,6 +1202,9 @@ func ValidateAIConfig(cfg AIConfig) error {
 	}
 	if cfg.Retry.MaxDelayMs < cfg.Retry.InitialDelayMs {
 		return fmt.Errorf("AI 最大重试延迟不能小于初始延迟")
+	}
+	if cfg.RequestTimeoutSeconds <= 0 {
+		return fmt.Errorf("AI 请求超时必须大于 0")
 	}
 	if cfg.LogRetentionDays <= 0 {
 		return fmt.Errorf("AI 日志保留天数必须大于 0")
@@ -1829,6 +1837,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("ai.retry.maxAttempts", config.AI.Retry.MaxAttempts)
 		_ = k.Set("ai.retry.initialDelayMs", config.AI.Retry.InitialDelayMs)
 		_ = k.Set("ai.retry.maxDelayMs", config.AI.Retry.MaxDelayMs)
+		_ = k.Set("ai.requestTimeoutSeconds", config.AI.RequestTimeoutSeconds)
 		_ = k.Set("ai.providers", config.AI.Providers)
 		_ = k.Set("ai.features", config.AI.Features)
 		_ = k.Set("ai.pricing", config.AI.Pricing)

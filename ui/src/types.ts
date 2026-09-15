@@ -594,6 +594,7 @@ export interface AIConfig {
   enabled: boolean;
   routing: AIRoutingConfig;
   retry: AIRetryConfig;
+  requestTimeoutSeconds: number;
   providers: AIProviderConfig[];
   features: Record<string, AIFeatureConfig>;
   pricing: AIModelPricingConfig[];

@@ -68,6 +68,7 @@ const defaultConfig = (): AIConfig => ({
     initialDelayMs: 300,
     maxDelayMs: 3000,
   },
+  requestTimeoutSeconds: 60,
   providers: [
     {
       id: 'deepseek-default',
@@ -159,6 +160,9 @@ const mergeConfig = (incoming?: Partial<AIConfig>): AIConfig => ({
   ...(incoming || {}),
   routing: { ...defaultConfig().routing, ...(incoming?.routing || {}) },
   retry: { ...defaultConfig().retry, ...(incoming?.retry || {}) },
+  requestTimeoutSeconds: Number.isFinite(incoming?.requestTimeoutSeconds) && (incoming?.requestTimeoutSeconds || 0) > 0
+    ? Number(incoming?.requestTimeoutSeconds)
+    : 60,
   providers: Array.isArray(incoming?.providers) && incoming?.providers.length
     ? incoming.providers.map((provider, index) => normalizeProvider(provider, index))
     : defaultConfig().providers,
@@ -378,11 +382,14 @@ defineExpose({
             <n-form-item label="重试次数">
               <n-input-number v-model:value="model.retry.maxAttempts" :min="1" />
             </n-form-item>
-            <n-form-item label="初始延迟(ms)">
+            <n-form-item label="重试初始间隔(ms)">
               <n-input-number v-model:value="model.retry.initialDelayMs" :min="50" />
             </n-form-item>
-            <n-form-item label="最大延迟(ms)">
+            <n-form-item label="重试最大间隔(ms)">
               <n-input-number v-model:value="model.retry.maxDelayMs" :min="100" />
+            </n-form-item>
+            <n-form-item label="请求超时(秒)">
+              <n-input-number v-model:value="model.requestTimeoutSeconds" :min="1" />
             </n-form-item>
           </n-collapse-item>
 

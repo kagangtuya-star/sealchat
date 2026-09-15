@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { AIFeatureCapability, AIRunSource, UserAIFeatureBinding, UserAIProviderProfile, UserAISettings } from '@/types'
-import { api } from '@/stores/_config'
+import { api, buildAuthorizedHeaders, urlBase } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
 import { discoverLocalAIModels, readLocalAISettings, runLocalAIChat, writeLocalAISettings } from '@/services/ai/local-ai'
+import { persistAccessToken } from '@/utils/authToken'
 
 const AI_SOURCE_STORAGE_KEY = 'sealchat_ai_source_v1'
-const PLATFORM_AI_TASK_TIMEOUT_MS = 120000
 export const USER_AI_SETTINGS_REQUIRED_MESSAGE = '请先在个人信息的 AI 设置中配置个人 API 后再调用'
 
 export const isUserAISettingsRequiredMessage = (value: unknown) => {
@@ -38,6 +38,90 @@ const persistSource = (value: AIRunSource) => {
   } catch {
     // ignore storage failure
   }
+}
+
+interface AIStreamEvent {
+  event: string
+  data: string
+}
+
+const parseAIStreamEvents = (raw: string): AIStreamEvent[] => {
+  const events: AIStreamEvent[] = []
+  let event = 'message'
+  let dataLines: string[] = []
+  const flush = () => {
+    if (dataLines.length === 0) {
+      event = 'message'
+      return
+    }
+    events.push({ event, data: dataLines.join('\n') })
+    event = 'message'
+    dataLines = []
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    if (line === '') {
+      flush()
+      continue
+    }
+    if (line.startsWith(':')) continue
+    const separator = line.indexOf(':')
+    const field = separator >= 0 ? line.slice(0, separator) : line
+    let value = separator >= 0 ? line.slice(separator + 1) : ''
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (field === 'event') event = value
+    if (field === 'data') dataLines.push(value)
+  }
+  flush()
+  return events
+}
+
+const readAIResponseError = async (response: Response, raw: string) => {
+  try {
+    const payload = JSON.parse(raw) as { message?: string; error?: { message?: string } }
+    const message = payload?.message || payload?.error?.message
+    if (message) return String(message)
+  } catch {
+    // fall through to status text
+  }
+  return response.statusText || `AI 请求失败（${response.status}）`
+}
+
+const runPlatformAITask = async (featureKey: string, payload: { worldId?: string; channelId?: string; input: string; source: AIRunSource }, token: string) => {
+  const response = await fetch(`${urlBase}/api/v1/ai/tasks/${encodeURIComponent(featureKey)}?stream=1`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: buildAuthorizedHeaders({
+      Authorization: token,
+      'Content-Type': 'application/json',
+    }),
+    body: JSON.stringify(payload),
+  })
+  const refreshedToken = response.headers.get('x-access-token-refresh')
+  if (refreshedToken?.trim()) {
+    persistAccessToken(refreshedToken)
+  }
+  const raw = await response.text()
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.toLowerCase().includes('text/event-stream')) {
+    throw new Error(await readAIResponseError(response, raw))
+  }
+  const events = parseAIStreamEvents(raw)
+  const errorEvent = events.find((item) => item.event === 'error')
+  if (errorEvent) {
+    let message = 'AI 请求失败'
+    try {
+      const payload = JSON.parse(errorEvent.data) as { message?: string }
+      message = payload.message || message
+    } catch {
+      // keep the generic message for malformed error events
+    }
+    throw new Error(message)
+  }
+  const resultEvent = events.find((item) => item.event === 'result')
+  if (!resultEvent) {
+    throw new Error(response.ok ? 'AI 响应缺少结果' : await readAIResponseError(response, raw))
+  }
+  return { data: JSON.parse(resultEvent.data) as { featureKey: string; result: string; model: string; providerId: string; warning?: string } }
 }
 
 export const useAIStore = defineStore('ai', () => {
@@ -159,13 +243,10 @@ export const useAIStore = defineStore('ai', () => {
       }
     }
     const user = useUserStore()
-    return api.post(`api/v1/ai/tasks/${featureKey}`, {
+    return runPlatformAITask(featureKey, {
       ...payload,
       source,
-    }, {
-      headers: { Authorization: user.token },
-      timeout: PLATFORM_AI_TASK_TIMEOUT_MS,
-    })
+    }, user.token)
   }
 
   const enabledFeatureKeys = computed(() => Object.keys(features.value).filter((key) => features.value[key]?.enabled))

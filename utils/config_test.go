@@ -166,3 +166,15 @@ func TestResolveBotCommandPrefixesCustom(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeAIConfigRequestTimeoutDefaults(t *testing.T) {
+	for _, value := range []int{0, -1} {
+		cfg := NormalizeAIConfig(AIConfig{RequestTimeoutSeconds: value})
+		if cfg.RequestTimeoutSeconds != 60 {
+			t.Fatalf("RequestTimeoutSeconds(%d) = %d, want 60", value, cfg.RequestTimeoutSeconds)
+		}
+		if err := ValidateAIConfig(AIConfig{RequestTimeoutSeconds: value}); err != nil {
+			t.Fatalf("ValidateAIConfig(%d) error = %v, want nil after normalization", value, err)
+		}
+	}
+}
