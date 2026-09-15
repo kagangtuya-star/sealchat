@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -19,6 +20,8 @@ import (
 )
 
 var runtimeCertificateManager *service.CertificateManager
+var runtimeCertificateStateMu sync.RWMutex
+var runtimeCertificateConfig *utils.CertificateConfig
 var (
 	startHTTP01CompanionForServing    = startHTTP01Companion
 	startTLSALPN01CompanionForServing = startTLSALPN01Companion
@@ -33,21 +36,23 @@ func serveAppWithOptionalCertificate(app *fiber.App, config *utils.AppConfig) er
 	if err != nil {
 		return fmt.Errorf("初始化证书管理器失败: %w", err)
 	}
-	runtimeCertificateManager = manager
+	setRuntimeCertificateManager(manager, config.Certificate)
 
 	listenAddr := certificateBusinessListenAddr(config)
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		manager.Stop()
+		StopRuntimeCertificateManager()
 		return fmt.Errorf("HTTPS 业务端口监听失败 %s: %w", listenAddr, err)
 	}
 	tlsConfig := manager.TLSConfig()
 	if tlsConfig == nil {
-		manager.Stop()
+		StopRuntimeCertificateManager()
 		_ = ln.Close()
 		return fmt.Errorf("证书 TLS 配置不可用")
 	}
-	startCertificateChallengeCompanions(config, manager, tlsConfig, listenAddr)
+	for _, companionErr := range startCertificateChallengeCompanions(config, manager, tlsConfig, listenAddr) {
+		manager.ReportRuntimeError("challenge", companionErr)
+	}
 
 	log.Printf("HTTPS listening at %s", listenAddr)
 	if certificateListenAddrSharesHTTP(config, listenAddr) {
@@ -85,11 +90,43 @@ func startCertificateMaintenance(manager *service.CertificateManager) {
 }
 
 func StopRuntimeCertificateManager() {
-	if runtimeCertificateManager == nil {
-		return
-	}
-	runtimeCertificateManager.Stop()
+	runtimeCertificateStateMu.Lock()
+	manager := runtimeCertificateManager
 	runtimeCertificateManager = nil
+	runtimeCertificateConfig = nil
+	runtimeCertificateStateMu.Unlock()
+	if manager != nil {
+		manager.Stop()
+	}
+}
+
+func setRuntimeCertificateManager(manager *service.CertificateManager, cfg utils.CertificateConfig) {
+	normalized := utils.NormalizeCertificateConfig(cfg)
+	runtimeCertificateStateMu.Lock()
+	runtimeCertificateManager = manager
+	runtimeCertificateConfig = &normalized
+	runtimeCertificateStateMu.Unlock()
+}
+
+func currentRuntimeCertificateManager() *service.CertificateManager {
+	runtimeCertificateStateMu.RLock()
+	defer runtimeCertificateStateMu.RUnlock()
+	return runtimeCertificateManager
+}
+
+func certificateRuntimeRestartRequired() bool {
+	cfg := utils.CertificateConfig{}
+	if appConfig != nil {
+		cfg = utils.NormalizeCertificateConfig(appConfig.Certificate)
+	}
+	runtimeCertificateStateMu.RLock()
+	manager := runtimeCertificateManager
+	snapshot := runtimeCertificateConfig
+	runtimeCertificateStateMu.RUnlock()
+	if manager == nil || snapshot == nil {
+		return cfg.Enabled
+	}
+	return *snapshot != cfg
 }
 
 func startCertificateChallengeCompanions(config *utils.AppConfig, manager *service.CertificateManager, tlsConfig *tls.Config, listenAddr string) []error {
@@ -258,6 +295,10 @@ func shouldRedirectCertificateHTTP(config *utils.AppConfig, host string, isTLS b
 	if isTLS || config == nil || !config.Certificate.Enabled || !config.Certificate.ForceHTTPS || !config.Certificate.RedirectHTTP {
 		return false
 	}
+	manager := currentRuntimeCertificateManager()
+	if manager == nil || !manager.IsCertificateReady() {
+		return false
+	}
 	return !isCertificateLoopbackHost(host)
 }
 
@@ -392,14 +433,22 @@ func serveCertificateProtocolMux(base net.Listener, httpListener, tlsListener *c
 			}
 			return
 		}
-		routeCertificateProtocolConn(conn, httpListener, tlsListener)
+		go routeCertificateProtocolConn(conn, httpListener, tlsListener)
 	}
 }
 
 func routeCertificateProtocolConn(conn net.Conn, httpListener, tlsListener *certificateMuxListener) {
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		_ = conn.Close()
+		return
+	}
 	buffered := bufio.NewReader(conn)
 	first, err := buffered.Peek(1)
 	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		_ = conn.Close()
 		return
 	}

@@ -1012,6 +1012,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		if err != nil {
 			return err
 		}
+		if err := normalizeAndValidateCertificateConfigForWrite(newConfig); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
 
 		var rawPayload struct {
 			Audio *struct {

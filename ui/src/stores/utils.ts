@@ -357,9 +357,9 @@ export const useUtilsStore = defineStore({
       return resp;
     },
 
-    async adminCertificateConfigUpdate(config: CertificateConfig) {
+    async adminCertificateConfigUpdate(config: CertificateConfig, clear?: { clearZeroSSLAPIKey?: boolean; clearZeroSSLEABMACKey?: boolean }) {
       const user = useUserStore();
-      const resp = await api.put('api/v1/admin/certificates/config', { config }, {
+      const resp = await api.put('api/v1/admin/certificates/config', { config, ...clear }, {
         headers: { 'Authorization': user.token },
       });
       return resp;
@@ -382,9 +382,9 @@ export const useUtilsStore = defineStore({
       return resp;
     },
 
-    async adminCertificateObtain() {
+    async adminCertificateObtain(force = false) {
       const user = useUserStore();
-      const resp = await api.post('api/v1/admin/certificates/obtain', {}, {
+      const resp = await api.post('api/v1/admin/certificates/obtain', { force }, {
         headers: { 'Authorization': user.token },
       });
       return resp;

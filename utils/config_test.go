@@ -178,3 +178,59 @@ func TestNormalizeAIConfigRequestTimeoutDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeCertificateConfigRenewBeforeDays(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		issuer CertificateIssuer
+		input  int
+		want   int
+	}{
+		{name: "short-lived zero defaults to 3", issuer: CertificateIssuerLetsEncryptShortLived, input: 0, want: 3},
+		{name: "short-lived old default migrates", issuer: CertificateIssuerLetsEncryptShortLived, input: 14, want: 3},
+		{name: "short-lived 7 resets to default", issuer: CertificateIssuerLetsEncryptShortLived, input: 7, want: 3},
+		{name: "short-lived 30 resets to default", issuer: CertificateIssuerLetsEncryptShortLived, input: 30, want: 3},
+		{name: "short-lived 3 remains", issuer: CertificateIssuerLetsEncryptShortLived, input: 3, want: 3},
+		{name: "short-lived 4 remains", issuer: CertificateIssuerLetsEncryptShortLived, input: 4, want: 4},
+		{name: "short-lived 5 remains", issuer: CertificateIssuerLetsEncryptShortLived, input: 5, want: 5},
+		{name: "short-lived 6 remains", issuer: CertificateIssuerLetsEncryptShortLived, input: 6, want: 6},
+		{name: "ZeroSSL 14 remains", issuer: CertificateIssuerZeroSSL90Days, input: 14, want: 14},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NormalizeCertificateConfig(CertificateConfig{Issuer: tt.issuer, RenewBeforeDays: tt.input})
+			if cfg.RenewBeforeDays != tt.want {
+				t.Fatalf("renewBeforeDays = %d, want %d", cfg.RenewBeforeDays, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateCertificateConfigRejectsZeroSSLTLSALPN(t *testing.T) {
+	cfg := NormalizeCertificateConfig(CertificateConfig{
+		Enabled:          true,
+		SubjectIP:        "8.8.8.8",
+		Issuer:           CertificateIssuerZeroSSL90Days,
+		Challenge:        CertificateChallengeTLSALPN01,
+		Email:            "admin@example.com",
+		ZeroSSLEABKeyID:  "key-id",
+		ZeroSSLEABMACKey: "mac-key",
+	})
+	if err := ValidateCertificateConfig(cfg); err == nil {
+		t.Fatal("expected ZeroSSL TLS-ALPN-01 validation to fail")
+	}
+}
+
+func TestValidateCertificateConfigHTTPSListenAddress(t *testing.T) {
+	for _, addr := range []string{":443", ":8443", "0.0.0.0:443", "[::]:443"} {
+		cfg := NormalizeCertificateConfig(CertificateConfig{HTTPSServeAt: addr})
+		if err := ValidateCertificateConfig(cfg); err != nil {
+			t.Errorf("expected %q to be valid: %v", addr, err)
+		}
+	}
+	for _, addr := range []string{"443", ":0", ":65536", "127.0.0.1:not-a-port"} {
+		cfg := NormalizeCertificateConfig(CertificateConfig{HTTPSServeAt: addr})
+		if err := ValidateCertificateConfig(cfg); err == nil {
+			t.Errorf("expected %q to be invalid", addr)
+		}
+	}
+}
