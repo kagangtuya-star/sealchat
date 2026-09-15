@@ -9,6 +9,7 @@ import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import WorldClueContentView from '@/components/world-clue/WorldClueContentView.vue'
 import WorldClueDistributionPanel from './WorldClueDistributionPanel.vue'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
+import { convertTextContentFormat } from '@/utils/textContentFormat'
 
 const props = defineProps<{ show: boolean; worldId: string; channelId: string; clue?: WorldClueDetail | null; canManage: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void; (event: 'saved', clue: WorldClueDetail): void }>()
@@ -458,14 +459,28 @@ onBeforeUnmount(() => {
   clearBackgroundMediaPreview()
 })
 function setRich(value: boolean) {
+  const nextFormat = value ? 'tiptap' : 'plain'
+  const nextContent = convertTextContentFormat(
+    form.content,
+    form.contentFormat,
+    nextFormat,
+  )
+
+  form.content = nextContent
+  form.contentFormat = nextFormat
   rich.value = value
-  form.contentFormat = value ? 'tiptap' : 'plain'
-  form.content = value ? emptyTiptapDocument : ''
 }
 function setManagerRich(value: boolean) {
+  const nextFormat = value ? 'tiptap' : 'plain'
+  const nextContent = convertTextContentFormat(
+    form.managerNote,
+    form.managerNoteFormat,
+    nextFormat,
+  )
+
+  form.managerNote = nextContent
+  form.managerNoteFormat = nextFormat
   managerRich.value = value
-  form.managerNoteFormat = value ? 'tiptap' : 'plain'
-  form.managerNote = value ? emptyTiptapDocument : ''
 }
 
 const preview = computed<WorldClueDetail>(() => ({

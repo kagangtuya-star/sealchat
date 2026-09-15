@@ -6,6 +6,7 @@ import Avatar from '@/components/avatar.vue'
 import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import { api } from '@/stores/_config'
 import { useWorldClueStore, type WorldClueDetail, type WorldClueRosterMember } from '@/stores/worldClue'
+import { convertTextContentFormat } from '@/utils/textContentFormat'
 
 type Override = 'inherit' | 'none' | 'view' | 'edit'
 type Effective = 'none' | 'view' | 'edit'
@@ -335,6 +336,14 @@ function emitPrivatePreview(member: WorldClueRosterMember) {
     content: privateContent.value,
   })
 }
+function setPrivateFormat(value: 'plain' | 'tiptap') {
+  privateContent.value = convertTextContentFormat(
+    privateContent.value,
+    privateFormat.value,
+    value,
+  )
+  privateFormat.value = value
+}
 const actualLabel = (value: Effective) => value === 'none' ? '不可见' : value === 'view' ? '查看' : '编辑'
 function setFilter(value: string) {
   if (value === 'all' || value === 'visible' || value === 'hidden' || value === 'private') filter.value = value
@@ -509,7 +518,7 @@ onBeforeUnmount(() => {
     <aside v-if="sheetMember" class="private-sheet">
       <header><div><strong>{{ nameOf(sheetMember) }}</strong><small>成员专属信息 · 仅该成员可见 <em v-if="privateDirty && !privateLoading">· 未保存</em></small><small v-if="getPrivateLock() && !ownsPrivateLock()" class="private-lock-hint">🔒 {{ privateLockOwnerName() }} 正在编辑此成员的专属信息</small><small v-else-if="privateAcquiringLock" class="private-lock-hint">正在获取编辑权…</small></div><div class="private-sheet__header-actions"><NButton circle quaternary size="small" title="保存" aria-label="保存专属信息" :type="privateDirty ? 'primary' : 'default'" :loading="privateSaving" :disabled="privateLoading" @click="flushPrivate()"><template #icon><NIcon><DeviceFloppy /></NIcon></template></NButton><NButton circle quaternary size="small" title="关闭" aria-label="关闭专属信息" :disabled="privateLoading || switchingPrivate" @click="closePrivate"><template #icon><NIcon><X /></NIcon></template></NButton></div></header>
       <NSpin :show="privateLoading" class="private-sheet__body" :inert="privateLoading || switchingPrivate">
-        <label><span>内容格式</span><NSelect :value="privateFormat" :options="[{label:'纯文本',value:'plain'},{label:'富文本',value:'tiptap'}]" @update:value="value => { privateFormat=value; privateContent=value === 'tiptap' ? emptyTiptapDocument : '' }" /></label>
+        <label><span>内容格式</span><NSelect :value="privateFormat" :options="[{label:'纯文本',value:'plain'},{label:'富文本',value:'tiptap'}]" @update:value="setPrivateFormat" /></label>
         <div v-if="privateFormat==='tiptap'" class="private-rich-lock-gate" @pointerdown.capture="gatePrivatePointer" @keydown.capture="gatePrivateKeydown">
           <RichTextEditor ref="privateEditorRef" v-model="privateContent" :maxlength="50000" min-height="360px" @focus="beginPrivateEdit" @blur="finishPrivateEdit(privateEditorRef)" />
         </div>

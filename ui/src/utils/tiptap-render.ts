@@ -698,10 +698,19 @@ export function isTipTapJson(content: string): boolean {
 /**
  * 将 HTML 转换为纯文本（用于搜索、摘要等）
  */
-export function tiptapJsonToPlainText(json: TipTapNode | string): string {
+export function tiptapJsonToPlainText(
+  json: TipTapNode | string,
+  options?: { trimTrailingNewlines?: boolean },
+): string {
   try {
     const parsedJson = typeof json === 'string' ? JSON.parse(json) : json;
-    return extractText(parsedJson).replace(/\n+$/, '');
+    const text = extractText(parsedJson);
+    if (options?.trimTrailingNewlines === false) {
+      // `extractText` appends one separator for the final block node. Remove
+      // that structural separator while keeping any hardBreak content.
+      return text.endsWith('\n') ? text.slice(0, -1) : text;
+    }
+    return text.replace(/\n+$/, '');
   } catch {
     return '';
   }
@@ -751,8 +760,11 @@ function extractText(node: TipTapNode): string {
 /**
  * 将纯文本转换为 TipTap JSON 格式
  */
-export function plainTextToTiptapJson(text: string): TipTapNode {
-  if (!text || !text.trim()) {
+export function plainTextToTiptapJson(
+  text: string,
+  options?: { preserveWhitespaceOnly?: boolean },
+): TipTapNode {
+  if (!text || (!options?.preserveWhitespaceOnly && !text.trim())) {
     return {
       type: 'doc',
       content: [{ type: 'paragraph' }],
