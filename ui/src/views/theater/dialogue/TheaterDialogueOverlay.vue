@@ -29,6 +29,8 @@ const props = defineProps<{
   fillContainer?: boolean
   textOnly?: boolean
   textOverrides?: TheaterDialogueEmbedSettings
+  hideDialoguePerformance?: boolean
+  hidePortraitPerformance?: boolean
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -346,7 +348,14 @@ onBeforeUnmount(() => {
   <div
     ref="rootRef"
     class="theater-dialogue-overlay theater-composition-host"
-    :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion, 'is-fill-container': fillContainer, 'is-text-only': textOnly }"
+    :class="{
+      'is-open': current,
+      'is-reduced-motion': snapshot.reducedMotion,
+      'is-fill-container': fillContainer,
+      'is-text-only': textOnly,
+      'is-dialogue-performance-hidden': hideDialoguePerformance,
+      'is-portrait-performance-hidden': hidePortraitPerformance,
+    }"
     aria-live="polite"
   >
     <div v-if="!textOnly && current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
@@ -456,6 +465,17 @@ onBeforeUnmount(() => {
   z-index: 0;
   inset: 0;
   pointer-events: none;
+}
+
+.theater-dialogue-overlay.is-dialogue-performance-hidden .theater-dialogue-shell,
+.theater-dialogue-overlay.is-dialogue-performance-hidden .theater-dialogue-controls,
+.theater-dialogue-overlay.is-dialogue-performance-hidden .theater-dialogue-narration,
+.theater-dialogue-overlay.is-dialogue-performance-hidden .theater-dialogue-portrait {
+  display: none;
+}
+
+.theater-dialogue-overlay.is-portrait-performance-hidden .theater-dialogue-portrait {
+  display: none;
 }
 
 .theater-dialogue-overlay > .theater-composition {

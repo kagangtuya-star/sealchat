@@ -287,6 +287,27 @@ const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
 const iframeInteractionDisabled = ref(false)
+const theaterPerformanceVisibilityStorageKey = 'sealchat.theater.performance-visibility.v1'
+const readTheaterPerformanceVisibility = () => {
+  const defaults = { dialogueHidden: false, portraitHidden: false }
+  try {
+    if (typeof window === 'undefined') return defaults
+    const stored = window.localStorage.getItem(theaterPerformanceVisibilityStorageKey)
+    if (stored === null) return defaults
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object') return defaults
+    const value = parsed as Record<string, unknown>
+    return {
+      dialogueHidden: value.dialogueHidden === true,
+      portraitHidden: value.portraitHidden === true,
+    }
+  } catch {
+    return defaults
+  }
+}
+const initialTheaterPerformanceVisibility = readTheaterPerformanceVisibility()
+const dialoguePerformanceHidden = ref(initialTheaterPerformanceVisibility.dialogueHidden)
+const portraitPerformanceHidden = ref(initialTheaterPerformanceVisibility.portraitHidden)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
@@ -1002,6 +1023,22 @@ const iframeInteractionOptions = computed<DropdownOption[]>(() => [{
 }])
 const toggleIframeInteraction = (key: string | number) => {
   if (key === 'disable-interaction') iframeInteractionDisabled.value = !iframeInteractionDisabled.value
+}
+const performanceVisibilityOptions = computed<DropdownOption[]>(() => [
+  {
+    key: 'hide-dialogue-performance',
+    label: '隐藏对话演出',
+    icon: () => h(NIcon, { style: { opacity: dialoguePerformanceHidden.value ? 1 : 0 } }, { default: () => h(Check) }),
+  },
+  {
+    key: 'hide-portrait-performance',
+    label: '仅隐藏立绘演出',
+    icon: () => h(NIcon, { style: { opacity: portraitPerformanceHidden.value ? 1 : 0 } }, { default: () => h(Check) }),
+  },
+])
+const togglePerformanceVisibility = (key: string | number) => {
+  if (key === 'hide-dialogue-performance') dialoguePerformanceHidden.value = !dialoguePerformanceHidden.value
+  if (key === 'hide-portrait-performance') portraitPerformanceHidden.value = !portraitPerformanceHidden.value
 }
 
 const revealToolbarColors = () => { toolbarColorsVisible.value = true }
@@ -8102,6 +8139,13 @@ watch(theaterAudioMasterVolume, (volume) => {
     player.volume((theaterAudioBaseVolumes.get(key) ?? 1) * normalized)
   })
 })
+watch([dialoguePerformanceHidden, portraitPerformanceHidden], ([dialogueHidden, portraitHidden]) => {
+  try {
+    window.localStorage.setItem(theaterPerformanceVisibilityStorageKey, JSON.stringify({ dialogueHidden, portraitHidden }))
+  } catch {
+    // Playback remains available when browser storage is disabled.
+  }
+}, { flush: 'sync' })
 
 onBeforeUnmount(() => {
   quickToolPickerEpoch += 1
@@ -8278,14 +8322,26 @@ onBeforeUnmount(() => {
           </template>
           悬浮窗管理
         </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button :class="{ 'is-active': chatVisible }" aria-label="切换聊天区" @click="emit('toggleChat')">
-              <template #icon><n-icon><Message /></n-icon></template>
+        <span class="theater-chat-trigger-group">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                class="theater-chat-trigger theater-chat-trigger--primary"
+                :class="{ 'is-active': chatVisible }"
+                :aria-label="chatVisible ? '隐藏聊天' : '显示聊天'"
+                @click="emit('toggleChat')"
+              >
+                <template #icon><n-icon><Message /></n-icon></template>
+              </n-button>
+            </template>
+            {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
+          </n-tooltip>
+          <n-dropdown trigger="click" :options="performanceVisibilityOptions" :menu-props="theaterSecondaryMenuProps" @select="togglePerformanceVisibility">
+            <n-button class="theater-chat-trigger theater-chat-trigger--menu" aria-label="演出显示选项">
+              <template #icon><n-icon><ChevronDown /></n-icon></template>
             </n-button>
-          </template>
-          {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
-        </n-tooltip>
+          </n-dropdown>
+        </span>
       </n-button-group>
       <n-popover
         trigger="click"
@@ -8550,7 +8606,15 @@ onBeforeUnmount(() => {
           :channel-id="channelId"
           @open-character-card="emit('openCharacterCard', $event)"
         />
-        <TheaterDialogueOverlay v-if="!hasCharacterDialogueSurface" :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
+        <TheaterDialogueOverlay
+          v-if="!hasCharacterDialogueSurface"
+          :runtime="dialogueRuntime"
+          :character-snapshot="characterSnapshot"
+          :world-id="worldId"
+          :channel-id="channelId"
+          :hide-dialogue-performance="dialoguePerformanceHidden"
+          :hide-portrait-performance="portraitPerformanceHidden"
+        />
         <TheaterEffectOverlay
           :playbacks="effectPlaybacks"
           :selected-object="selectedEffectObject"
@@ -9920,6 +9984,23 @@ onBeforeUnmount(() => {
   color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
+.theater-chat-trigger-group { display: inline-flex; flex: 0 0 auto; }
+.theater-panel-switches :deep(.theater-chat-trigger) { padding: 0; border-radius: 0; }
+.theater-panel-switches :deep(.theater-chat-trigger--primary) {
+  --n-width: 30px !important;
+  --n-padding: 0 !important;
+  width: 30px;
+  min-width: 30px;
+  border-radius: 3px 0 0 3px;
+}
+.theater-panel-switches :deep(.theater-chat-trigger--menu) {
+  --n-width: 18px !important;
+  --n-padding: 0 !important;
+  width: 18px;
+  min-width: 18px;
+  margin-left: -1px;
+  border-radius: 0 3px 3px 0;
+}
 .theater-stage-object-actions :deep(.theater-copy-trigger--primary),
 .theater-stage-object-actions :deep(.theater-scene-fixed-trigger--primary),
 .theater-stage-object-actions :deep(.theater-grid-trigger--primary),
