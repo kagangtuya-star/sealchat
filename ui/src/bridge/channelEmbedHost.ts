@@ -428,7 +428,6 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
         if (!has('theater.dialogue.subscribe')) throw new Error('CAPABILITY_DENIED')
         if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
         const identityId = boundedString(params.identityId, 100, true)
-        if (!getIdentities().some((identity: { id: string }) => identity.id === identityId)) throw new Error('NOT_FOUND: identity')
         session.disposeDialogue?.()
         session.disposeDialogue = dialogueSource.subscribe(deps.channelId, identityId, ({ topic, payload }) => {
           if (closed || sessions.get(request.sessionId) !== session || !has('theater.dialogue.subscribe')) return
@@ -448,14 +447,12 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
         if (!has('theater.character.read') || !deps.theaterCharacterSource) throw new Error('CAPABILITY_DENIED')
         if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
         const identityId = boundedString(params.identityId, 100, true)
-        if (!getIdentities().some((identity: { id: string }) => identity.id === identityId)) throw new Error('NOT_FOUND: identity')
         return theaterCharacterSnapshot(deps.theaterCharacterSource.getSnapshot(), identityId)
       }
       case 'theater.character.subscribe': {
         if (!has('theater.character.read') || !deps.theaterCharacterSource) throw new Error('CAPABILITY_DENIED')
         if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
         const identityId = boundedString(params.identityId, 100, true)
-        if (!getIdentities().some((identity: { id: string }) => identity.id === identityId)) throw new Error('NOT_FOUND: identity')
         session.theaterCharacterIdentityId = identityId
         return theaterCharacterSnapshot(deps.theaterCharacterSource.getSnapshot(), identityId)
       }

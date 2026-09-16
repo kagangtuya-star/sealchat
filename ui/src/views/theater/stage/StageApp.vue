@@ -139,9 +139,12 @@ import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControlle
 import type { DialogueController, DialogueControllerTemplate, DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
 import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 import {
-  buildTheaterDialogueSurfaceUrl,
   parseTheaterDialogueSurfaceUrl,
 } from '../dialogue/theater-dialogue-surface'
+import {
+  normalizeTheaterDialogueEmbedSettings,
+  THEATER_DIALOGUE_EMBED_SETTINGS_KEY,
+} from '../dialogue/theater-dialogue-embed-settings'
 import {
   normalizeTheaterCharacterPortraitEmbedSettings,
   THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
@@ -2905,11 +2908,7 @@ const dialogueCharacterOptions = computed<QuickToolOption[]>(() => {
       id: character.identityId,
       name,
       description: `${name} · ${character.identityId}`,
-      url: buildTheaterDialogueSurfaceUrl({
-        identityId: character.identityId,
-        worldId: props.worldId,
-        channelId: props.channelId,
-      }),
+      url: '',
     }
   })
 })
@@ -3030,7 +3029,7 @@ const handleQuickToolTabChange = (value: string) => {
   quickToolSelection.value = null
 }
 
-const quickAddCharacterPortrait = async (identityId: string) => {
+const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId: string) => {
   const character = props.characterSnapshot.characters.find(item => item.identityId === identityId)
   const object = selectedObject.value
   if (!character || !object || object.type !== 'iframe') throw new Error('未找到角色')
@@ -3046,6 +3045,7 @@ const quickAddCharacterPortrait = async (identityId: string) => {
     && channelId === props.channelId
     && selectedObject.value?.id === objectId
   )
+  const dialogue = kind === 'dialogue'
   let formId = ''
   let attached = false
   const cleanupForm = async () => {
@@ -3060,7 +3060,9 @@ const quickAddCharacterPortrait = async (identityId: string) => {
   try {
     const form = await iformStore.createForm({
       name: '',
-      templateRef: 'builtin:theater-character-portrait',
+      templateRef: dialogue
+        ? 'builtin:theater-dialogue-overlay'
+        : 'builtin:theater-character-portrait',
     })
     formId = form?.id || ''
     if (!formId) throw new Error('内置工具安装失败')
@@ -3068,26 +3070,37 @@ const quickAddCharacterPortrait = async (identityId: string) => {
       await cleanupForm()
       return
     }
+
     await chatStore.sendAPI('iform.storage.set', {
       channel_id: channelId,
       form_id: formId,
-      key: THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
-      value: normalizeTheaterCharacterPortraitEmbedSettings({ version: 1, identityId }),
+      key: dialogue
+        ? THEATER_DIALOGUE_EMBED_SETTINGS_KEY
+        : THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
+      value: dialogue
+        ? normalizeTheaterDialogueEmbedSettings({ version: 1, identityId })
+        : normalizeTheaterCharacterPortraitEmbedSettings({ version: 1, identityId }),
     } as any)
     if (!isCurrent()) {
       await cleanupForm()
       return
     }
-    const url = resolveSafeStageIframeUrl(quickToolUrl('iform', formId))
+
+    const url = resolveSafeStageIframeUrl(generateInternalSurfaceLink({
+      type: 'iform',
+      id: formId,
+      worldId,
+      channelId,
+    }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }))
     if (!url) throw new Error('内置工具地址无效')
-    props.store.beginObjectEdit('添加角色立绘')
-    object.name = `${name} 立绘`
+    props.store.beginObjectEdit(dialogue ? '添加角色对话框' : '添加角色立绘')
+    object.name = `${name} ${dialogue ? '对话框' : '立绘'}`
     object.interactive = true
     object.aspectRatioLocked = false
     object.transform = {
       ...object.transform,
-      width: Number((480 / WORLD_UNIT_PX).toFixed(6)),
-      height: Number((720 / WORLD_UNIT_PX).toFixed(6)),
+      width: Number(((dialogue ? 640 : 480) / WORLD_UNIT_PX).toFixed(6)),
+      height: Number(((dialogue ? 240 : 720) / WORLD_UNIT_PX).toFixed(6)),
     }
     object.content = { ...object.content, iframe: { url, scale: 1 } }
     props.store.commitObjectEdit()
@@ -3105,37 +3118,12 @@ const applyQuickToolSelection = async () => {
   const selected = selection?.option
   const object = selectedObject.value
   if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value || quickToolPickerApplying.value) return
-  if (selection.tab === 'dialogue') {
-    const character = props.characterSnapshot.characters.find(item => item.identityId === selected.id)
-    if (!character) {
-      quickToolSelection.value = null
-      quickToolPickerError.value = '未找到角色'
-      return
-    }
-    const url = resolveSafeStageIframeUrl(selected.url)
-    if (!url) return
-    const name = dialogueCharacterName(character)
-    props.store.beginObjectEdit('添加角色对话框')
-    object.name = `${name} 对话框`
-    object.interactive = true
-    object.aspectRatioLocked = false
-    object.transform = {
-      ...object.transform,
-      width: Number((640 / WORLD_UNIT_PX).toFixed(6)),
-      height: Number((240 / WORLD_UNIT_PX).toFixed(6)),
-    }
-    object.content = { ...object.content, iframe: { url, scale: 1 } }
-    props.store.commitObjectEdit()
-    iframeUrlDraft.value = url
-    closeQuickToolPicker()
-    return
-  }
-  if (selection.tab === 'portrait') {
+  if (selection.tab === 'dialogue' || selection.tab === 'portrait') {
     const applyEpoch = quickToolPickerEpoch
     quickToolPickerApplying.value = true
     quickToolPickerError.value = ''
     try {
-      await quickAddCharacterPortrait(selected.id)
+      await quickAddCharacterIForm(selection.tab, selected.id)
     } catch (error) {
       if (quickToolPickerEpoch === applyEpoch) {
         quickToolPickerError.value = error instanceof Error ? error.message : '添加内置工具失败'

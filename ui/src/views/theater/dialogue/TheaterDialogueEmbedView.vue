@@ -86,13 +86,8 @@ const normalizeRevision = (input: unknown) => typeof input === 'number' && Numbe
 const bindIdentity = async (active: ChannelEmbedClient, current: () => boolean): Promise<IdentityBindingResult> => {
   boundIdentityId = ''
   const identityId = settings.value.identityId
-  const exists = characters.value.some(item => item.value === identityId)
-  await replaceTheaterDialogueEmbedIdentity(runtime, active.theater.dialogue, exists ? identityId : '', current)
+  await replaceTheaterDialogueEmbedIdentity(runtime, active.theater.dialogue, identityId, current)
   if (!current()) return 'unbound'
-  if (identityId && !exists) {
-    notice.value = '已配置角色不在当前频道，请重新选择。'
-    return 'missing'
-  }
   boundIdentityId = identityId
   return identityId ? 'bound' : 'unbound'
 }
@@ -171,12 +166,6 @@ const connect = async () => {
       if (!current()) return
       updateCharacters(value)
       window.dispatchEvent(new CustomEvent('sealchat:theater-appearance-invalidated', { detail: { channelId: context.value.channelId } }))
-      if (boundIdentityId && !characters.value.some(item => item.value === boundIdentityId)) {
-        boundIdentityId = ''
-        runtime.reset()
-        void active.theater.dialogue.unsubscribe().catch(() => undefined)
-        notice.value = '已配置角色不在当前频道，请重新选择。'
-      }
     }))
     disposers.push(active.permissions.onChanged(() => {
       void active.permissions.getCurrent().then(value => { if (current()) canWrite.value = value.canWriteStorage }).catch(() => undefined)
@@ -245,7 +234,8 @@ const save = async () => {
   const attempt = generation
   const current = () => !disposed && generation === attempt && client === active
   const next = normalizeTheaterDialogueEmbedSettings(draft.value)
-  if (next.identityId && !characters.value.some(item => item.value === next.identityId)) { notice.value = '请选择当前频道角色。'; return }
+  const identityChanged = next.identityId !== settings.value.identityId
+  if (identityChanged && next.identityId && !characters.value.some(item => item.value === next.identityId)) { notice.value = '请选择当前可用的频道角色。'; return }
   const expectedRevision = draftRevision
   saving.value = true
   try {

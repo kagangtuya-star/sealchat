@@ -96,8 +96,8 @@ const updateCharacters = (input: unknown) => {
 }
 const currentPortraitNotice = (identityId = settings.value.identityId) => {
   if (!identityId) return ''
-  if (!characters.value.some(item => item.value === identityId)) return '已配置角色不在当前频道，请重新选择。'
-  if (!snapshot.value?.character) return '正在同步角色立绘……'
+  if (!snapshot.value) return '正在同步角色立绘……'
+  if (!snapshot.value.character) return '已配置角色当前没有可用的小剧场角色快照。'
   return portrait.value ? '' : '当前角色未配置小剧场立绘。'
 }
 const cleanupSession = () => {
@@ -127,30 +127,17 @@ const scheduleReconnect = () => {
 const bindIdentity = async (active: ChannelEmbedClient, current: () => boolean): Promise<IdentityBindingResult> => {
   const attempt = ++bindingEpoch
   const identityId = settings.value.identityId
-  const exists = characters.value.some(item => item.value === identityId)
   const previousIdentityId = boundIdentityId
   boundIdentityId = ''
   snapshot.value = null
   if (previousIdentityId) await active.theater.character.unsubscribe().catch(() => undefined)
   if (!current() || bindingEpoch !== attempt) return 'unbound'
-  if (identityId && !exists) {
-    notice.value = '已配置角色不在当前频道，请重新选择。'
-    return 'missing'
-  }
   if (!identityId) return 'unbound'
-  try {
-    const nextSnapshot = await active.theater.character.subscribe({ identityId })
-    if (!current() || bindingEpoch !== attempt) return 'unbound'
-    boundIdentityId = identityId
-    snapshot.value = nextSnapshot
-    return 'bound'
-  } catch (error) {
-    if (error instanceof SealChatEmbedError && error.code === 'NOT_FOUND') {
-      if (current() && bindingEpoch === attempt) notice.value = '已配置角色不在当前频道，请重新选择。'
-      return 'missing'
-    }
-    throw error
-  }
+  const nextSnapshot = await active.theater.character.subscribe({ identityId })
+  if (!current() || bindingEpoch !== attempt) return 'unbound'
+  boundIdentityId = identityId
+  snapshot.value = nextSnapshot
+  return 'bound'
 }
 const applyRemoteSettings = async (
   nextSettings: TheaterCharacterPortraitEmbedSettings,
@@ -231,13 +218,6 @@ const connect = async () => {
     disposers.push(active.characters.onChanged(value => {
       if (!current()) return
       updateCharacters(value)
-      if (boundIdentityId && !characters.value.some(item => item.value === boundIdentityId)) {
-        bindingEpoch += 1
-        boundIdentityId = ''
-        snapshot.value = null
-        void active.theater.character.unsubscribe().catch(() => undefined)
-        notice.value = '已配置角色不在当前频道，请重新选择。'
-      }
     }))
     disposers.push(active.permissions.onChanged(() => {
       void active.permissions.getCurrent().then(value => {
@@ -298,8 +278,9 @@ const save = async () => {
   const attempt = generation
   const current = () => !disposed && generation === attempt && client === active
   const next = normalizeTheaterCharacterPortraitEmbedSettings(draft.value)
-  if (next.identityId && !characters.value.some(item => item.value === next.identityId)) {
-    notice.value = '请选择当前频道角色。'
+  const identityChanged = next.identityId !== settings.value.identityId
+  if (identityChanged && next.identityId && !characters.value.some(item => item.value === next.identityId)) {
+    notice.value = '请选择当前可用的频道角色。'
     return
   }
   const expectedRevision = draftRevision

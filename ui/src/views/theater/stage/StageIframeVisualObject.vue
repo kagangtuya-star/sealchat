@@ -4,6 +4,7 @@ import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
 import type { ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHost'
 import { useChatStore } from '@/stores/chat'
 import { useIFormStore } from '@/stores/iform'
+import { useUtilsStore } from '@/stores/utils'
 import { parseInternalSurfaceLink } from '@/utils/internalSurfaceLink'
 import { normalizeStageIframeContent, resolveSafeStageIframeUrl, type StageObject } from '../shared/stage-types'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
@@ -15,15 +16,45 @@ const props = defineProps<{
 
 const chat = useChatStore()
 const iformStore = useIFormStore()
+const utilsStore = useUtilsStore()
 iformStore.bootstrap()
 const iframeContent = computed(() => normalizeStageIframeContent(props.object.content?.iframe))
 const configuredUrl = computed(() => iframeContent.value.url)
 const iframeSrc = computed(() => resolveSafeStageIframeUrl(configuredUrl.value))
+const normalizeBasePath = (value: string) => {
+  const normalized = `/${value}`.replace(/\/+/g, '/').replace(/\/+$/, '')
+  return normalized === '/' ? '' : normalized
+}
+const pathMatchesBase = (url: URL, basePath: string) => (
+  !basePath || url.pathname === basePath || url.pathname.startsWith(`${basePath}/`)
+)
+const isTrustedInternalSurfaceUrl = (url: URL) => {
+  try {
+    const documentUrl = new URL(window.location.href.split('#', 1)[0])
+    if (
+      url.origin === documentUrl.origin
+      && pathMatchesBase(url, normalizeBasePath(documentUrl.pathname))
+    ) return true
+
+    const configuredDomain = utilsStore.config?.domain?.trim() || ''
+    if (!configuredDomain) return false
+    const hasExplicitProtocol = /^https?:\/\//i.test(configuredDomain)
+    const canonicalUrl = new URL(hasExplicitProtocol ? configuredDomain : `http://${configuredDomain}`)
+    const hostMatches = hasExplicitProtocol
+      ? url.origin === canonicalUrl.origin
+      : url.hostname === canonicalUrl.hostname
+        && (canonicalUrl.port ? (url.port || (url.protocol === 'https:' ? '443' : '80')) === canonicalUrl.port : !url.port)
+    const canonicalBasePath = normalizeBasePath(utilsStore.config?.webUrl?.trim() || '')
+    return hostMatches && pathMatchesBase(url, canonicalBasePath)
+  } catch {
+    return false
+  }
+}
 const internalIFormTarget = computed(() => {
   if (!iframeSrc.value || typeof window === 'undefined') return null
   try {
     const url = new URL(iframeSrc.value)
-    if (url.origin !== window.location.origin) return null
+    if (!isTrustedInternalSurfaceUrl(url)) return null
     const parsed = parseInternalSurfaceLink(url.href)
     return parsed?.type === 'iform' ? parsed : null
   } catch {
