@@ -83,3 +83,4 @@ skills-lock.json
 !bin/**
 /bin/cn-font-split
 ui/scripts/quickdraw-inline-style.test.mjs
+*.spec.ts
