@@ -5,7 +5,7 @@ import { PlayerSkipForward, X } from '@vicons/tabler'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
-import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { createDefaultTheaterPresentation, DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
 import { isTipTapJson } from '@/utils/tiptap-render'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
@@ -47,6 +47,7 @@ let bodyContentObserver: { disconnect: () => void } | null = null
 let motionQuery: MediaQueryList | null = null
 let invalidateAppearance: ((event: Event) => void) | null = null
 let appearanceRequestGeneration = 0
+let livePresentationContextKey = ''
 const speakerFontFamily = ref('')
 const contentFontFamily = ref('')
 let speakerFontLoadGeneration = 0
@@ -106,9 +107,28 @@ const dialogueStyle = computed<CSSProperties>(() => ({
 }))
 const dialogueControlsStyle = computed<CSSProperties>(() => ({ ...dialogueStyle.value, zIndex: '1000' }))
 const portrait = computed(() => presentation.value.portrait?.enabled ? presentation.value.portrait : null)
-const portraitStyle = computed<CSSProperties | undefined>(() => portrait.value
-  ? { ...resolveTheaterTransformStyle(portrait.value.transform) }
-  : undefined)
+const portraitKey = computed(() => {
+  const layer = portrait.value
+  const actor = current.value?.message.actor
+  if (!layer || !actor) return ''
+  return JSON.stringify([
+    actor.identityId,
+    actor.variantId || null,
+    layer.media.assetId,
+    layer.media.resourceAttachmentId,
+  ])
+})
+const portraitStyle = computed<CSSProperties | undefined>(() => {
+  const layer = portrait.value
+  if (!layer) return undefined
+  const { opacity, ...layoutStyle } = resolveTheaterTransformStyle(layer.transform)
+  const fadeDurationMs = layer.fadeDurationMs ?? DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS
+  return {
+    ...layoutStyle,
+    '--theater-portrait-opacity': opacity,
+    '--theater-portrait-fade-duration': `${fadeDurationMs}ms`,
+  }
+})
 const portraitDecorations = computed(() => presentation.value.portraitDecorations
   .filter((layer) => layer.enabled)
   .sort((left, right) => left.transform.zIndex - right.transform.zIndex))
@@ -266,6 +286,15 @@ const handleRichPlaybackCompleted = () => {
 
 const updateReducedMotion = () => props.runtime.setReducedMotion(resolveTheaterReducedMotion().effectiveReducedMotion)
 
+const resolveLivePresentationContextKey = (identityId: string, variantId: string | null) => JSON.stringify([
+  props.worldId,
+  props.channelId,
+  props.characterSnapshot.revision,
+  props.characterSnapshot.updatedAt,
+  identityId,
+  variantId,
+])
+
 const refreshLivePresentation = () => {
   const targetMessage = message.value
   const targetActor = targetMessage?.actor
@@ -273,11 +302,23 @@ const refreshLivePresentation = () => {
   const targetMessageId = targetMessage?.messageId || ''
   const targetIdentityId = targetActor?.identityId || ''
   const targetVariantId = targetActor?.variantId || null
+  const targetContextKey = targetActor
+    ? resolveLivePresentationContextKey(targetIdentityId, targetVariantId)
+    : ''
 
-  // Keep current message's snapshot presentation visible while remote resolution runs.
-  livePresentation.value = targetActor
-    ? resolveTheaterDialoguePresentation(targetMessage, props.characterSnapshot)
-    : null
+  if (!targetActor) {
+    livePresentation.value = null
+    livePresentationContextKey = ''
+    return
+  }
+
+  const samePresentationContext = livePresentation.value !== null
+    && livePresentationContextKey === targetContextKey
+  if (!samePresentationContext) {
+    // Keep current message's snapshot presentation visible while remote resolution runs.
+    livePresentation.value = resolveTheaterDialoguePresentation(targetMessage, props.characterSnapshot)
+    livePresentationContextKey = targetContextKey
+  }
   if (!targetActor?.identityId) return
 
   void appearanceCache.resolve(props.worldId, props.channelId, {
@@ -292,7 +333,10 @@ const refreshLivePresentation = () => {
       || currentActor?.identityId !== targetIdentityId
       || currentActor?.variantId !== targetVariantId
     ) return
-    if (resolved) livePresentation.value = resolved.presentation || createDefaultTheaterPresentation()
+    if (resolved) {
+      livePresentation.value = resolved.presentation || createDefaultTheaterPresentation()
+      livePresentationContextKey = targetContextKey
+    }
   }).catch(() => undefined)
 }
 
@@ -359,29 +403,34 @@ onBeforeUnmount(() => {
     aria-live="polite"
   >
     <div v-if="!textOnly && current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
-    <div v-if="current" class="theater-composition">
-      <div v-if="!textOnly && portrait && !narration.enabled" class="theater-dialogue-portrait" :style="portraitStyle">
-        <TheaterPresentationMedia
-          class="theater-dialogue-portrait__base"
-          :media="portrait.media"
-          :playback-rate="portrait.playbackRate"
-          :active="mediaActive"
-        />
-        <div
-          v-for="decoration in portraitDecorations"
-          :key="decoration.id"
-          class="theater-dialogue-portrait__decoration"
-          :style="layerStyle(decoration)"
-        >
+    <div class="theater-composition">
+      <Transition
+        name="theater-portrait-fade"
+        appear
+      >
+        <div v-if="current && !textOnly && portrait && !narration.enabled" :key="portraitKey" class="theater-dialogue-portrait" :style="portraitStyle">
           <TheaterPresentationMedia
-            :media="decoration.media"
-            :playback-rate="decoration.playbackRate"
+            class="theater-dialogue-portrait__base"
+            :media="portrait.media"
+            :playback-rate="portrait.playbackRate"
             :active="mediaActive"
           />
+          <div
+            v-for="decoration in portraitDecorations"
+            :key="decoration.id"
+            class="theater-dialogue-portrait__decoration"
+            :style="layerStyle(decoration)"
+          >
+            <TheaterPresentationMedia
+              :media="decoration.media"
+              :playback-rate="decoration.playbackRate"
+              :active="mediaActive"
+            />
+          </div>
         </div>
-      </div>
+      </Transition>
 
-      <section class="theater-dialogue-shell" :style="dialogueStyle">
+      <section v-if="current" class="theater-dialogue-shell" :style="dialogueStyle">
         <div v-if="!textOnly && !frame && !narration.enabled" class="theater-dialogue-shell__default" />
         <div v-if="!textOnly && frame && !narration.enabled" class="theater-dialogue-frame" :style="frameStyle">
           <TheaterPresentationMedia
@@ -414,7 +463,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
-      <div v-if="!textOnly" class="theater-dialogue-controls" :style="dialogueControlsStyle">
+      <div v-if="current && !textOnly" class="theater-dialogue-controls" :style="dialogueControlsStyle">
         <div class="theater-dialogue-actions">
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -494,11 +543,18 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.theater-dialogue-portrait { opacity: var(--theater-portrait-opacity, 1); }
 .theater-dialogue-portrait__base,
-.theater-dialogue-portrait__decoration,
-.theater-dialogue-frame {
-  transition: opacity 180ms ease, transform 180ms ease;
+.theater-dialogue-portrait__decoration { transition: transform 180ms ease; }
+.theater-dialogue-frame { transition: opacity 180ms ease, transform 180ms ease; }
+.theater-portrait-fade-enter-active,
+.theater-portrait-fade-leave-active {
+  transition: opacity var(--theater-portrait-fade-duration, 90ms) ease;
 }
+.theater-portrait-fade-enter-to,
+.theater-portrait-fade-leave-from { opacity: var(--theater-portrait-opacity, 1); }
+.theater-portrait-fade-enter-from,
+.theater-portrait-fade-leave-to { opacity: 0; }
 
 .theater-dialogue-shell {
   min-width: 0;

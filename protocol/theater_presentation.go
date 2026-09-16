@@ -10,8 +10,11 @@ import (
 )
 
 const (
-	TheaterPresentationSchemaVersion = 2
-	MaxTheaterPortraitDecorations    = 16
+	TheaterPresentationSchemaVersion           = 2
+	MaxTheaterPortraitDecorations              = 16
+	DefaultTheaterPortraitFadeDurationMS int64 = 90
+	MinTheaterPortraitFadeDurationMS     int64 = 50
+	MaxTheaterPortraitFadeDurationMS     int64 = 5000
 )
 
 type TheaterMediaKind string
@@ -77,14 +80,25 @@ type TheaterMediaRef struct {
 }
 
 type TheaterVisualLayer struct {
-	ID           string            `json:"id"`
-	Enabled      bool              `json:"enabled"`
-	Media        TheaterMediaRef   `json:"media"`
-	Space        TheaterLayerSpace `json:"space"`
-	Transform    TheaterTransform  `json:"transform"`
-	Fit          TheaterObjectFit  `json:"fit"`
-	PlaybackRate float64           `json:"playbackRate"`
-	BlendMode    TheaterBlendMode  `json:"blendMode"`
+	ID             string            `json:"id"`
+	Enabled        bool              `json:"enabled"`
+	Media          TheaterMediaRef   `json:"media"`
+	Space          TheaterLayerSpace `json:"space"`
+	Transform      TheaterTransform  `json:"transform"`
+	Fit            TheaterObjectFit  `json:"fit"`
+	PlaybackRate   float64           `json:"playbackRate"`
+	BlendMode      TheaterBlendMode  `json:"blendMode"`
+	FadeDurationMS int64             `json:"fadeDurationMs"`
+}
+
+func (layer *TheaterVisualLayer) UnmarshalJSON(data []byte) error {
+	type theaterVisualLayer TheaterVisualLayer
+	value := theaterVisualLayer{FadeDurationMS: DefaultTheaterPortraitFadeDurationMS}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*layer = TheaterVisualLayer(value)
+	return nil
 }
 
 type TheaterSpacing struct {
@@ -145,11 +159,22 @@ type TheaterPresentation struct {
 // TheaterVisualStyle stores reusable layer settings without binding a template
 // to one character's media asset.
 type TheaterVisualStyle struct {
-	Enabled      bool             `json:"enabled"`
-	Transform    TheaterTransform `json:"transform"`
-	Fit          TheaterObjectFit `json:"fit"`
-	PlaybackRate float64          `json:"playbackRate"`
-	BlendMode    TheaterBlendMode `json:"blendMode"`
+	Enabled        bool             `json:"enabled"`
+	Transform      TheaterTransform `json:"transform"`
+	Fit            TheaterObjectFit `json:"fit"`
+	PlaybackRate   float64          `json:"playbackRate"`
+	BlendMode      TheaterBlendMode `json:"blendMode"`
+	FadeDurationMS int64            `json:"fadeDurationMs"`
+}
+
+func (style *TheaterVisualStyle) UnmarshalJSON(data []byte) error {
+	type theaterVisualStyle TheaterVisualStyle
+	value := theaterVisualStyle{FadeDurationMS: DefaultTheaterPortraitFadeDurationMS}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*style = TheaterVisualStyle(value)
+	return nil
 }
 
 type TheaterDialogueBoxTemplate struct {
@@ -282,6 +307,7 @@ func applyTheaterVisualStyle(layer *TheaterVisualLayer, style *TheaterVisualStyl
 	layer.Fit = style.Fit
 	layer.PlaybackRate = style.PlaybackRate
 	layer.BlendMode = style.BlendMode
+	layer.FadeDurationMS = style.FadeDurationMS
 }
 
 func ApplyWorldTheaterPresentationTemplate(value TheaterPresentation, template WorldTheaterPresentationTemplate) TheaterPresentation {
@@ -312,11 +338,12 @@ func TheaterVisualStyleFromLayer(layer *TheaterVisualLayer) *TheaterVisualStyle 
 		return nil
 	}
 	return &TheaterVisualStyle{
-		Enabled:      layer.Enabled,
-		Transform:    layer.Transform,
-		Fit:          layer.Fit,
-		PlaybackRate: layer.PlaybackRate,
-		BlendMode:    layer.BlendMode,
+		Enabled:        layer.Enabled,
+		Transform:      layer.Transform,
+		Fit:            layer.Fit,
+		PlaybackRate:   layer.PlaybackRate,
+		BlendMode:      layer.BlendMode,
+		FadeDurationMS: layer.FadeDurationMS,
 	}
 }
 
@@ -339,7 +366,8 @@ func theaterLayersEqual(left, right *TheaterVisualLayer) bool {
 	}
 	if left.ID != right.ID || left.Enabled != right.Enabled || left.Space != right.Space ||
 		left.Transform != right.Transform || left.Fit != right.Fit ||
-		left.PlaybackRate != right.PlaybackRate || left.BlendMode != right.BlendMode {
+		left.PlaybackRate != right.PlaybackRate || left.BlendMode != right.BlendMode ||
+		left.FadeDurationMS != right.FadeDurationMS {
 		return false
 	}
 	return theaterMediaRefsEqual(left.Media, right.Media)
@@ -406,11 +434,12 @@ func frontendCompatTheaterPresentation() TheaterPresentation {
 
 func defaultPortraitVisualStyle() TheaterVisualStyle {
 	return TheaterVisualStyle{
-		Enabled:      true,
-		Transform:    DefaultTheaterTransform(),
-		Fit:          TheaterObjectFitCover,
-		PlaybackRate: 1,
-		BlendMode:    TheaterBlendModeNormal,
+		Enabled:        true,
+		Transform:      DefaultTheaterTransform(),
+		Fit:            TheaterObjectFitCover,
+		PlaybackRate:   1,
+		BlendMode:      TheaterBlendModeNormal,
+		FadeDurationMS: DefaultTheaterPortraitFadeDurationMS,
 	}
 }
 
@@ -544,6 +573,9 @@ func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationT
 		}
 		if style.PlaybackRate < 0.25 || style.PlaybackRate > 4 || math.IsNaN(style.PlaybackRate) || math.IsInf(style.PlaybackRate, 0) {
 			problems = append(problems, fmt.Errorf("%s.playbackRate is invalid", path))
+		}
+		if !validTheaterPortraitFadeDurationMS(style.FadeDurationMS) {
+			problems = append(problems, fmt.Errorf("%s.fadeDurationMs must be 0 or between %d and %d", path, MinTheaterPortraitFadeDurationMS, MaxTheaterPortraitFadeDurationMS))
 		}
 		if style.BlendMode != TheaterBlendModeNormal && style.BlendMode != TheaterBlendModeMultiply && style.BlendMode != TheaterBlendModeScreen && style.BlendMode != TheaterBlendModeOverlay {
 			problems = append(problems, fmt.Errorf("%s.blendMode is invalid", path))
@@ -890,6 +922,9 @@ func validateTheaterLayer(layer TheaterVisualLayer, expectedSpace TheaterLayerSp
 	if layer.BlendMode != TheaterBlendModeNormal && layer.BlendMode != TheaterBlendModeMultiply && layer.BlendMode != TheaterBlendModeScreen && layer.BlendMode != TheaterBlendModeOverlay {
 		problems = append(problems, fmt.Errorf("%s.blendMode is invalid", path))
 	}
+	if !validTheaterPortraitFadeDurationMS(layer.FadeDurationMS) {
+		problems = append(problems, fmt.Errorf("%s.fadeDurationMs must be 0 or between %d and %d", path, MinTheaterPortraitFadeDurationMS, MaxTheaterPortraitFadeDurationMS))
+	}
 	return errors.Join(problems...)
 }
 
@@ -967,6 +1002,10 @@ func validateTheaterTransformWithYMinimum(transform TheaterTransform, path strin
 
 func finiteInRange(value, minimum, maximum float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= minimum && value <= maximum
+}
+
+func validTheaterPortraitFadeDurationMS(value int64) bool {
+	return value == 0 || (value >= MinTheaterPortraitFadeDurationMS && value <= MaxTheaterPortraitFadeDurationMS)
 }
 
 func appendError(problems []error, problem error) []error {

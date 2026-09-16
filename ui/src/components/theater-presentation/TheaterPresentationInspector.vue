@@ -83,6 +83,13 @@ const setPlaybackRate = (value: number | null) => {
   if (value === null) return
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'playbackRate', value }, { transient: true })
 }
+const setFadeDuration = (value: number | null) => {
+  if (props.selection.kind !== 'portrait' || value === null) return
+  emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fadeDurationMs', value }, { transient: true })
+}
+const fadeHintHovered = ref(false)
+const fadeHintFocused = ref(false)
+const fadeHintVisible = computed(() => fadeHintHovered.value || fadeHintFocused.value)
 const setFontScale = (value: number) => {
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fontScale', value }, { transient: true })
 }
@@ -262,6 +269,37 @@ onMounted(() => { void refreshPlatformFonts() })
         :options="[{ label: 'Normal', value: 'normal' }, { label: 'Multiply', value: 'multiply' }, { label: 'Screen', value: 'screen' }, { label: 'Overlay', value: 'overlay' }]"
         @update:value="emit('dispatch', { type: 'set-layer-property', target: selection, property: 'blendMode', value: $event })"
       />
+      <template v-if="selection.kind === 'portrait'">
+        <div class="theater-inspector__label">淡入淡出时间</div>
+        <n-popover :show="fadeHintVisible" placement="top-start" trigger="manual">
+          <template #trigger>
+            <div
+              class="theater-inspector__fade-duration"
+              @mouseenter="fadeHintHovered = true"
+              @mouseleave="fadeHintHovered = false"
+              @focusin="fadeHintFocused = true"
+              @focusout="fadeHintFocused = false"
+            >
+              <n-input-number
+                :value="layer.fadeDurationMs"
+                :min="0"
+                :max="5000"
+                :step="50"
+                @focus="emit('transactionStart')"
+                @blur="emit('transactionEnd')"
+                @update:value="setFadeDuration"
+              >
+                <template #suffix>ms</template>
+              </n-input-number>
+            </div>
+          </template>
+          <div class="theater-inspector__fade-hint">
+            <div>控制角色立绘进场、退场与切换时的淡入淡出时长。</div>
+            <div>设为 0 ms 时关闭淡入淡出。</div>
+            <small>默认 90 ms</small>
+          </div>
+        </n-popover>
+      </template>
       <n-input-number
         v-if="layer.media.kind === 'video'"
         :value="layer.playbackRate"
@@ -346,6 +384,9 @@ onMounted(() => { void refreshPlatformFonts() })
 <style scoped>
 .theater-inspector { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .theater-inspector__label { margin-top: 4px; color: var(--sc-text-secondary, #64748b); font-size: 12px; font-weight: 600; }
+.theater-inspector__fade-duration { width: 100%; }
+.theater-inspector__fade-hint { max-width: 240px; font-size: 12px; line-height: 1.5; }
+.theater-inspector__fade-hint small { color: var(--sc-text-secondary, #64748b); }
 .theater-inspector__mode { display: flex; flex-direction: column; gap: 8px; }
 .theater-inspector__number-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .theater-inspector__slider-field { display: grid; grid-template-columns: 52px minmax(0, 1fr) 42px; align-items: center; gap: 8px; font-size: 12px; }

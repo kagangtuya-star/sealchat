@@ -3,6 +3,7 @@ import {
   createDefaultTheaterDialogueStyle,
   createDefaultTheaterNarrationStyle,
   createDefaultTheaterPresentation,
+  DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS,
   applyWorldTheaterPresentationTemplate,
   normalizeTheaterPresentation,
   normalizeTheaterTextTransform,
@@ -32,7 +33,7 @@ export type TheaterEditorCommand =
   | { type: 'select'; target: TheaterSelection }
   | { type: 'set-transform'; target: TheaterSelection; transform: Partial<TheaterTransform> }
   | { type: 'set-media'; target: TheaterSelection; media: TheaterMediaRef | null }
-  | { type: 'set-layer-property'; target: TheaterSelection; property: 'enabled' | 'fit' | 'blendMode' | 'playbackRate' | 'fontScale' | 'fontAssetId'; value: boolean | string | number }
+  | { type: 'set-layer-property'; target: TheaterSelection; property: 'enabled' | 'fit' | 'blendMode' | 'playbackRate' | 'fadeDurationMs' | 'fontScale' | 'fontAssetId'; value: boolean | string | number }
   | { type: 'add-decoration'; layer: TheaterVisualLayer }
   | { type: 'remove-decoration'; id: string }
   | { type: 'reorder-decoration'; id: string; beforeId: string | null }
@@ -191,6 +192,7 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
         layer.fit = style.fit
         layer.playbackRate = style.playbackRate
         layer.blendMode = style.blendMode
+        layer.fadeDurationMs = style.fadeDurationMs
       }
       replaceLayer(state.draft, command.target, () => layer)
     } else {
@@ -277,6 +279,7 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
           fit: style.fit,
           playbackRate: style.playbackRate,
           blendMode: style.blendMode,
+          fadeDurationMs: style.fadeDurationMs,
         }
       }
     }
@@ -388,4 +391,5 @@ export const createTheaterVisualLayer = (
   fit: 'cover',
   playbackRate: 1,
   blendMode: 'normal',
+  fadeDurationMs: DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS,
 })
