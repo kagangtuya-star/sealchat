@@ -21,9 +21,11 @@ import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StageCl
 import { dialogAskConfirm } from '@/utils/dialog'
 import {
   hasTheaterDialoguePerformanceContent,
+  resolveTheaterDialoguePresentation,
   TheaterDialogueRuntime,
   type TheaterDialogueRuntimeSnapshot,
 } from '../dialogue/theater-dialogue-runtime'
+import type { TheaterDialogueMessage } from '../bridge/theater-dialogue-queue'
 import {
   THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES,
   isTheaterDialogueSurfaceCommandMessage,
@@ -32,7 +34,7 @@ import {
   parseTheaterDialogueSurfaceUrl,
   type TheaterDialogueSurfaceContext,
 } from '../dialogue/theater-dialogue-surface'
-import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
+import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
@@ -52,6 +54,7 @@ import {
   installTheaterBridgeDebugConsoleCommand,
   isTheaterBridgeDebugEnabled,
 } from '../bridge/theater-bridge-debug'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 
 const route = useRoute()
 const router = useRouter()
@@ -207,6 +210,11 @@ interface DialogueSurfaceRuntimeEntry {
   unsubscribe: () => void
 }
 const dialogueSurfaceRuntimes = new Map<string, DialogueSurfaceRuntimeEntry>()
+interface DialogueSurfacePortraitGateState {
+  settledKey: string
+  pendingKey: string
+}
+const dialogueSurfacePortraitGateStates = new Map<string, DialogueSurfacePortraitGateState>()
 let dialogueSurfaceModeActive = false
 const theaterActivationVisible = ref(false)
 const theaterActivationCode = ref('')
@@ -583,6 +591,52 @@ const hasRenderableDialogueSurfaceForIdentity = (identityId: string | null) => {
   return false
 }
 
+const getDialogueSurfacePortraitGateState = (identityId: string) => {
+  let state = dialogueSurfacePortraitGateStates.get(identityId)
+  if (!state) {
+    state = { settledKey: '', pendingKey: '' }
+    dialogueSurfacePortraitGateStates.set(identityId, state)
+  }
+  return state
+}
+
+const resolveDialogueSurfacePortraitGate = (
+  identityId: string,
+  message: TheaterDialogueMessage,
+  reducedMotion: boolean,
+) => {
+  const state = getDialogueSurfacePortraitGateState(identityId)
+  if (!hasRenderableDialogueSurfaceForIdentity(identityId)) {
+    state.settledKey = ''
+    state.pendingKey = ''
+    return false
+  }
+
+  const presentation = resolveTheaterDialoguePresentation(message, characterSnapshot.value)
+  const portrait = presentation.portrait?.enabled ? presentation.portrait : null
+  const portraitKey = portrait
+    ? JSON.stringify([
+        message.actor.identityId,
+        message.actor.variantId || null,
+        portrait.media.assetId,
+        portrait.media.resourceAttachmentId,
+      ])
+    : ''
+  const fadeDurationMs = portrait?.fadeDurationMs ?? DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS
+
+  if (reducedMotion || !portrait || presentation.narration.enabled || fadeDurationMs <= 0) {
+    state.settledKey = portraitKey
+    state.pendingKey = ''
+    return false
+  }
+  if (portraitKey === state.settledKey) {
+    state.pendingKey = ''
+    return false
+  }
+  state.pendingKey = portraitKey
+  return true
+}
+
 const ensureUnrenderedPerformanceDialogueProgressForIdentity = (
   identityId: string,
   snapshot?: TheaterDialogueRuntimeSnapshot,
@@ -619,6 +673,7 @@ const disposeAllDialogueSurfaceRuntimes = () => {
     entry.runtime.dispose()
     dialogueSurfaceRuntimes.delete(identityId)
   }
+  dialogueSurfacePortraitGateStates.clear()
 }
 
 const reconcileDialogueSurfaceRuntimes = () => {
@@ -638,11 +693,17 @@ const reconcileDialogueSurfaceRuntimes = () => {
     entry.unsubscribe()
     entry.runtime.dispose()
     dialogueSurfaceRuntimes.delete(identityId)
+    dialogueSurfacePortraitGateStates.delete(identityId)
   }
 
   for (const identityId of configuredIdentityIds) {
     if (dialogueSurfaceRuntimes.has(identityId)) continue
-    const runtime = new TheaterDialogueRuntime()
+    const runtime = new TheaterDialogueRuntime({
+      reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+      shouldPauseBeforeCurrent: (message, reducedMotion) => (
+        resolveDialogueSurfacePortraitGate(identityId, message, reducedMotion)
+      ),
+    })
     const entry: DialogueSurfaceRuntimeEntry = {
       runtime,
       unsubscribe: () => undefined,
@@ -723,8 +784,23 @@ const handleDialogueSurfaceMessage = (event: MessageEvent) => {
   const command = event.data.command
   if (command.name === 'complete-current') runtime.completeCurrent(command.messageId)
   else if (command.name === 'skip') runtime.skip()
-  else if (command.name === 'close') runtime.close()
+  else if (command.name === 'close') {
+    dialogueSurfacePortraitGateStates.delete(surface.context.identityId)
+    runtime.close()
+  }
   else if (command.name === 'set-reduced-motion') runtime.setReducedMotion(command.value)
+  else if (command.name === 'set-playback-paused') {
+    if (!command.value) {
+      const currentMessageId = runtime.getSnapshot().queue.current?.message.messageId || ''
+      if (!command.messageId || command.messageId !== currentMessageId) return
+      if (typeof command.portraitKey === 'string') {
+        const state = getDialogueSurfacePortraitGateState(surface.context.identityId)
+        state.settledKey = command.portraitKey
+        state.pendingKey = ''
+      }
+    }
+    runtime.setPlaybackPaused(command.value, command.portraitKey, command.messageId)
+  }
   else runtime.setCharactersPerSecond(command.value)
 }
 

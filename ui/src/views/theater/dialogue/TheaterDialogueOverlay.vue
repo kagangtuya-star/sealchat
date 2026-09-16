@@ -107,6 +107,9 @@ const dialogueStyle = computed<CSSProperties>(() => ({
 }))
 const dialogueControlsStyle = computed<CSSProperties>(() => ({ ...dialogueStyle.value, zIndex: '1000' }))
 const portrait = computed(() => presentation.value.portrait?.enabled ? presentation.value.portrait : null)
+const portraitFadeDurationMs = computed(() => (
+  portrait.value?.fadeDurationMs ?? DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS
+))
 const portraitKey = computed(() => {
   const layer = portrait.value
   const actor = current.value?.message.actor
@@ -134,6 +137,113 @@ const portraitDecorations = computed(() => presentation.value.portraitDecoration
   .sort((left, right) => left.transform.zIndex - right.transform.zIndex))
 const frame = computed(() => presentation.value.dialogue.frame?.enabled ? presentation.value.dialogue.frame : null)
 const narration = computed(() => presentation.value.narration)
+const canGatePlaybackForPortrait = computed(() => Boolean(
+  current.value
+  && portrait.value
+  && !props.textOnly
+  && !narration.value.enabled
+  && !snapshot.value.reducedMotion
+  && !props.hidePortraitPerformance
+  && !props.hideDialoguePerformance
+  && portraitFadeDurationMs.value > 0
+))
+const portraitPlaybackGate = ref(false)
+let trackedPortraitMessageId = ''
+let portraitGateMessageId = ''
+let pendingPortraitKey = ''
+let settledPortraitKey = ''
+
+const releasePortraitPlaybackGate = (settledKey?: string, settledMessageId?: string) => {
+  portraitPlaybackGate.value = false
+  portraitGateMessageId = ''
+  pendingPortraitKey = ''
+  props.runtime.setPlaybackPaused(false, settledKey, settledMessageId)
+}
+
+watch(
+  () => [
+    current.value?.message.messageId || '',
+    portraitKey.value,
+    canGatePlaybackForPortrait.value,
+  ] as const,
+  ([messageId, nextPortraitKey, canGate]) => {
+    if (!messageId) {
+      trackedPortraitMessageId = ''
+      settledPortraitKey = ''
+      releasePortraitPlaybackGate()
+      return
+    }
+
+    if (messageId !== trackedPortraitMessageId) {
+      trackedPortraitMessageId = messageId
+      if (canGate && nextPortraitKey && nextPortraitKey !== settledPortraitKey) {
+        portraitPlaybackGate.value = true
+        portraitGateMessageId = messageId
+        pendingPortraitKey = nextPortraitKey
+        props.runtime.setPlaybackPaused(true)
+        return
+      }
+      if (!canGate) {
+        settledPortraitKey = nextPortraitKey
+        releasePortraitPlaybackGate(nextPortraitKey, messageId)
+        return
+      }
+      // Same settled portrait: no new Transition is required.
+      // Still release a possible parent-side pre-pause for this exact message.
+      releasePortraitPlaybackGate(undefined, messageId)
+      return
+    }
+
+    if (portraitPlaybackGate.value) {
+      if (canGate && nextPortraitKey) {
+        pendingPortraitKey = nextPortraitKey
+        return
+      }
+      settledPortraitKey = nextPortraitKey
+      releasePortraitPlaybackGate(nextPortraitKey, messageId)
+      return
+    }
+
+    // Once this message has begun, asynchronous appearance changes may animate
+    // the portrait but must never pause or restart its subtitle playback.
+    settledPortraitKey = nextPortraitKey
+    if (!canGate) releasePortraitPlaybackGate(nextPortraitKey, messageId)
+  },
+  { immediate: true, flush: 'sync' },
+)
+
+const resolveEnteredPortraitState = (element: Element) => {
+  if (!(element instanceof HTMLElement)) return { portraitKey: '', messageId: '' }
+  return {
+    portraitKey: element.dataset.portraitKey ?? '',
+    messageId: element.dataset.messageId ?? '',
+  }
+}
+
+const handlePortraitAfterEnter = (element: Element) => {
+  const { portraitKey: enteredPortraitKey, messageId: enteredMessageId } = resolveEnteredPortraitState(element)
+  if (!enteredPortraitKey || !enteredMessageId) return
+  if (portraitPlaybackGate.value) {
+    if (enteredMessageId !== portraitGateMessageId || enteredPortraitKey !== pendingPortraitKey) return
+    settledPortraitKey = enteredPortraitKey
+    releasePortraitPlaybackGate(enteredPortraitKey, enteredMessageId)
+    return
+  }
+  settledPortraitKey = enteredPortraitKey
+  props.runtime.setPlaybackPaused(false, enteredPortraitKey, enteredMessageId)
+}
+
+const handlePortraitEnterCancelled = () => {
+  const messageId = current.value?.message.messageId || ''
+  if (
+    canGatePlaybackForPortrait.value
+    && portraitPlaybackGate.value
+    && messageId === portraitGateMessageId
+    && portraitKey.value
+  ) return
+  settledPortraitKey = portraitKey.value
+  releasePortraitPlaybackGate(portraitKey.value, messageId)
+}
 const narrationStyle = computed<CSSProperties>(() => ({
   backgroundColor: resolveTheaterBackdropColor(
     narration.value.backdropColor,
@@ -379,6 +489,7 @@ onBeforeUnmount(() => {
   speakerFontLoadGeneration += 1
   contentFontLoadGeneration += 1
   appearanceRequestGeneration += 1
+  releasePortraitPlaybackGate()
   unsubscribe?.()
   intersectionObserver?.disconnect()
   bodyContentObserver?.disconnect()
@@ -407,8 +518,10 @@ onBeforeUnmount(() => {
       <Transition
         name="theater-portrait-fade"
         appear
+        @after-enter="handlePortraitAfterEnter"
+        @enter-cancelled="handlePortraitEnterCancelled"
       >
-        <div v-if="current && !textOnly && portrait && !narration.enabled" :key="portraitKey" class="theater-dialogue-portrait" :style="portraitStyle">
+        <div v-if="current && !textOnly && portrait && !narration.enabled" :key="portraitKey" :data-portrait-key="portraitKey" :data-message-id="message?.messageId || ''" class="theater-dialogue-portrait" :style="portraitStyle">
           <TheaterPresentationMedia
             class="theater-dialogue-portrait__base"
             :media="portrait.media"
@@ -446,7 +559,7 @@ onBeforeUnmount(() => {
           <div ref="bodyRef" class="theater-dialogue-body" :style="contentStyle">
             <div ref="bodyContentRef" class="theater-dialogue-body__content">
               <RichTextContent
-                v-if="showRichContent"
+                v-if="showRichContent && !portraitPlaybackGate"
                 ref="richTextRef"
                 :key="message?.messageId"
                 class="theater-dialogue-rich-text"

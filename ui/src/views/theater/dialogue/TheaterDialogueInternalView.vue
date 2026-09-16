@@ -87,6 +87,16 @@ class DialogueSurfaceRuntimeAdapter implements TheaterDialogueRuntimeController 
     if (this.ownsCurrent()) sendCommand({ name: 'set-characters-per-second', value })
   }
 
+  setPlaybackPaused = (paused: boolean, settledPortraitKey?: string, messageId?: string) => {
+    if (!this.ownsCurrent()) return
+    sendCommand({
+      name: 'set-playback-paused',
+      value: paused,
+      ...(!paused && typeof settledPortraitKey === 'string' ? { portraitKey: settledPortraitKey } : {}),
+      ...(!paused && typeof messageId === 'string' ? { messageId } : {}),
+    })
+  }
+
   private ownsCurrent() {
     return this.snapshot.queue.current?.message.actor.identityId === context.identityId
   }

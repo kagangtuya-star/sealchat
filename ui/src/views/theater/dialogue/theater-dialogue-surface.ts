@@ -21,6 +21,7 @@ export type TheaterDialogueSurfaceCommand =
   | { name: 'close' }
   | { name: 'set-reduced-motion'; value: boolean }
   | { name: 'set-characters-per-second'; value: number }
+  | { name: 'set-playback-paused'; value: boolean; portraitKey?: string; messageId?: string }
 
 export type TheaterDialogueSurfaceReadyMessage = TheaterDialogueSurfaceContext & {
   type: typeof THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES.ready
@@ -75,6 +76,9 @@ const isTheaterDialogueSurfaceCommand = (value: unknown): value is TheaterDialog
   if (value.name === 'complete-current') return value.messageId === undefined || typeof value.messageId === 'string'
   if (value.name === 'skip' || value.name === 'close') return true
   if (value.name === 'set-reduced-motion') return typeof value.value === 'boolean'
+  if (value.name === 'set-playback-paused') return typeof value.value === 'boolean'
+    && (value.portraitKey === undefined || typeof value.portraitKey === 'string')
+    && (value.messageId === undefined || typeof value.messageId === 'string')
   return value.name === 'set-characters-per-second'
     && typeof value.value === 'number'
     && Number.isFinite(value.value)
