@@ -3029,6 +3029,30 @@ const handleQuickToolTabChange = (value: string) => {
   quickToolSelection.value = null
 }
 
+const deleteReplacedQuickToolForm = async (channelId: string, worldId: string, objectId: string, formId: string) => {
+  const objects = new Map<string, StageObject>()
+  Object.values(props.store.state.scenes).forEach((scene) => {
+    Object.values(scene.state.sceneObjects).forEach(item => objects.set(item.id, item))
+  })
+  Object.values(props.store.state.liveState.sceneObjects).forEach(item => objects.set(item.id, item))
+  Object.values(props.store.state.persistentObjects).forEach(item => objects.set(item.id, item))
+  const stillReferenced = [...objects.values()].some((item) => {
+    if (item.id === objectId || item.type !== 'iframe') return false
+    const surface = parseInternalSurfaceLink(normalizeStageIframeContent(item.content?.iframe).url)
+    return surface?.type === 'iform'
+      && surface.id === formId
+      && surface.worldId === worldId
+      && surface.channelId === channelId
+  })
+  if (stillReferenced) return
+  try {
+    await api.delete(`api/v1/channels/${channelId}/iforms/${formId}`)
+    await iformStore.ensureForms(channelId, true)
+  } catch {
+    // The replacement is already attached; deleting the previous quick tool is best effort.
+  }
+}
+
 const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId: string) => {
   const character = props.characterSnapshot.characters.find(item => item.identityId === identityId)
   const object = selectedObject.value
@@ -3046,6 +3070,19 @@ const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId:
     && selectedObject.value?.id === objectId
   )
   const dialogue = kind === 'dialogue'
+  const componentName = `${name} ${dialogue ? '对话框' : '立绘'}`
+  const formName = `小剧场-网页组件-${componentName}`
+  const oldSurface = parseInternalSurfaceLink(normalizeStageIframeContent(object.content?.iframe).url)
+  const oldForm = oldSurface?.type === 'iform'
+    && oldSurface.worldId === worldId
+    && oldSurface.channelId === channelId
+    ? (iformStore.formsByChannel[channelId] || []).find(form => form.id === oldSurface.id)
+    : undefined
+  const oldFormId = oldForm?.name?.startsWith('小剧场-网页组件-')
+    && (oldForm.templateRef === 'builtin:theater-character-portrait'
+      || oldForm.templateRef === 'builtin:theater-dialogue-overlay')
+    ? oldForm.id
+    : ''
   let formId = ''
   let attached = false
   const cleanupForm = async () => {
@@ -3059,7 +3096,7 @@ const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId:
   }
   try {
     const form = await iformStore.createForm({
-      name: '',
+      name: formName,
       templateRef: dialogue
         ? 'builtin:theater-dialogue-overlay'
         : 'builtin:theater-character-portrait',
@@ -3093,20 +3130,31 @@ const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId:
       channelId,
     }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }))
     if (!url) throw new Error('内置工具地址无效')
+    const previousObject = cloneStageData(object)
     props.store.beginObjectEdit(dialogue ? '添加角色对话框' : '添加角色立绘')
-    object.name = `${name} ${dialogue ? '对话框' : '立绘'}`
-    object.interactive = true
-    object.aspectRatioLocked = false
-    object.transform = {
-      ...object.transform,
-      width: Number(((dialogue ? 640 : 480) / WORLD_UNIT_PX).toFixed(6)),
-      height: Number(((dialogue ? 240 : 720) / WORLD_UNIT_PX).toFixed(6)),
+    try {
+      object.name = componentName
+      object.interactive = true
+      object.aspectRatioLocked = false
+      object.transform = {
+        ...object.transform,
+        width: Number(((dialogue ? 640 : 480) / WORLD_UNIT_PX).toFixed(6)),
+        height: Number(((dialogue ? 240 : 720) / WORLD_UNIT_PX).toFixed(6)),
+      }
+      object.content = { ...object.content, iframe: { url, scale: 1 } }
+      props.store.commitObjectEdit()
+    } catch (error) {
+      props.store.cancelObjectEdit()
+      const currentObject = props.store.activeObjects.value[objectId]
+      if (currentObject) Object.assign(currentObject, previousObject)
+      throw error
     }
-    object.content = { ...object.content, iframe: { url, scale: 1 } }
-    props.store.commitObjectEdit()
     attached = true
     iframeUrlDraft.value = url
     closeQuickToolPicker()
+    if (oldFormId && oldFormId !== formId) {
+      await deleteReplacedQuickToolForm(channelId, worldId, objectId, oldFormId)
+    }
   } catch (error) {
     if (!attached) await cleanupForm()
     throw error
