@@ -451,6 +451,12 @@ func splitWhisperTargetIDs(raw string) []string {
 	return result
 }
 
+// SplitWhisperTargetIDs exposes the established legacy WhisperTo parsing rule
+// to persistence callers that need the same visibility semantics.
+func SplitWhisperTargetIDs(raw string) []string {
+	return splitWhisperTargetIDs(raw)
+}
+
 func normalizeWhisperDisplayNames(names []string) []string {
 	if len(names) == 0 {
 		return nil

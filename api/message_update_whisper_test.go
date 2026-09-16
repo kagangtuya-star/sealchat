@@ -5,11 +5,151 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/utils"
 )
+
+func createMentionWatermarkTestRead(t *testing.T, channelID, userID string) {
+	t.Helper()
+	zero := int64(0)
+	if err := model.GetDB().Create(&model.ChannelLatestReadModel{
+		ChannelId:         channelID,
+		UserId:            userID,
+		LatestMentionTime: &zero,
+	}).Error; err != nil {
+		t.Fatalf("create read state for %s: %v", userID, err)
+	}
+}
+
+func mentionWatermarkForTest(t *testing.T, channelID, userID string) *int64 {
+	t.Helper()
+	var record model.ChannelLatestReadModel
+	if err := model.GetDB().Where("channel_id = ? AND user_id = ?", channelID, userID).First(&record).Error; err != nil {
+		t.Fatalf("load read state for %s: %v", userID, err)
+	}
+	return record.LatestMentionTime
+}
+
+func requireMentionWatermarkForTest(t *testing.T, channelID, userID string, want int64) {
+	t.Helper()
+	got := mentionWatermarkForTest(t, channelID, userID)
+	if got == nil || *got != want {
+		t.Fatalf("watermark for %s = %v, want %d", userID, got, want)
+	}
+}
+
+func TestTagCheckPersistsMentionsAndWatermarks(t *testing.T) {
+	t.Run("direct user", func(t *testing.T) {
+		initMessageUpdateWhisperTestDB(t)
+		channelID := "mention-direct-channel"
+		for _, userID := range []string{"mention-direct-sender", "mention-direct-target", "mention-direct-other"} {
+			createMentionWatermarkTestRead(t, channelID, userID)
+		}
+		message := &model.MessageModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "mention-direct-message", CreatedAt: time.UnixMilli(200)},
+			ChannelID:         channelID, UserID: "mention-direct-sender", Content: `<at id="mention-direct-target"/>`,
+		}
+		if err := (&ChatContext{}).TagCheck(message); err != nil {
+			t.Fatal(err)
+		}
+		requireMentionWatermarkForTest(t, channelID, "mention-direct-target", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-direct-sender", 0)
+		requireMentionWatermarkForTest(t, channelID, "mention-direct-other", 0)
+		var count int64
+		if err := model.GetDB().Model(&model.MentionModel{}).Where("related_id = ?", message.ID).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("mention count = %d, want 1", count)
+		}
+	})
+
+	t.Run("channel all", func(t *testing.T) {
+		initMessageUpdateWhisperTestDB(t)
+		channelID := "mention-all-channel"
+		for _, userID := range []string{"mention-all-sender", "mention-all-a", "mention-all-b"} {
+			createMentionWatermarkTestRead(t, channelID, userID)
+		}
+		message := &model.MessageModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "mention-all-message", CreatedAt: time.UnixMilli(200)},
+			ChannelID:         channelID, UserID: "mention-all-sender", Content: `<at id="all"/>`,
+		}
+		if err := (&ChatContext{}).TagCheck(message); err != nil {
+			t.Fatal(err)
+		}
+		requireMentionWatermarkForTest(t, channelID, "mention-all-a", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-all-b", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-all-sender", 0)
+	})
+
+	t.Run("whisper direct intersects visibility", func(t *testing.T) {
+		initMessageUpdateWhisperTestDB(t)
+		channelID := "mention-whisper-direct-channel"
+		for _, userID := range []string{"mention-whisper-sender", "mention-whisper-visible", "mention-whisper-hidden"} {
+			createMentionWatermarkTestRead(t, channelID, userID)
+		}
+		message := &model.MessageModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "mention-whisper-direct-message", CreatedAt: time.UnixMilli(200)},
+			ChannelID:         channelID, UserID: "mention-whisper-sender", IsWhisper: true,
+			Content: `<at id="mention-whisper-visible"/><at id="mention-whisper-hidden"/>`,
+		}
+		if err := model.CreateWhisperRecipients(message.ID, []string{"mention-whisper-visible"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&ChatContext{}).TagCheck(message); err != nil {
+			t.Fatal(err)
+		}
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-visible", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-hidden", 0)
+	})
+
+	t.Run("whisper all uses legacy WhisperTo list", func(t *testing.T) {
+		initMessageUpdateWhisperTestDB(t)
+		channelID := "mention-whisper-all-channel"
+		for _, userID := range []string{"mention-whisper-all-sender", "mention-whisper-all-a", "mention-whisper-all-b", "mention-whisper-all-hidden"} {
+			createMentionWatermarkTestRead(t, channelID, userID)
+		}
+		message := &model.MessageModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "mention-whisper-all-message", CreatedAt: time.UnixMilli(200)},
+			ChannelID:         channelID, UserID: "mention-whisper-all-sender", IsWhisper: true,
+			WhisperTo: "mention-whisper-all-a, mention-whisper-all-b", Content: `<at id="all"/>`,
+		}
+		if err := (&ChatContext{}).TagCheck(message); err != nil {
+			t.Fatal(err)
+		}
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-all-a", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-all-b", 200)
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-all-hidden", 0)
+		requireMentionWatermarkForTest(t, channelID, "mention-whisper-all-sender", 0)
+	})
+
+	t.Run("watermark failure rolls back mentions", func(t *testing.T) {
+		initMessageUpdateWhisperTestDB(t)
+		if err := model.GetDB().Migrator().DropTable(&model.ChannelLatestReadModel{}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = model.GetDB().AutoMigrate(&model.ChannelLatestReadModel{})
+		})
+		message := &model.MessageModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "mention-rollback-message", CreatedAt: time.UnixMilli(200)},
+			ChannelID:         "mention-rollback-channel", UserID: "mention-rollback-sender", Content: `<at id="mention-rollback-target"/>`,
+		}
+		if err := (&ChatContext{}).TagCheck(message); err == nil {
+			t.Fatal("TagCheck succeeded after channel_latest_read was removed")
+		}
+		var count int64
+		if err := model.GetDB().Model(&model.MentionModel{}).Where("related_id = ?", message.ID).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("mention count after rollback = %d, want 0", count)
+		}
+	})
+}
 
 func TestBuildWhisperVisibilityDiffComputesAddedKeptRemoved(t *testing.T) {
 	updateTargets, removeTargets := buildWhisperVisibilityDiff("author", []string{"u1", "u2", "u2"}, []string{"u2", "u3", ""})

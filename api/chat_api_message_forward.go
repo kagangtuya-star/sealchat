@@ -318,15 +318,47 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
-		ctx.TagCheck(item.target.channel.ID, item.message.ID, item.message.Content)
 		_ = model.WebhookEventLogAppendForMessage(item.target.channel.ID, "message-created", item.message.ID)
-		notifyAppMessageCreated(item.message.ID)
+
+		var userIDs []string
+		if ctx.UserId2ConnInfo != nil {
+			ctx.UserId2ConnInfo.Range(func(userID string, _ *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+				userIDs = append(userIDs, userID)
+				return true
+			})
+		}
+		var onlineUserIDs []string
+		if ctx.ChannelUsersMap != nil {
+			if channelUsers, exists := ctx.ChannelUsersMap.Load(item.target.channel.ID); exists && channelUsers != nil {
+				channelUsers.Range(func(userID string) bool {
+					onlineUserIDs = append(onlineUserIDs, userID)
+					return true
+				})
+			}
+		}
+		_ = model.ChannelReadInitInBatches(item.target.channel.ID, userIDs)
+		_ = model.ChannelReadSetInBatch([]string{item.target.channel.ID}, onlineUserIDs)
+
+		hasMention := len(collectMentionTargetIDsFromContent(item.message.Content)) > 0
+		mentionStateReady := !hasMention
+		if hasMention {
+			if err := ctx.TagCheck(item.message); err != nil {
+				log.Printf("持久化转发消息 mention 状态失败 message=%s err=%v", item.message.ID, err)
+			} else {
+				mentionStateReady = true
+			}
+		}
+		if !hasMention || mentionStateReady {
+			notifyAppMessageCreated(item.message.ID)
+		}
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
 			}
 		}(item.target.channel.ID, *item.message)
-		notifyForwardMessageCreated(ctx, item.target.channel.ID, item.message.Content, item.message.ID, item.target.channel.WorldID)
+		if !hasMention || mentionStateReady {
+			notifyForwardMessageCreated(ctx, item.message, item.target.channel.WorldID, userIDs)
+		}
 	}
 
 	return &struct {
@@ -342,26 +374,11 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 	}, nil
 }
 
-func notifyForwardMessageCreated(ctx *ChatContext, channelID, content, messageID, worldID string) {
-	if ctx == nil || ctx.UserId2ConnInfo == nil || channelID == "" {
+func notifyForwardMessageCreated(ctx *ChatContext, message *model.MessageModel, worldID string, userIDs []string) {
+	if ctx == nil || message == nil || message.ChannelID == "" {
 		return
 	}
-	var userIDs []string
-	ctx.UserId2ConnInfo.Range(func(userID string, _ *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-		userIDs = append(userIDs, userID)
-		return true
-	})
-	var onlineUserIDs []string
-	if ctx.ChannelUsersMap != nil {
-		if channelUsers, exists := ctx.ChannelUsersMap.Load(channelID); exists && channelUsers != nil {
-			channelUsers.Range(func(userID string) bool {
-				onlineUserIDs = append(onlineUserIDs, userID)
-				return true
-			})
-		}
-	}
-	_ = model.ChannelReadInitInBatches(channelID, userIDs)
-	_ = model.ChannelReadSetInBatch([]string{channelID}, onlineUserIDs)
+	channelID := message.ChannelID
 	for _, userID := range userIDs {
 		if userID == "" {
 			continue
@@ -370,7 +387,7 @@ func notifyForwardMessageCreated(ctx *ChatContext, channelID, content, messageID
 			ctx,
 			userID,
 			channelID,
-			buildMessageCreatedNoticePayload(channelID, content, userID, messageID, worldID),
+			buildMessageCreatedNoticePayload(channelID, message.Content, userID, message.ID, worldID),
 		)
 	}
 }

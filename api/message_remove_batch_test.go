@@ -93,6 +93,26 @@ func TestAPIMessageRemoveSupportsBatchMessageIDs(t *testing.T) {
 	createMessageRemoveBatchTestMember(t, channel.ID, author.ID)
 	createMessageRemoveBatchTestMessage(t, channel.ID, author.ID, "msg-batch-1")
 	createMessageRemoveBatchTestMessage(t, channel.ID, author.ID, "msg-batch-2")
+	recipientID := "message-remove-mention-recipient"
+	zero := int64(0)
+	if err := model.GetDB().Create(&model.ChannelLatestReadModel{
+		ChannelId:         channel.ID,
+		UserId:            recipientID,
+		LatestMentionTime: &zero,
+	}).Error; err != nil {
+		t.Fatalf("create mention recipient read state failed: %v", err)
+	}
+	var mentionedMessage model.MessageModel
+	if err := model.GetDB().Where("id = ?", "msg-batch-1").First(&mentionedMessage).Error; err != nil {
+		t.Fatal(err)
+	}
+	mentionedMessage.Content = `<at id="message-remove-mention-recipient"/>`
+	if err := model.GetDB().Model(&mentionedMessage).Update("content", mentionedMessage.Content).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ChatContext{}).TagCheck(&mentionedMessage); err != nil {
+		t.Fatalf("persist mention state failed: %v", err)
+	}
 
 	ctx := &ChatContext{
 		User:            author,
@@ -143,5 +163,19 @@ func TestAPIMessageRemoveSupportsBatchMessageIDs(t *testing.T) {
 		if msg.Content != "" {
 			t.Fatalf("message %s content = %q, want empty", msg.ID, msg.Content)
 		}
+	}
+	var readState model.ChannelLatestReadModel
+	if err := model.GetDB().Where("channel_id = ? AND user_id = ?", channel.ID, recipientID).First(&readState).Error; err != nil {
+		t.Fatal(err)
+	}
+	if readState.LatestMentionTime != nil {
+		t.Fatalf("watermark after message removal = %v, want nil", readState.LatestMentionTime)
+	}
+	unread, err := model.ChannelUnreadStateFetch([]string{channel.ID}, recipientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unread.Mentions[channel.ID] {
+		t.Fatal("removed message still produced an unread mention")
 	}
 }

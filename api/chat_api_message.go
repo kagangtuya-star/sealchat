@@ -937,14 +937,25 @@ func apiMessageRemove(ctx *ChatContext, data *messageRemovePayload) (any, error)
 		"deleted_by": operatorID,
 		"content":    "",
 	}
-	db := model.GetDB()
-	result := db.Model(&model.MessageModel{}).
-		Where("id IN ? AND channel_id = ? AND is_deleted = ?", ids, channelID, false).
-		Updates(updateData)
-	if result.Error != nil {
-		return nil, result.Error
+	mentionInvalidationPlans, err := loadMessageMentionInvalidationPlans(messages)
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected == 0 {
+	db := model.GetDB()
+	var rowsAffected int64
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.MessageModel{}).
+			Where("id IN ? AND channel_id = ? AND is_deleted = ?", ids, channelID, false).
+			Updates(updateData)
+		if result.Error != nil {
+			return result.Error
+		}
+		rowsAffected = result.RowsAffected
+		return invalidateMessageMentionWatermarksTx(tx, mentionInvalidationPlans)
+	}); err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
 		return nil, fmt.Errorf("消息不存在或已删除")
 	}
 
@@ -2519,7 +2530,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
-		ctx.TagCheck(data.ChannelID, m.ID, content)
 		member.UpdateRecentSent()
 		channel.UpdateRecentSent()
 
@@ -2631,24 +2641,24 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			model.FriendRelationSetVisibleById(channel.ID)
 		}
 
+		var noticeTargets []string
 		if whisperUser != nil {
-			targets := make([]string, 0, len(whisperRecipientIDs)+1)
+			noticeTargets = make([]string, 0, len(whisperRecipientIDs)+1)
 			if whisperTo != "" {
-				targets = append(targets, whisperTo)
+				noticeTargets = append(noticeTargets, whisperTo)
 			}
-			targets = append(targets, whisperRecipientIDs...)
-			targets = lo.Uniq(targets)
-			for _, uid := range targets {
+			noticeTargets = append(noticeTargets, whisperRecipientIDs...)
+			noticeTargets = lo.Uniq(noticeTargets)
+			for _, uid := range noticeTargets {
 				if uid == "" || uid == ctx.User.ID {
 					continue
 				}
 				_ = model.ChannelReadInit(data.ChannelID, uid)
-				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID))
 			}
 		} else if channel.PermType == "private" {
 			if privateOtherUser != "" {
+				noticeTargets = []string{privateOtherUser}
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
-				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser, m.ID, channel.WorldID))
 			}
 		} else {
 			// 给当前在线人都通知一遍
@@ -2669,18 +2679,32 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 			_ = model.ChannelReadInitInBatches(data.ChannelID, uids)
 			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
+			noticeTargets = uids
+		}
 
-			// 发送快速更新通知
-			for _, uid := range uids {
+		mentionTargets := collectMentionTargetIDsFromContent(m.Content)
+		hasMention := len(mentionTargets) > 0
+		mentionStateReady := !hasMention
+		if hasMention {
+			if err := ctx.TagCheck(&m); err != nil {
+				log.Printf("持久化消息 mention 状态失败 message=%s err=%v", m.ID, err)
+			} else {
+				mentionStateReady = true
+			}
+		}
+		if !hasMention || mentionStateReady {
+			for _, uid := range noticeTargets {
 				if uid == "" {
 					continue
 				}
-				broadcastMessageCreatedNoticeOutsideChannel(
-					ctx,
-					uid,
-					data.ChannelID,
-					buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID),
-				)
+				payload := buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID)
+				if whisperUser != nil || channel.PermType == "private" {
+					if uid != ctx.User.ID {
+						ctx.BroadcastToUserJSON(uid, payload)
+					}
+					continue
+				}
+				broadcastMessageCreatedNoticeOutsideChannel(ctx, uid, data.ChannelID, payload)
 			}
 		}
 
