@@ -60,6 +60,7 @@ type MessageModel struct {
 
 	SenderMemberName          string                        `json:"sender_member_name"` // 用户在当时的名字
 	SenderIdentityID          string                        `json:"sender_identity_id" gorm:"size:100"`
+	SenderSharedIdentityID    string                        `json:"sender_shared_identity_id,omitempty" gorm:"size:100"`
 	SenderIdentityVariantID   string                        `json:"sender_identity_variant_id" gorm:"size:100"`
 	SenderIdentityName        string                        `json:"sender_identity_name"`
 	SenderIdentityColor       string                        `json:"sender_identity_color"`
@@ -252,6 +253,7 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || len(m.SenderIdentityDecorations) > 0 {
 		msg.Identity = &protocol.MessageIdentity{
 			ID:                  m.SenderIdentityID,
+			SharedIdentityID:    m.SenderSharedIdentityID,
 			VariantID:           m.SenderIdentityVariantID,
 			DisplayName:         m.SenderIdentityName,
 			Color:               m.SenderIdentityColor,

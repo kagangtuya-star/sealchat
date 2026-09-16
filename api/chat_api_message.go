@@ -2434,6 +2434,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
+		m.SenderSharedIdentityID = identity.SharedIdentityID
 		m.SenderIdentityIsTemporary = identity.IsTemporary
 		if appearance != nil {
 			m.SenderIdentityVariantID = appearance.VariantID
@@ -3143,6 +3144,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			identityChanged = identity.ID != msg.SenderIdentityID || nextVariantID != msg.SenderIdentityVariantID
 			if identityChanged {
 				msg.SenderIdentityID = identity.ID
+				msg.SenderSharedIdentityID = identity.SharedIdentityID
 				msg.SenderRoleID = identity.ID
 				msg.SenderIdentityIsTemporary = identity.IsTemporary
 				msg.SenderIdentityVariantID = nextVariantID
@@ -3174,6 +3176,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			identityChanged = msg.SenderIdentityID != "" || msg.SenderIdentityVariantID != ""
 			if identityChanged {
 				msg.SenderIdentityID = ""
+				msg.SenderSharedIdentityID = ""
 				msg.SenderIdentityVariantID = ""
 				msg.SenderIdentityName = ""
 				msg.SenderIdentityColor = ""
@@ -3385,6 +3388,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if identityChanged {
 		updates["sender_identity_id"] = msg.SenderIdentityID
+		updates["sender_shared_identity_id"] = msg.SenderSharedIdentityID
 		updates["sender_identity_variant_id"] = msg.SenderIdentityVariantID
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor

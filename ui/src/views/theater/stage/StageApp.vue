@@ -135,6 +135,9 @@ import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
+import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
+import type { DialogueController, DialogueControllerTemplate, DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
+import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 import {
   buildTheaterDialogueSurfaceUrl,
   parseTheaterDialogueSurfaceUrl,
@@ -149,7 +152,7 @@ import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
-import type { TheaterPresentation } from '@/types/theaterPresentation'
+import type { TheaterPresentation, TheaterTransform } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
@@ -191,6 +194,12 @@ const props = defineProps<{
   permissions: string[]
   constructionSceneId: string | null
   dialogueRuntime: TheaterDialogueRuntime
+  dialogueController?: DialogueController
+  dialogueControllerTemplate?: DialogueControllerTemplate | null
+  canManageDialogue?: boolean
+  canDragPortraits?: boolean
+  saveDialogueController?: (patch: DialogueControllerPatch) => Promise<void>
+  savePortraitPosition?: (key: string, position: DialoguePosition) => Promise<void>
   appearancePreview: {
     previewId: string
     draft: TheaterPresentation
@@ -198,6 +207,8 @@ const props = defineProps<{
     activeSection: TheaterSection
     previewName: string
     previewText: string
+    controllerArea?: TheaterTransform
+    multiplayerPortraitTransform?: TheaterTransform
   } | null
   sceneDialogueEnabled: boolean
   sceneAudioEnabled: boolean
@@ -2803,6 +2814,17 @@ const hasCharacterDialogueSurface = computed(() => Object.values(props.store.act
     form => form.id === surface.id && form.templateRef === 'builtin:theater-dialogue-overlay',
   )
 }))
+const dialogueSuppressedObjectIds = computed(() => props.dialogueController?.enabled
+  ? Object.values(props.store.activeObjects.value).filter(object => {
+      if (object.type !== 'iframe') return false
+      const url = normalizeStageIframeContent(object.content?.iframe).url
+      const context = parseTheaterDialogueSurfaceUrl(url)
+      if (context?.worldId === props.worldId && context.channelId === props.channelId) return true
+      const surface = parseInternalSurfaceLink(url)
+      return surface?.type === 'iform' && surface.worldId === props.worldId && surface.channelId === props.channelId
+        && (iformStore.formsByChannel[props.channelId] || []).some(form => form.id === surface.id && form.templateRef === 'builtin:theater-dialogue-overlay')
+    }).map(object => object.id)
+  : [])
 
 type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue' | 'portrait'
 interface QuickToolOption {
@@ -8342,6 +8364,7 @@ onBeforeUnmount(() => {
             </n-button>
           </n-dropdown>
         </span>
+        <TheaterDialogueControllerPanel v-if="dialogueController && saveDialogueController" :world-id="worldId" :controller="dialogueController" :can-manage="canManageDialogue === true" :save="saveDialogueController" />
       </n-button-group>
       <n-popover
         trigger="click"
@@ -8576,7 +8599,7 @@ onBeforeUnmount(() => {
             :viewport-width="viewportSize.width"
             :viewport-height="viewportSize.height"
             :entrance-playbacks="textEntrancePlaybacks"
-            :hidden-object-ids="pendingTextEntranceIds"
+            :hidden-object-ids="[...pendingTextEntranceIds, ...dialogueSuppressedObjectIds]"
             :stacking-order="rootStackingOrder"
             :character-snapshot="characterSnapshot"
           />
@@ -8607,13 +8630,17 @@ onBeforeUnmount(() => {
           @open-character-card="emit('openCharacterCard', $event)"
         />
         <TheaterDialogueOverlay
-          v-if="!hasCharacterDialogueSurface"
+          v-if="!appearancePreview && (dialogueController?.enabled || !hasCharacterDialogueSurface)"
           :runtime="dialogueRuntime"
           :character-snapshot="characterSnapshot"
           :world-id="worldId"
           :channel-id="channelId"
-          :hide-dialogue-performance="dialoguePerformanceHidden"
-          :hide-portrait-performance="portraitPerformanceHidden"
+          :hide-dialogue-performance="!dialogueController?.enabled && dialoguePerformanceHidden"
+          :hide-portrait-performance="!dialogueController?.enabled && portraitPerformanceHidden"
+          :controller="dialogueController"
+          :controller-template="dialogueControllerTemplate"
+          :can-drag-portraits="canDragPortraits"
+          :save-portrait-position="savePortraitPosition"
         />
         <TheaterEffectOverlay
           :playbacks="effectPlaybacks"
@@ -8635,6 +8662,8 @@ onBeforeUnmount(() => {
             :preview-enabled="true"
             :preview-name="appearancePreview.previewName"
             :preview-text="appearancePreview.previewText"
+            :controller-area="appearancePreview.controllerArea"
+            :multiplayer-portrait-transform="appearancePreview.multiplayerPortraitTransform"
             @dispatch="(command, options) => emit('appearancePreviewCommand', command, options?.transient)"
             @gesture-start="emit('appearancePreviewPhase', 'start')"
             @gesture-end="emit('appearancePreviewPhase', 'end')"

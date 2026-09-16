@@ -147,7 +147,7 @@ func CanSwitchTheaterScene(actorID, worldID, channelID string) bool {
 
 func theaterPermissionForMutation(mutationType string) string {
 	switch mutationType {
-	case TheaterMutationRoomConstructionSet:
+	case TheaterMutationRoomConstructionSet, TheaterMutationRoomDialoguePatch, TheaterMutationRoomDialoguePositionSet:
 		return TheaterPermissionView
 	case TheaterMutationSceneApply:
 		return TheaterPermissionSceneSwitch

@@ -134,6 +134,22 @@ export class TheaterDialogueRuntime {
     reducedMotion: this.reducedMotion,
   })
 
+  /** Transfer playback ownership without replaying completed IDs or timers. */
+  takeSnapshot = (): TheaterDialogueRuntimeSnapshot => {
+    const snapshot = this.getSnapshot()
+    this.close()
+    return snapshot
+  }
+
+  restoreSnapshot = (snapshot: TheaterDialogueRuntimeSnapshot) => {
+    if (this.disposed) return
+    this.clearTimer()
+    this.playbackPaused = false
+    this.queue = snapshotDialogueQueue(snapshot.queue)
+    this.phase = snapshot.phase
+    this.armCurrent()
+  }
+
   subscribe = (listener: (snapshot: TheaterDialogueRuntimeSnapshot) => void) => {
     this.listeners.add(listener)
     listener(this.getSnapshot())

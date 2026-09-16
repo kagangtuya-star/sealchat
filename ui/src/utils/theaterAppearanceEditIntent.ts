@@ -1,7 +1,7 @@
 export type TheaterAppearanceEditIntent = {
   channelId: string
   identityId: string
-  mode: 'base' | 'variant'
+  mode: 'base' | 'variant' | 'controller'
   variantId?: string
   targetUserId?: string
   targetKind?: 'self' | 'user' | 'bot'
@@ -24,7 +24,7 @@ const parseIntent = (raw: string | null): TheaterAppearanceEditIntent | null => 
     if (!isRecord(data)) return null
     const channelId = String(data.channelId || '').trim()
     const identityId = String(data.identityId || '').trim()
-    const mode = data.mode === 'variant' ? 'variant' : data.mode === 'base' ? 'base' : ''
+    const mode = data.mode === 'variant' || data.mode === 'base' || data.mode === 'controller' ? data.mode : ''
     const createdAt = Number(data.createdAt || 0)
     if (!channelId || !identityId || !mode || !Number.isFinite(createdAt) || createdAt <= 0) return null
     if (Date.now() - createdAt > INTENT_TTL_MS) return null

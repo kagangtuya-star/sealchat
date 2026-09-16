@@ -6,25 +6,27 @@ import (
 )
 
 const (
-	TheaterMutationSceneCreate         = "scene.create"
-	TheaterMutationSceneUpdate         = "scene.update"
-	TheaterMutationSceneReorder        = "scene.reorder"
-	TheaterMutationSceneDelete         = "scene.delete"
-	TheaterMutationSceneApply          = "scene.apply"
-	TheaterMutationSceneFoldersUpdate  = "scene.folders.update"
-	TheaterMutationRoomConstructionSet = "room.construction.set"
-	TheaterMutationObjectCreate        = "object.create"
-	TheaterMutationObjectUpdate        = "object.update"
-	TheaterMutationObjectBatchUpdate   = "object.batchUpdate"
-	TheaterMutationObjectDelete        = "object.delete"
-	TheaterMutationObjectToggle        = "object.toggle"
-	TheaterMutationCharacterBind       = "character.bind"
-	TheaterMutationCharacterUpdate     = "character.update"
-	TheaterMutationResourceAttach      = "resource.attach"
-	TheaterMutationResourceDetach      = "resource.detach"
-	TheaterMutationAdminRestore        = "admin.snapshot.restore"
-	TheaterMutationAdminReplace        = "admin.snapshot.replace"
-	TheaterMutationAdminPackageImport  = "admin.package.import"
+	TheaterMutationRoomDialoguePatch       = "room.dialogue.patch"
+	TheaterMutationRoomDialoguePositionSet = "room.dialogue.position.set"
+	TheaterMutationSceneCreate             = "scene.create"
+	TheaterMutationSceneUpdate             = "scene.update"
+	TheaterMutationSceneReorder            = "scene.reorder"
+	TheaterMutationSceneDelete             = "scene.delete"
+	TheaterMutationSceneApply              = "scene.apply"
+	TheaterMutationSceneFoldersUpdate      = "scene.folders.update"
+	TheaterMutationRoomConstructionSet     = "room.construction.set"
+	TheaterMutationObjectCreate            = "object.create"
+	TheaterMutationObjectUpdate            = "object.update"
+	TheaterMutationObjectBatchUpdate       = "object.batchUpdate"
+	TheaterMutationObjectDelete            = "object.delete"
+	TheaterMutationObjectToggle            = "object.toggle"
+	TheaterMutationCharacterBind           = "character.bind"
+	TheaterMutationCharacterUpdate         = "character.update"
+	TheaterMutationResourceAttach          = "resource.attach"
+	TheaterMutationResourceDetach          = "resource.detach"
+	TheaterMutationAdminRestore            = "admin.snapshot.restore"
+	TheaterMutationAdminReplace            = "admin.snapshot.replace"
+	TheaterMutationAdminPackageImport      = "admin.package.import"
 )
 
 const (
@@ -118,13 +120,15 @@ type TheaterObjectSnapshot struct {
 }
 
 type TheaterSharedSnapshot struct {
-	ActiveSceneID     *string                          `json:"activeSceneId"`
-	LiveState         json.RawMessage                  `json:"liveState"`
-	SceneFolders      []TheaterSceneFolder             `json:"sceneFolders,omitempty"`
-	Scenes            map[string]TheaterSceneSnapshot  `json:"scenes"`
-	PersistentObjects map[string]TheaterObjectSnapshot `json:"persistentObjects"`
-	Characters        map[string]TheaterObjectSnapshot `json:"characters"`
-	Resources         map[string]TheaterResourcePublic `json:"resources"`
+	DialogueController         *TheaterDialogueController         `json:"dialogueController,omitempty"`
+	DialogueControllerTemplate *TheaterDialogueControllerTemplate `json:"dialogueControllerTemplate,omitempty"`
+	ActiveSceneID              *string                            `json:"activeSceneId"`
+	LiveState                  json.RawMessage                    `json:"liveState"`
+	SceneFolders               []TheaterSceneFolder               `json:"sceneFolders,omitempty"`
+	Scenes                     map[string]TheaterSceneSnapshot    `json:"scenes"`
+	PersistentObjects          map[string]TheaterObjectSnapshot   `json:"persistentObjects"`
+	Characters                 map[string]TheaterObjectSnapshot   `json:"characters"`
+	Resources                  map[string]TheaterResourcePublic   `json:"resources"`
 }
 
 type TheaterSnapshotResult struct {

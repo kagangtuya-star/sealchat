@@ -557,6 +557,7 @@ const normalizeFrozenIdentity = (
   return {
     userId,
     identityId,
+    sharedIdentityId: normalizeOptionalId(identity.sharedIdentityId || message.senderSharedIdentityId || message.sender_shared_identity_id),
     variantId,
     displayName,
     color,
@@ -584,6 +585,7 @@ export const serializeTheaterDialogueMessage = (
   const rawContent = normalizeMessageContent(message.contentRichText ?? message.content)
   const richContent = isTipTapJson(rawContent) ? rawContent : ''
   const actor = normalizeFrozenIdentity(message, resolveAttachmentUrl)
+  const sourceChannelId = normalizeOptionalId(message.channelId || message.channel_id || asRecord(message.channel).id)
   const displayOrder = typeof message.displayOrder === 'number' && Number.isFinite(message.displayOrder)
     ? message.displayOrder
     : typeof message.display_order === 'number' && Number.isFinite(message.display_order)
@@ -591,6 +593,7 @@ export const serializeTheaterDialogueMessage = (
       : undefined
   return {
     messageId,
+    ...(sourceChannelId ? { sourceChannelId } : {}),
     createdAt: normalizeTimestamp(message.createdAt ?? message.timestamp ?? message.created_at),
     ...(displayOrder !== undefined ? { displayOrder } : {}),
     icMode: String(message.icMode ?? message.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic',

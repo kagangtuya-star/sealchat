@@ -87,12 +87,14 @@ func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnaps
 
 func projectTheaterSnapshotForMember(snapshot TheaterSharedSnapshot) (TheaterSharedSnapshot, string) {
 	projected := TheaterSharedSnapshot{
-		ActiveSceneID:     snapshot.ActiveSceneID,
-		LiveState:         snapshot.LiveState,
-		Scenes:            map[string]TheaterSceneSnapshot{},
-		PersistentObjects: projectTheaterObjectsForMember(snapshot.PersistentObjects),
-		Characters:        map[string]TheaterObjectSnapshot{},
-		Resources:         map[string]TheaterResourcePublic{},
+		DialogueController:         snapshot.DialogueController,
+		DialogueControllerTemplate: snapshot.DialogueControllerTemplate,
+		ActiveSceneID:              snapshot.ActiveSceneID,
+		LiveState:                  snapshot.LiveState,
+		Scenes:                     map[string]TheaterSceneSnapshot{},
+		PersistentObjects:          projectTheaterObjectsForMember(snapshot.PersistentObjects),
+		Characters:                 map[string]TheaterObjectSnapshot{},
+		Resources:                  map[string]TheaterResourcePublic{},
 	}
 	for _, scene := range snapshot.Scenes {
 		if (snapshot.ActiveSceneID == nil || scene.ID != *snapshot.ActiveSceneID) && !scene.Published {
@@ -486,7 +488,7 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 		return err
 	}
 	room.ActiveSceneID = derefString(snapshot.ActiveSceneID)
-	room.StateJSON = defaultJSON(snapshot.LiveState, `{}`)
+	room.StateJSON = preserveDialogueControllerState(room.StateJSON, defaultJSON(snapshot.LiveState, `{}`))
 	var liveState map[string]any
 	if json.Unmarshal([]byte(room.StateJSON), &liveState) != nil || liveState == nil {
 		liveState = map[string]any{}
@@ -607,6 +609,13 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 		PersistentObjects: map[string]TheaterObjectSnapshot{},
 		Characters:        map[string]TheaterObjectSnapshot{},
 		Resources:         map[string]TheaterResourcePublic{},
+	}
+	if room.ChannelID == "" {
+		controller, template, err := loadDialogueController(conn, room)
+		if err != nil {
+			return result, "", err
+		}
+		result.DialogueController, result.DialogueControllerTemplate = &controller, template
 	}
 	if strings.TrimSpace(room.ActiveSceneID) != "" {
 		value := room.ActiveSceneID

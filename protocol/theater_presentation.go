@@ -149,11 +149,12 @@ func (dialogue *TheaterDialogueStyle) UnmarshalJSON(data []byte) error {
 }
 
 type TheaterPresentation struct {
-	SchemaVersion       int                   `json:"schemaVersion"`
-	Portrait            *TheaterVisualLayer   `json:"portrait"`
-	PortraitDecorations []TheaterVisualLayer  `json:"portraitDecorations"`
-	Dialogue            TheaterDialogueStyle  `json:"dialogue"`
-	Narration           TheaterNarrationStyle `json:"narration"`
+	SchemaVersion                int                   `json:"schemaVersion"`
+	Portrait                     *TheaterVisualLayer   `json:"portrait"`
+	MultiplayerPortraitTransform *TheaterTransform     `json:"multiplayerPortraitTransform,omitempty"`
+	PortraitDecorations          []TheaterVisualLayer  `json:"portraitDecorations"`
+	Dialogue                     TheaterDialogueStyle  `json:"dialogue"`
+	Narration                    TheaterNarrationStyle `json:"narration"`
 }
 
 // TheaterVisualStyle stores reusable layer settings without binding a template
@@ -678,6 +679,10 @@ func matchesTheaterTransformSize(transform TheaterTransform, x, y, width, height
 func ResolveTheaterPresentation(base TheaterPresentation, patch *TheaterPresentationPatch) TheaterPresentation {
 	resolved := NormalizeTheaterPresentation(base)
 	resolved.Portrait = cloneTheaterLayer(resolved.Portrait)
+	if resolved.MultiplayerPortraitTransform != nil {
+		transform := *resolved.MultiplayerPortraitTransform
+		resolved.MultiplayerPortraitTransform = &transform
+	}
 	resolved.PortraitDecorations = append([]TheaterVisualLayer(nil), resolved.PortraitDecorations...)
 	resolved.Dialogue.Frame = cloneTheaterLayer(resolved.Dialogue.Frame)
 	if patch == nil {
@@ -714,6 +719,9 @@ func ValidateTheaterPresentation(value TheaterPresentation) error {
 	}
 	if value.Portrait != nil {
 		problems = appendError(problems, validateTheaterLayer(*value.Portrait, TheaterLayerSpaceViewport, "portrait"))
+	}
+	if value.MultiplayerPortraitTransform != nil {
+		problems = appendError(problems, validateTheaterTransform(*value.MultiplayerPortraitTransform, "multiplayerPortraitTransform"))
 	}
 	if len(value.PortraitDecorations) > MaxTheaterPortraitDecorations {
 		problems = append(problems, fmt.Errorf("portraitDecorations must contain at most %d layers", MaxTheaterPortraitDecorations))

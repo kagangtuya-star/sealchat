@@ -20,6 +20,9 @@ import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCac
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import { isTheaterBridgeDebugEnabled, logTheaterDialogueDebug } from '../bridge/theater-bridge-debug'
 import type { TheaterDialogueEmbedSettings } from './theater-dialogue-embed-settings'
+import TheaterDialogueResidents from './TheaterDialogueResidents.vue'
+import type { DialogueController, DialogueControllerTemplate } from './theater-dialogue-controller'
+import type { DialoguePosition } from './theater-dialogue-layout'
 
 const props = defineProps<{
   runtime: TheaterDialogueRuntimeController
@@ -31,6 +34,10 @@ const props = defineProps<{
   textOverrides?: TheaterDialogueEmbedSettings
   hideDialoguePerformance?: boolean
   hidePortraitPerformance?: boolean
+  controller?: DialogueController
+  controllerTemplate?: DialogueControllerTemplate | null
+  canDragPortraits?: boolean
+  savePortraitPosition?: (key: string, position: DialoguePosition) => Promise<void>
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -80,6 +87,7 @@ const current = computed(() => snapshot.value.queue.current)
 const message = computed(() => current.value?.message || null)
 const presentation = computed(() => {
   const base = livePresentation.value || resolveTheaterDialoguePresentation(message.value, props.characterSnapshot)
+  if (props.controller?.enabled && props.controllerTemplate) return { ...props.controllerTemplate.presentation, portrait: null, narration: base.narration }
   const overrides = props.textOverrides
   if (!overrides) return base
   return { ...base, dialogue: {
@@ -265,6 +273,7 @@ const useRichPlayback = computed(() => {
 const showRichContent = computed(() => Boolean(richContent.value && (!typing.value || useRichPlayback.value)))
 const mediaActive = computed(() => Boolean(current.value && typing.value && visibleInViewport.value))
 const speakerColor = computed(() => {
+  if (props.controller?.enabled) return presentation.value.dialogue.contentColor
   if (props.textOverrides?.speakerColor) return props.textOverrides.speakerColor
   const color = String(message.value?.actor.color || '').trim()
   return typeof CSS !== 'undefined' && CSS.supports('color', color) ? color : 'var(--sc-text-primary, #f4f4f5)'
@@ -515,6 +524,7 @@ onBeforeUnmount(() => {
   >
     <div v-if="!textOnly && current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
     <div class="theater-composition">
+      <TheaterDialogueResidents v-if="controller?.enabled && controllerTemplate && savePortraitPosition" :runtime="runtime" :world-id="worldId" :channel-id="channelId" :controller="controller" :template="controllerTemplate" :can-drag="canDragPortraits === true" :save-position="savePortraitPosition" />
       <Transition
         name="theater-portrait-fade"
         appear

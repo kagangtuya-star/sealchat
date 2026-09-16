@@ -467,6 +467,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	if identity != nil {
 		msg.SenderRoleID = identity.ID
 		msg.SenderIdentityID = identity.ID
+		msg.SenderSharedIdentityID = identity.SharedIdentityID
 		msg.SenderIdentityIsTemporary = identity.IsTemporary
 		if appearance != nil {
 			msg.SenderIdentityVariantID = appearance.VariantID

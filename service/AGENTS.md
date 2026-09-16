@@ -34,6 +34,8 @@ The current SealChat service layer may directly use `model.GetDB()` and GORM for
 
 ## Domain Ownership
 
+- 世界级对话框控制器只通过 `room.dialogue.patch` / `room.dialogue.position.set` 修改；场景导入、状态替换和修复必须保留当前房间的 `dialogueController`，不能采纳外来系统角色 ID。公共模板归属 `theater-dialogue-controller` 共享根，禁止进入普通用户角色物化或世界默认模板覆盖。用 `go test ./service -run TestDialogueController` 验证。
+
 Keep related business rules together.
 
 Do not scatter one workflow across several unrelated service files unless the split follows a clear domain boundary.

@@ -257,6 +257,7 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 					if target.identity != nil {
 						m.SenderRoleID = target.identity.ID
 						m.SenderIdentityID = target.identity.ID
+						m.SenderSharedIdentityID = target.identity.SharedIdentityID
 						m.SenderIdentityIsTemporary = target.identity.IsTemporary
 						if target.appearance != nil {
 							m.SenderIdentityVariantID = target.appearance.VariantID

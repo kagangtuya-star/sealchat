@@ -131,6 +131,8 @@ import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
 import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
+import TheaterDialogueControllerIdentity from './components/TheaterDialogueControllerIdentity.vue'
+import { readDialogueController, type DialogueControllerTemplate } from '@/views/theater/dialogue/theater-dialogue-controller'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import {
   applyWorldTheaterPresentationTemplate,
@@ -139,6 +141,7 @@ import {
   resolveTheaterPresentation,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type TheaterTransform,
   type WorldTheaterPresentationTemplate,
   type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
@@ -3377,7 +3380,9 @@ const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
 const theaterPresentationEditorVisible = ref(false);
-const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
+const theaterPresentationEditorMode = ref<'base' | 'variant' | 'multiplayer'>('base');
+const theaterPresentationControllerTemplate = ref<DialogueControllerTemplate | null>(null);
+const theaterDialogueControllerIdentityRef = ref<InstanceType<typeof TheaterDialogueControllerIdentity> | null>(null);
 const theaterPresentationApplying = ref(false);
 const worldTheaterTemplateSaving = ref(false);
 const currentWorldTheaterTemplate = computed<WorldTheaterPresentationTemplate>(() => {
@@ -5438,6 +5443,26 @@ const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
   return false;
 };
 
+const enterTheaterForDialogueControllerEdit = async (identityId: string) => {
+  const confirmed = await askEnterTheaterForAppearanceEdit();
+  if (!confirmed) return;
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
+    return;
+  }
+  writeTheaterAppearanceEditIntent({ channelId, identityId, mode: 'controller' });
+  identityManageVisible.value = false;
+  try {
+    await router.push({ name: 'theater', query: { worldId, channelId } });
+  } catch (error) {
+    clearTheaterAppearanceEditIntent();
+    message.error(error instanceof Error ? error.message : '进入小剧场失败');
+  }
+};
+
 const openIdentityTheaterPresentationEditor = async () => {
   if (isDelegatedSharedIdentity.value) return;
   if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
@@ -5455,7 +5480,22 @@ const openIdentityTheaterPresentationEditor = async () => {
       return;
     }
   }
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  theaterPresentationControllerTemplate.value = null;
   theaterPresentationEditorMode.value = 'base';
+  if (worldId) {
+    try {
+      const state = await readDialogueController(worldId);
+      if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      if (state.controller.enabled && state.template) {
+        theaterPresentationControllerTemplate.value = state.template;
+        theaterPresentationEditorMode.value = 'multiplayer';
+      }
+    } catch {
+      if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+    }
+  }
   theaterPresentationEditorVisible.value = true;
 };
 
@@ -5475,8 +5515,14 @@ const openIdentityVariantTheaterPresentationEditor = async () => {
       return;
     }
   }
+  theaterPresentationControllerTemplate.value = null;
   theaterPresentationEditorMode.value = 'variant';
   theaterPresentationEditorVisible.value = true;
+};
+
+const toggleTheaterPresentationEditorMode = () => {
+  if (!theaterPresentationControllerTemplate.value || theaterPresentationEditorMode.value === 'variant') return;
+  theaterPresentationEditorMode.value = theaterPresentationEditorMode.value === 'multiplayer' ? 'base' : 'multiplayer';
 };
 
 const handleTheaterPresentationApply = async (value: TheaterPresentation | TheaterPresentationPatch) => {
@@ -5534,6 +5580,14 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
   } finally {
     theaterPresentationApplying.value = false;
   }
+};
+
+const handleMultiplayerPortraitApply = async (transform: TheaterTransform | undefined) => {
+  const presentation = cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+    || createDefaultTheaterPresentation();
+  if (transform) presentation.multiplayerPortraitTransform = JSON.parse(JSON.stringify(transform));
+  else delete presentation.multiplayerPortraitTransform;
+  await handleTheaterPresentationApply(presentation);
 };
 
 const handleSetWorldTheaterTemplate = async (
@@ -5832,6 +5886,12 @@ const resumeTheaterAppearanceEditIntent = async () => {
   if (!intent) return;
   theaterAppearanceEditResumeRunning = true;
   try {
+    if (intent.mode === 'controller') {
+      identityManageVisible.value = true;
+      await nextTick();
+      await theaterDialogueControllerIdentityRef.value?.open();
+      return;
+    }
     if (intent.targetUserId && intent.targetKind && intent.targetKind !== 'self') {
       identityManageTargetUserId.value = intent.targetUserId;
       identityManageTargetKind.value = intent.targetKind;
@@ -5858,9 +5918,23 @@ const resumeTheaterAppearanceEditIntent = async () => {
         return;
       }
       openIdentityVariantEdit(variant);
+      theaterPresentationControllerTemplate.value = null;
       theaterPresentationEditorMode.value = 'variant';
     } else {
+      const worldId = String(chat.currentWorldId || '').trim();
+      theaterPresentationControllerTemplate.value = null;
       theaterPresentationEditorMode.value = 'base';
+      if (!worldId || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      try {
+        const state = await readDialogueController(worldId);
+        if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+        if (state.controller.enabled && state.template) {
+          theaterPresentationControllerTemplate.value = state.template;
+          theaterPresentationEditorMode.value = 'multiplayer';
+        }
+      } catch {
+        if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      }
     }
     await nextTick();
     theaterPresentationEditorVisible.value = true;
@@ -17684,6 +17758,7 @@ onBeforeUnmount(() => {
     :presentation="identityForm.theaterPresentation"
     :base="identityForm.theaterPresentation"
     :patch="identityVariantForm.theaterPresentation"
+    :controller-template="theaterPresentationControllerTemplate"
     :channel-id="chat.curChannel?.id || ''"
     :identity-id="editingIdentity?.id || ''"
     :variant-id="theaterPresentationEditorMode === 'variant' ? (editingIdentityVariant?.id || '') : ''"
@@ -17694,7 +17769,9 @@ onBeforeUnmount(() => {
     :world-template-saving="worldTheaterTemplateSaving"
     :applying="theaterPresentationApplying"
     @apply="handleTheaterPresentationApply"
+    @apply-multiplayer="handleMultiplayerPortraitApply"
     @set-world-template="handleSetWorldTheaterTemplate"
+    @toggle-editor-mode="toggleTheaterPresentationEditorMode"
   />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"
@@ -17845,6 +17922,14 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </template>
+      <TheaterDialogueControllerIdentity
+        ref="theaterDialogueControllerIdentityRef"
+        :world-id="chat.currentWorldId"
+        :channel-id="chat.curChannel?.id || ''"
+        :visible="identityManageVisible"
+        :theater-mode="isTheaterEmbedMode"
+        @request-enter-theater="enterTheaterForDialogueControllerEdit"
+      />
       <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager" :class="{ 'identity-manager--bot': isManagingBotIdentity }">
         <div v-if="!isManagingBotIdentity" class="identity-manager__sidebar">
           <div class="identity-folder-header">

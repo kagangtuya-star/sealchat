@@ -73,6 +73,29 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	if channel != nil && channel.Status != "" && channel.Status != model.ChannelStatusActive {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "归档频道不可写 Theater", 403, nil)
 	}
+	if command.Type == TheaterMutationRoomDialoguePatch || command.Type == TheaterMutationRoomDialoguePositionSet {
+		if command.ChannelID != "" {
+			return nil, theaterPayloadError("对话框控制器仅支持世界房间")
+		}
+		if command.Type == TheaterMutationRoomDialoguePatch && !IsWorldAdmin(command.WorldID, actorID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "只有世界管理员可以设置对话框控制器", 403, nil)
+		}
+		if command.Type == TheaterMutationRoomDialoguePositionSet && !canMoveDialoguePortrait(command.WorldID, actorID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "没有立绘位置调整权限", 403, nil)
+		}
+		// Resolve permission scope before entering the write transaction. The
+		// existing channel resolver uses the shared pool (SQLite may have one connection).
+		allowed, scopeErr := ChannelIdListByWorld(actorID, command.WorldID, false)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		switch payload := decoded.(type) {
+		case *theaterDialoguePatch:
+			payload.allowedChannels = allowed
+		case *theaterDialoguePositionSet:
+			payload.allowedChannels = allowed
+		}
+	}
 	payloadHash := theaterJSONHash(normalizedPayload)
 	room, err := model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
 	if err != nil {
@@ -385,6 +408,10 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 
 func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any, delegatedObjectEdit, actionVisibilityBatch bool) error {
 	switch payload := decoded.(type) {
+	case *theaterDialoguePatch:
+		return applyDialoguePatch(tx, room, actorID, payload)
+	case *theaterDialoguePositionSet:
+		return applyDialoguePosition(tx, room, actorID, payload)
 	case *theaterSceneCreatePayload:
 		return applyTheaterSceneCreate(tx, room, actorID, payload)
 	case *theaterSceneUpdatePayload:

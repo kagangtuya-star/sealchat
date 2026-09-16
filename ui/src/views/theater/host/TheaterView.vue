@@ -34,7 +34,7 @@ import {
   parseTheaterDialogueSurfaceUrl,
   type TheaterDialogueSurfaceContext,
 } from '../dialogue/theater-dialogue-surface'
-import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
+import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, type TheaterPresentation, type TheaterTransform } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
@@ -55,6 +55,8 @@ import {
   isTheaterBridgeDebugEnabled,
 } from '../bridge/theater-bridge-debug'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import { defaultDialogueController, dialogueControllerStates, type DialogueController, type DialogueControllerTemplate, type DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
+import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 
 const route = useRoute()
 const router = useRouter()
@@ -73,6 +75,17 @@ const channelId = ref(routeChannelId.value)
 const stageStore = createTheaterStageStore()
 const sessionId = createTheaterBridgeId('session')
 const dialogueRuntime = new TheaterDialogueRuntime()
+const dialogueController = ref<DialogueController>(defaultDialogueController())
+const dialogueControllerTemplate = ref<DialogueControllerTemplate | null>(null)
+const canDragPortraits = computed(() => isWorldAdmin.value || chat.worldDetailMap[worldId.value]?.memberRole === 'member')
+const saveDialogueController = async (patch: DialogueControllerPatch) => {
+  if (!theaterSync) throw new Error('小剧场尚未连接')
+  await theaterSync.patchDialogueController(patch)
+}
+const savePortraitPosition = async (key: string, position: DialoguePosition) => {
+  if (!theaterSync) throw new Error('小剧场尚未连接')
+  await theaterSync.setDialoguePosition(key, position)
+}
 
 installTheaterBridgeDebugConsoleCommand()
 
@@ -192,6 +205,8 @@ type AppearancePreviewState = {
   activeSection: TheaterSection
   previewName: string
   previewText: string
+  controllerArea?: TheaterTransform
+  multiplayerPortraitTransform?: TheaterTransform
 }
 const appearancePreview = ref<AppearancePreviewState | null>(null)
 const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
@@ -677,6 +692,7 @@ const disposeAllDialogueSurfaceRuntimes = () => {
 }
 
 const reconcileDialogueSurfaceRuntimes = () => {
+  if (dialogueController.value.enabled) return
   const configuredIdentityIds = getConfiguredDialogueSurfaceIdentityIds()
   const nextSurfaceMode = configuredIdentityIds.size > 0
 
@@ -717,6 +733,7 @@ const reconcileDialogueSurfaceRuntimes = () => {
 }
 
 const handleDialogueMessageCreated = (payload: TheaterDialogueMessagePayload) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.created(payload); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.created(payload)
@@ -727,7 +744,38 @@ const handleDialogueMessageCreated = (payload: TheaterDialogueMessagePayload) =>
   dialogueSurfaceRuntimes.get(identityId)?.runtime.created(payload)
 }
 
+watch(() => dialogueController.value.enabled, (enabled, previous) => {
+  if (enabled === previous) return
+  if (enabled) {
+    if (!dialogueSurfaceModeActive) return
+    const snapshots = [...dialogueSurfaceRuntimes.values()].map(entry => entry.runtime.takeSnapshot())
+    const template = dialogueRuntime.takeSnapshot()
+    const pending = snapshots.flatMap(snapshot => [snapshot.queue.current, ...snapshot.queue.waiting].filter((item): item is NonNullable<typeof item> => item !== null))
+      .sort((a, b) => (a.message.displayOrder ?? a.message.createdAt) - (b.message.displayOrder ?? b.message.createdAt) || a.message.messageId.localeCompare(b.message.messageId))
+    const unique = [...new Map(pending.map(item => [item.message.messageId, item])).values()]
+    const items = unique.map((item, index) => ({ ...item, sequence: index + 1 }))
+    template.queue.current = items[0] || null
+    template.queue.waiting = items.slice(1)
+    template.queue.lastSequence = items.length
+    template.queue.dismissedThroughSequence = 0
+    template.queue.recentMessageIds = [...new Set([...template.queue.recentMessageIds, ...snapshots.flatMap(snapshot => snapshot.queue.recentMessageIds)])].slice(-512)
+    disposeAllDialogueSurfaceRuntimes()
+    dialogueSurfaceModeActive = false
+    dialogueRuntime.restoreSnapshot(template)
+  } else {
+    const snapshot = dialogueRuntime.takeSnapshot()
+    reconcileDialogueSurfaceRuntimes()
+    if (!dialogueSurfaceModeActive) { dialogueRuntime.restoreSnapshot(snapshot); return }
+    const pending = [snapshot.queue.current, ...snapshot.queue.waiting].filter((item): item is NonNullable<typeof item> => item !== null)
+    for (const [identityId, entry] of dialogueSurfaceRuntimes) {
+      const items = pending.filter(item => item.message.actor.identityId === identityId)
+      entry.runtime.restoreSnapshot({ ...snapshot, queue: { ...snapshot.queue, current: items[0] || null, waiting: items.slice(1) } })
+    }
+  }
+}, { flush: 'sync' })
+
 const handleDialogueMessageUpdated = (payload: TheaterDialogueMessagePayload) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.updated(payload); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.updated(payload)
@@ -741,6 +789,7 @@ const handleDialogueMessageUpdated = (payload: TheaterDialogueMessagePayload) =>
 }
 
 const handleDialogueMessageRemoved = (messageId: string) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.removed(messageId); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.removed(messageId)
@@ -751,6 +800,18 @@ const handleDialogueMessageRemoved = (messageId: string) => {
 
 const handleDialogueSurfaceMessage = (event: MessageEvent) => {
   if (event.origin !== window.location.origin) return
+  if (event.source === iframeRef.value?.contentWindow && event.data?.type === 'sealchat.theater.dialogue-controller.patch') {
+    if (event.data.worldId !== worldId.value || typeof event.data.requestId !== 'string') return
+    const target = iframeRef.value.contentWindow
+    const requestedWorld = worldId.value
+    const requestId = event.data.requestId
+    void saveDialogueController(event.data.patch).then(() => {
+      if (worldId.value !== requestedWorld) return
+      target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: true, state: { ...dialogueControllerStates.value[requestedWorld], canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
+    }).catch(() => target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: false, error: '公共演出设定保存失败' }, window.location.origin))
+    return
+  }
+  if (dialogueController.value.enabled) return
   if (isTheaterDialogueSurfaceReadyMessage(event.data)) {
     if (!dialogueSurfaceContextMatches(event.data)) return
     const surface = findDialogueSurfaceFrame(event.source, event.data.identityId)
@@ -966,6 +1027,10 @@ const startTheaterSync = async () => {
   theaterSyncing.value = false
   theaterPermissions.value = []
   constructionSceneId.value = null
+  dialogueRuntime.reset()
+  disposeAllDialogueSurfaceRuntimes()
+  dialogueController.value = defaultDialogueController()
+  dialogueControllerTemplate.value = null
   await previousClient?.stop()
   const isCurrent = () => generation === theaterSyncGeneration
   if (!isCurrent() || !targetWorldId || !targetChannelId) return
@@ -994,6 +1059,9 @@ const startTheaterSync = async () => {
     },
     onRuntimeStateChange: (state) => {
       if (!isCurrent() || theaterSync !== client) return
+      dialogueController.value = state.dialogueController
+      dialogueControllerTemplate.value = state.dialogueControllerTemplate
+      iframeRef.value?.contentWindow?.postMessage({ type: 'sealchat.theater.dialogue-controller.state', worldId: worldId.value, state: { controller: state.dialogueController, template: state.dialogueControllerTemplate, revision: state.revision, canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
       constructionSceneId.value = state.constructionSceneId
     },
     onSyncingChange: (syncing) => {
@@ -1072,7 +1140,9 @@ const handleTheaterContext = (event: MessageEvent) => {
   }
   if (data.type === 'sealchat.theater.appearance-preview.start' || data.type === 'sealchat.theater.appearance-preview.update') {
     const parsed = theaterPresentationSchema.safeParse(data.draft)
-    if (!parsed.success || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
+    const controllerArea = data.controllerArea === undefined ? undefined : theaterTransformSchema.safeParse(data.controllerArea)
+    const multiplayerPortraitTransform = data.multiplayerPortraitTransform === undefined ? undefined : theaterTransformSchema.safeParse(data.multiplayerPortraitTransform)
+    if (!parsed.success || controllerArea?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
     appearancePreview.value = {
       previewId: data.previewId,
       draft: parsed.data,
@@ -1080,6 +1150,8 @@ const handleTheaterContext = (event: MessageEvent) => {
       activeSection: data.activeSection as TheaterSection,
       previewName: typeof data.previewName === 'string' ? data.previewName : '角色名',
       previewText: typeof data.previewText === 'string' ? data.previewText : '夜色正好，我们该出发了。',
+      controllerArea: controllerArea?.data,
+      multiplayerPortraitTransform: multiplayerPortraitTransform?.data,
     }
     return
   }
@@ -1242,6 +1314,12 @@ function handleDice3DMessage(event: MessageEvent) {
           :permissions="theaterPermissions"
           :construction-scene-id="constructionSceneId"
           :dialogue-runtime="dialogueRuntime"
+          :dialogue-controller="dialogueController"
+          :dialogue-controller-template="dialogueControllerTemplate"
+          :can-manage-dialogue="isWorldAdmin"
+          :can-drag-portraits="canDragPortraits"
+          :save-dialogue-controller="saveDialogueController"
+          :save-portrait-position="savePortraitPosition"
           :appearance-preview="appearancePreview"
           :scene-dialogue-enabled="sceneDialogueEnabled"
           :scene-audio-enabled="sceneAudioEnabled"

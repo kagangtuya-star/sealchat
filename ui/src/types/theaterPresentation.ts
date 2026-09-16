@@ -152,6 +152,7 @@ const portraitDecorationsSchema = z.array(theaterVisualLayerSchema)
 export const theaterPresentationSchema = z.strictObject({
   schemaVersion: z.literal(THEATER_PRESENTATION_SCHEMA_VERSION),
   portrait: theaterVisualLayerSchema.nullable(),
+  multiplayerPortraitTransform: theaterTransformSchema.optional(),
   portraitDecorations: portraitDecorationsSchema,
   dialogue: theaterDialogueStyleSchema,
   narration: theaterNarrationStyleSchema.default({
@@ -377,6 +378,7 @@ export const normalizeTheaterPresentation = (input: unknown): TheaterPresentatio
   const normalized = theaterPresentationSchema.parse({
     schemaVersion: THEATER_PRESENTATION_SCHEMA_VERSION,
     portrait: value.portrait ?? null,
+    ...(value.multiplayerPortraitTransform ? { multiplayerPortraitTransform: value.multiplayerPortraitTransform } : {}),
     portraitDecorations: value.portraitDecorations ?? [],
     dialogue: value.dialogue ?? createDefaultTheaterDialogueStyle(),
     narration: value.narration ?? createDefaultTheaterNarrationStyle(),

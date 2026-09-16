@@ -598,7 +598,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 			}
 			liveState["sceneFolders"] = currentSnapshot.SceneFolders
 			stateBytes, _ := json.Marshal(liveState)
-			stateRaw = string(stateBytes)
+			stateRaw = preserveDialogueControllerState(current.StateJSON, string(stateBytes))
 			roomUpdates["active_scene_id"] = *conversion.Snapshot.ActiveSceneID
 			roomUpdates["state_json"] = stateRaw
 			current.ActiveSceneID = *conversion.Snapshot.ActiveSceneID

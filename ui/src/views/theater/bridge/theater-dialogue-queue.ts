@@ -4,6 +4,7 @@ export const THEATER_DIALOGUE_QUEUE_LIMIT = 64
 export const THEATER_DIALOGUE_DEDUPE_LIMIT = 512
 
 export interface TheaterDialogueMessage {
+  sourceChannelId?: string
   messageId: string
   createdAt: number
   displayOrder?: number
@@ -17,6 +18,7 @@ export interface TheaterDialogueMessage {
   actor: {
     userId: string | null
     identityId: string | null
+    sharedIdentityId?: string | null
     variantId: string | null
     displayName: string
     color: string

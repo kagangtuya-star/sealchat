@@ -204,6 +204,7 @@ type Message struct {
 }
 
 type MessageIdentity struct {
+	SharedIdentityID    string               `json:"sharedIdentityId,omitempty"`
 	ID                  string               `json:"id"`
 	VariantID           string               `json:"variantId,omitempty"`
 	DisplayName         string               `json:"displayName"`
