@@ -33,7 +33,7 @@ configs/
 data/
 pegtest/
 temp/
-
+*_test.go
 dist/
 config.yaml
 version.yaml
