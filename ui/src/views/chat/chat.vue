@@ -392,7 +392,7 @@ const openSplitView = async () => {
   await openSplitRoute(worldId, worldId, currentChannelId, '');
 };
 
-const openTheaterView = async () => {
+const openTheaterView = async (mode: 'standard' | 'pip') => {
   const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const channelWorldId = String(chat.curChannel?.worldId || '').trim();
@@ -403,7 +403,7 @@ const openTheaterView = async () => {
   const ffmpegUnavailable = !audioStudio.ffmpegAvailable;
   await router.push({
     name: 'theater',
-    query: { worldId, channelId },
+    query: { worldId, channelId, pip: mode === 'pip' ? '1' : '0' },
   });
   if (ffmpegUnavailable) {
     dialog.warning({
@@ -420,6 +420,10 @@ const openTheaterView = async () => {
       positiveText: '知道了',
     });
   }
+};
+
+const handleOpenTheater = (...args: unknown[]) => {
+  return openTheaterView(args[0] === 'pip' ? 'pip' : 'standard');
 };
 
 const openIcOocSplitView = async (side: 'left' | 'right') => {
@@ -15299,7 +15303,7 @@ onBeforeUnmount(() => {
           @open-channel-images="openChannelImagesPanel"
           @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
-          @open-theater="openTheaterView"
+          @open-theater="handleOpenTheater"
           @open-ic-ooc-split="openIcOocSplitView"
           @open-inline-chat-split="openInlineIcOocSplit"
           @toggle-sticky-note="toggleStickyNotes"

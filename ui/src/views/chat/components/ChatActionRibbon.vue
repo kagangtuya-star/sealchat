@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance, watch } from 'vue'
 import { NIcon } from 'naive-ui'
 import { calculateVisibleActionCount } from './chatActionRibbonLayout'
 import {
@@ -92,7 +92,7 @@ interface Emits {
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
   (e: 'open-split'): void
-  (e: 'open-theater'): void
+  (e: 'open-theater', mode: 'standard' | 'pip'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'open-inline-chat-split'): void
   (e: 'toggle-sticky-note'): void
@@ -126,7 +126,7 @@ interface ActionButton {
   icon: any
   emitEvent: string
   activeKey: keyof Props
-  template?: 'default' | 'split-dual'
+  template?: 'default' | 'split-dual' | 'theater-dual'
   disabled?: () => boolean
   disabledReason?: string
 }
@@ -134,8 +134,20 @@ interface ActionButton {
 const SPLIT_DUAL_MORE_LEFT_KEY = 'ic-ooc-split:left'
 const SPLIT_DUAL_MORE_RIGHT_KEY = 'ic-ooc-split:right'
 const SPLIT_DUAL_MORE_INLINE_KEY = 'ic-ooc-split:inline'
+const THEATER_MORE_STANDARD_KEY = 'theater:standard'
+const THEATER_MORE_PIP_KEY = 'theater:pip'
 const splitChooserExpanded = ref(false)
 const dualSplitActionRef = ref<HTMLElement | null>(null)
+const theaterChooserExpanded = ref(false)
+const theaterActionRef = ref<HTMLElement | null>(null)
+
+const setDualSplitActionRef = (element: Element | ComponentPublicInstance | null) => {
+  dualSplitActionRef.value = element instanceof HTMLElement ? element : null
+}
+
+const setTheaterActionRef = (element: Element | ComponentPublicInstance | null) => {
+  theaterActionRef.value = element instanceof HTMLElement ? element : null
+}
 
 const allActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
@@ -175,6 +187,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
       icon: TheaterIcon,
       emitEvent: 'open-theater',
       activeKey: 'theaterActive',
+      template: 'theater-dual',
       disabled: () => props.theaterEnabled === false,
       disabledReason: '请先进入频道',
     })
@@ -243,6 +256,18 @@ const hasOverflowButtons = computed(() => {
 // Dropdown menu options for overflow buttons
 const moreMenuOptions = computed(() => {
   return overflowButtons.value.map((btn) => {
+    if (btn.template === 'theater-dual') {
+      const disabled = btn.disabled?.() === true
+      return {
+        key: btn.key,
+        label: btn.label,
+        icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
+        children: [
+          { key: THEATER_MORE_STANDARD_KEY, label: '标准模式', disabled },
+          { key: THEATER_MORE_PIP_KEY, label: '画中画模式', disabled },
+        ],
+      }
+    }
     if (btn.template === 'split-dual') {
       const disabled = btn.disabled?.() === true
       return {
@@ -266,6 +291,14 @@ const moreMenuOptions = computed(() => {
 })
 
 const handleMoreMenuSelect = (key: string) => {
+  if (key === THEATER_MORE_STANDARD_KEY) {
+    emit('open-theater', 'standard')
+    return
+  }
+  if (key === THEATER_MORE_PIP_KEY) {
+    emit('open-theater', 'pip')
+    return
+  }
   if (key === SPLIT_DUAL_MORE_LEFT_KEY) {
     emit('open-ic-ooc-split', 'left')
     return
@@ -294,6 +327,7 @@ const handleButtonClick = (button: ActionButton) => {
 
 const handleSplitChooserPointerEnter = (button: ActionButton) => {
   if (isMobile() || button.disabled?.() === true) return
+  theaterChooserExpanded.value = false
   splitChooserExpanded.value = true
 }
 
@@ -302,8 +336,15 @@ const handleSplitChooserPointerLeave = () => {
   splitChooserExpanded.value = false
 }
 
+const handleSplitChooserFocusIn = (button: ActionButton) => {
+  if (button.disabled?.() === true || isMobile()) return
+  theaterChooserExpanded.value = false
+  splitChooserExpanded.value = true
+}
+
 const handleSplitChooserTriggerClick = (button: ActionButton) => {
   if (button.disabled?.() === true) return
+  theaterChooserExpanded.value = false
   splitChooserExpanded.value = !splitChooserExpanded.value
 }
 
@@ -322,6 +363,42 @@ const handleSplitChooserSelect = (side: 'left' | 'right' | 'inline') => {
     return
   }
   emit('open-ic-ooc-split', side)
+}
+
+const handleTheaterChooserPointerEnter = (button: ActionButton) => {
+  if (isMobile() || button.disabled?.() === true) return
+  splitChooserExpanded.value = false
+  theaterChooserExpanded.value = true
+}
+
+const handleTheaterChooserPointerLeave = () => {
+  if (isMobile()) return
+  theaterChooserExpanded.value = false
+}
+
+const handleTheaterChooserFocusIn = (button: ActionButton) => {
+  if (button.disabled?.() === true || isMobile()) return
+  splitChooserExpanded.value = false
+  theaterChooserExpanded.value = true
+}
+
+const handleTheaterChooserTriggerClick = (button: ActionButton) => {
+  if (button.disabled?.() === true) return
+  splitChooserExpanded.value = false
+  theaterChooserExpanded.value = !theaterChooserExpanded.value
+}
+
+const handleTheaterChooserFocusOut = (event: FocusEvent) => {
+  const nextTarget = event.relatedTarget as Node | null
+  if (nextTarget && theaterActionRef.value?.contains(nextTarget)) {
+    return
+  }
+  theaterChooserExpanded.value = false
+}
+
+const handleTheaterChooserSelect = (mode: 'standard' | 'pip') => {
+  theaterChooserExpanded.value = false
+  emit('open-theater', mode)
 }
 
 const BUTTON_GAP = 8 // gap between buttons (0.5rem)
@@ -383,12 +460,13 @@ const handleViewportResize = () => {
 }
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
-  if (!splitChooserExpanded.value) return
   const target = event.target as Node | null
-  if (target && dualSplitActionRef.value?.contains(target)) {
-    return
+  if (splitChooserExpanded.value && !(target && dualSplitActionRef.value?.contains(target))) {
+    splitChooserExpanded.value = false
   }
-  splitChooserExpanded.value = false
+  if (theaterChooserExpanded.value && !(target && theaterActionRef.value?.contains(target))) {
+    theaterChooserExpanded.value = false
+  }
 }
 
 onMounted(() => {
@@ -540,20 +618,59 @@ const cycleIcFilter = () => {
     <!-- 功能入口区域 -->
     <div
       class="ribbon-section ribbon-section--actions"
-      :class="{ 'is-split-chooser-expanded': splitChooserExpanded }"
+      :class="{ 'is-action-chooser-expanded': splitChooserExpanded || theaterChooserExpanded }"
       ref="actionsContainerRef"
     >
       <div class="ribbon-actions-viewport">
         <div class="ribbon-actions-grid">
           <template v-for="button in visibleButtons" :key="button.key">
             <div
-              v-if="button.template === 'split-dual'"
-              ref="dualSplitActionRef"
+              v-if="button.template === 'theater-dual'"
+              :ref="setTheaterActionRef"
+              class="ribbon-dual-split ribbon-theater-chooser"
+              :class="{ 'is-expanded': theaterChooserExpanded, 'is-active': props[button.activeKey], 'is-disabled': button.disabled?.() === true }"
+              @mouseenter="handleTheaterChooserPointerEnter(button)"
+              @mouseleave="handleTheaterChooserPointerLeave"
+              @focusin="handleTheaterChooserFocusIn(button)"
+              @focusout="handleTheaterChooserFocusOut"
+            >
+              <button
+                type="button"
+                class="ribbon-dual-split__trigger"
+                :disabled="button.disabled?.() === true"
+                :aria-expanded="theaterChooserExpanded ? 'true' : 'false'"
+                @click="handleTheaterChooserTriggerClick(button)"
+              >
+                <span class="ribbon-dual-split__trigger-icon">
+                  <n-icon :component="button.icon" />
+                </span>
+                <span class="ribbon-dual-split__trigger-label">{{ button.label }}</span>
+              </button>
+              <div class="ribbon-dual-split__overlay ribbon-theater-chooser__overlay" :class="{ 'is-expanded': theaterChooserExpanded }">
+                <button
+                  type="button"
+                  class="ribbon-dual-split__choice ribbon-theater-chooser__choice"
+                  @click.stop="handleTheaterChooserSelect('standard')"
+                >
+                  标准模式
+                </button>
+                <button
+                  type="button"
+                  class="ribbon-dual-split__choice ribbon-theater-chooser__choice"
+                  @click.stop="handleTheaterChooserSelect('pip')"
+                >
+                  画中画模式
+                </button>
+              </div>
+            </div>
+            <div
+              v-else-if="button.template === 'split-dual'"
+              :ref="setDualSplitActionRef"
               class="ribbon-dual-split"
               :class="{ 'is-expanded': splitChooserExpanded, 'is-active': props[button.activeKey], 'is-disabled': button.disabled?.() === true }"
               @mouseenter="handleSplitChooserPointerEnter(button)"
               @mouseleave="handleSplitChooserPointerLeave"
-              @focusin="button.disabled?.() === true ? undefined : (splitChooserExpanded = true)"
+              @focusin="handleSplitChooserFocusIn(button)"
               @focusout="handleSplitChooserFocusOut"
             >
               <button
@@ -636,7 +753,7 @@ const cycleIcFilter = () => {
           class="ribbon-action-measurement-item"
           :data-action-key="button.key"
         >
-          <template v-if="button.template === 'split-dual'">
+          <template v-if="button.template === 'split-dual' || button.template === 'theater-dual'">
             <div class="ribbon-dual-split ribbon-dual-split--measurement">
               <button type="button" class="ribbon-dual-split__trigger">
                 <span class="ribbon-dual-split__trigger-icon">
@@ -772,7 +889,7 @@ const cycleIcFilter = () => {
   flex-wrap: nowrap;
 }
 
-.ribbon-section--actions.is-split-chooser-expanded {
+.ribbon-section--actions.is-action-chooser-expanded {
   overflow: visible;
 }
 
@@ -877,6 +994,14 @@ const cycleIcFilter = () => {
   transform: translateX(-50%) scale(1);
 }
 
+.ribbon-theater-chooser__overlay {
+  width: max(100%, 11rem);
+}
+
+.ribbon-theater-chooser__choice {
+  flex-basis: 50%;
+}
+
 .ribbon-dual-split.is-expanded .ribbon-dual-split__trigger {
   opacity: 0;
 }
@@ -944,7 +1069,7 @@ const cycleIcFilter = () => {
   overflow: hidden;
 }
 
-.ribbon-section--actions.is-split-chooser-expanded .ribbon-actions-viewport {
+.ribbon-section--actions.is-action-chooser-expanded .ribbon-actions-viewport {
   overflow: visible;
 }
 
