@@ -112,6 +112,8 @@ export interface DisplaySettings {
   sendShortcut: 'enter' | 'ctrlEnter'
   autoCorrectPunctuation: boolean
   mobileMinimalInputEnabled: boolean
+  mobileTheaterHideWhileTyping: boolean
+  mobileTheaterPipEnabled: boolean
   channelAggregateBadgeEnabled: boolean
   enableIcToggleHotkey: boolean
   favoriteChannelBarEnabled: boolean
@@ -559,6 +561,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   sendShortcut: SEND_SHORTCUT_DEFAULT,
   autoCorrectPunctuation: true,
   mobileMinimalInputEnabled: isMobileBrowserRuntime(),
+  mobileTheaterHideWhileTyping: false,
+  mobileTheaterPipEnabled: false,
   channelAggregateBadgeEnabled: true,
   enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
@@ -868,6 +872,8 @@ const parseStoredSettingsInternal = (
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
       autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
+      mobileTheaterHideWhileTyping: coerceBoolean((parsed as any)?.mobileTheaterHideWhileTyping ?? false),
+      mobileTheaterPipEnabled: coerceBoolean((parsed as any)?.mobileTheaterPipEnabled ?? false),
       channelAggregateBadgeEnabled: coerceBoolean((parsed as any)?.channelAggregateBadgeEnabled ?? true),
       enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
       favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
@@ -1222,6 +1228,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)
       : base.mobileMinimalInputEnabled,
+  mobileTheaterHideWhileTyping:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileTheaterHideWhileTyping')
+      ? coerceBoolean((patch as any).mobileTheaterHideWhileTyping ?? false)
+      : base.mobileTheaterHideWhileTyping,
+  mobileTheaterPipEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileTheaterPipEnabled')
+      ? coerceBoolean((patch as any).mobileTheaterPipEnabled ?? false)
+      : base.mobileTheaterPipEnabled,
   channelAggregateBadgeEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'channelAggregateBadgeEnabled')
       ? coerceBoolean((patch as any).channelAggregateBadgeEnabled ?? true)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useWindowSize } from '@vueuse/core'
+import { useMediaQuery, useWindowSize } from '@vueuse/core'
 import { NButton, NIcon, useDialog, useMessage } from 'naive-ui'
 import { ArrowsMaximize, MessageOff } from '@vicons/tabler'
 import { useChatStore } from '@/stores/chat'
@@ -157,8 +157,46 @@ const splitRatio = ref(0.7)
 const splitDragging = ref(false)
 const chatHidden = ref(false)
 const mobileTab = ref<'stage' | 'chat'>('stage')
+const mobilePipWidth = ref<number | null>(null)
+const mobilePipOffset = ref({ x: 0, y: 0 })
+let mobilePipResize: { pointerId: number, startX: number, startWidth: number, maximumWidth: number } | null = null
+let mobilePipMove: {
+  pointerId: number
+  startX: number
+  startY: number
+  startLeft: number
+  startTop: number
+  startOffsetX: number
+  startOffsetY: number
+  width: number
+  height: number
+} | null = null
 const isNarrow = computed(() => width.value < 840)
-const chatVisible = computed(() => isNarrow.value ? mobileTab.value === 'chat' : !chatHidden.value)
+const isPortrait = useMediaQuery('(orientation: portrait)')
+const mobilePortraitInputLock = ref(false)
+const isMobilePortrait = computed(() => (
+  isNarrow.value
+  && (isPortrait.value || mobilePortraitInputLock.value)
+))
+const chatComposerFocused = ref(false)
+let mobilePortraitUnlockFrame: number | null = null
+const mobilePipActive = computed(() => (
+  isMobilePortrait.value
+  && display.settings.mobileTheaterPipEnabled
+  && !chatHidden.value
+))
+const mobileStageHiddenByInput = computed(() => (
+  isMobilePortrait.value
+  && display.settings.mobileTheaterHideWhileTyping
+  && chatComposerFocused.value
+))
+const chatVisible = computed(() => (
+  isMobilePortrait.value
+    ? !chatHidden.value
+    : isNarrow.value
+      ? mobileTab.value === 'chat'
+      : !chatHidden.value
+))
 const theaterDividerWidth = 7
 const chatBridgeOnline = ref(false)
 const chatBridgeStatus = ref<TheaterChatBridgeStatus>('connecting')
@@ -262,6 +300,21 @@ const splitPaneWidth = (ratio: number) => {
   return `calc(${normalized * 100}% - ${normalized * theaterDividerWidth}px)`
 }
 
+const stageSurfaceStyle = computed(() => {
+  if (mobilePipActive.value) {
+    const style: Record<string, string> = {
+      '--mobile-theater-pip-translate-x': `${mobilePipOffset.value.x}px`,
+      '--mobile-theater-pip-translate-y': `${mobilePipOffset.value.y}px`,
+    }
+    if (mobilePipWidth.value !== null) {
+      style['--mobile-theater-pip-width'] = `${mobilePipWidth.value}px`
+    }
+    return style
+  }
+  if (!isNarrow.value && !chatHidden.value) return { width: splitPaneWidth(splitRatio.value) }
+  return undefined
+})
+
 const updateRatio = (clientX: number) => {
   const rect = layoutRef.value?.getBoundingClientRect()
   if (!rect?.width) return
@@ -288,14 +341,87 @@ const stopDivider = (event: PointerEvent) => {
   ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
 }
 
+const handleMobilePipResizeDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !mobilePipActive.value) return
+  const stage = stageSurfaceRef.value?.getBoundingClientRect()
+  if (!stage) return
+  mobilePipResize = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startWidth: stage.width,
+    maximumWidth: Math.max(200, Math.min(
+      stage.right - 8,
+      (window.innerHeight - stage.top - 8) * 16 / 9,
+    )),
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+const handleMobilePipResizeMove = (event: PointerEvent) => {
+  if (!mobilePipResize || mobilePipResize.pointerId !== event.pointerId) return
+  mobilePipWidth.value = Math.min(mobilePipResize.maximumWidth, Math.max(200,
+    mobilePipResize.startWidth + mobilePipResize.startX - event.clientX,
+  ))
+}
+
+const stopMobilePipResize = (event: PointerEvent) => {
+  if (!mobilePipResize || mobilePipResize.pointerId !== event.pointerId) return
+  mobilePipResize = null
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+}
+
+const handleMobilePipMoveDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !mobilePipActive.value) return
+  const stage = stageSurfaceRef.value?.getBoundingClientRect()
+  if (!stage) return
+  mobilePipMove = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: stage.left,
+    startTop: stage.top,
+    startOffsetX: mobilePipOffset.value.x,
+    startOffsetY: mobilePipOffset.value.y,
+    width: stage.width,
+    height: stage.height,
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+const handleMobilePipMove = (event: PointerEvent) => {
+  if (!mobilePipMove || mobilePipMove.pointerId !== event.pointerId) return
+  const left = Math.min(
+    window.innerWidth - mobilePipMove.width - 8,
+    Math.max(8, mobilePipMove.startLeft + event.clientX - mobilePipMove.startX),
+  )
+  const top = Math.min(
+    window.innerHeight - mobilePipMove.height - 8,
+    Math.max(8, mobilePipMove.startTop + event.clientY - mobilePipMove.startY),
+  )
+  mobilePipOffset.value = {
+    x: mobilePipMove.startOffsetX + left - mobilePipMove.startLeft,
+    y: mobilePipMove.startOffsetY + top - mobilePipMove.startTop,
+  }
+}
+
+const stopMobilePipMove = (event: PointerEvent) => {
+  if (!mobilePipMove || mobilePipMove.pointerId !== event.pointerId) return
+  mobilePipMove = null
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+}
+
 const resetLayout = () => {
   splitRatio.value = 0.7
   chatHidden.value = false
   mobileTab.value = 'stage'
+  mobilePipWidth.value = null
+  mobilePipOffset.value = { x: 0, y: 0 }
 }
 
 const toggleChat = () => {
-  if (isNarrow.value) {
+  if (isNarrow.value && !isMobilePortrait.value) {
     mobileTab.value = mobileTab.value === 'chat' ? 'stage' : 'chat'
     return
   }
@@ -1108,10 +1234,40 @@ const flushTheaterSync = async () => {
   await theaterSync?.flushPendingChanges()
 }
 
+const cancelMobilePortraitUnlock = () => {
+  if (mobilePortraitUnlockFrame === null) return
+  cancelAnimationFrame(mobilePortraitUnlockFrame)
+  mobilePortraitUnlockFrame = null
+}
+
+const handleChatFrameLoad = () => {
+  cancelMobilePortraitUnlock()
+  chatComposerFocused.value = false
+  mobilePortraitInputLock.value = false
+  theaterBridge?.handleChatFrameLoad()
+}
+
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
   const data = event.data as Record<string, unknown> | null
   if (!data) return
+  if (data.type === 'sealchat.theater.composer-focus') {
+    if (data.sessionId !== sessionId || typeof data.focused !== 'boolean') return
+    if (data.focused) {
+      cancelMobilePortraitUnlock()
+      if (isMobilePortrait.value) mobilePortraitInputLock.value = true
+    } else {
+      chatComposerFocused.value = false
+      cancelMobilePortraitUnlock()
+      mobilePortraitUnlockFrame = requestAnimationFrame(() => {
+        mobilePortraitUnlockFrame = null
+        if (!chatComposerFocused.value) mobilePortraitInputLock.value = false
+      })
+      return
+    }
+    chatComposerFocused.value = data.focused
+    return
+  }
   if (data.type === THEATER_CHAT_FLOATING_OPEN_REQUEST) {
     if (!isTheaterChatFloatingOpenRequest(data)) return
     const channel = floatingChannelOptions.value.find(item => item.value === data.channelId.trim())
@@ -1229,6 +1385,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  cancelMobilePortraitUnlock()
   theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
   window.removeEventListener('message', handleTheaterContext)
@@ -1287,14 +1444,21 @@ function handleDice3DMessage(event: MessageEvent) {
     <div
       ref="layoutRef"
       class="theater-host-layout"
-      :class="{ 'is-dragging': splitDragging, 'is-narrow': isNarrow, 'is-chat-hidden': chatHidden }"
+      :class="{
+        'is-dragging': splitDragging,
+        'is-narrow': isNarrow,
+        'is-chat-hidden': chatHidden,
+        'is-mobile-portrait': isMobilePortrait,
+        'is-mobile-pip': mobilePipActive,
+        'is-mobile-stage-hidden': mobileStageHiddenByInput,
+      }"
     >
       <section
 		ref="stageSurfaceRef"
-        v-show="!isNarrow || mobileTab === 'stage'"
+        v-show="isMobilePortrait || !isNarrow || mobileTab === 'stage'"
         class="theater-host-stage"
         :class="{ 'is-sync-pending': !theaterSyncReady }"
-        :style="!isNarrow && !chatHidden ? { width: splitPaneWidth(splitRatio) } : undefined"
+        :style="stageSurfaceStyle"
       >
         <StageApp
           ref="stageAppRef"
@@ -1352,7 +1516,27 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-		<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
+			<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
+        <div
+          v-if="mobilePipActive"
+          class="theater-mobile-pip-move"
+          role="button"
+          aria-label="移动小剧场画中画"
+          @pointerdown.stop="handleMobilePipMoveDown"
+          @pointermove.stop="handleMobilePipMove"
+          @pointerup.stop="stopMobilePipMove"
+          @pointercancel.stop="stopMobilePipMove"
+        />
+        <div
+          v-if="mobilePipActive"
+          class="theater-mobile-pip-resize"
+          role="separator"
+          aria-label="调整小剧场画中画大小"
+          @pointerdown.stop="handleMobilePipResizeDown"
+          @pointermove.stop="handleMobilePipResizeMove"
+          @pointerup.stop="stopMobilePipResize"
+          @pointercancel.stop="stopMobilePipResize"
+        />
       </section>
 
       <div
@@ -1367,7 +1551,7 @@ function handleDice3DMessage(event: MessageEvent) {
       ><n-icon><ArrowsMaximize /></n-icon></div>
 
       <section
-        v-show="!chatHidden && (!isNarrow || mobileTab === 'chat')"
+        v-show="!chatHidden && (isMobilePortrait || !isNarrow || mobileTab === 'chat')"
         class="theater-host-chat"
         :style="!isNarrow ? { width: splitPaneWidth(1 - splitRatio) } : undefined"
       >
@@ -1386,7 +1570,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :src="iframeSrc"
           frameborder="0"
           allow="autoplay; clipboard-read; clipboard-write"
-          @load="theaterBridge?.handleChatFrameLoad()"
+          @load="handleChatFrameLoad"
         />
       </section>
     </div>
@@ -1411,4 +1595,24 @@ function handleDice3DMessage(event: MessageEvent) {
 .theater-host-chat-close { position: absolute; z-index: 4; top: 8px; left: 8px; width: 34px; height: 34px; background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 92%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
 .theater-host-layout.is-narrow { display: block; }
 .theater-host-layout.is-narrow .theater-host-stage, .theater-host-layout.is-narrow .theater-host-chat { width: 100%; }
+.theater-host-layout.is-mobile-portrait { display: flex; flex-direction: column; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage { width: 100% !important; height: auto; aspect-ratio: 16 / 9; flex: 0 0 auto; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-host-layout.is-mobile-portrait.is-chat-hidden .theater-host-stage { height: 100%; flex: 1 1 auto; aspect-ratio: auto; }
+.theater-host-layout.is-mobile-portrait .theater-host-chat { width: 100% !important; height: auto; min-height: 0; flex: 1 1 auto; border-left: 0; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions) { top: max(.416667cqw, env(safe-area-inset-top)); right: max(.416667cqw, env(safe-area-inset-right)); gap: max(4px, .208333cqw); }
+.theater-host-layout.is-mobile-portrait.is-mobile-pip .theater-host-stage :deep(.theater-dialogue-actions) { top: max(4px, .416667cqw); right: max(4px, .416667cqw); }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions .n-button) { width: clamp(24px, 2.291667cqw, 44px); height: clamp(24px, 2.291667cqw, 44px); min-width: clamp(24px, 2.291667cqw, 44px); padding: 0; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions svg) { width: clamp(12px, .9375cqw, 18px); height: clamp(12px, .9375cqw, 18px); }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-floating-host--stage) { position: fixed; inset: 0; overflow: hidden; }
+.theater-host-layout.is-mobile-portrait.is-mobile-pip .theater-host-stage { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px + var(--mobile-theater-pip-translate-y, 0px)); right: calc(12px - var(--mobile-theater-pip-translate-x, 0px)); z-index: 30; width: var(--mobile-theater-pip-width, min(58vw, 320px)) !important; height: auto; aspect-ratio: 16 / 9; flex: none; overflow: hidden; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 14px; background: var(--sc-bg-page, #141418); box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
+.theater-host-layout.is-mobile-portrait.is-mobile-pip .theater-host-chat { width: 100% !important; height: 100%; flex: 1 1 100%; }
+.theater-mobile-pip-move { position: absolute; z-index: 10020; top: 0; left: 50%; width: 52px; height: 24px; touch-action: none; cursor: move; transform: translateX(-50%); }
+.theater-mobile-pip-move::after { position: absolute; top: 6px; left: 50%; width: 24px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .82); box-shadow: 0 1px 3px rgba(0, 0, 0, .72); transform: translateX(-50%); content: ''; }
+.theater-mobile-pip-resize { position: absolute; z-index: 10020; bottom: 0; left: 0; width: 28px; height: 28px; touch-action: none; cursor: nesw-resize; }
+.theater-mobile-pip-resize::after { position: absolute; bottom: 5px; left: 5px; width: 9px; height: 9px; border-bottom: 2px solid rgba(255, 255, 255, .82); border-left: 2px solid rgba(255, 255, 255, .82); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72)); content: ''; }
+.theater-host-layout.is-mobile-portrait.is-mobile-stage-hidden .theater-host-stage { height: 0; min-height: 0; flex-basis: 0; opacity: 0; visibility: hidden; pointer-events: none; border: 0; }
+
+@media (max-width: 420px) {
+  .theater-host-layout.is-mobile-portrait.is-mobile-pip .theater-host-stage { width: var(--mobile-theater-pip-width, 54vw) !important; min-width: 200px; }
+}
 </style>

@@ -748,6 +748,32 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入时自动隐藏小剧场</p>
+            <p class="section-desc">移动端竖屏输入消息时收起小剧场，为聊天与键盘腾出空间</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileTheaterHideWhileTyping">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">移动端自动启用小剧场画中画模式</p>
+            <p class="section-desc">移动端竖屏进入小剧场时，将舞台显示为右上角悬浮小窗</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileTheaterPipEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
