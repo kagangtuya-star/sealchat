@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, onUpdated, ref, h, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
+import { onMounted, onUpdated, ref, h, Fragment, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
 import type { PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
@@ -38,7 +38,7 @@ import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/
 import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
-import { parseSingleWorldClueEmbedLinkText } from '@/utils/worldClueEmbedLink'
+import { parseSingleWorldClueEmbedLinkText, type ParsedSingleWorldClueEmbedLink } from '@/utils/worldClueEmbedLink'
 import { normalizeStickyNoteHexColor } from '@/utils/stickyNoteColor'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
@@ -353,6 +353,27 @@ const resolveSingleWorldClueLinkFromContent = (content: string) => {
   return link;
 };
 
+const resolveWorldClueLinksFromContent = (content: string): ParsedSingleWorldClueEmbedLink[] => {
+  const source = (isTipTapJson(content) ? tiptapJsonToPlainText(content) : content)
+    .replace(/\u00a0/g, ' ')
+    .trim();
+  if (!source) return [];
+
+  MESSAGE_LINK_REGEX.lastIndex = 0;
+  const links: ParsedSingleWorldClueEmbedLink[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MESSAGE_LINK_REGEX.exec(source)) !== null) {
+    if (source.slice(cursor, match.index).trim()) return [];
+    const link = parseSingleWorldClueEmbedLinkText(match[0] || '');
+    if (!link) return [];
+    links.push(link);
+    cursor = match.index + match[0].length;
+  }
+  if (!links.length || source.slice(cursor).trim()) return [];
+  return links;
+};
+
 const resolveSingleBattleReportLinkFromContent = (content: string) => {
   let singleBattleReportLink = parseSingleBattleReportEmbedLinkText(content);
   if (!singleBattleReportLink && isTipTapJson(content)) {
@@ -407,6 +428,22 @@ const parseContent = (payload: any, overrideContent?: string) => {
   }
 
   const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
+
+  const worldClueLinks = resolveWorldClueLinksFromContent(content);
+  if (
+    worldClueLinks.length > 1
+    && worldClueLinks.every((link) => link.worldId === String(chat.currentWorldId || ''))
+  ) {
+    return h(
+      Fragment,
+      null,
+      worldClueLinks.map((link) => h(ClueMessageEmbedCard, {
+        worldId: link.worldId,
+        clueId: link.clueId,
+        rawLink: link.rawLink,
+      })),
+    );
+  }
 
   const singleWorldClueLink = resolveSingleWorldClueLinkFromContent(content);
   if (singleWorldClueLink && singleWorldClueLink.worldId === String(chat.currentWorldId || '')) {

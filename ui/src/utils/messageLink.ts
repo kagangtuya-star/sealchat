@@ -81,6 +81,7 @@ export function parseChatLink(url: string): ChatLinkParams | null {
   if (RESERVED_CHAT_ROUTE_SEGMENTS.has(worldId.toLowerCase())) return null
 
   const search = new URLSearchParams(queryString || '')
+  if (search.has('clue')) return null
   const messageId = (search.get('msg') || '').trim()
 
   return messageId
@@ -142,10 +143,10 @@ export function isLocalChatLink(url: string): boolean {
 
 /**
  * 消息链接的正则表达式（用于在纯文本中匹配链接）
- * 匹配格式: http(s)://domain/#/{worldId}/{channelId}?msg={messageId}
+ * 匹配格式: http(s)://domain/#/{worldId}/{channelId}[?query]
  */
 export const MESSAGE_LINK_REGEX =
-  /(?:https?:\/\/[^\s<>"]*)?\/?#\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+(?:\?msg=[^\s<>"]+)?/g
+  /(?:https?:\/\/[^\s<>"]*)?\/?#\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+(?:\?[^\s<>"]+)?/g
 
 /**
  * 带自定义标题的消息链接正则表达式
