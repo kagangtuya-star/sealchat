@@ -94,6 +94,7 @@ export interface DisplaySettings {
   timestampFormat: TimestampFormat
   maxExportMessages: number
   maxExportConcurrency: number
+  messageImageSnapshotWidth: number
   fontSize: number
   lineHeight: number
   letterSpacing: number
@@ -176,6 +177,14 @@ const SLICE_LIMIT_MAX = 20000
 const CONCURRENCY_DEFAULT = 2
 const CONCURRENCY_MIN = 1
 const CONCURRENCY_MAX = 8
+const MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT = 380
+const MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN = 280
+const MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX = 800
+export const MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS = {
+  DEFAULT: MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
+  MIN: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN,
+  MAX: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX,
+}
 const HISTORY_NAVIGATION_OPACITY_DEFAULT = 65
 const HISTORY_NAVIGATION_OPACITY_MIN = 20
 const HISTORY_NAVIGATION_OPACITY_MAX = 100
@@ -532,6 +541,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
   maxExportConcurrency: CONCURRENCY_DEFAULT,
+  messageImageSnapshotWidth: MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
   fontSize: FONT_SIZE_DEFAULT,
   lineHeight: LINE_HEIGHT_DEFAULT,
   letterSpacing: LETTER_SPACING_DEFAULT,
@@ -799,6 +809,12 @@ const parseStoredSettingsInternal = (
         CONCURRENCY_DEFAULT,
         CONCURRENCY_MIN,
         CONCURRENCY_MAX,
+      ),
+      messageImageSnapshotWidth: coerceNumberInRange(
+        (parsed as any)?.messageImageSnapshotWidth,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX,
       ),
       fontSize: coerceNumberInRange(parsed.fontSize, FONT_SIZE_DEFAULT, FONT_SIZE_MIN, FONT_SIZE_MAX),
       lineHeight: coerceFloatInRange(parsed.lineHeight, LINE_HEIGHT_DEFAULT, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX),
@@ -1099,6 +1115,15 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
         CONCURRENCY_MAX,
       )
       : base.maxExportConcurrency,
+  messageImageSnapshotWidth:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'messageImageSnapshotWidth')
+      ? coerceNumberInRange(
+        patch.messageImageSnapshotWidth,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN,
+        MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX,
+      )
+      : base.messageImageSnapshotWidth,
   fontSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'fontSize')
       ? coerceNumberInRange(patch.fontSize, FONT_SIZE_DEFAULT, FONT_SIZE_MIN, FONT_SIZE_MAX)

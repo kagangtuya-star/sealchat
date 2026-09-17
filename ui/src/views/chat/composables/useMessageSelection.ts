@@ -1,10 +1,18 @@
-import { computed, onBeforeUnmount, ref, type Ref } from 'vue';
+import { computed, createApp, nextTick, onBeforeUnmount, ref, type Ref } from 'vue';
 import dayjs from 'dayjs';
 import { nanoid } from 'nanoid';
 import type { Message } from '@satorijs/protocol';
 import { chatEvent, useChatStore } from '@/stores/chat';
+import { useDisplayStore } from '@/stores/display';
+import { useUserStore } from '@/stores/user';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { dialogAskConfirm } from '@/utils/dialog';
+import MessageImageSnapshot from '../components/message-image/MessageImageSnapshot.vue';
+import {
+  buildMessageImageSnapshotGroups,
+  MESSAGE_IMAGE_SNAPSHOT_WIDTH,
+  resolveMessageImageSnapshotPalette,
+} from '../components/message-image/messageImageSnapshot';
 
 interface MessageSelectionOptions {
   chat: ReturnType<typeof useChatStore>;
@@ -28,6 +36,8 @@ export const useMessageSelection = ({
   message,
   dialog,
 }: MessageSelectionOptions) => {
+  const display = useDisplayStore();
+  const user = useUserStore();
   const forwardDialogVisible = ref(false);
   const forwardDialogSourceChannelId = ref('');
   const forwardDialogSourceWorldId = ref('');
@@ -179,65 +189,103 @@ export const useMessageSelection = ({
       message.warning('请先选择消息');
       return;
     }
+    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+      message.error('当前浏览器不支持复制图片到剪贴板');
+      return;
+    }
+
+    const channelUserNames = new Map<string, string>();
+    (chat.curChannelUsers || []).forEach((channelUser: any) => {
+      const id = String(channelUser?.id || '').trim();
+      const name = String(
+        channelUser?.nick
+        || channelUser?.nickname
+        || channelUser?.name
+        || channelUser?.username
+        || '',
+      ).trim();
+      if (id && name) channelUserNames.set(id, name);
+    });
+    const groups = buildMessageImageSnapshotGroups(messages, rows.value, {
+      botCommandPrefixes: chat.curChannel?.botCommandPrefixes,
+      currentUserId: user.info.id,
+      resolveUserName: (userId) => channelUserNames.get(userId) || '',
+    });
+    const palette = resolveMessageImageSnapshotPalette(
+      document.documentElement.dataset.displayPalette === 'night',
+    );
+    const rootStyles = getComputedStyle(document.documentElement);
+    const snapshotWidth = display.settings.messageImageSnapshotWidth || MESSAGE_IMAGE_SNAPSHOT_WIDTH;
+    const snapshotPalette = {
+      ...palette,
+      background: rootStyles.getPropertyValue('--custom-chat-stage-bg').trim()
+        || rootStyles.getPropertyValue('--chat-ic-bg').trim()
+        || palette.background,
+    };
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.left = '-100000px';
+    host.style.top = '0';
+    host.style.width = `${snapshotWidth}px`;
+    host.style.pointerEvents = 'none';
+    document.body.appendChild(host);
+    const snapshotApp = createApp(MessageImageSnapshot, {
+      groups,
+      palette: snapshotPalette,
+    });
+    let mounted = false;
+
     try {
-      const html2canvas = (await import('html2canvas')).default;
-      const messageEls: HTMLElement[] = [];
-      for (const msg of messages) {
-        const el = msg.id ? document.getElementById(msg.id) : null;
-        if (el) messageEls.push(el);
-      }
-      if (!messageEls.length) {
-        message.error('未找到消息元素');
+      snapshotApp.mount(host);
+      mounted = true;
+      await nextTick();
+
+      const snapshotRoot = host.querySelector<HTMLElement>('[data-message-image-snapshot]');
+      if (!snapshotRoot) throw new Error('Message image snapshot root was not mounted');
+
+      const imagePromises = Array.from(snapshotRoot.querySelectorAll('img')).map(async (image) => {
+        if (image.complete) {
+          if (typeof image.decode === 'function') await image.decode().catch(() => undefined);
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          image.addEventListener('load', () => resolve(), { once: true });
+          image.addEventListener('error', () => resolve(), { once: true });
+        });
+      });
+      const fontsReady = document.fonts?.ready ?? Promise.resolve();
+      await Promise.race([
+        Promise.all([fontsReady, ...imagePromises]),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 4000)),
+      ]);
+
+      const { domToBlob } = await import('modern-screenshot');
+      const blob = await domToBlob(snapshotRoot, {
+        type: 'image/png',
+        width: snapshotWidth,
+        scale: 2,
+        backgroundColor: snapshotPalette.background,
+        timeout: 5000,
+      });
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'image/png': blob,
+          }),
+        ]);
+      } catch (error) {
+        console.error(error);
+        message.error('复制图片失败');
         return;
       }
-      const rootStyles = getComputedStyle(document.documentElement);
-      const bgColor = rootStyles.getPropertyValue('--sc-bg-base')?.trim()
-        || rootStyles.getPropertyValue('--chat-bg')?.trim()
-        || getComputedStyle(document.body).backgroundColor
-        || '#ffffff';
-      const canvases: HTMLCanvasElement[] = [];
-      for (const el of messageEls) {
-        const canvas = await html2canvas(el, {
-          backgroundColor: bgColor,
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          onclone: (_clonedDoc, clonedEl) => {
-            clonedEl.classList.remove('chat-item--multiselect', 'chat-item--selected');
-            const checkbox = clonedEl.querySelector('.chat-item__select-checkbox');
-            if (checkbox) checkbox.remove();
-          },
-        });
-        canvases.push(canvas);
-      }
-      const totalHeight = canvases.reduce((sum, canvas) => sum + canvas.height, 0);
-      const maxWidth = Math.max(...canvases.map((canvas) => canvas.width));
-      const padding = 16 * 2;
-      const combinedCanvas = document.createElement('canvas');
-      combinedCanvas.width = maxWidth + padding * 2;
-      combinedCanvas.height = totalHeight + padding * 2;
-      const ctx = combinedCanvas.getContext('2d')!;
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, combinedCanvas.width, combinedCanvas.height);
-      let y = padding;
-      for (const canvas of canvases) {
-        ctx.drawImage(canvas, padding, y);
-        y += canvas.height;
-      }
-      combinedCanvas.toBlob(async (blob) => {
-        if (!blob) return;
-        try {
-          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          message.success('已复制为图片');
-          chat.exitMultiSelectMode();
-        } catch (e) {
-          message.error('复制图片失败');
-        }
-      }, 'image/png');
-    } catch (e) {
-      console.error(e);
+      message.success('已复制为图片');
+      chat.exitMultiSelectMode();
+    } catch (error) {
+      console.error(error);
       message.error('生成图片失败');
+    } finally {
+      if (mounted) snapshotApp.unmount();
+      host.remove();
     }
   };
 
