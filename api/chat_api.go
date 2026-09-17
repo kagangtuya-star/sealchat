@@ -104,6 +104,9 @@ func apiBotInfoSetName(ctx *ChatContext, msg []byte) {
 		return
 	}
 
+	var members []*model.MemberModel
+	model.GetDB().Where("user_id = ?", ctx.User.ID).Find(&members)
+
 	name := strings.TrimSpace(data.Data.Name)
 	if ctx.User.IsBot {
 		if token, err := model.BotTokenGet(ctx.User.ID); err == nil && token != nil {
@@ -120,7 +123,7 @@ func apiBotInfoSetName(ctx *ChatContext, msg []byte) {
 	ctx.User.Nickname = name
 	ctx.User.Brief = data.Data.Brief
 	ctx.User.SaveInfo()
-	for _, i := range ctx.Members {
+	for _, i := range members {
 		i.Nickname = name
 		i.SaveInfo()
 		// 广播事件，名字更新了

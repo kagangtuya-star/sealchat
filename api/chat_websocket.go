@@ -972,16 +972,11 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				apiMsg := ApiMsgPayload{}
 				err := json.Unmarshal(msg, &apiMsg)
 
-				var members []*model.MemberModel
-				db := model.GetDB()
-				db.Where("user_id = ?", curUser.ID).Find(&members)
-
 				ctx := &ChatContext{
 					Conn:            c,
 					User:            curUser,
 					Echo:            apiMsg.Echo,
 					ConnInfo:        curConnInfo,
-					Members:         members,
 					ChannelUsersMap: channelUsersMap,
 					UserId2ConnInfo: userId2ConnInfo,
 				}
