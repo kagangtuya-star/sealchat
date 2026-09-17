@@ -260,6 +260,10 @@ func ensureChatHistoryIndexes() error {
 	`, `
 	CREATE INDEX IF NOT EXISTS idx_messages_channel_created_at
 	ON messages(channel_id, created_at)
+	`, `
+	CREATE INDEX IF NOT EXISTS idx_msg_pinned_list
+	ON messages(channel_id, pinned_at DESC, display_order ASC, created_at ASC)
+	WHERE is_deleted = 0 AND is_pinned = 1
 	`}
 		for _, statement := range statements {
 			if err := db.Exec(statement).Error; err != nil {
