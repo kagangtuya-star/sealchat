@@ -7023,10 +7023,15 @@ const messageWindow = reactive({
   lockedHistory: false,
   beforeCursorExhausted: false,
 });
+let detachedRealtimeRevision = 0;
+const detachedRealtimeMessageKeys = new Set<string>();
 const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
 const anchorMessageId = computed(() => messageWindow.anchorMessageId);
+const detachedFromLatest = computed(() => (
+  historyLocked.value && !messageWindow.hasReachedLatest
+));
 
 watch(pinnedCollapsed, (collapsed) => {
   localStorage.setItem(pinnedCollapseStorageKey, String(collapsed));
@@ -7172,9 +7177,6 @@ const updateWindowAnchorsFromRows = () => {
     messageWindow.earliestTimestamp = firstTs;
   }
   if (lastTs !== null) {
-    if (messageWindow.latestTimestamp === null || lastTs > messageWindow.latestTimestamp) {
-      messageWindow.hasReachedLatest = false;
-    }
     messageWindow.latestTimestamp = lastTs;
     messageWindow.afterCursor = buildMessageCursor(lastMessage as any);
   } else {
@@ -7980,6 +7982,22 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
 };
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
+
+const shouldInsertCreatedMessageIntoWindow = (messageData?: any) => (
+  !detachedFromLatest.value || Boolean(messageData?.insertAboveTargetId)
+);
+
+const recordDetachedRealtimeMessage = (messageData?: any) => {
+  const messageId = String(messageData?.id || '').trim();
+  const messageKey = resolveSentConfirmKey(messageData);
+  if ((messageId && messageExistsLocally(messageId)) || (messageKey && detachedRealtimeMessageKeys.has(messageKey))) {
+    return;
+  }
+  if (messageKey) {
+    detachedRealtimeMessageKeys.add(messageKey);
+  }
+  detachedRealtimeRevision += 1;
+};
 
 const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | null; after?: string | null }) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -12982,8 +13000,10 @@ const performSend = async (options?: {
   }
 
   setMessageSendStatus(tmpMsg as any, 'sending');
-  rows.value.push(tmpMsg);
-  sortRowsByDisplayOrder();
+  if (shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
+    rows.value.push(tmpMsg);
+    sortRowsByDisplayOrder();
+  }
   instantMessages.add(tmpMsg);
   let sendOutcome:
     | { ok: true; messageId: string }
@@ -13081,7 +13101,9 @@ const performSend = async (options?: {
     }
     setMessageSendStatus(tmpMsg as any, 'sent');
     instantMessages.delete(tmpMsg);
-    upsertMessage(tmpMsg);
+    if (shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
+      upsertMessage(tmpMsg);
+    }
     notifyNewMessageHighlight(tmpMsg);
     if (activeReeditSource) {
       try {
@@ -13132,7 +13154,7 @@ const performSend = async (options?: {
     sendOutcome = { ok: false, error: { code: 'MESSAGE_SEND_FAILED', message: reason } };
   }
 
-  if (wasAtBottom && !insertPlacement) {
+  if (wasAtBottom && !insertPlacement && shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
     toBottom();
   }
   return sendOutcome;
@@ -13803,11 +13825,16 @@ const handleMessageCreated = (e?: Event) => {
       instantMessages.delete(matchedPending);
       Object.assign(matchedPending, incoming);
       setMessageSendStatus(matchedPending as any, 'sent');
-      upsertMessage(matchedPending);
+      const shouldInsert = shouldInsertCreatedMessageIntoWindow(matchedPending);
+      if (shouldInsert) {
+        upsertMessage(matchedPending);
+      } else {
+        recordDetachedRealtimeMessage(matchedPending);
+      }
       notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      if (shouldAutoScrollForSelfMessage(matchedPending)) {
+      if (shouldInsert && shouldAutoScrollForSelfMessage(matchedPending)) {
         toBottom();
       }
       return;
@@ -13871,6 +13898,13 @@ const handleMessageCreated = (e?: Event) => {
         }
       });
     }
+  }
+  if (!shouldInsertCreatedMessageIntoWindow(incoming)) {
+    recordDetachedRealtimeMessage(incoming);
+    notifyNewMessageHighlight(incoming);
+    removeTypingPreview(incoming.user?.id);
+    removeTypingPreview(incoming.user?.id, 'editing');
+    return;
   }
   upsertMessage(incoming);
   if (!isSelf) {
@@ -14381,13 +14415,16 @@ const scheduleLatestMessagesRefetch = () => {
   });
 };
 
-const fetchLatestMessages = async () => {
+const fetchLatestMessages = async (
+  options: { preserveHistoryLock?: boolean } = {},
+): Promise<boolean> => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
-    return;
+    return false;
   }
   const channelIdAtStart = chat.curChannel.id;
   const fetchEpoch = ++latestMessagesFetchEpoch;
   const filterSignatureAtStart = messageFilterSignature.value;
+  const realtimeRevisionAtStart = detachedRealtimeRevision;
   const isStale = () => (
     fetchEpoch !== latestMessagesFetchEpoch
     || chat.curChannel?.id !== channelIdAtStart
@@ -14400,7 +14437,10 @@ const fetchLatestMessages = async () => {
   });
   let fetchSucceeded = false;
   const previousRows = rows.value.slice();
-  resetWindowState('live', { preserveRows: true });
+  resetWindowState(options.preserveHistoryLock ? 'history' : 'live', {
+    preserveRows: true,
+    preserveHistoryLock: options.preserveHistoryLock,
+  });
   resetTypingPreview();
   messageWindow.loadingLatest = true;
   try {
@@ -14409,7 +14449,7 @@ const fetchLatestMessages = async () => {
       ...buildMessageFilterOptions(),
     });
     if (isStale()) {
-      return;
+      return false;
     }
     fetchSucceeded = true;
     console.info('[channel-load] messages-fetch-success', {
@@ -14423,6 +14463,12 @@ const fetchLatestMessages = async () => {
     validateMessageInsertTarget({ silent: true });
     applyCursorUpdate({ before: resp?.next ?? '' });
     computeAfterCursorFromRows();
+    if (options.preserveHistoryLock && detachedRealtimeRevision !== realtimeRevisionAtStart) {
+      messageWindow.hasReachedLatest = false;
+      return false;
+    }
+    messageWindow.hasReachedLatest = true;
+    detachedRealtimeMessageKeys.clear();
     await nextTick();
     scrollToBottom();
     showButton.value = false;
@@ -14434,12 +14480,16 @@ const fetchLatestMessages = async () => {
       rows: rows.value.length,
       ts: Date.now(),
     });
+    return true;
   } catch (error) {
     if (isStale()) {
-      return;
+      return false;
     }
     rows.value = previousRows;
-    resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+    resetWindowState(options.preserveHistoryLock ? 'history' : 'live', {
+      preserveRows: true,
+      preserveHistoryLock: options.preserveHistoryLock,
+    });
     throw error;
   } finally {
     const stale = isStale();
@@ -14451,7 +14501,7 @@ const fetchLatestMessages = async () => {
       ok: fetchSucceeded,
       ts: Date.now(),
     });
-    if (stale) {
+    if (stale && !options.preserveHistoryLock) {
       scheduleLatestMessagesRefetch();
     }
   }
@@ -14545,7 +14595,9 @@ const loadOlderMessages = async () => {
   }
 };
 
-const loadNewerMessages = async () => {
+const loadNewerMessages = async (
+  options: { scheduleRealtimeRetry?: boolean } = {},
+): Promise<boolean> => {
   if (
     !chat.curChannel?.id ||
     messageWindow.loadingAfter ||
@@ -14560,23 +14612,48 @@ const loadNewerMessages = async () => {
     }
     return false;
   }
+  const channelIdAtStart = chat.curChannel.id;
+  const afterCursorAtStart = messageWindow.afterCursor;
+  const realtimeRevisionAtStart = detachedRealtimeRevision;
+  let retryAfterRealtimeRace = false;
   messageWindow.loadingAfter = true;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, messageWindow.afterCursor, {
+    const resp = await chat.messageList(channelIdAtStart, afterCursorAtStart, {
       limit: PAGINATED_MESSAGE_LOAD_LIMIT,
       direction: 'after',
       ...buildMessageFilterOptions(),
     });
+    if (
+      chat.curChannel?.id !== channelIdAtStart
+      || !historyLocked.value
+      || messageWindow.afterCursor !== afterCursorAtStart
+    ) {
+      return false;
+    }
     const normalized = normalizeMessageList(resp?.data || []);
     if (normalized.length) {
       mergeIncomingMessages(normalized);
+      normalized.forEach((item) => {
+        detachedRealtimeMessageKeys.delete(resolveSentConfirmKey(item));
+      });
       messageWindow.hasReachedLatest = false;
       if (isSearchBrowseActive()) {
-        searchBrowseSession.hasMoreAfter = Boolean(resp?.next);
+        searchBrowseSession.hasMoreAfter = true;
       }
       return true;
     }
+    if (detachedRealtimeRevision !== realtimeRevisionAtStart) {
+      messageWindow.hasReachedLatest = false;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreAfter = true;
+      }
+      if (options.scheduleRealtimeRetry !== false) {
+        retryAfterRealtimeRace = true;
+      }
+      return false;
+    }
     messageWindow.hasReachedLatest = true;
+    detachedRealtimeMessageKeys.clear();
     if (isSearchBrowseActive()) {
       searchBrowseSession.hasMoreAfter = false;
     }
@@ -14589,12 +14666,51 @@ const loadNewerMessages = async () => {
     return false;
   } finally {
     messageWindow.loadingAfter = false;
+    if (retryAfterRealtimeRace) {
+      void nextTick(() => {
+        if (
+          chat.curChannel?.id === channelIdAtStart
+          && detachedFromLatest.value
+          && messageWindow.afterCursor === afterCursorAtStart
+        ) {
+          void loadNewerMessages();
+        }
+      });
+    }
   }
 };
 
 const handleBackToLatest = async () => {
-  await fetchLatestMessages();
-  unlockHistoryView();
+  if (!chat.curChannel?.id || messageWindow.loadingLatest) {
+    return;
+  }
+  const channelIdAtStart = chat.curChannel.id;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let synced = false;
+    try {
+      synced = await fetchLatestMessages({ preserveHistoryLock: true });
+    } catch {
+      return;
+    }
+    if (chat.curChannel?.id !== channelIdAtStart || !historyLocked.value) {
+      return;
+    }
+    if (synced) {
+      unlockHistoryView();
+      return;
+    }
+  }
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await loadNewerMessages({ scheduleRealtimeRetry: false });
+    if (chat.curChannel?.id !== channelIdAtStart || !historyLocked.value) {
+      return;
+    }
+    if (messageWindow.hasReachedLatest) {
+      unlockHistoryView();
+      return;
+    }
+  }
 };
 
 const onScroll = () => {
@@ -15049,7 +15165,9 @@ const sendImageMessage = async (attachmentId: string) => {
     message.error('发送失败,您可能没有权限在此频道发送消息');
     return false;
   }
-  toBottom();
+  if (!detachedFromLatest.value) {
+    toBottom();
+  }
   return true;
 };
 
