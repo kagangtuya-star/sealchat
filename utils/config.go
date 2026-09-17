@@ -444,6 +444,12 @@ type PerformanceProfilerConfig struct {
 	RetentionDays          int    `json:"retentionDays" yaml:"retentionDays"`
 }
 
+const DefaultWebSocketOutboundQueueSize = 256
+
+type WebSocketConfig struct {
+	OutboundQueueSize int `json:"outboundQueueSize" yaml:"outboundQueueSize"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                    `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                    `json:"domain" yaml:"domain"`
@@ -489,6 +495,7 @@ type AppConfig struct {
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
 	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
+	WebSocket                 WebSocketConfig           `json:"websocket" yaml:"websocket"`
 }
 
 type ExportConfig struct {
@@ -720,6 +727,9 @@ func ReadConfig() *AppConfig {
 			SnapshotIntervalSec:    300,
 			CPUProfileDurationSec:  300,
 			RetentionDays:          3,
+		},
+		WebSocket: WebSocketConfig{
+			OutboundQueueSize: DefaultWebSocketOutboundQueueSize,
 		},
 	}
 

@@ -1080,7 +1080,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	registerFrontendStaticRoutes(app, config.WebUrl, uiStatic, renderIndex)
 
-	websocketWorks(app, config.WebUrl)
+	websocketWorks(
+		app,
+		config.WebUrl,
+		config.WebSocket.OutboundQueueSize,
+	)
 	oneBotWSWorks(app, config.WebUrl)
 	startOneBotReverseRuntimeForInit()
 

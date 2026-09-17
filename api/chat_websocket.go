@@ -27,9 +27,46 @@ type ApiMsgPayload struct {
 	Data json.RawMessage `json:"data"`
 }
 
+var (
+	errWSConnectionClosed  = errors.New("websocket connection closed")
+	errWSOutboundQueueFull = errors.New("websocket outbound queue full: slow consumer")
+)
+
+const defaultWSOutboundQueueSize = utils.DefaultWebSocketOutboundQueueSize
+
+type wsOutboundMessage struct {
+	payload []byte
+	timeout time.Duration
+	result  chan error
+}
+
+type wsOutboundSocket interface {
+	SetWriteDeadline(time.Time) error
+	WriteMessage(int, []byte) error
+}
+
 type WsSyncConn struct {
 	*websocket.Conn
 	Mux sync.RWMutex
+
+	outbound       chan wsOutboundMessage
+	done           chan struct{}
+	closeOnce      sync.Once
+	outboundSocket wsOutboundSocket
+}
+
+func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
+	if queueSize <= 0 {
+		queueSize = defaultWSOutboundQueueSize
+	}
+	c := &WsSyncConn{
+		Conn:           raw,
+		outbound:       make(chan wsOutboundMessage, queueSize),
+		done:           make(chan struct{}),
+		outboundSocket: raw,
+	}
+	go c.outboundWriter()
+	return c
 }
 
 func (c *WsSyncConn) WriteJSON(v interface{}) error {
@@ -37,25 +74,123 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
-	if c == nil || c.Conn == nil {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.outbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	result := make(chan error, 1)
+	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: timeout, result: result}); err != nil {
+		return err
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-c.done:
+		select {
+		case err := <-result:
+			return err
+		default:
+			return errWSConnectionClosed
+		}
+	}
+}
+
+func (c *WsSyncConn) EnqueueJSON(v any) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.outbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout})
+}
+
+func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+
+	select {
+	case c.outbound <- message:
+		select {
+		case <-c.done:
+			return errWSConnectionClosed
+		default:
+			return nil
+		}
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+		_ = c.Close()
+		return errWSOutboundQueueFull
+	}
+}
+
+func (c *WsSyncConn) outboundWriter() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case message := <-c.outbound:
+			select {
+			case <-c.done:
+				if message.result != nil {
+					message.result <- errWSConnectionClosed
+				}
+				return
+			default:
+			}
+
+			err := c.writeOutboundMessage(message)
+			if message.result != nil {
+				message.result <- err
+			}
+			if err != nil {
+				_ = c.Close()
+				return
+			}
+		}
+	}
+}
+
+func (c *WsSyncConn) writeOutboundMessage(message wsOutboundMessage) error {
+	if c.outboundSocket == nil {
 		return errors.New("websocket connection unavailable")
 	}
 	c.Mux.Lock()
 	defer c.Mux.Unlock()
-	if timeout > 0 {
-		if err := c.Conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-			_ = c.Conn.Close()
+
+	if message.timeout > 0 {
+		if err := c.outboundSocket.SetWriteDeadline(time.Now().Add(message.timeout)); err != nil {
 			return err
 		}
 		defer func() {
-			_ = c.Conn.SetWriteDeadline(time.Time{})
+			_ = c.outboundSocket.SetWriteDeadline(time.Time{})
 		}()
 	}
-	if err := c.Conn.WriteJSON(v); err != nil {
-		_ = c.Conn.Close()
-		return err
+	return c.outboundSocket.WriteMessage(websocket.TextMessage, message.payload)
+}
+
+func (c *WsSyncConn) Close() error {
+	if c == nil {
+		return nil
 	}
-	return nil
+	var closeErr error
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+		if c.Conn != nil {
+			closeErr = c.Conn.Close()
+		}
+	})
+	return closeErr
 }
 
 type ConnInfo struct {
@@ -350,7 +485,10 @@ func isUserSuppressingExternalNotification(userID string) bool {
 	return suppress
 }
 
-func websocketWorks(app *fiber.App, webUrl string) {
+func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
+	if outboundQueueSize <= 0 {
+		outboundQueueSize = defaultWSOutboundQueueSize
+	}
 	channelUsersMap := &utils.SyncMap[string, *utils.SyncSet[string]]{}
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
@@ -649,7 +787,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 					if info.ChannelId == event.ChannelID {
-						_ = conn.WriteJSON(protocol.GatewayPayloadStructure{
+						writeConnJSONAndPrune(connMap, conn, protocol.GatewayPayloadStructure{
 							Op: protocol.OpEvent,
 							Body: map[string]any{
 								"type":      "chat-import-progress",
@@ -735,7 +873,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			curUser     *model.UserModel
 			curConnInfo *ConnInfo
 		)
-		c := &WsSyncConn{rawConn, sync.RWMutex{}}
+		c := newWsSyncConn(rawConn, outboundQueueSize)
 		clientAddr := normalizeRemoteAddr(rawConn.RemoteAddr().String())
 		preAuthReleased := false
 		preAuthGlobalCount, preAuthAddrCount := addPreAuthConnection(clientAddr)
@@ -764,7 +902,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			if !preAuthReleased {
 				releasePreAuthConnection(clientAddr)
 			}
-			_ = rawConn.Close()
+			_ = c.Close()
 		}()
 
 		// 设置pong处理器，收到pong时更新连接活跃状态
@@ -795,7 +933,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					c.Mux.Unlock()
 					if err != nil {
 						log.Printf("WebSocket ping failed, closing connection: %v", err)
-						rawConn.Close()
+						_ = c.Close()
 						return
 					}
 				case <-pingDone:

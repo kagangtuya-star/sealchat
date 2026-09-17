@@ -35,15 +35,10 @@ type ChatContext struct {
 
 func writeConnJSONAndPrune(connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], conn *WsSyncConn, data any) bool {
 	if conn == nil {
-		if connMap != nil {
-			connMap.Delete(conn)
-		}
 		return false
 	}
-	if err := conn.WriteJSON(data); err != nil {
-		if connMap != nil {
-			connMap.Delete(conn)
-		}
+	if err := conn.EnqueueJSON(data); err != nil {
+		_ = conn.Close()
 		return false
 	}
 	return true

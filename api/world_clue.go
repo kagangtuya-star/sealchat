@@ -648,7 +648,7 @@ func broadcastWorldClueChanged(worldID, clueID, action string, revision int64) {
 			}
 			conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 				if info != nil && !info.IsGuest && !info.IsObserver && info.WorldId == worldID {
-					_ = conn.WriteJSON(payload)
+					writeConnJSONAndPrune(conns, conn, payload)
 				}
 				return true
 			})
@@ -678,7 +678,7 @@ func broadcastWorldCluePublished(worldID, clueID string, publishSeq int64, recip
 			return true
 		})
 		if selected != nil {
-			_ = selected.WriteJSON(struct {
+			writeConnJSONAndPrune(conns, selected, struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
 			}{Event: event, Op: protocol.OpEvent})

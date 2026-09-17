@@ -200,7 +200,7 @@ func newClosedChatTestConn(t *testing.T) *WsSyncConn {
 	defer clientConn.Close()
 
 	serverConn := <-serverConnCh
-	conn := &WsSyncConn{Conn: &wsfiber.Conn{Conn: serverConn}}
+	conn := newWsSyncConn(&wsfiber.Conn{Conn: serverConn}, defaultWSOutboundQueueSize)
 	_ = conn.Close()
 	return conn
 }
@@ -226,15 +226,17 @@ func newReadableChatTestConn(t *testing.T) (*WsSyncConn, *fastws.Conn, func()) {
 	}
 
 	serverConn := <-serverConnCh
+	conn := newWsSyncConn(&wsfiber.Conn{Conn: serverConn}, defaultWSOutboundQueueSize)
 	cleanup := func() {
+		_ = conn.Close()
 		_ = clientConn.Close()
 		_ = serverConn.Close()
 		server.Close()
 	}
-	return &WsSyncConn{Conn: &wsfiber.Conn{Conn: serverConn}}, clientConn, cleanup
+	return conn, clientConn, cleanup
 }
 
-func TestBroadcastEventInChannelRemovesBrokenConnection(t *testing.T) {
+func TestBroadcastEventInChannelHandlesBrokenConnectionWithoutBlocking(t *testing.T) {
 	brokenConn := newClosedChatTestConn(t)
 	connMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
 	connMap.Store(brokenConn, &ConnInfo{
@@ -249,15 +251,29 @@ func TestBroadcastEventInChannelRemovesBrokenConnection(t *testing.T) {
 	}
 	ctx.UserId2ConnInfo.Store("user-test", connMap)
 
-	ctx.BroadcastEventInChannel("channel-test", &protocol.Event{
-		Type: protocol.EventMessageCreated,
-		Message: &protocol.Message{
-			Content: "hello",
-		},
-	})
+	broadcastDone := make(chan struct{})
+	go func() {
+		ctx.BroadcastEventInChannel("channel-test", &protocol.Event{
+			Type: protocol.EventMessageCreated,
+			Message: &protocol.Message{
+				Content: "hello",
+			},
+		})
+		close(broadcastDone)
+	}()
 
-	if connMap.Exists(brokenConn) {
-		t.Fatal("expected broken websocket connection to be removed after write failure")
+	select {
+	case <-broadcastDone:
+	case <-time.After(time.Second):
+		t.Fatal("broadcast to closed websocket blocked")
+	}
+	select {
+	case <-brokenConn.done:
+	default:
+		t.Fatal("broken websocket connection is not closed")
+	}
+	if !connMap.Exists(brokenConn) {
+		t.Fatal("fan-out helper removed connection before handler cleanup")
 	}
 }
 
