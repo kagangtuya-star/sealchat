@@ -1711,7 +1711,6 @@ const worldMessageToastStackRef = ref<{
   dismissAll: () => void;
   dismissChannel: (worldId: string, channelId: string) => void;
 } | null>(null);
-const worldMessageNoticeTasks = new Map<string, Promise<void>>();
 interface ChannelFavoriteRecommendation {
   worldId: string;
   channelId: string;
@@ -13661,104 +13660,30 @@ const handleMessageCreatedNotice = (event?: any) => {
     return;
   }
 
-  const taskKey = `${channelId}:${messageId || 'latest'}`;
-  if (worldMessageNoticeTasks.has(taskKey)) {
+  const knownChannel = chat.findChannelById(channelId) as any;
+  const noticeWorldId = String(
+    event?.worldId
+      || event?.world_id
+      || knownChannel?.worldId
+      || knownChannel?.world_id
+      || '',
+  ).trim();
+  if (!noticeWorldId || noticeWorldId !== currentWorldId) {
     return;
   }
-  const task = (async () => {
-    let channel = chat.findChannelById(channelId) as any;
-    let channelWorldId = String(
-      event?.worldId
-        || event?.world_id
-        || event?.channel?.worldId
-        || event?.channel?.world_id
-        || event?.message?.channel?.worldId
-        || event?.message?.channel?.world_id
-        || event?.message?.worldId
-        || event?.message?.world_id
-        || channel?.worldId
-        || channel?.world_id
-        || '',
-    ).trim();
-    if (!channelWorldId && typeof chat.channelInfoGet === 'function') {
-      try {
-        const response = await chat.channelInfoGet(channelId);
-        channel = response?.item || channel;
-        channelWorldId = String(channel?.worldId || channel?.world_id || '').trim();
-      } catch {
-        channelWorldId = '';
-      }
-    }
-    if (!channelWorldId || channelWorldId !== currentWorldId) {
-      return;
-    }
 
-    const activeWorldId = String(chat.currentWorldId || routeWorldId.value || (chat.curChannel as any)?.worldId || '').trim();
-    if (currentWorldId !== activeWorldId) {
-      return;
-    }
-
-    const noticeMessage = event?.message;
-    if (noticeMessage && typeof noticeMessage === 'object') {
-      const incoming = normalizeMessageShape(noticeMessage);
-      if (!incoming.id && messageId) {
-        incoming.id = messageId;
-      }
-      if (incoming.id) {
-        enqueueWorldMessageToast(incoming, {
-          ...event,
-          channel: event?.channel || channel,
-        });
-        return;
-      }
-    }
-
-    let rawMessage: any = null;
-    if (messageId) {
-      try {
-        const context = await chat.messageContext(channelId, messageId, {
-          before: 1,
-          after: 1,
-          includeArchived: true,
-          includeOoc: true,
-        });
-        const contextItems = Array.isArray(context?.data)
-          ? context.data
-          : (Array.isArray((context?.data as any)?.data) ? (context?.data as any).data : []);
-        rawMessage = contextItems.find((item: any) => String(item?.id || item?.message_id || item?.messageId || '').trim() === messageId) || null;
-      } catch {
-        rawMessage = null;
-      }
-    } else {
-      // Older servers omit messageId from notice. Time-mode list avoids marking channel read.
-      try {
-        const response = await chat.messageList(channelId, undefined, {
-          limit: 1,
-          fromTime: 1,
-          includeArchived: true,
-          includeOoc: true,
-        });
-        const items = Array.isArray(response?.data) ? response.data : [];
-        rawMessage = items.length > 0 ? items[items.length - 1] : null;
-      } catch {
-        rawMessage = null;
-      }
-    }
-    if (!rawMessage) {
-      return;
-    }
-    const incoming = normalizeMessageShape(rawMessage);
-    if (messageId && String(incoming.id || '').trim() !== messageId) {
-      return;
-    }
-    enqueueWorldMessageToast(incoming, {
-      ...event,
-      channel: event?.channel || channel,
-    });
-  })().catch(() => undefined).finally(() => {
-    worldMessageNoticeTasks.delete(taskKey);
+  worldMessageToastStackRef.value?.enqueue({
+    worldId: currentWorldId,
+    channelId,
+    messageId,
+    channelName: String(event?.channelName || event?.channel_name || knownChannel?.name || '未知频道').trim() || '未知频道',
+    speakerName: String(event?.speakerName || event?.speaker_name || '新消息').trim() || '新消息',
+    preview: String(event?.preview || '发送了一条新消息').trim() || '发送了一条新消息',
+    createdAt: normalizeTimestamp(event?.createdAt)
+      ?? normalizeTimestamp(event?.created_at)
+      ?? normalizeTimestamp(event?.timestamp)
+      ?? Date.now(),
   });
-  worldMessageNoticeTasks.set(taskKey, task);
 };
 
 const handleMessageCreated = (e?: Event) => {

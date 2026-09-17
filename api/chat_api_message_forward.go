@@ -320,29 +320,11 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 		}
 		_ = model.WebhookEventLogAppendForMessage(item.target.channel.ID, "message-created", item.message.ID)
 
-		var userIDs []string
-		if ctx.UserId2ConnInfo != nil {
-			ctx.UserId2ConnInfo.Range(func(userID string, _ *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-				userIDs = append(userIDs, userID)
-				return true
-			})
-		}
-		var onlineUserIDs []string
-		if ctx.ChannelUsersMap != nil {
-			if channelUsers, exists := ctx.ChannelUsersMap.Load(item.target.channel.ID); exists && channelUsers != nil {
-				channelUsers.Range(func(userID string) bool {
-					onlineUserIDs = append(onlineUserIDs, userID)
-					return true
-				})
-			}
-		}
-		_ = model.ChannelReadInitInBatches(item.target.channel.ID, userIDs)
-		_ = model.ChannelReadSetInBatch([]string{item.target.channel.ID}, onlineUserIDs)
-
-		hasMention := len(collectMentionTargetIDsFromContent(item.message.Content)) > 0
+		mentionTargets := collectMentionTargetIDsFromContent(item.message.Content)
+		hasMention := len(mentionTargets) > 0
 		mentionStateReady := !hasMention
 		if hasMention {
-			if err := ctx.TagCheck(item.message); err != nil {
+			if err := ctx.TagCheck(item.message, mentionTargets); err != nil {
 				log.Printf("持久化转发消息 mention 状态失败 message=%s err=%v", item.message.ID, err)
 			} else {
 				mentionStateReady = true
@@ -356,9 +338,13 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 				log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
 			}
 		}(item.target.channel.ID, *item.message)
-		if !hasMention || mentionStateReady {
-			notifyForwardMessageCreated(ctx, item.message, item.target.channel.WorldID, userIDs)
-		}
+		broadcastWorldMessageCreatedNotice(ctx, worldMessageNoticeSourceFromProtocol(
+			item.target.channel.WorldID,
+			item.target.channelData,
+			messageData,
+			item.message.UserID,
+			item.message.SenderMemberName,
+		), mentionTargets, !hasMention || mentionStateReady)
 	}
 
 	return &struct {
@@ -372,22 +358,4 @@ func apiMessageForwardBatch(ctx *ChatContext, data *messageForwardBatchRequest) 
 		Created:         createdResult,
 		Failed:          []any{},
 	}, nil
-}
-
-func notifyForwardMessageCreated(ctx *ChatContext, message *model.MessageModel, worldID string, userIDs []string) {
-	if ctx == nil || message == nil || message.ChannelID == "" {
-		return
-	}
-	channelID := message.ChannelID
-	for _, userID := range userIDs {
-		if userID == "" {
-			continue
-		}
-		broadcastMessageCreatedNoticeOutsideChannel(
-			ctx,
-			userID,
-			channelID,
-			buildMessageCreatedNoticePayload(channelID, message.Content, userID, message.ID, worldID),
-		)
-	}
 }

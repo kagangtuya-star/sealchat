@@ -2660,52 +2660,30 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				noticeTargets = []string{privateOtherUser}
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
 			}
-		} else {
-			// 给当前在线人都通知一遍
-			var uids []string
-			ctx.UserId2ConnInfo.Range(func(key string, value *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-				uids = append(uids, key)
-				return true
-			})
-
-			// 找出当前频道在线的人
-			var uidsOnline []string
-			if x, exists := ctx.ChannelUsersMap.Load(data.ChannelID); exists {
-				x.Range(func(key string) bool {
-					uidsOnline = append(uidsOnline, key)
-					return true
-				})
-			}
-
-			_ = model.ChannelReadInitInBatches(data.ChannelID, uids)
-			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
-			noticeTargets = uids
 		}
 
 		mentionTargets := collectMentionTargetIDsFromContent(m.Content)
 		hasMention := len(mentionTargets) > 0
 		mentionStateReady := !hasMention
 		if hasMention {
-			if err := ctx.TagCheck(&m); err != nil {
+			if err := ctx.TagCheck(&m, mentionTargets); err != nil {
 				log.Printf("持久化消息 mention 状态失败 message=%s err=%v", m.ID, err)
 			} else {
 				mentionStateReady = true
 			}
 		}
-		if !hasMention || mentionStateReady {
-			for _, uid := range noticeTargets {
-				if uid == "" {
-					continue
-				}
-				payload := buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID)
-				if whisperUser != nil || channel.PermType == "private" {
-					if uid != ctx.User.ID {
-						ctx.BroadcastToUserJSON(uid, payload)
+		noticeSource := worldMessageNoticeSourceFromProtocol(channel.WorldID, channelData, messageData, ctx.User.ID, m.SenderMemberName)
+		if whisperUser != nil || channel.PermType == "private" {
+			if !hasMention || mentionStateReady {
+				noticePreview := buildWorldMessageNoticePreview(noticeSource.Content)
+				for _, uid := range noticeTargets {
+					if uid != "" && uid != ctx.User.ID {
+						ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(noticeSource, uid, mentionTargets, noticePreview))
 					}
-					continue
 				}
-				broadcastMessageCreatedNoticeOutsideChannel(ctx, uid, data.ChannelID, payload)
 			}
+		} else {
+			broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets, !hasMention || mentionStateReady)
 		}
 
 		return messageData, nil
@@ -4480,7 +4458,15 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 				Channel: channelData,
 				User:    userData,
 			})
-			broadcastMessageCreatedNoticeToUsers(ctx, data.ChannelID, m.Content, m.ID, channelData.WorldID)
+			noticeSource := worldMessageNoticeSourceFromProtocol(
+				channelData.WorldID,
+				channelData,
+				messageData,
+				m.UserID,
+				m.SenderMemberName,
+			)
+			mentionTargets := collectMentionTargetIDsFromContent(noticeSource.Content)
+			broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets)
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
@@ -4720,7 +4706,15 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 			Channel: channelData,
 			User:    userData,
 		})
-		broadcastMessageCreatedNoticeToUsers(ctx, targetChannelID, msg.Content, m.ID, channelData.WorldID)
+		noticeSource := worldMessageNoticeSourceFromProtocol(
+			channelData.WorldID,
+			channelData,
+			messageData,
+			m.UserID,
+			m.SenderMemberName,
+		)
+		mentionTargets := collectMentionTargetIDsFromContent(noticeSource.Content)
+		broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets)
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 	notifyAppMessageCreated(m.ID)

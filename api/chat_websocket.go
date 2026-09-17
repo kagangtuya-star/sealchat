@@ -231,6 +231,114 @@ type ConnInfo struct {
 	theaterMu                    sync.RWMutex
 	theaterSubscription          *theaterSubscription
 	theaterQueue                 *theaterWriteQueue
+	worldNoticeMu                sync.RWMutex
+	worldNoticeVisibleWorldID    string
+	worldNoticeVisibleChannels   map[string]struct{}
+}
+
+func (info *ConnInfo) setWorldNoticeVisibleChannels(worldID string, channels []*model.ChannelModel) {
+	if info == nil {
+		return
+	}
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		info.invalidateWorldNoticeVisibility()
+		return
+	}
+
+	visibleChannels := make(map[string]struct{}, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelID := strings.TrimSpace(channel.ID)
+		if channelID != "" {
+			visibleChannels[channelID] = struct{}{}
+		}
+	}
+
+	info.worldNoticeMu.Lock()
+	info.worldNoticeVisibleWorldID = worldID
+	info.worldNoticeVisibleChannels = visibleChannels
+	info.worldNoticeMu.Unlock()
+}
+
+func (info *ConnInfo) canReceiveWorldMessageNotice(worldID, channelID string) bool {
+	if info == nil || info.IsGuest || info.IsObserver {
+		return false
+	}
+	worldID = strings.TrimSpace(worldID)
+	channelID = strings.TrimSpace(channelID)
+	if worldID == "" || channelID == "" || info.WorldId != worldID || info.ChannelId == channelID {
+		return false
+	}
+
+	info.worldNoticeMu.RLock()
+	defer info.worldNoticeMu.RUnlock()
+	if info.worldNoticeVisibleWorldID != worldID || info.worldNoticeVisibleChannels == nil {
+		return false
+	}
+	_, visible := info.worldNoticeVisibleChannels[channelID]
+	return visible
+}
+
+func (info *ConnInfo) invalidateWorldNoticeVisibility() {
+	if info == nil {
+		return
+	}
+	info.worldNoticeMu.Lock()
+	info.worldNoticeVisibleWorldID = ""
+	info.worldNoticeVisibleChannels = nil
+	info.worldNoticeMu.Unlock()
+}
+
+func (info *ConnInfo) invalidateWorldNoticeVisibilityForWorld(worldID string) {
+	if info == nil {
+		return
+	}
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return
+	}
+	info.worldNoticeMu.Lock()
+	if info.worldNoticeVisibleWorldID == worldID {
+		info.worldNoticeVisibleWorldID = ""
+		info.worldNoticeVisibleChannels = nil
+	}
+	info.worldNoticeMu.Unlock()
+}
+
+func invalidateWorldNoticeVisibilityForConnections(worldID string) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" || userId2ConnInfoGlobal == nil {
+		return
+	}
+	userId2ConnInfoGlobal.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		if conns == nil {
+			return true
+		}
+		conns.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			info.invalidateWorldNoticeVisibilityForWorld(worldID)
+			return true
+		})
+		return true
+	})
+}
+
+func invalidateWorldNoticeVisibilityForUser(userID, worldID string) {
+	userID = strings.TrimSpace(userID)
+	worldID = strings.TrimSpace(worldID)
+	if userID == "" || worldID == "" || userId2ConnInfoGlobal == nil {
+		return
+	}
+	conns, ok := userId2ConnInfoGlobal.Load(userID)
+	if !ok || conns == nil {
+		return
+	}
+	conns.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+		info.invalidateWorldNoticeVisibilityForWorld(worldID)
+		return true
+	})
 }
 
 type BotHiddenDicePending struct {

@@ -20,13 +20,13 @@ type messageMentionInvalidationPlan struct {
 	audience  messageMentionWatermarkAudience
 }
 
-func (ctx *ChatContext) TagCheck(message *model.MessageModel) error {
+func (ctx *ChatContext) TagCheck(message *model.MessageModel, mentionTargets map[string]struct{}) error {
 	if message == nil || message.ID == "" || message.ChannelID == "" {
 		return nil
 	}
 
 	mentions := make([]model.MentionModel, 0)
-	for receiverID := range collectMentionTargetIDsFromContent(message.Content) {
+	for receiverID := range mentionTargets {
 		if receiverID == "" {
 			continue
 		}

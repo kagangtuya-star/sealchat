@@ -10,6 +10,10 @@ type MessageEventPayload = {
   channel?: { id?: string };
   channelId?: string;
   channel_id?: string;
+  worldId?: string;
+  world_id?: string;
+  senderUserId?: string;
+  sender_user_id?: string;
   message?: {
     user?: { id?: string };
     user_id?: string;
@@ -22,7 +26,9 @@ const normalizeChannelId = (event?: MessageEventPayload): string => String(
 ).trim();
 
 const resolveMessageSenderId = (event?: MessageEventPayload): string => String(
-  event?.message?.user?.id
+  event?.senderUserId
+    || event?.sender_user_id
+    || event?.message?.user?.id
     || event?.message?.user_id
     || event?.user?.id
     || '',
