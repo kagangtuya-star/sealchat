@@ -94,6 +94,42 @@ func resetWSPerfProfiler(t *testing.T) *perfprofiler.Manager {
 	return m
 }
 
+func TestWsSyncConnAsyncEnqueueUsesDataWriteTimeout(t *testing.T) {
+	c := &WsSyncConn{
+		outbound:            make(chan wsOutboundMessage, 1),
+		interactiveOutbound: make(chan wsOutboundMessage, 1),
+		done:                make(chan struct{}),
+		coalesced:           make(map[string]wsCoalescedEntry),
+		coalescedWake:       make(chan struct{}, 1),
+	}
+	defer c.Close()
+
+	if err := c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, "interactive"); err != nil {
+		t.Fatal(err)
+	}
+	if message := <-c.interactiveOutbound; message.timeout != wsDataWriteTimeout {
+		t.Fatalf("interactive timeout = %v, want %v", message.timeout, wsDataWriteTimeout)
+	}
+
+	if err := c.enqueueReliableJSON(wsReliableClassOther, "reliable"); err != nil {
+		t.Fatal(err)
+	}
+	if message := <-c.outbound; message.timeout != wsDataWriteTimeout {
+		t.Fatalf("reliable timeout = %v, want %v", message.timeout, wsDataWriteTimeout)
+	}
+
+	if err := c.EnqueueCoalescedJSON("notice", "coalesced"); err != nil {
+		t.Fatal(err)
+	}
+	message, ok := c.popOldestCoalesced()
+	if !ok {
+		t.Fatal("coalesced message was not enqueued")
+	}
+	if message.timeout != wsDataWriteTimeout {
+		t.Fatalf("coalesced timeout = %v, want %v", message.timeout, wsDataWriteTimeout)
+	}
+}
+
 func TestWsSyncConnEnqueueJSONHasNoMessageCreateDiagnosticTag(t *testing.T) {
 	m := resetWSPerfProfiler(t)
 	c := &WsSyncConn{outbound: make(chan wsOutboundMessage, 1), done: make(chan struct{})}

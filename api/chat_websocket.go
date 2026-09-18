@@ -165,7 +165,7 @@ func (c *WsSyncConn) enqueueInteractiveJSON(class wsReliableClass, diagnosticTag
 	}
 	return c.enqueueInteractiveOutbound(wsOutboundMessage{
 		payload:       payload,
-		timeout:       wsWriteTimeout,
+		timeout:       wsDataWriteTimeout,
 		reliableClass: class,
 		diagnosticTag: diagnosticTag,
 	})
@@ -179,7 +179,7 @@ func (c *WsSyncConn) enqueueReliableJSON(class wsReliableClass, v any) error {
 	if c == nil || c.outbound == nil || c.done == nil {
 		return errors.New("websocket connection unavailable")
 	}
-	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout, reliableClass: class})
+	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsDataWriteTimeout, reliableClass: class})
 }
 
 func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
@@ -273,7 +273,7 @@ func (c *WsSyncConn) EnqueueCoalescedJSON(key string, v any) error {
 	}
 	c.coalescedSeq++
 	c.coalesced[key] = wsCoalescedEntry{
-		message: wsOutboundMessage{payload: payload, timeout: wsWriteTimeout},
+		message: wsOutboundMessage{payload: payload, timeout: wsDataWriteTimeout},
 		seq:     c.coalescedSeq,
 	}
 	perfprofiler.RecordWSCoalescedEnqueued()
@@ -639,8 +639,10 @@ const (
 	channelPresenceBroadcastMinIntervalMs = int64(2000)
 	// 在线态全量兜底广播间隔（秒）
 	channelPresenceFullBroadcastIntervalSeconds = 30
-	// 单次 WebSocket JSON 写超时
+	// 同步 WebSocket JSON 写超时
 	wsWriteTimeout = 10 * time.Second
+	// 已认证异步数据帧写超时；慢消费者应尽快断开，避免阻塞单连接 outboundWriter
+	wsDataWriteTimeout = 3 * time.Second
 	// 在线态变化合并广播窗口，降低 enter/leave/focus 抖动带来的广播风暴
 	channelPresenceFlushDelay = 1500 * time.Millisecond
 )
