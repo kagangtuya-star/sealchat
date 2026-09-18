@@ -11,6 +11,7 @@ import (
 	"sealchat/pkg/contentstats"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/service/perfprofiler"
 	"sort"
 	"strconv"
 	"strings"
@@ -1982,6 +1983,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	DisplayOrder      *float64 `json:"display_order"`
 	TypingDurationMs  *int64   `json:"typing_duration_ms"`
 }) (any, error) {
+	trace := perfprofiler.BeginMessageCreateTrace()
+	defer trace.Finish()
+	prepareStarted := trace.StageStart()
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
@@ -2477,7 +2481,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.WhisperTargetMemberName = whisperMember.Nickname
 		}
 	}
+	trace.StageDone(perfprofiler.MessageStagePrepare, prepareStarted)
+	persistStarted := trace.StageStart()
 	createResult := db.Create(&m)
+	trace.StageDone(perfprofiler.MessageStagePersist, persistStarted)
 	if createResult.Error != nil {
 		if trimmedClientID != "" && isUniqueConstraintError(createResult.Error) {
 			existingMessageData, err := findExistingByClientID(trimmedClientID)
@@ -2530,8 +2537,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
+		memberRecentStarted := trace.StageStart()
 		member.UpdateRecentSent()
+		trace.StageDone(perfprofiler.MessageStageMemberRecent, memberRecentStarted)
+		channelRecentStarted := trace.StageStart()
 		channel.UpdateRecentSent()
+		trace.StageDone(perfprofiler.MessageStageChannelRecent, channelRecentStarted)
 
 		userData := ctx.User.ToProtocolType()
 
@@ -2595,14 +2606,24 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				recipients = append(recipients, whisperRecipientIDs...)
 			}
 			recipients = lo.Uniq(recipients)
+			channelBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+			trace.StageDone(perfprofiler.MessageStageChannelBroadcast, channelBroadcastStarted)
+			botBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageBotBroadcast, botBroadcastStarted)
 		} else {
+			channelBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageChannelBroadcast, channelBroadcastStarted)
+			botBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageBotBroadcast, botBroadcastStarted)
 		}
 
+		webhookStarted := trace.StageStart()
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		trace.StageDone(perfprofiler.MessageStageWebhook, webhookStarted)
 		notifyAppMessageCreated(m.ID)
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
@@ -2662,6 +2683,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 
+		mentionStarted := trace.StageStart()
 		mentionTargets := collectMentionTargetIDsFromContent(m.Content)
 		hasMention := len(mentionTargets) > 0
 		mentionStateReady := !hasMention
@@ -2673,6 +2695,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 		noticeSource := worldMessageNoticeSourceFromProtocol(channel.WorldID, channelData, messageData, ctx.User.ID, m.SenderMemberName)
+		trace.StageDone(perfprofiler.MessageStageMention, mentionStarted)
 		if whisperUser != nil || channel.PermType == "private" {
 			if !hasMention || mentionStateReady {
 				noticePreview := buildWorldMessageNoticePreview(noticeSource.Content)
@@ -2683,7 +2706,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				}
 			}
 		} else {
+			worldNoticeStarted := trace.StageStart()
 			broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets, !hasMention || mentionStateReady)
+			trace.StageDone(perfprofiler.MessageStageWorldNotice, worldNoticeStarted)
 		}
 
 		return messageData, nil

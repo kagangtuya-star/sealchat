@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"sealchat/model"
+	"sealchat/service/perfprofiler"
 )
 
 const (
@@ -261,7 +262,9 @@ func RecordDigestWindowVisit(channelID, userID string) error {
 	return nil
 }
 
-func RecordDigestWindowMessage(channelID string, message *model.MessageModel) error {
+func RecordDigestWindowMessage(channelID string, message *model.MessageModel) (retErr error) {
+	trace := perfprofiler.BeginDigestTrace()
+	defer trace.Finish(&retErr)
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" || strings.Contains(channelID, ":") || message == nil || message.ID == "" || message.IsWhisper || message.IsDeleted || message.IsRevoked {
 		return nil
@@ -278,13 +281,19 @@ func RecordDigestWindowMessage(channelID string, message *model.MessageModel) er
 	for _, windowSeconds := range DigestSupportedWindowSeconds() {
 		windowStart, windowEnd := AlignDigestWindow(messageAt, windowSeconds)
 		if userID := strings.TrimSpace(message.UserID); userID != "" {
+			started := trace.StageStart()
 			if err := model.DigestWindowVisitorUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, userID); err != nil {
+				trace.VisitorUpsertDone(started)
 				return err
 			}
+			trace.VisitorUpsertDone(started)
 		}
+		started := trace.StageStart()
 		if err := model.DigestWindowSpeakerUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, speakerKey, speakerName, messageAt); err != nil {
+			trace.SpeakerUpsertDone(started)
 			return err
 		}
+		trace.SpeakerUpsertDone(started)
 	}
 	return nil
 }

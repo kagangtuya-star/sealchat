@@ -6,6 +6,8 @@ import { buildAuthorizedHeaders, urlBase } from '@/stores/_config';
 import {
   useUtilsStore,
   type AdminPerfArtifact,
+  type AdminPerfDurationStats,
+  type AdminPerfMessagePipelineSummary,
   type AdminPerfSamplePoint,
   type AdminPerfState,
   type AdminPerfTopFunction,
@@ -19,6 +21,9 @@ const message = useMessage();
 const loading = ref(false);
 const historyLoading = ref(false);
 const cpuActionLoading = ref(false);
+const pipelineLoading = ref(false);
+const pipelineResetLoading = ref(false);
+const traceActionLoading = ref(false);
 const state = ref<AdminPerfState | null>(null);
 const historyPoints = ref<AdminPerfSamplePoint[]>([]);
 const artifacts = ref<AdminPerfArtifact[]>([]);
@@ -26,7 +31,12 @@ const topFunctions = ref<AdminPerfTopFunction[]>([]);
 const range = ref<PerfRange>('1h');
 const customRange = ref<[number, number] | null>(null);
 const cpuDurationSec = ref<number | null>(null);
+const traceDurationSec = ref<number | null>(30);
+const pipelineWindowSec = ref(60);
+const pipelineSummary = ref<AdminPerfMessagePipelineSummary | null>(null);
 const refreshTimer = ref<number | null>(null);
+const pipelineRefreshTimer = ref<number | null>(null);
+const clockNow = ref(Date.now());
 
 const rangeOptions = [
   { label: '近 15 分钟', value: '15m' },
@@ -50,6 +60,21 @@ const topFunctionColumns = [
   { title: 'Flat %', key: 'flatPct' },
   { title: 'Cum', key: 'cumLabel' },
   { title: 'Cum %', key: 'cumPct' },
+];
+
+const pipelineWindowOptions = [
+  { label: '30 秒', value: 30 },
+  { label: '60 秒', value: 60 },
+  { label: '5 分钟', value: 300 },
+];
+
+const durationColumns = [
+  { title: '阶段', key: 'label' },
+  { title: '样本数', key: 'countLabel' },
+  { title: 'P50', key: 'p50Label' },
+  { title: 'P95', key: 'p95Label' },
+  { title: 'P99', key: 'p99Label' },
+  { title: 'Max', key: 'maxLabel' },
 ];
 
 const sparklineMetrics = [
@@ -86,6 +111,24 @@ const formatDuration = (seconds?: number) => {
   if (minutes <= 0) return `${remain} 秒`;
   return `${minutes} 分 ${remain} 秒`;
 };
+
+const formatLatency = (value?: number, count?: number) => {
+  if (!count) return '—';
+  const duration = value || 0;
+  if (duration < 1) return `${duration.toFixed(2)} ms`;
+  if (duration < 100) return `${duration.toFixed(1)} ms`;
+  return `${duration.toFixed(duration < 1000 ? 1 : 0)} ms`;
+};
+
+const durationRow = (key: string, label: string, stats: AdminPerfDurationStats) => ({
+  key,
+  label,
+  countLabel: formatNumber(stats.count),
+  p50Label: formatLatency(stats.p50Ms, stats.count),
+  p95Label: formatLatency(stats.p95Ms, stats.count),
+  p99Label: formatLatency(stats.p99Ms, stats.count),
+  maxLabel: formatLatency(stats.maxMs, stats.count),
+});
 
 const stateTagType = computed(() => {
   switch (state.value?.status) {
@@ -237,6 +280,33 @@ const cpuSessionCountdown = computed(() => {
   return formatDuration(remainSeconds);
 });
 
+const traceSessionCountdown = computed(() => {
+  const session = state.value?.traceSession;
+  if (!session?.active || !session.endsAt) return '未录制';
+  return formatDuration(Math.max(0, Math.ceil((session.endsAt - clockNow.value) / 1000)));
+});
+
+const pipelineRows = computed(() => (pipelineSummary.value?.stages || []).map((stage) => durationRow(stage.key, stage.label, stage)));
+
+const digestRows = computed(() => {
+  const digest = pipelineSummary.value?.digest;
+  if (!digest) return [];
+  return [
+    durationRow('digest_total', 'Digest Total', digest.total),
+    durationRow('visitor_upserts', 'Visitor Upserts', digest.visitorUpserts),
+    durationRow('speaker_upserts', 'Speaker Upserts', digest.speakerUpserts),
+  ];
+});
+
+const wsResponseRows = computed(() => {
+  const ws = pipelineSummary.value?.ws;
+  if (!ws) return [];
+  return [
+    durationRow('response_queue_wait', 'API Response Queue Wait', ws.responseQueueWait),
+    durationRow('response_socket_write', 'API Response Socket Write', ws.responseSocketWrite),
+  ];
+});
+
 const artifactDownloadUrl = (name: string) => {
   return `${urlBase}/api/v1/admin/perf/artifacts/${encodeURIComponent(name)}/download`;
 };
@@ -298,6 +368,16 @@ const refreshHistory = async () => {
   }
 };
 
+const refreshPipeline = async () => {
+  pipelineLoading.value = true;
+  try {
+    const resp = await utils.adminPerfMessagePipeline(pipelineWindowSec.value);
+    pipelineSummary.value = resp.data.summary;
+  } finally {
+    pipelineLoading.value = false;
+  }
+};
+
 const refreshAll = async () => {
   loading.value = true;
   try {
@@ -338,21 +418,75 @@ const stopCpuSession = async () => {
   }
 };
 
+const resetPipeline = async () => {
+  pipelineResetLoading.value = true;
+  try {
+    await utils.adminPerfMessagePipelineReset();
+    await refreshPipeline();
+    message.success('消息链路诊断数据已清空');
+  } catch (error: any) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '清空消息链路诊断数据失败');
+  } finally {
+    pipelineResetLoading.value = false;
+  }
+};
+
+const startTraceSession = async () => {
+  traceActionLoading.value = true;
+  try {
+    await utils.adminPerfStartTraceSession(traceDurationSec.value || undefined);
+    await Promise.all([refreshStatus(), refreshArtifacts()]);
+    message.success('Runtime Trace 已启动');
+  } catch (error: any) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '启动 Runtime Trace 失败');
+  } finally {
+    traceActionLoading.value = false;
+  }
+};
+
+const stopTraceSession = async () => {
+  traceActionLoading.value = true;
+  try {
+    await utils.adminPerfStopTraceSession();
+    await Promise.all([refreshStatus(), refreshArtifacts()]);
+    message.success('Runtime Trace 已停止');
+  } catch (error: any) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '停止 Runtime Trace 失败');
+  } finally {
+    traceActionLoading.value = false;
+  }
+};
+
 watch(currentRangeParams, () => {
   void refreshHistory();
 }, { deep: true });
 
+watch(pipelineWindowSec, () => {
+  void refreshPipeline();
+});
+
 onMounted(() => {
-  void refreshAll();
+	void refreshAll();
+	void refreshPipeline();
   refreshTimer.value = window.setInterval(() => {
     void Promise.allSettled([refreshStatus(), refreshArtifacts(), refreshTopFunctions()]);
   }, 15_000);
+	pipelineRefreshTimer.value = window.setInterval(() => {
+	  clockNow.value = Date.now();
+	  void refreshPipeline();
+	}, 2_000);
 });
 
 onBeforeUnmount(() => {
   if (refreshTimer.value) {
     window.clearInterval(refreshTimer.value);
   }
+	if (pipelineRefreshTimer.value) {
+	  window.clearInterval(pipelineRefreshTimer.value);
+	}
 });
 </script>
 
@@ -621,6 +755,119 @@ onBeforeUnmount(() => {
         </n-card>
       </n-grid-item>
     </n-grid>
+
+    <n-card title="消息并发诊断" size="small" class="perf-card">
+      <template #header-extra>
+        <n-space align="center">
+          <n-radio-group v-model:value="pipelineWindowSec" size="small">
+            <n-radio-button v-for="option in pipelineWindowOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </n-radio-button>
+          </n-radio-group>
+          <n-button size="small" :loading="pipelineLoading" @click="refreshPipeline">刷新</n-button>
+          <n-button size="small" secondary :loading="pipelineResetLoading" @click="resetPipeline">清空诊断数据</n-button>
+        </n-space>
+      </template>
+      <div class="perf-card__subcopy">
+        最近 {{ pipelineSummary?.windowSec || pipelineWindowSec }} 秒内采集 {{ formatNumber(pipelineSummary?.messageCount) }} 条 message.create；
+        本轮自 {{ formatTimestamp(pipelineSummary?.sinceResetAt) }} 起。
+      </div>
+
+      <n-card title="消息发送链路" size="small" embedded class="perf-inner-card">
+        <n-data-table
+          :columns="durationColumns"
+          :data="pipelineRows"
+          :bordered="false"
+          size="small"
+          :pagination="false"
+          :scroll-x="720"
+        />
+      </n-card>
+
+      <n-grid cols="1 900:2" :x-gap="18" :y-gap="18" class="perf-diagnostic-grid">
+        <n-grid-item>
+          <n-card title="数据库连接池" size="small" embedded class="perf-inner-card">
+            <div class="perf-metric-grid">
+              <div class="perf-metric"><div class="perf-metric__label">Driver</div><div class="perf-metric__value perf-metric__value--small">{{ pipelineSummary?.db?.driver || '未连接' }}</div></div>
+              <div class="perf-metric"><div class="perf-metric__label">Max Open</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.db?.maxOpenConnections) }}</div></div>
+              <div class="perf-metric"><div class="perf-metric__label">Open</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.db?.openConnections) }}</div></div>
+              <div class="perf-metric"><div class="perf-metric__label">In Use / Idle</div><div class="perf-metric__value perf-metric__value--small">{{ formatNumber(pipelineSummary?.db?.inUse) }} / {{ formatNumber(pipelineSummary?.db?.idle) }}</div></div>
+              <div class="perf-metric"><div class="perf-metric__label">本轮 Wait Count</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.db?.waitCountDelta) }}</div></div>
+              <div class="perf-metric"><div class="perf-metric__label">本轮 Wait Duration</div><div class="perf-metric__value perf-metric__value--small">{{ formatLatency(pipelineSummary?.db?.waitDurationMsDelta, 1) }}</div></div>
+            </div>
+            <div class="perf-card__subcopy perf-db-cumulative">
+              累计 Wait Count {{ formatNumber(pipelineSummary?.db?.waitCount) }}，Wait Duration {{ formatLatency(pipelineSummary?.db?.waitDurationMs, 1) }}。
+              这些值仅表示 database/sql 连接池等待，不等同于 SQLite write lock 等待。
+            </div>
+          </n-card>
+        </n-grid-item>
+
+        <n-grid-item>
+          <n-card title="Digest 异步压力" size="small" embedded class="perf-inner-card">
+            <div class="perf-summary-strip perf-summary-strip--five">
+              <div class="perf-summary-item"><span class="perf-summary-item__label">Started</span><strong>{{ formatNumber(pipelineSummary?.digest?.started) }}</strong></div>
+              <div class="perf-summary-item"><span class="perf-summary-item__label">Completed</span><strong>{{ formatNumber(pipelineSummary?.digest?.completed) }}</strong></div>
+              <div class="perf-summary-item"><span class="perf-summary-item__label">Errors</span><strong>{{ formatNumber(pipelineSummary?.digest?.errors) }}</strong></div>
+              <div class="perf-summary-item"><span class="perf-summary-item__label">In Flight</span><strong>{{ formatNumber(pipelineSummary?.digest?.inFlight) }}</strong></div>
+              <div class="perf-summary-item"><span class="perf-summary-item__label">Peak In Flight</span><strong>{{ formatNumber(pipelineSummary?.digest?.peakInFlight) }}</strong></div>
+            </div>
+            <n-data-table :columns="durationColumns" :data="digestRows" :bordered="false" size="small" :pagination="false" :scroll-x="720" />
+          </n-card>
+        </n-grid-item>
+      </n-grid>
+
+      <n-card title="WebSocket 出站诊断" size="small" embedded class="perf-inner-card perf-trace-card">
+        <n-data-table :columns="durationColumns" :data="wsResponseRows" :bordered="false" size="small" :pagination="false" :scroll-x="720" />
+        <div class="perf-card__subcopy perf-ws-copy">
+          Queue Wait 表示 message.create response 从进入 reliable FIFO 到 outboundWriter 取出的等待时间。<br>
+          Socket Write 表示 outboundWriter 实际执行 WebSocket WriteMessage 的耗时。<br>
+          Queue Depth Ahead 表示 response 入队时排在它前面的 reliable frame 数量，为并发近似值。
+        </div>
+        <div class="perf-summary-strip perf-summary-strip--five">
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Queue Depth Ahead P50</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.p50) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">P95</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.p95) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">P99</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.p99) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Max</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.max) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Samples</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.count) }}</strong></div>
+        </div>
+        <div class="perf-card__subcopy perf-ws-copy">Reliable FIFO 组成（本轮累计）</div>
+        <div class="perf-summary-strip perf-summary-strip--five">
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Total</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableEnqueuedTotal) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Message Created</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableMessageCreated) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Message Create Response</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableMessageCreateResponse) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">BOT Event</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableBotEvent) }}</strong></div>
+          <div class="perf-summary-item"><span class="perf-summary-item__label">Other</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableOther) }}</strong></div>
+        </div>
+        <div class="perf-card__subcopy perf-ws-copy">
+          这些计数表示自上次清空诊断数据后成功进入 reliable FIFO 的 frame 数量，用于判断 message.create response 前方的主要流量来源。
+        </div>
+        <div class="perf-metric-grid perf-ws-counters">
+          <div class="perf-metric"><div class="perf-metric__label">本轮累计 Reliable Queue Full</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.reliableQueueFull) }}</div></div>
+          <div class="perf-metric"><div class="perf-metric__label">本轮累计 Response Queue Full</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.responseQueueFull) }}</div></div>
+          <div class="perf-metric"><div class="perf-metric__label">Response Errors</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.responseErrors) }}</div></div>
+          <div class="perf-metric"><div class="perf-metric__label">本轮累计 Coalesced Enqueued</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.coalescedEnqueued) }}</div></div>
+          <div class="perf-metric"><div class="perf-metric__label">本轮累计 Coalesced Replaced</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.coalescedReplaced) }}</div></div>
+          <div class="perf-metric"><div class="perf-metric__label">本轮累计 Coalesced Evicted</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.coalescedEvicted) }}</div></div>
+        </div>
+        <div class="perf-card__subcopy perf-ws-copy">Coalesced Replaced 越高，说明跨频道派生通知合并实际生效。</div>
+      </n-card>
+
+      <n-card title="运行时 Trace" size="small" embedded class="perf-inner-card perf-trace-card">
+        <div class="perf-card__subcopy">Runtime Trace 会记录 goroutine 调度、阻塞、syscall 等信息，仅建议在短时间压力测试中开启。</div>
+        <div class="perf-trace-layout">
+          <div class="perf-stack">
+            <div class="perf-row"><span class="perf-label">当前状态</span><n-tag :type="state?.traceSession?.active ? 'error' : 'default'">{{ state?.traceSession?.active ? '录制中' : '空闲' }}</n-tag></div>
+            <div class="perf-row"><span class="perf-label">剩余时间</span><span class="perf-value">{{ traceSessionCountdown }}</span></div>
+            <div class="perf-row"><span class="perf-label">输出文件</span><span class="perf-value perf-value--mono">{{ state?.traceSession?.fileName || '未生成' }}</span></div>
+          </div>
+          <n-space align="center">
+            <n-input-number v-model:value="traceDurationSec" :min="5" :max="120" :precision="0" style="width: 130px"><template #suffix>秒</template></n-input-number>
+            <n-button type="error" :disabled="!state?.enabled || Boolean(state?.traceSession?.active)" :loading="traceActionLoading" @click="startTraceSession">开始 Trace</n-button>
+            <n-button secondary :disabled="!state?.traceSession?.active" :loading="traceActionLoading" @click="stopTraceSession">停止 Trace</n-button>
+          </n-space>
+        </div>
+      </n-card>
+    </n-card>
   </div>
 </template>
 
@@ -724,6 +971,10 @@ onBeforeUnmount(() => {
   letter-spacing: -0.02em;
 }
 
+.perf-metric__value--small {
+  font-size: 1rem;
+}
+
 .perf-metric__hint {
   margin-top: 0.2rem;
   font-size: 0.72rem;
@@ -749,6 +1000,34 @@ onBeforeUnmount(() => {
 .perf-summary-item__label {
   font-size: 0.75rem;
   color: var(--sc-text-secondary);
+}
+
+.perf-inner-card {
+  margin-top: 1rem;
+}
+
+.perf-diagnostic-grid {
+  margin-top: 0.1rem;
+}
+
+.perf-summary-strip--five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.perf-db-cumulative {
+  margin-top: 0.8rem;
+  margin-bottom: 0;
+}
+
+.perf-trace-card {
+  margin-top: 1rem;
+}
+
+.perf-trace-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
 }
 
 .perf-collapse {
@@ -863,6 +1142,10 @@ onBeforeUnmount(() => {
   .perf-metric-grid,
   .perf-summary-strip,
   .perf-sparkline-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .perf-trace-layout {
     grid-template-columns: 1fr;
   }
 }

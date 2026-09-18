@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -408,6 +409,18 @@ func deduplicateDigestRecords() error {
 
 func GetDB() *gorm.DB {
 	return db
+}
+
+// DBPoolStats returns a read-only snapshot of the underlying database/sql pool.
+func DBPoolStats() (sql.DBStats, bool) {
+	if db == nil {
+		return sql.DBStats{}, false
+	}
+	sqlDB, err := db.DB()
+	if err != nil || sqlDB == nil {
+		return sql.DBStats{}, false
+	}
+	return sqlDB.Stats(), true
 }
 
 // DBInitMinimal 仅初始化数据库连接（用于配置恢复场景）

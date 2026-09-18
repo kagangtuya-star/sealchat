@@ -278,6 +278,7 @@ func TestBroadcastEventInChannelHandlesBrokenConnectionWithoutBlocking(t *testin
 }
 
 func TestBroadcastEventInChannelUsesChannelUsersMapTargets(t *testing.T) {
+	m := resetWSPerfProfiler(t)
 	targetConn, targetClient, targetCleanup := newReadableChatTestConn(t)
 	defer targetCleanup()
 	otherConn, otherClient, otherCleanup := newReadableChatTestConn(t)
@@ -324,6 +325,10 @@ func TestBroadcastEventInChannelUsesChannelUsersMapTargets(t *testing.T) {
 	}
 	if len(body) == 0 {
 		t.Fatal("expected non-empty websocket payload")
+	}
+	ws := m.MessagePipelineSummary(10 * time.Second).WS
+	if ws.ReliableEnqueuedTotal != 1 || ws.ReliableMessageCreated != 1 {
+		t.Fatalf("message-created classification = %#v", ws)
 	}
 	_ = otherClient.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	if _, _, err := otherClient.ReadMessage(); err == nil {
@@ -448,6 +453,7 @@ func TestBroadcastEventInChannelForBotSkipsDuplicateWriteForWhisperTarget(t *tes
 		t.Fatalf("expected whisper target bot to receive direct payload: %v", err)
 	}
 
+	m := resetWSPerfProfiler(t)
 	ctx.BroadcastEventInChannelForBot(channel.ID, event)
 
 	_ = targetClient.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
@@ -461,5 +467,40 @@ func TestBroadcastEventInChannelForBotSkipsDuplicateWriteForWhisperTarget(t *tes
 	}
 	if !msgContext.IsWhisper || msgContext.WhisperToUserID != botUser.ID {
 		t.Fatalf("unexpected cached message context: %#v", msgContext)
+	}
+	if got := m.MessagePipelineSummary(10 * time.Second).WS.ReliableBotEvent; got != 0 {
+		t.Fatalf("skipped duplicate BOT write was counted: %d", got)
+	}
+
+	nonWhisperEvent := *event
+	nonWhisperMessage := *event.Message
+	nonWhisperMessage.IsWhisper = false
+	nonWhisperMessage.WhisperTo = nil
+	nonWhisperEvent.Message = &nonWhisperMessage
+	m.ResetMessagePipeline()
+	ctx.BroadcastEventInChannelForBot(channel.ID, &nonWhisperEvent)
+	_ = targetClient.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := targetClient.ReadMessage(); err != nil {
+		t.Fatalf("expected BOT direct fan-out payload: %v", err)
+	}
+	ws := m.MessagePipelineSummary(10 * time.Second).WS
+	if ws.ReliableEnqueuedTotal != 1 || ws.ReliableBotEvent != 1 {
+		t.Fatalf("BOT direct fan-out classification = %#v", ws)
+	}
+}
+
+func TestWriteConnReliableJSONAndPruneClassifiesBotEvent(t *testing.T) {
+	m := resetWSPerfProfiler(t)
+	c := &WsSyncConn{outbound: make(chan wsOutboundMessage, 1), done: make(chan struct{})}
+	defer c.Close()
+	connMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	connMap.Store(c, &ConnInfo{Conn: c})
+
+	if !writeConnReliableJSONAndPrune(connMap, c, wsReliableClassBotEvent, protocol.GatewayPayloadStructure{Op: protocol.OpEvent}) {
+		t.Fatal("BOT reliable write failed")
+	}
+	ws := m.MessagePipelineSummary(10 * time.Second).WS
+	if ws.ReliableEnqueuedTotal != 1 || ws.ReliableBotEvent != 1 {
+		t.Fatalf("BOT reliable classification = %#v", ws)
 	}
 }

@@ -99,7 +99,7 @@ func buildWorldMessageNoticePreview(content string) string {
 	return preview
 }
 
-func buildMessageCreatedNoticePayload(source worldMessageNoticeSource, recipientID string, mentionTargets map[string]struct{}, preview string) map[string]any {
+func isMessageCreatedNoticeMentioned(recipientID string, mentionTargets map[string]struct{}) bool {
 	mentioned := false
 	if recipientID != "" {
 		_, mentioned = mentionTargets[recipientID]
@@ -107,6 +107,19 @@ func buildMessageCreatedNoticePayload(source worldMessageNoticeSource, recipient
 			_, mentioned = mentionTargets["all"]
 		}
 	}
+	return mentioned
+}
+
+func worldMessageNoticeCoalesceKey(source worldMessageNoticeSource, mentioned bool) string {
+	kind := "normal"
+	if mentioned {
+		kind = "mention"
+	}
+	return "world-notice\x00" + source.WorldID + "\x00" + source.ChannelID + "\x00" + kind
+}
+
+func buildMessageCreatedNoticePayload(source worldMessageNoticeSource, recipientID string, mentionTargets map[string]struct{}, preview string) map[string]any {
+	mentioned := isMessageCreatedNoticeMentioned(recipientID, mentionTargets)
 	channelName := strings.TrimSpace(source.ChannelName)
 	if channelName == "" {
 		channelName = "未知频道"
@@ -216,8 +229,9 @@ func broadcastWorldMessageCreatedNotice(
 	preview := buildWorldMessageNoticePreview(source.Content)
 	for _, userID := range targetUserIDs {
 		payload := buildMessageCreatedNoticePayload(source, userID, mentionTargets, preview)
+		key := worldMessageNoticeCoalesceKey(source, isMessageCreatedNoticeMentioned(userID, mentionTargets))
 		for _, target := range targets[userID] {
-			writeConnJSONAndPrune(target.connMap, target.conn, payload)
+			writeConnCoalescedJSONAndPrune(target.connMap, target.conn, key, payload)
 		}
 	}
 }

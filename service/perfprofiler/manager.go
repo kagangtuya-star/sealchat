@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pprofprofile "github.com/google/pprof/profile"
@@ -35,6 +36,9 @@ type Manager struct {
 	cancel        context.CancelFunc
 	started       bool
 	sessionCancel context.CancelFunc
+	traceCancel   context.CancelFunc
+	enabled       atomic.Bool
+	pipeline      *messagePipelineCollector
 	wg            sync.WaitGroup
 }
 
@@ -65,7 +69,7 @@ func Get() *Manager {
 }
 
 func newManager(cfg Config) *Manager {
-	mgr := &Manager{}
+	mgr := &Manager{pipeline: newMessagePipelineCollector(messageTimingBufferSize)}
 	_ = mgr.ApplyConfig(cfg)
 	return mgr
 }
@@ -75,6 +79,7 @@ func (m *Manager) ApplyConfig(cfg Config) error {
 	defer m.mu.Unlock()
 	normalizeConfig(&cfg)
 	m.cfg = cfg
+	m.enabled.Store(cfg.Enabled)
 	m.state.Enabled = cfg.Enabled
 	m.state.OutputDir = cfg.OutputDir
 	m.state.LightIntervalSec = int(cfg.LightSampleInterval / time.Second)
@@ -144,9 +149,13 @@ func (m *Manager) Stop() {
 	if m.sessionCancel != nil {
 		m.sessionCancel()
 	}
+	if m.traceCancel != nil {
+		m.traceCancel()
+	}
 	m.started = false
 	m.cancel = nil
 	m.sessionCancel = nil
+	m.traceCancel = nil
 	if m.cfg.Enabled {
 		m.state.Status = "idle"
 	} else {
@@ -225,6 +234,10 @@ func (m *Manager) CurrentState() State {
 	if state.CPUSession != nil {
 		copySession := *state.CPUSession
 		state.CPUSession = &copySession
+	}
+	if state.TraceSession != nil {
+		copySession := *state.TraceSession
+		state.TraceSession = &copySession
 	}
 	return state
 }

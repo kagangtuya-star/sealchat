@@ -18,6 +18,7 @@ import (
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
 
@@ -34,10 +35,38 @@ var (
 
 const defaultWSOutboundQueueSize = utils.DefaultWebSocketOutboundQueueSize
 
+const maxWSCoalescedKeys = 64
+const wsReliableBurstBeforeCoalesced = 32
+
+type wsCoalescedEntry struct {
+	message wsOutboundMessage
+	seq     uint64
+}
+
+type wsOutboundDiagnosticTag uint8
+
+const (
+	wsOutboundDiagnosticNone wsOutboundDiagnosticTag = iota
+	wsOutboundDiagnosticMessageCreateResponse
+)
+
+type wsReliableClass uint8
+
+const (
+	wsReliableClassOther wsReliableClass = iota
+	wsReliableClassMessageCreated
+	wsReliableClassMessageCreateResponse
+	wsReliableClassBotEvent
+)
+
 type wsOutboundMessage struct {
-	payload []byte
-	timeout time.Duration
-	result  chan error
+	payload             []byte
+	timeout             time.Duration
+	result              chan error
+	diagnosticTag       wsOutboundDiagnosticTag
+	reliableClass       wsReliableClass
+	enqueuedAtNs        int64
+	queueDepthAtEnqueue int
 }
 
 type wsOutboundSocket interface {
@@ -53,6 +82,10 @@ type WsSyncConn struct {
 	done           chan struct{}
 	closeOnce      sync.Once
 	outboundSocket wsOutboundSocket
+	coalescedMu    sync.Mutex
+	coalesced      map[string]wsCoalescedEntry
+	coalescedWake  chan struct{}
+	coalescedSeq   uint64
 }
 
 func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
@@ -64,6 +97,8 @@ func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
 		outbound:       make(chan wsOutboundMessage, queueSize),
 		done:           make(chan struct{}),
 		outboundSocket: raw,
+		coalesced:      make(map[string]wsCoalescedEntry),
+		coalescedWake:  make(chan struct{}, 1),
 	}
 	go c.outboundWriter()
 	return c
@@ -74,6 +109,14 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
+	return c.writeJSONWithDiagnostic(v, timeout, wsOutboundDiagnosticNone)
+}
+
+func (c *WsSyncConn) writeMessageCreateResponseJSON(v any) error {
+	return c.writeJSONWithDiagnostic(v, wsWriteTimeout, wsOutboundDiagnosticMessageCreateResponse)
+}
+
+func (c *WsSyncConn) writeJSONWithDiagnostic(v any, timeout time.Duration, diagnosticTag wsOutboundDiagnosticTag) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -82,7 +125,11 @@ func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) 
 		return errors.New("websocket connection unavailable")
 	}
 	result := make(chan error, 1)
-	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: timeout, result: result}); err != nil {
+	reliableClass := wsReliableClassOther
+	if diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+		reliableClass = wsReliableClassMessageCreateResponse
+	}
+	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: timeout, result: result, diagnosticTag: diagnosticTag, reliableClass: reliableClass}); err != nil {
 		return err
 	}
 	select {
@@ -99,6 +146,10 @@ func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) 
 }
 
 func (c *WsSyncConn) EnqueueJSON(v any) error {
+	return c.enqueueReliableJSON(wsReliableClassOther, v)
+}
+
+func (c *WsSyncConn) enqueueReliableJSON(class wsReliableClass, v any) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -106,7 +157,7 @@ func (c *WsSyncConn) EnqueueJSON(v any) error {
 	if c == nil || c.outbound == nil || c.done == nil {
 		return errors.New("websocket connection unavailable")
 	}
-	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout})
+	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout, reliableClass: class})
 }
 
 func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
@@ -115,9 +166,14 @@ func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
 		return errWSConnectionClosed
 	default:
 	}
+	if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+		message.enqueuedAtNs = time.Now().UnixNano()
+		message.queueDepthAtEnqueue = len(c.outbound)
+	}
 
 	select {
 	case c.outbound <- message:
+		perfprofiler.RecordWSReliableEnqueued(uint8(message.reliableClass))
 		select {
 		case <-c.done:
 			return errWSConnectionClosed
@@ -127,34 +183,141 @@ func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
 	case <-c.done:
 		return errWSConnectionClosed
 	default:
+		perfprofiler.RecordWSReliableQueueFull(message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse)
 		_ = c.Close()
 		return errWSOutboundQueueFull
 	}
 }
 
+func (c *WsSyncConn) EnqueueCoalescedJSON(key string, v any) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("websocket coalesced key must not be empty")
+	}
+	if c == nil || c.done == nil || c.coalesced == nil || c.coalescedWake == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	c.coalescedMu.Lock()
+	defer c.coalescedMu.Unlock()
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	_, exists := c.coalesced[key]
+	if !exists && len(c.coalesced) >= maxWSCoalescedKeys {
+		var oldestKey string
+		var oldestSeq uint64
+		for candidate, entry := range c.coalesced {
+			if oldestKey == "" || entry.seq < oldestSeq {
+				oldestKey, oldestSeq = candidate, entry.seq
+			}
+		}
+		delete(c.coalesced, oldestKey)
+		perfprofiler.RecordWSCoalescedEvicted()
+	}
+	c.coalescedSeq++
+	c.coalesced[key] = wsCoalescedEntry{
+		message: wsOutboundMessage{payload: payload, timeout: wsWriteTimeout},
+		seq:     c.coalescedSeq,
+	}
+	perfprofiler.RecordWSCoalescedEnqueued()
+	if exists {
+		perfprofiler.RecordWSCoalescedReplaced()
+	}
+	select {
+	case c.coalescedWake <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (c *WsSyncConn) popOldestCoalesced() (wsOutboundMessage, bool) {
+	c.coalescedMu.Lock()
+	defer c.coalescedMu.Unlock()
+	var oldestKey string
+	var oldest wsCoalescedEntry
+	for key, entry := range c.coalesced {
+		if oldestKey == "" || entry.seq < oldest.seq {
+			oldestKey, oldest = key, entry
+		}
+	}
+	if oldestKey == "" {
+		return wsOutboundMessage{}, false
+	}
+	delete(c.coalesced, oldestKey)
+	return oldest.message, true
+}
+
 func (c *WsSyncConn) outboundWriter() {
+	reliableBurst := 0
 	for {
 		select {
 		case <-c.done:
 			return
-		case message := <-c.outbound:
+		default:
+		}
+		var message wsOutboundMessage
+		var ready bool
+		if reliableBurst >= wsReliableBurstBeforeCoalesced {
+			message, ready = c.popOldestCoalesced()
+			reliableBurst = 0
+		}
+		if !ready {
 			select {
-			case <-c.done:
-				if message.result != nil {
-					message.result <- errWSConnectionClosed
-				}
-				return
+			case message = <-c.outbound:
+				ready = true
+				reliableBurst++
 			default:
 			}
-
-			err := c.writeOutboundMessage(message)
-			if message.result != nil {
-				message.result <- err
-			}
-			if err != nil {
-				_ = c.Close()
+		}
+		if !ready {
+			message, ready = c.popOldestCoalesced()
+			reliableBurst = 0
+		}
+		if !ready {
+			select {
+			case <-c.done:
 				return
+			case message = <-c.outbound:
+				reliableBurst++
+			case <-c.coalescedWake:
+				continue
 			}
+		}
+		dequeueAt := time.Now().UnixNano()
+		select {
+		case <-c.done:
+			if message.result != nil {
+				message.result <- errWSConnectionClosed
+			}
+			if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+				perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, -1, message.queueDepthAtEnqueue, true)
+			}
+			return
+		default:
+		}
+		socketStarted := time.Now().UnixNano()
+		err := c.writeOutboundMessage(message)
+		socketWriteNs := time.Now().UnixNano() - socketStarted
+		if message.result != nil {
+			message.result <- err
+		}
+		if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+			perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, socketWriteNs, message.queueDepthAtEnqueue, err != nil)
+		}
+		if err != nil {
+			_ = c.Close()
+			return
 		}
 	}
 }
