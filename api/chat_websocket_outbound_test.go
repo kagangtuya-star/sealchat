@@ -60,11 +60,12 @@ func (s *recordingWSOutboundSocket) decodedStrings(t *testing.T) []string {
 
 func newTestWsSyncConn(socket wsOutboundSocket, queueSize int) *WsSyncConn {
 	c := &WsSyncConn{
-		outbound:       make(chan wsOutboundMessage, queueSize),
-		done:           make(chan struct{}),
-		outboundSocket: socket,
-		coalesced:      make(map[string]wsCoalescedEntry),
-		coalescedWake:  make(chan struct{}, 1),
+		outbound:            make(chan wsOutboundMessage, queueSize),
+		interactiveOutbound: make(chan wsOutboundMessage, wsInteractiveQueueSize),
+		done:                make(chan struct{}),
+		outboundSocket:      socket,
+		coalesced:           make(map[string]wsCoalescedEntry),
+		coalescedWake:       make(chan struct{}, 1),
 	}
 	go c.outboundWriter()
 	return c
@@ -108,6 +109,9 @@ func TestWsSyncConnEnqueueJSONHasNoMessageCreateDiagnosticTag(t *testing.T) {
 	if ws.ReliableEnqueuedTotal != 1 || ws.ReliableOther != 1 {
 		t.Fatalf("ordinary reliable classification = %#v", ws)
 	}
+	if len(c.interactiveOutbound) != 0 {
+		t.Fatal("ordinary reliable message entered interactive queue")
+	}
 }
 
 func TestWsSyncConnMessageCreateResponseReliableClassification(t *testing.T) {
@@ -116,7 +120,7 @@ func TestWsSyncConnMessageCreateResponseReliableClassification(t *testing.T) {
 	c := newTestWsSyncConn(socket, 1)
 	defer c.Close()
 
-	if err := c.writeMessageCreateResponseJSON("response"); err != nil {
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
 	ws := m.MessagePipelineSummary(10 * time.Second).WS
@@ -126,20 +130,16 @@ func TestWsSyncConnMessageCreateResponseReliableClassification(t *testing.T) {
 }
 
 func TestWsSyncConnMessageCreateResponseCapturesEnqueueState(t *testing.T) {
-	c := &WsSyncConn{outbound: make(chan wsOutboundMessage, 3), done: make(chan struct{})}
+	c := &WsSyncConn{interactiveOutbound: make(chan wsOutboundMessage, 3), done: make(chan struct{})}
 	defer c.Close()
-	if err := c.EnqueueJSON("ahead"); err != nil {
+	if err := c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, "ahead"); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal("response")
-	if err != nil {
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, diagnosticTag: wsOutboundDiagnosticMessageCreateResponse}); err != nil {
-		t.Fatal(err)
-	}
-	<-c.outbound
-	message := <-c.outbound
+	<-c.interactiveOutbound
+	message := <-c.interactiveOutbound
 	if message.enqueuedAtNs <= 0 || message.queueDepthAtEnqueue != 1 {
 		t.Fatalf("unexpected response enqueue diagnostics: %#v", message)
 	}
@@ -148,16 +148,11 @@ func TestWsSyncConnMessageCreateResponseCapturesEnqueueState(t *testing.T) {
 func TestWsSyncConnMessageCreateResponseQueueWaitTiming(t *testing.T) {
 	m := resetWSPerfProfiler(t)
 	c, socket, release := blockedCoalescedTestConn(t, 2)
-	payload, _ := json.Marshal("response")
-	result := make(chan error, 1)
-	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout, result: result, diagnosticTag: wsOutboundDiagnosticMessageCreateResponse}); err != nil {
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
 	release()
 	waitForWrites(t, socket.wrote, 2)
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
 	if err := c.WriteJSON("barrier"); err != nil {
 		t.Fatal(err)
 	}
@@ -173,17 +168,12 @@ func TestWsSyncConnMessageCreateResponseSocketWriteTiming(t *testing.T) {
 	socket := &recordingWSOutboundSocket{entered: make(chan struct{}, 1), wrote: make(chan struct{}, 1), block: block}
 	c := newTestWsSyncConn(socket, 1)
 	defer c.Close()
-	payload, _ := json.Marshal("response")
-	result := make(chan error, 1)
-	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout, result: result, diagnosticTag: wsOutboundDiagnosticMessageCreateResponse}); err != nil {
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
 	waitForWrites(t, socket.entered, 1)
 	close(block)
 	waitForWrites(t, socket.wrote, 1)
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
 	if err := c.WriteJSON("barrier"); err != nil {
 		t.Fatal(err)
 	}
@@ -193,29 +183,32 @@ func TestWsSyncConnMessageCreateResponseSocketWriteTiming(t *testing.T) {
 	}
 }
 
-func TestWsSyncConnSynchronousResultPrecedesMessageResponseTiming(t *testing.T) {
+func TestWsSyncConnMessageResponseTimingWaitsForWriter(t *testing.T) {
 	m := resetWSPerfProfiler(t)
-	socket := &recordingWSOutboundSocket{wrote: make(chan struct{}, 2)}
-	c := newTestWsSyncConn(socket, 1)
-	defer c.Close()
-	payload, _ := json.Marshal("response")
-	result := make(chan error)
-	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsWriteTimeout, result: result, diagnosticTag: wsOutboundDiagnosticMessageCreateResponse}); err != nil {
+	c, socket, release := blockedCoalescedTestConn(t, 1)
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
-	waitForWrites(t, socket.wrote, 1)
-	if got := m.MessagePipelineSummary(10 * time.Second).WS.ResponseSocketWrite.Count; got != 0 {
-		t.Fatalf("timing recorded before synchronous result was delivered: count=%d", got)
+	if got := messageResponseWriteCount(m); got != 0 {
+		t.Fatalf("response write timing recorded at enqueue: count=%d", got)
 	}
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
+	release()
+	waitForWrites(t, socket.wrote, 2)
 	if err := c.WriteJSON("barrier"); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.MessagePipelineSummary(10 * time.Second).WS.ResponseSocketWrite.Count; got != 1 {
-		t.Fatalf("timing not recorded after synchronous result was delivered: count=%d", got)
+	if got := messageResponseWriteCount(m); got != 1 {
+		t.Fatalf("response write timing count = %d, want 1", got)
 	}
+}
+
+func messageResponseWriteCount(m *perfprofiler.Manager) int {
+	for _, stage := range m.MessagePipelineSummary(10 * time.Second).Stages {
+		if stage.Key == "api_response_write" {
+			return stage.Count
+		}
+	}
+	return 0
 }
 
 func TestWsSyncConnFIFO(t *testing.T) {
@@ -315,14 +308,18 @@ func TestWsSyncConnSynchronousQueueFullDoesNotBlock(t *testing.T) {
 
 func TestWsSyncConnMessageCreateResponseQueueFullClosesAndCounts(t *testing.T) {
 	m := resetWSPerfProfiler(t)
-	c := &WsSyncConn{outbound: make(chan wsOutboundMessage, 1), done: make(chan struct{})}
-	if err := c.EnqueueJSON("first"); err != nil {
+	c := &WsSyncConn{interactiveOutbound: make(chan wsOutboundMessage, 1), done: make(chan struct{})}
+	if err := c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, "first"); err != nil {
 		t.Fatal(err)
 	}
 	before := m.MessagePipelineSummary(10 * time.Second).WS.ReliableEnqueuedTotal
-	err := c.writeMessageCreateResponseJSON("response")
+	started := time.Now()
+	err := c.enqueueMessageCreateResponseJSON("response")
 	if !errors.Is(err, errWSOutboundQueueFull) {
 		t.Fatalf("queue full error = %v", err)
+	}
+	if time.Since(started) > 100*time.Millisecond {
+		t.Fatal("queue-full interactive enqueue blocked")
 	}
 	select {
 	case <-c.done:
@@ -384,6 +381,9 @@ func TestNewWsSyncConnUsesDefaultQueueSize(t *testing.T) {
 	defer c.Close()
 	if got := cap(c.outbound); got != defaultWSOutboundQueueSize {
 		t.Fatalf("queue capacity = %d, want %d", got, defaultWSOutboundQueueSize)
+	}
+	if got := cap(c.interactiveOutbound); got != wsInteractiveQueueSize {
+		t.Fatalf("interactive queue capacity = %d, want %d", got, wsInteractiveQueueSize)
 	}
 }
 
@@ -469,10 +469,112 @@ func TestWsSyncConnCoalescedDoesNotConsumeReliableQueue(t *testing.T) {
 	if len(c.outbound) != 0 {
 		t.Fatal("notices consumed reliable queue")
 	}
+	if len(c.interactiveOutbound) != 0 {
+		t.Fatal("notices consumed interactive queue")
+	}
 	for range cap(c.outbound) {
 		if err := c.EnqueueJSON("reliable"); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestWsSyncConnInteractiveOvertakesQueuedReliable(t *testing.T) {
+	c, socket, release := blockedCoalescedTestConn(t, 3)
+	for _, value := range []string{"A", "B"} {
+		if err := c.EnqueueJSON(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
+		t.Fatal(err)
+	}
+
+	release()
+	waitForWrites(t, socket.wrote, 4)
+	if got := socket.decodedStrings(t); !reflect.DeepEqual(got, []string{"blocked", "response", "A", "B"}) {
+		t.Fatalf("writes = %v", got)
+	}
+}
+
+func TestWsSyncConnReliableFIFOUnchangedWithInteractive(t *testing.T) {
+	c, socket, release := blockedCoalescedTestConn(t, 3)
+	for _, value := range []string{"A", "B", "C"} {
+		if err := c.EnqueueJSON(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
+		t.Fatal(err)
+	}
+
+	release()
+	waitForWrites(t, socket.wrote, 5)
+	var reliable []string
+	for _, value := range socket.decodedStrings(t) {
+		if value == "A" || value == "B" || value == "C" {
+			reliable = append(reliable, value)
+		}
+	}
+	if !reflect.DeepEqual(reliable, []string{"A", "B", "C"}) {
+		t.Fatalf("reliable order = %v", reliable)
+	}
+}
+
+func TestWsSyncConnInteractiveDoesNotStarveReliable(t *testing.T) {
+	c, socket, release := blockedCoalescedTestConn(t, 1)
+	for i := range wsInteractiveBurstBeforeReliable + 1 {
+		if err := c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, fmt.Sprintf("interactive-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.EnqueueJSON("reliable"); err != nil {
+		t.Fatal(err)
+	}
+
+	release()
+	waitForWrites(t, socket.wrote, wsInteractiveBurstBeforeReliable+3)
+	got := socket.decodedStrings(t)
+	if got[wsInteractiveBurstBeforeReliable+1] != "reliable" {
+		t.Fatalf("reliable starved after interactive burst: %v", got)
+	}
+}
+
+func TestWsSyncConnMessageCreateResponseEnqueueDoesNotWaitForSocket(t *testing.T) {
+	m := resetWSPerfProfiler(t)
+	c, _, _ := blockedCoalescedTestConn(t, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.enqueueMessageCreateResponseJSON("response")
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("message.create response enqueue waited for socket write")
+	}
+	ws := m.MessagePipelineSummary(10 * time.Second).WS
+	if ws.ReliableMessageCreateResponse != 1 {
+		t.Fatalf("message.create response classification = %#v", ws)
+	}
+}
+
+func TestWsSyncConnCloseWithPendingInteractiveResponseDoesNotBlock(t *testing.T) {
+	c, _, _ := blockedCoalescedTestConn(t, 1)
+	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close blocked with pending interactive response")
 	}
 }
 

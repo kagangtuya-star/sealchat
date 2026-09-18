@@ -35,6 +35,7 @@ import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
 import DiceTrayFloatingWindow from './components/DiceTrayFloatingWindow.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
 import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
+import { shouldApplyMessageCreateAck } from './messageCreateAck';
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
@@ -12727,10 +12728,16 @@ const retrySendMessage = async (target?: Message) => {
     || current.identity?.variantId
     || '',
   ).trim() || undefined;
-  const displayOrder = Number(currentData.displayOrder);
-  const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
-    ? displayOrder
-    : undefined;
+	const displayOrder = Number(currentData.displayOrder);
+	const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
+	  ? displayOrder
+	  : undefined;
+	const requestChannelId = String(
+	  currentData.channel?.id
+	  || currentData.channel_id
+	  || chat.curChannel?.id
+	  || '',
+	).trim();
 
   setMessageSendStatus(currentData, 'sending');
   instantMessages.add(current);
@@ -12748,17 +12755,25 @@ const retrySendMessage = async (target?: Message) => {
       undefined,
       identityVariantId,
     );
-    if (!newMsg) {
-      throw new Error('message.create returned empty result');
-    }
-    Object.entries(newMsg as Record<string, any>).forEach(([k, v]) => {
-      (current as any)[k] = v;
-    });
-    setMessageSendStatus(current as any, 'sent');
-    instantMessages.delete(current);
-    upsertMessage(current);
-    notifyNewMessageHighlight(current);
-    toBottom();
+	  if (!newMsg) {
+	    throw new Error('message.create returned empty result');
+	  }
+	  const currentChannelId = String(chat.curChannel?.id || '').trim();
+	  const applyAck = shouldApplyMessageCreateAck(
+	    requestChannelId,
+	    currentChannelId,
+	    instantMessages.has(current),
+	  );
+	  instantMessages.delete(current);
+	  if (applyAck) {
+	    Object.entries(newMsg as Record<string, any>).forEach(([k, v]) => {
+	      (current as any)[k] = v;
+	    });
+	    setMessageSendStatus(current as any, 'sent');
+	    upsertMessage(current);
+	    notifyNewMessageHighlight(current);
+	    toBottom();
+	  }
   } catch (error) {
     const reason = resolveMessageSendFailureReason(error);
     setMessageSendStatus(current as any, 'failed', reason);
@@ -13056,10 +13071,16 @@ const performSend = async (options?: {
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
       identityVariantIdOverride,
     );
-    if (!newMsg) {
-      throw new Error('message.create returned empty result');
-    }
-    if (isChannelDefaultDiceCommandResponse(newMsg)) {
+	  if (!newMsg) {
+	    throw new Error('message.create returned empty result');
+	  }
+	  const responseChannelId = String(chat.curChannel?.id || '').trim();
+	  if (!activeChannelId || responseChannelId !== activeChannelId) {
+	    instantMessages.delete(tmpMsg);
+	    sendOutcome = { ok: true, messageId: String(newMsg.id || tmpMsg.id || clientId) };
+	    return sendOutcome;
+	  }
+	  if (isChannelDefaultDiceCommandResponse(newMsg)) {
       setMessageSendStatus(tmpMsg as any, 'sent');
       instantMessages.delete(tmpMsg);
       const index = rows.value.findIndex(item => item.id === tmpMsg.id);
@@ -13076,9 +13097,16 @@ const performSend = async (options?: {
       sendOutcome = { ok: true, messageId: String(newMsg.id) };
       return sendOutcome;
     }
-    for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
-      (tmpMsg as any)[k] = v;
-    }
+	  const applyAck = shouldApplyMessageCreateAck(
+	    activeChannelId,
+	    responseChannelId,
+	    instantMessages.has(tmpMsg),
+	  );
+	  if (applyAck) {
+	    for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
+	      (tmpMsg as any)[k] = v;
+	    }
+	  }
     const interjectFirstEditSnapshot = interjectSession.value?.phase === 'awaiting-first-send'
       ? createInterjectEditSnapshot({
         messageId: String(tmpMsg.id || '').trim(),
@@ -13098,12 +13126,16 @@ const performSend = async (options?: {
     if (diceMatchesInDraft.length) {
       diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
-    setMessageSendStatus(tmpMsg as any, 'sent');
-    instantMessages.delete(tmpMsg);
-    if (shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
-      upsertMessage(tmpMsg);
-    }
-    notifyNewMessageHighlight(tmpMsg);
+	  if (applyAck) {
+	    setMessageSendStatus(tmpMsg as any, 'sent');
+	  }
+	  instantMessages.delete(tmpMsg);
+	  if (applyAck && shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
+	    upsertMessage(tmpMsg);
+	  }
+	  if (applyAck) {
+	    notifyNewMessageHighlight(tmpMsg);
+	  }
     if (activeReeditSource) {
       try {
         await chat.messageRemove(activeReeditSource.channelId, activeReeditSource.messageId);

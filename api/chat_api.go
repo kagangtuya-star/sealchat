@@ -11,7 +11,6 @@ import (
 
 	"sealchat/model"
 	"sealchat/protocol"
-	"sealchat/service/perfprofiler"
 )
 
 func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatContext, data T) (T2, error)) {
@@ -24,7 +23,7 @@ func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatCo
 
 	err := json.Unmarshal(msg, &data)
 	if err != nil {
-		_ = c.WriteJSON(&struct {
+		_ = c.EnqueueJSON(&struct {
 			Echo string `json:"echo"`
 			Err  string `json:"err"`
 		}{ctx.Echo, "INVALID_PARAMS"})
@@ -34,38 +33,28 @@ func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatCo
 	ret, err := solve(ctx, data.Data)
 	if err != nil {
 		errMsg := err.Error()
-		started := int64(0)
-		if data.API == "message.create" {
-			started = perfprofiler.BeginMessageResponseWrite()
-		}
 		response := &struct {
 			Echo string `json:"echo"`
 			Err  string `json:"err"`
 			Data any    `json:"data"`
 		}{ctx.Echo, errMsg, ret}
 		if data.API == "message.create" {
-			_ = c.writeMessageCreateResponseJSON(response)
+			_ = c.enqueueMessageCreateResponseJSON(response)
 		} else {
-			_ = c.WriteJSON(response)
+			_ = c.EnqueueJSON(response)
 		}
-		perfprofiler.RecordMessageResponseWrite(started)
 		return
 	}
 
-	started := int64(0)
-	if data.API == "message.create" {
-		started = perfprofiler.BeginMessageResponseWrite()
-	}
 	response := &struct {
 		Echo string `json:"echo"`
 		Data any    `json:"data"`
 	}{ctx.Echo, ret}
 	if data.API == "message.create" {
-		_ = c.writeMessageCreateResponseJSON(response)
+		_ = c.enqueueMessageCreateResponseJSON(response)
 	} else {
-		_ = c.WriteJSON(response)
+		_ = c.EnqueueJSON(response)
 	}
-	perfprofiler.RecordMessageResponseWrite(started)
 }
 
 func apiUserListCommon(dataNext string, f func(q *gorm.DB)) (any, error) {

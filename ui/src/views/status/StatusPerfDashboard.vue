@@ -819,9 +819,9 @@ onBeforeUnmount(() => {
       <n-card title="WebSocket 出站诊断" size="small" embedded class="perf-inner-card perf-trace-card">
         <n-data-table :columns="durationColumns" :data="wsResponseRows" :bordered="false" size="small" :pagination="false" :scroll-x="720" />
         <div class="perf-card__subcopy perf-ws-copy">
-          Queue Wait 表示 message.create response 从进入 reliable FIFO 到 outboundWriter 取出的等待时间。<br>
-          Socket Write 表示 outboundWriter 实际执行 WebSocket WriteMessage 的耗时。<br>
-          Queue Depth Ahead 表示 response 入队时排在它前面的 reliable frame 数量，为并发近似值。
+	          Queue Wait 表示 message.create response 从进入 interactive queue 到 outboundWriter 取出的等待时间。<br>
+	          Socket Write 表示 outboundWriter 实际执行 WebSocket WriteMessage 的耗时。<br>
+	          Queue Depth Ahead 表示 message.create response 入 interactive queue 时排在它前面的 interactive frame 数量，为并发近似值。
         </div>
         <div class="perf-summary-strip perf-summary-strip--five">
           <div class="perf-summary-item"><span class="perf-summary-item__label">Queue Depth Ahead P50</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.p50) }}</strong></div>
@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
           <div class="perf-summary-item"><span class="perf-summary-item__label">Max</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.max) }}</strong></div>
           <div class="perf-summary-item"><span class="perf-summary-item__label">Samples</span><strong>{{ formatNumber(pipelineSummary?.ws?.responseQueueDepth?.count) }}</strong></div>
         </div>
-        <div class="perf-card__subcopy perf-ws-copy">Reliable FIFO 组成（本轮累计）</div>
+	        <div class="perf-card__subcopy perf-ws-copy">Reliable 出站组成（本轮累计）</div>
         <div class="perf-summary-strip perf-summary-strip--five">
           <div class="perf-summary-item"><span class="perf-summary-item__label">Total</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableEnqueuedTotal) }}</strong></div>
           <div class="perf-summary-item"><span class="perf-summary-item__label">Message Created</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableMessageCreated) }}</strong></div>
@@ -839,7 +839,7 @@ onBeforeUnmount(() => {
           <div class="perf-summary-item"><span class="perf-summary-item__label">Other</span><strong>{{ formatNumber(pipelineSummary?.ws?.reliableOther) }}</strong></div>
         </div>
         <div class="perf-card__subcopy perf-ws-copy">
-          这些计数表示自上次清空诊断数据后成功进入 reliable FIFO 的 frame 数量，用于判断 message.create response 前方的主要流量来源。
+	          这些计数表示自上次清空诊断数据后成功进入 reliable 出站队列的 frame 数量。
         </div>
         <div class="perf-metric-grid perf-ws-counters">
           <div class="perf-metric"><div class="perf-metric__label">本轮累计 Reliable Queue Full</div><div class="perf-metric__value">{{ formatNumber(pipelineSummary?.ws?.reliableQueueFull) }}</div></div>

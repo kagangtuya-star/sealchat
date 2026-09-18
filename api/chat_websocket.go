@@ -35,8 +35,12 @@ var (
 
 const defaultWSOutboundQueueSize = utils.DefaultWebSocketOutboundQueueSize
 
-const maxWSCoalescedKeys = 64
-const wsReliableBurstBeforeCoalesced = 32
+const (
+	maxWSCoalescedKeys               = 64
+	wsReliableBurstBeforeCoalesced   = 32
+	wsInteractiveQueueSize           = 32
+	wsInteractiveBurstBeforeReliable = 8
+)
 
 type wsCoalescedEntry struct {
 	message wsOutboundMessage
@@ -78,14 +82,15 @@ type WsSyncConn struct {
 	*websocket.Conn
 	Mux sync.RWMutex
 
-	outbound       chan wsOutboundMessage
-	done           chan struct{}
-	closeOnce      sync.Once
-	outboundSocket wsOutboundSocket
-	coalescedMu    sync.Mutex
-	coalesced      map[string]wsCoalescedEntry
-	coalescedWake  chan struct{}
-	coalescedSeq   uint64
+	outbound            chan wsOutboundMessage
+	interactiveOutbound chan wsOutboundMessage
+	done                chan struct{}
+	closeOnce           sync.Once
+	outboundSocket      wsOutboundSocket
+	coalescedMu         sync.Mutex
+	coalesced           map[string]wsCoalescedEntry
+	coalescedWake       chan struct{}
+	coalescedSeq        uint64
 }
 
 func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
@@ -93,12 +98,13 @@ func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
 		queueSize = defaultWSOutboundQueueSize
 	}
 	c := &WsSyncConn{
-		Conn:           raw,
-		outbound:       make(chan wsOutboundMessage, queueSize),
-		done:           make(chan struct{}),
-		outboundSocket: raw,
-		coalesced:      make(map[string]wsCoalescedEntry),
-		coalescedWake:  make(chan struct{}, 1),
+		Conn:                raw,
+		outbound:            make(chan wsOutboundMessage, queueSize),
+		interactiveOutbound: make(chan wsOutboundMessage, wsInteractiveQueueSize),
+		done:                make(chan struct{}),
+		outboundSocket:      raw,
+		coalesced:           make(map[string]wsCoalescedEntry),
+		coalescedWake:       make(chan struct{}, 1),
 	}
 	go c.outboundWriter()
 	return c
@@ -110,10 +116,6 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 
 func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
 	return c.writeJSONWithDiagnostic(v, timeout, wsOutboundDiagnosticNone)
-}
-
-func (c *WsSyncConn) writeMessageCreateResponseJSON(v any) error {
-	return c.writeJSONWithDiagnostic(v, wsWriteTimeout, wsOutboundDiagnosticMessageCreateResponse)
 }
 
 func (c *WsSyncConn) writeJSONWithDiagnostic(v any, timeout time.Duration, diagnosticTag wsOutboundDiagnosticTag) error {
@@ -149,6 +151,26 @@ func (c *WsSyncConn) EnqueueJSON(v any) error {
 	return c.enqueueReliableJSON(wsReliableClassOther, v)
 }
 
+func (c *WsSyncConn) enqueueMessageCreateResponseJSON(v any) error {
+	return c.enqueueInteractiveJSON(wsReliableClassMessageCreateResponse, wsOutboundDiagnosticMessageCreateResponse, v)
+}
+
+func (c *WsSyncConn) enqueueInteractiveJSON(class wsReliableClass, diagnosticTag wsOutboundDiagnosticTag, v any) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.interactiveOutbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	return c.enqueueInteractiveOutbound(wsOutboundMessage{
+		payload:       payload,
+		timeout:       wsWriteTimeout,
+		reliableClass: class,
+		diagnosticTag: diagnosticTag,
+	})
+}
+
 func (c *WsSyncConn) enqueueReliableJSON(class wsReliableClass, v any) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
@@ -166,13 +188,37 @@ func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
 		return errWSConnectionClosed
 	default:
 	}
+	select {
+	case c.outbound <- message:
+		perfprofiler.RecordWSReliableEnqueued(uint8(message.reliableClass))
+		select {
+		case <-c.done:
+			return errWSConnectionClosed
+		default:
+			return nil
+		}
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+		perfprofiler.RecordWSReliableQueueFull(message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse)
+		_ = c.Close()
+		return errWSOutboundQueueFull
+	}
+}
+
+func (c *WsSyncConn) enqueueInteractiveOutbound(message wsOutboundMessage) error {
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
 	if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
 		message.enqueuedAtNs = time.Now().UnixNano()
-		message.queueDepthAtEnqueue = len(c.outbound)
+		message.queueDepthAtEnqueue = len(c.interactiveOutbound)
 	}
 
 	select {
-	case c.outbound <- message:
+	case c.interactiveOutbound <- message:
 		perfprofiler.RecordWSReliableEnqueued(uint8(message.reliableClass))
 		select {
 		case <-c.done:
@@ -259,7 +305,8 @@ func (c *WsSyncConn) popOldestCoalesced() (wsOutboundMessage, bool) {
 }
 
 func (c *WsSyncConn) outboundWriter() {
-	reliableBurst := 0
+	interactiveBurst := 0
+	nonCoalescedBurst := 0
 	for {
 		select {
 		case <-c.done:
@@ -268,28 +315,57 @@ func (c *WsSyncConn) outboundWriter() {
 		}
 		var message wsOutboundMessage
 		var ready bool
-		if reliableBurst >= wsReliableBurstBeforeCoalesced {
+		if nonCoalescedBurst >= wsReliableBurstBeforeCoalesced {
 			message, ready = c.popOldestCoalesced()
-			reliableBurst = 0
+			nonCoalescedBurst = 0
+			if ready {
+				interactiveBurst = 0
+			}
+		}
+		if !ready && interactiveBurst < wsInteractiveBurstBeforeReliable {
+			select {
+			case message = <-c.interactiveOutbound:
+				ready = true
+				interactiveBurst++
+				nonCoalescedBurst++
+			default:
+			}
 		}
 		if !ready {
 			select {
 			case message = <-c.outbound:
 				ready = true
-				reliableBurst++
+				interactiveBurst = 0
+				nonCoalescedBurst++
 			default:
 			}
 		}
 		if !ready {
 			message, ready = c.popOldestCoalesced()
-			reliableBurst = 0
+			if ready {
+				interactiveBurst = 0
+				nonCoalescedBurst = 0
+			}
+		}
+		if !ready {
+			select {
+			case message = <-c.interactiveOutbound:
+				ready = true
+				interactiveBurst++
+				nonCoalescedBurst++
+			default:
+			}
 		}
 		if !ready {
 			select {
 			case <-c.done:
 				return
+			case message = <-c.interactiveOutbound:
+				interactiveBurst++
+				nonCoalescedBurst++
 			case message = <-c.outbound:
-				reliableBurst++
+				interactiveBurst = 0
+				nonCoalescedBurst++
 			case <-c.coalescedWake:
 				continue
 			}
@@ -302,6 +378,7 @@ func (c *WsSyncConn) outboundWriter() {
 			}
 			if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
 				perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, -1, message.queueDepthAtEnqueue, true)
+				perfprofiler.RecordMessageResponseWrite(message.enqueuedAtNs)
 			}
 			return
 		default:
@@ -314,6 +391,7 @@ func (c *WsSyncConn) outboundWriter() {
 		}
 		if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
 			perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, socketWriteNs, message.queueDepthAtEnqueue, err != nil)
+			perfprofiler.RecordMessageResponseWrite(message.enqueuedAtNs)
 		}
 		if err != nil {
 			_ = c.Close()
@@ -1315,7 +1393,7 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					if collector := metrics.Get(); collector != nil && curUser != nil {
 						collector.RecordUserHeartbeat(curUser.ID)
 					}
-					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+					_ = c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, protocol.GatewayPayloadStructure{
 						Op: protocol.OpPong,
 					})
 					// 仅在焦点状态变化时触发在线态广播，避免每次 ping 放大 CPU。
@@ -1361,7 +1439,7 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					}
 					latencyBody.ServerSentAt = time.Now().UnixMilli()
 					payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult, Body: latencyBody}
-					_ = c.WriteJSON(payload)
+					_ = c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, payload)
 					solved = true
 				}
 			}
