@@ -1277,9 +1277,7 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 				}
 				select {
 				case <-time.After(interval):
-					c.Mux.Lock()
 					err := rawConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
-					c.Mux.Unlock()
 					if err != nil {
 						log.Printf("WebSocket ping failed, closing connection: %v", err)
 						_ = c.Close()
