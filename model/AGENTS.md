@@ -1,106 +1,72 @@
-# SealChat Model Agent Guide
+# SealChat Model / Database Agent Guide
 
-This file defines model/persistence instructions for AI coding agents working under `model/`.
+This file defines persistence-layer rules for AI coding agents working under `model/`.
 
-Repository-wide rules from the root `AGENTS.md` also apply.
+Repository-wide rules from the root `AGENTS.md` also apply. Keep changes small, compatibility-safe, and limited to the requested scope.
 
 ## Scope
 
-The `model/` package contains SealChat's persistence-facing data structures and database-related behavior.
+`model/` owns persistence-facing behavior:
 
-The project uses GORM and supports multiple SQL backends, including:
+- GORM models and table definitions;
+- fields, tags, indexes, constraints, timestamps, and nullable values;
+- reusable persistence/query helpers;
+- persistence-specific normalization;
+- database behavior shared by services.
+
+SealChat supports:
 
 - SQLite;
 - MySQL;
 - PostgreSQL.
 
-Model code includes patterns such as:
+Do not put Fiber/HTTP behavior, permission orchestration, WebSocket broadcasting, external API calls, or large multi-model workflows in `model/`. Those normally belong in `service/` or `api/`.
 
-- GORM model structs;
-- explicit table names;
-- GORM tags;
-- indexes and unique indexes;
-- timestamps and nullable fields;
-- small persistence-oriented normalization methods;
-- persistence helpers used by services.
+Do not introduce a mandatory repository/DAO layer. Existing services may use `model.GetDB()` and GORM directly.
 
-Model changes are compatibility-sensitive because they affect existing databases, migrations, queries, imports, and service behavior.
+## Compatibility
 
-## Role of the Model Layer
+Treat schema, GORM tags, stored values, enum strings, defaults, indexes, and query semantics as compatibility-sensitive.
 
-Keep persistence concerns here.
+Before changing persistent structure or behavior:
 
-Appropriate responsibilities include:
+1. inspect existing migrations/init behavior;
+2. search all readers and writers;
+3. inspect service/API callers;
+4. consider existing production rows;
+5. verify zero/default/NULL behavior;
+6. verify indexes and uniqueness constraints;
+7. preserve SQLite/MySQL/PostgreSQL compatibility.
 
-- persistent struct definitions;
-- GORM tags;
-- table names;
-- indexes;
-- database representation;
-- small persistence-specific helpers;
-- normalization intrinsic to the stored model;
-- reusable model-level query helpers where that is already the project pattern.
+Do not rename or delete persisted fields, columns, enum values, or constraints as cleanup without an explicit compatibility plan.
 
-Do not put Fiber/HTTP concerns in model code.
+A Go struct change is not automatically a safe database migration.
 
-Do not place large application workflows or user-facing permission orchestration into model hooks.
+## Cross-Database SQL
 
-The service layer is the normal owner of multi-model business behavior.
+Shared model code must work on SQLite, MySQL, and PostgreSQL unless explicitly backend-specific.
 
-## Existing Architecture
+Prefer portable GORM clauses and simple SQL.
 
-SealChat services may directly use `model.GetDB()` and GORM.
+Be careful with:
 
-Do not introduce a mandatory repository/DAO abstraction across the project unless explicitly requested.
-
-When adding a model helper, ensure it provides genuine persistence-level value rather than merely hiding one ordinary GORM call.
-
-## Cross-Database Compatibility
-
-Shared model/query behavior must work across SQLite, MySQL, and PostgreSQL unless explicitly backend-specific.
-
-Be cautious with SQL features whose syntax or semantics differ, including:
-
-- case-insensitive matching;
+- `ON CONFLICT` / upsert behavior;
 - JSON functions;
-- boolean representations;
-- datetime functions;
+- booleans;
+- date/time functions;
 - string concatenation;
-- upsert/conflict syntax;
-- full-text search;
 - collations;
 - `RETURNING`;
 - generated columns;
 - partial indexes;
-- identifier quoting.
+- identifier quoting;
+- full-text search.
 
-Prefer portable GORM expressions and simple SQL where possible.
+If backend-specific SQL is required, branch explicitly by dialect and document/test it. Never fix one backend by silently breaking another.
 
-If backend-specific SQL is necessary, branch explicitly by dialect and test/document the behavior.
+For batch upserts with row-specific conflict updates, prefer GORM constructs that let the dialect rewrite incoming-row references correctly, such as `clause.Column{Table: "excluded", ...}` where supported by the current drivers.
 
-Do not fix one backend by silently breaking the others.
-
-## Schema Changes
-
-Do not change persistent schema for an implementation convenience.
-
-Before adding/removing/renaming a field:
-
-1. find existing migration/init behavior;
-2. search all reads and writes;
-3. inspect JSON/API exposure;
-4. consider existing production rows;
-5. consider zero/default/null values;
-6. consider indexes and constraints;
-7. consider downgrade/compatibility expectations if relevant.
-
-A struct field change is not automatically a safe migration.
-
-Do not rename a GORM column without an explicit migration/compatibility plan.
-
-Do not delete a persisted field simply because current code appears not to read it.
-
-## GORM Tags
+## GORM and Schema Rules
 
 Treat GORM tags as schema definitions.
 
@@ -111,265 +77,222 @@ Be deliberate with:
 - `default`;
 - `index`;
 - `uniqueIndex`;
-- composite-index names;
-- composite-index priority;
+- composite-index names and priorities;
 - column types.
 
-When adding a query pattern that will be hot or large, consider whether an index is required.
+Reuse existing base models and ID conventions.
 
-Do not add indexes blindly. Each index increases write/storage cost.
+Do not add indexes blindly. Every index adds write, storage, and migration cost.
 
-Composite index order should follow actual filtering/sorting patterns.
+For a new hot query, inspect the real `WHERE`, `ORDER BY`, expected cardinality, and existing indexes before adding another one.
 
-## Base Models and IDs
+## Queries
 
-Reuse existing base model types and ID conventions.
+Queries whose behavior depends on order must use an explicit `ORDER BY`.
 
-Do not introduce an incompatible primary-key strategy for one new model without a concrete requirement.
+This is mandatory for timelines, pagination, queues, recent items, pinned/priority items, exports, and cursor generation.
 
-Keep ID lengths/types consistent with surrounding models and externally visible identifiers.
+Avoid:
 
-Do not assume an empty string is equivalent to a missing row in every query path unless existing model/service code intentionally uses that convention.
+- unbounded scans on large tables;
+- accidental N+1 queries;
+- large preloads when only a few columns or counts are required;
+- repeated queries for data already available to the caller;
+- per-row queries inside hot loops when one batch query is equivalent.
 
-## NULL, Zero Values, and Defaults
+Use explicit selects/joins when they materially reduce unnecessary work and remain readable.
 
-Distinguish database `NULL` from Go zero values.
+Pagination must use deterministic ordering and stable tie-breakers.
 
-Use pointer/nullable fields when the difference matters.
+## Updates and Concurrency
+
+Do not `Save` a stale full model when only a few fields should change.
+
+Prefer targeted:
+
+- `Update`;
+- `UpdateColumn`;
+- `Updates(map[string]any{...})`;
+- conditional updates with `RowsAffected`.
+
+Remember that struct-based GORM `Updates` may omit zero values while map-based updates can explicitly write `false`, `0`, and `""`.
+
+Use database uniqueness/constraints for invariants that must survive concurrent processes. A Go mutex only protects one process.
+
+For compare-and-set behavior, include the expected state/version in the `WHERE` clause and inspect `RowsAffected`.
+
+## Transactions
+
+Use transactions only when an invariant truly requires atomic multi-write behavior.
+
+Keep transaction boundaries narrow.
+
+A helper expected to participate in a caller transaction must use the provided `*gorm.DB`; do not silently fall back to the global DB.
+
+Do not add nested/independent transactions without understanding GORM and backend behavior.
+
+Avoid holding a transaction or SQLite writer while doing unrelated work, network I/O, large loops, or expensive computation.
+
+Do not wrap many independent hot-path statements in one large transaction merely to reduce commit count; measure the actual contention first.
+
+## Hooks
+
+Use GORM hooks sparingly.
+
+Hooks must stay persistence-local and lightweight.
+
+Do not hide in hooks:
+
+- WebSocket broadcasts;
+- notifications;
+- external HTTP calls;
+- permission workflows;
+- unrelated model mutations;
+- request-context behavior.
+
+Hooks run in migrations/tests and can silently amplify hot-path database work.
+
+When optimizing a create-only hook, preserve update/replace semantics of reusable helpers. Example: a new message with no image attachment may skip attachment synchronization, but the general replace helper must still delete old attachment rows when an existing message changes from images to plain text.
+
+## Deletes
+
+Understand whether the model uses hard delete, soft delete, archival, or status flags.
+
+Do not change one lifecycle semantic into another casually.
+
+Bulk updates/deletes must use narrow predicates. Never add an unscoped destructive mutation without an explicit requirement.
+
+When deleting persistent references, inspect dependent rows and external storage references.
+
+## Time, NULL, and Persistent Values
+
+Follow surrounding project conventions for time storage and comparison; use UTC where existing code does.
+
+Distinguish database `NULL` from Go zero values when the difference matters.
 
 Be especially careful with:
 
 - `*time.Time`;
 - optional strings;
 - booleans with meaningful unset state;
-- counters/version fields;
+- counters and versions;
 - foreign IDs.
 
-Remember that GORM struct-based `Updates` may omit zero values, while map-based updates can explicitly write them.
+Persistent enum/string values are contracts. Do not rename them as cosmetic cleanup.
 
-Choose update form based on intended semantics.
+## Sensitive Data
 
-Do not change `false`, `0`, or `""` persistence behavior accidentally.
+Models may contain hashes, tokens, external IDs, notification endpoints, or configuration.
 
-## Normalize Methods
+Do not expose sensitive fields through JSON unless explicitly intended.
 
-Small `Normalize()` methods are an established model pattern where normalization is intrinsic to the persisted entity.
+Do not store plaintext secrets where the existing design stores hashes.
 
-Good uses include:
+Do not add logging of secrets from model helpers.
 
-- trimming identifier/title fields;
-- filling stable enum defaults;
-- ensuring minimum version/default values.
+## Performance Rules
 
-Do not use model normalization to:
+Do not optimize by guesswork. For hot paths, measure:
 
-- perform network calls;
-- query unrelated tables;
-- enforce user permissions;
-- rewrite user-authored rich content;
-- trigger side effects.
+- query count;
+- write count;
+- connection-pool waits;
+- transaction duration;
+- result cardinality;
+- index use;
+- duplicated work.
 
-Keep normalization deterministic.
+Prefer reducing redundant database work before increasing connection-pool size.
 
-If normalization must run before persistence, make sure callers actually invoke it or use the project's established hook pattern.
+For SQLite in particular, a larger `MaxOpenConns` does not create multiple concurrent writers. It may move waiting from `database/sql` into SQLite lock contention.
 
-## Query Determinism
+Do not change the current SQLite connection-pool defaults without a controlled A/B test that checks both:
 
-SQL row order is undefined unless explicitly ordered.
+- `database/sql` wait count/duration;
+- SQLite busy/lock errors and tail latency.
 
-Any query whose behavior depends on order must use an explicit `ORDER BY`.
+Batch equivalent writes when business semantics are unchanged. Avoid per-window/per-row statement amplification.
 
-This is mandatory for:
+## Established Hot-Path Invariants
 
-- message timelines;
-- pagination;
-- recent records;
-- priority/pinned content;
-- deterministic exports;
-- processing queues;
-- cursor generation.
+The following optimizations are intentional and should not be casually reverted.
 
-Do not rely on primary-key insertion order unless it is explicitly part of the query.
+### Digest windows
 
-When two rows may have equal primary sort values, add a stable tie-breaker where pagination correctness requires it.
+Digest recording uses seven supported windows, but database writes are batched.
 
-## Pagination
+For one normal message:
 
-Pagination queries must be deterministic and gap/duplicate resistant.
+- visitor rows: at most one batch upsert;
+- speaker rows: at most one batch upsert.
 
-For cursor/keyset pagination:
+Do not restore seven independent visitor plus seven independent speaker statements.
 
-- ensure cursor fields match the query ordering;
-- use stable tie-breakers;
-- define inclusive/exclusive boundaries carefully;
-- scope the cursor to the relevant resource/channel if required.
+Speaker conflict updates must preserve:
 
-For offset pagination:
+- `message_count = message_count + 1`;
+- existing `first_message_at`;
+- incoming `window_end`;
+- incoming `speaker_display_name`;
+- incoming `last_message_at`;
+- `updated_at`.
 
-- understand that concurrent inserts/deletes can move rows;
-- use it only where that behavior is acceptable.
+Digest visit recording should insert all supported visitor windows in one batch.
 
-Do not mix cursors generated from one filter/order with a different query.
+### Message image attachments
 
-## Updates and Concurrency
+For a newly created message with no image attachment IDs, `AfterCreate` should return without opening the attachment replacement transaction.
 
-Avoid `Save` of an entire stale model when only a few fields should change.
+Do not move that fast-path into the generic replacement helper: existing-message updates from image content to plain text must still delete old attachment rows.
 
-Prefer targeted `Updates(map[string]any{...})` or equivalent when independent fields may be changed concurrently.
+### App notification persistence helpers
 
-For compare-and-set behavior, include the expected old/version state in the `WHERE` clause and inspect `RowsAffected`.
+Do not reintroduce repeated preference-table scans in the message hot path.
 
-Use database constraints for invariants that must survive concurrent processes.
+The combined external-notification preference query is intended to represent the union of valid ServerChan, Bark, and Meow consumers.
 
-A Go mutex cannot enforce a database invariant across multiple server processes.
+Avoid adding per-message database lookups when the same already-loaded data can be reused by the service layer.
 
-## Transactions
+### Webhook/event-log helpers
 
-Model helpers used inside a transaction should accept or use the transaction handle when necessary.
+Keep persistence helpers small and composable so callers that already know origin metadata do not need an unnecessary lookup merely to append an event log row.
 
-Do not secretly call the global DB from a helper that is expected to participate in the caller's transaction.
+Do not force all event-log writes through a helper that always re-queries external references.
 
-If adding a reusable query helper, consider accepting `*gorm.DB` when transactional composition is required.
+## Testing
 
-Do not start nested/independent transactions without understanding GORM and backend semantics.
-
-## Index and Query Review
-
-When introducing or changing a frequently executed query, inspect:
-
-- `WHERE` predicates;
-- `ORDER BY`;
-- join/preload behavior;
-- expected cardinality;
-- existing indexes.
-
-For large message/channel/user tables, avoid unbounded scans.
-
-Do not solve every query with a new index; prefer indexes that match real access paths.
-
-For compound filters plus ordering, index column order matters.
-
-## Relations and Preload
-
-Use GORM relations/preloads deliberately.
-
-Avoid accidental N+1 query patterns.
-
-Do not preload large child collections when only counts or a few fields are required.
-
-Use explicit joins/selects when that is clearer and consistent with nearby code.
-
-Be cautious when adding cascading deletes or association behavior: it can alter existing data lifecycle semantics.
-
-## Deletes
-
-Understand whether a model uses:
-
-- hard delete;
-- soft delete;
-- status flags;
-- archival.
-
-Do not replace one semantic with another casually.
-
-For hard deletes, inspect dependent rows and external storage references.
-
-For bulk delete/update, use narrow predicates and consider requiring an explicit scope guard.
-
-Never write an unscoped bulk mutation without confirming it is intentional.
-
-## Time
-
-Use the project's established time conventions.
-
-Prefer UTC for stored/server comparison when surrounding code does so.
-
-Be explicit about:
-
-- creation/update times;
-- nullable event times;
-- expiration;
-- cursor timestamps;
-- timezone conversion at API/UI boundaries.
-
-Do not compare formatted time strings when native time/database comparison is available.
-
-## Enums and Persistent Strings
-
-String enums stored in the database are compatibility-sensitive.
-
-Do not rename an enum value as cosmetic cleanup.
-
-When adding a value:
-
-- define its default/fallback behavior;
-- update validators;
-- update service/API handling;
-- consider old clients/data.
-
-Unknown stored values should fail or fall back according to the domain contract, not arbitrarily.
-
-## Sensitive Fields
-
-Persistent models may contain:
-
-- credential hashes;
-- token tails;
-- external IDs;
-- configuration;
-- notification endpoints.
-
-Do not add JSON exposure to sensitive fields without verifying that they may safely leave the server.
-
-A database hash is still sensitive data even when not reversible.
-
-Do not store plaintext secrets when the existing design uses hashed credentials.
-
-## Hooks and Side Effects
-
-Use GORM hooks sparingly.
-
-Hooks should not hide substantial business workflows.
-
-Avoid hooks that:
-
-- broadcast WebSocket events;
-- send notifications;
-- call external APIs;
-- mutate unrelated domain state;
-- depend on request/user context.
-
-These side effects are difficult to reason about and can execute unexpectedly during migrations/tests.
-
-Prefer explicit service orchestration.
-
-## Tests
-
-For model changes, test persistence semantics when practical.
+For model changes, add focused persistence tests when practical.
 
 Important cases include:
 
-- defaults;
-- normalization;
+- defaults and normalization;
 - unique constraints;
-- composite indexes/uniqueness;
+- composite uniqueness;
 - zero-value updates;
 - nullable fields;
 - deterministic ordering;
 - pagination boundaries;
+- conflict/upsert semantics;
+- create/update/delete lifecycle behavior;
+- batch behavior;
 - migration compatibility.
 
-When a query is intended to be cross-database, avoid tests that only prove SQLite-specific SQL unless the code is explicitly SQLite-only.
+For cross-database code, do not rely on SQLite-only SQL semantics unless the implementation is intentionally SQLite-specific.
 
-## Validation
+Use existing project test DB setup instead of inventing a parallel harness.
 
-Run focused model tests first:
+Run focused tests first:
 
 ```bash
 go test ./model
 ```
 
-Run affected service/API tests when model behavior is consumed there.
+When service/API behavior consumes the change:
+
+```bash
+go test ./service
+go test ./api
+```
 
 When practical:
 
@@ -377,29 +300,30 @@ When practical:
 go test ./...
 ```
 
-For concurrency-sensitive persistence behavior, consider:
+For concurrency-sensitive code, consider:
 
 ```bash
 go test -race ./model ./service
 ```
 
-The race detector does not replace database concurrency tests, but it can detect process-level data races.
+Do not claim tests passed unless they were actually executed.
 
-## Diff Review
+## Review Checklist
 
-Before finishing a model change, explicitly check for:
+Before finishing a model/database change, verify:
 
-- unintended column/table renames;
-- changed defaults;
-- changed JSON exposure;
-- missing migration considerations;
-- SQLite-specific SQL in shared code;
-- missing `ORDER BY`;
-- unsafe full-model saves;
-- broad update/delete predicates;
-- incorrect zero-value behavior;
-- missing/incorrect index priority;
-- sensitive fields becoming serializable;
-- business side effects leaking into model hooks.
+- no unintended schema/table/column rename;
+- no changed default or NULL semantics;
+- no accidental JSON exposure;
+- no SQLite-only behavior in shared code;
+- deterministic ordering where required;
+- no stale full-model save;
+- no broad update/delete;
+- no unnecessary transaction;
+- no N+1 or repeated hot-path query;
+- no blind index addition;
+- no side effect hidden in a hook;
+- no regression of the established hot-path invariants above;
+- focused tests cover the changed persistence semantics.
 
-Persistence changes should be conservative and explicit.
+Persistence changes should be conservative, measurable, and explicit.
