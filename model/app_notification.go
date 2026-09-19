@@ -325,6 +325,18 @@ func ListMeowAppNotificationPreferences() ([]AppNotificationPreferenceModel, err
 	return preferences, err
 }
 
+func ListEnabledExternalAppNotificationPreferences() ([]AppNotificationPreferenceModel, error) {
+	var preferences []AppNotificationPreferenceModel
+	err := db.Where(
+		"world_whitelist_enabled = ? AND ((server_chan_enabled = ? AND server_chan_send_key <> ?) OR (bark_enabled = ? AND bark_device_key <> ? AND bark_server_url <> ?) OR (meow_enabled = ? AND meow_nickname <> ?))",
+		true,
+		true, "",
+		true, "", "",
+		true, "",
+	).Find(&preferences).Error
+	return preferences, err
+}
+
 func UpdateAppNotificationDeviceWorld(deviceID, worldID string) (*AppNotificationDeviceModel, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	worldID = strings.TrimSpace(worldID)

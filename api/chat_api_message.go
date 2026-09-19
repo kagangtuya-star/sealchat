@@ -2622,7 +2622,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		webhookStarted := trace.StageStart()
-		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		_ = model.WebhookEventLogAppend(data.ChannelID, "message-created", m.ID, "", "", "", "")
 		trace.StageDone(perfprofiler.MessageStageWebhook, webhookStarted)
 		notifyAppMessageCreated(m.ID)
 		go func(channelID string, message model.MessageModel) {
