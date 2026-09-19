@@ -103,6 +103,9 @@ func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (m *MessageModel) AfterCreate(tx *gorm.DB) error {
+	if len(ExtractMessageImageAttachmentIDs(m.Content)) == 0 {
+		return nil
+	}
 	return ReplaceMessageImageAttachments(tx, m.ID, m.Content)
 }
 
