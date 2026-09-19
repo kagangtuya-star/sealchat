@@ -87,3 +87,4 @@ ui/scripts/quickdraw-inline-style.test.mjs
 *.spec.cts
 *.spec.cjs
 *.spec.js
+/perf
