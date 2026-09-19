@@ -201,16 +201,27 @@ func DigestWindowVisitorUpsert(scopeType, scopeID string, windowSeconds int, win
 	if scopeType == "" || scopeID == "" || userID == "" || windowSeconds <= 0 || windowStart <= 0 || windowEnd <= 0 {
 		return nil
 	}
-	record := &DigestWindowVisitorModel{
-		StringPKBaseModel: StringPKBaseModel{ID: utils.NewID()},
-		ScopeType:         scopeType,
-		ScopeID:           scopeID,
-		WindowSeconds:     windowSeconds,
-		WindowStart:       windowStart,
-		WindowEnd:         windowEnd,
-		UserID:            userID,
+	record := DigestWindowVisitorModel{
+		ScopeType:     scopeType,
+		ScopeID:       scopeID,
+		WindowSeconds: windowSeconds,
+		WindowStart:   windowStart,
+		WindowEnd:     windowEnd,
+		UserID:        userID,
 	}
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(record).Error
+	return DigestWindowVisitorUpsertBatch([]DigestWindowVisitorModel{record})
+}
+
+func DigestWindowVisitorUpsertBatch(records []DigestWindowVisitorModel) error {
+	if len(records) == 0 {
+		return nil
+	}
+	for i := range records {
+		if records[i].ID == "" {
+			records[i].ID = utils.NewID()
+		}
+	}
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&records).Error
 }
 
 func DigestWindowVisitorCount(scopeType, scopeID string, windowSeconds int, windowStart int64) (int64, error) {
@@ -255,8 +266,7 @@ func DigestWindowSpeakerUpsert(scopeType, scopeID string, windowSeconds int, win
 	if speakerDisplayName == "" {
 		speakerDisplayName = speakerKey
 	}
-	record := &DigestWindowSpeakerModel{
-		StringPKBaseModel:  StringPKBaseModel{ID: utils.NewID()},
+	record := DigestWindowSpeakerModel{
 		ScopeType:          scopeType,
 		ScopeID:            scopeID,
 		WindowSeconds:      windowSeconds,
@@ -268,6 +278,18 @@ func DigestWindowSpeakerUpsert(scopeType, scopeID string, windowSeconds int, win
 		FirstMessageAt:     messageAt,
 		LastMessageAt:      messageAt,
 	}
+	return DigestWindowSpeakerUpsertBatch([]DigestWindowSpeakerModel{record})
+}
+
+func DigestWindowSpeakerUpsertBatch(records []DigestWindowSpeakerModel) error {
+	if len(records) == 0 {
+		return nil
+	}
+	for i := range records {
+		if records[i].ID == "" {
+			records[i].ID = utils.NewID()
+		}
+	}
 	return db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "scope_type"},
@@ -276,14 +298,14 @@ func DigestWindowSpeakerUpsert(scopeType, scopeID string, windowSeconds int, win
 			{Name: "window_start"},
 			{Name: "speaker_key"},
 		},
-		DoUpdates: clause.Assignments(map[string]any{
-			"window_end":           windowEnd,
-			"speaker_display_name": speakerDisplayName,
-			"message_count":        gorm.Expr("message_count + ?", 1),
-			"last_message_at":      messageAt,
-			"updated_at":           time.Now(),
-		}),
-	}).Create(record).Error
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "window_end"}, Value: clause.Column{Table: "excluded", Name: "window_end"}},
+			{Column: clause.Column{Name: "speaker_display_name"}, Value: clause.Column{Table: "excluded", Name: "speaker_display_name"}},
+			{Column: clause.Column{Name: "message_count"}, Value: gorm.Expr("message_count + ?", 1)},
+			{Column: clause.Column{Name: "last_message_at"}, Value: clause.Column{Table: "excluded", Name: "last_message_at"}},
+			{Column: clause.Column{Name: "updated_at"}, Value: time.Now()},
+		},
+	}).Create(&records).Error
 }
 
 func DigestWindowSpeakerList(scopeType, scopeID string, windowSeconds int, windowStart int64) ([]*DigestWindowSpeakerModel, error) {

@@ -9,6 +9,123 @@ import (
 	"sealchat/model"
 )
 
+func TestRecordDigestWindowMessageWritesAndIncrementsAllSupportedWindows(t *testing.T) {
+	initTestDB(t)
+	db := model.GetDB()
+	channelID := "digest-message-channel"
+	userID := "digest-message-user"
+	speakerKey := "digest-message-speaker"
+	createdAt := time.UnixMilli(1700000000000)
+
+	message := &model.MessageModel{
+		StringPKBaseModel:  model.StringPKBaseModel{ID: "digest-message-1", CreatedAt: createdAt},
+		UserID:             userID,
+		SenderIdentityID:   speakerKey,
+		SenderIdentityName: "测试发言者",
+	}
+	if err := RecordDigestWindowMessage(channelID, message); err != nil {
+		t.Fatalf("RecordDigestWindowMessage first call failed: %v", err)
+	}
+
+	var visitors []model.DigestWindowVisitorModel
+	if err := db.Where("scope_type = ? AND scope_id = ? AND user_id = ?", model.DigestScopeTypeChannel, channelID, userID).
+		Find(&visitors).Error; err != nil {
+		t.Fatalf("query digest visitors failed: %v", err)
+	}
+	assertDigestWindowSeconds(t, visitorWindowSeconds(visitors))
+
+	var speakers []model.DigestWindowSpeakerModel
+	if err := db.Where("scope_type = ? AND scope_id = ? AND speaker_key = ?", model.DigestScopeTypeChannel, channelID, speakerKey).
+		Find(&speakers).Error; err != nil {
+		t.Fatalf("query digest speakers failed: %v", err)
+	}
+	assertDigestWindowSeconds(t, speakerWindowSeconds(speakers))
+	for _, speaker := range speakers {
+		if speaker.MessageCount != 1 {
+			t.Fatalf("first message count for window %d = %d, want 1", speaker.WindowSeconds, speaker.MessageCount)
+		}
+	}
+
+	secondMessage := *message
+	secondMessage.ID = "digest-message-2"
+	if err := RecordDigestWindowMessage(channelID, &secondMessage); err != nil {
+		t.Fatalf("RecordDigestWindowMessage second call failed: %v", err)
+	}
+
+	visitors = nil
+	if err := db.Where("scope_type = ? AND scope_id = ? AND user_id = ?", model.DigestScopeTypeChannel, channelID, userID).
+		Find(&visitors).Error; err != nil {
+		t.Fatalf("query digest visitors after second message failed: %v", err)
+	}
+	assertDigestWindowSeconds(t, visitorWindowSeconds(visitors))
+
+	speakers = nil
+	if err := db.Where("scope_type = ? AND scope_id = ? AND speaker_key = ?", model.DigestScopeTypeChannel, channelID, speakerKey).
+		Find(&speakers).Error; err != nil {
+		t.Fatalf("query digest speakers after second message failed: %v", err)
+	}
+	assertDigestWindowSeconds(t, speakerWindowSeconds(speakers))
+	for _, speaker := range speakers {
+		if speaker.MessageCount != 2 {
+			t.Fatalf("second message count for window %d = %d, want 2", speaker.WindowSeconds, speaker.MessageCount)
+		}
+	}
+}
+
+func TestRecordDigestWindowVisitKeepsOneRowPerSupportedWindow(t *testing.T) {
+	initTestDB(t)
+	db := model.GetDB()
+	channelID := "digest-visit-channel"
+	userID := "digest-visit-user"
+
+	if err := RecordDigestWindowVisit(channelID, userID); err != nil {
+		t.Fatalf("RecordDigestWindowVisit first call failed: %v", err)
+	}
+	if err := RecordDigestWindowVisit(channelID, userID); err != nil {
+		t.Fatalf("RecordDigestWindowVisit second call failed: %v", err)
+	}
+
+	var visitors []model.DigestWindowVisitorModel
+	if err := db.Where("scope_type = ? AND scope_id = ? AND user_id = ?", model.DigestScopeTypeChannel, channelID, userID).
+		Find(&visitors).Error; err != nil {
+		t.Fatalf("query digest visitors failed: %v", err)
+	}
+	assertDigestWindowSeconds(t, visitorWindowSeconds(visitors))
+}
+
+func assertDigestWindowSeconds(t *testing.T, actual []int) {
+	t.Helper()
+	expected := DigestSupportedWindowSeconds()
+	if len(actual) != len(expected) {
+		t.Fatalf("digest window row count = %d, want %d (actual windows: %v)", len(actual), len(expected), actual)
+	}
+	seen := make(map[int]struct{}, len(actual))
+	for _, windowSeconds := range actual {
+		seen[windowSeconds] = struct{}{}
+	}
+	for _, windowSeconds := range expected {
+		if _, ok := seen[windowSeconds]; !ok {
+			t.Fatalf("missing digest window %d in %v", windowSeconds, actual)
+		}
+	}
+}
+
+func visitorWindowSeconds(records []model.DigestWindowVisitorModel) []int {
+	windows := make([]int, 0, len(records))
+	for _, record := range records {
+		windows = append(windows, record.WindowSeconds)
+	}
+	return windows
+}
+
+func speakerWindowSeconds(records []model.DigestWindowSpeakerModel) []int {
+	windows := make([]int, 0, len(records))
+	for _, record := range records {
+		windows = append(windows, record.WindowSeconds)
+	}
+	return windows
+}
+
 func TestBuildWorldDigestPreviewMergesSelectedChannels(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()
