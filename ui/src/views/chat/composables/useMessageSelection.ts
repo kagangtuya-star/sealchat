@@ -7,6 +7,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { dialogAskConfirm } from '@/utils/dialog';
+import MessageImageExportPreview from '../components/message-image/MessageImageExportPreview.vue';
 import MessageImageSnapshot from '../components/message-image/MessageImageSnapshot.vue';
 import {
   buildMessageImageSnapshotGroups,
@@ -29,6 +30,56 @@ interface MessageForwardPayload {
   messages?: any[];
 }
 
+interface SnapshotMessageImageOptions {
+  width: number;
+  backgroundColor: string;
+}
+
+const snapshotMessageImage = async (
+  root: HTMLElement,
+  options: SnapshotMessageImageOptions,
+): Promise<Blob> => {
+  let modernScreenshotError: unknown;
+  try {
+    const { domToBlob } = await import('modern-screenshot');
+    const blob = await domToBlob(root, {
+      type: 'image/png',
+      width: options.width,
+      scale: 2,
+      backgroundColor: options.backgroundColor,
+      timeout: 5000,
+    });
+    if (!blob) throw new Error('modern-screenshot returned an empty blob');
+    return blob;
+  } catch (error) {
+    modernScreenshotError = error;
+    console.error('modern-screenshot failed to generate the message image', error);
+  }
+
+  try {
+    const { default: html2canvas } = await import('html2canvas');
+    const canvas = await html2canvas(root, {
+      width: options.width,
+      scale: 2,
+      backgroundColor: options.backgroundColor,
+      useCORS: true,
+      imageTimeout: 5000,
+      logging: false,
+    });
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/png');
+    });
+    if (!blob) throw new Error('html2canvas returned an empty blob');
+    return blob;
+  } catch (error) {
+    console.error('html2canvas fallback failed to generate the message image', {
+      modernScreenshotError,
+      html2canvasError: error,
+    });
+    throw error;
+  }
+};
+
 export const useMessageSelection = ({
   chat,
   rows,
@@ -43,6 +94,51 @@ export const useMessageSelection = ({
   const forwardDialogSourceWorldId = ref('');
   const forwardDialogMessageIds = ref<string[]>([]);
   const forwardDialogMessages = ref<any[]>([]);
+  let closeMessageImageExportPreview: (() => void) | null = null;
+  let messageImageExportRequestId = 0;
+
+  const closeOpenMessageImageExportPreview = () => {
+    closeMessageImageExportPreview?.();
+  };
+
+  const openMessageImageExportPreview = (blob: Blob, logicalWidth: number) => {
+    closeOpenMessageImageExportPreview();
+
+    const objectUrl = URL.createObjectURL(blob);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let mounted = false;
+    let cleaned = false;
+    let cleanup = () => {};
+    const previewApp = createApp(MessageImageExportPreview, {
+      blob,
+      objectUrl,
+      logicalWidth,
+      fileName: `sealchat-messages-${dayjs().format('YYYYMMDD-HHmmss')}.png`,
+      showMessage: (type: 'success' | 'error', content: string) => message[type](content),
+      onClose: () => cleanup(),
+    });
+
+    cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (mounted) previewApp.unmount();
+      URL.revokeObjectURL(objectUrl);
+      host.remove();
+      if (closeMessageImageExportPreview === cleanup) {
+        closeMessageImageExportPreview = null;
+      }
+    };
+
+    closeMessageImageExportPreview = cleanup;
+    try {
+      previewApp.mount(host);
+      mounted = true;
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  };
 
   const allMessageIds = computed(() => {
     const ids = new Set<string>();
@@ -91,7 +187,9 @@ export const useMessageSelection = ({
   };
   chatEvent.on('message-forward-open' as any, handleMessageForwardOpen as any);
   onBeforeUnmount(() => {
+    messageImageExportRequestId += 1;
     chatEvent.off('message-forward-open' as any, handleMessageForwardOpen as any);
+    closeOpenMessageImageExportPreview();
   });
 
   const handleMultiSelectForward = () => {
@@ -184,16 +282,20 @@ export const useMessageSelection = ({
   };
 
   const handleMultiSelectCopyImage = async () => {
+    const requestId = ++messageImageExportRequestId;
+    const sourceWorldId = String(chat.currentWorldId || '').trim();
+    const sourceChannelId = String(chat.curChannel?.id || '').trim();
+    const isCurrentMessageImageExportContext = () => (
+      requestId === messageImageExportRequestId
+      && String(chat.currentWorldId || '').trim() === sourceWorldId
+      && String(chat.curChannel?.id || '').trim() === sourceChannelId
+    );
+    closeOpenMessageImageExportPreview();
     const messages = getMultiSelectedMessages();
     if (!messages.length) {
       message.warning('请先选择消息');
       return;
     }
-    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
-      message.error('当前浏览器不支持复制图片到剪贴板');
-      return;
-    }
-
     const channelUserNames = new Map<string, string>();
     (chat.curChannelUsers || []).forEach((channelUser: any) => {
       const id = String(channelUser?.id || '').trim();
@@ -259,29 +361,17 @@ export const useMessageSelection = ({
         new Promise<void>((resolve) => window.setTimeout(resolve, 4000)),
       ]);
 
-      const { domToBlob } = await import('modern-screenshot');
-      const blob = await domToBlob(snapshotRoot, {
-        type: 'image/png',
+      const blob = await snapshotMessageImage(snapshotRoot, {
         width: snapshotWidth,
-        scale: 2,
         backgroundColor: snapshotPalette.background,
-        timeout: 5000,
       });
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'image/png': blob,
-          }),
-        ]);
-      } catch (error) {
-        console.error(error);
-        message.error('复制图片失败');
-        return;
-      }
-      message.success('已复制为图片');
+      if (!isCurrentMessageImageExportContext()) return;
+      openMessageImageExportPreview(blob, snapshotWidth);
       chat.exitMultiSelectMode();
+      message.success('图片已生成');
     } catch (error) {
-      console.error(error);
+      if (!isCurrentMessageImageExportContext()) return;
+      console.error('Failed to generate the message image', error);
       message.error('生成图片失败');
     } finally {
       if (mounted) snapshotApp.unmount();
