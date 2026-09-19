@@ -34,7 +34,9 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
   >
     <section v-for="group in props.groups" :key="group.key" class="message-image-snapshot__group">
       <div class="message-image-snapshot__avatar" aria-hidden="true">
-        <span>{{ avatarFallback(group.senderName) }}</span>
+        <span v-if="!group.avatarUrl || failedAvatars.has(group.key)">
+          {{ avatarFallback(group.senderName) }}
+        </span>
         <img
           v-if="group.avatarUrl && !failedAvatars.has(group.key)"
           :src="group.avatarUrl"
