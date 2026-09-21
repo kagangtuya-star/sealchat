@@ -191,6 +191,10 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 	}
 	var target any
 	switch mutationType {
+	case TheaterMutationRoomDialoguePatch:
+		target = &theaterDialoguePatch{}
+	case TheaterMutationRoomDialoguePositionSet:
+		target = &theaterDialoguePositionSet{}
 	case TheaterMutationSceneCreate:
 		target = &theaterSceneCreatePayload{}
 	case TheaterMutationSceneUpdate:
@@ -250,6 +254,10 @@ func decodeStrictJSON(raw []byte, target any) error {
 
 func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 	switch payload := decoded.(type) {
+	case *theaterDialoguePatch:
+		return validateDialoguePatch(payload)
+	case *theaterDialoguePositionSet:
+		return validateDialoguePosition(payload)
 	case *theaterSceneCreatePayload:
 		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
 			return err

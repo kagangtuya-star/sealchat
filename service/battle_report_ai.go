@@ -39,7 +39,7 @@ type BattleReportSummaryPromptInput struct {
 	AIConfig           utils.AIConfig
 }
 
-func StartBattleReportSummary(ctx context.Context, channelID string, userID string, input BattleReportSummaryInput) (*model.BattleReportModel, error) {
+func StartBattleReportSummary(channelID string, userID string, input BattleReportSummaryInput) (*model.BattleReportModel, error) {
 	channels, err := resolveBattleReportSourceChannels(channelID, "", input.SourceChannelIDs, userID)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func StartBattleReportSummary(ctx context.Context, channelID string, userID stri
 		user = &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: userID}}
 	}
 	go func() {
-		if err := runBattleReportSummaryTask(ctx, item.ID, BattleReportSummaryRunOptions{
+		if err := runBattleReportSummaryTask(context.Background(), item.ID, BattleReportSummaryRunOptions{
 			User:             user,
 			Source:           input.Source,
 			SourceChannelIDs: sourceChannelIDs,

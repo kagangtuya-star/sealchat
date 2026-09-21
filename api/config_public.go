@@ -41,9 +41,9 @@ func OptionalSignCheckMiddleware(c *fiber.Ctx) error {
 }
 
 func ConfigGetHandler(c *fiber.Ctx) error {
-	ret := sanitizeConfigForClient(appConfig)
 	u := getCurUser(c)
 	isAdmin := u != nil && pm.CanWithSystemRole(u.ID, pm.PermModAdmin)
+	ret := sanitizeConfigForConfigGet(appConfig, isAdmin)
 	if !isAdmin {
 		ret.ServeAt = ""
 	} else if appConfig != nil {
@@ -70,4 +70,12 @@ func ConfigGetHandler(c *fiber.Ctx) error {
 		AudioImportEnabled:       audioImportEnabled,
 	}
 	return c.Status(http.StatusOK).JSON(resp)
+}
+
+func sanitizeConfigForConfigGet(cfg *utils.AppConfig, isAdmin bool) utils.AppConfig {
+	ret := sanitizeConfigForClient(cfg)
+	if isAdmin {
+		ret.Certificate = sanitizeConfigForAdmin(cfg).Certificate
+	}
+	return ret
 }

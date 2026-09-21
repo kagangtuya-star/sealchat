@@ -3,6 +3,7 @@ import { computed, useAttrs } from 'vue'
 import type { CameraState, StageEntrancePlayback, StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop } from './stage-layer-order'
 import StageTextVisualObject from './StageTextVisualObject.vue'
+import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 
 defineOptions({ inheritAttrs: false })
 
@@ -14,6 +15,7 @@ const props = defineProps<{
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: string[]
   stackingOrder: Record<string, number>
+  characterSnapshot: ChatCharactersSnapshotPayload
 }>()
 
 const attrs = useAttrs()
@@ -61,6 +63,7 @@ const rootStyle = (object: StageObject) => ({
           :objects="props.objects"
           :entrance-playbacks="props.entrancePlaybacks"
           :hidden-object-ids="hiddenObjectIds"
+          :character-snapshot="props.characterSnapshot"
         />
       </div>
     </div>

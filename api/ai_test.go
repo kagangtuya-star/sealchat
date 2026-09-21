@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,24 @@ import (
 	"sealchat/model"
 	"sealchat/utils"
 )
+
+func TestAITaskSSEEncoding(t *testing.T) {
+	var buf bytes.Buffer
+	writer := bufio.NewWriter(&buf)
+	if !writeAITaskComment(writer, "ready") {
+		t.Fatal("writeAITaskComment returned false")
+	}
+	if !writeAITaskSSE(writer, "result", fiber.Map{"featureKey": "polish", "result": "ok"}) {
+		t.Fatal("writeAITaskSSE result returned false")
+	}
+	if !writeAITaskSSE(writer, "error", fiber.Map{"message": "failed"}) {
+		t.Fatal("writeAITaskSSE error returned false")
+	}
+	want := ": ready\n\nevent: result\ndata: {\"featureKey\":\"polish\",\"result\":\"ok\"}\n\nevent: error\ndata: {\"message\":\"failed\"}\n\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("SSE = %q, want %q", got, want)
+	}
+}
 
 func TestAICapabilitiesGetIncludesFeatureRuntimeConfig(t *testing.T) {
 	originalConfig := appConfig

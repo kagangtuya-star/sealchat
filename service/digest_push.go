@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"sealchat/model"
+	"sealchat/service/perfprofiler"
 )
 
 const (
@@ -252,16 +253,25 @@ func RecordDigestWindowVisit(channelID, userID string) error {
 		return nil
 	}
 	nowMillis := time.Now().UnixMilli()
-	for _, windowSeconds := range DigestSupportedWindowSeconds() {
+	windows := DigestSupportedWindowSeconds()
+	records := make([]model.DigestWindowVisitorModel, 0, len(windows))
+	for _, windowSeconds := range windows {
 		windowStart, windowEnd := AlignDigestWindow(nowMillis, windowSeconds)
-		if err := model.DigestWindowVisitorUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, userID); err != nil {
-			return err
-		}
+		records = append(records, model.DigestWindowVisitorModel{
+			ScopeType:     model.DigestScopeTypeChannel,
+			ScopeID:       channelID,
+			WindowSeconds: windowSeconds,
+			WindowStart:   windowStart,
+			WindowEnd:     windowEnd,
+			UserID:        userID,
+		})
 	}
-	return nil
+	return model.DigestWindowVisitorUpsertBatch(records)
 }
 
-func RecordDigestWindowMessage(channelID string, message *model.MessageModel) error {
+func RecordDigestWindowMessage(channelID string, message *model.MessageModel) (retErr error) {
+	trace := perfprofiler.BeginDigestTrace()
+	defer trace.Finish(&retErr)
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" || strings.Contains(channelID, ":") || message == nil || message.ID == "" || message.IsWhisper || message.IsDeleted || message.IsRevoked {
 		return nil
@@ -275,18 +285,47 @@ func RecordDigestWindowMessage(channelID string, message *model.MessageModel) er
 	if messageAt <= 0 {
 		messageAt = time.Now().UnixMilli()
 	}
-	for _, windowSeconds := range DigestSupportedWindowSeconds() {
+	windows := DigestSupportedWindowSeconds()
+	visitorRecords := make([]model.DigestWindowVisitorModel, 0, len(windows))
+	speakerRecords := make([]model.DigestWindowSpeakerModel, 0, len(windows))
+	userID := strings.TrimSpace(message.UserID)
+	for _, windowSeconds := range windows {
 		windowStart, windowEnd := AlignDigestWindow(messageAt, windowSeconds)
-		if userID := strings.TrimSpace(message.UserID); userID != "" {
-			if err := model.DigestWindowVisitorUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, userID); err != nil {
-				return err
-			}
+		if userID != "" {
+			visitorRecords = append(visitorRecords, model.DigestWindowVisitorModel{
+				ScopeType:     model.DigestScopeTypeChannel,
+				ScopeID:       channelID,
+				WindowSeconds: windowSeconds,
+				WindowStart:   windowStart,
+				WindowEnd:     windowEnd,
+				UserID:        userID,
+			})
 		}
-		if err := model.DigestWindowSpeakerUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, speakerKey, speakerName, messageAt); err != nil {
+		speakerRecords = append(speakerRecords, model.DigestWindowSpeakerModel{
+			ScopeType:          model.DigestScopeTypeChannel,
+			ScopeID:            channelID,
+			WindowSeconds:      windowSeconds,
+			WindowStart:        windowStart,
+			WindowEnd:          windowEnd,
+			SpeakerKey:         speakerKey,
+			SpeakerDisplayName: speakerName,
+			MessageCount:       1,
+			FirstMessageAt:     messageAt,
+			LastMessageAt:      messageAt,
+		})
+	}
+	if len(visitorRecords) > 0 {
+		started := trace.StageStart()
+		err := model.DigestWindowVisitorUpsertBatch(visitorRecords)
+		trace.VisitorUpsertDone(started)
+		if err != nil {
 			return err
 		}
 	}
-	return nil
+	started := trace.StageStart()
+	err := model.DigestWindowSpeakerUpsertBatch(speakerRecords)
+	trace.SpeakerUpsertDone(started)
+	return err
 }
 
 func ResolveDigestSpeakerDisplayName(message *model.MessageModel) string {

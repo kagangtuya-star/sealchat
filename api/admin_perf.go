@@ -151,6 +151,80 @@ func AdminPerfCPUSessionStop(c *fiber.Ctx) error {
 	})
 }
 
+func AdminPerfMessagePipeline(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return nil
+	}
+	windowSec, err := parsePerfWindowSec(c.Query("windowSec"))
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusBadRequest, err, "消息链路时间窗口无效")
+	}
+	manager := perfprofiler.Get()
+	if manager == nil {
+		return c.Status(http.StatusOK).JSON(fiber.Map{"message": "ok", "summary": perfprofiler.MessagePipelineSummary{WindowSec: windowSec}})
+	}
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"message": "ok",
+		"summary": manager.MessagePipelineSummary(time.Duration(windowSec) * time.Second),
+	})
+}
+
+func AdminPerfMessagePipelineReset(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return nil
+	}
+	manager := perfprofiler.Get()
+	if manager == nil {
+		return wrapErrorStatus(c, http.StatusServiceUnavailable, nil, "性能检测管理器未初始化")
+	}
+	manager.ResetMessagePipeline()
+	return c.Status(http.StatusOK).JSON(fiber.Map{"message": "ok"})
+}
+
+func AdminPerfTraceSessionStart(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return nil
+	}
+	manager := perfprofiler.Get()
+	if manager == nil {
+		return wrapErrorStatus(c, http.StatusServiceUnavailable, nil, "性能检测管理器未初始化")
+	}
+	var payload struct {
+		DurationSec int `json:"durationSec"`
+	}
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&payload); err != nil {
+			return wrapErrorStatus(c, http.StatusBadRequest, err, "请求体解析失败")
+		}
+	}
+	state, err := manager.StartTraceSession(time.Duration(payload.DurationSec) * time.Second)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch err {
+		case perfprofiler.ErrDisabled, perfprofiler.ErrTraceSessionActive:
+			status = http.StatusConflict
+		case perfprofiler.ErrTraceDurationInvalid:
+			status = http.StatusBadRequest
+		}
+		return wrapErrorStatus(c, status, err, "启动 Runtime Trace 失败")
+	}
+	return c.Status(http.StatusOK).JSON(fiber.Map{"message": "ok", "state": state})
+}
+
+func AdminPerfTraceSessionStop(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return nil
+	}
+	manager := perfprofiler.Get()
+	if manager == nil {
+		return wrapErrorStatus(c, http.StatusServiceUnavailable, nil, "性能检测管理器未初始化")
+	}
+	if err := manager.StopTraceSession(); err != nil {
+		return wrapErrorStatus(c, http.StatusInternalServerError, err, "停止 Runtime Trace 失败")
+	}
+	return c.Status(http.StatusOK).JSON(fiber.Map{"message": "ok", "state": manager.CurrentState().TraceSession})
+}
+
 func AdminPerfArtifactDownload(c *fiber.Ctx) error {
 	if !CanWithSystemRole(c, pm.PermModAdmin) {
 		return nil
@@ -201,4 +275,15 @@ func parsePerfRange(c *fiber.Ctx) (int64, int64, error) {
 	default:
 		return 0, 0, strconv.ErrSyntax
 	}
+}
+
+func parsePerfWindowSec(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 60, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 10 || value > 600 {
+		return 0, strconv.ErrSyntax
+	}
+	return value, nil
 }

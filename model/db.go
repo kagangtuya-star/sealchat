@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -260,6 +261,17 @@ func ensureChatHistoryIndexes() error {
 	`, `
 	CREATE INDEX IF NOT EXISTS idx_messages_channel_created_at
 	ON messages(channel_id, created_at)
+	`, `
+	CREATE INDEX IF NOT EXISTS idx_msg_pinned_list
+	ON messages(channel_id, pinned_at DESC, display_order ASC, created_at ASC)
+	WHERE is_deleted = 0 AND is_pinned = 1
+	`, `
+	CREATE INDEX IF NOT EXISTS idx_msg_live_stats
+	ON messages(
+		ic_mode,
+		visible_char_count
+	)
+	WHERE is_deleted = 0
 	`}
 		for _, statement := range statements {
 			if err := db.Exec(statement).Error; err != nil {
@@ -397,6 +409,18 @@ func deduplicateDigestRecords() error {
 
 func GetDB() *gorm.DB {
 	return db
+}
+
+// DBPoolStats returns a read-only snapshot of the underlying database/sql pool.
+func DBPoolStats() (sql.DBStats, bool) {
+	if db == nil {
+		return sql.DBStats{}, false
+	}
+	sqlDB, err := db.DB()
+	if err != nil || sqlDB == nil {
+		return sql.DBStats{}, false
+	}
+	return sqlDB.Stats(), true
 }
 
 // DBInitMinimal 仅初始化数据库连接（用于配置恢复场景）

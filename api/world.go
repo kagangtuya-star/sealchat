@@ -496,15 +496,22 @@ func WorldJoinHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"member": member})
 }
 
+var (
+	worldLeaveForHandler            = service.WorldLeave
+	worldRemoveMemberForHandler     = service.WorldRemoveMember
+	worldUpdateMemberRoleForHandler = service.WorldUpdateMemberRole
+)
+
 func WorldLeaveHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
 	}
 	worldID := c.Params("worldId")
-	if err := service.WorldLeave(worldID, user.ID); err != nil {
+	if err := worldLeaveForHandler(worldID, user.ID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 	}
+	invalidateWorldNoticeVisibilityForUser(user.ID, worldID)
 	return c.JSON(fiber.Map{"message": "已退出"})
 }
 
@@ -652,7 +659,7 @@ func WorldMemberRemoveHandler(c *fiber.Ctx) error {
 	}
 	worldID := c.Params("worldId")
 	targetUserID := c.Params("userId")
-	if err := service.WorldRemoveMember(worldID, user.ID, targetUserID); err != nil {
+	if err := worldRemoveMemberForHandler(worldID, user.ID, targetUserID); err != nil {
 		switch {
 		case errors.Is(err, service.ErrWorldPermission):
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权操作"})
@@ -664,6 +671,7 @@ func WorldMemberRemoveHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "操作失败"})
 		}
 	}
+	invalidateWorldNoticeVisibilityForUser(targetUserID, worldID)
 	return c.JSON(fiber.Map{"message": "已移除"})
 }
 
@@ -680,7 +688,7 @@ func WorldMemberRoleHandler(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
 	}
-	if err := service.WorldUpdateMemberRole(worldID, user.ID, targetUserID, body.Role); err != nil {
+	if err := worldUpdateMemberRoleForHandler(worldID, user.ID, targetUserID, body.Role); err != nil {
 		switch {
 		case errors.Is(err, service.ErrWorldPermission):
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权操作"})
@@ -692,6 +700,7 @@ func WorldMemberRoleHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新失败"})
 		}
 	}
+	invalidateWorldNoticeVisibilityForUser(targetUserID, worldID)
 	return c.JSON(fiber.Map{"message": "已更新"})
 }
 

@@ -110,6 +110,12 @@ const router = createRouter({
       meta: { internalSurface: true },
     },
     {
+      path: '/internal/theater-character-portrait-embed',
+      name: 'theater-character-portrait-embed',
+      component: () => import('@/views/theater/portrait/TheaterCharacterPortraitEmbedView.vue'),
+      meta: { internalSurface: true },
+    },
+    {
       path: '/internal/:type/:id',
       name: 'internal-surface',
       component: () => import('@/views/internal/InternalSurfaceView.vue'),

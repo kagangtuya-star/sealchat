@@ -2,6 +2,7 @@
 import { reactive, watch, computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
+  MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS,
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
   useDisplayStore,
@@ -288,11 +289,13 @@ type NumericSettingKey =
   | 'messagePaddingY'
   | 'historyNavigationOpacity'
   | 'quickGalleryPageSize'
+  | 'messageImageSnapshotWidth'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
 }
 const handleQuickGalleryPageSizeUpdate = (value: number | null) => handleNumericInput('quickGalleryPageSize', value)
+const handleMessageImageSnapshotWidthUpdate = (value: number | null) => handleNumericInput('messageImageSnapshotWidth', value)
 const handleFontSizeUpdate = (value: number | null) => handleNumericInput('fontSize', value)
 const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lineHeight', value)
 const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
@@ -745,6 +748,32 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入时自动隐藏小剧场</p>
+            <p class="section-desc">移动端竖屏输入消息时收起小剧场，为聊天与键盘腾出空间</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileTheaterHideWhileTyping">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">移动端自动启用小剧场画中画模式</p>
+            <p class="section-desc">移动端竖屏进入小剧场时，将舞台显示为右上角悬浮小窗</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileTheaterPipEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
@@ -1062,6 +1091,26 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           <template #checked>已禁用</template>
           <template #unchecked>允许</template>
         </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">复制消息图片宽度</p>
+            <p class="section-desc">设置复制为图片时的逻辑版式宽度，输出图片使用 2 倍分辨率</p>
+          </div>
+        </header>
+        <n-input-number
+          :value="draft.messageImageSnapshotWidth"
+          size="small"
+          :min="MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS.MIN"
+          :max="MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS.MAX"
+          :step="10"
+          style="width: 140px"
+          @update:value="handleMessageImageSnapshotWidthUpdate"
+        >
+          <template #suffix>px</template>
+        </n-input-number>
       </section>
 
       <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">

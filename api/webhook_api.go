@@ -467,6 +467,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	if identity != nil {
 		msg.SenderRoleID = identity.ID
 		msg.SenderIdentityID = identity.ID
+		msg.SenderSharedIdentityID = identity.SharedIdentityID
 		msg.SenderIdentityIsTemporary = identity.IsTemporary
 		if appearance != nil {
 			msg.SenderIdentityVariantID = appearance.VariantID
@@ -536,7 +537,15 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	}
 	broadcast.BroadcastEventInChannel(channel.ID, ev)
 	broadcast.BroadcastEventInChannelForBot(channel.ID, ev)
-	broadcastMessageCreatedNoticeToUsers(broadcast, channel.ID, msg.Content, msg.ID, channel.WorldID)
+	noticeSource := worldMessageNoticeSourceFromProtocol(
+		channel.WorldID,
+		channelData,
+		messageData,
+		msg.UserID,
+		msg.SenderMemberName,
+	)
+	mentionTargets := collectMentionTargetIDsFromContent(noticeSource.Content)
+	broadcastWorldMessageCreatedNotice(broadcast, noticeSource, mentionTargets)
 
 	channel.UpdateRecentSent()
 	member.UpdateRecentSent()

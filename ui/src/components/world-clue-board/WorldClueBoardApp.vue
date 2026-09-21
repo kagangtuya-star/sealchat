@@ -78,7 +78,7 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 const session = computed(() => board.current)
-const scope = ref<WorldClueBoardScope>('personal')
+const scope = ref<WorldClueBoardScope>('shared')
 const switchingScope = ref(false)
 const boardReadonly = computed(() => !session.value?.canWrite)
 const scopePreferenceKey = () => `sealchat_clue_board_scope_v1:${String(user.info.id || '')}:${props.worldId}`
@@ -747,7 +747,12 @@ async function initialLoad() {
     return
   }
   initialLoading.value = true
-  try { scope.value = localStorage.getItem(scopePreferenceKey()) === 'shared' ? 'shared' : 'personal' } catch { scope.value = 'personal' }
+  try {
+    const storedScope = localStorage.getItem(scopePreferenceKey())
+    scope.value = storedScope === 'personal' ? 'personal' : 'shared'
+  } catch {
+    scope.value = 'shared'
+  }
   if (scope.value === 'shared' && !await prepareSharedRealtime()) {
     if (epoch !== initialEpoch) return
     scope.value = 'personal'

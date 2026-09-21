@@ -2,6 +2,9 @@ import { z } from 'zod'
 
 export const THEATER_PRESENTATION_SCHEMA_VERSION = 2 as const
 export const MAX_THEATER_PORTRAIT_DECORATIONS = 16
+export const DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS = 90
+export const MIN_THEATER_PORTRAIT_FADE_DURATION_MS = 50
+export const MAX_THEATER_PORTRAIT_FADE_DURATION_MS = 5000
 
 export const theaterMediaKindSchema = z.enum(['static_image', 'animated_image', 'video'])
 export const theaterObjectFitSchema = z.literal('cover')
@@ -43,6 +46,12 @@ export const theaterMediaRefSchema = z.strictObject({
   }
 })
 
+const theaterFadeDurationMsSchema = z.number().finite().int()
+  .refine((value) => value === 0 || (value >= MIN_THEATER_PORTRAIT_FADE_DURATION_MS && value <= MAX_THEATER_PORTRAIT_FADE_DURATION_MS), {
+    message: `fadeDurationMs must be 0 or between ${MIN_THEATER_PORTRAIT_FADE_DURATION_MS} and ${MAX_THEATER_PORTRAIT_FADE_DURATION_MS}`,
+  })
+  .default(DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS)
+
 export const theaterVisualLayerSchema = z.strictObject({
   id: z.string().min(1).max(128),
   enabled: z.boolean(),
@@ -52,6 +61,7 @@ export const theaterVisualLayerSchema = z.strictObject({
   fit: theaterObjectFitSchema,
   playbackRate: z.number().finite().min(0.25).max(4),
   blendMode: theaterBlendModeSchema,
+  fadeDurationMs: theaterFadeDurationMsSchema,
 })
 
 export const theaterVisualStyleSchema = z.strictObject({
@@ -60,6 +70,7 @@ export const theaterVisualStyleSchema = z.strictObject({
   fit: theaterObjectFitSchema,
   playbackRate: z.number().finite().min(0.25).max(4),
   blendMode: theaterBlendModeSchema,
+  fadeDurationMs: theaterFadeDurationMsSchema,
 })
 
 export const theaterSpacingSchema = z.strictObject({
@@ -141,6 +152,7 @@ const portraitDecorationsSchema = z.array(theaterVisualLayerSchema)
 export const theaterPresentationSchema = z.strictObject({
   schemaVersion: z.literal(THEATER_PRESENTATION_SCHEMA_VERSION),
   portrait: theaterVisualLayerSchema.nullable(),
+  multiplayerPortraitTransform: theaterTransformSchema.optional(),
   portraitDecorations: portraitDecorationsSchema,
   dialogue: theaterDialogueStyleSchema,
   narration: theaterNarrationStyleSchema.default({
@@ -245,6 +257,7 @@ export const theaterVisualStyleFromLayer = (layer: TheaterVisualLayer | null): T
         fit: layer.fit,
         playbackRate: layer.playbackRate,
         blendMode: layer.blendMode,
+        fadeDurationMs: layer.fadeDurationMs,
       })
     : undefined
 )
@@ -266,6 +279,7 @@ const applyTheaterVisualStyle = (layer: TheaterVisualLayer | null, style?: Theat
   layer.fit = style.fit
   layer.playbackRate = style.playbackRate
   layer.blendMode = style.blendMode
+  layer.fadeDurationMs = style.fadeDurationMs
 }
 
 export const applyWorldTheaterPresentationTemplate = (
@@ -364,6 +378,7 @@ export const normalizeTheaterPresentation = (input: unknown): TheaterPresentatio
   const normalized = theaterPresentationSchema.parse({
     schemaVersion: THEATER_PRESENTATION_SCHEMA_VERSION,
     portrait: value.portrait ?? null,
+    ...(value.multiplayerPortraitTransform ? { multiplayerPortraitTransform: value.multiplayerPortraitTransform } : {}),
     portraitDecorations: value.portraitDecorations ?? [],
     dialogue: value.dialogue ?? createDefaultTheaterDialogueStyle(),
     narration: value.narration ?? createDefaultTheaterNarrationStyle(),

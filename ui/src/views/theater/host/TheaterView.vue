@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useWindowSize } from '@vueuse/core'
+import { useMediaQuery, useWindowSize } from '@vueuse/core'
 import { NButton, NIcon, useDialog, useMessage } from 'naive-ui'
 import { ArrowsMaximize, MessageOff } from '@vicons/tabler'
 import { useChatStore } from '@/stores/chat'
@@ -21,9 +21,11 @@ import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StageCl
 import { dialogAskConfirm } from '@/utils/dialog'
 import {
   hasTheaterDialoguePerformanceContent,
+  resolveTheaterDialoguePresentation,
   TheaterDialogueRuntime,
   type TheaterDialogueRuntimeSnapshot,
 } from '../dialogue/theater-dialogue-runtime'
+import type { TheaterDialogueMessage } from '../bridge/theater-dialogue-queue'
 import {
   THEATER_DIALOGUE_SURFACE_MESSAGE_TYPES,
   isTheaterDialogueSurfaceCommandMessage,
@@ -32,7 +34,7 @@ import {
   parseTheaterDialogueSurfaceUrl,
   type TheaterDialogueSurfaceContext,
 } from '../dialogue/theater-dialogue-surface'
-import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
+import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, type TheaterPresentation, type TheaterTransform } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
@@ -52,6 +54,9 @@ import {
   installTheaterBridgeDebugConsoleCommand,
   isTheaterBridgeDebugEnabled,
 } from '../bridge/theater-bridge-debug'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import { defaultDialogueController, dialogueControllerStates, type DialogueController, type DialogueControllerTemplate, type DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
+import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,11 +70,27 @@ const { width } = useWindowSize()
 
 const routeWorldId = computed(() => typeof route.query.worldId === 'string' ? route.query.worldId.trim() : '')
 const routeChannelId = computed(() => typeof route.query.channelId === 'string' ? route.query.channelId.trim() : '')
+const routePipPreference = computed<boolean | null>(() => {
+  if (route.query.pip === '1') return true
+  if (route.query.pip === '0') return false
+  return null
+})
 const worldId = ref(routeWorldId.value)
 const channelId = ref(routeChannelId.value)
 const stageStore = createTheaterStageStore()
 const sessionId = createTheaterBridgeId('session')
 const dialogueRuntime = new TheaterDialogueRuntime()
+const dialogueController = ref<DialogueController>(defaultDialogueController())
+const dialogueControllerTemplate = ref<DialogueControllerTemplate | null>(null)
+const canDragPortraits = computed(() => isWorldAdmin.value || chat.worldDetailMap[worldId.value]?.memberRole === 'member')
+const saveDialogueController = async (patch: DialogueControllerPatch) => {
+  if (!theaterSync) throw new Error('小剧场尚未连接')
+  await theaterSync.patchDialogueController(patch)
+}
+const savePortraitPosition = async (key: string, position: DialoguePosition) => {
+  if (!theaterSync) throw new Error('小剧场尚未连接')
+  await theaterSync.setDialoguePosition(key, position)
+}
 
 installTheaterBridgeDebugConsoleCommand()
 
@@ -141,8 +162,56 @@ const splitRatio = ref(0.7)
 const splitDragging = ref(false)
 const chatHidden = ref(false)
 const mobileTab = ref<'stage' | 'chat'>('stage')
+const mobilePipWidth = ref<number | null>(null)
+const mobilePipOffset = ref({ x: 0, y: 0 })
+let mobilePipResize: { pointerId: number, startX: number, startWidth: number, maximumWidth: number } | null = null
+let mobilePipMove: {
+  pointerId: number
+  startX: number
+  startY: number
+  startLeft: number
+  startTop: number
+  startOffsetX: number
+  startOffsetY: number
+  width: number
+  height: number
+} | null = null
 const isNarrow = computed(() => width.value < 840)
-const chatVisible = computed(() => isNarrow.value ? mobileTab.value === 'chat' : !chatHidden.value)
+const isPortrait = useMediaQuery('(orientation: portrait)')
+const mobilePortraitInputLock = ref(false)
+const isMobilePortrait = computed(() => (
+  isNarrow.value
+  && (isPortrait.value || mobilePortraitInputLock.value)
+))
+const chatComposerFocused = ref(false)
+let mobilePortraitUnlockFrame: number | null = null
+const manualPipActive = computed(() => (
+  routePipPreference.value === true
+))
+const mobileAutoPipActive = computed(() => (
+  routePipPreference.value !== false
+  && isMobilePortrait.value
+  && display.settings.mobileTheaterPipEnabled
+))
+const theaterPipActive = computed(() => (
+  !chatHidden.value
+  && (
+    manualPipActive.value
+    || mobileAutoPipActive.value
+  )
+))
+const mobileStageHiddenByInput = computed(() => (
+  isMobilePortrait.value
+  && display.settings.mobileTheaterHideWhileTyping
+  && chatComposerFocused.value
+))
+const chatVisible = computed(() => (
+  isMobilePortrait.value
+    ? !chatHidden.value
+    : isNarrow.value
+      ? mobileTab.value === 'chat'
+      : !chatHidden.value
+))
 const theaterDividerWidth = 7
 const chatBridgeOnline = ref(false)
 const chatBridgeStatus = ref<TheaterChatBridgeStatus>('connecting')
@@ -189,6 +258,8 @@ type AppearancePreviewState = {
   activeSection: TheaterSection
   previewName: string
   previewText: string
+  controllerArea?: TheaterTransform
+  multiplayerPortraitTransform?: TheaterTransform
 }
 const appearancePreview = ref<AppearancePreviewState | null>(null)
 const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
@@ -207,6 +278,11 @@ interface DialogueSurfaceRuntimeEntry {
   unsubscribe: () => void
 }
 const dialogueSurfaceRuntimes = new Map<string, DialogueSurfaceRuntimeEntry>()
+interface DialogueSurfacePortraitGateState {
+  settledKey: string
+  pendingKey: string
+}
+const dialogueSurfacePortraitGateStates = new Map<string, DialogueSurfacePortraitGateState>()
 let dialogueSurfaceModeActive = false
 const theaterActivationVisible = ref(false)
 const theaterActivationCode = ref('')
@@ -239,6 +315,21 @@ const splitPaneWidth = (ratio: number) => {
   return `calc(${normalized * 100}% - ${normalized * theaterDividerWidth}px)`
 }
 
+const stageSurfaceStyle = computed(() => {
+  if (theaterPipActive.value) {
+    const style: Record<string, string> = {
+      '--mobile-theater-pip-translate-x': `${mobilePipOffset.value.x}px`,
+      '--mobile-theater-pip-translate-y': `${mobilePipOffset.value.y}px`,
+    }
+    if (mobilePipWidth.value !== null) {
+      style['--mobile-theater-pip-width'] = `${mobilePipWidth.value}px`
+    }
+    return style
+  }
+  if (!isNarrow.value && !chatHidden.value) return { width: splitPaneWidth(splitRatio.value) }
+  return undefined
+})
+
 const updateRatio = (clientX: number) => {
   const rect = layoutRef.value?.getBoundingClientRect()
   if (!rect?.width) return
@@ -265,14 +356,87 @@ const stopDivider = (event: PointerEvent) => {
   ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
 }
 
+const handleMobilePipResizeDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !theaterPipActive.value) return
+  const stage = stageSurfaceRef.value?.getBoundingClientRect()
+  if (!stage) return
+  mobilePipResize = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startWidth: stage.width,
+    maximumWidth: Math.max(200, Math.min(
+      stage.right - 8,
+      (window.innerHeight - stage.top - 8) * 16 / 9,
+    )),
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+const handleMobilePipResizeMove = (event: PointerEvent) => {
+  if (!mobilePipResize || mobilePipResize.pointerId !== event.pointerId) return
+  mobilePipWidth.value = Math.min(mobilePipResize.maximumWidth, Math.max(200,
+    mobilePipResize.startWidth + mobilePipResize.startX - event.clientX,
+  ))
+}
+
+const stopMobilePipResize = (event: PointerEvent) => {
+  if (!mobilePipResize || mobilePipResize.pointerId !== event.pointerId) return
+  mobilePipResize = null
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+}
+
+const handleMobilePipMoveDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !theaterPipActive.value) return
+  const stage = stageSurfaceRef.value?.getBoundingClientRect()
+  if (!stage) return
+  mobilePipMove = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: stage.left,
+    startTop: stage.top,
+    startOffsetX: mobilePipOffset.value.x,
+    startOffsetY: mobilePipOffset.value.y,
+    width: stage.width,
+    height: stage.height,
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+const handleMobilePipMove = (event: PointerEvent) => {
+  if (!mobilePipMove || mobilePipMove.pointerId !== event.pointerId) return
+  const left = Math.min(
+    window.innerWidth - mobilePipMove.width - 8,
+    Math.max(8, mobilePipMove.startLeft + event.clientX - mobilePipMove.startX),
+  )
+  const top = Math.min(
+    window.innerHeight - mobilePipMove.height - 8,
+    Math.max(8, mobilePipMove.startTop + event.clientY - mobilePipMove.startY),
+  )
+  mobilePipOffset.value = {
+    x: mobilePipMove.startOffsetX + left - mobilePipMove.startLeft,
+    y: mobilePipMove.startOffsetY + top - mobilePipMove.startTop,
+  }
+}
+
+const stopMobilePipMove = (event: PointerEvent) => {
+  if (!mobilePipMove || mobilePipMove.pointerId !== event.pointerId) return
+  mobilePipMove = null
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+}
+
 const resetLayout = () => {
   splitRatio.value = 0.7
   chatHidden.value = false
   mobileTab.value = 'stage'
+  mobilePipWidth.value = null
+  mobilePipOffset.value = { x: 0, y: 0 }
 }
 
 const toggleChat = () => {
-  if (isNarrow.value) {
+  if (isNarrow.value && !isMobilePortrait.value) {
     mobileTab.value = mobileTab.value === 'chat' ? 'stage' : 'chat'
     return
   }
@@ -583,6 +747,52 @@ const hasRenderableDialogueSurfaceForIdentity = (identityId: string | null) => {
   return false
 }
 
+const getDialogueSurfacePortraitGateState = (identityId: string) => {
+  let state = dialogueSurfacePortraitGateStates.get(identityId)
+  if (!state) {
+    state = { settledKey: '', pendingKey: '' }
+    dialogueSurfacePortraitGateStates.set(identityId, state)
+  }
+  return state
+}
+
+const resolveDialogueSurfacePortraitGate = (
+  identityId: string,
+  message: TheaterDialogueMessage,
+  reducedMotion: boolean,
+) => {
+  const state = getDialogueSurfacePortraitGateState(identityId)
+  if (!hasRenderableDialogueSurfaceForIdentity(identityId)) {
+    state.settledKey = ''
+    state.pendingKey = ''
+    return false
+  }
+
+  const presentation = resolveTheaterDialoguePresentation(message, characterSnapshot.value)
+  const portrait = presentation.portrait?.enabled ? presentation.portrait : null
+  const portraitKey = portrait
+    ? JSON.stringify([
+        message.actor.identityId,
+        message.actor.variantId || null,
+        portrait.media.assetId,
+        portrait.media.resourceAttachmentId,
+      ])
+    : ''
+  const fadeDurationMs = portrait?.fadeDurationMs ?? DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS
+
+  if (reducedMotion || !portrait || presentation.narration.enabled || fadeDurationMs <= 0) {
+    state.settledKey = portraitKey
+    state.pendingKey = ''
+    return false
+  }
+  if (portraitKey === state.settledKey) {
+    state.pendingKey = ''
+    return false
+  }
+  state.pendingKey = portraitKey
+  return true
+}
+
 const ensureUnrenderedPerformanceDialogueProgressForIdentity = (
   identityId: string,
   snapshot?: TheaterDialogueRuntimeSnapshot,
@@ -619,9 +829,11 @@ const disposeAllDialogueSurfaceRuntimes = () => {
     entry.runtime.dispose()
     dialogueSurfaceRuntimes.delete(identityId)
   }
+  dialogueSurfacePortraitGateStates.clear()
 }
 
 const reconcileDialogueSurfaceRuntimes = () => {
+  if (dialogueController.value.enabled) return
   const configuredIdentityIds = getConfiguredDialogueSurfaceIdentityIds()
   const nextSurfaceMode = configuredIdentityIds.size > 0
 
@@ -638,11 +850,17 @@ const reconcileDialogueSurfaceRuntimes = () => {
     entry.unsubscribe()
     entry.runtime.dispose()
     dialogueSurfaceRuntimes.delete(identityId)
+    dialogueSurfacePortraitGateStates.delete(identityId)
   }
 
   for (const identityId of configuredIdentityIds) {
     if (dialogueSurfaceRuntimes.has(identityId)) continue
-    const runtime = new TheaterDialogueRuntime()
+    const runtime = new TheaterDialogueRuntime({
+      reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+      shouldPauseBeforeCurrent: (message, reducedMotion) => (
+        resolveDialogueSurfacePortraitGate(identityId, message, reducedMotion)
+      ),
+    })
     const entry: DialogueSurfaceRuntimeEntry = {
       runtime,
       unsubscribe: () => undefined,
@@ -656,6 +874,7 @@ const reconcileDialogueSurfaceRuntimes = () => {
 }
 
 const handleDialogueMessageCreated = (payload: TheaterDialogueMessagePayload) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.created(payload); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.created(payload)
@@ -666,7 +885,38 @@ const handleDialogueMessageCreated = (payload: TheaterDialogueMessagePayload) =>
   dialogueSurfaceRuntimes.get(identityId)?.runtime.created(payload)
 }
 
+watch(() => dialogueController.value.enabled, (enabled, previous) => {
+  if (enabled === previous) return
+  if (enabled) {
+    if (!dialogueSurfaceModeActive) return
+    const snapshots = [...dialogueSurfaceRuntimes.values()].map(entry => entry.runtime.takeSnapshot())
+    const template = dialogueRuntime.takeSnapshot()
+    const pending = snapshots.flatMap(snapshot => [snapshot.queue.current, ...snapshot.queue.waiting].filter((item): item is NonNullable<typeof item> => item !== null))
+      .sort((a, b) => (a.message.displayOrder ?? a.message.createdAt) - (b.message.displayOrder ?? b.message.createdAt) || a.message.messageId.localeCompare(b.message.messageId))
+    const unique = [...new Map(pending.map(item => [item.message.messageId, item])).values()]
+    const items = unique.map((item, index) => ({ ...item, sequence: index + 1 }))
+    template.queue.current = items[0] || null
+    template.queue.waiting = items.slice(1)
+    template.queue.lastSequence = items.length
+    template.queue.dismissedThroughSequence = 0
+    template.queue.recentMessageIds = [...new Set([...template.queue.recentMessageIds, ...snapshots.flatMap(snapshot => snapshot.queue.recentMessageIds)])].slice(-512)
+    disposeAllDialogueSurfaceRuntimes()
+    dialogueSurfaceModeActive = false
+    dialogueRuntime.restoreSnapshot(template)
+  } else {
+    const snapshot = dialogueRuntime.takeSnapshot()
+    reconcileDialogueSurfaceRuntimes()
+    if (!dialogueSurfaceModeActive) { dialogueRuntime.restoreSnapshot(snapshot); return }
+    const pending = [snapshot.queue.current, ...snapshot.queue.waiting].filter((item): item is NonNullable<typeof item> => item !== null)
+    for (const [identityId, entry] of dialogueSurfaceRuntimes) {
+      const items = pending.filter(item => item.message.actor.identityId === identityId)
+      entry.runtime.restoreSnapshot({ ...snapshot, queue: { ...snapshot.queue, current: items[0] || null, waiting: items.slice(1) } })
+    }
+  }
+}, { flush: 'sync' })
+
 const handleDialogueMessageUpdated = (payload: TheaterDialogueMessagePayload) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.updated(payload); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.updated(payload)
@@ -680,6 +930,7 @@ const handleDialogueMessageUpdated = (payload: TheaterDialogueMessagePayload) =>
 }
 
 const handleDialogueMessageRemoved = (messageId: string) => {
+  if (dialogueController.value.enabled) { dialogueRuntime.removed(messageId); return }
   reconcileDialogueSurfaceRuntimes()
   if (!dialogueSurfaceModeActive) {
     dialogueRuntime.removed(messageId)
@@ -690,6 +941,18 @@ const handleDialogueMessageRemoved = (messageId: string) => {
 
 const handleDialogueSurfaceMessage = (event: MessageEvent) => {
   if (event.origin !== window.location.origin) return
+  if (event.source === iframeRef.value?.contentWindow && event.data?.type === 'sealchat.theater.dialogue-controller.patch') {
+    if (event.data.worldId !== worldId.value || typeof event.data.requestId !== 'string') return
+    const target = iframeRef.value.contentWindow
+    const requestedWorld = worldId.value
+    const requestId = event.data.requestId
+    void saveDialogueController(event.data.patch).then(() => {
+      if (worldId.value !== requestedWorld) return
+      target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: true, state: { ...dialogueControllerStates.value[requestedWorld], canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
+    }).catch(() => target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: false, error: '公共演出设定保存失败' }, window.location.origin))
+    return
+  }
+  if (dialogueController.value.enabled) return
   if (isTheaterDialogueSurfaceReadyMessage(event.data)) {
     if (!dialogueSurfaceContextMatches(event.data)) return
     const surface = findDialogueSurfaceFrame(event.source, event.data.identityId)
@@ -723,8 +986,23 @@ const handleDialogueSurfaceMessage = (event: MessageEvent) => {
   const command = event.data.command
   if (command.name === 'complete-current') runtime.completeCurrent(command.messageId)
   else if (command.name === 'skip') runtime.skip()
-  else if (command.name === 'close') runtime.close()
+  else if (command.name === 'close') {
+    dialogueSurfacePortraitGateStates.delete(surface.context.identityId)
+    runtime.close()
+  }
   else if (command.name === 'set-reduced-motion') runtime.setReducedMotion(command.value)
+  else if (command.name === 'set-playback-paused') {
+    if (!command.value) {
+      const currentMessageId = runtime.getSnapshot().queue.current?.message.messageId || ''
+      if (!command.messageId || command.messageId !== currentMessageId) return
+      if (typeof command.portraitKey === 'string') {
+        const state = getDialogueSurfacePortraitGateState(surface.context.identityId)
+        state.settledKey = command.portraitKey
+        state.pendingKey = ''
+      }
+    }
+    runtime.setPlaybackPaused(command.value, command.portraitKey, command.messageId)
+  }
   else runtime.setCharactersPerSecond(command.value)
 }
 
@@ -890,6 +1168,10 @@ const startTheaterSync = async () => {
   theaterSyncing.value = false
   theaterPermissions.value = []
   constructionSceneId.value = null
+  dialogueRuntime.reset()
+  disposeAllDialogueSurfaceRuntimes()
+  dialogueController.value = defaultDialogueController()
+  dialogueControllerTemplate.value = null
   await previousClient?.stop()
   const isCurrent = () => generation === theaterSyncGeneration
   if (!isCurrent() || !targetWorldId || !targetChannelId) return
@@ -918,6 +1200,9 @@ const startTheaterSync = async () => {
     },
     onRuntimeStateChange: (state) => {
       if (!isCurrent() || theaterSync !== client) return
+      dialogueController.value = state.dialogueController
+      dialogueControllerTemplate.value = state.dialogueControllerTemplate
+      iframeRef.value?.contentWindow?.postMessage({ type: 'sealchat.theater.dialogue-controller.state', worldId: worldId.value, state: { controller: state.dialogueController, template: state.dialogueControllerTemplate, revision: state.revision, canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
       constructionSceneId.value = state.constructionSceneId
     },
     onSyncingChange: (syncing) => {
@@ -964,10 +1249,40 @@ const flushTheaterSync = async () => {
   await theaterSync?.flushPendingChanges()
 }
 
+const cancelMobilePortraitUnlock = () => {
+  if (mobilePortraitUnlockFrame === null) return
+  cancelAnimationFrame(mobilePortraitUnlockFrame)
+  mobilePortraitUnlockFrame = null
+}
+
+const handleChatFrameLoad = () => {
+  cancelMobilePortraitUnlock()
+  chatComposerFocused.value = false
+  mobilePortraitInputLock.value = false
+  theaterBridge?.handleChatFrameLoad()
+}
+
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
   const data = event.data as Record<string, unknown> | null
   if (!data) return
+  if (data.type === 'sealchat.theater.composer-focus') {
+    if (data.sessionId !== sessionId || typeof data.focused !== 'boolean') return
+    if (data.focused) {
+      cancelMobilePortraitUnlock()
+      if (isMobilePortrait.value) mobilePortraitInputLock.value = true
+    } else {
+      chatComposerFocused.value = false
+      cancelMobilePortraitUnlock()
+      mobilePortraitUnlockFrame = requestAnimationFrame(() => {
+        mobilePortraitUnlockFrame = null
+        if (!chatComposerFocused.value) mobilePortraitInputLock.value = false
+      })
+      return
+    }
+    chatComposerFocused.value = data.focused
+    return
+  }
   if (data.type === THEATER_CHAT_FLOATING_OPEN_REQUEST) {
     if (!isTheaterChatFloatingOpenRequest(data)) return
     const channel = floatingChannelOptions.value.find(item => item.value === data.channelId.trim())
@@ -996,7 +1311,9 @@ const handleTheaterContext = (event: MessageEvent) => {
   }
   if (data.type === 'sealchat.theater.appearance-preview.start' || data.type === 'sealchat.theater.appearance-preview.update') {
     const parsed = theaterPresentationSchema.safeParse(data.draft)
-    if (!parsed.success || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
+    const controllerArea = data.controllerArea === undefined ? undefined : theaterTransformSchema.safeParse(data.controllerArea)
+    const multiplayerPortraitTransform = data.multiplayerPortraitTransform === undefined ? undefined : theaterTransformSchema.safeParse(data.multiplayerPortraitTransform)
+    if (!parsed.success || controllerArea?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
     appearancePreview.value = {
       previewId: data.previewId,
       draft: parsed.data,
@@ -1004,6 +1321,8 @@ const handleTheaterContext = (event: MessageEvent) => {
       activeSection: data.activeSection as TheaterSection,
       previewName: typeof data.previewName === 'string' ? data.previewName : '角色名',
       previewText: typeof data.previewText === 'string' ? data.previewText : '夜色正好，我们该出发了。',
+      controllerArea: controllerArea?.data,
+      multiplayerPortraitTransform: multiplayerPortraitTransform?.data,
     }
     return
   }
@@ -1081,6 +1400,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  cancelMobilePortraitUnlock()
   theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
   window.removeEventListener('message', handleTheaterContext)
@@ -1139,14 +1459,21 @@ function handleDice3DMessage(event: MessageEvent) {
     <div
       ref="layoutRef"
       class="theater-host-layout"
-      :class="{ 'is-dragging': splitDragging, 'is-narrow': isNarrow, 'is-chat-hidden': chatHidden }"
+      :class="{
+        'is-dragging': splitDragging,
+        'is-narrow': isNarrow,
+        'is-chat-hidden': chatHidden,
+        'is-mobile-portrait': isMobilePortrait,
+        'is-theater-pip': theaterPipActive,
+        'is-mobile-stage-hidden': mobileStageHiddenByInput,
+      }"
     >
       <section
 		ref="stageSurfaceRef"
-        v-show="!isNarrow || mobileTab === 'stage'"
+		v-show="theaterPipActive || isMobilePortrait || !isNarrow || mobileTab === 'stage'"
         class="theater-host-stage"
         :class="{ 'is-sync-pending': !theaterSyncReady }"
-        :style="!isNarrow && !chatHidden ? { width: splitPaneWidth(splitRatio) } : undefined"
+        :style="stageSurfaceStyle"
       >
         <StageApp
           ref="stageAppRef"
@@ -1166,6 +1493,12 @@ function handleDice3DMessage(event: MessageEvent) {
           :permissions="theaterPermissions"
           :construction-scene-id="constructionSceneId"
           :dialogue-runtime="dialogueRuntime"
+          :dialogue-controller="dialogueController"
+          :dialogue-controller-template="dialogueControllerTemplate"
+          :can-manage-dialogue="isWorldAdmin"
+          :can-drag-portraits="canDragPortraits"
+          :save-dialogue-controller="saveDialogueController"
+          :save-portrait-position="savePortraitPosition"
           :appearance-preview="appearancePreview"
           :scene-dialogue-enabled="sceneDialogueEnabled"
           :scene-audio-enabled="sceneAudioEnabled"
@@ -1198,11 +1531,31 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-		<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
+			<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
+        <div
+          v-if="theaterPipActive"
+          class="theater-mobile-pip-move"
+          role="button"
+          aria-label="移动小剧场画中画"
+          @pointerdown.stop="handleMobilePipMoveDown"
+          @pointermove.stop="handleMobilePipMove"
+          @pointerup.stop="stopMobilePipMove"
+          @pointercancel.stop="stopMobilePipMove"
+        />
+        <div
+          v-if="theaterPipActive"
+          class="theater-mobile-pip-resize"
+          role="separator"
+          aria-label="调整小剧场画中画大小"
+          @pointerdown.stop="handleMobilePipResizeDown"
+          @pointermove.stop="handleMobilePipResizeMove"
+          @pointerup.stop="stopMobilePipResize"
+          @pointercancel.stop="stopMobilePipResize"
+        />
       </section>
 
       <div
-        v-if="!isNarrow && !chatHidden"
+        v-if="!isNarrow && !chatHidden && !theaterPipActive"
         class="theater-host-divider"
         role="separator"
         aria-label="调整舞台与聊天宽度"
@@ -1213,7 +1566,7 @@ function handleDice3DMessage(event: MessageEvent) {
       ><n-icon><ArrowsMaximize /></n-icon></div>
 
       <section
-        v-show="!chatHidden && (!isNarrow || mobileTab === 'chat')"
+        v-show="!chatHidden && (theaterPipActive || isMobilePortrait || !isNarrow || mobileTab === 'chat')"
         class="theater-host-chat"
         :style="!isNarrow ? { width: splitPaneWidth(1 - splitRatio) } : undefined"
       >
@@ -1232,7 +1585,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :src="iframeSrc"
           frameborder="0"
           allow="autoplay; clipboard-read; clipboard-write"
-          @load="theaterBridge?.handleChatFrameLoad()"
+          @load="handleChatFrameLoad"
         />
       </section>
     </div>
@@ -1257,4 +1610,24 @@ function handleDice3DMessage(event: MessageEvent) {
 .theater-host-chat-close { position: absolute; z-index: 4; top: 8px; left: 8px; width: 34px; height: 34px; background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 92%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
 .theater-host-layout.is-narrow { display: block; }
 .theater-host-layout.is-narrow .theater-host-stage, .theater-host-layout.is-narrow .theater-host-chat { width: 100%; }
+.theater-host-layout.is-mobile-portrait { display: flex; flex-direction: column; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage { width: 100% !important; height: auto; aspect-ratio: 16 / 9; flex: 0 0 auto; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-host-layout.is-mobile-portrait.is-chat-hidden .theater-host-stage { height: 100%; flex: 1 1 auto; aspect-ratio: auto; }
+.theater-host-layout.is-mobile-portrait .theater-host-chat { width: 100% !important; height: auto; min-height: 0; flex: 1 1 auto; border-left: 0; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions) { top: max(.416667cqw, env(safe-area-inset-top)); right: max(.416667cqw, env(safe-area-inset-right)); gap: max(4px, .208333cqw); }
+.theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-dialogue-actions) { top: max(4px, .416667cqw); right: max(4px, .416667cqw); }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions .n-button), .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-dialogue-actions .n-button) { width: clamp(24px, 2.291667cqw, 44px); height: clamp(24px, 2.291667cqw, 44px); min-width: clamp(24px, 2.291667cqw, 44px); padding: 0; }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions svg), .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-dialogue-actions svg) { width: clamp(12px, .9375cqw, 18px); height: clamp(12px, .9375cqw, 18px); }
+.theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-floating-host--stage), .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-floating-host--stage) { position: fixed; inset: 0; overflow: hidden; }
+.theater-host-layout.is-theater-pip .theater-host-stage { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px + var(--mobile-theater-pip-translate-y, 0px)); right: calc(12px - var(--mobile-theater-pip-translate-x, 0px)); z-index: 30; width: var(--mobile-theater-pip-width, min(58vw, 320px)) !important; height: auto; aspect-ratio: 16 / 9; flex: none; overflow: hidden; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 14px; background: var(--sc-bg-page, #141418); box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
+.theater-host-layout.is-theater-pip .theater-host-chat { width: 100% !important; height: 100%; flex: 1 1 100%; border-left: 0; }
+.theater-mobile-pip-move { position: absolute; z-index: 10020; top: 0; left: 50%; width: 52px; height: 24px; touch-action: none; cursor: move; transform: translateX(-50%); }
+.theater-mobile-pip-move::after { position: absolute; top: 6px; left: 50%; width: 24px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .82); box-shadow: 0 1px 3px rgba(0, 0, 0, .72); transform: translateX(-50%); content: ''; }
+.theater-mobile-pip-resize { position: absolute; z-index: 10020; bottom: 0; left: 0; width: 28px; height: 28px; touch-action: none; cursor: nesw-resize; }
+.theater-mobile-pip-resize::after { position: absolute; bottom: 5px; left: 5px; width: 9px; height: 9px; border-bottom: 2px solid rgba(255, 255, 255, .82); border-left: 2px solid rgba(255, 255, 255, .82); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72)); content: ''; }
+.theater-host-layout.is-mobile-portrait.is-mobile-stage-hidden .theater-host-stage { height: 0; min-height: 0; flex-basis: 0; opacity: 0; visibility: hidden; pointer-events: none; border: 0; }
+
+@media (max-width: 420px) {
+  .theater-host-layout.is-mobile-portrait.is-theater-pip .theater-host-stage { width: var(--mobile-theater-pip-width, 54vw) !important; min-width: 200px; }
+}
 </style>

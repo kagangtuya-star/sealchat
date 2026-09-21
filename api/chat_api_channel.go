@@ -110,6 +110,9 @@ func apiChannelList(ctx *ChatContext, data *struct {
 }) (any, error) {
 	worldID := strings.TrimSpace(data.WorldID)
 	if ctx.IsReadOnly() {
+		if ctx.ConnInfo != nil {
+			ctx.ConnInfo.invalidateWorldNoticeVisibility()
+		}
 		items, err := listReadOnlyChannelsByWorld(ctx, worldID)
 		if err != nil {
 			return nil, err
@@ -143,6 +146,9 @@ func apiChannelList(ctx *ChatContext, data *struct {
 	items, err := service.ChannelList(ctx.User.ID, worldID)
 	if err != nil {
 		return nil, err
+	}
+	if ctx.ConnInfo != nil {
+		ctx.ConnInfo.setWorldNoticeVisibleChannels(worldID, items)
 	}
 
 	for _, item := range items {

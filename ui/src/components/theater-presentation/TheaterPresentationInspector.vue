@@ -5,7 +5,7 @@ import type { SelectOption } from 'naive-ui'
 import { listPlatformFonts } from '@/services/font/platformFontApi'
 import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
-import type { TheaterPresentation, TheaterTransform, TheaterVisualLayer } from '@/types/theaterPresentation'
+import type { TheaterPresentation, TheaterTransform, TheaterVisualLayer, TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSectionMode, TheaterSelection } from './theaterPresentationEditorState'
 
 const props = defineProps<{
@@ -13,9 +13,12 @@ const props = defineProps<{
   selection: TheaterSelection
   mode: 'base' | 'variant'
   sectionModes: Record<TheaterSection, TheaterSectionMode>
+  portraitStyle?: TheaterVisualStyle | null
+  portraitAutoWidth?: boolean
 }>()
 const emit = defineEmits<{
   dispatch: [command: TheaterEditorCommand, options?: { transient?: boolean }]
+  'update:portraitStyle': [style: TheaterVisualStyle]
   transactionStart: []
   transactionEnd: []
 }>()
@@ -28,9 +31,9 @@ const section = computed<TheaterSection>(() => {
   if (props.selection.kind === 'decoration') return 'decorations'
   return 'dialogue'
 })
-const layer = computed<TheaterVisualLayer | null>(() => {
+const layer = computed<TheaterVisualLayer | TheaterVisualStyle | null>(() => {
   const selection = props.selection
-  if (selection.kind === 'portrait') return props.draft.portrait
+  if (selection.kind === 'portrait') return props.portraitStyle || props.draft.portrait
   if (selection.kind === 'decoration') return props.draft.portraitDecorations.find((item) => item.id === selection.id) || null
   if (selection.kind === 'dialogue-frame') return props.draft.dialogue.frame
   return null
@@ -47,7 +50,17 @@ const decorationIndex = computed(() => props.selection.kind === 'decoration'
 
 const setTransform = (key: keyof TheaterTransform, value: number | null) => {
   if (value === null || !Number.isFinite(value)) return
+  if (props.selection.kind === 'portrait' && props.portraitStyle) {
+    emit('update:portraitStyle', {
+      ...props.portraitStyle,
+      transform: { ...props.portraitStyle.transform, [key]: value },
+    })
+    return
+  }
   emit('dispatch', { type: 'set-transform', target: props.selection, transform: { [key]: value } }, { transient: true })
+}
+const setLayerProperty = (property: 'enabled' | 'blendMode' | 'playbackRate' | 'fadeDurationMs', value: boolean | string | number, options?: { transient?: boolean }) => {
+  emit('dispatch', { type: 'set-layer-property', target: props.selection, property, value }, options)
 }
 const textLayer = computed(() => props.selection.kind === 'speaker' || props.selection.kind === 'content'
   ? props.draft.dialogue[props.selection.kind]
@@ -81,8 +94,15 @@ const setRotation = (value: number) => setTransform('rotation', value)
 const setOpacity = (value: number) => setTransform('opacity', value)
 const setPlaybackRate = (value: number | null) => {
   if (value === null) return
-  emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'playbackRate', value }, { transient: true })
+  setLayerProperty('playbackRate', value, { transient: true })
 }
+const setFadeDuration = (value: number | null) => {
+  if (props.selection.kind !== 'portrait' || value === null) return
+  setLayerProperty('fadeDurationMs', value, { transient: true })
+}
+const fadeHintHovered = ref(false)
+const fadeHintFocused = ref(false)
+const fadeHintVisible = computed(() => fadeHintHovered.value || fadeHintFocused.value)
 const setFontScale = (value: number) => {
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fontScale', value }, { transient: true })
 }
@@ -156,11 +176,12 @@ onMounted(() => { void refreshPlatformFonts() })
 
     <template v-if="transform">
       <div class="theater-inspector__label">变换</div>
+      <div v-if="selection.kind === 'portrait' && portraitAutoWidth" class="theater-inspector__auto-width-hint">横向位置和宽度由多人排列自动分配</div>
       <div v-if="selection.kind !== 'decoration'" class="theater-inspector__number-grid">
-        <n-input-number :value="transform.x" :step="0.01" :min="-1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('x', $event)" ><template #prefix>X</template></n-input-number>
-        <n-input-number :value="transform.y" :step="0.01" :min="textLayerCanMoveAboveViewport ? undefined : -1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('y', $event)" ><template #prefix>Y</template></n-input-number>
-        <n-input-number :value="transform.width" :step="0.01" :min="0.01" :max="3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('width', $event)" ><template #prefix>W</template></n-input-number>
-        <n-input-number :value="transform.height" :step="0.01" :min="0.01" :max="3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('height', $event)" ><template #prefix>H</template></n-input-number>
+        <n-input-number v-if="selection.kind !== 'portrait' || !portraitAutoWidth" :value="transform.x" :step="0.01" :min="-1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('x', $event)" ><template #prefix>X</template></n-input-number>
+        <n-input-number :value="transform.y" :step="0.01" :min="selection.kind === 'portrait' && portraitAutoWidth ? 0 : textLayerCanMoveAboveViewport ? undefined : -1" :max="selection.kind === 'portrait' && portraitAutoWidth ? Math.max(0, 1 - transform.height) : 2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('y', $event)" ><template #prefix>Y</template></n-input-number>
+        <n-input-number v-if="selection.kind !== 'portrait' || !portraitAutoWidth" :value="transform.width" :step="0.01" :min="0.01" :max="3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('width', $event)" ><template #prefix>W</template></n-input-number>
+        <n-input-number :value="transform.height" :step="0.01" :min="0.01" :max="selection.kind === 'portrait' && portraitAutoWidth ? Math.max(0.01, 1 - transform.y) : 3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('height', $event)" ><template #prefix>H</template></n-input-number>
       </div>
       <div v-else class="theater-inspector__sync-values">
         X {{ transform.x.toFixed(3) }} · Y {{ transform.y.toFixed(3) }} · W {{ transform.width.toFixed(3) }} · H {{ transform.height.toFixed(3) }}
@@ -251,19 +272,50 @@ onMounted(() => { void refreshPlatformFonts() })
       </template>
     </template>
 
-    <template v-if="layer">
+    <template v-if="layer && (selection.kind !== 'portrait' || !portraitStyle)">
       <div class="theater-inspector__label">图层</div>
       <n-checkbox
         :checked="layer.enabled"
-        @update:checked="emit('dispatch', { type: 'set-layer-property', target: selection, property: 'enabled', value: $event })"
+        @update:checked="setLayerProperty('enabled', $event)"
       >启用</n-checkbox>
       <n-select
         :value="layer.blendMode"
         :options="[{ label: 'Normal', value: 'normal' }, { label: 'Multiply', value: 'multiply' }, { label: 'Screen', value: 'screen' }, { label: 'Overlay', value: 'overlay' }]"
-        @update:value="emit('dispatch', { type: 'set-layer-property', target: selection, property: 'blendMode', value: $event })"
+        @update:value="setLayerProperty('blendMode', $event)"
       />
+      <template v-if="selection.kind === 'portrait'">
+        <div class="theater-inspector__label">淡入淡出时间</div>
+        <n-popover :show="fadeHintVisible" placement="top-start" trigger="manual">
+          <template #trigger>
+            <div
+              class="theater-inspector__fade-duration"
+              @mouseenter="fadeHintHovered = true"
+              @mouseleave="fadeHintHovered = false"
+              @focusin="fadeHintFocused = true"
+              @focusout="fadeHintFocused = false"
+            >
+              <n-input-number
+                :value="layer.fadeDurationMs"
+                :min="0"
+                :max="5000"
+                :step="50"
+                @focus="emit('transactionStart')"
+                @blur="emit('transactionEnd')"
+                @update:value="setFadeDuration"
+              >
+                <template #suffix>ms</template>
+              </n-input-number>
+            </div>
+          </template>
+          <div class="theater-inspector__fade-hint">
+            <div>控制角色立绘进场、退场与切换时的淡入淡出时长。</div>
+            <div>设为 0 ms 时关闭淡入淡出。</div>
+            <small>默认 90 ms</small>
+          </div>
+        </n-popover>
+      </template>
       <n-input-number
-        v-if="layer.media.kind === 'video'"
+        v-if="'media' in layer && layer.media.kind === 'video'"
         :value="layer.playbackRate"
         :step="0.25"
         :min="0.25"
@@ -289,7 +341,7 @@ onMounted(() => { void refreshPlatformFonts() })
       </n-radio-group>
     </template>
 
-    <section v-if="section === 'portrait'" class="theater-inspector__narration">
+    <section v-if="section === 'portrait' && !portraitStyle" class="theater-inspector__narration">
       <div v-if="mode === 'variant'" class="theater-inspector__mode">
         <div class="theater-inspector__label">旁白模式配置</div>
         <n-radio-group
@@ -332,7 +384,7 @@ onMounted(() => { void refreshPlatformFonts() })
       </template>
     </section>
 
-    <div class="theater-inspector__actions">
+    <div v-if="selection.kind !== 'portrait' || !portraitStyle" class="theater-inspector__actions">
       <n-tooltip><template #trigger><n-button quaternary circle @click="emit('dispatch', { type: 'reset-section', section })"><template #icon><n-icon><Refresh /></n-icon></template></n-button></template>重置当前部分</n-tooltip>
       <template v-if="selection.kind === 'decoration'">
         <n-tooltip><template #trigger><n-button quaternary circle :disabled="decorationIndex <= 0" @click="reorder(-1)"><template #icon><n-icon><ArrowUp /></n-icon></template></n-button></template>上移</n-tooltip>
@@ -346,6 +398,10 @@ onMounted(() => { void refreshPlatformFonts() })
 <style scoped>
 .theater-inspector { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .theater-inspector__label { margin-top: 4px; color: var(--sc-text-secondary, #64748b); font-size: 12px; font-weight: 600; }
+.theater-inspector__auto-width-hint { color: var(--sc-text-secondary, #64748b); font-size: 12px; }
+.theater-inspector__fade-duration { width: 100%; }
+.theater-inspector__fade-hint { max-width: 240px; font-size: 12px; line-height: 1.5; }
+.theater-inspector__fade-hint small { color: var(--sc-text-secondary, #64748b); }
 .theater-inspector__mode { display: flex; flex-direction: column; gap: 8px; }
 .theater-inspector__number-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .theater-inspector__slider-field { display: grid; grid-template-columns: 52px minmax(0, 1fr) 42px; align-items: center; gap: 8px; font-size: 12px; }

@@ -718,6 +718,7 @@ const theaterDialogueActorAppearanceSchema = z.strictObject({
 })
 
 export const theaterDialogueMessagePayloadSchema = z.strictObject({
+  sourceChannelId: nonEmptyIdSchema.optional(),
   messageId: nonEmptyIdSchema,
   createdAt: z.number().int().nonnegative(),
   displayOrder: z.number().finite().optional(),
@@ -731,6 +732,7 @@ export const theaterDialogueMessagePayloadSchema = z.strictObject({
   actor: z.strictObject({
     userId: nonEmptyIdSchema.nullable(),
     identityId: nonEmptyIdSchema.nullable(),
+    sharedIdentityId: nonEmptyIdSchema.nullable().optional(),
     variantId: nonEmptyIdSchema.nullable(),
     displayName: z.string().max(512),
     color: z.string().max(256),

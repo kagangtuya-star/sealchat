@@ -5,6 +5,7 @@ import type { ChannelCharacterSnapshotItem } from '@/stores/channelCharacterSnap
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { uploadChannelEmbedImage } from '@/services/embed/channelEmbedImageUpload'
 import { createChannelEmbedTheaterDialogue } from './channelEmbedTheaterDialogue'
+import type { ChatCharactersSnapshotPayload } from '@/views/theater/bridge/theater-bridge-protocol'
 import {
   CHANNEL_EMBED_EVENT,
   CHANNEL_EMBED_HANDSHAKE_ACK,
@@ -20,7 +21,12 @@ const defaultCapabilities = ['context.read', 'user.read', 'members.read', 'world
 const publicErrorCodes = new Set(['ORIGIN_DENIED', 'HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'CAPABILITY_DENIED', 'PERMISSION_DENIED', 'INVALID_PARAMS', 'NOT_FOUND', 'REVISION_CONFLICT', 'QUOTA_EXCEEDED', 'PAYLOAD_TOO_LARGE', 'RATE_LIMITED', 'WS_OFFLINE', 'TIMEOUT', 'INTERNAL_ERROR'])
 
 const dialogueSource = createChannelEmbedTheaterDialogue(chatEvent, resolveAttachmentUrl)
-type EmbedSession = { port: MessagePort; source: WindowProxy; origin: string; disposeDialogue?: () => void }
+type EmbedSession = { port: MessagePort; source: WindowProxy; origin: string; disposeDialogue?: () => void; theaterCharacterIdentityId?: string }
+
+export interface ChannelEmbedTheaterCharacterSource {
+  getSnapshot(): ChatCharactersSnapshotPayload
+  subscribe(listener: (snapshot: ChatCharactersSnapshotPayload) => void): () => void
+}
 
 type HostDeps = {
   chat: any
@@ -38,6 +44,7 @@ type HostDeps = {
   iframe: HTMLIFrameElement
   worldId: string
   channelId: string
+  theaterCharacterSource?: ChannelEmbedTheaterCharacterSource
 }
 
 const safeString = (value: unknown, max = 512) => typeof value === 'string' ? value.slice(0, max) : ''
@@ -174,7 +181,8 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
   }
   const currentActiveIdentityId = () => safeString(deps.chat.activeChannelIdentity?.[deps.channelId], 100)
   const effectiveCapabilities = () => policy.capabilities.filter((capability) => {
-    if (!defaultCapabilities.includes(capability) && capability !== 'theater.dialogue.subscribe') return false
+    if (!defaultCapabilities.includes(capability) && capability !== 'theater.dialogue.subscribe' && capability !== 'theater.character.read') return false
+    if (capability === 'theater.character.read' && !deps.theaterCharacterSource) return false
     if (['members.read', 'characterCard.write', 'storage.write', 'events.publish', 'messages.send', 'attachments.upload'].includes(capability) && (!deps.chat.curMember || deps.chat.observerMode)) return false
     return true
   })
@@ -222,12 +230,28 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     }
   }
   const contextKey = () => JSON.stringify({ activeChannelId: safeString(deps.chat.curChannel?.id), channel: { id: deps.channelId, name: safeString(deps.chat.curChannel?.name), type: safeString(deps.chat.curChannel?.type) }, worldId: deps.worldId, member: safeMember(deps.chat.curMember), authorization: worldAuthorization(), character: currentCharacter(), state: deps.chat.connectState, users: deps.chat.curChannelUsers?.map((user: any) => safeString(user?.id, 100)) })
-  const postEvent = (topic: string, payload: unknown, seq?: number) => {
-    sessions.forEach((session) => {
-      const event: EmbedEvent = { type: CHANNEL_EMBED_EVENT, version: 1, sessionId, eventId: randomEmbedId('event'), topic, seq, contextVersion, payload, at: Date.now() }
-      try { session.port.postMessage(event) } catch { /* session cleaned on next request */ }
-    })
+  const postEventToSession = (targetSessionId: string, session: EmbedSession, topic: string, payload: unknown, seq?: number) => {
+    const event: EmbedEvent = { type: CHANNEL_EMBED_EVENT, version: 1, sessionId: targetSessionId, eventId: randomEmbedId('event'), topic, seq, contextVersion, payload, at: Date.now() }
+    try { session.port.postMessage(event) } catch { /* session cleaned on next request */ }
   }
+  const postEvent = (topic: string, payload: unknown, seq?: number) => {
+    sessions.forEach((session, targetSessionId) => postEventToSession(targetSessionId, session, topic, payload, seq))
+  }
+  const theaterCharacterSnapshot = (snapshot: ChatCharactersSnapshotPayload, identityId: string) => ({
+    revision: snapshot.revision,
+    updatedAt: snapshot.updatedAt,
+    activeIdentityId: snapshot.activeIdentityId,
+    identityId,
+    character: snapshot.characters.find(character => character.identityId === identityId) || null,
+  })
+  const disposeTheaterCharacterSource = deps.theaterCharacterSource?.subscribe((snapshot) => {
+    if (closed || !has('theater.character.read')) return
+    sessions.forEach((session, targetSessionId) => {
+      const identityId = session.theaterCharacterIdentityId
+      if (!identityId) return
+      postEventToSession(targetSessionId, session, 'theater.character.changed', theaterCharacterSnapshot(snapshot, identityId))
+    })
+  })
   const publishContextChanges = () => {
     const next = contextKey()
     if (next === lastContextKey) return
@@ -397,14 +421,13 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     if (method === 'attachments.uploadImage' && !has('attachments.upload')) throw new Error('CAPABILITY_DENIED')
     if (method.startsWith('characterCard.') && !has(method === 'characterCard.updateAttrs' ? 'characterCard.write' : 'characterCard.read')) throw new Error('CAPABILITY_DENIED')
     if (method === 'members.list' && params.scope === 'world-admins' && !has('world.admins.read')) throw new Error('CAPABILITY_DENIED')
-    const contextSensitive = method.startsWith('storage.') || method === 'members.list' || method === 'member.getCurrent' || method.startsWith('characters.') || method.startsWith('characterCard.') || method === 'permissions.getCurrent' || method === 'events.publish' || method === 'events.subscribe' || method === 'messages.send' || method === 'attachments.uploadImage'
+    const contextSensitive = method.startsWith('storage.') || method === 'members.list' || method === 'member.getCurrent' || method.startsWith('characters.') || method.startsWith('characterCard.') || method.startsWith('theater.character.') || method === 'permissions.getCurrent' || method === 'events.publish' || method === 'events.subscribe' || method === 'messages.send' || method === 'attachments.uploadImage'
     requireContext(request, contextSensitive)
     switch (method) {
       case 'theater.dialogue.subscribe': {
         if (!has('theater.dialogue.subscribe')) throw new Error('CAPABILITY_DENIED')
         if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
         const identityId = boundedString(params.identityId, 100, true)
-        if (!getIdentities().some((identity: { id: string }) => identity.id === identityId)) throw new Error('NOT_FOUND: identity')
         session.disposeDialogue?.()
         session.disposeDialogue = dialogueSource.subscribe(deps.channelId, identityId, ({ topic, payload }) => {
           if (closed || sessions.get(request.sessionId) !== session || !has('theater.dialogue.subscribe')) return
@@ -419,6 +442,23 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
         if (!has('theater.dialogue.subscribe')) throw new Error('CAPABILITY_DENIED')
         session.disposeDialogue?.()
         session.disposeDialogue = undefined
+        return null
+      case 'theater.character.get': {
+        if (!has('theater.character.read') || !deps.theaterCharacterSource) throw new Error('CAPABILITY_DENIED')
+        if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
+        const identityId = boundedString(params.identityId, 100, true)
+        return theaterCharacterSnapshot(deps.theaterCharacterSource.getSnapshot(), identityId)
+      }
+      case 'theater.character.subscribe': {
+        if (!has('theater.character.read') || !deps.theaterCharacterSource) throw new Error('CAPABILITY_DENIED')
+        if (!hasOnlyKeys(params, ['identityId'])) throw new Error('INVALID_PARAMS')
+        const identityId = boundedString(params.identityId, 100, true)
+        session.theaterCharacterIdentityId = identityId
+        return theaterCharacterSnapshot(deps.theaterCharacterSource.getSnapshot(), identityId)
+      }
+      case 'theater.character.unsubscribe':
+        if (!has('theater.character.read')) throw new Error('CAPABILITY_DENIED')
+        session.theaterCharacterIdentityId = undefined
         return null
       case 'context.get': if (!has('context.read')) throw new Error('CAPABILITY_DENIED'); return getContext()
       case 'user.getCurrent': if (!has('user.read')) throw new Error('CAPABILITY_DENIED'); return safeUser(deps.user.info)
@@ -541,6 +581,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     closed = true
     window.removeEventListener('message', handleHandshake)
     listeners.forEach((dispose) => dispose())
+    disposeTheaterCharacterSource?.()
     closeActiveSessions()
   }
   return { get sessionId() { return sessionId }, stop, getContext, isActive: () => !closed }

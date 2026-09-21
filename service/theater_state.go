@@ -149,10 +149,12 @@ func RepairTheaterStateJSON() (summary TheaterStateRepairSummary, err error) {
 				summary.InvalidJSON++
 				continue
 			}
+			preserved := preserveDialogueControllerState(room.StateJSON, string(canonical))
+			changed = preserved != room.StateJSON
 			if !changed {
 				continue
 			}
-			room.StateJSON = string(canonical)
+			room.StateJSON = preserved
 			if err := tx.Model(&model.TheaterRoomModel{}).Where("id = ?", room.ID).Update("state_json", room.StateJSON).Error; err != nil {
 				return err
 			}

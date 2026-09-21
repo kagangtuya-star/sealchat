@@ -35,6 +35,7 @@ import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
 import DiceTrayFloatingWindow from './components/DiceTrayFloatingWindow.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
 import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
+import { shouldApplyMessageCreateAck } from './messageCreateAck';
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
@@ -131,6 +132,8 @@ import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
 import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
+import TheaterDialogueControllerIdentity from './components/TheaterDialogueControllerIdentity.vue'
+import { readDialogueController, type DialogueControllerTemplate } from '@/views/theater/dialogue/theater-dialogue-controller'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import {
   applyWorldTheaterPresentationTemplate,
@@ -139,6 +142,7 @@ import {
   resolveTheaterPresentation,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type TheaterTransform,
   type WorldTheaterPresentationTemplate,
   type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
@@ -389,7 +393,7 @@ const openSplitView = async () => {
   await openSplitRoute(worldId, worldId, currentChannelId, '');
 };
 
-const openTheaterView = async () => {
+const openTheaterView = async (mode: 'standard' | 'pip') => {
   const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const channelWorldId = String(chat.curChannel?.worldId || '').trim();
@@ -400,7 +404,7 @@ const openTheaterView = async () => {
   const ffmpegUnavailable = !audioStudio.ffmpegAvailable;
   await router.push({
     name: 'theater',
-    query: { worldId, channelId },
+    query: { worldId, channelId, pip: mode === 'pip' ? '1' : '0' },
   });
   if (ffmpegUnavailable) {
     dialog.warning({
@@ -417,6 +421,10 @@ const openTheaterView = async () => {
       positiveText: '知道了',
     });
   }
+};
+
+const handleOpenTheater = (...args: unknown[]) => {
+  return openTheaterView(args[0] === 'pip' ? 'pip' : 'standard');
 };
 
 const openIcOocSplitView = async (side: 'left' | 'right') => {
@@ -1704,7 +1712,6 @@ const worldMessageToastStackRef = ref<{
   dismissAll: () => void;
   dismissChannel: (worldId: string, channelId: string) => void;
 } | null>(null);
-const worldMessageNoticeTasks = new Map<string, Promise<void>>();
 interface ChannelFavoriteRecommendation {
   worldId: string;
   channelId: string;
@@ -3377,7 +3384,9 @@ const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
 const theaterPresentationEditorVisible = ref(false);
-const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
+const theaterPresentationEditorMode = ref<'base' | 'variant' | 'multiplayer'>('base');
+const theaterPresentationControllerTemplate = ref<DialogueControllerTemplate | null>(null);
+const theaterDialogueControllerIdentityRef = ref<InstanceType<typeof TheaterDialogueControllerIdentity> | null>(null);
 const theaterPresentationApplying = ref(false);
 const worldTheaterTemplateSaving = ref(false);
 const currentWorldTheaterTemplate = computed<WorldTheaterPresentationTemplate>(() => {
@@ -5438,6 +5447,26 @@ const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
   return false;
 };
 
+const enterTheaterForDialogueControllerEdit = async (identityId: string) => {
+  const confirmed = await askEnterTheaterForAppearanceEdit();
+  if (!confirmed) return;
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
+    return;
+  }
+  writeTheaterAppearanceEditIntent({ channelId, identityId, mode: 'controller' });
+  identityManageVisible.value = false;
+  try {
+    await router.push({ name: 'theater', query: { worldId, channelId } });
+  } catch (error) {
+    clearTheaterAppearanceEditIntent();
+    message.error(error instanceof Error ? error.message : '进入小剧场失败');
+  }
+};
+
 const openIdentityTheaterPresentationEditor = async () => {
   if (isDelegatedSharedIdentity.value) return;
   if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
@@ -5455,7 +5484,22 @@ const openIdentityTheaterPresentationEditor = async () => {
       return;
     }
   }
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  theaterPresentationControllerTemplate.value = null;
   theaterPresentationEditorMode.value = 'base';
+  if (worldId) {
+    try {
+      const state = await readDialogueController(worldId);
+      if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      if (state.controller.enabled && state.template) {
+        theaterPresentationControllerTemplate.value = state.template;
+        theaterPresentationEditorMode.value = 'multiplayer';
+      }
+    } catch {
+      if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+    }
+  }
   theaterPresentationEditorVisible.value = true;
 };
 
@@ -5475,8 +5519,14 @@ const openIdentityVariantTheaterPresentationEditor = async () => {
       return;
     }
   }
+  theaterPresentationControllerTemplate.value = null;
   theaterPresentationEditorMode.value = 'variant';
   theaterPresentationEditorVisible.value = true;
+};
+
+const toggleTheaterPresentationEditorMode = () => {
+  if (!theaterPresentationControllerTemplate.value || theaterPresentationEditorMode.value === 'variant') return;
+  theaterPresentationEditorMode.value = theaterPresentationEditorMode.value === 'multiplayer' ? 'base' : 'multiplayer';
 };
 
 const handleTheaterPresentationApply = async (value: TheaterPresentation | TheaterPresentationPatch) => {
@@ -5534,6 +5584,14 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
   } finally {
     theaterPresentationApplying.value = false;
   }
+};
+
+const handleMultiplayerPortraitApply = async (transform: TheaterTransform | undefined) => {
+  const presentation = cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+    || createDefaultTheaterPresentation();
+  if (transform) presentation.multiplayerPortraitTransform = JSON.parse(JSON.stringify(transform));
+  else delete presentation.multiplayerPortraitTransform;
+  await handleTheaterPresentationApply(presentation);
 };
 
 const handleSetWorldTheaterTemplate = async (
@@ -5832,6 +5890,12 @@ const resumeTheaterAppearanceEditIntent = async () => {
   if (!intent) return;
   theaterAppearanceEditResumeRunning = true;
   try {
+    if (intent.mode === 'controller') {
+      identityManageVisible.value = true;
+      await nextTick();
+      await theaterDialogueControllerIdentityRef.value?.open();
+      return;
+    }
     if (intent.targetUserId && intent.targetKind && intent.targetKind !== 'self') {
       identityManageTargetUserId.value = intent.targetUserId;
       identityManageTargetKind.value = intent.targetKind;
@@ -5858,9 +5922,23 @@ const resumeTheaterAppearanceEditIntent = async () => {
         return;
       }
       openIdentityVariantEdit(variant);
+      theaterPresentationControllerTemplate.value = null;
       theaterPresentationEditorMode.value = 'variant';
     } else {
+      const worldId = String(chat.currentWorldId || '').trim();
+      theaterPresentationControllerTemplate.value = null;
       theaterPresentationEditorMode.value = 'base';
+      if (!worldId || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      try {
+        const state = await readDialogueController(worldId);
+        if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+        if (state.controller.enabled && state.template) {
+          theaterPresentationControllerTemplate.value = state.template;
+          theaterPresentationEditorMode.value = 'multiplayer';
+        }
+      } catch {
+        if (worldId !== String(chat.currentWorldId || '').trim() || channelId !== String(chat.curChannel?.id || '').trim()) return;
+      }
     }
     await nextTick();
     theaterPresentationEditorVisible.value = true;
@@ -6945,10 +7023,15 @@ const messageWindow = reactive({
   lockedHistory: false,
   beforeCursorExhausted: false,
 });
+let detachedRealtimeRevision = 0;
+const detachedRealtimeMessageKeys = new Set<string>();
 const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
 const anchorMessageId = computed(() => messageWindow.anchorMessageId);
+const detachedFromLatest = computed(() => (
+  historyLocked.value && !messageWindow.hasReachedLatest
+));
 
 watch(pinnedCollapsed, (collapsed) => {
   localStorage.setItem(pinnedCollapseStorageKey, String(collapsed));
@@ -7094,9 +7177,6 @@ const updateWindowAnchorsFromRows = () => {
     messageWindow.earliestTimestamp = firstTs;
   }
   if (lastTs !== null) {
-    if (messageWindow.latestTimestamp === null || lastTs > messageWindow.latestTimestamp) {
-      messageWindow.hasReachedLatest = false;
-    }
     messageWindow.latestTimestamp = lastTs;
     messageWindow.afterCursor = buildMessageCursor(lastMessage as any);
   } else {
@@ -7902,6 +7982,22 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
 };
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
+
+const shouldInsertCreatedMessageIntoWindow = (messageData?: any) => (
+  !detachedFromLatest.value || Boolean(messageData?.insertAboveTargetId)
+);
+
+const recordDetachedRealtimeMessage = (messageData?: any) => {
+  const messageId = String(messageData?.id || '').trim();
+  const messageKey = resolveSentConfirmKey(messageData);
+  if ((messageId && messageExistsLocally(messageId)) || (messageKey && detachedRealtimeMessageKeys.has(messageKey))) {
+    return;
+  }
+  if (messageKey) {
+    detachedRealtimeMessageKeys.add(messageKey);
+  }
+  detachedRealtimeRevision += 1;
+};
 
 const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | null; after?: string | null }) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -12632,10 +12728,16 @@ const retrySendMessage = async (target?: Message) => {
     || current.identity?.variantId
     || '',
   ).trim() || undefined;
-  const displayOrder = Number(currentData.displayOrder);
-  const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
-    ? displayOrder
-    : undefined;
+	const displayOrder = Number(currentData.displayOrder);
+	const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
+	  ? displayOrder
+	  : undefined;
+	const requestChannelId = String(
+	  currentData.channel?.id
+	  || currentData.channel_id
+	  || chat.curChannel?.id
+	  || '',
+	).trim();
 
   setMessageSendStatus(currentData, 'sending');
   instantMessages.add(current);
@@ -12653,17 +12755,25 @@ const retrySendMessage = async (target?: Message) => {
       undefined,
       identityVariantId,
     );
-    if (!newMsg) {
-      throw new Error('message.create returned empty result');
-    }
-    Object.entries(newMsg as Record<string, any>).forEach(([k, v]) => {
-      (current as any)[k] = v;
-    });
-    setMessageSendStatus(current as any, 'sent');
-    instantMessages.delete(current);
-    upsertMessage(current);
-    notifyNewMessageHighlight(current);
-    toBottom();
+	  if (!newMsg) {
+	    throw new Error('message.create returned empty result');
+	  }
+	  const currentChannelId = String(chat.curChannel?.id || '').trim();
+	  const applyAck = shouldApplyMessageCreateAck(
+	    requestChannelId,
+	    currentChannelId,
+	    instantMessages.has(current),
+	  );
+	  instantMessages.delete(current);
+	  if (applyAck) {
+	    Object.entries(newMsg as Record<string, any>).forEach(([k, v]) => {
+	      (current as any)[k] = v;
+	    });
+	    setMessageSendStatus(current as any, 'sent');
+	    upsertMessage(current);
+	    notifyNewMessageHighlight(current);
+	    toBottom();
+	  }
   } catch (error) {
     const reason = resolveMessageSendFailureReason(error);
     setMessageSendStatus(current as any, 'failed', reason);
@@ -12904,8 +13014,10 @@ const performSend = async (options?: {
   }
 
   setMessageSendStatus(tmpMsg as any, 'sending');
-  rows.value.push(tmpMsg);
-  sortRowsByDisplayOrder();
+  if (shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
+    rows.value.push(tmpMsg);
+    sortRowsByDisplayOrder();
+  }
   instantMessages.add(tmpMsg);
   let sendOutcome:
     | { ok: true; messageId: string }
@@ -12959,10 +13071,16 @@ const performSend = async (options?: {
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
       identityVariantIdOverride,
     );
-    if (!newMsg) {
-      throw new Error('message.create returned empty result');
-    }
-    if (isChannelDefaultDiceCommandResponse(newMsg)) {
+	  if (!newMsg) {
+	    throw new Error('message.create returned empty result');
+	  }
+	  const responseChannelId = String(chat.curChannel?.id || '').trim();
+	  if (!activeChannelId || responseChannelId !== activeChannelId) {
+	    instantMessages.delete(tmpMsg);
+	    sendOutcome = { ok: true, messageId: String(newMsg.id || tmpMsg.id || clientId) };
+	    return sendOutcome;
+	  }
+	  if (isChannelDefaultDiceCommandResponse(newMsg)) {
       setMessageSendStatus(tmpMsg as any, 'sent');
       instantMessages.delete(tmpMsg);
       const index = rows.value.findIndex(item => item.id === tmpMsg.id);
@@ -12979,9 +13097,16 @@ const performSend = async (options?: {
       sendOutcome = { ok: true, messageId: String(newMsg.id) };
       return sendOutcome;
     }
-    for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
-      (tmpMsg as any)[k] = v;
-    }
+	  const applyAck = shouldApplyMessageCreateAck(
+	    activeChannelId,
+	    responseChannelId,
+	    instantMessages.has(tmpMsg),
+	  );
+	  if (applyAck) {
+	    for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
+	      (tmpMsg as any)[k] = v;
+	    }
+	  }
     const interjectFirstEditSnapshot = interjectSession.value?.phase === 'awaiting-first-send'
       ? createInterjectEditSnapshot({
         messageId: String(tmpMsg.id || '').trim(),
@@ -13001,10 +13126,16 @@ const performSend = async (options?: {
     if (diceMatchesInDraft.length) {
       diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
-    setMessageSendStatus(tmpMsg as any, 'sent');
-    instantMessages.delete(tmpMsg);
-    upsertMessage(tmpMsg);
-    notifyNewMessageHighlight(tmpMsg);
+	  if (applyAck) {
+	    setMessageSendStatus(tmpMsg as any, 'sent');
+	  }
+	  instantMessages.delete(tmpMsg);
+	  if (applyAck && shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
+	    upsertMessage(tmpMsg);
+	  }
+	  if (applyAck) {
+	    notifyNewMessageHighlight(tmpMsg);
+	  }
     if (activeReeditSource) {
       try {
         await chat.messageRemove(activeReeditSource.channelId, activeReeditSource.messageId);
@@ -13054,7 +13185,7 @@ const performSend = async (options?: {
     sendOutcome = { ok: false, error: { code: 'MESSAGE_SEND_FAILED', message: reason } };
   }
 
-  if (wasAtBottom && !insertPlacement) {
+  if (wasAtBottom && !insertPlacement && shouldInsertCreatedMessageIntoWindow(tmpMsg)) {
     toBottom();
   }
   return sendOutcome;
@@ -13561,104 +13692,30 @@ const handleMessageCreatedNotice = (event?: any) => {
     return;
   }
 
-  const taskKey = `${channelId}:${messageId || 'latest'}`;
-  if (worldMessageNoticeTasks.has(taskKey)) {
+  const knownChannel = chat.findChannelById(channelId) as any;
+  const noticeWorldId = String(
+    event?.worldId
+      || event?.world_id
+      || knownChannel?.worldId
+      || knownChannel?.world_id
+      || '',
+  ).trim();
+  if (!noticeWorldId || noticeWorldId !== currentWorldId) {
     return;
   }
-  const task = (async () => {
-    let channel = chat.findChannelById(channelId) as any;
-    let channelWorldId = String(
-      event?.worldId
-        || event?.world_id
-        || event?.channel?.worldId
-        || event?.channel?.world_id
-        || event?.message?.channel?.worldId
-        || event?.message?.channel?.world_id
-        || event?.message?.worldId
-        || event?.message?.world_id
-        || channel?.worldId
-        || channel?.world_id
-        || '',
-    ).trim();
-    if (!channelWorldId && typeof chat.channelInfoGet === 'function') {
-      try {
-        const response = await chat.channelInfoGet(channelId);
-        channel = response?.item || channel;
-        channelWorldId = String(channel?.worldId || channel?.world_id || '').trim();
-      } catch {
-        channelWorldId = '';
-      }
-    }
-    if (!channelWorldId || channelWorldId !== currentWorldId) {
-      return;
-    }
 
-    const activeWorldId = String(chat.currentWorldId || routeWorldId.value || (chat.curChannel as any)?.worldId || '').trim();
-    if (currentWorldId !== activeWorldId) {
-      return;
-    }
-
-    const noticeMessage = event?.message;
-    if (noticeMessage && typeof noticeMessage === 'object') {
-      const incoming = normalizeMessageShape(noticeMessage);
-      if (!incoming.id && messageId) {
-        incoming.id = messageId;
-      }
-      if (incoming.id) {
-        enqueueWorldMessageToast(incoming, {
-          ...event,
-          channel: event?.channel || channel,
-        });
-        return;
-      }
-    }
-
-    let rawMessage: any = null;
-    if (messageId) {
-      try {
-        const context = await chat.messageContext(channelId, messageId, {
-          before: 1,
-          after: 1,
-          includeArchived: true,
-          includeOoc: true,
-        });
-        const contextItems = Array.isArray(context?.data)
-          ? context.data
-          : (Array.isArray((context?.data as any)?.data) ? (context?.data as any).data : []);
-        rawMessage = contextItems.find((item: any) => String(item?.id || item?.message_id || item?.messageId || '').trim() === messageId) || null;
-      } catch {
-        rawMessage = null;
-      }
-    } else {
-      // Older servers omit messageId from notice. Time-mode list avoids marking channel read.
-      try {
-        const response = await chat.messageList(channelId, undefined, {
-          limit: 1,
-          fromTime: 1,
-          includeArchived: true,
-          includeOoc: true,
-        });
-        const items = Array.isArray(response?.data) ? response.data : [];
-        rawMessage = items.length > 0 ? items[items.length - 1] : null;
-      } catch {
-        rawMessage = null;
-      }
-    }
-    if (!rawMessage) {
-      return;
-    }
-    const incoming = normalizeMessageShape(rawMessage);
-    if (messageId && String(incoming.id || '').trim() !== messageId) {
-      return;
-    }
-    enqueueWorldMessageToast(incoming, {
-      ...event,
-      channel: event?.channel || channel,
-    });
-  })().catch(() => undefined).finally(() => {
-    worldMessageNoticeTasks.delete(taskKey);
+  worldMessageToastStackRef.value?.enqueue({
+    worldId: currentWorldId,
+    channelId,
+    messageId,
+    channelName: String(event?.channelName || event?.channel_name || knownChannel?.name || '未知频道').trim() || '未知频道',
+    speakerName: String(event?.speakerName || event?.speaker_name || '新消息').trim() || '新消息',
+    preview: String(event?.preview || '发送了一条新消息').trim() || '发送了一条新消息',
+    createdAt: normalizeTimestamp(event?.createdAt)
+      ?? normalizeTimestamp(event?.created_at)
+      ?? normalizeTimestamp(event?.timestamp)
+      ?? Date.now(),
   });
-  worldMessageNoticeTasks.set(taskKey, task);
 };
 
 const handleMessageCreated = (e?: Event) => {
@@ -13725,11 +13782,16 @@ const handleMessageCreated = (e?: Event) => {
       instantMessages.delete(matchedPending);
       Object.assign(matchedPending, incoming);
       setMessageSendStatus(matchedPending as any, 'sent');
-      upsertMessage(matchedPending);
+      const shouldInsert = shouldInsertCreatedMessageIntoWindow(matchedPending);
+      if (shouldInsert) {
+        upsertMessage(matchedPending);
+      } else {
+        recordDetachedRealtimeMessage(matchedPending);
+      }
       notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      if (shouldAutoScrollForSelfMessage(matchedPending)) {
+      if (shouldInsert && shouldAutoScrollForSelfMessage(matchedPending)) {
         toBottom();
       }
       return;
@@ -13793,6 +13855,13 @@ const handleMessageCreated = (e?: Event) => {
         }
       });
     }
+  }
+  if (!shouldInsertCreatedMessageIntoWindow(incoming)) {
+    recordDetachedRealtimeMessage(incoming);
+    notifyNewMessageHighlight(incoming);
+    removeTypingPreview(incoming.user?.id);
+    removeTypingPreview(incoming.user?.id, 'editing');
+    return;
   }
   upsertMessage(incoming);
   if (!isSelf) {
@@ -14303,13 +14372,16 @@ const scheduleLatestMessagesRefetch = () => {
   });
 };
 
-const fetchLatestMessages = async () => {
+const fetchLatestMessages = async (
+  options: { preserveHistoryLock?: boolean } = {},
+): Promise<boolean> => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
-    return;
+    return false;
   }
   const channelIdAtStart = chat.curChannel.id;
   const fetchEpoch = ++latestMessagesFetchEpoch;
   const filterSignatureAtStart = messageFilterSignature.value;
+  const realtimeRevisionAtStart = detachedRealtimeRevision;
   const isStale = () => (
     fetchEpoch !== latestMessagesFetchEpoch
     || chat.curChannel?.id !== channelIdAtStart
@@ -14322,7 +14394,10 @@ const fetchLatestMessages = async () => {
   });
   let fetchSucceeded = false;
   const previousRows = rows.value.slice();
-  resetWindowState('live', { preserveRows: true });
+  resetWindowState(options.preserveHistoryLock ? 'history' : 'live', {
+    preserveRows: true,
+    preserveHistoryLock: options.preserveHistoryLock,
+  });
   resetTypingPreview();
   messageWindow.loadingLatest = true;
   try {
@@ -14331,7 +14406,7 @@ const fetchLatestMessages = async () => {
       ...buildMessageFilterOptions(),
     });
     if (isStale()) {
-      return;
+      return false;
     }
     fetchSucceeded = true;
     console.info('[channel-load] messages-fetch-success', {
@@ -14345,6 +14420,12 @@ const fetchLatestMessages = async () => {
     validateMessageInsertTarget({ silent: true });
     applyCursorUpdate({ before: resp?.next ?? '' });
     computeAfterCursorFromRows();
+    if (options.preserveHistoryLock && detachedRealtimeRevision !== realtimeRevisionAtStart) {
+      messageWindow.hasReachedLatest = false;
+      return false;
+    }
+    messageWindow.hasReachedLatest = true;
+    detachedRealtimeMessageKeys.clear();
     await nextTick();
     scrollToBottom();
     showButton.value = false;
@@ -14356,12 +14437,16 @@ const fetchLatestMessages = async () => {
       rows: rows.value.length,
       ts: Date.now(),
     });
+    return true;
   } catch (error) {
     if (isStale()) {
-      return;
+      return false;
     }
     rows.value = previousRows;
-    resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+    resetWindowState(options.preserveHistoryLock ? 'history' : 'live', {
+      preserveRows: true,
+      preserveHistoryLock: options.preserveHistoryLock,
+    });
     throw error;
   } finally {
     const stale = isStale();
@@ -14373,7 +14458,7 @@ const fetchLatestMessages = async () => {
       ok: fetchSucceeded,
       ts: Date.now(),
     });
-    if (stale) {
+    if (stale && !options.preserveHistoryLock) {
       scheduleLatestMessagesRefetch();
     }
   }
@@ -14467,7 +14552,9 @@ const loadOlderMessages = async () => {
   }
 };
 
-const loadNewerMessages = async () => {
+const loadNewerMessages = async (
+  options: { scheduleRealtimeRetry?: boolean } = {},
+): Promise<boolean> => {
   if (
     !chat.curChannel?.id ||
     messageWindow.loadingAfter ||
@@ -14482,23 +14569,48 @@ const loadNewerMessages = async () => {
     }
     return false;
   }
+  const channelIdAtStart = chat.curChannel.id;
+  const afterCursorAtStart = messageWindow.afterCursor;
+  const realtimeRevisionAtStart = detachedRealtimeRevision;
+  let retryAfterRealtimeRace = false;
   messageWindow.loadingAfter = true;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, messageWindow.afterCursor, {
+    const resp = await chat.messageList(channelIdAtStart, afterCursorAtStart, {
       limit: PAGINATED_MESSAGE_LOAD_LIMIT,
       direction: 'after',
       ...buildMessageFilterOptions(),
     });
+    if (
+      chat.curChannel?.id !== channelIdAtStart
+      || !historyLocked.value
+      || messageWindow.afterCursor !== afterCursorAtStart
+    ) {
+      return false;
+    }
     const normalized = normalizeMessageList(resp?.data || []);
     if (normalized.length) {
       mergeIncomingMessages(normalized);
+      normalized.forEach((item) => {
+        detachedRealtimeMessageKeys.delete(resolveSentConfirmKey(item));
+      });
       messageWindow.hasReachedLatest = false;
       if (isSearchBrowseActive()) {
-        searchBrowseSession.hasMoreAfter = Boolean(resp?.next);
+        searchBrowseSession.hasMoreAfter = true;
       }
       return true;
     }
+    if (detachedRealtimeRevision !== realtimeRevisionAtStart) {
+      messageWindow.hasReachedLatest = false;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreAfter = true;
+      }
+      if (options.scheduleRealtimeRetry !== false) {
+        retryAfterRealtimeRace = true;
+      }
+      return false;
+    }
     messageWindow.hasReachedLatest = true;
+    detachedRealtimeMessageKeys.clear();
     if (isSearchBrowseActive()) {
       searchBrowseSession.hasMoreAfter = false;
     }
@@ -14511,12 +14623,51 @@ const loadNewerMessages = async () => {
     return false;
   } finally {
     messageWindow.loadingAfter = false;
+    if (retryAfterRealtimeRace) {
+      void nextTick(() => {
+        if (
+          chat.curChannel?.id === channelIdAtStart
+          && detachedFromLatest.value
+          && messageWindow.afterCursor === afterCursorAtStart
+        ) {
+          void loadNewerMessages();
+        }
+      });
+    }
   }
 };
 
 const handleBackToLatest = async () => {
-  await fetchLatestMessages();
-  unlockHistoryView();
+  if (!chat.curChannel?.id || messageWindow.loadingLatest) {
+    return;
+  }
+  const channelIdAtStart = chat.curChannel.id;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let synced = false;
+    try {
+      synced = await fetchLatestMessages({ preserveHistoryLock: true });
+    } catch {
+      return;
+    }
+    if (chat.curChannel?.id !== channelIdAtStart || !historyLocked.value) {
+      return;
+    }
+    if (synced) {
+      unlockHistoryView();
+      return;
+    }
+  }
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await loadNewerMessages({ scheduleRealtimeRetry: false });
+    if (chat.curChannel?.id !== channelIdAtStart || !historyLocked.value) {
+      return;
+    }
+    if (messageWindow.hasReachedLatest) {
+      unlockHistoryView();
+      return;
+    }
+  }
 };
 
 const onScroll = () => {
@@ -14971,7 +15122,9 @@ const sendImageMessage = async (attachmentId: string) => {
     message.error('发送失败,您可能没有权限在此频道发送消息');
     return false;
   }
-  toBottom();
+  if (!detachedFromLatest.value) {
+    toBottom();
+  }
   return true;
 };
 
@@ -15225,7 +15378,7 @@ onBeforeUnmount(() => {
           @open-channel-images="openChannelImagesPanel"
           @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
-          @open-theater="openTheaterView"
+          @open-theater="handleOpenTheater"
           @open-ic-ooc-split="openIcOocSplitView"
           @open-inline-chat-split="openInlineIcOocSplit"
           @toggle-sticky-note="toggleStickyNotes"
@@ -17684,6 +17837,7 @@ onBeforeUnmount(() => {
     :presentation="identityForm.theaterPresentation"
     :base="identityForm.theaterPresentation"
     :patch="identityVariantForm.theaterPresentation"
+    :controller-template="theaterPresentationControllerTemplate"
     :channel-id="chat.curChannel?.id || ''"
     :identity-id="editingIdentity?.id || ''"
     :variant-id="theaterPresentationEditorMode === 'variant' ? (editingIdentityVariant?.id || '') : ''"
@@ -17694,7 +17848,9 @@ onBeforeUnmount(() => {
     :world-template-saving="worldTheaterTemplateSaving"
     :applying="theaterPresentationApplying"
     @apply="handleTheaterPresentationApply"
+    @apply-multiplayer="handleMultiplayerPortraitApply"
     @set-world-template="handleSetWorldTheaterTemplate"
+    @toggle-editor-mode="toggleTheaterPresentationEditorMode"
   />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"
@@ -17845,6 +18001,14 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </template>
+      <TheaterDialogueControllerIdentity
+        ref="theaterDialogueControllerIdentityRef"
+        :world-id="chat.currentWorldId"
+        :channel-id="chat.curChannel?.id || ''"
+        :visible="identityManageVisible"
+        :theater-mode="isTheaterEmbedMode"
+        @request-enter-theater="enterTheaterForDialogueControllerEdit"
+      />
       <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager" :class="{ 'identity-manager--bot': isManagingBotIdentity }">
         <div v-if="!isManagingBotIdentity" class="identity-manager__sidebar">
           <div class="identity-folder-header">

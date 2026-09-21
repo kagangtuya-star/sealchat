@@ -30,7 +30,10 @@ watch(mediaUrl, () => { videoFallbackUrl.value = '' })
 function useVideoMedia() {
   videoFallbackUrl.value = mediaUrl.value
 }
-const layoutClass = computed(() => `world-clue-content--${props.clue.presentation?.mediaPlacement || 'left'}`)
+const hasMedia = computed(() => props.clue.kind === 'iframe' || (props.clue.kind === 'image' && !!mediaUrl.value))
+const layoutClass = computed(() => hasMedia.value
+  ? `world-clue-content--${props.clue.presentation?.mediaPlacement || 'left'}`
+  : 'world-clue-content--no-media')
 </script>
 
 <template>
@@ -61,6 +64,7 @@ const layoutClass = computed(() => `world-clue-content--${props.clue.presentatio
 .world-clue-content--right { grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--clue-media-ratio) * 100%)); }
 .world-clue-content--right .world-clue-content__media { order: 2; }
 .world-clue-content--top, .world-clue-content--bottom { grid-template-columns: 1fr; }
+.world-clue-content--no-media { grid-template-columns: minmax(0, 1fr); }
 .world-clue-content--bottom .world-clue-content__media { order: 2; }
 .world-clue-content__media { min-width: 0; min-height: 260px; }
 .world-clue-content__media img, .world-clue-content__media video { display: block; width: 100%; height: 100%; max-height: 70dvh; }

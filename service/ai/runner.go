@@ -172,7 +172,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			SystemPrompt: featureCfg.DefaultPrompt,
 			UserInput:    input,
 			Params:       featureCfg.Params,
-		}, aiCfg.Retry)
+		}, aiCfg.Retry, aiCfg.RequestTimeoutSeconds)
 		if err == nil {
 			if result.Model == "" {
 				result.Model = model
@@ -207,7 +207,7 @@ func (r *Runner) nextProviderOffset(cfg utils.AIConfig) int {
 	return offset
 }
 
-func (r *Runner) completeWithRetry(ctx context.Context, client ChatClient, req CompletionRequest, retry utils.AIRetryConfig) (CompletionResult, error) {
+func (r *Runner) completeWithRetry(ctx context.Context, client ChatClient, req CompletionRequest, retry utils.AIRetryConfig, requestTimeoutSeconds int) (CompletionResult, error) {
 	attempts := retry.MaxAttempts
 	if attempts <= 0 {
 		attempts = 1
@@ -223,10 +223,15 @@ func (r *Runner) completeWithRetry(ctx context.Context, client ChatClient, req C
 	if maxDelay < delay {
 		maxDelay = delay
 	}
+	if requestTimeoutSeconds <= 0 {
+		requestTimeoutSeconds = 60
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		result, err := client.Complete(ctx, req)
+		attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(requestTimeoutSeconds)*time.Second)
+		result, err := client.Complete(attemptCtx, req)
+		cancel()
 		if err == nil {
 			return result, nil
 		}

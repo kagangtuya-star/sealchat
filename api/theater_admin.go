@@ -72,6 +72,8 @@ func bindTheaterAudioRoutes(router fiber.Router, base string) {
 }
 
 func BindWorldTheaterRoutes(router fiber.Router) {
+	router.Get("/worlds/:worldId/theater/dialogue-controller", TheaterDialogueControllerGet)
+	router.Get("/worlds/:worldId/theater/character-options", TheaterCharacterOptionsGet)
 	router.Post("/worlds/:worldId/theater/activate", TheaterActivate)
 	bindTheaterRoutes(router, "/worlds/:worldId/theater")
 }

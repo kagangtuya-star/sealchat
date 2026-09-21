@@ -1,4 +1,4 @@
-import type { TheaterDialogueMessagePayload, TheaterDialogueMessageRemovedPayload } from '../views/theater/bridge/theater-bridge-protocol'
+import type { ChatCharacterSnapshot, TheaterDialogueMessagePayload, TheaterDialogueMessageRemovedPayload } from '../views/theater/bridge/theater-bridge-protocol'
 import {
   CHANNEL_EMBED_EVENT,
   CHANNEL_EMBED_HANDSHAKE,
@@ -93,6 +93,13 @@ export interface EmbedUploadedImage {
   mimeType: string
   size: number
 }
+export interface EmbedTheaterCharacterSnapshot {
+  revision: number
+  updatedAt: number
+  activeIdentityId: string | null
+  identityId: string
+  character: ChatCharacterSnapshot | null
+}
 
 export class ChannelEmbedClient {
   private readonly port: MessagePort
@@ -105,11 +112,13 @@ export class ChannelEmbedClient {
   private storageSeq = 0
   private storageResyncing = false
   private closed = false
+  readonly capabilities: readonly string[]
 
-  constructor(port: MessagePort, sessionId: string, contextVersion: number) {
+  constructor(port: MessagePort, sessionId: string, contextVersion: number, capabilities: string[] = []) {
     this.port = port
     this.sessionId = sessionId
     this.contextVersion = contextVersion
+    this.capabilities = [...capabilities]
     port.onmessage = (message) => this.handleMessage(message.data)
     port.start?.()
   }
@@ -216,13 +225,21 @@ export class ChannelEmbedClient {
   }
 
   readonly context = { get: () => this.request('context.get'), onChanged: (handler: EventHandler) => this.on('context.changed', handler) }
-  readonly theater = { dialogue: {
-    subscribe: (params: { identityId: string }) => this.request<{ identityId: string }>('theater.dialogue.subscribe', params),
-    unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
-    onCreated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.created', handler),
-    onUpdated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.updated', handler),
-    onRemoved: (handler: (payload: TheaterDialogueMessageRemovedPayload) => void) => this.on('theater.dialogue.removed', handler),
-  } }
+  readonly theater = {
+    dialogue: {
+      subscribe: (params: { identityId: string }) => this.request<{ identityId: string }>('theater.dialogue.subscribe', params),
+      unsubscribe: () => this.request('theater.dialogue.unsubscribe'),
+      onCreated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.created', handler),
+      onUpdated: (handler: (payload: TheaterDialogueMessagePayload) => void) => this.on('theater.dialogue.updated', handler),
+      onRemoved: (handler: (payload: TheaterDialogueMessageRemovedPayload) => void) => this.on('theater.dialogue.removed', handler),
+    },
+    character: {
+      get: (params: { identityId: string }) => this.request<EmbedTheaterCharacterSnapshot>('theater.character.get', params),
+      subscribe: (params: { identityId: string }) => this.request<EmbedTheaterCharacterSnapshot>('theater.character.subscribe', params),
+      unsubscribe: () => this.request('theater.character.unsubscribe'),
+      onChanged: (handler: (payload: EmbedTheaterCharacterSnapshot) => void) => this.on('theater.character.changed', handler),
+    },
+  }
   readonly user = { getCurrent: () => this.request('user.getCurrent') }
   readonly member = { getCurrent: () => this.request('member.getCurrent') }
   readonly members = { list: (params: { scope: EmbedMemberListScope; cursor?: string }) => this.request<EmbedSafeMember[] | EmbedWorldAdmin[]>('members.list', params), onChanged: (handler: EventHandler) => this.on('members.changed', handler) }
@@ -283,7 +300,7 @@ export const SealChatEmbed = {
         settled = true
         cleanup()
         if (!ack.ok || !event.ports[0] || !ack.sessionId) { reject(new SealChatEmbedError(ack.error || { code: 'HANDSHAKE_FAILED', message: 'Embed handshake rejected' })); return }
-        resolve(new ChannelEmbedClient(event.ports[0], ack.sessionId, ack.contextVersion || 0))
+        resolve(new ChannelEmbedClient(event.ports[0], ack.sessionId, ack.contextVersion || 0, ack.capabilities || []))
       }
       window.addEventListener('message', onMessage)
       window.parent.postMessage({ type: CHANNEL_EMBED_HANDSHAKE, version: 1, nonce }, targetOrigin)

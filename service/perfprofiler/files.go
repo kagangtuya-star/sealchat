@@ -130,6 +130,8 @@ func cleanupExpiredFiles(root string, retention time.Duration) error {
 
 func detectArtifactKind(name, path string) string {
 	switch {
+	case strings.Contains(path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) && strings.HasPrefix(name, "trace-session-") && strings.HasSuffix(name, ".out"):
+		return "session-trace"
 	case strings.Contains(path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) && strings.HasSuffix(name, ".pb.gz"):
 		return "session-cpu"
 	case strings.Contains(path, string(filepath.Separator)+"sessions"+string(filepath.Separator)) && strings.HasSuffix(name, ".json"):

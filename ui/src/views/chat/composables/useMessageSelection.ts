@@ -1,10 +1,19 @@
-import { computed, onBeforeUnmount, ref, type Ref } from 'vue';
+import { computed, createApp, nextTick, onBeforeUnmount, ref, type Ref } from 'vue';
 import dayjs from 'dayjs';
 import { nanoid } from 'nanoid';
 import type { Message } from '@satorijs/protocol';
 import { chatEvent, useChatStore } from '@/stores/chat';
+import { useDisplayStore } from '@/stores/display';
+import { useUserStore } from '@/stores/user';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import { dialogAskConfirm } from '@/utils/dialog';
+import MessageImageExportPreview from '../components/message-image/MessageImageExportPreview.vue';
+import MessageImageSnapshot from '../components/message-image/MessageImageSnapshot.vue';
+import {
+  buildMessageImageSnapshotGroups,
+  MESSAGE_IMAGE_SNAPSHOT_WIDTH,
+  resolveMessageImageSnapshotPalette,
+} from '../components/message-image/messageImageSnapshot';
 
 interface MessageSelectionOptions {
   chat: ReturnType<typeof useChatStore>;
@@ -21,6 +30,56 @@ interface MessageForwardPayload {
   messages?: any[];
 }
 
+interface SnapshotMessageImageOptions {
+  width: number;
+  backgroundColor: string;
+}
+
+const snapshotMessageImage = async (
+  root: HTMLElement,
+  options: SnapshotMessageImageOptions,
+): Promise<Blob> => {
+  let modernScreenshotError: unknown;
+  try {
+    const { domToBlob } = await import('modern-screenshot');
+    const blob = await domToBlob(root, {
+      type: 'image/png',
+      width: options.width,
+      scale: 2,
+      backgroundColor: options.backgroundColor,
+      timeout: 5000,
+    });
+    if (!blob) throw new Error('modern-screenshot returned an empty blob');
+    return blob;
+  } catch (error) {
+    modernScreenshotError = error;
+    console.error('modern-screenshot failed to generate the message image', error);
+  }
+
+  try {
+    const { default: html2canvas } = await import('html2canvas');
+    const canvas = await html2canvas(root, {
+      width: options.width,
+      scale: 2,
+      backgroundColor: options.backgroundColor,
+      useCORS: true,
+      imageTimeout: 5000,
+      logging: false,
+    });
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/png');
+    });
+    if (!blob) throw new Error('html2canvas returned an empty blob');
+    return blob;
+  } catch (error) {
+    console.error('html2canvas fallback failed to generate the message image', {
+      modernScreenshotError,
+      html2canvasError: error,
+    });
+    throw error;
+  }
+};
+
 export const useMessageSelection = ({
   chat,
   rows,
@@ -28,11 +87,58 @@ export const useMessageSelection = ({
   message,
   dialog,
 }: MessageSelectionOptions) => {
+  const display = useDisplayStore();
+  const user = useUserStore();
   const forwardDialogVisible = ref(false);
   const forwardDialogSourceChannelId = ref('');
   const forwardDialogSourceWorldId = ref('');
   const forwardDialogMessageIds = ref<string[]>([]);
   const forwardDialogMessages = ref<any[]>([]);
+  let closeMessageImageExportPreview: (() => void) | null = null;
+  let messageImageExportRequestId = 0;
+
+  const closeOpenMessageImageExportPreview = () => {
+    closeMessageImageExportPreview?.();
+  };
+
+  const openMessageImageExportPreview = (blob: Blob, logicalWidth: number) => {
+    closeOpenMessageImageExportPreview();
+
+    const objectUrl = URL.createObjectURL(blob);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let mounted = false;
+    let cleaned = false;
+    let cleanup = () => {};
+    const previewApp = createApp(MessageImageExportPreview, {
+      blob,
+      objectUrl,
+      logicalWidth,
+      fileName: `sealchat-messages-${dayjs().format('YYYYMMDD-HHmmss')}.png`,
+      showMessage: (type: 'success' | 'error', content: string) => message[type](content),
+      onClose: () => cleanup(),
+    });
+
+    cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (mounted) previewApp.unmount();
+      URL.revokeObjectURL(objectUrl);
+      host.remove();
+      if (closeMessageImageExportPreview === cleanup) {
+        closeMessageImageExportPreview = null;
+      }
+    };
+
+    closeMessageImageExportPreview = cleanup;
+    try {
+      previewApp.mount(host);
+      mounted = true;
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  };
 
   const allMessageIds = computed(() => {
     const ids = new Set<string>();
@@ -81,7 +187,9 @@ export const useMessageSelection = ({
   };
   chatEvent.on('message-forward-open' as any, handleMessageForwardOpen as any);
   onBeforeUnmount(() => {
+    messageImageExportRequestId += 1;
     chatEvent.off('message-forward-open' as any, handleMessageForwardOpen as any);
+    closeOpenMessageImageExportPreview();
   });
 
   const handleMultiSelectForward = () => {
@@ -174,70 +282,100 @@ export const useMessageSelection = ({
   };
 
   const handleMultiSelectCopyImage = async () => {
+    const requestId = ++messageImageExportRequestId;
+    const sourceWorldId = String(chat.currentWorldId || '').trim();
+    const sourceChannelId = String(chat.curChannel?.id || '').trim();
+    const isCurrentMessageImageExportContext = () => (
+      requestId === messageImageExportRequestId
+      && String(chat.currentWorldId || '').trim() === sourceWorldId
+      && String(chat.curChannel?.id || '').trim() === sourceChannelId
+    );
+    closeOpenMessageImageExportPreview();
     const messages = getMultiSelectedMessages();
     if (!messages.length) {
       message.warning('请先选择消息');
       return;
     }
+    const channelUserNames = new Map<string, string>();
+    (chat.curChannelUsers || []).forEach((channelUser: any) => {
+      const id = String(channelUser?.id || '').trim();
+      const name = String(
+        channelUser?.nick
+        || channelUser?.nickname
+        || channelUser?.name
+        || channelUser?.username
+        || '',
+      ).trim();
+      if (id && name) channelUserNames.set(id, name);
+    });
+    const groups = buildMessageImageSnapshotGroups(messages, rows.value, {
+      botCommandPrefixes: chat.curChannel?.botCommandPrefixes,
+      currentUserId: user.info.id,
+      resolveUserName: (userId) => channelUserNames.get(userId) || '',
+    });
+    const palette = resolveMessageImageSnapshotPalette(
+      document.documentElement.dataset.displayPalette === 'night',
+    );
+    const rootStyles = getComputedStyle(document.documentElement);
+    const snapshotWidth = display.settings.messageImageSnapshotWidth || MESSAGE_IMAGE_SNAPSHOT_WIDTH;
+    const snapshotPalette = {
+      ...palette,
+      background: rootStyles.getPropertyValue('--custom-chat-stage-bg').trim()
+        || rootStyles.getPropertyValue('--chat-ic-bg').trim()
+        || palette.background,
+    };
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.left = '-100000px';
+    host.style.top = '0';
+    host.style.width = `${snapshotWidth}px`;
+    host.style.pointerEvents = 'none';
+    document.body.appendChild(host);
+    const snapshotApp = createApp(MessageImageSnapshot, {
+      groups,
+      palette: snapshotPalette,
+    });
+    let mounted = false;
+
     try {
-      const html2canvas = (await import('html2canvas')).default;
-      const messageEls: HTMLElement[] = [];
-      for (const msg of messages) {
-        const el = msg.id ? document.getElementById(msg.id) : null;
-        if (el) messageEls.push(el);
-      }
-      if (!messageEls.length) {
-        message.error('未找到消息元素');
-        return;
-      }
-      const rootStyles = getComputedStyle(document.documentElement);
-      const bgColor = rootStyles.getPropertyValue('--sc-bg-base')?.trim()
-        || rootStyles.getPropertyValue('--chat-bg')?.trim()
-        || getComputedStyle(document.body).backgroundColor
-        || '#ffffff';
-      const canvases: HTMLCanvasElement[] = [];
-      for (const el of messageEls) {
-        const canvas = await html2canvas(el, {
-          backgroundColor: bgColor,
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          onclone: (_clonedDoc, clonedEl) => {
-            clonedEl.classList.remove('chat-item--multiselect', 'chat-item--selected');
-            const checkbox = clonedEl.querySelector('.chat-item__select-checkbox');
-            if (checkbox) checkbox.remove();
-          },
-        });
-        canvases.push(canvas);
-      }
-      const totalHeight = canvases.reduce((sum, canvas) => sum + canvas.height, 0);
-      const maxWidth = Math.max(...canvases.map((canvas) => canvas.width));
-      const padding = 16 * 2;
-      const combinedCanvas = document.createElement('canvas');
-      combinedCanvas.width = maxWidth + padding * 2;
-      combinedCanvas.height = totalHeight + padding * 2;
-      const ctx = combinedCanvas.getContext('2d')!;
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, combinedCanvas.width, combinedCanvas.height);
-      let y = padding;
-      for (const canvas of canvases) {
-        ctx.drawImage(canvas, padding, y);
-        y += canvas.height;
-      }
-      combinedCanvas.toBlob(async (blob) => {
-        if (!blob) return;
-        try {
-          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          message.success('已复制为图片');
-          chat.exitMultiSelectMode();
-        } catch (e) {
-          message.error('复制图片失败');
+      snapshotApp.mount(host);
+      mounted = true;
+      await nextTick();
+
+      const snapshotRoot = host.querySelector<HTMLElement>('[data-message-image-snapshot]');
+      if (!snapshotRoot) throw new Error('Message image snapshot root was not mounted');
+
+      const imagePromises = Array.from(snapshotRoot.querySelectorAll('img')).map(async (image) => {
+        if (image.complete) {
+          if (typeof image.decode === 'function') await image.decode().catch(() => undefined);
+          return;
         }
-      }, 'image/png');
-    } catch (e) {
-      console.error(e);
+        await new Promise<void>((resolve) => {
+          image.addEventListener('load', () => resolve(), { once: true });
+          image.addEventListener('error', () => resolve(), { once: true });
+        });
+      });
+      const fontsReady = document.fonts?.ready ?? Promise.resolve();
+      await Promise.race([
+        Promise.all([fontsReady, ...imagePromises]),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 4000)),
+      ]);
+
+      const blob = await snapshotMessageImage(snapshotRoot, {
+        width: snapshotWidth,
+        backgroundColor: snapshotPalette.background,
+      });
+      if (!isCurrentMessageImageExportContext()) return;
+      openMessageImageExportPreview(blob, snapshotWidth);
+      chat.exitMultiSelectMode();
+      message.success('图片已生成');
+    } catch (error) {
+      if (!isCurrentMessageImageExportContext()) return;
+      console.error('Failed to generate the message image', error);
       message.error('生成图片失败');
+    } finally {
+      if (mounted) snapshotApp.unmount();
+      host.remove();
     }
   };
 

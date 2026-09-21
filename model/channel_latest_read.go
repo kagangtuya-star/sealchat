@@ -3,8 +3,10 @@ package model
 import (
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -21,8 +23,15 @@ type ChannelLatestReadModel struct {
 
 	MessageId   string
 	MessageTime int64
+	// NULL marks a legacy row that still needs one lazy unread-mention migration.
+	LatestMentionTime   *int64 `gorm:"column:latest_mention_time" json:"-"`
+	MentionStateVersion int64  `gorm:"column:mention_state_version;not null;default:0" json:"-"`
 
 	Mark string `json:"mark"` // 特殊标记
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
 }
 
 func (*ChannelLatestReadModel) TableName() string {
@@ -39,6 +48,15 @@ type ChannelUnreadState struct {
 	Counts   map[string]int64 `json:"counts"`
 	Mentions map[string]bool  `json:"mentions"`
 }
+
+type channelMentionMigrationCall struct {
+	done chan struct{}
+	err  error
+}
+
+var channelMentionMigrationCalls sync.Map
+
+var channelUnreadMentionFetchFunc = channelUnreadMentionFetch
 
 func ChannelUnreadFetch(inChIds []string, userId string) (map[string]int64, error) {
 	items, err := ChannelReadListByUserId(inChIds, userId)
@@ -77,6 +95,18 @@ func ChannelUnreadStateFetch(inChIds []string, userId string) (*ChannelUnreadSta
 	if len(items) == 0 {
 		return state, nil
 	}
+	for _, item := range items {
+		if item != nil && item.LatestMentionTime == nil {
+			if err := ensureChannelMentionWatermarks(inChIds, userId); err != nil {
+				return nil, err
+			}
+			items, err = ChannelReadListByUserId(inChIds, userId)
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
 
 	chIds := make([]string, 0, len(items))
 	timeLst := make([]time.Time, 0, len(items))
@@ -86,6 +116,9 @@ func ChannelUnreadStateFetch(inChIds []string, userId string) (*ChannelUnreadSta
 		}
 		chIds = append(chIds, item.ChannelId)
 		timeLst = append(timeLst, time.UnixMilli(item.MessageTime))
+		if item.LatestMentionTime != nil && *item.LatestMentionTime > item.MessageTime {
+			state.Mentions[item.ChannelId] = true
+		}
 	}
 	if len(chIds) == 0 {
 		return state, nil
@@ -95,15 +128,88 @@ func ChannelUnreadStateFetch(inChIds []string, userId string) (*ChannelUnreadSta
 	if err != nil {
 		return nil, err
 	}
-	mentions, err := channelUnreadMentionFetch(chIds, timeLst, userId)
-	if err != nil {
-		return nil, err
-	}
 	state.Counts = counts
-	state.Mentions = mentions
 	return state, nil
 }
 
+func ensureChannelMentionWatermarks(channelIDs []string, userID string) error {
+	for {
+		items, err := ChannelReadListByUserId(channelIDs, userID)
+		if err != nil {
+			return err
+		}
+		if !channelMentionWatermarksNeedMigration(items) {
+			return nil
+		}
+
+		newCall := &channelMentionMigrationCall{done: make(chan struct{})}
+		actual, loaded := channelMentionMigrationCalls.LoadOrStore(userID, newCall)
+		call := actual.(*channelMentionMigrationCall)
+		if loaded {
+			<-call.done
+			if call.err != nil {
+				return call.err
+			}
+			continue
+		}
+
+		call.err = migrateChannelMentionWatermarks(channelIDs, userID)
+		close(call.done)
+		channelMentionMigrationCalls.CompareAndDelete(userID, call)
+		if call.err != nil {
+			return call.err
+		}
+	}
+}
+
+func channelMentionWatermarksNeedMigration(items []*ChannelLatestReadModel) bool {
+	for _, item := range items {
+		if item != nil && item.ChannelId != "" && item.LatestMentionTime == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func migrateChannelMentionWatermarks(channelIDs []string, userID string) error {
+	items, err := ChannelReadListByUserId(channelIDs, userID)
+	if err != nil {
+		return err
+	}
+	legacyItems := make([]*ChannelLatestReadModel, 0, len(items))
+	legacyChannelIDs := make([]string, 0, len(items))
+	legacyTimes := make([]time.Time, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.ChannelId == "" || item.LatestMentionTime != nil {
+			continue
+		}
+		legacyItems = append(legacyItems, item)
+		legacyChannelIDs = append(legacyChannelIDs, item.ChannelId)
+		legacyTimes = append(legacyTimes, time.UnixMilli(item.MessageTime))
+	}
+	if len(legacyItems) == 0 {
+		return nil
+	}
+
+	mentions, err := channelUnreadMentionFetchFunc(legacyChannelIDs, legacyTimes, userID)
+	if err != nil {
+		return err
+	}
+	for _, item := range legacyItems {
+		mentionTime := int64(0)
+		if mentions[item.ChannelId] {
+			mentionTime = item.MessageTime + 1
+		}
+		if _, err := channelMentionBackfillIfNull(item.ID, item.MentionStateVersion, mentionTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// channelUnreadMentionFetch is only the one-time lazy migration fallback for
+// legacy channel_latest_read rows whose latest_mention_time is NULL. It must not
+// be used by the normal unread-state hot path.
 func channelUnreadMentionFetch(channelIDs []string, updateTimes []time.Time, userID string) (map[string]bool, error) {
 	if len(channelIDs) != len(updateTimes) {
 		return nil, errors.New("channelIDs和updateTimes长度不匹配")
@@ -151,6 +257,116 @@ func channelUnreadMentionFetch(channelIDs []string, updateTimes []time.Time, use
 	return mentionMap, nil
 }
 
+func channelMentionBackfillIfNull(recordID string, expectedVersion int64, mentionTime int64) (bool, error) {
+	result := db.Model(&ChannelLatestReadModel{}).
+		Where("id = ? AND latest_mention_time IS NULL AND mention_state_version = ?", recordID, expectedVersion).
+		Update("latest_mention_time", mentionTime)
+	return result.RowsAffected > 0, result.Error
+}
+
+func channelMentionAdvance(query *gorm.DB, messageTime int64) error {
+	return query.Update("latest_mention_time", gorm.Expr(`CASE
+		WHEN latest_mention_time IS NULL OR latest_mention_time < ? THEN ?
+		ELSE latest_mention_time
+	END`, messageTime, messageTime)).Error
+}
+
+func channelMentionAdvanceForUsersTx(tx *gorm.DB, channelID string, senderID string, userIDs []string, messageTime int64) error {
+	if channelID == "" || len(userIDs) == 0 {
+		return nil
+	}
+	return channelMentionAdvance(tx.Model(&ChannelLatestReadModel{}).
+		Where("channel_id = ? AND user_id IN ? AND user_id <> ?", channelID, userIDs, senderID), messageTime)
+}
+
+func channelMentionAdvanceForChannelTx(tx *gorm.DB, channelID string, senderID string, messageTime int64) error {
+	if channelID == "" {
+		return nil
+	}
+	return channelMentionAdvance(tx.Model(&ChannelLatestReadModel{}).
+		Where("channel_id = ? AND user_id <> ?", channelID, senderID), messageTime)
+}
+
+// ChannelMentionAdvanceForUsersTx is the transaction-aware form used when the
+// mention rows and their watermarks must commit atomically.
+func ChannelMentionAdvanceForUsersTx(tx *gorm.DB, channelID string, senderID string, userIDs []string, messageTime int64) error {
+	if tx == nil {
+		tx = db
+	}
+	return channelMentionAdvanceForUsersTx(tx, channelID, senderID, userIDs, messageTime)
+}
+
+// ChannelMentionAdvanceForChannelTx is the transaction-aware form used when
+// the mention rows and their watermarks must commit atomically.
+func ChannelMentionAdvanceForChannelTx(tx *gorm.DB, channelID string, senderID string, messageTime int64) error {
+	if tx == nil {
+		tx = db
+	}
+	return channelMentionAdvanceForChannelTx(tx, channelID, senderID, messageTime)
+}
+
+// ChannelMentionAdvanceForUsers atomically advances mention watermarks for
+// existing read records belonging to the selected users.
+func ChannelMentionAdvanceForUsers(channelID string, senderID string, userIDs []string, messageTime int64) error {
+	return channelMentionAdvanceForUsersTx(db, channelID, senderID, userIDs, messageTime)
+}
+
+// ChannelMentionAdvanceForChannel atomically advances mention watermarks for
+// every existing read record in the channel except the sender's.
+func ChannelMentionAdvanceForChannel(channelID string, senderID string, messageTime int64) error {
+	return channelMentionAdvanceForChannelTx(db, channelID, senderID, messageTime)
+}
+
+func channelMentionInvalidateForUsersTx(tx *gorm.DB, channelID string, senderID string, userIDs []string) error {
+	if channelID == "" || len(userIDs) == 0 {
+		return nil
+	}
+	// Pending NULL rows also need a revision bump so an in-flight legacy scan
+	// cannot restore a mention deleted after that scan began.
+	return tx.Model(&ChannelLatestReadModel{}).
+		Where("channel_id = ? AND user_id IN ? AND user_id <> ?", channelID, userIDs, senderID).
+		Where("(latest_mention_time IS NULL OR latest_mention_time > message_time)").
+		Updates(map[string]any{
+			"latest_mention_time":   nil,
+			"mention_state_version": gorm.Expr("mention_state_version + 1"),
+		}).Error
+}
+
+func channelMentionInvalidateForChannelTx(tx *gorm.DB, channelID string, senderID string) error {
+	if channelID == "" {
+		return nil
+	}
+	return tx.Model(&ChannelLatestReadModel{}).
+		Where("channel_id = ? AND user_id <> ?", channelID, senderID).
+		Where("(latest_mention_time IS NULL OR latest_mention_time > message_time)").
+		Updates(map[string]any{
+			"latest_mention_time":   nil,
+			"mention_state_version": gorm.Expr("mention_state_version + 1"),
+		}).Error
+}
+
+func ChannelMentionInvalidateForUsersTx(tx *gorm.DB, channelID string, senderID string, userIDs []string) error {
+	if tx == nil {
+		tx = db
+	}
+	return channelMentionInvalidateForUsersTx(tx, channelID, senderID, userIDs)
+}
+
+func ChannelMentionInvalidateForChannelTx(tx *gorm.DB, channelID string, senderID string) error {
+	if tx == nil {
+		tx = db
+	}
+	return channelMentionInvalidateForChannelTx(tx, channelID, senderID)
+}
+
+func ChannelMentionInvalidateForUsers(channelID string, senderID string, userIDs []string) error {
+	return channelMentionInvalidateForUsersTx(db, channelID, senderID, userIDs)
+}
+
+func ChannelMentionInvalidateForChannel(channelID string, senderID string) error {
+	return channelMentionInvalidateForChannelTx(db, channelID, senderID)
+}
+
 func ChannelReadSet(channelId, userId string) error {
 	var record ChannelLatestReadModel
 	err := db.Where("channel_id = ? AND user_id = ?", channelId, userId).Limit(1).Find(&record).Error
@@ -160,9 +376,10 @@ func ChannelReadSet(channelId, userId string) error {
 	if record.ID == "" {
 		// 记录不存在,创建新记录
 		record = ChannelLatestReadModel{
-			ChannelId:   channelId,
-			UserId:      userId,
-			MessageTime: time.Now().UnixMilli(),
+			ChannelId:         channelId,
+			UserId:            userId,
+			MessageTime:       time.Now().UnixMilli(),
+			LatestMentionTime: int64Ptr(0),
 		}
 		return db.Create(&record).Error
 	}

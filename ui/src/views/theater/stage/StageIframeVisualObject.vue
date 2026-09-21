@@ -1,26 +1,60 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
+import { computed, onBeforeUnmount, ref, toRaw, watch, type CSSProperties } from 'vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import type { ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHost'
 import { useChatStore } from '@/stores/chat'
 import { useIFormStore } from '@/stores/iform'
+import { useUtilsStore } from '@/stores/utils'
 import { parseInternalSurfaceLink } from '@/utils/internalSurfaceLink'
 import { normalizeStageIframeContent, resolveSafeStageIframeUrl, type StageObject } from '../shared/stage-types'
+import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 
 const props = defineProps<{
   object: StageObject
+  characterSnapshot: ChatCharactersSnapshotPayload
 }>()
 
 const chat = useChatStore()
 const iformStore = useIFormStore()
+const utilsStore = useUtilsStore()
 iformStore.bootstrap()
 const iframeContent = computed(() => normalizeStageIframeContent(props.object.content?.iframe))
 const configuredUrl = computed(() => iframeContent.value.url)
 const iframeSrc = computed(() => resolveSafeStageIframeUrl(configuredUrl.value))
+const normalizeBasePath = (value: string) => {
+  const normalized = `/${value}`.replace(/\/+/g, '/').replace(/\/+$/, '')
+  return normalized === '/' ? '' : normalized
+}
+const pathMatchesBase = (url: URL, basePath: string) => (
+  !basePath || url.pathname === basePath || url.pathname.startsWith(`${basePath}/`)
+)
+const isTrustedInternalSurfaceUrl = (url: URL) => {
+  try {
+    const documentUrl = new URL(window.location.href.split('#', 1)[0])
+    if (
+      url.origin === documentUrl.origin
+      && pathMatchesBase(url, normalizeBasePath(documentUrl.pathname))
+    ) return true
+
+    const configuredDomain = utilsStore.config?.domain?.trim() || ''
+    if (!configuredDomain) return false
+    const hasExplicitProtocol = /^https?:\/\//i.test(configuredDomain)
+    const canonicalUrl = new URL(hasExplicitProtocol ? configuredDomain : `http://${configuredDomain}`)
+    const hostMatches = hasExplicitProtocol
+      ? url.origin === canonicalUrl.origin
+      : url.hostname === canonicalUrl.hostname
+        && (canonicalUrl.port ? (url.port || (url.protocol === 'https:' ? '443' : '80')) === canonicalUrl.port : !url.port)
+    const canonicalBasePath = normalizeBasePath(utilsStore.config?.webUrl?.trim() || '')
+    return hostMatches && pathMatchesBase(url, canonicalBasePath)
+  } catch {
+    return false
+  }
+}
 const internalIFormTarget = computed(() => {
   if (!iframeSrc.value || typeof window === 'undefined') return null
   try {
     const url = new URL(iframeSrc.value)
-    if (url.origin !== window.location.origin) return null
+    if (!isTrustedInternalSurfaceUrl(url)) return null
     const parsed = parseInternalSurfaceLink(url.href)
     return parsed?.type === 'iform' ? parsed : null
   } catch {
@@ -43,6 +77,24 @@ const directIForm = computed(() => {
 })
 const directIFormState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let loadEpoch = 0
+const theaterCharacterSourceStops = new Set<() => void>()
+const cloneCharacterSnapshot = (snapshot: ChatCharactersSnapshotPayload) => structuredClone(toRaw(snapshot))
+const theaterCharacterSource: ChannelEmbedTheaterCharacterSource = {
+  getSnapshot: () => cloneCharacterSnapshot(props.characterSnapshot),
+  subscribe: (listener) => {
+    const stopWatch = watch(
+      () => props.characterSnapshot,
+      snapshot => listener(cloneCharacterSnapshot(snapshot)),
+      { flush: 'sync' },
+    )
+    const stop = () => {
+      stopWatch()
+      theaterCharacterSourceStops.delete(stop)
+    }
+    theaterCharacterSourceStops.add(stop)
+    return stop
+  },
+}
 
 watch(
   () => [
@@ -77,7 +129,10 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => { loadEpoch += 1 })
+onBeforeUnmount(() => {
+  loadEpoch += 1
+  Array.from(theaterCharacterSourceStops).forEach(stop => stop())
+})
 
 const pointerEvents = computed<'auto' | 'none'>(() => (
   props.object.interactive ? 'auto' : 'none'
@@ -99,6 +154,7 @@ const frameStyle = computed<CSSProperties>(() => ({
       :form="directIForm"
       :channel-id="internalIFormTarget.channelId"
       :enable-channel-embed="true"
+      :theater-character-source="theaterCharacterSource"
       :style="frameStyle"
     />
     <span

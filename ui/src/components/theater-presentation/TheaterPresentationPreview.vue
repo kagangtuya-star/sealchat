@@ -13,6 +13,8 @@ const props = defineProps<{
   previewEnabled?: boolean
   previewName?: string
   previewText?: string
+  controllerArea?: TheaterTransform
+  multiplayerPortraitTransform?: TheaterTransform
 }>()
 const emit = defineEmits<{
   dispatch: [command: TheaterEditorCommand, options?: { transient?: boolean }]
@@ -133,12 +135,22 @@ const applyPointerMove = (event: PointerEvent) => {
   const dy = (event.clientY - gesture.startY) / Math.max(1, gesture.rect.height)
   let transform: Partial<TheaterTransform>
   if (gesture.kind === 'drag') {
-    transform = { x: gesture.transform.x + dx, y: gesture.transform.y + dy }
+    transform = gesture.target.kind === 'portrait' && (props.controllerArea || props.multiplayerPortraitTransform)
+      ? { y: gesture.transform.y + dy }
+      : { x: gesture.transform.x + dx, y: gesture.transform.y + dy }
   } else if (gesture.kind === 'resize') {
     const west = gesture.corner === 'nw' || gesture.corner === 'sw'
     const north = gesture.corner === 'nw' || gesture.corner === 'ne'
-    let width = Math.max(0.01, gesture.transform.width + (west ? -dx : dx))
     let height = Math.max(0.01, gesture.transform.height + (north ? -dy : dy))
+    if (gesture.target.kind === 'portrait' && (props.controllerArea || props.multiplayerPortraitTransform)) {
+      transform = {
+        height,
+        y: north ? gesture.transform.y + gesture.transform.height - height : gesture.transform.y,
+      }
+      emit('dispatch', { type: 'set-transform', target: gesture.target, transform }, { transient: true })
+      return
+    }
+    let width = Math.max(0.01, gesture.transform.width + (west ? -dx : dx))
     if (event.shiftKey) {
       const mediaAspect = selectedMediaAspect(gesture.target) || gesture.aspect
       height = width / mediaAspect * (gesture.rect.width / Math.max(1, gesture.rect.height))
@@ -205,9 +217,35 @@ const dialogueFrameStyle = (frame: TheaterVisualLayer): CSSProperties => ({
   ...layerStyle(frame),
   opacity: String(frame.transform.opacity * props.draft.dialogue.transform.opacity),
 })
+const autoWidthPreviewTransform = (transform: TheaterTransform, aspectRatio: number): TheaterTransform => {
+  const safeAspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 2 / 3
+  let height = Math.max(0.01, Math.min(1, transform.height))
+  let width = height * safeAspect / (16 / 9)
+  if (width > 1) {
+    height /= width
+    width = 1
+  }
+  return {
+    ...transform,
+    x: (1 - width) / 2,
+    y: Math.max(0, Math.min(1 - height, transform.y)),
+    width,
+    height,
+  }
+}
 const portraitRootStyle = computed<CSSProperties>(() => props.draft.portrait
-  ? layerStyle(props.draft.portrait)
+  ? {
+      ...layerStyle(props.draft.portrait),
+      ...(props.multiplayerPortraitTransform ? resolveTheaterTransformStyle(autoWidthPreviewTransform(props.multiplayerPortraitTransform, props.draft.portrait.media.width / props.draft.portrait.media.height)) : {}),
+    }
   : ({ position: 'absolute', inset: '0' } as CSSProperties))
+const controllerAreaStyle = computed<CSSProperties>(() => props.controllerArea ? { ...resolveTheaterTransformStyle(autoWidthPreviewTransform(props.controllerArea, 2 / 3)) } : {})
+const controllerAreaLabel = computed(() => {
+  const area = props.controllerArea
+  if (!area) return ''
+  const percent = (value: number) => `${Math.round(value * 100)}%`
+  return `多人立绘默认状态 · Y ${percent(area.y)} · H ${percent(area.height)} · 宽度自动`
+})
 const textLayerStyle = (kind: 'speaker' | 'content') => ({
   ...resolveTheaterTextTransformStyle(props.draft.dialogue[kind].transform),
   display: props.draft.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
@@ -240,18 +278,19 @@ const narrationStyle = computed<CSSProperties>(() => ({
 
       <div ref="compositionRef" class="theater-composition">
         <div
-          data-transform-target
+          v-if="controllerArea && !multiplayerPortraitTransform"
+          data-controller-area="1"
           data-portrait-root="1"
-          v-show="!draft.narration.enabled"
-          class="theater-preview__layer"
-          :class="{ 'is-selected': selection.kind === 'portrait' && draft.portrait, 'is-locked': activeSection !== 'portrait' }"
-          :style="portraitRootStyle"
-          @pointerdown="draft.portrait && beginGesture($event, 'drag', { kind: 'portrait' }, draft.portrait.transform)"
+          data-transform-target
+          class="theater-preview__controller-area"
+          :class="{ 'is-selected': selection.kind === 'portrait', 'is-locked': activeSection !== 'portrait' }"
+          :style="controllerAreaStyle"
+          @pointerdown="beginGesture($event, 'drag', { kind: 'portrait' }, controllerArea)"
         >
-          <TheaterPresentationMedia v-if="draft.portrait" :media="draft.portrait.media" :playback-rate="draft.portrait.playbackRate" />
-          <template v-if="draft.portrait && sameSelection(selection, { kind: 'portrait' })">
-            <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'portrait' }, draft.portrait!.transform, corner)" />
-            <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'portrait' }, draft.portrait!.transform)" />
+          <span>{{ controllerAreaLabel }}</span>
+          <template v-if="selection.kind === 'portrait'">
+            <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整多人立绘高度`" @pointerdown="beginGesture($event, 'resize', { kind: 'portrait' }, controllerArea, corner)" />
+            <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转多人立绘" @pointerdown="beginGesture($event, 'rotate', { kind: 'portrait' }, controllerArea)" />
           </template>
           <div
             v-for="layer in draft.portraitDecorations"
@@ -264,6 +303,37 @@ const narrationStyle = computed<CSSProperties>(() => ({
           >
             <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
             <template v-if="sameSelection(selection, { kind: 'decoration', id: layer.id })">
+              <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'decoration', id: layer.id }, layer.transform, corner)" />
+              <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'decoration', id: layer.id }, layer.transform)" />
+            </template>
+          </div>
+        </div>
+        <div
+          v-if="!controllerArea || multiplayerPortraitTransform"
+          data-transform-target
+          data-portrait-root="1"
+          v-show="!draft.narration.enabled"
+          class="theater-preview__layer"
+          :class="{ 'is-selected': selection.kind === 'portrait' && draft.portrait, 'is-locked': activeSection !== 'portrait', 'is-empty': !draft.portrait }"
+          :style="portraitRootStyle"
+          @pointerdown="draft.portrait && beginGesture($event, 'drag', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait.transform)"
+        >
+          <TheaterPresentationMedia v-if="draft.portrait" :media="draft.portrait.media" :playback-rate="draft.portrait.playbackRate" />
+          <template v-if="draft.portrait && sameSelection(selection, { kind: 'portrait' })">
+            <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait!.transform, corner)" />
+            <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait!.transform)" />
+          </template>
+          <div
+            v-for="layer in draft.portraitDecorations"
+            :key="layer.id"
+            data-transform-target
+            class="theater-preview__layer theater-preview__decoration"
+            :class="{ 'is-selected': !multiplayerPortraitTransform && selection.kind === 'decoration' && selection.id === layer.id, 'is-locked': !!multiplayerPortraitTransform || activeSection !== 'decorations', 'is-readonly': !!multiplayerPortraitTransform }"
+            :style="layerStyle(layer)"
+            @pointerdown="!multiplayerPortraitTransform && beginGesture($event, 'drag', { kind: 'decoration', id: layer.id }, layer.transform)"
+          >
+            <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
+            <template v-if="!multiplayerPortraitTransform && sameSelection(selection, { kind: 'decoration', id: layer.id })">
               <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'decoration', id: layer.id }, layer.transform, corner)" />
               <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'decoration', id: layer.id }, layer.transform)" />
             </template>
@@ -339,10 +409,16 @@ const narrationStyle = computed<CSSProperties>(() => ({
 .theater-preview__disabled { position: absolute; z-index: 1000; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.58); }
 .theater-preview__narration { position: absolute; z-index: 0; inset: 0; pointer-events: none; }
 .theater-preview .theater-composition { z-index: 1; }
+.theater-preview__controller-area { border: 1px dashed #60a5fa; box-sizing: border-box; display: grid; place-items: center; color: #93c5fd; font-size: 12px; cursor: move; }
+.theater-preview__controller-area.is-selected { outline: 2px solid #60a5fa; outline-offset: -2px; }
+.theater-preview__controller-area.is-locked { cursor: default; }
+.theater-preview__controller-area > span { position: absolute; z-index: 998; top: 4px; left: 6px; pointer-events: none; }
 .theater-preview__layer, .theater-preview__dialogue { cursor: move; box-sizing: border-box; }
+.theater-preview__layer.is-empty { pointer-events: none; }
 .theater-preview .is-locked { cursor: default; }
 .theater-preview__layer.is-selected, .theater-preview__dialogue.is-selected, .theater-preview__frame.is-selected { outline: 2px solid #60a5fa; outline-offset: -2px; }
 .theater-preview__decoration { pointer-events: auto; }
+.theater-preview__decoration.is-readonly { pointer-events: none; }
 .theater-preview__dialogue { color: white; }
 .theater-preview__default-frame { position: absolute; inset: 0; background: rgba(12,12,14,.94); border: 1px solid rgba(255,255,255,.25); border-radius: 4px; }
 .theater-preview__frame { position: absolute; inset: 0; z-index: 1; cursor: move; }

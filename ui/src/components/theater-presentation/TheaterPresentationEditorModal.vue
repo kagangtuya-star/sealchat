@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowBackUp, ArrowForwardUp, Photo, Plus, Template, X } from '@vicons/tabler'
+import { ArrowBackUp, ArrowForwardUp, Photo, Plus, Template, User, Users, X } from '@vicons/tabler'
 import { compressImage } from '@/composables/useImageCompressor'
 import { useTheaterPresentationEditor } from '@/composables/useTheaterPresentationEditor'
 import {
@@ -11,10 +11,13 @@ import {
 } from '@/composables/useTheaterAppearanceAssets'
 import {
   MAX_THEATER_PORTRAIT_DECORATIONS,
+  createDefaultTheaterTransform,
+  normalizeTheaterTransform,
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type TheaterTransform,
   type WorldTheaterPresentationTemplate,
   type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
@@ -25,10 +28,12 @@ import {
 } from './theaterPresentationEditorState'
 import TheaterPresentationInspector from './TheaterPresentationInspector.vue'
 import TheaterPresentationPreview from './TheaterPresentationPreview.vue'
+import type { DialogueControllerTemplate } from '@/views/theater/dialogue/theater-dialogue-controller'
 
 const props = withDefaults(defineProps<{
   show: boolean
-  mode: 'base' | 'variant'
+  mode: 'base' | 'variant' | 'controller' | 'multiplayer'
+  controllerTemplate?: DialogueControllerTemplate | null
   presentation?: TheaterPresentation | null
   base?: TheaterPresentation | null
   patch?: TheaterPresentationPatch | null
@@ -56,17 +61,152 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:show': [show: boolean]
   apply: [value: TheaterPresentation | TheaterPresentationPatch]
+  applyMultiplayer: [transform: TheaterPresentation['multiplayerPortraitTransform']]
   setWorldTemplate: [sections: WorldTheaterPresentationTemplateSection[], presentation: TheaterPresentation]
+  applyController: [template: DialogueControllerTemplate]
+  toggleEditorMode: []
 }>()
 
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const editorPresentation = () => {
+  if (props.mode !== 'multiplayer' || !props.controllerTemplate) return props.presentation
+  const presentation = clone(props.controllerTemplate.presentation)
+  delete presentation.multiplayerPortraitTransform
+  if (props.presentation?.portrait) {
+    const portraitStyle = props.controllerTemplate.portraitStyle
+    presentation.portrait = {
+      ...clone(props.presentation.portrait),
+      enabled: portraitStyle.enabled,
+      transform: createDefaultTheaterTransform(),
+      fit: portraitStyle.fit,
+      playbackRate: portraitStyle.playbackRate,
+      blendMode: portraitStyle.blendMode,
+      fadeDurationMs: portraitStyle.fadeDurationMs,
+    }
+  } else {
+    presentation.portrait = null
+  }
+  return theaterPresentationSchema.parse(presentation)
+}
+const editablePortraitStyle = () => {
+  if (!props.controllerTemplate || (props.mode !== 'controller' && props.mode !== 'multiplayer')) return null
+  const style = clone(props.controllerTemplate.portraitStyle)
+  if (props.mode === 'multiplayer') {
+    style.transform = clone(props.presentation?.multiplayerPortraitTransform || props.controllerTemplate.portraitStyle.transform)
+  }
+  return style
+}
+
 const editor = useTheaterPresentationEditor({
-  mode: props.mode,
-  presentation: props.presentation,
-  base: props.base,
+  mode: props.mode === 'variant' ? 'variant' : 'base',
+  presentation: editorPresentation(),
+  base: props.mode === 'multiplayer' ? editorPresentation() : props.base,
   patch: props.patch,
   worldTemplate: props.worldTemplate,
 })
 const activeTab = ref<'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue'>('portrait')
+const controllerStyle = ref<DialogueControllerTemplate['portraitStyle'] | null>(editablePortraitStyle())
+type ControllerTransformHistory = {
+  past: TheaterTransform[]
+  future: TheaterTransform[]
+  transactionStart: TheaterTransform | null
+}
+const controllerTransformHistory = ref<ControllerTransformHistory>({ past: [], future: [], transactionStart: null })
+const transformKeys: (keyof TheaterTransform)[] = ['x', 'y', 'width', 'height', 'rotation', 'opacity', 'zIndex']
+const sameTransform = (left: TheaterTransform, right: TheaterTransform) => transformKeys.every(key => left[key] === right[key])
+const normalizeControllerTransform = (input: Partial<TheaterTransform>, fallback: TheaterTransform) => {
+  const transform = normalizeTheaterTransform(input, fallback)
+  transform.x = fallback.x
+  transform.width = fallback.width
+  transform.height = Math.max(0.01, Math.min(1, transform.height))
+  transform.y = Math.max(0, Math.min(1 - transform.height, transform.y))
+  return transform
+}
+const resetControllerTransformHistory = () => {
+  controllerTransformHistory.value = { past: [], future: [], transactionStart: null }
+}
+const recordControllerTransform = (previous: TheaterTransform, next: TheaterTransform) => {
+  if (sameTransform(previous, next) || controllerTransformHistory.value.transactionStart) return
+  controllerTransformHistory.value = {
+    ...controllerTransformHistory.value,
+    past: [...controllerTransformHistory.value.past, clone(previous)],
+    future: [],
+  }
+}
+const setControllerTransform = (input: Partial<TheaterTransform>) => {
+  if (!controllerStyle.value) return
+  const previous = controllerStyle.value.transform
+  const transform = normalizeControllerTransform(input, previous)
+  recordControllerTransform(previous, transform)
+  controllerStyle.value = { ...controllerStyle.value, transform }
+}
+const controllerTransformHistoryActive = computed(() => (
+  (props.mode === 'controller' || props.mode === 'multiplayer') && activeTab.value === 'portrait'
+))
+const beginEditTransaction = () => {
+  if (!controllerTransformHistoryActive.value) {
+    editor.beginTransaction()
+    return
+  }
+  if (!controllerStyle.value || controllerTransformHistory.value.transactionStart) return
+  controllerTransformHistory.value = {
+    ...controllerTransformHistory.value,
+    transactionStart: clone(controllerStyle.value.transform),
+  }
+}
+const commitEditTransaction = () => {
+  const start = controllerTransformHistory.value.transactionStart
+  if (!start) {
+    editor.commitTransaction()
+    return
+  }
+  const current = controllerStyle.value?.transform
+  controllerTransformHistory.value = {
+    past: current && !sameTransform(start, current)
+      ? [...controllerTransformHistory.value.past, clone(start)]
+      : controllerTransformHistory.value.past,
+    future: current && !sameTransform(start, current) ? [] : controllerTransformHistory.value.future,
+    transactionStart: null,
+  }
+}
+const canUndo = computed(() => controllerTransformHistoryActive.value
+  ? controllerTransformHistory.value.past.length > 0
+  : editor.history.value.past.length > 0)
+const canRedo = computed(() => controllerTransformHistoryActive.value
+  ? controllerTransformHistory.value.future.length > 0
+  : editor.history.value.future.length > 0)
+const undo = () => {
+  if (!controllerTransformHistoryActive.value) {
+    editor.undo()
+    return
+  }
+  commitEditTransaction()
+  const previous = controllerTransformHistory.value.past.at(-1)
+  if (!previous || !controllerStyle.value) return
+  const current = clone(controllerStyle.value.transform)
+  controllerStyle.value = { ...controllerStyle.value, transform: normalizeControllerTransform(previous, current) }
+  controllerTransformHistory.value = {
+    past: controllerTransformHistory.value.past.slice(0, -1),
+    future: [current, ...controllerTransformHistory.value.future],
+    transactionStart: null,
+  }
+}
+const redo = () => {
+  if (!controllerTransformHistoryActive.value) {
+    editor.redo()
+    return
+  }
+  commitEditTransaction()
+  const next = controllerTransformHistory.value.future[0]
+  if (!next || !controllerStyle.value) return
+  const current = clone(controllerStyle.value.transform)
+  controllerStyle.value = { ...controllerStyle.value, transform: normalizeControllerTransform(next, current) }
+  controllerTransformHistory.value = {
+    past: [...controllerTransformHistory.value.past, current],
+    future: controllerTransformHistory.value.future.slice(1),
+    transactionStart: null,
+  }
+}
 const previewEnabled = ref(true)
 const templatePopoverVisible = ref(false)
 const templateSections = ref<WorldTheaterPresentationTemplateSection[]>(['portrait', 'speaker', 'content', 'dialogue'])
@@ -89,6 +229,14 @@ const postPreviewMessage = (type: 'start' | 'update' | 'stop') => {
     draft: type === 'stop' ? undefined : editor.draft.value,
     selection: type === 'stop' ? undefined : editor.selection.value,
     activeSection: type === 'stop' ? undefined : activeTab.value === 'decorations' ? 'decorations' : activeTab.value,
+    controllerArea: type === 'stop'
+      ? undefined
+      : props.mode === 'controller' && controllerStyle.value
+        ? { ...controllerStyle.value.transform }
+        : undefined,
+    multiplayerPortraitTransform: type === 'stop' || props.mode !== 'multiplayer' || !controllerStyle.value
+      ? undefined
+      : { ...controllerStyle.value.transform },
     previewName: props.previewName || '角色名',
     previewText: '夜色正好，我们该出发了。',
   }, window.location.origin)
@@ -100,19 +248,21 @@ const stopExternalPreview = () => {
   previewStarted = false
 }
 
-watch(() => props.show, (show) => {
+watch(() => [props.show, props.mode] as const, ([show]) => {
   uploadGeneration += 1
+  resetControllerTransformHistory()
   if (!show) return
   previewId = `appearance-preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   previewStarted = false
   editor.state.value = createTheaterPresentationEditorState({
-    mode: props.mode,
-    presentation: props.presentation,
-    base: props.base,
+    mode: props.mode === 'variant' ? 'variant' : 'base',
+    presentation: editorPresentation(),
+    base: props.mode === 'multiplayer' ? editorPresentation() : props.base,
     patch: props.patch,
     worldTemplate: props.worldTemplate,
   })
-  activeTab.value = 'portrait'
+  activeTab.value = props.mode === 'controller' ? 'dialogue' : 'portrait'
+  controllerStyle.value = editablePortraitStyle()
   previewEnabled.value = true
   uploadAsset.value = null
   uploadErrorCode.value = ''
@@ -126,7 +276,7 @@ watch(() => props.worldTemplate, (template) => {
 }, { deep: true })
 
 watch(
-  () => [props.show, previewEnabled.value, editor.revision.value, props.previewName] as const,
+  () => [props.show, previewEnabled.value, editor.revision.value, props.previewName, controllerStyle.value?.transform] as const,
   ([show, enabled]) => {
     if (!externalPreview) return
     if (!show || !enabled) {
@@ -143,8 +293,8 @@ const handlePreviewCommand = (event: MessageEvent) => {
   if (!externalPreview || event.origin !== window.location.origin || event.source !== window.parent) return
   const data = event.data as Record<string, unknown> | null
   if (!data || data.type !== 'sealchat.theater.appearance-preview.command' || data.previewId !== previewId) return
-  if (data.phase === 'start') editor.beginTransaction()
-  if (data.phase === 'end') editor.commitTransaction()
+  if (data.phase === 'start') beginEditTransaction()
+  if (data.phase === 'end') commitEditTransaction()
   if (data.command && typeof data.command === 'object') dispatch(data.command as TheaterEditorCommand, { transient: data.transient === true })
 }
 
@@ -171,6 +321,7 @@ const selectTab = (tab: 'portrait' | 'speaker' | 'content' | 'decorations' | 'di
 }
 
 const triggerUpload = (purpose: TheaterAppearanceAsset['purpose']) => {
+  if ((props.mode === 'controller' || props.mode === 'multiplayer') && purpose === 'portrait') return
   if (!canUpload.value || uploading.value) return
   uploadPurpose.value = purpose
   fileInput.value?.click()
@@ -270,7 +421,18 @@ const dispatch = (command: TheaterEditorCommand, options?: { transient?: boolean
     if (command.target.kind === 'content') activeTab.value = 'content'
     if (command.target.kind === 'dialogue' || command.target.kind === 'dialogue-frame') activeTab.value = 'dialogue'
   }
+  if ((props.mode === 'controller' || props.mode === 'multiplayer') && command.type === 'set-transform' && command.target.kind === 'portrait' && controllerStyle.value) {
+    setControllerTransform(command.transform)
+    return
+  }
   editor.dispatch(command, options)
+}
+const updateControllerStyle = (style: DialogueControllerTemplate['portraitStyle']) => {
+  if (!controllerStyle.value) return
+  const current = controllerStyle.value.transform
+  const transform = normalizeControllerTransform(style.transform, current)
+  recordControllerTransform(current, transform)
+  controllerStyle.value = { ...clone(style), transform }
 }
 const close = () => {
   if (props.applying) return
@@ -279,6 +441,14 @@ const close = () => {
 }
 const apply = () => {
   if (!canApply.value || props.applying) return
+  if (props.mode === 'controller' && controllerStyle.value) {
+    emit('applyController', { presentation: { ...theaterPresentationSchema.parse(editor.result.value), portrait: null }, portraitStyle: JSON.parse(JSON.stringify(controllerStyle.value)) })
+    return
+  }
+  if (props.mode === 'multiplayer' && controllerStyle.value) {
+    emit('applyMultiplayer', clone(controllerStyle.value.transform))
+    return
+  }
   const result = props.mode === 'variant'
     ? theaterPresentationPatchSchema.parse(editor.result.value)
     : theaterPresentationSchema.parse(editor.result.value)
@@ -296,11 +466,17 @@ const setWorldTemplate = () => {
     <div class="theater-editor-modal" :class="{ 'is-external-preview': externalPreview }" data-testid="theater-presentation-editor">
       <header class="theater-editor-modal__header">
         <div>
-          <div class="theater-editor-modal__title">小剧场演出外观</div>
-          <div class="theater-editor-modal__subtitle">{{ mode === 'variant' ? '差分覆盖' : '频道角色基础外观' }}</div>
+          <div class="theater-editor-modal__title-row">
+            <div class="theater-editor-modal__title">小剧场演出外观</div>
+            <n-button v-if="controllerTemplate && (mode === 'base' || mode === 'multiplayer')" size="tiny" :type="mode === 'multiplayer' ? 'primary' : 'default'" secondary @click="emit('toggleEditorMode')">
+              <template #icon><n-icon><component :is="mode === 'multiplayer' ? Users : User" /></n-icon></template>
+              {{ mode === 'multiplayer' ? '多人' : '单人' }}
+            </n-button>
+          </div>
+          <div class="theater-editor-modal__subtitle">{{ mode === 'controller' ? '全局对话框 · 多人公共演出设定' : mode === 'multiplayer' ? '当前角色 · 多人立绘调整' : mode === 'variant' ? '差分覆盖' : '频道角色基础外观' }}</div>
         </div>
         <div class="theater-editor-modal__header-actions">
-          <n-popover v-if="canSetWorldTemplate" v-model:show="templatePopoverVisible" trigger="click" placement="bottom-end">
+          <n-popover v-if="canSetWorldTemplate && mode !== 'controller' && mode !== 'multiplayer'" v-model:show="templatePopoverVisible" trigger="click" placement="bottom-end">
             <template #trigger>
               <n-button size="small" secondary :loading="worldTemplateSaving">
                 <template #icon><n-icon><Template /></n-icon></template>
@@ -321,19 +497,19 @@ const setWorldTemplate = () => {
             </div>
           </n-popover>
           <n-tooltip><template #trigger><n-switch v-model:value="previewEnabled" size="small" /></template>编辑预览</n-tooltip>
-          <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.past.length" @click="editor.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤销</n-tooltip>
-          <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.future.length" @click="editor.redo"><template #icon><n-icon><ArrowForwardUp /></n-icon></template></n-button></template>重做</n-tooltip>
+          <n-tooltip><template #trigger><n-button circle quaternary :disabled="!canUndo" @click="undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤销</n-tooltip>
+          <n-tooltip><template #trigger><n-button circle quaternary :disabled="!canRedo" @click="redo"><template #icon><n-icon><ArrowForwardUp /></n-icon></template></n-button></template>重做</n-tooltip>
           <n-tooltip><template #trigger><n-button circle quaternary :disabled="applying" @click="close"><template #icon><n-icon><X /></n-icon></template></n-button></template>关闭</n-tooltip>
         </div>
       </header>
 
       <div class="theater-editor-modal__toolbar">
         <n-tabs :value="activeTab" type="segment" size="small" @update:value="selectTab">
-          <n-tab name="portrait">立绘</n-tab>
-          <n-tab name="speaker">昵称</n-tab>
-          <n-tab name="content">聊天内容</n-tab>
-          <n-tab name="decorations">立绘装饰</n-tab>
-          <n-tab name="dialogue">对话框</n-tab>
+          <n-tab name="portrait">{{ mode === 'controller' ? '多人立绘默认状态' : '立绘' }}</n-tab>
+          <n-tab v-if="mode !== 'multiplayer'" name="speaker">昵称</n-tab>
+          <n-tab v-if="mode !== 'multiplayer'" name="content">聊天内容</n-tab>
+          <n-tab v-if="mode !== 'multiplayer'" name="decorations">{{ mode === 'controller' ? '公共装饰' : '立绘装饰' }}</n-tab>
+          <n-tab v-if="mode !== 'multiplayer'" name="dialogue">对话框</n-tab>
         </n-tabs>
       </div>
 
@@ -345,12 +521,15 @@ const setWorldTemplate = () => {
             :active-section="activeTab === 'decorations' ? 'decorations' : activeTab"
             :preview-enabled="previewEnabled"
             :preview-name="previewName"
+            :controller-area="mode === 'controller' ? controllerStyle?.transform : undefined"
+            :multiplayer-portrait-transform="mode === 'multiplayer' ? controllerStyle?.transform : undefined"
             @dispatch="dispatch"
-            @gesture-start="editor.beginTransaction"
-            @gesture-end="editor.commitTransaction"
+            @gesture-start="beginEditTransaction"
+            @gesture-end="commitEditTransaction"
           />
           <div class="theater-editor-modal__asset-row">
-            <n-button v-if="activeTab === 'portrait'" size="small" :disabled="!canUpload || uploading" @click="triggerUpload('portrait')"><template #icon><n-icon><Photo /></n-icon></template>上传立绘</n-button>
+            <n-button v-if="activeTab === 'portrait' && mode !== 'controller' && mode !== 'multiplayer'" size="small" :disabled="!canUpload || uploading" @click="triggerUpload('portrait')"><template #icon><n-icon><Photo /></n-icon></template>上传立绘</n-button>
+            <span v-if="mode === 'multiplayer'" class="theater-editor-modal__hint">公共样式只读，仅调整当前立绘</span>
             <n-button v-if="activeTab === 'decorations'" size="small" :disabled="!canUpload || uploading || editor.draft.value.portraitDecorations.length >= MAX_THEATER_PORTRAIT_DECORATIONS" @click="triggerUpload('portrait-decoration')"><template #icon><n-icon><Plus /></n-icon></template>添加装饰</n-button>
             <n-button v-if="activeTab === 'dialogue'" size="small" :disabled="!canUpload || uploading" @click="triggerUpload('dialogue-frame')"><template #icon><n-icon><Photo /></n-icon></template>上传对话框</n-button>
             <span v-if="!canUpload" class="theater-editor-modal__hint">先保存频道角色，才能上传演出资源</span>
@@ -365,11 +544,14 @@ const setWorldTemplate = () => {
           <TheaterPresentationInspector
             :draft="editor.draft.value"
             :selection="editor.selection.value"
-            :mode="mode"
+            :mode="mode === 'variant' ? 'variant' : 'base'"
             :section-modes="editor.sectionModes.value"
+            :portrait-style="mode === 'controller' || mode === 'multiplayer' ? controllerStyle : null"
+            :portrait-auto-width="mode === 'controller' || mode === 'multiplayer'"
             @dispatch="dispatch"
-            @transaction-start="editor.beginTransaction"
-            @transaction-end="editor.commitTransaction"
+            @update:portrait-style="updateControllerStyle"
+            @transaction-start="beginEditTransaction"
+            @transaction-end="commitEditTransaction"
           />
         </aside>
       </div>
@@ -386,6 +568,7 @@ const setWorldTemplate = () => {
 .theater-editor-modal { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; color: var(--sc-text-primary, #0f172a); background: var(--sc-bg-elevated, #fff); border: 1px solid var(--sc-border-strong, rgba(15,23,42,.15)); border-radius: 6px; box-shadow: 0 18px 50px rgba(0,0,0,.24); }
 .theater-editor-modal__header, .theater-editor-modal__toolbar, .theater-editor-modal__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--sc-border-mute, rgba(148,163,184,.24)); }
 .theater-editor-modal__title { font-size: 16px; font-weight: 700; }
+.theater-editor-modal__title-row { display: flex; align-items: center; gap: 8px; }
 .theater-editor-modal__subtitle, .theater-editor-modal__hint { color: var(--sc-text-secondary, #64748b); font-size: 12px; }
 .theater-editor-modal__header-actions, .theater-editor-modal__asset-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .theater-editor-modal__template-popover { display: flex; min-width: 210px; flex-direction: column; gap: 12px; }

@@ -2,7 +2,6 @@ package api
 
 import (
 	"log"
-	"sync"
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
@@ -26,7 +25,8 @@ func oneBotWSWorks(app *fiber.App, webUrl string) {
 
 func oneBotForwardWSHandler(role oneBotSessionRole) func(*websocket.Conn) {
 	return func(rawConn *websocket.Conn) {
-		conn := &WsSyncConn{Conn: rawConn, Mux: sync.RWMutex{}}
+		conn := newWsSyncConn(rawConn, defaultWSOutboundQueueSize)
+		defer conn.Close()
 		token := resolveOneBotAccessToken(rawConn.Headers("Authorization"))
 		if token == "" {
 			token = resolveOneBotAccessToken(rawConn.Query("access_token"))
@@ -34,14 +34,14 @@ func oneBotForwardWSHandler(role oneBotSessionRole) func(*websocket.Conn) {
 
 		botUser, _, err := resolveOneBotBotFromToken(token)
 		if err != nil {
-			_ = rawConn.WriteJSON(oneBotFailureResponse(err, nil))
-			_ = rawConn.Close()
+			_ = conn.WriteJSON(oneBotFailureResponse(err, nil))
+			_ = conn.Close()
 			return
 		}
 		selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUser.ID)
 		if err != nil {
-			_ = rawConn.WriteJSON(oneBotFailureResponse(err, nil))
-			_ = rawConn.Close()
+			_ = conn.WriteJSON(oneBotFailureResponse(err, nil))
+			_ = conn.Close()
 			return
 		}
 

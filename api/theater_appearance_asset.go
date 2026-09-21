@@ -12,7 +12,11 @@ import (
 func TheaterAppearanceAssetUpload(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	channelID := strings.TrimSpace(c.Params("channelId"))
-	actor, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.FormValue("targetUserId")))
+	user := getCurUser(c)
+	if user == nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "未登录")
+	}
+	actor, err := service.ResolveTheaterAppearanceActor(channelID, user.ID, strings.TrimSpace(c.FormValue("targetUserId")), c.FormValue("identityId"), c.FormValue("variantId"), c.FormValue("purpose"))
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}

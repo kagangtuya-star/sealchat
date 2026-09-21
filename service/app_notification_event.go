@@ -175,6 +175,17 @@ func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, f
 	if messageID == "" {
 		return nil
 	}
+	devices, err := model.ListActiveAppNotificationDevices()
+	if err != nil {
+		return err
+	}
+	externalPreferences, err := model.ListEnabledExternalAppNotificationPreferences()
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 && len(externalPreferences) == 0 {
+		return nil
+	}
 	var message model.MessageModel
 	if err := model.GetDB().Preload("User").Where("id = ?", messageID).First(&message).Error; err != nil {
 		return err
@@ -187,25 +198,30 @@ func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, f
 	if err != nil || world == nil {
 		return err
 	}
-	instanceID, err := model.EnsureAppNotificationInstanceID()
-	if err != nil {
-		return err
+	instanceID := ""
+	if len(devices) > 0 {
+		instanceID, err = model.EnsureAppNotificationInstanceID()
+		if err != nil {
+			return err
+		}
 	}
-	devices, err := model.ListActiveAppNotificationDevices()
-	if err != nil {
-		return err
+	preferences := map[string]*model.AppNotificationPreferenceModel{}
+	if len(devices) > 0 {
+		deviceUserIDs := make([]string, 0, len(devices))
+		for _, device := range devices {
+			deviceUserIDs = append(deviceUserIDs, device.UserID)
+		}
+		preferences, err = model.GetAppNotificationPreferences(deviceUserIDs)
+		if err != nil {
+			return err
+		}
 	}
-	deviceUserIDs := make([]string, 0, len(devices))
-	for _, device := range devices {
-		deviceUserIDs = append(deviceUserIDs, device.UserID)
-	}
-	preferences, err := model.GetAppNotificationPreferences(deviceUserIDs)
-	if err != nil {
-		return err
-	}
-	whisperRecipients := model.GetWhisperRecipientIDs(message.ID)
-	if strings.TrimSpace(message.WhisperTo) != "" {
-		whisperRecipients = append(whisperRecipients, strings.TrimSpace(message.WhisperTo))
+	var whisperRecipients []string
+	if message.IsWhisper {
+		whisperRecipients = model.GetWhisperRecipientIDs(message.ID)
+		if strings.TrimSpace(message.WhisperTo) != "" {
+			whisperRecipients = append(whisperRecipients, strings.TrimSpace(message.WhisperTo))
+		}
 	}
 	senderName := strings.TrimSpace(message.SenderIdentityName)
 	if senderName == "" {
@@ -253,18 +269,17 @@ func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, f
 		}
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
-	serverChanErr := sendServerChanAppNotifications(source, webURL, canReadByUser)
-	barkErr := sendBarkAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser)
-	meowErr := sendMeowAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser)
+	serverChanErr := sendServerChanAppNotifications(source, webURL, canReadByUser, externalPreferences)
+	barkErr := sendBarkAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser, externalPreferences)
+	meowErr := sendMeowAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser, externalPreferences)
 	return errors.Join(serverChanErr, barkErr, meowErr)
 }
 
-func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL string, canReadByUser map[string]bool) error {
-	preferences, err := model.ListServerChanAppNotificationPreferences()
-	if err != nil {
-		return err
-	}
+func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL string, canReadByUser map[string]bool, preferences []model.AppNotificationPreferenceModel) error {
 	for _, preference := range preferences {
+		if !preference.WorldWhitelistEnabled || !preference.ServerChanEnabled || strings.TrimSpace(preference.ServerChanSendKey) == "" {
+			continue
+		}
 		canRead, known := canReadByUser[preference.UserID]
 		if !known {
 			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)
@@ -330,12 +345,11 @@ func SendServerChanTestNotification(sendKey, title, content string) error {
 	return sendServerChan(sendKey, title, content)
 }
 
-func sendBarkAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool) error {
-	preferences, err := model.ListBarkAppNotificationPreferences()
-	if err != nil {
-		return err
-	}
+func sendBarkAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool, preferences []model.AppNotificationPreferenceModel) error {
 	for _, preference := range preferences {
+		if !preference.WorldWhitelistEnabled || !preference.BarkEnabled || strings.TrimSpace(preference.BarkDeviceKey) == "" || strings.TrimSpace(preference.BarkServerURL) == "" {
+			continue
+		}
 		canRead, known := canReadByUser[preference.UserID]
 		if !known {
 			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)
@@ -421,12 +435,11 @@ func appNotificationAvatarURL(publicOrigin, webURL, avatar string) string {
 	return appNotificationExternalURL(publicOrigin, avatar)
 }
 
-func sendMeowAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool) error {
-	preferences, err := model.ListMeowAppNotificationPreferences()
-	if err != nil {
-		return err
-	}
+func sendMeowAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool, preferences []model.AppNotificationPreferenceModel) error {
 	for _, preference := range preferences {
+		if !preference.WorldWhitelistEnabled || !preference.MeowEnabled || strings.TrimSpace(preference.MeowNickname) == "" {
+			continue
+		}
 		canRead, known := canReadByUser[preference.UserID]
 		if !known {
 			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)

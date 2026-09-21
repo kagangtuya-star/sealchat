@@ -438,7 +438,7 @@ func MaterializeSharedChannelIdentitiesForUserTx(tx *gorm.DB, userID string) err
 		return err
 	}
 	var templates []*model.SharedChannelIdentityModel
-	if err := tx.Where("user_id = ?", userID).Order("created_at ASC").Find(&templates).Error; err != nil {
+	if err := tx.Where("user_id = ? AND system_kind IS NULL", userID).Order("created_at ASC").Find(&templates).Error; err != nil {
 		return err
 	}
 	for _, template := range templates {

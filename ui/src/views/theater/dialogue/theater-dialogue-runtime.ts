@@ -36,6 +36,7 @@ export interface TheaterDialogueRuntimeController {
   close(): void
   setReducedMotion(value: boolean): void
   setCharactersPerSecond(value: number): void
+  setPlaybackPaused(paused: boolean, settledPortraitKey?: string, messageId?: string): void
 }
 interface TheaterDialogueScheduler {
   setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
@@ -45,6 +46,10 @@ interface TheaterDialogueScheduler {
 interface TheaterDialogueRuntimeOptions {
   reducedMotion?: boolean
   scheduler?: TheaterDialogueScheduler
+  shouldPauseBeforeCurrent?: (
+    message: TheaterDialogueMessage,
+    reducedMotion: boolean,
+  ) => boolean
 }
 
 const defaultScheduler: TheaterDialogueScheduler = {
@@ -113,11 +118,14 @@ export class TheaterDialogueRuntime {
   private timerGeneration = 0
   private disposed = false
   private charactersPerSecond: number | null = null
+  private playbackPaused = false
+  private readonly shouldPauseBeforeCurrent: TheaterDialogueRuntimeOptions['shouldPauseBeforeCurrent']
   private readonly listeners = new Set<(snapshot: TheaterDialogueRuntimeSnapshot) => void>()
 
   constructor(options: TheaterDialogueRuntimeOptions = {}) {
     this.reducedMotion = options.reducedMotion === true
     this.scheduler = options.scheduler || defaultScheduler
+    this.shouldPauseBeforeCurrent = options.shouldPauseBeforeCurrent
   }
 
   getSnapshot = (): TheaterDialogueRuntimeSnapshot => ({
@@ -125,6 +133,22 @@ export class TheaterDialogueRuntime {
     phase: this.phase,
     reducedMotion: this.reducedMotion,
   })
+
+  /** Transfer playback ownership without replaying completed IDs or timers. */
+  takeSnapshot = (): TheaterDialogueRuntimeSnapshot => {
+    const snapshot = this.getSnapshot()
+    this.close()
+    return snapshot
+  }
+
+  restoreSnapshot = (snapshot: TheaterDialogueRuntimeSnapshot) => {
+    if (this.disposed) return
+    this.clearTimer()
+    this.playbackPaused = false
+    this.queue = snapshotDialogueQueue(snapshot.queue)
+    this.phase = snapshot.phase
+    this.armCurrent()
+  }
 
   subscribe = (listener: (snapshot: TheaterDialogueRuntimeSnapshot) => void) => {
     this.listeners.add(listener)
@@ -212,6 +236,7 @@ export class TheaterDialogueRuntime {
 
   close = () => {
     if (this.disposed) return
+    this.playbackPaused = false
     this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'close' })
     this.phase = 'idle'
     this.clearTimer()
@@ -233,8 +258,19 @@ export class TheaterDialogueRuntime {
     if (this.phase === 'typing') this.armCurrent()
   }
 
+  setPlaybackPaused = (paused: boolean, _settledPortraitKey?: string, _messageId?: string) => {
+    if (this.disposed || this.playbackPaused === paused) return
+    this.playbackPaused = paused
+    if (paused) {
+      if (this.phase === 'typing') this.clearTimer()
+      return
+    }
+    if (this.phase === 'typing' && this.queue.current) this.armCurrent()
+  }
+
   reset = () => {
     if (this.disposed) return
+    this.playbackPaused = false
     this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'reset' })
     this.phase = 'idle'
     this.clearTimer()
@@ -243,6 +279,7 @@ export class TheaterDialogueRuntime {
 
   dispose = () => {
     if (this.disposed) return
+    this.playbackPaused = false
     this.clearTimer()
     this.queue = createTheaterDialogueQueueState()
     this.phase = 'idle'
@@ -252,21 +289,30 @@ export class TheaterDialogueRuntime {
 
   private startCurrent() {
     this.clearTimer()
-    if (!this.queue.current) {
+    const current = this.queue.current
+    if (!current) {
       this.phase = 'idle'
       this.emit()
       return
     }
+    const startedCurrent = { ...current, revealedCharacters: 0 }
     this.queue = {
       ...this.queue,
-      current: { ...this.queue.current, revealedCharacters: 0 },
+      current: startedCurrent,
     }
-    this.debug('start', { messageId: this.queue.current.message.messageId })
+    if (this.shouldPauseBeforeCurrent) {
+      this.playbackPaused = this.shouldPauseBeforeCurrent(
+        startedCurrent.message,
+        this.reducedMotion,
+      )
+    }
+    this.debug('start', { messageId: startedCurrent.message.messageId })
     this.armCurrent()
   }
 
   private armCurrent() {
     this.clearTimer()
+    const armGeneration = this.timerGeneration
     const current = this.queue.current
     if (!current) {
       this.phase = 'idle'
@@ -282,6 +328,13 @@ export class TheaterDialogueRuntime {
     }
     this.phase = 'typing'
     this.emit()
+    if (this.playbackPaused) {
+      this.debug('playback.paused', { messageId: current.message.messageId })
+      return
+    }
+    // A synchronous subscriber may release an existing gate and re-arm playback
+    // during emit(); let that nested arm own the next timer.
+    if (armGeneration !== this.timerGeneration) return
     if (hasTheaterDialoguePerformanceContent(current.message)) {
       this.debug('playback.delegated', { messageId: current.message.messageId })
       return

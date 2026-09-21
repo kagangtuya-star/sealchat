@@ -18,6 +18,7 @@ import (
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
 
@@ -27,9 +28,86 @@ type ApiMsgPayload struct {
 	Data json.RawMessage `json:"data"`
 }
 
+var (
+	errWSConnectionClosed  = errors.New("websocket connection closed")
+	errWSOutboundQueueFull = errors.New("websocket outbound queue full: slow consumer")
+)
+
+const defaultWSOutboundQueueSize = utils.DefaultWebSocketOutboundQueueSize
+
+const (
+	maxWSCoalescedKeys               = 64
+	wsReliableBurstBeforeCoalesced   = 32
+	wsInteractiveQueueSize           = 32
+	wsInteractiveBurstBeforeReliable = 8
+)
+
+type wsCoalescedEntry struct {
+	message wsOutboundMessage
+	seq     uint64
+}
+
+type wsOutboundDiagnosticTag uint8
+
+const (
+	wsOutboundDiagnosticNone wsOutboundDiagnosticTag = iota
+	wsOutboundDiagnosticMessageCreateResponse
+)
+
+type wsReliableClass uint8
+
+const (
+	wsReliableClassOther wsReliableClass = iota
+	wsReliableClassMessageCreated
+	wsReliableClassMessageCreateResponse
+	wsReliableClassBotEvent
+)
+
+type wsOutboundMessage struct {
+	payload             []byte
+	timeout             time.Duration
+	result              chan error
+	diagnosticTag       wsOutboundDiagnosticTag
+	reliableClass       wsReliableClass
+	enqueuedAtNs        int64
+	queueDepthAtEnqueue int
+}
+
+type wsOutboundSocket interface {
+	SetWriteDeadline(time.Time) error
+	WriteMessage(int, []byte) error
+}
+
 type WsSyncConn struct {
 	*websocket.Conn
 	Mux sync.RWMutex
+
+	outbound            chan wsOutboundMessage
+	interactiveOutbound chan wsOutboundMessage
+	done                chan struct{}
+	closeOnce           sync.Once
+	outboundSocket      wsOutboundSocket
+	coalescedMu         sync.Mutex
+	coalesced           map[string]wsCoalescedEntry
+	coalescedWake       chan struct{}
+	coalescedSeq        uint64
+}
+
+func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
+	if queueSize <= 0 {
+		queueSize = defaultWSOutboundQueueSize
+	}
+	c := &WsSyncConn{
+		Conn:                raw,
+		outbound:            make(chan wsOutboundMessage, queueSize),
+		interactiveOutbound: make(chan wsOutboundMessage, wsInteractiveQueueSize),
+		done:                make(chan struct{}),
+		outboundSocket:      raw,
+		coalesced:           make(map[string]wsCoalescedEntry),
+		coalescedWake:       make(chan struct{}, 1),
+	}
+	go c.outboundWriter()
+	return c
 }
 
 func (c *WsSyncConn) WriteJSON(v interface{}) error {
@@ -37,25 +115,323 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
-	if c == nil || c.Conn == nil {
+	return c.writeJSONWithDiagnostic(v, timeout, wsOutboundDiagnosticNone)
+}
+
+func (c *WsSyncConn) writeJSONWithDiagnostic(v any, timeout time.Duration, diagnosticTag wsOutboundDiagnosticTag) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.outbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	result := make(chan error, 1)
+	reliableClass := wsReliableClassOther
+	if diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+		reliableClass = wsReliableClassMessageCreateResponse
+	}
+	if err := c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: timeout, result: result, diagnosticTag: diagnosticTag, reliableClass: reliableClass}); err != nil {
+		return err
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-c.done:
+		select {
+		case err := <-result:
+			return err
+		default:
+			return errWSConnectionClosed
+		}
+	}
+}
+
+func (c *WsSyncConn) EnqueueJSON(v any) error {
+	return c.enqueueReliableJSON(wsReliableClassOther, v)
+}
+
+func (c *WsSyncConn) enqueueMessageCreateResponseJSON(v any) error {
+	return c.enqueueInteractiveJSON(wsReliableClassMessageCreateResponse, wsOutboundDiagnosticMessageCreateResponse, v)
+}
+
+func (c *WsSyncConn) enqueueInteractiveJSON(class wsReliableClass, diagnosticTag wsOutboundDiagnosticTag, v any) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.interactiveOutbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	return c.enqueueInteractiveOutbound(wsOutboundMessage{
+		payload:       payload,
+		timeout:       wsDataWriteTimeout,
+		reliableClass: class,
+		diagnosticTag: diagnosticTag,
+	})
+}
+
+func (c *WsSyncConn) enqueueReliableJSON(class wsReliableClass, v any) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if c == nil || c.outbound == nil || c.done == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	return c.enqueueOutbound(wsOutboundMessage{payload: payload, timeout: wsDataWriteTimeout, reliableClass: class})
+}
+
+func (c *WsSyncConn) enqueueOutbound(message wsOutboundMessage) error {
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	select {
+	case c.outbound <- message:
+		perfprofiler.RecordWSReliableEnqueued(uint8(message.reliableClass))
+		select {
+		case <-c.done:
+			return errWSConnectionClosed
+		default:
+			return nil
+		}
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+		perfprofiler.RecordWSReliableQueueFull(message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse)
+		_ = c.Close()
+		return errWSOutboundQueueFull
+	}
+}
+
+func (c *WsSyncConn) enqueueInteractiveOutbound(message wsOutboundMessage) error {
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+		message.enqueuedAtNs = time.Now().UnixNano()
+		message.queueDepthAtEnqueue = len(c.interactiveOutbound)
+	}
+
+	select {
+	case c.interactiveOutbound <- message:
+		perfprofiler.RecordWSReliableEnqueued(uint8(message.reliableClass))
+		select {
+		case <-c.done:
+			return errWSConnectionClosed
+		default:
+			return nil
+		}
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+		perfprofiler.RecordWSReliableQueueFull(message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse)
+		_ = c.Close()
+		return errWSOutboundQueueFull
+	}
+}
+
+func (c *WsSyncConn) EnqueueCoalescedJSON(key string, v any) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("websocket coalesced key must not be empty")
+	}
+	if c == nil || c.done == nil || c.coalesced == nil || c.coalescedWake == nil {
+		return errors.New("websocket connection unavailable")
+	}
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	c.coalescedMu.Lock()
+	defer c.coalescedMu.Unlock()
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
+	_, exists := c.coalesced[key]
+	if !exists && len(c.coalesced) >= maxWSCoalescedKeys {
+		var oldestKey string
+		var oldestSeq uint64
+		for candidate, entry := range c.coalesced {
+			if oldestKey == "" || entry.seq < oldestSeq {
+				oldestKey, oldestSeq = candidate, entry.seq
+			}
+		}
+		delete(c.coalesced, oldestKey)
+		perfprofiler.RecordWSCoalescedEvicted()
+	}
+	c.coalescedSeq++
+	c.coalesced[key] = wsCoalescedEntry{
+		message: wsOutboundMessage{payload: payload, timeout: wsDataWriteTimeout},
+		seq:     c.coalescedSeq,
+	}
+	perfprofiler.RecordWSCoalescedEnqueued()
+	if exists {
+		perfprofiler.RecordWSCoalescedReplaced()
+	}
+	select {
+	case c.coalescedWake <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (c *WsSyncConn) popOldestCoalesced() (wsOutboundMessage, bool) {
+	c.coalescedMu.Lock()
+	defer c.coalescedMu.Unlock()
+	var oldestKey string
+	var oldest wsCoalescedEntry
+	for key, entry := range c.coalesced {
+		if oldestKey == "" || entry.seq < oldest.seq {
+			oldestKey, oldest = key, entry
+		}
+	}
+	if oldestKey == "" {
+		return wsOutboundMessage{}, false
+	}
+	delete(c.coalesced, oldestKey)
+	return oldest.message, true
+}
+
+func (c *WsSyncConn) outboundWriter() {
+	interactiveBurst := 0
+	nonCoalescedBurst := 0
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+		var message wsOutboundMessage
+		var ready bool
+		if nonCoalescedBurst >= wsReliableBurstBeforeCoalesced {
+			message, ready = c.popOldestCoalesced()
+			nonCoalescedBurst = 0
+			if ready {
+				interactiveBurst = 0
+			}
+		}
+		if !ready && interactiveBurst < wsInteractiveBurstBeforeReliable {
+			select {
+			case message = <-c.interactiveOutbound:
+				ready = true
+				interactiveBurst++
+				nonCoalescedBurst++
+			default:
+			}
+		}
+		if !ready {
+			select {
+			case message = <-c.outbound:
+				ready = true
+				interactiveBurst = 0
+				nonCoalescedBurst++
+			default:
+			}
+		}
+		if !ready {
+			message, ready = c.popOldestCoalesced()
+			if ready {
+				interactiveBurst = 0
+				nonCoalescedBurst = 0
+			}
+		}
+		if !ready {
+			select {
+			case message = <-c.interactiveOutbound:
+				ready = true
+				interactiveBurst++
+				nonCoalescedBurst++
+			default:
+			}
+		}
+		if !ready {
+			select {
+			case <-c.done:
+				return
+			case message = <-c.interactiveOutbound:
+				interactiveBurst++
+				nonCoalescedBurst++
+			case message = <-c.outbound:
+				interactiveBurst = 0
+				nonCoalescedBurst++
+			case <-c.coalescedWake:
+				continue
+			}
+		}
+		dequeueAt := time.Now().UnixNano()
+		select {
+		case <-c.done:
+			if message.result != nil {
+				message.result <- errWSConnectionClosed
+			}
+			if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+				perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, -1, message.queueDepthAtEnqueue, true)
+				perfprofiler.RecordMessageResponseWrite(message.enqueuedAtNs)
+			}
+			return
+		default:
+		}
+		socketStarted := time.Now().UnixNano()
+		err := c.writeOutboundMessage(message)
+		socketWriteNs := time.Now().UnixNano() - socketStarted
+		if message.result != nil {
+			message.result <- err
+		}
+		if message.diagnosticTag == wsOutboundDiagnosticMessageCreateResponse {
+			perfprofiler.RecordMessageResponseOutbound(dequeueAt-message.enqueuedAtNs, socketWriteNs, message.queueDepthAtEnqueue, err != nil)
+			perfprofiler.RecordMessageResponseWrite(message.enqueuedAtNs)
+		}
+		if err != nil {
+			_ = c.Close()
+			return
+		}
+	}
+}
+
+func (c *WsSyncConn) writeOutboundMessage(message wsOutboundMessage) error {
+	if c.outboundSocket == nil {
 		return errors.New("websocket connection unavailable")
 	}
 	c.Mux.Lock()
 	defer c.Mux.Unlock()
-	if timeout > 0 {
-		if err := c.Conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-			_ = c.Conn.Close()
+
+	if message.timeout > 0 {
+		if err := c.outboundSocket.SetWriteDeadline(time.Now().Add(message.timeout)); err != nil {
 			return err
 		}
 		defer func() {
-			_ = c.Conn.SetWriteDeadline(time.Time{})
+			_ = c.outboundSocket.SetWriteDeadline(time.Time{})
 		}()
 	}
-	if err := c.Conn.WriteJSON(v); err != nil {
-		_ = c.Conn.Close()
-		return err
+	return c.outboundSocket.WriteMessage(websocket.TextMessage, message.payload)
+}
+
+func (c *WsSyncConn) Close() error {
+	if c == nil {
+		return nil
 	}
-	return nil
+	var closeErr error
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+		if c.Conn != nil {
+			closeErr = c.Conn.Close()
+		}
+	})
+	return closeErr
 }
 
 type ConnInfo struct {
@@ -96,6 +472,114 @@ type ConnInfo struct {
 	theaterMu                    sync.RWMutex
 	theaterSubscription          *theaterSubscription
 	theaterQueue                 *theaterWriteQueue
+	worldNoticeMu                sync.RWMutex
+	worldNoticeVisibleWorldID    string
+	worldNoticeVisibleChannels   map[string]struct{}
+}
+
+func (info *ConnInfo) setWorldNoticeVisibleChannels(worldID string, channels []*model.ChannelModel) {
+	if info == nil {
+		return
+	}
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		info.invalidateWorldNoticeVisibility()
+		return
+	}
+
+	visibleChannels := make(map[string]struct{}, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelID := strings.TrimSpace(channel.ID)
+		if channelID != "" {
+			visibleChannels[channelID] = struct{}{}
+		}
+	}
+
+	info.worldNoticeMu.Lock()
+	info.worldNoticeVisibleWorldID = worldID
+	info.worldNoticeVisibleChannels = visibleChannels
+	info.worldNoticeMu.Unlock()
+}
+
+func (info *ConnInfo) canReceiveWorldMessageNotice(worldID, channelID string) bool {
+	if info == nil || info.IsGuest || info.IsObserver {
+		return false
+	}
+	worldID = strings.TrimSpace(worldID)
+	channelID = strings.TrimSpace(channelID)
+	if worldID == "" || channelID == "" || info.WorldId != worldID || info.ChannelId == channelID {
+		return false
+	}
+
+	info.worldNoticeMu.RLock()
+	defer info.worldNoticeMu.RUnlock()
+	if info.worldNoticeVisibleWorldID != worldID || info.worldNoticeVisibleChannels == nil {
+		return false
+	}
+	_, visible := info.worldNoticeVisibleChannels[channelID]
+	return visible
+}
+
+func (info *ConnInfo) invalidateWorldNoticeVisibility() {
+	if info == nil {
+		return
+	}
+	info.worldNoticeMu.Lock()
+	info.worldNoticeVisibleWorldID = ""
+	info.worldNoticeVisibleChannels = nil
+	info.worldNoticeMu.Unlock()
+}
+
+func (info *ConnInfo) invalidateWorldNoticeVisibilityForWorld(worldID string) {
+	if info == nil {
+		return
+	}
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return
+	}
+	info.worldNoticeMu.Lock()
+	if info.worldNoticeVisibleWorldID == worldID {
+		info.worldNoticeVisibleWorldID = ""
+		info.worldNoticeVisibleChannels = nil
+	}
+	info.worldNoticeMu.Unlock()
+}
+
+func invalidateWorldNoticeVisibilityForConnections(worldID string) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" || userId2ConnInfoGlobal == nil {
+		return
+	}
+	userId2ConnInfoGlobal.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		if conns == nil {
+			return true
+		}
+		conns.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			info.invalidateWorldNoticeVisibilityForWorld(worldID)
+			return true
+		})
+		return true
+	})
+}
+
+func invalidateWorldNoticeVisibilityForUser(userID, worldID string) {
+	userID = strings.TrimSpace(userID)
+	worldID = strings.TrimSpace(worldID)
+	if userID == "" || worldID == "" || userId2ConnInfoGlobal == nil {
+		return
+	}
+	conns, ok := userId2ConnInfoGlobal.Load(userID)
+	if !ok || conns == nil {
+		return
+	}
+	conns.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+		info.invalidateWorldNoticeVisibilityForWorld(worldID)
+		return true
+	})
 }
 
 type BotHiddenDicePending struct {
@@ -155,8 +639,10 @@ const (
 	channelPresenceBroadcastMinIntervalMs = int64(2000)
 	// 在线态全量兜底广播间隔（秒）
 	channelPresenceFullBroadcastIntervalSeconds = 30
-	// 单次 WebSocket JSON 写超时
+	// 同步 WebSocket JSON 写超时
 	wsWriteTimeout = 10 * time.Second
+	// 已认证异步数据帧写超时；慢消费者应尽快断开，避免阻塞单连接 outboundWriter
+	wsDataWriteTimeout = 3 * time.Second
 	// 在线态变化合并广播窗口，降低 enter/leave/focus 抖动带来的广播风暴
 	channelPresenceFlushDelay = 1500 * time.Millisecond
 )
@@ -350,7 +836,10 @@ func isUserSuppressingExternalNotification(userID string) bool {
 	return suppress
 }
 
-func websocketWorks(app *fiber.App, webUrl string) {
+func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
+	if outboundQueueSize <= 0 {
+		outboundQueueSize = defaultWSOutboundQueueSize
+	}
 	channelUsersMap := &utils.SyncMap[string, *utils.SyncSet[string]]{}
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
@@ -649,7 +1138,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 					if info.ChannelId == event.ChannelID {
-						_ = conn.WriteJSON(protocol.GatewayPayloadStructure{
+						writeConnJSONAndPrune(connMap, conn, protocol.GatewayPayloadStructure{
 							Op: protocol.OpEvent,
 							Body: map[string]any{
 								"type":      "chat-import-progress",
@@ -735,7 +1224,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			curUser     *model.UserModel
 			curConnInfo *ConnInfo
 		)
-		c := &WsSyncConn{rawConn, sync.RWMutex{}}
+		c := newWsSyncConn(rawConn, outboundQueueSize)
 		clientAddr := normalizeRemoteAddr(rawConn.RemoteAddr().String())
 		preAuthReleased := false
 		preAuthGlobalCount, preAuthAddrCount := addPreAuthConnection(clientAddr)
@@ -764,7 +1253,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			if !preAuthReleased {
 				releasePreAuthConnection(clientAddr)
 			}
-			_ = rawConn.Close()
+			_ = c.Close()
 		}()
 
 		// 设置pong处理器，收到pong时更新连接活跃状态
@@ -790,12 +1279,10 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				}
 				select {
 				case <-time.After(interval):
-					c.Mux.Lock()
-					err := rawConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
-					c.Mux.Unlock()
+					err := rawConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsDataWriteTimeout))
 					if err != nil {
 						log.Printf("WebSocket ping failed, closing connection: %v", err)
-						rawConn.Close()
+						_ = c.Close()
 						return
 					}
 				case <-pingDone:
@@ -906,7 +1393,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					if collector := metrics.Get(); collector != nil && curUser != nil {
 						collector.RecordUserHeartbeat(curUser.ID)
 					}
-					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+					_ = c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, protocol.GatewayPayloadStructure{
 						Op: protocol.OpPong,
 					})
 					// 仅在焦点状态变化时触发在线态广播，避免每次 ping 放大 CPU。
@@ -952,7 +1439,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					}
 					latencyBody.ServerSentAt = time.Now().UnixMilli()
 					payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult, Body: latencyBody}
-					_ = c.WriteJSON(payload)
+					_ = c.enqueueInteractiveJSON(wsReliableClassOther, wsOutboundDiagnosticNone, payload)
 					solved = true
 				}
 			}
@@ -972,16 +1459,11 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				apiMsg := ApiMsgPayload{}
 				err := json.Unmarshal(msg, &apiMsg)
 
-				var members []*model.MemberModel
-				db := model.GetDB()
-				db.Where("user_id = ?", curUser.ID).Find(&members)
-
 				ctx := &ChatContext{
 					Conn:            c,
 					User:            curUser,
 					Echo:            apiMsg.Echo,
 					ConnInfo:        curConnInfo,
-					Members:         members,
 					ChannelUsersMap: channelUsersMap,
 					UserId2ConnInfo: userId2ConnInfo,
 				}

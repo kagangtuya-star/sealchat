@@ -294,7 +294,7 @@ func BattleReportSummarize(c *fiber.Ctx) error {
 		cfg = appConfig.AI
 	}
 	runner := aiRunnerFactory(func() *utils.AppConfig { return appConfig })
-	item, err := service.StartBattleReportSummary(c.Context(), c.Params("channelId"), user.ID, service.BattleReportSummaryInput{
+	item, err := service.StartBattleReportSummary(c.Params("channelId"), user.ID, service.BattleReportSummaryInput{
 		Title:              req.Title,
 		PeriodStart:        unixMilliToTime(req.PeriodStart),
 		PeriodEnd:          unixMilliToTime(req.PeriodEnd),

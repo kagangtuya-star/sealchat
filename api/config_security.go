@@ -13,6 +13,7 @@ import (
 func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 	ret := sanitizeConfigForAdmin(cfg)
 	ret.AI.Providers = nil
+	ret.Certificate = utils.CertificateConfig{}
 	return ret
 }
 
@@ -49,6 +50,14 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 	}
 
 	return ret
+}
+
+func normalizeAndValidateCertificateConfigForWrite(cfg *utils.AppConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	cfg.Certificate = utils.NormalizeCertificateConfig(cfg.Certificate)
+	return utils.ValidateCertificateConfig(cfg.Certificate)
 }
 
 func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *utils.AppConfig {

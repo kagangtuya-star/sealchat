@@ -344,6 +344,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		if err != nil {
 			return err
 		}
+		stateRaw = []byte(preserveDialogueControllerState(current.StateJSON, string(stateRaw)))
 		current.StateJSON = string(stateRaw)
 		roomUpdates["state_json"] = string(stateRaw)
 		if len(currentSnapshot.Scenes) == 0 && remappedSnapshot.ActiveSceneID != nil {

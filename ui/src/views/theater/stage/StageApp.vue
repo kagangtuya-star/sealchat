@@ -53,11 +53,12 @@ import {
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { useIFormStore } from '@/stores/iform'
+import { useChatStore } from '@/stores/chat'
 import { useStickyNoteStore } from '@/stores/stickyNote'
 import { useCharacterCardStore } from '@/stores/characterCard'
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot'
 import { useUtilsStore } from '@/stores/utils'
-import { generateInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
+import { generateInternalSurfaceLink, parseInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
@@ -134,17 +135,27 @@ import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
+import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
+import type { DialogueController, DialogueControllerTemplate, DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
+import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 import {
-  buildTheaterDialogueSurfaceUrl,
   parseTheaterDialogueSurfaceUrl,
 } from '../dialogue/theater-dialogue-surface'
+import {
+  normalizeTheaterDialogueEmbedSettings,
+  THEATER_DIALOGUE_EMBED_SETTINGS_KEY,
+} from '../dialogue/theater-dialogue-embed-settings'
+import {
+  normalizeTheaterCharacterPortraitEmbedSettings,
+  THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
+} from '../portrait/theater-character-portrait-embed-settings'
 import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '../host/theater-floating-window'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
-import type { TheaterPresentation } from '@/types/theaterPresentation'
+import type { TheaterPresentation, TheaterTransform } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
@@ -186,6 +197,12 @@ const props = defineProps<{
   permissions: string[]
   constructionSceneId: string | null
   dialogueRuntime: TheaterDialogueRuntime
+  dialogueController?: DialogueController
+  dialogueControllerTemplate?: DialogueControllerTemplate | null
+  canManageDialogue?: boolean
+  canDragPortraits?: boolean
+  saveDialogueController?: (patch: DialogueControllerPatch) => Promise<void>
+  savePortraitPosition?: (key: string, position: DialoguePosition) => Promise<void>
   appearancePreview: {
     previewId: string
     draft: TheaterPresentation
@@ -193,6 +210,8 @@ const props = defineProps<{
     activeSection: TheaterSection
     previewName: string
     previewText: string
+    controllerArea?: TheaterTransform
+    multiplayerPortraitTransform?: TheaterTransform
   } | null
   sceneDialogueEnabled: boolean
   sceneAudioEnabled: boolean
@@ -282,6 +301,27 @@ const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
 const iframeInteractionDisabled = ref(false)
+const theaterPerformanceVisibilityStorageKey = 'sealchat.theater.performance-visibility.v1'
+const readTheaterPerformanceVisibility = () => {
+  const defaults = { dialogueHidden: false, portraitHidden: false }
+  try {
+    if (typeof window === 'undefined') return defaults
+    const stored = window.localStorage.getItem(theaterPerformanceVisibilityStorageKey)
+    if (stored === null) return defaults
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object') return defaults
+    const value = parsed as Record<string, unknown>
+    return {
+      dialogueHidden: value.dialogueHidden === true,
+      portraitHidden: value.portraitHidden === true,
+    }
+  } catch {
+    return defaults
+  }
+}
+const initialTheaterPerformanceVisibility = readTheaterPerformanceVisibility()
+const dialoguePerformanceHidden = ref(initialTheaterPerformanceVisibility.dialogueHidden)
+const portraitPerformanceHidden = ref(initialTheaterPerformanceVisibility.portraitHidden)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
@@ -997,6 +1037,22 @@ const iframeInteractionOptions = computed<DropdownOption[]>(() => [{
 }])
 const toggleIframeInteraction = (key: string | number) => {
   if (key === 'disable-interaction') iframeInteractionDisabled.value = !iframeInteractionDisabled.value
+}
+const performanceVisibilityOptions = computed<DropdownOption[]>(() => [
+  {
+    key: 'hide-dialogue-performance',
+    label: '隐藏对话演出',
+    icon: () => h(NIcon, { style: { opacity: dialoguePerformanceHidden.value ? 1 : 0 } }, { default: () => h(Check) }),
+  },
+  {
+    key: 'hide-portrait-performance',
+    label: '仅隐藏立绘演出',
+    icon: () => h(NIcon, { style: { opacity: portraitPerformanceHidden.value ? 1 : 0 } }, { default: () => h(Check) }),
+  },
+])
+const togglePerformanceVisibility = (key: string | number) => {
+  if (key === 'hide-dialogue-performance') dialoguePerformanceHidden.value = !dialoguePerformanceHidden.value
+  if (key === 'hide-portrait-performance') portraitPerformanceHidden.value = !portraitPerformanceHidden.value
 }
 
 const revealToolbarColors = () => { toolbarColorsVisible.value = true }
@@ -2743,13 +2799,37 @@ const selectedObject = computed(() => {
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 
+const iformStore = useIFormStore()
+const chatStore = useChatStore()
+const stickyNoteStore = useStickyNoteStore()
+const characterCardStore = useCharacterCardStore()
+const snapshotStore = useChannelCharacterSnapshotStore()
+const utilsStore = useUtilsStore()
+
 const hasCharacterDialogueSurface = computed(() => Object.values(props.store.activeObjects.value).some((object) => {
   if (object.type !== 'iframe') return false
-  const context = parseTheaterDialogueSurfaceUrl(normalizeStageIframeContent(object.content?.iframe).url)
-  return context?.worldId === props.worldId && context.channelId === props.channelId
+  const url = normalizeStageIframeContent(object.content?.iframe).url
+  const dialogueContext = parseTheaterDialogueSurfaceUrl(url)
+  if (dialogueContext?.worldId === props.worldId && dialogueContext.channelId === props.channelId) return true
+  const surface = parseInternalSurfaceLink(url)
+  if (surface?.type !== 'iform' || surface.worldId !== props.worldId || surface.channelId !== props.channelId) return false
+  return (iformStore.formsByChannel[props.channelId] || []).some(
+    form => form.id === surface.id && form.templateRef === 'builtin:theater-dialogue-overlay',
+  )
 }))
+const dialogueSuppressedObjectIds = computed(() => props.dialogueController?.enabled
+  ? Object.values(props.store.activeObjects.value).filter(object => {
+      if (object.type !== 'iframe') return false
+      const url = normalizeStageIframeContent(object.content?.iframe).url
+      const context = parseTheaterDialogueSurfaceUrl(url)
+      if (context?.worldId === props.worldId && context.channelId === props.channelId) return true
+      const surface = parseInternalSurfaceLink(url)
+      return surface?.type === 'iform' && surface.worldId === props.worldId && surface.channelId === props.channelId
+        && (iformStore.formsByChannel[props.channelId] || []).some(form => form.id === surface.id && form.templateRef === 'builtin:theater-dialogue-overlay')
+    }).map(object => object.id)
+  : [])
 
-type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue'
+type QuickToolTab = 'iform' | 'note' | 'character' | 'dialogue' | 'portrait'
 interface QuickToolOption {
   id: string
   name: string
@@ -2757,14 +2837,10 @@ interface QuickToolOption {
   url: string
 }
 
-const iformStore = useIFormStore()
-const stickyNoteStore = useStickyNoteStore()
-const characterCardStore = useCharacterCardStore()
-const snapshotStore = useChannelCharacterSnapshotStore()
-const utilsStore = useUtilsStore()
 const quickToolPickerOpen = ref(false)
 const quickToolPickerTab = ref<QuickToolTab>('iform')
 const quickToolPickerLoading = ref(false)
+const quickToolPickerApplying = ref(false)
 const quickToolPickerError = ref('')
 const quickToolSelection = ref<{ tab: QuickToolTab; option: QuickToolOption } | null>(null)
 const quickToolCharacterQuery = ref('')
@@ -2775,6 +2851,7 @@ const quickToolTabs: Array<{ value: QuickToolTab; label: string }> = [
   { value: 'note', label: '便签' },
   { value: 'character', label: '人物卡' },
   { value: 'dialogue', label: '角色对话框' },
+  { value: 'portrait', label: '角色立绘' },
 ]
 
 const quickToolUrl = (type: 'iform' | 'note' | 'character', id: string) => (
@@ -2831,17 +2908,13 @@ const dialogueCharacterOptions = computed<QuickToolOption[]>(() => {
       id: character.identityId,
       name,
       description: `${name} · ${character.identityId}`,
-      url: buildTheaterDialogueSurfaceUrl({
-        identityId: character.identityId,
-        worldId: props.worldId,
-        channelId: props.channelId,
-      }),
+      url: '',
     }
   })
 })
 
 const quickToolOptionsFor = (tab: QuickToolTab): QuickToolOption[] => {
-  if (tab === 'dialogue') return dialogueCharacterOptions.value
+  if (tab === 'dialogue' || tab === 'portrait') return dialogueCharacterOptions.value
   if (tab === 'iform') {
     return (iformStore.formsByChannel[props.channelId] || []).map((form) => ({
       id: form.id,
@@ -2893,9 +2966,14 @@ const quickToolPickerStyle = computed(() => {
     zIndex: '10002',
   }
 })
-const quickToolActiveLoading = computed(() => quickToolPickerTab.value !== 'dialogue' && quickToolPickerLoading.value)
+const quickToolActiveLoading = computed(() => (
+  quickToolPickerTab.value !== 'dialogue'
+  && quickToolPickerTab.value !== 'portrait'
+  && quickToolPickerLoading.value
+))
 
 const selectQuickTool = (tab: QuickToolTab, option: QuickToolOption) => {
+  if (quickToolPickerApplying.value) return
   quickToolSelection.value = { tab, option }
 }
 
@@ -2914,6 +2992,7 @@ const openQuickToolPicker = async () => {
   quickToolCharacterQuery.value = ''
   quickToolPickerError.value = ''
   quickToolPickerLoading.value = true
+  quickToolPickerApplying.value = false
   const worldId = props.worldId
   const channelId = props.channelId
   iformStore.bootstrap()
@@ -2944,39 +3023,167 @@ const closeQuickToolPicker = () => {
 }
 
 const handleQuickToolTabChange = (value: string) => {
-  if (value !== 'iform' && value !== 'note' && value !== 'character' && value !== 'dialogue') return
+  if (quickToolPickerApplying.value) return
+  if (value !== 'iform' && value !== 'note' && value !== 'character' && value !== 'dialogue' && value !== 'portrait') return
   quickToolPickerTab.value = value
   quickToolSelection.value = null
 }
 
-const applyQuickToolSelection = () => {
+const deleteReplacedQuickToolForm = async (channelId: string, worldId: string, objectId: string, formId: string) => {
+  const objects = new Map<string, StageObject>()
+  Object.values(props.store.state.scenes).forEach((scene) => {
+    Object.values(scene.state.sceneObjects).forEach(item => objects.set(item.id, item))
+  })
+  Object.values(props.store.state.liveState.sceneObjects).forEach(item => objects.set(item.id, item))
+  Object.values(props.store.state.persistentObjects).forEach(item => objects.set(item.id, item))
+  const stillReferenced = [...objects.values()].some((item) => {
+    if (item.id === objectId || item.type !== 'iframe') return false
+    const surface = parseInternalSurfaceLink(normalizeStageIframeContent(item.content?.iframe).url)
+    return surface?.type === 'iform'
+      && surface.id === formId
+      && surface.worldId === worldId
+      && surface.channelId === channelId
+  })
+  if (stillReferenced) return
+  try {
+    await api.delete(`api/v1/channels/${channelId}/iforms/${formId}`)
+    await iformStore.ensureForms(channelId, true)
+  } catch {
+    // The replacement is already attached; deleting the previous quick tool is best effort.
+  }
+}
+
+const quickAddCharacterIForm = async (kind: 'dialogue' | 'portrait', identityId: string) => {
+  const character = props.characterSnapshot.characters.find(item => item.identityId === identityId)
+  const object = selectedObject.value
+  if (!character || !object || object.type !== 'iframe') throw new Error('未找到角色')
+  if (iformStore.visibleChannelId !== props.channelId) throw new Error('当前频道尚未就绪')
+  const epoch = quickToolPickerEpoch
+  const objectId = object.id
+  const worldId = props.worldId
+  const channelId = props.channelId
+  const name = dialogueCharacterName(character)
+  const isCurrent = () => (
+    epoch === quickToolPickerEpoch
+    && worldId === props.worldId
+    && channelId === props.channelId
+    && selectedObject.value?.id === objectId
+  )
+  const dialogue = kind === 'dialogue'
+  const componentName = `${name} ${dialogue ? '对话框' : '立绘'}`
+  const formName = `小剧场-网页组件-${componentName}`
+  const oldSurface = parseInternalSurfaceLink(normalizeStageIframeContent(object.content?.iframe).url)
+  const oldForm = oldSurface?.type === 'iform'
+    && oldSurface.worldId === worldId
+    && oldSurface.channelId === channelId
+    ? (iformStore.formsByChannel[channelId] || []).find(form => form.id === oldSurface.id)
+    : undefined
+  const oldFormId = oldForm?.name?.startsWith('小剧场-网页组件-')
+    && (oldForm.templateRef === 'builtin:theater-character-portrait'
+      || oldForm.templateRef === 'builtin:theater-dialogue-overlay')
+    ? oldForm.id
+    : ''
+  let formId = ''
+  let attached = false
+  const cleanupForm = async () => {
+    if (!formId) return
+    try {
+      await api.delete(`api/v1/channels/${channelId}/iforms/${formId}`)
+      await iformStore.ensureForms(channelId, true)
+    } catch {
+      // Keep the original quick-add error; cleanup is best effort.
+    }
+  }
+  try {
+    const form = await iformStore.createForm({
+      name: formName,
+      templateRef: dialogue
+        ? 'builtin:theater-dialogue-overlay'
+        : 'builtin:theater-character-portrait',
+    })
+    formId = form?.id || ''
+    if (!formId) throw new Error('内置工具安装失败')
+    if (!isCurrent()) {
+      await cleanupForm()
+      return
+    }
+
+    await chatStore.sendAPI('iform.storage.set', {
+      channel_id: channelId,
+      form_id: formId,
+      key: dialogue
+        ? THEATER_DIALOGUE_EMBED_SETTINGS_KEY
+        : THEATER_CHARACTER_PORTRAIT_EMBED_SETTINGS_KEY,
+      value: dialogue
+        ? normalizeTheaterDialogueEmbedSettings({ version: 1, identityId })
+        : normalizeTheaterCharacterPortraitEmbedSettings({ version: 1, identityId }),
+    } as any)
+    if (!isCurrent()) {
+      await cleanupForm()
+      return
+    }
+
+    const url = resolveSafeStageIframeUrl(generateInternalSurfaceLink({
+      type: 'iform',
+      id: formId,
+      worldId,
+      channelId,
+    }, { base: resolveInternalSurfaceLinkBase(utilsStore.config) }))
+    if (!url) throw new Error('内置工具地址无效')
+    const previousObject = cloneStageData(object)
+    props.store.beginObjectEdit(dialogue ? '添加角色对话框' : '添加角色立绘')
+    try {
+      object.name = componentName
+      object.interactive = true
+      object.aspectRatioLocked = false
+      object.transform = {
+        ...object.transform,
+        width: Number(((dialogue ? 640 : 480) / WORLD_UNIT_PX).toFixed(6)),
+        height: Number(((dialogue ? 240 : 720) / WORLD_UNIT_PX).toFixed(6)),
+      }
+      object.content = { ...object.content, iframe: { url, scale: 1 } }
+      props.store.commitObjectEdit()
+    } catch (error) {
+      props.store.cancelObjectEdit()
+      const currentObject = props.store.activeObjects.value[objectId]
+      if (currentObject) Object.assign(currentObject, previousObject)
+      throw error
+    }
+    attached = true
+    iframeUrlDraft.value = url
+    closeQuickToolPicker()
+    if (oldFormId && oldFormId !== formId) {
+      await deleteReplacedQuickToolForm(channelId, worldId, objectId, oldFormId)
+    }
+  } catch (error) {
+    if (!attached) await cleanupForm()
+    throw error
+  }
+}
+
+const applyQuickToolSelection = async () => {
   const selection = quickToolSelection.value
   const selected = selection?.option
   const object = selectedObject.value
-  if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value) return
-  if (selection.tab === 'dialogue') {
-    const character = props.characterSnapshot.characters.find(item => item.identityId === selected.id)
-    if (!character) {
-      quickToolSelection.value = null
-      quickToolPickerError.value = '未找到角色'
-      return
+  if (!selected || !object || object.type !== 'iframe' || !canEditAllObjects.value || quickToolPickerApplying.value) return
+  if (selection.tab === 'dialogue' || selection.tab === 'portrait') {
+    const applyEpoch = quickToolPickerEpoch
+    quickToolPickerApplying.value = true
+    quickToolPickerError.value = ''
+    try {
+      await quickAddCharacterIForm(selection.tab, selected.id)
+    } catch (error) {
+      if (quickToolPickerEpoch === applyEpoch) {
+        quickToolPickerError.value = error instanceof Error ? error.message : '添加内置工具失败'
+        if (quickToolPickerError.value === '未找到角色') {
+          quickToolSelection.value = null
+        }
+      }
+    } finally {
+      if (quickToolPickerEpoch === applyEpoch) {
+        quickToolPickerApplying.value = false
+      }
     }
-    const url = resolveSafeStageIframeUrl(selected.url)
-    if (!url) return
-    const name = dialogueCharacterName(character)
-    props.store.beginObjectEdit('添加角色对话框')
-    object.name = `${name} 对话框`
-    object.interactive = true
-    object.aspectRatioLocked = false
-    object.transform = {
-      ...object.transform,
-      width: Number((640 / WORLD_UNIT_PX).toFixed(6)),
-      height: Number((240 / WORLD_UNIT_PX).toFixed(6)),
-    }
-    object.content = { ...object.content, iframe: { url, scale: 1 } }
-    props.store.commitObjectEdit()
-    iframeUrlDraft.value = url
-    closeQuickToolPicker()
     return
   }
   iframeUrlDraft.value = selected.url
@@ -7990,6 +8197,13 @@ watch(theaterAudioMasterVolume, (volume) => {
     player.volume((theaterAudioBaseVolumes.get(key) ?? 1) * normalized)
   })
 })
+watch([dialoguePerformanceHidden, portraitPerformanceHidden], ([dialogueHidden, portraitHidden]) => {
+  try {
+    window.localStorage.setItem(theaterPerformanceVisibilityStorageKey, JSON.stringify({ dialogueHidden, portraitHidden }))
+  } catch {
+    // Playback remains available when browser storage is disabled.
+  }
+}, { flush: 'sync' })
 
 onBeforeUnmount(() => {
   quickToolPickerEpoch += 1
@@ -8166,14 +8380,27 @@ onBeforeUnmount(() => {
           </template>
           悬浮窗管理
         </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button :class="{ 'is-active': chatVisible }" aria-label="切换聊天区" @click="emit('toggleChat')">
-              <template #icon><n-icon><Message /></n-icon></template>
+        <span class="theater-chat-trigger-group">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                class="theater-chat-trigger theater-chat-trigger--primary"
+                :class="{ 'is-active': chatVisible }"
+                :aria-label="chatVisible ? '隐藏聊天' : '显示聊天'"
+                @click="emit('toggleChat')"
+              >
+                <template #icon><n-icon><Message /></n-icon></template>
+              </n-button>
+            </template>
+            {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
+          </n-tooltip>
+          <n-dropdown trigger="click" :options="performanceVisibilityOptions" :menu-props="theaterSecondaryMenuProps" @select="togglePerformanceVisibility">
+            <n-button class="theater-chat-trigger theater-chat-trigger--menu" aria-label="演出显示选项">
+              <template #icon><n-icon><ChevronDown /></n-icon></template>
             </n-button>
-          </template>
-          {{ chatVisible ? '隐藏聊天' : '显示聊天' }}
-        </n-tooltip>
+          </n-dropdown>
+        </span>
+        <TheaterDialogueControllerPanel v-if="dialogueController && saveDialogueController" :world-id="worldId" :controller="dialogueController" :can-manage="canManageDialogue === true" :save="saveDialogueController" />
       </n-button-group>
       <n-popover
         trigger="click"
@@ -8408,8 +8635,9 @@ onBeforeUnmount(() => {
             :viewport-width="viewportSize.width"
             :viewport-height="viewportSize.height"
             :entrance-playbacks="textEntrancePlaybacks"
-            :hidden-object-ids="pendingTextEntranceIds"
+            :hidden-object-ids="[...pendingTextEntranceIds, ...dialogueSuppressedObjectIds]"
             :stacking-order="rootStackingOrder"
+            :character-snapshot="characterSnapshot"
           />
           <div
             v-if="imageAnnotationOverlay.visible"
@@ -8437,7 +8665,19 @@ onBeforeUnmount(() => {
           :channel-id="channelId"
           @open-character-card="emit('openCharacterCard', $event)"
         />
-        <TheaterDialogueOverlay v-if="!hasCharacterDialogueSurface" :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
+        <TheaterDialogueOverlay
+          v-if="!appearancePreview && (dialogueController?.enabled || !hasCharacterDialogueSurface)"
+          :runtime="dialogueRuntime"
+          :character-snapshot="characterSnapshot"
+          :world-id="worldId"
+          :channel-id="channelId"
+          :hide-dialogue-performance="!dialogueController?.enabled && dialoguePerformanceHidden"
+          :hide-portrait-performance="!dialogueController?.enabled && portraitPerformanceHidden"
+          :controller="dialogueController"
+          :controller-template="dialogueControllerTemplate"
+          :can-drag-portraits="canDragPortraits"
+          :save-portrait-position="savePortraitPosition"
+        />
         <TheaterEffectOverlay
           :playbacks="effectPlaybacks"
           :selected-object="selectedEffectObject"
@@ -8458,6 +8698,8 @@ onBeforeUnmount(() => {
             :preview-enabled="true"
             :preview-name="appearancePreview.previewName"
             :preview-text="appearancePreview.previewText"
+            :controller-area="appearancePreview.controllerArea"
+            :multiplayer-portrait-transform="appearancePreview.multiplayerPortraitTransform"
             @dispatch="(command, options) => emit('appearancePreviewCommand', command, options?.transient)"
             @gesture-start="emit('appearancePreviewPhase', 'start')"
             @gesture-end="emit('appearancePreviewPhase', 'end')"
@@ -8485,7 +8727,7 @@ onBeforeUnmount(() => {
             @update:value="handleQuickToolTabChange"
           >
             <n-tab-pane v-for="tab in quickToolTabs" :key="tab.value" :name="tab.value" :tab="tab.label">
-              <div v-if="tab.value === 'dialogue'" class="theater-tool-picker__search" @focusin.stop @focusout.stop>
+              <div v-if="tab.value === 'dialogue' || tab.value === 'portrait'" class="theater-tool-picker__search" @focusin.stop @focusout.stop>
                 <n-input
                   v-model:value="quickToolCharacterQuery"
                   size="small"
@@ -8501,6 +8743,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="theater-tool-picker__option"
                   :class="{ 'is-selected': isQuickToolOptionSelected(tab.value, option) }"
+                  :disabled="quickToolPickerApplying"
                   @click="selectQuickTool(tab.value, option)"
                 >
                   <span class="theater-tool-picker__option-main">
@@ -8510,7 +8753,7 @@ onBeforeUnmount(() => {
                   <n-icon v-if="isQuickToolOptionSelected(tab.value, option)"><Select /></n-icon>
                 </button>
                 <div v-if="!quickToolOptionsFor(tab.value).length" class="theater-tool-picker__empty">
-                  {{ tab.value === 'dialogue' ? '未找到角色' : `暂无可用${tab.label}` }}
+                  {{ tab.value === 'dialogue' || tab.value === 'portrait' ? '未找到角色' : `暂无可用${tab.label}` }}
                 </div>
               </div>
             </n-tab-pane>
@@ -8520,7 +8763,7 @@ onBeforeUnmount(() => {
           <div class="theater-tool-picker__footer">
             <small v-if="quickToolSelection">已选择：{{ quickToolSelection.option.name }}</small>
             <span v-else />
-            <n-button size="small" type="primary" :disabled="!quickToolSelection || quickToolActiveLoading" @click="applyQuickToolSelection">确定</n-button>
+            <n-button size="small" type="primary" :loading="quickToolPickerApplying" :disabled="!quickToolSelection || quickToolActiveLoading" @click="applyQuickToolSelection">确定</n-button>
           </div>
         </div>
       </aside>
@@ -9806,6 +10049,23 @@ onBeforeUnmount(() => {
   color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
+.theater-chat-trigger-group { display: inline-flex; flex: 0 0 auto; }
+.theater-panel-switches :deep(.theater-chat-trigger) { padding: 0; border-radius: 0; }
+.theater-panel-switches :deep(.theater-chat-trigger--primary) {
+  --n-width: 30px !important;
+  --n-padding: 0 !important;
+  width: 30px;
+  min-width: 30px;
+  border-radius: 3px 0 0 3px;
+}
+.theater-panel-switches :deep(.theater-chat-trigger--menu) {
+  --n-width: 18px !important;
+  --n-padding: 0 !important;
+  width: 18px;
+  min-width: 18px;
+  margin-left: -1px;
+  border-radius: 0 3px 3px 0;
+}
 .theater-stage-object-actions :deep(.theater-copy-trigger--primary),
 .theater-stage-object-actions :deep(.theater-scene-fixed-trigger--primary),
 .theater-stage-object-actions :deep(.theater-grid-trigger--primary),

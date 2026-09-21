@@ -1209,7 +1209,7 @@ func BroadcastStickyNoteToChannel(channelID string, eventType protocol.EventName
 	userConnMap.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info.ChannelId == channelID {
-				_ = conn.WriteJSON(struct {
+				writeConnJSONAndPrune(connMap, conn, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{
@@ -1249,7 +1249,7 @@ func BroadcastStickyNoteToUsers(userIDs []string, eventType protocol.EventName, 
 			return true
 		}
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-			_ = conn.WriteJSON(struct {
+			writeConnJSONAndPrune(connMap, conn, struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
 			}{

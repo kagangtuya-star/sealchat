@@ -288,7 +288,7 @@ func broadcastLobbyAnnouncementUpdated() {
 			if info == nil || info.IsGuest || info.User == nil || info.User.ID == "" || info.User.IsBot {
 				return true
 			}
-			_ = conn.WriteJSON(struct {
+			writeConnJSONAndPrune(connMap, conn, struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
 			}{

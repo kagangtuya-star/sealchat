@@ -141,6 +141,8 @@ export interface AdminPerfSessionState {
   autoStopped: boolean;
 }
 
+export interface AdminPerfTraceSessionState extends AdminPerfSessionState {}
+
 export interface AdminPerfState {
   enabled: boolean;
   status: string;
@@ -153,6 +155,82 @@ export interface AdminPerfState {
   lastError?: string;
   latest?: AdminPerfSamplePoint;
   cpuSession?: AdminPerfSessionState;
+  traceSession?: AdminPerfTraceSessionState;
+}
+
+export interface AdminPerfDurationStats {
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  maxMs: number;
+}
+
+export interface AdminPerfIntStats {
+  count: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  max: number;
+}
+
+export interface AdminPerfMessagePipelineStage extends AdminPerfDurationStats {
+  key: string;
+  label: string;
+}
+
+export interface AdminPerfDBStats {
+  driver: string;
+  maxOpenConnections: number;
+  openConnections: number;
+  inUse: number;
+  idle: number;
+  waitCount: number;
+  waitDurationMs: number;
+  waitCountDelta: number;
+  waitDurationMsDelta: number;
+  maxIdleClosed: number;
+  maxIdleTimeClosed: number;
+  maxLifetimeClosed: number;
+}
+
+export interface AdminPerfDigestStats {
+  started: number;
+  completed: number;
+  errors: number;
+  inFlight: number;
+  peakInFlight: number;
+  total: AdminPerfDurationStats;
+  visitorUpserts: AdminPerfDurationStats;
+  speakerUpserts: AdminPerfDurationStats;
+}
+
+export interface AdminPerfWSOutboundStats {
+  responseQueueWait: AdminPerfDurationStats;
+  responseSocketWrite: AdminPerfDurationStats;
+  responseQueueDepth: AdminPerfIntStats;
+  responseErrors: number;
+  reliableQueueFull: number;
+  responseQueueFull: number;
+  reliableEnqueuedTotal: number;
+  reliableMessageCreated: number;
+  reliableMessageCreateResponse: number;
+  reliableBotEvent: number;
+  reliableOther: number;
+  coalescedEnqueued: number;
+  coalescedReplaced: number;
+  coalescedEvicted: number;
+}
+
+export interface AdminPerfMessagePipelineSummary {
+  updatedAt: number;
+  sinceResetAt: number;
+  windowSec: number;
+  messageCount: number;
+  stages: AdminPerfMessagePipelineStage[];
+  digest: AdminPerfDigestStats;
+  db: AdminPerfDBStats;
+  ws: AdminPerfWSOutboundStats;
 }
 
 export interface AdminPerfArtifact {
@@ -357,9 +435,9 @@ export const useUtilsStore = defineStore({
       return resp;
     },
 
-    async adminCertificateConfigUpdate(config: CertificateConfig) {
+    async adminCertificateConfigUpdate(config: CertificateConfig, clear?: { clearZeroSSLAPIKey?: boolean; clearZeroSSLEABMACKey?: boolean }) {
       const user = useUserStore();
-      const resp = await api.put('api/v1/admin/certificates/config', { config }, {
+      const resp = await api.put('api/v1/admin/certificates/config', { config, ...clear }, {
         headers: { 'Authorization': user.token },
       });
       return resp;
@@ -382,9 +460,9 @@ export const useUtilsStore = defineStore({
       return resp;
     },
 
-    async adminCertificateObtain() {
+    async adminCertificateObtain(force = false) {
       const user = useUserStore();
-      const resp = await api.post('api/v1/admin/certificates/obtain', {}, {
+      const resp = await api.post('api/v1/admin/certificates/obtain', { force }, {
         headers: { 'Authorization': user.token },
       });
       return resp;
@@ -540,6 +618,42 @@ export const useUtilsStore = defineStore({
         {
           headers: { 'Authorization': user.token },
         },
+      );
+    },
+
+    async adminPerfMessagePipeline(windowSec = 60) {
+      const user = useUserStore();
+      return await api.get<{ message: string; summary: AdminPerfMessagePipelineSummary }>(
+        'api/v1/admin/perf/message-pipeline',
+        {
+          headers: { 'Authorization': user.token },
+          params: { windowSec },
+        },
+      );
+    },
+
+    async adminPerfMessagePipelineReset() {
+      const user = useUserStore();
+      return await api.post<{ message: string }>('api/v1/admin/perf/message-pipeline/reset', {}, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminPerfStartTraceSession(durationSec?: number) {
+      const user = useUserStore();
+      return await api.post<{ message: string; state: AdminPerfTraceSessionState | null }>(
+        'api/v1/admin/perf/trace-session/start',
+        durationSec ? { durationSec } : {},
+        { headers: { 'Authorization': user.token } },
+      );
+    },
+
+    async adminPerfStopTraceSession() {
+      const user = useUserStore();
+      return await api.post<{ message: string; state: AdminPerfTraceSessionState | null }>(
+        'api/v1/admin/perf/trace-session/stop',
+        {},
+        { headers: { 'Authorization': user.token } },
       );
     },
 

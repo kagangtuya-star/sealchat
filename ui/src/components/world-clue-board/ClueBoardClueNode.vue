@@ -52,7 +52,7 @@ function onPointerdown(event: PointerEvent) {
     @click.stop="emit('select', { additive: $event.shiftKey })"
   >
     <div v-if="showImage && mediaState !== 'failed'" class="clue-board-node__media">
-      <img v-if="mediaState === 'image'" :src="mediaURL" :alt="summary.title" loading="lazy" :referrerpolicy="summary.imageAttachmentId ? undefined : 'no-referrer'" @error="mediaState = 'video'" />
+      <img v-if="mediaState === 'image'" :src="mediaURL" :alt="summary.title" loading="lazy" draggable="false" :referrerpolicy="summary.imageAttachmentId ? undefined : 'no-referrer'" @dragstart.prevent @error="mediaState = 'video'" />
       <video v-else :src="mediaURL" muted playsinline preload="metadata" @error="mediaState = 'failed'" />
     </div>
     <div v-else class="clue-board-node__media clue-board-node__media--placeholder">
@@ -83,6 +83,7 @@ function onPointerdown(event: PointerEvent) {
 .clue-board-node.is-unread { border-left: 3px solid var(--primary-color, #3388de); }
 .clue-board-node__media { display: flex; width: 100%; height: 84px; flex: 0 0 84px; align-items: center; justify-content: center; overflow: hidden; color: var(--sc-text-secondary); background: color-mix(in srgb, var(--sc-bg-surface) 86%, #000 14%); font-size: 11px; gap: 5px; }
 .clue-board-node__media img, .clue-board-node__media video { width: 100%; height: 100%; object-fit: contain; }
+.clue-board-node__media img { -webkit-user-drag: none; }
 .clue-board-node__header { display: flex; min-width: 0; align-items: center; gap: 5px; padding: 8px 10px 2px; }
 .clue-board-node__header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clue-board-node__unread { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--primary-color, #3388de); }

@@ -12,7 +12,8 @@ import (
 
 type SharedChannelIdentityModel struct {
 	StringPKBaseModel
-	WorldID             string                        `json:"worldId" gorm:"size:100;index"`
+	WorldID             string                        `json:"worldId" gorm:"size:100;index;uniqueIndex:udx_shared_world_system,priority:1"`
+	SystemKind          *string                       `json:"systemKind,omitempty" gorm:"size:64;uniqueIndex:udx_shared_world_system,priority:2"`
 	UserID              string                        `json:"userId" gorm:"size:100;not null;index"`
 	SourceChannelID     string                        `json:"sourceChannelId" gorm:"size:100"`
 	SourceIdentityID    string                        `json:"sourceIdentityId" gorm:"size:100"`

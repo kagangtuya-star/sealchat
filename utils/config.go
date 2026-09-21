@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -318,6 +319,7 @@ const (
 )
 
 const certificateShortLivedMinRenewBeforeDays = 3
+const certificateShortLivedMaxRenewBeforeDays = 6
 
 type CertificateChallenge string
 
@@ -425,6 +427,7 @@ type AIConfig struct {
 	Enabled          bool                       `json:"enabled" yaml:"enabled"`
 	Routing          AIRoutingConfig            `json:"routing" yaml:"routing"`
 	Retry            AIRetryConfig              `json:"retry" yaml:"retry"`
+	RequestTimeoutSeconds int                    `json:"requestTimeoutSeconds" yaml:"requestTimeoutSeconds"`
 	Providers        []AIProviderConfig         `json:"providers" yaml:"providers"`
 	Features         map[string]AIFeatureConfig `json:"features" yaml:"features"`
 	Pricing          []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
@@ -439,6 +442,12 @@ type PerformanceProfilerConfig struct {
 	SnapshotIntervalSec    int    `json:"snapshotIntervalSec" yaml:"snapshotIntervalSec"`
 	CPUProfileDurationSec  int    `json:"cpuProfileDurationSec" yaml:"cpuProfileDurationSec"`
 	RetentionDays          int    `json:"retentionDays" yaml:"retentionDays"`
+}
+
+const DefaultWebSocketOutboundQueueSize = 256
+
+type WebSocketConfig struct {
+	OutboundQueueSize int `json:"outboundQueueSize" yaml:"outboundQueueSize"`
 }
 
 type AppConfig struct {
@@ -486,6 +495,7 @@ type AppConfig struct {
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
 	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
+	WebSocket                 WebSocketConfig           `json:"websocket" yaml:"websocket"`
 }
 
 type ExportConfig struct {
@@ -718,6 +728,9 @@ func ReadConfig() *AppConfig {
 			CPUProfileDurationSec:  300,
 			RetentionDays:          3,
 		},
+		WebSocket: WebSocketConfig{
+			OutboundQueueSize: DefaultWebSocketOutboundQueueSize,
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -809,6 +822,11 @@ func NormalizeCertificateConfig(cfg CertificateConfig) CertificateConfig {
 	cfg.Email = strings.TrimSpace(cfg.Email)
 	cfg.StorageDir = strings.TrimSpace(cfg.StorageDir)
 	cfg.HTTPSServeAt = strings.TrimSpace(cfg.HTTPSServeAt)
+	if host, port, err := net.SplitHostPort(cfg.HTTPSServeAt); err == nil {
+		if portNumber, parseErr := strconv.Atoi(port); parseErr == nil && portNumber >= 1 && portNumber <= 65535 {
+			cfg.HTTPSServeAt = net.JoinHostPort(host, strconv.Itoa(portNumber))
+		}
+	}
 	cfg.ZeroSSLAPIKey = strings.TrimSpace(cfg.ZeroSSLAPIKey)
 	cfg.ZeroSSLEABKeyID = strings.TrimSpace(cfg.ZeroSSLEABKeyID)
 	cfg.ZeroSSLEABMACKey = strings.TrimSpace(cfg.ZeroSSLEABMACKey)
@@ -825,11 +843,12 @@ func NormalizeCertificateConfig(cfg CertificateConfig) CertificateConfig {
 	if cfg.CheckIntervalMinutes == 0 {
 		cfg.CheckIntervalMinutes = 360
 	}
-	if cfg.RenewBeforeDays == 0 {
+	if cfg.Issuer == CertificateIssuerLetsEncryptShortLived {
+		if cfg.RenewBeforeDays < certificateShortLivedMinRenewBeforeDays || cfg.RenewBeforeDays > certificateShortLivedMaxRenewBeforeDays {
+			cfg.RenewBeforeDays = certificateShortLivedMinRenewBeforeDays
+		}
+	} else if cfg.RenewBeforeDays == 0 {
 		cfg.RenewBeforeDays = 14
-	}
-	if cfg.Issuer == CertificateIssuerLetsEncryptShortLived && cfg.RenewBeforeDays < certificateShortLivedMinRenewBeforeDays {
-		cfg.RenewBeforeDays = certificateShortLivedMinRenewBeforeDays
 	}
 	if cfg.RetryInitialMinutes == 0 {
 		cfg.RetryInitialMinutes = 5
@@ -848,7 +867,7 @@ func defaultCertificateConfig() CertificateConfig {
 		ForceHTTPS:           true,
 		RedirectHTTP:         true,
 		CheckIntervalMinutes: 360,
-		RenewBeforeDays:      14,
+		RenewBeforeDays:      3,
 		RetryInitialMinutes:  5,
 		RetryMaxMinutes:      240,
 	})
@@ -1008,6 +1027,7 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 		Enabled:          cfg.Enabled,
 		Routing:          cfg.Routing,
 		Retry:            cfg.Retry,
+		RequestTimeoutSeconds: cfg.RequestTimeoutSeconds,
 		Providers:        make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
 		Features:         make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
 		Pricing:          make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
@@ -1025,6 +1045,9 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	}
 	if result.Retry.MaxDelayMs <= 0 {
 		result.Retry.MaxDelayMs = 3000
+	}
+	if result.RequestTimeoutSeconds <= 0 {
+		result.RequestTimeoutSeconds = 60
 	}
 	if result.LogRetentionDays <= 0 {
 		result.LogRetentionDays = 30
@@ -1198,6 +1221,9 @@ func ValidateAIConfig(cfg AIConfig) error {
 	if cfg.Retry.MaxDelayMs < cfg.Retry.InitialDelayMs {
 		return fmt.Errorf("AI 最大重试延迟不能小于初始延迟")
 	}
+	if cfg.RequestTimeoutSeconds <= 0 {
+		return fmt.Errorf("AI 请求超时必须大于 0")
+	}
 	if cfg.LogRetentionDays <= 0 {
 		return fmt.Errorf("AI 日志保留天数必须大于 0")
 	}
@@ -1288,6 +1314,20 @@ func ValidateCertificateConfig(cfg CertificateConfig) error {
 		return fmt.Errorf("证书重试最大间隔不能小于初始间隔")
 	}
 	cfg = NormalizeCertificateConfig(cfg)
+	if cfg.Issuer == CertificateIssuerLetsEncryptShortLived &&
+		(cfg.RenewBeforeDays < certificateShortLivedMinRenewBeforeDays || cfg.RenewBeforeDays > certificateShortLivedMaxRenewBeforeDays) {
+		return fmt.Errorf("Let's Encrypt 短期证书续期阈值必须在 3 到 6 天之间")
+	}
+	if cfg.HTTPSServeAt != "" {
+		_, port, err := net.SplitHostPort(cfg.HTTPSServeAt)
+		if err != nil {
+			return fmt.Errorf("HTTPS 监听地址无效: %s", cfg.HTTPSServeAt)
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return fmt.Errorf("HTTPS 监听端口必须在 1 到 65535 之间")
+		}
+	}
 	if !cfg.Enabled {
 		return nil
 	}
@@ -1296,6 +1336,9 @@ func ValidateCertificateConfig(cfg CertificateConfig) error {
 	}
 	if cfg.Challenge != CertificateChallengeHTTP01 && cfg.Challenge != CertificateChallengeTLSALPN01 {
 		return fmt.Errorf("证书验证方式无效: %s", cfg.Challenge)
+	}
+	if cfg.Issuer == CertificateIssuerZeroSSL90Days && cfg.Challenge != CertificateChallengeHTTP01 {
+		return fmt.Errorf("ZeroSSL IP 证书仅支持 HTTP-01 验证")
 	}
 	if !isPublicCertificateIP(cfg.SubjectIP) {
 		return fmt.Errorf("证书 IP 必须是公网 IP")
@@ -1307,11 +1350,6 @@ func ValidateCertificateConfig(cfg CertificateConfig) error {
 		cfg.ZeroSSLAPIKey == "" &&
 		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
 		return fmt.Errorf("ZeroSSL 证书需要 API Key 或 EAB 凭据")
-	}
-	if cfg.Issuer == CertificateIssuerZeroSSL90Days &&
-		cfg.Challenge == CertificateChallengeTLSALPN01 &&
-		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
-		return fmt.Errorf("ZeroSSL TLS-ALPN-01 证书需要 EAB 凭据")
 	}
 	return nil
 }
@@ -1829,6 +1867,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("ai.retry.maxAttempts", config.AI.Retry.MaxAttempts)
 		_ = k.Set("ai.retry.initialDelayMs", config.AI.Retry.InitialDelayMs)
 		_ = k.Set("ai.retry.maxDelayMs", config.AI.Retry.MaxDelayMs)
+		_ = k.Set("ai.requestTimeoutSeconds", config.AI.RequestTimeoutSeconds)
 		_ = k.Set("ai.providers", config.AI.Providers)
 		_ = k.Set("ai.features", config.AI.Features)
 		_ = k.Set("ai.pricing", config.AI.Pricing)

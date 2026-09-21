@@ -2,7 +2,7 @@
 import { useUtilsStore } from '@/stores/utils'
 import type { CertificateChallenge, CertificateConfig, CertificateIssuer, CertificateLogEntry, CertificateStatus } from '@/types'
 import { cloneDeep } from 'lodash-es'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { computed, onMounted, ref, watch } from 'vue'
 
 type CertificateConfigResponse = {
@@ -12,6 +12,7 @@ type CertificateConfigResponse = {
 
 const utils = useUtilsStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const defaultConfig = (): CertificateConfig => ({
   enabled: false,
@@ -24,7 +25,7 @@ const defaultConfig = (): CertificateConfig => ({
   forceHTTPS: true,
   redirectHTTP: true,
   checkIntervalMinutes: 360,
-  renewBeforeDays: 14,
+  renewBeforeDays: 3,
   retryInitialMinutes: 5,
   retryMaxMinutes: 240,
   zeroSSLAPIKey: '',
@@ -40,19 +41,29 @@ const loading = ref(false)
 const saving = ref(false)
 const obtaining = ref(false)
 const originalSnapshot = ref('')
+const restartRequired = ref(false)
+const clearZeroSSLAPIKey = ref(false)
+const clearZeroSSLEABMACKey = ref(false)
 
 const issuerOptions: { label: string; value: CertificateIssuer }[] = [
   { label: 'Let’s Encrypt 短期证书', value: 'letsencrypt_shortlived' },
   { label: 'ZeroSSL 90 天证书', value: 'zerossl_90d' },
 ]
 
-const challengeOptions: { label: string; value: CertificateChallenge }[] = [
-  { label: 'HTTP-01（使用 80 端口）', value: 'http-01' },
-  { label: 'TLS-ALPN-01（使用 443 端口）', value: 'tls-alpn-01' },
-]
+const challengeOptions = computed<{ label: string; value: CertificateChallenge }[]>(() => (
+  model.value.issuer === 'zerossl_90d'
+    ? [{ label: 'HTTP-01（使用 80 端口）', value: 'http-01' }]
+    : [
+        { label: 'HTTP-01（使用 80 端口）', value: 'http-01' },
+        { label: 'TLS-ALPN-01（使用 443 端口）', value: 'tls-alpn-01' },
+      ]
+))
 
 const minimumRenewBeforeDays = computed(() => (
   model.value.issuer === 'letsencrypt_shortlived' ? 3 : 1
+))
+const maximumRenewBeforeDays = computed(() => (
+  model.value.issuer === 'letsencrypt_shortlived' ? 6 : undefined
 ))
 
 const normalizeConfig = (value?: Partial<CertificateConfig> | null): CertificateConfig => ({
@@ -63,14 +74,26 @@ const normalizeConfig = (value?: Partial<CertificateConfig> | null): Certificate
 })
 
 const snapshotOf = (value: CertificateConfig) => JSON.stringify(value)
-const isModified = computed(() => snapshotOf(model.value) !== originalSnapshot.value)
+const isModified = computed(() => (
+  snapshotOf(model.value) !== originalSnapshot.value ||
+  clearZeroSSLAPIKey.value ||
+  clearZeroSSLEABMACKey.value
+))
 
 const formatCertificateTime = (value?: string | null) => {
   if (!value || value.startsWith('0001-01-01')) return '未知'
   return new Date(value).toLocaleString()
 }
 
-watch(() => model.value.issuer, () => {
+watch(() => model.value.issuer, (issuer, previousIssuer) => {
+  if (issuer === 'zerossl_90d') {
+    model.value.challenge = 'http-01'
+    if (previousIssuer === 'letsencrypt_shortlived') {
+      model.value.renewBeforeDays = 14
+    }
+  } else if (previousIssuer === 'zerossl_90d') {
+    model.value.renewBeforeDays = 3
+  }
   if (model.value.renewBeforeDays < minimumRenewBeforeDays.value) {
     model.value.renewBeforeDays = minimumRenewBeforeDays.value
   }
@@ -110,7 +133,9 @@ const load = async () => {
     ])
     model.value = normalizeConfig((configResp.data as CertificateConfigResponse).config)
     originalSnapshot.value = snapshotOf(model.value)
+    restartRequired.value = Boolean((configResp.data as CertificateConfigResponse).restartRequired)
     status.value = statusResp.data?.status || null
+    restartRequired.value = Boolean(statusResp.data?.restartRequired ?? restartRequired.value)
     logs.value = logsResp.data?.items || []
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '加载证书配置失败')
@@ -123,9 +148,15 @@ const save = async () => {
   saving.value = true
   try {
     const payload = cloneDeep(model.value)
-    const resp = await utils.adminCertificateConfigUpdate(payload)
+    const resp = await utils.adminCertificateConfigUpdate(payload, {
+      clearZeroSSLAPIKey: clearZeroSSLAPIKey.value,
+      clearZeroSSLEABMACKey: clearZeroSSLEABMACKey.value,
+    })
     model.value = normalizeConfig((resp.data as CertificateConfigResponse).config)
     originalSnapshot.value = snapshotOf(model.value)
+    restartRequired.value = Boolean(resp.data?.restartRequired)
+    clearZeroSSLAPIKey.value = false
+    clearZeroSSLEABMACKey.value = false
     message.success(resp.data?.restartRequired ? '已保存，重启服务后生效' : '已保存')
     await refreshStatus()
   } catch (error: any) {
@@ -142,24 +173,35 @@ const refreshStatus = async () => {
       utils.adminCertificateLogs(100),
     ])
     status.value = statusResp.data?.status || null
+    restartRequired.value = Boolean(statusResp.data?.restartRequired)
     logs.value = logsResp.data?.items || []
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '刷新证书状态失败')
   }
 }
 
-const obtainNow = async () => {
+const obtainNow = async (force = false) => {
   obtaining.value = true
   try {
-    const resp = await utils.adminCertificateObtain()
+    const resp = await utils.adminCertificateObtain(force)
     status.value = resp.data?.status || status.value
-    message.success('已触发证书检查')
+    message.success(force ? '已强制触发证书重新申请' : '已完成证书检查与续期')
     await refreshStatus()
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '触发证书检查失败')
   } finally {
     obtaining.value = false
   }
+}
+
+const confirmForceRenew = () => {
+  dialog.warning({
+    title: '强制重新申请证书',
+    content: '此操作会向 CA 重新签发证书，频繁操作可能触发签发频率限制。确定继续吗？',
+    positiveText: '强制重新申请',
+    negativeText: '取消',
+    onPositiveClick: () => obtainNow(true),
+  })
 }
 
 onMounted(load)
@@ -175,6 +217,7 @@ defineExpose({
     <n-alert type="warning" title="公网 IP 证书签发限制" class="admin-certificate__notice">
       仅支持单个公网 IP。HTTPS 监听地址留空时会在原服务端口上同时支持 HTTPS；本地 HTTP 访问仍保留，保存后需要重启服务。
     </n-alert>
+    <n-alert v-if="restartRequired" type="warning" title="配置已变更，重启后生效" class="admin-certificate__notice" />
 
     <div class="admin-certificate__grid">
       <n-card title="证书配置" :bordered="false" class="admin-certificate__card admin-certificate__config-card">
@@ -210,8 +253,8 @@ defineExpose({
             <n-form-item label="检查周期（分钟）" feedback="自动续期守护完成一轮成功检查后，按此周期进入下一轮。">
               <n-input-number v-model:value="model.checkIntervalMinutes" :min="1" />
             </n-form-item>
-            <n-form-item label="最小续期阈值（天）" feedback="剩余天数小于等于该值时，自动续期守护会主动触发证书检查。Let’s Encrypt 短期证书最低自动调整为 3 天。">
-              <n-input-number v-model:value="model.renewBeforeDays" :min="minimumRenewBeforeDays" />
+            <n-form-item label="最小续期阈值（天）" feedback="剩余天数小于等于该值时，自动续期守护会主动触发证书检查。Let’s Encrypt 短期证书允许 3 至 6 天。">
+              <n-input-number v-model:value="model.renewBeforeDays" :min="minimumRenewBeforeDays" :max="maximumRenewBeforeDays" />
             </n-form-item>
             <n-form-item label="重试初始间隔（分钟）" feedback="自动续期检查失败后，从此间隔开始指数退避重试。">
               <n-input-number v-model:value="model.retryInitialMinutes" :min="1" />
@@ -220,17 +263,25 @@ defineExpose({
               <n-input-number v-model:value="model.retryMaxMinutes" :min="1" />
             </n-form-item>
 
-            <n-divider>ZeroSSL 凭据</n-divider>
-            <n-form-item label="API Key" feedback="已保存的密钥不会回显；留空表示保留旧值。">
-              <n-input v-model:value="model.zeroSSLAPIKey" type="password" show-password-on="click" placeholder="ZeroSSL API Key" />
-            </n-form-item>
-            <n-form-item label="EAB Key ID">
-              <n-input v-model:value="model.zeroSSLEABKeyID" placeholder="ZeroSSL EAB Key ID" />
-            </n-form-item>
-            <n-form-item label="EAB MAC Key" feedback="TLS-ALPN-01 使用 ZeroSSL 时需要 EAB 凭据。">
-              <n-input v-model:value="model.zeroSSLEABMACKey" type="password" show-password-on="click" placeholder="ZeroSSL EAB MAC Key" />
-            </n-form-item>
-            <n-form-item label="测试环境">
+            <template v-if="model.issuer === 'zerossl_90d'">
+              <n-divider>ZeroSSL 凭据</n-divider>
+              <n-form-item label="API Key" feedback="已保存的密钥不会回显；留空表示保留旧值。完整 EAB 凭据优先于 API Key。">
+                <n-input v-model:value="model.zeroSSLAPIKey" type="password" show-password-on="click" placeholder="ZeroSSL API Key" />
+              </n-form-item>
+              <n-form-item label="清除 API Key">
+                <n-checkbox v-model:checked="clearZeroSSLAPIKey">保存时清除已保存的 API Key</n-checkbox>
+              </n-form-item>
+              <n-form-item label="EAB Key ID">
+                <n-input v-model:value="model.zeroSSLEABKeyID" placeholder="ZeroSSL EAB Key ID" />
+              </n-form-item>
+              <n-form-item label="EAB MAC Key" feedback="已保存的密钥不会回显；留空表示保留旧值。">
+                <n-input v-model:value="model.zeroSSLEABMACKey" type="password" show-password-on="click" placeholder="ZeroSSL EAB MAC Key" />
+              </n-form-item>
+              <n-form-item label="清除 EAB MAC">
+                <n-checkbox v-model:checked="clearZeroSSLEABMACKey">保存时清除已保存的 EAB MAC Key</n-checkbox>
+              </n-form-item>
+            </template>
+            <n-form-item v-if="model.issuer === 'letsencrypt_shortlived'" label="测试环境">
               <n-switch v-model:value="model.staging" />
             </n-form-item>
           </n-form>
@@ -241,7 +292,8 @@ defineExpose({
         <n-card title="当前状态" :bordered="false" class="admin-certificate__card">
           <div class="admin-certificate__actions">
             <n-button size="small" @click="refreshStatus">刷新</n-button>
-            <n-button size="small" type="primary" :loading="obtaining" @click="obtainNow">触发检查与续期</n-button>
+            <n-button size="small" type="primary" :loading="obtaining" :disabled="restartRequired" @click="obtainNow(false)">检查与续期</n-button>
+            <n-button size="small" type="error" secondary :disabled="restartRequired || obtaining" @click="confirmForceRenew">强制重新申请</n-button>
           </div>
           <div v-if="status?.lastError" class="admin-certificate__error">{{ status.lastError }}</div>
           <div v-for="row in statusRows" :key="row[0]" class="admin-certificate__status-row">

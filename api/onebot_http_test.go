@@ -441,7 +441,8 @@ func TestOneBotHTTPAPISendGroupMsgBroadcastsRealtimeEvent(t *testing.T) {
 	app := fiber.New()
 	oneBotHTTPWorks(app)
 	app.Get("/test-ws", wsfiber.New(func(c *wsfiber.Conn) {
-		conn := &WsSyncConn{Conn: c}
+		conn := newWsSyncConn(c, defaultWSOutboundQueueSize)
+		defer conn.Close()
 		receivedConn <- conn
 		<-releaseConn
 	}))

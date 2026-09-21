@@ -520,9 +520,11 @@ func buildChannelUpdatedTreeChangeEvent(operator *model.UserModel, channel *mode
 }
 
 func broadcastChannelTreeInvalidatedEvent(operator *model.UserModel, worldID string, event *protocol.Event) {
-	if strings.TrimSpace(worldID) == "" || event == nil || userId2ConnInfoGlobal == nil {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" || event == nil || userId2ConnInfoGlobal == nil {
 		return
 	}
+	invalidateWorldNoticeVisibilityForConnections(worldID)
 	recipients, err := buildOnlineWorldMemberRecipients(worldID, userId2ConnInfoGlobal)
 	if err != nil || len(recipients) == 0 {
 		return

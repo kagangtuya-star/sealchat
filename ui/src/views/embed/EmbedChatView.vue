@@ -204,6 +204,38 @@ const postToParent = (payload: any) => {
   }
 };
 
+const isTheaterComposerFocusTarget = (target: EventTarget | null) => {
+  const element = target instanceof Element ? target : null;
+  if (!element?.closest('.edit-area')) return false;
+
+  return element.matches('textarea, input, [contenteditable="true"]')
+    || !!element.closest('.hybrid-input, .tiptap-editor');
+};
+
+const postTheaterComposerFocus = (focused: boolean) => {
+  if (!theaterMode.value || !theaterSessionId.value) return;
+
+  postToParent({
+    type: 'sealchat.theater.composer-focus',
+    sessionId: theaterSessionId.value,
+    focused,
+  });
+};
+
+const handleTheaterComposerFocusIn = (event: FocusEvent) => {
+  if (isTheaterComposerFocusTarget(event.target)) {
+    postTheaterComposerFocus(true);
+  }
+};
+
+const handleTheaterComposerFocusOut = () => {
+  queueMicrotask(() => {
+    postTheaterComposerFocus(
+      isTheaterComposerFocusTarget(document.activeElement),
+    );
+  });
+};
+
 const stopTheaterBridge = () => {
   theaterBridgeGeneration += 1;
   disposeTheaterMessageEvents?.();
@@ -1222,6 +1254,8 @@ onMounted(async () => {
   window.addEventListener('message', handleMessage);
   document.addEventListener('pointerdown', handleInteraction, { capture: true });
   document.addEventListener('keydown', handleInteraction, { capture: true });
+  document.addEventListener('focusin', handleTheaterComposerFocusIn, true);
+  document.addEventListener('focusout', handleTheaterComposerFocusOut, true);
   window.addEventListener('focus', handleFloatingFocus);
   window.addEventListener('blur', handleFloatingBlur);
   await initialize();
@@ -1243,6 +1277,8 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener('pointerdown', handleInteraction, { capture: true } as any);
   document.removeEventListener('keydown', handleInteraction, { capture: true } as any);
+  document.removeEventListener('focusin', handleTheaterComposerFocusIn, true);
+  document.removeEventListener('focusout', handleTheaterComposerFocusOut, true);
   window.removeEventListener('focus', handleFloatingFocus);
   window.removeEventListener('blur', handleFloatingBlur);
 });

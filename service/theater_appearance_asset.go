@@ -47,7 +47,7 @@ type TheaterAppearanceAssetAttachmentInput struct {
 }
 
 func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUserID, channelID string, input TheaterAppearanceAssetAttachmentInput) (*TheaterAppearanceAssetPublic, error) {
-	actor, err := ResolveChannelIdentityActor(channelID, operatorUserID, input.TargetUserID)
+	actor, err := ResolveTheaterAppearanceActor(channelID, operatorUserID, input.TargetUserID, input.IdentityID, input.VariantID, input.Purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -56,9 +56,6 @@ func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUse
 		return nil, newTheaterError(TheaterAppearanceAssetErrorInvalid, "purpose 无效", 400, nil)
 	}
 	identityID := strings.TrimSpace(input.IdentityID)
-	if _, err := ValidateChannelIdentityActorIdentity(actor, channelID, identityID); err != nil {
-		return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "identity 不属于目标用户或频道", 400, nil)
-	}
 	variantID := strings.TrimSpace(input.VariantID)
 	if variantID != "" {
 		variant, variantErr := model.ChannelIdentityVariantGetByID(variantID)
@@ -120,7 +117,7 @@ type TheaterAppearanceAssetPublic struct {
 }
 
 func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, channelID string, input TheaterAppearanceAssetUploadInput) (*TheaterAppearanceAssetPublic, error) {
-	actor, err := ResolveChannelIdentityActor(channelID, operatorUserID, input.TargetUserID)
+	actor, err := ResolveTheaterAppearanceActor(channelID, operatorUserID, input.TargetUserID, input.IdentityID, input.VariantID, input.Purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -131,9 +128,6 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 	identityID := strings.TrimSpace(input.IdentityID)
 	if identityID == "" {
 		return nil, newTheaterError(TheaterAppearanceAssetErrorInvalid, "identityId 必填", 400, nil)
-	}
-	if _, err := ValidateChannelIdentityActorIdentity(actor, channelID, identityID); err != nil {
-		return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "identity 不属于目标用户或频道", 400, nil)
 	}
 	variantID := strings.TrimSpace(input.VariantID)
 	if variantID != "" {
@@ -218,7 +212,7 @@ func GetTheaterAppearanceAsset(ctx context.Context, operatorUserID, channelID, a
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ResolveChannelIdentityActor(channelID, operatorUserID, asset.OwnerUserID); err != nil {
+	if _, err := resolveTheaterAppearanceActor(channelID, operatorUserID, asset.OwnerUserID, asset.IdentityID, asset.VariantID, asset.Purpose, false); err != nil {
 		return nil, err
 	}
 	public := theaterAppearanceAssetPublic(*asset)
@@ -230,7 +224,7 @@ func DeleteTheaterAppearanceAsset(ctx context.Context, operatorUserID, channelID
 	if err != nil {
 		return err
 	}
-	if _, err := ResolveChannelIdentityActor(channelID, operatorUserID, asset.OwnerUserID); err != nil {
+	if _, err := resolveTheaterAppearanceActor(channelID, operatorUserID, asset.OwnerUserID, asset.IdentityID, asset.VariantID, asset.Purpose, false); err != nil {
 		return err
 	}
 	inUse, err := TheaterAppearanceAssetInUse(model.GetDB(), asset.ID)
@@ -536,6 +530,7 @@ func TheaterAppearanceAssetInUse(tx *gorm.DB, assetID string) (bool, error) {
 		column string
 	}{
 		{model: &model.ChannelIdentityModel{}, column: "theater_presentation"},
+		{model: &model.SharedChannelIdentityModel{}, column: "theater_presentation"},
 		{model: &model.MessageModel{}, column: "sender_theater_presentation"},
 	}
 	for _, check := range checks {

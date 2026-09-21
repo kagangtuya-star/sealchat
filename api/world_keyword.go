@@ -619,7 +619,7 @@ func broadcastEventToWorld(worldID string, event *protocol.Event) {
 	userId2ConnInfoGlobal.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info != nil && info.WorldId == worldID {
-				_ = conn.WriteJSON(struct {
+				writeConnJSONAndPrune(conns, conn, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{

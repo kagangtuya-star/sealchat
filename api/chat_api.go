@@ -17,12 +17,13 @@ func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatCo
 	c := ctx.Conn
 
 	var data struct {
-		Data T `json:"data"`
+		API  string `json:"api"`
+		Data T      `json:"data"`
 	}
 
 	err := json.Unmarshal(msg, &data)
 	if err != nil {
-		_ = c.WriteJSON(&struct {
+		_ = c.EnqueueJSON(&struct {
 			Echo string `json:"echo"`
 			Err  string `json:"err"`
 		}{ctx.Echo, "INVALID_PARAMS"})
@@ -32,18 +33,28 @@ func apiWrap[T any, T2 any](ctx *ChatContext, msg []byte, solve func(ctx *ChatCo
 	ret, err := solve(ctx, data.Data)
 	if err != nil {
 		errMsg := err.Error()
-		_ = c.WriteJSON(&struct {
+		response := &struct {
 			Echo string `json:"echo"`
 			Err  string `json:"err"`
 			Data any    `json:"data"`
-		}{ctx.Echo, errMsg, ret})
+		}{ctx.Echo, errMsg, ret}
+		if data.API == "message.create" {
+			_ = c.enqueueMessageCreateResponseJSON(response)
+		} else {
+			_ = c.EnqueueJSON(response)
+		}
 		return
 	}
 
-	_ = c.WriteJSON(&struct {
+	response := &struct {
 		Echo string `json:"echo"`
 		Data any    `json:"data"`
-	}{ctx.Echo, ret})
+	}{ctx.Echo, ret}
+	if data.API == "message.create" {
+		_ = c.enqueueMessageCreateResponseJSON(response)
+	} else {
+		_ = c.EnqueueJSON(response)
+	}
 }
 
 func apiUserListCommon(dataNext string, f func(q *gorm.DB)) (any, error) {
@@ -104,6 +115,9 @@ func apiBotInfoSetName(ctx *ChatContext, msg []byte) {
 		return
 	}
 
+	var members []*model.MemberModel
+	model.GetDB().Where("user_id = ?", ctx.User.ID).Find(&members)
+
 	name := strings.TrimSpace(data.Data.Name)
 	if ctx.User.IsBot {
 		if token, err := model.BotTokenGet(ctx.User.ID); err == nil && token != nil {
@@ -120,7 +134,7 @@ func apiBotInfoSetName(ctx *ChatContext, msg []byte) {
 	ctx.User.Nickname = name
 	ctx.User.Brief = data.Data.Brief
 	ctx.User.SaveInfo()
-	for _, i := range ctx.Members {
+	for _, i := range members {
 		i.Nickname = name
 		i.SaveInfo()
 		// 广播事件，名字更新了

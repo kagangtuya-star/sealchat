@@ -22,6 +22,14 @@ const emit = defineEmits<{
 const editingId = ref('')
 const editingLabel = ref('')
 const editInput = ref<HTMLInputElement | null>(null)
+const PARALLEL_LINE_GAP = 28
+const LABEL_GAP = 5
+const EDIT_WIDTH = 156
+const EDIT_HEIGHT = 26
+
+function relationEndpointKey(kind: string, id: string) {
+  return `${kind}:${id}`
+}
 
 function setEditInput(element: Element | ComponentPublicInstance | null) {
   editInput.value = element instanceof HTMLInputElement ? element : null
@@ -48,12 +56,23 @@ const endpoints = computed<Array<BoardRelationEndpoint & { parallelIndex: number
   })
   const groups = new Map<string, typeof visible>()
   for (const endpoint of visible) {
-    const ids = [endpoint.source.id, endpoint.target.id].sort().join('|')
-    const group = groups.get(ids) || []
+    const source = relationEndpointKey(endpoint.relation.sourceRef.kind, endpoint.relation.sourceRef.id)
+    const target = relationEndpointKey(endpoint.relation.targetRef.kind, endpoint.relation.targetRef.id)
+    const key = [source, target].sort().join('|')
+    const group = groups.get(key) || []
     group.push(endpoint)
-    groups.set(ids, group)
+    groups.set(key, group)
   }
-  for (const group of groups.values()) group.forEach((endpoint, index) => { endpoint.parallelIndex = index - (group.length - 1) / 2 })
+  for (const group of groups.values()) {
+    group.sort((a, b) => (
+      a.relation.id < b.relation.id
+        ? -1
+        : a.relation.id > b.relation.id
+          ? 1
+          : 0
+    ))
+    group.forEach((endpoint, index) => { endpoint.parallelIndex = index - (group.length - 1) / 2 })
+  }
   return visible
 })
 
@@ -70,9 +89,25 @@ function lineFor(endpoint: BoardRelationEndpoint & { parallelIndex: number }) {
   const end = screenPoint(endpoint.target, endPoint.x, endPoint.y)
   const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
   const length = Math.hypot(end.x - start.x, end.y - start.y) || 1
-  const offset = endpoint.parallelIndex * 18
-  const control = { x: middle.x - ((end.y - start.y) / length) * offset, y: middle.y + ((end.x - start.x) / length) * offset }
-  const label = { x: (start.x + 2 * control.x + end.x) / 4, y: (start.y + 2 * control.y + end.y) / 4 }
+  const rawNormalX = -(end.y - start.y) / length
+  const rawNormalY = (end.x - start.x) / length
+  const sourceKey = relationEndpointKey(endpoint.relation.sourceRef.kind, endpoint.relation.sourceRef.id)
+  const targetKey = relationEndpointKey(endpoint.relation.targetRef.kind, endpoint.relation.targetRef.id)
+  const directionSign = sourceKey <= targetKey ? 1 : -1
+  const normalX = rawNormalX * directionSign
+  const normalY = rawNormalY * directionSign
+  const lineOffset = endpoint.parallelIndex * PARALLEL_LINE_GAP
+  const control = { x: middle.x + normalX * lineOffset, y: middle.y + normalY * lineOffset }
+  const curveMiddle = {
+    x: (start.x + 2 * control.x + end.x) / 4,
+    y: (start.y + 2 * control.y + end.y) / 4,
+  }
+  const parallel = endpoint.parallelIndex
+  const side = parallel === 0 ? 1 : Math.sign(parallel)
+  const label = {
+    x: curveMiddle.x + normalX * LABEL_GAP * side,
+    y: curveMiddle.y + normalY * LABEL_GAP * side,
+  }
   return { start, end, control, label }
 }
 
@@ -97,7 +132,10 @@ function beginEdit(endpoint: BoardRelationEndpoint & { parallelIndex: number }) 
   if (props.interactionLocked) return
   editingId.value = endpoint.relation.id
   editingLabel.value = endpoint.relation.label || ''
-  void nextTick(() => editInput.value?.focus())
+  void nextTick(() => {
+    editInput.value?.focus()
+    editInput.value?.select()
+  })
 }
 
 function finishEdit() {
@@ -127,8 +165,8 @@ function relationClass(kind: string) { return `relation-${kind}` }
         :d="pathFor(endpoint).d"
         :marker-end="endpoint.relation.kind === 'related' || endpoint.relation.kind === 'contradicts' ? undefined : 'url(#clue-board-arrow)'"
       />
-      <text :x="pathFor(endpoint).label.x" :y="pathFor(endpoint).label.y - 6" @dblclick.stop="beginEdit(endpoint)">{{ endpoint.relation.label?.trim() || relationKindLabels[endpoint.relation.kind] }}</text>
-      <foreignObject v-if="editingId === endpoint.relation.id" :x="pathFor(endpoint).label.x - 84" :y="pathFor(endpoint).label.y - 34" width="168" height="30" @pointerdown.stop>
+      <text v-if="editingId !== endpoint.relation.id" :x="pathFor(endpoint).label.x" :y="pathFor(endpoint).label.y" @dblclick.stop="beginEdit(endpoint)">{{ endpoint.relation.label?.trim() || relationKindLabels[endpoint.relation.kind] }}</text>
+      <foreignObject v-if="editingId === endpoint.relation.id" :x="lineFor(endpoint).label.x - EDIT_WIDTH / 2" :y="lineFor(endpoint).label.y - EDIT_HEIGHT / 2" :width="EDIT_WIDTH" :height="EDIT_HEIGHT" @pointerdown.stop @click.stop @dblclick.stop>
         <input :ref="setEditInput" v-model="editingLabel" class="clue-board-relation-edit" maxlength="500" @keydown.enter.prevent="finishEdit" @keydown.esc.prevent="cancelEdit" @blur="finishEdit" />
       </foreignObject>
     </g>
@@ -142,7 +180,8 @@ function relationClass(kind: string) { return `relation-${kind}` }
 .clue-board-relations path { fill: none; stroke: currentColor; stroke-width: 1.8; opacity: .72; pointer-events: stroke; }
 .clue-board-relations text { fill: var(--sc-text-secondary); stroke: var(--sc-bg-surface); stroke-width: 3px; paint-order: stroke; font-size: 11px; text-anchor: middle; cursor: text; user-select: none; }
 .clue-board-relations.is-locked text { cursor: default; }
-.clue-board-relation-edit { width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--primary-color, #3388de); border-radius: 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); font: inherit; }
+.clue-board-relations foreignObject { pointer-events: auto; }
+.clue-board-relation-edit { width: 100%; height: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--primary-color, #3388de); border-radius: 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); font: inherit; pointer-events: auto; }
 .relation-preview { stroke-dasharray: 5 4; opacity: .48; pointer-events: none; }
 .relation-contradicts { color: #d96c6c; }
 .relation-causes { color: #9c79dd; }

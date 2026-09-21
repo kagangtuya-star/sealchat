@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
 }>(), { playbackRate: 1, active: true })
 
 const display = useDisplayStore()
+const emit = defineEmits<{ dimensions: [width: number, height: number] }>()
 const failedIndex = ref(-1)
 const supportsVideo = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -49,6 +50,7 @@ const handleError = () => { failedIndex.value += 1 }
 const handleVideoLoaded = () => {
   if (!videoRef.value) return
   videoRef.value.playbackRate = props.playbackRate
+  emit('dimensions', videoRef.value.videoWidth, videoRef.value.videoHeight)
   videoRef.value.defaultPlaybackRate = props.playbackRate
   if (props.active) void videoRef.value.play().catch(() => undefined)
   else videoRef.value.pause()
@@ -77,6 +79,7 @@ const handleVideoLoaded = () => {
     draggable="false"
     style="object-fit: cover"
     @error="handleError"
+    @load="event => { const image = event.target as HTMLImageElement; emit('dimensions', image.naturalWidth, image.naturalHeight) }"
   >
 </template>
 

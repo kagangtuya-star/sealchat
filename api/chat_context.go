@@ -34,16 +34,33 @@ type ChatContext struct {
 }
 
 func writeConnJSONAndPrune(connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], conn *WsSyncConn, data any) bool {
+	return writeConnReliableJSONAndPrune(connMap, conn, wsReliableClassOther, data)
+}
+
+func writeConnReliableJSONAndPrune(connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], conn *WsSyncConn, class wsReliableClass, data any) bool {
 	if conn == nil {
-		if connMap != nil {
-			connMap.Delete(conn)
-		}
 		return false
 	}
-	if err := conn.WriteJSON(data); err != nil {
-		if connMap != nil {
-			connMap.Delete(conn)
-		}
+	if err := conn.enqueueReliableJSON(class, data); err != nil {
+		_ = conn.Close()
+		return false
+	}
+	return true
+}
+
+func reliableClassForChannelEvent(data *protocol.Event) wsReliableClass {
+	if data != nil && data.Type == protocol.EventMessageCreated {
+		return wsReliableClassMessageCreated
+	}
+	return wsReliableClassOther
+}
+
+func writeConnCoalescedJSONAndPrune(connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], conn *WsSyncConn, key string, data any) bool {
+	if conn == nil {
+		return false
+	}
+	if err := conn.EnqueueCoalescedJSON(key, data); err != nil {
+		_ = conn.Close()
 		return false
 	}
 	return true
@@ -251,10 +268,11 @@ func (ctx *ChatContext) BroadcastEvent(data *protocol.Event) {
 
 func (ctx *ChatContext) BroadcastEventInChannel(channelId string, data *protocol.Event) {
 	data.Timestamp = time.Now().Unix()
+	class := reliableClassForChannelEvent(data)
 	ctx.rangeChannelConnMaps(channelId, func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool {
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info != nil && ((indexed && info.ChannelId == "") || info.ChannelId == channelId) {
-				writeConnJSONAndPrune(connMap, conn, struct {
+				writeConnReliableJSONAndPrune(connMap, conn, class, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{
@@ -302,7 +320,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			if active != nil && activeConn != nil {
 				cacheBotEventContext(active, channelId, data)
 				if !shouldSkipDirectBotEventWrite(botID, data) {
-					writeConnJSONAndPrune(x, activeConn, struct {
+					writeConnReliableJSONAndPrune(x, activeConn, wsReliableClassBotEvent, struct {
 						protocol.Event
 						Op protocol.Opcode `json:"op"`
 					}{
@@ -559,13 +577,14 @@ func (ctx *ChatContext) BroadcastEventInChannelExcept(channelId string, ignoredU
 		ignoredMap[id] = struct{}{}
 	}
 	data.Timestamp = time.Now().Unix()
+	class := reliableClassForChannelEvent(data)
 	ctx.rangeChannelConnMaps(channelId, func(userId string, value *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool {
 		if _, ignored := ignoredMap[userId]; ignored {
 			return true
 		}
 		value.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info != nil && ((indexed && info.ChannelId == "") || info.ChannelId == channelId) {
-				writeConnJSONAndPrune(value, conn, struct {
+				writeConnReliableJSONAndPrune(value, conn, class, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{
@@ -601,6 +620,7 @@ func (ctx *ChatContext) BroadcastEventInChannelToUsers(channelId string, userIds
 		}
 	}
 	data.Timestamp = time.Now().Unix()
+	class := reliableClassForChannelEvent(data)
 	for userId := range targets {
 		value, ok := ctx.UserId2ConnInfo.Load(userId)
 		if !ok || value == nil {
@@ -608,7 +628,7 @@ func (ctx *ChatContext) BroadcastEventInChannelToUsers(channelId string, userIds
 		}
 		value.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info != nil && (info.ChannelId == "" || info.ChannelId == channelId) {
-				writeConnJSONAndPrune(value, conn, struct {
+				writeConnReliableJSONAndPrune(value, conn, class, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{

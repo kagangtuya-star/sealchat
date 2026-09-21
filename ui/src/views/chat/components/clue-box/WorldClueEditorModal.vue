@@ -9,6 +9,7 @@ import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import WorldClueContentView from '@/components/world-clue/WorldClueContentView.vue'
 import WorldClueDistributionPanel from './WorldClueDistributionPanel.vue'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
+import { convertTextContentFormat } from '@/utils/textContentFormat'
 
 const props = defineProps<{ show: boolean; worldId: string; channelId: string; clue?: WorldClueDetail | null; canManage: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void; (event: 'saved', clue: WorldClueDetail): void }>()
@@ -52,6 +53,7 @@ const lockSessionId = ref('')
 const ownedLockFields = ref<Set<string>>(new Set())
 const acquiringLockFields = ref<Set<string>>(new Set())
 const pendingReleaseLockFields = ref<Set<string>>(new Set())
+const activeEditingField = ref<string | null>(null)
 const lockClock = ref(Date.now())
 let lockRenewTimer: ReturnType<typeof setInterval> | null = null
 const contentEditorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
@@ -182,11 +184,17 @@ async function renewOwnedLocks() {
 }
 async function beginFieldEdit(field: string) {
   const clueId = workingClue.value?.id
-  if (!clueId) return true
+  if (!clueId) {
+    activeEditingField.value = field
+    return true
+  }
   const pending = new Set(pendingReleaseLockFields.value)
   pending.delete(field)
   pendingReleaseLockFields.value = pending
-  if (ownsFieldLock(field)) return true
+  if (ownsFieldLock(field)) {
+    activeEditingField.value = field
+    return true
+  }
   if (acquiringLockFields.value.has(field)) return false
   const worldId = props.worldId
   const sessionId = lockSessionId.value
@@ -202,6 +210,7 @@ async function beginFieldEdit(field: string) {
     }
     acquired = true
     ownedLockFields.value = new Set(ownedLockFields.value).add(field)
+    activeEditingField.value = field
     ensureLockRenewTimer()
     if (pendingReleaseLockFields.value.has(field)) {
       const pending = new Set(pendingReleaseLockFields.value)
@@ -236,6 +245,7 @@ async function releaseFieldLock(field: string, options?: { worldId?: string; clu
   try { await store.releaseEditLock(worldId, clueId, field, sessionId) } catch { /* best effort */ }
 }
 async function finishFieldEdit(field: string) {
+  if (activeEditingField.value === field) activeEditingField.value = null
   if (!ownedLockFields.value.has(field)) {
     if (acquiringLockFields.value.has(field)) {
       pendingReleaseLockFields.value = new Set(pendingReleaseLockFields.value).add(field)
@@ -256,6 +266,7 @@ async function finishFieldEdit(field: string) {
   }
 }
 async function releaseAllFieldLocks(options?: { worldId?: string; clueId?: string; sessionId?: string }) {
+  activeEditingField.value = null
   const worldId = options?.worldId ?? props.worldId
   const fields = [...ownedLockFields.value]
   const sessionId = options?.sessionId ?? lockSessionId.value
@@ -315,6 +326,7 @@ function clearBackgroundMediaPreview() {
 function reset() {
   autosaveReady.value = false
   clearAutosaveTimer()
+  activeEditingField.value = null
   session += 1
   lockSessionId.value = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -437,6 +449,7 @@ watch(() => props.show, value => {
   } else {
     autosaveReady.value = false
     clearAutosaveTimer()
+    activeEditingField.value = null
     const lockContext = { worldId: props.worldId, clueId: workingClue.value?.id, sessionId: lockSessionId.value }
     void (async () => {
       if (distributionPanel.value) await distributionPanel.value.closePrivate()
@@ -451,6 +464,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   autosaveReady.value = false
   session += 1
+  activeEditingField.value = null
   clearAutosaveTimer()
   clearLockRenewTimer()
   void releaseAllFieldLocks()
@@ -458,14 +472,28 @@ onBeforeUnmount(() => {
   clearBackgroundMediaPreview()
 })
 function setRich(value: boolean) {
+  const nextFormat = value ? 'tiptap' : 'plain'
+  const nextContent = convertTextContentFormat(
+    form.content,
+    form.contentFormat,
+    nextFormat,
+  )
+
+  form.content = nextContent
+  form.contentFormat = nextFormat
   rich.value = value
-  form.contentFormat = value ? 'tiptap' : 'plain'
-  form.content = value ? emptyTiptapDocument : ''
 }
 function setManagerRich(value: boolean) {
+  const nextFormat = value ? 'tiptap' : 'plain'
+  const nextContent = convertTextContentFormat(
+    form.managerNote,
+    form.managerNoteFormat,
+    nextFormat,
+  )
+
+  form.managerNote = nextContent
+  form.managerNoteFormat = nextFormat
   managerRich.value = value
-  form.managerNoteFormat = value ? 'tiptap' : 'plain'
-  form.managerNote = value ? emptyTiptapDocument : ''
 }
 
 const preview = computed<WorldClueDetail>(() => ({
@@ -633,6 +661,43 @@ async function flushAutosave(manual = true): Promise<boolean> {
         })
         if (session !== currentSession || !autosaveReady.value || props.worldId !== sessionWorldId) return false
         const clueWasCreated = !workingClue.value?.id && !!saved.id
+        if (clueWasCreated) {
+          const lockWorldId = sessionWorldId
+          const lockSessionIdValue = lockSessionId.value
+          const isCurrent = () => session === currentSession
+            && props.show
+            && autosaveReady.value
+            && props.worldId === lockWorldId
+            && lockSessionId.value === lockSessionIdValue
+          while (isCurrent()) {
+            const activeField = activeEditingField.value
+            if (!activeField) break
+            try {
+              const lockResult = await store.acquireEditLock(lockWorldId, saved.id, activeField, lockSessionIdValue)
+              if (!isCurrent()) {
+                if (lockResult.ok) {
+                  await store.releaseEditLock(lockWorldId, saved.id, activeField, lockSessionIdValue).catch(() => false)
+                }
+                return false
+              }
+              if (activeEditingField.value !== activeField) {
+                if (lockResult.ok) {
+                  await store.releaseEditLock(lockWorldId, saved.id, activeField, lockSessionIdValue).catch(() => false)
+                }
+                continue
+              }
+              if (lockResult.ok) {
+                ownedLockFields.value = new Set(ownedLockFields.value).add(activeField)
+              }
+              break
+            } catch (error: any) {
+              if (!isCurrent()) return false
+              if (activeEditingField.value !== activeField) continue
+              message.error(error?.response?.data?.message || '获取编辑权失败')
+              break
+            }
+          }
+        }
         workingClue.value = saved
         if (clueWasCreated) ensureLockRenewTimer()
         savedSnapshot.value = snapshot

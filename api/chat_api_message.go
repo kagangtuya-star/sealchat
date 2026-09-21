@@ -11,6 +11,7 @@ import (
 	"sealchat/pkg/contentstats"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/service/perfprofiler"
 	"sort"
 	"strconv"
 	"strings"
@@ -937,14 +938,25 @@ func apiMessageRemove(ctx *ChatContext, data *messageRemovePayload) (any, error)
 		"deleted_by": operatorID,
 		"content":    "",
 	}
-	db := model.GetDB()
-	result := db.Model(&model.MessageModel{}).
-		Where("id IN ? AND channel_id = ? AND is_deleted = ?", ids, channelID, false).
-		Updates(updateData)
-	if result.Error != nil {
-		return nil, result.Error
+	mentionInvalidationPlans, err := loadMessageMentionInvalidationPlans(messages)
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected == 0 {
+	db := model.GetDB()
+	var rowsAffected int64
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.MessageModel{}).
+			Where("id IN ? AND channel_id = ? AND is_deleted = ?", ids, channelID, false).
+			Updates(updateData)
+		if result.Error != nil {
+			return result.Error
+		}
+		rowsAffected = result.RowsAffected
+		return invalidateMessageMentionWatermarksTx(tx, mentionInvalidationPlans)
+	}); err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
 		return nil, fmt.Errorf("消息不存在或已删除")
 	}
 
@@ -1971,6 +1983,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	DisplayOrder      *float64 `json:"display_order"`
 	TypingDurationMs  *int64   `json:"typing_duration_ms"`
 }) (any, error) {
+	trace := perfprofiler.BeginMessageCreateTrace()
+	defer trace.Finish()
+	prepareStarted := trace.StageStart()
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
@@ -2434,6 +2449,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
+		m.SenderSharedIdentityID = identity.SharedIdentityID
 		m.SenderIdentityIsTemporary = identity.IsTemporary
 		if appearance != nil {
 			m.SenderIdentityVariantID = appearance.VariantID
@@ -2465,7 +2481,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.WhisperTargetMemberName = whisperMember.Nickname
 		}
 	}
+	trace.StageDone(perfprofiler.MessageStagePrepare, prepareStarted)
+	persistStarted := trace.StageStart()
 	createResult := db.Create(&m)
+	trace.StageDone(perfprofiler.MessageStagePersist, persistStarted)
 	if createResult.Error != nil {
 		if trimmedClientID != "" && isUniqueConstraintError(createResult.Error) {
 			existingMessageData, err := findExistingByClientID(trimmedClientID)
@@ -2518,9 +2537,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
-		ctx.TagCheck(data.ChannelID, m.ID, content)
+		memberRecentStarted := trace.StageStart()
 		member.UpdateRecentSent()
+		trace.StageDone(perfprofiler.MessageStageMemberRecent, memberRecentStarted)
+		channelRecentStarted := trace.StageStart()
 		channel.UpdateRecentSent()
+		trace.StageDone(perfprofiler.MessageStageChannelRecent, channelRecentStarted)
 
 		userData := ctx.User.ToProtocolType()
 
@@ -2584,14 +2606,24 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				recipients = append(recipients, whisperRecipientIDs...)
 			}
 			recipients = lo.Uniq(recipients)
+			channelBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+			trace.StageDone(perfprofiler.MessageStageChannelBroadcast, channelBroadcastStarted)
+			botBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageBotBroadcast, botBroadcastStarted)
 		} else {
+			channelBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageChannelBroadcast, channelBroadcastStarted)
+			botBroadcastStarted := trace.StageStart()
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+			trace.StageDone(perfprofiler.MessageStageBotBroadcast, botBroadcastStarted)
 		}
 
-		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		webhookStarted := trace.StageStart()
+		_ = model.WebhookEventLogAppend(data.ChannelID, "message-created", m.ID, "", "", "", "")
+		trace.StageDone(perfprofiler.MessageStageWebhook, webhookStarted)
 		notifyAppMessageCreated(m.ID)
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
@@ -2630,57 +2662,53 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			model.FriendRelationSetVisibleById(channel.ID)
 		}
 
+		var noticeTargets []string
 		if whisperUser != nil {
-			targets := make([]string, 0, len(whisperRecipientIDs)+1)
+			noticeTargets = make([]string, 0, len(whisperRecipientIDs)+1)
 			if whisperTo != "" {
-				targets = append(targets, whisperTo)
+				noticeTargets = append(noticeTargets, whisperTo)
 			}
-			targets = append(targets, whisperRecipientIDs...)
-			targets = lo.Uniq(targets)
-			for _, uid := range targets {
+			noticeTargets = append(noticeTargets, whisperRecipientIDs...)
+			noticeTargets = lo.Uniq(noticeTargets)
+			for _, uid := range noticeTargets {
 				if uid == "" || uid == ctx.User.ID {
 					continue
 				}
 				_ = model.ChannelReadInit(data.ChannelID, uid)
-				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID))
 			}
 		} else if channel.PermType == "private" {
 			if privateOtherUser != "" {
+				noticeTargets = []string{privateOtherUser}
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
-				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser, m.ID, channel.WorldID))
+			}
+		}
+
+		mentionStarted := trace.StageStart()
+		mentionTargets := collectMentionTargetIDsFromContent(m.Content)
+		hasMention := len(mentionTargets) > 0
+		mentionStateReady := !hasMention
+		if hasMention {
+			if err := ctx.TagCheck(&m, mentionTargets); err != nil {
+				log.Printf("持久化消息 mention 状态失败 message=%s err=%v", m.ID, err)
+			} else {
+				mentionStateReady = true
+			}
+		}
+		noticeSource := worldMessageNoticeSourceFromProtocol(channel.WorldID, channelData, messageData, ctx.User.ID, m.SenderMemberName)
+		trace.StageDone(perfprofiler.MessageStageMention, mentionStarted)
+		if whisperUser != nil || channel.PermType == "private" {
+			if !hasMention || mentionStateReady {
+				noticePreview := buildWorldMessageNoticePreview(noticeSource.Content)
+				for _, uid := range noticeTargets {
+					if uid != "" && uid != ctx.User.ID {
+						ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(noticeSource, uid, mentionTargets, noticePreview))
+					}
+				}
 			}
 		} else {
-			// 给当前在线人都通知一遍
-			var uids []string
-			ctx.UserId2ConnInfo.Range(func(key string, value *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-				uids = append(uids, key)
-				return true
-			})
-
-			// 找出当前频道在线的人
-			var uidsOnline []string
-			if x, exists := ctx.ChannelUsersMap.Load(data.ChannelID); exists {
-				x.Range(func(key string) bool {
-					uidsOnline = append(uidsOnline, key)
-					return true
-				})
-			}
-
-			_ = model.ChannelReadInitInBatches(data.ChannelID, uids)
-			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
-
-			// 发送快速更新通知
-			for _, uid := range uids {
-				if uid == "" {
-					continue
-				}
-				broadcastMessageCreatedNoticeOutsideChannel(
-					ctx,
-					uid,
-					data.ChannelID,
-					buildMessageCreatedNoticePayload(data.ChannelID, content, uid, m.ID, channel.WorldID),
-				)
-			}
+			worldNoticeStarted := trace.StageStart()
+			broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets, !hasMention || mentionStateReady)
+			trace.StageDone(perfprofiler.MessageStageWorldNotice, worldNoticeStarted)
 		}
 
 		return messageData, nil
@@ -3143,6 +3171,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			identityChanged = identity.ID != msg.SenderIdentityID || nextVariantID != msg.SenderIdentityVariantID
 			if identityChanged {
 				msg.SenderIdentityID = identity.ID
+				msg.SenderSharedIdentityID = identity.SharedIdentityID
 				msg.SenderRoleID = identity.ID
 				msg.SenderIdentityIsTemporary = identity.IsTemporary
 				msg.SenderIdentityVariantID = nextVariantID
@@ -3174,6 +3203,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			identityChanged = msg.SenderIdentityID != "" || msg.SenderIdentityVariantID != ""
 			if identityChanged {
 				msg.SenderIdentityID = ""
+				msg.SenderSharedIdentityID = ""
 				msg.SenderIdentityVariantID = ""
 				msg.SenderIdentityName = ""
 				msg.SenderIdentityColor = ""
@@ -3385,6 +3415,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if identityChanged {
 		updates["sender_identity_id"] = msg.SenderIdentityID
+		updates["sender_shared_identity_id"] = msg.SenderSharedIdentityID
 		updates["sender_identity_variant_id"] = msg.SenderIdentityVariantID
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor
@@ -4452,7 +4483,15 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 				Channel: channelData,
 				User:    userData,
 			})
-			broadcastMessageCreatedNoticeToUsers(ctx, data.ChannelID, m.Content, m.ID, channelData.WorldID)
+			noticeSource := worldMessageNoticeSourceFromProtocol(
+				channelData.WorldID,
+				channelData,
+				messageData,
+				m.UserID,
+				m.SenderMemberName,
+			)
+			mentionTargets := collectMentionTargetIDsFromContent(noticeSource.Content)
+			broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets)
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
@@ -4692,7 +4731,15 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 			Channel: channelData,
 			User:    userData,
 		})
-		broadcastMessageCreatedNoticeToUsers(ctx, targetChannelID, msg.Content, m.ID, channelData.WorldID)
+		noticeSource := worldMessageNoticeSourceFromProtocol(
+			channelData.WorldID,
+			channelData,
+			messageData,
+			m.UserID,
+			m.SenderMemberName,
+		)
+		mentionTargets := collectMentionTargetIDsFromContent(noticeSource.Content)
+		broadcastWorldMessageCreatedNotice(ctx, noticeSource, mentionTargets)
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 	notifyAppMessageCreated(m.ID)

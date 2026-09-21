@@ -7,6 +7,8 @@ import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConf
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
+import { defaultDialogueController, publishDialogueController, registerDialogueControllerWriter, type DialogueController, type DialogueControllerTemplate, type DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
+import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
 
 type JsonObject = Record<string, unknown>
 
@@ -64,6 +66,8 @@ interface TheaterSnapshotResponse {
   permissions: string[]
   constructionSceneId?: string | null
   snapshot: {
+    dialogueController?: DialogueController
+    dialogueControllerTemplate?: DialogueControllerTemplate | null
     activeSceneId?: string | null
     liveState?: JsonObject
     sceneFolders?: SceneFolder[]
@@ -73,7 +77,10 @@ interface TheaterSnapshotResponse {
 }
 
 export interface TheaterRuntimeState {
+  revision: number
   constructionSceneId: string | null
+  dialogueController: DialogueController
+  dialogueControllerTemplate: DialogueControllerTemplate | null
 }
 
 interface TheaterMutation {
@@ -906,6 +913,8 @@ export class TheaterSyncClient {
     this.inputChannelId = options.inputChannelId || options.channelId
   }
 
+  private unregisterDialogueWriter: (() => void) | null = null
+
   setInputChannelId(channelId: string) {
     this.inputChannelId = channelId.trim()
   }
@@ -913,6 +922,7 @@ export class TheaterSyncClient {
   async start() {
     if (this.started) return
     this.started = true
+    this.unregisterDialogueWriter = registerDialogueControllerWriter(this.options.worldId, patch => this.patchDialogueController(patch))
     chatEvent.on('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.rejected' as any, this.onGatewayEvent)
@@ -940,6 +950,8 @@ export class TheaterSyncClient {
   async stop() {
     if (!this.started) return
     this.started = false
+    this.unregisterDialogueWriter?.()
+    this.unregisterDialogueWriter = null
     this.stopWatch?.()
     this.stopWatch = null
     if (this.flushTimer) clearTimeout(this.flushTimer)
@@ -1044,26 +1056,56 @@ export class TheaterSyncClient {
   }
 
   async setConstructionScene(sceneId: string | null) {
-    await this.flushPendingChanges()
-    const normalizedSceneId = sceneId?.trim() || null
-    const post = () => api.post(`${this.theaterBase()}/mutations`, {
-      mutationId: mutationId('construction'),
-      worldId: this.options.worldId,
-      channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
-      expectedRevision: this.revision,
-      type: 'room.construction.set',
-      payload: { sceneId: normalizedSceneId },
-    })
-    let response
+    return this.submitRoomMutation('room.construction.set', { sceneId: sceneId?.trim() || null })
+  }
+
+  patchDialogueController(patch: DialogueControllerPatch) {
+    return this.submitRoomMutation('room.dialogue.patch', structuredClone(patch))
+  }
+
+  setDialoguePosition(actorKey: string, position: DialoguePosition) {
+    return this.submitRoomMutation('room.dialogue.position.set', { actorKey, position: { ...position } })
+  }
+
+  private async submitRoomMutation(type: string, payload: JsonObject) {
+    const previous = this.mutationActionQueue
+    let release!: () => void
+    this.mutationActionQueue = new Promise<void>(resolve => { release = resolve })
+    await previous
     try {
-      response = await post()
-    } catch (error) {
-      if (!isRevisionConflict(error)) throw error
-      await this.reload(true)
-      response = await post()
+      await this.flushPendingChanges()
+      if (!this.started) throw new Error('小剧场已关闭')
+      // Hold the same saving gate used by automatic stage flushes throughout
+      // retry/reload. Fields are replayed; positions are never replaced wholesale.
+      this.saving = true
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (!this.started) throw new Error('小剧场已关闭')
+        try {
+          const response = await api.post(`${this.theaterBase()}/mutations`, {
+            mutationId: mutationId('room'),
+            worldId: this.options.worldId,
+            channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
+            expectedRevision: this.revision,
+            type,
+            payload,
+          })
+          if (!this.started) return
+          this.revision = finite(response.data?.revision, this.revision + 1)
+          await this.reload(true)
+          return
+        } catch (error) {
+          if (!this.started || !isRevisionConflict(error) || attempt === 2) throw error
+          await this.reload(true)
+        }
+      }
+    } finally {
+      this.saving = false
+      release()
+      const remoteChanged = this.pendingRemoteRevision > this.revision
+      this.pendingRemoteRevision = 0
+      if (this.started && remoteChanged) void this.reload().catch(() => undefined)
+      if (this.started && this.flushAgain) { this.flushAgain = false; this.scheduleFlush(0) }
     }
-    this.revision = finite(response.data?.revision, this.revision + 1)
-    await this.reload(true)
   }
 
   async publishPointerTrace(trace: StagePointerTraceInput) {
@@ -1192,13 +1234,22 @@ export class TheaterSyncClient {
       if (!this.started) return
       const data = response.data
       const nextRevision = finite(data.revision, 0)
+      if (this.hasLoaded && nextRevision < this.revision) return
       this.schemaVersion = finite(data.schemaVersion, 1)
       this.permissions = Array.isArray(data.permissions) ? data.permissions.filter((item): item is string => typeof item === 'string') : []
       this.options.onPermissionsChange?.([...this.permissions])
       this.options.onRuntimeStateChange?.({
+        revision: nextRevision,
+        dialogueController: data.snapshot.dialogueController || defaultDialogueController(),
+        dialogueControllerTemplate: data.snapshot.dialogueControllerTemplate || null,
         constructionSceneId: typeof data.constructionSceneId === 'string' && data.constructionSceneId.trim()
           ? data.constructionSceneId.trim()
           : null,
+      })
+      publishDialogueController(this.options.worldId, {
+        revision: nextRevision,
+        controller: data.snapshot.dialogueController || defaultDialogueController(),
+        template: data.snapshot.dialogueControllerTemplate || null,
       })
       if (!force && this.hasLoaded && nextRevision === this.revision) {
         this.flushPendingEffectTriggers()

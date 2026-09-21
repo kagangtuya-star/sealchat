@@ -144,7 +144,7 @@ func broadcastExternalGlossaryLibraryEvent(payload *externalGlossaryLibraryEvent
 	}
 	userId2ConnInfoGlobal.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		conns.Range(func(conn *WsSyncConn, _ *ConnInfo) bool {
-			_ = conn.WriteJSON(struct {
+			writeConnJSONAndPrune(conns, conn, struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
 			}{
