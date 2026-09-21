@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NPopover, NSpace, useDialog, useMessage } from 'naive-ui'
-import { Check, ChevronLeft, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, LayoutBoard, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
+import { Check, ChevronLeft, Columns, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, LayoutBoard, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
@@ -49,7 +49,7 @@ const boardEmbedRef = ref<InstanceType<typeof WorldClueBoardEmbedLayer> | null>(
 const panelWasDragged = ref(false)
 // Keep the clue-box affordance hidden until a clue is pushed or the user opens it.
 const tabDismissed = ref(true)
-const preference = reactive({ x: 0, y: 80, width: 460, height: 720, expanded: false, pinned: true, layout: 'grid' as 'grid' | 'list', mediaPreview: false })
+const preference = reactive({ x: 0, y: 80, width: 460, height: 720, expanded: false, pinned: true, layout: 'grid' as 'grid' | 'list', columns: 2, mediaPreview: false })
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let pointerCleanup: (() => void) | null = null
 
@@ -58,6 +58,8 @@ const panelMinWidth = 360
 const panelMinHeight = 320
 
 const preferenceKey = computed(() => `sealchat.world-clue-box.v1:${user.info?.id || 'anonymous'}:${props.worldId}`)
+const nextClueColumns = computed(() => preference.columns >= 4 ? 1 : preference.columns + 1)
+const clueColumnsTitle = computed(() => `当前 ${preference.columns} 栏，点击切换为 ${nextClueColumns.value} 栏`)
 const scopedFolders = computed(() => store.folders.filter(folder => folder.scope === viewScope.value))
 const visibleFolders = computed(() => scopedFolders.value
   .filter(folder => (folder.parentId || '') === selectedFolderId.value)
@@ -123,6 +125,7 @@ watch(() => [props.worldId, viewScope.value] as const, ([worldId, scope], previo
 function readPreference() {
   let expanded = false
   let dismissed = true
+  let columns = 2
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey.value) || '{}')
     preference.width = Number(value.width) || 460
@@ -133,13 +136,16 @@ function readPreference() {
     dismissed = typeof value.tabDismissed === 'boolean' ? value.tabDismissed : true
     preference.pinned = value.pinned !== false
     preference.layout = value.layout === 'list' ? 'list' : 'grid'
+    if (typeof value.columns === 'number' && Number.isInteger(value.columns) && value.columns >= 1 && value.columns <= 4) columns = value.columns
     preference.mediaPreview = value.mediaPreview === true
   } catch { /* ignore invalid local state */ }
+  preference.columns = columns
   preference.expanded = expanded
   tabDismissed.value = dismissed
   clampPanelGeometry()
   return expanded
 }
+function cycleClueColumns() { preference.columns = nextClueColumns.value }
 function clampPanelGeometry() {
   if (window.innerWidth <= 680) return
   const maxWidth = Math.max(panelMinWidth, window.innerWidth - panelMargin * 2)
@@ -752,6 +758,7 @@ defineExpose({ toggleVisibility, openBoard })
         <div class="clue-box__display-tools">
           <NButton quaternary size="small" :type="multiSelect ? 'primary' : 'default'" title="多选" @click="toggleMultiSelect"><template #icon><NIcon><Check /></NIcon></template>多选</NButton>
           <NButton quaternary size="small" :title="preference.layout === 'grid' ? '列表' : '网格'" @click="preference.layout = preference.layout === 'grid' ? 'list' : 'grid'"><template #icon><NIcon><component :is="preference.layout === 'grid' ? List : GridDots" /></NIcon></template>{{ preference.layout === 'grid' ? '列表' : '网格' }}</NButton>
+          <NButton class="clue-box__columns-button" circle quaternary size="small" :title="clueColumnsTitle" :aria-label="clueColumnsTitle" @click="cycleClueColumns"><template #icon><NIcon><Columns /></NIcon></template></NButton>
           <NButton quaternary size="small" :type="preference.mediaPreview ? 'primary' : 'default'" :title="preference.mediaPreview ? '显示内容' : '显示媒体'" @click="preference.mediaPreview = !preference.mediaPreview"><template #icon><NIcon><Photo /></NIcon></template>{{ preference.mediaPreview ? '显示内容' : '显示媒体' }}</NButton>
         </div>
       </div>
@@ -800,7 +807,7 @@ defineExpose({ toggleVisibility, openBoard })
         </div>
       </div>
     </div>
-    <div v-if="visibleItems.length" class="clue-box__items" :class="`clue-box__items--${preference.layout}`">
+    <div v-if="visibleItems.length" class="clue-box__items" :class="`clue-box__items--${preference.layout}`" :style="{ '--clue-columns': preference.columns }">
       <div
         v-for="item in visibleItems" :key="item.id" class="clue-box__item-wrap"
         :class="{ 'clue-box__item-wrap--drop-target': dragging?.type === 'clue' && dragOverClueTarget === item.id }"
@@ -839,12 +846,12 @@ defineExpose({ toggleVisibility, openBoard })
           </div>
           <p v-if="!preference.mediaPreview">{{ item.contentText || (item.kind === 'iframe' ? item.embedDomain : '暂无摘要') }}</p>
           <div v-if="!multiSelect" class="clue-box__item-actions">
-            <NButton quaternary size="tiny" title="打开" @click.stop="openClue(item, $event)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template>打开</NButton>
-            <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template>编辑</NButton>
-            <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '重放' : '揭示'" @click.stop="revealOrReplay(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template>{{ item.status === 'published' ? '重放' : '揭示' }}</NButton>
+            <NButton quaternary size="tiny" title="打开" aria-label="打开" @click.stop="openClue(item, $event)" @dblclick.stop><template #icon><NIcon><ExternalLink /></NIcon></template><span class="clue-box__action-label">打开</span></NButton>
+            <NButton v-if="canManage || item.effectiveAccess === 'edit'" quaternary size="tiny" title="编辑" aria-label="编辑" @click.stop="editClue(item)" @dblclick.stop><template #icon><NIcon><Edit /></NIcon></template><span class="clue-box__action-label">编辑</span></NButton>
+            <NButton v-if="canManage" quaternary size="tiny" :title="item.status === 'published' ? '重放' : '揭示'" :aria-label="item.status === 'published' ? '重放' : '揭示'" @click.stop="revealOrReplay(item)" @dblclick.stop><template #icon><NIcon><Presentation /></NIcon></template><span class="clue-box__action-label">{{ item.status === 'published' ? '重放' : '揭示' }}</span></NButton>
             <NButton v-if="canManage" circle quaternary size="tiny" type="error" title="删除" aria-label="删除" @click.stop="deleteClue(item)" @dblclick.stop><template #icon><NIcon><Trash /></NIcon></template></NButton>
-            <NButton circle quaternary size="tiny" title="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
-            <NButton circle quaternary size="tiny" title="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
+            <NButton circle quaternary size="tiny" title="复制链接" aria-label="复制链接" @click.stop="copyLink(item)" @dblclick.stop><template #icon><NIcon><Copy /></NIcon></template></NButton>
+            <NButton circle quaternary size="tiny" title="插入输入框" aria-label="插入输入框" @click.stop="insertLink(item)" @dblclick.stop><template #icon><NIcon><MessagePlus /></NIcon></template></NButton>
           </div>
         </article>
       </div>
@@ -907,9 +914,14 @@ defineExpose({ toggleVisibility, openBoard })
 .clue-box__folder-tab--editing { padding: 0 4px; }
 .clue-box__folder-add { flex: 0 0 auto; }
 .clue-box__items { min-height: 0; flex: 1; overflow: auto; padding: 0 14px 14px; }
-.clue-box__items--grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; gap: 9px; }
-.clue-box__items--list { display: grid; align-content: start; grid-auto-rows: max-content; gap: 7px; }
-.clue-box__item-wrap { position: relative; min-width: 0; align-self: start; }
+.clue-box__items--grid, .clue-box__items--list { display: grid; grid-template-columns: repeat(var(--clue-columns, 2), minmax(0, 1fr)); align-content: start; grid-auto-rows: max-content; }
+.clue-box__items--grid { gap: 9px; }
+.clue-box__items--list { gap: 5px; }
+.clue-box__items--list .clue-box__item { padding: 8px 10px; }
+.clue-box__items--list .clue-box__item p { min-height: 0; margin: 4px 0; -webkit-line-clamp: 1; }
+.clue-box__items--list .clue-box__item-actions { gap: 1px; margin-top: 6px; padding-top: 5px; }
+.clue-box__items--list .clue-box__media { width: calc(100% + 20px); aspect-ratio: 3 / 1; margin: -8px -10px 8px; }
+.clue-box__item-wrap { position: relative; min-width: 0; align-self: start; container-type: inline-size; }
 .clue-box__item-wrap--drop-target::before { position: absolute; z-index: 1; top: 5px; bottom: 5px; left: -5px; width: 2px; border-radius: 999px; background: var(--primary-color, #3388de); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 18%, transparent); content: ''; pointer-events: none; }
 .clue-box__drag { color: var(--sc-text-secondary); cursor: grab; }
 .clue-box__item { position: relative; min-width: 0; overflow: hidden; padding: 12px; color: var(--sc-text-primary); border: 1px solid var(--sc-border-mute); border-radius: 5px; background: color-mix(in srgb, var(--sc-bg-elevated) 94%, var(--primary-color, #3388de) 2%); transition: border-color .14s ease, background-color .14s ease, transform .14s ease; }
@@ -942,6 +954,13 @@ defineExpose({ toggleVisibility, openBoard })
 .clue-box-tab { position: fixed; right: 0; z-index: 1200; width: 34px; min-height: 108px; padding: 28px 7px 10px; border: 1px solid var(--sc-border-strong); border-right: 0; border-radius: 5px 0 0 5px; color: var(--sc-text-primary); background: var(--sc-bg-elevated); writing-mode: vertical-rl; cursor: pointer; touch-action: none; user-select: none; }
 .clue-box-tab :deep(.n-badge-sup) { top: -18px; right: 50%; transform: translateX(50%); writing-mode: horizontal-tb; }
 .clue-box :deep(.n-input) { --n-box-shadow-hover: none !important; --n-box-shadow-focus: none !important; --n-box-shadow-active: none !important; --n-box-shadow-hover-warning: none !important; --n-box-shadow-focus-warning: none !important; --n-box-shadow-active-warning: none !important; --n-box-shadow-hover-error: none !important; --n-box-shadow-focus-error: none !important; --n-box-shadow-active-error: none !important; }
-@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } .clue-box__float-open { opacity: 1; } }
-@media (max-width: 380px) { .clue-box__items--grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .clue-box { inset: 0 !important; width: 100% !important; height: 100dvh !important; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; border-radius: 0; } .clue-box__resize { display: none; } .clue-box__folder-actions { opacity: 1; } .clue-box__scope-row { align-items: stretch; flex-direction: column; } .clue-box__display-tools { margin-left: 0; padding-top: 7px; padding-left: 0; border-top: 1px solid var(--sc-border-mute); border-left: 0; } .clue-box__display-tools .n-button { flex: 1; } .clue-box__display-tools .clue-box__columns-button { flex: 0 0 auto; } .clue-box__batch-bar { align-items: stretch; flex-direction: column; } .clue-box__batch-summary { margin-right: 0; } .clue-box__batch-actions .n-button { flex: 1; } .clue-box__float-open { opacity: 1; } }
+@container (max-width: 190px) {
+  .clue-box__action-label { display: none; }
+  .clue-box__item-wrap .clue-box__item { padding: 9px; }
+  .clue-box__item-wrap .clue-box__item-heading { gap: 3px; }
+  .clue-box__item-wrap .clue-box__item-actions { gap: 1px; margin-top: 7px; padding-top: 6px; }
+  .clue-box__item-wrap .clue-box__item-actions .n-button { min-width: 26px; padding-right: 5px; padding-left: 5px; }
+  .clue-box__item-wrap .clue-box__media { width: calc(100% + 18px); margin: -9px -9px 8px; }
+}
 </style>
