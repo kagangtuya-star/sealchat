@@ -33,10 +33,14 @@ function endpointName(endpoint: WorldClueBoardRelationEndpointRef | undefined) {
 const sourceName = computed(() => endpointName(props.relation.sourceRef))
 const targetName = computed(() => endpointName(props.relation.targetRef))
 
-watch(() => props.relation, (relation) => {
-  kind.value = relation.kind
-  label.value = relation.label || ''
-}, { immediate: true })
+watch(
+  () => [props.relation.id, props.relation.kind, props.relation.label] as const,
+  ([, nextKind, nextLabel]) => {
+    kind.value = nextKind
+    label.value = nextLabel || ''
+  },
+  { immediate: true },
+)
 
 function commitLabel() {
   if (props.readonly) return
