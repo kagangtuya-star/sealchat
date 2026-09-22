@@ -11,6 +11,7 @@ import { useDisplayStore } from '@/stores/display'
 import { useChatStore } from '@/stores/chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
+import GlobalGlassBackground from '@/components/appearance/GlobalGlassBackground.vue'
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
 import WorldCluePresentationHost from '@/components/world-clue/WorldCluePresentationHost.vue'
 import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
@@ -99,6 +100,7 @@ onUnmounted(() => {
   <n-config-provider :locale="locale" :date-locale="dateLocale" :theme="naiveTheme" :theme-overrides="themeOverrides" style="height: 100%;">
     <n-message-provider>
       <n-dialog-provider>
+        <GlobalGlassBackground />
         <RouterView />
         <GlobalLobbyAnnouncementHost v-if="!isInternalSurface" />
         <QuickLoginApprovalHost v-if="!isInternalSurface" />
@@ -2706,5 +2708,56 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] .world-keyword-manager .n-input {
   --n-color: var(--sc-bg-input) !important;
   --n-text-color: var(--sc-text-primary) !important;
+}
+</style>
+
+<style lang="scss">
+@use 'sass:string';
+
+/* Keep the opt-in material overrides after the existing custom-theme rules.
+   Exclusions apply only to the enumerated surface candidates, never all nodes. */
+@mixin ordinary-glass-surface($selectors) {
+  @each $selector in string.split($selectors, ',') {
+    #{$selector}:not(:where(.theater-stage-app, .theater-stage-app *, .theater-secondary-surface, .theater-secondary-surface *, :has(.theater-secondary-surface))) {
+      @content;
+    }
+  }
+}
+
+:root[data-sc-glass-background='true'],
+:root[data-custom-theme='true'][data-sc-glass-background='true'] {
+  body { background-color: var(--sc-bg-page); }
+  #app { isolation: isolate; background: transparent; }
+
+  /* Layout wrappers must not stack several opaque page backgrounds. */
+  :is(.sc-app-shell, .sc-layout-root, .sc-layout-content, .sc-layout-sider, .sc-layout-header, .sc-sidebar-fill, .chat-root-container, .sc-embed-root, .internal-surface, .theater-host) {
+    background: transparent !important;
+  }
+  .sc-app-shell { background: var(--sc-glass-page) !important; }
+
+  @include ordinary-glass-surface('.sc-header, .sc-sidebar, .chat-root-container > .chat:not(.chat--has-background), .chat-root-container > .edit-area, .action-ribbon, .world-lobby-root, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu') {
+    background: var(--sc-glass-surface) !important;
+    border-color: var(--sc-glass-border) !important;
+    box-shadow: var(--sc-glass-shadow);
+    backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+    -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+  }
+  .sc-header { background: var(--sc-glass-header) !important; }
+  .sc-sidebar { background: var(--sc-glass-sidebar) !important; }
+  .chat-root-container > .edit-area { background: var(--sc-glass-input) !important; }
+
+  @include ordinary-glass-surface('.n-card, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel') {
+    --n-color: var(--sc-glass-elevated) !important;
+    background: var(--sc-glass-elevated) !important;
+  }
+
+  /* Inner library wrappers share their parent's material, without extra blur layers. */
+  @include ordinary-glass-surface('.n-modal .n-card, .n-card__content, .n-card-header, .n-modal .n-card-header__main, .n-card__action, .n-dialog__content, .n-dialog__title, .n-drawer-content, .n-popover__content, .n-popover-arrow-wrapper, .n-dropdown-option, .n-base-select-option, .n-base-select-group-header, .v-binder-follower-content, .sc-sidebar .n-tabs, .sc-sidebar .n-tabs-nav, .sc-sidebar .n-tabs-wrapper, .sc-sidebar .n-tabs-rail, .sc-sidebar .n-tab-pane') {
+    background-color: transparent !important;
+  }
+  @include ordinary-glass-surface('.n-dropdown-option:hover, .n-dropdown-option--pending, .n-base-select-option:hover, .n-base-select-option--pending') {
+    background-color: var(--sc-sidebar-hover) !important;
+  }
+  .chat-root-container .chat.chat--has-background { background: transparent !important; }
 }
 </style>

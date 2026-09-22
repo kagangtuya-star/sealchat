@@ -231,7 +231,8 @@
   background: color-mix(in srgb, var(--sc-bg-surface) 74%, transparent);
 }
 
-.chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__list,
+:root[data-sc-glass-background='true'] .chat-pinned-zone .chat-pinned-zone__list {
   border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 72%, transparent);
   background: color-mix(in srgb, var(--chat-stage-bg, var(--sc-bg-surface, #ffffff)) 22%, transparent);
   backdrop-filter: blur(8px);
@@ -244,11 +245,13 @@
   backdrop-filter: blur(8px);
 }
 
-.chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__header,
+:root[data-sc-glass-background='true'] .chat-pinned-zone .chat-pinned-zone__header {
   color: color-mix(in srgb, var(--chat-text-secondary, #475569) 88%, var(--chat-text-primary, #0f172a) 12%);
 }
 
-.chat-pinned-zone.chat--has-background {
+.chat-pinned-zone.chat--has-background,
+:root[data-sc-glass-background='true'] .chat-pinned-zone {
   --chat-compact-ic-bg: transparent;
   --chat-compact-ooc-bg: transparent;
   --chat-compact-archived-bg: transparent;
@@ -260,11 +263,13 @@
   --chat-compact-archived-bg: transparent;
 }
 
-.chat-pinned-zone.chat--has-background .chat-pinned-zone__row + .chat-pinned-zone__row {
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__row + .chat-pinned-zone__row,
+:root[data-sc-glass-background='true'] .chat-pinned-zone .chat-pinned-zone__row + .chat-pinned-zone__row {
   border-top-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 58%, transparent);
 }
 
-:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__list,
+:root[data-display-palette='night'][data-sc-glass-background='true'] .chat-pinned-zone .chat-pinned-zone__list {
   border-color: color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.18)) 78%, transparent);
   background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
 }
@@ -274,7 +279,8 @@
   background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
 }
 
-:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__header,
+:root[data-display-palette='night'][data-sc-glass-background='true'] .chat-pinned-zone .chat-pinned-zone__header {
   color: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 90%, var(--chat-text-secondary, #b5b5c5) 10%);
 }
 
@@ -290,7 +296,8 @@
   background-color: var(--chat-stage-bg, var(--sc-bg-surface));
 }
 
-.chat--layout-bubble.chat--has-background .message-row {
+.chat--layout-bubble.chat--has-background .message-row,
+:root[data-sc-glass-background='true'] .chat--layout-bubble .message-row {
   background-color: transparent;
 }
 
@@ -482,6 +489,10 @@
   box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
 }
 
+:root[data-sc-glass-background='true'] .chat {
+  background-color: transparent;
+}
+
 .favorite-bar-wrapper {
   margin-top: 0.75rem;
   margin-bottom: 0.5rem;
@@ -562,7 +573,8 @@
   --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
 }
 
-.chat--has-background {
+.chat--has-background,
+:root[data-sc-glass-background='true'] .chat {
   /* 频道背景开启时，预览/编辑框体使用半透明 tone 混合色，确保能随背景调整可见变化 */
   --chat-bubble-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 34%, transparent);
   --chat-bubble-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 34%, transparent);
@@ -590,7 +602,8 @@
   transition: background-color 0.25s ease;
 }
 
-.chat--layout-compact.chat--has-background {
+.chat--layout-compact.chat--has-background,
+:root[data-sc-glass-background='true'] .chat--layout-compact {
   --chat-compact-ic-bg: transparent;
   --chat-compact-ooc-bg: transparent;
   --chat-compact-archived-bg: transparent;
@@ -4121,4 +4134,3 @@
   opacity: 0;
   transform: translateY(-10px);
 }
-

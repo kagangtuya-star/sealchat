@@ -5,6 +5,7 @@ import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerC
 import { useWindowSize } from '@vueuse/core';
 import { debounce } from 'lodash-es';
 import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
+import GlassBackgroundPanel from '@/views/chat/components/GlassBackgroundPanel.vue';
 import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
 import { replaceChannelTitle } from '@/stores/utils';
@@ -167,6 +168,7 @@ const notifyOwnerPaneId = ref<PaneId | null>(null);
 const webTargetPaneId = ref<PaneId>('A');
 
 const actionRibbonVisible = ref(false);
+const glassBackgroundPanelVisible = ref(false);
 
 const drawerVisible = ref(false);
 const sidebarCollapsed = ref(false);
@@ -1127,6 +1129,7 @@ watch(
               :identity-active="false"
               :gallery-active="false"
               :display-active="false"
+              :glass-background-active="glassBackgroundPanelVisible"
               :favorite-active="false"
               :channel-images-active="false"
               :can-import="activePane.canImport"
@@ -1149,6 +1152,7 @@ watch(
               @open-identity-manager="openPanel('identity')"
               @open-gallery="openPanel('gallery')"
               @open-display-settings="openPanel('display')"
+              @open-glass-background="glassBackgroundPanelVisible = true"
               @open-favorites="openPanel('favorites')"
               @open-channel-images="openPanel('channel-images')"
               @open-character-remark="openPanel('character-remark')"
@@ -1256,6 +1260,10 @@ watch(
     </n-layout>
 
   </main>
+  <GlassBackgroundPanel
+    v-if="glassBackgroundPanelVisible"
+    @close="glassBackgroundPanelVisible = false"
+  />
 </template>
 
 <style scoped>

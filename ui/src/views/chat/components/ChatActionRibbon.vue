@@ -49,6 +49,7 @@ interface Props {
   identityActive?: boolean
   galleryActive?: boolean
   displayActive?: boolean
+  glassBackgroundActive?: boolean
   favoriteActive?: boolean
   channelImagesActive?: boolean
   battleSummaryEnabled?: boolean
@@ -88,6 +89,7 @@ interface Emits {
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
+  (e: 'open-glass-background'): void
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
@@ -229,6 +231,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     buttons.push({ key: 'email-notification', label: '未读提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
   }
   
+  buttons.push({ key: 'glass-background', label: '玻璃背景', icon: Palette, emitEvent: 'open-glass-background', activeKey: 'glassBackgroundActive' })
   return buttons
 })
 

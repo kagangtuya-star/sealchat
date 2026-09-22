@@ -16,6 +16,8 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import GlassBackgroundPanel from './components/GlassBackgroundPanel.vue'
+import { buildBackgroundImageStyle, buildBackgroundOverlayStyle } from '@/utils/backgroundPresentation'
 import InlineChatSplitWindow from './components/InlineChatSplitWindow.vue'
 import ChatAiPolishDock from './components/ChatAiPolishDock.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
@@ -1036,6 +1038,7 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const glassBackgroundPanelVisible = ref(false);
 type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'notifications' | 'other';
 const displaySettingsInitialCategory = ref<DisplaySettingsCategory>('appearance');
 const characterRemarkManagerVisible = ref(false);
@@ -1055,53 +1058,12 @@ const canManageWorldAnnouncements = computed(() => {
 
 const channelBackgroundStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
-  if (!channel?.backgroundAttachmentId) return null;
-  let settings: { mode?: string; opacity?: number; blur?: number; brightness?: number } = {
-    mode: 'cover', opacity: 30, blur: 0, brightness: 100
-  };
-  if (channel.backgroundSettings) {
-    try {
-      const parsed = typeof channel.backgroundSettings === 'string'
-        ? JSON.parse(channel.backgroundSettings)
-        : channel.backgroundSettings;
-      settings = { ...settings, ...parsed };
-    } catch { /* ignore */ }
-  }
-  const attachmentId = channel.backgroundAttachmentId;
-  const bgUrl = resolveAttachmentUrl(attachmentId.startsWith('id:') ? attachmentId : `id:${attachmentId}`);
-  let bgSize = 'cover';
-  let bgRepeat = 'no-repeat';
-  const bgPosition = 'center';
-  switch (settings.mode) {
-    case 'contain': bgSize = 'contain'; break;
-    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
-    case 'center': bgSize = 'auto'; break;
-  }
-  return {
-    backgroundImage: `url(${bgUrl})`,
-    backgroundSize: bgSize,
-    backgroundRepeat: bgRepeat,
-    backgroundPosition: bgPosition,
-    opacity: (settings.opacity ?? 30) / 100,
-    filter: `blur(${settings.blur ?? 0}px) brightness(${settings.brightness ?? 100}%)`,
-  };
+  return buildBackgroundImageStyle(channel?.backgroundAttachmentId, channel?.backgroundSettings);
 });
 
 const channelBackgroundOverlayStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
-  if (!channel?.backgroundAttachmentId || !channel.backgroundSettings) return null;
-  let settings: { overlayColor?: string; overlayOpacity?: number } = {};
-  try {
-    const parsed = typeof channel.backgroundSettings === 'string'
-      ? JSON.parse(channel.backgroundSettings)
-      : channel.backgroundSettings;
-    settings = parsed;
-  } catch { /* ignore */ }
-  if (!settings.overlayColor || !(settings.overlayOpacity ?? 0)) return null;
-  return {
-    backgroundColor: settings.overlayColor,
-    opacity: (settings.overlayOpacity ?? 0) / 100,
-  };
+  return channel?.backgroundAttachmentId ? buildBackgroundOverlayStyle(channel.backgroundSettings) : null;
 });
 
 const diceTrayWindowRef = ref<{
@@ -15338,6 +15300,8 @@ onBeforeUnmount(() => {
           :identity-active="identityDialogVisible"
           :gallery-active="galleryPanelVisible"
           :display-active="displaySettingsVisible"
+          :glass-background-active="glassBackgroundPanelVisible"
+          @open-glass-background="glassBackgroundPanelVisible = true"
           :favorite-active="channelFavoritesVisible"
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
@@ -18409,6 +18373,7 @@ onBeforeUnmount(() => {
   />
   <IFormDrawer />
 
+  <GlassBackgroundPanel v-if="glassBackgroundPanelVisible" @close="glassBackgroundPanelVisible = false" />
   <DisplaySettingsModal
     v-model:visible="displaySettingsVisible"
     :settings="display.settings"
