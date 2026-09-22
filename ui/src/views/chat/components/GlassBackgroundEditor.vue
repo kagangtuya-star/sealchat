@@ -50,7 +50,14 @@ onBeforeUnmount(() => {
 const presentation = computed(() => ({ mode: props.settings.mode, opacity: props.settings.backgroundOpacity,
   blur: props.settings.backgroundBlur, brightness: props.settings.backgroundBrightness,
   overlayColor: props.settings.overlayColor, overlayOpacity: props.settings.overlayOpacity }));
-const imageStyle = computed(() => ({ ...buildBackgroundImageStyle(props.settings.attachmentId, presentation.value), inset: `${-props.settings.backgroundBlur * 3}px` }));
+const imageStyle = computed(() => ({
+  ...buildBackgroundImageStyle(props.settings.attachmentId, { ...presentation.value, blur: 0 }),
+  inset: 0,
+}));
+const blurStyle = computed(() => ({
+  backdropFilter: `blur(${props.settings.backgroundBlur}px)`,
+  WebkitBackdropFilter: `blur(${props.settings.backgroundBlur}px)`,
+}));
 const overlayStyle = computed(() => buildBackgroundOverlayStyle(presentation.value));
 const glassSurfaceStyle = computed(() => {
   const opacity = props.settings.surfaceOpacity;
@@ -99,6 +106,7 @@ function clearImage() { generation++; uploading.value = false; emit('uploading',
   <div class="glass-editor">
     <div class="glass-editor__preview">
       <div v-if="settings.attachmentId" class="glass-editor__image" :style="imageStyle" />
+      <div v-if="settings.attachmentId && settings.backgroundBlur > 0" class="glass-editor__blur" :style="blurStyle" />
       <div v-if="settings.attachmentId && overlayStyle" class="glass-editor__overlay" :style="overlayStyle" />
       <div class="glass-editor__surface" :style="glassSurfaceStyle">
         <div class="glass-editor__surface-title">玻璃材质预览</div>
@@ -126,12 +134,13 @@ function clearImage() { generation++; uploading.value = false; emit('uploading',
 .glass-editor { display: flex; flex-direction: column; gap: 14px; }
 .glass-editor__preview { position: relative; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: var(--sc-bg-page); color: var(--sc-text-secondary); }
 .glass-editor__image { position: absolute; inset: 0; z-index: 0; }
-.glass-editor__overlay { position: absolute; inset: 0; z-index: 1; }
-.glass-editor__surface { position: absolute; left: 16%; right: 16%; bottom: 14%; min-height: 42%; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--sc-border-strong) 70%, transparent); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); display: flex; flex-direction: column; gap: 7px; justify-content: center; z-index: 2; box-sizing: border-box; color: var(--sc-text-primary); }
+.glass-editor__blur { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.glass-editor__overlay { position: absolute; inset: 0; z-index: 2; }
+.glass-editor__surface { position: absolute; left: 16%; right: 16%; bottom: 14%; min-height: 42%; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--sc-border-strong) 70%, transparent); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); display: flex; flex-direction: column; gap: 7px; justify-content: center; z-index: 3; box-sizing: border-box; color: var(--sc-text-primary); }
 .glass-editor__surface-title { font-size: 12px; font-weight: 600; }
 .glass-editor__surface-line { width: 82%; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--sc-text-primary) 30%, transparent); }
 .glass-editor__surface-line--short { width: 56%; }
-.glass-editor__empty { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 3; text-align: center; }
+.glass-editor__empty { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 4; text-align: center; }
 .glass-editor__actions { display: flex; gap: 8px; }
 .glass-editor__row { display: flex; justify-content: space-between; gap: 12px; }
 label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
