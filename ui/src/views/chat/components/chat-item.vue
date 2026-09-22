@@ -4580,10 +4580,20 @@ const handleRetrySend = () => {
     calc(var(--chat-message-padding-x, 1.1rem) * 0.95);
 }
 
-.chat--has-background .chat-item--layout-bubble > .right > .content {
-  --chat-message-ic-bg: var(--chat-bubble-ic-bg, color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 34%, transparent));
+.chat--has-background .chat-item--layout-bubble > .right > .content,
+:root[data-sc-glass-background='true']
+  .chat
+  .chat-item--layout-bubble > .right > .content,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone
+  .chat-item--layout-bubble > .right > .content {
+  --chat-message-ic-bg: var(--chat-bubble-ic-bg, transparent);
   background: var(--chat-message-ic-bg);
   border: 1px solid color-mix(in srgb, var(--chat-bubble-border, rgba(15, 23, 42, 0.08)) 70%, transparent);
+}
+
+.chat--has-background
+  .chat-item--layout-bubble > .right > .content {
   backdrop-filter: blur(4px);
 }
 
@@ -5314,8 +5324,18 @@ const handleRetrySend = () => {
   font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
 }
 
-.chat--has-background .chat-item--layout-bubble.chat-item--ooc .right .content {
-  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, color-mix(in srgb, var(--chat-ooc-bg, #ffffff) 34%, transparent));
+.chat--has-background
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content,
+:root[data-sc-glass-background='true']
+  .chat
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content {
+  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, transparent);
   background: var(--chat-message-ooc-bg);
   border: 1px solid color-mix(in srgb, var(--chat-ooc-border, rgba(148, 163, 184, 0.35)) 72%, transparent);
 }

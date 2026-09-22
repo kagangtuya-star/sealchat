@@ -250,17 +250,48 @@
   color: color-mix(in srgb, var(--chat-text-secondary, #475569) 88%, var(--chat-text-primary, #0f172a) 12%);
 }
 
+:root[data-sc-glass-background='true'] .chat-pinned-zone,
 .chat-pinned-zone.chat--has-background,
-:root[data-sc-glass-background='true'] .chat-pinned-zone {
+.channel-background-layer ~ .chat-pinned-zone {
   --chat-compact-ic-bg: transparent;
   --chat-compact-ooc-bg: transparent;
   --chat-compact-archived-bg: transparent;
 }
 
-.channel-background-layer ~ .chat-pinned-zone {
-  --chat-compact-ic-bg: transparent;
-  --chat-compact-ooc-bg: transparent;
-  --chat-compact-archived-bg: transparent;
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone.chat--background-tone-enabled {
+  --chat-compact-ic-bg:
+    color-mix(in srgb, var(--chat-ic-bg) 24%, transparent);
+
+  --chat-compact-ooc-bg:
+    color-mix(in srgb, var(--chat-ooc-bg) 36%, transparent);
+
+  --chat-compact-archived-bg:
+    color-mix(
+      in srgb,
+      var(--chat-archived-bg, rgba(148, 163, 184, 0.2)) 26%,
+      transparent
+    );
+}
+
+.chat-pinned-zone.chat--has-background.chat--background-tone-enabled,
+.channel-background-layer ~ .chat-pinned-zone.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone.chat--has-background.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .channel-background-layer ~ .chat-pinned-zone.chat--background-tone-enabled {
+  --chat-compact-ic-bg:
+    color-mix(in srgb, var(--chat-ic-bg) 30%, transparent);
+
+  --chat-compact-ooc-bg:
+    color-mix(in srgb, var(--chat-ooc-bg) 44%, transparent);
+
+  --chat-compact-archived-bg:
+    color-mix(
+      in srgb,
+      var(--chat-archived-bg, rgba(148, 163, 184, 0.2)) 32%,
+      transparent
+    );
 }
 
 .chat-pinned-zone.chat--has-background .chat-pinned-zone__row + .chat-pinned-zone__row,
@@ -308,6 +339,15 @@
 .chat--layout-compact .message-row {
   padding-top: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
   padding-bottom: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
+}
+
+.chat--layout-compact.chat--has-background.chat--background-tone-enabled
+  .message-row,
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--background-tone-enabled
+  .message-row {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .chat--layout-bubble .message-row:first-child {
@@ -574,13 +614,14 @@
 }
 
 .chat--has-background,
-:root[data-sc-glass-background='true'] .chat {
-  /* 频道背景开启时，预览/编辑框体使用半透明 tone 混合色，确保能随背景调整可见变化 */
-  --chat-bubble-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 34%, transparent);
-  --chat-bubble-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 34%, transparent);
+:root[data-sc-glass-background='true'] .chat,
+:root[data-sc-glass-background='true'] .chat-pinned-zone {
+  --chat-bubble-ic-bg: transparent;
+  --chat-bubble-ooc-bg: transparent;
+
   --chat-live-preview-ic-bg: var(--chat-bubble-ic-bg);
   --chat-live-preview-ooc-bg: var(--chat-bubble-ooc-bg);
-  --chat-editing-preview-bg: color-mix(in srgb, var(--chat-preview-bg, var(--chat-ic-bg)) 34%, transparent);
+  --chat-editing-preview-bg: transparent;
   --chat-editing-preview-ic-bg: var(--chat-bubble-ic-bg);
   --chat-editing-preview-ooc-bg: var(--chat-bubble-ooc-bg);
   --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
@@ -594,6 +635,43 @@
   --chat-editing-preview-ooc-border-night: var(--chat-live-preview-ooc-border-night);
 }
 
+:root[data-sc-glass-background='true']
+  .chat.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone.chat--background-tone-enabled {
+  --chat-bubble-ic-bg:
+    color-mix(in srgb, var(--chat-ic-bg) 24%, transparent);
+
+  --chat-bubble-ooc-bg:
+    color-mix(in srgb, var(--chat-ooc-bg) 36%, transparent);
+
+  --chat-editing-preview-bg:
+    color-mix(
+      in srgb,
+      var(--chat-preview-bg, var(--chat-ic-bg)) 30%,
+      transparent
+    );
+}
+
+.chat--has-background.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .chat.chat--has-background.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone.chat--has-background.chat--background-tone-enabled {
+  --chat-bubble-ic-bg:
+    color-mix(in srgb, var(--chat-ic-bg) 30%, transparent);
+
+  --chat-bubble-ooc-bg:
+    color-mix(in srgb, var(--chat-ooc-bg) 44%, transparent);
+
+  --chat-editing-preview-bg:
+    color-mix(
+      in srgb,
+      var(--chat-preview-bg, var(--chat-ic-bg)) 36%,
+      transparent
+    );
+}
+
 .chat--layout-compact {
   --chat-compact-ic-bg: var(--chat-ic-bg);
   --chat-compact-ooc-bg: var(--chat-ooc-bg);
@@ -602,11 +680,42 @@
   transition: background-color 0.25s ease;
 }
 
-.chat--layout-compact.chat--has-background,
-:root[data-sc-glass-background='true'] .chat--layout-compact {
+:root[data-sc-glass-background='true'] .chat--layout-compact,
+.chat--layout-compact.chat--has-background {
   --chat-compact-ic-bg: transparent;
   --chat-compact-ooc-bg: transparent;
   --chat-compact-archived-bg: transparent;
+  background-color: transparent;
+}
+
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--background-tone-enabled {
+  --chat-compact-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-compact-ooc-bg: var(--chat-bubble-ooc-bg);
+
+  --chat-compact-archived-bg:
+    color-mix(
+      in srgb,
+      var(--chat-archived-bg, rgba(148, 163, 184, 0.2)) 26%,
+      transparent
+    );
+
+  background-color: transparent;
+}
+
+.chat--layout-compact.chat--has-background.chat--background-tone-enabled,
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--has-background.chat--background-tone-enabled {
+  --chat-compact-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-compact-ooc-bg: var(--chat-bubble-ooc-bg);
+
+  --chat-compact-archived-bg:
+    color-mix(
+      in srgb,
+      var(--chat-archived-bg, rgba(148, 163, 184, 0.2)) 32%,
+      transparent
+    );
+
   background-color: transparent;
 }
 
@@ -661,6 +770,26 @@
   background-color: var(--chat-compact-archived-bg);
 }
 
+.chat--layout-compact.chat--has-background.chat--background-tone-enabled
+  .message-row--tone-ic,
+.chat--layout-compact.chat--has-background.chat--background-tone-enabled
+  .message-row--tone-ooc,
+.chat--layout-compact.chat--has-background.chat--background-tone-enabled
+  .message-row--tone-archived {
+  background-color: transparent;
+}
+
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--background-tone-enabled
+  .message-row--tone-ic,
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--background-tone-enabled
+  .message-row--tone-ooc,
+:root[data-sc-glass-background='true']
+  .chat--layout-compact.chat--background-tone-enabled
+  .message-row--tone-archived {
+  background-color: transparent;
+}
 
 .chat--layout-compact .message-row__handle {
   margin-top: 0.1rem;

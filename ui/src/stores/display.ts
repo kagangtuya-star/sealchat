@@ -81,6 +81,7 @@ export interface DisplaySettings {
   showAvatar: boolean
   avatarVisibilityScope: AvatarVisibilityScope
   preferStaticAvatarDecoration: boolean
+  backgroundMessageToneEnabled: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
@@ -530,6 +531,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showAvatar: true,
   avatarVisibilityScope: 'all',
   preferStaticAvatarDecoration: false,
+  backgroundMessageToneEnabled: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
@@ -776,6 +778,7 @@ const parseStoredSettingsInternal = (
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarVisibilityScope: normalizeAvatarVisibilityScope((parsed as any)?.avatarVisibilityScope),
       preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
+      backgroundMessageToneEnabled: coerceBoolean((parsed as any)?.backgroundMessageToneEnabled ?? true),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
         AVATAR_SIZE_DEFAULT,
@@ -1059,6 +1062,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
       ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
       : base.preferStaticAvatarDecoration,
+  backgroundMessageToneEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'backgroundMessageToneEnabled')
+      ? coerceBoolean((patch as any).backgroundMessageToneEnabled)
+      : base.backgroundMessageToneEnabled,
   avatarSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
       ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)

@@ -845,6 +845,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">背景消息场内外区分</p>
+            <p class="section-desc">频道背景或玻璃背景开启时，使用半透明色调区分场内与场外消息；关闭后恢复全透明显示</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.backgroundMessageToneEnabled">
+          <template #checked>增强区分</template>
+          <template #unchecked>全透明</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>

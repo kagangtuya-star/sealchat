@@ -15932,7 +15932,7 @@ onBeforeUnmount(() => {
     <div
       v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
       class="chat-pinned-zone px-4"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle, 'chat--background-tone-enabled': display.settings.backgroundMessageToneEnabled }]"
     >
       <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
         <span class="chat-pinned-zone__title">置顶消息</span>
@@ -15979,7 +15979,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle, 'chat--background-tone-enabled': display.settings.backgroundMessageToneEnabled }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
