@@ -266,6 +266,29 @@ func (ctx *ChatContext) BroadcastEvent(data *protocol.Event) {
 	})
 }
 
+func (ctx *ChatContext) BroadcastEventInWorld(worldID string, data *protocol.Event) {
+	if ctx == nil || ctx.UserId2ConnInfo == nil || worldID == "" || data == nil {
+		return
+	}
+	data.Timestamp = time.Now().Unix()
+	payload := struct {
+		protocol.Event
+		Op protocol.Opcode `json:"op"`
+	}{Event: *data, Op: protocol.OpEvent}
+	ctx.UserId2ConnInfo.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		if conns == nil {
+			return true
+		}
+		conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+			if info != nil && info.WorldId == worldID {
+				writeConnJSONAndPrune(conns, conn, payload)
+			}
+			return true
+		})
+		return true
+	})
+}
+
 func (ctx *ChatContext) BroadcastEventInChannel(channelId string, data *protocol.Event) {
 	data.Timestamp = time.Now().Unix()
 	class := reliableClassForChannelEvent(data)

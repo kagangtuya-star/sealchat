@@ -406,6 +406,13 @@ type Argv struct {
 
 type EventName string
 
+const EventWorldGlassBackgroundUpdated EventName = "world-glass-background-updated"
+
+type WorldGlassEventPayload struct {
+	WorldID  string `json:"worldId"`
+	Revision uint64 `json:"revision"`
+}
+
 const (
 	EventGenresAdded                    EventName = "genres-added"
 	EventGenresDeleted                  EventName = "genres-deleted"
@@ -529,6 +536,7 @@ type MessageReactionEvent struct {
 }
 
 type Event struct {
+	WorldGlass                  *WorldGlassEventPayload             `json:"worldGlass,omitempty"`
 	ID                          int64                               `json:"id"`
 	Type                        EventName                           `json:"type"`
 	SelfID                      string                              `json:"selfID"`

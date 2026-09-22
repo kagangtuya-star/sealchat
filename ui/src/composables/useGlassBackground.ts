@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, readonly, watch } from 'vue';
 import { clampBackgroundNumber, normalizeBackgroundPresentationSettings } from '@/utils/backgroundPresentation';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
+import { worldGlassState } from '@/composables/useWorldGlassBackground';
 
 export interface GlassBackgroundSettings {
   version: 1;
@@ -20,8 +21,8 @@ export interface GlassBackgroundSettings {
 const STORAGE_KEY = 'sealchat.glass-background.v1';
 const defaults: GlassBackgroundSettings = {
   version: 1, enabled: false, attachmentId: '', mode: 'cover',
-  backgroundOpacity: 100, backgroundBlur: 0, backgroundBrightness: 85,
-  surfaceOpacity: 72, glassBlur: 18, saturation: 125,
+  backgroundOpacity: 100, backgroundBlur: 0, backgroundBrightness: 95,
+  surfaceOpacity: 55, glassBlur: 12, saturation: 110,
   overlayColor: undefined, overlayOpacity: 0,
 };
 
@@ -56,6 +57,12 @@ function readSettings() {
 }
 
 const settings = reactive(readSettings());
+const effectiveSettings = computed(() => {
+  const remote = worldGlassState.value;
+  return remote?.enabled && remote.preset
+    ? normalizeGlassBackgroundSettings({ ...remote.preset.settings, attachmentId: remote.preset.attachmentId, enabled: true })
+    : settings;
+});
 let pendingWrite: ReturnType<typeof setTimeout> | undefined;
 function flush() {
   if (pendingWrite === undefined) return;
@@ -77,7 +84,7 @@ export function useGlassBackground() {
     overlayOpacity: settings.overlayOpacity,
   }));
   return {
-    settings: readonly(settings), presentation, update,
+    settings: readonly(settings), localSettings: readonly(settings), effectiveSettings, worldGlassState, presentation, update,
     clear: () => update({ attachmentId: '' }),
     // Reset only material parameters; keep the selected attachment and enabled state.
     reset: () => update({ ...defaults, attachmentId: settings.attachmentId, enabled: settings.enabled }),
@@ -91,7 +98,7 @@ export function useGlassBackgroundRuntime() {
     delete document.documentElement.dataset.scGlassBackground;
     properties.forEach(name => document.documentElement.style.removeProperty(`--sc-glass-${name}`));
   };
-  const stop = watch(settings, () => {
+  const stop = watch(effectiveSettings, (settings) => {
     if (typeof document === 'undefined') return;
     if (!settings.enabled) { clean(); return; }
     const root = document.documentElement;
@@ -102,7 +109,7 @@ export function useGlassBackgroundRuntime() {
       `${settings.glassBlur}px`, `${settings.saturation}%`,
     ];
     properties.forEach((name, index) => root.style.setProperty(`--sc-glass-${name}`, values[index]));
-  }, { immediate: true });
+  }, { immediate: true, deep: true });
   const onStorage = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY && event.key !== null) return;
     try { if (event.storageArea !== window.localStorage) return; } catch { return; }

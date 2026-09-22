@@ -83,6 +83,8 @@ type RoleOption = { id: string; label?: string; name?: string };
 type SplitChannelNode = {
   id: string;
   name: string;
+  type?: number;
+  isPrivate?: boolean;
   permType?: string;
   unread: number;
   children?: SplitChannelNode[];
@@ -166,6 +168,8 @@ const buildChannelTree = (): SplitChannelNode[] => {
         return {
           id: String(item.id || ''),
           name: String(item.name || ''),
+          type: typeof item?.type === 'number' ? item.type : undefined,
+          isPrivate: item?.isPrivate === true,
           permType: typeof item?.permType === 'string' ? item.permType : undefined,
           unread: selfUnread + childrenUnread,
           children,
@@ -647,11 +651,13 @@ const normalizeChannelTree = (nodes: any): SplitChannelNode[] => {
       .map((item) => {
         const id = typeof item?.id === 'string' ? item.id : String(item?.id || '');
         const name = typeof item?.name === 'string' ? item.name : String(item?.name || '');
+        const type = typeof item?.type === 'number' ? item.type : undefined;
+        const isPrivate = item?.isPrivate === true;
         const permType = typeof item?.permType === 'string' ? item.permType : undefined;
         const unread = typeof item?.unread === 'number' ? item.unread : Number(item?.unread || 0);
         const children = walk(item?.children || []);
         if (!id) return null;
-        return { id, name, permType, unread: Number.isFinite(unread) ? unread : 0, children };
+        return { id, name, type, isPrivate, permType, unread: Number.isFinite(unread) ? unread : 0, children };
       })
       .filter(Boolean) as SplitChannelNode[];
   };

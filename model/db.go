@@ -127,6 +127,7 @@ func DBInit(cfg *utils.AppConfig) {
 
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
+	db.AutoMigrate(&WorldGlassPresetModel{}, &WorldGlassStateModel{}, &WorldGlassTriggerModel{})
 	db.AutoMigrate(&MessageModel{})
 	db.AutoMigrate(&MessageAttachmentModel{}, &ChannelMessageAttachmentBackfillState{})
 	db.AutoMigrate(&MessageVisibleCharCountBackfillState{})

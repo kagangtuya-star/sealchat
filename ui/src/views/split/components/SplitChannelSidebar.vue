@@ -12,6 +12,8 @@ type PaneMode = 'chat' | 'web';
 export interface SplitChannelNode {
   id: string;
   name: string;
+  type?: number;
+  isPrivate?: boolean;
   permType?: string;
   unread: number;
   children?: SplitChannelNode[];

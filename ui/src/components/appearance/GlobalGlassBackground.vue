@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useGlassBackground, useGlassBackgroundRuntime } from '@/composables/useGlassBackground';
+import { useWorldGlassBackgroundRuntime } from '@/composables/useWorldGlassBackground';
 import { buildBackgroundImageStyle, buildBackgroundOverlayStyle } from '@/utils/backgroundPresentation';
 
-const { settings, presentation } = useGlassBackground();
+const { effectiveSettings: settings } = useGlassBackground();
+const presentation = computed(() => ({
+  mode: settings.value.mode, opacity: settings.value.backgroundOpacity, blur: settings.value.backgroundBlur,
+  brightness: settings.value.backgroundBrightness, overlayColor: settings.value.overlayColor, overlayOpacity: settings.value.overlayOpacity,
+}));
 useGlassBackgroundRuntime();
+useWorldGlassBackgroundRuntime();
 const imageStyle = computed(() => ({
-  ...buildBackgroundImageStyle(settings.attachmentId, presentation.value),
-  inset: `${-settings.backgroundBlur * 3}px`,
+  ...buildBackgroundImageStyle(settings.value.attachmentId, presentation.value),
+  inset: `${-settings.value.backgroundBlur * 3}px`,
 }));
 const overlayStyle = computed(() => buildBackgroundOverlayStyle(presentation.value));
 </script>
