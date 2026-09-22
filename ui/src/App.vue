@@ -2742,9 +2742,45 @@ nav a:first-of-type {
     backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
     -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
   }
+  @include ordinary-glass-surface('.sticky-note-rail__body, .sticky-note-rail__badge, .clue-box-tab') {
+    background: var(--sc-glass-elevated) !important;
+    border-color: var(--sc-glass-border) !important;
+    box-shadow: var(--sc-glass-shadow);
+    backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+    -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+  }
   .sc-header { background: var(--sc-glass-header) !important; }
   .sc-sidebar { background: var(--sc-glass-sidebar) !important; }
   .chat-root-container > .edit-area { background: var(--sc-glass-input) !important; }
+
+  /* Chat input controls inherit the edit area's material without nested blur layers. */
+  @include ordinary-glass-surface('.chat-root-container > .edit-area .hybrid-input') {
+    background-color: transparent !important;
+  }
+  @include ordinary-glass-surface('.chat-root-container > .edit-area .tiptap-editor, .chat-root-container > .edit-area .tiptap-toolbar, .chat-root-container > .edit-area .tiptap-editor-wrapper') {
+    background-color: transparent !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__header, .sticky-note-rail__folder-content') {
+    background: transparent !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__action') {
+    background: color-mix(in srgb, var(--sc-glass-elevated) 55%, transparent) !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__action--active') {
+    background: rgba(245, 158, 11, 0.18) !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__action--add') {
+    background: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.08) !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__action--add:hover') {
+    background: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.16) !important;
+  }
+  @include ordinary-glass-surface('.sticky-note-rail__color-picker, .sticky-note-rail__push-popup, .sticky-note-type-popup__content') {
+    background: var(--sc-glass-elevated) !important;
+    border-color: var(--sc-glass-border) !important;
+    backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+    -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+  }
 
   @include ordinary-glass-surface('.n-card, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel') {
     --n-color: var(--sc-glass-elevated) !important;
