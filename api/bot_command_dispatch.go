@@ -77,8 +77,28 @@ func newBotCommandDispatchEvent(
 	command string,
 	icMode string,
 ) *protocol.Event {
+	return newBotCommandEvent(
+		channel,
+		user,
+		member,
+		command,
+		icMode,
+		"bot-command-dispatch:"+utils.NewID(),
+		"bot-command-dispatch:"+utils.NewID(),
+	)
+}
+
+func newBotCommandEvent(
+	channel *protocol.Channel,
+	user *protocol.User,
+	member *protocol.GuildMember,
+	command string,
+	icMode string,
+	messageID string,
+	clientID string,
+) *protocol.Event {
 	command = strings.TrimSpace(command)
-	if command == "" || channel == nil || user == nil {
+	if command == "" || channel == nil || user == nil || strings.TrimSpace(messageID) == "" {
 		return nil
 	}
 	now := time.Now()
@@ -87,7 +107,7 @@ func newBotCommandDispatchEvent(
 		icMode = "ic"
 	}
 	message := &protocol.Message{
-		ID:           "bot-command-dispatch:" + utils.NewID(),
+		ID:           messageID,
 		Channel:      channel,
 		User:         user,
 		Member:       member,
@@ -97,7 +117,7 @@ func newBotCommandDispatchEvent(
 		UpdatedAt:    nowMs,
 		DisplayOrder: float64(nowMs),
 		IcMode:       icMode,
-		ClientID:     "bot-command-dispatch:" + utils.NewID(),
+		ClientID:     clientID,
 	}
 	return &protocol.Event{
 		Type:    protocol.EventMessageCreated,

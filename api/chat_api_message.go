@@ -1989,6 +1989,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
+	botMsgContext := resolveBotMessageContext(ctx, channelId)
+	if ack, captured := tryCaptureBotInteractionMessageCreate(ctx, channelId, data.QuoteID, data.Content, botMsgContext); captured {
+		return ack, nil
+	}
 	trimmedClientID := strings.TrimSpace(data.ClientID)
 	if strings.HasPrefix(trimmedClientID, "iform_embed:") {
 		parts := strings.SplitN(strings.TrimPrefix(trimmedClientID, "iform_embed:"), ":", 2)
@@ -2005,7 +2009,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 
 	var privateOtherUser string
-	botMsgContext := resolveBotMessageContext(ctx, channelId)
 	botContextICMode := ""
 	if botMsgContext != nil {
 		botContextICMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
@@ -4256,15 +4259,34 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 }
 
 func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.MessageContext {
+	return resolveBotMessageContextWithBroker(botInteractions, ctx, channelId)
+}
+
+func resolveBotMessageContextWithBroker(broker *botInteractionBroker, ctx *ChatContext, channelId string) *protocol.MessageContext {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
 		return nil
 	}
-	if ctx.ConnInfo.BotLastMessageContext == nil {
+	ctx.ConnInfo.botMessageContextMu.Lock()
+	var msgContext *protocol.MessageContext
+	var ok bool
+	if ctx.ConnInfo.BotLastMessageContext != nil {
+		msgContext, ok = ctx.ConnInfo.BotLastMessageContext.Load(channelId)
+	}
+	ctx.ConnInfo.botMessageContextMu.Unlock()
+	if !ok || msgContext == nil {
 		return nil
 	}
-	msgContext, ok := ctx.ConnInfo.BotLastMessageContext.Load(channelId)
-	if !ok {
-		return nil
+	if msgContext.IsEphemeral && strings.TrimSpace(msgContext.InteractionID) != "" {
+		if broker == nil {
+			return nil
+		}
+		pending := broker.pendingForRequest(msgContext.InteractionID, time.Now())
+		if pending == nil ||
+			pending.BotUserID != ctx.User.ID ||
+			pending.BotConn != ctx.Conn ||
+			pending.ChannelID != channelId {
+			return nil
+		}
 	}
 	return msgContext
 }

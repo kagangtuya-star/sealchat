@@ -43,6 +43,7 @@ const botIdleWaiters: Array<() => void> = [];
 const normalDrainWaiters: Array<() => void> = [];
 
 const isBotRelatedApi = (api: string) => botApiPrefixes.some((prefix) => api.startsWith(prefix));
+const shouldBypassApiScheduling = (api: string) => api === 'bot.interact';
 const waitForBotIdle = () => new Promise<void>((resolve) => {
   if (botApiPending === 0) {
     resolve();
@@ -1964,9 +1965,9 @@ export const useChatStore = defineStore({
           this.subject.next({ api, data, echo });
         });
       };
-      const run = isBotRelatedApi(api)
-        ? enqueueBotApi(doSend)
-        : enqueueNormalApi(doSend);
+      const run = shouldBypassApiScheduling(api)
+        ? doSend()
+        : (isBotRelatedApi(api) ? enqueueBotApi(doSend) : enqueueNormalApi(doSend));
       return run.then((resp: any) => {
         if (resp?.err) {
           const error = new Error(resp.err);
@@ -5590,6 +5591,34 @@ export const useChatStore = defineStore({
       if (resp?.data?.ok !== true) {
         throw new Error(resp?.data?.error || 'BOT 指令转发失败');
       }
+      return resp.data;
+    },
+
+    async botInteract(channelId: string, command: string, options?: { timeoutMs?: number }) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedCommand = String(command || '').trim();
+      if (!normalizedChannelId) {
+        throw new Error('缺少频道 ID');
+      }
+      if (!normalizedCommand) {
+        throw new Error('缺少指令内容');
+      }
+      const requestedTimeout = options?.timeoutMs ?? 5_000;
+      const finiteTimeout = Number.isFinite(requestedTimeout) ? Math.trunc(requestedTimeout) : 5_000;
+      const serverTimeoutMs = Math.min(15_000, Math.max(1_000, finiteTimeout));
+      const resp = await this.sendAPI<{
+        data?: {
+          ok: boolean;
+          request_id: string;
+          matched_by: 'structured' | 'quote' | 'context';
+          content: string;
+          data: unknown;
+        };
+      }>('bot.interact', {
+        channel_id: normalizedChannelId,
+        command: normalizedCommand,
+        timeout_ms: serverTimeoutMs,
+      } as APIMessage, { timeoutMs: serverTimeoutMs + 2_000 });
       return resp.data;
     },
 

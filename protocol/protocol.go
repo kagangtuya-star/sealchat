@@ -524,6 +524,8 @@ type MessageContext struct {
 	WhisperToUserID string `json:"whisperToUserId,omitempty"` // 悄悄话目标用户ID
 	IsHiddenDice    bool   `json:"isHiddenDice,omitempty"`    // 是否为暗骰
 	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
+	InteractionID   string `json:"interactionId,omitempty"`   // 临时 BOT interaction 请求ID
+	IsEphemeral     bool   `json:"isEphemeral,omitempty"`     // 是否为不持久化的临时消息
 }
 
 type MessageReactionEvent struct {

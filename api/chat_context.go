@@ -21,6 +21,11 @@ const botNicknameSyncSuppressWindowMs int64 = 3_000
 
 var botNicknameSyncPendingByBotChannel utils.SyncMap[string, *BotNicknameSyncPending]
 
+type BotMessageEventMarker struct {
+	MessageID string
+	At        int64
+}
+
 type ChatContext struct {
 	Conn            *WsSyncConn
 	User            *model.UserModel
@@ -361,6 +366,22 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 func cacheBotEventContext(info *ConnInfo, channelId string, data *protocol.Event) {
 	if info == nil || channelId == "" || data == nil {
 		return
+	}
+	info.botMessageContextMu.Lock()
+	defer info.botMessageContextMu.Unlock()
+
+	cacheBotEventContextLocked(info, channelId, data)
+}
+
+func cacheBotEventContextLocked(info *ConnInfo, channelId string, data *protocol.Event) {
+	if data.Type == protocol.EventMessageCreated && data.Message != nil && strings.TrimSpace(data.Message.ID) != "" {
+		if info.BotLastMessageEvent == nil {
+			info.BotLastMessageEvent = &utils.SyncMap[string, BotMessageEventMarker]{}
+		}
+		info.BotLastMessageEvent.Store(channelId, BotMessageEventMarker{
+			MessageID: data.Message.ID,
+			At:        time.Now().UnixMilli(),
+		})
 	}
 	whisperTargetIDs := extractBotWhisperTargetIDs(data)
 	if len(whisperTargetIDs) > 0 {

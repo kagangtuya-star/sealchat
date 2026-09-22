@@ -461,9 +461,11 @@ type ConnInfo struct {
 	SuppressExternalNotification bool
 	NotificationStateUpdatedAt   int64
 	BotLastMessageContext        *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastMessageEvent          *utils.SyncMap[string, BotMessageEventMarker]
 	BotLastWhisperTargets        *utils.SyncMap[string, []string]
 	BotHiddenDicePending         *utils.SyncMap[string, *BotHiddenDicePending]
 	BotNicknameSyncPending       *utils.SyncMap[string, *BotNicknameSyncPending]
+	botMessageContextMu          sync.Mutex
 	embedMu                      sync.RWMutex
 	embedSubscriptions           map[string]struct{}
 	BotCharacterSupport          BotCharacterSupportState
@@ -1484,6 +1486,10 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 
 					// Handle BOT response (api field is empty)
 					if apiMsg.Api == "" && apiMsg.Echo != "" {
+						if HandleBotInteractionResponse(ctx, apiMsg.Echo, apiMsg.Data) {
+							solved = true
+							continue
+						}
 						if len(apiMsg.Data) > 0 && HandleCharacterResponse(apiMsg.Echo, apiMsg.Data) {
 							solved = true
 							continue
@@ -1687,6 +1693,9 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 						solved = true
 					case "bot.command.dispatch":
 						apiBotCommandDispatch(ctx, msg)
+						solved = true
+					case "bot.interact":
+						apiBotInteractWs(ctx, msg)
 						solved = true
 					case "bot.channel_member.set_name":
 						apiBotChannelMemberSetName(ctx, msg)
