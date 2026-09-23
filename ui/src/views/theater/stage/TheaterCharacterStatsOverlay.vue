@@ -37,6 +37,7 @@ interface OverlayLayout {
 }
 
 type MinimizedEdge = 'left' | 'right' | 'bottom';
+const MAX_STAT_ICONS = 100;
 
 interface ResolvedStat {
   id: string;
@@ -49,6 +50,13 @@ interface ResolvedStat {
   fillLeft: number;
   fillWidth: number;
   zeroLeft: number;
+  displayMode: 'bar' | 'icon';
+  iconType: 'text' | 'image';
+  iconValue: string;
+  valuePerIcon: number;
+  subdivisions: number;
+  iconCount: number;
+  iconFills: number[];
 }
 
 interface ResolvedCharacter {
@@ -302,6 +310,48 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
   const max = resolveNumericSource(template.max, attrs);
   const min = resolveNumericSource(template.min, attrs);
   if (current === null) return null;
+  const displayMode: ResolvedStat['displayMode'] = template.display?.mode === 'icon' ? 'icon' : 'bar';
+  const configuredIconValue = String(template.display?.icon?.value || '').trim();
+  const iconType: ResolvedStat['iconType'] = template.display?.icon?.type === 'image' && configuredIconValue ? 'image' : 'text';
+  const iconValue = configuredIconValue || '❤️';
+  const configuredValuePerIcon = Number(template.display?.valuePerIcon);
+  const valuePerIcon = Number.isFinite(configuredValuePerIcon) && configuredValuePerIcon > 0 ? configuredValuePerIcon : 1;
+  const configuredSubdivisions = Math.floor(Number(template.display?.subdivisions));
+  const subdivisions = Number.isFinite(configuredSubdivisions) && configuredSubdivisions >= 1 ? configuredSubdivisions : 1;
+  const displayDefaults = {
+    displayMode,
+    iconType,
+    iconValue,
+    valuePerIcon,
+    subdivisions,
+    iconCount: 0,
+    iconFills: [] as number[],
+  };
+  const rangeMin = min ?? 0;
+  if (displayMode === 'icon') {
+    if (max === null || max <= rangeMin) return null;
+    const iconCount = Math.min(MAX_STAT_ICONS, Math.ceil((max - rangeMin) / valuePerIcon));
+    const filledValue = clamp(current, rangeMin, max) - rangeMin;
+    const iconFills = Array.from({ length: iconCount }, (_, index) => {
+      const fill = clamp((filledValue - (index * valuePerIcon)) / valuePerIcon, 0, 1);
+      return Math.min(1, Math.ceil(fill * subdivisions) / subdivisions);
+    });
+    return {
+      id: template.id,
+      name: template.name,
+      current,
+      max,
+      min,
+      barColor: template.barColor || '#ffffff',
+      textColor: template.textColor || '#ffffff',
+      fillLeft: 0,
+      fillWidth: 0,
+      zeroLeft: 0,
+      ...displayDefaults,
+      iconCount,
+      iconFills,
+    };
+  }
   if (max === null) {
     return {
       id: template.id,
@@ -314,9 +364,9 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
       fillLeft: 0,
       fillWidth: 100,
       zeroLeft: 0,
+      ...displayDefaults,
     };
   }
-  const rangeMin = min ?? 0;
   if (max <= rangeMin) {
     return {
       id: template.id,
@@ -329,6 +379,7 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
       fillLeft: 0,
       fillWidth: 100,
       zeroLeft: 0,
+      ...displayDefaults,
     };
   }
   const range = max - rangeMin;
@@ -345,6 +396,7 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
     fillLeft: Math.min(currentRatio, zeroRatio) * 100,
     fillWidth: Math.abs(currentRatio - zeroRatio) * 100,
     zeroLeft: zeroRatio * 100,
+    ...displayDefaults,
   };
 };
 
@@ -534,6 +586,7 @@ onBeforeUnmount(() => {
             <div class="theater-character-stat-card__stats">
               <div v-for="stat in character.stats" :key="stat.id" class="theater-character-stat">
                 <div
+                  v-if="stat.displayMode === 'bar'"
                   class="theater-character-stat__bar"
                   :style="{ color: stat.textColor }"
                   @pointerdown="beginInteraction('drag', $event)"
@@ -548,6 +601,32 @@ onBeforeUnmount(() => {
                   <span v-if="stat.min !== null && stat.min < 0 && stat.max !== null && stat.max > 0" class="theater-character-stat__zero" :style="{ left: `${stat.zeroLeft}%` }" />
                   <span class="theater-character-stat__name">{{ stat.name }}</span>
                   <span class="theater-character-stat__value">{{ stat.max === null ? stat.current : `${stat.current}/${stat.max}` }}</span>
+                </div>
+                <div
+                  v-else
+                  class="theater-character-stat__icons"
+                  :style="{ color: stat.textColor }"
+                  @pointerdown="beginInteraction('drag', $event)"
+                  @pointermove="moveInteraction"
+                  @pointerup="endInteraction"
+                  @pointercancel="endInteraction"
+                >
+                  <div class="theater-character-stat__icon-line">
+                    <span class="theater-character-stat__icon-name">{{ stat.name }}</span>
+                    <span class="theater-character-stat__icon-value">{{ stat.current }}/{{ stat.max }}</span>
+                  </div>
+                  <div class="theater-character-stat__icon-list">
+                    <span v-for="(fill, index) in stat.iconFills" :key="index" class="theater-character-stat__icon">
+                      <span class="theater-character-stat__icon-base">
+                        <img v-if="stat.iconType === 'image'" :src="resolveAttachmentUrl(stat.iconValue)" alt="">
+                        <span v-else>{{ stat.iconValue }}</span>
+                      </span>
+                      <span class="theater-character-stat__icon-fill" :style="{ width: `${fill * 100}%` }">
+                        <img v-if="stat.iconType === 'image'" :src="resolveAttachmentUrl(stat.iconValue)" alt="">
+                        <span v-else>{{ stat.iconValue }}</span>
+                      </span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -593,6 +672,16 @@ onBeforeUnmount(() => {
 .theater-character-stat__fill { position: absolute; top: 0; bottom: 0; opacity: .46; }
 .theater-character-stat__zero { position: absolute; top: 0; bottom: 0; width: 1px; background: currentColor; opacity: .75; }
 .theater-character-stat__value { inset: 0 4px 0 auto; place-items: center end; }
+.theater-character-stat__icons { min-height: 16px; padding: 1px 3px 2px; overflow: hidden; background: rgba(0, 0, 0, .2); border-radius: 2px; cursor: move; touch-action: none; }
+.theater-character-stat__icon-line { display: flex; justify-content: space-between; gap: 4px; overflow: hidden; font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 13px; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+.theater-character-stat__icon-name { overflow: hidden; text-overflow: ellipsis; }
+.theater-character-stat__icon-value { flex: none; }
+.theater-character-stat__icon-list { display: flex; flex-wrap: wrap; gap: 1px; }
+.theater-character-stat__icon { position: relative; display: inline-block; width: 14px; height: 14px; overflow: hidden; font-size: 13px; line-height: 14px; }
+.theater-character-stat__icon-base, .theater-character-stat__icon-fill { position: absolute; inset: 0; display: block; overflow: hidden; white-space: nowrap; }
+.theater-character-stat__icon-base { filter: grayscale(1); opacity: .22; }
+.theater-character-stat__icon-fill { right: auto; }
+.theater-character-stat__icon img, .theater-character-stat__icon-base > span, .theater-character-stat__icon-fill > span { display: block; width: 14px; height: 14px; object-fit: contain; }
 .theater-character-overlay__minimize, .theater-character-overlay__resize { position: absolute; padding: 0; border: 0; opacity: 0; pointer-events: none; transition: opacity .14s ease, background-color .14s ease; }
 .is-chrome-visible .theater-character-overlay__minimize, .is-chrome-visible .theater-character-overlay__resize, .theater-character-overlay:focus-within .theater-character-overlay__minimize, .theater-character-overlay:focus-within .theater-character-overlay__resize { opacity: 1; pointer-events: auto; }
 .theater-character-overlay__minimize { top: 2px; right: 4px; display: grid; width: 18px; height: 16px; place-items: center; color: rgba(255, 255, 255, .76); background: rgba(255, 255, 255, .09); border-radius: 2px; cursor: pointer; }

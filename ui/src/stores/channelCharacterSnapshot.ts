@@ -15,6 +15,15 @@ export interface TheaterCharacterStatTemplate {
   min?: CharacterSnapshotNumericSource;
   barColor?: string;
   textColor?: string;
+  display?: {
+    mode?: 'bar' | 'icon';
+    icon?: {
+      type: 'text' | 'image';
+      value: string;
+    };
+    valuePerIcon?: number;
+    subdivisions?: number;
+  };
 }
 
 export interface TheaterCharacterOverlayTemplate {

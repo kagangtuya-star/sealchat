@@ -26,6 +26,7 @@ import {
 } from '@/utils/characterCardNarratorSettings';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, resolveTemplateValue, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { readHtmlFile } from '@/utils/htmlFile';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import AvatarVue from '@/components/avatar.vue';
 import AvatarEditor from '@/components/AvatarEditor.vue';
@@ -348,6 +349,7 @@ const overlayTemplateImportInput = ref<HTMLInputElement | null>(null);
 const templateHtmlFileInput = ref<HTMLInputElement | null>(null);
 const overlayTemplateEditorPreferredColumns = ref(2);
 let nextOverlayItemSerial = 1;
+const MAX_STAT_ICONS = 100;
 
 interface OverlayEditorSource {
   value: string;
@@ -362,6 +364,11 @@ interface OverlayEditorItem {
   max: OverlayEditorSource;
   barColor: string;
   textColor: string;
+  displayMode: 'bar' | 'icon';
+  iconType: 'text' | 'image';
+  iconValue: string;
+  valuePerIcon: string;
+  subdivisions: string;
 }
 
 const overlayTemplatePresets = CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS;
@@ -377,6 +384,14 @@ const badgeTemplateModeOptions = [
   { label: '跟随默认', value: 'inherit' },
   { label: '使用个人兜底', value: 'custom' },
   { label: '关闭徽章', value: 'off' },
+];
+const overlayDisplayModeOptions = [
+  { label: '数据条', value: 'bar' },
+  { label: '图标', value: 'icon' },
+];
+const overlayIconTypeOptions = [
+  { label: '文本图标', value: 'text' },
+  { label: '图片图标', value: 'image' },
 ];
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const theaterOverlaySettingsToggleIcon = computed(() => (
@@ -423,7 +438,32 @@ const createOverlayEditorItem = (): OverlayEditorItem => ({
   max: { value: '', kind: 'path' },
   barColor: '#5b8ff9',
   textColor: '#f8fafc',
+  displayMode: 'bar',
+  iconType: 'text',
+  iconValue: '❤️',
+  valuePerIcon: '1',
+  subdivisions: '2',
 });
+
+const positiveNumberString = (value: unknown, fallback: string) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? String(numericValue) : fallback;
+};
+
+const subdivisionString = (value: unknown) => {
+  const numericValue = Math.floor(Number(value));
+  return Number.isFinite(numericValue) && numericValue >= 1 ? String(numericValue) : '2';
+};
+
+const resolveEditorValuePerIcon = (value: unknown) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 1;
+};
+
+const resolveEditorSubdivisions = (value: unknown) => {
+  const numericValue = Math.floor(Number(value));
+  return Number.isFinite(numericValue) && numericValue >= 1 ? numericValue : 1;
+};
 
 const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[]; preferredColumns: number } | null => {
   try {
@@ -436,15 +476,23 @@ const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[
         : 2,
       items: value.items
         .filter(item => item && typeof item === 'object')
-        .map((item, index) => ({
-          id: String(item.id || `stat_${Date.now()}_${index + 1}`),
-          name: String(item.name || ''),
-          current: sourceToEditorSource(item.current),
-          min: sourceToEditorSource(item.min),
-          max: sourceToEditorSource(item.max),
-          barColor: item.barColor || '#5b8ff9',
-          textColor: item.textColor || '#f8fafc',
-        })),
+        .map((item, index) => {
+          const displayMode = item.display?.mode === 'icon' ? 'icon' : 'bar';
+          return {
+            id: String(item.id || `stat_${Date.now()}_${index + 1}`),
+            name: String(item.name || ''),
+            current: sourceToEditorSource(item.current),
+            min: sourceToEditorSource(item.min),
+            max: sourceToEditorSource(item.max),
+            barColor: item.barColor || '#5b8ff9',
+            textColor: item.textColor || '#f8fafc',
+            displayMode,
+            iconType: item.display?.icon?.type === 'image' ? 'image' : 'text',
+            iconValue: String(item.display?.icon?.value || '❤️'),
+            valuePerIcon: positiveNumberString(item.display?.valuePerIcon, '1'),
+            subdivisions: subdivisionString(item.display?.subdivisions),
+          } satisfies OverlayEditorItem;
+        }),
     };
   } catch {
     return null;
@@ -545,13 +593,23 @@ const overlayTemplatePreviewItems = computed(() => overlayTemplateEditorItems.va
     const max = hasMax ? resolveOverlayEditorSource(item.max) : null;
     const min = resolveOverlayEditorSource(item.min);
     if (current === null) return null;
-    if (max === null) return { ...item, current, max: null, percent: 100 };
+    if (max === null) return { ...item, current, max: null, percent: 100, iconFills: [] as number[], iconPreviewTruncated: false };
     const rangeMin = min ?? 0;
-    if (max <= rangeMin) return { ...item, current, max: null, percent: 100 };
+    if (max <= rangeMin) return { ...item, current, max: null, percent: 100, iconFills: [] as number[], iconPreviewTruncated: false };
     const percent = Math.min(100, Math.max(0, ((current - rangeMin) / (max - rangeMin)) * 100));
-    return { ...item, current, max, percent };
+    if (item.displayMode !== 'icon') return { ...item, current, max, percent, iconFills: [] as number[], iconPreviewTruncated: false };
+    const valuePerIcon = resolveEditorValuePerIcon(item.valuePerIcon);
+    const subdivisions = resolveEditorSubdivisions(item.subdivisions);
+    const theoreticalIconCount = Math.ceil((max - rangeMin) / valuePerIcon);
+    const iconCount = Math.min(MAX_STAT_ICONS, theoreticalIconCount);
+    const filledValue = Math.min(max, Math.max(rangeMin, current)) - rangeMin;
+    const iconFills = Array.from({ length: iconCount }, (_, index) => {
+      const fill = Math.min(1, Math.max(0, (filledValue - (index * valuePerIcon)) / valuePerIcon));
+      return Math.min(1, Math.ceil(fill * subdivisions) / subdivisions);
+    });
+    return { ...item, current, max, percent, iconFills, iconPreviewTruncated: theoreticalIconCount > MAX_STAT_ICONS };
   })
-  .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number } => !!item));
+  .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number; iconFills: number[]; iconPreviewTruncated: boolean } => !!item));
 
 const serializeOverlayTemplateEditor = () => JSON.stringify({
   version: 1,
@@ -565,6 +623,17 @@ const serializeOverlayTemplateEditor = () => JSON.stringify({
       max: editorSourceToTemplateSource(item.max),
       barColor: item.barColor,
       textColor: item.textColor,
+      display: item.displayMode === 'icon'
+        ? {
+          mode: 'icon' as const,
+          icon: {
+            type: item.iconType,
+            value: item.iconValue.trim() || (item.iconType === 'text' ? '❤️' : ''),
+          },
+          valuePerIcon: resolveEditorValuePerIcon(item.valuePerIcon),
+          subdivisions: resolveEditorSubdivisions(item.subdivisions),
+        }
+        : { mode: 'bar' as const },
     }))
     .filter(item => item.name && item.current),
 }, null, 2);
@@ -2610,41 +2679,66 @@ defineExpose({ openCardById });
       <div
         v-for="item in overlayTemplateEditorItems"
         :key="item.id"
-        class="overlay-template-editor__row"
-        :class="{ 'overlay-template-editor__row--dragging': draggingOverlayItemId === item.id }"
+        class="overlay-template-editor__item"
+        :class="{ 'overlay-template-editor__item--dragging': draggingOverlayItemId === item.id }"
         @dragover.prevent
         @drop="reorderOverlayTemplateEditorItem(item.id)"
       >
-        <button
-          type="button"
-          class="overlay-template-editor__drag-handle"
-          title="拖动排序"
-          aria-label="拖动排序"
-          draggable="true"
-          @dragstart="beginOverlayTemplateItemDrag(item.id, $event)"
-          @dragend="draggingOverlayItemId = ''"
-        >
-          <n-icon :component="GripVertical" />
-        </button>
-        <n-input v-model:value="item.name" size="small" placeholder="生命值" />
-        <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
-          <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
-        </n-input>
-        <n-input v-model:value="item.min.value" size="small" placeholder="0" />
-        <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
-        <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
-        <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
-        <n-button
-          quaternary
-          circle
-          size="small"
-          type="error"
-          title="删除"
-          aria-label="删除"
-          @click="removeOverlayTemplateEditorItem(item.id)"
-        >
-          <template #icon><n-icon :component="Trash" /></template>
-        </n-button>
+        <div class="overlay-template-editor__row">
+          <button
+            type="button"
+            class="overlay-template-editor__drag-handle"
+            title="拖动排序"
+            aria-label="拖动排序"
+            draggable="true"
+            @dragstart="beginOverlayTemplateItemDrag(item.id, $event)"
+            @dragend="draggingOverlayItemId = ''"
+          >
+            <n-icon :component="GripVertical" />
+          </button>
+          <n-input v-model:value="item.name" size="small" placeholder="生命值" />
+          <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
+            <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+          </n-input>
+          <n-input v-model:value="item.min.value" size="small" placeholder="0" />
+          <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
+          <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
+          <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
+          <n-button
+            quaternary
+            circle
+            size="small"
+            type="error"
+            title="删除"
+            aria-label="删除"
+            @click="removeOverlayTemplateEditorItem(item.id)"
+          >
+            <template #icon><n-icon :component="Trash" /></template>
+          </n-button>
+        </div>
+        <div class="overlay-template-editor__additional-row">
+          <label class="overlay-template-editor__additional-field">
+            <span>显示方式</span>
+            <n-select v-model:value="item.displayMode" size="small" :options="overlayDisplayModeOptions" />
+          </label>
+          <template v-if="item.displayMode === 'icon'">
+            <label class="overlay-template-editor__additional-field overlay-template-editor__additional-field--icon">
+              <span>图标</span>
+              <span class="overlay-template-editor__icon-inputs">
+                <n-select v-model:value="item.iconType" size="small" :options="overlayIconTypeOptions" />
+                <n-input v-model:value="item.iconValue" size="small" :placeholder="item.iconType === 'image' ? '图片地址或附件 ID' : '❤️'" />
+              </span>
+            </label>
+            <label class="overlay-template-editor__additional-field">
+              <span>每格数值</span>
+              <n-input v-model:value="item.valuePerIcon" size="small" placeholder="1" />
+            </label>
+            <label class="overlay-template-editor__additional-field">
+              <span>细分</span>
+              <n-input v-model:value="item.subdivisions" size="small" placeholder="2" />
+            </label>
+          </template>
+        </div>
       </div>
       <n-empty v-if="!overlayTemplateEditorItems.length" size="small" description="暂无数据项" class="overlay-template-editor__empty" />
 
@@ -2656,9 +2750,25 @@ defineExpose({ openCardById });
               <span>{{ item.name }}</span>
               <span>{{ item.max === null ? item.current : `${item.current}/${item.max}` }}</span>
             </div>
-            <div class="overlay-template-preview__bar">
+            <div v-if="item.displayMode === 'bar'" class="overlay-template-preview__bar">
               <span :style="{ width: `${item.percent}%`, backgroundColor: item.barColor }" />
             </div>
+            <span v-else-if="item.max === null" class="overlay-template-preview__hint">图标模式需要最大值</span>
+            <template v-else>
+              <div class="overlay-template-preview__icons">
+                <span v-for="(fill, index) in item.iconFills" :key="index" class="overlay-template-preview__icon">
+                  <span class="overlay-template-preview__icon-base">
+                    <img v-if="item.iconType === 'image' && item.iconValue.trim()" :src="resolveAttachmentUrl(item.iconValue)" alt="">
+                    <span v-else>{{ item.iconValue || '❤️' }}</span>
+                  </span>
+                  <span class="overlay-template-preview__icon-fill" :style="{ width: `${fill * 100}%` }">
+                    <img v-if="item.iconType === 'image' && item.iconValue.trim()" :src="resolveAttachmentUrl(item.iconValue)" alt="">
+                    <span v-else>{{ item.iconValue || '❤️' }}</span>
+                  </span>
+                </span>
+              </div>
+              <span v-if="item.iconPreviewTruncated" class="overlay-template-preview__hint">图标数量过多，仅预览前 100 个</span>
+            </template>
           </div>
         </div>
         <span v-else class="overlay-template-preview__empty">暂无可预览数据</span>
@@ -3122,15 +3232,43 @@ defineExpose({ openCardById });
   font-size: 0.74rem;
 }
 
-.overlay-template-editor__row {
+.overlay-template-editor__item {
   padding: 0.45rem 0.25rem;
   border-top: 1px solid var(--sc-border-color);
   transition: background-color 0.16s ease;
 }
 
-.overlay-template-editor__row--dragging {
+.overlay-template-editor__item--dragging {
   background: rgba(59, 130, 246, 0.08);
 }
+.overlay-template-editor__additional-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.7rem;
+  padding: 0.45rem 30px 0 28px;
+}
+
+.overlay-template-editor__additional-field {
+  display: grid;
+  grid-template-columns: max-content minmax(92px, 120px);
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.74rem;
+}
+
+.overlay-template-editor__additional-field--icon {
+  flex: 1 1 310px;
+  grid-template-columns: max-content minmax(230px, 1fr);
+}
+
+.overlay-template-editor__icon-inputs {
+  display: grid;
+  grid-template-columns: 100px minmax(130px, 1fr);
+  gap: 0.4rem;
+}
+
 
 .overlay-template-editor__drag-handle {
   display: inline-flex;
@@ -3202,6 +3340,54 @@ defineExpose({ openCardById });
   display: block;
   height: 100%;
   border-radius: inherit;
+}
+
+.overlay-template-preview__icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.overlay-template-preview__icon {
+  position: relative;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 18px;
+}
+
+.overlay-template-preview__icon-base,
+.overlay-template-preview__icon-fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.overlay-template-preview__icon-base {
+  filter: grayscale(1);
+  opacity: 0.22;
+}
+
+.overlay-template-preview__icon-fill {
+  right: auto;
+}
+
+.overlay-template-preview__icon img,
+.overlay-template-preview__icon-base > span,
+.overlay-template-preview__icon-fill > span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.overlay-template-preview__hint {
+  color: var(--sc-text-secondary);
+  font-size: 0.72rem;
 }
 
 .overlay-template-preview__empty {
@@ -3627,6 +3813,23 @@ defineExpose({ openCardById });
   .overlay-template-editor__row > :nth-child(8) {
     grid-column: 4;
     grid-row: 1 / span 3;
+  }
+
+  .overlay-template-editor__additional-row {
+    align-items: stretch;
+    flex-direction: column;
+    padding-right: 30px;
+  }
+
+  .overlay-template-editor__additional-field,
+  .overlay-template-editor__additional-field--icon {
+    flex: none;
+    grid-template-columns: 68px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .overlay-template-editor__icon-inputs {
+    grid-template-columns: 1fr;
   }
 
   .overlay-template-preview__stats {
