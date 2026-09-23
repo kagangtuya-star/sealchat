@@ -29,6 +29,18 @@ import {
   getCharacterSnapshotTemplatePreset,
 } from '@/utils/characterSnapshotTemplatePresets';
 
+const extractBotInteractionErrorCode = (error: unknown) => {
+  if (!error || typeof error !== 'object') {
+    return '';
+  }
+  const response = (error as { response?: unknown }).response;
+  if (!response || typeof response !== 'object') {
+    return '';
+  }
+  const code = (response as { err?: unknown }).err;
+  return typeof code === 'string' ? code.trim() : '';
+};
+
 // Character card type for UI (matching old API format)
 export interface CharacterCard {
   id: string;
@@ -169,6 +181,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Local identity bindings. Shared identities use one binding key across copies.
   const identityBindings = ref<Record<string, string>>({});
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
+  const botNicknameSyncRunningByChannel = new Set<string>();
+  const pendingBotNicknameSyncByChannel = new Map<string, {
+    command: string;
+    reason: string;
+  }>();
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
   const onlineCardsByChannel = ref<Record<string, Record<string, OnlineCharacterCardItem>>>({});
   const onlineCardsLoadingByChannel = ref<Record<string, boolean>>({});
@@ -1472,6 +1489,44 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return shouldEnableBotNicknameSyncForChannel(channel);
   };
 
+  const executeBotNicknameSync = async (channelId: string, command: string, reason: string) => {
+    const rememberSyncedCommand = () => {
+      lastBotNicknameSyncByChannel.value = {
+        ...lastBotNicknameSyncByChannel.value,
+        [channelId]: command,
+      };
+    };
+    try {
+      await chatStore.botInteract(channelId, command, { timeoutMs: 5_000, legacyQuiet: true });
+      rememberSyncedCommand();
+      return true;
+    } catch (error) {
+      const errorCode = extractBotInteractionErrorCode(error);
+      if (errorCode === 'BOT_INTERACTION_TIMEOUT') {
+        rememberSyncedCommand();
+        console.warn('[CharacterCard] BOT nickname sync timed out', { channelId, reason, command, error });
+        return false;
+      }
+      if (errorCode === 'BOT_INTERACTION_BOT_UNAVAILABLE') {
+        try {
+          await chatStore.botNicknameSyncDispatch(channelId, command);
+          rememberSyncedCommand();
+          return true;
+        } catch (fallbackError) {
+          console.warn('[CharacterCard] Failed to sync bot nickname via fallback', {
+            channelId,
+            reason,
+            command,
+            error: fallbackError,
+          });
+          return false;
+        }
+      }
+      console.warn('[CharacterCard] Failed to sync bot nickname', { channelId, reason, command, error });
+      return false;
+    }
+  };
+
   const dispatchBotNicknameSync = async (channelId: string, targetName: string, reason: string, force = false) => {
     if (!canSyncBotNickname(channelId)) {
       return false;
@@ -1484,19 +1539,27 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (!force && lastBotNicknameSyncByChannel.value[channelId] === command) {
       return false;
     }
-    try {
-      await chatStore.botCommandDispatch(channelId, command, {
-        silent: true,
-        reason,
-      });
-      lastBotNicknameSyncByChannel.value = {
-        ...lastBotNicknameSyncByChannel.value,
-        [channelId]: command,
-      };
-      return true;
-    } catch (e) {
-      console.warn('[CharacterCard] Failed to sync bot nickname', { channelId, reason, command, error: e });
+    if (botNicknameSyncRunningByChannel.has(channelId)) {
+      pendingBotNicknameSyncByChannel.set(channelId, { command, reason });
       return false;
+    }
+
+    botNicknameSyncRunningByChannel.add(channelId);
+    let nextSync: { command: string; reason: string } | undefined = { command, reason };
+    let synced = false;
+    try {
+      while (nextSync) {
+        synced = await executeBotNicknameSync(channelId, nextSync.command, nextSync.reason);
+        nextSync = pendingBotNicknameSyncByChannel.get(channelId);
+        pendingBotNicknameSyncByChannel.delete(channelId);
+        if (nextSync?.command === lastBotNicknameSyncByChannel.value[channelId]) {
+          nextSync = undefined;
+        }
+      }
+      return synced;
+    } finally {
+      pendingBotNicknameSyncByChannel.delete(channelId);
+      botNicknameSyncRunningByChannel.delete(channelId);
     }
   };
 
@@ -1550,12 +1613,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const reloadAfterSwitch = options.reloadAfterSwitch !== false;
     const nicknameSyncReason = boundCardId ? 'identity-switch-bound' : 'identity-switch-unbound';
 
-    void syncBotNicknameForIdentity(channelId, identityId, {
-      reason: nicknameSyncReason,
-    });
-
     if (!boundCardId) {
       if (preserveWhenUnbound) {
+        void syncBotNicknameForIdentity(channelId, identityId, {
+          reason: nicknameSyncReason,
+        });
         return {
           ok: true,
           switched: false,
@@ -1570,6 +1632,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           preserved: false,
         };
       }
+      void syncBotNicknameForIdentity(channelId, identityId, {
+        reason: nicknameSyncReason,
+      });
       if (reloadAfterSwitch) {
         await loadCards(channelId);
       }
@@ -1588,6 +1653,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         preserved: false,
       };
     }
+    void syncBotNicknameForIdentity(channelId, identityId, {
+      reason: nicknameSyncReason,
+    });
     if (reloadAfterSwitch) {
       await loadCards(channelId);
     }

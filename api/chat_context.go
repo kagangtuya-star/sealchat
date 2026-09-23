@@ -16,11 +16,6 @@ var (
 	botCommandTailCleanupPattern = regexp.MustCompile(`(?i)(?:\s|&nbsp;|<br\s*/?>)+$`)
 )
 
-const botCommandDispatchMessageIDPrefix = "bot-command-dispatch:"
-const botNicknameSyncSuppressWindowMs int64 = 3_000
-
-var botNicknameSyncPendingByBotChannel utils.SyncMap[string, *BotNicknameSyncPending]
-
 type BotMessageEventMarker struct {
 	MessageID string
 	At        int64
@@ -121,64 +116,6 @@ func (ctx *ChatContext) rangeChannelConnMaps(channelId string, f func(userId str
 	ctx.UserId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		return f(userId, connMap, false)
 	})
-}
-
-func botNicknameSyncPendingKey(botUserID, channelId string) string {
-	botUserID = strings.TrimSpace(botUserID)
-	channelId = strings.TrimSpace(channelId)
-	if botUserID == "" || channelId == "" {
-		return ""
-	}
-	return botUserID + "\x00" + channelId
-}
-
-func storeBotNicknameSyncPendingForBot(botUserID, channelId, targetName, senderUserID string, createdAt int64) {
-	key := botNicknameSyncPendingKey(botUserID, channelId)
-	targetName = strings.TrimSpace(targetName)
-	if key == "" || targetName == "" {
-		return
-	}
-	if createdAt <= 0 {
-		createdAt = time.Now().UnixMilli()
-	}
-	botNicknameSyncPendingByBotChannel.Store(key, &BotNicknameSyncPending{
-		TargetName:   targetName,
-		SenderUserID: strings.TrimSpace(senderUserID),
-		CreatedAt:    createdAt,
-	})
-}
-
-func loadBotNicknameSyncPendingForBot(botUserID, channelId string) (*BotNicknameSyncPending, bool) {
-	key := botNicknameSyncPendingKey(botUserID, channelId)
-	if key == "" {
-		return nil, false
-	}
-	return botNicknameSyncPendingByBotChannel.Load(key)
-}
-
-func deleteBotNicknameSyncPendingForBot(botUserID, channelId string) {
-	key := botNicknameSyncPendingKey(botUserID, channelId)
-	if key == "" {
-		return
-	}
-	botNicknameSyncPendingByBotChannel.Delete(key)
-}
-
-func shouldSuppressBotNicknameSyncContent(botUserID, channelId, content string) bool {
-	pending, ok := loadBotNicknameSyncPendingForBot(botUserID, channelId)
-	if !ok || pending == nil {
-		return false
-	}
-	ageMs := time.Now().UnixMilli() - pending.CreatedAt
-	if ageMs > botNicknameSyncSuppressWindowMs {
-		deleteBotNicknameSyncPendingForBot(botUserID, channelId)
-		return false
-	}
-	if !isBotNicknameSyncAckContent(content, pending.TargetName) {
-		return false
-	}
-	deleteBotNicknameSyncPendingForBot(botUserID, channelId)
-	return true
 }
 
 func (ctx *ChatContext) IsGuest() bool {
@@ -397,7 +334,6 @@ func cacheBotEventContextLocked(info *ConnInfo, channelId string, data *protocol
 		info.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
 	}
 	info.BotLastMessageContext.Store(channelId, data.MessageContext)
-	storeBotNicknameSyncPending(info, channelId, data)
 	if !data.MessageContext.IsHiddenDice || data.MessageContext.SenderUserID == "" {
 		return
 	}
@@ -423,74 +359,6 @@ func cacheBotEventContextLocked(info *ConnInfo, channelId string, data *protocol
 		Count:         0,
 		CreatedAt:     time.Now().UnixMilli(),
 	})
-}
-
-func storeBotNicknameSyncPending(info *ConnInfo, channelId string, data *protocol.Event) {
-	if info == nil || channelId == "" || data == nil || data.Message == nil {
-		return
-	}
-	if !strings.HasPrefix(strings.TrimSpace(data.Message.ID), botCommandDispatchMessageIDPrefix) {
-		return
-	}
-	targetName, ok := extractBotNicknameSyncTarget(data.Message.Content)
-	if !ok {
-		return
-	}
-	if info.BotNicknameSyncPending == nil {
-		info.BotNicknameSyncPending = &utils.SyncMap[string, *BotNicknameSyncPending]{}
-	}
-	senderUserID := ""
-	if data.MessageContext != nil {
-		senderUserID = strings.TrimSpace(data.MessageContext.SenderUserID)
-	}
-	createdAt := time.Now().UnixMilli()
-	info.BotNicknameSyncPending.Store(channelId, &BotNicknameSyncPending{
-		TargetName:   targetName,
-		SenderUserID: senderUserID,
-		CreatedAt:    createdAt,
-	})
-	if info.User != nil && info.User.IsBot {
-		storeBotNicknameSyncPendingForBot(info.User.ID, channelId, targetName, senderUserID, createdAt)
-	}
-}
-
-func extractBotNicknameSyncTarget(content string) (string, bool) {
-	leading := strings.TrimLeft(content, " \t\r\n")
-	if leading == "" {
-		return "", false
-	}
-	for _, prefix := range resolveBotCommandPrefixes() {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" || !strings.HasPrefix(leading, prefix) {
-			continue
-		}
-		remainder := strings.TrimSpace(leading[len(prefix):])
-		if len(remainder) < 3 || !strings.EqualFold(remainder[:2], "nn") {
-			return "", false
-		}
-		targetName := strings.TrimSpace(remainder[2:])
-		if targetName == "" {
-			return "", false
-		}
-		return targetName, true
-	}
-	return extractBotNicknameSyncTargetByCommandName(leading)
-}
-
-func extractBotNicknameSyncTargetByCommandName(content string) (string, bool) {
-	fields := strings.Fields(strings.TrimSpace(content))
-	if len(fields) < 2 {
-		return "", false
-	}
-	command := fields[0]
-	if len(command) < 3 || !strings.EqualFold(command[len(command)-2:], "nn") {
-		return "", false
-	}
-	targetName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(content), command))
-	if targetName == "" {
-		return "", false
-	}
-	return targetName, true
 }
 
 func normalizeEventForBot(event *protocol.Event) *protocol.Event {

@@ -28,14 +28,16 @@ var (
 	errBotInteractionBusy           = errors.New("BOT_INTERACTION_BUSY")
 	errBotInteractionTimeout        = errors.New("BOT_INTERACTION_TIMEOUT")
 	errBotInteractionBotUnavailable = errors.New("BOT_INTERACTION_BOT_UNAVAILABLE")
+	errBotInteractionRetryQuiet     = errors.New("BOT_INTERACTION_RETRY_QUIET")
 
 	botInteractions = newBotInteractionBroker()
 )
 
 type botInteractionRequest struct {
-	ChannelID string `json:"channel_id"`
-	Command   string `json:"command"`
-	TimeoutMs int64  `json:"timeout_ms"`
+	ChannelID   string `json:"channel_id"`
+	Command     string `json:"command"`
+	TimeoutMs   int64  `json:"timeout_ms"`
+	LegacyQuiet bool   `json:"legacy_quiet"`
 }
 
 type botInteractionResult struct {
@@ -260,10 +262,30 @@ func normalizeBotInteractionTimeout(timeoutMs int64) time.Duration {
 }
 
 func isBotInteractionContextQuiet(marker BotMessageEventMarker, exists bool, now time.Time) bool {
-	if !exists {
+	if !exists || strings.HasPrefix(marker.MessageID, botInteractionMessageIDPrefix) {
 		return true
 	}
 	return now.UnixMilli()-marker.At >= botInteractionLegacyQuietWindow.Milliseconds()
+}
+
+func botInteractionQuietDelay(info *ConnInfo, channelID string, now time.Time) time.Duration {
+	if info == nil || strings.TrimSpace(channelID) == "" {
+		return 0
+	}
+	info.botMessageContextMu.Lock()
+	defer info.botMessageContextMu.Unlock()
+	if info.BotLastMessageEvent == nil {
+		return 0
+	}
+	marker, ok := info.BotLastMessageEvent.Load(channelID)
+	if !ok || strings.HasPrefix(marker.MessageID, botInteractionMessageIDPrefix) {
+		return 0
+	}
+	remainingMs := marker.At + botInteractionLegacyQuietWindow.Milliseconds() - now.UnixMilli()
+	if remainingMs <= 0 {
+		return 0
+	}
+	return time.Duration(remainingMs) * time.Millisecond
 }
 
 func cacheBotInteractionEventContext(info *ConnInfo, channelID string, event *protocol.Event, now time.Time) bool {
@@ -279,9 +301,46 @@ func cacheBotInteractionEventContext(info *ConnInfo, channelID string, event *pr
 	if info.BotLastMessageEvent != nil {
 		marker, exists = info.BotLastMessageEvent.Load(channelID)
 	}
-	allowed := isBotInteractionContextQuiet(marker, exists, now)
+	if !isBotInteractionContextQuiet(marker, exists, now) {
+		return false
+	}
 	cacheBotEventContextLocked(info, channelID, event)
-	return allowed
+	return true
+}
+
+func cacheBotInteractionMessageContextLocked(info *ConnInfo, channelID string, event *protocol.Event) {
+	if event.MessageContext == nil {
+		return
+	}
+	if info.BotLastMessageContext == nil {
+		info.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
+	}
+	info.BotLastMessageContext.Store(channelID, event.MessageContext)
+}
+
+func cacheBotInteractionEventContextForRequest(info *ConnInfo, channelID string, event *protocol.Event, now time.Time, requireQuiet bool) bool {
+	if requireQuiet {
+		return cacheBotInteractionEventContext(info, channelID, event, now)
+	}
+	if info == nil || strings.TrimSpace(channelID) == "" || event == nil {
+		return false
+	}
+
+	info.botMessageContextMu.Lock()
+	defer info.botMessageContextMu.Unlock()
+
+	var marker BotMessageEventMarker
+	var exists bool
+	if info.BotLastMessageEvent != nil {
+		marker, exists = info.BotLastMessageEvent.Load(channelID)
+	}
+	legacyContextAllowed := isBotInteractionContextQuiet(marker, exists, now)
+	if legacyContextAllowed {
+		cacheBotEventContextLocked(info, channelID, event)
+	} else {
+		cacheBotInteractionMessageContextLocked(info, channelID, event)
+	}
+	return legacyContextAllowed
 }
 
 func isBotInteractionLatestMessageEvent(info *ConnInfo, channelID, messageID string) bool {
@@ -297,22 +356,29 @@ func isBotInteractionLatestMessageEvent(info *ConnInfo, channelID, messageID str
 	return ok && marker.MessageID == messageID
 }
 
-func startBotInteraction(ctx *ChatContext, data *botInteractionRequest) (*botInteractionPending, error) {
+func prepareBotInteractionRequest(ctx *ChatContext, data *botInteractionRequest) (string, string, *model.ChannelModel, error) {
 	if ctx == nil || ctx.User == nil || data == nil {
-		return nil, errors.New("INVALID_PARAMS")
+		return "", "", nil, errors.New("INVALID_PARAMS")
 	}
 	channelID := strings.TrimSpace(data.ChannelID)
 	command := strings.TrimSpace(data.Command)
 	if channelID == "" || command == "" {
-		return nil, errors.New("INVALID_PARAMS")
+		return "", "", nil, errors.New("INVALID_PARAMS")
 	}
 	if !canDispatchBotCommand(ctx, channelID) {
-		return nil, errors.New("PERMISSION_DENIED")
+		return "", "", nil, errors.New("PERMISSION_DENIED")
 	}
-
 	channel, err := model.ChannelGet(channelID)
 	if err != nil || channel == nil || channel.ID == "" {
-		return nil, errors.New("INVALID_PARAMS")
+		return "", "", nil, errors.New("INVALID_PARAMS")
+	}
+	return channelID, command, channel, nil
+}
+
+func startBotInteraction(ctx *ChatContext, data *botInteractionRequest) (*botInteractionPending, error) {
+	channelID, command, channel, err := prepareBotInteractionRequest(ctx, data)
+	if err != nil {
+		return nil, err
 	}
 	botConn, botInfo, err := findBotConnectionForChannel(ctx, channelID)
 	if err != nil || botConn == nil || botInfo == nil || botInfo.User == nil || !botInfo.User.IsBot {
@@ -356,10 +422,19 @@ func startBotInteraction(ctx *ChatContext, data *botInteractionRequest) (*botInt
 	}
 	event = normalizeEventForBot(event)
 	event.Timestamp = time.Now().Unix()
+	legacyContextAllowed := false
+	if data.LegacyQuiet {
+		if !cacheBotInteractionEventContext(botInfo, channelID, event, time.Now()) {
+			botInteractions.cancel(pending, errBotInteractionRetryQuiet)
+			return nil, errBotInteractionRetryQuiet
+		}
+		legacyContextAllowed = true
+	} else {
+		legacyContextAllowed = cacheBotInteractionEventContextForRequest(botInfo, channelID, event, time.Now(), false)
+	}
 	if !botInteractions.markSent(pending, time.Now()) {
 		return nil, errBotInteractionTimeout
 	}
-	legacyContextAllowed := cacheBotInteractionEventContext(botInfo, channelID, event, time.Now())
 	if !botInteractions.setLegacyContextAllowed(pending, legacyContextAllowed) {
 		return nil, errBotInteractionTimeout
 	}
@@ -378,6 +453,90 @@ func startBotInteraction(ctx *ChatContext, data *botInteractionRequest) (*botInt
 	return pending, nil
 }
 
+func waitBotInteractionQuiet(info *ConnInfo, channelID string, deadline time.Time, done <-chan struct{}) error {
+	for {
+		if done != nil {
+			select {
+			case <-done:
+				return errWSConnectionClosed
+			default:
+			}
+		}
+		remainingBudget := time.Until(deadline)
+		if remainingBudget <= 0 {
+			return errBotInteractionBusy
+		}
+		delay := botInteractionQuietDelay(info, channelID, time.Now())
+		if delay <= 0 {
+			return nil
+		}
+		if delay > remainingBudget {
+			delay = remainingBudget
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-done:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return errWSConnectionClosed
+		}
+	}
+}
+
+func startBotInteractionWhenQuiet(ctx *ChatContext, data *botInteractionRequest) (*botInteractionPending, error) {
+	channelID, _, _, err := prepareBotInteractionRequest(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	var done <-chan struct{}
+	if ctx != nil && ctx.Conn != nil {
+		done = ctx.Conn.done
+	}
+	waitDeadline := time.Now().Add(botInteractionLegacyQuietWindow)
+	for {
+		_, botInfo, err := findBotConnectionForChannel(ctx, channelID)
+		if err != nil || botInfo == nil || botInfo.User == nil || !botInfo.User.IsBot {
+			return nil, errBotInteractionBotUnavailable
+		}
+		if botInteractions.pendingForLane(botInfo.User.ID, channelID, time.Now()) != nil {
+			return nil, errBotInteractionBusy
+		}
+		if err := waitBotInteractionQuiet(botInfo, channelID, waitDeadline, done); err != nil {
+			return nil, err
+		}
+		select {
+		case <-done:
+			return nil, errWSConnectionClosed
+		default:
+		}
+		pending, err := startBotInteraction(ctx, data)
+		if errors.Is(err, errBotInteractionRetryQuiet) {
+			continue
+		}
+		return pending, err
+	}
+}
+
+func waitAndReplyBotInteraction(conn *WsSyncConn, echo string, pending *botInteractionPending) {
+	result, err := botInteractions.wait(pending)
+	if err != nil {
+		_ = conn.EnqueueJSON(&struct {
+			Echo string `json:"echo"`
+			Err  string `json:"err"`
+		}{Echo: echo, Err: err.Error()})
+		return
+	}
+	_ = conn.EnqueueJSON(&struct {
+		Echo string                `json:"echo"`
+		Data *botInteractionResult `json:"data"`
+	}{Echo: echo, Data: result})
+}
+
 func apiBotInteractWs(ctx *ChatContext, msg []byte) {
 	if ctx == nil || ctx.Conn == nil {
 		return
@@ -394,6 +553,21 @@ func apiBotInteractWs(ctx *ChatContext, msg []byte) {
 		}{Echo: echo, Err: "INVALID_PARAMS"})
 		return
 	}
+	if request.Data != nil && request.Data.LegacyQuiet {
+		go func() {
+			pending, err := startBotInteractionWhenQuiet(ctx, request.Data)
+			if err != nil {
+				_ = conn.EnqueueJSON(&struct {
+					Echo string `json:"echo"`
+					Err  string `json:"err"`
+				}{Echo: echo, Err: err.Error()})
+				return
+			}
+			waitAndReplyBotInteraction(conn, echo, pending)
+		}()
+		return
+	}
+
 	pending, err := startBotInteraction(ctx, request.Data)
 	if err != nil {
 		_ = conn.EnqueueJSON(&struct {
@@ -402,21 +576,7 @@ func apiBotInteractWs(ctx *ChatContext, msg []byte) {
 		}{Echo: echo, Err: err.Error()})
 		return
 	}
-
-	go func(conn *WsSyncConn, echo string, pending *botInteractionPending) {
-		result, err := botInteractions.wait(pending)
-		if err != nil {
-			_ = conn.EnqueueJSON(&struct {
-				Echo string `json:"echo"`
-				Err  string `json:"err"`
-			}{Echo: echo, Err: err.Error()})
-			return
-		}
-		_ = conn.EnqueueJSON(&struct {
-			Echo string                `json:"echo"`
-			Data *botInteractionResult `json:"data"`
-		}{Echo: echo, Data: result})
-	}(conn, echo, pending)
+	go waitAndReplyBotInteraction(conn, echo, pending)
 }
 
 func tryCaptureBotInteractionMessageCreate(

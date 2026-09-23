@@ -5573,28 +5573,7 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
-    async botCommandDispatch(channelId: string, command: string, options?: { silent?: boolean; reason?: string }) {
-      const normalizedChannelId = String(channelId || '').trim();
-      const normalizedCommand = String(command || '').trim();
-      if (!normalizedChannelId) {
-        throw new Error('缺少频道 ID');
-      }
-      if (!normalizedCommand) {
-        throw new Error('缺少指令内容');
-      }
-      const resp = await this.sendAPI<{ data?: { ok?: boolean; error?: string } }>('bot.command.dispatch', {
-        channel_id: normalizedChannelId,
-        command: normalizedCommand,
-        silent: options?.silent !== false,
-        reason: String(options?.reason || '').trim(),
-      });
-      if (resp?.data?.ok !== true) {
-        throw new Error(resp?.data?.error || 'BOT 指令转发失败');
-      }
-      return resp.data;
-    },
-
-    async botInteract(channelId: string, command: string, options?: { timeoutMs?: number }) {
+    async botInteract(channelId: string, command: string, options?: { timeoutMs?: number; legacyQuiet?: boolean }) {
       const normalizedChannelId = String(channelId || '').trim();
       const normalizedCommand = String(command || '').trim();
       if (!normalizedChannelId) {
@@ -5606,6 +5585,7 @@ export const useChatStore = defineStore({
       const requestedTimeout = options?.timeoutMs ?? 5_000;
       const finiteTimeout = Number.isFinite(requestedTimeout) ? Math.trunc(requestedTimeout) : 5_000;
       const serverTimeoutMs = Math.min(15_000, Math.max(1_000, finiteTimeout));
+      const quietExtraMs = options?.legacyQuiet === true ? 5_000 : 0;
       const resp = await this.sendAPI<{
         data?: {
           ok: boolean;
@@ -5618,7 +5598,27 @@ export const useChatStore = defineStore({
         channel_id: normalizedChannelId,
         command: normalizedCommand,
         timeout_ms: serverTimeoutMs,
-      } as APIMessage, { timeoutMs: serverTimeoutMs + 2_000 });
+        legacy_quiet: options?.legacyQuiet === true,
+      } as APIMessage, { timeoutMs: serverTimeoutMs + quietExtraMs + 2_000 });
+      return resp.data;
+    },
+
+    async botNicknameSyncDispatch(channelId: string, command: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedCommand = String(command || '').trim();
+      if (!normalizedChannelId) {
+        throw new Error('缺少频道 ID');
+      }
+      if (!normalizedCommand) {
+        throw new Error('缺少指令内容');
+      }
+      const resp = await this.sendAPI<{ data?: { ok?: boolean } }>('bot.nickname_sync.dispatch', {
+        channel_id: normalizedChannelId,
+        command: normalizedCommand,
+      } as APIMessage);
+      if (resp?.data?.ok !== true) {
+        throw new Error('BOT 昵称同步失败');
+      }
       return resp.data;
     },
 

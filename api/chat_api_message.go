@@ -2107,16 +2107,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			// 不包含 Satori 标签的纯文本，保持原样
 			// 前端的 @satorijs/element toString() 会进行必要的 HTML 转义
 		}
-		if shouldSuppressBotNicknameSyncMessageCreate(ctx, channelId, content) {
-			return &protocol.Message{
-				ID:        "suppressed-bot-nickname-sync:" + utils.NewID(),
-				Channel:   &protocol.Channel{ID: channelId},
-				Content:   "",
-				Timestamp: time.Now().Unix(),
-				CreatedAt: time.Now().UnixMilli(),
-				UpdatedAt: time.Now().UnixMilli(),
-			}, nil
-		}
 	}
 
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
@@ -4379,13 +4369,6 @@ func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenD
 		return nil
 	}
 	return pending
-}
-
-func shouldSuppressBotNicknameSyncMessageCreate(ctx *ChatContext, channelId, content string) bool {
-	if ctx == nil || ctx.User == nil || !ctx.User.IsBot {
-		return false
-	}
-	return shouldSuppressBotNicknameSyncContent(ctx.User.ID, channelId, content)
 }
 
 func builtinSealBotSolve(ctx *ChatContext, data *struct {
