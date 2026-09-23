@@ -20,9 +20,13 @@ import (
 )
 
 const (
-	defaultCharacterOverlayTemplate = `{"version":1,"preferredColumns":2,"items":[]}`
-	maxCharacterSnapshotBytes       = 1024 * 1024
-	maxCharacterOverlayBytes        = 64 * 1024
+	defaultCharacterOverlayTemplate     = `{"version":1,"preferredColumns":2,"items":[]}`
+	maxCharacterSnapshotBytes           = 1024 * 1024
+	maxCharacterOverlayBytes            = 64 * 1024
+	cocCharacterBadgeTemplate           = `HP{生命值} SAN{理智} 魔法{魔法值} 幸运{幸运}`
+	shinobigamiCharacterBadgeTemplate   = `HP{生命值} 污损{污秽} {损伤分野}`
+	cocCharacterOverlayTemplate         = `{"version":1,"preferredColumns":2,"items":[{"id":"coc-hp","name":"HP","current":{"path":"生命值"},"min":{"path":"0"},"max":{"path":"生命值上限"},"barColor":"#B73F42","textColor":"#f8fafc"},{"id":"coc-mp","name":"MP","current":{"path":"魔法值"},"max":{"path":"意志/5"},"barColor":"#436C85","textColor":"#f8fafc"},{"id":"coc-san","name":"SAN","current":{"path":"理智"},"max":{"path":"意志"},"barColor":"#DE9960","textColor":"#f8fafc"},{"id":"coc-luck","name":"幸运","current":{"path":"幸运"},"barColor":"#82B29B","textColor":"#f8fafc"}]}`
+	shinobigamiCharacterOverlayTemplate = `{"version":1,"preferredColumns":2,"items":[{"id":"shinobigami-instrument","name":"器術","current":{"path":"1-$忍神.damageSwitches.器术"},"min":{"path":"0"},"max":{"path":"1"},"barColor":"#e26b0a","textColor":"#f8fafc"},{"id":"shinobigami-body","name":"体術","current":{"path":"1-$忍神.damageSwitches.体术"},"max":{"path":"1"},"barColor":"#76933c","textColor":"#f8fafc"},{"id":"shinobigami-ninja","name":"忍術","current":{"path":"1-$忍神.damageSwitches.忍术"},"max":{"path":"1"},"barColor":"#c00000","textColor":"#f8fafc"},{"id":"shinobigami-scheme","name":"謀術","current":{"path":"1-$忍神.damageSwitches.谋术"},"max":{"path":"1"},"barColor":"#948a54","textColor":"#f8fafc"},{"id":"shinobigami-battle","name":"戦術","current":{"path":"1-$忍神.damageSwitches.战术"},"max":{"path":"1"},"barColor":"#16365c","textColor":"#f8fafc"},{"id":"shinobigami-demon","name":"妖術","current":{"path":"1-$忍神.damageSwitches.妖术"},"max":{"path":"1"},"barColor":"#60497a","textColor":"#f8fafc"}]}`
 )
 
 var characterSnapshotColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?([0-9a-fA-F]{2})?$`)
@@ -33,6 +37,13 @@ type CharacterSnapshotWriteResult struct {
 }
 
 type CharacterSnapshotSettingsUpdateInput struct {
+	BadgeTemplate              string
+	TheaterOverlayTemplateMode string
+	TheaterOverlayTemplateJSON string
+}
+
+type characterSnapshotRulePreset struct {
+	Name                       string
 	BadgeTemplate              string
 	TheaterOverlayTemplateJSON string
 }
@@ -359,7 +370,8 @@ func CharacterSnapshotSettingsGet(channelID, actorID string) (*protocol.Characte
 	err := model.GetDB().Where("channel_id = ?", strings.TrimSpace(channelID)).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &protocol.CharacterSnapshotSettingsPayload{
-			ChannelID: strings.TrimSpace(channelID), TheaterOverlayTemplateJSON: defaultCharacterOverlayTemplate, SchemaVersion: 1,
+			ChannelID: strings.TrimSpace(channelID), TheaterOverlayTemplateMode: "inherit",
+			TheaterOverlayTemplateJSON: defaultCharacterOverlayTemplate, SchemaVersion: 1,
 		}, nil
 	}
 	if err != nil {
@@ -381,6 +393,10 @@ func CharacterSnapshotSettingsUpdate(channelID, actorID string, update Character
 	if err != nil {
 		return nil, err
 	}
+	overlayMode, err := normalizeCharacterSnapshotSettingsOverlayMode(update.TheaterOverlayTemplateMode, overlayJSON)
+	if err != nil {
+		return nil, err
+	}
 	var saved model.ChannelCharacterSnapshotSettingsModel
 	var revision int64
 	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
@@ -390,15 +406,16 @@ func CharacterSnapshotSettingsUpdate(channelID, actorID string, update Character
 		}
 		revision = nextCharacterSnapshotRevision(saved.ServerRevision)
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			saved = model.ChannelCharacterSnapshotSettingsModel{ChannelID: channelID, BadgeTemplate: badgeTemplate, TheaterOverlayTemplateJSON: overlayJSON, SchemaVersion: 1, ServerRevision: revision, UpdatedBy: actorID}
+			saved = model.ChannelCharacterSnapshotSettingsModel{ChannelID: channelID, BadgeTemplate: badgeTemplate, TheaterOverlayTemplateMode: overlayMode, TheaterOverlayTemplateJSON: overlayJSON, SchemaVersion: 1, ServerRevision: revision, UpdatedBy: actorID}
 			return tx.Create(&saved).Error
 		}
-		return tx.Model(&saved).Updates(map[string]any{"badge_template": badgeTemplate, "theater_overlay_template_json": overlayJSON, "schema_version": 1, "server_revision": revision, "updated_by": actorID}).Error
+		return tx.Model(&saved).Updates(map[string]any{"badge_template": badgeTemplate, "theater_overlay_template_mode": overlayMode, "theater_overlay_template_json": overlayJSON, "schema_version": 1, "server_revision": revision, "updated_by": actorID}).Error
 	})
 	if err != nil {
 		return nil, err
 	}
 	saved.BadgeTemplate = badgeTemplate
+	saved.TheaterOverlayTemplateMode = overlayMode
 	saved.TheaterOverlayTemplateJSON = overlayJSON
 	saved.SchemaVersion = 1
 	saved.ServerRevision = revision
@@ -480,7 +497,8 @@ func characterSnapshotModelToProtocol(row *model.ChannelCharacterSnapshotModel) 
 }
 
 func characterSnapshotSettingsToProtocol(row *model.ChannelCharacterSnapshotSettingsModel) *protocol.CharacterSnapshotSettingsPayload {
-	return &protocol.CharacterSnapshotSettingsPayload{ChannelID: row.ChannelID, BadgeTemplate: row.BadgeTemplate, TheaterOverlayTemplateJSON: row.TheaterOverlayTemplateJSON, SchemaVersion: row.SchemaVersion, ServerRevision: row.ServerRevision, UpdatedBy: row.UpdatedBy}
+	overlayMode, _ := normalizeCharacterSnapshotSettingsOverlayMode(row.TheaterOverlayTemplateMode, row.TheaterOverlayTemplateJSON)
+	return &protocol.CharacterSnapshotSettingsPayload{ChannelID: row.ChannelID, BadgeTemplate: row.BadgeTemplate, TheaterOverlayTemplateMode: overlayMode, TheaterOverlayTemplateJSON: row.TheaterOverlayTemplateJSON, SchemaVersion: row.SchemaVersion, ServerRevision: row.ServerRevision, UpdatedBy: row.UpdatedBy}
 }
 
 func characterSnapshotPreferenceToProtocol(row *model.ChannelCharacterSnapshotPreferenceModel) *protocol.CharacterSnapshotPreferencePayload {
@@ -488,10 +506,11 @@ func characterSnapshotPreferenceToProtocol(row *model.ChannelCharacterSnapshotPr
 }
 
 func loadCharacterSnapshotTemplates(channelID string) (*model.ChannelCharacterSnapshotSettingsModel, map[string]*model.ChannelCharacterSnapshotPreferenceModel, error) {
-	settings := &model.ChannelCharacterSnapshotSettingsModel{ChannelID: channelID, TheaterOverlayTemplateJSON: defaultCharacterOverlayTemplate, SchemaVersion: 1}
+	settings := &model.ChannelCharacterSnapshotSettingsModel{ChannelID: channelID, TheaterOverlayTemplateMode: "inherit", TheaterOverlayTemplateJSON: defaultCharacterOverlayTemplate, SchemaVersion: 1}
 	if err := model.GetDB().Where("channel_id = ?", channelID).First(settings).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil, err
 	}
+	settings.TheaterOverlayTemplateMode, _ = normalizeCharacterSnapshotSettingsOverlayMode(settings.TheaterOverlayTemplateMode, settings.TheaterOverlayTemplateJSON)
 	var rows []*model.ChannelCharacterSnapshotPreferenceModel
 	if err := model.GetDB().Where("channel_id = ?", channelID).Find(&rows).Error; err != nil {
 		return nil, nil, err
@@ -823,63 +842,95 @@ func applyEffectiveCharacterSnapshotTemplatesWithResolver(item *protocol.Charact
 	if item == nil {
 		return
 	}
-	hasExplicitChannelSettings := settings != nil && strings.TrimSpace(settings.ID) != ""
+	var resolved *CharacterCardTemplateResolution
+	if resolver != nil {
+		resolved = resolver.resolve(item)
+	}
+	sheetType := ""
+	if item.Data.Card != nil {
+		sheetType = item.Data.Card.SheetType
+	}
+	preset := resolveCharacterSnapshotRulePreset(sheetType)
+
 	item.BadgeTemplate = ""
-	if settings != nil {
+	if preference != nil && preference.BadgeTemplateMode == "custom" && strings.TrimSpace(preference.BadgeTemplate) != "" {
+		item.BadgeTemplate = preference.BadgeTemplate
+	} else if settings != nil && strings.TrimSpace(settings.BadgeTemplate) != "" {
 		item.BadgeTemplate = settings.BadgeTemplate
+	} else if preset != nil {
+		item.BadgeTemplate = preset.BadgeTemplate
 	}
 	item.BadgeTemplateDisabled = false
-	item.TheaterOverlayTemplateJSON = ""
-	if settings != nil {
-		item.TheaterOverlayTemplateJSON = settings.TheaterOverlayTemplateJSON
-	}
-	if item.TheaterOverlayTemplateJSON == "" {
-		item.TheaterOverlayTemplateJSON = defaultCharacterOverlayTemplate
-	}
-	allowTheaterOverlayFallback := !hasExplicitChannelSettings
-	if preference != nil {
-		switch preference.BadgeTemplateMode {
-		case "off":
-			item.BadgeTemplate = ""
-			item.BadgeTemplateDisabled = true
-		case "custom":
-			item.BadgeTemplate = preference.BadgeTemplate
+	item.TheaterOverlayTemplateJSON = defaultCharacterOverlayTemplate
+	if preference != nil && preference.TheaterOverlayTemplateMode == "custom" && strings.TrimSpace(preference.TheaterOverlayTemplateJSON) != "" {
+		item.TheaterOverlayTemplateJSON = preference.TheaterOverlayTemplateJSON
+	} else {
+		channelMode := "inherit"
+		if settings != nil {
+			channelMode, _ = normalizeCharacterSnapshotSettingsOverlayMode(settings.TheaterOverlayTemplateMode, settings.TheaterOverlayTemplateJSON)
 		}
-		switch preference.TheaterOverlayTemplateMode {
+		switch channelMode {
+		case "custom":
+			item.TheaterOverlayTemplateJSON = settings.TheaterOverlayTemplateJSON
 		case "off":
 			item.TheaterOverlayTemplateJSON = ""
-			allowTheaterOverlayFallback = false
-		case "custom":
-			item.TheaterOverlayTemplateJSON = preference.TheaterOverlayTemplateJSON
-			allowTheaterOverlayFallback = false
+		default:
+			if preset != nil {
+				item.TheaterOverlayTemplateJSON = preset.TheaterOverlayTemplateJSON
+			}
 		}
 	}
-	applyResolvedCharacterSnapshotTemplate(item, resolver.resolve(item), !item.BadgeTemplateDisabled, allowTheaterOverlayFallback)
+	applyResolvedCharacterSnapshotTemplate(item, resolved)
+	if preference != nil && preference.BadgeTemplateMode == "off" {
+		item.BadgeTemplate = ""
+		item.BadgeTemplateDisabled = true
+	}
+	if preference != nil && preference.TheaterOverlayTemplateMode == "off" {
+		item.TheaterOverlayTemplateJSON = ""
+	}
 }
 
-func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, preference *model.ChannelCharacterSnapshotPreferenceModel, allowTheaterOverlayFallback bool, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
+func applyPlatformCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, preference *model.ChannelCharacterSnapshotPreferenceModel, platformTemplateCache ...map[string]*model.PlatformCharacterCardTemplateModel) {
 	var cache map[string]*model.PlatformCharacterCardTemplateModel
 	if len(platformTemplateCache) > 0 {
 		cache = platformTemplateCache[0]
 	}
 	resolver := newCharacterSnapshotTemplateResolver(cache)
 	resolved := resolver.resolvePlatformRef(item)
-	badgeEnabled := preference == nil || preference.BadgeTemplateMode != "off"
-	applyResolvedCharacterSnapshotTemplate(item, resolved, badgeEnabled, allowTheaterOverlayFallback)
+	applyResolvedCharacterSnapshotTemplate(item, resolved)
+	if preference != nil && preference.BadgeTemplateMode == "off" {
+		item.BadgeTemplate = ""
+		item.BadgeTemplateDisabled = true
+	}
+	if preference != nil && preference.TheaterOverlayTemplateMode == "off" {
+		item.TheaterOverlayTemplateJSON = ""
+	}
 }
 
-func applyResolvedCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, resolved *CharacterCardTemplateResolution, badgeEnabled, allowTheaterOverlayFallback bool) {
+func applyResolvedCharacterSnapshotTemplate(item *protocol.CharacterSnapshotItem, resolved *CharacterCardTemplateResolution) {
 	if item == nil || resolved == nil || !resolved.Exists {
 		return
 	}
 	if resolved.Content != "" && item.Data.Card != nil {
 		item.Data.Card.TemplateText = resolved.Content
 	}
-	if badgeEnabled && resolved.BadgeTemplateOverride != "" {
+	if resolved.BadgeTemplateOverride != "" {
 		item.BadgeTemplate = resolved.BadgeTemplateOverride
 	}
-	if allowTheaterOverlayFallback && resolved.TheaterOverlayTemplateJSON != "" {
+	if resolved.TheaterOverlayTemplateJSON != "" {
 		item.TheaterOverlayTemplateJSON = resolved.TheaterOverlayTemplateJSON
+	}
+}
+
+func resolveCharacterSnapshotRulePreset(sheetType string) *characterSnapshotRulePreset {
+	normalized := strings.ToLower(strings.TrimSpace(sheetType))
+	switch normalized {
+	case "coc", "coc7":
+		return &characterSnapshotRulePreset{Name: "COC", BadgeTemplate: cocCharacterBadgeTemplate, TheaterOverlayTemplateJSON: cocCharacterOverlayTemplate}
+	case "shinobigami", "忍神":
+		return &characterSnapshotRulePreset{Name: "忍神", BadgeTemplate: shinobigamiCharacterBadgeTemplate, TheaterOverlayTemplateJSON: shinobigamiCharacterOverlayTemplate}
+	default:
+		return nil
 	}
 }
 
@@ -909,6 +960,25 @@ func validateCharacterSnapshotMode(mode string) (string, error) {
 	return mode, nil
 }
 
+func normalizeCharacterSnapshotSettingsOverlayMode(mode, overlayJSON string) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "inherit" || mode == "custom" || mode == "off" {
+		return mode, nil
+	}
+	if mode != "" {
+		return "", errors.New("模板模式必须为 inherit、custom 或 off")
+	}
+	overlayJSON = strings.TrimSpace(overlayJSON)
+	if overlayJSON == "" {
+		return "inherit", nil
+	}
+	normalized, err := validateCharacterOverlayTemplate(overlayJSON)
+	if err != nil || normalized == defaultCharacterOverlayTemplate {
+		return "inherit", nil
+	}
+	return "custom", nil
+}
+
 func validateCharacterOverlayTemplate(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -928,6 +998,15 @@ func validateCharacterOverlayTemplate(raw string) (string, error) {
 			Min       map[string]any `json:"min,omitempty"`
 			BarColor  string         `json:"barColor,omitempty"`
 			TextColor string         `json:"textColor,omitempty"`
+			Display   *struct {
+				Mode string `json:"mode"`
+				Icon *struct {
+					Type  string `json:"type"`
+					Value string `json:"value"`
+				} `json:"icon,omitempty"`
+				ValuePerIcon *float64 `json:"valuePerIcon,omitempty"`
+				Subdivisions *float64 `json:"subdivisions,omitempty"`
+			} `json:"display,omitempty"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(raw), &template); err != nil {
@@ -970,6 +1049,26 @@ func validateCharacterOverlayTemplate(raw string) (string, error) {
 		}
 		if item.TextColor != "" && !characterSnapshotColorPattern.MatchString(item.TextColor) {
 			return "", fmt.Errorf("数据项 %s 文本颜色无效", name)
+		}
+		if item.Display != nil {
+			switch item.Display.Mode {
+			case "", "bar":
+			case "icon":
+				if item.Display.Icon == nil || (item.Display.Icon.Type != "text" && item.Display.Icon.Type != "image") {
+					return "", fmt.Errorf("数据项 %s 图标类型无效", name)
+				}
+				if utf8.RuneCountInString(item.Display.Icon.Value) > 2048 {
+					return "", fmt.Errorf("数据项 %s 图标内容过长", name)
+				}
+				if item.Display.ValuePerIcon == nil || math.IsNaN(*item.Display.ValuePerIcon) || math.IsInf(*item.Display.ValuePerIcon, 0) || *item.Display.ValuePerIcon <= 0 {
+					return "", fmt.Errorf("数据项 %s 单图标数值无效", name)
+				}
+				if item.Display.Subdivisions == nil || math.IsNaN(*item.Display.Subdivisions) || math.IsInf(*item.Display.Subdivisions, 0) || *item.Display.Subdivisions < 1 || math.Trunc(*item.Display.Subdivisions) != *item.Display.Subdivisions {
+					return "", fmt.Errorf("数据项 %s 图标细分数量无效", name)
+				}
+			default:
+				return "", fmt.Errorf("数据项 %s 展示模式无效", name)
+			}
 		}
 	}
 	canonical, err := json.Marshal(template)

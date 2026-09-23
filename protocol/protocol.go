@@ -869,6 +869,7 @@ type CharacterSnapshotProbePayload struct {
 type CharacterSnapshotSettingsPayload struct {
 	ChannelID                  string `json:"channelId"`
 	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode"`
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
 	SchemaVersion              int    `json:"schemaVersion"`
 	ServerRevision             int64  `json:"serverRevision"`

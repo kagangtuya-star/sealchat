@@ -5,6 +5,7 @@ type ChannelCharacterSnapshotSettingsModel struct {
 	StringPKBaseModel
 	ChannelID                  string `json:"channelId" gorm:"size:100;not null;uniqueIndex:udx_channel_character_snapshot_settings"`
 	BadgeTemplate              string `json:"badgeTemplate" gorm:"type:text;not null;default:''"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode" gorm:"size:16;not null;default:''"`
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson" gorm:"type:text;not null"`
 	SchemaVersion              int    `json:"schemaVersion" gorm:"not null;default:1"`
 	ServerRevision             int64  `json:"serverRevision" gorm:"not null;default:0;index"`

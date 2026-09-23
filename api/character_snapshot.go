@@ -34,6 +34,7 @@ type characterSnapshotSettingsRequest struct {
 type characterSnapshotSettingsUpdateRequest struct {
 	ChannelID                  string `json:"channelId"`
 	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode"`
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
 }
 
@@ -117,7 +118,10 @@ func apiCharacterSnapshotSettingsUpdate(ctx *ChatContext, data *characterSnapsho
 	if ctx.IsReadOnly() {
 		return nil, errors.New("无权操作")
 	}
-	payload, err := service.CharacterSnapshotSettingsUpdate(data.ChannelID, ctx.User.ID, service.CharacterSnapshotSettingsUpdateInput{BadgeTemplate: data.BadgeTemplate, TheaterOverlayTemplateJSON: data.TheaterOverlayTemplateJSON})
+	payload, err := service.CharacterSnapshotSettingsUpdate(data.ChannelID, ctx.User.ID, service.CharacterSnapshotSettingsUpdateInput{
+		BadgeTemplate: data.BadgeTemplate, TheaterOverlayTemplateMode: data.TheaterOverlayTemplateMode,
+		TheaterOverlayTemplateJSON: data.TheaterOverlayTemplateJSON,
+	})
 	if err != nil {
 		return nil, err
 	}

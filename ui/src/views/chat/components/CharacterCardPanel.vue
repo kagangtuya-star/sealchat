@@ -335,6 +335,7 @@ const autoSyncBotNicknameEnabled = computed({
 
 const badgeTemplate = ref('');
 const channelSnapshotTemplateManageAllowed = ref(false);
+const channelOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const theaterOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
 const theaterOverlaySettingsExpanded = ref(false);
 const personalBadgeTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
@@ -375,15 +376,15 @@ const overlayTemplatePresets = CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS;
 const badgeTemplatePresets = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS;
 
 const overlayTemplateEditorItems = ref<OverlayEditorItem[]>([]);
-const templateModeOptions = [
-  { label: '继承频道', value: 'inherit' },
-  { label: '个人模板', value: 'custom' },
+const personalTemplateModeOptions = [
+  { label: '跟随有效模板', value: 'inherit' },
+  { label: '使用个人兜底', value: 'custom' },
   { label: '关闭', value: 'off' },
 ];
-const badgeTemplateModeOptions = [
-  { label: '跟随默认', value: 'inherit' },
-  { label: '使用个人兜底', value: 'custom' },
-  { label: '关闭徽章', value: 'off' },
+const channelOverlayTemplateModeOptions = [
+  { label: '跟随规则预设', value: 'inherit' },
+  { label: '频道自定义', value: 'custom' },
+  { label: '频道默认关闭', value: 'off' },
 ];
 const overlayDisplayModeOptions = [
   { label: '数据条', value: 'bar' },
@@ -673,6 +674,7 @@ const syncSnapshotTemplateDrafts = async () => {
   const preference = snapshotStore.preferenceByChannel[channelId];
   if (settings) {
     badgeTemplate.value = settings.badgeTemplate || badgeTemplate.value || DEFAULT_CARD_TEMPLATE;
+    channelOverlayTemplateMode.value = settings.theaterOverlayTemplateMode || 'inherit';
     theaterOverlayTemplateJson.value = formatTemplateJson(settings.theaterOverlayTemplateJson);
   }
   if (preference) {
@@ -681,6 +683,29 @@ const syncSnapshotTemplateDrafts = async () => {
     personalOverlayTemplateMode.value = preference.theaterOverlayTemplateMode || 'inherit';
     personalOverlayTemplateJson.value = formatTemplateJson(preference.theaterOverlayTemplateJson);
   }
+};
+
+const getPersistedChannelBadgeTemplate = () => {
+  const channelId = resolvedChannelId.value;
+  return channelId
+    ? String(snapshotStore.settingsByChannel[channelId]?.badgeTemplate || '')
+    : '';
+};
+
+const getPersistedChannelOverlaySettings = () => {
+  const channelId = resolvedChannelId.value;
+  const settings = channelId
+    ? snapshotStore.settingsByChannel[channelId]
+    : undefined;
+
+  return {
+    theaterOverlayTemplateMode: settings?.theaterOverlayTemplateMode || 'inherit',
+    theaterOverlayTemplateJson: settings?.theaterOverlayTemplateJson || JSON.stringify({
+      version: 1,
+      preferredColumns: 2,
+      items: [],
+    }),
+  };
 };
 
 const persistBadgeTemplate = () => {
@@ -706,18 +731,47 @@ const syncBadgeTemplateToWorld = async () => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return;
   const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
-  badgeTemplate.value = normalized;
-  persistBadgeTemplate();
   snapshotTemplateSaving.value = true;
   try {
+    await snapshotStore.initializeChannel(channelId);
+    const persistedSettings = snapshotStore.settingsByChannel[channelId];
+    if (!persistedSettings) {
+      message.error('频道模板设置尚未加载，请稍后重试');
+      return;
+    }
+    if (resolvedChannelId.value !== channelId) {
+      return;
+    }
+    badgeTemplate.value = normalized;
+    persistBadgeTemplate();
     await snapshotStore.updateSettings(channelId, {
       badgeTemplate: normalized,
-      theaterOverlayTemplateJson: theaterOverlayTemplateJson.value,
+      theaterOverlayTemplateMode: persistedSettings.theaterOverlayTemplateMode || 'inherit',
+      theaterOverlayTemplateJson: persistedSettings.theaterOverlayTemplateJson,
     });
     await snapshotStore.refreshChannel(channelId);
     message.success('频道人物卡模板已同步');
   } catch (e: any) {
     message.error(e?.response?.err || e?.message || '模板同步失败');
+  } finally {
+    snapshotTemplateSaving.value = false;
+  }
+};
+
+const saveChannelOverlaySettings = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  snapshotTemplateSaving.value = true;
+  try {
+    await snapshotStore.updateSettings(channelId, {
+      badgeTemplate: getPersistedChannelBadgeTemplate(),
+      theaterOverlayTemplateMode: channelOverlayTemplateMode.value,
+      theaterOverlayTemplateJson: theaterOverlayTemplateJson.value,
+    });
+    await snapshotStore.refreshChannel(channelId);
+    message.success('频道小剧场浮层策略已保存');
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '频道浮层策略保存失败');
   } finally {
     snapshotTemplateSaving.value = false;
   }
@@ -750,13 +804,12 @@ const saveOverlayTemplateEditor = async () => {
   snapshotTemplateSaving.value = true;
   try {
     if (overlayTemplateEditorTarget.value === 'channel') {
-      const normalizedBadgeTemplate = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
-      badgeTemplate.value = normalizedBadgeTemplate;
-      persistBadgeTemplate();
       await snapshotStore.updateSettings(channelId, {
-        badgeTemplate: normalizedBadgeTemplate,
+        badgeTemplate: getPersistedChannelBadgeTemplate(),
+        theaterOverlayTemplateMode: 'custom',
         theaterOverlayTemplateJson: templateJson,
       });
+      channelOverlayTemplateMode.value = 'custom';
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
       message.success('小剧场数据浮层模板已保存');
@@ -793,8 +846,10 @@ const applySnapshotTemplatePreset = async (target: 'channel' | 'personal', prese
       persistBadgeTemplate();
       await snapshotStore.updateSettings(channelId, {
         badgeTemplate: badgeTemplatePreset,
+        theaterOverlayTemplateMode: 'custom',
         theaterOverlayTemplateJson: templateJson,
       });
+      channelOverlayTemplateMode.value = 'custom';
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
     } else {
@@ -1127,59 +1182,147 @@ const currentActiveCardId = computed(() => {
   return cardStore.getActiveCardId(channelId);
 });
 
+type EffectiveSnapshotTemplateSource = 'disabled' | 'card-template' | 'personal' | 'channel' | 'rule-preset' | 'system';
+
+interface EffectiveSnapshotTemplateInfo {
+  source: EffectiveSnapshotTemplateSource;
+  sourceLabel: string;
+  template: string;
+}
+
+const resolveEffectiveSnapshotTemplate = (options: {
+  disabled?: boolean;
+  cardTemplate?: string;
+  cardTemplateName?: string;
+  personalTemplate?: string;
+  channelTemplate?: string;
+  channelOff?: boolean;
+  rulePresetTemplate?: string;
+  rulePresetName?: string;
+  systemTemplate?: string;
+}): EffectiveSnapshotTemplateInfo => {
+  if (options.disabled) return { source: 'disabled', sourceLabel: '已关闭', template: '' };
+  if (options.cardTemplate?.trim()) {
+    return {
+      source: 'card-template',
+      sourceLabel: `人物卡 · ${options.cardTemplateName || '模板'}`,
+      template: options.cardTemplate.trim(),
+    };
+  }
+  if (options.personalTemplate?.trim()) {
+    return { source: 'personal', sourceLabel: '个人兜底', template: options.personalTemplate.trim() };
+  }
+  if (options.channelOff) return { source: 'disabled', sourceLabel: '已关闭', template: '' };
+  if (options.channelTemplate?.trim()) {
+    return { source: 'channel', sourceLabel: '频道默认', template: options.channelTemplate.trim() };
+  }
+  if (options.rulePresetTemplate?.trim()) {
+    return {
+      source: 'rule-preset',
+      sourceLabel: `${options.rulePresetName || ''} 规则预设`.trim(),
+      template: options.rulePresetTemplate.trim(),
+    };
+  }
+  return { source: 'system', sourceLabel: '系统默认', template: options.systemTemplate || '' };
+};
+
+const effectiveCardSnapshotTemplate = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const activeCardId = currentActiveCardId.value;
+  if (!channelId || !activeCardId) return undefined;
+  const binding = templateStore.getBinding(channelId, activeCardId);
+  const templateId = String(binding?.templateId || '').trim();
+  if (binding?.mode !== 'managed' || !templateId) return undefined;
+  return templateStore.templates.find(tpl => tpl.ref === templateId)
+    || templateStore.templates.find(tpl => tpl.id === templateId);
+});
+
+const activeSnapshotRulePreset = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const sheetType = channelId ? cardStore.activeCards[channelId]?.type || '' : '';
+  return getCharacterSnapshotTemplatePreset(sheetType);
+});
+
 const effectiveBadgeTemplateInfo = computed(() => {
   const channelId = resolvedChannelId.value;
-  const preference = channelId
-    ? snapshotStore.preferenceByChannel[channelId]
-    : undefined;
-  const settings = channelId
-    ? snapshotStore.settingsByChannel[channelId]
-    : undefined;
+  const preference = channelId ? snapshotStore.preferenceByChannel[channelId] : undefined;
+  const settings = channelId ? snapshotStore.settingsByChannel[channelId] : undefined;
+  const cardTemplate = effectiveCardSnapshotTemplate.value;
+  const preset = activeSnapshotRulePreset.value;
+  const cardBadgeTemplate = cardTemplate?.origin === 'platform'
+    ? cardTemplate.badgeTemplateOverride
+    : cardTemplate?.defaultBadgeTemplate;
 
-  if (preference?.badgeTemplateMode === 'off') {
+  return resolveEffectiveSnapshotTemplate({
+    disabled: preference?.badgeTemplateMode === 'off',
+    cardTemplate: cardBadgeTemplate,
+    cardTemplateName: cardTemplate?.name,
+    personalTemplate: preference?.badgeTemplateMode === 'custom' ? preference.badgeTemplate : '',
+    channelTemplate: settings?.badgeTemplate,
+    rulePresetTemplate: preset ? badgeTemplatePresets[preset] : '',
+    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+  });
+});
+
+const effectiveOverlayTemplateInfo = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const preference = channelId ? snapshotStore.preferenceByChannel[channelId] : undefined;
+  const settings = channelId ? snapshotStore.settingsByChannel[channelId] : undefined;
+  const cardTemplate = effectiveCardSnapshotTemplate.value;
+  const preset = activeSnapshotRulePreset.value;
+
+  return resolveEffectiveSnapshotTemplate({
+    disabled: preference?.theaterOverlayTemplateMode === 'off',
+    cardTemplate: cardTemplate?.theaterOverlayTemplateJson,
+    cardTemplateName: cardTemplate?.name,
+    personalTemplate: preference?.theaterOverlayTemplateMode === 'custom'
+      ? preference.theaterOverlayTemplateJson
+      : '',
+    channelTemplate: settings?.theaterOverlayTemplateMode === 'custom'
+      ? settings.theaterOverlayTemplateJson
+      : '',
+    channelOff: settings?.theaterOverlayTemplateMode === 'off',
+    rulePresetTemplate: preset ? JSON.stringify(overlayTemplatePresets[preset], null, 2) : '',
+    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+    systemTemplate: JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2),
+  });
+});
+
+interface EffectiveOverlayTemplatePreviewItem {
+  name: string;
+  displayMode: OverlayEditorItem['displayMode'];
+  current: number | null;
+  max: number | null;
+  currentResolved: boolean;
+}
+
+interface EffectiveOverlayTemplatePreview {
+  preferredColumns: number;
+  itemCount: number;
+  items: EffectiveOverlayTemplatePreviewItem[];
+}
+
+const effectiveOverlayTemplatePreview = computed<EffectiveOverlayTemplatePreview | null>(() => {
+  if (effectiveOverlayTemplateInfo.value.source === 'disabled') return null;
+  const parsed = parseOverlayTemplateForEditor(effectiveOverlayTemplateInfo.value.template);
+  if (!parsed) return null;
+
+  const items = parsed.items.map((item): EffectiveOverlayTemplatePreviewItem => {
+    const current = resolveOverlayEditorSource(item.current);
+    const max = item.max.value.trim() ? resolveOverlayEditorSource(item.max) : null;
     return {
-      source: 'disabled' as const,
-      sourceLabel: '已关闭',
-      template: '',
+      name: item.name.trim() || '未命名',
+      displayMode: item.displayMode,
+      current,
+      max,
+      currentResolved: current !== null,
     };
-  }
-
-  const activeCardId = currentActiveCardId.value;
-  if (channelId && activeCardId) {
-    const binding = templateStore.getBinding(channelId, activeCardId);
-    const templateId = String(binding?.templateId || '').trim();
-    if (binding?.mode === 'managed' && templateId) {
-      const managedTemplate = templateStore.templates.find(tpl => tpl.ref === templateId)
-        || templateStore.templates.find(tpl => tpl.id === templateId);
-      const managedBadgeTemplate = String(
-        managedTemplate?.badgeTemplateOverride
-          || managedTemplate?.defaultBadgeTemplate
-          || '',
-      ).trim();
-      if (managedTemplate && managedBadgeTemplate) {
-        return {
-          source: 'card-template' as const,
-          sourceLabel: `人物卡 · ${managedTemplate.name}`,
-          template: managedBadgeTemplate,
-          templateName: managedTemplate.name,
-        };
-      }
-    }
-  }
-
-  const personalTemplate = String(preference?.badgeTemplate || '').trim();
-  if (preference?.badgeTemplateMode === 'custom' && personalTemplate) {
-    return {
-      source: 'personal' as const,
-      sourceLabel: '个人兜底',
-      template: personalTemplate,
-    };
-  }
+  });
 
   return {
-    source: 'channel' as const,
-    sourceLabel: '频道模板',
-    template: String(settings?.badgeTemplate || '').trim(),
+    preferredColumns: parsed.preferredColumns,
+    itemCount: items.length,
+    items,
   };
 });
 
@@ -1614,16 +1757,6 @@ const handleCreateCard = async () => {
       throw new Error('人物卡创建失败');
     }
     const setupTasks: Array<{ label: string; task: Promise<unknown> }> = [];
-    const snapshotTemplatePreset = getCharacterSnapshotTemplatePreset(sheetType);
-    if (snapshotTemplatePreset) {
-      setupTasks.push({
-        label: '默认快照模板启用',
-        task: applySnapshotTemplatePreset(
-          canSyncBadgeTemplate.value ? 'channel' : 'personal',
-          snapshotTemplatePreset,
-        ),
-      });
-    }
     if (newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE) {
       setupTasks.push({
         label: '模板应用',
@@ -2242,7 +2375,7 @@ defineExpose({ openCardById });
                 个人徽章策略已关闭，当前角色不显示徽章。
               </div>
               <div class="effective-badge-template__priority">
-                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道模板
+                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道默认 &gt; 规则预设 &gt; 系统默认
               </div>
             </div>
             <div class="settings-row settings-row--template">
@@ -2281,7 +2414,7 @@ defineExpose({ openCardById });
                 <p class="settings-desc">仅影响自己的快照；人物卡模板未提供默认徽章时，才使用个人兜底。</p>
               </div>
               <div class="settings-template-input">
-                <n-select v-model:value="personalBadgeTemplateMode" size="small" :options="badgeTemplateModeOptions" />
+                <n-select v-model:value="personalBadgeTemplateMode" size="small" :options="personalTemplateModeOptions" />
                 <n-input
                   v-if="personalBadgeTemplateMode === 'custom'"
                   v-model:value="personalBadgeTemplate"
@@ -2312,16 +2445,88 @@ defineExpose({ openCardById });
         </button>
         <n-collapse-transition :show="theaterOverlaySettingsExpanded">
           <div class="character-card-settings__body">
-            <div class="settings-row">
-              <p class="settings-title">小剧场数据浮层模板</p>
-              <n-button
-                size="small"
-                :disabled="!canSyncBadgeTemplate || snapshotTemplateSaving"
-                @click="openOverlayTemplateEditor('channel')"
+            <div class="effective-badge-template">
+              <div class="effective-badge-template__header">
+                <span class="settings-title">实际使用的小剧场浮层模板</span>
+                <n-tag
+                  size="small"
+                  :bordered="false"
+                  :type="effectiveOverlayTemplateInfo.source === 'card-template'
+                    ? 'success'
+                    : effectiveOverlayTemplateInfo.source === 'personal'
+                      ? 'info'
+                      : effectiveOverlayTemplateInfo.source === 'disabled'
+                        ? 'warning'
+                        : 'default'"
+                >
+                  {{ effectiveOverlayTemplateInfo.sourceLabel }}
+                </n-tag>
+              </div>
+              <div
+                v-if="effectiveOverlayTemplateInfo.source !== 'disabled'"
+                class="effective-badge-template__value"
               >
-                <template #icon><n-icon :component="Edit" /></template>
-                编辑
-              </n-button>
+                <div v-if="!effectiveOverlayTemplatePreview" class="effective-overlay-template-preview__empty">
+                  模板预览不可用
+                </div>
+                <template v-else>
+                  <div v-if="effectiveOverlayTemplatePreview.itemCount" class="effective-overlay-template-preview__summary">
+                    {{ effectiveOverlayTemplatePreview.itemCount }} 个状态 · {{ effectiveOverlayTemplatePreview.preferredColumns }} 列
+                  </div>
+                  <div v-if="effectiveOverlayTemplatePreview.items.length" class="effective-overlay-template-preview__items">
+                    <span
+                      v-for="(item, index) in effectiveOverlayTemplatePreview.items"
+                      :key="`${item.name}-${index}`"
+                      class="effective-overlay-template-preview__item"
+                    >
+                      <span class="effective-overlay-template-preview__name">{{ item.name }}</span>
+                      <span v-if="item.displayMode === 'icon'" class="effective-overlay-template-preview__mode">图标</span>
+                      <span class="effective-overlay-template-preview__value">
+                        {{ !item.currentResolved
+                          ? '未找到'
+                          : item.max === null
+                            ? item.current
+                            : `${item.current}/${item.max}` }}
+                      </span>
+                    </span>
+                  </div>
+                  <div v-else class="effective-overlay-template-preview__empty">暂无状态项</div>
+                </template>
+              </div>
+              <div v-else class="effective-badge-template__value">当前角色不显示小剧场数据浮层。</div>
+              <div class="effective-badge-template__priority">
+                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道默认 &gt; 规则预设 &gt; 系统默认
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
+              <div>
+                <p class="settings-title">频道小剧场浮层策略</p>
+                <p class="settings-desc">作为人物卡模板和个人兜底之后的频道默认；跟随规则预设时不提供频道覆盖。</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-select
+                  v-model:value="channelOverlayTemplateMode"
+                  size="small"
+                  :disabled="!canSyncBadgeTemplate"
+                  :options="channelOverlayTemplateModeOptions"
+                />
+                <n-button
+                  v-if="channelOverlayTemplateMode === 'custom'"
+                  size="small"
+                  :disabled="!canSyncBadgeTemplate || snapshotTemplateSaving"
+                  @click="openOverlayTemplateEditor('channel')"
+                >
+                  <template #icon><n-icon :component="Edit" /></template>
+                  编辑
+                </n-button>
+                <n-button
+                  size="small"
+                  type="primary"
+                  :disabled="!canSyncBadgeTemplate"
+                  :loading="snapshotTemplateSaving"
+                  @click="saveChannelOverlaySettings"
+                >保存</n-button>
+              </div>
             </div>
             <div class="settings-row settings-row--template">
               <p class="settings-title">启用默认模板</p>
@@ -2333,7 +2538,7 @@ defineExpose({ openCardById });
             <div class="settings-row settings-row--template">
               <p class="settings-title">个人小剧场浮层模板</p>
               <div class="settings-template-input settings-template-input--inline">
-                <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="templateModeOptions" />
+                <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="personalTemplateModeOptions" />
                 <n-button
                   v-if="personalOverlayTemplateMode === 'custom'"
                   size="small"
@@ -3197,6 +3402,49 @@ defineExpose({ openCardById });
   opacity: 0.75;
 }
 
+.effective-overlay-template-preview__summary {
+  margin-bottom: 0.35rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.74rem;
+}
+
+.effective-overlay-template-preview__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.effective-overlay-template-preview__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28rem;
+  max-width: 100%;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--sc-border-color);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  line-height: 1.2;
+}
+
+.effective-overlay-template-preview__name {
+  color: var(--sc-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.effective-overlay-template-preview__mode {
+  color: var(--sc-text-tertiary);
+  font-size: 0.64rem;
+}
+
+.effective-overlay-template-preview__value {
+  color: var(--sc-text-secondary);
+  white-space: nowrap;
+}
+
+.effective-overlay-template-preview__empty {
+  color: var(--sc-text-secondary);
+}
+
 .overlay-template-presets {
   display: flex;
   gap: 0.4rem;
@@ -3241,6 +3489,7 @@ defineExpose({ openCardById });
 .overlay-template-editor__item--dragging {
   background: rgba(59, 130, 246, 0.08);
 }
+
 .overlay-template-editor__additional-row {
   display: flex;
   align-items: end;
@@ -3268,7 +3517,6 @@ defineExpose({ openCardById });
   grid-template-columns: 100px minmax(130px, 1fr);
   gap: 0.4rem;
 }
-
 
 .overlay-template-editor__drag-handle {
   display: inline-flex;

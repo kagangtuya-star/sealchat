@@ -23,11 +23,6 @@ import {
   resolveBotNicknameSyncName,
   shouldEnableBotNicknameSyncForChannel,
 } from '@/utils/botNicknameSync';
-import {
-  CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
-  CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
-  getCharacterSnapshotTemplatePreset,
-} from '@/utils/characterSnapshotTemplatePresets';
 
 const extractBotInteractionErrorCode = (error: unknown) => {
   if (!error || typeof error !== 'object') {
@@ -1272,7 +1267,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
-        await applySnapshotTemplatePresetForCard(channelId, getActiveCardId(channelId));
         return resp.data;
       }
     } catch (e) {
@@ -1412,40 +1406,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Get card by ID from list
   const getCardById = (cardId: string) => {
     return cardList.value.find(c => c.id === cardId);
-  };
-
-  const applySnapshotTemplatePresetForCard = async (channelId: string, cardId: string) => {
-    const card = getCardById(cardId);
-    const preset = getCharacterSnapshotTemplatePreset(
-      card?.sheetType || activeCards.value[channelId]?.type || '',
-    );
-    if (!channelId || !preset) return;
-    try {
-      const badgeTemplate = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset];
-      const theaterOverlayTemplateJson = JSON.stringify(
-        CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
-        null,
-        2,
-      );
-      const current = snapshotStore.preferenceByChannel[channelId];
-      if (
-        current?.badgeTemplateMode === 'custom'
-        && current.badgeTemplate === badgeTemplate
-        && current.theaterOverlayTemplateMode === 'custom'
-        && current.theaterOverlayTemplateJson === theaterOverlayTemplateJson
-      ) {
-        return;
-      }
-      await snapshotStore.updatePreference(channelId, {
-        badgeTemplateMode: 'custom',
-        badgeTemplate,
-        theaterOverlayTemplateMode: 'custom',
-        theaterOverlayTemplateJson,
-      });
-      await snapshotStore.syncLocalSnapshot(channelId, true);
-    } catch (error) {
-      console.warn('[CharacterCard] Failed to apply snapshot template preset', { channelId, cardId, error });
-    }
   };
 
   // Get card by name from list

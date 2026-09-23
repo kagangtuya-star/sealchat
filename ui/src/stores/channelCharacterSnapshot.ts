@@ -74,6 +74,7 @@ export interface ChannelCharacterSnapshotItem {
 export interface ChannelCharacterSnapshotSettings {
   channelId: string;
   badgeTemplate: string;
+  theaterOverlayTemplateMode: CharacterSnapshotTemplateMode;
   theaterOverlayTemplateJson: string;
   schemaVersion: number;
   serverRevision: number;
@@ -403,7 +404,7 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
     }, Math.max(0, delay)));
   };
 
-  const updateSettings = async (channelId: string, update: Pick<ChannelCharacterSnapshotSettings, 'badgeTemplate' | 'theaterOverlayTemplateJson'>) => {
+  const updateSettings = async (channelId: string, update: Pick<ChannelCharacterSnapshotSettings, 'badgeTemplate' | 'theaterOverlayTemplateMode' | 'theaterOverlayTemplateJson'>) => {
     const response = await chatStore.sendAPI<{ data?: ChannelCharacterSnapshotSettings }>('character.snapshot.settings.update', { channelId, ...update });
     if (response?.data?.channelId) settingsByChannel.value = { ...settingsByChannel.value, [channelId]: response.data };
     return response?.data;
@@ -417,22 +418,6 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
 
   const getChannelItems = (channelId: string) => Object.values(snapshotsByChannel.value[channelId] || {});
   const getSnapshot = (channelId: string, identityId: string) => snapshotsByChannel.value[channelId]?.[identityId] || null;
-
-  const getEffectiveBadgeTemplate = (channelId: string) => {
-    const preference = preferenceByChannel.value[channelId];
-    if (preference?.badgeTemplateMode === 'off') return '';
-    if (preference?.badgeTemplateMode === 'custom') return String(preference.badgeTemplate || '').trim();
-    return String(settingsByChannel.value[channelId]?.badgeTemplate || '').trim();
-  };
-
-  const getEffectiveOverlayTemplate = (channelId: string) => {
-    const preference = preferenceByChannel.value[channelId];
-    if (preference?.theaterOverlayTemplateMode === 'off') return null;
-    const raw = preference?.theaterOverlayTemplateMode === 'custom'
-      ? preference.theaterOverlayTemplateJson
-      : settingsByChannel.value[channelId]?.theaterOverlayTemplateJson;
-    return parseOverlayTemplate(raw);
-  };
 
   const getOverlayTemplateForSnapshot = (item: ChannelCharacterSnapshotItem) => {
     if (!String(item.theaterOverlayTemplateJson || '').trim()) return null;
@@ -458,8 +443,6 @@ export const useChannelCharacterSnapshotStore = defineStore('channelCharacterSna
     updatePreference,
     getChannelItems,
     getSnapshot,
-    getEffectiveBadgeTemplate,
-    getEffectiveOverlayTemplate,
     getOverlayTemplateForSnapshot,
   };
 });
