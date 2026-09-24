@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
+import type { SatoriMessage } from '@/types';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { computed, nextTick } from 'vue';
 import { NIcon, useMessage } from 'naive-ui';
@@ -14,6 +15,15 @@ const message = useMessage()
 const { t } = useI18n();
 const user = useUserStore()
 const display = useDisplayStore()
+interface CharacterCardOpenPayload {
+  item: SatoriMessage | null;
+  clientX: number;
+  clientY: number;
+}
+
+const emit = defineEmits<{
+  (event: 'open-character-card', payload: CharacterCardOpenPayload): void;
+}>();
 
 const avatarMenuClass = computed(() => (display.palette === 'night' ? 'avatar-menu--night' : 'avatar-menu--day'))
 const avatarMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
@@ -143,9 +153,14 @@ const openIdentitySettings = () => {
   chatEvent.emit('channel-identity-open');
 };
 
-const clickCharacterCard = () => {
+const clickCharacterCard = (event: MouseEvent) => {
+  const item = chat.avatarMenu.item;
   chat.avatarMenu.show = false;
-  message.info('人物卡入口暂未接入');
+  emit('open-character-card', {
+    item,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
 };
 
 const menuAvatar = computed(() => {

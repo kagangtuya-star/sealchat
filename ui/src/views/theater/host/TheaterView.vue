@@ -1255,12 +1255,25 @@ const cancelMobilePortraitUnlock = () => {
   mobilePortraitUnlockFrame = null
 }
 
+const postTheaterLayoutState = () => {
+  iframeRef.value?.contentWindow?.postMessage({
+    type: 'sealchat.theater.layout-state',
+    sessionId,
+    pipActive: theaterPipActive.value,
+  }, window.location.origin)
+}
+
 const handleChatFrameLoad = () => {
   cancelMobilePortraitUnlock()
   chatComposerFocused.value = false
   mobilePortraitInputLock.value = false
   theaterBridge?.handleChatFrameLoad()
+  postTheaterLayoutState()
 }
+
+watch(theaterPipActive, () => {
+  postTheaterLayoutState()
+})
 
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return

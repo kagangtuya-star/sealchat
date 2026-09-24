@@ -5,7 +5,7 @@ import MessageForwardDialog from './components/MessageForwardDialog.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type InlineChatSplitOpenPayload, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
-import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
+import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, SatoriMessage, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, MessagePlus, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
 import { NIcon, c } from 'naive-ui';
@@ -187,6 +187,16 @@ import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { buildMessageCursor } from '@/utils/messageCursor';
+import {
+  buildInternalSurfaceResourceKey,
+  generateInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+  type InternalSurfaceLinkParams,
+} from '@/utils/internalSurfaceLink';
+import {
+  isTheaterChatFrame,
+  requestTheaterFloatingOpen,
+} from '@/utils/theaterFloatingBridge';
 import { buildRoleSnapshot } from '@/bridge/sealchatBridgeSerializer';
 import type { BridgeRoleSnapshot } from '@/bridge/sealchatBridgeProtocol';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
@@ -269,6 +279,31 @@ const isEditingCurrentChannel = computed(() => {
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
+const theaterPipActiveFromHost = ref(false);
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'message', (event: MessageEvent) => {
+    if (!isTheaterEmbedMode.value) return;
+    if (event.origin !== window.location.origin || event.source !== window.parent) return;
+
+    const data = event.data as {
+      type?: string;
+      sessionId?: string;
+      pipActive?: boolean;
+    } | null;
+
+    if (data?.type !== 'sealchat.theater.layout-state') return;
+
+    const expectedSessionId =
+      typeof route.query.sessionId === 'string'
+        ? route.query.sessionId
+        : '';
+
+    if (expectedSessionId && data.sessionId !== expectedSessionId) return;
+    if (typeof data.pipActive !== 'boolean') return;
+
+    theaterPipActiveFromHost.value = data.pipActive;
+  });
+}
 const isToolbarEmbedMode = computed(
   () => isEmbedMode.value && route.query.toolbar === '1',
 );
@@ -925,17 +960,72 @@ const selectCharacterVariantForTheater = async (payload: TheaterCharacterVariant
   return { ok: true as const };
 };
 
-const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+const resolveOwnCharacterCardId = async (channelId: string, identityId: string) => {
+  const normalizedIdentityId = String(identityId || '').trim();
+  if (!channelId || !normalizedIdentityId) {
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+
+  let identities: ChannelIdentity[];
+  try {
+    identities = await chat.loadChannelIdentities(channelId, false);
+  } catch (error) {
+    console.warn('[character-card] failed to resolve identity ownership', error);
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+  const identity = identities.find(item => item.id === normalizedIdentityId);
+  const isOwn = !!identity && String(identity.userId || '') === String(user.info?.id || '');
+  if (!isOwn) {
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+
+  const boundCardId = String(
+    characterCardStore.getBoundCardId(normalizedIdentityId, identity.sharedIdentityId)
+    || (
+      chat.getActiveIdentityId(channelId) === normalizedIdentityId
+        ? characterCardStore.getActiveCardId(channelId)
+        : ''
+    )
+    || '',
+  ).trim();
+
+  return {
+    isOwn: true,
+    cardId: boundCardId,
+  };
+};
+
+const openCharacterCardByIdentity = async (identityId: string) => {
   const channelId = String(chat.curChannel?.id || '').trim();
-  const identityId = String(payload.identityId || '').trim();
-  if (!channelId || !identityId) {
+  const normalizedIdentityId = String(identityId || '').trim();
+  if (!channelId || !normalizedIdentityId) {
     return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '人物卡参数无效' } };
   }
+
+  const ownCard = await resolveOwnCharacterCardId(channelId, normalizedIdentityId);
+  if (ownCard.cardId) {
+    try {
+      const opened = await characterCardPanelRef.value?.openCardById(ownCard.cardId, 'view');
+      if (opened) return { ok: true as const };
+    } catch (error) {
+      console.warn('[theater-bridge] failed to open bound character card', error);
+    }
+  }
+
   await channelCharacterSnapshotStore.initializeChannel(channelId);
-  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, normalizedIdentityId);
   if (!snapshot) {
     await channelCharacterSnapshotStore.refreshChannel(channelId);
-    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, normalizedIdentityId);
   }
   const card = snapshot?.data.card;
   if (!snapshot || !card) {
@@ -955,7 +1045,7 @@ const openCharacterCardForTheater = async (payload: { identityId: string }) => {
     message.warning('未能定位当前人物卡，已打开只读快照');
   }
   const windowId = characterSheetStore.openSheet({
-    id: `snapshot:${channelId}:${identityId}`,
+    id: `snapshot:${channelId}:${normalizedIdentityId}`,
     name: card.name,
     sheetType: card.sheetType,
     attrs: card.attrs,
@@ -975,6 +1065,10 @@ const openCharacterCardForTheater = async (payload: { identityId: string }) => {
   });
   characterSheetStore.setMode(windowId, 'view');
   return { ok: true as const };
+};
+
+const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+  return openCharacterCardByIdentity(payload.identityId);
 };
 
 defineExpose({
@@ -11313,6 +11407,79 @@ const resolveMessageIdentityId = (msg?: any): string | null => {
   return null;
 };
 
+interface AvatarCharacterCardOpenPayload {
+  item: SatoriMessage | null;
+  clientX: number;
+  clientY: number;
+}
+
+const handleAvatarCharacterCardOpen = async (payload: AvatarCharacterCardOpenPayload) => {
+  const identityId = resolveMessageIdentityId(payload.item);
+  if (!identityId) {
+    message.warning('无法识别该角色');
+    return;
+  }
+
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (isTheaterChatFrame() && !theaterPipActiveFromHost.value) {
+    const ownCard = await resolveOwnCharacterCardId(channelId, identityId);
+    const isOwn = ownCard.isOwn;
+    let resourceId = ownCard.cardId;
+    let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+
+    if (!resourceId) {
+      await channelCharacterSnapshotStore.initializeChannel(channelId);
+      snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+      if (!snapshot) {
+        await channelCharacterSnapshotStore.refreshChannel(channelId);
+        snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+      }
+      if (!snapshot?.data.card) {
+        message.warning('该角色没有可查看的人物卡快照');
+        return;
+      }
+      const sourceCardId = String(snapshot.sourceCardId || '').trim();
+      if (isOwn && String(snapshot.userId || '') === String(user.info?.id || '') && sourceCardId) {
+        resourceId = sourceCardId;
+      } else {
+        resourceId = `snapshot:${channelId}:${identityId}`;
+      }
+    }
+
+    const rawAvatarUrl = String(payload.item?.member?.avatar || payload.item?.user?.avatar || '').trim();
+    const avatarUrl = rawAvatarUrl ? (resolveAttachmentUrl(rawAvatarUrl) || rawAvatarUrl) : '';
+    const params: InternalSurfaceLinkParams = {
+      type: 'character',
+      id: resourceId,
+      worldId,
+      channelId,
+    };
+    const resource = {
+      key: buildInternalSurfaceResourceKey(params),
+      url: generateInternalSurfaceLink(params, {
+        base: resolveInternalSurfaceLinkBase(utils.config),
+      }),
+      title: snapshot?.data.card?.name
+        || characterCardStore.getCardById(resourceId)?.name
+        || '人物卡',
+      presentation: avatarUrl ? { avatarUrl } : undefined,
+    };
+    const accepted = await requestTheaterFloatingOpen(resource, {
+      clientX: payload.clientX,
+      clientY: payload.clientY,
+    });
+    if (accepted) return;
+    message.warning('小剧场人物卡浮窗打开失败');
+    return;
+  }
+
+  const result = await openCharacterCardByIdentity(identityId);
+  if (!result.ok) {
+    message.warning(result.error.message);
+  }
+};
+
 type MessageIdentitySnapshot = {
   identityId: string | null;
   displayName: string;
@@ -17263,7 +17430,7 @@ onBeforeUnmount(() => {
   </div>
 
   <RightClickMenu />
-  <AvatarClickMenu />
+  <AvatarClickMenu @open-character-card="handleAvatarCharacterCardOpen" />
   <MessageImageEditor
     :show="richInlineImageEditorVisible"
     :file="richInlineImageEditorFile"
