@@ -3,7 +3,8 @@ import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { computed, nextTick } from 'vue';
-import { useMessage } from 'naive-ui';
+import { NIcon, useMessage } from 'naive-ui';
+import { Edit, Id, Message2, MessageCircle2, UserPlus } from '@vicons/tabler';
 import { useUserStore } from '@/stores/user';
 import { useI18n } from 'vue-i18n';
 import { useDisplayStore } from '@/stores/display';
@@ -23,10 +24,18 @@ const avatarMenuOptions = computed<MenuOptions>(() => ({
   adjustPosition: { xDirection: 'right', yDirection: 'top' },
 }))
 
+const isSelf = computed(() => {
+  const data = chat.avatarMenu.item;
+  return !!data?.user?.id && data.user.id === user.info.id;
+});
+
+const showUserActions = computed(() => !!chat.avatarMenu.item?.user?.id && !isSelf.value);
+
 const clickTalkTo = async () => {
   const data = chat.avatarMenu.item;
   if (data && data.user) {
-    if (data.user.id === user.info.id) return;
+    if (isSelf.value) return;
+    chat.avatarMenu.show = false;
     const ch = await chat.channelPrivateCreate(data.user.id);
     if (ch?.channel?.id) {
       chat.sidebarTab = 'privateChats';
@@ -44,7 +53,7 @@ const clickWhisper = () => {
     message.warning(t('whisper.userUnknown'));
     return;
   }
-  if (data.user.id === user.info.id) {
+  if (isSelf.value) {
     message.warning(t('whisper.selfNotAllowed'));
     return;
   }
@@ -64,10 +73,11 @@ const clickWhisper = () => {
 const clickFriendAdd = async () => {
   const data = chat.avatarMenu.item;
   if (data && data.user) {
-    if (data.user.id === user.info.id) {
+    if (isSelf.value) {
       message.warning('不能添加自己为好友');
       return;
     }
+    chat.avatarMenu.show = false;
     try {
       const ret = await chat.friendRequestCreate(user.info.id, data.user.id, '');
       if (ret.status === 0) {
@@ -91,7 +101,7 @@ const showFriendAdd = computed(() => {
     // 2. 点击的用户已经是好友
     if (!data.user?.id) return false;
 
-    if (data.user.id === user.info.id) {
+    if (isSelf.value) {
       return false;
     }
 
@@ -107,15 +117,6 @@ const showFriendAdd = computed(() => {
   }
   return false;
 });
-
-const showWhisper = computed(() => {
-  const data = chat.avatarMenu.item;
-  if (!data?.user?.id) {
-    return false;
-  }
-  return data.user.id !== user.info.id;
-});
-
 
 const nick = computed(() => {
   const item = chat.avatarMenu.item;
@@ -134,12 +135,17 @@ const showIdentitySettings = computed(() => {
   if (!data?.user?.id) {
     return false;
   }
-  return data.user.id === user.info.id;
+  return isSelf.value;
 });
 
 const openIdentitySettings = () => {
   chat.avatarMenu.show = false;
   chatEvent.emit('channel-identity-open');
+};
+
+const clickCharacterCard = () => {
+  chat.avatarMenu.show = false;
+  message.info('人物卡入口暂未接入');
 };
 
 const menuAvatar = computed(() => {
@@ -167,10 +173,28 @@ const menuAvatar = computed(() => {
     </div>
 
     <context-menu-sperator />
-    <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
-    <context-menu-item label="私聊" @click="clickTalkTo" />
-    <context-menu-item v-if="showFriendAdd" label="加好友" @click="clickFriendAdd" />
-    <context-menu-item v-if="showIdentitySettings" label="更改频道内资料" @click="openIdentitySettings" />
+    <div class="avatar-menu-actions">
+      <button v-if="showUserActions" type="button" class="avatar-menu-action" @click="clickWhisper">
+        <NIcon :size="15" class="avatar-menu-action__icon"><MessageCircle2 /></NIcon>
+        <span>{{ t('inputBox.whisperButton') }}</span>
+      </button>
+      <button v-if="showUserActions" type="button" class="avatar-menu-action" @click="clickTalkTo">
+        <NIcon :size="15" class="avatar-menu-action__icon"><Message2 /></NIcon>
+        <span>私聊</span>
+      </button>
+      <button v-if="showFriendAdd" type="button" class="avatar-menu-action" @click="clickFriendAdd">
+        <NIcon :size="15" class="avatar-menu-action__icon"><UserPlus /></NIcon>
+        <span>添加好友</span>
+      </button>
+      <button type="button" class="avatar-menu-action" @click="clickCharacterCard">
+        <NIcon :size="15" class="avatar-menu-action__icon"><Id /></NIcon>
+        <span>人物卡</span>
+      </button>
+      <button v-if="showIdentitySettings" type="button" class="avatar-menu-action" @click="openIdentitySettings">
+        <NIcon :size="15" class="avatar-menu-action__icon"><Edit /></NIcon>
+        <span>修改角色</span>
+      </button>
+    </div>
   </context-menu>
 </template>
 
@@ -207,5 +231,56 @@ const menuAvatar = computed(() => {
 :deep(.context-menu.avatar-menu--day .context-menu-item:hover),
 :deep(.mx-context-menu.avatar-menu--day .mx-context-menu-item:hover) {
   background: rgba(15, 23, 42, 0.06);
+}
+
+.avatar-menu-actions {
+  display: flex;
+  gap: 0.2rem;
+  min-width: 14rem;
+  padding: 0.2rem 0.65rem 0.25rem;
+}
+
+.avatar-menu-action {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 0.08rem;
+  padding: 0.22rem 0.3rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.1;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.avatar-menu-action__icon {
+  flex-shrink: 0;
+}
+
+:deep(.context-menu.avatar-menu--night .avatar-menu-action:hover),
+:deep(.mx-context-menu.avatar-menu--night .avatar-menu-action:hover) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.context-menu.avatar-menu--night .avatar-menu-action:active),
+:deep(.mx-context-menu.avatar-menu--night .avatar-menu-action:active) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:deep(.context-menu.avatar-menu--day .avatar-menu-action:hover),
+:deep(.mx-context-menu.avatar-menu--day .avatar-menu-action:hover) {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+:deep(.context-menu.avatar-menu--day .avatar-menu-action:active),
+:deep(.mx-context-menu.avatar-menu--day .avatar-menu-action:active) {
+  background: rgba(15, 23, 42, 0.1);
 }
 </style>
