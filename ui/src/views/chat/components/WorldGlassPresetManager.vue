@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { NButton, NDropdown, NInput, NSelect, NSwitch, useDialog, useMessage } from 'naive-ui';
+import { NButton, NDropdown, NIcon, NInput, NSelect, NSwitch, useDialog, useMessage } from 'naive-ui';
+import { Dots } from '@vicons/tabler';
 import { api } from '@/stores/_config';
 import { useChatStore } from '@/stores/chat';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
@@ -246,7 +247,11 @@ const triggerCount = (id: string) => management.value?.triggers.filter(t => t.pr
                 <small v-if="management?.state.activePresetId === preset.id">{{ management.state.enabled ? '● 当前默认' : '默认（已停用）' }}</small>
                 <small v-if="triggerCount(preset.id)">{{ triggerCount(preset.id) }} 个频道</small>
               </button>
-              <NDropdown :options="menuOptions" trigger="click" :menu-props="glassDropdownMenuProps" @select="menu($event, preset)"><NButton class="world-glass__menu" size="tiny" :disabled="busy" :aria-label="`${preset.name} 操作`">⋯</NButton></NDropdown>
+              <NDropdown :options="menuOptions" trigger="click" :menu-props="glassDropdownMenuProps" @select="menu($event, preset)">
+                <NButton class="world-glass__menu" quaternary circle size="small" :disabled="busy" :aria-label="`${preset.name} 操作`" title="更多操作">
+                  <template #icon><NIcon><Dots /></NIcon></template>
+                </NButton>
+              </NDropdown>
             </article>
           </div>
         </template>
@@ -265,7 +270,8 @@ const triggerCount = (id: string) => management.value?.triggers.filter(t => t.pr
 .world-glass__preview { aspect-ratio: 16 / 9; width: 100%; background-size: cover; background-position: center; background-color: var(--sc-bg-page); border-radius: 6px; }
 .world-glass__activate { width: 100%; padding: 0 0 10px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
 .world-glass__activate strong, .world-glass__activate small { padding: 0 8px; max-width: 100%; overflow-wrap: anywhere; }
-.world-glass__menu { position: absolute; right: 5px; top: 5px; }
+.world-glass__menu { position: absolute; right: 8px; top: 8px; width: 30px; height: 30px; opacity: .42; transition: opacity 160ms ease, box-shadow 160ms ease; --n-color: var(--sc-bg-elevated) !important; --n-color-hover: var(--sc-bg-page) !important; --n-color-pressed: var(--sc-bg-page) !important; --n-color-focus: var(--sc-bg-elevated) !important; --n-border: 1px solid var(--sc-border-strong) !important; --n-border-hover: 1px solid var(--sc-text-primary) !important; --n-border-pressed: 1px solid var(--sc-text-primary) !important; --n-border-focus: 1px solid var(--sc-text-primary) !important; --n-text-color: var(--sc-text-primary) !important; box-shadow: 0 2px 8px #0005; }
+.world-glass__card:has(.world-glass__preview:hover) .world-glass__menu, .world-glass__menu:hover, .world-glass__menu:focus-visible { opacity: 1; box-shadow: 0 3px 10px #0007; }
 .world-glass label { display: flex; flex-direction: column; gap: 6px; }
 :global(.v-binder-follower-container:has(.sc-glass-popup-menu)) { z-index: 3300 !important; }
 </style>
