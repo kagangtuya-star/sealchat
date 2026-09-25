@@ -185,10 +185,14 @@ export interface BotOneBotConfig {
 
 export interface SatoriMessage {
   id?: string;
+  user_id?: string;
+  userId?: string;
   channel?: Channel;
   guild?: Guild;
   user?: User;
   identity?: MessageIdentity;
+  senderIdentityId?: string;
+  senderSharedIdentityId?: string;
   senderRoleId?: string;
   member?: GuildMember;
   content?: string;
@@ -200,6 +204,9 @@ export interface SatoriMessage {
   displayOrder?: number;
 
   sender_member_name?: string;
+  sender_identity_id?: string;
+  sender_shared_identity_id?: string;
+  sender_identity_name?: string;
   sender_role_id?: string;
   sender_identity_variant_id?: string;
   sender_identity_is_temporary?: boolean;
@@ -1146,6 +1153,7 @@ export interface ChannelIdentityFolder {
 
 export interface MessageIdentity {
   id?: string;
+  sharedIdentityId?: string;
   variantId?: string;
   displayName?: string;
   color?: string;

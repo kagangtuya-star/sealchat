@@ -15,7 +15,9 @@ import {
   type CharacterSnapshotNumericSource,
   type TheaterCharacterOverlayTemplate,
 } from '@/stores/channelCharacterSnapshot';
+import { useAvatarCharacterStateStore, type AvatarCardSource } from '@/stores/avatarCharacterState';
 import {
+  AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
   getCharacterSnapshotTemplatePreset,
@@ -53,6 +55,7 @@ const displayStore = useDisplayStore();
 const userStore = useUserStore();
 const utilsStore = useUtilsStore();
 const snapshotStore = useChannelCharacterSnapshotStore();
+const avatarState = useAvatarCharacterStateStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 const updateViewportWidth = () => {
@@ -338,13 +341,17 @@ const channelSnapshotTemplateManageAllowed = ref(false);
 const channelOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const theaterOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
 const theaterOverlaySettingsExpanded = ref(false);
+const avatarCardSettingsExpanded = ref(false);
+const avatarSourceDraft = ref<AvatarCardSource>('world');
+const avatarSettingsSaving = ref(false);
 const personalBadgeTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const personalBadgeTemplate = ref('');
 const personalOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const personalOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
 const snapshotTemplateSaving = ref(false);
 const overlayTemplateEditorVisible = ref(false);
-const overlayTemplateEditorTarget = ref<'channel' | 'personal'>('channel');
+type OverlayEditorTarget = 'channel' | 'personal' | 'avatar-bot' | 'avatar-world';
+const overlayTemplateEditorTarget = ref<OverlayEditorTarget>('channel');
 const draggingOverlayItemId = ref('');
 const overlayTemplateImportInput = ref<HTMLInputElement | null>(null);
 const templateHtmlFileInput = ref<HTMLInputElement | null>(null);
@@ -398,6 +405,37 @@ const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const theaterOverlaySettingsToggleIcon = computed(() => (
   theaterOverlaySettingsExpanded.value ? ChevronDown : ChevronRight
 ));
+const avatarCardSettingsToggleIcon = computed(() => avatarCardSettingsExpanded.value ? ChevronDown : ChevronRight);
+const avatarSettings = computed(() => avatarState.getSettings(resolvedChannelId.value));
+const avatarTemplateJson = computed(() => avatarSourceDraft.value === 'bot'
+  ? avatarSettings.value.botTemplateJson : avatarSettings.value.worldTemplateJson);
+const avatarTemplateSummary = computed(() => {
+  const parsed = parseOverlayTemplateForEditor(avatarTemplateJson.value);
+  if (!parsed?.items.length) return '暂无状态项';
+  const names = parsed.items.slice(0, 3).map(item => item.name).join('、');
+  return `${parsed.items.length} 个状态 · ${names}${parsed.items.length > 3 ? '…' : ''}`;
+});
+watch(
+  [
+    resolvedChannelId,
+    () => avatarSettings.value.sourceMode,
+    characterApiDisabled,
+    overlayTemplateEditorVisible,
+  ],
+  () => {
+    const channelId = resolvedChannelId.value;
+    if (!channelId || avatarSettingsSaving.value || overlayTemplateEditorVisible.value) return;
+
+    const explicitSource = avatarSettings.value.sourceMode;
+    if (explicitSource === '') {
+      avatarSourceDraft.value = avatarState.getEffectiveSource(channelId);
+      return;
+    }
+
+    avatarSourceDraft.value = explicitSource;
+  },
+  { immediate: true },
+);
 const activeCharacterCardAttrs = computed<Record<string, any>>(() => {
   const channelId = resolvedChannelId.value;
   return channelId ? cardStore.activeCards[channelId]?.attrs || {} : {};
@@ -500,9 +538,11 @@ const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[
   }
 };
 
-const openOverlayTemplateEditor = (target: 'channel' | 'personal') => {
+const openOverlayTemplateEditor = (target: OverlayEditorTarget) => {
   overlayTemplateEditorTarget.value = target;
-  const raw = target === 'channel' ? theaterOverlayTemplateJson.value : personalOverlayTemplateJson.value;
+  const raw = target === 'channel' ? theaterOverlayTemplateJson.value
+    : target === 'personal' ? personalOverlayTemplateJson.value
+      : target === 'avatar-bot' ? avatarSettings.value.botTemplateJson : avatarSettings.value.worldTemplateJson;
   const draft = parseOverlayTemplateForEditor(raw);
   overlayTemplateEditorItems.value = draft?.items || [];
   overlayTemplateEditorPreferredColumns.value = draft?.preferredColumns || 2;
@@ -515,7 +555,7 @@ const exportOverlayTemplate = () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `sealchat-theater-overlay-${overlayTemplateEditorTarget.value}.json`;
+  link.download = `sealchat-character-overlay-${overlayTemplateEditorTarget.value}.json`;
   link.click();
   URL.revokeObjectURL(url);
 };
@@ -574,9 +614,14 @@ const reorderOverlayTemplateEditorItem = (targetId: string) => {
 };
 
 const resolveOverlayEditorSource = (source: OverlayEditorSource): number | null => {
+  const editorAttrs = overlayTemplateEditorTarget.value === 'avatar-world'
+    ? avatarState.getWorldState(resolvedChannelId.value, currentIdentityId.value)?.attrs || {}
+    : overlayTemplateEditorTarget.value === 'avatar-bot'
+      ? snapshotStore.getSnapshot(resolvedChannelId.value, currentIdentityId.value)?.data.card?.attrs || {}
+      : activeCharacterCardAttrs.value;
   const raw = source.kind === 'literal'
     ? source.value
-    : resolveTemplateValue(activeCharacterCardAttrs.value, source.value);
+    : resolveTemplateValue(editorAttrs, source.value);
   if (raw === null || raw === undefined || raw === '') return null;
   const numericValue = typeof raw === 'number' ? raw : Number(String(raw).trim());
   return Number.isFinite(numericValue) ? numericValue : null;
@@ -813,7 +858,7 @@ const saveOverlayTemplateEditor = async () => {
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
       message.success('小剧场数据浮层模板已保存');
-    } else {
+    } else if (overlayTemplateEditorTarget.value === 'personal') {
       personalOverlayTemplateJson.value = templateJson;
       await snapshotStore.updatePreference(channelId, {
         badgeTemplateMode: personalBadgeTemplateMode.value,
@@ -823,6 +868,10 @@ const saveOverlayTemplateEditor = async () => {
       });
       await snapshotStore.syncLocalSnapshot(channelId, true);
       message.success('个人小剧场浮层模板已保存');
+    } else {
+      const source: AvatarCardSource = overlayTemplateEditorTarget.value === 'avatar-bot' ? 'bot' : 'world';
+      await avatarState.updateSettings(channelId, { template: { source, json: templateJson } });
+      message.success('头像点击卡片模板已保存');
     }
     overlayTemplateEditorVisible.value = false;
     return true;
@@ -831,6 +880,38 @@ const saveOverlayTemplateEditor = async () => {
     return false;
   } finally {
     snapshotTemplateSaving.value = false;
+  }
+};
+
+const saveAvatarSource = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  avatarSettingsSaving.value = true;
+  try {
+    await avatarState.updateSettings(channelId, { sourceMode: avatarSourceDraft.value });
+    message.success('头像点击卡片数据来源已保存');
+  } catch (error: any) {
+    message.error(error?.response?.err || error?.message || '保存失败');
+  } finally {
+    avatarSettingsSaving.value = false;
+  }
+};
+
+const applyAvatarTemplatePreset = async (preset: keyof typeof overlayTemplatePresets) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  avatarSettingsSaving.value = true;
+  try {
+    const source = avatarSourceDraft.value;
+    const presets = source === 'bot'
+      ? CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS
+      : AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS;
+    await avatarState.updateSettings(channelId, { template: { source, json: JSON.stringify(presets[preset]) } });
+    message.success(`头像点击卡片已应用 ${preset === 'coc' ? 'COC' : '忍神'} 模板`);
+  } catch (error: any) {
+    message.error(error?.response?.err || error?.message || '应用模板失败');
+  } finally {
+    avatarSettingsSaving.value = false;
   }
 };
 
@@ -946,6 +1027,19 @@ watch(() => props.visible, async (val) => {
   pruneStaleNarratorIdentities();
   if (resolvedChannelId.value && !characterApiDisabled.value) {
     await loadPanelData(resolvedChannelId.value);
+  }
+}, { immediate: true });
+
+watch([() => props.visible, resolvedChannelId], async ([visible, channelId]) => {
+  if (!visible || !channelId) return;
+  await avatarState.initializeChannel(channelId);
+  try {
+    const allowed = await chatStore.hasChannelPermission(
+      channelId, 'func_channel_manage_info', userStore.info.id,
+    );
+    if (resolvedChannelId.value === channelId) channelSnapshotTemplateManageAllowed.value = allowed;
+  } catch {
+    if (resolvedChannelId.value === channelId) channelSnapshotTemplateManageAllowed.value = false;
   }
 }, { immediate: true });
 
@@ -2554,6 +2648,56 @@ defineExpose({ openCardById });
         </n-collapse-transition>
       </div>
 
+      <div class="character-card-settings">
+        <button
+          type="button"
+          class="settings-group-toggle"
+          :aria-expanded="avatarCardSettingsExpanded"
+          @click="avatarCardSettingsExpanded = !avatarCardSettingsExpanded"
+        >
+          <span class="settings-group-toggle__title-wrap">
+            <n-icon size="18" class="settings-group-toggle__icon">
+              <component :is="avatarCardSettingsToggleIcon" />
+            </n-icon>
+            <span class="settings-group-toggle__title">头像点击卡片浮窗</span>
+          </span>
+          <span class="settings-group-toggle__state">{{ avatarCardSettingsExpanded ? '收起' : '展开' }}</span>
+        </button>
+        <n-collapse-transition :show="avatarCardSettingsExpanded">
+          <div class="character-card-settings__body">
+            <div class="settings-row settings-row--template settings-row--stacked">
+              <div>
+                <p class="settings-title">数据来源</p>
+                <p class="settings-desc">两套数据和模板独立保存；未配置时按频道 BOT 人物卡能力自动选择。</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-radio-group v-model:value="avatarSourceDraft" size="small" :disabled="!canSyncBadgeTemplate">
+                  <n-radio-button value="bot">BOT人物卡</n-radio-button>
+                  <n-radio-button value="world">世界数据</n-radio-button>
+                </n-radio-group>
+                <n-button size="small" type="primary" :disabled="!canSyncBadgeTemplate" :loading="avatarSettingsSaving" @click="saveAvatarSource">保存</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template settings-row--stacked">
+              <div>
+                <p class="settings-title">{{ avatarSourceDraft === 'bot' ? 'BOT人物卡显示模板' : '世界数据显示模板' }}</p>
+                <p class="settings-desc">{{ avatarTemplateSummary }}</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-button size="small" :disabled="!canSyncBadgeTemplate" @click="openOverlayTemplateEditor(avatarSourceDraft === 'bot' ? 'avatar-bot' : 'avatar-world')">编辑模板</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
+              <p class="settings-title">应用到当前来源</p>
+              <div class="overlay-template-presets">
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('coc')">COC</n-button>
+              </div>
+            </div>
+          </div>
+        </n-collapse-transition>
+      </div>
+
       <div v-if="onlineCharacterCardsEnabled" class="character-card-settings">
         <button
           type="button"
@@ -2845,7 +2989,7 @@ defineExpose({ openCardById });
   <n-modal
     v-model:show="overlayTemplateEditorVisible"
     preset="card"
-    title="编辑小剧场数据浮层"
+    :title="overlayTemplateEditorTarget.startsWith('avatar-') ? '编辑头像点击卡片模板' : '编辑小剧场数据浮层'"
     style="width: min(980px, 94vw);"
     :bordered="false"
   >

@@ -60,10 +60,29 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 	if !CanReadChannelByUserId(actorID, channelID) {
 		return nil, errors.New("无权查看频道人物卡快照")
 	}
+	items, invalidIdentityIDs, err := characterSnapshotListByChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if len(invalidIdentityIDs) > 0 {
+		_ = model.GetDB().Model(&model.ChannelCharacterSnapshotModel{}).
+			Where("channel_id = ? AND identity_id IN ?", channelID, invalidIdentityIDs).
+			Update("is_active", false).Error
+	}
+	return items, nil
+}
+
+// CharacterSnapshotListByChannel reads snapshots after the caller has checked channel read access.
+func CharacterSnapshotListByChannel(channelID string) ([]*protocol.CharacterSnapshotItem, error) {
+	items, _, err := characterSnapshotListByChannel(strings.TrimSpace(channelID))
+	return items, err
+}
+
+func characterSnapshotListByChannel(channelID string) ([]*protocol.CharacterSnapshotItem, []string, error) {
 	var rows []*model.ChannelCharacterSnapshotModel
 	if err := model.GetDB().Where("channel_id = ? AND is_active = ?", channelID, true).
 		Order("updated_at desc").Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	identityIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -74,7 +93,7 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 	var identities []model.ChannelIdentityModel
 	if len(identityIDs) > 0 {
 		if err := model.GetDB().Select("id", "channel_id", "user_id").Where("id IN ?", identityIDs).Find(&identities).Error; err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	validIdentityOwners := make(map[string]string, len(identities))
@@ -85,11 +104,11 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 	}
 	settings, preferences, err := loadCharacterSnapshotTemplates(channelID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	templateResolver, err := loadCharacterSnapshotTemplateResolver(rows)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	items := make([]*protocol.CharacterSnapshotItem, 0, len(rows))
 	invalidIdentityIDs := make([]string, 0)
@@ -106,12 +125,7 @@ func CharacterSnapshotList(channelID, actorID string) ([]*protocol.CharacterSnap
 			items = append(items, item)
 		}
 	}
-	if len(invalidIdentityIDs) > 0 {
-		_ = model.GetDB().Model(&model.ChannelCharacterSnapshotModel{}).
-			Where("channel_id = ? AND identity_id IN ?", channelID, invalidIdentityIDs).
-			Update("is_active", false).Error
-	}
-	return items, nil
+	return items, invalidIdentityIDs, nil
 }
 
 func CharacterSnapshotProbeList(channelID string) ([]*protocol.CharacterSnapshotProbeItem, error) {

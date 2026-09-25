@@ -50,8 +50,20 @@ func apiCharacterSnapshotList(ctx *ChatContext, data *characterSnapshotListReque
 	if ctx == nil || ctx.User == nil {
 		return nil, errors.New("未登录")
 	}
+	if data == nil {
+		return nil, errors.New("缺少频道ID")
+	}
 	channelID := strings.TrimSpace(data.ChannelID)
-	items, err := service.CharacterSnapshotList(channelID, ctx.User.ID)
+	var items []*protocol.CharacterSnapshotItem
+	var err error
+	if ctx.IsReadOnly() {
+		if _, err = checkReadOnlyChannelAccess(ctx, channelID); err != nil {
+			return nil, err
+		}
+		items, err = service.CharacterSnapshotListByChannel(channelID)
+	} else {
+		items, err = service.CharacterSnapshotList(channelID, ctx.User.ID)
+	}
 	if err != nil {
 		return nil, err
 	}

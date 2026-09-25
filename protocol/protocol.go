@@ -478,6 +478,8 @@ const (
 	EventCharacterSnapshotProbe             EventName = "character-snapshot-probe"
 	EventCharacterSnapshotSettingsUpdated   EventName = "character-snapshot-settings-updated"
 	EventCharacterSnapshotPreferenceUpdated EventName = "character-snapshot-preference-updated"
+	EventAvatarCardSettingsUpdated          EventName = "avatar-card-settings-updated"
+	EventWorldCharacterStateUpdated         EventName = "world-character-state-updated"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
@@ -574,6 +576,8 @@ type Event struct {
 	CharacterSnapshotProbe      *CharacterSnapshotProbePayload      `json:"characterSnapshotProbe,omitempty"`
 	CharacterSnapshotSettings   *CharacterSnapshotSettingsPayload   `json:"characterSnapshotSettings,omitempty"`
 	CharacterSnapshotPreference *CharacterSnapshotPreferencePayload `json:"characterSnapshotPreference,omitempty"`
+	AvatarCardSettings          *AvatarCardSettingsPayload          `json:"avatarCardSettings,omitempty"`
+	WorldCharacterState         *WorldCharacterStatePayload         `json:"worldCharacterState,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
@@ -885,6 +889,31 @@ type CharacterSnapshotPreferencePayload struct {
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
 	SchemaVersion              int    `json:"schemaVersion"`
 	ServerRevision             int64  `json:"serverRevision"`
+}
+
+type AvatarCardSettingsPayload struct {
+	ChannelID         string `json:"channelId"`
+	SourceMode        string `json:"sourceMode"`
+	BotTemplateJSON   string `json:"botTemplateJson"`
+	WorldTemplateJSON string `json:"worldTemplateJson"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	ServerRevision    int64  `json:"serverRevision"`
+	UpdatedBy         string `json:"updatedBy,omitempty"`
+}
+
+type WorldCharacterStatePayload struct {
+	WorldID          string         `json:"worldId"`
+	IdentityID       string         `json:"identityId"`
+	SharedIdentityID string         `json:"sharedIdentityId,omitempty"`
+	SubjectKey       string         `json:"subjectKey"`
+	Attrs            map[string]any `json:"attrs"`
+	Revision         int64          `json:"revision"`
+}
+
+type WorldCharacterStateListPayload struct {
+	ChannelID string                        `json:"channelId"`
+	WorldID   string                        `json:"worldId"`
+	Items     []*WorldCharacterStatePayload `json:"items"`
 }
 
 // CharacterRemarkEventPayload 角色备注事件载荷

@@ -889,6 +889,9 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 		"message.get":                {},
 		"message.first":              {},
 		"message.context":            {},
+		"avatar.card.settings.get":    {},
+		"world.character_state.list":  {},
+		"character.snapshot.list":     {},
 		"theater.subscribe":          {},
 		"theater.unsubscribe":        {},
 	}
@@ -1760,6 +1763,18 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 						solved = true
 					case "character.snapshot.preference.update":
 						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceUpdate)
+						solved = true
+					case "avatar.card.settings.get":
+						apiWrap(ctx, msg, apiAvatarCardSettingsGet)
+						solved = true
+					case "avatar.card.settings.update":
+						apiWrap(ctx, msg, apiAvatarCardSettingsUpdate)
+						solved = true
+					case "world.character_state.list":
+						apiWrap(ctx, msg, apiWorldCharacterStateList)
+						solved = true
+					case "world.character_state.patch":
+						apiWrap(ctx, msg, apiWorldCharacterStatePatch)
 						solved = true
 					case "character.remark.broadcast":
 						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)

@@ -27,6 +27,31 @@ export const CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS: Record<CharacterSnapsh
   },
 };
 
+export const AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS: Record<CharacterSnapshotTemplatePreset, TheaterCharacterOverlayTemplate> = {
+  shinobigami: {
+    version: 1,
+    preferredColumns: 2,
+    items: [
+      { id: 'shinobigami-instrument', name: '器術', current: { path: '器術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#e26b0a', textColor: '#f8fafc' },
+      { id: 'shinobigami-body', name: '体術', current: { path: '体術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#76933c', textColor: '#f8fafc' },
+      { id: 'shinobigami-ninja', name: '忍術', current: { path: '忍術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#c00000', textColor: '#f8fafc' },
+      { id: 'shinobigami-scheme', name: '謀術', current: { path: '謀術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#948a54', textColor: '#f8fafc' },
+      { id: 'shinobigami-battle', name: '戦術', current: { path: '戦術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#16365c', textColor: '#f8fafc' },
+      { id: 'shinobigami-demon', name: '妖術', current: { path: '妖術' }, min: { value: 0 }, max: { value: 1 }, barColor: '#60497a', textColor: '#f8fafc' },
+    ],
+  },
+  coc: {
+    version: 1,
+    preferredColumns: 2,
+    items: [
+      { id: 'coc-hp', name: 'HP', current: { path: '生命值' }, min: { value: 0 }, max: { path: '生命值上限' }, barColor: '#B73F42', textColor: '#f8fafc' },
+      { id: 'coc-mp', name: 'MP', current: { path: '魔法值' }, min: { value: 0 }, max: { path: '魔法值上限' }, barColor: '#436C85', textColor: '#f8fafc' },
+      { id: 'coc-san', name: 'SAN', current: { path: '理智' }, min: { value: 0 }, max: { path: '理智上限' }, barColor: '#DE9960', textColor: '#f8fafc' },
+      { id: 'coc-luck', name: '幸运', current: { path: '幸运' }, min: { value: 0 }, max: { path: '幸运上限' }, barColor: '#82B29B', textColor: '#f8fafc' },
+    ],
+  },
+};
+
 export const CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS: Record<CharacterSnapshotTemplatePreset, string> = {
   coc: 'HP{生命值} SAN{理智} 魔法{魔法值} 幸运{幸运}',
   shinobigami: "HP{生命值} 污损{污秽} {损伤分野}",
