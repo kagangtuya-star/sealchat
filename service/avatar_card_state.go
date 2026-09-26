@@ -17,6 +17,94 @@ import (
 
 const maxWorldCharacterAttrsBytes = 64 * 1024
 
+type AvatarBotMutationContext struct {
+	TargetUserID string
+	SourceCardID string
+}
+
+// AvatarBotMutationAuthorize checks the durable identity, snapshot and source policy.
+// Live connection and BOT card checks belong to the WebSocket API boundary.
+func AvatarBotMutationAuthorize(channelID, identityID, actorID, expectedCardID string, botCapable bool) (*AvatarBotMutationContext, error) {
+	channelID, identityID, actorID = strings.TrimSpace(channelID), strings.TrimSpace(identityID), strings.TrimSpace(actorID)
+	if channelID == "" || identityID == "" || actorID == "" {
+		return nil, errors.New("NOT_EDITABLE")
+	}
+	identity, err := model.ChannelIdentityGetByID(identityID)
+	if err != nil || identity == nil || identity.ChannelID != channelID || identity.IsHidden {
+		return nil, errors.New("NOT_EDITABLE")
+	}
+	if identity.UserID == actorID {
+		if !CanReadChannelByUserId(actorID, channelID) {
+			return nil, errors.New("PERMISSION_DENIED")
+		}
+	} else {
+		actor, actorErr := ResolveChannelIdentityActor(channelID, actorID, identity.UserID)
+		if actorErr != nil || actor == nil || actor.OperatorRank < 3 {
+			return nil, errors.New("PERMISSION_DENIED")
+		}
+		if _, actorErr = ValidateChannelIdentityActorIdentity(actor, channelID, identityID); actorErr != nil {
+			return nil, errors.New("PERMISSION_DENIED")
+		}
+	}
+	settings, err := AvatarCardSettingsGetByChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if settings.SourceMode == "world" || !botCapable {
+		return nil, errors.New("NOT_EDITABLE")
+	}
+	var snapshot model.ChannelCharacterSnapshotModel
+	if err = model.GetDB().Where("channel_id = ? AND identity_id = ? AND is_active = ?", channelID, identityID, true).Take(&snapshot).Error; err != nil || strings.TrimSpace(snapshot.SourceCardID) == "" || snapshot.UserID != identity.UserID {
+		return nil, errors.New("NOT_EDITABLE")
+	}
+	if expectedCardID != "" && snapshot.SourceCardID != expectedCardID {
+		return nil, errors.New("CARD_CHANGED")
+	}
+	return &AvatarBotMutationContext{TargetUserID: identity.UserID, SourceCardID: snapshot.SourceCardID}, nil
+}
+
+func AvatarBotMutationTemplatePath(channelID, statID, slot string) (string, error) {
+	if statID == "" || (slot != "current" && slot != "max") {
+		return "", errors.New("NOT_EDITABLE")
+	}
+	settings, err := AvatarCardSettingsGetByChannel(channelID)
+	if err != nil {
+		return "", err
+	}
+	if len(settings.BotTemplateJSON) > maxCharacterOverlayBytes {
+		return "", errors.New("NOT_EDITABLE")
+	}
+	var template struct {
+		Version int `json:"version"`
+		Items   []struct {
+			ID      string                     `json:"id"`
+			Current map[string]json.RawMessage `json:"current"`
+			Max     map[string]json.RawMessage `json:"max"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(settings.BotTemplateJSON), &template); err != nil || template.Version != 1 || template.Items == nil {
+		return "", errors.New("NOT_EDITABLE")
+	}
+	for _, item := range template.Items {
+		if item.ID != statID {
+			continue
+		}
+		source := item.Current
+		if slot == "max" {
+			source = item.Max
+		}
+		if len(source) != 1 {
+			return "", errors.New("NOT_EDITABLE")
+		}
+		var path string
+		if err := json.Unmarshal(source["path"], &path); err != nil || strings.TrimSpace(path) == "" || len(path) > 512 {
+			return "", errors.New("NOT_EDITABLE")
+		}
+		return path, nil
+	}
+	return "", errors.New("NOT_EDITABLE")
+}
+
 type AvatarCardSettingsUpdateInput struct {
 	SourceMode     *string
 	TemplateSource string
@@ -203,7 +291,7 @@ func WorldCharacterStateListByChannel(channelID string) (*protocol.WorldCharacte
 			}
 		}
 		items = append(items, &protocol.WorldCharacterStatePayload{WorldID: channel.WorldID, IdentityID: identity.ID,
-			SharedIdentityID: identity.SharedIdentityID, SubjectKey: key, Attrs: attrs, Revision: row.Revision})
+			UserID: identity.UserID, SharedIdentityID: identity.SharedIdentityID, SubjectKey: key, Attrs: attrs, Revision: row.Revision})
 	}
 	return &protocol.WorldCharacterStateListPayload{ChannelID: channel.ID, WorldID: channel.WorldID, Items: items}, nil
 }
@@ -278,7 +366,57 @@ func WorldCharacterStatePatch(channelID, identityID, actorID, path, op string, v
 		return nil, err
 	}
 	return &protocol.WorldCharacterStatePayload{WorldID: channel.WorldID, IdentityID: identity.ID,
-		SharedIdentityID: identity.SharedIdentityID, SubjectKey: key, Attrs: attrs, Revision: revision}, nil
+		UserID: identity.UserID, SharedIdentityID: identity.SharedIdentityID, SubjectKey: key, Attrs: attrs, Revision: revision}, nil
+}
+
+func migrateWorldCharacterStateSubjectTx(tx *gorm.DB, channelID string, oldSubjectKey string, newSubjectKey string) error {
+	channelID = strings.TrimSpace(channelID)
+	oldSubjectKey = strings.TrimSpace(oldSubjectKey)
+	newSubjectKey = strings.TrimSpace(newSubjectKey)
+	if tx == nil || channelID == "" || oldSubjectKey == "" || newSubjectKey == "" {
+		return errors.New("迁移世界角色状态参数无效")
+	}
+	if oldSubjectKey == newSubjectKey {
+		return nil
+	}
+
+	var channel model.ChannelModel
+	if err := tx.Select("id", "world_id").Where("id = ?", channelID).Take(&channel).Error; err != nil {
+		return err
+	}
+	worldID := strings.TrimSpace(channel.WorldID)
+	if worldID == "" {
+		return nil
+	}
+
+	var row model.WorldCharacterStateModel
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("world_id = ? AND subject_key = ?", worldID, oldSubjectKey).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Model(&row).UpdateColumn("subject_key", newSubjectKey).Error
+}
+
+func deleteWorldCharacterStateSubjectByChannel(channelID string, subjectKey string) error {
+	channelID = strings.TrimSpace(channelID)
+	subjectKey = strings.TrimSpace(subjectKey)
+	if channelID == "" || subjectKey == "" {
+		return nil
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return err
+	}
+	worldID := strings.TrimSpace(channel.WorldID)
+	if worldID == "" {
+		return nil
+	}
+	return model.GetDB().Where("world_id = ? AND subject_key = ?", worldID, subjectKey).
+		Delete(&model.WorldCharacterStateModel{}).Error
 }
 
 func parseWorldCharacterAttrs(raw string) (map[string]any, error) {

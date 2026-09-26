@@ -317,7 +317,7 @@ func sharedChannelIdentityChannelsTx(tx *gorm.DB, source *model.ChannelIdentityM
 type sharedChannelIdentityCopyOptions struct {
 	reuseDefaultProjection bool
 	repairExisting         bool
-	botManaged              bool
+	botManaged             bool
 	orphanAssetIDs         *[]string
 }
 
@@ -1305,6 +1305,10 @@ func SharedChannelIdentityDelete(ownerUserID, operatorUserID, identityID string)
 		if identity.SharedIdentityID == "" {
 			return ErrChannelIdentityNotShared
 		}
+		var shared model.SharedChannelIdentityModel
+		if err := tx.Where("id = ?", identity.SharedIdentityID).Take(&shared).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("shared_identity_id = ? AND user_id = ?", identity.SharedIdentityID, ownerUserID).Find(&copies).Error; err != nil {
 			return err
 		}
@@ -1354,6 +1358,10 @@ func SharedChannelIdentityDelete(ownerUserID, operatorUserID, identityID string)
 			return err
 		}
 		if err := tx.Unscoped().Where("shared_identity_id = ?", identity.SharedIdentityID).Delete(&model.SharedChannelIdentitySyncRetryModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("world_id = ? AND subject_key = ?", shared.WorldID, "shared:"+shared.ID).
+			Delete(&model.WorldCharacterStateModel{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", identity.SharedIdentityID).Delete(&model.SharedChannelIdentityModel{}).Error

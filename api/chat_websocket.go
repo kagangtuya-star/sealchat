@@ -1770,6 +1770,15 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "avatar.card.settings.update":
 						apiWrap(ctx, msg, apiAvatarCardSettingsUpdate)
 						solved = true
+					case "avatar.card.bot_mutation.status":
+						apiAvatarBotMutationStatusWs(ctx, msg)
+						solved = true
+					case "avatar.card.bot_mutation.delegate":
+						apiAvatarBotMutationDelegateWs(ctx, msg)
+						solved = true
+					case "avatar.card.bot_mutation.respond":
+						apiWrap(ctx, msg, apiAvatarBotMutationRespond)
+						solved = true
 					case "world.character_state.list":
 						apiWrap(ctx, msg, apiWorldCharacterStateList)
 						solved = true

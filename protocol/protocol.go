@@ -413,6 +413,18 @@ type WorldGlassEventPayload struct {
 	Revision uint64 `json:"revision"`
 }
 
+type AvatarBotMutationPayload struct {
+	RequestID            string  `json:"requestId"`
+	ChannelID            string  `json:"channelId"`
+	IdentityID           string  `json:"identityId"`
+	ExpectedSourceCardID string  `json:"expectedSourceCardId"`
+	StatID               string  `json:"statId"`
+	Slot                 string  `json:"slot"`
+	SourcePath           string  `json:"sourcePath"`
+	Op                   string  `json:"op"`
+	Value                float64 `json:"value"`
+}
+
 const (
 	EventGenresAdded                    EventName = "genres-added"
 	EventGenresDeleted                  EventName = "genres-deleted"
@@ -479,6 +491,7 @@ const (
 	EventCharacterSnapshotSettingsUpdated   EventName = "character-snapshot-settings-updated"
 	EventCharacterSnapshotPreferenceUpdated EventName = "character-snapshot-preference-updated"
 	EventAvatarCardSettingsUpdated          EventName = "avatar-card-settings-updated"
+	EventAvatarCardBotMutationRequest       EventName = "avatar-card-bot-mutation-request"
 	EventWorldCharacterStateUpdated         EventName = "world-character-state-updated"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
@@ -577,6 +590,7 @@ type Event struct {
 	CharacterSnapshotSettings   *CharacterSnapshotSettingsPayload   `json:"characterSnapshotSettings,omitempty"`
 	CharacterSnapshotPreference *CharacterSnapshotPreferencePayload `json:"characterSnapshotPreference,omitempty"`
 	AvatarCardSettings          *AvatarCardSettingsPayload          `json:"avatarCardSettings,omitempty"`
+	AvatarCardBotMutation       *AvatarBotMutationPayload           `json:"avatarCardBotMutation,omitempty"`
 	WorldCharacterState         *WorldCharacterStatePayload         `json:"worldCharacterState,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
@@ -904,6 +918,7 @@ type AvatarCardSettingsPayload struct {
 type WorldCharacterStatePayload struct {
 	WorldID          string         `json:"worldId"`
 	IdentityID       string         `json:"identityId"`
+	UserID           string         `json:"userId"`
 	SharedIdentityID string         `json:"sharedIdentityId,omitempty"`
 	SubjectKey       string         `json:"subjectKey"`
 	Attrs            map[string]any `json:"attrs"`

@@ -23,6 +23,8 @@ import {
   resolveBotNicknameSyncName,
   shouldEnableBotNicknameSyncForChannel,
 } from '@/utils/botNicknameSync';
+import { patchCharacterCardValuePath, resolveCharacterStatInverseValue, resolveCharacterStatMutationTarget } from '@/utils/characterStatMutation';
+import { resolveCharacterNumericSource } from '@/utils/characterStatDisplay';
 
 const extractBotInteractionErrorCode = (error: unknown) => {
   if (!error || typeof error !== 'object') {
@@ -60,6 +62,7 @@ interface CharacterCardFromAPI {
 
 // Active card data (from character.get)
 export interface CharacterCardData {
+  id?: string;
   name: string;
   type: string;
   attrs: Record<string, any>;
@@ -161,6 +164,16 @@ export const resolveCardIdByNameAndType = (
     if (exact) return exact.id;
   }
   return cards.find(card => card.name === normalizedName)?.id || '';
+};
+
+export const resolveCardIdByNameAndTypeStrict = (
+  cards: readonly Pick<CharacterCard, 'id' | 'name' | 'sheetType'>[],
+  name?: string, sheetType?: string, stableID?: string,
+) => {
+  if (stableID) return stableID;
+  if (!name) return '';
+  const matches = cards.filter(card => card.name === name && (!sheetType || card.sheetType === sheetType));
+  return matches.length === 1 ? matches[0].id : '';
 };
 
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
@@ -953,7 +966,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
         group_id: channelId,
         user_id: userId,
       });
@@ -977,6 +990,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           (resp.data as any)?.avatar,
         ].find(value => typeof value === 'string' && value.trim());
         const cardData: CharacterCardData = {
+          id: String(resp.data.id || '').trim() || undefined,
           name: resp.data.name || '',
           type: resp.data.type || '',
           attrs: resp.data.data || {},
@@ -1413,11 +1427,48 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return cardList.value.find(c => c.name === name);
   };
 
-  // Resolve active card ID for a channel by matching name/type with list
+  // Prefer the stable ID returned by character.get; older BOTs need the list match.
   const getActiveCardId = (channelId: string) => {
     const active = activeCards.value[channelId];
     if (!active) return '';
+    if (active.id) return active.id;
     return resolveCardIdByNameAndType(cardList.value, active.name, active.type);
+  };
+
+  const getActiveCardStrict = async (channelId: string, expectedCardId?: string) => {
+    if (!getCharacterApiStatus(channelId).available) throw new Error('NOT_EDITABLE');
+    let card = await getActiveCard(channelId, { throwOnError: true });
+    if (!card?.id) {
+      await loadCardList(channelId, { throwOnError: true });
+      card = await getActiveCard(channelId, { throwOnError: true });
+    }
+    const id = card && resolveCardIdByNameAndTypeStrict(cardList.value, card.name, card.type, card.id);
+    if (!id || (expectedCardId && id !== expectedCardId)) throw new Error('CARD_CHANGED');
+    return { card, id } as { card: CharacterCardData; id: string };
+  };
+
+  const patchActiveCardValuePath = async (
+    channelId: string, expectedCardId: string, sourcePath: string, expectedPath: string[],
+    op: 'set' | 'add', value: number, directOnly: boolean,
+  ) => {
+    const { card } = await getActiveCardStrict(channelId, expectedCardId);
+    const target = resolveCharacterStatMutationTarget(sourcePath, card.attrs || {}, { allowRootInit: true, directOnly });
+    const latest = resolveCharacterNumericSource({ path: sourcePath }, card.attrs);
+    if (!target || target.path.length !== expectedPath.length
+      || target.path.some((part, index) => part !== expectedPath[index])
+      || (op === 'add' && latest === null)) throw new Error('NOT_EDITABLE');
+    const expectedDisplay = op === 'add' ? latest! + value : value;
+    const rawValue = resolveCharacterStatInverseValue(target, card.attrs, expectedDisplay);
+    if (rawValue === null) throw new Error('NOT_EDITABLE');
+    const attrs = patchCharacterCardValuePath(card.attrs || {}, target.path, rawValue);
+    if (!attrs) throw new Error('NOT_EDITABLE');
+    if (!await updateCardStrict(channelId, card.name, attrs)) throw new Error('NOT_EDITABLE');
+    const fresh = await getActiveCardStrict(channelId, expectedCardId);
+    const actual = resolveCharacterNumericSource({ path: sourcePath }, fresh.card.attrs);
+    if (actual === null || Math.abs(actual - expectedDisplay) > 1e-8 * Math.max(1, Math.abs(expectedDisplay))) {
+      throw new Error('AVATAR_CARD_BOT_MUTATION_FAILED');
+    }
+    return fresh.card;
   };
 
   // Backwards compatibility: getCardsByChannel returns all cards (SealDice doesn't filter by channel)
@@ -1855,6 +1906,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getCardById,
     getCardByName,
     getActiveCardId,
+    getActiveCardStrict,
+    patchActiveCardValuePath,
     getCardsByChannel,
     getBadgeByIdentity,
     getNarratorIdentityIds,

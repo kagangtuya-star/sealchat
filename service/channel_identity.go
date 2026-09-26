@@ -423,6 +423,10 @@ func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID strin
 				break
 			}
 		}
+		if err := migrateWorldCharacterStateSubjectTx(tx, locked.ChannelID,
+			WorldCharacterSubjectKey(&locked), WorldCharacterSubjectKey(&updated)); err != nil {
+			return err
+		}
 		if err := tx.Model(&model.ChannelIdentityFolderMemberModel{}).Where("identity_id = ?", updated.ID).
 			Order("sort_order ASC, created_at ASC").Pluck("folder_id", &updated.FolderIDs).Error; err != nil {
 			return err
@@ -714,6 +718,10 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 		if err := tx.Create(item).Error; err != nil {
 			return err
 		}
+		if err := migrateWorldCharacterStateSubjectTx(tx, identity.ChannelID,
+			WorldCharacterSubjectKey(identity), WorldCharacterSubjectKey(item)); err != nil {
+			return err
+		}
 		if err := reassignTheaterAppearanceAssetsIdentityTx(tx, identity.ID, item.ID, identity.ChannelID, identity.UserID); err != nil {
 			return err
 		}
@@ -870,6 +878,9 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 	}
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
+	}
+	if err := deleteWorldCharacterStateSubjectByChannel(channelID, WorldCharacterSubjectKey(identity)); err != nil {
+		log.Printf("删除频道身份世界状态孤儿清理失败[channel=%s identity=%s]: %v", channelID, identity.ID, err)
 	}
 	if err := model.ChannelIdentityModeConfigClearIdentityReferences(ownerUserID, channelID, identity.ID); err != nil {
 		return err

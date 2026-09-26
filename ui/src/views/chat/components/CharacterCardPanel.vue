@@ -2989,8 +2989,8 @@ defineExpose({ openCardById });
   <n-modal
     v-model:show="overlayTemplateEditorVisible"
     preset="card"
+    class="sc-fluid-modal sc-fluid-modal--xwide"
     :title="overlayTemplateEditorTarget.startsWith('avatar-') ? '编辑头像点击卡片模板' : '编辑小剧场数据浮层'"
-    style="width: min(980px, 94vw);"
     :bordered="false"
   >
     <div class="overlay-template-editor">
@@ -3015,6 +3015,8 @@ defineExpose({ openCardById });
           新增
         </n-button>
       </div>
+      <div class="sc-modal-table-scroll">
+      <div class="overlay-template-editor__table">
       <div class="overlay-template-editor__header" aria-hidden="true">
         <span />
         <span>数据名字</span>
@@ -3045,15 +3047,34 @@ defineExpose({ openCardById });
           >
             <n-icon :component="GripVertical" />
           </button>
-          <n-input v-model:value="item.name" size="small" placeholder="生命值" />
-          <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
-            <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
-          </n-input>
-          <n-input v-model:value="item.min.value" size="small" placeholder="0" />
-          <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
-          <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
-          <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
+          <div class="overlay-template-editor__field overlay-template-editor__field--name">
+            <span class="overlay-template-editor__field-label">数据名字</span>
+            <n-input v-model:value="item.name" size="small" placeholder="生命值" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--current">
+            <span class="overlay-template-editor__field-label">当前值</span>
+            <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
+              <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+            </n-input>
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--min">
+            <span class="overlay-template-editor__field-label">最小值</span>
+            <n-input v-model:value="item.min.value" size="small" placeholder="0" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--max">
+            <span class="overlay-template-editor__field-label">最大值</span>
+            <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--text-color">
+            <span class="overlay-template-editor__field-label">文本颜色</span>
+            <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--bar-color">
+            <span class="overlay-template-editor__field-label">数据条颜色</span>
+            <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
+          </div>
           <n-button
+            class="overlay-template-editor__delete"
             quaternary
             circle
             size="small"
@@ -3090,6 +3111,8 @@ defineExpose({ openCardById });
         </div>
       </div>
       <n-empty v-if="!overlayTemplateEditorItems.length" size="small" description="暂无数据项" class="overlay-template-editor__empty" />
+      </div>
+      </div>
 
       <div class="overlay-template-preview">
         <span class="overlay-template-preview__label">预览</span>
@@ -3602,12 +3625,17 @@ defineExpose({ openCardById });
 
 .overlay-template-editor__toolbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
 }
 
 .overlay-template-editor__file-input {
   display: none;
+}
+
+.overlay-template-editor__table {
+  min-width: 760px;
 }
 
 .overlay-template-editor__header,
@@ -3622,6 +3650,14 @@ defineExpose({ openCardById });
   padding: 0 0.25rem;
   color: var(--sc-text-secondary);
   font-size: 0.74rem;
+}
+
+.overlay-template-editor__field {
+  min-width: 0;
+}
+
+.overlay-template-editor__field-label {
+  display: none;
 }
 
 .overlay-template-editor__item {
@@ -4159,75 +4195,6 @@ defineExpose({ openCardById });
     width: 100%;
   }
 
-  .overlay-template-editor__header {
-    display: none;
-  }
-
-  .overlay-template-editor__row {
-    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 30px;
-  }
-
-  .overlay-template-editor__row > :nth-child(1) {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(2) {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(3) {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(4) {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .overlay-template-editor__row > :nth-child(5) {
-    grid-column: 3;
-    grid-row: 2;
-  }
-
-  .overlay-template-editor__row > :nth-child(6) {
-    grid-column: 2;
-    grid-row: 3;
-  }
-
-  .overlay-template-editor__row > :nth-child(7) {
-    grid-column: 3;
-    grid-row: 3;
-  }
-
-  .overlay-template-editor__row > :nth-child(8) {
-    grid-column: 4;
-    grid-row: 1 / span 3;
-  }
-
-  .overlay-template-editor__additional-row {
-    align-items: stretch;
-    flex-direction: column;
-    padding-right: 30px;
-  }
-
-  .overlay-template-editor__additional-field,
-  .overlay-template-editor__additional-field--icon {
-    flex: none;
-    grid-template-columns: 68px minmax(0, 1fr);
-    width: 100%;
-  }
-
-  .overlay-template-editor__icon-inputs {
-    grid-template-columns: 1fr;
-  }
-
-  .overlay-template-preview__stats {
-    grid-template-columns: 1fr;
-  }
-
   .online-character-cards__header {
     align-items: center;
   }
@@ -4250,6 +4217,102 @@ defineExpose({ openCardById });
   .character-card-item :deep(.n-card-header__extra .n-button) {
     min-width: 30px;
     min-height: 30px;
+  }
+}
+
+@media (max-width: 860px) {
+  .overlay-template-editor__table {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .overlay-template-editor__header {
+    display: none;
+  }
+
+  .overlay-template-editor__item {
+    margin-bottom: 0.6rem;
+    padding: 0.6rem;
+    border: 1px solid var(--sc-border-color);
+    border-radius: 6px;
+  }
+
+  .overlay-template-editor__row {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding-top: 2rem;
+  }
+
+  .overlay-template-editor__drag-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  .overlay-template-editor__delete {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+
+  .overlay-template-editor__field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .overlay-template-editor__field--name,
+  .overlay-template-editor__field--current {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__field-label {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: var(--sc-text-secondary);
+    font-size: 0.68rem;
+  }
+
+  .overlay-template-editor__additional-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem 0 0;
+  }
+
+  .overlay-template-editor__additional-field,
+  .overlay-template-editor__additional-field--icon {
+    grid-template-columns: 68px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .overlay-template-editor__additional-field--icon {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__icon-inputs {
+    grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1.2fr);
+  }
+
+  .overlay-template-preview__stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 460px) {
+  .overlay-template-editor__field {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__additional-row {
+    grid-template-columns: 1fr;
+  }
+
+  .overlay-template-editor__additional-field--icon {
+    grid-column: auto;
   }
 }
 </style>
