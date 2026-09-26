@@ -242,9 +242,24 @@ watch(() => avatarState.mutationError, value => {
   avatarState.mutationError = '';
 });
 
-const sourcePath = (item: TheaterCharacterStatTemplate, slot: 'current' | 'max') => {
+const rawSourcePath = (item: TheaterCharacterStatTemplate, slot: 'current' | 'max') => {
   const source = item[slot];
   return source && 'path' in source ? source.path.trim() : '';
+};
+const legacyWorldCurrentSource = (item: TheaterCharacterStatTemplate) => {
+  if (cardData.value.source !== 'world') return null;
+  const raw = rawSourcePath(item, 'current');
+  if (!raw || isWritableWorldTemplatePath(raw) || !Number.isFinite(Number(raw))) return null;
+  const path = String(item.name || '').trim();
+  if (!isWritableWorldTemplatePath(path)) return null;
+  return { path };
+};
+const sourcePath = (item: TheaterCharacterStatTemplate, slot: 'current' | 'max') => {
+  if (slot === 'current') {
+    const legacy = legacyWorldCurrentSource(item);
+    if (legacy) return legacy.path;
+  }
+  return rawSourcePath(item, slot);
 };
 const operationContext = (item: TheaterCharacterStatTemplate, slot: 'current' | 'max') => ({
   channelId: clickedChannelId.value, identityId: clickedIdentityId.value,
@@ -267,11 +282,15 @@ const statRows = computed<StatRow[]>(() => {
   return data.template.items.flatMap(item => {
     const currentContext = operationContext(item, 'current');
     const maxContext = operationContext(item, 'max');
-    const base = resolveCharacterStat(item, data.attrs!, true);
+    const legacyCurrent = legacyWorldCurrentSource(item);
+    const displayItem = legacyCurrent && Object.prototype.hasOwnProperty.call(data.attrs!, legacyCurrent.path)
+      ? { ...item, current: { path: legacyCurrent.path } }
+      : item;
+    const base = resolveCharacterStat(displayItem, data.attrs!, true);
     if (!base) return [];
     const current = avatarState.getOptimisticStatValue(currentContext, base.current);
     const max = avatarState.getOptimisticStatValue(maxContext, base.max);
-    const rendered = resolveCharacterStat({ ...item,
+    const rendered = resolveCharacterStat({ ...displayItem,
       ...(current !== null ? { current: { value: current } } : {}),
       ...(max !== null ? { max: { value: max } } : {}),
     }, data.attrs!, true) || base;
@@ -302,7 +321,14 @@ const submitEdit = (row: StatRow, slot: 'current' | 'max') => {
 };
 const changeCurrent = (row: StatRow, delta: number) => {
   if (!row.editCurrent) return;
-  avatarState.queueStatMutation({ ...operationContext(row.item, 'current'), op: 'add', value: delta } as AvatarStatMutationOperation);
+  const context = operationContext(row.item, 'current');
+  const legacy = legacyWorldCurrentSource(row.item);
+  const attrs = cardData.value.attrs;
+  if (legacy && attrs && !Object.prototype.hasOwnProperty.call(attrs, legacy.path) && row.stat.current !== null) {
+    avatarState.queueStatMutation({ ...context, op: 'set', value: row.stat.current + delta } as AvatarStatMutationOperation);
+    return;
+  }
+  avatarState.queueStatMutation({ ...context, op: 'add', value: delta } as AvatarStatMutationOperation);
 };
 const statTextColor = (stat: ResolvedCharacterStat) => {
   const color = String(stat.textColor || '').trim();

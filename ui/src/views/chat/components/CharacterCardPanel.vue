@@ -401,6 +401,17 @@ const overlayIconTypeOptions = [
   { label: '文本图标', value: 'text' },
   { label: '图片图标', value: 'image' },
 ];
+const overlayWorldSourceKindOptions = [
+  { label: '字段', value: 'path' },
+  { label: '常量', value: 'literal' },
+];
+const isAvatarWorldTemplateEditor = computed(() => overlayTemplateEditorTarget.value === 'avatar-world');
+const isWritableWorldTemplatePath = (raw: unknown) => {
+  if (typeof raw !== 'string') return false;
+  const path = raw.trim();
+  if (!/^[\p{L}\p{N}_-]{1,128}$/u.test(path)) return false;
+  return !Number.isFinite(Number(path));
+};
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const theaterOverlaySettingsToggleIcon = computed(() => (
   theaterOverlaySettingsExpanded.value ? ChevronDown : ChevronRight
@@ -473,7 +484,7 @@ const createOverlayEditorItem = (): OverlayEditorItem => ({
   id: `stat_${Date.now()}_${nextOverlayItemSerial++}`,
   name: '',
   current: { value: '', kind: 'path' },
-  min: { value: '', kind: 'path' },
+  min: isAvatarWorldTemplateEditor.value ? { value: '0', kind: 'literal' } : { value: '', kind: 'path' },
   max: { value: '', kind: 'path' },
   barColor: '#5b8ff9',
   textColor: '#f8fafc',
@@ -842,9 +853,38 @@ const savePersonalSnapshotTemplates = async () => {
   }
 };
 
+const normalizeAndValidateAvatarWorldOverlayTemplate = () => {
+  if (!isAvatarWorldTemplateEditor.value) return true;
+  for (const item of overlayTemplateEditorItems.value) {
+    for (const [slot, label, source] of [
+      ['current', '当前', item.current],
+      ['min', '最小', item.min],
+      ['max', '最大', item.max],
+    ] as const) {
+      const value = source.value.trim();
+      if (source.kind !== 'path' || !value || isWritableWorldTemplatePath(value)) continue;
+
+      if (Number.isFinite(Number(value))) {
+        if (slot === 'current') {
+          if (isWritableWorldTemplatePath(item.name.trim())) continue;
+          message.error('当前值使用数字初始值时，数据名字必须同时是合法的 world 字段名');
+          return false;
+        }
+        source.kind = 'literal';
+        continue;
+      }
+
+      message.error(`${item.name.trim() || '未命名数据'}的${label}来源不是合法字段名`);
+      return false;
+    }
+  }
+  return true;
+};
+
 const saveOverlayTemplateEditor = async () => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return false;
+  if (!normalizeAndValidateAvatarWorldOverlayTemplate()) return false;
   const templateJson = serializeOverlayTemplateEditor();
   snapshotTemplateSaving.value = true;
   try {
@@ -3015,14 +3055,17 @@ defineExpose({ openCardById });
           新增
         </n-button>
       </div>
+      <div v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__hint">
+        “字段”绑定 world 状态，可在头像卡直接输入或增减；“常量”仅用于固定显示。
+      </div>
       <div class="sc-modal-table-scroll">
-      <div class="overlay-template-editor__table">
+      <div class="overlay-template-editor__table" :class="{ 'overlay-template-editor__table--world': isAvatarWorldTemplateEditor }">
       <div class="overlay-template-editor__header" aria-hidden="true">
         <span />
         <span>数据名字</span>
-        <span>当前值</span>
-        <span>最小值</span>
-        <span>最大值</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '当前来源' : '当前值' }}</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '最小来源' : '最小值' }}</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '最大来源' : '最大值' }}</span>
         <span>文本颜色</span>
         <span>数据条颜色</span>
         <span />
@@ -3052,18 +3095,32 @@ defineExpose({ openCardById });
             <n-input v-model:value="item.name" size="small" placeholder="生命值" />
           </div>
           <div class="overlay-template-editor__field overlay-template-editor__field--current">
-            <span class="overlay-template-editor__field-label">当前值</span>
-            <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '当前来源' : '当前值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.current.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.current.value" size="small" :placeholder="item.current.kind === 'path' ? '生命值' : '2'">
+                <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+              </n-input>
+            </span>
+            <n-input v-else v-model:value="item.current.value" size="small" placeholder="生命值">
               <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
             </n-input>
           </div>
           <div class="overlay-template-editor__field overlay-template-editor__field--min">
-            <span class="overlay-template-editor__field-label">最小值</span>
-            <n-input v-model:value="item.min.value" size="small" placeholder="0" />
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '最小来源' : '最小值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.min.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.min.value" size="small" :placeholder="item.min.kind === 'path' ? '生命值下限' : '0'" />
+            </span>
+            <n-input v-else v-model:value="item.min.value" size="small" placeholder="0" />
           </div>
           <div class="overlay-template-editor__field overlay-template-editor__field--max">
-            <span class="overlay-template-editor__field-label">最大值</span>
-            <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '最大来源' : '最大值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.max.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.max.value" size="small" :placeholder="item.max.kind === 'path' ? '生命值上限' : '8'" />
+            </span>
+            <n-input v-else v-model:value="item.max.value" size="small" placeholder="生命值上限" />
           </div>
           <div class="overlay-template-editor__field overlay-template-editor__field--text-color">
             <span class="overlay-template-editor__field-label">文本颜色</span>
@@ -3630,12 +3687,62 @@ defineExpose({ openCardById });
   gap: 0.5rem;
 }
 
+.overlay-template-editor__hint {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--sc-border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 92%, black);
+  color: var(--sc-text-primary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.overlay-template-editor__source-inputs {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.overlay-template-editor__source-inputs :deep(.n-base-selection) {
+  min-width: 88px;
+}
+
+.overlay-template-editor :deep(.n-input),
+.overlay-template-editor :deep(.n-base-selection),
+.overlay-template-editor :deep(.n-color-picker-trigger) {
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 94%, black);
+}
+
+.overlay-template-editor :deep(.n-input__input-el),
+.overlay-template-editor :deep(.n-input__textarea-el),
+.overlay-template-editor :deep(.n-base-selection-label) {
+  color: var(--sc-text-primary);
+}
+
+.overlay-template-editor :deep(.n-input__placeholder),
+.overlay-template-editor :deep(.n-base-selection-placeholder) {
+  color: var(--sc-text-secondary);
+  opacity: 0.82;
+}
+
 .overlay-template-editor__file-input {
   display: none;
 }
 
 .overlay-template-editor__table {
   min-width: 760px;
+}
+
+@media (min-width: 861px) {
+  .overlay-template-editor__table--world {
+    min-width: 1080px;
+  }
+
+  .overlay-template-editor__table--world .overlay-template-editor__header,
+  .overlay-template-editor__table--world .overlay-template-editor__row {
+    grid-template-columns: 28px minmax(110px, 1fr) minmax(210px, 1.7fr) minmax(170px, 1.2fr) minmax(210px, 1.5fr) 84px 84px 30px;
+  }
 }
 
 .overlay-template-editor__header,
@@ -3647,9 +3754,12 @@ defineExpose({ openCardById });
 }
 
 .overlay-template-editor__header {
-  padding: 0 0.25rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.74rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 88%, transparent);
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
 .overlay-template-editor__field {
@@ -3661,13 +3771,16 @@ defineExpose({ openCardById });
 }
 
 .overlay-template-editor__item {
-  padding: 0.45rem 0.25rem;
-  border-top: 1px solid var(--sc-border-color);
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--sc-border-color) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 78%, transparent);
   transition: background-color 0.16s ease;
 }
 
 .overlay-template-editor__item--dragging {
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .overlay-template-editor__additional-row {
@@ -3675,7 +3788,9 @@ defineExpose({ openCardById });
   align-items: end;
   flex-wrap: wrap;
   gap: 0.45rem 0.7rem;
-  padding: 0.45rem 30px 0 28px;
+  margin-top: 0.5rem;
+  padding: 0.55rem 30px 0 28px;
+  border-top: 1px dashed color-mix(in srgb, var(--sc-border-color) 70%, transparent);
 }
 
 .overlay-template-editor__additional-field {
@@ -3683,8 +3798,8 @@ defineExpose({ openCardById });
   grid-template-columns: max-content minmax(92px, 120px);
   align-items: center;
   gap: 0.4rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.74rem;
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
 }
 
 .overlay-template-editor__additional-field--icon {
@@ -3719,8 +3834,9 @@ defineExpose({ openCardById });
 .overlay-template-editor__resolved-value {
   max-width: 58px;
   overflow: hidden;
-  color: var(--sc-text-secondary);
+  color: var(--sc-text-primary);
   font-size: 0.72rem;
+  opacity: 0.78;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3730,17 +3846,18 @@ defineExpose({ openCardById });
 }
 
 .overlay-template-preview {
-  padding: 0.7rem 0.8rem;
+  padding: 0.8rem 0.9rem;
   border: 1px solid var(--sc-border-color);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--sc-bg-secondary, #1e1e24) 86%, black);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #1e1e24) 94%, black);
 }
 
 .overlay-template-preview__label {
   display: block;
   margin-bottom: 0.5rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.74rem;
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
 .overlay-template-preview__stats {
@@ -4271,8 +4388,9 @@ defineExpose({ openCardById });
   .overlay-template-editor__field-label {
     display: block;
     margin-bottom: 0.2rem;
-    color: var(--sc-text-secondary);
-    font-size: 0.68rem;
+    color: var(--sc-text-primary);
+    font-size: 0.7rem;
+    font-weight: 500;
   }
 
   .overlay-template-editor__additional-row {
