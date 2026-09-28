@@ -340,16 +340,39 @@ func ttsVoices(c *fiber.Ctx) error {
 		size = 20
 	}
 	q := model.GetDB().Model(&model.TTSVoice{}).Where("deleted_at IS NULL")
-	if c.Query("mine") == "true" {
-		q = q.Where("owner_user_id = ? AND lifecycle <> ?", userID, "deleted")
-	} else {
-		q = q.Where("(owner_user_id = ? OR (is_public = ? AND lifecycle = ? AND provider_status = ?))", userID, true, "saved", "OK")
+	// `scope` selects the picker catalog: saved voices only, where the caller's
+	// own voices stay listed even when the provider reports them unhealthy.
+	// Without it the legacy `mine` semantics (workbench lifecycles) apply.
+	switch scope := c.Query("scope"); scope {
+	case "":
+		if c.Query("mine") == "true" {
+			q = q.Where("owner_user_id = ? AND lifecycle <> ?", userID, "deleted")
+		} else {
+			q = q.Where("(owner_user_id = ? OR (is_public = ? AND lifecycle = ? AND provider_status = ?))", userID, true, "saved", "OK")
+		}
+	case "mine":
+		q = q.Where("owner_user_id = ? AND lifecycle = ?", userID, "saved")
+	case "public":
+		q = q.Where("lifecycle = ? AND is_public = ? AND (owner_user_id = ? OR provider_status = ?)", "saved", true, userID, "OK")
+	case "all":
+		q = q.Where("lifecycle = ? AND (owner_user_id = ? OR (is_public = ? AND provider_status = ?))", "saved", userID, true, "OK")
+	default:
+		return c.SendStatus(fiber.StatusBadRequest)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		q = q.Where("name LIKE ? OR tags LIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 	if target := c.Query("model"); target != "" {
 		q = q.Where("target_model = ?", target)
+	}
+	if providerID := strings.TrimSpace(c.Query("providerId")); providerID != "" {
+		q = q.Where("provider_id = ?", providerID)
+	}
+	if kind := strings.TrimSpace(c.Query("kind")); kind != "" {
+		q = q.Where("kind = ?", kind)
+	}
+	if tag := strings.TrimSpace(c.Query("tag")); tag != "" {
+		q = q.Where("tags LIKE ?", "%"+tag+"%")
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

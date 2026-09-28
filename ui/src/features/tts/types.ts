@@ -22,6 +22,7 @@ export interface SpeechQuota {
 export interface SpeechVoice {
   id: string
   ownerUserId: string
+  providerId?: string
   name: string
   tags: string
   description: string
@@ -35,8 +36,21 @@ export interface SpeechVoice {
   previewExpiresAt?: string
   previewResourceId?: string
 }
-export interface SystemVoice { id: string; name: string; targetModel: string; languages: string[]; kind: string; tags?: string }
+// System voice ids are model-specific; (providerId, targetModel, id) identifies one.
+export interface SystemVoice { id: string; name: string; targetModel: string; providerId?: string; languages: string[]; kind: string; tags?: string }
 export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; total: number; catalogVersion: string }
+// `scope` selects the saved-voice picker catalog; without it `mine` keeps the
+// workbench listing (previews and creating voices included).
+export interface VoiceDirectoryQuery {
+  scope?: 'all' | 'mine' | 'public'
+  mine?: boolean
+  page?: number
+  search?: string
+  model?: string
+  providerId?: string
+  kind?: string
+  tag?: string
+}
 export interface SpeechRequest {
   requestKey: string
   text?: string

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NInputNumber, NModal, NSelect, NSpace, NPagination } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NModal } from 'naive-ui'
 import { speechAPI, speechError } from './api'
 import { useSpeechStore } from './store'
 import type { RoleSpeechConfig, SpeechJob } from './types'
 import { speechPlayer } from './player'
 import { useUserStore } from '@/stores/user'
-const props = defineProps<{ identityId: string }>()
+import VoicePicker from './VoicePicker.vue'
+import { roleVoiceFields, roleVoiceSelection, type VoiceSelection } from './voice-catalog'
+const props = defineProps<{ identityId: string; identityName?: string }>()
 const speech = useSpeechStore()
 const user = useUserStore()
 let generation = 0
@@ -16,22 +18,15 @@ const busy = ref(false)
 const text = ref('你好，这是我的角色语音试听。')
 const job = ref<SpeechJob | null>(null)
 const role = ref<RoleSpeechConfig | null>(null)
-watch([() => user.info.id, () => props.identityId], () => { generation++; visible.value = false; role.value = null; job.value = null; busy.value = false }, { flush: 'sync' })
+const selection = ref<VoiceSelection>({ type: 'inherit' })
+watch([() => user.info.id, () => props.identityId], () => { generation++; visible.value = false; role.value = null; selection.value = { type: 'inherit' }; job.value = null; busy.value = false }, { flush: 'sync' })
 watch(visible, () => { generation++; busy.value = false }, { flush: 'sync' })
 onBeforeUnmount(() => { generation++ })
-const options = ref<{ label: string; value: string }[]>([])
-const search = ref('')
-const page = ref(1)
-const total = ref(0)
-const unavailable = computed(() => !!voice.value && !options.value.some(option => option.value === voice.value))
-const voice = computed({
-  get: () => role.value?.voiceId ? `voice:${role.value.voiceId}` : role.value?.systemVoice ? `system:${role.value.systemVoice}` : '',
-  set: (value: string) => {
-    if (!role.value) return
-    role.value.voiceId = value.startsWith('voice:') ? value.slice(6) : ''
-    role.value.systemVoice = value.startsWith('system:') ? value.slice(7) : ''
-  },
-})
+const titleId = computed(() => `role-voice-title-${props.identityId}`)
+// Keep the picker-side selection separate from the persisted role fields so a
+// system voice can retain its model/provider-qualified identity while editing.
+// Role system voices are resolved against the platform default model.
+const presetModelIds = computed(() => speech.quota ? [speech.quota.defaultModel] : [])
 async function open() {
   if (visible.value) return
   visible.value = true
@@ -42,43 +37,10 @@ async function open() {
   const identityId = props.identityId
   const current = generation
   try {
-    const [value, directory] = await Promise.all([speechAPI.role(identityId), speechAPI.voices({ page: 1 })])
+    const value = await speechAPI.role(identityId)
     if (current !== generation || !visible.value || identityId !== props.identityId) return
     role.value = value
-    page.value = 1
-    search.value = ''
-    total.value = directory.total
-    options.value = [{ label: '继承平台默认音色', value: '' },
-      ...directory.system.filter(v => v.targetModel === speech.quota?.defaultModel).map(v => ({ label: v.name, value: `system:${v.id}` })),
-      ...directory.items.filter(v => v.lifecycle === 'saved' && v.providerStatus === 'OK').map(v => ({ label: v.name, value: `voice:${v.id}` })),
-    ]
-    if (value.voiceId && !options.value.some(option => option.value === `voice:${value.voiceId}`)) {
-      try {
-        const selected = await speechAPI.voice(value.voiceId)
-        if (current === generation && visible.value && identityId === props.identityId) options.value.push({ label: selected.name, value: `voice:${selected.id}` })
-      } catch { /* Keep an explicit unavailable binding; never choose a fallback. */ }
-    }
-  } catch (e) { if (current === generation) error.value = speechError(e) }
-  finally { if (current === generation) busy.value = false }
-}
-async function browse(nextPage = 1) {
-  if (busy.value) return
-  busy.value = true
-  error.value = ''
-  const current = generation
-  const selected = options.value.find(option => option.value === voice.value)
-  try {
-    const directory = await speechAPI.voices({ page: nextPage, search: search.value })
-    if (current !== generation) return
-    const values = [
-      { label: '继承平台默认音色', value: '' },
-      ...directory.system.filter(v => v.targetModel === speech.quota?.defaultModel).map(v => ({ label: v.name, value: `system:${v.id}` })),
-      ...directory.items.filter(v => v.lifecycle === 'saved' && v.providerStatus === 'OK').map(v => ({ label: v.name, value: `voice:${v.id}` })),
-    ]
-    if (selected && !values.some(option => option.value === selected.value)) values.push(selected)
-    options.value = values
-    page.value = nextPage
-    total.value = directory.total
+    selection.value = roleVoiceSelection(value)
   } catch (e) { if (current === generation) error.value = speechError(e) }
   finally { if (current === generation) busy.value = false }
 }
@@ -88,7 +50,7 @@ async function save() {
   error.value = ''
   const current = generation
   try {
-    await speechAPI.saveRole(props.identityId, { ...role.value })
+    await speechAPI.saveRole(props.identityId, { ...role.value, ...roleVoiceFields(selection.value) })
     if (current === generation) visible.value = false
   }
   catch (e) { if (current === generation) error.value = speechError(e) }
@@ -100,7 +62,7 @@ async function audition() {
   error.value = ''
   const current = generation
   try {
-    const value = await speechAPI.submit('audition', { ...role.value, text: text.value, requestKey: crypto.randomUUID() })
+    const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), text: text.value, requestKey: crypto.randomUUID() })
     if (current === generation) job.value = value
   }
   catch (e) { if (current === generation) error.value = speechError(e) }
@@ -120,31 +82,138 @@ async function query() {
 </script>
 <template>
   <NButton text size="small" @click="open">音色</NButton>
-  <NModal v-model:show="visible" preset="card" title="角色音色" style="width: min(520px, 94vw)">
-    <NSpace vertical>
-      <NAlert v-if="error" type="error">{{ error }}</NAlert>
-      <template v-if="role">
-        <NSpace>
-          <NInput v-model:value="search" placeholder="搜索个人或公开音色名称、标签" @keyup.enter="browse(1)" />
-          <NButton :loading="busy" @click="browse(1)">搜索音色</NButton>
-        </NSpace>
-        <NSelect v-model:value="voice" :options="options" filterable />
-        <NPagination :page="page" :item-count="total" :page-size="20" :disabled="busy" @update:page="browse" />
-        <span>{{ voice ? '当前使用显式音色绑定' : '当前继承平台默认音色' }}；选择“继承平台默认音色”并保存可清除绑定。</span>
-        <NAlert v-if="unavailable" type="warning">当前绑定已不可用或不再公开；不会自动改用其他声音。请重新选择或清除绑定。</NAlert>
-        <NInput v-model:value="role.instruction" placeholder="朗读指令（不调用文本模型）" />
-        <label>语速<NInputNumber v-model:value="role.rate" :min="0.5" :max="2" :step="0.1" /></label>
-        <label>音调<NInputNumber v-model:value="role.pitch" :min="0.5" :max="2" :step="0.1" /></label>
-        <label>音量<NInputNumber v-model:value="role.volume" :min="0" :max="100" /></label>
-        <NButton :loading="busy" @click="save">保存绑定</NButton>
-        <NInput v-model:value="text" placeholder="试听文字" />
-        <NButton :loading="busy" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" @click="audition">确认付费试听（{{ speech.quota?.characterPrice ?? '未定价' }} / 字）</NButton>
-        <template v-if="job">
-          <span>{{ job.status }} {{ job.errorCode }}</span>
-          <NButton @click="query">查询试听状态</NButton>
-          <NButton v-if="job.audioResourceId" @click="speechPlayer.play('resources', job.audioResourceId)">免费重放 / 停止</NButton>
-        </template>
-      </template>
-    </NSpace>
+  <NModal v-model:show="visible" :auto-focus="false">
+    <section class="rv-shell" role="dialog" aria-modal="true" :aria-labelledby="titleId">
+      <header class="rv-head">
+        <div class="rv-head__text">
+          <h2 :id="titleId">选择角色音色</h2>
+          <p>{{ identityName ? `角色：${identityName}` : '为当前角色绑定朗读音色' }}</p>
+        </div>
+        <button type="button" class="rv-close" aria-label="关闭" @click="visible = false">✕</button>
+      </header>
+      <NAlert v-if="error" type="error" class="rv-alert">{{ error }}</NAlert>
+      <div v-if="role" class="rv-body">
+        <VoicePicker v-model="selection" mode="select" :preset-model-ids="presetModelIds" class="rv-picker" />
+        <aside class="rv-side">
+          <section class="rv-section">
+            <h3>角色语音参数</h3>
+            <label class="rv-field">
+              <span>朗读指令</span>
+              <NInput v-model:value="role.instruction" placeholder="朗读指令（不调用文本模型）" />
+            </label>
+            <div class="rv-numbers">
+              <label class="rv-field"><span>语速</span><NInputNumber v-model:value="role.rate" :min="0.5" :max="2" :step="0.1" /></label>
+              <label class="rv-field"><span>音调</span><NInputNumber v-model:value="role.pitch" :min="0.5" :max="2" :step="0.1" /></label>
+              <label class="rv-field"><span>音量</span><NInputNumber v-model:value="role.volume" :min="0" :max="100" /></label>
+            </div>
+          </section>
+          <section class="rv-section">
+            <h3>付费试听</h3>
+            <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
+            <p class="rv-hint">按当前选择与参数合成新音频，扣除语音额度；重放已有结果免费。</p>
+            <NButton :loading="busy" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" @click="audition">确认付费试听（{{ speech.quota?.characterPrice ?? '未定价' }} / 字）</NButton>
+            <div v-if="job" class="rv-job">
+              <span>试听任务：{{ job.status }} {{ job.errorCode }}</span>
+              <div class="rv-job__actions">
+                <NButton size="small" @click="query">查询试听状态</NButton>
+                <NButton v-if="job.audioResourceId" size="small" @click="speechPlayer.play('resources', job.audioResourceId)">免费重放 / 停止</NButton>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+      <p v-else class="rv-empty">{{ busy ? '正在读取角色音色…' : '' }}</p>
+      <footer class="rv-foot">
+        <span class="rv-foot__hint">选择“跟随平台默认音色”并保存即可清除绑定。</span>
+        <div class="rv-foot__actions">
+          <NButton @click="visible = false">取消</NButton>
+          <NButton type="primary" :loading="busy" :disabled="!role" @click="save">保存绑定</NButton>
+        </div>
+      </footer>
+    </section>
   </NModal>
 </template>
+
+<style scoped>
+/* NModal adds `.n-modal` to this root, which custom themes paint with
+   --sc-bg-elevated; every palette uses the same surface here. */
+.rv-shell {
+  display: flex;
+  flex-direction: column;
+  width: min(1000px, 94vw);
+  height: min(760px, 88vh);
+  overflow: hidden;
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 10px;
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .25);
+}
+.rv-head { display: flex; flex: none; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 12px; }
+.rv-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.rv-head p { margin: 4px 0 0; font-size: 13px; color: var(--sc-text-secondary); }
+.rv-head__text { min-width: 0; }
+.rv-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sc-text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+}
+.rv-close:hover { background: color-mix(in srgb, var(--sc-text-primary) 8%, transparent); color: var(--sc-text-primary); }
+.rv-alert { flex: none; margin: 0 22px 12px; }
+.rv-body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 22px;
+  min-height: 0;
+  padding: 0 22px 16px;
+}
+.rv-picker { min-height: 0; }
+.rv-side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  padding-left: 22px;
+  overflow-y: auto;
+  border-left: 1px solid var(--sc-border-mute);
+}
+.rv-section { display: flex; flex-direction: column; gap: 10px; }
+.rv-section h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.rv-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--sc-text-secondary); }
+.rv-numbers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.rv-numbers .rv-field { display: grid; grid-template-columns: 3em minmax(0, 1fr); align-items: center; }
+.rv-hint { margin: 0; font-size: 12px; color: var(--sc-text-secondary); }
+.rv-job { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.rv-job__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-empty { flex: 1 1 auto; margin: 0; padding: 24px; text-align: center; color: var(--sc-text-secondary); }
+.rv-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--sc-border-mute);
+}
+.rv-foot__hint { min-width: 0; font-size: 12px; color: var(--sc-text-secondary); }
+.rv-foot__actions { display: flex; flex: none; gap: 8px; }
+
+@media (max-width: 720px) {
+  .rv-shell { width: 100vw; max-width: 100%; height: 100vh; height: 100dvh; border: 0; border-radius: 0; }
+  .rv-head { padding: 14px 16px 10px; }
+  .rv-alert { margin: 0 16px 10px; }
+  .rv-body { display: block; padding: 0 16px 16px; overflow-y: auto; }
+  .rv-side { margin-top: 20px; padding: 16px 0 0; overflow: visible; border-top: 1px solid var(--sc-border-mute); border-left: 0; }
+  .rv-foot { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  .rv-foot__hint { display: none; }
+  .rv-foot__actions { flex: 1; justify-content: flex-end; }
+}
+</style>

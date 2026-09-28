@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceDirectory } from './types'
+import type { MessageSpeech, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -31,7 +31,7 @@ export const speechAPI = {
     form.append('authorized', 'true')
     return (await api.post<{ id: string }>(`${root}/sources`, form)).data.id
   },
-  async voices(params: { mine?: boolean; page?: number; search?: string; model?: string }) {
+  async voices(params: VoiceDirectoryQuery) {
     return (await api.get<VoiceDirectory>(`${root}/voices`, { params })).data
   },
   async voice(voiceId: string) { return (await api.get<SpeechVoice>(`${root}/voices/${id(voiceId)}`)).data },

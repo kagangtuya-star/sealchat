@@ -18261,7 +18261,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="identity-list__actions">
-                <RoleVoiceDialog v-if="!isManagingBotIdentity" :identity-id="identity.id" />
+                <RoleVoiceDialog v-if="!isManagingBotIdentity" :identity-id="identity.id" :identity-name="identity.displayName" />
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
                 <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1 || (isManagingOtherUserIdentity && Boolean(identity.sharedIdentityId))" @click="deleteIdentity(identity)">删除</n-button>
               </div>
