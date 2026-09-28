@@ -1,4 +1,6 @@
 <script setup lang="tsx">
+import { useSpeechStore } from '@/features/tts/store'
+import RoleVoiceDialog from '@/features/tts/RoleVoiceDialog.vue'
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import MessageForwardDialog from './components/MessageForwardDialog.vue';
@@ -12883,6 +12885,10 @@ const retrySendMessage = async (target?: Message) => {
       undefined,
       undefined,
       identityVariantId,
+      undefined,
+      undefined,
+      currentData._ttsAutoRequested === true
+        && useSpeechStore().optIn(chat.curChannel?.id || ''),
     );
 	  if (!newMsg) {
 	    throw new Error('message.create returned empty result');
@@ -13126,6 +13132,7 @@ const performSend = async (options?: {
     }
   }
   (tmpMsg as any).clientId = clientId;
+  tmpMsg._ttsAutoRequested = useSpeechStore().optIn(chat.curChannel?.id || '');
   if (chat.curChannel) {
     (tmpMsg as any).channel = chat.curChannel;
   }
@@ -13199,6 +13206,9 @@ const performSend = async (options?: {
       typingDurationMs,
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
       identityVariantIdOverride,
+      undefined,
+      undefined,
+      tmpMsg._ttsAutoRequested === true,
     );
 	  if (!newMsg) {
 	    throw new Error('message.create returned empty result');
@@ -15502,6 +15512,9 @@ onBeforeUnmount(() => {
           @open-export="exportManagerVisible = true"
           @open-import="importDialogVisible = true"
           @open-identity-manager="openIdentityManager"
+          @open-speech="useSpeechStore().open(chat.curChannel?.id || '')"
+          :speech-enabled="true"
+          :speech-active="useSpeechStore().visible"
           @open-gallery="openGalleryPanel"
           @open-display-settings="openDisplaySettings('appearance')"
           @open-favorites="channelFavoritesVisible = true"
@@ -18248,6 +18261,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="identity-list__actions">
+                <RoleVoiceDialog v-if="!isManagingBotIdentity" :identity-id="identity.id" />
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
                 <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1 || (isManagingOtherUserIdentity && Boolean(identity.sharedIdentityId))" @click="deleteIdentity(identity)">删除</n-button>
               </div>

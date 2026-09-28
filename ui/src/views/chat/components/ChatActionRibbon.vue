@@ -16,6 +16,7 @@ import {
   Star as StarIcon,
   Upload as UploadIcon,
   Users as UsersIcon,
+  Volume as SpeechIcon,
   Id as CharacterCardIcon,
   Message2 as CharacterRemarkIcon,
 	Dice as Dice3DIcon,
@@ -42,6 +43,8 @@ interface RoleOption {
 }
 
 interface Props {
+  speechActive?: boolean
+  speechEnabled?: boolean
   filters: FilterState
   roles: RoleOption[]
   archiveActive?: boolean
@@ -82,6 +85,7 @@ interface Props {
 }
 
 interface Emits {
+  (e: 'open-speech'): void
   (e: 'update:filters', filters: FilterState): void
   (e: 'open-archive'): void
   (e: 'open-export'): void
@@ -209,6 +213,8 @@ const allActionButtons = computed<ActionButton[]>(() => {
       template: 'split-dual',
     })
   }
+
+  buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive', disabled: () => props.speechEnabled === false })
 
   // 便签入口（置于“分屏”之后）
   if (props.stickyNoteEnabled !== false) {

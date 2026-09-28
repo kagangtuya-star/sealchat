@@ -857,6 +857,7 @@ func apiMessageDelete(ctx *ChatContext, data *messageDeletePayload) (any, error)
 
 		item.IsRevoked = true
 		db.Model(&item).Update("is_revoked", true)
+		service.TTSCancelMessage(item.ID)
 
 		var channel model.ChannelModel
 		db.Where("id = ?", data.ChannelID).Limit(1).Find(&channel)
@@ -962,6 +963,7 @@ func apiMessageRemove(ctx *ChatContext, data *messageRemovePayload) (any, error)
 
 	for _, msg := range messages {
 		msg.IsDeleted = true
+		service.TTSCancelMessage(msg.ID)
 		msg.DeletedBy = operatorID
 		msg.Content = ""
 		msg.DeletedAt = &now
@@ -1969,6 +1971,7 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
+	TTSAuto           bool     `json:"tts_auto"`
 	ChannelID         string   `json:"channel_id"`
 	QuoteID           string   `json:"quote_id"`
 	Content           string   `json:"content"`
@@ -2474,6 +2477,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.WhisperTargetMemberName = whisperMember.Nickname
 		}
 	}
+	service.TTSPrepareMessageIntent(&m, ctx.User, data.TTSAuto && botMsgContext == nil && !strings.HasPrefix(trimmedClientID, "iform_embed:") && (renderResult == nil || len(renderResult.Rolls) == 0))
 	trace.StageDone(perfprofiler.MessageStagePrepare, prepareStarted)
 	persistStarted := trace.StageStart()
 	createResult := db.Create(&m)
@@ -2497,6 +2501,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 	rows := createResult.RowsAffected
+	if m.TTSIntent != "" {
+		service.TTSWake()
+	}
 
 	if rows > 0 {
 		if renderResult != nil {
@@ -3395,6 +3402,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		"edit_count": msg.EditCount,
 		"updated_at": msg.UpdatedAt,
 	}
+	updates["tts_intent"] = ""
+	updates["tts_status"] = "invalidated"
+	updates["tts_data"] = nil
+	msg.TTSIntent = ""
+	msg.TTSStatus = "invalidated"
+	msg.TTSData = nil
 	if prevContent != newContent {
 		updates["content"] = msg.Content
 		updates["visible_char_count"] = contentstats.CountVisibleTextChars(msg.Content)
@@ -3434,6 +3447,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if err != nil {
 		return nil, err
 	}
+	service.TTSCancelMessage(msg.ID)
 	if effectiveBuiltInDiceEnabled {
 		if err := model.MessageDiceRollReplace(msg.ID, updatedDiceRolls); err != nil {
 			return nil, err

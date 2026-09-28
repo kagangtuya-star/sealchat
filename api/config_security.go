@@ -13,6 +13,7 @@ import (
 func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 	ret := sanitizeConfigForAdmin(cfg)
 	ret.AI.Providers = nil
+	ret.AI.Speech = nil
 	ret.Certificate = utils.CertificateConfig{}
 	return ret
 }
@@ -22,6 +23,14 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 		return utils.AppConfig{}
 	}
 	ret := *cfg
+	ret.AI.Speech = utils.NormalizeSpeechConfig(cfg.AI.Speech)
+	if ret.AI.Speech != nil {
+		for i := range ret.AI.Speech.Providers {
+			p := &ret.AI.Speech.Providers[i]
+			p.HasAPIKey = strings.TrimSpace(p.APIKey) != ""
+			p.APIKey = ""
+		}
+	}
 	if len(cfg.AI.Providers) > 0 {
 		ret.AI.Providers = append([]utils.AIProviderConfig(nil), cfg.AI.Providers...)
 	}
@@ -74,6 +83,21 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 
 	out := *incoming
+	if incoming.AI.Speech == nil {
+		out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
+	} else {
+		out.AI.Speech = utils.NormalizeSpeechConfig(incoming.AI.Speech)
+		if current.AI.Speech != nil {
+			for i := range out.AI.Speech.Providers {
+				p := &out.AI.Speech.Providers[i]
+				for _, old := range current.AI.Speech.Providers {
+					if old.ID == p.ID && old.CredentialScope == p.CredentialScope && strings.TrimSpace(p.APIKey) == "" {
+						p.APIKey = old.APIKey
+					}
+				}
+			}
+		}
+	}
 
 	// Always keep server-only DSN if incoming is empty.
 	if strings.TrimSpace(out.DSN) == "" {
@@ -163,6 +187,8 @@ func mergeConfigPatchForWrite(current *utils.AppConfig, raw []byte) (*utils.AppC
 	}
 
 	out := *current
+	// The recursive patch must never mutate the live pointer before validation.
+	out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
 	if err := applyJSONConfigPatch(reflect.ValueOf(&out).Elem(), payload); err != nil {
 		return nil, err
 	}
@@ -194,6 +220,20 @@ func applyJSONConfigPatch(dst reflect.Value, payload map[string]json.RawMessage)
 			continue
 		}
 
+		if name == "speech" && field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {
+				copyValue := reflect.New(field.Type().Elem())
+				if !field.IsNil() {
+					copyValue.Elem().Set(field.Elem())
+				}
+				if err := applyJSONConfigPatch(copyValue.Elem(), nested); err != nil {
+					return err
+				}
+				field.Set(copyValue)
+				continue
+			}
+		}
 		if field.Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
 			var nested map[string]json.RawMessage
 			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useSpeechStore } from '@/features/tts/store'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent, useMessage } from 'naive-ui';
@@ -370,6 +371,8 @@ const effectiveAudioPaneId = computed<PaneId>(() => {
   return preferredPaneId;
 });
 const activePaneHasChannel = computed(() => activePane.value.mode === 'chat' && !!activePane.value.channelId);
+watch(() => activePane.value.channelId, channelId => { useSpeechStore().scopeChannel = channelId || '' }, { immediate: true });
+onBeforeUnmount(() => { useSpeechStore().scopeChannel = '' });
 
 const activeChannelTitle = computed(() => {
   if (activePane.value.mode === 'web') {
@@ -1217,6 +1220,8 @@ watch(
               @open-export="openPanel('export')"
               @open-import="openPanel('import')"
               @open-identity-manager="openPanel('identity')"
+              @open-speech="useSpeechStore().open(activePane.channelId || '')"
+              :speech-active="useSpeechStore().visible"
               @open-gallery="openPanel('gallery')"
               @open-display-settings="openPanel('display')"
               @open-glass-background="glassBackgroundPanelVisible = true"

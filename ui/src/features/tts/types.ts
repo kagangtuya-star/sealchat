@@ -1,0 +1,114 @@
+export interface MessageSpeech {
+  status: string
+  audioResourceId?: string
+  durationMs?: number
+  format?: string
+  messageRevision: number
+}
+export interface SpeechQuota {
+  enabled: boolean
+  autoSynthesis: boolean
+  policy: { dailyLimit: number | null; monthlyLimit: number | null; lifetimeLimit: number | null }
+  usage: { DailySettled: number; MonthlySettled: number; LifetimeSettled: number; ActiveReserved: number }
+  saved: number
+  slots: number
+  format: string
+  characterPrice: number | null
+  designPrice: number | null
+  clonePrice: number | null
+  defaultModel: string
+  defaultVoice: string
+}
+export interface SpeechVoice {
+  id: string
+  ownerUserId: string
+  name: string
+  tags: string
+  description: string
+  parameters: string
+  targetModel: string
+  kind: string
+  isPublic: boolean
+  lifecycle: string
+  providerStatus: string
+  revision: number
+  previewExpiresAt?: string
+  previewResourceId?: string
+}
+export interface SystemVoice { id: string; name: string; targetModel: string; languages: string[]; kind: string; tags?: string }
+export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; total: number; catalogVersion: string }
+export interface SpeechRequest {
+  requestKey: string
+  text?: string
+  voiceId?: string
+  systemVoice?: string
+  instruction?: string
+  rate?: number
+  pitch?: number
+  volume?: number
+  name?: string
+  description?: string
+  sourceResourceId?: string
+}
+export interface SpeechJob {
+  id: string
+  status: string
+  operation: string
+  model?: string
+  voiceId?: string
+  audioResourceId?: string
+  usageStatus: string
+  errorCode?: string
+  message?: string
+  estimatedUnits: number
+  actualUnits?: number | null
+  actualCost?: number
+  media?: { codec: string; container: string; sampleRate: number; channelCount: number; durationMs: number }
+}
+export interface RoleSpeechConfig {
+  identityId: string
+  voiceId: string
+  systemVoice: string
+  instruction: string
+  rate: number
+  pitch: number
+  volume: number
+  revision: number
+}
+export interface SpeechProvider {
+  id: string; enabled: boolean; credentialScope: string; region: string; workspace: string
+  apiKey: string; hasApiKey?: boolean; synthesisEndpoint: string; voiceEndpoint: string; model: string
+  characterPrice: number | null; designPrice: number | null; clonePrice: number | null
+  accountVoiceLimit: number | null; revision: number
+}
+export interface SpeechConfig {
+  enabled: boolean; providers: SpeechProvider[]; defaultProvider: string; defaultVoice: string
+  format: string; quotaDefault: SpeechQuota['policy']; defaultSlots: number
+  previewTTLMinutes: number; previewLimit: number; requestTimeoutSeconds: number
+  maxConcurrent: number; channelQueueLimit: number
+}
+export interface ResolvedSpeechModel {
+  id: string
+  name: string
+  characterPrice: number
+  displayPrice: string
+  designPrice: number | null
+  clonePrice: number
+}
+export interface ResolvedSpeechProvider {
+  providerId: string
+  workspace: string
+  region: string
+  credentialScope: string
+  synthesisEndpoint: string
+  voiceEndpoint: string
+  models: ResolvedSpeechModel[]
+}
+export interface SpeechPolicy {
+  overrideEnabled: boolean; dailyLimit: number | null; monthlyLimit: number | null
+  lifetimeLimit: number | null; slots: number | null
+}
+export interface UnknownSpeechUsage {
+  id: string; operation: string; payerUserId: string; providerRequestId: string
+  estimatedUnits: number; errorCode: string
+}

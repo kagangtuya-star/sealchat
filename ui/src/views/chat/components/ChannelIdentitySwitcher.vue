@@ -1,4 +1,5 @@
 <script setup lang="tsx">
+import { useSpeechStore } from '@/features/tts/store'
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useCharacterCardStore } from '@/stores/characterCard';
@@ -8,7 +9,7 @@ import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownGroupOption, DropdownDividerOption, DropdownRenderOption, DropdownProps } from 'naive-ui';
 import { NDropdown, NButton, NIcon, NTooltip } from 'naive-ui';
-import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit } from '@vicons/tabler';
+import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit, Volume, Volume3 as VolumeOff } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 import { useI18n } from 'vue-i18n';
 
@@ -60,8 +61,33 @@ const chat = useChatStore();
 const user = useUserStore();
 const display = useDisplayStore();
 const cardStore = useCharacterCardStore();
+const speech = useSpeechStore();
 
 const resolvedChannelId = computed(() => props.channelId || chat.curChannel?.id || '');
+
+// Per-tab, per-channel temporary override of automatic synthesis for messages this user sends.
+const ttsUnavailableReason = computed(() => {
+  if (!speech.quota?.enabled) return '平台未启用语音合成';
+  if (!speech.quota.autoSynthesis) return '请先在语音朗读中开启自动合成';
+  return '';
+});
+const ttsAvailable = computed(() => !!resolvedChannelId.value && !ttsUnavailableReason.value);
+const ttsEnabled = computed(() => {
+  const id = resolvedChannelId.value;
+  return !!id
+    && !!speech.quota?.enabled
+    && !!speech.quota.autoSynthesis
+    && speech.temporary[id] !== false;
+});
+const ttsActionTitle = computed(() => (
+  ttsUnavailableReason.value || (ttsEnabled.value ? '关闭语音合成' : '开启语音合成')
+));
+const toggleTemporarySpeech = () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || !ttsAvailable.value) return false;
+  speech.setTemporary(channelId, speech.temporary[channelId] === false);
+  return true;
+};
 
 const identities = computed(() => {
   const id = resolvedChannelId.value;
@@ -309,6 +335,13 @@ const renderActionIconByKey = (key: string) => {
       </NIcon>
     );
   }
+  if (key === '__tts_toggle') {
+    return (
+      <NIcon size={18}>
+        {ttsEnabled.value ? <Volume /> : <VolumeOff />}
+      </NIcon>
+    );
+  }
   return (
     <NIcon size={18}>
       <Settings />
@@ -352,6 +385,18 @@ const renderMobileActionRow = () => (
         </button>
       </>
     ) : null}
+    <button
+      type="button"
+      class={['identity-action-bar-inline__btn', 'identity-action--tts', ttsEnabled.value ? '' : 'is-disabled-state']}
+      title={ttsActionTitle.value}
+      aria-label={ttsActionTitle.value}
+      aria-pressed={ttsEnabled.value}
+      aria-disabled={!ttsAvailable.value}
+      onMousedown={consumeDropdownActionPointer}
+      onClick={handleMobileTtsAction}
+    >
+      {renderActionIconByKey('__tts_toggle')}
+    </button>
   </div>
 );
 
@@ -416,6 +461,16 @@ const options = computed<DropdownMixedOption[]>(() => {
       },
     );
   }
+  result.push({
+    key: '__tts_toggle',
+    label: '语音合成',
+    disabled: !ttsAvailable.value,
+    class: 'identity-option identity-option--action identity-action identity-action--tts',
+    props: {
+      class: ['identity-action--tts', ttsEnabled.value ? '' : 'is-disabled-state'],
+    },
+    icon: () => renderActionIconByKey('__tts_toggle'),
+  });
   return result;
 });
 
@@ -453,16 +508,21 @@ const handleMobileManageAction = (event: MouseEvent) => {
   dropdownVisible.value = false;
   emit('manage');
 };
+const handleMobileTtsAction = (event: MouseEvent) => {
+  consumeDropdownActionPointer(event);
+  toggleTemporarySpeech();
+};
 
 const renderLabel: DropdownRenderLabelFn = (option) => {
-  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle') {
+  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle' || option.key === '__tts_toggle') {
     const label = String(option.label || '');
     const hint = String((option as any).hint || '');
+    const title = option.key === '__tts_toggle' ? ttsActionTitle.value : label;
     return (
       <div
         class="identity-action-option identity-option-node identity-option-node--action"
-        title={label}
-        aria-label={label}
+        title={title}
+        aria-label={title}
       >
         <span class="identity-action-option__body">
           <span class="identity-action-option__text">{label}</span>
@@ -509,6 +569,12 @@ const handleSelect = async (key: string | number) => {
   }
   if (key === '__toggle') {
     applyToggleFilterMode(true);
+    return;
+  }
+  if (key === '__tts_toggle') {
+    if (toggleTemporarySpeech()) {
+      keepDropdownOpenAfterToggle.value = true;
+    }
     return;
   }
   if (key === '__mobile_actions') {
@@ -686,7 +752,7 @@ const applyDropdownMenuLayout = (): boolean => {
   const rowHeight = optionEls[0]?.offsetHeight || 36;
   const dividerHeight = menuEl.querySelector<HTMLElement>('.n-dropdown-divider')?.offsetHeight || 8;
   const visibleRoleCount = Math.min(identityOptionCount.value, MAX_VISIBLE_ROLE_COUNT);
-  const actionCount = isMobile.value ? 1 : (1 + (canManageIdentities.value ? 2 : 0)); // mobile action bar or desktop actions
+  const actionCount = isMobile.value ? 1 : (2 + (canManageIdentities.value ? 2 : 0)); // mobile action bar, or desktop toggle + TTS (+ create/manage)
   const menuPadding = 8;
   const desiredHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
   const viewportHeight = Math.max(
@@ -1002,6 +1068,22 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 :global(.identity-action-bar-inline__btn:active) {
   transform: scale(0.96);
+}
+
+/* TTS toggle: user-off state is only dimmed; it is not Naive UI's disabled state. */
+:global(.identity-action--tts.is-disabled-state .n-dropdown-option-body__prefix),
+:global(.identity-action--tts.is-disabled-state .n-dropdown-option-body__label) {
+  color: var(--sc-text-secondary, #64748b);
+  opacity: 0.55;
+}
+
+:global(.identity-action-bar-inline__btn.identity-action--tts.is-disabled-state) {
+  opacity: 0.55;
+}
+
+:global(.identity-action-bar-inline__btn.identity-action--tts[aria-disabled='true']) {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .identity-action-option {

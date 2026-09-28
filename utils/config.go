@@ -424,15 +424,16 @@ type AIQuotaPolicyConfig struct {
 }
 
 type AIConfig struct {
-	Enabled          bool                       `json:"enabled" yaml:"enabled"`
-	Routing          AIRoutingConfig            `json:"routing" yaml:"routing"`
-	Retry            AIRetryConfig              `json:"retry" yaml:"retry"`
-	RequestTimeoutSeconds int                    `json:"requestTimeoutSeconds" yaml:"requestTimeoutSeconds"`
-	Providers        []AIProviderConfig         `json:"providers" yaml:"providers"`
-	Features         map[string]AIFeatureConfig `json:"features" yaml:"features"`
-	Pricing          []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
-	LogRetentionDays int                        `json:"logRetentionDays" yaml:"logRetentionDays"`
-	QuotaDefault     AIQuotaPolicyConfig        `json:"quotaDefault" yaml:"quotaDefault"`
+	Speech                *SpeechConfig              `json:"speech,omitempty" yaml:"speech,omitempty"`
+	Enabled               bool                       `json:"enabled" yaml:"enabled"`
+	Routing               AIRoutingConfig            `json:"routing" yaml:"routing"`
+	Retry                 AIRetryConfig              `json:"retry" yaml:"retry"`
+	RequestTimeoutSeconds int                        `json:"requestTimeoutSeconds" yaml:"requestTimeoutSeconds"`
+	Providers             []AIProviderConfig         `json:"providers" yaml:"providers"`
+	Features              map[string]AIFeatureConfig `json:"features" yaml:"features"`
+	Pricing               []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
+	LogRetentionDays      int                        `json:"logRetentionDays" yaml:"logRetentionDays"`
+	QuotaDefault          AIQuotaPolicyConfig        `json:"quotaDefault" yaml:"quotaDefault"`
 }
 
 type PerformanceProfilerConfig struct {
@@ -812,7 +813,6 @@ func ReadConfig() *AppConfig {
 	config.AI = NormalizeAIConfig(config.AI)
 	applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 
-	k.Print()
 	currentConfig = &config
 	return currentConfig
 }
@@ -1024,15 +1024,16 @@ func isZeroAIModelPricing(pricing AIModelPricingConfig) bool {
 
 func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	result := AIConfig{
-		Enabled:          cfg.Enabled,
-		Routing:          cfg.Routing,
-		Retry:            cfg.Retry,
+		Speech:                NormalizeSpeechConfig(cfg.Speech),
+		Enabled:               cfg.Enabled,
+		Routing:               cfg.Routing,
+		Retry:                 cfg.Retry,
 		RequestTimeoutSeconds: cfg.RequestTimeoutSeconds,
-		Providers:        make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
-		Features:         make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
-		Pricing:          make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
-		LogRetentionDays: cfg.LogRetentionDays,
-		QuotaDefault:     cfg.QuotaDefault,
+		Providers:             make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
+		Features:              make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
+		Pricing:               make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
+		LogRetentionDays:      cfg.LogRetentionDays,
+		QuotaDefault:          cfg.QuotaDefault,
 	}
 	if result.Routing.Mode == "" {
 		result.Routing.Mode = AIRoutingModeRoundRobin
@@ -1211,6 +1212,9 @@ func validateAIQuotaLimit(limit *float64, label string) error {
 }
 
 func ValidateAIConfig(cfg AIConfig) error {
+	if err := ValidateSpeechConfig(NormalizeSpeechConfig(cfg.Speech)); err != nil {
+		return err
+	}
 	cfg = NormalizeAIConfig(cfg)
 	if cfg.Retry.MaxAttempts <= 0 {
 		return fmt.Errorf("AI 重试次数必须大于 0")
@@ -1869,6 +1873,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("ai.retry.maxDelayMs", config.AI.Retry.MaxDelayMs)
 		_ = k.Set("ai.requestTimeoutSeconds", config.AI.RequestTimeoutSeconds)
 		_ = k.Set("ai.providers", config.AI.Providers)
+		_ = k.Set("ai.speech", config.AI.Speech)
 		_ = k.Set("ai.features", config.AI.Features)
 		_ = k.Set("ai.pricing", config.AI.Pricing)
 		_ = k.Set("ai.logRetentionDays", config.AI.LogRetentionDays)

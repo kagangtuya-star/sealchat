@@ -448,6 +448,7 @@ func oneBotActionSendIntoChannel(session *oneBotSession, channel *model.ChannelM
 		return nil, oneBotBadRequest(err.Error())
 	}
 	resp, err := apiMessageCreate(oneBotChatContext(session), &struct {
+		TTSAuto           bool     `json:"tts_auto"`
 		ChannelID         string   `json:"channel_id"`
 		QuoteID           string   `json:"quote_id"`
 		Content           string   `json:"content"`

@@ -12,6 +12,7 @@ import (
 )
 
 type AdminUsageLogQuery struct {
+	QuotaKind  string
 	Page       int
 	PageSize   int
 	Query      string
@@ -62,7 +63,13 @@ func AdminListUsageLogs(q AdminUsageLogQuery) (*AdminUsageLogListResult, error) 
 	if q.PageSize <= 0 || q.PageSize > 200 {
 		q.PageSize = 20
 	}
-	db := model.GetDB().Model(&model.AIUsageLogModel{})
+	if q.QuotaKind == "" {
+		q.QuotaKind = model.QuotaKindText
+	}
+	if q.QuotaKind != model.QuotaKindText && q.QuotaKind != model.QuotaKindSpeech {
+		return nil, errors.New("invalid quota kind")
+	}
+	db := model.GetDB().Model(&model.AIUsageLogModel{}).Where("quota_kind = ?", q.QuotaKind)
 	if query := strings.TrimSpace(q.Query); query != "" {
 		like := "%" + query + "%"
 		db = db.Where("user_id LIKE ? OR username_snapshot LIKE ? OR nickname_snapshot LIKE ?", like, like, like)
@@ -105,6 +112,10 @@ func AdminListUsageLogs(q AdminUsageLogQuery) (*AdminUsageLogListResult, error) 
 }
 
 func AdminCleanupUsageLogs(retentionDays int, now time.Time) (int64, error) {
+	return AdminCleanupUsageLogsForKind(model.QuotaKindText, retentionDays, now)
+}
+
+func AdminCleanupUsageLogsForKind(kind string, retentionDays int, now time.Time) (int64, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -116,7 +127,7 @@ func AdminCleanupUsageLogs(retentionDays int, now time.Time) (int64, error) {
 		}
 	}
 	cutoff := now.Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	return model.AIUsageLogCleanupBefore(cutoff)
+	return model.AIUsageLogCleanupBeforeForKind(kind, cutoff)
 }
 
 func adminAIQuotaUserExists(userID string) (bool, error) {

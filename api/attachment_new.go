@@ -224,7 +224,7 @@ func AttachmentUploadQuick(c *fiber.Ctx) error {
 
 	db := model.GetDB()
 	var item model.AttachmentModel
-	db.Where("hash = ? and size = ?", hashBytes, body.Size).Limit(1).Find(&item)
+	model.ExcludeTTSAttachments(db).Where("hash = ? and size = ?", hashBytes, body.Size).Limit(1).Find(&item)
 	if item.ID == "" {
 		return wrapError(c, nil, "此项数据无法进行快速上传")
 	}

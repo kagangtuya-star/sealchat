@@ -21,6 +21,8 @@ declare module '@satorijs/protocol' {
     avatarDecoration?: AvatarDecoration;
   }
   interface Message {
+    tts?: import('@/features/tts/types').MessageSpeech | null;
+    _ttsAutoRequested?: boolean;
     whisperMeta?: WhisperMeta;
     whisperToIds?: User[];
     senderRoleId?: string;
@@ -619,6 +621,9 @@ export interface AIFeatureCapability {
 }
 
 export interface AdminAIUsageLogItem {
+  quotaKind?: 'text' | 'speech';
+  billingUnits?: number;
+  unitPrice?: number;
   id: string;
   userId: string;
   usernameSnapshot: string;

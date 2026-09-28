@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -45,6 +46,14 @@ func (*AttachmentModel) TableName() string {
 	return "attachments"
 }
 
+func (a *AttachmentModel) IsTTSManaged() bool {
+	return a != nil && (a.RootIDType == "tts" || strings.HasPrefix(a.ObjectKey, "tts-private/"))
+}
+
+func ExcludeTTSAttachments(q *gorm.DB) *gorm.DB {
+	return q.Where("(root_id_type IS NULL OR root_id_type <> ?) AND (object_key IS NULL OR object_key NOT LIKE ?)", "tts", "tts-private/%")
+}
+
 func AttachmentCreate(at *AttachmentModel) (tx *gorm.DB, item *AttachmentModel) {
 	db := GetDB()
 	if at.ID == "" {
@@ -58,7 +67,7 @@ func AttachmentCreate(at *AttachmentModel) (tx *gorm.DB, item *AttachmentModel) 
 
 func AttachmentFindByHashAndSize(hash []byte, size int64) (*AttachmentModel, error) {
 	var att AttachmentModel
-	err := GetDB().
+	err := ExcludeTTSAttachments(GetDB()).
 		Where("hash = ? AND size = ?", hash, size).
 		Order("created_at ASC").
 		Limit(1).
@@ -101,7 +110,7 @@ func AttachmentSetConfirm(ids []string, data map[string]any) (tx *gorm.DB) {
 		}
 	}
 
-	q := db.Model(&item).
+	q := ExcludeTTSAttachments(db.Model(&item)).
 		Where("id IN (?)", ids).
 		Updates(m)
 
@@ -111,7 +120,7 @@ func AttachmentSetConfirm(ids []string, data map[string]any) (tx *gorm.DB) {
 // AttachmentsSetDelete 删除附件(注意，删除文件需要另外处理，id与hash为多对一关系)
 func AttachmentsSetDelete(attachmentIdList []string) int64 {
 	if len(attachmentIdList) > 0 {
-		ret := db.Unscoped().Delete(&AttachmentModel{}, "id IN (?)", attachmentIdList)
+		ret := ExcludeTTSAttachments(db.Unscoped()).Delete(&AttachmentModel{}, "id IN (?)", attachmentIdList)
 		return ret.RowsAffected
 	}
 	return 0

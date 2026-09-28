@@ -164,6 +164,7 @@ const (
 )
 
 type Message struct {
+	TTS              *MessageTTS        `json:"tts,omitempty"`
 	ID               string             `json:"id"`
 	MessageID        string             // Deprecated
 	Channel          *Channel           `json:"channel"`
@@ -201,6 +202,14 @@ type Message struct {
 	ClientID         string             `json:"clientId,omitempty"`
 	WhisperMeta      *WhisperMeta       `json:"whisperMeta,omitempty"`
 	DiceVisual       *DiceVisualPayload `json:"diceVisual,omitempty"`
+}
+
+type MessageTTS struct {
+	Status          string `json:"status"`
+	AudioResourceID string `json:"audioResourceId,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
+	Format          string `json:"format,omitempty"`
+	MessageRevision int    `json:"messageRevision"`
 }
 
 type MessageIdentity struct {

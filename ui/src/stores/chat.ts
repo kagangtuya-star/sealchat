@@ -5003,11 +5003,13 @@ export const useChatStore = defineStore({
       identityVariantId?: string,
       icMode?: 'ic' | 'ooc',
       channelIdOverride?: string,
+      ttsAuto = false,
     ) {
       const payload: Record<string, any> = {
         channel_id: channelIdOverride || this.curChannel?.id,
         content,
         ic_mode: icMode || this.icMode,
+        tts_auto: ttsAuto === true,
       };
       if (quote_id) {
         payload.quote_id = quote_id;

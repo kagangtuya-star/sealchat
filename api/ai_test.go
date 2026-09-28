@@ -14,8 +14,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	aiService "sealchat/service/ai"
 	"sealchat/model"
+	aiService "sealchat/service/ai"
 	"sealchat/utils"
 )
 
@@ -275,7 +275,7 @@ func TestAdminAIConfigUpdatePersistsIncomingProviderAPIKey(t *testing.T) {
 				Enabled:       true,
 				DefaultPrompt: "prompt",
 				DefaultModel:  "deepseek-v4-flash",
-				Access: utils.AIFeatureAccessConfig{Mode: utils.AIFeatureAccessAll},
+				Access:        utils.AIFeatureAccessConfig{Mode: utils.AIFeatureAccessAll},
 			},
 		},
 	})

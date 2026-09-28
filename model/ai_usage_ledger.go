@@ -2,6 +2,8 @@ package model
 
 type AIUsageLedgerModel struct {
 	StringPKBaseModel
+	QuotaKind        string  `json:"quotaKind" gorm:"size:16;not null;default:text;index"`
+	OperationKey     *string `json:"-" gorm:"size:128;uniqueIndex"`
 	UserID           string  `json:"userId" gorm:"size:100;index"`
 	FeatureKey       string  `json:"featureKey" gorm:"size:64;index"`
 	ProviderID       string  `json:"providerId" gorm:"size:64;index"`

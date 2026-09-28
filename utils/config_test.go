@@ -3,6 +3,7 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/knadh/koanf/v2"
@@ -138,6 +139,91 @@ func TestReadConfigLogUploadEndpointsFallbackOrder(t *testing.T) {
 		if cfg.LogUpload.Endpoints[idx] != want {
 			t.Fatalf("unexpected endpoint at %d: got %s want %s", idx, cfg.LogUpload.Endpoints[idx], want)
 		}
+	}
+}
+
+func TestWriteConfigPersistsSpeech(t *testing.T) {
+	oldK := k
+	oldCurrentConfig := currentConfig
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("serveAt: :3212\n"), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	k = koanf.New(".")
+	currentConfig = nil
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chdir(oldCwd)
+		k = oldK
+		currentConfig = oldCurrentConfig
+	})
+
+	price := 0.00014
+	cfg := ReadConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.Speech = &SpeechConfig{
+		Enabled:         true,
+		DefaultProvider: "aliyun-test",
+		DefaultVoice:    "voice-test",
+		Format:          "wav",
+		Providers: []SpeechProviderConfig{
+			{
+				ID:                "aliyun-test",
+				Enabled:           true,
+				CredentialScope:   "scope-test",
+				APIKey:            "secret-test",
+				Workspace:         "workspace-test",
+				Region:            "cn-beijing",
+				SynthesisEndpoint: "https://synthesis.example.com/api",
+				VoiceEndpoint:     "https://voice.example.com/api",
+				Model:             "qwen-audio-3.0-tts-plus",
+				CharacterPrice:    &price,
+			},
+		},
+	}
+
+	WriteConfig(cfg)
+
+	if cfg.AI.Speech == nil || len(cfg.AI.Speech.Providers) != 1 || cfg.AI.Speech.Providers[0].APIKey != "secret-test" {
+		t.Fatalf("WriteConfig cleared caller speech config: %#v", cfg.AI.Speech)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config failed: %v", err)
+	}
+	if !strings.Contains(string(raw), "speech:") || !strings.Contains(string(raw), "secret-test") || strings.Contains(string(raw), "hasApiKey") {
+		t.Fatalf("unexpected persisted speech config:\n%s", raw)
+	}
+
+	k = koanf.New(".")
+	currentConfig = nil
+	got := ReadConfig()
+	speech := got.AI.Speech
+	if speech == nil {
+		t.Fatal("ai.speech was not persisted")
+	}
+	if !speech.Enabled || speech.DefaultProvider != "aliyun-test" || speech.DefaultVoice != "voice-test" || speech.Format != "wav" {
+		t.Fatalf("unexpected speech config: %#v", speech)
+	}
+	if len(speech.Providers) != 1 {
+		t.Fatalf("unexpected provider count: %#v", speech.Providers)
+	}
+	p := speech.Providers[0]
+	if p.ID != "aliyun-test" || !p.Enabled || p.APIKey != "secret-test" || p.CredentialScope != "scope-test" ||
+		p.Workspace != "workspace-test" || p.Region != "cn-beijing" ||
+		p.SynthesisEndpoint != "https://synthesis.example.com/api" || p.VoiceEndpoint != "https://voice.example.com/api" ||
+		p.Model != "qwen-audio-3.0-tts-plus" || p.CharacterPrice == nil || *p.CharacterPrice != price {
+		t.Fatalf("unexpected speech provider: %#v", p)
 	}
 }
 

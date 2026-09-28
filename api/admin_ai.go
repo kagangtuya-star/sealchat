@@ -34,7 +34,7 @@ func AdminAIConfigGet(ctx *fiber.Ctx) error {
 
 func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
 	var body struct {
-		Config utils.AIConfig `json:"config"`
+		Config json.RawMessage `json:"config"`
 	}
 	if err := ctx.BodyParser(&body); err != nil {
 		return err
@@ -43,9 +43,23 @@ func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
 	if current == nil {
 		current = &utils.AppConfig{}
 	}
-	incoming := *current
-	incoming.AI = body.Config
-	merged := mergeConfigForWrite(current, &incoming)
+	var configObject map[string]json.RawMessage
+	if err := json.Unmarshal(body.Config, &configObject); err != nil || configObject == nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "AI 配置必须为对象"})
+	}
+	if rawSpeech, exists := configObject["speech"]; exists {
+		if err := validateExplicitTTSFormatFromSpeechObject(rawSpeech); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+	}
+	raw, err := json.Marshal(map[string]json.RawMessage{"ai": body.Config})
+	if err != nil {
+		return err
+	}
+	merged, err := mergeConfigPatchForWrite(current, raw)
+	if err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "AI 配置无效"})
+	}
 	merged.AI = utils.NormalizeAIConfig(merged.AI)
 	if enrichedAI, pricingErr := aiService.FillMissingPricingFromModelsDev(ctx.Context(), merged.AI); pricingErr == nil {
 		merged.AI = enrichedAI
@@ -212,7 +226,12 @@ func AdminAIUsageLogs(c *fiber.Ctx) error {
 	if !CanWithSystemRole(c, pm.PermModAdmin) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
+	kind := c.Query("quotaKind", "text")
+	if kind != "text" && kind != "speech" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "无效的额度类型"})
+	}
 	result, err := aiService.AdminListUsageLogs(aiService.AdminUsageLogQuery{
+		QuotaKind:  kind,
 		Page:       c.QueryInt("page", 1),
 		PageSize:   c.QueryInt("pageSize", 20),
 		Query:      c.Query("query"),
@@ -234,14 +253,21 @@ func AdminAIUsageLogsCleanup(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	var body struct {
-		RetentionDays int `json:"retentionDays"`
+		RetentionDays int    `json:"retentionDays"`
+		QuotaKind     string `json:"quotaKind"`
 	}
 	if len(c.Body()) > 0 {
 		if err := c.BodyParser(&body); err != nil {
 			return wrapErrorStatus(c, fiber.StatusBadRequest, err, "AI 日志清理请求解析失败")
 		}
 	}
-	affectedRows, err := aiService.AdminCleanupUsageLogs(body.RetentionDays, time.Now())
+	if body.QuotaKind == "" {
+		body.QuotaKind = "text"
+	}
+	if body.QuotaKind != "text" && body.QuotaKind != "speech" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "无效的额度类型"})
+	}
+	affectedRows, err := aiService.AdminCleanupUsageLogsForKind(body.QuotaKind, body.RetentionDays, time.Now())
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "清理 AI 调用日志失败")
 	}

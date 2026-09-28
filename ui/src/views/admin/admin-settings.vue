@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsAI from './admin-settings-ai.vue'
+import AdminSpeechSettings from '@/features/tts/AdminSpeechSettings.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
 import AdminSettingsCertificate from './admin-settings-certificate.vue'
 import AdminSettingsAudio from './admin-settings-audio.vue'
@@ -15,7 +16,7 @@ import AdminSettingsChannelEmbedTools from './admin-settings-channel-embed-tools
 import AdminSettingsCharacterCardTemplates from './admin-settings-character-card-templates.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate' | 'channel-embed-tools' | 'character-card-templates'
+type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'ai-speech' | 'certificate' | 'channel-embed-tools' | 'character-card-templates'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
@@ -140,6 +141,9 @@ const saveCurrentTab = async () => {
           @open-usage-management="openAIOpsDrawer"
           @open-quota-management="openAIQuotaModal"
         />
+      </n-tab-pane>
+      <n-tab-pane name="ai-speech" tab="AI语音配置">
+        <AdminSpeechSettings />
       </n-tab-pane>
       <n-tab-pane name="channel-embed-tools" tab="频道嵌入工具">
         <AdminSettingsChannelEmbedTools />

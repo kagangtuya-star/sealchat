@@ -4,6 +4,7 @@ import "time"
 
 type AIQuotaReservationModel struct {
 	StringPKBaseModel
+	QuotaKind    string    `json:"quotaKind" gorm:"size:16;not null;default:text;index"`
 	UserID       string    `json:"userId" gorm:"size:100;index"`
 	FeatureKey   string    `json:"featureKey" gorm:"size:64;index"`
 	ProviderID   string    `json:"providerId" gorm:"size:64;index"`
@@ -21,7 +22,7 @@ func AIQuotaReservationCleanupExpired(now time.Time) (int64, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	tx := db.Where("status = ? AND expires_at < ?", "active", now).
+	tx := db.Where("quota_kind = ? AND status = ? AND expires_at < ?", QuotaKindText, "active", now).
 		Delete(&AIQuotaReservationModel{})
 	return tx.RowsAffected, tx.Error
 }

@@ -469,6 +469,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
 
 	v1.Get("/config", OptionalSignCheckMiddleware, ConfigGetHandler)
+	BindTTSPublicRoutes(v1)
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
@@ -669,6 +670,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	BindStickyNoteRoutes(v1Auth)
 	BindWorldTheaterRoutes(v1Auth)
 	BindTheaterAudioRoutes(v1Auth)
+	BindTTSRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")
@@ -888,6 +890,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/bot-list", BotList)
 
 	v1AuthAdmin := v1Auth.Group("", UserRoleAdminMiddleware)
+	BindTTSAdminRoutes(v1AuthAdmin)
 	v1AuthAdmin.Get("/admin/bot-token-list", BotTokenList)
 	v1AuthAdmin.Post("/admin/bot-token-add", BotTokenAdd)
 	v1AuthAdmin.Post("/admin/bot-token-update", BotTokenUpdate)
@@ -1013,9 +1016,25 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
+		var rawConfigPayload map[string]json.RawMessage
+		if err := json.Unmarshal(ctx.Body(), &rawConfigPayload); err == nil && rawConfigPayload != nil {
+			if rawAI, exists := rawConfigPayload["ai"]; exists {
+				var rawAIConfig map[string]json.RawMessage
+				if err := json.Unmarshal(rawAI, &rawAIConfig); err == nil && rawAIConfig != nil {
+					if rawSpeech, exists := rawAIConfig["speech"]; exists {
+						if err := validateExplicitTTSFormatFromSpeechObject(rawSpeech); err != nil {
+							return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+						}
+					}
+				}
+			}
+		}
 		newConfig, err := mergeConfigPatchForWrite(appConfig, ctx.Body())
 		if err != nil {
 			return err
+		}
+		if err := utils.ValidateSpeechConfig(newConfig.AI.Speech); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 		if err := normalizeAndValidateCertificateConfigForWrite(newConfig); err != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})

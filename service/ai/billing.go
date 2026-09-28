@@ -150,6 +150,15 @@ func UsageAvailable(usage RunUsage) bool {
 }
 
 func QueryQuotaUsageSnapshot(userID string, now time.Time) (*QuotaUsageSnapshot, error) {
+	return QueryQuotaUsageSnapshotForKind(model.GetDB(), model.QuotaKindText, userID, now)
+}
+
+// Speech reservations remain committed until an explicit terminal settlement,
+// including after midnight or when an upstream outcome is unknown.
+func QueryQuotaUsageSnapshotForKind(db *gorm.DB, kind, userID string, now time.Time) (*QuotaUsageSnapshot, error) {
+	if kind != model.QuotaKindText && kind != model.QuotaKindSpeech {
+		return nil, fmt.Errorf("invalid quota kind")
+	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return &QuotaUsageSnapshot{}, nil
@@ -160,27 +169,32 @@ func QueryQuotaUsageSnapshot(userID string, now time.Time) (*QuotaUsageSnapshot,
 	dayKey := now.Format("2006-01-02")
 	monthKey := now.Format("2006-01")
 	snapshot := &QuotaUsageSnapshot{}
-	db := model.GetDB()
 	if err := db.Model(&model.AIUsageLedgerModel{}).
+		Where("quota_kind = ?", kind).
 		Where("user_id = ? AND billing_day = ?", userID, dayKey).
 		Select("COALESCE(SUM(total_cost), 0)").
 		Scan(&snapshot.DailySettled).Error; err != nil {
 		return nil, err
 	}
 	if err := db.Model(&model.AIUsageLedgerModel{}).
+		Where("quota_kind = ?", kind).
 		Where("user_id = ? AND billing_month = ?", userID, monthKey).
 		Select("COALESCE(SUM(total_cost), 0)").
 		Scan(&snapshot.MonthlySettled).Error; err != nil {
 		return nil, err
 	}
 	if err := db.Model(&model.AIUsageLedgerModel{}).
+		Where("quota_kind = ?", kind).
 		Where("user_id = ?", userID).
 		Select("COALESCE(SUM(total_cost), 0)").
 		Scan(&snapshot.LifetimeSettled).Error; err != nil {
 		return nil, err
 	}
-	if err := db.Model(&model.AIQuotaReservationModel{}).
-		Where("user_id = ? AND status = ? AND expires_at >= ?", userID, AIQuotaReservationStatusActive, now).
+	reservations := db.Model(&model.AIQuotaReservationModel{}).Where("quota_kind = ? AND user_id = ? AND status = ?", kind, userID, AIQuotaReservationStatusActive)
+	if kind == model.QuotaKindText {
+		reservations = reservations.Where("expires_at >= ?", now)
+	}
+	if err := reservations.
 		Select("COALESCE(SUM(reserved_cost), 0)").
 		Scan(&snapshot.ActiveReserved).Error; err != nil {
 		return nil, err
@@ -300,6 +314,7 @@ func ReserveQuota(userID string, featureKey string, providerID string, modelName
 		now = time.Now()
 	}
 	item := &model.AIQuotaReservationModel{
+		QuotaKind:         model.QuotaKindText,
 		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()},
 		UserID:            userID,
 		FeatureKey:        featureKey,
@@ -337,7 +352,7 @@ func ReleaseQuotaReservation(id string) error {
 		return nil
 	}
 	return model.GetDB().Model(&model.AIQuotaReservationModel{}).
-		Where("id = ? AND status = ?", id, AIQuotaReservationStatusActive).
+		Where("quota_kind = ? AND id = ? AND status = ?", model.QuotaKindText, id, AIQuotaReservationStatusActive).
 		Updates(map[string]any{
 			"status":     AIQuotaReservationStatusReleased,
 			"updated_at": time.Now(),
@@ -350,21 +365,29 @@ func SettleQuotaReservation(reservationID string, ledger *model.AIUsageLedgerMod
 		return fmt.Errorf("reservation id 不能为空")
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		claimed := tx.Model(&model.AIQuotaReservationModel{}).
+			Where("quota_kind = ? AND id = ? AND status = ?", model.QuotaKindText, reservationID, AIQuotaReservationStatusActive).
+			Updates(map[string]any{"status": AIQuotaReservationStatusSettled, "updated_at": time.Now()})
+		if claimed.Error != nil {
+			return claimed.Error
+		}
+		if claimed.RowsAffected != 1 {
+			return fmt.Errorf("reservation is not active")
+		}
 		if log != nil {
+			log.QuotaKind = model.QuotaKindText
 			if err := tx.Create(log).Error; err != nil {
 				return err
 			}
 		}
 		if ledger != nil {
+			ledger.QuotaKind = model.QuotaKindText
+			key := "text:" + reservationID
+			ledger.OperationKey = &key
 			if err := tx.Create(ledger).Error; err != nil {
 				return err
 			}
 		}
-		return tx.Model(&model.AIQuotaReservationModel{}).
-			Where("id = ? AND status = ?", reservationID, AIQuotaReservationStatusActive).
-			Updates(map[string]any{
-				"status":     AIQuotaReservationStatusSettled,
-				"updated_at": time.Now(),
-			}).Error
+		return nil
 	})
 }
