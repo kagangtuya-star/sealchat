@@ -32,7 +32,7 @@ const emit = defineEmits<{
 
 registerBuiltInSceneOverlayPresets()
 
-const selectedCategory = ref<'custom' | 'all' | SceneOverlayPresetCategory>('custom')
+const selectedCategory = ref<'custom' | 'all' | SceneOverlayPresetCategory>('all')
 const keyword = ref('')
 const applyMode = ref<SceneOverlayPresetApplyMode>('append')
 const visibleCount = ref(24)
@@ -66,7 +66,6 @@ const beginCategoryDrag = (event: PointerEvent) => {
     startScrollLeft: scroller.scrollLeft,
     moved: false,
   }
-  scroller.setPointerCapture(event.pointerId)
 }
 
 const moveCategoryDrag = (event: PointerEvent) => {
@@ -74,8 +73,11 @@ const moveCategoryDrag = (event: PointerEvent) => {
   const scroller = categoryScroller.value
   if (!drag || !scroller || drag.pointerId !== event.pointerId) return
   const delta = event.clientX - drag.startX
-  if (!drag.moved && Math.abs(delta) < 4) return
-  drag.moved = true
+  if (!drag.moved) {
+    if (Math.abs(delta) < 4) return
+    drag.moved = true
+    scroller.setPointerCapture(event.pointerId)
+  }
   scroller.scrollLeft = drag.startScrollLeft - delta
   event.preventDefault()
 }
