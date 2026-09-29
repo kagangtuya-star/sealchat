@@ -88,3 +88,5 @@ ui/scripts/quickdraw-inline-style.test.mjs
 *.spec.cjs
 *.spec.js
 /perf
+mutagen.yml
+mutagen.yml.lock
