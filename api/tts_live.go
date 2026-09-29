@@ -15,7 +15,9 @@ import (
 
 // One reader tails the one archival spool. The supplier's bursts do not enter
 // connection queues: at most 100 ms PCM is sent per 100 ms of playback time.
-// The returned finish reports whether a PCM start frame was dispatched.
+// The returned finish reports whether a PCM start frame was dispatched, i.e.
+// whether this stream already paced the channel lane. Delivery to a connection
+// queue never proves playback; the ready announcement lets browsers decide.
 func ttsBroadcastLive(ctx context.Context, job model.TTSJob, path string) func(bool) bool {
 	complete := make(chan bool, 1)
 	done := make(chan struct{})
@@ -90,8 +92,8 @@ func ttsBroadcastLive(ctx context.Context, job model.TTSJob, path string) func(b
 					}
 				}
 				listeners = eligible
-				// Only a delivered start frame consumes the message; otherwise
-				// the archived file must still be offered by the ready path.
+				// Only a delivered start frame paced the lane; otherwise the
+				// ready path streams the archived file on its own timeline.
 				if len(listeners) == 0 {
 					return
 				}
@@ -101,20 +103,30 @@ func ttsBroadcastLive(ctx context.Context, job model.TTSJob, path string) func(b
 			if time.Now().Before(next) {
 				continue
 			}
-			if sent == media.DataSize {
+			// Streaming headers may carry estimated lengths; only the bytes
+			// actually spooled bound the stream. The header gives layout only.
+			info, err := f.Stat()
+			if err != nil {
+				cancel()
+				return
+			}
+			frameSize := media.ChannelCount * 2
+			available := int(info.Size()) - media.DataOffset - sent
+			available -= available % frameSize
+			size := media.SampleRate * frameSize / 10
+			if available < size {
 				if !finished {
 					continue
 				}
+				size = available
+			}
+			if size <= 0 {
 				for _, l := range listeners {
 					ttsSend(l, control("end"))
 				}
 				// Input end is not speaker end: retain the lane's prebuffer tail.
 				time.Sleep(300 * time.Millisecond)
 				return
-			}
-			size := media.SampleRate * media.ChannelCount * 2 / 10
-			if size > media.DataSize-sent {
-				size = media.DataSize - sent
 			}
 			packet := make([]byte, 8+size)
 			n, _ := f.ReadAt(packet[8:], int64(media.DataOffset+sent))

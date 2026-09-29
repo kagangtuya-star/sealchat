@@ -164,7 +164,8 @@ func main() {
 	utils.EnsureDataDirs(config)
 
 	if err := utils.VerifyBundledWebPToolsWithLog(log.Printf); err != nil {
-		fatalWithStartupLock("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）：%v", err)
+		fatalWithStartupLock("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）"+
+			"：%v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { speechAPI, speechError } from './api'
 import { useUserStore } from '@/stores/user'
-import { SpeechEpoch } from './runtime'
+import { SpeechEpoch, type SpeechEnd } from './runtime'
 
 // One coordinator per main application. It never creates synthesis jobs.
 // Unset preference defaults to on; only an explicit user "false" keeps it off.
@@ -23,8 +23,12 @@ let liveSequence = 0
 let pendingPCM: ArrayBuffer[] = []
 let pendingBytes = 0
 let inputEnded = false
+// Completion of the playback that is current now; reported once, after reset.
+let finish: ((result: SpeechEnd) => void) | undefined
 
-function stop() {
+function stop(result: SpeechEnd = 'stopped') {
+  const done = finish
+  finish = undefined
   epoch.invalidate()
   request?.abort()
   request = undefined
@@ -35,12 +39,15 @@ function stop() {
   state.key = ''
   state.loading = false
   state.playing = false
+  if (done) queueMicrotask(() => done(result))
 }
 
-async function startPCM(value: { epoch: number; messageId: string; media: { codec: string; container: string; sampleRate: number; channelCount: number } }) {
-  if (!state.automatic || window.parent !== window) return
+async function startPCM(value: { epoch: number; messageId: string; media: { codec: string; container: string; sampleRate: number; channelCount: number } }, onEnd?: (result: SpeechEnd) => void) {
+  if (window.parent !== window) return
+  if (!state.automatic) { if (onEnd) queueMicrotask(() => onEnd('failed')); return }
   stop()
-  if (value.media.codec !== 'pcm_s16le' || value.media.container !== 'wav') { state.error = '实时音频格式不受支持'; return }
+  finish = onEnd
+  if (value.media.codec !== 'pcm_s16le' || value.media.container !== 'wav') { stop('failed'); state.error = '实时音频格式不受支持'; return }
   const current = epoch.capture()
   liveEpoch = value.epoch; liveSequence = 0
   state.key = `messages:${value.messageId}`; state.loading = true; state.error = ''
@@ -54,27 +61,27 @@ async function startPCM(value: { epoch: number; messageId: string; media: { code
     worklet = new AudioWorkletNode(context!, 'sealchat-speech-pcm', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [value.media.channelCount], processorOptions: { inputRate: value.media.sampleRate, channels: value.media.channelCount } })
     worklet.port.onmessage = ({ data }) => {
       if (!epoch.current(current)) return
-      if (data.type === 'played') stop()
-      if (data.type === 'desynced') { stop(); state.error = '实时语音已不同步，等待下一段；不会从头自动重播。' }
+      if (data.type === 'played') stop('played')
+      if (data.type === 'desynced') { stop('failed'); state.error = '实时语音已不同步，将在完整文件就绪后播放。' }
     }
     worklet.connect(context!.destination)
     for (const bytes of pendingPCM) worklet.port.postMessage({ type: 'audio', bytes }, [bytes])
     pendingPCM = []; pendingBytes = 0
     if (inputEnded) worklet.port.postMessage({ type: 'end' })
     state.loading = false; state.playing = true
-  } catch (error) { if (epoch.current(current)) { stop(); state.error = speechError(error) } }
+  } catch (error) { if (epoch.current(current)) { stop('failed'); state.error = speechError(error) } }
 }
 
 function pcmPacket(packet: ArrayBuffer) {
   if (packet.byteLength < 8 || liveEpoch < 0) return
   const view = new DataView(packet)
   if (view.getUint32(0) !== liveEpoch) return
-  if (view.getUint32(4) !== liveSequence++ || inputEnded) { stop(); state.error = '实时语音包不连续，等待下一段。'; return }
+  if (view.getUint32(4) !== liveSequence++ || inputEnded) { stop('failed'); state.error = '实时语音包不连续，将在完整文件就绪后播放。'; return }
   const bytes = packet.slice(8)
   if (worklet) worklet.port.postMessage({ type: 'audio', bytes }, [bytes])
   else {
     pendingBytes += bytes.byteLength
-    if (pendingBytes > 384000) { stop(); state.error = '实时解码器加载过慢，已跳过本段。'; return }
+    if (pendingBytes > 384000) { stop('failed'); state.error = '实时解码器加载过慢，将在完整文件就绪后播放。'; return }
     pendingPCM.push(bytes)
   }
 }
@@ -87,6 +94,8 @@ function endPCM(value: number) {
 async function unlock() {
   context ??= new AudioContext()
   await context.resume()
+  // Some browsers resolve without a user gesture yet stay suspended.
+  if (context.state !== 'running') throw new Error('浏览器尚未允许播放音频，请点击页面后重试。')
 }
 async function setAutomatic(enabled: boolean) {
   const current = epoch.capture()
@@ -117,15 +126,23 @@ function resumePreferred() {
   })()
   return resuming
 }
-async function play(kind: 'messages' | 'resources', id: string, automatic = false) {
+async function play(kind: 'messages' | 'resources', id: string, automatic = false, onEnd?: (result: SpeechEnd) => void) {
   if (window.parent !== window) {
     window.parent.postMessage({ type: 'sealchat:tts-intent', action: 'play', kind, id, userId: useUserStore().info.id }, window.location.origin)
     return
   }
-  if (!automatic) state.automatic = false
   const key = `${kind}:${id}`
-  if (state.key === key) { stop(); return }
+  // Clicking the playing item stops it; that never changes automatic listening.
+  if (!automatic && state.key === key) { stop(); return }
+  // Manual replay only pauses automatic listening. Every end (natural, stop,
+  // ticket/download/decode failure) resumes the preference; resumePreferred
+  // keeps it paused while another playback is loading or playing.
+  if (!automatic) state.automatic = false
   stop()
+  finish = (result) => {
+    onEnd?.(result)
+    if (!automatic) void resumePreferred()
+  }
   const current = epoch.capture()
   const controller = new AbortController()
   request = controller
@@ -144,13 +161,13 @@ async function play(kind: 'messages' | 'resources', id: string, automatic = fals
     source = context!.createBufferSource()
     source.buffer = decoded
     source.connect(context!.destination)
-    source.onended = () => { if (epoch.current(current)) stop() }
+    source.onended = () => { if (epoch.current(current)) stop('played') }
     source.start()
     state.loading = false
     state.playing = true
   } catch (error) {
     if (!epoch.current(current)) return
-    stop()
+    stop('failed')
     state.error = speechError(error)
   }
 }

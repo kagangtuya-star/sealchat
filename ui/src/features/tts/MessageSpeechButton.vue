@@ -16,7 +16,7 @@ const metadata = computed(() => {
 })
 const active = computed(() => speechPlayer.state.key === `messages:${props.message.id}`)
 watch(metadata, (value) => {
-  if (active.value && (!value || value.status !== 'ready')) speechPlayer.stop()
+  if (active.value && (!value || ['failed', 'skipped', 'unavailable', 'usage_unknown'].includes(value.status))) speechPlayer.stop()
 })
 </script>
 <template>

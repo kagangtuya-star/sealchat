@@ -30,10 +30,11 @@ type ttsListener struct {
 
 var ttsHub = struct {
 	sync.Mutex
-	clients  map[*ttsListener]bool
-	epochs   map[string]uint32
-	messages map[string]string
-}{clients: map[*ttsListener]bool{}, epochs: map[string]uint32{}, messages: map[string]string{}}
+	clients    map[*ttsListener]bool
+	epochs     map[string]uint32
+	messages   map[string]string
+	suppressed map[string]string
+}{clients: map[*ttsListener]bool{}, epochs: map[string]uint32{}, messages: map[string]string{}, suppressed: map[string]string{}}
 
 func ttsWSUpgrade(c *fiber.Ctx) error {
 	if !ttsOriginMatchesHost(c.Get("Origin"), string(c.Context().Request.Header.Host())) {
@@ -141,20 +142,34 @@ func ttsSend(l *ttsListener, f ttsFrame) bool {
 		return false
 	}
 }
-func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string) {
+
+// Reports whether the lane must wait for the playback timeline of this file.
+// After a realtime stream (streamed) the stream already paced the lane: the
+// archive is only announced, in file mode, so that connections which did not
+// finish it can play the file. Whether a browser actually heard an utterance
+// is known only to that browser, which drops archives it already played.
+func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string, streamed bool) bool {
 	// Cache metadata intentionally omits file offsets. Recover them from the
 	// validated archive before sending raw PCM, never send RIFF headers as PCM.
-	if media.Container == "wav" {
+	if media.Container == "wav" && !streamed {
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return
+			return false
 		}
 		media, err = ttsprovider.InspectMedia(b)
 		if err != nil {
-			return
+			return false
 		}
 	}
 	ttsHub.Lock()
+	// Skip/stop of this message may land between realtime end and archive.
+	if suppressed := ttsHub.suppressed[j.ChannelID]; suppressed != "" {
+		delete(ttsHub.suppressed, j.ChannelID)
+		if suppressed == j.MessageID {
+			ttsHub.Unlock()
+			return false
+		}
+	}
 	ttsHub.epochs[j.ChannelID]++
 	epoch := ttsHub.epochs[j.ChannelID]
 	ttsHub.messages[j.ChannelID] = j.MessageID
@@ -165,13 +180,29 @@ func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string) {
 		}
 	}
 	ttsHub.Unlock()
-	go func() {
-		eligible := []*ttsListener{}
-		for _, l := range listeners {
-			if _, err := ttsReadMessage(l.user, j.MessageID); err == nil {
-				eligible = append(eligible, l)
+	eligible := []*ttsListener{}
+	for _, l := range listeners {
+		if _, err := ttsReadMessage(l.user, j.MessageID); err == nil {
+			eligible = append(eligible, l)
+		}
+	}
+	if len(eligible) == 0 {
+		return false
+	}
+	if streamed {
+		// Sent before the lane is released, so the next utterance cannot
+		// supersede the announcement; sends never block.
+		frame := ttsJSON(fiber.Map{"type": "start", "epoch": epoch, "utterance": j.ID, "messageId": j.MessageID, "media": media, "mode": "file", "startsAt": time.Now().UnixMilli()})
+		ttsHub.Lock()
+		if ttsHub.epochs[j.ChannelID] == epoch {
+			for _, l := range eligible {
+				ttsSend(l, frame)
 			}
 		}
+		ttsHub.Unlock()
+		return false
+	}
+	go func() {
 		mode := "file"
 		if media.Container == "wav" && media.Codec == "pcm_s16le" {
 			mode = "pcm"
@@ -256,6 +287,7 @@ func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string) {
 			ttsSend(l, ttsJSON(fiber.Map{"type": "end", "epoch": epoch}))
 		}
 	}()
+	return true
 }
 
 // The writer consumes concurrently; a length check followed by receive can block.
@@ -273,6 +305,8 @@ func ttsBroadcastCancel(messageID string) {
 	defer ttsHub.Unlock()
 	for ch, msg := range ttsHub.messages {
 		if msg == messageID {
+			// Preserve skip/stop across the short realtime-end -> ready gap.
+			ttsHub.suppressed[ch] = messageID
 			epoch := ttsHub.epochs[ch]
 			ttsHub.epochs[ch]++
 			for l := range ttsHub.clients {

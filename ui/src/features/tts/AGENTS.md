@@ -28,6 +28,12 @@ or submit synthesis from message reception, history loading or component mount.
   is separate. Stop must disconnect the worklet and invalidate pending loading.
 - Stop, account/channel changes and cancellation invalidate pending async work.
   Do not allow a late callback to restart an old utterance.
+- Automatic playback ownership: the server orders and broadcasts (channel lane,
+  realtime start/PCM/end, then a file-mode announcement of the archive); only the
+  browser knows what it played. `SpeechQueue` (runtime.ts) is the one client
+  FIFO: a busy page queues successors and plays their archived files later,
+  never buffering their PCM. Only natural completion or an explicit stop/cancel
+  settles a message; `/queue` is queried once per (re)connect, not polled.
 - Preview promotion reuses a cloud voice. Expiration applies to previews/creating
   voices, never saved voices; cache expiry does not delete durable message audio.
 
@@ -36,8 +42,11 @@ Validation from repository root:
 ```sh
 node --test ui/src/features/tts/runtime.test.mjs
 node --test ui/src/features/tts/pcm.test.mjs
+node --test ui/src/features/tts/player.test.mjs
+node --test ui/src/features/tts/speech-host.test.mjs
 npm --prefix ui run type-check
 npm --prefix ui run build-only
 ```
 
-The pure runtime tests do not establish browser playback or provider compatibility.
+The node tests stub the app, Web Audio and the server; they do not establish
+browser playback or provider compatibility.

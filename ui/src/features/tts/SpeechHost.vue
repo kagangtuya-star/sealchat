@@ -6,7 +6,7 @@ import { useSpeechStore } from './store'
 import { speechPlayer } from './player'
 import { speechAPI } from './api'
 import { api } from '@/stores/_config'
-import { SpeechPlaybackOrder } from './runtime'
+import { SpeechQueue, type SpeechEnd } from './runtime'
 
 const SpeechPanel = defineAsyncComponent(() => import('./SpeechPanel.vue'))
 const speech = useSpeechStore()
@@ -14,42 +14,167 @@ const user = useUserStore()
 const chat = useChatStore()
 const mainWindow = window.parent === window
 const currentChannel = computed(() => mainWindow ? speech.scopeChannel || chat.curChannel?.id : chat.curChannel?.id)
-watch([() => speechPlayer.state.automatic, currentChannel, () => user.info.id], ([enabled, channelId, userId], _, cleanup) => {
+const waitingStatuses = new Set(['pending', 'queued', 'running', 'storage_pending', 'archiving'])
+const reconnectingError = '语音订阅中断，正在重新连接。'
+const playbackIdle = () => speechPlayer.state.automatic && !speechPlayer.state.loading && !speechPlayer.state.playing
+let subscription: { drain(): void; claim(key: string): void } | undefined
+// One subscription per (preference, channel, account). It owns the only socket,
+// reconnect timer and playback queue; cleanup makes every late callback inert.
+// Immediate: a page that mounts with all three ready must subscribe at once.
+watch([() => speechPlayer.state.preferred, currentChannel, () => user.info.id], ([preferred, channelId, userId], _, cleanup) => {
+  if (!mainWindow || !preferred || !channelId || !userId) return
+  const channel = channelId
   let active = true
   let socket: WebSocket | undefined
-  const order = new SpeechPlaybackOrder()
-  cleanup(() => { active = false; socket?.close(); speechPlayer.stop() })
-  if (!mainWindow || !enabled || !channelId || !userId) return
-  void speechAPI.wsTicket(channelId).then(ticket => {
-    if (!active) return
-    const base = new URL(api.defaults.baseURL || '/', window.location.href)
-    const url = new URL(ticket.path, base)
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    url.searchParams.set('ticket', ticket.ticket)
-    url.searchParams.set('mode', 'pcm')
-    socket = new WebSocket(url)
-    socket.binaryType = 'arraybuffer'
-    socket.onmessage = event => {
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let recheckTimer: ReturnType<typeof setTimeout> | undefined
+  let failures = 0
+  let draining = false
+  const queue = new SpeechQueue()
+  const idle = playbackIdle
+
+  function begin(messageId: string, live?: Parameters<typeof speechPlayer.startPCM>[0]) {
+    queue.begin(messageId)
+    const onEnd = (result: SpeechEnd) => {
       if (!active) return
-      if (event.data instanceof ArrayBuffer) { speechPlayer.pcmPacket(event.data); return }
-      if (typeof event.data !== 'string') return
-      try {
-        const value = JSON.parse(event.data)
-        if (!Number.isSafeInteger(value.epoch) || value.epoch < 0) return
-        if (value.type === 'start' && typeof value.messageId === 'string') {
-          const action = order.start(value.epoch, speechPlayer.state.loading || speechPlayer.state.playing)
-          if (action === 'play') {
-            if (value.mode === 'pcm' && value.media) void speechPlayer.startPCM(value)
-            else void speechPlayer.play('messages', value.messageId, true)
-          }
-          if (action === 'skip') speechPlayer.state.error = '本地播放尚未结束，已跳过赶不上的语音；可稍后点击消息重听。'
-        } else if (order.cancel(value.epoch) && value.type === 'end') speechPlayer.endPCM(value.epoch)
-        else if (order.cancel(value.epoch) && ['cancel', 'desynced'].includes(value.type)) speechPlayer.stop()
-      } catch { /* Invalid control frames never trigger a charged operation. */ }
+      queue.end(messageId, result, !!live)
+      void drain()
     }
-    socket.onerror = () => { if (active) speechPlayer.state.error = '语音订阅中断，请重新开启自动播放。' }
-  }).catch(() => { if (active) speechPlayer.state.error = '无法订阅当前频道语音。' })
-}, { flush: 'sync' })
+    if (live) void speechPlayer.startPCM(live, onEnd)
+    else void speechPlayer.play('messages', messageId, true, onEnd)
+  }
+  // Plays owed messages strictly in order from their archived files.
+  async function drain() {
+    if (!active || draining) return
+    draining = true
+    try {
+      while (active && idle() && !queue.current && queue.pending.length > 0) {
+        const messageId = queue.pending[0]
+        let state
+        try {
+          state = await speechAPI.message(messageId)
+        } catch {
+          recheck()
+          return
+        }
+        if (!active) return
+        speech.messageStates[messageId] = state
+        if (queue.pending[0] !== messageId) continue
+        if (state?.status === 'ready') {
+          if (idle() && !queue.current) begin(messageId)
+          return
+        }
+        // Normally the archive's start frame arrives first; the slow recheck
+        // only covers states that are never broadcast (e.g. storage recovery).
+        if (state && waitingStatuses.has(state.status)) {
+          recheck()
+          return
+        }
+        queue.dismiss(messageId)
+      }
+    } finally {
+      draining = false
+    }
+  }
+  function recheck() {
+    if (!active || recheckTimer) return
+    recheckTimer = setTimeout(() => { recheckTimer = undefined; void drain() }, 3000)
+  }
+  subscription = {
+    drain() { void drain() },
+    // A message the user replays by hand while it is still owed counts as heard.
+    claim(key) {
+      const messageId = key.startsWith('messages:') ? key.slice('messages:'.length) : ''
+      if (messageId && messageId !== queue.current) queue.dismiss(messageId)
+    },
+  }
+
+  function onFrame(value: any) {
+    if (!Number.isSafeInteger(value.epoch) || value.epoch < 0) return
+    if (value.type === 'start' && typeof value.messageId === 'string') {
+      const action = queue.start(value.epoch, value.messageId, idle())
+      if (action === 'play') begin(value.messageId, value.mode === 'pcm' && value.media ? value : undefined)
+      else if (action === 'queue') void drain()
+      return
+    }
+    if (value.type === 'end') { speechPlayer.endPCM(value.epoch); return }
+    const messageId = queue.message(value.epoch)
+    if (!messageId || !['cancel', 'desynced'].includes(value.type)) return
+    const playing = speechPlayer.state.key === `messages:${messageId}`
+    // Cancel means skipped/stopped/invalidated: never play it here. A server
+    // desync only breaks this realtime attempt; the archive stays owed.
+    if (value.type === 'cancel') {
+      queue.dismiss(messageId)
+      if (playing) speechPlayer.stop()
+    } else if (playing) speechPlayer.stop('failed')
+  }
+  // Recovery after (re)connect: messages still in the server queue, in server
+  // order. It never replays archives this page already settled.
+  async function recover() {
+    try {
+      const result = await speechAPI.queue(channel)
+      if (!active) return
+      for (const item of result.items) queue.offer(item.messageId)
+      void drain()
+    } catch { /* The next reconnect retries recovery; live frames still arrive. */ }
+  }
+  function reconnect() {
+    if (!active || reconnectTimer) return
+    speechPlayer.state.error = reconnectingError
+    reconnectTimer = setTimeout(connect, Math.min(1000 * 2 ** failures++, 15000))
+  }
+  function connect() {
+    reconnectTimer = undefined
+    // Tickets are single-use and short-lived: every attempt requests a new one.
+    speechAPI.wsTicket(channel).then(ticket => {
+      if (!active) return
+      const base = new URL(api.defaults.baseURL || '/', window.location.href)
+      const url = new URL(ticket.path, base)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.searchParams.set('ticket', ticket.ticket)
+      url.searchParams.set('mode', 'pcm')
+      const ws = new WebSocket(url)
+      let openedAt = 0
+      socket = ws
+      ws.binaryType = 'arraybuffer'
+      ws.onopen = () => {
+        if (!active || socket !== ws) return
+        openedAt = Date.now()
+        queue.resetEpochs()
+        if (speechPlayer.state.error === reconnectingError) speechPlayer.state.error = ''
+        void recover()
+      }
+      ws.onmessage = event => {
+        if (!active || socket !== ws) return
+        if (event.data instanceof ArrayBuffer) { speechPlayer.pcmPacket(event.data); return }
+        if (typeof event.data !== 'string') return
+        try { onFrame(JSON.parse(event.data)) } catch { /* Invalid control frames never trigger a charged operation. */ }
+      }
+      // An error is always followed by close; close alone schedules the retry.
+      ws.onclose = () => {
+        if (!active || socket !== ws) return
+        socket = undefined
+        // A server that accepts and closes at once (e.g. connection limit) keeps backing off.
+        if (openedAt && Date.now() - openedAt > 10000) failures = 0
+        reconnect()
+      }
+    }).catch(() => reconnect())
+  }
+  cleanup(() => {
+    active = false
+    subscription = undefined
+    clearTimeout(reconnectTimer)
+    clearTimeout(recheckTimer)
+    const ws = socket
+    socket = undefined
+    ws?.close()
+    speechPlayer.stop()
+  })
+  connect()
+}, { flush: 'sync', immediate: true })
+// Unlock or the end of any playback (including manual replay) resumes owed messages.
+watch(playbackIdle, value => { if (value) subscription?.drain() })
+watch(() => speechPlayer.state.key, key => { if (key) subscription?.claim(key) }, { flush: 'sync' })
 function onIntent(event: MessageEvent) {
   if (event.origin !== window.location.origin) return
   const value = event.data

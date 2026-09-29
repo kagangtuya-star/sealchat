@@ -27,14 +27,16 @@ var ttsTimelines = struct {
 }{items: map[string]chan struct{}{}}
 var ttsCallbacks struct {
 	sync.RWMutex
-	ready   func(model.TTSJob, ttsprovider.Media, string)
+	ready   func(model.TTSJob, ttsprovider.Media, string, bool) bool
 	invalid func(string)
 	live    func(context.Context, model.TTSJob, string) func(bool) bool
 }
 
-// The live finish function reports whether a PCM start frame was dispatched;
-// only then was the message consumed by realtime playback.
-func TTSSetCallbacks(ready func(model.TTSJob, ttsprovider.Media, string), invalid func(string), live func(context.Context, model.TTSJob, string) func(bool) bool) {
+// The live finish function reports whether a PCM start frame was dispatched,
+// i.e. whether the realtime stream already paced the channel lane. ready is
+// told so, and reports whether the lane must still wait for the file timeline.
+// Neither can know what a browser heard; browsers deduplicate by message.
+func TTSSetCallbacks(ready func(model.TTSJob, ttsprovider.Media, string, bool) bool, invalid func(string), live func(context.Context, model.TTSJob, string) func(bool) bool) {
 	ttsCallbacks.Lock()
 	defer ttsCallbacks.Unlock()
 	ttsCallbacks.ready = ready
@@ -43,6 +45,11 @@ func TTSSetCallbacks(ready func(model.TTSJob, ttsprovider.Media, string), invali
 }
 
 type ttsLiveContextKey struct{}
+
+// A message job may wait behind the channel's earlier audio. Once queued it is
+// stale only after this bound (restart backlog, abnormal lanes), never merely
+// because its predecessors speak for long. Unqueued intents expire separately.
+const ttsMessageQueueWait = 15 * time.Minute
 
 func TTSWake() {
 	select {
@@ -165,7 +172,7 @@ func ttsRecoverOutbox() {
 		if m.IsDeleted || m.IsRevoked || m.DeletedAt != nil || time.Since(m.CreatedAt) > 2*time.Minute || json.Unmarshal([]byte(m.TTSIntent), &s) != nil {
 			status = "skipped"
 		} else {
-			j := &model.TTSJob{Operation: "message_synthesis", RequestKey: "message:" + m.ID, PayerUserID: m.UserID, ChannelID: m.ChannelID, MessageID: m.ID, MessageRevision: int64(m.EditCount), Snapshot: m.TTSIntent, VoiceID: s.VoiceID, Deadline: m.CreatedAt.Add(2 * time.Minute)}
+			j := &model.TTSJob{Operation: "message_synthesis", RequestKey: "message:" + m.ID, PayerUserID: m.UserID, ChannelID: m.ChannelID, MessageID: m.ID, MessageRevision: int64(m.EditCount), Snapshot: m.TTSIntent, VoiceID: s.VoiceID, Deadline: time.Now().Add(ttsMessageQueueWait)}
 			if err := ttsReserveSnapshot(j, s); err != nil {
 				status = "skipped"
 			}
@@ -574,24 +581,26 @@ func ttsPublishMessage(ctx context.Context, j *model.TTSJob, s TTSSnapshot, a *m
 		if !ttsMessageStatus(j, "ready", &protocol.MessageTTS{Status: "ready", AudioResourceID: a.ID, DurationMS: media.DurationMS, Format: media.Container, MessageRevision: int(j.MessageRevision)}) {
 			return
 		}
-		if ctx.Value(ttsLiveContextKey{}) == true || j.Status == "storage_pending" {
-			return // Never replay audio already heard while streaming or recovering storage.
+		if j.Status == "storage_pending" {
+			return // Never announce while recovering storage; clients poll the state.
 		}
 		path, e := TTSResourcePath(a)
 		stop := make(chan struct{})
 		ttsTimelines.Lock()
 		ttsTimelines.items[j.MessageID] = stop
 		ttsTimelines.Unlock()
+		// A lane includes its audio timeline, not just upstream generation time.
+		// A realtime stream already spent it; then the archive is only announced.
+		wait := time.Duration(0)
 		if e == nil {
 			ttsCallbacks.RLock()
 			fn := ttsCallbacks.ready
 			ttsCallbacks.RUnlock()
-			if fn != nil {
-				fn(*j, media, path)
+			if fn != nil && fn(*j, media, path, ctx.Value(ttsLiveContextKey{}) == true) {
+				wait = time.Duration(media.DurationMS+300) * time.Millisecond
 			}
 		}
-		// A lane includes its audio timeline, not just upstream generation time.
-		timer := time.NewTimer(time.Duration(media.DurationMS+300) * time.Millisecond)
+		timer := time.NewTimer(wait)
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
