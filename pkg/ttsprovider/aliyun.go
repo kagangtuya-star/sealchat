@@ -1,4 +1,4 @@
-// Package ttsprovider implements the Qwen-Audio-TTS HTTP contract only.
+// Package ttsprovider implements the Qwen-Audio-TTS provider contracts.
 package ttsprovider
 
 import (

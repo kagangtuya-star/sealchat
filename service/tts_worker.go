@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"sort"
 	"sync"
@@ -23,8 +24,14 @@ var ttsWake = make(chan struct{}, 1)
 var ttsWorkerOnce sync.Once
 var ttsTimelines = struct {
 	sync.Mutex
-	items map[string]chan struct{}
-}{items: map[string]chan struct{}{}}
+	items     map[string]chan struct{}
+	synthesis map[string]*ttsSynthesisCancel
+}{items: map[string]chan struct{}{}, synthesis: map[string]*ttsSynthesisCancel{}}
+
+type ttsSynthesisCancel struct {
+	cancel context.CancelFunc
+}
+
 var ttsCallbacks struct {
 	sync.RWMutex
 	ready   func(model.TTSJob, ttsprovider.Media, string, bool) bool
@@ -75,16 +82,37 @@ func TTSClearChannelPending(channelID string) error {
 
 func TTSStopPlayback(id string) {
 	ttsTimelines.Lock()
+	synthesis := ttsTimelines.synthesis[id]
 	if stop, ok := ttsTimelines.items[id]; ok {
 		close(stop)
 		delete(ttsTimelines.items, id)
 	}
 	ttsTimelines.Unlock()
+	if synthesis != nil {
+		synthesis.cancel()
+	}
 	ttsCallbacks.RLock()
 	fn := ttsCallbacks.invalid
 	ttsCallbacks.RUnlock()
 	if fn != nil {
 		fn(id)
+	}
+}
+
+func ttsRegisterSynthesisCancel(messageID string, cancel context.CancelFunc) func() {
+	if messageID == "" {
+		return func() {}
+	}
+	entry := &ttsSynthesisCancel{cancel: cancel}
+	ttsTimelines.Lock()
+	ttsTimelines.synthesis[messageID] = entry
+	ttsTimelines.Unlock()
+	return func() {
+		ttsTimelines.Lock()
+		if ttsTimelines.synthesis[messageID] == entry {
+			delete(ttsTimelines.synthesis, messageID)
+		}
+		ttsTimelines.Unlock()
 	}
 }
 
@@ -198,7 +226,7 @@ func ttsMessageCurrentWithDB(db *gorm.DB, job *model.TTSJob, s TTSSnapshot) bool
 	if db.Where("id = ? AND is_deleted = ? AND (is_revoked = ? OR is_revoked IS NULL) AND deleted_at IS NULL AND edit_count = ?", job.MessageID, false, false, job.MessageRevision).First(&m).Error != nil {
 		return false
 	}
-	text, err := TTSPlainText(m.Content)
+	text, err := ttsPlainText(m.Content, ttsMessageSynthesisMaxRunes)
 	if m.IsWhisper != (s.Whisper || len(s.Audience) > 0) || (job.ChannelID != "" && m.ChannelID != job.ChannelID) || (job.PayerUserID != "" && m.UserID != job.PayerUserID) {
 		return false
 	}
@@ -318,6 +346,13 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		return
 	}
 	path := f.Name()
+	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.RequestTimeoutSeconds)*time.Second)
+	defer cancel()
+	cleanupSynthesisCancel := func() {}
+	if j.Operation == "message_synthesis" {
+		cleanupSynthesisCancel = ttsRegisterSynthesisCancel(j.MessageID, cancel)
+	}
+	defer cleanupSynthesisCancel()
 	r := db.Model(&model.TTSJob{}).Where("id = ? AND status = ?", j.ID, "queued").Updates(map[string]any{"status": "running", "spool_path": path})
 	if r.Error != nil || r.RowsAffected != 1 {
 		f.Close()
@@ -325,8 +360,27 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		return
 	}
 	j.SpoolPath = path
-	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.RequestTimeoutSeconds)*time.Second)
-	defer cancel()
+	stopCurrentWatch := make(chan struct{})
+	defer close(stopCurrentWatch)
+	if j.Operation == "message_synthesis" && j.MessageID != "" {
+		go func() {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopCurrentWatch:
+					return
+				case <-ticker.C:
+					if !ttsMessageCurrent(j, s) {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
 	client := ttsprovider.Client{APIKey: provider.APIKey, SynthesisEndpoint: s.Provider.SynthesisEndpoint, VoiceEndpoint: s.Provider.VoiceEndpoint}
 	var units int64
 	confirmed := false
@@ -376,9 +430,9 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 				finish = live(parent, *j, path)
 			}
 		}
-		result, e := client.Synthesize(ctx, s.Provider.Model, s.Input, f)
+		result, e := ttsSynthesize(ctx, &client, j, s, f)
 		if finish != nil {
-			// SSE audio.data only feeds realtime playback. When the provider
+			// Provider stream audio feeds realtime playback. When the HTTP path
 			// names a finished file, archive validation applies to that file
 			// after the live reader has closed the spool. Failure cancels
 			// already sent PCM; it never retries a charged request.
@@ -454,6 +508,16 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		return
 	}
 	ttsArchive(parent, j, s)
+}
+
+func ttsSynthesize(ctx context.Context, client *ttsprovider.Client, job *model.TTSJob, snapshot TTSSnapshot, sink io.Writer) (ttsprovider.Result, error) {
+	if job.Operation == "message_synthesis" {
+		segments := TTSSplitText(snapshot.Input.Text)
+		if len(segments) > 1 {
+			return client.SynthesizeSegments(ctx, snapshot.Provider.Model, snapshot.Input, segments, sink)
+		}
+	}
+	return client.Synthesize(ctx, snapshot.Provider.Model, snapshot.Input, sink)
 }
 
 // ttsAdoptProviderAudio replaces the realtime SSE spool with the provider's

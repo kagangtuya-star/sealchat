@@ -19,6 +19,8 @@ import (
 
 const TTSAutoPreference = "tts.autoSynthesis"
 
+const ttsMessageSynthesisMaxRunes = 20000
+
 type TTSRequest struct {
 	RequestKey       string  `json:"requestKey"`
 	Text             string  `json:"text"`
@@ -143,6 +145,10 @@ func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error)
 
 // Unknown rich nodes are omitted, notably secrets, clues, images and cards.
 func TTSPlainText(content string) (string, error) {
+	return ttsPlainText(content, 500)
+}
+
+func ttsPlainText(content string, maxRunes int) (string, error) {
 	input := strings.TrimSpace(content)
 	if strings.HasPrefix(input, "{") {
 		var node map[string]any
@@ -193,8 +199,11 @@ func TTSPlainText(content string) (string, error) {
 		return "", TTSValidationError("此消息类型不朗读")
 	}
 	text := strings.TrimSpace(NormalizeMessageContentToPlainText(input))
-	if text == "" || utf8.RuneCountInString(text) > 500 {
-		return "", TTSValidationError("朗读文本须为 1–500 字符")
+	if text == "" || utf8.RuneCountInString(text) > maxRunes {
+		if maxRunes == 500 {
+			return "", TTSValidationError("朗读文本须为 1–500 字符")
+		}
+		return "", TTSValidationError("朗读文本须为 1–20000 字符")
 	}
 	if strings.HasPrefix(text, ".") || strings.HasPrefix(text, "/") || strings.HasPrefix(text, "。") {
 		return "", TTSValidationError("命令不自动朗读")
@@ -206,7 +215,7 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 	if !optIn || user == nil || user.IsBot || m.ICMode != "ic" || len(m.ChannelID) >= 30 || m.WidgetData != "" || !TTSAutomaticEnabled(user.ID) {
 		return
 	}
-	text, err := TTSPlainText(m.Content)
+	text, err := ttsPlainText(m.Content, ttsMessageSynthesisMaxRunes)
 	if err != nil {
 		m.TTSStatus = "skipped"
 		return
