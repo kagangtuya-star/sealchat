@@ -160,43 +160,46 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	}
 	s.Provider.APIKey = ""
 	s.Provider.HasAPIKey = false
-	v := r.SystemVoice
-	if voice == nil && v != "" && !systemVoiceBindingSupported(s.Provider, v, r.SystemVoiceProvider, r.SystemVoiceModel) {
-		if !automatic {
-			return s, TTSValidationError("系统音色与当前 provider 类型或模型不匹配，需要重新选择")
+	v := ""
+	if target == nil {
+		v = r.SystemVoice
+		if voice == nil && v != "" && !systemVoiceBindingSupported(s.Provider, v, r.SystemVoiceProvider, r.SystemVoiceModel) {
+			if !automatic {
+				return s, TTSValidationError("系统音色与当前 provider 类型或模型不匹配，需要重新选择")
+			}
+			v = ""
 		}
-		v = ""
-	}
-	if v == "" {
-		v = ttsprovider.DefaultVoice(s.Provider.EffectiveProviderKind(), s.Provider.Model)
-		if s.Provider.ID == cfg.DefaultProvider && ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, cfg.DefaultVoice) {
-			v = cfg.DefaultVoice
-		}
-	}
-	if voice != nil {
-		if !PersonalVoiceSupported(s.Provider, *voice) {
-			return s, ErrTTSDenied
-		}
-		v = voice.ProviderVoiceID
-		if voice.Parameters != "" {
-			var defaults TTSRequest
-			if json.Unmarshal([]byte(voice.Parameters), &defaults) == nil {
-				if r.Instruction == "" {
-					r.Instruction = defaults.Instruction
-				}
-				if r.Rate == 0 {
-					r.Rate = defaults.Rate
-				}
-				if r.Pitch == 0 {
-					r.Pitch = defaults.Pitch
-				}
-				if r.Volume == nil {
-					r.Volume = defaults.Volume
-				}
+		if v == "" {
+			v = ttsprovider.DefaultVoice(s.Provider.EffectiveProviderKind(), s.Provider.Model)
+			if s.Provider.ID == cfg.DefaultProvider && ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, cfg.DefaultVoice) {
+				v = cfg.DefaultVoice
 			}
 		}
-	} else if !ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v) {
-		return s, TTSValidationError("系统音色与当前模型不匹配")
+		if voice != nil {
+			if !PersonalVoiceSupported(s.Provider, *voice) {
+				return s, ErrTTSDenied
+			}
+			v = voice.ProviderVoiceID
+			if voice.Parameters != "" {
+				var defaults TTSRequest
+				if json.Unmarshal([]byte(voice.Parameters), &defaults) == nil {
+					if r.Instruction == "" {
+						r.Instruction = defaults.Instruction
+					}
+					if r.Rate == 0 {
+						r.Rate = defaults.Rate
+					}
+					if r.Pitch == 0 {
+						r.Pitch = defaults.Pitch
+					}
+					if r.Volume == nil {
+						r.Volume = defaults.Volume
+					}
+				}
+			}
+		} else if !ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v) {
+			return s, TTSValidationError("系统音色与当前模型不匹配")
+		}
 	}
 	if r.Rate == 0 {
 		r.Rate = 1
