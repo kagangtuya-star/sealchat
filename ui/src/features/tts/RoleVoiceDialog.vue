@@ -92,7 +92,7 @@ async function query() {
 </script>
 <template>
   <NButton text size="small" @click="open">音色</NButton>
-  <NModal v-model:show="visible" :auto-focus="false">
+  <NModal v-model:show="visible" :auto-focus="false" :trap-focus="false">
     <section class="rv-shell" role="dialog" aria-modal="true" :aria-labelledby="titleId">
       <header class="rv-head">
         <div class="rv-head__text">

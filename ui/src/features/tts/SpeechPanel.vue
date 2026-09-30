@@ -227,7 +227,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
 </script>
 
 <template>
-  <NModal v-model:show="speech.visible" :auto-focus="false">
+  <NModal v-model:show="speech.visible" :auto-focus="false" :trap-focus="false">
     <section class="sp-shell" role="dialog" aria-modal="true" aria-labelledby="speech-panel-title" :style="{ '--vp-accent': `var(--primary-color, ${theme.primaryColor})`, '--sp-warning': theme.warningColor }">
       <header class="sp-head">
         <h2 id="speech-panel-title">语音朗读</h2>

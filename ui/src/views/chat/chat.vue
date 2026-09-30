@@ -18036,6 +18036,7 @@ onBeforeUnmount(() => {
     v-model:show="identityManageVisible"
     placement="right"
     :width="identityDrawerWidth"
+    :trap-focus="false"
   >
     <n-drawer-content :class="['identity-manage-drawer', { 'identity-manage-drawer--night': isNightPalette }]">
       <template #header>
