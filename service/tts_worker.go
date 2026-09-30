@@ -393,7 +393,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		if j.Operation == "clone" {
 			input.VoicePrompt = ""
 			input.PreviewText = ""
-			input.URL, err = TTSCloneReadURL(j.PayerUserID, s.SourceResourceID)
+			input.URL, err = TTSCloneReadURL(j)
 		}
 		var result ttsprovider.VoiceResult
 		if err == nil {

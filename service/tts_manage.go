@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,25 +71,71 @@ func TTSReadTicket(key string, consume bool) (TTSTicket, bool) {
 	}
 	return t, true
 }
-func TTSCloneReadURL(userID, resourceID string) (string, error) {
+func ttsCloneSourceToken(jobID, reservationID string, expires int64) string {
+	return ttsHash("tts-clone-source:v1:" + jobID + ":" + reservationID + ":" + strconv.FormatInt(expires, 10))
+}
+
+func ttsCloneSourceAttachment(job *model.TTSJob) (*model.AttachmentModel, error) {
+	if job == nil || job.ID == "" || job.Operation != "clone" || job.PayerUserID == "" || job.ReservationID == "" || job.DeletedAt != nil {
+		return nil, ErrTTSDenied
+	}
+	var snapshot TTSSnapshot
+	if json.Unmarshal([]byte(job.Snapshot), &snapshot) != nil || snapshot.SourceResourceID == "" {
+		return nil, ErrTTSDenied
+	}
 	var a model.AttachmentModel
-	if model.GetDB().Where("id = ? AND user_id = ? AND root_id_type = ? AND parent_id_type = ? AND deleted_at IS NULL", resourceID, userID, "tts", "clone_source").First(&a).Error != nil {
-		return "", ErrTTSDenied
+	if model.GetDB().Where("id = ? AND user_id = ? AND root_id_type = ? AND parent_id_type = ? AND deleted_at IS NULL", snapshot.SourceResourceID, job.PayerUserID, "tts", "clone_source").First(&a).Error != nil {
+		return nil, ErrTTSDenied
 	}
-	cfg := utils.GetConfig()
-	base := strings.TrimRight(cfg.Domain, "/")
-	if !strings.HasPrefix(base, "https://") {
-		return "", TTSValidationError("复刻样本读取需要配置公开 HTTPS Domain")
-	}
-	token, err := TTSIssueTicket(TTSTicket{UserID: userID, ResourceID: resourceID, Purpose: "clone_source", Expires: time.Now().Add(5 * time.Minute)})
-	if err != nil {
+	return &a, nil
+}
+
+func TTSCloneReadURL(job *model.TTSJob) (string, error) {
+	if _, err := ttsCloneSourceAttachment(job); err != nil {
 		return "", err
 	}
+	cfg := utils.GetConfig()
+	if cfg == nil {
+		return "", TTSValidationError("复刻样本读取需要配置公开 HTTPS Domain")
+	}
+	base, err := url.Parse(cfg.Domain)
+	if err != nil || base.Scheme != "https" || base.Host == "" || base.Hostname() == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" {
+		return "", TTSValidationError("复刻样本读取需要配置公开 HTTPS Domain")
+	}
+	base.Path = strings.TrimRight(base.Path, "/")
 	webRoot := strings.Trim(cfg.WebUrl, "/")
 	if webRoot != "" {
-		base += "/" + webRoot
+		base.Path += "/" + webRoot
 	}
-	return base + "/api/v1/tts/play/" + token, nil
+	base.Path += "/api/v1/tts/clone-source/" + job.ID
+	base.RawPath = ""
+	expires := time.Now().Add(5 * time.Minute).Unix()
+	base.RawQuery = url.Values{
+		"expires": {strconv.FormatInt(expires, 10)},
+		"token":   {ttsCloneSourceToken(job.ID, job.ReservationID, expires)},
+	}.Encode()
+	return base.String(), nil
+}
+
+// Authorization is database-backed; serving local TTS files across instances
+// still requires a shared filesystem or routing to an instance with the file.
+func TTSResolveCloneSource(jobID, expiresRaw, token string) (*model.AttachmentModel, error) {
+	if jobID == "" || expiresRaw == "" || token == "" {
+		return nil, ErrTTSDenied
+	}
+	expires, err := strconv.ParseInt(expiresRaw, 10, 64)
+	if err != nil || !time.Now().Before(time.Unix(expires, 0)) {
+		return nil, ErrTTSDenied
+	}
+	var job model.TTSJob
+	if model.GetDB().Where("id = ? AND deleted_at IS NULL", jobID).First(&job).Error != nil || job.Operation != "clone" || job.PayerUserID == "" || job.ReservationID == "" {
+		return nil, ErrTTSDenied
+	}
+	expected := ttsCloneSourceToken(job.ID, job.ReservationID, expires)
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		return nil, ErrTTSDenied
+	}
+	return ttsCloneSourceAttachment(&job)
 }
 
 var ttsMaintenanceAt time.Time

@@ -47,6 +47,7 @@ func ttsError(c *fiber.Ctx, err error) error {
 }
 func BindTTSPublicRoutes(v1 fiber.Router) {
 	v1.Get("/tts/play/:ticket", ttsPlay)
+	v1.Get("/tts/clone-source/:jobId", ttsCloneSource)
 	v1.Get("/tts/ws", ttsWSUpgrade, ttsWSHandler())
 }
 func BindTTSRoutes(auth fiber.Router) {
@@ -182,6 +183,9 @@ func BindTTSRoutes(auth fiber.Router) {
 		a, err := ttsReadResource(getCurUser(c).ID, c.Params("id"))
 		if err != nil {
 			return ttsError(c, err)
+		}
+		if a.ParentIDType == "clone_source" {
+			return c.SendStatus(fiber.StatusForbidden)
 		}
 		return ttsTicketResponse(c, service.TTSTicket{UserID: getCurUser(c).ID, ResourceID: a.ID, Purpose: "preview", Expires: time.Now().Add(2 * time.Minute)})
 	})
@@ -475,7 +479,7 @@ func ttsPlay(c *fiber.Ctx) error {
 		}
 		a = &model.AttachmentModel{}
 		err = model.GetDB().Where("id = ?", t.ResourceID).First(a).Error
-	} else if t.Purpose == "preview" || t.Purpose == "clone_source" {
+	} else if t.Purpose == "preview" {
 		a, err = ttsReadResource(t.UserID, t.ResourceID)
 	} else {
 		return c.SendStatus(403)
@@ -483,6 +487,18 @@ func ttsPlay(c *fiber.Ctx) error {
 	if err != nil {
 		return c.SendStatus(404)
 	}
+	return ttsSendAttachment(c, a)
+}
+
+func ttsCloneSource(c *fiber.Ctx) error {
+	a, err := service.TTSResolveCloneSource(c.Params("jobId"), c.Query("expires"), c.Query("token"))
+	if err != nil {
+		return c.SendStatus(403)
+	}
+	return ttsSendAttachment(c, a)
+}
+
+func ttsSendAttachment(c *fiber.Ctx, a *model.AttachmentModel) error {
 	path, err := service.TTSResourcePath(a)
 	if err != nil {
 		return c.SendStatus(404)
