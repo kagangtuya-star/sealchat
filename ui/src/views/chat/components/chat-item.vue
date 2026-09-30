@@ -1,5 +1,6 @@
 <script setup lang="tsx">
 import MessageSpeechButton from '@/features/tts/MessageSpeechButton.vue'
+import { speechPlayer } from '@/features/tts/player'
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
 import { onMounted, onUpdated, ref, h, Fragment, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
@@ -4019,7 +4020,7 @@ const handleRetrySend = () => {
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
         <div v-if="hasEditAction || item?.tts" class="message-action-bar"
-          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible, 'message-action-bar--speech': !!item?.tts }">
+          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible, 'message-action-bar--speech': !!item?.tts, 'message-action-bar--playing': speechPlayer.state.key === `messages:${item?.id}` }">
           <MessageSpeechButton v-if="item?.id" :message="{ id: item.id, tts: item.tts }" />
           <n-tooltip v-if="canShowEditAction" trigger="hover">
             <template #trigger>
@@ -5103,7 +5104,8 @@ const handleRetrySend = () => {
 
 .chat-item .content:hover .message-action-bar,
 .chat-item.is-editing .message-action-bar,
-.chat-item .message-action-bar--active {
+.chat-item .message-action-bar--active,
+.chat-item .message-action-bar--playing {
   opacity: 1;
   pointer-events: auto;
 }
