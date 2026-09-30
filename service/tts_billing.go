@@ -51,11 +51,11 @@ func withTTSUserPolicy(db *gorm.DB, userID string, fn func(*gorm.DB, *model.TTSU
 
 func ttsCost(units int64, price float64) (float64, error) {
 	if units < 0 || price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-		return 0, TTSValidationError("语音费用无效")
+		return 0, TTSValidationError("语音用量无效")
 	}
 	cost := math.Round(float64(units)*price*1e6) / 1e6
 	if math.IsInf(cost, 0) || cost > 1e12 {
-		return 0, TTSValidationError("语音费用超限")
+		return 0, TTSValidationError("语音用量超限")
 	}
 	return cost, nil
 }
@@ -121,7 +121,7 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 			return err
 		}
 		if policy.DailyLimit != nil && usage.DailySettled+usage.ActiveReserved+cost > *policy.DailyLimit || policy.MonthlyLimit != nil && usage.MonthlySettled+usage.ActiveReserved+cost > *policy.MonthlyLimit || policy.LifetimeLimit != nil && usage.LifetimeSettled+usage.ActiveReserved+cost > *policy.LifetimeLimit {
-			return TTSValidationError("语音额度不足")
+			return TTSValidationError("语音用量不足")
 		}
 		if job.Operation == "design" || job.Operation == "clone" {
 			if provider.AccountVoiceLimit != nil {

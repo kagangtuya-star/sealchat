@@ -17,9 +17,9 @@ function amount(value: number | null) {
 <template>
   <div class="speech-quota-summary">
     <div v-for="row in rows" :key="row.label">
-      {{ row.label }}语音金额：已用 {{ amount(row.used) }} / 上限 {{ amount(row.limit) }} · 可用 {{ amount(row.available) }}
+      {{ row.label }}语音用量：已用 {{ amount(row.used) }} / 上限 {{ amount(row.limit) }} · 可用 {{ amount(row.available) }}
     </div>
-    <div>有效预留 {{ amount(quota.usage.ActiveReserved) }}（已从各周期可用金额中扣除）</div>
+    <div>有效预留 {{ amount(quota.usage.ActiveReserved) }}（占用各周期可用用量）</div>
     <div>已保存音色 {{ quota.saved }} / {{ quota.slots }} 槽位</div>
   </div>
 </template>

@@ -372,7 +372,7 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 		job.EstimatedUnits = 1
 	}
 	if price == nil {
-		return TTSValidationError("管理员尚未确认此操作单价")
+		return TTSValidationError("管理员尚未确认此操作参数")
 	}
 	return ttsReserveJob(model.GetDB(), cfg, job, s.Provider, *price, time.Now())
 }

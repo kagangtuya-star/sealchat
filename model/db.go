@@ -175,7 +175,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioImportJobModel{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
 	if err := MigrateTTS(db); err != nil {
-		panic(fmt.Sprintf("初始化语音与 AI 计费数据表失败: %v", err))
+		panic(fmt.Sprintf("初始化语音与 AI 用量数据表失败: %v", err))
 	}
 	db.AutoMigrate(&AIUserQuotaOverrideModel{})
 	db.AutoMigrate(&PlatformFontAsset{})

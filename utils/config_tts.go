@@ -95,7 +95,7 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 	}
 	for _, v := range []*float64{cfg.QuotaDefault.DailyLimit, cfg.QuotaDefault.MonthlyLimit, cfg.QuotaDefault.LifetimeLimit} {
 		if v != nil && (*v < 0 || math.IsNaN(*v) || math.IsInf(*v, 0)) {
-			return fmt.Errorf("语音额度无效")
+			return fmt.Errorf("语音限制无效")
 		}
 	}
 	ids := map[string]bool{}
@@ -110,7 +110,7 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 		}
 		for _, price := range []*float64{p.CharacterPrice, p.DesignPrice, p.ClonePrice} {
 			if price != nil && (*price < 0 || math.IsNaN(*price) || math.IsInf(*price, 0)) {
-				return fmt.Errorf("语音单价无效")
+				return fmt.Errorf("语音单位值无效")
 			}
 		}
 		if p.AccountVoiceLimit != nil && *p.AccountVoiceLimit < 0 {
@@ -131,7 +131,7 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 		if p.ID == cfg.DefaultProvider {
 			found = true
 			if cfg.Enabled && p.CharacterPrice == nil {
-				return fmt.Errorf("请显式确认合成字符单价")
+				return fmt.Errorf("请显式确认合成字符单位值")
 			}
 		}
 	}

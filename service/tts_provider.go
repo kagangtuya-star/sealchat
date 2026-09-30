@@ -169,7 +169,7 @@ func resolveAliyunTTSProvider(ctx context.Context, client *http.Client, baseURL,
 		})
 	}
 	if len(result.Models) == 0 {
-		return result, TTSValidationError("百炼模型目录未返回可确认价格的 Qwen Audio 3.0 TTS 模型")
+		return result, TTSValidationError("百炼模型目录未返回可确认配置的 Qwen Audio 3.0 TTS 模型")
 	}
 	return result, nil
 }

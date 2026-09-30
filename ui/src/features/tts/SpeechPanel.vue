@@ -200,16 +200,16 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
       </header>
       <div v-if="error || speechPlayer.state.error || (speech.quota && !speech.quota.enabled)" class="sp-alerts">
         <NAlert v-if="error || speechPlayer.state.error" type="error">{{ error || speechPlayer.state.error }}</NAlert>
-        <NAlert v-if="speech.quota && !speech.quota.enabled" type="warning">平台未启用新的语音收费操作；已有语音仍可播放。</NAlert>
+        <NAlert v-if="speech.quota && !speech.quota.enabled" type="warning">平台未启用新的语音操作；已有语音仍可播放。</NAlert>
       </div>
 
       <div v-show="tab === 'catalog'" class="sp-body sp-catalog">
         <VoicePicker ref="picker" v-model="selection" mode="browse" :preset-model-ids="presetModelIds" class="sp-picker" />
         <aside class="sp-side">
-          <h3>付费合成试听</h3>
-          <p class="sp-hint">使用左侧当前选择的音色合成新文本。新文本试听会扣发起人的语音额度，单价 {{ speech.quota?.characterPrice ?? '尚未确认' }} / 字；重放已有文件不收费。</p>
+          <h3>合成试听</h3>
+          <p class="sp-hint">使用左侧当前选择的音色合成新文本；已有文件可重放。</p>
           <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="输入新的试听文字（最多 500 字）" />
-          <NButton type="primary" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" :loading="busy" @click="run(() => submit('audition'))">确认付费合成试听</NButton>
+          <NButton type="primary" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" :loading="busy" @click="run(() => submit('audition'))">确认合成试听</NButton>
         </aside>
       </div>
 
@@ -223,11 +223,11 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
           <label class="sp-field"><span>声音描述</span><NInput v-model:value="description" type="textarea" placeholder="描述希望设计的声音" /></label>
           <label class="sp-field"><span>预览文本</span><NInput v-model:value="text" type="textarea" placeholder="15–200 字预览文本" /></label>
           <p class="sp-hint">创建完成后会生成限时预览，可在“我的音色”中保存或替换已有音色。已保存音色 {{ speech.quota?.saved ?? 0 }} / {{ speech.quota?.slots ?? 0 }}。</p>
-          <NButton v-if="operation === 'design'" type="primary" :disabled="!speech.quota?.enabled || speech.quota.designPrice == null" :loading="busy" @click="run(() => submit('design'))">确认付费设计（{{ speech.quota?.designPrice ?? '未定价' }} / 次）</NButton>
+          <NButton v-if="operation === 'design'" type="primary" :disabled="!speech.quota?.enabled || speech.quota.designPrice == null" :loading="busy" @click="run(() => submit('design'))">确认设计</NButton>
           <template v-else>
             <input type="file" accept="audio/wav,audio/mpeg" @change="event => { source = (event.target as HTMLInputElement).files?.[0] ?? null }" />
             <label class="sp-check"><input v-model="authorized" type="checkbox" />我确认拥有此样本的复刻授权（10–60 秒 WAV/MP3）</label>
-            <NButton type="primary" :disabled="!authorized || !source || !speech.quota?.enabled || speech.quota.clonePrice == null" :loading="busy" @click="run(() => submit('clone'))">确认付费复刻（{{ speech.quota?.clonePrice ?? '未定价' }} / 次）</NButton>
+            <NButton type="primary" :disabled="!authorized || !source || !speech.quota?.enabled || speech.quota.clonePrice == null" :loading="busy" @click="run(() => submit('clone'))">确认复刻</NButton>
           </template>
         </div>
       </div>
@@ -270,7 +270,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
                 <label class="sp-check">公开音色 <NSwitch v-model:value="selectedVoice.isPublic" /></label>
               </div>
               <div class="sp-voice__actions">
-                <NButton v-if="selectedVoice.previewResourceId" size="small" @click="speechPlayer.play('resources', selectedVoice.previewResourceId)">免费重放 / 停止</NButton>
+                <NButton v-if="selectedVoice.previewResourceId" size="small" @click="speechPlayer.play('resources', selectedVoice.previewResourceId)">重放 / 停止</NButton>
                 <NButton size="small" type="primary" :loading="busy" @click="run(() => update(selectedVoice!))">保存本地名称、标签、公开状态与参数</NButton>
                 <NButton size="small" :loading="busy" @click="run(() => remove(selectedVoice!))">删除</NButton>
               </div>
@@ -286,7 +286,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
               </div>
               <small v-if="replaceId" class="sp-hint">替换将保留正在执行任务的旧版本；原角色绑定失效后需重新选择新版本，不自动换声。</small>
               <div class="sp-voice__actions">
-                <NButton v-if="selectedVoice.previewResourceId" size="small" @click="speechPlayer.play('resources', selectedVoice.previewResourceId)">免费试听 / 停止</NButton>
+                <NButton v-if="selectedVoice.previewResourceId" size="small" @click="speechPlayer.play('resources', selectedVoice.previewResourceId)">试听 / 停止</NButton>
                 <NButton size="small" type="primary" :loading="busy" @click="run(() => save(selectedVoice!))">{{ replaceId ? '替换所选音色' : '保存为新音色' }}</NButton>
                 <NButton size="small" :loading="busy" @click="run(() => remove(selectedVoice!))">丢弃预览</NButton>
               </div>
@@ -305,7 +305,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
           <span>已保存音色 {{ speech.quota?.saved ?? 0 }} / {{ speech.quota?.slots ?? 0 }}</span>
         </div>
         <SpeechQuotaSummary v-if="speech.quota" :quota="speech.quota" />
-        <NAlert type="info">PCM16 WAV 支持增量播放（约 300ms 预缓冲）；MP3 使用完整文件兼容模式。当前生产格式仅支持 WAV / MP3。自动播放不触发收费合成；手动重放或试听会暂停本地自动播放。</NAlert>
+        <NAlert type="info">PCM16 WAV 支持增量播放（约 300ms 预缓冲）；MP3 使用完整文件兼容模式。当前生产格式仅支持 WAV / MP3。自动播放不会合成新音频；手动重放或试听会暂停本地自动播放。</NAlert>
         <div v-if="currentChannel" class="sp-settings">
           <NButton @click="run(loadQueue)">查询频道朗读队列</NButton>
           <span v-if="queue">可见待处理任务 {{ queue.items.length }}</span>
@@ -320,7 +320,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
         <span>任务：{{ job.status }} {{ job.errorCode }}</span>
         <div class="sp-foot__actions">
           <NButton v-if="job.audioResourceId" size="small" @click="speechPlayer.play('resources', job.audioResourceId)">播放 / 停止已有试听</NButton>
-          <NButton size="small" @click="run(() => poll(job!.id))">查询状态（免费）</NButton>
+          <NButton size="small" @click="run(() => poll(job!.id))">查询状态</NButton>
         </div>
       </footer>
     </section>

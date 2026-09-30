@@ -15,7 +15,7 @@ type Media struct {
 	DataSize     int    `json:"-"`
 }
 
-var ErrMedia = errors.New("音频容器不受支持或文件不完整；不会自动重试收费合成")
+var ErrMedia = errors.New("音频容器不受支持或文件不完整；不会自动重试合成")
 
 // InspectMedia validates a complete archive, independently of SSE completion.
 // PCM WAV is the only realtime container. Other validated media use file mode.

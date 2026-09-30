@@ -26,6 +26,6 @@ watch(metadata, (value) => {
         <NIcon :component="active ? PlayerStop : Volume" size="18" />
       </NButton>
     </template>
-    {{ speechPlayer.state.error || (active ? '停止语音' : '播放已保存语音（免费）') }}
+    {{ speechPlayer.state.error || (active ? '停止语音' : '播放语音') }}
   </NTooltip>
 </template>

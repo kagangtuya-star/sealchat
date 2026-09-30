@@ -318,7 +318,7 @@ func TTSSetPolicy(userID string, input model.TTSUserPolicy) error {
 	}
 	for _, v := range []*float64{input.DailyLimit, input.MonthlyLimit, input.LifetimeLimit} {
 		if v != nil && *v < 0 {
-			return TTSValidationError("额度不能为负数")
+			return TTSValidationError("限制不能为负数")
 		}
 	}
 	return withTTSUserPolicy(model.GetDB(), userID, func(tx *gorm.DB, _ *model.TTSUserPolicy) error {

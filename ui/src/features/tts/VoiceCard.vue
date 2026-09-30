@@ -48,9 +48,9 @@ function preview() {
         v-if="item.previewResourceId"
         type="button"
         class="voice-card__preview"
-        :aria-label="previewing ? `停止试听 ${item.name}` : `免费重放 ${item.name} 的已有试听`"
+        :aria-label="previewing ? `停止试听 ${item.name}` : `试听 ${item.name} 的已有音频`"
         @click="preview"
-      >{{ previewing ? (speechPlayer.state.loading ? '加载中…' : '停止') : '免费试听' }}</button>
+      >{{ previewing ? (speechPlayer.state.loading ? '加载中…' : '停止') : '试听' }}</button>
     </div>
   </article>
 </template>

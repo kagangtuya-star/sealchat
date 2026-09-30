@@ -290,7 +290,7 @@ defineExpose({ reload })
     </div>
 
     <div class="vp-footer">
-      <small class="vp-footer__hint">标有“免费试听”的音色会重放已有文件；其他音色试听需付费合成。</small>
+      <small class="vp-footer__hint">已有试听会直接重放；其他音色会生成试听音频。</small>
       <NPagination v-if="total > PAGE_SIZE" v-model:page="page" :item-count="total" :page-size="PAGE_SIZE" :page-slot="5" size="small" :disabled="loading" />
     </div>
   </div>

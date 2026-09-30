@@ -20,7 +20,7 @@ import (
 
 func ttsError(c *fiber.Ctx, err error) error {
 	status := fiber.StatusInternalServerError
-	message := "语音操作失败，请查询任务状态；不要重复提交收费请求"
+	message := "语音操作失败，请查询任务状态；不要重复提交请求"
 	var validation service.TTSValidationError
 	if errors.As(err, &validation) {
 		status, message = 400, validation.Error()

@@ -30,7 +30,7 @@ const quickProviderOptions = computed(() => [
   ...config.value.providers.map(provider => ({ label: provider.id, value: provider.id })),
 ])
 const resolvedModelOptions = computed(() => (resolvedProvider.value?.models ?? []).map(model => ({
-  label: `${model.name} · ${model.displayPrice}`,
+  label: model.name,
   value: model.id,
 })))
 const quickProvider = computed(() => config.value.providers.find(provider => provider.id === quickProviderId.value))
@@ -118,7 +118,7 @@ async function resolveProvider() {
   const currentModel = config.value.providers.find(provider => provider.id === resolved.providerId)?.model
   const selected = resolved.models.find(model => model.id === currentModel) ?? resolved.models[0]
   if (selected) applyResolvedModel(selected.id)
-  notice.value = 'Base URL 与 API Key 已验证，模型与价格已从百炼模型目录导入；保存配置后生效。'
+  notice.value = 'Base URL 与 API Key 已验证，模型信息已从百炼模型目录导入；保存配置后生效。'
 }
 const terminalTestStates = new Set(['succeeded', 'failed', 'usage_unknown', 'cancelled'])
 const waitOneSecond = () => new Promise<void>((resolve) => {
@@ -131,7 +131,7 @@ const waitOneSecond = () => new Promise<void>((resolve) => {
 })
 async function testProvider() {
   const generation = ++testGeneration
-  const job = await speechAPI.submit('audition', { requestKey: crypto.randomUUID(), text: '这是一次明确收费的语音测试。' })
+  const job = await speechAPI.submit('audition', { requestKey: crypto.randomUUID(), text: '这是一次语音测试。' })
   testJob.value = job
   testNotice.value = `已提交合成测试 ${job.id}，正在查询结果。`
   for (let attempt = 0; attempt < 30 && !terminalTestStates.has(testJob.value.status); attempt++) {
@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
       <div class="speech-settings__heading">
         <div>
           <h3>AI 语音服务</h3>
-          <p>配置平台语音合成、用户额度、音色槽位与服务商参数。</p>
+          <p>配置平台语音合成、用户用量限制、音色槽位与服务商参数。</p>
         </div>
         <div class="speech-settings__switch">
           <NText>启用语音</NText>
@@ -229,7 +229,7 @@ onBeforeUnmount(() => {
       <NAlert v-if="error" type="error">{{ error }}</NAlert>
       <NAlert v-if="notice" type="info">{{ notice }}</NAlert>
       <NAlert type="info">
-        语音与文本金额账本相互隔离；新的收费语音操作仍受平台 AI 总开关约束。
+        语音与文本数据相互隔离；新的语音操作仍受平台 AI 总开关约束。
       </NAlert>
       <div class="speech-settings__docs">
         <NText depth="3">相关文档</NText>
@@ -260,21 +260,21 @@ onBeforeUnmount(() => {
             <NFormItem label="合成格式">
               <NSelect v-model:value="config.format" :options="[{ label: 'WAV（PCM16 增量播放）', value: 'wav' }, { label: 'MP3（兼容文件播放）', value: 'mp3' }]" />
               <template #feedback>
-                当前生产格式仅支持 WAV / MP3；不会自动换格式重试收费调用。私有 TTS 文件存放于本地受保护目录。
+                当前生产格式仅支持 WAV / MP3；不会自动换格式重试调用。私有 TTS 文件存放于本地受保护目录。
               </template>
             </NFormItem>
           </NCollapseItem>
 
-          <NCollapseItem title="用户额度与预览" name="quota">
+          <NCollapseItem title="用户限制与预览" name="quota">
             <NGrid cols="1 s:2 l:3" :x-gap="16" responsive="screen">
               <NGi>
-                <NFormItem label="默认日额度"><NInputNumber v-model:value="config.quotaDefault.dailyLimit" :min="0" /></NFormItem>
+                <NFormItem label="默认日限制"><NInputNumber v-model:value="config.quotaDefault.dailyLimit" :min="0" /></NFormItem>
               </NGi>
               <NGi>
-                <NFormItem label="默认月额度"><NInputNumber v-model:value="config.quotaDefault.monthlyLimit" :min="0" /></NFormItem>
+                <NFormItem label="默认月限制"><NInputNumber v-model:value="config.quotaDefault.monthlyLimit" :min="0" /></NFormItem>
               </NGi>
               <NGi>
-                <NFormItem label="默认累计额度"><NInputNumber v-model:value="config.quotaDefault.lifetimeLimit" :min="0" /></NFormItem>
+                <NFormItem label="默认累计限制"><NInputNumber v-model:value="config.quotaDefault.lifetimeLimit" :min="0" /></NFormItem>
               </NGi>
               <NGi>
                 <NFormItem label="个人保存槽位"><NInputNumber v-model:value="config.defaultSlots" :min="0" /></NFormItem>
@@ -316,13 +316,13 @@ onBeforeUnmount(() => {
                       <NGi><NText depth="3">地域：</NText>华北2（北京）</NGi>
                       <NGi><NText depth="3">连接：</NText><NTag type="success" size="small">已验证</NTag></NGi>
                       <NGi><NText depth="3">可用模型：</NText>{{ resolvedProvider.models.length }}</NGi>
-                      <NGi><NText depth="3">价格来源：</NText>百炼模型目录</NGi>
+                      <NGi><NText depth="3">信息来源：</NText>百炼模型目录</NGi>
                     </NGrid>
                     <NFormItem label="模型" class="speech-provider-summary__model">
                       <NSelect :value="resolvedModelId" :options="resolvedModelOptions" @update:value="applyResolvedModel" />
                     </NFormItem>
                     <NAlert v-if="resolvedProvider.models.find(model => model.id === resolvedModelId)?.designPrice == null" type="warning">
-                      供应商未返回可确认的声音设计价格，声音设计暂不可收费提交；普通 TTS 合成不受影响。
+                      供应商未返回可确认的声音设计信息，声音设计暂不可提交；普通 TTS 合成不受影响。
                     </NAlert>
                   </div>
                 </div>
@@ -360,9 +360,9 @@ onBeforeUnmount(() => {
                     </NGi>
                     <NGi>
                       <NFormItem label="模型"><NSelect v-model:value="provider.model" :options="['qwen-audio-3.0-tts-flash', 'qwen-audio-3.0-tts-plus'].map(value => ({ label: value, value }))" /></NFormItem>
-                      <NFormItem label="原始字符单价"><NInputNumber v-model:value="provider.characterPrice" :min="0" placeholder="单字符价格" /></NFormItem>
-                      <NFormItem label="每次设计价格"><NInputNumber v-model:value="provider.designPrice" :min="0" /></NFormItem>
-                      <NFormItem label="每次复刻价格"><NInputNumber v-model:value="provider.clonePrice" :min="0" /></NFormItem>
+                      <NFormItem label="字符单位值"><NInputNumber v-model:value="provider.characterPrice" :min="0" placeholder="单字符配置值" /></NFormItem>
+                      <NFormItem label="设计单位值"><NInputNumber v-model:value="provider.designPrice" :min="0" /></NFormItem>
+                      <NFormItem label="复刻单位值"><NInputNumber v-model:value="provider.clonePrice" :min="0" /></NFormItem>
                       <NFormItem label="账号音色上限"><NInputNumber v-model:value="provider.accountVoiceLimit" :min="0" /></NFormItem>
                       <NFormItem label="Revision"><NInputNumber v-model:value="provider.revision" :min="1" /></NFormItem>
                     </NGi>
@@ -379,9 +379,9 @@ onBeforeUnmount(() => {
             <div class="speech-settings__test">
               <NSpace align="center">
                 <NButton :loading="testBusy" :disabled="!config.enabled" @click="runTestProvider">
-                  合成测试（会产生少量费用）
+                  合成测试
                 </NButton>
-                <NText depth="3">只提交一次真实合成；后续每秒免费查询当前任务，最多约 30 秒。</NText>
+                <NText depth="3">只提交一次真实合成；后续每秒查询当前任务，最多约 30 秒。</NText>
               </NSpace>
               <NAlert v-if="testError" type="error" class="speech-settings__test-alert">{{ testError }}</NAlert>
               <NAlert v-if="testNotice" type="info" class="speech-settings__test-alert">{{ testNotice }}</NAlert>
@@ -393,12 +393,11 @@ onBeforeUnmount(() => {
                     <span v-if="testJob.model">模型：{{ testJob.model }}</span>
                     <span v-if="testJob.media">媒体：{{ testJob.media.container }} / {{ testJob.media.codec }} / {{ testJob.media.sampleRate }} Hz</span>
                     <span v-if="testJob.actualUnits != null">实际字符数：{{ testJob.actualUnits }}</span>
-                    <span v-if="testJob.actualCost != null">实际费用：{{ testJob.actualCost }}</span>
                     <span v-if="testJob.errorCode">错误码：{{ testJob.errorCode }}</span>
                   </div>
                 </div>
                 <NSpace>
-                  <NButton size="small" :disabled="testBusy" @click="refreshTestJob">查询测试结果（免费）</NButton>
+                  <NButton size="small" :disabled="testBusy" @click="refreshTestJob">查询测试结果</NButton>
                   <NButton v-if="testJob.audioResourceId" size="small" @click="speechPlayer.play('resources', testJob.audioResourceId)">播放测试音频</NButton>
                 </NSpace>
               </div>
