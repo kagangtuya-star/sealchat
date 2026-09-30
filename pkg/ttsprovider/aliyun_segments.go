@@ -57,7 +57,9 @@ type aliyunWSServerEvent struct {
 			Type string `json:"type"`
 		} `json:"output"`
 		Usage *struct {
-			Characters *int64 `json:"characters"`
+			Characters   *int64 `json:"characters"`
+			InputTokens  *int64 `json:"input_tokens"`
+			OutputTokens *int64 `json:"output_tokens"`
 		} `json:"usage"`
 	} `json:"payload"`
 }
@@ -305,16 +307,19 @@ func (c *Client) SynthesizeSegments(ctx context.Context, model string, input Inp
 					return result, errAliyunWSProtocol
 				}
 				result.UsageConfirmed = event.Payload.Usage != nil && event.Payload.Usage.Characters != nil && *event.Payload.Usage.Characters >= 0
+				result.TokenUsageConfirmed = result.InputTokens != nil && result.OutputTokens != nil
 				select {
 				case writeErr := <-writeDone:
 					if writeErr != nil {
 						if ctx.Err() != nil {
 							result.UsageConfirmed = false
+							result.TokenUsageConfirmed = false
 						}
 						return result, writeErr
 					}
 				case <-ctx.Done():
 					result.UsageConfirmed = false
+					result.TokenUsageConfirmed = false
 					return result, ctx.Err()
 				}
 				result.Complete = true
@@ -357,8 +362,12 @@ func aliyunUpdateWSResult(result *Result, event aliyunWSServerEvent) {
 	if event.Header.Attributes != nil && event.Header.Attributes.RequestUUID != "" {
 		result.RequestID = event.Header.Attributes.RequestUUID
 	}
-	if event.Payload.Usage != nil && event.Payload.Usage.Characters != nil && *event.Payload.Usage.Characters >= 0 && *event.Payload.Usage.Characters > result.Characters {
-		result.Characters = *event.Payload.Usage.Characters
+	if event.Payload.Usage != nil {
+		if event.Payload.Usage.Characters != nil && *event.Payload.Usage.Characters >= 0 && *event.Payload.Usage.Characters > result.Characters {
+			result.Characters = *event.Payload.Usage.Characters
+		}
+		updateTokenUsage(&result.InputTokens, event.Payload.Usage.InputTokens)
+		updateTokenUsage(&result.OutputTokens, event.Payload.Usage.OutputTokens)
 	}
 }
 
@@ -366,12 +375,14 @@ func aliyunConfirmNoTrailingFrame(ctx context.Context, conn *websocket.Conn, res
 	if ctx.Err() != nil {
 		result.Complete = false
 		result.UsageConfirmed = false
+		result.TokenUsageConfirmed = false
 		return result, ctx.Err()
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(aliyunWSCompletionLookahead)); err != nil {
 		if ctx.Err() != nil {
 			result.Complete = false
 			result.UsageConfirmed = false
+			result.TokenUsageConfirmed = false
 			return result, ctx.Err()
 		}
 		return result, err
@@ -383,6 +394,7 @@ func aliyunConfirmNoTrailingFrame(ctx context.Context, conn *websocket.Conn, res
 	if ctx.Err() != nil {
 		result.Complete = false
 		result.UsageConfirmed = false
+		result.TokenUsageConfirmed = false
 		return result, ctx.Err()
 	}
 	var networkError net.Error

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { clearSpeechSubmissionKeys, speechAPI } from './api'
 import { speechPlayer } from './player'
 import { useUserStore } from '@/stores/user'
@@ -10,6 +10,9 @@ export const useSpeechStore = defineStore('tts', () => {
   const scopeChannel = ref('')
   const messageStates = ref<Record<string, MessageSpeech | null>>({})
   const quota = ref<SpeechQuota | null>(null)
+  const canSynthesize = computed(() => !!quota.value?.enabled && (quota.value.pricingMode === 'token'
+    ? quota.value.inputTokenPrice != null && quota.value.outputTokenPrice != null
+    : quota.value.characterPrice != null))
   const temporary = ref<Record<string, boolean>>({})
   let generation = 0
   function reset() {
@@ -42,5 +45,5 @@ export const useSpeechStore = defineStore('tts', () => {
     temporary.value[channelId] = enabled
     if (window.parent !== window) window.parent.postMessage({ type: 'sealchat:tts-intent', action: 'temporary', channelId, enabled, userId: useUserStore().info.id }, window.location.origin)
   }
-  return { visible, quota, temporary, messageStates, scopeChannel, reset, refresh, optIn, open, setTemporary }
+  return { visible, quota, canSynthesize, temporary, messageStates, scopeChannel, reset, refresh, optIn, open, setTemporary }
 })

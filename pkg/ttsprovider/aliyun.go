@@ -33,12 +33,15 @@ type Input struct {
 }
 
 type Result struct {
-	RequestID      string
-	Characters     int64
-	UsageConfirmed bool
-	Complete       bool
-	AudioURL       string
-	Bytes          int64
+	RequestID           string
+	Characters          int64
+	InputTokens         *int64
+	OutputTokens        *int64
+	TokenUsageConfirmed bool
+	UsageConfirmed      bool
+	Complete            bool
+	AudioURL            string
+	Bytes               int64
 }
 
 type Client struct {
@@ -131,7 +134,9 @@ func ReadSSE(src io.Reader, sink io.Writer) (Result, error) {
 				} `json:"audio"`
 			} `json:"output"`
 			Usage *struct {
-				Characters *int64 `json:"characters"`
+				Characters   *int64 `json:"characters"`
+				InputTokens  *int64 `json:"input_tokens"`
+				OutputTokens *int64 `json:"output_tokens"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data.String()), &v); err != nil {
@@ -141,17 +146,22 @@ func ReadSSE(src io.Reader, sink io.Writer) (Result, error) {
 		if v.RequestID != "" {
 			result.RequestID = v.RequestID
 		}
-		if v.Usage != nil && v.Usage.Characters != nil && *v.Usage.Characters >= 0 {
-			usageSeen = true
-			if *v.Usage.Characters > result.Characters {
-				result.Characters = *v.Usage.Characters
+		if v.Usage != nil {
+			if v.Usage.Characters != nil && *v.Usage.Characters >= 0 {
+				usageSeen = true
+				if *v.Usage.Characters > result.Characters {
+					result.Characters = *v.Usage.Characters
+				}
 			}
+			updateTokenUsage(&result.InputTokens, v.Usage.InputTokens)
+			updateTokenUsage(&result.OutputTokens, v.Usage.OutputTokens)
 		}
 		if event == "error" || v.Code != "" {
 			return &ProviderError{Code: v.Code, RequestID: result.RequestID}
 		}
 		if v.Output.FinishReason == "stop" {
 			result.UsageConfirmed = usageSeen
+			result.TokenUsageConfirmed = result.InputTokens != nil && result.OutputTokens != nil
 		}
 		event = ""
 		if result.Complete {
@@ -213,6 +223,13 @@ func ReadSSE(src io.Reader, sink io.Writer) (Result, error) {
 		return result, ErrIncomplete
 	}
 	return result, nil
+}
+
+func updateTokenUsage(current **int64, value *int64) {
+	if value != nil && *value >= 0 && (*current == nil || *value > **current) {
+		copyValue := *value
+		*current = &copyValue
+	}
 }
 
 type CreateVoiceInput struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -34,6 +35,44 @@ type modelsDevCost struct {
 	CacheRead       float64         `json:"cache_read"`
 	Tiers           json.RawMessage `json:"tiers"`
 	ContextOver200K json.RawMessage `json:"context_over_200k"`
+	inputConfirmed  bool
+	outputConfirmed bool
+}
+
+func (cost *modelsDevCost) UnmarshalJSON(data []byte) error {
+	type plainCost modelsDevCost
+	var decoded plainCost
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*cost = modelsDevCost(decoded)
+	cost.inputConfirmed = len(fields["input"]) > 0 && strings.TrimSpace(string(fields["input"])) != "null"
+	cost.outputConfirmed = len(fields["output"]) > 0 && strings.TrimSpace(string(fields["output"])) != "null"
+	return nil
+}
+
+func LookupModelsDevPricing(ctx context.Context, providerID, providerName, model string) (utils.AIModelPricingConfig, bool, error) {
+	catalog, err := getModelsDevCatalog(ctx)
+	if err != nil {
+		return utils.AIModelPricingConfig{}, false, err
+	}
+	provider, ok := findModelsDevProvider(catalog, utils.AIProviderConfig{ID: providerID, Name: providerName})
+	if !ok {
+		return utils.AIModelPricingConfig{}, false, nil
+	}
+	entry, ok := provider.Models[model]
+	if !ok || entry.Cost == nil || hasModelsDevTieredPricing(entry.Cost) {
+		return utils.AIModelPricingConfig{}, false, nil
+	}
+	cost := entry.Cost
+	if !cost.inputConfirmed || !cost.outputConfirmed || cost.Input < 0 || cost.Output < 0 || math.IsNaN(cost.Input) || math.IsNaN(cost.Output) || math.IsInf(cost.Input, 0) || math.IsInf(cost.Output, 0) {
+		return utils.AIModelPricingConfig{}, false, nil
+	}
+	return utils.AIModelPricingConfig{ProviderID: providerID, Model: model, PromptPricePer1MTokens: cost.Input, CompletionPricePer1MTokens: cost.Output}, true, nil
 }
 
 var modelsDevPricingCache struct {

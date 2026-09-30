@@ -20,7 +20,7 @@ var ttsBasicVoices = func() []TTSSystemVoice {
 }()
 
 // Source: https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list
-// System catalog version 2026-09-12. IDs are model-specific.
+// System catalog version 2026-09-30. IDs are model-specific.
 type TTSSystemVoice struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -42,7 +42,7 @@ func TTSSystemVoices() []TTSSystemVoice {
 		}
 		items = append(items, TTSSystemVoice{ID: v[0], Name: v[1], TargetModel: "qwen-audio-3.0-tts-" + v[2], Languages: languages, Kind: "system"})
 	}
-	return items
+	return append(items, tts31SystemVoices()...)
 }
 func ttsSystemVoiceValid(id, model string) bool {
 	for _, v := range TTSSystemVoices() {

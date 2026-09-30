@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"sealchat/pkg/ttsprovider"
+	aiService "sealchat/service/ai"
 	"sealchat/utils"
 )
 
@@ -19,13 +22,15 @@ const aliyunBeijingHostSuffix = ".cn-beijing.maas.aliyuncs.com"
 
 var ErrTTSProviderCredential = errors.New("Base URL 与 API Key 不匹配，或 API Key 无权访问该业务空间")
 
+var lookupTTSModelsDevPricing = aiService.LookupModelsDevPricing
+
 type TTSResolvedModel struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	CharacterPrice float64  `json:"characterPrice"`
-	DisplayPrice   string   `json:"displayPrice"`
-	DesignPrice    *float64 `json:"designPrice"`
-	ClonePrice     float64  `json:"clonePrice"`
+	ttsprovider.TTSModelPricing
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	PricingSource string   `json:"pricingSource"`
+	DesignPrice   *float64 `json:"designPrice"`
+	ClonePrice    float64  `json:"clonePrice"`
 }
 
 type TTSProviderResolution struct {
@@ -143,33 +148,27 @@ func resolveAliyunTTSProvider(ctx context.Context, client *http.Client, baseURL,
 		}
 	}
 
-	supported := map[string]bool{
-		"qwen-audio-3.0-tts-flash": true,
-		"qwen-audio-3.0-tts-plus":  true,
-	}
 	for _, model := range models {
-		if !supported[model.Model] {
-			continue
-		}
-		price, ok := characterPricePerTenThousand(model)
-		if !ok {
+		spec, supported := ttsprovider.LookupModel(model.Model)
+		if !supported || !spec.HTTPStreaming {
 			continue
 		}
 		name := strings.TrimSpace(model.Name)
 		if name == "" {
 			name = model.Model
 		}
-		result.Models = append(result.Models, TTSResolvedModel{
-			ID:             model.Model,
-			Name:           name,
-			CharacterPrice: price / 10000,
-			DisplayPrice:   strconv.FormatFloat(price, 'f', -1, 64) + " 元 / 万字符",
-			DesignPrice:    designPrice,
-			ClonePrice:     0,
-		})
+		resolved := resolveTTSModelPricing(model, spec)
+		if spec.Pricing.Mode == ttsprovider.PricingToken && resolved.PricingSource != "online" {
+			if pricing, found, lookupErr := lookupTTSModelsDevPricing(ctx, "alibaba", "Alibaba", model.Model); lookupErr == nil && found {
+				resolved = resolveTTSModelPricing(model, spec, pricing)
+			}
+		}
+		resolved.Name = name
+		resolved.DesignPrice = designPrice
+		result.Models = append(result.Models, resolved)
 	}
 	if len(result.Models) == 0 {
-		return result, TTSValidationError("百炼模型目录未返回可确认配置的 Qwen Audio 3.0 TTS 模型")
+		return result, TTSValidationError("百炼模型目录未返回受支持的 Qwen Audio TTS 模型")
 	}
 	return result, nil
 }
@@ -215,19 +214,132 @@ func fetchAliyunModelCatalog(ctx context.Context, client *http.Client, endpoint,
 	return payload.Output.Models, nil
 }
 
-func characterPricePerTenThousand(model aliyunCatalogModel) (float64, bool) {
+type aliyunNormalizedPrice struct {
+	Kind  string
+	Price float64
+}
+
+func normalizeAliyunPrice(item aliyunPriceItem) (aliyunNormalizedPrice, bool) {
+	price, ok := parseAliyunPrice(item.Price)
+	if !ok {
+		return aliyunNormalizedPrice{}, false
+	}
+	unit := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(item.PriceUnit), " ", ""))
+	unit = strings.ReplaceAll(unit, ",", "")
+	var kind string
+	var divisor float64
+	switch unit {
+	case "每万字符", "每1万字符", "per10000characters", "per10kcharacters":
+		kind, divisor = "character", 10000
+	case "每千字符", "每1千字符", "per1000characters", "per1kcharacters":
+		kind, divisor = "character", 1000
+	case "每字符", "percharacter":
+		kind, divisor = "character", 1
+	case "每百万token", "每100万token", "每1百万token", "per1000000tokens", "per1mtokens", "permilliontokens":
+		kind, divisor = "token", 1000000
+	case "每千token", "每1千token", "per1000tokens", "per1ktokens":
+		kind, divisor = "token", 1000
+	case "每token", "pertoken":
+		kind, divisor = "token", 1
+	case "每次", "每次调用", "perrequest", "percall":
+		kind, divisor = "request", 1
+	default:
+		return aliyunNormalizedPrice{}, false
+	}
+	if kind == "token" {
+		label := strings.ToLower(item.Type + " " + item.PriceName)
+		switch {
+		case strings.Contains(label, "input") || strings.Contains(label, "prompt") || strings.Contains(label, "输入"):
+			kind = "input_token"
+		case strings.Contains(label, "output") || strings.Contains(label, "completion") || strings.Contains(label, "输出"):
+			kind = "output_token"
+		default:
+			return aliyunNormalizedPrice{}, false
+		}
+	}
+	return aliyunNormalizedPrice{Kind: kind, Price: price / divisor}, true
+}
+
+func resolveTTSModelPricing(model aliyunCatalogModel, spec ttsprovider.ModelSpec, modelsDevPricing ...utils.AIModelPricingConfig) TTSResolvedModel {
+	pricing := ttsprovider.TTSModelPricing{Mode: spec.Pricing.Mode}
 	for _, priceRange := range model.Prices {
 		for _, item := range priceRange.Prices {
-			unit := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(item.PriceUnit), " ", ""))
-			if unit != "每万字符" && unit != "每1万字符" && unit != "per10,000characters" && unit != "per10000characters" && unit != "per10kcharacters" {
+			price, ok := normalizeAliyunPrice(item)
+			if !ok {
 				continue
 			}
-			if price, ok := parseAliyunPrice(item.Price); ok {
-				return price, true
+			switch price.Kind {
+			case "character":
+				if pricing.CharacterPrice == nil {
+					pricing.CharacterPrice = &price.Price
+				}
+			case "input_token":
+				if pricing.InputTokenPrice == nil {
+					pricing.InputTokenPrice = &price.Price
+				}
+			case "output_token":
+				if pricing.OutputTokenPrice == nil {
+					pricing.OutputTokenPrice = &price.Price
+				}
 			}
 		}
 	}
-	return 0, false
+	source := "online"
+	if pricing.Mode == ttsprovider.PricingToken && len(modelsDevPricing) == 1 && (pricing.InputTokenPrice == nil || pricing.OutputTokenPrice == nil) {
+		input := modelsDevPricing[0].PromptPricePer1MTokens / 1000000
+		output := modelsDevPricing[0].CompletionPricePer1MTokens / 1000000
+		if input >= 0 && output >= 0 && !math.IsNaN(input) && !math.IsNaN(output) && !math.IsInf(input, 0) && !math.IsInf(output, 0) {
+			if pricing.InputTokenPrice == nil && pricing.OutputTokenPrice == nil {
+				source = "modelsdev"
+			} else {
+				source = "mixed"
+			}
+			if pricing.InputTokenPrice == nil {
+				pricing.InputTokenPrice = &input
+			}
+			if pricing.OutputTokenPrice == nil {
+				pricing.OutputTokenPrice = &output
+			}
+		}
+	}
+	if pricing.Mode == ttsprovider.PricingCharacter {
+		pricing.InputTokenPrice, pricing.OutputTokenPrice = nil, nil
+		if pricing.CharacterPrice == nil {
+			pricing, source = spec.Pricing, "builtin"
+		}
+	} else {
+		pricing.CharacterPrice = nil
+		if pricing.InputTokenPrice == nil && pricing.OutputTokenPrice == nil {
+			pricing, source = spec.Pricing, "builtin"
+		} else {
+			if pricing.InputTokenPrice == nil && spec.Pricing.InputTokenPrice != nil {
+				pricing.InputTokenPrice, source = spec.Pricing.InputTokenPrice, "mixed"
+			}
+			if pricing.OutputTokenPrice == nil && spec.Pricing.OutputTokenPrice != nil {
+				pricing.OutputTokenPrice, source = spec.Pricing.OutputTokenPrice, "mixed"
+			}
+		}
+	}
+	format := func(price float64) string { return strconv.FormatFloat(math.Round(price*1e9)/1e9, 'f', -1, 64) }
+	switch {
+	case pricing.Mode == ttsprovider.PricingCharacter && pricing.CharacterPrice != nil:
+		pricing.DisplayPrice = format(*pricing.CharacterPrice*10000) + " 元 / 万字符"
+	case pricing.Mode == ttsprovider.PricingToken && pricing.InputTokenPrice != nil && pricing.OutputTokenPrice != nil:
+		pricing.DisplayPrice = "输入 " + format(*pricing.InputTokenPrice*1000000) + " 元 / 百万 Token；输出 " + format(*pricing.OutputTokenPrice*1000000) + " 元 / 百万 Token"
+	default:
+		pricing.DisplayPrice, source = "价格未确认", "unknown"
+	}
+	return TTSResolvedModel{ID: model.Model, Name: model.Model, TTSModelPricing: pricing, PricingSource: source}
+}
+
+func TTSModelCatalog() []TTSResolvedModel {
+	models := []TTSResolvedModel{}
+	for _, spec := range ttsprovider.ModelCatalog() {
+		if spec.HTTPStreaming {
+			models = append(models, resolveTTSModelPricing(aliyunCatalogModel{Model: spec.ID}, spec))
+		}
+	}
+	return models
 }
 
 func confirmedVoiceDesignPrice(models []aliyunCatalogModel) *float64 {
@@ -237,16 +349,13 @@ func confirmedVoiceDesignPrice(models []aliyunCatalogModel) *float64 {
 		}
 		for _, priceRange := range model.Prices {
 			for _, item := range priceRange.Prices {
-				unit := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(item.PriceUnit), " ", ""))
 				label := strings.ToLower(item.Type + " " + item.PriceName)
-				perUse := strings.HasPrefix(unit, "每次") || unit == "perrequest" || unit == "percall"
 				design := strings.Contains(label, "design") || strings.Contains(label, "声音设计") || strings.Contains(label, "音色设计")
-				if !perUse || !design {
+				price, ok := normalizeAliyunPrice(item)
+				if !ok || price.Kind != "request" || !design {
 					continue
 				}
-				if price, ok := parseAliyunPrice(item.Price); ok {
-					return &price
-				}
+				return &price.Price
 			}
 		}
 	}
@@ -270,5 +379,5 @@ func parseAliyunPrice(raw json.RawMessage) (float64, bool) {
 		return 0, false
 	}
 	price, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
-	return price, err == nil && price >= 0
+	return price, err == nil && price >= 0 && !math.IsNaN(price) && !math.IsInf(price, 0)
 }

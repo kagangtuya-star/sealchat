@@ -111,7 +111,7 @@ async function query() {
             <h3>试听</h3>
             <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
             <p class="rv-hint">按当前选择与参数合成新音频；已有结果可重放。</p>
-            <NButton :loading="busy" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" @click="audition">确认试听</NButton>
+            <NButton :loading="busy" :disabled="!speech.canSynthesize" @click="audition">确认试听</NButton>
             <div v-if="job" class="rv-job">
               <span>试听任务：{{ job.status }} {{ job.errorCode }}</span>
               <div class="rv-job__actions">

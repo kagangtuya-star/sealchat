@@ -12,6 +12,8 @@ const quota = ref<SpeechQuota | null>(null)
 const unknown = ref<UnknownSpeechUsage[]>([])
 const note = ref('')
 const units = ref<number | null>(null)
+const inputTokens = ref<number | null>(null)
+const outputTokens = ref<number | null>(null)
 const error = ref('')
 const notice = ref('')
 const policyNotice = ref('')
@@ -62,8 +64,10 @@ async function loadUnknown() {
     : '当前没有待核对的供应商用量。'
 }
 async function resolve(id: string, action: 'settle' | 'release') {
-  if (!note.value.trim() || (action === 'settle' && units.value == null)) throw new Error('必须填写供应商核对依据；结算还需要确认实际用量。')
-  await speechAPI.resolveUnknown(id, action, note.value, units.value ?? 0)
+  const tokenMode = unknown.value.find(item => item.id === id)?.pricingMode === 'token'
+  const missingUsage = tokenMode ? inputTokens.value == null || outputTokens.value == null : units.value == null
+  if (!note.value.trim() || (action === 'settle' && missingUsage)) throw new Error('必须填写供应商核对依据；结算还需要确认实际用量。')
+  await speechAPI.resolveUnknown(id, action, note.value, units.value ?? 0, tokenMode ? inputTokens.value : undefined, tokenMode ? outputTokens.value : undefined)
   unknown.value = await speechAPI.unknown()
 }
 </script>
@@ -91,8 +95,12 @@ async function resolve(id: string, action: 'settle' | 'release') {
     <NAlert v-if="notice" type="info">{{ notice }}</NAlert>
     <NInput v-model:value="note" placeholder="核对依据和处置说明（必填，留作审计）" />
     <NInputNumber v-model:value="units" :min="0" placeholder="供应商确认的实际字符数或创建次数" />
+    <template v-if="unknown.some(item => item.pricingMode === 'token')">
+      <NInputNumber v-model:value="inputTokens" :min="0" :precision="0" placeholder="供应商确认的输入 Token 数" />
+      <NInputNumber v-model:value="outputTokens" :min="0" :precision="0" placeholder="供应商确认的输出 Token 数" />
+    </template>
     <NSpace v-for="item in unknown" :key="item.id" vertical>
-      <span>{{ item.operation }} · {{ item.payerUserId }} · Request ID {{ item.providerRequestId || '未返回' }} · {{ item.errorCode }}</span>
+      <span>{{ item.operation }} · {{ item.pricingMode === 'token' ? 'Token 计费' : '字符/次数计费' }} · {{ item.payerUserId }} · Request ID {{ item.providerRequestId || '未返回' }} · {{ item.errorCode }}</span>
       <NSpace>
         <NButton :loading="busy" @click="run(() => resolve(item.id, 'settle'))">确认供应商用量并结算</NButton>
         <NButton :loading="busy" @click="run(() => resolve(item.id, 'release'))">确认无用量并释放</NButton>

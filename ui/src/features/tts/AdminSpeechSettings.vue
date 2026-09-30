@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCollapse, NCollapseItem, NForm, NFormItem, NGi, NGrid, NInput, NInputNumber, NSelect, NSpace, NSwitch, NTag, NText } from 'naive-ui'
 import { speechAPI, speechError } from './api'
-import type { ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
+import type { ResolvedSpeechModel, ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
 import { speechPlayer } from './player'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
 const newProviderTarget = '__new_provider__'
@@ -20,6 +20,9 @@ const quickProviderId = ref(newProviderTarget)
 const resolvedProvider = ref<ResolvedSpeechProvider | null>(null)
 const resolvedModelId = ref('')
 const systemVoices = ref<SystemVoice[]>([])
+const modelCatalog = ref<ResolvedSpeechModel[]>([])
+const modelOptions = computed(() => modelCatalog.value.map(model => ({ label: model.name, value: model.id })))
+const resolvedModel = computed(() => resolvedProvider.value?.models.find(model => model.id === resolvedModelId.value))
 const localProviderIds = new Set<string>()
 let alive = true
 let testGeneration = 0
@@ -39,7 +42,8 @@ async function run(fn: () => Promise<void>) {
   try { await fn() } catch (e) { error.value = speechError(e) } finally { busy.value = false }
 }
 function blankProvider(id: string, enabled = false): SpeechProvider {
-  return { id, enabled, credentialScope: '', region: 'cn-beijing', workspace: '', apiKey: '', synthesisEndpoint: '', voiceEndpoint: '', model: 'qwen-audio-3.0-tts-flash', characterPrice: null, designPrice: null, clonePrice: null, accountVoiceLimit: null, revision: 1 }
+  const model = modelCatalog.value[0]
+  return { id, enabled, credentialScope: '', region: 'cn-beijing', workspace: '', apiKey: '', synthesisEndpoint: '', voiceEndpoint: '', model: model?.id ?? '', pricingMode: model?.pricingMode ?? 'character', characterPrice: null, inputTokenPrice: null, outputTokenPrice: null, designPrice: null, clonePrice: null, accountVoiceLimit: null, revision: 1 }
 }
 function add() {
   const id = crypto.randomUUID()
@@ -80,6 +84,26 @@ function ensureDefaultVoice(model: string) {
   const fallback = systemVoices.value.find(voice => voice.targetModel === model)
   if (fallback) config.value.defaultVoice = fallback.id
 }
+watch(() => config.value.providers.find(provider => provider.id === config.value.defaultProvider)?.model, model => {
+  if (model) ensureDefaultVoice(model)
+})
+function setModelPricing(provider: SpeechProvider, model: ResolvedSpeechModel) {
+  Object.assign(provider, {
+    model: model.id,
+    pricingMode: model.pricingMode,
+    characterPrice: model.characterPrice,
+    inputTokenPrice: model.inputTokenPrice,
+    outputTokenPrice: model.outputTokenPrice,
+  })
+}
+function selectProviderModel(provider: SpeechProvider, modelId: string) {
+  const online = resolvedProvider.value?.providerId === provider.id ? resolvedProvider.value.models.find(model => model.id === modelId) : undefined
+  const model = online ?? modelCatalog.value.find(model => model.id === modelId)
+  if (model) setModelPricing(provider, model)
+}
+function displayUnitPrice(price: number | null | undefined, units: number) {
+  return price == null ? '价格未确认' : `${Number((price * units).toFixed(9))} 元 / ${units === 10000 ? '万字符' : '百万 Token'}`
+}
 function applyResolvedModel(modelId: string) {
   resolvedModelId.value = modelId
   const resolved = resolvedProvider.value
@@ -99,11 +123,10 @@ function applyResolvedModel(modelId: string) {
     apiKey: quickApiKey.value.trim(),
     synthesisEndpoint: resolved.synthesisEndpoint,
     voiceEndpoint: resolved.voiceEndpoint,
-    model: model.id,
-    characterPrice: model.characterPrice,
     designPrice: model.designPrice,
     clonePrice: model.clonePrice,
   })
+  setModelPricing(provider, model)
   if (firstProvider) {
     provider.enabled = true
     config.value.defaultProvider = provider.id
@@ -188,10 +211,11 @@ function refreshTestJob() {
   })
 }
 onMounted(() => void run(async () => {
-  const [value, directory] = await Promise.all([speechAPI.adminConfig(), speechAPI.voices({ page: 1 })])
+  const [value, directory, models] = await Promise.all([speechAPI.adminConfig(), speechAPI.voices({ page: 1 }), speechAPI.models()])
   if (!alive) return
   if (value) config.value = value
   systemVoices.value = directory.system
+  modelCatalog.value = models
   selectQuickProvider(config.value.defaultProvider || config.value.providers[0]?.id || newProviderTarget)
 }))
 onBeforeUnmount(() => {
@@ -321,6 +345,9 @@ onBeforeUnmount(() => {
                     <NFormItem label="模型" class="speech-provider-summary__model">
                       <NSelect :value="resolvedModelId" :options="resolvedModelOptions" @update:value="applyResolvedModel" />
                     </NFormItem>
+                    <NText v-if="resolvedModel" depth="3">
+                      已导入 {{ resolvedModel.id }} · {{ resolvedModel.displayPrice }} · {{ resolvedModel.pricingSource === 'online' ? '百炼在线价格' : resolvedModel.pricingSource === 'modelsdev' ? 'models.dev 价格目录' : resolvedModel.pricingSource === 'builtin' ? '官方内置价格快照' : resolvedModel.pricingSource === 'mixed' ? '在线价格 + 补全价格' : '价格未确认' }}
+                    </NText>
                     <NAlert v-if="resolvedProvider.models.find(model => model.id === resolvedModelId)?.designPrice == null" type="warning">
                       供应商未返回可确认的声音设计信息，声音设计暂不可提交；普通 TTS 合成不受影响。
                     </NAlert>
@@ -359,8 +386,21 @@ onBeforeUnmount(() => {
                       <NFormItem label="Voice Endpoint"><NInput v-model:value="provider.voiceEndpoint" /></NFormItem>
                     </NGi>
                     <NGi>
-                      <NFormItem label="模型"><NSelect v-model:value="provider.model" :options="['qwen-audio-3.0-tts-flash', 'qwen-audio-3.0-tts-plus'].map(value => ({ label: value, value }))" /></NFormItem>
-                      <NFormItem label="字符单位值"><NInputNumber v-model:value="provider.characterPrice" :min="0" placeholder="单字符配置值" /></NFormItem>
+                      <NFormItem label="模型"><NSelect :value="provider.model" :options="modelOptions" @update:value="selectProviderModel(provider, $event)" /></NFormItem>
+                      <template v-if="provider.pricingMode === 'token'">
+                        <NFormItem label="输入 Token 单价">
+                          <NInputNumber v-model:value="provider.inputTokenPrice" :min="0" placeholder="单 Token 成本" />
+                          <template #feedback>{{ displayUnitPrice(provider.inputTokenPrice, 1000000) }}</template>
+                        </NFormItem>
+                        <NFormItem label="输出 Token 单价">
+                          <NInputNumber v-model:value="provider.outputTokenPrice" :min="0" placeholder="单 Token 成本" />
+                          <template #feedback>{{ displayUnitPrice(provider.outputTokenPrice, 1000000) }}</template>
+                        </NFormItem>
+                      </template>
+                      <NFormItem v-else label="字符单价">
+                        <NInputNumber v-model:value="provider.characterPrice" :min="0" placeholder="单字符成本" />
+                        <template #feedback>{{ displayUnitPrice(provider.characterPrice, 10000) }}</template>
+                      </NFormItem>
                       <NFormItem label="设计单位值"><NInputNumber v-model:value="provider.designPrice" :min="0" /></NFormItem>
                       <NFormItem label="复刻单位值"><NInputNumber v-model:value="provider.clonePrice" :min="0" /></NFormItem>
                       <NFormItem label="账号音色上限"><NInputNumber v-model:value="provider.accountVoiceLimit" :min="0" /></NFormItem>
@@ -393,6 +433,8 @@ onBeforeUnmount(() => {
                     <span v-if="testJob.model">模型：{{ testJob.model }}</span>
                     <span v-if="testJob.media">媒体：{{ testJob.media.container }} / {{ testJob.media.codec }} / {{ testJob.media.sampleRate }} Hz</span>
                     <span v-if="testJob.actualUnits != null">实际字符数：{{ testJob.actualUnits }}</span>
+                    <span v-if="testJob.inputTokens != null">输入 Token：{{ testJob.inputTokens }}</span>
+                    <span v-if="testJob.outputTokens != null">输出 Token：{{ testJob.outputTokens }}</span>
                     <span v-if="testJob.errorCode">错误码：{{ testJob.errorCode }}</span>
                   </div>
                 </div>

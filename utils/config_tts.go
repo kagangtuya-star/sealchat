@@ -5,6 +5,8 @@ import (
 	"math"
 	"net/url"
 	"strings"
+
+	"sealchat/pkg/ttsprovider"
 )
 
 // Nil prices are unconfirmed; an explicitly configured zero is valid.
@@ -20,10 +22,31 @@ type SpeechProviderConfig struct {
 	VoiceEndpoint     string   `json:"voiceEndpoint" yaml:"voiceEndpoint"`
 	Model             string   `json:"model" yaml:"model"`
 	CharacterPrice    *float64 `json:"characterPrice" yaml:"characterPrice"`
+	PricingMode       string   `json:"pricingMode,omitempty" yaml:"pricingMode,omitempty"`
+	InputTokenPrice   *float64 `json:"inputTokenPrice" yaml:"inputTokenPrice"`
+	OutputTokenPrice  *float64 `json:"outputTokenPrice" yaml:"outputTokenPrice"`
 	DesignPrice       *float64 `json:"designPrice" yaml:"designPrice"`
 	ClonePrice        *float64 `json:"clonePrice" yaml:"clonePrice"`
 	AccountVoiceLimit *int     `json:"accountVoiceLimit" yaml:"accountVoiceLimit"`
 	Revision          int64    `json:"revision" yaml:"revision"`
+}
+
+func (p SpeechProviderConfig) EffectivePricingMode() string {
+	if p.PricingMode == "" {
+		return ttsprovider.PricingCharacter
+	}
+	return p.PricingMode
+}
+
+func (p SpeechProviderConfig) SynthesisPriceConfirmed() bool {
+	switch p.EffectivePricingMode() {
+	case ttsprovider.PricingCharacter:
+		return p.CharacterPrice != nil
+	case ttsprovider.PricingToken:
+		return p.InputTokenPrice != nil && p.OutputTokenPrice != nil
+	default:
+		return false
+	}
 }
 
 type SpeechConfig struct {
@@ -105,10 +128,14 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 			return fmt.Errorf("语音 provider ID 为空或重复")
 		}
 		ids[p.ID] = true
-		if p.Model != "qwen-audio-3.0-tts-flash" && p.Model != "qwen-audio-3.0-tts-plus" {
+		spec, supported := ttsprovider.LookupModel(p.Model)
+		if !supported || !spec.HTTPStreaming {
 			return fmt.Errorf("语音模型不受支持")
 		}
-		for _, price := range []*float64{p.CharacterPrice, p.DesignPrice, p.ClonePrice} {
+		if p.EffectivePricingMode() != spec.Pricing.Mode {
+			return fmt.Errorf("语音定价模式与模型不匹配")
+		}
+		for _, price := range []*float64{p.CharacterPrice, p.InputTokenPrice, p.OutputTokenPrice, p.DesignPrice, p.ClonePrice} {
 			if price != nil && (*price < 0 || math.IsNaN(*price) || math.IsInf(*price, 0)) {
 				return fmt.Errorf("语音单位值无效")
 			}
@@ -130,8 +157,8 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 		}
 		if p.ID == cfg.DefaultProvider {
 			found = true
-			if cfg.Enabled && p.CharacterPrice == nil {
-				return fmt.Errorf("请显式确认合成字符单位值")
+			if cfg.Enabled && !p.SynthesisPriceConfirmed() {
+				return fmt.Errorf("请显式确认合成单价")
 			}
 		}
 	}

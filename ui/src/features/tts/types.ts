@@ -14,6 +14,9 @@ export interface SpeechQuota {
   slots: number
   format: string
   characterPrice: number | null
+  pricingMode?: 'character' | 'token'
+  inputTokenPrice?: number | null
+  outputTokenPrice?: number | null
   designPrice: number | null
   clonePrice: number | null
   defaultModel: string
@@ -77,6 +80,9 @@ export interface SpeechJob {
   estimatedUnits: number
   actualUnits?: number | null
   actualCost?: number
+  pricingMode?: 'character' | 'token' | 'request'
+  inputTokens?: number | null
+  outputTokens?: number | null
   media?: { codec: string; container: string; sampleRate: number; channelCount: number; durationMs: number }
 }
 export interface RoleSpeechConfig {
@@ -93,6 +99,7 @@ export interface SpeechProvider {
   id: string; enabled: boolean; credentialScope: string; region: string; workspace: string
   apiKey: string; hasApiKey?: boolean; synthesisEndpoint: string; voiceEndpoint: string; model: string
   characterPrice: number | null; designPrice: number | null; clonePrice: number | null
+  pricingMode?: 'character' | 'token'; inputTokenPrice?: number | null; outputTokenPrice?: number | null
   accountVoiceLimit: number | null; revision: number
 }
 export interface SpeechConfig {
@@ -104,8 +111,12 @@ export interface SpeechConfig {
 export interface ResolvedSpeechModel {
   id: string
   name: string
-  characterPrice: number
+  pricingMode: 'character' | 'token'
+  characterPrice: number | null
+  inputTokenPrice: number | null
+  outputTokenPrice: number | null
   displayPrice: string
+  pricingSource: 'online' | 'modelsdev' | 'builtin' | 'mixed' | 'unknown'
   designPrice: number | null
   clonePrice: number
 }
@@ -125,4 +136,5 @@ export interface SpeechPolicy {
 export interface UnknownSpeechUsage {
   id: string; operation: string; payerUserId: string; providerRequestId: string
   estimatedUnits: number; errorCode: string
+  pricingMode?: 'character' | 'token' | 'request'
 }

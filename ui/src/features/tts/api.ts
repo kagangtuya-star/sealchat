@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceDirectory, VoiceDirectoryQuery } from './types'
+import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -13,12 +13,13 @@ export const speechAPI = {
   async logs(params: Record<string, string | number | undefined>) { return api.get<AdminAIUsageLogListResult>('api/v1/admin/ai/usage-logs', { params: { ...params, quotaKind: 'speech' } }) },
   async cleanupLogs(retentionDays?: number) { return api.post<{ affectedRows: number }>('api/v1/admin/ai/usage-logs/cleanup', { retentionDays, quotaKind: 'speech' }) },
   async unknown() { return (await api.get<UnknownSpeechUsage[]>(`${root}/admin/unknown`)).data },
-  async resolveUnknown(jobId: string, action: 'settle' | 'release', note: string, units: number) { await api.post(`${root}/admin/unknown/${id(jobId)}`, { action, note, units }) },
+  async resolveUnknown(jobId: string, action: 'settle' | 'release', note: string, units: number, inputTokens?: number | null, outputTokens?: number | null) { await api.post(`${root}/admin/unknown/${id(jobId)}`, { action, note, units, inputTokens, outputTokens }) },
   async policy(userId: string) { return (await api.get<{ quota: SpeechQuota; policy: SpeechPolicy }>(`${root}/admin/users/${id(userId)}`)).data },
   async savePolicy(userId: string, policy: SpeechPolicy) { await api.put(`${root}/admin/users/${id(userId)}`, policy) },
   async wsTicket(channelId: string) { return (await api.post<{ ticket: string; path: string }>(`${root}/channels/${id(channelId)}/ws-ticket`)).data },
   async states(channelId: string) { return (await api.get<{ id: string; tts: MessageSpeech | null }[]>(`${root}/channels/${id(channelId)}/states`)).data },
   async adminConfig() { return (await api.get<{ config: SpeechConfig | null }>(`${root}/admin/config`)).data.config },
+  async models() { return (await api.get<ResolvedSpeechModel[]>(`${root}/admin/models`)).data },
   async saveAdminConfig(config: SpeechConfig) { return (await api.patch<{ config: SpeechConfig }>(`${root}/admin/config`, config)).data.config },
   async resolveProvider(baseUrl: string, apiKey: string, providerId: string) {
     return (await api.post<ResolvedSpeechProvider>(`${root}/admin/provider/resolve`, { baseUrl, apiKey, providerId })).data

@@ -359,8 +359,12 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 		}
 	}
 	price := s.Provider.CharacterPrice
+	if s.Provider.EffectivePricingMode() == ttsprovider.PricingToken && s.Provider.SynthesisPriceConfirmed() {
+		estimatedPrice := *s.Provider.InputTokenPrice + *s.Provider.OutputTokenPrice
+		price = &estimatedPrice
+	}
 	job.EstimatedUnits = int64(utf8.RuneCountInString(s.Input.Text))
-	if s.Provider.Model == "qwen-audio-3.0-tts-flash" || s.Provider.Model == "qwen-audio-3.0-tts-plus" {
+	if spec, supported := ttsprovider.LookupModel(s.Provider.Model); supported && spec.Pricing.Mode == ttsprovider.PricingCharacter {
 		job.EstimatedUnits = TTSBillableCharacters(s.Input.Text)
 	}
 	if job.Operation == "design" {
@@ -370,6 +374,9 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 	if job.Operation == "clone" {
 		price = s.Provider.ClonePrice
 		job.EstimatedUnits = 1
+	}
+	if job.Operation != "design" && job.Operation != "clone" && !s.Provider.SynthesisPriceConfirmed() {
+		return TTSValidationError("管理员尚未确认合成单价")
 	}
 	if price == nil {
 		return TTSValidationError("管理员尚未确认此操作参数")

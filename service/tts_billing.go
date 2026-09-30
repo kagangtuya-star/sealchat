@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"sealchat/model"
+	"sealchat/pkg/ttsprovider"
 	aiService "sealchat/service/ai"
 	"sealchat/utils"
 )
@@ -168,6 +169,44 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 
 // Storage completion is deliberately separate from provider usage settlement.
 func ttsSettleJob(db *gorm.DB, jobID string, units int64, now time.Time) error {
+	return ttsSettleUsageJob(db, jobID, units, nil, now)
+}
+
+func TTSJobPricingMode(job *model.TTSJob) string {
+	if job.Operation == "design" || job.Operation == "clone" {
+		return "request"
+	}
+	var snapshot TTSSnapshot
+	if json.Unmarshal([]byte(job.Snapshot), &snapshot) == nil {
+		return snapshot.Provider.EffectivePricingMode()
+	}
+	return ttsprovider.PricingCharacter
+}
+
+func ttsTokenCosts(provider utils.SpeechProviderConfig, usage *ttsprovider.Result) (float64, float64, float64, error) {
+	if usage == nil || !usage.TokenUsageConfirmed || usage.InputTokens == nil || usage.OutputTokens == nil || provider.InputTokenPrice == nil || provider.OutputTokenPrice == nil {
+		return 0, 0, 0, TTSValidationError("供应商 Token 用量或单价未确认")
+	}
+	input, err := ttsCost(*usage.InputTokens, *provider.InputTokenPrice)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	output, err := ttsCost(*usage.OutputTokens, *provider.OutputTokenPrice)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	total, err := ttsCost(1, float64(*usage.InputTokens)**provider.InputTokenPrice+float64(*usage.OutputTokens)**provider.OutputTokenPrice)
+	return input, output, total, err
+}
+
+func ttsSynthesisUsageConfirmed(provider utils.SpeechProviderConfig, result ttsprovider.Result) bool {
+	if provider.EffectivePricingMode() == ttsprovider.PricingToken {
+		return result.TokenUsageConfirmed && result.InputTokens != nil && result.OutputTokens != nil
+	}
+	return result.UsageConfirmed
+}
+
+func ttsSettleUsageJob(db *gorm.DB, jobID string, units int64, usage *ttsprovider.Result, now time.Time) error {
 	var owner model.TTSJob
 	if err := db.Select("payer_user_id").Where("id = ?", jobID).First(&owner).Error; err != nil {
 		return err
@@ -179,12 +218,32 @@ func ttsSettleJob(db *gorm.DB, jobID string, units int64, now time.Time) error {
 		if err := tx.Where("id = ?", jobID).First(&job).Error; err != nil {
 			return err
 		}
+		if job.UsageStatus == "settled" {
+			return nil
+		}
 		price := job.UnitPrice
 		cost, err := ttsCost(units, price)
+		updates := map[string]any{"usage_status": "settled", "actual_units": units}
+		log := model.AIUsageLogModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, FeatureKey: job.Operation, Source: "platform", Status: "success", BillingUnits: units, UnitPrice: price, StartedAt: job.CreatedAt, FinishedAt: now}
+		if TTSJobPricingMode(&job) == ttsprovider.PricingToken {
+			var snapshot TTSSnapshot
+			if err := json.Unmarshal([]byte(job.Snapshot), &snapshot); err != nil {
+				return err
+			}
+			log.PromptCost, log.CompletionCost, cost, err = ttsTokenCosts(snapshot.Provider, usage)
+			if err == nil {
+				updates["input_tokens"], updates["output_tokens"] = *usage.InputTokens, *usage.OutputTokens
+				updates["actual_units"] = nil
+				log.BillingUnits, log.UnitPrice = 0, 0
+				log.PromptTokens, log.CompletionTokens = *usage.InputTokens, *usage.OutputTokens
+				log.PromptPricePer1M, log.CompletionPricePer1M = *snapshot.Provider.InputTokenPrice*1000000, *snapshot.Provider.OutputTokenPrice*1000000
+			}
+		}
 		if err != nil {
 			return err
 		}
-		r := tx.Model(&model.TTSJob{}).Where("id = ? AND usage_status IN ?", jobID, []string{"reserved", "unknown"}).Updates(map[string]any{"usage_status": "settled", "actual_units": units})
+		updates["actual_cost"] = cost
+		r := tx.Model(&model.TTSJob{}).Where("id = ? AND usage_status IN ?", jobID, []string{"reserved", "unknown"}).Updates(updates)
 		if r.Error != nil {
 			return r.Error
 		}
@@ -205,7 +264,7 @@ func ttsSettleJob(db *gorm.DB, jobID string, units int64, now time.Time) error {
 		if r.RowsAffected != 1 {
 			return ErrTTSConflict
 		}
-		log := model.AIUsageLogModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, FeatureKey: job.Operation, ProviderID: reservation.ProviderID, Model: reservation.Model, Source: "platform", Status: "success", BillingUnits: units, UnitPrice: price, TotalCost: cost, StartedAt: job.CreatedAt, FinishedAt: now}
+		log.ProviderID, log.Model, log.TotalCost = reservation.ProviderID, reservation.Model, cost
 		if err := tx.Create(&log).Error; err != nil {
 			return err
 		}

@@ -383,6 +383,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	}
 	client := ttsprovider.Client{APIKey: provider.APIKey, SynthesisEndpoint: s.Provider.SynthesisEndpoint, VoiceEndpoint: s.Provider.VoiceEndpoint}
 	var units int64
+	var synthesisUsage *ttsprovider.Result
 	confirmed := false
 	requestID := ""
 	audioURL := ""
@@ -449,7 +450,8 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		}
 		err = e
 		units = result.Characters
-		confirmed = result.UsageConfirmed
+		confirmed = ttsSynthesisUsageConfirmed(s.Provider, result)
+		synthesisUsage = &result
 		requestID = result.RequestID
 		if e == nil && result.Complete {
 			audioURL = result.AudioURL
@@ -482,7 +484,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	}
 	_ = db.Model(&model.TTSJob{}).Where("id = ?", j.ID).Update("provider_request_id", requestID).Error
 	if confirmed {
-		if e := ttsSettleJob(db, j.ID, units, time.Now()); e != nil {
+		if e := ttsSettleUsageJob(db, j.ID, units, synthesisUsage, time.Now()); e != nil {
 			ttsUnknown(j, "settlement_pending")
 			return
 		}

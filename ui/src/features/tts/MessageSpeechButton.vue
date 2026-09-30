@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { NButton, NIcon, NTooltip } from 'naive-ui'
-import { PlayerStop, Volume } from '@vicons/tabler'
+import { Volume, Volume2 } from '@vicons/tabler'
 import { speechPlayer } from './player'
 import { useSpeechStore } from './store'
 import type { MessageSpeech } from './types'
@@ -23,7 +23,7 @@ watch(metadata, (value) => {
   <NTooltip v-if="metadata?.status === 'ready' && metadata.audioResourceId" trigger="hover">
     <template #trigger>
       <NButton text size="small" aria-label="播放或停止已保存语音" :loading="active && speechPlayer.state.loading" @click.stop="speechPlayer.play('messages', message.id)">
-        <NIcon :component="active ? PlayerStop : Volume" size="18" />
+        <NIcon :component="active ? Volume : Volume2" size="18" />
       </NButton>
     </template>
     {{ speechPlayer.state.error || (active ? '停止语音' : '播放语音') }}

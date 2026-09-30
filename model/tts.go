@@ -71,6 +71,9 @@ type TTSJob struct {
 	EstimatedUnits    int64     `json:"estimatedUnits"`
 	UnitPrice         float64   `json:"-"`
 	ActualUnits       *int64    `json:"actualUnits"`
+	InputTokens       *int64    `json:"inputTokens,omitempty"`
+	OutputTokens      *int64    `json:"outputTokens,omitempty"`
+	ActualCost        *float64  `json:"-"`
 	UsageStatus       string    `json:"usageStatus" gorm:"size:32;index"`
 	ResourceID        string    `json:"audioResourceId,omitempty"`
 	ErrorCode         string    `json:"errorCode,omitempty"`

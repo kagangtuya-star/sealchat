@@ -209,7 +209,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
           <h3>合成试听</h3>
           <p class="sp-hint">使用左侧当前选择的音色合成新文本；已有文件可重放。</p>
           <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="输入新的试听文字（最多 500 字）" />
-          <NButton type="primary" :disabled="!speech.quota?.enabled || speech.quota.characterPrice == null" :loading="busy" @click="run(() => submit('audition'))">确认合成试听</NButton>
+          <NButton type="primary" :disabled="!speech.canSynthesize" :loading="busy" @click="run(() => submit('audition'))">确认合成试听</NButton>
         </aside>
       </div>
 

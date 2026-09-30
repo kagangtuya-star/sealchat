@@ -209,6 +209,9 @@ func BindTTSAdminRoutes(authAdmin fiber.Router) {
 	})
 	admin.Patch("/config", ttsAdminConfig)
 	admin.Post("/provider/resolve", ttsAdminProviderResolve)
+	admin.Get("/models", func(c *fiber.Ctx) error {
+		return c.JSON(service.TTSModelCatalog())
+	})
 	admin.Get("/users/:id", func(c *fiber.Ctx) error {
 		q, err := service.TTSQuotaForUser(c.Params("id"))
 		if err != nil {
@@ -239,20 +242,23 @@ func BindTTSAdminRoutes(authAdmin fiber.Router) {
 		}
 		items := []fiber.Map{}
 		for _, j := range jobs {
-			items = append(items, fiber.Map{"id": j.ID, "operation": j.Operation, "payerUserId": j.PayerUserID, "providerRequestId": j.ProviderRequestID, "estimatedUnits": j.EstimatedUnits, "errorCode": j.ErrorCode, "createdAt": j.CreatedAt})
+			items = append(items, fiber.Map{"id": j.ID, "operation": j.Operation, "payerUserId": j.PayerUserID, "providerRequestId": j.ProviderRequestID, "estimatedUnits": j.EstimatedUnits, "pricingMode": service.TTSJobPricingMode(&j), "errorCode": j.ErrorCode, "createdAt": j.CreatedAt})
 		}
 		return c.JSON(items)
 	})
 	admin.Post("/unknown/:id", func(c *fiber.Ctx) error {
 		var b struct {
-			Action string `json:"action"`
-			Note   string `json:"note"`
-			Units  int64  `json:"units"`
+			Action       string `json:"action"`
+			Note         string `json:"note"`
+			Units        int64  `json:"units"`
+			InputTokens  *int64 `json:"inputTokens"`
+			OutputTokens *int64 `json:"outputTokens"`
 		}
 		if err := c.BodyParser(&b); err != nil {
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
-		if err := service.TTSResolveUnknown(getCurUser(c).ID, c.Params("id"), b.Action, b.Note, b.Units); err != nil {
+		usage := ttsprovider.Result{InputTokens: b.InputTokens, OutputTokens: b.OutputTokens, TokenUsageConfirmed: b.InputTokens != nil && b.OutputTokens != nil}
+		if err := service.TTSResolveUnknown(getCurUser(c).ID, c.Params("id"), b.Action, b.Note, b.Units, usage); err != nil {
 			return ttsError(c, err)
 		}
 		return c.JSON(fiber.Map{"ok": true})
@@ -267,8 +273,8 @@ func ttsJobResponse(job *model.TTSJob) any {
 			media = &value
 		}
 	}
-	var actualCost *float64
-	if job.ActualUnits != nil {
+	actualCost := job.ActualCost
+	if actualCost == nil && job.ActualUnits != nil {
 		value := math.Round(float64(*job.ActualUnits)*job.UnitPrice*1e6) / 1e6
 		actualCost = &value
 	}
@@ -281,11 +287,12 @@ func ttsJobResponse(job *model.TTSJob) any {
 	}
 	return struct {
 		*model.TTSJob
-		Media      *ttsprovider.Media `json:"media,omitempty"`
-		ActualCost *float64           `json:"actualCost,omitempty"`
-		Message    string             `json:"message,omitempty"`
-		Model      string             `json:"model,omitempty"`
-	}{job, media, actualCost, ttsJobMessage(job), modelID}
+		Media       *ttsprovider.Media `json:"media,omitempty"`
+		ActualCost  *float64           `json:"actualCost,omitempty"`
+		Message     string             `json:"message,omitempty"`
+		Model       string             `json:"model,omitempty"`
+		PricingMode string             `json:"pricingMode"`
+	}{job, media, actualCost, ttsJobMessage(job), modelID, service.TTSJobPricingMode(job)}
 }
 
 func ttsJobMessage(job *model.TTSJob) string {
@@ -382,7 +389,7 @@ func ttsVoices(c *fiber.Ctx) error {
 	if err := q.Order("created_at DESC, id DESC").Offset((page - 1) * size).Limit(size).Find(&items).Error; err != nil {
 		return ttsError(c, err)
 	}
-	return c.JSON(fiber.Map{"items": items, "total": total, "system": service.TTSSystemVoices(), "catalogVersion": "2026-09-12"})
+	return c.JSON(fiber.Map{"items": items, "total": total, "system": service.TTSSystemVoices(), "catalogVersion": "2026-09-30"})
 }
 func ttsReadMessage(userID, id string) (*model.MessageModel, error) {
 	var m model.MessageModel

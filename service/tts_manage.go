@@ -153,18 +153,21 @@ func ttsMaintainVoices(parent context.Context) {
 }
 
 type TTSQuota struct {
-	Enabled        bool                          `json:"enabled"`
-	AutoSynthesis  bool                          `json:"autoSynthesis"`
-	Policy         utils.AIQuotaPolicyConfig     `json:"policy"`
-	Usage          *aiService.QuotaUsageSnapshot `json:"usage"`
-	Saved          int64                         `json:"saved"`
-	Slots          int                           `json:"slots"`
-	Format         string                        `json:"format"`
-	CharacterPrice *float64                      `json:"characterPrice"`
-	DesignPrice    *float64                      `json:"designPrice"`
-	ClonePrice     *float64                      `json:"clonePrice"`
-	DefaultModel   string                        `json:"defaultModel"`
-	DefaultVoice   string                        `json:"defaultVoice"`
+	Enabled          bool                          `json:"enabled"`
+	AutoSynthesis    bool                          `json:"autoSynthesis"`
+	Policy           utils.AIQuotaPolicyConfig     `json:"policy"`
+	Usage            *aiService.QuotaUsageSnapshot `json:"usage"`
+	Saved            int64                         `json:"saved"`
+	Slots            int                           `json:"slots"`
+	Format           string                        `json:"format"`
+	CharacterPrice   *float64                      `json:"characterPrice"`
+	PricingMode      string                        `json:"pricingMode"`
+	InputTokenPrice  *float64                      `json:"inputTokenPrice"`
+	OutputTokenPrice *float64                      `json:"outputTokenPrice"`
+	DesignPrice      *float64                      `json:"designPrice"`
+	ClonePrice       *float64                      `json:"clonePrice"`
+	DefaultModel     string                        `json:"defaultModel"`
+	DefaultVoice     string                        `json:"defaultVoice"`
 }
 
 func TTSQuotaForUser(userID string) (TTSQuota, error) {
@@ -184,6 +187,8 @@ func TTSQuotaForUser(userID string) (TTSQuota, error) {
 			if p.ID == speech.DefaultProvider {
 				q.DefaultModel = p.Model
 				q.CharacterPrice = p.CharacterPrice
+				q.PricingMode = p.EffectivePricingMode()
+				q.InputTokenPrice, q.OutputTokenPrice = p.InputTokenPrice, p.OutputTokenPrice
 				q.DesignPrice = p.DesignPrice
 				q.ClonePrice = p.ClonePrice
 			}
@@ -326,7 +331,7 @@ func TTSSetPolicy(userID string, input model.TTSUserPolicy) error {
 	})
 }
 
-func TTSResolveUnknown(actor, jobID, action, note string, units int64) error {
+func TTSResolveUnknown(actor, jobID, action, note string, units int64, tokenUsage ...ttsprovider.Result) error {
 	if len(strings.TrimSpace(note)) < 3 {
 		return TTSValidationError("请填写核对依据与供应商 request ID")
 	}
@@ -339,7 +344,11 @@ func TTSResolveUnknown(actor, jobID, action, note string, units int64) error {
 			if (j.Operation == "design" || j.Operation == "clone") && units != 0 && units != 1 {
 				return TTSValidationError("单个音色创建任务的确认次数只能为 0 或 1")
 			}
-			if err := ttsSettleJob(tx, j.ID, units, time.Now()); err != nil {
+			var usage *ttsprovider.Result
+			if len(tokenUsage) == 1 {
+				usage = &tokenUsage[0]
+			}
+			if err := ttsSettleUsageJob(tx, j.ID, units, usage, time.Now()); err != nil {
 				return err
 			}
 		} else if action == "release" {
