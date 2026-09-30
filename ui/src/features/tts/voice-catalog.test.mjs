@@ -61,6 +61,7 @@ async function component(filename) {
   return (await import(moduleURL(code))).default
 }
 const VoicePicker = await component('./VoicePicker.vue')
+const VoiceCard = await component('./VoiceCard.vue')
 const AdminSpeechSettings = await component('./AdminSpeechSettings.vue')
 const SpeechPanel = await component('./SpeechPanel.vue')
 async function settle() { for (let i = 0; i < 30; i++) await vue.nextTick() }
@@ -447,6 +448,27 @@ test('clear action is inside expanded facets, only shown for active attributes, 
   assert.match(content.slice(filterStart, clearAt), /v-if="activeFilterCount > 0"/)
   assert.equal(content.match(/清除筛选/g).length, 1)
   assert.match(content, /class="vp-chip is-category"/)
+})
+
+test('VoiceCard preserves detail tags for multilingual voices and never renders model ids', () => {
+  const scope = vue.effectScope()
+  const item = catalog.systemVoiceItem({
+    ...system[1],
+    languages: ['zh', 'ja', 'ko', 'fr', 'de'],
+    tags: '女 / 柔和 / 自然 / 知性 / 有声书',
+  }, next)
+  const state = scope.run(() => VoiceCard.setup({ item, providers, selected: false }, { expose() {}, emit() {} }))
+  try {
+    assert.deepEqual(state.chips.value, [
+      { text: '多语 · 5', language: true },
+      { text: '女', language: false },
+      { text: '柔和', language: false },
+      { text: '自然', language: false },
+    ])
+    const { descriptor } = parse(readFileSync(new URL('./VoiceCard.vue', import.meta.url), 'utf8'))
+    assert.doesNotMatch(descriptor.template.content, /modelId|showModel/)
+    assert.doesNotMatch(descriptor.scriptSetup.content, /showModel/)
+  } finally { scope.stop() }
 })
 
 test('admin default voice dropdown uses the current provider/model and catalog default', async () => {

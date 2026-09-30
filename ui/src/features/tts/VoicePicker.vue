@@ -150,7 +150,6 @@ const total = computed(() => {
   if (source.value === 'all') return effectivePersonalTotal.value + filteredPresets.value.length
   return effectivePersonalTotal.value
 })
-const showModel = computed(() => new Set(visible.value.map(item => item.modelId)).size > 1)
 const hasFilters = computed(() => Object.values(filters.value).some(Boolean))
 const activeFilterCount = computed(() => Object.values(filters.value).filter(Boolean).length)
 const emptyMessage = computed(() => {
@@ -307,7 +306,6 @@ defineExpose({ reload })
           :item="item"
           :providers="providers"
           :selected="isItemSelected(item)"
-          :show-model="showModel"
           @select="choose"
         />
       </div>

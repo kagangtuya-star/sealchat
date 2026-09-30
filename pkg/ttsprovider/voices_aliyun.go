@@ -11,12 +11,14 @@ import (
 //go:embed tts_catalog_basic_20260723.json
 var ttsBasicCatalogJSON []byte
 
-var ttsBasicVoices = func() []TTSVoiceSpec {
-	var items []struct {
-		TTSVoiceSpec
-		TargetModel string `json:"targetModel"`
-	}
-	if err := json.Unmarshal(ttsBasicCatalogJSON, &items); err != nil {
+type aliyunVoiceCatalogItem struct {
+	TTSVoiceSpec
+	TargetModel string `json:"targetModel"`
+}
+
+func loadAliyunVoiceCatalog(data []byte) []TTSVoiceSpec {
+	var items []aliyunVoiceCatalogItem
+	if err := json.Unmarshal(data, &items); err != nil {
 		panic("invalid bundled TTS voice catalog")
 	}
 	voices := make([]TTSVoiceSpec, 0, len(items))
@@ -26,7 +28,9 @@ var ttsBasicVoices = func() []TTSVoiceSpec {
 		voices = append(voices, item.TTSVoiceSpec)
 	}
 	return voices
-}()
+}
+
+var ttsBasicVoices = loadAliyunVoiceCatalog(ttsBasicCatalogJSON)
 
 // Source: https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list
 // System catalog version 2026-09-30. IDs are model-specific.

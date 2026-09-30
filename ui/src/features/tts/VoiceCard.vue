@@ -4,14 +4,21 @@ import { speechPlayer } from './player'
 import type { SpeechProviderMeta } from './types'
 import { isDisplayVoiceTag, voiceKindLabel, voiceLanguageLabel, voiceSourceLabel, type VoiceCatalogItem } from './voice-catalog'
 
-const props = defineProps<{ item: VoiceCatalogItem; providers: SpeechProviderMeta[]; selected: boolean; showModel?: boolean }>()
+const props = defineProps<{ item: VoiceCatalogItem; providers: SpeechProviderMeta[]; selected: boolean }>()
 const emit = defineEmits<{ select: [item: VoiceCatalogItem] }>()
 const previewing = computed(() => !!props.item.previewResourceId && speechPlayer.state.key === `resources:${props.item.previewResourceId}`)
-// Hide provider age metadata and keep the actual style/use-case tags visible on cards.
-const chips = computed(() => [
-  ...props.item.languages.map(voiceLanguageLabel),
-  ...props.item.tags.filter(isDisplayVoiceTag),
-].slice(0, 4))
+// Keep one compact language summary so multi-language support cannot hide
+// voice traits and use-case tags. Provider age metadata remains excluded.
+const chips = computed(() => {
+  const language = props.item.languages.length > 1
+    ? `多语 · ${props.item.languages.length}`
+    : props.item.languages.length === 1 ? voiceLanguageLabel(props.item.languages[0]) : ''
+  const details = props.item.tags.filter(isDisplayVoiceTag).slice(0, language ? 3 : 4)
+  return [
+    ...(language ? [{ text: language, language: true }] : []),
+    ...details.map(text => ({ text, language: false })),
+  ]
+})
 // Only an existing preview file is replayed here; it never submits synthesis.
 function preview() {
   if (props.item.previewResourceId) void speechPlayer.play('resources', props.item.previewResourceId)
@@ -35,15 +42,15 @@ function preview() {
     <p v-if="item.description" class="voice-card__desc">{{ item.description }}</p>
     <div v-if="chips.length" class="voice-card__tags">
       <span
-        v-for="(chip, index) in chips"
-        :key="index"
+        v-for="chip in chips"
+        :key="`${chip.language ? 'language' : 'tag'}:${chip.text}`"
         class="voice-card__tag"
-        :class="{ 'is-language': index < item.languages.length }"
-      >{{ chip }}</span>
+        :class="{ 'is-language': chip.language }"
+      >{{ chip.text }}</span>
     </div>
     <div class="voice-card__foot">
       <span class="voice-card__meta">
-        {{ voiceKindLabel(item.kind) }}<template v-if="showModel"> · {{ item.modelId }}</template><template v-if="!item.available"> · 当前不可用</template>
+        {{ voiceKindLabel(item.kind) }}<template v-if="!item.available"> · 当前不可用</template>
       </span>
       <button
         v-if="item.previewResourceId"

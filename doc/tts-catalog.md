@@ -8,7 +8,7 @@ JSON/YAML 中旧实例缺少 `providerKind` 时按阿里云处理；读取时补
 - `pkg/ttsprovider/providers.go`：`ProviderCatalog()` / `LookupProvider(kind)` 返回已知品牌及显示名称（阿里、腾讯），不表示模型、音色或运行时已经实现。
 - `pkg/ttsprovider/models.go`：`LookupModel(providerKind, modelID)`、模型能力和模型默认音色。
 - `pkg/ttsprovider/voices.go`：`TTSVoiceSpec`、`VoicesForModel`、`VoiceSupported` 和 `DefaultVoice`。
-- `voices_aliyun.go`、`voices_aliyun_31.go`：阿里云音色数据。旧版 JSON 在加载时转换为 `providerKind + models[]`，官方 ID 大小写保持不变。
+- `tts_catalog_basic_20260723.json`、`tts_catalog_31_20260930.json`：阿里云版本化音色目录数据；`voices_aliyun.go`、`voices_aliyun_31.go` 只负责嵌入与归一化装载。JSON 的 `targetModel` 在加载时转换为 `providerKind + models[]`，官方 ID 大小写保持不变。
 
 `GET /api/v1/tts/voices` 的 `system` 包含 `id`、`name`、`providerKind`、`models`、`languages`、`kind`，以及存在时的 `tags`。
 响应的 `providers` 为 `[{ kind, name }]`，与 `items`、`total`、`system`、`catalogVersion` 并列。VoicePicker 从它生成「全部 / 阿里预设 / 腾讯预设 / 我的音色 / 公开音色」来源页签；腾讯目前没有模型或音色，显示「当前没有可用的腾讯预设音色。」，不调用腾讯 API。
