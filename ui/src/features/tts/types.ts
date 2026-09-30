@@ -77,6 +77,8 @@ export interface SpeechRequest {
   name?: string
   description?: string
   sourceResourceId?: string
+  cloneLanguageHint?: string
+  clonePreprocess?: boolean
 }
 export interface SpeechJob {
   id: string
@@ -147,6 +149,7 @@ export interface ResolvedSpeechProvider {
   models: ResolvedSpeechModel[]
 }
 export type VoiceCreationModel = Pick<ResolvedSpeechModel, 'id' | 'providerKind' | 'name' | 'capabilities'>
+  & { cloneLanguages?: string[]; supportsClonePreprocess?: boolean }
 export type VoiceCreationProvider = Pick<ResolvedSpeechProvider, 'providerId' | 'providerKind'>
   & Pick<SpeechProvider, 'designPrice' | 'clonePrice'> & { models: VoiceCreationModel[] }
 export interface SpeechPolicy {

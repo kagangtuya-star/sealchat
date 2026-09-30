@@ -49,10 +49,12 @@ type TTSProviderResolution struct {
 
 // Public creation choices expose configured models and prices, never credentials.
 type TTSVoiceCreationModel struct {
-	ID           string                        `json:"id"`
-	ProviderKind string                        `json:"providerKind"`
-	Name         string                        `json:"name"`
-	Capabilities ttsprovider.ModelCapabilities `json:"capabilities"`
+	ID                      string                        `json:"id"`
+	ProviderKind            string                        `json:"providerKind"`
+	Name                    string                        `json:"name"`
+	Capabilities            ttsprovider.ModelCapabilities `json:"capabilities"`
+	CloneLanguages          []string                      `json:"cloneLanguages,omitempty"`
+	SupportsClonePreprocess bool                          `json:"supportsClonePreprocess,omitempty"`
 }
 
 type TTSVoiceCreationProvider struct {
@@ -74,7 +76,7 @@ func TTSVoiceCreationProviders() ([]TTSVoiceCreationProvider, error) {
 		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" || !supported || (!spec.Capabilities.VoiceDesign && !spec.Capabilities.VoiceClone) {
 			continue
 		}
-		model := TTSVoiceCreationModel{ID: spec.ID, ProviderKind: spec.ProviderKind, Name: spec.ID, Capabilities: spec.Capabilities}
+		model := TTSVoiceCreationModel{ID: spec.ID, ProviderKind: spec.ProviderKind, Name: spec.ID, Capabilities: spec.Capabilities, CloneLanguages: spec.CloneLanguages, SupportsClonePreprocess: spec.SupportsClonePreprocess}
 		providers = append(providers, TTSVoiceCreationProvider{ProviderID: p.ID, ProviderKind: p.EffectiveProviderKind(), Models: []TTSVoiceCreationModel{model}, DesignPrice: p.DesignPrice, ClonePrice: p.ClonePrice})
 	}
 	return providers, nil

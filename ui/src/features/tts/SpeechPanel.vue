@@ -62,6 +62,7 @@ const creationOptions = computed(() => creationProviders.value.flatMap(provider 
     label: `${provider.providerKind === 'aliyun' ? '阿里云' : provider.providerKind}（${provider.providerId}） · ${model.id}`,
     providerId: provider.providerId, modelId: model.id,
     designPrice: provider.designPrice, clonePrice: provider.clonePrice,
+    cloneLanguages: model.cloneLanguages ?? [], supportsClonePreprocess: model.supportsClonePreprocess ?? false,
   }))))
 watch([creationOptions, voiceContext], ([options, context]) => {
   if (options.some(option => option.value === creationTarget.value)) return
@@ -71,6 +72,21 @@ watch([creationOptions, voiceContext], ([options, context]) => {
   creationTarget.value = preferred?.value ?? options[0]?.value ?? ''
 }, { immediate: true, flush: 'sync' })
 const selectedCreationTarget = computed(() => creationOptions.value.find(option => option.value === creationTarget.value))
+const cloneLanguageHint = ref('')
+const clonePreprocess = ref(false)
+// Labels only; supported choices come from the creation target metadata.
+const cloneLanguageLabels: Readonly<Record<string, string>> = {
+  zh: '中文', en: '英语', fr: '法语', de: '德语', ja: '日语', ko: '韩语', ru: '俄语', pt: '葡萄牙语',
+  th: '泰语', id: '印尼语', vi: '越南语', it: '意大利语', es: '西班牙语', ms: '马来语', fil: '菲律宾语', ar: '阿拉伯语',
+}
+const cloneLanguageOptions = computed(() => [
+  { value: '', label: '自动/默认' },
+  ...(selectedCreationTarget.value?.cloneLanguages ?? []).map(value => ({ value, label: cloneLanguageLabels[value] ?? value })),
+])
+watch(selectedCreationTarget, target => {
+  if (!target?.cloneLanguages.includes(cloneLanguageHint.value)) cloneLanguageHint.value = ''
+  if (!target?.supportsClonePreprocess) clonePreprocess.value = false
+}, { flush: 'sync' })
 const source = ref<File | null>(null)
 let uploadedSource: { file: File; id: string } | null = null
 const authorized = ref(false)
@@ -195,6 +211,7 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
   const value = await speechAPI.submit(kind, {
     requestKey: crypto.randomUUID(), text: text.value, name: name.value, description: description.value,
     sourceResourceId,
+    ...(kind === 'clone' ? { cloneLanguageHint: cloneLanguageHint.value, clonePreprocess: clonePreprocess.value } : {}),
     ...(target ? { providerId: target.providerId, modelId: target.modelId } : requestVoiceFields(selection.value)),
   })
   if (!alive || userId !== user.info.id) return
@@ -256,6 +273,11 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
           <template v-else>
             <input type="file" accept="audio/wav,audio/mpeg" @change="event => { source = (event.target as HTMLInputElement).files?.[0] ?? null }" />
             <label class="sp-check"><input v-model="authorized" type="checkbox" />我确认拥有此样本的复刻授权（10–60 秒 WAV/MP3）</label>
+            <label class="sp-field"><span>样本语言</span><NSelect v-model:value="cloneLanguageHint" :options="cloneLanguageOptions" :disabled="busy" /></label>
+            <div v-if="selectedCreationTarget?.supportsClonePreprocess">
+              <label class="sp-check">音频预处理 <NSwitch v-model:value="clonePreprocess" :disabled="busy" /></label>
+              <p class="sp-hint">有明显环境噪声时可开启；干净录音建议关闭。</p>
+            </div>
             <NButton type="primary" :disabled="!authorized || !source || !speech.quota?.enabled || selectedCreationTarget?.clonePrice == null" :loading="busy" @click="run(() => submit('clone'))">确认复刻</NButton>
           </template>
         </div>

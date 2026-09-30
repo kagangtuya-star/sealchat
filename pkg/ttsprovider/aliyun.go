@@ -233,13 +233,15 @@ func updateTokenUsage(current **int64, value *int64) {
 }
 
 type CreateVoiceInput struct {
-	Action        string   `json:"action"`
-	TargetModel   string   `json:"target_model"`
-	Prefix        string   `json:"prefix"`
-	VoicePrompt   string   `json:"voice_prompt,omitempty"`
-	PreviewText   string   `json:"preview_text,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	LanguageHints []string `json:"language_hints,omitempty"`
+	Action               string   `json:"action"`
+	TargetModel          string   `json:"target_model"`
+	Prefix               string   `json:"prefix"`
+	VoicePrompt          string   `json:"voice_prompt,omitempty"`
+	PreviewText          string   `json:"preview_text,omitempty"`
+	URL                  string   `json:"url,omitempty"`
+	LanguageHints        []string `json:"language_hints,omitempty"`
+	MaxPromptAudioLength float64  `json:"max_prompt_audio_length,omitempty"`
+	EnablePreprocess     *bool    `json:"enable_preprocess,omitempty"`
 }
 type Voice struct {
 	VoiceID      string `json:"voice_id"`

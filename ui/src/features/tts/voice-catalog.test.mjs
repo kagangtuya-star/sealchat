@@ -68,10 +68,10 @@ test('creation targets use provider/model capabilities and revalidate when switc
   globalThis.__voiceTest.speech = vue.reactive({ quota: { enabled: true, voiceContext: flash }, async refresh() {} })
   const scope = vue.effectScope()
   const state = scope.run(() => SpeechPanel.setup({}, { expose() {} }))
-  const provider = (providerId, modelId, voiceDesign, voiceClone) => ({ providerId, providerKind: 'aliyun', designPrice: 0, clonePrice: 0, models: [{ id: modelId, providerKind: 'aliyun', capabilities: { voiceDesign, voiceClone } }] })
+  const provider = (providerId, modelId, voiceDesign, voiceClone, cloneLanguages = [], supportsClonePreprocess = false) => ({ providerId, providerKind: 'aliyun', designPrice: 0, clonePrice: 0, models: [{ id: modelId, providerKind: 'aliyun', capabilities: { voiceDesign, voiceClone }, cloneLanguages, supportsClonePreprocess }] })
   try {
     // Default is the second option, so initialization must use VoiceContext.
-    state.creationProviders.value = [provider('target-31', next.modelId, true, true), provider(flash.providerId, flash.modelId, true, false), provider('clone-only', flash.modelId, false, true)]
+    state.creationProviders.value = [provider('target-31', next.modelId, true, true, ['ja', 'en'], true), provider(flash.providerId, flash.modelId, true, false), provider('clone-only', flash.modelId, false, true, ['en'])]
     assert.equal(state.selectedCreationTarget.value.providerId, flash.providerId)
     assert.equal(state.creationOptions.value.length, 2)
     assert.match(state.creationOptions.value[0].label, /阿里云（target-31） · qwen-audio-3.1-tts-flash/)
@@ -89,7 +89,14 @@ test('creation targets use provider/model capabilities and revalidate when switc
     assert.equal(submitted.request.modelId, next.modelId)
     assert.equal(submitted.request.systemVoice, undefined)
     assert.equal(submitted.request.voiceId, undefined)
+    assert.equal(submitted.request.cloneLanguageHint, undefined)
+    assert.equal(submitted.request.clonePreprocess, undefined)
     state.operation.value = 'clone'
+    assert.deepEqual(state.cloneLanguageOptions.value, [{ value: '', label: '自动/默认' }, { value: 'ja', label: '日语' }, { value: 'en', label: '英语' }])
+    assert.equal(state.cloneLanguageHint.value, '')
+    assert.equal(state.clonePreprocess.value, false)
+    state.cloneLanguageHint.value = 'ja'
+    state.clonePreprocess.value = true
     state.source.value = { name: 'sample.wav' }
     state.authorized.value = true
     await state.submit('clone')
@@ -99,13 +106,34 @@ test('creation targets use provider/model capabilities and revalidate when switc
     assert.equal(clone.request.providerId, 'target-31')
     assert.equal(clone.request.modelId, next.modelId)
     assert.equal(clone.request.sourceResourceId, 'clone-source')
+    assert.equal(clone.request.cloneLanguageHint, 'ja')
+    assert.equal(clone.request.clonePreprocess, true)
+    state.creationTarget.value = state.creationOptions.value.find(option => option.providerId === 'clone-only').value
+    assert.equal(state.cloneLanguageHint.value, '')
+    assert.equal(state.clonePreprocess.value, false)
+    assert.equal(state.selectedCreationTarget.value.supportsClonePreprocess, false)
+    assert.deepEqual(state.cloneLanguageOptions.value.map(option => option.value), ['', 'en'])
+    await state.submit('clone')
+    await settle()
+    assert.equal(globalThis.__voiceTest.submissions.at(-1).request.cloneLanguageHint, '')
+    assert.equal(globalThis.__voiceTest.submissions.at(-1).request.clonePreprocess, false)
+    state.cloneLanguageHint.value = 'en'
+    state.creationTarget.value = state.creationOptions.value.find(option => option.providerId === 'target-31').value
+    assert.equal(state.cloneLanguageHint.value, 'en')
+    state.clonePreprocess.value = true
     state.operation.value = 'design'
+    await state.submit('design')
+    await settle()
+    assert.equal(globalThis.__voiceTest.submissions.at(-1).request.cloneLanguageHint, undefined)
+    assert.equal(globalThis.__voiceTest.submissions.at(-1).request.clonePreprocess, undefined)
     await state.submit('audition')
     await settle()
     const audition = globalThis.__voiceTest.submissions.at(-1).request
     assert.equal(audition.systemVoice, system[0].id)
     assert.equal(audition.providerId, undefined)
     assert.equal(audition.modelId, undefined)
+    assert.equal(audition.cloneLanguageHint, undefined)
+    assert.equal(audition.clonePreprocess, undefined)
     state.creationProviders.value = [provider('clone-only', flash.modelId, false, true)]
     assert.equal(state.creationTarget.value, '')
     await assert.rejects(state.submit('design'), /目标模型/)

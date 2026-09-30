@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -389,10 +390,16 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	audioURL := ""
 	sseWAV := false
 	if j.Operation == "design" || j.Operation == "clone" {
-		input := ttsprovider.CreateVoiceInput{TargetModel: s.Provider.Model, Prefix: "sealchat", VoicePrompt: s.Description, PreviewText: s.Input.Text, LanguageHints: []string{"zh"}}
+		input := ttsprovider.CreateVoiceInput{TargetModel: s.Provider.Model, Prefix: "sealchat", VoicePrompt: s.Description, PreviewText: s.Input.Text}
 		if j.Operation == "clone" {
 			input.VoicePrompt = ""
 			input.PreviewText = ""
+			if s.CloneLanguageHint != "" {
+				input.LanguageHints = []string{s.CloneLanguageHint}
+			}
+			input.MaxPromptAudioLength = 30
+			preprocess := s.ClonePreprocess
+			input.EnablePreprocess = &preprocess
 			input.URL, err = TTSCloneReadURL(j)
 		}
 		var result ttsprovider.VoiceResult
@@ -489,11 +496,11 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 			return
 		}
 	} else {
-		ttsUnknown(j, "provider_usage_unknown")
+		ttsUnknown(j, ttsProviderErrorCode(err, "provider_usage_unknown"))
 		return
 	}
 	if err != nil {
-		_ = db.Model(&model.TTSJob{}).Where("id = ?", j.ID).Updates(map[string]any{"status": "failed", "error_code": "provider_or_spool_failed"}).Error
+		_ = db.Model(&model.TTSJob{}).Where("id = ?", j.ID).Updates(map[string]any{"status": "failed", "error_code": ttsProviderErrorCode(err, "provider_or_spool_failed")}).Error
 		_ = os.Remove(j.SpoolPath)
 		ttsMessageStatus(j, "failed", nil)
 		return
@@ -510,6 +517,32 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		return
 	}
 	ttsArchive(parent, j, s)
+}
+
+// Keep only a bounded machine code for internal diagnostics, never error text.
+func ttsProviderErrorCode(err error, fallback string) string {
+	var providerError *ttsprovider.ProviderError
+	if !errors.As(err, &providerError) {
+		return fallback
+	}
+	var code strings.Builder
+	for _, r := range providerError.Code {
+		if code.Len() == 64 {
+			break
+		}
+		switch {
+		case r >= 'A' && r <= 'Z':
+			code.WriteByte(byte(r + ('a' - 'A')))
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			code.WriteByte(byte(r))
+		default:
+			code.WriteByte('_')
+		}
+	}
+	if normalized := strings.Trim(code.String(), "_"); normalized != "" {
+		return "provider_" + normalized
+	}
+	return fallback
 }
 
 func ttsSynthesize(ctx context.Context, client *ttsprovider.Client, job *model.TTSJob, snapshot TTSSnapshot, sink io.Writer) (ttsprovider.Result, error) {

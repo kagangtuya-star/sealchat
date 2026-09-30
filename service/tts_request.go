@@ -37,21 +37,25 @@ type TTSRequest struct {
 	Name                string  `json:"name"`
 	Description         string  `json:"description"`
 	SourceResourceID    string  `json:"sourceResourceId"`
+	CloneLanguageHint   string  `json:"cloneLanguageHint,omitempty"`
+	ClonePreprocess     bool    `json:"clonePreprocess,omitempty"`
 }
 type TTSSnapshot struct {
-	Version          int                        `json:"version"`
-	Provider         utils.SpeechProviderConfig `json:"provider"`
-	Input            ttsprovider.Input          `json:"input"`
-	VoiceID          string                     `json:"voiceId"`
-	VoiceRevision    int64                      `json:"voiceRevision"`
-	Owner            string                     `json:"owner"`
-	Scope            string                     `json:"scope"`
-	Fingerprint      string                     `json:"fingerprint"`
-	SourceResourceID string                     `json:"sourceResourceId,omitempty"`
-	Name             string                     `json:"name,omitempty"`
-	Description      string                     `json:"description,omitempty"`
-	Audience         []string                   `json:"audience,omitempty"`
-	Whisper          bool                       `json:"whisper,omitempty"`
+	Version           int                        `json:"version"`
+	Provider          utils.SpeechProviderConfig `json:"provider"`
+	Input             ttsprovider.Input          `json:"input"`
+	VoiceID           string                     `json:"voiceId"`
+	VoiceRevision     int64                      `json:"voiceRevision"`
+	Owner             string                     `json:"owner"`
+	Scope             string                     `json:"scope"`
+	Fingerprint       string                     `json:"fingerprint"`
+	SourceResourceID  string                     `json:"sourceResourceId,omitempty"`
+	Name              string                     `json:"name,omitempty"`
+	Description       string                     `json:"description,omitempty"`
+	CloneLanguageHint string                     `json:"cloneLanguageHint,omitempty"`
+	ClonePreprocess   bool                       `json:"clonePreprocess,omitempty"`
+	Audience          []string                   `json:"audience,omitempty"`
+	Whisper           bool                       `json:"whisper,omitempty"`
 }
 
 func ttsHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -84,6 +88,16 @@ func ttsSnapshotForRequest(userID string, r TTSRequest, scope string, automatic 
 func ttsVoiceCreationCapability(capabilities ttsprovider.ModelCapabilities, operation string) error {
 	if (operation == "design" && !capabilities.VoiceDesign) || (operation == "clone" && !capabilities.VoiceClone) {
 		return TTSValidationError("当前模型不支持此音色创建方式")
+	}
+	return nil
+}
+
+func ttsValidateCloneOptions(spec ttsprovider.ModelSpec, r TTSRequest) error {
+	if !ttsprovider.VoiceCloneLanguageSupported(spec, r.CloneLanguageHint) {
+		return TTSValidationError("当前模型不支持此样本语言")
+	}
+	if r.ClonePreprocess && !spec.SupportsClonePreprocess {
+		return TTSValidationError("当前模型不支持音频预处理")
 	}
 	return nil
 }
@@ -155,8 +169,15 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	if !found || s.Provider.APIKey == "" {
 		return s, ErrTTSDisabled
 	}
-	if _, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); !supported {
+	spec, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model)
+	if !supported {
 		return s, TTSValidationError("语音 provider 类型与模型不匹配")
+	}
+	if operation == "clone" {
+		if err := ttsValidateCloneOptions(spec, r); err != nil {
+			return s, err
+		}
+		s.CloneLanguageHint, s.ClonePreprocess = r.CloneLanguageHint, r.ClonePreprocess
 	}
 	s.Provider.APIKey = ""
 	s.Provider.HasAPIKey = false

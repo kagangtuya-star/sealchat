@@ -296,6 +296,18 @@ func ttsJobResponse(job *model.TTSJob) any {
 			modelID = snapshot.Provider.Model
 		}
 	}
+	publicJob := *job
+	// Provider codes are internal diagnostics; preserve the safe client contract.
+	if strings.HasPrefix(publicJob.ErrorCode, "provider_") {
+		switch publicJob.ErrorCode {
+		case "provider_usage_unknown", "provider_or_spool_failed", "provider_audio_download_failed", "provider_audio_invalid_media":
+		default:
+			publicJob.ErrorCode = "provider_or_spool_failed"
+			if publicJob.Status == "usage_unknown" {
+				publicJob.ErrorCode = "provider_usage_unknown"
+			}
+		}
+	}
 	return struct {
 		*model.TTSJob
 		Media       *ttsprovider.Media `json:"media,omitempty"`
@@ -303,7 +315,7 @@ func ttsJobResponse(job *model.TTSJob) any {
 		Message     string             `json:"message,omitempty"`
 		Model       string             `json:"model,omitempty"`
 		PricingMode string             `json:"pricingMode"`
-	}{job, media, actualCost, ttsJobMessage(job), modelID, service.TTSJobPricingMode(job)}
+	}{&publicJob, media, actualCost, ttsJobMessage(&publicJob), modelID, service.TTSJobPricingMode(job)}
 }
 
 func ttsJobMessage(job *model.TTSJob) string {
