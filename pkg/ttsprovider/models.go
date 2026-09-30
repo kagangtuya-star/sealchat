@@ -1,6 +1,7 @@
 package ttsprovider
 
 const (
+	ProviderAliyun   = "aliyun"
 	PricingCharacter = "character"
 	PricingToken     = "token"
 )
@@ -13,24 +14,34 @@ type TTSModelPricing struct {
 	DisplayPrice     string   `json:"displayPrice"`
 }
 
+type ModelCapabilities struct {
+	HTTPStreaming      bool `json:"httpStreaming"`
+	WebSocketStreaming bool `json:"webSocketStreaming"`
+	VoiceDesign        bool `json:"voiceDesign"`
+	VoiceClone         bool `json:"voiceClone"`
+}
+
 type ModelSpec struct {
-	ID            string
-	Pricing       TTSModelPricing
-	HTTPStreaming bool
+	ID           string
+	ProviderKind string
+	Pricing      TTSModelPricing
+	Capabilities ModelCapabilities
+	DefaultVoice string
 }
 
 func ModelCatalog() []ModelSpec {
 	flash, plus, input, output := 0.0001, 0.00014, 0.0000015, 0.000012
+	capabilities := ModelCapabilities{HTTPStreaming: true, WebSocketStreaming: true, VoiceDesign: true, VoiceClone: true}
 	return []ModelSpec{
-		{ID: "qwen-audio-3.0-tts-flash", HTTPStreaming: true, Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &flash, DisplayPrice: "1 元 / 万字符"}},
-		{ID: "qwen-audio-3.0-tts-plus", HTTPStreaming: true, Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &plus, DisplayPrice: "1.4 元 / 万字符"}},
-		{ID: "qwen-audio-3.1-tts-flash", HTTPStreaming: true, Pricing: TTSModelPricing{Mode: PricingToken, InputTokenPrice: &input, OutputTokenPrice: &output, DisplayPrice: "输入 1.5 元 / 百万 Token；输出 12 元 / 百万 Token"}},
+		{ID: "qwen-audio-3.0-tts-flash", ProviderKind: ProviderAliyun, Capabilities: capabilities, DefaultVoice: "longanhuan_v3.6", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &flash, DisplayPrice: "1 元 / 万字符"}},
+		{ID: "qwen-audio-3.0-tts-plus", ProviderKind: ProviderAliyun, Capabilities: capabilities, DefaultVoice: "longanlingxin", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &plus, DisplayPrice: "1.4 元 / 万字符"}},
+		{ID: "qwen-audio-3.1-tts-flash", ProviderKind: ProviderAliyun, Capabilities: capabilities, DefaultVoice: "longanhuan_v3.1", Pricing: TTSModelPricing{Mode: PricingToken, InputTokenPrice: &input, OutputTokenPrice: &output, DisplayPrice: "输入 1.5 元 / 百万 Token；输出 12 元 / 百万 Token"}},
 	}
 }
 
-func LookupModel(id string) (ModelSpec, bool) {
+func LookupModel(providerKind, id string) (ModelSpec, bool) {
 	for _, spec := range ModelCatalog() {
-		if spec.ID == id {
+		if spec.ProviderKind == providerKind && spec.ID == id {
 			return spec, true
 		}
 	}

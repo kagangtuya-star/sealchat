@@ -5,6 +5,11 @@ export interface MessageSpeech {
   format?: string
   messageRevision: number
 }
+export interface VoiceContext {
+  providerKind: string
+  providerId: string
+  modelId: string
+}
 export interface SpeechQuota {
   enabled: boolean
   autoSynthesis: boolean
@@ -21,6 +26,7 @@ export interface SpeechQuota {
   clonePrice: number | null
   defaultModel: string
   defaultVoice: string
+  voiceContext: VoiceContext
 }
 export interface SpeechVoice {
   id: string
@@ -35,12 +41,12 @@ export interface SpeechVoice {
   isPublic: boolean
   lifecycle: string
   providerStatus: string
+  supported?: boolean
   revision: number
   previewExpiresAt?: string
   previewResourceId?: string
 }
-// System voice ids are model-specific; (providerId, targetModel, id) identifies one.
-export interface SystemVoice { id: string; name: string; targetModel: string; providerId?: string; languages: string[]; kind: string; tags?: string }
+export interface SystemVoice { id: string; name: string; providerKind: string; models: string[]; targetModel?: string; languages: string[]; kind: string; tags?: string }
 export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; total: number; catalogVersion: string }
 // `scope` selects the saved-voice picker catalog; without it `mine` keeps the
 // workbench listing (previews and creating voices included).
@@ -59,6 +65,8 @@ export interface SpeechRequest {
   text?: string
   voiceId?: string
   systemVoice?: string
+  systemVoiceProvider?: string
+  systemVoiceModel?: string
   instruction?: string
   rate?: number
   pitch?: number
@@ -89,6 +97,8 @@ export interface RoleSpeechConfig {
   identityId: string
   voiceId: string
   systemVoice: string
+  systemVoiceProvider: string
+  systemVoiceModel: string
   instruction: string
   rate: number
   pitch: number
@@ -96,7 +106,7 @@ export interface RoleSpeechConfig {
   revision: number
 }
 export interface SpeechProvider {
-  id: string; enabled: boolean; credentialScope: string; region: string; workspace: string
+  id: string; providerKind: string; enabled: boolean; credentialScope: string; region: string; workspace: string
   apiKey: string; hasApiKey?: boolean; synthesisEndpoint: string; voiceEndpoint: string; model: string
   characterPrice: number | null; designPrice: number | null; clonePrice: number | null
   pricingMode?: 'character' | 'token'; inputTokenPrice?: number | null; outputTokenPrice?: number | null
@@ -110,6 +120,9 @@ export interface SpeechConfig {
 }
 export interface ResolvedSpeechModel {
   id: string
+  providerKind: string
+  defaultVoice: string
+  capabilities: { httpStreaming: boolean; webSocketStreaming: boolean; voiceDesign: boolean; voiceClone: boolean }
   name: string
   pricingMode: 'character' | 'token'
   characterPrice: number | null
@@ -122,6 +135,7 @@ export interface ResolvedSpeechModel {
 }
 export interface ResolvedSpeechProvider {
   providerId: string
+  providerKind: string
   workspace: string
   region: string
   credentialScope: string

@@ -6,7 +6,35 @@ import (
 
 	"gorm.io/gorm"
 	"sealchat/model"
+	"sealchat/pkg/ttsprovider"
+	"sealchat/utils"
 )
+
+// Personal assets stay bound to the creating instance and account namespace.
+// The model catalog also prevents reinterpreting an Aliyun asset as another kind.
+func PersonalVoiceSupported(provider utils.SpeechProviderConfig, voice model.TTSVoice) bool {
+	_, supported := ttsprovider.LookupModel(provider.EffectiveProviderKind(), voice.TargetModel)
+	return supported && voice.ProviderID == provider.ID && voice.CredentialScope == provider.CredentialScope &&
+		voice.Region == provider.Region && voice.Workspace == provider.Workspace && voice.TargetModel == provider.Model
+}
+
+type TTSPersonalVoice struct {
+	model.TTSVoice
+	Supported bool `json:"supported"`
+}
+
+func TTSPersonalVoiceResponse(voice model.TTSVoice) TTSPersonalVoice {
+	item := TTSPersonalVoice{TTSVoice: voice}
+	if cfg := utils.GetConfig(); cfg != nil && cfg.AI.Speech != nil {
+		for _, p := range utils.NormalizeSpeechConfig(cfg.AI.Speech).Providers {
+			if p.Enabled && PersonalVoiceSupported(p, voice) {
+				item.Supported = true
+				break
+			}
+		}
+	}
+	return item
+}
 
 func ttsAccessibleVoice(db *gorm.DB, userID, voiceID string) (*model.TTSVoice, error) {
 	var voice model.TTSVoice

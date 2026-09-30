@@ -26,7 +26,7 @@ const titleId = computed(() => `role-voice-title-${props.identityId}`)
 // Keep the picker-side selection separate from the persisted role fields so a
 // system voice can retain its model/provider-qualified identity while editing.
 // Role system voices are resolved against the platform default model.
-const presetModelIds = computed(() => speech.quota ? [speech.quota.defaultModel] : [])
+const voiceContext = computed(() => speech.quota?.voiceContext ?? null)
 async function open() {
   if (visible.value) return
   visible.value = true
@@ -37,6 +37,8 @@ async function open() {
   const identityId = props.identityId
   const current = generation
   try {
+    await speech.refresh()
+    if (current !== generation || !visible.value || identityId !== props.identityId) return
     const value = await speechAPI.role(identityId)
     if (current !== generation || !visible.value || identityId !== props.identityId) return
     role.value = value
@@ -93,7 +95,7 @@ async function query() {
       </header>
       <NAlert v-if="error" type="error" class="rv-alert">{{ error }}</NAlert>
       <div v-if="role" class="rv-body">
-        <VoicePicker v-model="selection" mode="select" :preset-model-ids="presetModelIds" class="rv-picker" />
+        <VoicePicker v-model="selection" mode="select" :voice-context="voiceContext" class="rv-picker" />
         <aside class="rv-side">
           <section class="rv-section">
             <h3>角色语音参数</h3>

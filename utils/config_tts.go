@@ -12,6 +12,7 @@ import (
 // Nil prices are unconfirmed; an explicitly configured zero is valid.
 type SpeechProviderConfig struct {
 	ID                string   `json:"id" yaml:"id"`
+	ProviderKind      string   `json:"providerKind" yaml:"providerKind"`
 	Enabled           bool     `json:"enabled" yaml:"enabled"`
 	CredentialScope   string   `json:"credentialScope" yaml:"credentialScope"`
 	Region            string   `json:"region" yaml:"region"`
@@ -29,6 +30,14 @@ type SpeechProviderConfig struct {
 	ClonePrice        *float64 `json:"clonePrice" yaml:"clonePrice"`
 	AccountVoiceLimit *int     `json:"accountVoiceLimit" yaml:"accountVoiceLimit"`
 	Revision          int64    `json:"revision" yaml:"revision"`
+}
+
+// Empty kinds belong to the legacy Aliyun compatible-mode configuration.
+func (p SpeechProviderConfig) EffectiveProviderKind() string {
+	if p.ProviderKind == "" {
+		return ttsprovider.ProviderAliyun
+	}
+	return p.ProviderKind
 }
 
 func (p SpeechProviderConfig) EffectivePricingMode() string {
@@ -65,6 +74,16 @@ type SpeechConfig struct {
 }
 
 func NormalizeSpeechConfig(cfg *SpeechConfig) *SpeechConfig {
+	return normalizeSpeechConfig(cfg, true)
+}
+
+// Explicit nonempty selections must survive normalization so validation can
+// reject them. Historical reads may repair a stale selection instead.
+func NormalizeSpeechConfigForWrite(cfg *SpeechConfig) *SpeechConfig {
+	return normalizeSpeechConfig(cfg, false)
+}
+
+func normalizeSpeechConfig(cfg *SpeechConfig, repairVoice bool) *SpeechConfig {
 	if cfg == nil {
 		return nil
 	}
@@ -72,9 +91,6 @@ func NormalizeSpeechConfig(cfg *SpeechConfig) *SpeechConfig {
 	out.Providers = append([]SpeechProviderConfig{}, cfg.Providers...)
 	if out.Format == "" || out.Format == "opus" {
 		out.Format = "wav"
-	}
-	if out.DefaultVoice == "" {
-		out.DefaultVoice = "longanhuan_v3.6"
 	}
 	if out.PreviewTTLMinutes <= 0 {
 		out.PreviewTTLMinutes = 30
@@ -93,17 +109,69 @@ func NormalizeSpeechConfig(cfg *SpeechConfig) *SpeechConfig {
 	}
 	for i := range out.Providers {
 		p := &out.Providers[i]
-		if p.Model == "" {
+		p.ProviderKind = p.EffectiveProviderKind()
+		if p.Model == "" && p.ProviderKind == ttsprovider.ProviderAliyun {
 			p.Model = "qwen-audio-3.0-tts-flash"
 		}
-		if p.Region == "" {
+		if p.Region == "" && p.ProviderKind == ttsprovider.ProviderAliyun {
 			p.Region = "cn-beijing"
 		}
 		if p.Revision <= 0 {
 			p.Revision = 1
 		}
 	}
+	for _, p := range out.Providers {
+		if p.ID == out.DefaultProvider && (out.DefaultVoice == "" || (repairVoice && !ttsprovider.VoiceSupported(p.ProviderKind, p.Model, out.DefaultVoice))) {
+			out.DefaultVoice = ttsprovider.DefaultVoice(p.ProviderKind, p.Model)
+			break
+		}
+	}
 	return &out
+}
+
+func validateSpeechEndpoint(value string) bool {
+	u, err := url.Parse(value)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.Fragment == "" && !strings.Contains(value, "#")
+}
+
+func validateSpeechProviderRuntimeFields(p SpeechProviderConfig, spec ttsprovider.ModelSpec) error {
+	switch p.EffectiveProviderKind() {
+	case ttsprovider.ProviderAliyun:
+		if p.CredentialScope == "" || p.Workspace == "" || p.Region != "cn-beijing" {
+			return fmt.Errorf("请配置语音账号命名空间、北京业务空间与 API Key")
+		}
+		if (spec.Capabilities.VoiceDesign || spec.Capabilities.VoiceClone) && !validateSpeechEndpoint(p.VoiceEndpoint) {
+			return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")
+		}
+	}
+	return nil
+}
+
+func validateSpeechProviderConfig(p SpeechProviderConfig, spec ttsprovider.ModelSpec) error {
+	if p.EffectivePricingMode() != spec.Pricing.Mode {
+		return fmt.Errorf("语音定价模式与模型不匹配")
+	}
+	for _, price := range []*float64{p.CharacterPrice, p.InputTokenPrice, p.OutputTokenPrice, p.DesignPrice, p.ClonePrice} {
+		if price != nil && (*price < 0 || math.IsNaN(*price) || math.IsInf(*price, 0)) {
+			return fmt.Errorf("语音单位值无效")
+		}
+	}
+	if p.AccountVoiceLimit != nil && *p.AccountVoiceLimit < 0 {
+		return fmt.Errorf("账号音色上限无效")
+	}
+	if !p.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(p.APIKey) == "" {
+		if p.EffectiveProviderKind() == ttsprovider.ProviderAliyun {
+			return fmt.Errorf("请配置语音账号命名空间、北京业务空间与 API Key")
+		}
+		return fmt.Errorf("请配置语音 API Key")
+	}
+	if !validateSpeechEndpoint(p.SynthesisEndpoint) {
+		return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")
+	}
+	return validateSpeechProviderRuntimeFields(p, spec)
 }
 
 func ValidateSpeechConfig(cfg *SpeechConfig) error {
@@ -128,41 +196,27 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 			return fmt.Errorf("语音 provider ID 为空或重复")
 		}
 		ids[p.ID] = true
-		spec, supported := ttsprovider.LookupModel(p.Model)
-		if !supported || !spec.HTTPStreaming {
+		spec, supported := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model)
+		if !supported || !spec.Capabilities.HTTPStreaming {
 			return fmt.Errorf("语音模型不受支持")
 		}
-		if p.EffectivePricingMode() != spec.Pricing.Mode {
-			return fmt.Errorf("语音定价模式与模型不匹配")
-		}
-		for _, price := range []*float64{p.CharacterPrice, p.InputTokenPrice, p.OutputTokenPrice, p.DesignPrice, p.ClonePrice} {
-			if price != nil && (*price < 0 || math.IsNaN(*price) || math.IsInf(*price, 0)) {
-				return fmt.Errorf("语音单位值无效")
-			}
-		}
-		if p.AccountVoiceLimit != nil && *p.AccountVoiceLimit < 0 {
-			return fmt.Errorf("账号音色上限无效")
+		if err := validateSpeechProviderConfig(p, spec); err != nil {
+			return err
 		}
 		if !p.Enabled {
 			continue
 		}
-		if p.CredentialScope == "" || p.Workspace == "" || p.Region != "cn-beijing" || strings.TrimSpace(p.APIKey) == "" {
-			return fmt.Errorf("请配置语音账号命名空间、北京业务空间与 API Key")
-		}
-		for _, endpoint := range []string{p.SynthesisEndpoint, p.VoiceEndpoint} {
-			u, err := url.Parse(endpoint)
-			if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
-				return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")
-			}
-		}
 		if p.ID == cfg.DefaultProvider {
 			found = true
+			if !ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, cfg.DefaultVoice) {
+				return fmt.Errorf("默认系统音色与默认 provider 类型或模型不匹配")
+			}
 			if cfg.Enabled && !p.SynthesisPriceConfirmed() {
 				return fmt.Errorf("请显式确认合成单价")
 			}
 		}
 	}
-	if cfg.Enabled && !found {
+	if (cfg.Enabled || cfg.DefaultProvider != "" || cfg.DefaultVoice != "") && !found {
 		return fmt.Errorf("请选择已启用的默认语音 provider")
 	}
 	return nil

@@ -43,7 +43,7 @@ const text = ref('你好，欢迎来到我们的冒险故事。')
 // The catalog picks the voice for auditions and design/clone requests; the
 // platform default stands in when nothing explicit is chosen.
 const selection = ref<VoiceSelection>({ type: 'inherit' })
-const presetModelIds = computed(() => speech.quota ? [speech.quota.defaultModel] : [])
+const voiceContext = computed(() => speech.quota?.voiceContext ?? null)
 const picker = ref<InstanceType<typeof VoicePicker> | null>(null)
 const MINE_PAGE_SIZE = 20
 const page = ref(1)
@@ -167,7 +167,7 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
   const value = await speechAPI.submit(kind, {
     requestKey: crypto.randomUUID(), text: text.value, name: name.value, description: description.value,
     sourceResourceId,
-    ...requestVoiceFields(selection.value, speech.quota?.defaultVoice),
+    ...requestVoiceFields(selection.value),
   })
   if (!alive || userId !== user.info.id) return
   job.value = value
@@ -204,7 +204,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
       </div>
 
       <div v-show="tab === 'catalog'" class="sp-body sp-catalog">
-        <VoicePicker ref="picker" v-model="selection" mode="browse" :preset-model-ids="presetModelIds" class="sp-picker" />
+        <VoicePicker ref="picker" v-model="selection" mode="browse" :voice-context="voiceContext" class="sp-picker" />
         <aside class="sp-side">
           <h3>合成试听</h3>
           <p class="sp-hint">使用左侧当前选择的音色合成新文本；已有文件可重放。</p>

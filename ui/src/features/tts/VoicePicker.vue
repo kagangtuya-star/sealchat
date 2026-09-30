@@ -3,11 +3,11 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NInput, NPagination, useThemeVars } from 'naive-ui'
 import { speechAPI, speechError } from './api'
 import { useUserStore } from '@/stores/user'
-import type { SpeechVoice, SystemVoice } from './types'
+import type { SpeechVoice, SystemVoice, VoiceContext } from './types'
 import VoiceCard from './VoiceCard.vue'
 import {
   collectVoiceFacets, emptyVoiceFilters, itemSelection, matchesCategory, matchesSearch, matchesVoiceFilters,
-  personalVoiceItem, selectsItem, systemVoiceItem, voiceCategoryOptions, voiceSourceLabel,
+  personalVoiceItem, personalVoiceSupported, itemSupported, selectsItem, systemVoiceItem, systemVoiceSupported, voiceCategoryOptions, voiceSourceLabel,
   type VoiceCatalogItem, type VoiceCategory, type VoiceFacetKey, type VoiceSelection,
 } from './voice-catalog'
 
@@ -16,9 +16,7 @@ import {
 // selection on its own.
 const props = defineProps<{
   mode: 'browse' | 'select'
-  // Restricts platform presets to these models (system voice ids are
-  // model-specific). Personal voices carry their own model. Omit for no limit.
-  presetModelIds?: string[]
+  voiceContext: VoiceContext | null
 }>()
 const selection = defineModel<VoiceSelection>({ required: true })
 const user = useUserStore()
@@ -39,6 +37,7 @@ const personal = ref<SpeechVoice[]>([])
 const personalTotal = ref(0)
 // Personal voices looked up by id when bound but not on the current page; null = not accessible.
 const resolved = ref<Record<string, VoiceCatalogItem | null>>({})
+const resolveEpoch = ref(0)
 const loading = ref(false)
 const error = ref('')
 const searchRef = ref<InstanceType<typeof NInput> | null>(null)
@@ -60,7 +59,7 @@ async function load() {
     const { providerId, kind, tag } = filters.value
     const value = await speechAPI.voices(scope === 'platform'
       ? { scope: 'all', page: 1 }
-      : { scope, search: search.value, page: page.value, providerId: providerId || undefined, kind: kind || undefined, tag: tag || undefined })
+      : { scope, search: search.value, page: page.value, providerId: props.voiceContext?.providerId || providerId || undefined, model: props.voiceContext?.modelId, kind: kind || undefined, tag: tag || undefined })
     if (current !== serial || userId !== user.info.id) return
     system.value = value.system
     // Platform only needs the preset list; its personal page is not displayed.
@@ -71,8 +70,10 @@ async function load() {
   finally { if (current === serial) loading.value = false }
 }
 watch(() => user.info.id, () => { system.value = null; personal.value = []; personalTotal.value = 0; resolved.value = {} }, { flush: 'sync' })
+watch(() => props.voiceContext, () => { page.value = 1; personal.value = []; personalTotal.value = 0; resolved.value = {}; resolveEpoch.value++ }, { flush: 'sync' })
 watch([
   category, search, page, () => user.info.id,
+  () => props.voiceContext,
   () => filters.value.providerId, () => filters.value.kind, () => filters.value.tag,
 ], () => void load(), { immediate: true })
 
@@ -104,10 +105,10 @@ function clearFilters() {
 }
 
 const presetItems = computed(() => (system.value ?? [])
-  .filter(voice => !props.presetModelIds || props.presetModelIds.includes(voice.targetModel))
-  .map(systemVoiceItem))
+  .filter(voice => systemVoiceSupported(voice, props.voiceContext))
+  .map(voice => systemVoiceItem(voice, props.voiceContext!)))
 // Previews and creating voices are managed in the workbench, not picked here.
-const personalItems = computed(() => personal.value.filter(voice => voice.lifecycle === 'saved').map(voice => personalVoiceItem(voice, user.info.id)))
+const personalItems = computed(() => personal.value.filter(voice => voice.lifecycle === 'saved' && personalVoiceSupported(voice, props.voiceContext)).map(voice => personalVoiceItem(voice, user.info.id)))
 const scopedPresets = computed(() => category.value === 'all' || category.value === 'platform'
   ? presetItems.value.filter(item => matchesSearch(item, search.value))
   : [])
@@ -119,8 +120,8 @@ const filteredPresets = computed(() => scopedPresets.value.filter(item => matche
 const filteredPersonal = computed(() => scopedPersonal.value.filter(item => matchesVoiceFilters(item, filters.value)))
 // Personal voices carry no language metadata, so a language filter matches none
 // of them and they must not occupy pagination slots.
-const effectivePersonalTotal = computed(() => filters.value.language ? 0 : personalTotal.value)
-const pagePersonalCount = computed(() => filters.value.language ? 0 : personal.value.length)
+const effectivePersonalTotal = computed(() => filters.value.language || !props.voiceContext ? 0 : personalTotal.value)
+const pagePersonalCount = computed(() => filters.value.language || !props.voiceContext ? 0 : personal.value.length)
 // "All" continues the server's personal pages with local preset pages, so each
 // page holds at most PAGE_SIZE entries and no preset is skipped.
 const visible = computed<VoiceCatalogItem[]>(() => {
@@ -146,7 +147,6 @@ const missingPersonalId = computed(() => {
   const value = selection.value
   return value.type === 'personal' && !personalItems.value.some(item => item.id === value.id) ? value.id : ''
 })
-const resolveEpoch = ref(0)
 let resolveSerial = 0
 watch([missingPersonalId, () => user.info.id, resolveEpoch], async ([id, userId]) => {
   if (!id || id in resolved.value) return
@@ -167,7 +167,7 @@ const current = computed<CurrentState>(() => {
   }
   const item = personalItems.value.find(entry => entry.id === value.id) ?? resolved.value[value.id]
   if (item === undefined) return { status: 'pending' }
-  return item?.available ? { status: 'ready', item } : { status: 'unavailable' }
+  return item?.available && itemSupported(item, props.voiceContext) ? { status: 'ready', item } : { status: 'unavailable' }
 })
 
 function choose(item: VoiceCatalogItem) { if (item.available) selection.value = itemSelection(item) }
@@ -265,7 +265,7 @@ defineExpose({ reload })
         </span>
       </div>
       <div v-if="current.status === 'unavailable'" class="vp-current__warning">
-        <small>可能已删除、改为私有或服务不可用；不会自动改用其他声音。</small>
+        <small>当前模型不可用，需要重新选择；也可能已删除、改为私有或服务不可用。</small>
         <div class="vp-current__actions">
           <button type="button" class="vp-chip" @click="reselect">重新选择</button>
           <button type="button" class="vp-chip" @click="followDefault">{{ mode === 'select' ? '清除绑定，跟随默认' : '改用平台默认' }}</button>

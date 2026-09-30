@@ -40,7 +40,7 @@ Token 用量和实际费用以新增可空字段保存，现有任务通过既�
 3.1 与 3.0 复用同一个 `ttsprovider.Client`、同一个 `SpeechSynthesizer` endpoint
 和 HTTP/SSE 请求结构。现有超长文本分段、WebSocket 合成分支、播放队列和并发架构不变；
 该分支没有可确认的 Token 用量时同样暂停结算。
-3.1 的 68 个官方系统音色按 `targetModel` 严格隔离，不修改用户自定义音色结构。
+3.1 的 68 个官方系统音色按 `providerKind + models[]` 严格隔离，`targetModel` 仅为单模型音色的 API 兼容派生字段；不修改用户自定义音色结构。详见 [能力目录](tts-catalog.md)。
 
 ## 官方依据
 

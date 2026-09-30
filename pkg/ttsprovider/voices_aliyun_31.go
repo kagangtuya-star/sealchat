@@ -1,7 +1,7 @@
-package service
+package ttsprovider
 
-func tts31SystemVoices() []TTSSystemVoice {
-	items := []TTSSystemVoice{}
+func tts31SystemVoices() []TTSVoiceSpec {
+	items := []TTSVoiceSpec{}
 	groups := []struct {
 		Languages []string
 		Voices    [][2]string
@@ -34,7 +34,7 @@ func tts31SystemVoices() []TTSSystemVoice {
 	}
 	for _, group := range groups {
 		for _, voice := range group.Voices {
-			items = append(items, TTSSystemVoice{ID: voice[0], Name: voice[1], TargetModel: "qwen-audio-3.1-tts-flash", Languages: append([]string{}, group.Languages...), Kind: "system"})
+			items = append(items, TTSVoiceSpec{ID: voice[0], Name: voice[1], ProviderKind: ProviderAliyun, Models: []string{"qwen-audio-3.1-tts-flash"}, Languages: append([]string{}, group.Languages...), Kind: "system"})
 		}
 	}
 	return items

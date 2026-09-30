@@ -1212,7 +1212,7 @@ func validateAIQuotaLimit(limit *float64, label string) error {
 }
 
 func ValidateAIConfig(cfg AIConfig) error {
-	if err := ValidateSpeechConfig(NormalizeSpeechConfig(cfg.Speech)); err != nil {
+	if err := ValidateSpeechConfig(NormalizeSpeechConfigForWrite(cfg.Speech)); err != nil {
 		return err
 	}
 	cfg = NormalizeAIConfig(cfg)

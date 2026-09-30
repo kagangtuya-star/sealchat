@@ -81,7 +81,7 @@ func BindTTSRoutes(auth fiber.Router) {
 		if err := model.GetDB().Where("id = ? AND lifecycle = ? AND provider_status = ? AND deleted_at IS NULL AND (owner_user_id = ? OR is_public = ?)", c.Params("id"), "saved", "OK", getCurUser(c).ID, true).First(&voice).Error; err != nil {
 			return ttsError(c, err)
 		}
-		return c.JSON(voice)
+		return c.JSON(service.TTSPersonalVoiceResponse(voice))
 	})
 	r.Post("/sources", ttsSourceUpload)
 	r.Patch("/voices/:id", func(c *fiber.Ctx) error {
@@ -389,7 +389,11 @@ func ttsVoices(c *fiber.Ctx) error {
 	if err := q.Order("created_at DESC, id DESC").Offset((page - 1) * size).Limit(size).Find(&items).Error; err != nil {
 		return ttsError(c, err)
 	}
-	return c.JSON(fiber.Map{"items": items, "total": total, "system": service.TTSSystemVoices(), "catalogVersion": "2026-09-30"})
+	voices := make([]service.TTSPersonalVoice, 0, len(items))
+	for _, voice := range items {
+		voices = append(voices, service.TTSPersonalVoiceResponse(voice))
+	}
+	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "catalogVersion": "2026-09-30"})
 }
 func ttsReadMessage(userID, id string) (*model.MessageModel, error) {
 	var m model.MessageModel
@@ -567,7 +571,7 @@ func ttsAdminConfig(c *fiber.Ctx) error {
 		return ttsError(c, err)
 	}
 	if err = utils.ValidateSpeechConfig(merged.AI.Speech); err != nil {
-		return ttsError(c, err)
+		return ttsError(c, service.TTSValidationError(err.Error()))
 	}
 	appConfig = merged
 	utils.WriteConfig(appConfig)

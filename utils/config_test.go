@@ -174,7 +174,7 @@ func TestWriteConfigPersistsSpeech(t *testing.T) {
 	cfg.AI.Speech = &SpeechConfig{
 		Enabled:         true,
 		DefaultProvider: "aliyun-test",
-		DefaultVoice:    "voice-test",
+		DefaultVoice:    "longanlingxin",
 		Format:          "wav",
 		Providers: []SpeechProviderConfig{
 			{
@@ -212,14 +212,14 @@ func TestWriteConfigPersistsSpeech(t *testing.T) {
 	if speech == nil {
 		t.Fatal("ai.speech was not persisted")
 	}
-	if !speech.Enabled || speech.DefaultProvider != "aliyun-test" || speech.DefaultVoice != "voice-test" || speech.Format != "wav" {
+	if !speech.Enabled || speech.DefaultProvider != "aliyun-test" || speech.DefaultVoice != "longanlingxin" || speech.Format != "wav" {
 		t.Fatalf("unexpected speech config: %#v", speech)
 	}
 	if len(speech.Providers) != 1 {
 		t.Fatalf("unexpected provider count: %#v", speech.Providers)
 	}
 	p := speech.Providers[0]
-	if p.ID != "aliyun-test" || !p.Enabled || p.APIKey != "secret-test" || p.CredentialScope != "scope-test" ||
+	if p.ID != "aliyun-test" || p.ProviderKind != "aliyun" || !p.Enabled || p.APIKey != "secret-test" || p.CredentialScope != "scope-test" ||
 		p.Workspace != "workspace-test" || p.Region != "cn-beijing" ||
 		p.SynthesisEndpoint != "https://synthesis.example.com/api" || p.VoiceEndpoint != "https://voice.example.com/api" ||
 		p.Model != "qwen-audio-3.0-tts-plus" || p.CharacterPrice == nil || *p.CharacterPrice != price {

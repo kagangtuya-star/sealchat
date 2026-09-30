@@ -22,17 +22,19 @@ const TTSAutoPreference = "tts.autoSynthesis"
 const ttsMessageSynthesisMaxRunes = 20000
 
 type TTSRequest struct {
-	RequestKey       string  `json:"requestKey"`
-	Text             string  `json:"text"`
-	VoiceID          string  `json:"voiceId"`
-	SystemVoice      string  `json:"systemVoice"`
-	Instruction      string  `json:"instruction"`
-	Rate             float64 `json:"rate"`
-	Pitch            float64 `json:"pitch"`
-	Volume           *int    `json:"volume"`
-	Name             string  `json:"name"`
-	Description      string  `json:"description"`
-	SourceResourceID string  `json:"sourceResourceId"`
+	RequestKey          string  `json:"requestKey"`
+	Text                string  `json:"text"`
+	VoiceID             string  `json:"voiceId"`
+	SystemVoice         string  `json:"systemVoice"`
+	SystemVoiceProvider string  `json:"systemVoiceProvider,omitempty"`
+	SystemVoiceModel    string  `json:"systemVoiceModel,omitempty"`
+	Instruction         string  `json:"instruction"`
+	Rate                float64 `json:"rate"`
+	Pitch               float64 `json:"pitch"`
+	Volume              *int    `json:"volume"`
+	Name                string  `json:"name"`
+	Description         string  `json:"description"`
+	SourceResourceID    string  `json:"sourceResourceId"`
 }
 type TTSSnapshot struct {
 	Version          int                        `json:"version"`
@@ -64,11 +66,24 @@ func TTSAutomaticEnabled(userID string) bool {
 }
 
 func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error) {
+	return ttsSnapshotForRequest(userID, r, scope, false)
+}
+
+func systemVoiceBindingSupported(p utils.SpeechProviderConfig, id, providerKind, modelID string) bool {
+	legacy := providerKind == "" && modelID == ""
+	return (legacy || (providerKind == p.EffectiveProviderKind() && modelID == p.Model)) &&
+		ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, id)
+}
+
+func ttsSnapshotForRequest(userID string, r TTSRequest, scope string, automatic bool) (TTSSnapshot, error) {
 	cfg, err := ttsConfig()
 	if err != nil {
 		return TTSSnapshot{}, err
 	}
 	s := TTSSnapshot{Version: 1, Owner: userID, Scope: scope, VoiceID: r.VoiceID, SourceResourceID: r.SourceResourceID, Name: r.Name, Description: r.Description}
+	if r.VoiceID != "" && r.SystemVoice != "" {
+		return s, TTSValidationError("不能同时指定个人音色和系统音色")
+	}
 	providerID := cfg.DefaultProvider
 	var voice *model.TTSVoice
 	if r.VoiceID != "" {
@@ -90,14 +105,26 @@ func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error)
 	if !found || s.Provider.APIKey == "" {
 		return s, ErrTTSDisabled
 	}
+	if _, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); !supported {
+		return s, TTSValidationError("语音 provider 类型与模型不匹配")
+	}
 	s.Provider.APIKey = ""
 	s.Provider.HasAPIKey = false
 	v := r.SystemVoice
+	if voice == nil && v != "" && !systemVoiceBindingSupported(s.Provider, v, r.SystemVoiceProvider, r.SystemVoiceModel) {
+		if !automatic {
+			return s, TTSValidationError("系统音色与当前 provider 类型或模型不匹配，需要重新选择")
+		}
+		v = ""
+	}
 	if v == "" {
-		v = cfg.DefaultVoice
+		v = ttsprovider.DefaultVoice(s.Provider.EffectiveProviderKind(), s.Provider.Model)
+		if s.Provider.ID == cfg.DefaultProvider && ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, cfg.DefaultVoice) {
+			v = cfg.DefaultVoice
+		}
 	}
 	if voice != nil {
-		if voice.CredentialScope != s.Provider.CredentialScope || voice.TargetModel != s.Provider.Model || voice.Region != s.Provider.Region || voice.Workspace != s.Provider.Workspace {
+		if !PersonalVoiceSupported(s.Provider, *voice) {
 			return s, ErrTTSDenied
 		}
 		v = voice.ProviderVoiceID
@@ -118,7 +145,7 @@ func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error)
 				}
 			}
 		}
-	} else if !ttsSystemVoiceValid(v, s.Provider.Model) {
+	} else if !ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v) {
 		return s, TTSValidationError("系统音色与当前模型不匹配")
 	}
 	if r.Rate == 0 {
@@ -226,6 +253,8 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 		if model.GetDB().Where("identity_id = ? AND deleted_at IS NULL", m.SenderIdentityID).First(&role).Error == nil {
 			r.VoiceID = role.VoiceID
 			r.SystemVoice = role.SystemVoice
+			r.SystemVoiceProvider = role.SystemVoiceProvider
+			r.SystemVoiceModel = role.SystemVoiceModel
 			r.Instruction = role.Instruction
 			r.Rate = role.Rate
 			r.Pitch = role.Pitch
@@ -233,7 +262,7 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 		}
 	}
 	// Start with an isolated scope, then freeze the actual audience below.
-	s, err := ttsSnapshot(user.ID, r, m.ChannelID+":"+m.ID)
+	s, err := ttsSnapshotForRequest(user.ID, r, m.ChannelID+":"+m.ID, true)
 	if err != nil {
 		m.TTSStatus = "unavailable"
 		return
@@ -301,6 +330,10 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	spec, _ := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model)
+	if (operation == "design" && !spec.Capabilities.VoiceDesign) || (operation == "clone" && !spec.Capabilities.VoiceClone) {
+		return nil, TTSValidationError("当前模型不支持此音色创建方式")
+	}
 	if operation == "clone" {
 		var a model.AttachmentModel
 		if model.GetDB().Where("id = ? AND user_id = ? AND root_id_type = ? AND parent_id_type = ? AND deleted_at IS NULL", r.SourceResourceID, userID, "tts", "clone_source").First(&a).Error != nil {
@@ -364,7 +397,7 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 		price = &estimatedPrice
 	}
 	job.EstimatedUnits = int64(utf8.RuneCountInString(s.Input.Text))
-	if spec, supported := ttsprovider.LookupModel(s.Provider.Model); supported && spec.Pricing.Mode == ttsprovider.PricingCharacter {
+	if spec, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); supported && spec.Pricing.Mode == ttsprovider.PricingCharacter {
 		job.EstimatedUnits = TTSBillableCharacters(s.Input.Text)
 	}
 	if job.Operation == "design" {

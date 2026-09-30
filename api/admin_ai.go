@@ -60,6 +60,9 @@ func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "AI 配置无效"})
 	}
+	if err := utils.ValidateSpeechConfig(merged.AI.Speech); err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+	}
 	merged.AI = utils.NormalizeAIConfig(merged.AI)
 	if enrichedAI, pricingErr := aiService.FillMissingPricingFromModelsDev(ctx.Context(), merged.AI); pricingErr == nil {
 		merged.AI = enrichedAI

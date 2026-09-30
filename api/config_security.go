@@ -86,12 +86,12 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	if incoming.AI.Speech == nil {
 		out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
 	} else {
-		out.AI.Speech = utils.NormalizeSpeechConfig(incoming.AI.Speech)
+		out.AI.Speech = utils.NormalizeSpeechConfigForWrite(incoming.AI.Speech)
 		if current.AI.Speech != nil {
 			for i := range out.AI.Speech.Providers {
 				p := &out.AI.Speech.Providers[i]
 				for _, old := range current.AI.Speech.Providers {
-					if old.ID == p.ID && old.CredentialScope == p.CredentialScope && strings.TrimSpace(p.APIKey) == "" {
+					if old.ID == p.ID && old.EffectiveProviderKind() == p.EffectiveProviderKind() && old.CredentialScope == p.CredentialScope && strings.TrimSpace(p.APIKey) == "" {
 						p.APIKey = old.APIKey
 					}
 				}

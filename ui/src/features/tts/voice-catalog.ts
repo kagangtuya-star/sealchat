@@ -1,14 +1,11 @@
-import type { RoleSpeechConfig, SpeechRequest, SpeechVoice, SystemVoice } from './types'
+import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechRequest, SpeechVoice, SystemVoice, VoiceContext } from './types'
 
-// Front-end catalog model. API types stay unchanged; the adapters below are the
-// only place that knows how `VoiceDirectory.system` / `.items` map onto it.
+// Adapters keep the provider/model context shared by all voice selectors.
 export type VoiceOwnership = 'platform' | 'mine' | 'public'
 export type VoiceVisibility = 'system' | 'private' | 'public'
 export type VoiceSelection =
   | { type: 'inherit' }
-  // System ids are model-specific. modelId/providerId are picker-side metadata;
-  // a selection restored from RoleSpeechConfig.systemVoice carries only the id.
-  | { type: 'system'; id: string; modelId?: string; providerId?: string }
+  | { type: 'system'; id: string; modelId?: string; providerKind?: string }
   | { type: 'personal'; id: string }
 export type VoiceCategory = 'all' | 'platform' | 'mine' | 'public'
 
@@ -17,6 +14,8 @@ export interface VoiceCatalogItem {
   id: string
   source: 'system' | 'personal'
   providerId?: string
+  providerKind?: string
+  models: string[]
   modelId: string
   name: string
   description?: string
@@ -36,9 +35,7 @@ export interface SpeechProviderCatalogMeta {
   id: string
   label: string
 }
-// Keyed by the `providerId` carried on voice data. The directory currently
-// returns admin-assigned provider ids for personal voices only and no provider
-// for system voices, so no entry is registered yet; unknown ids show verbatim.
+// Keyed by the instance IDs carried on personal voices. Unknown IDs show verbatim.
 export const speechProviderCatalog: Readonly<Record<string, SpeechProviderCatalogMeta>> = {}
 export const voiceCategoryOptions: ReadonlyArray<{ value: VoiceCategory; label: string }> = [
   { value: 'all', label: '全部' },
@@ -69,10 +66,10 @@ export function isDisplayVoiceTag(value: string): boolean {
   return !!text && !/^\d+(?:\.\d+)?(?:\s*(?:岁|years?|yrs?))?$/i.test(text)
 }
 
-export function systemVoiceItem(voice: SystemVoice): VoiceCatalogItem {
+export function systemVoiceItem(voice: SystemVoice, context: VoiceContext): VoiceCatalogItem {
   return {
-    key: `system:${voice.providerId ?? ''}:${voice.targetModel}:${voice.id}`, id: voice.id, source: 'system',
-    providerId: voice.providerId || undefined, modelId: voice.targetModel, name: voice.name,
+    key: `system:${voice.providerKind}:${context.modelId}:${voice.id}`, id: voice.id, source: 'system',
+    providerKind: voice.providerKind, models: voice.models, modelId: context.modelId, name: voice.name,
     tags: splitTags(voice.tags), languages: voice.languages ?? [], kind: voice.kind,
     ownership: 'platform', visibility: 'system', available: true,
   }
@@ -83,53 +80,69 @@ export function systemVoiceItem(voice: SystemVoice): VoiceCatalogItem {
 export function personalVoiceItem(voice: SpeechVoice, userId: string): VoiceCatalogItem {
   return {
     key: `personal:${voice.id}`, id: voice.id, source: 'personal', providerId: voice.providerId || undefined,
-    modelId: voice.targetModel, name: voice.name, description: voice.description || undefined,
+    models: [voice.targetModel], modelId: voice.targetModel, name: voice.name, description: voice.description || undefined,
     tags: splitTags(voice.tags), languages: [], kind: voice.kind,
     ownership: voice.ownerUserId === userId ? 'mine' : 'public',
     visibility: voice.isPublic ? 'public' : 'private',
-    available: voice.lifecycle === 'saved' && voice.providerStatus === 'OK',
+    available: voice.lifecycle === 'saved' && voice.providerStatus === 'OK' && voice.supported !== false,
     previewResourceId: voice.previewResourceId || undefined,
   }
+}
+
+export function systemVoiceSupported(voice: SystemVoice, context: VoiceContext | null): boolean {
+  return !!context && voice.providerKind === context.providerKind && voice.models.includes(context.modelId)
+}
+export function personalVoiceSupported(voice: Pick<SpeechVoice, 'providerId' | 'targetModel'>, context: VoiceContext | null): boolean {
+  return !!context && voice.providerId === context.providerId && voice.targetModel === context.modelId
+}
+export function itemSupported(item: VoiceCatalogItem, context: VoiceContext | null): boolean {
+  return !!context && (item.source === 'system'
+    ? item.providerKind === context.providerKind && item.models.includes(context.modelId)
+    : item.providerId === context.providerId && item.modelId === context.modelId)
+}
+export function defaultVoiceForContext(voices: SystemVoice[], models: ResolvedSpeechModel[], context: VoiceContext | null, current: string): string {
+  if (!context) return ''
+  if (voices.some(voice => voice.id === current && systemVoiceSupported(voice, context))) return current
+  return models.find(model => model.providerKind === context.providerKind && model.id === context.modelId)?.defaultVoice ?? ''
 }
 
 export function sameSelection(a: VoiceSelection, b: VoiceSelection): boolean {
   if (a.type === 'inherit' || b.type === 'inherit') return a.type === b.type
   if (a.type === 'system' && b.type === 'system') {
     return a.id === b.id && (!a.modelId || !b.modelId || a.modelId === b.modelId)
-      && (!a.providerId || !b.providerId || a.providerId === b.providerId)
+      && (!a.providerKind || !b.providerKind || a.providerKind === b.providerKind)
   }
   return a.type === b.type && a.id === b.id
 }
-// A system selection without modelId/providerId is a legacy persisted binding
-// and matches by id within the presets the caller allows.
+// Both namespace fields empty means a legacy binding, resolved in the context.
 export function selectsItem(selection: VoiceSelection, item: VoiceCatalogItem): boolean {
   if (selection.type === 'inherit' || selection.type !== item.source || selection.id !== item.id) return false
   if (selection.type !== 'system') return true
-  return (!selection.modelId || selection.modelId === item.modelId)
-    && (!selection.providerId || selection.providerId === item.providerId)
+  const legacy = !selection.modelId && !selection.providerKind
+  return legacy || (selection.modelId === item.modelId && selection.providerKind === item.providerKind)
 }
 export function itemSelection(item: VoiceCatalogItem): VoiceSelection {
   return item.source === 'system'
-    ? { type: 'system', id: item.id, modelId: item.modelId, providerId: item.providerId }
+    ? { type: 'system', id: item.id, modelId: item.modelId, providerKind: item.providerKind }
     : { type: 'personal', id: item.id }
 }
 
-// RoleSpeechConfig keeps two fields; at most one of them may carry a value.
-export function roleVoiceSelection(role: Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice'>): VoiceSelection {
+type RoleVoiceFields = Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceModel'>
+export function roleVoiceSelection(role: RoleVoiceFields): VoiceSelection {
   if (role.voiceId) return { type: 'personal', id: role.voiceId }
-  if (role.systemVoice) return { type: 'system', id: role.systemVoice }
+  if (role.systemVoice) return { type: 'system', id: role.systemVoice, providerKind: role.systemVoiceProvider || undefined, modelId: role.systemVoiceModel || undefined }
   return { type: 'inherit' }
 }
-export function roleVoiceFields(selection: VoiceSelection): Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice'> {
-  if (selection.type === 'personal') return { voiceId: selection.id, systemVoice: '' }
-  if (selection.type === 'system') return { voiceId: '', systemVoice: selection.id }
-  return { voiceId: '', systemVoice: '' }
+export function roleVoiceFields(selection: VoiceSelection): RoleVoiceFields {
+  const empty = { voiceId: '', systemVoice: '', systemVoiceProvider: '', systemVoiceModel: '' }
+  if (selection.type === 'personal') return { ...empty, voiceId: selection.id }
+  if (selection.type === 'system') return { ...empty, systemVoice: selection.id, systemVoiceProvider: selection.providerKind ?? '', systemVoiceModel: selection.modelId ?? '' }
+  return empty
 }
-// Job requests carry either an explicit personal voice or a system voice, with
-// the platform default standing in for "inherit".
-export function requestVoiceFields(selection: VoiceSelection, defaultVoice: string | undefined): Pick<SpeechRequest, 'voiceId' | 'systemVoice'> {
+export function requestVoiceFields(selection: VoiceSelection): Pick<SpeechRequest, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceModel'> {
   if (selection.type === 'personal') return { voiceId: selection.id }
-  return { systemVoice: selection.type === 'system' ? selection.id : defaultVoice }
+  if (selection.type === 'system') return { systemVoice: selection.id, systemVoiceProvider: selection.providerKind, systemVoiceModel: selection.modelId }
+  return {}
 }
 
 export function matchesCategory(item: VoiceCatalogItem, category: VoiceCategory): boolean {

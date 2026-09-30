@@ -5,8 +5,9 @@ import { speechAPI, speechError } from './api'
 import type { ResolvedSpeechModel, ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
 import { speechPlayer } from './player'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
+import { defaultVoiceForContext, systemVoiceSupported } from './voice-catalog'
 const newProviderTarget = '__new_provider__'
-const config = ref<SpeechConfig>({ enabled: false, providers: [], defaultProvider: '', defaultVoice: 'longanhuan_v3.6', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
+const config = ref<SpeechConfig>({ enabled: false, providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
@@ -21,7 +22,11 @@ const resolvedProvider = ref<ResolvedSpeechProvider | null>(null)
 const resolvedModelId = ref('')
 const systemVoices = ref<SystemVoice[]>([])
 const modelCatalog = ref<ResolvedSpeechModel[]>([])
-const modelOptions = computed(() => modelCatalog.value.map(model => ({ label: model.name, value: model.id })))
+const providerKindOptions = computed(() => [...new Set(modelCatalog.value.map(model => model.providerKind))].map(kind => ({ label: kind, value: kind })))
+const modelOptions = (provider: SpeechProvider) => modelCatalog.value.filter(model => model.providerKind === provider.providerKind).map(model => ({ label: model.name, value: model.id }))
+const defaultProvider = computed(() => config.value.providers.find(provider => provider.id === config.value.defaultProvider))
+const voiceContext = computed(() => defaultProvider.value ? { providerKind: defaultProvider.value.providerKind, providerId: defaultProvider.value.id, modelId: defaultProvider.value.model } : null)
+const defaultVoiceOptions = computed(() => systemVoices.value.filter(voice => systemVoiceSupported(voice, voiceContext.value)).map(voice => ({ label: `${voice.name} (${voice.id})`, value: voice.id })))
 const resolvedModel = computed(() => resolvedProvider.value?.models.find(model => model.id === resolvedModelId.value))
 const localProviderIds = new Set<string>()
 let alive = true
@@ -43,7 +48,7 @@ async function run(fn: () => Promise<void>) {
 }
 function blankProvider(id: string, enabled = false): SpeechProvider {
   const model = modelCatalog.value[0]
-  return { id, enabled, credentialScope: '', region: 'cn-beijing', workspace: '', apiKey: '', synthesisEndpoint: '', voiceEndpoint: '', model: model?.id ?? '', pricingMode: model?.pricingMode ?? 'character', characterPrice: null, inputTokenPrice: null, outputTokenPrice: null, designPrice: null, clonePrice: null, accountVoiceLimit: null, revision: 1 }
+  return { id, providerKind: model?.providerKind ?? '', enabled, credentialScope: '', region: 'cn-beijing', workspace: '', apiKey: '', synthesisEndpoint: '', voiceEndpoint: '', model: model?.id ?? '', pricingMode: model?.pricingMode ?? 'character', characterPrice: null, inputTokenPrice: null, outputTokenPrice: null, designPrice: null, clonePrice: null, accountVoiceLimit: null, revision: 1 }
 }
 function add() {
   const id = crypto.randomUUID()
@@ -79,16 +84,14 @@ function selectQuickProvider(providerId: string) {
   resolvedProvider.value = null
   resolvedModelId.value = ''
 }
-function ensureDefaultVoice(model: string) {
-  if (systemVoices.value.some(voice => voice.id === config.value.defaultVoice && voice.targetModel === model)) return
-  const fallback = systemVoices.value.find(voice => voice.targetModel === model)
-  if (fallback) config.value.defaultVoice = fallback.id
+function ensureDefaultVoice() {
+  if (!modelCatalog.value.length || !systemVoices.value.length) return
+  config.value.defaultVoice = defaultVoiceForContext(systemVoices.value, modelCatalog.value, voiceContext.value, config.value.defaultVoice)
 }
-watch(() => config.value.providers.find(provider => provider.id === config.value.defaultProvider)?.model, model => {
-  if (model) ensureDefaultVoice(model)
-})
+watch([voiceContext, systemVoices, modelCatalog], ensureDefaultVoice)
 function setModelPricing(provider: SpeechProvider, model: ResolvedSpeechModel) {
   Object.assign(provider, {
+    providerKind: model.providerKind,
     model: model.id,
     pricingMode: model.pricingMode,
     characterPrice: model.characterPrice,
@@ -97,8 +100,13 @@ function setModelPricing(provider: SpeechProvider, model: ResolvedSpeechModel) {
   })
 }
 function selectProviderModel(provider: SpeechProvider, modelId: string) {
-  const online = resolvedProvider.value?.providerId === provider.id ? resolvedProvider.value.models.find(model => model.id === modelId) : undefined
-  const model = online ?? modelCatalog.value.find(model => model.id === modelId)
+  const online = resolvedProvider.value?.providerId === provider.id ? resolvedProvider.value.models.find(model => model.providerKind === provider.providerKind && model.id === modelId) : undefined
+  const model = online ?? modelCatalog.value.find(model => model.providerKind === provider.providerKind && model.id === modelId)
+  if (model) setModelPricing(provider, model)
+}
+function selectProviderKind(provider: SpeechProvider, kind: string) {
+  provider.providerKind = kind
+  const model = modelCatalog.value.find(model => model.providerKind === kind)
   if (model) setModelPricing(provider, model)
 }
 function displayUnitPrice(price: number | null | undefined, units: number) {
@@ -117,6 +125,7 @@ function applyResolvedModel(modelId: string) {
     localProviderIds.add(provider.id)
   }
   Object.assign(provider, {
+    providerKind: resolved.providerKind,
     credentialScope: resolved.credentialScope,
     region: resolved.region,
     workspace: resolved.workspace,
@@ -131,7 +140,7 @@ function applyResolvedModel(modelId: string) {
     provider.enabled = true
     config.value.defaultProvider = provider.id
   }
-  if (config.value.defaultProvider === provider.id) ensureDefaultVoice(model.id)
+  if (config.value.defaultProvider === provider.id) ensureDefaultVoice()
   quickProviderId.value = provider.id
 }
 async function resolveProvider() {
@@ -278,8 +287,8 @@ onBeforeUnmount(() => {
                 }))"
               />
             </NFormItem>
-            <NFormItem label="默认系统音色 ID">
-              <NInput v-model:value="config.defaultVoice" />
+            <NFormItem label="默认系统音色">
+              <NSelect v-model:value="config.defaultVoice" :options="defaultVoiceOptions" filterable :disabled="!voiceContext" />
             </NFormItem>
             <NFormItem label="合成格式">
               <NSelect v-model:value="config.format" :options="[{ label: 'WAV（PCM16 增量播放）', value: 'wav' }, { label: 'MP3（兼容文件播放）', value: 'mp3' }]" />
@@ -378,6 +387,7 @@ onBeforeUnmount(() => {
                   <NGrid cols="1 l:2" :x-gap="24" responsive="screen">
                     <NGi>
                       <NFormItem label="Provider ID"><NInput :value="provider.id" readonly /></NFormItem>
+                      <NFormItem label="Provider 类型"><NSelect :value="provider.providerKind" :options="providerKindOptions" @update:value="selectProviderKind(provider, $event)" /></NFormItem>
                       <NFormItem label="credentialScope"><NInput v-model:value="provider.credentialScope" /></NFormItem>
                       <NFormItem label="Workspace"><NInput v-model:value="provider.workspace" /></NFormItem>
                       <NFormItem label="Region"><NInput v-model:value="provider.region" /></NFormItem>
@@ -386,7 +396,7 @@ onBeforeUnmount(() => {
                       <NFormItem label="Voice Endpoint"><NInput v-model:value="provider.voiceEndpoint" /></NFormItem>
                     </NGi>
                     <NGi>
-                      <NFormItem label="模型"><NSelect :value="provider.model" :options="modelOptions" @update:value="selectProviderModel(provider, $event)" /></NFormItem>
+                      <NFormItem label="模型"><NSelect :value="provider.model" :options="modelOptions(provider)" @update:value="selectProviderModel(provider, $event)" /></NFormItem>
                       <template v-if="provider.pricingMode === 'token'">
                         <NFormItem label="输入 Token 单价">
                           <NInputNumber v-model:value="provider.inputTokenPrice" :min="0" placeholder="单 Token 成本" />

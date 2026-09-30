@@ -167,7 +167,14 @@ type TTSQuota struct {
 	DesignPrice      *float64                      `json:"designPrice"`
 	ClonePrice       *float64                      `json:"clonePrice"`
 	DefaultModel     string                        `json:"defaultModel"`
+	VoiceContext     TTSVoiceContext               `json:"voiceContext"`
 	DefaultVoice     string                        `json:"defaultVoice"`
+}
+
+type TTSVoiceContext struct {
+	ProviderKind string `json:"providerKind"`
+	ProviderID   string `json:"providerId"`
+	ModelID      string `json:"modelId"`
 }
 
 func TTSQuotaForUser(userID string) (TTSQuota, error) {
@@ -185,6 +192,7 @@ func TTSQuotaForUser(userID string) (TTSQuota, error) {
 		q.DefaultVoice = speech.DefaultVoice
 		for _, p := range speech.Providers {
 			if p.ID == speech.DefaultProvider {
+				q.VoiceContext = TTSVoiceContext{ProviderKind: p.EffectiveProviderKind(), ProviderID: p.ID, ModelID: p.Model}
 				q.DefaultModel = p.Model
 				q.CharacterPrice = p.CharacterPrice
 				q.PricingMode = p.EffectivePricingMode()
@@ -245,10 +253,17 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 		}
 	}
 	if input.VoiceID != "" || input.SystemVoice != "" {
-		_, err = ttsSnapshot(userID, TTSRequest{VoiceID: input.VoiceID, SystemVoice: input.SystemVoice, Instruction: input.Instruction, Rate: input.Rate, Pitch: input.Pitch, Volume: &input.Volume}, "role")
+		s, err := ttsSnapshot(userID, TTSRequest{VoiceID: input.VoiceID, SystemVoice: input.SystemVoice, SystemVoiceProvider: input.SystemVoiceProvider, SystemVoiceModel: input.SystemVoiceModel, Instruction: input.Instruction, Rate: input.Rate, Pitch: input.Pitch, Volume: &input.Volume}, "role")
 		if err != nil {
 			return err
 		}
+		if input.SystemVoice != "" {
+			input.SystemVoiceProvider = s.Provider.EffectiveProviderKind()
+			input.SystemVoiceModel = s.Provider.Model
+		}
+	}
+	if input.SystemVoice == "" {
+		input.SystemVoiceProvider, input.SystemVoiceModel = "", ""
 	}
 	if input.Revision != old.Revision {
 		return ErrTTSConflict
@@ -259,7 +274,7 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 		input.StringPKBaseModel = model.StringPKBaseModel{}
 		return model.GetDB().Create(&input).Error
 	}
-	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"voice_id": input.VoiceID, "system_voice": input.SystemVoice, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
+	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"voice_id": input.VoiceID, "system_voice": input.SystemVoice, "system_voice_provider": input.SystemVoiceProvider, "system_voice_model": input.SystemVoiceModel, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
 	if r.Error != nil {
 		return r.Error
 	}

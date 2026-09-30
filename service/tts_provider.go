@@ -26,15 +26,19 @@ var lookupTTSModelsDevPricing = aiService.LookupModelsDevPricing
 
 type TTSResolvedModel struct {
 	ttsprovider.TTSModelPricing
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	PricingSource string   `json:"pricingSource"`
-	DesignPrice   *float64 `json:"designPrice"`
-	ClonePrice    float64  `json:"clonePrice"`
+	ID            string                        `json:"id"`
+	ProviderKind  string                        `json:"providerKind"`
+	Capabilities  ttsprovider.ModelCapabilities `json:"capabilities"`
+	DefaultVoice  string                        `json:"defaultVoice"`
+	Name          string                        `json:"name"`
+	PricingSource string                        `json:"pricingSource"`
+	DesignPrice   *float64                      `json:"designPrice"`
+	ClonePrice    float64                       `json:"clonePrice"`
 }
 
 type TTSProviderResolution struct {
 	ProviderID        string             `json:"providerId"`
+	ProviderKind      string             `json:"providerKind"`
 	Workspace         string             `json:"workspace"`
 	Region            string             `json:"region"`
 	CredentialScope   string             `json:"credentialScope"`
@@ -85,6 +89,7 @@ func ParseAliyunTTSBaseURL(baseURL string) (TTSProviderResolution, error) {
 	}
 	nativeBase := "https://" + host + "/api/v1"
 	return TTSProviderResolution{
+		ProviderKind:      ttsprovider.ProviderAliyun,
 		Workspace:         workspace,
 		Region:            "cn-beijing",
 		CredentialScope:   "aliyun:" + workspace + ":cn-beijing",
@@ -149,8 +154,8 @@ func resolveAliyunTTSProvider(ctx context.Context, client *http.Client, baseURL,
 	}
 
 	for _, model := range models {
-		spec, supported := ttsprovider.LookupModel(model.Model)
-		if !supported || !spec.HTTPStreaming {
+		spec, supported := ttsprovider.LookupModel(ttsprovider.ProviderAliyun, model.Model)
+		if !supported || !spec.Capabilities.HTTPStreaming {
 			continue
 		}
 		name := strings.TrimSpace(model.Name)
@@ -329,13 +334,13 @@ func resolveTTSModelPricing(model aliyunCatalogModel, spec ttsprovider.ModelSpec
 	default:
 		pricing.DisplayPrice, source = "价格未确认", "unknown"
 	}
-	return TTSResolvedModel{ID: model.Model, Name: model.Model, TTSModelPricing: pricing, PricingSource: source}
+	return TTSResolvedModel{ID: model.Model, ProviderKind: spec.ProviderKind, Capabilities: spec.Capabilities, DefaultVoice: ttsprovider.DefaultVoice(spec.ProviderKind, spec.ID), Name: model.Model, TTSModelPricing: pricing, PricingSource: source}
 }
 
 func TTSModelCatalog() []TTSResolvedModel {
 	models := []TTSResolvedModel{}
 	for _, spec := range ttsprovider.ModelCatalog() {
-		if spec.HTTPStreaming {
+		if spec.Capabilities.HTTPStreaming {
 			models = append(models, resolveTTSModelPricing(aliyunCatalogModel{Model: spec.ID}, spec))
 		}
 	}
