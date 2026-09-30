@@ -45,7 +45,25 @@ const languageLabels: Readonly<Record<string, string>> = { zh: '中文', en: '�
 export const voiceKindLabel = (kind: string) => kindLabels[kind] ?? kind
 export const voiceLanguageLabel = (code: string) => languageLabels[code] ?? code
 
-const speechLanguageLabels: Readonly<Record<string, string>> = { zh: '中文', en: 'English', ja: '日本語', ko: '한국어', yue: '粤语', fr: 'Français', de: 'Deutsch', pt: 'Português', it: 'Italiano', vi: 'Tiếng Việt', id: 'Bahasa Indonesia', ru: 'Русский', th: 'ไทย', es: 'Español', ms: 'Bahasa Melayu', fil: 'Filipino', ar: 'العربية' }
+const speechLanguageLabels: Readonly<Record<string, string>> = {
+  zh: '中文（中文）',
+  en: '英语（English）',
+  ja: '日语（日本語）',
+  ko: '韩语（한국어）',
+  yue: '粤语（粤语）',
+  fr: '法语（Français）',
+  de: '德语（Deutsch）',
+  pt: '葡萄牙语（Português）',
+  it: '意大利语（Italiano）',
+  vi: '越南语（Tiếng Việt）',
+  id: '印尼语（Bahasa Indonesia）',
+  ru: '俄语（Русский）',
+  th: '泰语（ไทย）',
+  es: '西班牙语（Español）',
+  ms: '马来语（Bahasa Melayu）',
+  fil: '菲律宾语（Filipino）',
+  ar: '阿拉伯语（العربية）',
+}
 export function speechLanguageOptions(languages: string[]): Array<{ value: string; label: string }> {
   return [{ value: '', label: '跟随原文' }, ...[...new Set(languages)].filter(Boolean).map(value => ({ value, label: speechLanguageLabels[value] ?? voiceLanguageLabel(value) }))]
 }

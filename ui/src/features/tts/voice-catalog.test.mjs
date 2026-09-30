@@ -69,6 +69,37 @@ const SpeechPanel = await component('./SpeechPanel.vue')
 const RoleVoiceDialog = await component('./RoleVoiceDialog.vue')
 async function settle() { for (let i = 0; i < 30; i++) await vue.nextTick() }
 
+test('speech language labels include Chinese and native names while preserving values and fallbacks', () => {
+  const options = [
+    { value: 'zh', label: '中文（中文）' },
+    { value: 'en', label: '英语（English）' },
+    { value: 'fr', label: '法语（Français）' },
+    { value: 'de', label: '德语（Deutsch）' },
+    { value: 'ja', label: '日语（日本語）' },
+    { value: 'ko', label: '韩语（한국어）' },
+    { value: 'yue', label: '粤语（粤语）' },
+    { value: 'ru', label: '俄语（Русский）' },
+    { value: 'pt', label: '葡萄牙语（Português）' },
+    { value: 'th', label: '泰语（ไทย）' },
+    { value: 'id', label: '印尼语（Bahasa Indonesia）' },
+    { value: 'vi', label: '越南语（Tiếng Việt）' },
+    { value: 'it', label: '意大利语（Italiano）' },
+    { value: 'es', label: '西班牙语（Español）' },
+    { value: 'ms', label: '马来语（Bahasa Melayu）' },
+    { value: 'fil', label: '菲律宾语（Filipino）' },
+    { value: 'ar', label: '阿拉伯语（العربية）' },
+  ]
+  assert.deepEqual(catalog.speechLanguageOptions(options.map(option => option.value)), [
+    { value: '', label: '跟随原文' }, ...options,
+  ])
+  assert.deepEqual(catalog.speechLanguageOptions(['xx']), [
+    { value: '', label: '跟随原文' }, { value: 'xx', label: 'xx' },
+  ])
+  assert.equal(catalog.voiceLanguageLabel('zh'), '中文')
+  assert.equal(catalog.voiceLanguageLabel('en'), '英文')
+  assert.equal(catalog.voiceLanguageLabel('xx'), 'xx')
+})
+
 test('speech languages use speech capability, independently of catalog language filters', async () => {
   const speechLanguages = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'pt', 'it', 'vi', 'id']
   const bundled = JSON.parse(readFileSync(new URL('../../../../pkg/ttsprovider/tts_catalog_31_20260930.json', import.meta.url), 'utf8'))
@@ -93,10 +124,10 @@ test('speech languages use speech capability, independently of catalog language 
     state.system.value = voices
     await settle()
     assert.deepEqual(catalog.speechLanguageOptions(state.speechLanguages.value), [
-      { value: '', label: '跟随原文' }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' },
-      { value: 'ja', label: '日本語' }, { value: 'ko', label: '한국어' }, { value: 'fr', label: 'Français' },
-      { value: 'de', label: 'Deutsch' }, { value: 'pt', label: 'Português' }, { value: 'it', label: 'Italiano' },
-      { value: 'vi', label: 'Tiếng Việt' }, { value: 'id', label: 'Bahasa Indonesia' },
+      { value: '', label: '跟随原文' }, { value: 'zh', label: '中文（中文）' }, { value: 'en', label: '英语（English）' },
+      { value: 'ja', label: '日语（日本語）' }, { value: 'ko', label: '韩语（한국어）' }, { value: 'fr', label: '法语（Français）' },
+      { value: 'de', label: '德语（Deutsch）' }, { value: 'pt', label: '葡萄牙语（Português）' }, { value: 'it', label: '意大利语（Italiano）' },
+      { value: 'vi', label: '越南语（Tiếng Việt）' }, { value: 'id', label: '印尼语（Bahasa Indonesia）' },
     ])
     state.filters.value.language = 'en'
     assert.equal(state.filteredPresets.value.length, 0)
@@ -142,7 +173,7 @@ test('role speech language resets on incompatible selection and travels with sav
     role.selection.value = catalog.itemSelection(catalog.systemVoiceItem(system[0], flash))
     picker.system.value = [{ ...system[0], speechLanguages: ['zh', 'en', 'ja'] }, system[1]]
     await settle()
-    assert.ok(role.languageOptions.value.some(option => option.value === 'en' && option.label === 'English'))
+    assert.ok(role.languageOptions.value.some(option => option.value === 'en' && option.label === '英语（English）'))
     role.role.value.speechLanguage = 'en'
     await role.save()
     assert.equal(globalThis.__voiceTest.savedRole.request.speechLanguage, 'en')
