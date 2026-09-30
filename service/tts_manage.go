@@ -177,18 +177,17 @@ func ttsMaintainVoices(parent context.Context) {
 		if provider == nil {
 			continue
 		}
-		client := ttsprovider.Client{APIKey: provider.APIKey, VoiceEndpoint: provider.VoiceEndpoint}
 		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		if v.Lifecycle == "delete_pending" {
 			var refs int64
 			err := db.Model(&model.TTSJob{}).Where("voice_id = ? AND status IN ?", v.ID, []string{"queued", "running", "usage_unknown"}).Count(&refs).Error
 			if err == nil && refs == 0 {
-				if _, err = client.DeleteVoice(ctx, v.ProviderVoiceID); err == nil {
+				if _, err = ttsProviderDeleteVoice(ctx, *provider, v.ProviderVoiceID); err == nil {
 					_ = db.Model(&model.TTSVoice{}).Where("id = ? AND lifecycle = ?", v.ID, "delete_pending").Updates(map[string]any{"lifecycle": "deleted", "deleted_at": time.Now()}).Error
 				}
 			}
 		} else if v.ProviderStatus != "OK" {
-			r, err := client.QueryVoice(ctx, v.ProviderVoiceID)
+			r, err := ttsProviderQueryVoice(ctx, *provider, v.ProviderVoiceID)
 			if err == nil && r.Output.TargetModel == v.TargetModel {
 				updates := map[string]any{"provider_status": r.Output.Status}
 				if r.Output.Status == "OK" || r.Output.Status == "UNDEPLOYED" {
@@ -217,6 +216,7 @@ type TTSQuota struct {
 	ClonePrice       *float64                      `json:"clonePrice"`
 	DefaultModel     string                        `json:"defaultModel"`
 	VoiceContext     TTSVoiceContext               `json:"voiceContext"`
+	VoiceContexts    []TTSVoiceContext             `json:"voiceContexts"`
 	DefaultVoice     string                        `json:"defaultVoice"`
 }
 
@@ -227,7 +227,7 @@ type TTSVoiceContext struct {
 }
 
 func TTSQuotaForUser(userID string) (TTSQuota, error) {
-	q := TTSQuota{AutoSynthesis: TTSAutomaticEnabled(userID)}
+	q := TTSQuota{AutoSynthesis: TTSAutomaticEnabled(userID), VoiceContexts: []TTSVoiceContext{}}
 	cfg := utils.GetConfig()
 	var speech *utils.SpeechConfig
 	if cfg != nil {
@@ -240,6 +240,9 @@ func TTSQuotaForUser(userID string) (TTSQuota, error) {
 		q.Format = speech.Format
 		q.DefaultVoice = speech.DefaultVoice
 		for _, p := range speech.Providers {
+			if spec, ok := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model); p.Enabled && strings.TrimSpace(p.APIKey) != "" && ok && (spec.Capabilities.HTTPStreaming || spec.Capabilities.WebSocketStreaming) && p.SynthesisPriceConfirmed() {
+				q.VoiceContexts = append(q.VoiceContexts, TTSVoiceContext{ProviderKind: p.EffectiveProviderKind(), ProviderID: p.ID, ModelID: p.Model})
+			}
 			if p.ID == speech.DefaultProvider {
 				q.VoiceContext = TTSVoiceContext{ProviderKind: p.EffectiveProviderKind(), ProviderID: p.ID, ModelID: p.Model}
 				q.DefaultModel = p.Model
@@ -302,17 +305,18 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 		}
 	}
 	if input.VoiceID != "" || input.SystemVoice != "" {
-		s, err := ttsSnapshot(userID, TTSRequest{VoiceID: input.VoiceID, SystemVoice: input.SystemVoice, SystemVoiceProvider: input.SystemVoiceProvider, SystemVoiceModel: input.SystemVoiceModel, Instruction: input.Instruction, Rate: input.Rate, Pitch: input.Pitch, Volume: &input.Volume}, "role")
+		s, err := ttsSnapshot(userID, TTSRequest{VoiceID: input.VoiceID, SystemVoice: input.SystemVoice, SystemVoiceProvider: input.SystemVoiceProvider, SystemVoiceProviderID: input.SystemVoiceProviderID, SystemVoiceModel: input.SystemVoiceModel, Instruction: input.Instruction, Rate: input.Rate, Pitch: input.Pitch, Volume: &input.Volume}, "role")
 		if err != nil {
 			return err
 		}
 		if input.SystemVoice != "" {
 			input.SystemVoiceProvider = s.Provider.EffectiveProviderKind()
+			input.SystemVoiceProviderID = s.Provider.ID
 			input.SystemVoiceModel = s.Provider.Model
 		}
 	}
 	if input.SystemVoice == "" {
-		input.SystemVoiceProvider, input.SystemVoiceModel = "", ""
+		input.SystemVoiceProvider, input.SystemVoiceProviderID, input.SystemVoiceModel = "", "", ""
 	}
 	if input.Revision != old.Revision {
 		return ErrTTSConflict
@@ -323,7 +327,7 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 		input.StringPKBaseModel = model.StringPKBaseModel{}
 		return model.GetDB().Create(&input).Error
 	}
-	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"voice_id": input.VoiceID, "system_voice": input.SystemVoice, "system_voice_provider": input.SystemVoiceProvider, "system_voice_model": input.SystemVoiceModel, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
+	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"voice_id": input.VoiceID, "system_voice": input.SystemVoice, "system_voice_provider": input.SystemVoiceProvider, "system_voice_provider_id": input.SystemVoiceProviderID, "system_voice_model": input.SystemVoiceModel, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
 	if r.Error != nil {
 		return r.Error
 	}

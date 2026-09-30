@@ -11,6 +11,7 @@ import (
 )
 
 // Personal assets stay bound to the creating instance and account namespace.
+// Region/Workspace are part of the current provider-specific asset identity.
 // The model catalog also prevents reinterpreting an Aliyun asset as another kind.
 func PersonalVoiceSupported(provider utils.SpeechProviderConfig, voice model.TTSVoice) bool {
 	_, supported := ttsprovider.LookupModel(provider.EffectiveProviderKind(), voice.TargetModel)

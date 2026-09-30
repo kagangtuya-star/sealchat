@@ -416,7 +416,7 @@ func ttsVoices(c *fiber.Ctx) error {
 	for _, voice := range items {
 		voices = append(voices, service.TTSPersonalVoiceResponse(voice))
 	}
-	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "catalogVersion": "2026-09-30"})
+	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "providers": ttsprovider.ProviderCatalog(), "catalogVersion": "2026-09-30"})
 }
 func ttsReadMessage(userID, id string) (*model.MessageModel, error) {
 	var m model.MessageModel

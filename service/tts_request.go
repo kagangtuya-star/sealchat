@@ -22,23 +22,24 @@ const TTSAutoPreference = "tts.autoSynthesis"
 const ttsMessageSynthesisMaxRunes = 20000
 
 type TTSRequest struct {
-	RequestKey          string  `json:"requestKey"`
-	Text                string  `json:"text"`
-	VoiceID             string  `json:"voiceId"`
-	SystemVoice         string  `json:"systemVoice"`
-	SystemVoiceProvider string  `json:"systemVoiceProvider,omitempty"`
-	SystemVoiceModel    string  `json:"systemVoiceModel,omitempty"`
-	ProviderID          string  `json:"providerId,omitempty"`
-	ModelID             string  `json:"modelId,omitempty"`
-	Instruction         string  `json:"instruction"`
-	Rate                float64 `json:"rate"`
-	Pitch               float64 `json:"pitch"`
-	Volume              *int    `json:"volume"`
-	Name                string  `json:"name"`
-	Description         string  `json:"description"`
-	SourceResourceID    string  `json:"sourceResourceId"`
-	CloneLanguageHint   string  `json:"cloneLanguageHint,omitempty"`
-	ClonePreprocess     bool    `json:"clonePreprocess,omitempty"`
+	RequestKey            string  `json:"requestKey"`
+	Text                  string  `json:"text"`
+	VoiceID               string  `json:"voiceId"`
+	SystemVoice           string  `json:"systemVoice"`
+	SystemVoiceProvider   string  `json:"systemVoiceProvider,omitempty"`
+	SystemVoiceProviderID string  `json:"systemVoiceProviderId,omitempty"`
+	SystemVoiceModel      string  `json:"systemVoiceModel,omitempty"`
+	ProviderID            string  `json:"providerId,omitempty"`
+	ModelID               string  `json:"modelId,omitempty"`
+	Instruction           string  `json:"instruction"`
+	Rate                  float64 `json:"rate"`
+	Pitch                 float64 `json:"pitch"`
+	Volume                *int    `json:"volume"`
+	Name                  string  `json:"name"`
+	Description           string  `json:"description"`
+	SourceResourceID      string  `json:"sourceResourceId"`
+	CloneLanguageHint     string  `json:"cloneLanguageHint,omitempty"`
+	ClonePreprocess       bool    `json:"clonePreprocess,omitempty"`
 }
 type TTSSnapshot struct {
 	Version           int                        `json:"version"`
@@ -75,10 +76,44 @@ func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error)
 	return ttsSnapshotForRequest(userID, r, scope, false)
 }
 
-func systemVoiceBindingSupported(p utils.SpeechProviderConfig, id, providerKind, modelID string) bool {
-	legacy := providerKind == "" && modelID == ""
-	return (legacy || (providerKind == p.EffectiveProviderKind() && modelID == p.Model)) &&
-		ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, id)
+func resolveSystemVoiceProvider(cfg *utils.SpeechConfig, voiceID, providerKind, providerID, modelID string) (utils.SpeechProviderConfig, error) {
+	mismatch := TTSValidationError("系统音色与指定 provider 或模型不匹配，需要重新选择")
+	compatible := func(p utils.SpeechProviderConfig) bool {
+		return p.Enabled && strings.TrimSpace(p.APIKey) != "" &&
+			(providerKind == "" || providerKind == p.EffectiveProviderKind()) &&
+			(modelID == "" || modelID == p.Model) &&
+			ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, voiceID)
+	}
+	if providerID != "" {
+		for _, p := range cfg.Providers {
+			if p.ID == providerID && compatible(p) {
+				return p, nil
+			}
+		}
+		return utils.SpeechProviderConfig{}, mismatch
+	}
+	// Older bindings have no instance ID. Prefer a compatible default, then
+	// require a unique candidate; configuration order is not routing authority.
+	if (providerKind == "") != (modelID == "") {
+		return utils.SpeechProviderConfig{}, mismatch
+	}
+	for _, p := range cfg.Providers {
+		if p.ID == cfg.DefaultProvider && compatible(p) {
+			return p, nil
+		}
+	}
+	var candidate utils.SpeechProviderConfig
+	count := 0
+	for _, p := range cfg.Providers {
+		if compatible(p) {
+			candidate = p
+			count++
+		}
+	}
+	if count == 1 {
+		return candidate, nil
+	}
+	return utils.SpeechProviderConfig{}, mismatch
 }
 
 func ttsSnapshotForRequest(userID string, r TTSRequest, scope string, automatic bool) (TTSSnapshot, error) {
@@ -138,7 +173,7 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 		}
 		target = &p
 		// Creation targets are independent of synthesis voice bindings.
-		r.VoiceID, r.SystemVoice, r.SystemVoiceProvider, r.SystemVoiceModel = "", "", "", ""
+		r.VoiceID, r.SystemVoice, r.SystemVoiceProvider, r.SystemVoiceProviderID, r.SystemVoiceModel = "", "", "", "", ""
 	}
 	s := TTSSnapshot{Version: 1, Owner: userID, Scope: scope, VoiceID: r.VoiceID, SourceResourceID: r.SourceResourceID, Name: r.Name, Description: r.Description}
 	if r.VoiceID != "" && r.SystemVoice != "" {
@@ -153,6 +188,18 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 		}
 		providerID = voice.ProviderID
 		s.VoiceRevision = voice.Revision
+	} else if target == nil && r.SystemVoice != "" {
+		p, resolveErr := resolveSystemVoiceProvider(cfg, r.SystemVoice, r.SystemVoiceProvider, r.SystemVoiceProviderID, r.SystemVoiceModel)
+		if resolveErr != nil {
+			// Only legacy bindings may become stale and fall back automatically.
+			// An explicit instance ID must never be silently rerouted.
+			if !automatic || r.SystemVoiceProviderID != "" {
+				return s, resolveErr
+			}
+			r.SystemVoice, r.SystemVoiceProvider, r.SystemVoiceModel = "", "", ""
+		} else {
+			providerID = p.ID
+		}
 	}
 	found := false
 	if target != nil {
@@ -184,12 +231,6 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	v := ""
 	if target == nil {
 		v = r.SystemVoice
-		if voice == nil && v != "" && !systemVoiceBindingSupported(s.Provider, v, r.SystemVoiceProvider, r.SystemVoiceModel) {
-			if !automatic {
-				return s, TTSValidationError("系统音色与当前 provider 类型或模型不匹配，需要重新选择")
-			}
-			v = ""
-		}
 		if v == "" {
 			v = ttsprovider.DefaultVoice(s.Provider.EffectiveProviderKind(), s.Provider.Model)
 			if s.Provider.ID == cfg.DefaultProvider && ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, cfg.DefaultVoice) {
@@ -328,6 +369,7 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 			r.VoiceID = role.VoiceID
 			r.SystemVoice = role.SystemVoice
 			r.SystemVoiceProvider = role.SystemVoiceProvider
+			r.SystemVoiceProviderID = role.SystemVoiceProviderID
 			r.SystemVoiceModel = role.SystemVoiceModel
 			r.Instruction = role.Instruction
 			r.Rate = role.Rate

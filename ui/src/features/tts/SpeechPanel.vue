@@ -9,7 +9,7 @@ import { useUserStore } from '@/stores/user'
 import type { SpeechJob, SpeechVoice, VoiceCreationProvider, VoiceDirectory } from './types'
 import SpeechQuotaSummary from './SpeechQuotaSummary.vue'
 import VoicePicker from './VoicePicker.vue'
-import { requestVoiceFields, voiceKindLabel, type VoiceSelection } from './voice-catalog'
+import { providerDisplayName, requestVoiceFields, voiceKindLabel, type VoiceSelection } from './voice-catalog'
 
 const speech = useSpeechStore()
 const chat = useChatStore()
@@ -46,10 +46,11 @@ const text = ref('你好，欢迎来到我们的冒险故事。')
 // The catalog picks the voice for auditions; creation owns a separate target.
 const selection = ref<VoiceSelection>({ type: 'inherit' })
 const voiceContext = computed(() => speech.quota?.voiceContext ?? null)
+const voiceContexts = computed(() => speech.quota?.voiceContexts?.length ? speech.quota.voiceContexts : voiceContext.value ? [voiceContext.value] : [])
 const picker = ref<InstanceType<typeof VoicePicker> | null>(null)
 const MINE_PAGE_SIZE = 20
 const page = ref(1)
-const directory = ref<VoiceDirectory>({ items: [], system: [], total: 0, catalogVersion: '' })
+const directory = ref<VoiceDirectory>({ items: [], system: [], providers: [], total: 0, catalogVersion: '' })
 const name = ref('')
 const description = ref('')
 const operation = ref<'design' | 'clone'>('design')
@@ -59,7 +60,7 @@ const creationOptions = computed(() => creationProviders.value.flatMap(provider 
   .filter(model => model.providerKind === provider.providerKind && (operation.value === 'design' ? model.capabilities.voiceDesign : model.capabilities.voiceClone))
   .map(model => ({
     value: JSON.stringify([provider.providerId, model.id]),
-    label: `${provider.providerKind === 'aliyun' ? '阿里云' : provider.providerKind}（${provider.providerId}） · ${model.id}`,
+    label: `${providerDisplayName(directory.value.providers ?? [], provider.providerKind)}（${provider.providerId}） · ${model.id}`,
     providerId: provider.providerId, modelId: model.id,
     designPrice: provider.designPrice, clonePrice: provider.clonePrice,
     cloneLanguages: model.cloneLanguages ?? [], supportsClonePreprocess: model.supportsClonePreprocess ?? false,
@@ -95,7 +96,7 @@ const replacePage = ref(1)
 const replaceSearchInput = ref('')
 const replaceSearch = ref('')
 const replaceLoading = ref(false)
-const replaceDirectory = ref<VoiceDirectory>({ items: [], system: [], total: 0, catalogVersion: '' })
+const replaceDirectory = ref<VoiceDirectory>({ items: [], system: [], providers: [], total: 0, catalogVersion: '' })
 const replaceSelected = ref<SpeechVoice | null>(null)
 let replaceSerial = 0
 const replaceOptions = computed(() => {
@@ -120,7 +121,7 @@ watch(selectedId, () => {
   replacePage.value = 1
   replaceSearchInput.value = ''
   replaceSearch.value = ''
-  replaceDirectory.value = { items: [], system: [], total: 0, catalogVersion: '' }
+  replaceDirectory.value = { items: [], system: [], providers: [], total: 0, catalogVersion: '' }
   if (selectedVoice.value?.lifecycle === 'preview') void loadReplaceOptions()
 })
 let alive = true
@@ -249,7 +250,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
       </div>
 
       <div v-show="tab === 'catalog'" class="sp-body sp-catalog">
-        <VoicePicker ref="picker" v-model="selection" mode="browse" :voice-context="voiceContext" class="sp-picker" />
+        <VoicePicker ref="picker" v-model="selection" mode="browse" :voice-context="voiceContext" :voice-contexts="voiceContexts" class="sp-picker" />
         <aside class="sp-side">
           <h3>合成试听</h3>
           <p class="sp-hint">使用左侧当前选择的音色合成新文本；已有文件可重放。</p>

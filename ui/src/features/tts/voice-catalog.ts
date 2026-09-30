@@ -1,13 +1,13 @@
-import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechRequest, SpeechVoice, SystemVoice, VoiceContext } from './types'
+import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechProviderMeta, SpeechRequest, SpeechVoice, SystemVoice, VoiceContext } from './types'
 
 // Adapters keep the provider/model context shared by all voice selectors.
 export type VoiceOwnership = 'platform' | 'mine' | 'public'
 export type VoiceVisibility = 'system' | 'private' | 'public'
 export type VoiceSelection =
   | { type: 'inherit' }
-  | { type: 'system'; id: string; modelId?: string; providerKind?: string }
+  | { type: 'system'; id: string; modelId?: string; providerKind?: string; providerId?: string }
   | { type: 'personal'; id: string }
-export type VoiceCategory = 'all' | 'platform' | 'mine' | 'public'
+export type VoiceSourceKey = 'all' | 'mine' | 'public' | `system:${string}`
 
 export interface VoiceCatalogItem {
   key: string
@@ -31,26 +31,25 @@ export interface VoiceCatalogItem {
 // Display registry. It describes how the catalog is presented, never which
 // voices exist. Option lists are always derived from returned data; these maps
 // only label known values and fall back to the raw value otherwise.
-export interface SpeechProviderCatalogMeta {
-  id: string
-  label: string
+export function voiceSourceOptions(providers: SpeechProviderMeta[]): Array<{ value: VoiceSourceKey; label: string }> {
+  return [
+    { value: 'all', label: '全部' },
+    ...providers.map(provider => ({ value: `system:${provider.kind}` as VoiceSourceKey, label: `${provider.name}预设` })),
+    { value: 'mine', label: '我的音色' },
+    { value: 'public', label: '公开音色' },
+  ]
 }
-// Keyed by the instance IDs carried on personal voices. Unknown IDs show verbatim.
-export const speechProviderCatalog: Readonly<Record<string, SpeechProviderCatalogMeta>> = {}
-export const voiceCategoryOptions: ReadonlyArray<{ value: VoiceCategory; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'platform', label: '平台预设' },
-  { value: 'mine', label: '我的音色' },
-  { value: 'public', label: '公开音色' },
-]
 const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: '系统', design: '声音设计', clone: '样本复刻' }
 const languageLabels: Readonly<Record<string, string>> = { zh: '中文', en: '英文' }
 export const voiceKindLabel = (kind: string) => kindLabels[kind] ?? kind
 export const voiceLanguageLabel = (code: string) => languageLabels[code] ?? code
-export const voiceProviderLabel = (id: string) => speechProviderCatalog[id]?.label ?? id
 
-export function voiceSourceLabel(item: VoiceCatalogItem): string {
-  if (item.ownership === 'platform') return '平台预设'
+export function providerDisplayName(providers: SpeechProviderMeta[], kind: string): string {
+  return providers.find(provider => provider.kind === kind)?.name ?? kind
+}
+
+export function voiceSourceLabel(item: VoiceCatalogItem, providers: SpeechProviderMeta[]): string {
+  if (item.source === 'system') return `${providerDisplayName(providers, item.providerKind ?? '')}预设`
   if (item.ownership === 'mine') return item.visibility === 'public' ? '我的 · 公开' : '我的 · 私有'
   return '公开音色'
 }
@@ -68,8 +67,8 @@ export function isDisplayVoiceTag(value: string): boolean {
 
 export function systemVoiceItem(voice: SystemVoice, context: VoiceContext): VoiceCatalogItem {
   return {
-    key: `system:${voice.providerKind}:${context.modelId}:${voice.id}`, id: voice.id, source: 'system',
-    providerKind: voice.providerKind, models: voice.models, modelId: context.modelId, name: voice.name,
+    key: `system:${voice.providerKind}:${context.providerId}:${context.modelId}:${voice.id}`, id: voice.id, source: 'system',
+    providerKind: context.providerKind, providerId: context.providerId, models: voice.models, modelId: context.modelId, name: voice.name,
     tags: splitTags(voice.tags), languages: voice.languages ?? [], kind: voice.kind,
     ownership: 'platform', visibility: 'system', available: true,
   }
@@ -92,13 +91,37 @@ export function personalVoiceItem(voice: SpeechVoice, userId: string): VoiceCata
 export function systemVoiceSupported(voice: SystemVoice, context: VoiceContext | null): boolean {
   return !!context && voice.providerKind === context.providerKind && voice.models.includes(context.modelId)
 }
-export function personalVoiceSupported(voice: Pick<SpeechVoice, 'providerId' | 'targetModel'>, context: VoiceContext | null): boolean {
-  return !!context && voice.providerId === context.providerId && voice.targetModel === context.modelId
+export function resolveSystemVoiceContext(voice: SystemVoice, contexts: VoiceContext[], defaultContext: VoiceContext | null): VoiceContext | null {
+  if (systemVoiceSupported(voice, defaultContext)) return defaultContext
+  return contexts.find(context => systemVoiceSupported(voice, context)) ?? null
 }
-export function itemSupported(item: VoiceCatalogItem, context: VoiceContext | null): boolean {
-  return !!context && (item.source === 'system'
-    ? item.providerKind === context.providerKind && item.models.includes(context.modelId)
-    : item.providerId === context.providerId && item.modelId === context.modelId)
+// Resolve older bindings for display without changing the selection or role.
+export function resolveLegacySystemSelection(selection: VoiceSelection, voices: SystemVoice[], contexts: VoiceContext[], defaultContext: VoiceContext | null): VoiceCatalogItem | null {
+  if (selection.type !== 'system') return null
+  const itemForContext = (context: VoiceContext | null): VoiceCatalogItem | null => {
+    if (!context) return null
+    const voice = voices.find(voice => voice.id === selection.id && systemVoiceSupported(voice, context))
+    return voice ? systemVoiceItem(voice, context) : null
+  }
+  if (selection.providerId) {
+    const context = [ ...(defaultContext ? [defaultContext] : []), ...contexts ].find(context =>
+      context.providerKind === selection.providerKind && context.providerId === selection.providerId && context.modelId === selection.modelId)
+    return itemForContext(context ?? null)
+  }
+  if (!selection.providerKind && !selection.modelId) {
+    const defaultItem = itemForContext(defaultContext)
+    if (defaultItem) return defaultItem
+    const candidates = contexts.map(itemForContext).filter(item => item !== null)
+    return candidates.length === 1 ? candidates[0] : null
+  }
+  if (!selection.providerKind || !selection.modelId) return null
+  const matchesNamespace = (context: VoiceContext) => context.providerKind === selection.providerKind && context.modelId === selection.modelId
+  if (defaultContext && matchesNamespace(defaultContext)) {
+    const item = itemForContext(defaultContext)
+    if (item) return item
+  }
+  const candidates = contexts.filter(context => matchesNamespace(context) && itemForContext(context))
+  return candidates.length === 1 ? itemForContext(candidates[0]) : null
 }
 export function defaultVoiceForContext(voices: SystemVoice[], models: ResolvedSpeechModel[], context: VoiceContext | null, current: string): string {
   if (!context) return ''
@@ -109,46 +132,45 @@ export function defaultVoiceForContext(voices: SystemVoice[], models: ResolvedSp
 export function sameSelection(a: VoiceSelection, b: VoiceSelection): boolean {
   if (a.type === 'inherit' || b.type === 'inherit') return a.type === b.type
   if (a.type === 'system' && b.type === 'system') {
-    return a.id === b.id && (!a.modelId || !b.modelId || a.modelId === b.modelId)
-      && (!a.providerKind || !b.providerKind || a.providerKind === b.providerKind)
+    return a.id === b.id && a.modelId === b.modelId && a.providerKind === b.providerKind && a.providerId === b.providerId
   }
   return a.type === b.type && a.id === b.id
 }
-// Both namespace fields empty means a legacy binding, resolved in the context.
+// Only a completely empty namespace is a legacy UI binding.
 export function selectsItem(selection: VoiceSelection, item: VoiceCatalogItem): boolean {
   if (selection.type === 'inherit' || selection.type !== item.source || selection.id !== item.id) return false
   if (selection.type !== 'system') return true
-  const legacy = !selection.modelId && !selection.providerKind
-  return legacy || (selection.modelId === item.modelId && selection.providerKind === item.providerKind)
+  const legacy = !selection.modelId && !selection.providerKind && !selection.providerId
+  return legacy || (selection.modelId === item.modelId && selection.providerKind === item.providerKind && selection.providerId === item.providerId)
 }
 export function itemSelection(item: VoiceCatalogItem): VoiceSelection {
   return item.source === 'system'
-    ? { type: 'system', id: item.id, modelId: item.modelId, providerKind: item.providerKind }
+    ? { type: 'system', id: item.id, modelId: item.modelId, providerKind: item.providerKind, providerId: item.providerId }
     : { type: 'personal', id: item.id }
 }
 
-type RoleVoiceFields = Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceModel'>
+type RoleVoiceFields = Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceProviderId' | 'systemVoiceModel'>
 export function roleVoiceSelection(role: RoleVoiceFields): VoiceSelection {
   if (role.voiceId) return { type: 'personal', id: role.voiceId }
-  if (role.systemVoice) return { type: 'system', id: role.systemVoice, providerKind: role.systemVoiceProvider || undefined, modelId: role.systemVoiceModel || undefined }
+  if (role.systemVoice) return { type: 'system', id: role.systemVoice, providerKind: role.systemVoiceProvider || undefined, providerId: role.systemVoiceProviderId || undefined, modelId: role.systemVoiceModel || undefined }
   return { type: 'inherit' }
 }
 export function roleVoiceFields(selection: VoiceSelection): RoleVoiceFields {
-  const empty = { voiceId: '', systemVoice: '', systemVoiceProvider: '', systemVoiceModel: '' }
+  const empty = { voiceId: '', systemVoice: '', systemVoiceProvider: '', systemVoiceProviderId: '', systemVoiceModel: '' }
   if (selection.type === 'personal') return { ...empty, voiceId: selection.id }
-  if (selection.type === 'system') return { ...empty, systemVoice: selection.id, systemVoiceProvider: selection.providerKind ?? '', systemVoiceModel: selection.modelId ?? '' }
+  if (selection.type === 'system') return { ...empty, systemVoice: selection.id, systemVoiceProvider: selection.providerKind ?? '', systemVoiceProviderId: selection.providerId ?? '', systemVoiceModel: selection.modelId ?? '' }
   return empty
 }
-export function requestVoiceFields(selection: VoiceSelection): Pick<SpeechRequest, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceModel'> {
+export function requestVoiceFields(selection: VoiceSelection): Pick<SpeechRequest, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceProviderId' | 'systemVoiceModel'> {
   if (selection.type === 'personal') return { voiceId: selection.id }
-  if (selection.type === 'system') return { systemVoice: selection.id, systemVoiceProvider: selection.providerKind, systemVoiceModel: selection.modelId }
+  if (selection.type === 'system') return { systemVoice: selection.id, systemVoiceProvider: selection.providerKind, systemVoiceProviderId: selection.providerId, systemVoiceModel: selection.modelId }
   return {}
 }
 
-export function matchesCategory(item: VoiceCatalogItem, category: VoiceCategory): boolean {
-  if (category === 'platform') return item.ownership === 'platform'
-  if (category === 'mine') return item.ownership === 'mine'
-  if (category === 'public') return item.visibility === 'public'
+export function matchesSource(item: VoiceCatalogItem, source: VoiceSourceKey): boolean {
+  if (source.startsWith('system:')) return item.source === 'system' && item.providerKind === source.slice('system:'.length)
+  if (source === 'mine') return item.ownership === 'mine'
+  if (source === 'public') return item.visibility === 'public'
   return true
 }
 // Personal voices are searched by the server; system voices are only returned
@@ -161,19 +183,17 @@ export function matchesSearch(item: VoiceCatalogItem, search: string): boolean {
 
 export interface VoiceFacetOption { value: string; label: string; count: number }
 export interface VoiceFacet { key: VoiceFacetKey; label: string; options: VoiceFacetOption[] }
-export type VoiceFacetKey = 'providerId' | 'language' | 'kind' | 'tag'
+export type VoiceFacetKey = 'language' | 'kind' | 'tag'
 export type VoiceFacetFilters = Record<VoiceFacetKey, string>
-export const emptyVoiceFilters = (): VoiceFacetFilters => ({ providerId: '', language: '', kind: '', tag: '' })
+export const emptyVoiceFilters = (): VoiceFacetFilters => ({ language: '', kind: '', tag: '' })
 
 function facetValues(item: VoiceCatalogItem, key: VoiceFacetKey): string[] {
-  if (key === 'providerId') return item.providerId ? [item.providerId] : []
   if (key === 'language') return item.languages
   if (key === 'kind') return item.kind ? [item.kind] : []
   return item.tags.filter(isDisplayVoiceTag)
 }
 const facetMeta: ReadonlyArray<{ key: VoiceFacetKey; label: string; format: (value: string) => string; min: number }> = [
   // `min` hides dimensions whose returned values cannot narrow anything.
-  { key: 'providerId', label: '服务', format: voiceProviderLabel, min: 2 },
   { key: 'language', label: '语言', format: voiceLanguageLabel, min: 2 },
   { key: 'kind', label: '类型', format: voiceKindLabel, min: 2 },
   { key: 'tag', label: '标签', format: value => value, min: 1 },

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"sort"
 	"strings"
@@ -382,7 +381,6 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 			}
 		}()
 	}
-	client := ttsprovider.Client{APIKey: provider.APIKey, SynthesisEndpoint: s.Provider.SynthesisEndpoint, VoiceEndpoint: s.Provider.VoiceEndpoint}
 	var units int64
 	var synthesisUsage *ttsprovider.Result
 	confirmed := false
@@ -390,22 +388,8 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	audioURL := ""
 	sseWAV := false
 	if j.Operation == "design" || j.Operation == "clone" {
-		input := ttsprovider.CreateVoiceInput{TargetModel: s.Provider.Model, Prefix: "sealchat", VoicePrompt: s.Description, PreviewText: s.Input.Text}
-		if j.Operation == "clone" {
-			input.VoicePrompt = ""
-			input.PreviewText = ""
-			if s.CloneLanguageHint != "" {
-				input.LanguageHints = []string{s.CloneLanguageHint}
-			}
-			input.MaxPromptAudioLength = 30
-			preprocess := s.ClonePreprocess
-			input.EnablePreprocess = &preprocess
-			input.URL, err = TTSCloneReadURL(j)
-		}
 		var result ttsprovider.VoiceResult
-		if err == nil {
-			result, err = client.CreateVoice(ctx, input)
-		}
+		result, err = ttsProviderCreateVoice(ctx, *provider, j, s)
 		requestID = result.RequestID
 		confirmed = err == nil && result.Usage.Count != nil && *result.Usage.Count == 1
 		units = 1
@@ -438,7 +422,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 				finish = live(parent, *j, path)
 			}
 		}
-		result, e := ttsSynthesize(ctx, &client, j, s, f)
+		result, e := ttsProviderSynthesize(ctx, *provider, j, s, f)
 		if finish != nil {
 			// Provider stream audio feeds realtime playback. When the HTTP path
 			// names a finished file, archive validation applies to that file
@@ -480,7 +464,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	canonicalCode := ""
 	if err == nil && audioURL != "" {
 		dctx, dcancel := context.WithTimeout(parent, time.Duration(cfg.RequestTimeoutSeconds)*time.Second)
-		canonicalCode = ttsAdoptProviderAudio(dctx, &client, j.SpoolPath, audioURL)
+		canonicalCode = ttsProviderAdoptAudio(dctx, *provider, j.SpoolPath, audioURL)
 		dcancel()
 	}
 	if err == nil && sseWAV {
@@ -543,16 +527,6 @@ func ttsProviderErrorCode(err error, fallback string) string {
 		return "provider_" + normalized
 	}
 	return fallback
-}
-
-func ttsSynthesize(ctx context.Context, client *ttsprovider.Client, job *model.TTSJob, snapshot TTSSnapshot, sink io.Writer) (ttsprovider.Result, error) {
-	if job.Operation == "message_synthesis" {
-		segments := TTSSplitText(snapshot.Input.Text)
-		if len(segments) > 1 {
-			return client.SynthesizeSegments(ctx, snapshot.Provider.Model, snapshot.Input, segments, sink)
-		}
-	}
-	return client.Synthesize(ctx, snapshot.Provider.Model, snapshot.Input, sink)
 }
 
 // ttsAdoptProviderAudio replaces the realtime SSE spool with the provider's

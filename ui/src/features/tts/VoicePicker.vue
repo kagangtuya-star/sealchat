@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NInput, NPagination, useThemeVars } from 'naive-ui'
 import { speechAPI, speechError } from './api'
 import { useUserStore } from '@/stores/user'
-import type { SpeechVoice, SystemVoice, VoiceContext } from './types'
+import type { SpeechProviderMeta, SpeechVoice, SystemVoice, VoiceContext } from './types'
 import VoiceCard from './VoiceCard.vue'
 import {
-  collectVoiceFacets, emptyVoiceFilters, itemSelection, matchesCategory, matchesSearch, matchesVoiceFilters,
-  personalVoiceItem, personalVoiceSupported, itemSupported, selectsItem, systemVoiceItem, systemVoiceSupported, voiceCategoryOptions, voiceSourceLabel,
-  type VoiceCatalogItem, type VoiceCategory, type VoiceFacetKey, type VoiceSelection,
+  collectVoiceFacets, emptyVoiceFilters, itemSelection, matchesSource, matchesSearch, matchesVoiceFilters,
+  personalVoiceItem, resolveLegacySystemSelection, resolveSystemVoiceContext, selectsItem, systemVoiceItem, voiceSourceOptions, voiceSourceLabel,
+  type VoiceCatalogItem, type VoiceSourceKey, type VoiceFacetKey, type VoiceSelection,
 } from './voice-catalog'
 
 // `browse` picks a voice for auditions; `select` binds one and must surface a
@@ -17,6 +17,7 @@ import {
 const props = defineProps<{
   mode: 'browse' | 'select'
   voiceContext: VoiceContext | null
+  voiceContexts: VoiceContext[]
 }>()
 const selection = defineModel<VoiceSelection>({ required: true })
 const user = useUserStore()
@@ -24,7 +25,7 @@ const theme = useThemeVars()
 const PAGE_SIZE = 20 // Server default page size of GET /tts/voices.
 const TAG_PREVIEW = 12
 
-const category = ref<VoiceCategory>('all')
+const source = ref<VoiceSourceKey>('all')
 const searchInput = ref('')
 const search = ref('')
 const page = ref(1)
@@ -33,6 +34,9 @@ const filters = ref(emptyVoiceFilters())
 const filtersOpen = ref(false)
 const tagsExpanded = ref(false)
 const system = ref<SystemVoice[] | null>(null)
+const providers = ref<SpeechProviderMeta[]>([])
+const sourceOptions = computed(() => voiceSourceOptions(providers.value))
+const systemSource = computed(() => source.value.startsWith('system:'))
 const personal = ref<SpeechVoice[]>([])
 const personalTotal = ref(0)
 // Personal voices looked up by id when bound but not on the current page; null = not accessible.
@@ -46,40 +50,50 @@ let serial = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 // System voices arrive as a full list on every response; personal voices are
-// scoped, searched, filtered (provider/kind/tag) and paged by the server, so
+// scoped, searched, filtered (kind/tag) and paged by the server, so
 // `personalTotal` is the real filtered count. Stale responses are dropped by serial.
 async function load() {
   const current = ++serial
   const userId = user.info.id
-  const scope = category.value
+  const scope = systemSource.value ? 'all' : source.value as 'all' | 'mine' | 'public'
   error.value = ''
-  if (scope === 'platform' && system.value) { loading.value = false; return }
+  if (systemSource.value && system.value) { loading.value = false; return }
   loading.value = true
   try {
-    const { providerId, kind, tag } = filters.value
-    const value = await speechAPI.voices(scope === 'platform'
+    const { kind, tag } = filters.value
+    const value = await speechAPI.voices(systemSource.value
       ? { scope: 'all', page: 1 }
-      : { scope, search: search.value, page: page.value, providerId: props.voiceContext?.providerId || providerId || undefined, model: props.voiceContext?.modelId, kind: kind || undefined, tag: tag || undefined })
+      : { scope, search: search.value, page: page.value, kind: kind || undefined, tag: tag || undefined })
     if (current !== serial || userId !== user.info.id) return
     system.value = value.system
+    providers.value = value.providers ?? []
     // Platform only needs the preset list; its personal page is not displayed.
-    if (scope === 'platform') return
+    if (systemSource.value) return
     personal.value = value.items
     personalTotal.value = value.total
   } catch (e) { if (current === serial) error.value = speechError(e) }
   finally { if (current === serial) loading.value = false }
 }
-watch(() => user.info.id, () => { system.value = null; personal.value = []; personalTotal.value = 0; resolved.value = {} }, { flush: 'sync' })
-watch(() => props.voiceContext, () => { page.value = 1; personal.value = []; personalTotal.value = 0; resolved.value = {}; resolveEpoch.value++ }, { flush: 'sync' })
+watch(() => user.info.id, () => { system.value = null; providers.value = []; personal.value = []; personalTotal.value = 0; resolved.value = {}; resolveSerial++; resolveEpoch.value++ }, { flush: 'sync' })
+watch([() => props.voiceContext, () => props.voiceContexts], () => {
+  page.value = 1
+  filters.value = emptyVoiceFilters()
+  tagsExpanded.value = false
+  personal.value = []
+  personalTotal.value = 0
+  resolved.value = {}
+  resolveSerial++
+  resolveEpoch.value++
+}, { flush: 'sync', deep: true })
 watch([
-  category, search, page, () => user.info.id,
-  () => props.voiceContext,
-  () => filters.value.providerId, () => filters.value.kind, () => filters.value.tag,
-], () => void load(), { immediate: true })
+  source, search, page, () => user.info.id,
+  () => props.voiceContext, () => props.voiceContexts,
+  () => filters.value.kind, () => filters.value.tag,
+], () => void load(), { immediate: true, deep: true })
 
-function setCategory(value: VoiceCategory) {
-  if (category.value === value) return
-  category.value = value
+function setSource(value: VoiceSourceKey) {
+  if (source.value === value) return
+  source.value = value
   page.value = 1
   filters.value = emptyVoiceFilters()
   tagsExpanded.value = false
@@ -104,42 +118,46 @@ function clearFilters() {
   page.value = 1
 }
 
-const presetItems = computed(() => (system.value ?? [])
-  .filter(voice => systemVoiceSupported(voice, props.voiceContext))
-  .map(voice => systemVoiceItem(voice, props.voiceContext!)))
+const presetItems = computed(() => (system.value ?? []).flatMap(voice => {
+  const context = resolveSystemVoiceContext(voice, props.voiceContexts, props.voiceContext)
+  return context ? [systemVoiceItem(voice, context)] : []
+}))
 // Previews and creating voices are managed in the workbench, not picked here.
-const personalItems = computed(() => personal.value.filter(voice => voice.lifecycle === 'saved' && personalVoiceSupported(voice, props.voiceContext)).map(voice => personalVoiceItem(voice, user.info.id)))
-const scopedPresets = computed(() => category.value === 'all' || category.value === 'platform'
-  ? presetItems.value.filter(item => matchesSearch(item, search.value))
-  : [])
-const scopedPersonal = computed(() => category.value === 'platform' ? [] : personalItems.value.filter(item => matchesCategory(item, category.value)))
+const personalItems = computed(() => personal.value.filter(voice => voice.lifecycle === 'saved').map(voice => personalVoiceItem(voice, user.info.id)))
+const scopedPresets = computed(() => presetItems.value.filter(item => matchesSource(item, source.value) && matchesSearch(item, search.value)))
+const scopedPersonal = computed(() => personalItems.value.filter(item => matchesSource(item, source.value)))
 // Facets only describe what the current response actually contains.
 const facets = computed(() => collectVoiceFacets([...scopedPersonal.value, ...scopedPresets.value]))
 const filteredPresets = computed(() => scopedPresets.value.filter(item => matchesVoiceFilters(item, filters.value)))
-// Defensive only: the server already applied scope/search/provider/kind/tag.
+// Defensive only: the server already applied scope/search/kind/tag.
 const filteredPersonal = computed(() => scopedPersonal.value.filter(item => matchesVoiceFilters(item, filters.value)))
 // Personal voices carry no language metadata, so a language filter matches none
 // of them and they must not occupy pagination slots.
-const effectivePersonalTotal = computed(() => filters.value.language || !props.voiceContext ? 0 : personalTotal.value)
-const pagePersonalCount = computed(() => filters.value.language || !props.voiceContext ? 0 : personal.value.length)
+const effectivePersonalTotal = computed(() => filters.value.language ? 0 : personalTotal.value)
+const pagePersonalCount = computed(() => filters.value.language ? 0 : personal.value.length)
 // "All" continues the server's personal pages with local preset pages, so each
 // page holds at most PAGE_SIZE entries and no preset is skipped.
 const visible = computed<VoiceCatalogItem[]>(() => {
   const start = (page.value - 1) * PAGE_SIZE
-  if (category.value === 'platform') return filteredPresets.value.slice(start, start + PAGE_SIZE)
-  if (category.value !== 'all') return filteredPersonal.value
+  if (systemSource.value) return filteredPresets.value.slice(start, start + PAGE_SIZE)
+  if (source.value !== 'all') return filteredPersonal.value
   const offset = Math.max(0, start - effectivePersonalTotal.value)
   const room = Math.max(0, PAGE_SIZE - pagePersonalCount.value)
   return [...filteredPersonal.value, ...filteredPresets.value.slice(offset, offset + room)]
 })
 const total = computed(() => {
-  if (category.value === 'platform') return filteredPresets.value.length
-  if (category.value === 'all') return effectivePersonalTotal.value + filteredPresets.value.length
+  if (systemSource.value) return filteredPresets.value.length
+  if (source.value === 'all') return effectivePersonalTotal.value + filteredPresets.value.length
   return effectivePersonalTotal.value
 })
 const showModel = computed(() => new Set(visible.value.map(item => item.modelId)).size > 1)
 const hasFilters = computed(() => Object.values(filters.value).some(Boolean))
 const activeFilterCount = computed(() => Object.values(filters.value).filter(Boolean).length)
+const emptyMessage = computed(() => {
+  const provider = providers.value.find(entry => source.value === `system:${entry.kind}`)
+  if (provider && !presetItems.value.some(item => item.providerKind === provider.kind)) return `当前没有可用的${provider.name}预设音色。`
+  return hasFilters.value || search.value ? '没有符合条件的音色。' : '当前来源暂无音色。'
+})
 
 // A bound personal voice may be off-page, private, deleted or unhealthy. It is
 // looked up once per reload; failure keeps an explicit unavailable state.
@@ -162,13 +180,20 @@ const current = computed<CurrentState>(() => {
   if (value.type === 'inherit') return { status: 'inherit' }
   if (value.type === 'system') {
     if (!system.value) return { status: 'pending' }
-    const item = presetItems.value.find(entry => selectsItem(value, entry))
+    const item = resolveLegacySystemSelection(value, system.value, props.voiceContexts, props.voiceContext)
     return item ? { status: 'ready', item } : { status: 'unavailable' }
   }
   const item = personalItems.value.find(entry => entry.id === value.id) ?? resolved.value[value.id]
   if (item === undefined) return { status: 'pending' }
-  return item?.available && itemSupported(item, props.voiceContext) ? { status: 'ready', item } : { status: 'unavailable' }
+  return item?.available ? { status: 'ready', item } : { status: 'unavailable' }
 })
+
+function isItemSelected(item: VoiceCatalogItem): boolean {
+  if (selection.value.type === 'system') {
+    return current.value.status === 'ready' && current.value.item.key === item.key
+  }
+  return selectsItem(selection.value, item)
+}
 
 function choose(item: VoiceCatalogItem) { if (item.available) selection.value = itemSelection(item) }
 function followDefault() { selection.value = { type: 'inherit' } }
@@ -206,17 +231,16 @@ defineExpose({ reload })
           @click="filtersOpen = !filtersOpen"
         >筛选<template v-if="activeFilterCount"> · {{ activeFilterCount }}</template></button>
       </div>
-      <div class="vp-chips vp-categories" role="group" aria-label="音色分类">
+      <div class="vp-chips vp-categories" role="group" aria-label="音色来源">
         <button
-          v-for="option in voiceCategoryOptions"
+          v-for="option in sourceOptions"
           :key="option.value"
           type="button"
           class="vp-chip is-category"
-          :class="{ 'is-active': category === option.value }"
-          :aria-pressed="category === option.value"
-          @click="setCategory(option.value)"
+          :class="{ 'is-active': source === option.value }"
+          :aria-pressed="source === option.value"
+          @click="setSource(option.value)"
         >{{ option.label }}</button>
-        <button v-if="hasFilters" type="button" class="vp-chip is-more" @click="clearFilters">清除筛选</button>
       </div>
       <div v-if="filtersOpen" class="vp-filters">
         <p v-if="!facets.length" class="vp-filters__empty">当前结果没有可用的筛选项。</p>
@@ -240,6 +264,7 @@ defineExpose({ reload })
             >{{ tagsExpanded ? '收起' : `更多 ${facet.options.length - TAG_PREVIEW}` }}</button>
           </div>
         </div>
+        <button v-if="activeFilterCount > 0" type="button" class="vp-chip is-more vp-filters__clear" @click="clearFilters">清除筛选</button>
       </div>
     </div>
 
@@ -259,7 +284,7 @@ defineExpose({ reload })
           <template v-else-if="current.status === 'pending'">正在确认音色…</template>
           <template v-else-if="current.status === 'ready'">
             <strong class="vp-current__name">{{ current.item.name }}</strong>
-            <span class="vp-current__source"> · {{ voiceSourceLabel(current.item) }}</span>
+            <span class="vp-current__source"> · {{ voiceSourceLabel(current.item, providers) }}</span>
           </template>
           <strong v-else class="vp-current__name">{{ mode === 'select' ? '当前绑定音色已不可用' : '所选音色已不可用' }}</strong>
         </span>
@@ -280,12 +305,13 @@ defineExpose({ reload })
           v-for="item in visible"
           :key="item.key"
           :item="item"
-          :selected="selectsItem(selection, item)"
+          :providers="providers"
+          :selected="isItemSelected(item)"
           :show-model="showModel"
           @select="choose"
         />
       </div>
-      <p v-else-if="!loading" class="vp-note">{{ hasFilters || search ? '没有符合条件的音色。' : '当前分类暂无音色。' }}</p>
+      <p v-else-if="!loading" class="vp-note">{{ emptyMessage }}</p>
       <p v-if="loading" class="vp-note">加载中…</p>
     </div>
 
@@ -357,7 +383,6 @@ defineExpose({ reload })
   color: var(--vp-accent);
   box-shadow: inset 0 -1px 0 var(--vp-accent);
 }
-.vp-categories > .vp-chip.is-more { flex: none; margin-left: 2px; }
 .vp-chip.is-more { background: transparent; border-color: var(--sc-border-mute); }
 .vp-chip.vp-filter-toggle { flex: none; padding: 4px 14px; border-color: var(--sc-border-mute); border-radius: 5px; }
 .vp-chip.vp-filter-toggle.is-open:not(.is-active) { color: var(--sc-text-primary); border-color: var(--sc-border-strong); }
@@ -373,6 +398,7 @@ defineExpose({ reload })
   border-radius: 6px;
 }
 .vp-filters__empty { margin: 0; font-size: 12px; color: var(--sc-text-secondary); }
+.vp-filters__clear { align-self: flex-end; flex: none; }
 .vp-facet { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .vp-facet__label { flex: none; width: 3em; padding-top: 3px; font-size: 12px; color: var(--sc-text-secondary); }
 .vp-facet .vp-chips { flex: 1; column-gap: 16px; row-gap: 6px; }

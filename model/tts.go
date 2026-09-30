@@ -44,16 +44,17 @@ type TTSVoice struct {
 
 type ChannelIdentityTTSConfig struct {
 	StringPKBaseModel
-	IdentityID          string  `json:"identityId" gorm:"size:100;uniqueIndex"`
-	VoiceID             string  `json:"voiceId"`
-	SystemVoice         string  `json:"systemVoice"`
-	SystemVoiceProvider string  `json:"systemVoiceProvider"`
-	SystemVoiceModel    string  `json:"systemVoiceModel"`
-	Instruction         string  `json:"instruction"`
-	Rate                float64 `json:"rate"`
-	Pitch               float64 `json:"pitch"`
-	Volume              int     `json:"volume"`
-	Revision            int64   `json:"revision"`
+	IdentityID            string  `json:"identityId" gorm:"size:100;uniqueIndex"`
+	VoiceID               string  `json:"voiceId"`
+	SystemVoice           string  `json:"systemVoice"`
+	SystemVoiceProvider   string  `json:"systemVoiceProvider"`
+	SystemVoiceProviderID string  `json:"systemVoiceProviderId"`
+	SystemVoiceModel      string  `json:"systemVoiceModel"`
+	Instruction           string  `json:"instruction"`
+	Rate                  float64 `json:"rate"`
+	Pitch                 float64 `json:"pitch"`
+	Volume                int     `json:"volume"`
+	Revision              int64   `json:"revision"`
 }
 
 type TTSJob struct {

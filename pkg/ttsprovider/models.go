@@ -1,7 +1,6 @@
 package ttsprovider
 
 const (
-	ProviderAliyun   = "aliyun"
 	PricingCharacter = "character"
 	PricingToken     = "token"
 )

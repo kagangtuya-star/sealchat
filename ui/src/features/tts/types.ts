@@ -27,6 +27,7 @@ export interface SpeechQuota {
   defaultModel: string
   defaultVoice: string
   voiceContext: VoiceContext
+  voiceContexts: VoiceContext[]
 }
 export interface SpeechVoice {
   id: string
@@ -47,7 +48,8 @@ export interface SpeechVoice {
   previewResourceId?: string
 }
 export interface SystemVoice { id: string; name: string; providerKind: string; models: string[]; targetModel?: string; languages: string[]; kind: string; tags?: string }
-export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; total: number; catalogVersion: string }
+export interface SpeechProviderMeta { kind: string; name: string }
+export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; providers: SpeechProviderMeta[]; total: number; catalogVersion: string }
 // `scope` selects the saved-voice picker catalog; without it `mine` keeps the
 // workbench listing (previews and creating voices included).
 export interface VoiceDirectoryQuery {
@@ -66,6 +68,7 @@ export interface SpeechRequest {
   voiceId?: string
   systemVoice?: string
   systemVoiceProvider?: string
+  systemVoiceProviderId?: string
   systemVoiceModel?: string
   // Explicit creation target for design/clone; unrelated to voice bindings.
   providerId?: string
@@ -103,6 +106,7 @@ export interface RoleSpeechConfig {
   voiceId: string
   systemVoice: string
   systemVoiceProvider: string
+  systemVoiceProviderId: string
   systemVoiceModel: string
   instruction: string
   rate: number

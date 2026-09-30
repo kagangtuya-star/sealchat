@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { speechPlayer } from './player'
+import type { SpeechProviderMeta } from './types'
 import { isDisplayVoiceTag, voiceKindLabel, voiceLanguageLabel, voiceSourceLabel, type VoiceCatalogItem } from './voice-catalog'
 
-const props = defineProps<{ item: VoiceCatalogItem; selected: boolean; showModel?: boolean }>()
+const props = defineProps<{ item: VoiceCatalogItem; providers: SpeechProviderMeta[]; selected: boolean; showModel?: boolean }>()
 const emit = defineEmits<{ select: [item: VoiceCatalogItem] }>()
 const previewing = computed(() => !!props.item.previewResourceId && speechPlayer.state.key === `resources:${props.item.previewResourceId}`)
 // Hide provider age metadata and keep the actual style/use-case tags visible on cards.
@@ -24,12 +25,12 @@ function preview() {
       class="voice-card__select"
       :disabled="!item.available"
       :aria-pressed="selected"
-      :aria-label="`选择音色 ${item.name}（${voiceSourceLabel(item)}）`"
+      :aria-label="`选择音色 ${item.name}（${voiceSourceLabel(item, providers)}）`"
       @click="emit('select', item)"
     />
     <div class="voice-card__head">
       <strong class="voice-card__name">{{ item.name }}</strong>
-      <span class="voice-card__source">{{ voiceSourceLabel(item) }}</span>
+      <span class="voice-card__source">{{ voiceSourceLabel(item, providers) }}</span>
     </div>
     <p v-if="item.description" class="voice-card__desc">{{ item.description }}</p>
     <div v-if="chips.length" class="voice-card__tags">
