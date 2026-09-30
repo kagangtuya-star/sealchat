@@ -46,5 +46,23 @@ func aliyunSystemVoices() []TTSVoiceSpec {
 		}
 		items = append(items, TTSVoiceSpec{ID: v[0], Name: v[1], ProviderKind: ProviderAliyun, Models: []string{"qwen-audio-3.0-tts-" + v[2]}, Languages: languages, Kind: "system"})
 	}
-	return append(items, tts31SystemVoices()...)
+	items = append(items, tts31SystemVoices()...)
+	for i := range items {
+		if items[i].Kind == "basic" && len(items[i].Models) == 1 {
+			if spec, ok := LookupModel(items[i].ProviderKind, items[i].Models[0]); ok && spec.Capabilities.VoiceClone {
+				// Base voices are cloned voices. Keep catalog Languages for filtering,
+				// but allow SealChat translation targets supported by the model's clone path.
+				items[i].SpeechLanguages = append([]string(nil), spec.CloneLanguages...)
+			}
+		}
+		if !items[i].Supports(ProviderAliyun, "qwen-audio-3.1-tts-flash") {
+			continue
+		}
+		switch items[i].ID {
+		case "longanhuan_v3.1", "longanlingxin_v3.1", "longanfengyue_v3.1", "xunanchuan_v3.1":
+			// SealChat also permits English translation, without changing official metadata.
+			items[i].SpeechLanguages = []string{"zh", "en", "ja", "ko", "fr", "de", "pt", "it", "vi", "id"}
+		}
+	}
+	return items
 }

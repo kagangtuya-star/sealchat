@@ -36,6 +36,8 @@ globalThis.__voiceTest = {
       async submit(operation, request) { globalThis.__voiceTest.submissions.push({ operation, request }); return { id: 'create-job', status: 'failed' } },
       async job() { return { id: 'create-job', status: 'failed' } },
       async source() { return 'clone-source' },
+      async role() { return { ...globalThis.__voiceTest.role } },
+      async saveRole(id, request) { globalThis.__voiceTest.savedRole = { id, request } },
     },
     speechError: e => String(e),
   },
@@ -64,7 +66,89 @@ const VoicePicker = await component('./VoicePicker.vue')
 const VoiceCard = await component('./VoiceCard.vue')
 const AdminSpeechSettings = await component('./AdminSpeechSettings.vue')
 const SpeechPanel = await component('./SpeechPanel.vue')
+const RoleVoiceDialog = await component('./RoleVoiceDialog.vue')
 async function settle() { for (let i = 0; i < 30; i++) await vue.nextTick() }
+
+test('speech languages use speech capability, independently of catalog language filters', async () => {
+  const speechLanguages = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'pt', 'it', 'vi', 'id']
+  const bundled = JSON.parse(readFileSync(new URL('../../../../pkg/ttsprovider/tts_catalog_31_20260930.json', import.meta.url), 'utf8'))
+  const voices = bundled.filter(voice => ['longanhuan_v3.1', 'longanlingxin_v3.1', 'longanfengyue_v3.1', 'xunanchuan_v3.1'].includes(voice.id))
+    .map(voice => ({ ...voice, providerKind: 'aliyun', models: [next.modelId], speechLanguages }))
+  assert.equal(voices.length, 4)
+  for (const voice of voices) {
+    const item = catalog.systemVoiceItem(voice, next)
+    assert.equal(item.languages.includes('en'), false)
+    assert.deepEqual(item.languages, voice.languages)
+    assert.deepEqual(catalog.speechLanguageOptions(item.speechLanguages).map(option => option.value), ['', ...speechLanguages])
+    assert.equal(catalog.matchesVoiceFilters(item, { language: 'en', kind: '', tag: '' }), false)
+    assert.equal(catalog.matchesVoiceFilters(item, { language: 'ja', kind: '', tag: '' }), true)
+  }
+  const selected = vue.ref(catalog.itemSelection(catalog.systemVoiceItem(voices[0], next)))
+  globalThis.__voiceTest.selection = selected
+  const scope = vue.effectScope()
+  const props = vue.reactive({ mode: 'select', voiceContext: next, voiceContexts: [flash, next], defaultVoice: voices[0].id })
+  const state = scope.run(() => VoicePicker.setup(props, { expose() {} }))
+  try {
+    await settle()
+    state.system.value = voices
+    await settle()
+    assert.deepEqual(catalog.speechLanguageOptions(state.speechLanguages.value), [
+      { value: '', label: '跟随原文' }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' },
+      { value: 'ja', label: '日本語' }, { value: 'ko', label: '한국어' }, { value: 'fr', label: 'Français' },
+      { value: 'de', label: 'Deutsch' }, { value: 'pt', label: 'Português' }, { value: 'it', label: 'Italiano' },
+      { value: 'vi', label: 'Tiếng Việt' }, { value: 'id', label: 'Bahasa Indonesia' },
+    ])
+    state.filters.value.language = 'en'
+    assert.equal(state.filteredPresets.value.length, 0)
+    state.setSource('mine')
+    assert.deepEqual(state.speechLanguages.value, speechLanguages)
+    selected.value = { type: 'inherit' }
+    assert.deepEqual(state.speechLanguages.value, speechLanguages)
+    props.defaultVoice = 'missing'
+    assert.deepEqual(catalog.speechLanguageOptions(state.speechLanguages.value), [{ value: '', label: '跟随原文' }])
+    selected.value = { type: 'personal', id: 'mine' }
+    assert.deepEqual(catalog.speechLanguageOptions(state.speechLanguages.value), [{ value: '', label: '跟随原文' }])
+    assert.deepEqual(catalog.personalVoiceItem(personal('mine'), 'user').speechLanguages, [])
+    assert.deepEqual(catalog.systemVoiceItem(system[0], flash).speechLanguages, system[0].languages)
+    assert.deepEqual(catalog.systemVoiceItem({ ...system[0], speechLanguages: [] }, flash).speechLanguages, system[0].languages)
+    assert.deepEqual(catalog.speechLanguageOptions(['xx']), [{ value: '', label: '跟随原文' }, { value: 'xx', label: 'xx' }])
+    assert.equal(catalog.selectedSpeechLanguages({ type: 'system', id: 'pending' }, null, [], null, ''), null)
+  } finally { scope.stop() }
+})
+
+test('role speech language resets on incompatible selection and travels with save and audition', async () => {
+  globalThis.__voiceTest.speech = vue.reactive({ quota: { voiceContext: flash, voiceContexts: [flash, next], defaultVoice: system[0].id }, async refresh() {} })
+  globalThis.__voiceTest.role = { identityId: 'role', ...catalog.roleVoiceFields(catalog.itemSelection(catalog.systemVoiceItem(system[0], flash))), speechLanguage: 'zh', instruction: '', rate: 1, pitch: 1, volume: 50, revision: 0 }
+  const scope = vue.effectScope()
+  const role = scope.run(() => RoleVoiceDialog.setup({ identityId: 'role' }, { expose() {} }))
+  try {
+    await role.open()
+    globalThis.__voiceTest.selection = role.selection
+    const picker = scope.run(() => VoicePicker.setup({ mode: 'select', voiceContext: flash, voiceContexts: [flash, next], defaultVoice: system[0].id }, {
+      expose() {}, emit(name, languages) { assert.equal(name, 'speech-languages'); role.speechLanguages.value = languages },
+    }))
+    await settle()
+    assert.equal(role.role.value.speechLanguage, 'zh')
+    await role.audition()
+    assert.equal(globalThis.__voiceTest.submissions.at(-1).request.speechLanguage, 'zh')
+    picker.system.value = [{ ...system[0], speechLanguages: ['ja'] }, system[1]]
+    await settle()
+    assert.equal(role.role.value.speechLanguage, '')
+    role.role.value.speechLanguage = 'ja'
+    role.selection.value = { type: 'personal', id: 'mine' }
+    await settle()
+    assert.equal(role.role.value.speechLanguage, '')
+    assert.deepEqual(role.languageOptions.value, [{ value: '', label: '跟随原文' }])
+    role.selection.value = catalog.itemSelection(catalog.systemVoiceItem(system[0], flash))
+    picker.system.value = [{ ...system[0], speechLanguages: ['zh', 'en', 'ja'] }, system[1]]
+    await settle()
+    assert.ok(role.languageOptions.value.some(option => option.value === 'en' && option.label === 'English'))
+    role.role.value.speechLanguage = 'en'
+    await role.save()
+    assert.equal(globalThis.__voiceTest.savedRole.request.speechLanguage, 'en')
+    assert.equal(globalThis.__voiceTest.savedRole.request.systemVoice, system[0].id)
+  } finally { scope.stop() }
+})
 
 test('creation targets use provider/model capabilities and revalidate when switching operation', async () => {
   globalThis.__voiceTest.speech = vue.reactive({ quota: { enabled: true, voiceContext: flash }, async refresh() {} })

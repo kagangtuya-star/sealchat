@@ -123,6 +123,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	featureCfg := aiCfg.Features[req.FeatureKey]
 	source := strings.ToLower(strings.TrimSpace(req.Source))
+	if req.FeatureKey == FeatureTTSTranslate && source != "platform" {
+		return RunResult{}, errors.New("tts_translate requires platform source")
+	}
 	if featureCfg.UserCustomOnly && source != "user" {
 		return RunResult{}, FormatUserCustomProviderRequiredError(req.FeatureKey)
 	}

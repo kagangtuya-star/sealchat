@@ -152,7 +152,7 @@ func ttsWorker(ctx context.Context) {
 		case <-ttsWake:
 		case <-ticker.C:
 		}
-		ttsRecoverOutbox()
+		ttsRecoverOutboxWithContext(ctx)
 		// Disabling new charged operations must not suspend archival of already
 		// billed audio. Queued HTTP work still checks ttsConfig inside ttsRun.
 		var speechConfig *utils.SpeechConfig
@@ -189,6 +189,10 @@ func ttsWorker(ctx context.Context) {
 }
 
 func ttsRecoverOutbox() {
+	ttsRecoverOutboxWithContext(context.Background())
+}
+
+func ttsRecoverOutboxWithContext(ctx context.Context) {
 	db := model.GetDB()
 	var messages []model.MessageModel
 	if db.Where("tts_status = ? AND tts_intent <> ?", "pending", "").Order("created_at ASC, id ASC").Limit(50).Find(&messages).Error != nil {
@@ -197,15 +201,18 @@ func ttsRecoverOutbox() {
 	for _, m := range messages {
 		status := "queued"
 		var s TTSSnapshot
-		if m.IsDeleted || m.IsRevoked || m.DeletedAt != nil || time.Since(m.CreatedAt) > 2*time.Minute || json.Unmarshal([]byte(m.TTSIntent), &s) != nil {
+		if m.IsDeleted || m.IsRevoked || m.DeletedAt != nil || json.Unmarshal([]byte(m.TTSIntent), &s) != nil || (s.Translation == nil && time.Since(m.CreatedAt) > 2*time.Minute) {
 			status = "skipped"
 		} else {
+			if ttsRecoverTranslation(ctx, db, m, s) {
+				continue
+			}
 			j := &model.TTSJob{Operation: "message_synthesis", RequestKey: "message:" + m.ID, PayerUserID: m.UserID, ChannelID: m.ChannelID, MessageID: m.ID, MessageRevision: int64(m.EditCount), Snapshot: m.TTSIntent, VoiceID: s.VoiceID, Deadline: time.Now().Add(ttsMessageQueueWait)}
 			if err := ttsReserveSnapshot(j, s); err != nil {
 				status = "skipped"
 			}
 		}
-		_ = db.Model(&model.MessageModel{}).Where("id = ? AND tts_status = ? AND edit_count = ?", m.ID, "pending", m.EditCount).Update("tts_status", status).Error
+		_ = db.Model(&model.MessageModel{}).Where("id = ? AND tts_status = ? AND edit_count = ? AND tts_intent = ?", m.ID, "pending", m.EditCount, m.TTSIntent).Update("tts_status", status).Error
 	}
 }
 
@@ -230,7 +237,11 @@ func ttsMessageCurrentWithDB(db *gorm.DB, job *model.TTSJob, s TTSSnapshot) bool
 	if m.IsWhisper != (s.Whisper || len(s.Audience) > 0) || (job.ChannelID != "" && m.ChannelID != job.ChannelID) || (job.PayerUserID != "" && m.UserID != job.PayerUserID) {
 		return false
 	}
-	if err != nil || text != s.Input.Text || m.TTSIntent != job.Snapshot {
+	expectedSource := s.SourceText
+	if expectedSource == "" {
+		expectedSource = s.Input.Text
+	}
+	if err != nil || text != expectedSource || m.TTSIntent != job.Snapshot {
 		return false
 	}
 	if m.IsWhisper {

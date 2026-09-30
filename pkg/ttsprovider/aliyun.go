@@ -21,6 +21,7 @@ var ErrIncomplete = errors.New("tts stream has no successful terminal event")
 
 type Input struct {
 	Text        string  `json:"text"`
+	Language    string  `json:"language,omitempty"`
 	Voice       string  `json:"voice"`
 	Format      string  `json:"format"`
 	SampleRate  int     `json:"sample_rate"`
@@ -86,10 +87,23 @@ func (c *Client) post(ctx context.Context, endpoint string, body any, sse bool) 
 }
 
 func (c *Client) Synthesize(ctx context.Context, model string, input Input, sink io.Writer) (Result, error) {
+	// Language is an optional adapter hint. Aliyun detects the text language.
+	payload := struct {
+		Text        string  `json:"text"`
+		Voice       string  `json:"voice"`
+		Format      string  `json:"format"`
+		SampleRate  int     `json:"sample_rate"`
+		BitRate     int     `json:"bit_rate,omitempty"`
+		Instruction string  `json:"instruction,omitempty"`
+		Rate        float64 `json:"rate"`
+		Pitch       float64 `json:"pitch"`
+		Volume      int     `json:"volume"`
+		Seed        int     `json:"seed"`
+	}{input.Text, input.Voice, input.Format, input.SampleRate, input.BitRate, input.Instruction, input.Rate, input.Pitch, input.Volume, input.Seed}
 	resp, err := c.post(ctx, c.SynthesisEndpoint, struct {
 		Model string `json:"model"`
-		Input Input  `json:"input"`
-	}{model, input}, true)
+		Input any    `json:"input"`
+	}{model, payload}, true)
 	if err != nil {
 		return Result{}, err
 	}

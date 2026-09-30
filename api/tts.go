@@ -25,6 +25,10 @@ func ttsError(c *fiber.Ctx, err error) error {
 	if errors.As(err, &validation) {
 		status, message = 400, validation.Error()
 	}
+	var translation *service.TTSTranslationError
+	if errors.As(err, &translation) {
+		status, message = fiber.StatusServiceUnavailable, translation.Error()
+	}
 	if errors.Is(err, ttsprovider.ErrMedia) {
 		status, message = 400, ttsprovider.ErrMedia.Error()
 	}

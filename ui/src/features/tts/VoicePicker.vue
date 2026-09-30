@@ -7,7 +7,7 @@ import type { SpeechProviderMeta, SpeechVoice, SystemVoice, VoiceContext } from 
 import VoiceCard from './VoiceCard.vue'
 import {
   collectVoiceFacets, emptyVoiceFilters, itemSelection, matchesSource, matchesSearch, matchesVoiceFilters,
-  personalVoiceItem, resolveLegacySystemSelection, resolveSystemVoiceContext, selectsItem, systemVoiceItem, voiceSourceOptions, voiceSourceLabel,
+  personalVoiceItem, resolveLegacySystemSelection, resolveSystemVoiceContext, selectedSpeechLanguages, selectsItem, systemVoiceItem, voiceSourceOptions, voiceSourceLabel,
   type VoiceCatalogItem, type VoiceSourceKey, type VoiceFacetKey, type VoiceSelection,
 } from './voice-catalog'
 
@@ -18,7 +18,9 @@ const props = defineProps<{
   mode: 'browse' | 'select'
   voiceContext: VoiceContext | null
   voiceContexts: VoiceContext[]
+  defaultVoice?: string
 }>()
+const emit = defineEmits<{ (e: 'speech-languages', languages: string[] | null): void }>()
 const selection = defineModel<VoiceSelection>({ required: true })
 const user = useUserStore()
 const theme = useThemeVars()
@@ -186,6 +188,10 @@ const current = computed<CurrentState>(() => {
   if (item === undefined) return { status: 'pending' }
   return item?.available ? { status: 'ready', item } : { status: 'unavailable' }
 })
+
+// Independent of browsing source/search/language filters.
+const speechLanguages = computed(() => selectedSpeechLanguages(selection.value, system.value, props.voiceContexts, props.voiceContext, props.defaultVoice ?? ''))
+watch(speechLanguages, languages => emit?.('speech-languages', languages), { immediate: true })
 
 function isItemSelected(item: VoiceCatalogItem): boolean {
   if (selection.value.type === 'system') {

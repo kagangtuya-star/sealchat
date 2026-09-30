@@ -37,6 +37,26 @@ func TestAITaskSSEEncoding(t *testing.T) {
 	}
 }
 
+func TestAITaskRunRejectsBackendTTSTranslate(t *testing.T) {
+	app := fiber.New()
+	app.Post("/ai/tasks/:featureKey", func(c *fiber.Ctx) error {
+		c.Locals("user", &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: "user"}})
+		return AITaskRun(c)
+	})
+	for _, source := range []string{"platform", "user"} {
+		req := httptest.NewRequest("POST", "/ai/tasks/tts_translate", strings.NewReader(`{"source":"`+source+`","input":"arbitrary target"}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != fiber.StatusForbidden {
+			t.Fatalf("source=%s status=%d", source, resp.StatusCode)
+		}
+	}
+}
+
 func TestAICapabilitiesGetIncludesFeatureRuntimeConfig(t *testing.T) {
 	originalConfig := appConfig
 	defer func() {

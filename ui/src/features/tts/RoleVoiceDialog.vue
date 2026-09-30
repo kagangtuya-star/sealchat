@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NInputNumber, NModal } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NModal, NSelect } from 'naive-ui'
 import { speechAPI, speechError } from './api'
 import { useSpeechStore } from './store'
 import type { RoleSpeechConfig, SpeechJob } from './types'
 import { speechPlayer } from './player'
 import { useUserStore } from '@/stores/user'
 import VoicePicker from './VoicePicker.vue'
-import { roleVoiceFields, roleVoiceSelection, type VoiceSelection } from './voice-catalog'
+import { compatibleSpeechLanguage, roleVoiceFields, roleVoiceSelection, speechLanguageOptions, type VoiceSelection } from './voice-catalog'
 const props = defineProps<{ identityId: string; identityName?: string }>()
 const speech = useSpeechStore()
 const user = useUserStore()
@@ -19,6 +19,13 @@ const text = ref('你好，这是我的角色语音试听。')
 const job = ref<SpeechJob | null>(null)
 const role = ref<RoleSpeechConfig | null>(null)
 const selection = ref<VoiceSelection>({ type: 'inherit' })
+const speechLanguages = ref<string[] | null>(null)
+const languageOptions = computed(() => speechLanguageOptions(speechLanguages.value ?? []))
+watch([speechLanguages, () => role.value?.speechLanguage], () => {
+  if (role.value && speechLanguages.value !== null) {
+    role.value.speechLanguage = compatibleSpeechLanguage(role.value.speechLanguage ?? '', speechLanguages.value)
+  }
+}, { flush: 'sync' })
 watch([() => user.info.id, () => props.identityId], () => { generation++; visible.value = false; role.value = null; selection.value = { type: 'inherit' }; job.value = null; busy.value = false }, { flush: 'sync' })
 watch(visible, () => { generation++; busy.value = false }, { flush: 'sync' })
 onBeforeUnmount(() => { generation++ })
@@ -33,6 +40,7 @@ async function open() {
   busy.value = true
   error.value = ''
   role.value = null
+  speechLanguages.value = null
   job.value = null
   const identityId = props.identityId
   const current = generation
@@ -41,8 +49,8 @@ async function open() {
     if (current !== generation || !visible.value || identityId !== props.identityId) return
     const value = await speechAPI.role(identityId)
     if (current !== generation || !visible.value || identityId !== props.identityId) return
-    role.value = value
     selection.value = roleVoiceSelection(value)
+    role.value = { ...value, speechLanguage: value.speechLanguage ?? '' }
   } catch (e) { if (current === generation) error.value = speechError(e) }
   finally { if (current === generation) busy.value = false }
 }
@@ -52,7 +60,7 @@ async function save() {
   error.value = ''
   const current = generation
   try {
-    await speechAPI.saveRole(props.identityId, { ...role.value, ...roleVoiceFields(selection.value) })
+    await speechAPI.saveRole(props.identityId, { ...role.value, ...roleVoiceFields(selection.value), speechLanguage: role.value.speechLanguage })
     if (current === generation) visible.value = false
   }
   catch (e) { if (current === generation) error.value = speechError(e) }
@@ -64,7 +72,7 @@ async function audition() {
   error.value = ''
   const current = generation
   try {
-    const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), text: text.value, requestKey: crypto.randomUUID() })
+    const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), speechLanguage: role.value.speechLanguage, text: text.value, requestKey: crypto.randomUUID() })
     if (current === generation) job.value = value
   }
   catch (e) { if (current === generation) error.value = speechError(e) }
@@ -95,10 +103,15 @@ async function query() {
       </header>
       <NAlert v-if="error" type="error" class="rv-alert">{{ error }}</NAlert>
       <div v-if="role" class="rv-body">
-        <VoicePicker v-model="selection" mode="select" :voice-context="voiceContext" :voice-contexts="voiceContexts" class="rv-picker" />
+        <VoicePicker v-model="selection" mode="select" :voice-context="voiceContext" :voice-contexts="voiceContexts" :default-voice="speech.quota?.defaultVoice" class="rv-picker" @speech-languages="speechLanguages = $event" />
         <aside class="rv-side">
           <section class="rv-section">
             <h3>角色语音参数</h3>
+            <label class="rv-field">
+              <span>朗读语言</span>
+              <NSelect v-model:value="role.speechLanguage" :options="languageOptions" />
+            </label>
+            <p class="rv-hint">指定语言后，使用平台 AI 转换全文并计入文本额度；跟随原文直接朗读。</p>
             <label class="rv-field">
               <span>朗读指令</span>
               <NInput v-model:value="role.instruction" placeholder="朗读指令（不调用文本模型）" />

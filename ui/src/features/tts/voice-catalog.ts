@@ -21,6 +21,7 @@ export interface VoiceCatalogItem {
   description?: string
   tags: string[]
   languages: string[]
+  speechLanguages: string[]
   kind: string
   ownership: VoiceOwnership
   visibility: VoiceVisibility
@@ -43,6 +44,23 @@ const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: 
 const languageLabels: Readonly<Record<string, string>> = { zh: '中文', en: '英文' }
 export const voiceKindLabel = (kind: string) => kindLabels[kind] ?? kind
 export const voiceLanguageLabel = (code: string) => languageLabels[code] ?? code
+
+const speechLanguageLabels: Readonly<Record<string, string>> = { zh: '中文', en: 'English', ja: '日本語', ko: '한국어', yue: '粤语', fr: 'Français', de: 'Deutsch', pt: 'Português', it: 'Italiano', vi: 'Tiếng Việt', id: 'Bahasa Indonesia', ru: 'Русский', th: 'ไทย', es: 'Español', ms: 'Bahasa Melayu', fil: 'Filipino', ar: 'العربية' }
+export function speechLanguageOptions(languages: string[]): Array<{ value: string; label: string }> {
+  return [{ value: '', label: '跟随原文' }, ...[...new Set(languages)].filter(Boolean).map(value => ({ value, label: speechLanguageLabels[value] ?? voiceLanguageLabel(value) }))]
+}
+export function compatibleSpeechLanguage(language: string, languages: string[]): string {
+  return languages.includes(language) ? language : ''
+}
+export function selectedSpeechLanguages(selection: VoiceSelection, voices: SystemVoice[] | null, contexts: VoiceContext[], defaultContext: VoiceContext | null, defaultVoice: string): string[] | null {
+  if (selection.type === 'personal') return []
+  if (voices === null) return null // Loading must not clear an existing binding.
+  if (selection.type === 'inherit') {
+    const voice = voices.find(voice => voice.id === defaultVoice && systemVoiceSupported(voice, defaultContext))
+    return voice && defaultContext ? systemVoiceItem(voice, defaultContext).speechLanguages : []
+  }
+  return resolveLegacySystemSelection(selection, voices, contexts, defaultContext)?.speechLanguages ?? []
+}
 
 export function providerDisplayName(providers: SpeechProviderMeta[], kind: string): string {
   return providers.find(provider => provider.kind === kind)?.name ?? kind
@@ -70,6 +88,7 @@ export function systemVoiceItem(voice: SystemVoice, context: VoiceContext): Voic
     key: `system:${voice.providerKind}:${context.providerId}:${context.modelId}:${voice.id}`, id: voice.id, source: 'system',
     providerKind: context.providerKind, providerId: context.providerId, models: voice.models, modelId: context.modelId, name: voice.name,
     tags: splitTags(voice.tags), languages: voice.languages ?? [], kind: voice.kind,
+    speechLanguages: voice.speechLanguages?.length ? voice.speechLanguages : voice.languages ?? [],
     ownership: 'platform', visibility: 'system', available: true,
   }
 }
@@ -81,6 +100,7 @@ export function personalVoiceItem(voice: SpeechVoice, userId: string): VoiceCata
     key: `personal:${voice.id}`, id: voice.id, source: 'personal', providerId: voice.providerId || undefined,
     models: [voice.targetModel], modelId: voice.targetModel, name: voice.name, description: voice.description || undefined,
     tags: splitTags(voice.tags), languages: [], kind: voice.kind,
+    speechLanguages: [],
     ownership: voice.ownerUserId === userId ? 'mine' : 'public',
     visibility: voice.isPublic ? 'public' : 'private',
     available: voice.lifecycle === 'saved' && voice.providerStatus === 'OK' && voice.supported !== false,

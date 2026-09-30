@@ -50,6 +50,7 @@ type ChannelIdentityTTSConfig struct {
 	SystemVoiceProvider   string  `json:"systemVoiceProvider"`
 	SystemVoiceProviderID string  `json:"systemVoiceProviderId"`
 	SystemVoiceModel      string  `json:"systemVoiceModel"`
+	SpeechLanguage        string  `json:"speechLanguage" gorm:"size:16"`
 	Instruction           string  `json:"instruction"`
 	Rate                  float64 `json:"rate"`
 	Pitch                 float64 `json:"pitch"`

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,6 +40,8 @@ type TTSRequest struct {
 	Description           string  `json:"description"`
 	SourceResourceID      string  `json:"sourceResourceId"`
 	CloneLanguageHint     string  `json:"cloneLanguageHint,omitempty"`
+	SpeechLanguage        string  `json:"speechLanguage,omitempty"`
+	IdentityID            string  `json:"identityId,omitempty"`
 	ClonePreprocess       bool    `json:"clonePreprocess,omitempty"`
 }
 type TTSSnapshot struct {
@@ -57,6 +60,14 @@ type TTSSnapshot struct {
 	ClonePreprocess   bool                       `json:"clonePreprocess,omitempty"`
 	Audience          []string                   `json:"audience,omitempty"`
 	Whisper           bool                       `json:"whisper,omitempty"`
+	SourceText        string                     `json:"sourceText,omitempty"`
+	Translation       *TTSTranslationSnapshot    `json:"translation,omitempty"`
+}
+
+type TTSTranslationSnapshot struct {
+	TargetLanguage string `json:"targetLanguage"`
+	State          string `json:"state"` // pending / running / done
+	StartedAt      int64  `json:"startedAt,omitempty"`
 }
 
 func ttsHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -266,6 +277,14 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	if r.Rate == 0 {
 		r.Rate = 1
 	}
+	if operation != "design" && operation != "clone" && r.SpeechLanguage != "" {
+		if voice != nil {
+			return s, TTSValidationError("个人音色暂不支持指定朗读语言，请选择跟随原文")
+		}
+		if !ttsprovider.VoiceSpeechLanguageSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v, r.SpeechLanguage) {
+			return s, TTSValidationError("当前音色不支持此朗读语言")
+		}
+	}
 	if r.Pitch == 0 {
 		r.Pitch = 1
 	}
@@ -279,6 +298,11 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	s.Input = ttsprovider.Input{Text: strings.TrimSpace(r.Text), Voice: v, Format: cfg.Format, SampleRate: 24000, BitRate: 64, Rate: r.Rate, Pitch: r.Pitch, Volume: volume, Instruction: r.Instruction}
 	if cfg.Format != "opus" {
 		s.Input.BitRate = 0
+	}
+	if operation != "design" && operation != "clone" && r.SpeechLanguage != "" {
+		s.SourceText = s.Input.Text
+		s.Translation = &TTSTranslationSnapshot{TargetLanguage: r.SpeechLanguage, State: "pending"}
+		return s, nil
 	}
 	b, _ := json.Marshal(s)
 	s.Fingerprint = ttsHash(string(b))
@@ -371,6 +395,7 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 			r.SystemVoiceProvider = role.SystemVoiceProvider
 			r.SystemVoiceProviderID = role.SystemVoiceProviderID
 			r.SystemVoiceModel = role.SystemVoiceModel
+			r.SpeechLanguage = role.SpeechLanguage
 			r.Instruction = role.Instruction
 			r.Rate = role.Rate
 			r.Pitch = role.Pitch
@@ -400,8 +425,10 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 	audience, _ := json.Marshal(s.Audience)
 	s.Scope = m.ChannelID + ":" + ttsHash(string(audience))
 	s.Fingerprint = ""
-	fingerprint, _ := json.Marshal(s)
-	s.Fingerprint = ttsHash(string(fingerprint))
+	if s.Translation == nil {
+		fingerprint, _ := json.Marshal(s)
+		s.Fingerprint = ttsHash(string(fingerprint))
+	}
 	b, err := json.Marshal(s)
 	if err != nil {
 		return
@@ -456,6 +483,21 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 			return nil, ErrTTSDenied
 		}
 	}
+	if operation == "audition" && s.Translation != nil {
+		var user model.UserModel
+		if err := model.GetDB().Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
+			return nil, err
+		}
+		worldID, err := ttsAuditionWorldID(userID, r.IdentityID)
+		if err != nil {
+			return nil, err
+		}
+		text, err := ttsTranslateText(context.Background(), &user, worldID, s.Translation.TargetLanguage, s.SourceText)
+		if err != nil {
+			return nil, err
+		}
+		ttsCompleteTranslation(&s, text)
+	}
 	b, _ := json.Marshal(s)
 	job := &model.TTSJob{Operation: operation, RequestKey: key, PayerUserID: userID, Snapshot: string(b), InputHash: inputHash, Deadline: time.Now().Add(2 * time.Minute), VoiceID: r.VoiceID}
 	// Auditions are cached only inside this authenticated user's safety domain.
@@ -489,6 +531,9 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 	return job, nil
 }
 func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
+	if s.Translation != nil && (s.Translation.State != "done" || s.Fingerprint == "") {
+		return TTSValidationError("语音翻译尚未完成")
+	}
 	cfg, err := ttsConfig()
 	if err != nil {
 		return err

@@ -47,7 +47,7 @@ export interface SpeechVoice {
   previewExpiresAt?: string
   previewResourceId?: string
 }
-export interface SystemVoice { id: string; name: string; providerKind: string; models: string[]; targetModel?: string; languages: string[]; kind: string; tags?: string }
+export interface SystemVoice { id: string; name: string; providerKind: string; models: string[]; targetModel?: string; languages: string[]; speechLanguages?: string[]; kind: string; tags?: string }
 export interface SpeechProviderMeta { kind: string; name: string }
 export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; providers: SpeechProviderMeta[]; total: number; catalogVersion: string }
 // `scope` selects the saved-voice picker catalog; without it `mine` keeps the
@@ -64,6 +64,7 @@ export interface VoiceDirectoryQuery {
 }
 export interface SpeechRequest {
   requestKey: string
+  identityId?: string
   text?: string
   voiceId?: string
   systemVoice?: string
@@ -81,6 +82,7 @@ export interface SpeechRequest {
   description?: string
   sourceResourceId?: string
   cloneLanguageHint?: string
+  speechLanguage?: string
   clonePreprocess?: boolean
 }
 export interface SpeechJob {
@@ -108,6 +110,7 @@ export interface RoleSpeechConfig {
   systemVoiceProvider: string
   systemVoiceProviderId: string
   systemVoiceModel: string
+  speechLanguage: string
   instruction: string
   rate: number
   pitch: number
