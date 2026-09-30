@@ -76,6 +76,13 @@ func BindTTSRoutes(auth fiber.Router) {
 		return c.JSON(b)
 	})
 	r.Get("/voices", ttsVoices)
+	r.Get("/voice-targets", func(c *fiber.Ctx) error {
+		providers, err := service.TTSVoiceCreationProviders()
+		if err != nil {
+			return ttsError(c, err)
+		}
+		return c.JSON(providers)
+	})
 	r.Get("/voices/:id", func(c *fiber.Ctx) error {
 		var voice model.TTSVoice
 		if err := model.GetDB().Where("id = ? AND lifecycle = ? AND provider_status = ? AND deleted_at IS NULL AND (owner_user_id = ? OR is_public = ?)", c.Params("id"), "saved", "OK", getCurUser(c).ID, true).First(&voice).Error; err != nil {

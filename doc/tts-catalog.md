@@ -17,6 +17,10 @@ JSON/YAML 中旧实例缺少 `providerKind` 时按阿里云处理；读取时补
 `GET /api/v1/tts/me` 返回 `voiceContext: { providerKind, providerId, modelId }`，供选音器过滤当前可用系统和个人音色。
 管理员的默认音色下拉选项来自系统目录，切换默认实例或模型时保留兼容选择，否则使用模型目录的默认值。
 
+`GET /api/v1/tts/voice-targets` 向已登录用户返回启用且有 API Key 的创建实例：`providerId`、`providerKind`、仅含实例实际配置模型的 `models`（每项仅有 `id`、`providerKind`、`name`、`capabilities`）、实例的 `designPrice` / `clonePrice`；价格仅来自实例级字段，`null` 表示尚未确认，不返回模型价格、默认音色、凭证、账号命名空间或 endpoint。
+创建面板按 `voiceDesign` / `voiceClone` 过滤目标，默认使用 `voiceContext.providerId + modelId`，切换方式时保留支持的目标，否则选择第一个可用项。
+`POST /api/v1/tts/jobs/design` 和 `/clone` 可携带 `providerId`、`modelId` 指定创建目标，必须成对提供且与实例配置精确一致；省略时保留历史解析行为。新面板总是显式提供目标，独立于系统/个人音色绑定。后端检查模型能力并冻结实际 provider，Worker 继续以其 `Model` 作为 `voice-enrollment/create_voice` 的 `target_model` 和个人资产的 `TargetModel`。这些字段不参与 audition 或消息合成路由。
+
 历史配置读取可以修复不兼容的默认音色；配置写入使用 `NormalizeSpeechConfigForWrite` 保留显式非空选择，随后严格校验，非法组合返回 400。
 未指定音色时使用平台配置的兼容默认值；缺少默认值时由能力目录提供。阿里 3.0 Flash、3.1 Flash 和 3.0 Plus 默认分别为 `longanhuan_v3.6`、`longanhuan_v3.1`、`longanlingxin`。
 

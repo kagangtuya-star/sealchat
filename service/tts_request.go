@@ -28,6 +28,8 @@ type TTSRequest struct {
 	SystemVoice         string  `json:"systemVoice"`
 	SystemVoiceProvider string  `json:"systemVoiceProvider,omitempty"`
 	SystemVoiceModel    string  `json:"systemVoiceModel,omitempty"`
+	ProviderID          string  `json:"providerId,omitempty"`
+	ModelID             string  `json:"modelId,omitempty"`
 	Instruction         string  `json:"instruction"`
 	Rate                float64 `json:"rate"`
 	Pitch               float64 `json:"pitch"`
@@ -76,9 +78,53 @@ func systemVoiceBindingSupported(p utils.SpeechProviderConfig, id, providerKind,
 }
 
 func ttsSnapshotForRequest(userID string, r TTSRequest, scope string, automatic bool) (TTSSnapshot, error) {
+	return ttsSnapshotForOperation(userID, r, scope, automatic, "")
+}
+
+func ttsVoiceCreationCapability(capabilities ttsprovider.ModelCapabilities, operation string) error {
+	if (operation == "design" && !capabilities.VoiceDesign) || (operation == "clone" && !capabilities.VoiceClone) {
+		return TTSValidationError("当前模型不支持此音色创建方式")
+	}
+	return nil
+}
+
+func ttsCreationProvider(cfg *utils.SpeechConfig, providerID, modelID, operation string) (utils.SpeechProviderConfig, error) {
+	if providerID == "" || modelID == "" {
+		return utils.SpeechProviderConfig{}, TTSValidationError("请完整指定创建目标 provider 和模型")
+	}
+	for _, p := range cfg.Providers {
+		if p.ID != providerID {
+			continue
+		}
+		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" {
+			return p, ErrTTSDisabled
+		}
+		if p.Model != modelID {
+			return p, TTSValidationError("创建目标模型与 provider 配置不匹配")
+		}
+		spec, supported := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model)
+		if !supported {
+			return p, TTSValidationError("语音 provider 类型与模型不匹配")
+		}
+		return p, ttsVoiceCreationCapability(spec.Capabilities, operation)
+	}
+	return utils.SpeechProviderConfig{}, ErrTTSDisabled
+}
+
+func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automatic bool, operation string) (TTSSnapshot, error) {
 	cfg, err := ttsConfig()
 	if err != nil {
 		return TTSSnapshot{}, err
+	}
+	var target *utils.SpeechProviderConfig
+	if (operation == "design" || operation == "clone") && (r.ProviderID != "" || r.ModelID != "") {
+		p, resolveErr := ttsCreationProvider(cfg, r.ProviderID, r.ModelID, operation)
+		if resolveErr != nil {
+			return TTSSnapshot{}, resolveErr
+		}
+		target = &p
+		// Creation targets are independent of synthesis voice bindings.
+		r.VoiceID, r.SystemVoice, r.SystemVoiceProvider, r.SystemVoiceModel = "", "", "", ""
 	}
 	s := TTSSnapshot{Version: 1, Owner: userID, Scope: scope, VoiceID: r.VoiceID, SourceResourceID: r.SourceResourceID, Name: r.Name, Description: r.Description}
 	if r.VoiceID != "" && r.SystemVoice != "" {
@@ -95,11 +141,15 @@ func ttsSnapshotForRequest(userID string, r TTSRequest, scope string, automatic 
 		s.VoiceRevision = voice.Revision
 	}
 	found := false
-	for _, p := range cfg.Providers {
-		if p.ID == providerID && p.Enabled {
-			s.Provider = p
-			found = true
-			break
+	if target != nil {
+		s.Provider, found = *target, true
+	} else {
+		for _, p := range cfg.Providers {
+			if p.ID == providerID && p.Enabled {
+				s.Provider = p
+				found = true
+				break
+			}
 		}
 	}
 	if !found || s.Provider.APIKey == "" {
@@ -326,13 +376,13 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 	if operation == "design" && (utf8.RuneCountInString(r.Description) < 1 || utf8.RuneCountInString(r.Description) > 500 || utf8.RuneCountInString(r.Text) < 15 || utf8.RuneCountInString(r.Text) > 200) {
 		return nil, TTSValidationError("声音描述限 1–500 字符，预览文本限 15–200 字符")
 	}
-	s, err := ttsSnapshot(userID, r, "user:"+userID)
+	s, err := ttsSnapshotForOperation(userID, r, "user:"+userID, false, operation)
 	if err != nil {
 		return nil, err
 	}
 	spec, _ := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model)
-	if (operation == "design" && !spec.Capabilities.VoiceDesign) || (operation == "clone" && !spec.Capabilities.VoiceClone) {
-		return nil, TTSValidationError("当前模型不支持此音色创建方式")
+	if err := ttsVoiceCreationCapability(spec.Capabilities, operation); err != nil {
+		return nil, err
 	}
 	if operation == "clone" {
 		var a model.AttachmentModel

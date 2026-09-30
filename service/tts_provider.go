@@ -47,6 +47,39 @@ type TTSProviderResolution struct {
 	Models            []TTSResolvedModel `json:"models"`
 }
 
+// Public creation choices expose configured models and prices, never credentials.
+type TTSVoiceCreationModel struct {
+	ID           string                        `json:"id"`
+	ProviderKind string                        `json:"providerKind"`
+	Name         string                        `json:"name"`
+	Capabilities ttsprovider.ModelCapabilities `json:"capabilities"`
+}
+
+type TTSVoiceCreationProvider struct {
+	ProviderID   string                  `json:"providerId"`
+	ProviderKind string                  `json:"providerKind"`
+	Models       []TTSVoiceCreationModel `json:"models"`
+	DesignPrice  *float64                `json:"designPrice"`
+	ClonePrice   *float64                `json:"clonePrice"`
+}
+
+func TTSVoiceCreationProviders() ([]TTSVoiceCreationProvider, error) {
+	cfg, err := ttsConfig()
+	if err != nil {
+		return nil, err
+	}
+	providers := []TTSVoiceCreationProvider{}
+	for _, p := range cfg.Providers {
+		spec, supported := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model)
+		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" || !supported || (!spec.Capabilities.VoiceDesign && !spec.Capabilities.VoiceClone) {
+			continue
+		}
+		model := TTSVoiceCreationModel{ID: spec.ID, ProviderKind: spec.ProviderKind, Name: spec.ID, Capabilities: spec.Capabilities}
+		providers = append(providers, TTSVoiceCreationProvider{ProviderID: p.ID, ProviderKind: p.EffectiveProviderKind(), Models: []TTSVoiceCreationModel{model}, DesignPrice: p.DesignPrice, ClonePrice: p.ClonePrice})
+	}
+	return providers, nil
+}
+
 type aliyunModelCatalog struct {
 	Success bool   `json:"success"`
 	Code    any    `json:"code"`

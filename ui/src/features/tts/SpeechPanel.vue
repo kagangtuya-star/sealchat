@@ -6,7 +6,7 @@ import { useSpeechStore } from './store'
 import { speechPlayer } from './player'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
-import type { SpeechJob, SpeechVoice, VoiceDirectory } from './types'
+import type { SpeechJob, SpeechVoice, VoiceCreationProvider, VoiceDirectory } from './types'
 import SpeechQuotaSummary from './SpeechQuotaSummary.vue'
 import VoicePicker from './VoicePicker.vue'
 import { requestVoiceFields, voiceKindLabel, type VoiceSelection } from './voice-catalog'
@@ -36,12 +36,14 @@ const tabs: ReadonlyArray<{ value: PanelTab; label: string }> = [
 const lifecycleLabels: Readonly<Record<string, string>> = { creating: '创建中', preview: '预览', saved: '已保存', delete_pending: '删除中' }
 const tab = ref<PanelTab>('catalog')
 // Lifecycles move in the background (creating -> preview -> expiry); refresh on entry.
-watch(tab, value => { if (value === 'mine') void run(load) })
+watch(tab, value => {
+  if (value === 'mine') void run(load)
+  if (value === 'create') void run(loadCreationProviders)
+})
 const error = ref('')
 const busy = ref(false)
 const text = ref('你好，欢迎来到我们的冒险故事。')
-// The catalog picks the voice for auditions and design/clone requests; the
-// platform default stands in when nothing explicit is chosen.
+// The catalog picks the voice for auditions; creation owns a separate target.
 const selection = ref<VoiceSelection>({ type: 'inherit' })
 const voiceContext = computed(() => speech.quota?.voiceContext ?? null)
 const picker = ref<InstanceType<typeof VoicePicker> | null>(null)
@@ -51,6 +53,24 @@ const directory = ref<VoiceDirectory>({ items: [], system: [], total: 0, catalog
 const name = ref('')
 const description = ref('')
 const operation = ref<'design' | 'clone'>('design')
+const creationProviders = ref<VoiceCreationProvider[]>([])
+const creationTarget = ref('')
+const creationOptions = computed(() => creationProviders.value.flatMap(provider => provider.models
+  .filter(model => model.providerKind === provider.providerKind && (operation.value === 'design' ? model.capabilities.voiceDesign : model.capabilities.voiceClone))
+  .map(model => ({
+    value: JSON.stringify([provider.providerId, model.id]),
+    label: `${provider.providerKind === 'aliyun' ? '阿里云' : provider.providerKind}（${provider.providerId}） · ${model.id}`,
+    providerId: provider.providerId, modelId: model.id,
+    designPrice: provider.designPrice, clonePrice: provider.clonePrice,
+  }))))
+watch([creationOptions, voiceContext], ([options, context]) => {
+  if (options.some(option => option.value === creationTarget.value)) return
+  const preferred = !creationTarget.value && context
+    ? options.find(option => option.providerId === context.providerId && option.modelId === context.modelId)
+    : undefined
+  creationTarget.value = preferred?.value ?? options[0]?.value ?? ''
+}, { immediate: true, flush: 'sync' })
+const selectedCreationTarget = computed(() => creationOptions.value.find(option => option.value === creationTarget.value))
 const source = ref<File | null>(null)
 let uploadedSource: { file: File; id: string } | null = null
 const authorized = ref(false)
@@ -111,6 +131,11 @@ async function load() {
   }
   directory.value = value
 }
+async function loadCreationProviders() {
+  const userId = user.info.id
+  const providers = speech.quota?.enabled ? await speechAPI.voiceTargets() : []
+  if (alive && userId === user.info.id) creationProviders.value = providers
+}
 async function loadReplaceOptions() {
   const current = ++replaceSerial
   replaceLoading.value = true
@@ -155,6 +180,8 @@ async function poll(id: string) {
 }
 async function submit(kind: 'audition' | 'design' | 'clone') {
   const userId = user.info.id
+  const target = kind === 'audition' ? undefined : selectedCreationTarget.value
+  if (kind !== 'audition' && (!target || kind !== operation.value)) throw new Error('请选择支持当前创建方式的目标模型。')
   const selectedFile = source.value
   let sourceResourceId: string | undefined
   if (kind === 'clone' && selectedFile && authorized.value) {
@@ -163,11 +190,12 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
     uploadedSource = { file: selectedFile, id: sourceResourceId }
   }
   if (!alive || userId !== user.info.id) return
+  if (target && (kind !== operation.value || target.value !== selectedCreationTarget.value?.value)) return
   if (kind === 'clone' && !sourceResourceId) throw new Error('请选择自己有权使用的样本并确认授权。')
   const value = await speechAPI.submit(kind, {
     requestKey: crypto.randomUUID(), text: text.value, name: name.value, description: description.value,
     sourceResourceId,
-    ...requestVoiceFields(selection.value),
+    ...(target ? { providerId: target.providerId, modelId: target.modelId } : requestVoiceFields(selection.value)),
   })
   if (!alive || userId !== user.info.id) return
   job.value = value
@@ -176,7 +204,7 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
 async function save(voice: SpeechVoice) { await speechAPI.save(voice.id, replaceId.value); replaceId.value = ''; await reloadVoices(); await speech.refresh() }
 async function remove(voice: SpeechVoice) { await speechAPI.remove(voice.id); await reloadVoices(); await speech.refresh() }
 async function update(voice: SpeechVoice) { if (voice.parameters) JSON.parse(voice.parameters); await speechAPI.update(voice); await reloadVoices() }
-onMounted(() => void run(async () => { await speech.refresh(); await load() }))
+onMounted(() => void run(async () => { await speech.refresh(); await load(); await loadCreationProviders() }))
 onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(timer) })
 </script>
 
@@ -219,15 +247,16 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
             <button type="button" class="sp-tab" :class="{ 'is-active': operation === 'design' }" :aria-pressed="operation === 'design'" @click="operation = 'design'">声音设计</button>
             <button type="button" class="sp-tab" :class="{ 'is-active': operation === 'clone' }" :aria-pressed="operation === 'clone'" @click="operation = 'clone'">样本复刻</button>
           </div>
+          <label class="sp-field"><span>目标模型</span><NSelect v-model:value="creationTarget" :options="creationOptions" :disabled="busy" placeholder="暂无支持当前创建方式的模型" /></label>
           <label class="sp-field"><span>音色名称</span><NInput v-model:value="name" placeholder="音色名称" /></label>
           <label class="sp-field"><span>声音描述</span><NInput v-model:value="description" type="textarea" placeholder="描述希望设计的声音" /></label>
           <label class="sp-field"><span>预览文本</span><NInput v-model:value="text" type="textarea" placeholder="15–200 字预览文本" /></label>
           <p class="sp-hint">创建完成后会生成限时预览，可在“我的音色”中保存或替换已有音色。已保存音色 {{ speech.quota?.saved ?? 0 }} / {{ speech.quota?.slots ?? 0 }}。</p>
-          <NButton v-if="operation === 'design'" type="primary" :disabled="!speech.quota?.enabled || speech.quota.designPrice == null" :loading="busy" @click="run(() => submit('design'))">确认设计</NButton>
+          <NButton v-if="operation === 'design'" type="primary" :disabled="!speech.quota?.enabled || selectedCreationTarget?.designPrice == null" :loading="busy" @click="run(() => submit('design'))">确认设计</NButton>
           <template v-else>
             <input type="file" accept="audio/wav,audio/mpeg" @change="event => { source = (event.target as HTMLInputElement).files?.[0] ?? null }" />
             <label class="sp-check"><input v-model="authorized" type="checkbox" />我确认拥有此样本的复刻授权（10–60 秒 WAV/MP3）</label>
-            <NButton type="primary" :disabled="!authorized || !source || !speech.quota?.enabled || speech.quota.clonePrice == null" :loading="busy" @click="run(() => submit('clone'))">确认复刻</NButton>
+            <NButton type="primary" :disabled="!authorized || !source || !speech.quota?.enabled || selectedCreationTarget?.clonePrice == null" :loading="busy" @click="run(() => submit('clone'))">确认复刻</NButton>
           </template>
         </div>
       </div>

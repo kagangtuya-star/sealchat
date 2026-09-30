@@ -67,6 +67,9 @@ export interface SpeechRequest {
   systemVoice?: string
   systemVoiceProvider?: string
   systemVoiceModel?: string
+  // Explicit creation target for design/clone; unrelated to voice bindings.
+  providerId?: string
+  modelId?: string
   instruction?: string
   rate?: number
   pitch?: number
@@ -143,6 +146,9 @@ export interface ResolvedSpeechProvider {
   voiceEndpoint: string
   models: ResolvedSpeechModel[]
 }
+export type VoiceCreationModel = Pick<ResolvedSpeechModel, 'id' | 'providerKind' | 'name' | 'capabilities'>
+export type VoiceCreationProvider = Pick<ResolvedSpeechProvider, 'providerId' | 'providerKind'>
+  & Pick<SpeechProvider, 'designPrice' | 'clonePrice'> & { models: VoiceCreationModel[] }
 export interface SpeechPolicy {
   overrideEnabled: boolean; dailyLimit: number | null; monthlyLimit: number | null
   lifetimeLimit: number | null; slots: number | null

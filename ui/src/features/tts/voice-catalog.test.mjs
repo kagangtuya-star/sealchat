@@ -26,16 +26,22 @@ globalThis.__voiceTest = {
   vue: { ...vue, useModel: () => globalThis.__voiceTest.selection, onMounted() {}, onBeforeUnmount() {} },
   ui: { useThemeVars: () => ({}), NInput: {}, NSelect: {} },
   user: { useUserStore: () => ({ info: { id: 'user' } }) },
+  store: { useSpeechStore: () => globalThis.__voiceTest.speech },
+  chat: { useChatStore: () => ({}) },
   api: {
     speechAPI: {
       async voices(query) { globalThis.__voiceTest.queries.push(query); return globalThis.__voiceTest.directory },
       async voice(id) { return globalThis.__voiceTest.directory.items.find(voice => voice.id === id) },
+      async submit(operation, request) { globalThis.__voiceTest.submissions.push({ operation, request }); return { id: 'create-job', status: 'failed' } },
+      async job() { return { id: 'create-job', status: 'failed' } },
+      async source() { return 'clone-source' },
     },
     speechError: e => String(e),
   },
   player: { speechPlayer: {} },
   selection: vue.ref({ type: 'inherit' }),
   queries: [],
+  submissions: [],
   directory: { system, items: [personal('mine'), personal('other-account', 'aliyun-backup'), personal('other-model', flash.providerId, next.modelId)], total: 1 },
 }
 
@@ -43,7 +49,7 @@ globalThis.__voiceTest = {
 // charged APIs are stubbed; selection/filtering/watchers are production code.
 async function component(filename) {
   const { descriptor } = parse(readFileSync(new URL(filename, import.meta.url), 'utf8'))
-  const stubs = { vue: 'vue', 'naive-ui': 'ui', './api': 'api', '@/stores/user': 'user', './player': 'player' }
+  const stubs = { vue: 'vue', 'naive-ui': 'ui', './api': 'api', '@/stores/user': 'user', './player': 'player', './store': 'store', '@/stores/chat': 'chat' }
   const code = transpile(compileScript(descriptor, { id: filename }).content)
     .replace(/^import (\{[^}]*\}) from ['"]([^'"]+)['"];$/gm, (line, names, from) => {
       if (from === './voice-catalog') return `import ${names} from '${catalogURL}';`
@@ -55,7 +61,58 @@ async function component(filename) {
 }
 const VoicePicker = await component('./VoicePicker.vue')
 const AdminSpeechSettings = await component('./AdminSpeechSettings.vue')
+const SpeechPanel = await component('./SpeechPanel.vue')
 async function settle() { for (let i = 0; i < 30; i++) await vue.nextTick() }
+
+test('creation targets use provider/model capabilities and revalidate when switching operation', async () => {
+  globalThis.__voiceTest.speech = vue.reactive({ quota: { enabled: true, voiceContext: flash }, async refresh() {} })
+  const scope = vue.effectScope()
+  const state = scope.run(() => SpeechPanel.setup({}, { expose() {} }))
+  const provider = (providerId, modelId, voiceDesign, voiceClone) => ({ providerId, providerKind: 'aliyun', designPrice: 0, clonePrice: 0, models: [{ id: modelId, providerKind: 'aliyun', capabilities: { voiceDesign, voiceClone } }] })
+  try {
+    // Default is the second option, so initialization must use VoiceContext.
+    state.creationProviders.value = [provider('target-31', next.modelId, true, true), provider(flash.providerId, flash.modelId, true, false), provider('clone-only', flash.modelId, false, true)]
+    assert.equal(state.selectedCreationTarget.value.providerId, flash.providerId)
+    assert.equal(state.creationOptions.value.length, 2)
+    assert.match(state.creationOptions.value[0].label, /阿里云（target-31） · qwen-audio-3.1-tts-flash/)
+    state.operation.value = 'clone'
+    assert.equal(state.selectedCreationTarget.value.providerId, 'target-31')
+    state.creationTarget.value = state.creationOptions.value.find(option => option.providerId === 'clone-only').value
+    state.operation.value = 'design'
+    assert.equal(state.selectedCreationTarget.value.providerId, 'target-31')
+    state.selection.value = { type: 'system', id: system[0].id, providerKind: flash.providerKind, modelId: flash.modelId }
+    await state.submit('design')
+    await settle()
+    const submitted = globalThis.__voiceTest.submissions.at(-1)
+    assert.equal(submitted.operation, 'design')
+    assert.equal(submitted.request.providerId, 'target-31')
+    assert.equal(submitted.request.modelId, next.modelId)
+    assert.equal(submitted.request.systemVoice, undefined)
+    assert.equal(submitted.request.voiceId, undefined)
+    state.operation.value = 'clone'
+    state.source.value = { name: 'sample.wav' }
+    state.authorized.value = true
+    await state.submit('clone')
+    await settle()
+    const clone = globalThis.__voiceTest.submissions.at(-1)
+    assert.equal(clone.operation, 'clone')
+    assert.equal(clone.request.providerId, 'target-31')
+    assert.equal(clone.request.modelId, next.modelId)
+    assert.equal(clone.request.sourceResourceId, 'clone-source')
+    state.operation.value = 'design'
+    await state.submit('audition')
+    await settle()
+    const audition = globalThis.__voiceTest.submissions.at(-1).request
+    assert.equal(audition.systemVoice, system[0].id)
+    assert.equal(audition.providerId, undefined)
+    assert.equal(audition.modelId, undefined)
+    state.creationProviders.value = [provider('clone-only', flash.modelId, false, true)]
+    assert.equal(state.creationTarget.value, '')
+    await assert.rejects(state.submit('design'), /目标模型/)
+    state.operation.value = 'clone'
+    assert.equal(state.selectedCreationTarget.value.providerId, 'clone-only')
+  } finally { scope.stop() }
+})
 
 test('VoicePicker filters both system and personal voices by VoiceContext and keeps stale selections', async () => {
   const scope = vue.effectScope()

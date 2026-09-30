@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceDirectory, VoiceDirectoryQuery } from './types'
+import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -25,6 +25,7 @@ export const speechAPI = {
     return (await api.post<ResolvedSpeechProvider>(`${root}/admin/provider/resolve`, { baseUrl, apiKey, providerId })).data
   },
   async me() { return (await api.get<SpeechQuota>(`${root}/me`)).data },
+  async voiceTargets() { return (await api.get<VoiceCreationProvider[]>(`${root}/voice-targets`)).data },
   async settings(autoSynthesis: boolean) { await api.patch(`${root}/settings`, { autoSynthesis }) },
   async source(file: File) {
     const form = new FormData()
