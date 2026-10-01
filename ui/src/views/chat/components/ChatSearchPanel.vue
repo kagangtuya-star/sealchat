@@ -132,7 +132,6 @@ const panelStyle = computed(() => {
       transform: 'translateX(-50%)',
       width: `${mobileWidth}px`,
       zIndex: PANEL_Z_INDEX,
-      maxHeight: '80vh',
     }
   }
   return {
@@ -802,12 +801,11 @@ const shortContent = (text: string) => {
   transform: translateX(-50%);
   width: min(92vw, 420px);
   padding: 0.85rem;
+  min-height: 0;
   max-height: 80vh;
+  /* 面板 top 为 10vh，用动态视口高度扣除顶部偏移，避免地址栏占位时底部分页被裁切 */
+  max-height: calc(100dvh - 10vh - 12px);
   z-index: 2100;
-}
-
-.chat-search-panel--mobile .chat-search-panel__body {
-  overflow-y: auto;
 }
 
 .chat-search-panel__header {
@@ -869,12 +867,40 @@ const shortContent = (text: string) => {
 }
 
 .chat-search-panel--mobile .chat-search-panel__body {
-  max-height: 65vh;
+  overflow: hidden;
+}
+
+/* 移动端只让结果列表承担纵向滚动：整条链使用纵向 flex + min-height: 0，不依赖百分比高度 */
+.chat-search-panel--mobile .chat-search-panel__filter-bar {
+  flex-shrink: 0;
+  max-height: 40vh;
+  max-height: 40dvh;
   overflow-y: auto;
 }
 
 .chat-search-panel--mobile .chat-search-panel__results {
+  flex: 1 1 auto;
   min-height: 0;
+  flex-direction: column;
+}
+
+.chat-search-panel--mobile .chat-search-panel__results-spin,
+.chat-search-panel--mobile .chat-search-panel__results-spin :deep(.n-spin-container),
+.chat-search-panel--mobile .chat-search-panel__results-spin :deep(.n-spin-content) {
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: auto;
+}
+
+.chat-search-panel--mobile .chat-search-panel__results-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .chat-search-panel--resizing {
