@@ -425,7 +425,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 		}
 	} else {
 		var finish func(bool) bool
-		if j.MessageID != "" && s.Input.Format == "wav" {
+		if j.MessageID != "" && s.Input.Format == "wav" && ttsprovider.SupportsLivePCM(provider.EffectiveProviderKind(), s.Provider.Model) {
 			ttsCallbacks.RLock()
 			live := ttsCallbacks.live
 			ttsCallbacks.RUnlock()

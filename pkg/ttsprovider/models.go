@@ -94,3 +94,9 @@ func LookupModel(providerKind, id string) (ModelSpec, bool) {
 	}
 	return ModelSpec{}, false
 }
+
+// SupportsLivePCM reports whether the model runtime delivers incremental PCM.
+func SupportsLivePCM(providerKind, model string) bool {
+	spec, ok := LookupModel(providerKind, model)
+	return ok && spec.Runtime == RuntimeAliyunQwen
+}

@@ -204,7 +204,8 @@ func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string, str
 	}
 	go func() {
 		mode := "file"
-		if media.Container == "wav" && media.Codec == "pcm_s16le" {
+		var snapshot service.TTSSnapshot
+		if media.Container == "wav" && media.Codec == "pcm_s16le" && json.Unmarshal([]byte(j.Snapshot), &snapshot) == nil && ttsprovider.SupportsLivePCM(snapshot.Provider.EffectiveProviderKind(), snapshot.Provider.Model) {
 			mode = "pcm"
 		}
 		start := ttsJSON(fiber.Map{"type": "start", "epoch": epoch, "utterance": j.ID, "messageId": j.MessageID, "media": media, "mode": mode, "startsAt": time.Now().Add(300 * time.Millisecond).UnixMilli()})
