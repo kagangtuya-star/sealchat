@@ -420,7 +420,7 @@ func ttsVoices(c *fiber.Ctx) error {
 	for _, voice := range items {
 		voices = append(voices, service.TTSPersonalVoiceResponse(voice))
 	}
-	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "providers": ttsprovider.ProviderCatalog(), "catalogVersion": "2026-09-30"})
+	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "providers": ttsprovider.ProviderCatalog(), "presetSources": ttsprovider.PresetSourceCatalog(), "catalogVersion": "2026-09-30"})
 }
 func ttsReadMessage(userID, id string) (*model.MessageModel, error) {
 	var m model.MessageModel
@@ -624,13 +624,15 @@ func ttsAdminProviderResolve(c *fiber.Ctx) error {
 		Model        string `json:"model"`
 		BaseURL      string `json:"baseUrl"`
 		APIKey       string `json:"apiKey"`
+		SecretID     string `json:"secretId"`
+		SecretKey    string `json:"secretKey"`
 		ProviderID   string `json:"providerId"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Provider 配置请求无效"})
 	}
-	request := service.TTSProviderResolveRequest{ProviderKind: body.ProviderKind, Model: body.Model, BaseURL: body.BaseURL, APIKey: body.APIKey, ProviderID: strings.TrimSpace(body.ProviderID)}
-	if strings.TrimSpace(body.APIKey) == "" && request.ProviderID != "" && appConfig != nil && appConfig.AI.Speech != nil {
+	request := service.TTSProviderResolveRequest{ProviderKind: body.ProviderKind, Model: body.Model, BaseURL: body.BaseURL, APIKey: body.APIKey, SecretID: body.SecretID, SecretKey: body.SecretKey, ProviderID: strings.TrimSpace(body.ProviderID)}
+	if request.ProviderID != "" && appConfig != nil && appConfig.AI.Speech != nil {
 		for _, provider := range appConfig.AI.Speech.Providers {
 			if provider.ID == request.ProviderID {
 				request.SavedProvider = &provider

@@ -240,7 +240,7 @@ func TTSQuotaForUser(userID string) (TTSQuota, error) {
 		q.Format = speech.Format
 		q.DefaultVoice = speech.DefaultVoice
 		for _, p := range speech.Providers {
-			if spec, ok := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model); p.Enabled && strings.TrimSpace(p.APIKey) != "" && ok && (spec.Capabilities.HTTPStreaming || spec.Capabilities.WebSocketStreaming) && p.SynthesisPriceConfirmed() {
+			if spec, ok := ttsprovider.LookupModel(p.EffectiveProviderKind(), p.Model); p.Enabled && p.CredentialsReady() && ok && (spec.Capabilities.HTTPStreaming || spec.Capabilities.WebSocketStreaming) && p.SynthesisPriceConfirmed() {
 				q.VoiceContexts = append(q.VoiceContexts, TTSVoiceContext{ProviderKind: p.EffectiveProviderKind(), ProviderID: p.ID, ModelID: p.Model})
 			}
 			if p.ID == speech.DefaultProvider {

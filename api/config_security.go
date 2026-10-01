@@ -28,7 +28,10 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 		for i := range ret.AI.Speech.Providers {
 			p := &ret.AI.Speech.Providers[i]
 			p.HasAPIKey = strings.TrimSpace(p.APIKey) != ""
+			p.HasSecretID = strings.TrimSpace(p.SecretID) != ""
+			p.HasSecretKey = strings.TrimSpace(p.SecretKey) != ""
 			p.APIKey = ""
+			p.SecretID, p.SecretKey = "", ""
 		}
 	}
 	if len(cfg.AI.Providers) > 0 {
@@ -91,8 +94,13 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 			for i := range out.AI.Speech.Providers {
 				p := &out.AI.Speech.Providers[i]
 				for _, old := range current.AI.Speech.Providers {
-					if old.ID == p.ID && old.EffectiveProviderKind() == p.EffectiveProviderKind() && old.CredentialScope == p.CredentialScope && strings.TrimSpace(p.APIKey) == "" {
-						p.APIKey = old.APIKey
+					if old.ID == p.ID && old.EffectiveProviderKind() == p.EffectiveProviderKind() && old.CredentialScope == p.CredentialScope {
+						if strings.TrimSpace(p.APIKey) == "" {
+							p.APIKey = old.APIKey
+						}
+						if p.EffectiveProviderKind() == "tencent" && strings.TrimSpace(p.SecretID) == "" && strings.TrimSpace(p.SecretKey) == "" {
+							p.SecretID, p.SecretKey = old.SecretID, old.SecretKey
+						}
 					}
 				}
 			}

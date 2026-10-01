@@ -20,6 +20,12 @@ const job = ref<SpeechJob | null>(null)
 const role = ref<RoleSpeechConfig | null>(null)
 const selection = ref<VoiceSelection>({ type: 'inherit' })
 const speechLanguages = ref<string[] | null>(null)
+const systemModel = ref('')
+const tencentTraditional = computed(() => systemModel.value === 'tencent-tts-classic' || systemModel.value === 'tencent-tts-large')
+const incompatibleTencentParameters = computed(() => tencentTraditional.value && !!role.value && (role.value.pitch !== 1 || role.value.instruction !== ''))
+function resetTencentParameters() {
+  if (role.value) { role.value.pitch = 1; role.value.instruction = '' }
+}
 const languageOptions = computed(() => speechLanguageOptions(speechLanguages.value ?? []))
 watch([speechLanguages, () => role.value?.speechLanguage], () => {
   if (role.value && speechLanguages.value !== null) {
@@ -41,6 +47,7 @@ async function open() {
   error.value = ''
   role.value = null
   speechLanguages.value = null
+  systemModel.value = ''
   job.value = null
   const identityId = props.identityId
   const current = generation
@@ -103,7 +110,7 @@ async function query() {
       </header>
       <NAlert v-if="error" type="error" class="rv-alert">{{ error }}</NAlert>
       <div v-if="role" class="rv-body">
-        <VoicePicker v-model="selection" mode="select" :voice-context="voiceContext" :voice-contexts="voiceContexts" :default-voice="speech.quota?.defaultVoice" class="rv-picker" @speech-languages="speechLanguages = $event" />
+        <VoicePicker v-model="selection" mode="select" :voice-context="voiceContext" :voice-contexts="voiceContexts" :default-voice="speech.quota?.defaultVoice" class="rv-picker" @speech-languages="speechLanguages = $event" @system-model="systemModel = $event" />
         <aside class="rv-side">
           <section class="rv-section">
             <h3>角色语音参数</h3>
@@ -114,11 +121,16 @@ async function query() {
             <p class="rv-hint">指定语言后，使用平台 AI 转换全文并计入文本额度；跟随原文直接朗读。</p>
             <label class="rv-field">
               <span>朗读指令</span>
-              <NInput v-model:value="role.instruction" placeholder="朗读指令（不调用文本模型）" />
+              <NInput v-model:value="role.instruction" :disabled="tencentTraditional" placeholder="朗读指令（不调用文本模型）" />
             </label>
+            <p v-if="tencentTraditional" class="rv-hint">腾讯传统 TTS 不支持朗读指令或音调调整。</p>
+            <NAlert v-if="incompatibleTencentParameters" type="warning">
+              当前参数包含腾讯不支持的朗读指令或音调，请确认后恢复默认参数。
+              <NButton size="small" @click="resetTencentParameters">清除指令并将音调恢复为 1</NButton>
+            </NAlert>
             <div class="rv-numbers">
               <label class="rv-field"><span>语速</span><NInputNumber v-model:value="role.rate" :min="0.5" :max="2" :step="0.1" /></label>
-              <label class="rv-field"><span>音调</span><NInputNumber v-model:value="role.pitch" :min="0.5" :max="2" :step="0.1" /></label>
+              <label class="rv-field"><span>音调</span><NInputNumber :value="tencentTraditional ? 1 : role.pitch" :disabled="tencentTraditional" :min="0.5" :max="2" :step="0.1" @update:value="role.pitch = $event ?? 1" /></label>
               <label class="rv-field"><span>音量</span><NInputNumber v-model:value="role.volume" :min="0" :max="100" /></label>
             </div>
           </section>
@@ -126,7 +138,7 @@ async function query() {
             <h3>试听</h3>
             <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
             <p class="rv-hint">按当前选择与参数合成新音频；已有结果可重放。</p>
-            <NButton :loading="busy" :disabled="!speech.canSynthesize" @click="audition">确认试听</NButton>
+            <NButton :loading="busy" :disabled="!speech.canSynthesize || incompatibleTencentParameters" @click="audition">确认试听</NButton>
             <div v-if="job" class="rv-job">
               <span>试听任务：{{ job.status }} {{ job.errorCode }}</span>
               <div class="rv-job__actions">
@@ -142,7 +154,7 @@ async function query() {
         <span class="rv-foot__hint">选择“跟随平台默认音色”并保存即可清除绑定。</span>
         <div class="rv-foot__actions">
           <NButton @click="visible = false">取消</NButton>
-          <NButton type="primary" :loading="busy" :disabled="!role" @click="save">保存绑定</NButton>
+          <NButton type="primary" :loading="busy" :disabled="!role || incompatibleTencentParameters" @click="save">保存绑定</NButton>
         </div>
       </footer>
     </section>

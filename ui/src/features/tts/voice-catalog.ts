@@ -1,4 +1,4 @@
-import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechProviderMeta, SpeechRequest, SpeechVoice, SystemVoice, VoiceContext } from './types'
+import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechPresetSource, SpeechProviderMeta, SpeechRequest, SpeechVoice, SystemVoice, VoiceContext } from './types'
 
 // Adapters keep the provider/model context shared by all voice selectors.
 export type VoiceOwnership = 'platform' | 'mine' | 'public'
@@ -13,6 +13,7 @@ export interface VoiceCatalogItem {
   key: string
   id: string
   source: 'system' | 'personal'
+  presetSource: string
   providerId?: string
   providerKind?: string
   models: string[]
@@ -32,15 +33,15 @@ export interface VoiceCatalogItem {
 // Display registry. It describes how the catalog is presented, never which
 // voices exist. Option lists are always derived from returned data; these maps
 // only label known values and fall back to the raw value otherwise.
-export function voiceSourceOptions(providers: SpeechProviderMeta[]): Array<{ value: VoiceSourceKey; label: string }> {
+export function voiceSourceOptions(presetSources: SpeechPresetSource[]): Array<{ value: VoiceSourceKey; label: string }> {
   return [
     { value: 'all', label: '全部' },
-    ...providers.map(provider => ({ value: `system:${provider.kind}` as VoiceSourceKey, label: `${provider.name}预设` })),
+    ...presetSources.map(source => ({ value: `system:${source.key}` as VoiceSourceKey, label: source.label })),
     { value: 'mine', label: '我的音色' },
     { value: 'public', label: '公开音色' },
   ]
 }
-const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: '系统', design: '声音设计', clone: '样本复刻' }
+const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: '系统', classic: '精品音色', large: '大模型音色', design: '声音设计', clone: '样本复刻' }
 const languageLabels: Readonly<Record<string, string>> = { zh: '中文', en: '英文' }
 export const voiceKindLabel = (kind: string) => kindLabels[kind] ?? kind
 export const voiceLanguageLabel = (code: string) => languageLabels[code] ?? code
@@ -84,8 +85,8 @@ export function providerDisplayName(providers: SpeechProviderMeta[], kind: strin
   return providers.find(provider => provider.kind === kind)?.name ?? kind
 }
 
-export function voiceSourceLabel(item: VoiceCatalogItem, providers: SpeechProviderMeta[]): string {
-  if (item.source === 'system') return `${providerDisplayName(providers, item.providerKind ?? '')}预设`
+export function voiceSourceLabel(item: VoiceCatalogItem, providers: SpeechProviderMeta[], presetSources: SpeechPresetSource[] = []): string {
+  if (item.source === 'system') return presetSources.find(source => source.key === item.presetSource)?.label ?? `${providerDisplayName(providers, item.providerKind ?? '')}预设`
   if (item.ownership === 'mine') return item.visibility === 'public' ? '我的 · 公开' : '我的 · 私有'
   return '公开音色'
 }
@@ -104,6 +105,7 @@ export function isDisplayVoiceTag(value: string): boolean {
 export function systemVoiceItem(voice: SystemVoice, context: VoiceContext): VoiceCatalogItem {
   return {
     key: `system:${voice.providerKind}:${context.providerId}:${context.modelId}:${voice.id}`, id: voice.id, source: 'system',
+    presetSource: voice.presetSource || voice.providerKind,
     providerKind: context.providerKind, providerId: context.providerId, models: voice.models, modelId: context.modelId, name: voice.name,
     tags: splitTags(voice.tags), languages: voice.languages ?? [], kind: voice.kind,
     speechLanguages: voice.speechLanguages?.length ? voice.speechLanguages : voice.languages ?? [],
@@ -116,6 +118,7 @@ export function systemVoiceItem(voice: SystemVoice, context: VoiceContext): Voic
 export function personalVoiceItem(voice: SpeechVoice, userId: string): VoiceCatalogItem {
   return {
     key: `personal:${voice.id}`, id: voice.id, source: 'personal', providerId: voice.providerId || undefined,
+    presetSource: '',
     models: [voice.targetModel], modelId: voice.targetModel, name: voice.name, description: voice.description || undefined,
     tags: splitTags(voice.tags), languages: [], kind: voice.kind,
     speechLanguages: [],
@@ -206,7 +209,7 @@ export function requestVoiceFields(selection: VoiceSelection): Pick<SpeechReques
 }
 
 export function matchesSource(item: VoiceCatalogItem, source: VoiceSourceKey): boolean {
-  if (source.startsWith('system:')) return item.source === 'system' && item.providerKind === source.slice('system:'.length)
+  if (source.startsWith('system:')) return item.source === 'system' && item.presetSource === source.slice('system:'.length)
   if (source === 'mine') return item.ownership === 'mine'
   if (source === 'public') return item.visibility === 'public'
   return true

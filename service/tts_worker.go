@@ -314,7 +314,7 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 	}
 	var provider *utils.SpeechProviderConfig
 	for _, p := range cfg.Providers {
-		if p.ID == s.Provider.ID && p.Enabled && p.CredentialScope == s.Provider.CredentialScope && p.Region == s.Provider.Region && p.Workspace == s.Provider.Workspace && p.Model == s.Provider.Model && p.SynthesisEndpoint == s.Provider.SynthesisEndpoint && p.VoiceEndpoint == s.Provider.VoiceEndpoint {
+		if p.ID == s.Provider.ID && p.Enabled && p.CredentialsReady() && p.EffectiveProviderKind() == s.Provider.EffectiveProviderKind() && p.CredentialScope == s.Provider.CredentialScope && p.Region == s.Provider.Region && p.Workspace == s.Provider.Workspace && p.Model == s.Provider.Model && p.SynthesisEndpoint == s.Provider.SynthesisEndpoint && p.VoiceEndpoint == s.Provider.VoiceEndpoint {
 			cp := p
 			provider = &cp
 			break

@@ -1,0 +1,531 @@
+[
+  {
+    "id": "101050",
+    "name": "WeJack",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "en"
+    ],
+    "speechLanguages": [
+      "en"
+    ],
+    "kind": "classic",
+    "tags": "男声/英文男声/中性"
+  },
+  {
+    "id": "101055",
+    "name": "智付",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/通用女声/中性"
+  },
+  {
+    "id": "101013",
+    "name": "智辉",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/新闻男声/中性"
+  },
+  {
+    "id": "101019",
+    "name": "智彤",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/粤语女声/粤语/中性"
+  },
+  {
+    "id": "101030",
+    "name": "智柯",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/通用男声/中性"
+  },
+  {
+    "id": "101054",
+    "name": "智友",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/通用男声/中性"
+  },
+  {
+    "id": "101027",
+    "name": "智梅",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/通用女声/中性"
+  },
+  {
+    "id": "101026",
+    "name": "智希",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/通用女声/中性"
+  },
+  {
+    "id": "101004",
+    "name": "智云",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/通用男声/中性"
+  },
+  {
+    "id": "101015",
+    "name": "智萌",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/男童声/中性"
+  },
+  {
+    "id": "101011",
+    "name": "智燕",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/新闻女声/中性"
+  },
+  {
+    "id": "101001",
+    "name": "智瑜",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/情感女声/中性"
+  },
+  {
+    "id": "101021",
+    "name": "智瑞",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "男声/新闻男声/中性"
+  },
+  {
+    "id": "101016",
+    "name": "智甜",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-classic"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "classic",
+    "tags": "女声/女童声/中性"
+  },
+  {
+    "id": "501000",
+    "name": "智斌",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "speechLanguages": [
+      "zh",
+      "en"
+    ],
+    "kind": "large",
+    "tags": "男声/阅读男声/中性"
+  },
+  {
+    "id": "501001",
+    "name": "智兰",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/资讯女声/中性"
+  },
+  {
+    "id": "501002",
+    "name": "智菊",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/阅读女声/中性"
+  },
+  {
+    "id": "501003",
+    "name": "智宇",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/阅读男声/中性"
+  },
+  {
+    "id": "501004",
+    "name": "月华",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/聊天女声/中性"
+  },
+  {
+    "id": "501005",
+    "name": "飞镜",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性"
+  },
+  {
+    "id": "501006",
+    "name": "千嶂",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性"
+  },
+  {
+    "id": "501007",
+    "name": "浅草",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性"
+  },
+  {
+    "id": "501008",
+    "name": "WeJames",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "en"
+    ],
+    "speechLanguages": [
+      "en"
+    ],
+    "kind": "large",
+    "tags": "男声/外语男声/中性"
+  },
+  {
+    "id": "501009",
+    "name": "WeWinny",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "en"
+    ],
+    "speechLanguages": [
+      "en"
+    ],
+    "kind": "large",
+    "tags": "女声/外语女声/中性"
+  },
+  {
+    "id": "601008",
+    "name": "爱小豪",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性/悲伤/高兴/生气/恐惧/撒娇/震惊/厌恶/平静"
+  },
+  {
+    "id": "601009",
+    "name": "爱小芊",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/聊天女声/中性/悲伤/高兴/生气/恐惧/撒娇/震惊/厌恶/平静"
+  },
+  {
+    "id": "601010",
+    "name": "爱小娇",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/聊天女声/中性/悲伤/高兴/生气/恐惧/撒娇/震惊/厌恶/平静"
+  },
+  {
+    "id": "601011",
+    "name": "爱小川",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性"
+  },
+  {
+    "id": "601012",
+    "name": "爱小璟",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/特色女声/中性"
+  },
+  {
+    "id": "601013",
+    "name": "爱小伊",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "女声/阅读女声/中性"
+  },
+  {
+    "id": "601014",
+    "name": "爱小简",
+    "providerKind": "tencent",
+    "presetSource": "tencent",
+    "models": [
+      "tencent-tts-large"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "speechLanguages": [
+      "zh"
+    ],
+    "kind": "large",
+    "tags": "男声/聊天男声/中性"
+  }
+]

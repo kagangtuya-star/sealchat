@@ -47,9 +47,10 @@ export interface SpeechVoice {
   previewExpiresAt?: string
   previewResourceId?: string
 }
-export interface SystemVoice { id: string; name: string; providerKind: string; models: string[]; targetModel?: string; languages: string[]; speechLanguages?: string[]; kind: string; tags?: string }
+export interface SystemVoice { id: string; name: string; providerKind: string; presetSource?: string; models: string[]; targetModel?: string; languages: string[]; speechLanguages?: string[]; kind: string; tags?: string }
 export interface SpeechProviderMeta { kind: string; name: string }
-export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; providers: SpeechProviderMeta[]; total: number; catalogVersion: string }
+export interface SpeechPresetSource { key: string; label: string; providerKind: string }
+export interface VoiceDirectory { items: SpeechVoice[]; system: SystemVoice[]; providers: SpeechProviderMeta[]; presetSources: SpeechPresetSource[]; total: number; catalogVersion: string }
 // `scope` selects the saved-voice picker catalog; without it `mine` keeps the
 // workbench listing (previews and creating voices included).
 export interface VoiceDirectoryQuery {
@@ -120,6 +121,7 @@ export interface RoleSpeechConfig {
 export interface SpeechProvider {
   id: string; providerKind: string; enabled: boolean; credentialScope: string; region: string; workspace: string
   apiKey: string; hasApiKey?: boolean; synthesisEndpoint: string; voiceEndpoint: string; model: string
+  secretId?: string; secretKey?: string; hasSecretId?: boolean; hasSecretKey?: boolean
   characterPrice: number | null; designPrice: number | null; clonePrice: number | null
   pricingMode?: 'character' | 'token'; inputTokenPrice?: number | null; outputTokenPrice?: number | null
   accountVoiceLimit: number | null; revision: number
@@ -150,6 +152,8 @@ export interface SpeechProviderResolveRequest {
   model: string
   baseUrl: string
   apiKey: string
+  secretId?: string
+  secretKey?: string
   providerId: string
 }
 export interface ResolvedSpeechProvider {

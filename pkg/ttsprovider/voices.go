@@ -6,6 +6,7 @@ type TTSVoiceSpec struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	ProviderKind string   `json:"providerKind"`
+	PresetSource string   `json:"presetSource,omitempty"`
 	Models       []string `json:"models"`
 	Languages    []string `json:"languages"`
 	// SpeechLanguages are SealChat AI translation targets; empty falls back to Languages.
@@ -18,7 +19,7 @@ func (v TTSVoiceSpec) Supports(providerKind, modelID string) bool {
 	return v.ProviderKind == providerKind && slices.Contains(v.Models, modelID)
 }
 
-var systemVoiceCatalog = aliyunSystemVoices()
+var systemVoiceCatalog = append(aliyunSystemVoices(), tencentSystemVoices()...)
 
 func copyVoice(v TTSVoiceSpec) TTSVoiceSpec {
 	v.Models = slices.Clone(v.Models)

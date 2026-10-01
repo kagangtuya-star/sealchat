@@ -90,7 +90,7 @@ func ttsSnapshot(userID string, r TTSRequest, scope string) (TTSSnapshot, error)
 func resolveSystemVoiceProvider(cfg *utils.SpeechConfig, voiceID, providerKind, providerID, modelID string) (utils.SpeechProviderConfig, error) {
 	mismatch := TTSValidationError("系统音色与指定 provider 或模型不匹配，需要重新选择")
 	compatible := func(p utils.SpeechProviderConfig) bool {
-		return p.Enabled && strings.TrimSpace(p.APIKey) != "" &&
+		return p.Enabled && p.CredentialsReady() &&
 			(providerKind == "" || providerKind == p.EffectiveProviderKind()) &&
 			(modelID == "" || modelID == p.Model) &&
 			ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, voiceID)
@@ -156,7 +156,7 @@ func ttsCreationProvider(cfg *utils.SpeechConfig, providerID, modelID, operation
 		if p.ID != providerID {
 			continue
 		}
-		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" {
+		if !p.Enabled || !p.CredentialsReady() {
 			return p, ErrTTSDisabled
 		}
 		if p.Model != modelID {
@@ -224,12 +224,18 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 			}
 		}
 	}
-	if !found || s.Provider.APIKey == "" {
+	credentialsReady := s.Provider.CredentialsReady()
+	s.Provider.APIKey, s.Provider.SecretID, s.Provider.SecretKey = "", "", ""
+	s.Provider.HasAPIKey, s.Provider.HasSecretID, s.Provider.HasSecretKey = false, false, false
+	if !found || !credentialsReady {
 		return s, ErrTTSDisabled
 	}
 	spec, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model)
 	if !supported {
 		return s, TTSValidationError("语音 provider 类型与模型不匹配")
+	}
+	if err := ttsVoiceCreationCapability(spec.Capabilities, operation); err != nil {
+		return s, err
 	}
 	if operation == "clone" {
 		if err := ttsValidateCloneOptions(spec, r); err != nil {
@@ -237,8 +243,6 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 		}
 		s.CloneLanguageHint, s.ClonePreprocess = r.CloneLanguageHint, r.ClonePreprocess
 	}
-	s.Provider.APIKey = ""
-	s.Provider.HasAPIKey = false
 	v := ""
 	if target == nil {
 		v = r.SystemVoice
@@ -296,6 +300,15 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 		return s, TTSValidationError("语音参数超出范围")
 	}
 	s.Input = ttsprovider.Input{Text: strings.TrimSpace(r.Text), Voice: v, Format: cfg.Format, SampleRate: 24000, BitRate: 64, Rate: r.Rate, Pitch: r.Pitch, Volume: volume, Instruction: r.Instruction}
+	if spec.Runtime == ttsprovider.RuntimeTencentTTS {
+		if err := ttsprovider.ValidateTencentInput(s.Input); err != nil {
+			return s, TTSValidationError(err.Error())
+		}
+		s.Input.SampleRate = ttsprovider.TencentSampleRate(spec.ID)
+		if s.Input.Format == "mp3" && utf8.RuneCountInString(s.Input.Text) > ttsprovider.TencentMaxTextRunes && r.SpeechLanguage == "" {
+			return s, TTSValidationError("腾讯传统 TTS 长文本当前仅支持 WAV")
+		}
+	}
 	if cfg.Format != "opus" {
 		s.Input.BitRate = 0
 	}
@@ -534,6 +547,14 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 	if s.Translation != nil && (s.Translation.State != "done" || s.Fingerprint == "") {
 		return TTSValidationError("语音翻译尚未完成")
 	}
+	if spec, ok := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); ok && spec.Runtime == ttsprovider.RuntimeTencentTTS {
+		if err := ttsprovider.ValidateTencentInput(s.Input); err != nil {
+			return TTSValidationError(err.Error())
+		}
+		if s.Input.Format == "mp3" && utf8.RuneCountInString(s.Input.Text) > ttsprovider.TencentMaxTextRunes {
+			return TTSValidationError("腾讯传统 TTS 长文本当前仅支持 WAV")
+		}
+	}
 	cfg, err := ttsConfig()
 	if err != nil {
 		return err
@@ -558,7 +579,7 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 		price = &estimatedPrice
 	}
 	job.EstimatedUnits = int64(utf8.RuneCountInString(s.Input.Text))
-	if spec, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); supported && spec.Pricing.Mode == ttsprovider.PricingCharacter {
+	if spec, supported := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); supported && spec.Pricing.Mode == ttsprovider.PricingCharacter && spec.Runtime != ttsprovider.RuntimeTencentTTS {
 		job.EstimatedUnits = TTSBillableCharacters(s.Input.Text)
 	}
 	if job.Operation == "design" {

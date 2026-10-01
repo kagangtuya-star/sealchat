@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NInput, NPagination, useThemeVars } from 'naive-ui'
 import { speechAPI, speechError } from './api'
 import { useUserStore } from '@/stores/user'
-import type { SpeechProviderMeta, SpeechVoice, SystemVoice, VoiceContext } from './types'
+import type { SpeechPresetSource, SpeechProviderMeta, SpeechVoice, SystemVoice, VoiceContext } from './types'
 import VoiceCard from './VoiceCard.vue'
 import {
   collectVoiceFacets, emptyVoiceFilters, itemSelection, matchesSource, matchesSearch, matchesVoiceFilters,
@@ -20,7 +20,7 @@ const props = defineProps<{
   voiceContexts: VoiceContext[]
   defaultVoice?: string
 }>()
-const emit = defineEmits<{ (e: 'speech-languages', languages: string[] | null): void }>()
+const emit = defineEmits<{ (e: 'speech-languages', languages: string[] | null): void; (e: 'system-provider', kind: string): void; (e: 'system-model', modelId: string): void }>()
 const selection = defineModel<VoiceSelection>({ required: true })
 const user = useUserStore()
 const theme = useThemeVars()
@@ -37,7 +37,8 @@ const filtersOpen = ref(false)
 const tagsExpanded = ref(false)
 const system = ref<SystemVoice[] | null>(null)
 const providers = ref<SpeechProviderMeta[]>([])
-const sourceOptions = computed(() => voiceSourceOptions(providers.value))
+const presetSources = ref<SpeechPresetSource[]>([])
+const sourceOptions = computed(() => voiceSourceOptions(presetSources.value))
 const systemSource = computed(() => source.value.startsWith('system:'))
 const personal = ref<SpeechVoice[]>([])
 const personalTotal = ref(0)
@@ -69,6 +70,7 @@ async function load() {
     if (current !== serial || userId !== user.info.id) return
     system.value = value.system
     providers.value = value.providers ?? []
+    presetSources.value = value.presetSources ?? []
     // Platform only needs the preset list; its personal page is not displayed.
     if (systemSource.value) return
     personal.value = value.items
@@ -76,7 +78,7 @@ async function load() {
   } catch (e) { if (current === serial) error.value = speechError(e) }
   finally { if (current === serial) loading.value = false }
 }
-watch(() => user.info.id, () => { system.value = null; providers.value = []; personal.value = []; personalTotal.value = 0; resolved.value = {}; resolveSerial++; resolveEpoch.value++ }, { flush: 'sync' })
+watch(() => user.info.id, () => { system.value = null; providers.value = []; presetSources.value = []; personal.value = []; personalTotal.value = 0; resolved.value = {}; resolveSerial++; resolveEpoch.value++ }, { flush: 'sync' })
 watch([() => props.voiceContext, () => props.voiceContexts], () => {
   page.value = 1
   filters.value = emptyVoiceFilters()
@@ -155,8 +157,8 @@ const total = computed(() => {
 const hasFilters = computed(() => Object.values(filters.value).some(Boolean))
 const activeFilterCount = computed(() => Object.values(filters.value).filter(Boolean).length)
 const emptyMessage = computed(() => {
-  const provider = providers.value.find(entry => source.value === `system:${entry.kind}`)
-  if (provider && !presetItems.value.some(item => item.providerKind === provider.kind)) return `当前没有可用的${provider.name}预设音色。`
+  const preset = presetSources.value.find(entry => source.value === `system:${entry.key}`)
+  if (preset && !presetItems.value.some(item => item.presetSource === preset.key)) return `当前没有可用的${preset.label}音色。`
   return hasFilters.value || search.value ? '没有符合条件的音色。' : '当前来源暂无音色。'
 })
 
@@ -192,6 +194,10 @@ const current = computed<CurrentState>(() => {
 // Independent of browsing source/search/language filters.
 const speechLanguages = computed(() => selectedSpeechLanguages(selection.value, system.value, props.voiceContexts, props.voiceContext, props.defaultVoice ?? ''))
 watch(speechLanguages, languages => emit?.('speech-languages', languages), { immediate: true })
+const systemProvider = computed(() => selection.value.type === 'inherit' ? props.voiceContext?.providerKind ?? '' : current.value.status === 'ready' && current.value.item.source === 'system' ? current.value.item.providerKind ?? '' : '')
+watch(systemProvider, kind => emit?.('system-provider', kind), { immediate: true })
+const systemModel = computed(() => selection.value.type === 'inherit' ? props.voiceContext?.modelId ?? '' : current.value.status === 'ready' && current.value.item.source === 'system' ? current.value.item.modelId : '')
+watch(systemModel, modelId => emit?.('system-model', modelId), { immediate: true })
 
 function isItemSelected(item: VoiceCatalogItem): boolean {
   if (selection.value.type === 'system') {
@@ -289,7 +295,7 @@ defineExpose({ reload })
           <template v-else-if="current.status === 'pending'">正在确认音色…</template>
           <template v-else-if="current.status === 'ready'">
             <strong class="vp-current__name">{{ current.item.name }}</strong>
-            <span class="vp-current__source"> · {{ voiceSourceLabel(current.item, providers) }}</span>
+            <span class="vp-current__source"> · {{ voiceSourceLabel(current.item, providers, presetSources) }}</span>
           </template>
           <strong v-else class="vp-current__name">{{ mode === 'select' ? '当前绑定音色已不可用' : '所选音色已不可用' }}</strong>
         </span>
@@ -311,6 +317,7 @@ defineExpose({ reload })
           :key="item.key"
           :item="item"
           :providers="providers"
+          :preset-sources="presetSources"
           :selected="isItemSelected(item)"
           @select="choose"
         />

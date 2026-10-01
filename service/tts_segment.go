@@ -11,19 +11,32 @@ const (
 // TTSSplitText splits only provider-sized long text. It preserves every rune in
 // order; punctuation and whitespace stay on the preceding segment.
 func TTSSplitText(text string) []string {
+	return TTSSplitTextWithLimits(text, ttsSegmentTargetRunes, ttsSegmentMinRunes, ttsSegmentMaxRunes)
+}
+
+func TTSSplitTencentText(text string) []string {
+	return TTSSplitTextWithLimits(text, 120, 80, 145)
+}
+
+func TTSSplitTextWithLimits(text string, target, minRunes, maxRunes int) []string {
+	// Keep invalid caller limits bounded and progressing; registered runtimes
+	// supply ordered positive values.
+	maxRunes = max(1, maxRunes)
+	target = min(max(1, target), maxRunes)
+	minRunes = min(max(1, minRunes), target)
 	runes := []rune(text)
-	if len(runes) <= ttsSegmentMaxRunes {
+	if len(runes) <= maxRunes {
 		return []string{text}
 	}
 
-	segments := make([]string, 0, (len(runes)+ttsSegmentTargetRunes-1)/ttsSegmentTargetRunes)
-	for len(runes) > ttsSegmentMaxRunes {
-		cut := ttsSegmentBoundary(runes, true)
+	segments := make([]string, 0, (len(runes)+target-1)/target)
+	for len(runes) > maxRunes {
+		cut := ttsSegmentBoundary(runes, true, target, minRunes, maxRunes)
 		if cut == 0 {
-			cut = ttsSegmentBoundary(runes, false)
+			cut = ttsSegmentBoundary(runes, false, target, minRunes, maxRunes)
 		}
 		if cut == 0 {
-			cut = ttsSegmentTargetRunes
+			cut = target
 		}
 		segments = append(segments, string(runes[:cut]))
 		runes = runes[cut:]
@@ -32,10 +45,10 @@ func TTSSplitText(text string) []string {
 	return segments
 }
 
-func ttsSegmentBoundary(runes []rune, strong bool) int {
-	best, bestDistance := 0, ttsSegmentMaxRunes
-	limit := min(len(runes), ttsSegmentMaxRunes)
-	for i := ttsSegmentMinRunes - 1; i < limit; i++ {
+func ttsSegmentBoundary(runes []rune, strong bool, target, minRunes, maxRunes int) int {
+	best, bestDistance := 0, maxRunes
+	limit := min(len(runes), maxRunes)
+	for i := minRunes - 1; i < limit; i++ {
 		boundary := false
 		if strong {
 			boundary = ttsStrongSentenceEnd(runes, i)
@@ -50,7 +63,7 @@ func ttsSegmentBoundary(runes []rune, strong bool) int {
 			continue
 		}
 		cut := i + 1
-		distance := cut - ttsSegmentTargetRunes
+		distance := cut - target
 		if distance < 0 {
 			distance = -distance
 		}

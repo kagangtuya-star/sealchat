@@ -12,15 +12,30 @@ import (
 
 var errTTSUnsupportedProvider = errors.New("unsupported TTS provider")
 
-// Dispatch stays at the service boundary; the leaf Client is the Aliyun adapter.
+// Provider kind describes the brand; model runtime selects its protocol adapter.
 func ttsProviderSynthesize(ctx context.Context, provider utils.SpeechProviderConfig, job *model.TTSJob, snapshot TTSSnapshot, sink io.Writer) (ttsprovider.Result, error) {
-	switch provider.EffectiveProviderKind() {
-	case ttsprovider.ProviderAliyun:
+	spec, ok := ttsprovider.LookupModel(provider.EffectiveProviderKind(), snapshot.Provider.Model)
+	if !ok {
+		return ttsprovider.Result{}, errTTSUnsupportedProvider
+	}
+	switch spec.Runtime {
+	case ttsprovider.RuntimeAliyunQwen:
 		client := ttsprovider.Client{APIKey: provider.APIKey, SynthesisEndpoint: snapshot.Provider.SynthesisEndpoint, VoiceEndpoint: snapshot.Provider.VoiceEndpoint}
 		return ttsSynthesize(ctx, &client, job, snapshot, sink)
+	case ttsprovider.RuntimeTencentTTS:
+		client := ttsprovider.TencentClient{SecretID: provider.SecretID, SecretKey: provider.SecretKey, Endpoint: snapshot.Provider.SynthesisEndpoint}
+		return ttsTencentSynthesize(ctx, &client, snapshot, sink)
 	default:
 		return ttsprovider.Result{}, errTTSUnsupportedProvider
 	}
+}
+
+func ttsTencentSynthesize(ctx context.Context, client *ttsprovider.TencentClient, snapshot TTSSnapshot, sink io.Writer) (ttsprovider.Result, error) {
+	segments := TTSSplitTencentText(snapshot.Input.Text)
+	if len(segments) > 1 {
+		return client.SynthesizeSegments(ctx, snapshot.Provider.Model, snapshot.Input, segments, sink)
+	}
+	return client.Synthesize(ctx, snapshot.Provider.Model, snapshot.Input, sink)
 }
 
 func ttsProviderCreateVoice(ctx context.Context, provider utils.SpeechProviderConfig, job *model.TTSJob, snapshot TTSSnapshot) (ttsprovider.VoiceResult, error) {

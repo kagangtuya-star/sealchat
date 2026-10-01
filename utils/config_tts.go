@@ -19,6 +19,10 @@ type SpeechProviderConfig struct {
 	Workspace         string   `json:"workspace" yaml:"workspace"`
 	APIKey            string   `json:"apiKey" yaml:"apiKey"`
 	HasAPIKey         bool     `json:"hasApiKey" yaml:"-"`
+	SecretID          string   `json:"secretId,omitempty" yaml:"secretId"`
+	SecretKey         string   `json:"secretKey,omitempty" yaml:"secretKey"`
+	HasSecretID       bool     `json:"hasSecretId,omitempty" yaml:"-"`
+	HasSecretKey      bool     `json:"hasSecretKey,omitempty" yaml:"-"`
 	SynthesisEndpoint string   `json:"synthesisEndpoint" yaml:"synthesisEndpoint"`
 	VoiceEndpoint     string   `json:"voiceEndpoint" yaml:"voiceEndpoint"`
 	Model             string   `json:"model" yaml:"model"`
@@ -45,6 +49,17 @@ func (p SpeechProviderConfig) EffectivePricingMode() string {
 		return ttsprovider.PricingCharacter
 	}
 	return p.PricingMode
+}
+
+func (p SpeechProviderConfig) CredentialsReady() bool {
+	switch p.EffectiveProviderKind() {
+	case ttsprovider.ProviderAliyun:
+		return strings.TrimSpace(p.APIKey) != ""
+	case ttsprovider.ProviderTencent:
+		return strings.TrimSpace(p.SecretID) != "" && strings.TrimSpace(p.SecretKey) != ""
+	default:
+		return false
+	}
 }
 
 func (p SpeechProviderConfig) SynthesisPriceConfirmed() bool {
@@ -143,6 +158,13 @@ func validateSpeechProviderRuntimeFields(p SpeechProviderConfig, spec ttsprovide
 		if (spec.Capabilities.VoiceDesign || spec.Capabilities.VoiceClone) && !validateSpeechEndpoint(p.VoiceEndpoint) {
 			return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")
 		}
+	case ttsprovider.ProviderTencent:
+		if spec.Runtime != ttsprovider.RuntimeTencentTTS || p.SynthesisEndpoint != ttsprovider.TencentEndpoint || p.Region != "" || p.Workspace != "" || p.VoiceEndpoint != "" {
+			return fmt.Errorf("腾讯传统 TTS 必须使用官方 TextToVoice 接口，Region、Workspace 与 Voice Endpoint 留空")
+		}
+		if p.CredentialScope != ttsprovider.TencentCredentialScope(p.SecretID) {
+			return fmt.Errorf("腾讯云凭据命名空间无效，请重新解析验证配置")
+		}
 	}
 	return nil
 }
@@ -162,11 +184,11 @@ func validateSpeechProviderConfig(p SpeechProviderConfig, spec ttsprovider.Model
 	if !p.Enabled {
 		return nil
 	}
-	if strings.TrimSpace(p.APIKey) == "" {
+	if !p.CredentialsReady() {
 		if p.EffectiveProviderKind() == ttsprovider.ProviderAliyun {
 			return fmt.Errorf("请配置语音账号命名空间、北京业务空间与 API Key")
 		}
-		return fmt.Errorf("请配置语音 API Key")
+		return fmt.Errorf("腾讯云 SecretId 与 SecretKey 必须同时填写")
 	}
 	if !validateSpeechEndpoint(p.SynthesisEndpoint) {
 		return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")

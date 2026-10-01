@@ -50,7 +50,7 @@ const voiceContexts = computed(() => speech.quota?.voiceContexts?.length ? speec
 const picker = ref<InstanceType<typeof VoicePicker> | null>(null)
 const MINE_PAGE_SIZE = 20
 const page = ref(1)
-const directory = ref<VoiceDirectory>({ items: [], system: [], providers: [], total: 0, catalogVersion: '' })
+const directory = ref<VoiceDirectory>({ items: [], system: [], providers: [], presetSources: [], total: 0, catalogVersion: '' })
 const name = ref('')
 const description = ref('')
 const operation = ref<'design' | 'clone'>('design')
@@ -96,7 +96,7 @@ const replacePage = ref(1)
 const replaceSearchInput = ref('')
 const replaceSearch = ref('')
 const replaceLoading = ref(false)
-const replaceDirectory = ref<VoiceDirectory>({ items: [], system: [], providers: [], total: 0, catalogVersion: '' })
+const replaceDirectory = ref<VoiceDirectory>({ items: [], system: [], providers: [], presetSources: [], total: 0, catalogVersion: '' })
 const replaceSelected = ref<SpeechVoice | null>(null)
 let replaceSerial = 0
 const replaceOptions = computed(() => {
@@ -121,7 +121,7 @@ watch(selectedId, () => {
   replacePage.value = 1
   replaceSearchInput.value = ''
   replaceSearch.value = ''
-  replaceDirectory.value = { items: [], system: [], providers: [], total: 0, catalogVersion: '' }
+  replaceDirectory.value = { items: [], system: [], providers: [], presetSources: [], total: 0, catalogVersion: '' }
   if (selectedVoice.value?.lifecycle === 'preview') void loadReplaceOptions()
 })
 let alive = true

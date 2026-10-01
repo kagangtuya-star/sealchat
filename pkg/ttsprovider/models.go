@@ -1,8 +1,11 @@
 package ttsprovider
 
 const (
-	PricingCharacter = "character"
-	PricingToken     = "token"
+	PricingCharacter  = "character"
+	PricingToken      = "token"
+	RuntimeAliyunQwen = "aliyun-qwen"
+	RuntimeTencentTTS = "tencent-tts"
+	RuntimeTencentMTS = "tencent-mts" // Reserved; no models or adapter registered.
 )
 
 type TTSModelPricing struct {
@@ -22,7 +25,9 @@ type ModelCapabilities struct {
 
 type ModelSpec struct {
 	ID                      string
+	Name                    string
 	ProviderKind            string
+	Runtime                 string
 	Pricing                 TTSModelPricing
 	Capabilities            ModelCapabilities
 	DefaultVoice            string
@@ -32,6 +37,7 @@ type ModelSpec struct {
 
 func ModelCatalog() []ModelSpec {
 	flash, plus, input, output := 0.0001, 0.00014, 0.0000015, 0.000012
+	classic, large := 0.00003, 0.00012
 	capabilities := ModelCapabilities{HTTPStreaming: true, WebSocketStreaming: true, VoiceDesign: true, VoiceClone: true}
 	models := []ModelSpec{
 		{ID: "qwen-audio-3.0-tts-flash", ProviderKind: ProviderAliyun, Capabilities: capabilities, DefaultVoice: "longanhuan_v3.6", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &flash, DisplayPrice: "1 元 / 万字符"}},
@@ -40,9 +46,15 @@ func ModelCatalog() []ModelSpec {
 	}
 	// These registered Qwen-Audio clone APIs share the enrollment capabilities.
 	for i := range models {
+		models[i].Runtime = RuntimeAliyunQwen
 		models[i].CloneLanguages = []string{"zh", "en", "fr", "de", "ja", "ko", "ru", "pt", "th", "id", "vi", "it", "es", "ms", "fil", "ar"}
 		models[i].SupportsClonePreprocess = true
 	}
+	tencentCapabilities := ModelCapabilities{HTTPStreaming: true}
+	models = append(models,
+		ModelSpec{ID: "tencent-tts-classic", Name: "腾讯云 TTS 精品音色", ProviderKind: ProviderTencent, Runtime: RuntimeTencentTTS, Capabilities: tencentCapabilities, DefaultVoice: "101004", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &classic, DisplayPrice: "0.3 元 / 万字符"}},
+		ModelSpec{ID: "tencent-tts-large", Name: "腾讯云 TTS 大模型音色", ProviderKind: ProviderTencent, Runtime: RuntimeTencentTTS, Capabilities: tencentCapabilities, DefaultVoice: "501004", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &large, DisplayPrice: "1.2 元 / 万字符（后付费首档估算，可在 Provider 中调整）"}},
+	)
 	return models
 }
 
