@@ -1078,6 +1078,8 @@ const CHANNEL_SWITCH_WINDOW_MS = 1500;
 const CHANNEL_SWITCH_THRESHOLD = 6;
 const CHANNEL_SWITCH_BLOCK_MS = 1500;
 const CHANNEL_SWITCH_RELOAD_COOLDOWN_MS = 10_000;
+// 嵌入页初始化期间由 query 指定的初始频道；仅在自动回退选频道时作为首选候选，不持久化
+let initialChannelPreference: { worldId: string; channelId: string } | null = null;
 
 const clearWsReconnectTimer = (store?: { iReconnectAfterTime: number }) => {
   if (wsReconnectTimer) {
@@ -1985,6 +1987,12 @@ export const useChatStore = defineStore({
         content: content
       }
       this.subject?.next(msg);
+    },
+
+    setInitialChannelPreference(preference: { worldId: string; channelId: string } | null) {
+      const worldId = String(preference?.worldId || '').trim();
+      const channelId = String(preference?.channelId || '').trim();
+      initialChannelPreference = worldId && channelId ? { worldId, channelId } : null;
     },
 
     setCurrentWorld(worldId: string) {
@@ -4109,11 +4117,16 @@ export const useChatStore = defineStore({
       }
 
       if (!this.curChannel && options?.autoSwitch !== false && isCurrentWorldRequest) {
+        const initialChannelId = initialChannelPreference?.worldId === finalWorld
+          ? initialChannelPreference.channelId
+          : '';
         const targetChannelId = resolvePreferredChannelForWorld({
           worldId: finalWorld,
           tree: tree as SChannel[],
           defaultChannelId: this.worldMap[finalWorld]?.defaultChannelId,
-          lastChannelByWorld: this._lastChannelByWorld,
+          lastChannelByWorld: initialChannelId
+            ? { ...this._lastChannelByWorld, [finalWorld]: initialChannelId }
+            : this._lastChannelByWorld,
           fallbackLastChannel: this._lastChannel,
         });
         if (targetChannelId) {

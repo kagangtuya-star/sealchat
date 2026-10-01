@@ -1045,10 +1045,22 @@ const initialize = async () => {
     if (initialWorldId.value) {
       chat.setCurrentWorld(initialWorldId.value);
     }
+    // 小剧场以 query 中的 worldId + channelId 为初始频道的权威来源：
+    // 让初始化期间（含 WS 连接就绪时）的默认频道自动回退优先解析到该频道，避免先进入大厅/上次频道再跳转。
+    // 目标频道不在频道树中时仍按原有顺序回退。
+    const theaterInitialChannelId = theaterMode.value && initialWorldId.value && chat.currentWorldId === initialWorldId.value
+      ? initialChannelId.value.trim()
+      : '';
+    if (theaterInitialChannelId) {
+      chat.setInitialChannelPreference({ worldId: initialWorldId.value, channelId: theaterInitialChannelId });
+    }
     // 先把世界列表/当前世界同步给壳页面，避免 WS 尚未 ready 时侧边栏一直空白
     postStateThrottled('sealchat.embed.state');
     await chat.channelList(chat.currentWorldId, true);
-    if (initialChannelId.value) {
+    if (
+      initialChannelId.value
+      && !(theaterInitialChannelId && String(chat.curChannel?.id || '') === theaterInitialChannelId)
+    ) {
       await chat.channelSwitchTo(initialChannelId.value);
     }
     if (inlineSplitForceOoc.value && chat.curChannel?.id) {
@@ -1064,6 +1076,9 @@ const initialize = async () => {
     await fetchRoleOptions(chat.curChannel?.id ? String(chat.curChannel.id) : '');
     postState('sealchat.embed.ready');
   } finally {
+    if (theaterMode.value) {
+      chat.setInitialChannelPreference(null);
+    }
     initializing.value = false;
   }
 };

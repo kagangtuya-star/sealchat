@@ -56,9 +56,11 @@ const props = withDefaults(defineProps<{
   worldId: string
   channelId: string
   hostMode?: 'stage' | 'viewport'
+  dockMinimizedCharacters?: boolean
 }>(), {
   chatFrame: null,
   hostMode: 'stage',
+  dockMinimizedCharacters: false,
 })
 
 const hostMode = computed(() => props.hostMode)
@@ -117,6 +119,11 @@ const minimizedWidth = (item: TheaterFloatingWindowState) => (
 const minimizedHeight = (item: TheaterFloatingWindowState) => (
   item.resourceType === 'character' ? MINIMIZED_CHARACTER_SIZE : MINIMIZED_HEIGHT
 )
+// 窄屏下最小化的人物卡统一显示在停靠区；停靠区只是 windows 的派生视图，不改变窗口状态与持久化字段
+const isDockedCharacter = (item: TheaterFloatingWindowState) => (
+  props.dockMinimizedCharacters && item.minimized && item.resourceType === 'character'
+)
+const dockedCharacters = computed(() => windows.value.filter(item => !item.hidden && isDockedCharacter(item)))
 
 const storageKey = (worldId: string, channelId: string) => (
   `${hostMode.value === 'viewport' ? VIEWPORT_STORAGE_PREFIX : STAGE_STORAGE_PREFIX}${encodeURIComponent(worldId)}:${encodeURIComponent(channelId)}`
@@ -331,7 +338,8 @@ const fitWindowsToHost = () => {
   windows.value.forEach((item) => {
     item.width = clamp(item.width, MIN_WIDTH, rect.width - EDGE_PADDING * 2)
     item.height = clamp(item.height, MIN_HEIGHT, rect.height - EDGE_PADDING * 2)
-    clampWindowPosition(item)
+    // 停靠中的人物卡不按自由位置显示，保留其最小化坐标，回到宽屏后再由下一次 fit 收敛
+    if (!isDockedCharacter(item)) clampWindowPosition(item)
   })
 }
 
@@ -771,6 +779,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
         'is-character': item.resourceType === 'character',
         'is-minimal': item.chrome === 'minimal',
         'is-chat': item.source === 'chat',
+        'is-docked': isDockedCharacter(item),
       }"
       :style="windowStyle(item)"
       @pointerdown="bringToFront(item.id)"
@@ -844,6 +853,20 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
         @pointercancel="stopInteraction"
       />
     </section>
+    <div v-if="dockedCharacters.length" class="theater-floating-character-dock" aria-label="已最小化的人物卡">
+      <button
+        v-for="item in dockedCharacters"
+        :key="item.id"
+        type="button"
+        class="theater-floating-character-dock__item"
+        :title="`${item.title}（点击恢复）`"
+        :aria-label="`恢复人物卡：${item.title}`"
+        @click="restoreMinimized(item)"
+      >
+        <img v-if="item.avatarUrl" :src="item.avatarUrl" :alt="item.title">
+        <span v-else>{{ titleInitial(item) }}</span>
+      </button>
+    </div>
     </div>
   </Teleport>
 </template>
@@ -883,4 +906,11 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
 .theater-floating-window.is-character.is-minimized { border-radius: 50%; background: var(--sc-bg-elevated, #26262c); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .theater-floating-window__character-badge img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .theater-floating-window__character-badge span { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; }
+.theater-floating-window.is-docked { display: none; }
+/* 停靠区位于舞台工具栏（46px）下方右侧；容器自身不接收指针，只有头像可点击，过多时横向滚动 */
+.theater-floating-character-dock { position: absolute; z-index: 1000000; top: calc(max(8px, env(safe-area-inset-top, 0px)) + 46px); right: max(8px, env(safe-area-inset-right, 0px)); box-sizing: border-box; display: flex; flex-wrap: nowrap; gap: 6px; width: max-content; max-width: calc(100% - 16px); padding: 2px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; pointer-events: none; }
+.theater-floating-character-dock::-webkit-scrollbar { display: none; }
+.theater-floating-character-dock__item { flex: 0 0 auto; box-sizing: border-box; width: 44px; height: 44px; padding: 0; overflow: hidden; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 50%; color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-elevated, #26262c); box-shadow: 0 6px 16px rgba(0, 0, 0, .28); cursor: pointer; pointer-events: auto; touch-action: pan-x; user-select: none; }
+.theater-floating-character-dock__item img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.theater-floating-character-dock__item span { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; }
 </style>
