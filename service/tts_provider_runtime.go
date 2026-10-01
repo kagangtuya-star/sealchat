@@ -25,6 +25,13 @@ func ttsProviderSynthesize(ctx context.Context, provider utils.SpeechProviderCon
 	case ttsprovider.RuntimeTencentTTS:
 		client := ttsprovider.TencentClient{SecretID: provider.SecretID, SecretKey: provider.SecretKey, Endpoint: snapshot.Provider.SynthesisEndpoint}
 		return ttsTencentSynthesize(ctx, &client, snapshot, sink)
+	case ttsprovider.RuntimeTencentMPS:
+		client := ttsprovider.TencentMPSClient{SecretID: provider.SecretID, SecretKey: provider.SecretKey, Endpoint: snapshot.Provider.SynthesisEndpoint}
+		segments := TTSSplitText(snapshot.Input.Text)
+		if len(segments) > 1 {
+			return client.SynthesizeSegments(ctx, snapshot.Provider.Model, snapshot.Input, segments, sink)
+		}
+		return client.Synthesize(ctx, snapshot.Provider.Model, snapshot.Input, sink)
 	default:
 		return ttsprovider.Result{}, errTTSUnsupportedProvider
 	}

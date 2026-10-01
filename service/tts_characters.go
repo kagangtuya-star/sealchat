@@ -1,17 +1,9 @@
 package service
 
-import "unicode"
+import "sealchat/pkg/ttsprovider"
 
-// TTSBillableCharacters follows the current Qwen Audio 3.0 TTS character
-// accounting rule: Han characters count as two and every other rune as one.
+// TTSBillableCharacters implements the Han-double character accounting
+// currently shared by Qwen Audio 3.0 and Tencent MPS MiniMax.
 func TTSBillableCharacters(text string) int64 {
-	var total int64
-	for _, r := range text {
-		if unicode.Is(unicode.Han, r) {
-			total += 2
-		} else {
-			total++
-		}
-	}
-	return total
+	return ttsprovider.BillingCharactersHanDouble(text)
 }

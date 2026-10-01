@@ -28,6 +28,7 @@ type TTSResolvedModel struct {
 	ttsprovider.TTSModelPricing
 	ID            string                        `json:"id"`
 	ProviderKind  string                        `json:"providerKind"`
+	Runtime       string                        `json:"runtime"`
 	Capabilities  ttsprovider.ModelCapabilities `json:"capabilities"`
 	DefaultVoice  string                        `json:"defaultVoice"`
 	Name          string                        `json:"name"`
@@ -82,7 +83,22 @@ func ResolveTTSProvider(ctx context.Context, request TTSProviderResolveRequest) 
 		}
 		result, err = ResolveAliyunTTSProvider(ctx, request.BaseURL, strings.TrimSpace(request.APIKey), request.ProviderID)
 	case ttsprovider.ProviderTencent:
-		result, err = ResolveTencentTTSProvider(ctx, request)
+		request.Model = strings.TrimSpace(request.Model)
+		if request.Model == "" {
+			request.Model = "tencent-tts-classic"
+		}
+		spec, ok := ttsprovider.LookupModel(kind, request.Model)
+		if !ok {
+			return result, TTSValidationError("请选择受支持的腾讯云 TTS 模型")
+		}
+		switch spec.Runtime {
+		case ttsprovider.RuntimeTencentTTS:
+			result, err = ResolveTencentTTSProvider(ctx, request)
+		case ttsprovider.RuntimeTencentMPS:
+			result, err = ResolveTencentMPSProvider(ctx, request)
+		default:
+			return result, TTSValidationError("请选择受支持的腾讯云 TTS 模型")
+		}
 	default:
 		return result, TTSValidationError(fmt.Sprintf("不支持的 TTS 服务商：%s", kind))
 	}
@@ -427,7 +443,7 @@ func resolveTTSModelPricing(model aliyunCatalogModel, spec ttsprovider.ModelSpec
 	if name == "" {
 		name = spec.ID
 	}
-	return TTSResolvedModel{ID: spec.ID, ProviderKind: spec.ProviderKind, Capabilities: spec.Capabilities, DefaultVoice: ttsprovider.DefaultVoice(spec.ProviderKind, spec.ID), Name: name, TTSModelPricing: pricing, PricingSource: source}
+	return TTSResolvedModel{ID: spec.ID, ProviderKind: spec.ProviderKind, Runtime: spec.Runtime, Capabilities: spec.Capabilities, DefaultVoice: ttsprovider.DefaultVoice(spec.ProviderKind, spec.ID), Name: name, TTSModelPricing: pricing, PricingSource: source}
 }
 
 func ResolveTencentTTSProvider(ctx context.Context, request TTSProviderResolveRequest) (TTSProviderResolution, error) {
@@ -440,16 +456,9 @@ func ResolveTencentTTSProvider(ctx context.Context, request TTSProviderResolveRe
 // audio and never retries a possible charge.
 func resolveTencentTTSProvider(ctx context.Context, client *ttsprovider.TencentClient, request TTSProviderResolveRequest) (TTSProviderResolution, error) {
 	result := TTSProviderResolution{ProviderKind: ttsprovider.ProviderTencent, SynthesisEndpoint: ttsprovider.TencentEndpoint, Models: []TTSResolvedModel{}}
-	secretID, secretKey := strings.TrimSpace(request.SecretID), strings.TrimSpace(request.SecretKey)
-	if (secretID == "") != (secretKey == "") {
-		return result, TTSValidationError("SecretId 与 SecretKey 必须同时填写")
-	}
-	if secretID == "" {
-		old := request.SavedProvider
-		if old == nil || old.ID != strings.TrimSpace(request.ProviderID) || old.EffectiveProviderKind() != ttsprovider.ProviderTencent || !old.CredentialsReady() || old.CredentialScope != ttsprovider.TencentCredentialScope(old.SecretID) {
-			return result, TTSValidationError("请同时填写腾讯云 SecretId 与 SecretKey；更换服务商时必须重新填写凭据")
-		}
-		secretID, secretKey = old.SecretID, old.SecretKey
+	secretID, secretKey, err := ttsTencentSecrets(request)
+	if err != nil {
+		return result, err
 	}
 	modelID := strings.TrimSpace(request.Model)
 	spec, ok := ttsprovider.LookupModel(ttsprovider.ProviderTencent, modelID)
@@ -459,7 +468,7 @@ func resolveTencentTTSProvider(ctx context.Context, client *ttsprovider.TencentC
 	probe := ttsprovider.Input{Text: "测", Language: "zh", Voice: spec.DefaultVoice, Format: "wav", SampleRate: ttsprovider.TencentSampleRate(modelID), Rate: 1, Pitch: 1, Volume: 50}
 	c := *client
 	c.SecretID, c.SecretKey = secretID, secretKey
-	_, err := c.Synthesize(ctx, modelID, probe, io.Discard)
+	_, err = c.Synthesize(ctx, modelID, probe, io.Discard)
 	if err != nil {
 		var providerError *ttsprovider.ProviderError
 		if errors.As(err, &providerError) {
@@ -475,6 +484,68 @@ func resolveTencentTTSProvider(ctx context.Context, client *ttsprovider.TencentC
 	for _, model := range ttsprovider.ModelCatalog() {
 		if model.ProviderKind == ttsprovider.ProviderTencent && model.Runtime == ttsprovider.RuntimeTencentTTS {
 			result.Models = append(result.Models, resolveTTSModelPricing(aliyunCatalogModel{}, model))
+		}
+	}
+	return result, nil
+}
+
+func ttsTencentSecrets(request TTSProviderResolveRequest) (string, string, error) {
+	secretID, secretKey := strings.TrimSpace(request.SecretID), strings.TrimSpace(request.SecretKey)
+	if (secretID == "") != (secretKey == "") {
+		return "", "", TTSValidationError("SecretId 与 SecretKey 必须同时填写")
+	}
+	if secretID == "" {
+		old := request.SavedProvider
+		if old == nil || old.ID != strings.TrimSpace(request.ProviderID) || old.EffectiveProviderKind() != ttsprovider.ProviderTencent || !old.CredentialsReady() || old.CredentialScope != ttsprovider.TencentCredentialScope(old.SecretID) {
+			return "", "", TTSValidationError("请同时填写腾讯云 SecretId 与 SecretKey；更换服务商时必须重新填写凭据")
+		}
+		secretID, secretKey = old.SecretID, old.SecretKey
+	}
+	return secretID, secretKey, nil
+}
+
+func ResolveTencentMPSProvider(ctx context.Context, request TTSProviderResolveRequest) (TTSProviderResolution, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return resolveTencentMPSProvider(ctx, &ttsprovider.TencentMPSClient{HTTP: &http.Client{Timeout: 12 * time.Second}}, request)
+}
+
+// Configuration verification queries voices and never issues a synthesis POST.
+func resolveTencentMPSProvider(ctx context.Context, client *ttsprovider.TencentMPSClient, request TTSProviderResolveRequest) (TTSProviderResolution, error) {
+	result := TTSProviderResolution{ProviderKind: ttsprovider.ProviderTencent, SynthesisEndpoint: ttsprovider.TencentMPSEndpoint, Models: []TTSResolvedModel{}}
+	secretID, secretKey, err := ttsTencentSecrets(request)
+	if err != nil {
+		return result, err
+	}
+	spec, ok := ttsprovider.LookupModel(ttsprovider.ProviderTencent, strings.TrimSpace(request.Model))
+	if !ok || spec.Runtime != ttsprovider.RuntimeTencentMPS {
+		return result, TTSValidationError("请选择受支持的腾讯 MPS MiniMax 模型")
+	}
+	c := *client
+	c.SecretID, c.SecretKey = secretID, secretKey
+	voices, _, err := c.DescribeVoices(ctx)
+	if err != nil {
+		var providerError *ttsprovider.ProviderError
+		if errors.As(err, &providerError) {
+			return result, TTSValidationError(ttsprovider.TencentMPSProviderErrorMessage(providerError))
+		}
+		return result, err
+	}
+	dynamic := ttsprovider.TencentMPSVoiceSpecs(voices)
+	if len(dynamic) == 0 {
+		return result, TTSValidationError("腾讯 MPS 未返回可用的系统音色")
+	}
+	result.ProviderID = strings.TrimSpace(request.ProviderID)
+	if result.ProviderID == "" {
+		result.ProviderID = utils.NewID()
+	}
+	result.CredentialScope = ttsprovider.TencentCredentialScope(secretID)
+	ttsMPSCatalog.prime(result.CredentialScope, dynamic)
+	for _, model := range ttsprovider.ModelCatalog() {
+		if model.ProviderKind == ttsprovider.ProviderTencent && model.Runtime == ttsprovider.RuntimeTencentMPS {
+			resolved := resolveTTSModelPricing(aliyunCatalogModel{}, model)
+			resolved.DefaultVoice = ttsMPSDefaultVoice(dynamic)
+			result.Models = append(result.Models, resolved)
 		}
 	}
 	return result, nil

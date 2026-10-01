@@ -136,6 +136,9 @@ func normalizeSpeechConfig(cfg *SpeechConfig, repairVoice bool) *SpeechConfig {
 		}
 	}
 	for _, p := range out.Providers {
+		if spec, ok := ttsprovider.LookupModel(p.ProviderKind, p.Model); ok && spec.Runtime == ttsprovider.RuntimeTencentMPS {
+			continue
+		} // Dynamic defaults are validated in service.
 		if p.ID == out.DefaultProvider && (out.DefaultVoice == "" || (repairVoice && !ttsprovider.VoiceSupported(p.ProviderKind, p.Model, out.DefaultVoice))) {
 			out.DefaultVoice = ttsprovider.DefaultVoice(p.ProviderKind, p.Model)
 			break
@@ -159,7 +162,11 @@ func validateSpeechProviderRuntimeFields(p SpeechProviderConfig, spec ttsprovide
 			return fmt.Errorf("语音接口必须是管理员配置的 HTTPS 地址")
 		}
 	case ttsprovider.ProviderTencent:
-		if spec.Runtime != ttsprovider.RuntimeTencentTTS || p.SynthesisEndpoint != ttsprovider.TencentEndpoint || p.Region != "" || p.Workspace != "" || p.VoiceEndpoint != "" {
+		if spec.Runtime == ttsprovider.RuntimeTencentMPS {
+			if p.SynthesisEndpoint != ttsprovider.TencentMPSEndpoint || p.Region != "" || p.Workspace != "" || p.VoiceEndpoint != "" {
+				return fmt.Errorf("腾讯 MPS 必须使用官方 TextToSpeech 接口，Region、Workspace 与 Voice Endpoint 留空")
+			}
+		} else if spec.Runtime != ttsprovider.RuntimeTencentTTS || p.SynthesisEndpoint != ttsprovider.TencentEndpoint || p.Region != "" || p.Workspace != "" || p.VoiceEndpoint != "" {
 			return fmt.Errorf("腾讯传统 TTS 必须使用官方 TextToVoice 接口，Region、Workspace 与 Voice Endpoint 留空")
 		}
 		if p.CredentialScope != ttsprovider.TencentCredentialScope(p.SecretID) {
@@ -230,7 +237,7 @@ func ValidateSpeechConfig(cfg *SpeechConfig) error {
 		}
 		if p.ID == cfg.DefaultProvider {
 			found = true
-			if !ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, cfg.DefaultVoice) {
+			if (spec.Runtime == ttsprovider.RuntimeTencentMPS && strings.TrimSpace(cfg.DefaultVoice) == "") || (spec.Runtime != ttsprovider.RuntimeTencentMPS && !ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, cfg.DefaultVoice)) {
 				return fmt.Errorf("默认系统音色与默认 provider 类型或模型不匹配")
 			}
 			if cfg.Enabled && !p.SynthesisPriceConfirmed() {

@@ -261,6 +261,7 @@ func main() {
 	})
 	service.StartTheaterPackageWorker(ctx, config.Export.StorageDir)
 	service.StartTTSWorker(ctx)
+	go service.TTSPrimeMPSCatalogs()
 
 	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
 	service.StartDigestPushWorker()

@@ -1,11 +1,13 @@
 package ttsprovider
 
+import "strings"
+
 const (
 	PricingCharacter  = "character"
 	PricingToken      = "token"
 	RuntimeAliyunQwen = "aliyun-qwen"
 	RuntimeTencentTTS = "tencent-tts"
-	RuntimeTencentMTS = "tencent-mts" // Reserved; no models or adapter registered.
+	RuntimeTencentMPS = "tencent-mps"
 )
 
 type TTSModelPricing struct {
@@ -55,7 +57,18 @@ func ModelCatalog() []ModelSpec {
 		ModelSpec{ID: "tencent-tts-classic", Name: "腾讯云 TTS 精品音色", ProviderKind: ProviderTencent, Runtime: RuntimeTencentTTS, Capabilities: tencentCapabilities, DefaultVoice: "101004", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &classic, DisplayPrice: "0.3 元 / 万字符"}},
 		ModelSpec{ID: "tencent-tts-large", Name: "腾讯云 TTS 大模型音色", ProviderKind: ProviderTencent, Runtime: RuntimeTencentTTS, Capabilities: tencentCapabilities, DefaultVoice: "501004", Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &large, DisplayPrice: "1.2 元 / 万字符（后付费首档估算，可在 Provider 中调整）"}},
 	)
+	for _, id := range TencentMPSModels() {
+		price, display := 0.00035, "0.175 元 / 500 计费字符"
+		if strings.HasSuffix(id, "-turbo") {
+			price, display = 0.0002, "0.1 元 / 500 计费字符"
+		}
+		models = append(models, ModelSpec{ID: id, Name: "腾讯 MPS MiniMax " + id, ProviderKind: ProviderTencent, Runtime: RuntimeTencentMPS, Capabilities: tencentCapabilities, Pricing: TTSModelPricing{Mode: PricingCharacter, CharacterPrice: &price, DisplayPrice: display}})
+	}
 	return models
+}
+
+func TencentMPSModels() []string {
+	return []string{"speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo", "speech-02-hd", "speech-02-turbo"}
 }
 
 func VoiceCloneLanguageSupported(spec ModelSpec, language string) bool {

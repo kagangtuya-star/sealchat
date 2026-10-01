@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -93,7 +94,7 @@ func resolveSystemVoiceProvider(cfg *utils.SpeechConfig, voiceID, providerKind, 
 		return p.Enabled && p.CredentialsReady() &&
 			(providerKind == "" || providerKind == p.EffectiveProviderKind()) &&
 			(modelID == "" || modelID == p.Model) &&
-			ttsprovider.VoiceSupported(p.EffectiveProviderKind(), p.Model, voiceID)
+			ttsSystemVoiceSupported(p, p.Model, voiceID)
 	}
 	if providerID != "" {
 		for _, p := range cfg.Providers {
@@ -247,8 +248,8 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	if target == nil {
 		v = r.SystemVoice
 		if v == "" {
-			v = ttsprovider.DefaultVoice(s.Provider.EffectiveProviderKind(), s.Provider.Model)
-			if s.Provider.ID == cfg.DefaultProvider && ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, cfg.DefaultVoice) {
+			v = ttsDefaultSystemVoice(s.Provider, s.Provider.Model)
+			if s.Provider.ID == cfg.DefaultProvider && ttsSystemVoiceSupported(s.Provider, s.Provider.Model, cfg.DefaultVoice) {
 				v = cfg.DefaultVoice
 			}
 		}
@@ -274,7 +275,7 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 					}
 				}
 			}
-		} else if !ttsprovider.VoiceSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v) {
+		} else if !ttsSystemVoiceSupported(s.Provider, s.Provider.Model, v) {
 			return s, TTSValidationError("系统音色与当前模型不匹配")
 		}
 	}
@@ -285,7 +286,7 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 		if voice != nil {
 			return s, TTSValidationError("个人音色暂不支持指定朗读语言，请选择跟随原文")
 		}
-		if !ttsprovider.VoiceSpeechLanguageSupported(s.Provider.EffectiveProviderKind(), s.Provider.Model, v, r.SpeechLanguage) {
+		if !slices.Contains(ttsSystemVoiceSpeechLanguages(s.Provider, s.Provider.Model, v), r.SpeechLanguage) {
 			return s, TTSValidationError("当前音色不支持此朗读语言")
 		}
 	}
@@ -311,6 +312,14 @@ func ttsSnapshotForOperation(userID string, r TTSRequest, scope string, automati
 	}
 	if cfg.Format != "opus" {
 		s.Input.BitRate = 0
+	}
+	if spec.Runtime == ttsprovider.RuntimeTencentMPS {
+		if err := ttsprovider.ValidateTencentMPSInput(s.Input); err != nil {
+			return s, TTSValidationError(err.Error())
+		}
+		if s.Input.Format == "mp3" && len(TTSSplitText(s.Input.Text)) > 1 && r.SpeechLanguage == "" {
+			return s, TTSValidationError("腾讯 MPS 长文本当前仅支持 WAV 合成")
+		}
 	}
 	if operation != "design" && operation != "clone" && r.SpeechLanguage != "" {
 		s.SourceText = s.Input.Text
@@ -546,6 +555,14 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 	if s.Translation != nil && (s.Translation.State != "done" || s.Fingerprint == "") {
 		return TTSValidationError("语音翻译尚未完成")
+	}
+	if spec, ok := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); ok && spec.Runtime == ttsprovider.RuntimeTencentMPS {
+		if err := ttsprovider.ValidateTencentMPSInput(s.Input); err != nil {
+			return TTSValidationError(err.Error())
+		}
+		if s.Input.Format == "mp3" && len(TTSSplitText(s.Input.Text)) > 1 {
+			return TTSValidationError("腾讯 MPS 长文本当前仅支持 WAV 合成")
+		}
 	}
 	if spec, ok := ttsprovider.LookupModel(s.Provider.EffectiveProviderKind(), s.Provider.Model); ok && spec.Runtime == ttsprovider.RuntimeTencentTTS {
 		if err := ttsprovider.ValidateTencentInput(s.Input); err != nil {

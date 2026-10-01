@@ -420,7 +420,7 @@ func ttsVoices(c *fiber.Ctx) error {
 	for _, voice := range items {
 		voices = append(voices, service.TTSPersonalVoiceResponse(voice))
 	}
-	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(), "providers": ttsprovider.ProviderCatalog(), "presetSources": ttsprovider.PresetSourceCatalog(), "catalogVersion": "2026-09-30"})
+	return c.JSON(fiber.Map{"items": voices, "total": total, "system": service.TTSSystemVoices(c.UserContext()), "providers": ttsprovider.ProviderCatalog(), "presetSources": ttsprovider.PresetSourceCatalog(), "catalogVersion": "2026-09-30"})
 }
 func ttsReadMessage(userID, id string) (*model.MessageModel, error) {
 	var m model.MessageModel
@@ -612,9 +612,13 @@ func ttsAdminConfig(c *fiber.Ctx) error {
 	if err = utils.ValidateSpeechConfig(merged.AI.Speech); err != nil {
 		return ttsError(c, service.TTSValidationError(err.Error()))
 	}
+	if err = service.ValidateTTSDynamicDefaultVoice(merged.AI.Speech); err != nil {
+		return ttsError(c, err)
+	}
 	appConfig = merged
 	utils.WriteConfig(appConfig)
 	SyncConfigToDB(appConfig, "api")
+	go service.TTSPrimeMPSCatalogs()
 	return c.JSON(fiber.Map{"config": sanitizeConfigForAdmin(appConfig).AI.Speech})
 }
 

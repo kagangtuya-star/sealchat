@@ -7,7 +7,7 @@ import type { RoleSpeechConfig, SpeechJob } from './types'
 import { speechPlayer } from './player'
 import { useUserStore } from '@/stores/user'
 import VoicePicker from './VoicePicker.vue'
-import { compatibleSpeechLanguage, roleVoiceFields, roleVoiceSelection, speechLanguageOptions, type VoiceSelection } from './voice-catalog'
+import { compatibleSpeechLanguage, isTencentMPSModel, roleVoiceFields, roleVoiceSelection, speechLanguageOptions, type VoiceSelection } from './voice-catalog'
 const props = defineProps<{ identityId: string; identityName?: string }>()
 const speech = useSpeechStore()
 const user = useUserStore()
@@ -22,7 +22,12 @@ const selection = ref<VoiceSelection>({ type: 'inherit' })
 const speechLanguages = ref<string[] | null>(null)
 const systemModel = ref('')
 const tencentTraditional = computed(() => systemModel.value === 'tencent-tts-classic' || systemModel.value === 'tencent-tts-large')
+const tencentMPS = computed(() => isTencentMPSModel(systemModel.value))
+const instructionDisabled = computed(() => tencentTraditional.value || tencentMPS.value)
 const incompatibleTencentParameters = computed(() => tencentTraditional.value && !!role.value && (role.value.pitch !== 1 || role.value.instruction !== ''))
+const incompatibleMPSInstruction = computed(() => tencentMPS.value && !!role.value?.instruction)
+const incompatibleParameters = computed(() => incompatibleTencentParameters.value || incompatibleMPSInstruction.value)
+function clearMPSInstruction() { if (role.value) role.value.instruction = '' }
 function resetTencentParameters() {
   if (role.value) { role.value.pitch = 1; role.value.instruction = '' }
 }
@@ -62,7 +67,7 @@ async function open() {
   finally { if (current === generation) busy.value = false }
 }
 async function save() {
-  if (!role.value || busy.value) return
+  if (!role.value || busy.value || incompatibleParameters.value) return
   busy.value = true
   error.value = ''
   const current = generation
@@ -74,7 +79,7 @@ async function save() {
   finally { if (current === generation) busy.value = false }
 }
 async function audition() {
-  if (!role.value || busy.value) return
+  if (!role.value || busy.value || incompatibleParameters.value) return
   busy.value = true
   error.value = ''
   const current = generation
@@ -121,9 +126,14 @@ async function query() {
             <p class="rv-hint">指定语言后，使用平台 AI 转换全文并计入文本额度；跟随原文直接朗读。</p>
             <label class="rv-field">
               <span>朗读指令</span>
-              <NInput v-model:value="role.instruction" :disabled="tencentTraditional" placeholder="朗读指令（不调用文本模型）" />
+              <NInput v-model:value="role.instruction" :disabled="instructionDisabled" placeholder="朗读指令（不调用文本模型）" />
             </label>
             <p v-if="tencentTraditional" class="rv-hint">腾讯传统 TTS 不支持朗读指令或音调调整。</p>
+            <p v-if="tencentMPS" class="rv-hint">腾讯 MPS MiniMax 当前不支持自由朗读指令；情绪参数将在后续独立接入。</p>
+            <NAlert v-if="incompatibleMPSInstruction" type="warning">
+              当前参数包含腾讯 MPS 不支持的自由朗读指令，请确认后清除。
+              <NButton size="small" @click="clearMPSInstruction">清除指令</NButton>
+            </NAlert>
             <NAlert v-if="incompatibleTencentParameters" type="warning">
               当前参数包含腾讯不支持的朗读指令或音调，请确认后恢复默认参数。
               <NButton size="small" @click="resetTencentParameters">清除指令并将音调恢复为 1</NButton>
@@ -138,7 +148,7 @@ async function query() {
             <h3>试听</h3>
             <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
             <p class="rv-hint">按当前选择与参数合成新音频；已有结果可重放。</p>
-            <NButton :loading="busy" :disabled="!speech.canSynthesize || incompatibleTencentParameters" @click="audition">确认试听</NButton>
+            <NButton :loading="busy" :disabled="!speech.canSynthesize || incompatibleParameters" @click="audition">确认试听</NButton>
             <div v-if="job" class="rv-job">
               <span>试听任务：{{ job.status }} {{ job.errorCode }}</span>
               <div class="rv-job__actions">
@@ -154,7 +164,7 @@ async function query() {
         <span class="rv-foot__hint">选择“跟随平台默认音色”并保存即可清除绑定。</span>
         <div class="rv-foot__actions">
           <NButton @click="visible = false">取消</NButton>
-          <NButton type="primary" :loading="busy" :disabled="!role || incompatibleTencentParameters" @click="save">保存绑定</NButton>
+          <NButton type="primary" :loading="busy" :disabled="!role || incompatibleParameters" @click="save">保存绑定</NButton>
         </div>
       </footer>
     </section>

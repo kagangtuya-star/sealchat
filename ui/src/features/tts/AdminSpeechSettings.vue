@@ -5,7 +5,7 @@ import { speechAPI, speechError } from './api'
 import type { ResolvedSpeechModel, ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
 import { speechPlayer } from './player'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
-import { defaultVoiceForContext, systemVoiceSupported } from './voice-catalog'
+import { defaultVoiceForContext, isTencentMPSModel, systemVoiceSupported } from './voice-catalog'
 const newProviderTarget = '__new_provider__'
 const quickProviderDefinitions = [{
   kind: 'aliyun',
@@ -61,7 +61,11 @@ const providerKindOptions = computed(() => [...new Set(modelCatalog.value.map(mo
 const modelOptions = (provider: SpeechProvider) => modelCatalog.value.filter(model => model.providerKind === provider.providerKind).map(model => ({ label: model.name, value: model.id }))
 const defaultProvider = computed(() => config.value.providers.find(provider => provider.id === config.value.defaultProvider))
 const voiceContext = computed(() => defaultProvider.value ? { providerKind: defaultProvider.value.providerKind, providerId: defaultProvider.value.id, modelId: defaultProvider.value.model } : null)
-const defaultVoiceOptions = computed(() => systemVoices.value.filter(voice => systemVoiceSupported(voice, voiceContext.value)).map(voice => ({ label: `${voice.name} (${voice.id})`, value: voice.id })))
+const defaultVoiceOptions = computed(() => {
+  const options = systemVoices.value.filter(voice => systemVoiceSupported(voice, voiceContext.value)).map(voice => ({ label: voice.presetSource === 'tencent2' ? voice.name : `${voice.name} (${voice.id})`, value: voice.id }))
+  if (defaultProvider.value && isTencentMPSModel(defaultProvider.value.model) && config.value.defaultVoice && !options.some(option => option.value === config.value.defaultVoice)) options.push({ label: '系统默认音色', value: config.value.defaultVoice })
+  return options
+})
 const resolvedModel = computed(() => resolvedProvider.value?.models.find(model => model.id === resolvedModelId.value))
 const localProviderIds = new Set<string>()
 let alive = true
@@ -78,6 +82,8 @@ const resolvedModelOptions = computed(() => (resolvedProvider.value?.models ?? [
 })))
 const quickProvider = computed(() => config.value.providers.find(provider => provider.id === quickProviderId.value))
 const quickTencent = computed(() => quickProviderDefinition.value?.credentialMode === 'tencent-secret')
+const quickMPS = computed(() => quickTencent.value && quickModels.value.find(model => model.id === quickModelId.value)?.runtime === 'tencent-mps')
+const quickTencentEndpoint = computed(() => quickMPS.value ? 'https://mps.tencentcloudapi.com' : 'https://tts.tencentcloudapi.com')
 const quickSavedCredentials = computed(() => quickProvider.value?.providerKind === quickProviderKind.value)
 const canResolveQuickProvider = computed(() => !!quickProviderDefinition.value && !!quickModelId.value && (quickTencent.value
   ? (!!quickSecretId.value && !!quickSecretKey.value) || (!quickSecretId.value && !quickSecretKey.value && quickSavedCredentials.value && !!quickProvider.value?.hasSecretId && !!quickProvider.value?.hasSecretKey)
@@ -114,6 +120,8 @@ async function save() {
   quickSecretKey.value = ''
   localProviderIds.clear()
   notice.value = '语音配置已保存。'
+  try { systemVoices.value = (await speechAPI.voices({ page: 1 })).system }
+  catch { notice.value = '语音配置已保存，音色目录刷新失败。' }
 }
 function clearResolvedProvider() {
   resolvedProvider.value = null
@@ -149,6 +157,15 @@ function selectQuickProvider(providerId: string) {
 }
 function ensureDefaultVoice() {
   if (!modelCatalog.value.length || !systemVoices.value.length) return
+  if (defaultProvider.value && isTencentMPSModel(defaultProvider.value.model)) {
+    const online = resolvedProvider.value?.providerId === defaultProvider.value.id ? resolvedProvider.value.models : []
+    const model = online.find(model => model.id === defaultProvider.value?.model)
+    if (systemVoices.value.some(voice => voice.id === config.value.defaultVoice && systemVoiceSupported(voice, voiceContext.value))) return
+    // A new provider's catalog becomes available after saving. Use only its
+    // resolver default until then; the static catalog has no MPS default.
+    if (model) config.value.defaultVoice = model.defaultVoice
+    return
+  }
   config.value.defaultVoice = defaultVoiceForContext(systemVoices.value, modelCatalog.value, voiceContext.value, config.value.defaultVoice)
 }
 watch([voiceContext, systemVoices, modelCatalog], ensureDefaultVoice)
@@ -161,6 +178,7 @@ function setModelPricing(provider: SpeechProvider, model: ResolvedSpeechModel) {
     inputTokenPrice: model.inputTokenPrice,
     outputTokenPrice: model.outputTokenPrice,
   })
+  if (model.providerKind === 'tencent') provider.synthesisEndpoint = model.runtime === 'tencent-mps' ? 'https://mps.tencentcloudapi.com' : 'https://tts.tencentcloudapi.com'
 }
 function selectProviderModel(provider: SpeechProvider, modelId: string) {
   const online = resolvedProvider.value?.providerId === provider.id ? resolvedProvider.value.models.find(model => model.providerKind === provider.providerKind && model.id === modelId) : undefined
@@ -193,6 +211,7 @@ function applyResolvedModel(modelId: string) {
   if (provider.providerKind !== resolved.providerKind) {
     Object.assign(provider, { apiKey: '', secretId: '', secretKey: '', hasApiKey: false, hasSecretId: false, hasSecretKey: false })
   }
+  const previousScope = provider.credentialScope
   Object.assign(provider, {
     providerKind: resolved.providerKind,
     credentialScope: resolved.credentialScope,
@@ -215,7 +234,10 @@ function applyResolvedModel(modelId: string) {
     provider.enabled = true
     config.value.defaultProvider = provider.id
   }
-  if (config.value.defaultProvider === provider.id) ensureDefaultVoice()
+  if (config.value.defaultProvider === provider.id) {
+    if (model.runtime === 'tencent-mps' && (previousScope !== resolved.credentialScope || !systemVoices.value.some(voice => voice.id === config.value.defaultVoice && systemVoiceSupported(voice, voiceContext.value)))) config.value.defaultVoice = model.defaultVoice
+    else ensureDefaultVoice()
+  }
   quickProviderId.value = provider.id
 }
 async function resolveProvider() {
@@ -424,11 +446,12 @@ onBeforeUnmount(() => {
                     <NInput v-model:value="quickApiKey" type="password" :placeholder="quickProvider?.hasApiKey ? '已配置，留空使用已保存密钥' : quickProviderDefinition?.apiKeyPlaceholder" />
                   </NFormItem>
                   <template v-if="quickTencent">
-                    <NFormItem label="Endpoint"><NInput value="https://tts.tencentcloudapi.com" readonly /></NFormItem>
+                    <NFormItem label="Endpoint"><NInput :value="quickTencentEndpoint" readonly /></NFormItem>
                     <NFormItem label="SecretId"><NInput v-model:value="quickSecretId" :placeholder="quickSavedCredentials && quickProvider?.hasSecretId ? '已保存，留空则继续使用现有凭据' : 'SecretId'" /></NFormItem>
                     <NFormItem label="SecretKey"><NInput v-model:value="quickSecretKey" type="password" :placeholder="quickSavedCredentials && quickProvider?.hasSecretKey ? '已保存，留空则继续使用现有凭据' : 'SecretKey'" /></NFormItem>
-                    <NText depth="3">验证腾讯云配置会发起一次 1 字符真实语音合成请求。</NText>
-                    <p><NText depth="3">长消息分段合成建议使用 WAV；当前 MP3 仅保证单段合成。</NText></p>
+                    <NText v-if="quickMPS" depth="3">腾讯 MPS 配置验证通过查询系统音色完成，不会发起语音合成。</NText>
+                    <NText v-else depth="3">验证腾讯云配置会发起一次 1 字符真实语音合成请求。</NText>
+                    <p><NText depth="3">长消息分段合成建议使用 WAV；当前 MP3 仅支持单段。</NText></p>
                   </template>
                   <NButton type="primary" secondary :loading="busy" :disabled="!canResolveQuickProvider" @click="run(resolveProvider)">
                     解析并导入
@@ -440,7 +463,7 @@ onBeforeUnmount(() => {
                       <NGi v-if="resolvedProvider.region"><NText depth="3">地域：</NText>{{ resolvedProvider.providerKind === 'aliyun' && resolvedProvider.region === 'cn-beijing' ? '华北2（北京）' : resolvedProvider.region }}</NGi>
                       <NGi><NText depth="3">连接：</NText><NTag type="success" size="small">已验证</NTag></NGi>
                       <NGi><NText depth="3">可用模型：</NText>{{ resolvedProvider.models.length }}</NGi>
-                      <NGi><NText depth="3">信息来源：</NText>{{ quickProviderDefinition?.catalogSource }}</NGi>
+                      <NGi><NText depth="3">信息来源：</NText>{{ quickMPS ? '腾讯 MPS 系统音色目录' : quickProviderDefinition?.catalogSource }}</NGi>
                     </NGrid>
                     <NFormItem label="模型" class="speech-provider-summary__model">
                       <NSelect :value="resolvedModelId" :options="resolvedModelOptions" @update:value="applyResolvedModel" />
@@ -483,7 +506,7 @@ onBeforeUnmount(() => {
                       <template v-if="provider.providerKind === 'tencent'">
                         <NText depth="3">凭据通过快速接入解析 / 验证；SecretId 与 SecretKey 不会返回页面。</NText>
                         <NFormItem label="Synthesis Endpoint"><NInput :value="provider.synthesisEndpoint" readonly /></NFormItem>
-                        <NText depth="3">长消息分段合成建议使用 WAV；当前 MP3 仅保证单段合成。</NText>
+                        <NText depth="3">长消息分段合成建议使用 WAV；当前 MP3 仅支持单段。</NText>
                       </template>
                       <template v-else>
                         <NFormItem label="Workspace"><NInput v-model:value="provider.workspace" /></NFormItem>

@@ -135,6 +135,7 @@ export interface SpeechConfig {
 export interface ResolvedSpeechModel {
   id: string
   providerKind: string
+  runtime: string
   defaultVoice: string
   capabilities: { httpStreaming: boolean; webSocketStreaming: boolean; voiceDesign: boolean; voiceClone: boolean }
   name: string

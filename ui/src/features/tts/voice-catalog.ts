@@ -41,8 +41,49 @@ export function voiceSourceOptions(presetSources: SpeechPresetSource[]): Array<{
     { value: 'public', label: '公开音色' },
   ]
 }
-const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: '系统', classic: '精品音色', large: '大模型音色', design: '声音设计', clone: '样本复刻' }
-const languageLabels: Readonly<Record<string, string>> = { zh: '中文', en: '英文' }
+const kindLabels: Readonly<Record<string, string>> = { basic: '基础', system: '系统', 'mps-system': '系统音色', classic: '精品音色', large: '大模型音色', design: '声音设计', clone: '样本复刻' }
+const languageLabels: Readonly<Record<string, string>> = {
+  zh: '中文',
+  en: '英语',
+  ja: '日语',
+  de: '德语',
+  fr: '法语',
+  ko: '韩语',
+  ru: '俄语',
+  uk: '乌克兰语',
+  pt: '葡萄牙语',
+  it: '意大利语',
+  es: '西班牙语',
+  id: '印尼语',
+  nl: '荷兰语',
+  tr: '土耳其语',
+  fil: '菲律宾语',
+  ms: '马来语',
+  el: '希腊语',
+  fi: '芬兰语',
+  hr: '克罗地亚语',
+  sk: '斯洛伐克语',
+  pl: '波兰语',
+  sv: '瑞典语',
+  hi: '印地语',
+  bg: '保加利亚语',
+  ro: '罗马尼亚语',
+  ar: '阿拉伯语',
+  cs: '捷克语',
+  da: '丹麦语',
+  ta: '泰米尔语',
+  hun: '匈牙利语',
+  vi: '越南语',
+  no: '挪威语',
+  yue: '粤语',
+  th: '泰语',
+  he: '希伯来语',
+  ca: '加泰罗尼亚语',
+  nn: '新挪威语',
+  af: '南非荷兰语',
+  fa: '波斯语',
+  sl: '斯洛文尼亚语',
+}
 export const voiceKindLabel = (kind: string) => kindLabels[kind] ?? kind
 export const voiceLanguageLabel = (code: string) => languageLabels[code] ?? code
 
@@ -64,6 +105,34 @@ const speechLanguageLabels: Readonly<Record<string, string>> = {
   ms: '马来语（Bahasa Melayu）',
   fil: '菲律宾语（Filipino）',
   ar: '阿拉伯语（العربية）',
+  uk: '乌克兰语（Українська）',
+  nl: '荷兰语（Nederlands）',
+  tr: '土耳其语（Türkçe）',
+  el: '希腊语（Ελληνικά）',
+  fi: '芬兰语（Suomi）',
+  hr: '克罗地亚语（Hrvatski）',
+  sk: '斯洛伐克语（Slovenčina）',
+  pl: '波兰语（Polski）',
+  sv: '瑞典语（Svenska）',
+  hi: '印地语（हिन्दी）',
+  bg: '保加利亚语（Български）',
+  ro: '罗马尼亚语（Română）',
+  cs: '捷克语（Čeština）',
+  da: '丹麦语（Dansk）',
+  ta: '泰米尔语（தமிழ்）',
+  hun: '匈牙利语（Magyar）',
+  no: '挪威语（Norsk）',
+  he: '希伯来语（עברית）',
+  ca: '加泰罗尼亚语（Català）',
+  nn: '新挪威语（Nynorsk）',
+  af: '南非荷兰语（Afrikaans）',
+  fa: '波斯语（فارسی）',
+  sl: '斯洛文尼亚语（Slovenščina）',
+}
+
+export const tencentMPSModels = ['speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-hd', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'] as const
+export function isTencentMPSModel(modelId: string): boolean {
+  return (tencentMPSModels as readonly string[]).includes(modelId)
 }
 export function speechLanguageOptions(languages: string[]): Array<{ value: string; label: string }> {
   return [{ value: '', label: '跟随原文' }, ...[...new Set(languages)].filter(Boolean).map(value => ({ value, label: speechLanguageLabels[value] ?? voiceLanguageLabel(value) }))]

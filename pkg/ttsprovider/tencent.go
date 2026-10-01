@@ -1,13 +1,10 @@
 package ttsprovider
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -125,63 +122,13 @@ type tencentTextToVoiceRequest struct {
 	Codec           string  `json:"Codec"`
 }
 
-func tencentHash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
-func tencentHMAC(key []byte, value string) []byte {
-	h := hmac.New(sha256.New, key)
-	_, _ = h.Write([]byte(value))
-	return h.Sum(nil)
-}
-
-// TC3 signs exactly the bytes sent. Timestamp/version are Cloud API headers;
-// content-type, host and the lowercased action are the signed canonical headers.
 func (c *TencentClient) post(ctx context.Context, body tencentTextToVoiceRequest) (*http.Response, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
 	endpoint := c.Endpoint
 	if endpoint == "" {
 		endpoint = TencentEndpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
-	if err != nil || req.URL.Host == "" || req.URL.User != nil || req.URL.RawQuery != "" || (req.URL.Path != "" && req.URL.Path != "/") {
-		return nil, errors.New("腾讯云 TTS 接口地址无效")
-	}
-	now := time.Now()
-	if c.Now != nil {
-		now = c.Now()
-	}
-	date := now.UTC().Format("2006-01-02")
-	timestamp := strconv.FormatInt(now.Unix(), 10)
-	contentType := "application/json; charset=utf-8"
-	signedHeaders := "content-type;host;x-tc-action"
-	canonicalHeaders := "content-type:" + contentType + "\nhost:" + req.URL.Host + "\nx-tc-action:texttovoice\n"
-	canonicalRequest := "POST\n/\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + tencentHash(data)
-	scope := date + "/tts/tc3_request"
-	stringToSign := "TC3-HMAC-SHA256\n" + timestamp + "\n" + scope + "\n" + tencentHash([]byte(canonicalRequest))
-	dateKey := tencentHMAC([]byte("TC3"+c.SecretKey), date)
-	serviceKey := tencentHMAC(dateKey, "tts")
-	signingKey := tencentHMAC(serviceKey, "tc3_request")
-	signature := hex.EncodeToString(tencentHMAC(signingKey, stringToSign))
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-TC-Action", "TextToVoice")
-	req.Header.Set("X-TC-Version", "2019-08-23")
-	req.Header.Set("X-TC-Timestamp", timestamp)
-	req.Header.Set("Authorization", "TC3-HMAC-SHA256 Credential="+c.SecretID+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
-	h := &http.Client{Timeout: 90 * time.Second}
-	if c.HTTP != nil {
-		*h = *c.HTTP
-	}
-	// Redirects must never forward credentials or repeat a possible charge.
-	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := h.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, errors.New("无法连接腾讯云语音合成服务；不会自动重试合成")
-	}
-	return resp, nil
+	cloud := TencentCloudClient{SecretID: c.SecretID, SecretKey: c.SecretKey, HTTP: c.HTTP, Now: c.Now}
+	return cloud.post(ctx, endpoint, "tts", "TextToVoice", "2019-08-23", body)
 }
 
 // textToVoice returns complete audio without confirming task-level billing.
@@ -342,28 +289,6 @@ func tencentWriteAudio(ctx context.Context, result Result, audio []byte, text st
 	result.Characters = int64(utf8.RuneCountInString(text))
 	result.UsageConfirmed = true
 	return result, nil
-}
-
-// EncodePCM16MonoWAV wraps little-endian mono PCM16 in one bounded RIFF file.
-func EncodePCM16MonoWAV(pcm []byte, sampleRate int) ([]byte, error) {
-	if len(pcm) == 0 || len(pcm)%2 != 0 || len(pcm)+44 > MaxAudioBytes || (sampleRate != 8000 && sampleRate != 16000 && sampleRate != 24000) {
-		return nil, errors.New("无效或过大的 PCM16 mono 音频")
-	}
-	wav := make([]byte, 44+len(pcm))
-	copy(wav, "RIFF")
-	binary.LittleEndian.PutUint32(wav[4:], uint32(len(wav)-8))
-	copy(wav[8:], "WAVEfmt ")
-	binary.LittleEndian.PutUint32(wav[16:], 16)
-	binary.LittleEndian.PutUint16(wav[20:], 1)
-	binary.LittleEndian.PutUint16(wav[22:], 1)
-	binary.LittleEndian.PutUint32(wav[24:], uint32(sampleRate))
-	binary.LittleEndian.PutUint32(wav[28:], uint32(sampleRate*2))
-	binary.LittleEndian.PutUint16(wav[32:], 2)
-	binary.LittleEndian.PutUint16(wav[34:], 16)
-	copy(wav[36:], "data")
-	binary.LittleEndian.PutUint32(wav[40:], uint32(len(pcm)))
-	copy(wav[44:], pcm)
-	return wav, nil
 }
 
 func TencentErrorMessage(code string) string {
