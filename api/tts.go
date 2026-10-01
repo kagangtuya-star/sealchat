@@ -620,27 +620,25 @@ func ttsAdminConfig(c *fiber.Ctx) error {
 
 func ttsAdminProviderResolve(c *fiber.Ctx) error {
 	var body struct {
-		BaseURL    string `json:"baseUrl"`
-		APIKey     string `json:"apiKey"`
-		ProviderID string `json:"providerId"`
+		ProviderKind string `json:"providerKind"`
+		Model        string `json:"model"`
+		BaseURL      string `json:"baseUrl"`
+		APIKey       string `json:"apiKey"`
+		ProviderID   string `json:"providerId"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Provider 配置请求无效"})
 	}
-	apiKey := strings.TrimSpace(body.APIKey)
-	if apiKey == "" && strings.TrimSpace(body.ProviderID) != "" && appConfig != nil && appConfig.AI.Speech != nil {
+	request := service.TTSProviderResolveRequest{ProviderKind: body.ProviderKind, Model: body.Model, BaseURL: body.BaseURL, APIKey: body.APIKey, ProviderID: strings.TrimSpace(body.ProviderID)}
+	if strings.TrimSpace(body.APIKey) == "" && request.ProviderID != "" && appConfig != nil && appConfig.AI.Speech != nil {
 		for _, provider := range appConfig.AI.Speech.Providers {
-			if provider.ID == strings.TrimSpace(body.ProviderID) {
-				parsed, parseErr := service.ParseAliyunTTSBaseURL(body.BaseURL)
-				if parseErr == nil && parsed.Workspace != provider.Workspace {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "更换业务空间时必须重新填写 API Key"})
-				}
-				apiKey = provider.APIKey
+			if provider.ID == request.ProviderID {
+				request.SavedProvider = &provider
 				break
 			}
 		}
 	}
-	result, err := service.ResolveAliyunTTSProvider(c.UserContext(), body.BaseURL, apiKey, body.ProviderID)
+	result, err := service.ResolveTTSProvider(c.UserContext(), request)
 	if err == nil {
 		return c.JSON(result)
 	}

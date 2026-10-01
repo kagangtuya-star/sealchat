@@ -145,6 +145,13 @@ export interface ResolvedSpeechModel {
   designPrice: number | null
   clonePrice: number
 }
+export interface SpeechProviderResolveRequest {
+  providerKind: string
+  model: string
+  baseUrl: string
+  apiKey: string
+  providerId: string
+}
 export interface ResolvedSpeechProvider {
   providerId: string
   providerKind: string

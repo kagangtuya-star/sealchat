@@ -47,6 +47,55 @@ type TTSProviderResolution struct {
 	Models            []TTSResolvedModel `json:"models"`
 }
 
+type TTSProviderResolveRequest struct {
+	ProviderKind  string
+	Model         string
+	BaseURL       string
+	APIKey        string
+	ProviderID    string
+	SavedProvider *utils.SpeechProviderConfig
+}
+
+func ResolveTTSProvider(ctx context.Context, request TTSProviderResolveRequest) (TTSProviderResolution, error) {
+	kind := strings.TrimSpace(request.ProviderKind)
+	if kind == "" {
+		kind = ttsprovider.ProviderAliyun
+	}
+	var result TTSProviderResolution
+	var err error
+	switch kind {
+	case ttsprovider.ProviderAliyun:
+		if strings.TrimSpace(request.APIKey) == "" && request.SavedProvider != nil {
+			if request.SavedProvider.EffectiveProviderKind() != kind {
+				return result, TTSValidationError("更换服务商时必须重新填写 API Key")
+			}
+			parsed, parseErr := ParseAliyunTTSBaseURL(request.BaseURL)
+			if parseErr != nil {
+				return result, parseErr
+			}
+			if parsed.Workspace != request.SavedProvider.Workspace {
+				return result, TTSValidationError("更换业务空间时必须重新填写 API Key")
+			}
+			request.APIKey = request.SavedProvider.APIKey
+		}
+		result, err = ResolveAliyunTTSProvider(ctx, request.BaseURL, strings.TrimSpace(request.APIKey), request.ProviderID)
+	default:
+		return result, TTSValidationError(fmt.Sprintf("不支持的 TTS 服务商：%s", kind))
+	}
+	if err != nil {
+		return result, err
+	}
+	if modelID := strings.TrimSpace(request.Model); modelID != "" {
+		for _, model := range result.Models {
+			if model.ID == modelID && model.ProviderKind == kind {
+				return result, nil
+			}
+		}
+		return result, TTSValidationError(fmt.Sprintf("服务商 %s 的模型目录未返回所选 TTS 模型：%s", kind, modelID))
+	}
+	return result, nil
+}
+
 // Public creation choices expose configured models and prices, never credentials.
 type TTSVoiceCreationModel struct {
 	ID                      string                        `json:"id"`

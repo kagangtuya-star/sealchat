@@ -7,6 +7,16 @@ import { speechPlayer } from './player'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
 import { defaultVoiceForContext, systemVoiceSupported } from './voice-catalog'
 const newProviderTarget = '__new_provider__'
+const quickProviderDefinitions = [{
+  kind: 'aliyun',
+  label: '阿里云百炼',
+  baseUrlLabel: '百炼 Base URL',
+  baseUrlPlaceholder: 'https://llm-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+  apiKeyPlaceholder: 'sk-xxx',
+  catalogSource: '百炼模型目录',
+  onlinePricingSource: '百炼在线价格',
+  baseUrlFor: (provider?: SpeechProvider) => provider?.workspace ? `https://${provider.workspace}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` : '',
+}]
 const config = ref<SpeechConfig>({ enabled: false, providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
 const error = ref('')
 const notice = ref('')
@@ -18,10 +28,22 @@ const testBusy = ref(false)
 const quickBaseUrl = ref('')
 const quickApiKey = ref('')
 const quickProviderId = ref(newProviderTarget)
+const quickProviderKind = ref(quickProviderDefinitions[0].kind)
+const quickModelId = ref('')
 const resolvedProvider = ref<ResolvedSpeechProvider | null>(null)
 const resolvedModelId = ref('')
 const systemVoices = ref<SystemVoice[]>([])
 const modelCatalog = ref<ResolvedSpeechModel[]>([])
+const quickProviderKindOptions = quickProviderDefinitions.map(provider => ({ label: provider.label, value: provider.kind }))
+const quickProviderDefinition = computed(() => quickProviderDefinitions.find(provider => provider.kind === quickProviderKind.value))
+const quickModels = computed(() => modelCatalog.value.filter(model => model.providerKind === quickProviderKind.value && model.capabilities.httpStreaming))
+function quickModelLabel(model: ResolvedSpeechModel) {
+  const match = /^qwen-audio-(\d+\.\d+)-tts-(.+)$/.exec(model.id)
+  if (!match) return model.name || model.id
+  const [, version, tier] = match
+  return `Qwen Audio ${version} TTS ${tier.charAt(0).toUpperCase()}${tier.slice(1)}`
+}
+const quickModelOptions = computed(() => quickModels.value.map(model => ({ label: quickModelLabel(model), value: model.id })))
 const providerKindOptions = computed(() => [...new Set(modelCatalog.value.map(model => model.providerKind))].map(kind => ({ label: kind, value: kind })))
 const modelOptions = (provider: SpeechProvider) => modelCatalog.value.filter(model => model.providerKind === provider.providerKind).map(model => ({ label: model.name, value: model.id }))
 const defaultProvider = computed(() => config.value.providers.find(provider => provider.id === config.value.defaultProvider))
@@ -38,7 +60,7 @@ const quickProviderOptions = computed(() => [
   ...config.value.providers.map(provider => ({ label: provider.id, value: provider.id })),
 ])
 const resolvedModelOptions = computed(() => (resolvedProvider.value?.models ?? []).map(model => ({
-  label: model.name,
+  label: quickModelLabel(model),
   value: model.id,
 })))
 const quickProvider = computed(() => config.value.providers.find(provider => provider.id === quickProviderId.value))
@@ -73,16 +95,33 @@ async function save() {
   localProviderIds.clear()
   notice.value = '语音配置已保存。'
 }
-function baseUrlFor(provider?: SpeechProvider) {
-  return provider?.workspace ? `https://${provider.workspace}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` : ''
+function clearResolvedProvider() {
+  resolvedProvider.value = null
+  resolvedModelId.value = ''
+}
+function selectQuickProviderKind(kind: string) {
+  quickProviderKind.value = kind
+  quickModelId.value = quickModels.value[0]?.id ?? ''
+  quickBaseUrl.value = ''
+  quickApiKey.value = ''
+  clearResolvedProvider()
+}
+function selectQuickModel(modelId: string) {
+  quickModelId.value = modelId
+  clearResolvedProvider()
 }
 function selectQuickProvider(providerId: string) {
   const provider = config.value.providers.find(item => item.id === providerId)
   quickProviderId.value = providerId
-  quickBaseUrl.value = providerId === newProviderTarget ? '' : baseUrlFor(provider)
+  if (provider) {
+    quickProviderKind.value = provider.providerKind
+    quickModelId.value = provider.model
+  } else if (!quickModels.value.some(model => model.id === quickModelId.value)) {
+    quickModelId.value = quickModels.value[0]?.id ?? ''
+  }
+  quickBaseUrl.value = providerId === newProviderTarget ? '' : quickProviderDefinition.value?.baseUrlFor(provider) ?? ''
   quickApiKey.value = provider && !provider.hasApiKey ? provider.apiKey : ''
-  resolvedProvider.value = null
-  resolvedModelId.value = ''
+  clearResolvedProvider()
 }
 function ensureDefaultVoice() {
   if (!modelCatalog.value.length || !systemVoices.value.length) return
@@ -136,6 +175,8 @@ function applyResolvedModel(modelId: string) {
     clonePrice: model.clonePrice,
   })
   setModelPricing(provider, model)
+  quickProviderKind.value = model.providerKind
+  quickModelId.value = model.id
   if (firstProvider) {
     provider.enabled = true
     config.value.defaultProvider = provider.id
@@ -144,13 +185,16 @@ function applyResolvedModel(modelId: string) {
   quickProviderId.value = provider.id
 }
 async function resolveProvider() {
-  const providerId = quickProviderId.value === newProviderTarget ? '' : quickProviderId.value
-  const resolved = await speechAPI.resolveProvider(quickBaseUrl.value, quickApiKey.value, providerId)
+  const target = quickProviderId.value
+  const request = { providerKind: quickProviderKind.value, model: quickModelId.value, baseUrl: quickBaseUrl.value, apiKey: quickApiKey.value, providerId: target === newProviderTarget ? '' : target }
+  const resolved = await speechAPI.resolveProvider(request)
+  if (!alive || target !== quickProviderId.value || request.providerKind !== quickProviderKind.value || request.model !== quickModelId.value || request.baseUrl !== quickBaseUrl.value || request.apiKey !== quickApiKey.value) return
   resolvedProvider.value = resolved
-  const currentModel = config.value.providers.find(provider => provider.id === resolved.providerId)?.model
-  const selected = resolved.models.find(model => model.id === currentModel) ?? resolved.models[0]
+  const currentModel = request.providerId && !request.model ? quickProvider.value?.model : undefined
+  const selected = resolved.models.find(model => model.providerKind === request.providerKind && model.id === (request.model || currentModel)) ?? resolved.models[0]
   if (selected) applyResolvedModel(selected.id)
-  notice.value = 'Base URL 与 API Key 已验证，模型信息已从百炼模型目录导入；保存配置后生效。'
+  const source = quickProviderDefinitions.find(provider => provider.kind === resolved.providerKind)?.catalogSource
+  notice.value = `Base URL 与 API Key 已验证，模型信息已${source ? `从${source}` : ''}导入；保存配置后生效。`
 }
 const terminalTestStates = new Set(['succeeded', 'failed', 'usage_unknown', 'cancelled'])
 const waitOneSecond = () => new Promise<void>((resolve) => {
@@ -333,29 +377,35 @@ onBeforeUnmount(() => {
                   <NFormItem label="导入到">
                     <NSelect :value="quickProviderId" :options="quickProviderOptions" @update:value="selectQuickProvider" />
                   </NFormItem>
-                  <NFormItem label="百炼 Base URL">
-                    <NInput v-model:value="quickBaseUrl" placeholder="https://llm-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1" />
+                  <NFormItem label="服务商">
+                    <NSelect :value="quickProviderKind" :options="quickProviderKindOptions" @update:value="selectQuickProviderKind" />
+                  </NFormItem>
+                  <NFormItem label="模型/服务">
+                    <NSelect :value="quickModelId" :options="quickModelOptions" @update:value="selectQuickModel" />
+                  </NFormItem>
+                  <NFormItem :label="quickProviderDefinition?.baseUrlLabel ?? 'Base URL'">
+                    <NInput v-model:value="quickBaseUrl" :placeholder="quickProviderDefinition?.baseUrlPlaceholder" />
                   </NFormItem>
                   <NFormItem label="API Key">
-                    <NInput v-model:value="quickApiKey" type="password" :placeholder="quickProvider?.hasApiKey ? '已配置，留空使用已保存密钥' : 'sk-xxx'" />
+                    <NInput v-model:value="quickApiKey" type="password" :placeholder="quickProvider?.hasApiKey ? '已配置，留空使用已保存密钥' : quickProviderDefinition?.apiKeyPlaceholder" />
                   </NFormItem>
-                  <NButton type="primary" secondary :loading="busy" :disabled="!quickBaseUrl || (!quickApiKey && !quickProvider?.hasApiKey)" @click="run(resolveProvider)">
+                  <NButton type="primary" secondary :loading="busy" :disabled="!quickProviderDefinition || !quickBaseUrl || (!quickApiKey && !quickProvider?.hasApiKey)" @click="run(resolveProvider)">
                     解析并导入
                   </NButton>
 
                   <div v-if="resolvedProvider" class="speech-provider-summary">
                     <NGrid cols="1 s:2 l:3" :x-gap="16" :y-gap="8" responsive="screen">
                       <NGi><NText depth="3">业务空间：</NText>{{ resolvedProvider.workspace }}</NGi>
-                      <NGi><NText depth="3">地域：</NText>华北2（北京）</NGi>
+                      <NGi><NText depth="3">地域：</NText>{{ resolvedProvider.providerKind === 'aliyun' && resolvedProvider.region === 'cn-beijing' ? '华北2（北京）' : resolvedProvider.region }}</NGi>
                       <NGi><NText depth="3">连接：</NText><NTag type="success" size="small">已验证</NTag></NGi>
                       <NGi><NText depth="3">可用模型：</NText>{{ resolvedProvider.models.length }}</NGi>
-                      <NGi><NText depth="3">信息来源：</NText>百炼模型目录</NGi>
+                      <NGi v-if="resolvedProvider.providerKind === 'aliyun'"><NText depth="3">信息来源：</NText>{{ quickProviderDefinition?.catalogSource }}</NGi>
                     </NGrid>
                     <NFormItem label="模型" class="speech-provider-summary__model">
                       <NSelect :value="resolvedModelId" :options="resolvedModelOptions" @update:value="applyResolvedModel" />
                     </NFormItem>
                     <NText v-if="resolvedModel" depth="3">
-                      已导入 {{ resolvedModel.id }} · {{ resolvedModel.displayPrice }} · {{ resolvedModel.pricingSource === 'online' ? '百炼在线价格' : resolvedModel.pricingSource === 'modelsdev' ? 'models.dev 价格目录' : resolvedModel.pricingSource === 'builtin' ? '官方内置价格快照' : resolvedModel.pricingSource === 'mixed' ? '在线价格 + 补全价格' : '价格未确认' }}
+                      已导入 {{ resolvedModel.id }} · {{ resolvedModel.displayPrice }} · {{ resolvedModel.pricingSource === 'online' ? quickProviderDefinition?.onlinePricingSource ?? '供应商在线价格' : resolvedModel.pricingSource === 'modelsdev' ? 'models.dev 价格目录' : resolvedModel.pricingSource === 'builtin' ? '官方内置价格快照' : resolvedModel.pricingSource === 'mixed' ? '在线价格 + 补全价格' : '价格未确认' }}
                     </NText>
                     <NAlert v-if="resolvedProvider.models.find(model => model.id === resolvedModelId)?.designPrice == null" type="warning">
                       供应商未返回可确认的声音设计信息，声音设计暂不可提交；普通 TTS 合成不受影响。

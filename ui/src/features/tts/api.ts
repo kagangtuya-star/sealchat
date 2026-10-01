@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
+import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechProviderResolveRequest, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -21,8 +21,8 @@ export const speechAPI = {
   async adminConfig() { return (await api.get<{ config: SpeechConfig | null }>(`${root}/admin/config`)).data.config },
   async models() { return (await api.get<ResolvedSpeechModel[]>(`${root}/admin/models`)).data },
   async saveAdminConfig(config: SpeechConfig) { return (await api.patch<{ config: SpeechConfig }>(`${root}/admin/config`, config)).data.config },
-  async resolveProvider(baseUrl: string, apiKey: string, providerId: string) {
-    return (await api.post<ResolvedSpeechProvider>(`${root}/admin/provider/resolve`, { baseUrl, apiKey, providerId })).data
+  async resolveProvider(request: SpeechProviderResolveRequest) {
+    return (await api.post<ResolvedSpeechProvider>(`${root}/admin/provider/resolve`, request)).data
   },
   async me() { return (await api.get<SpeechQuota>(`${root}/me`)).data },
   async voiceTargets() { return (await api.get<VoiceCreationProvider[]>(`${root}/voice-targets`)).data },
