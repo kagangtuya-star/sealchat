@@ -389,7 +389,54 @@ export interface ServerAudioConfig {
 }
 
 export interface ServerStorageConfig {
+  mode?: 'local' | 's3' | 'auto';
+  baseUrl?: string;
+  presignTTL?: number;
   uploadTimeoutSeconds?: number;
+  maxSizeMB?: number;
+  logLevel?: string;
+  local?: {
+    uploadDir?: string;
+    audioDir?: string;
+    fontDir?: string;
+    tempDir?: string;
+    baseUrl?: string;
+  };
+  s3?: S3StorageConfig;
+}
+
+export interface S3StorageConfig {
+  enabled?: boolean;
+  attachmentsEnabled?: boolean | null;
+  audioEnabled?: boolean | null;
+  fontsEnabled?: boolean | null;
+  theaterEnabled?: boolean | null;
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  accessKey?: string;
+  secretKey?: string;
+  sessionToken?: string;
+  forcePathStyle?: boolean;
+  baseUrl?: string;
+  publicBaseUrl?: string;
+  useSSL?: boolean;
+  presignTTL?: number;
+  maxSizeMB?: number;
+  logLevel?: string;
+}
+
+export interface AdminStorageStatus {
+  configured: boolean;
+  initialized: boolean;
+  enabled: boolean;
+  remoteReady: boolean;
+  activeBackend: 'local' | 's3';
+  endpoint: string;
+  region: string;
+  bucket: string;
+  modules: Record<'attachments' | 'audio' | 'theaterAttachments' | 'theaterAudio' | 'fonts', 'local' | 's3'>;
+  lastError: string;
 }
 
 export interface BackupConfig {

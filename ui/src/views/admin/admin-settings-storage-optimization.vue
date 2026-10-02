@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import { useUtilsStore } from '@/stores/utils'
 import { api } from '@/stores/_config'
-import type { BackupConfig, BackupInfo, SQLiteConfig, ServerConfig } from '@/types'
+import type { AdminStorageStatus, BackupConfig, BackupInfo, S3StorageConfig, SQLiteConfig, ServerConfig, ServerStorageConfig } from '@/types'
 import { cloneDeep } from 'lodash-es'
 import { NButton, NTag, useMessage } from 'naive-ui'
 import dayjs from 'dayjs'
@@ -15,6 +15,7 @@ type AdminStorageOptimizationExpose = {
 type StorageOptimizationModel = {
   backup: BackupConfig
   sqlite: SQLiteConfig
+  storage: ServerStorageConfig & { s3: S3StorageConfig }
 }
 
 type MessageVisibleCharCountRepairState = {
@@ -68,15 +69,96 @@ const normalizeSQLiteConfig = (value?: SQLiteConfig | null): SQLiteConfig => ({
 const model = ref<StorageOptimizationModel>({
   backup: defaultBackupConfig(),
   sqlite: defaultSQLiteConfig(),
+  storage: { s3: {} },
 })
 const originalSnapshot = ref('')
-const isModified = computed(
-  () =>
-    JSON.stringify({
-      backup: model.value.backup,
-      sqlite: model.value.sqlite,
-    }) !== originalSnapshot.value,
-)
+const isModified = computed(() => JSON.stringify(model.value) !== originalSnapshot.value)
+const storageConfig = computed(() => model.value.storage)
+const s3Config = computed(() => model.value.storage.s3)
+
+const storageStatus = ref<AdminStorageStatus | null>(null)
+const storageStatusLoading = ref(false)
+const storageStatusError = ref('')
+const s3Testing = ref(false)
+const s3TestResult = ref<{ success: boolean; message: string } | null>(null)
+const s3Provider = ref('generic')
+const s3Presets = [
+  { label: '通用 S3', value: 'generic', endpoint: 's3.example.com', region: '按服务商填写', hint: '使用服务商提供的 S3 Endpoint，建议启用 SSL。' },
+  { label: '腾讯云 COS', value: 'cos', endpoint: 'cos.ap-guangzhou.myqcloud.com', region: 'ap-guangzhou', hint: 'Bucket 通常包含 APPID；使用所在地域的 COS Endpoint。' },
+  { label: '阿里云 OSS', value: 'oss', endpoint: 'oss-cn-hangzhou.aliyuncs.com', region: 'cn-hangzhou', hint: '使用 OSS 的 S3 兼容 Endpoint 与对应地域。' },
+  { label: 'AWS S3', value: 'aws', endpoint: 's3.ap-southeast-1.amazonaws.com', region: 'ap-southeast-1', hint: 'Endpoint 与 Bucket 的 Region 保持一致。' },
+  { label: 'Cloudflare R2', value: 'r2', endpoint: '<account-id>.r2.cloudflarestorage.com', region: 'auto', hint: 'Region 通常为 auto；凭据使用 R2 S3 API Token。' },
+  { label: 'MinIO / 自托管', value: 'minio', endpoint: 'http://localhost:9000', region: 'us-east-1', hint: '填写 S3 API 端口；通常启用 Force Path Style，HTTP 地址使用非 SSL。' },
+]
+const s3Preset = computed(() => s3Presets.find((preset) => preset.value === s3Provider.value) || s3Presets[0])
+const storageModeOptions = [
+  { label: 'local · 本地写入', value: 'local' },
+  { label: 's3 · 优先 S3，失败回退本地', value: 's3' },
+  { label: 'auto · 远端可用时优先 S3', value: 'auto' },
+]
+const s3ModuleOptions = [
+  { key: 'attachmentsEnabled', label: '附件' },
+  { key: 'audioEnabled', label: '音频素材' },
+  { key: 'theaterEnabled', label: '小剧场资源' },
+  { key: 'fontsEnabled', label: '字体资源' },
+] as const
+type S3ModuleKey = typeof s3ModuleOptions[number]['key']
+const moduleChecked = (key: S3ModuleKey) => {
+  if (key === 'theaterEnabled' && s3Config.value.theaterEnabled == null) {
+    return (s3Config.value.attachmentsEnabled ?? true) && (s3Config.value.audioEnabled ?? true)
+  }
+  return s3Config.value[key] ?? true
+}
+const moduleIndeterminate = (key: S3ModuleKey) => {
+  if (key !== 'theaterEnabled' || s3Config.value.theaterEnabled != null) return false
+  return (s3Config.value.attachmentsEnabled ?? true) !== (s3Config.value.audioEnabled ?? true)
+}
+const backendLabel = (backend?: string) => backend === 's3' ? 'S3' : backend === 'local' ? '本地' : '未知'
+
+const fetchStorageStatus = async () => {
+  if (storageStatusLoading.value) return
+  storageStatusLoading.value = true
+  storageStatusError.value = ''
+  try {
+    const resp = await api.get<AdminStorageStatus>('/api/v1/admin/storage/status')
+    storageStatus.value = resp.data
+  } catch {
+    storageStatus.value = null
+    storageStatusError.value = '获取运行状态失败，请刷新重试'
+  } finally {
+    storageStatusLoading.value = false
+  }
+}
+
+const validateS3Credentials = () => {
+  if (!!s3Config.value.accessKey?.trim() !== !!s3Config.value.secretKey?.trim()) {
+    message.error('Access Key 和 Secret Key 必须成对填写，或同时留空')
+    return false
+  }
+  return true
+}
+
+const testS3Connection = async () => {
+  if (s3Testing.value || !validateS3Credentials()) return
+  s3Testing.value = true
+  s3TestResult.value = null
+  const testedConfig = cloneDeep(storageConfig.value)
+  const testedSnapshot = JSON.stringify(testedConfig)
+  try {
+    const resp = await api.post<{ success: boolean; message: string }>(
+      '/api/v1/admin/storage/s3/test', testedConfig, { timeout: 30000 },
+    )
+    if (JSON.stringify(storageConfig.value) === testedSnapshot) s3TestResult.value = resp.data
+  } catch {
+    if (JSON.stringify(storageConfig.value) === testedSnapshot) {
+      s3TestResult.value = { success: false, message: '测试请求失败，请检查表单配置或稍后重试' }
+    }
+  } finally {
+    s3Testing.value = false
+  }
+}
+
+watch(() => JSON.stringify(model.value.storage), () => { s3TestResult.value = null })
 
 const backupConfig = computed({
   get: () => model.value.backup,
@@ -93,14 +175,16 @@ const sqliteMaintenanceConfig = computed({
 })
 
 const applyConfig = (config?: ServerConfig | null) => {
+  const storage = cloneDeep(config?.storage || {})
   model.value = {
     backup: normalizeBackupConfig(config?.backup),
     sqlite: normalizeSQLiteConfig(config?.sqlite),
+    storage: {
+      ...storage,
+      s3: { ...storage.s3, accessKey: '', secretKey: '', sessionToken: '' },
+    },
   }
-  originalSnapshot.value = JSON.stringify({
-    backup: model.value.backup,
-    sqlite: model.value.sqlite,
-  })
+  originalSnapshot.value = JSON.stringify(model.value)
 }
 
 const resetFromConfig = async () => {
@@ -109,14 +193,35 @@ const resetFromConfig = async () => {
 }
 
 const save = async () => {
+  if (!validateS3Credentials()) return
   try {
     const resp = await utils.configGet()
     const payload = cloneDeep(resp.data as ServerConfig)
     payload.backup = cloneDeep(model.value.backup)
     payload.sqlite = cloneDeep(model.value.sqlite)
+    // Apply only edited storage fields onto the latest complete configuration.
+    // Untouched nullable module switches retain their original inheritance.
+    const original = JSON.parse(originalSnapshot.value) as StorageOptimizationModel
+    payload.storage = cloneDeep(payload.storage || model.value.storage)
+    payload.storage.s3 = { ...payload.storage.s3 }
+    if (model.value.storage.mode !== original.storage.mode) {
+      payload.storage.mode = model.value.storage.mode
+    }
+    const editableS3Fields = [
+      'enabled', 'endpoint', 'region', 'bucket', 'accessKey', 'secretKey', 'sessionToken',
+      'publicBaseUrl', 'useSSL', 'forcePathStyle',
+      ...s3ModuleOptions.map((option) => option.key),
+    ] as const
+    for (const key of editableS3Fields) {
+      const value = model.value.storage.s3[key]
+      if (value !== original.storage.s3[key]) {
+        Object.assign(payload.storage.s3, { [key]: value })
+      }
+    }
     await utils.configSet(payload)
-    applyConfig(payload)
-    message.success('备份与储存优化已保存')
+    await resetFromConfig()
+    await fetchStorageStatus()
+    message.success('备份与储存优化已保存；存储配置重启后生效')
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '保存失败')
   }
@@ -422,7 +527,7 @@ const executeS3Migration = async (dryRun: boolean = false) => {
 
 onMounted(async () => {
   await resetFromConfig()
-  await Promise.all([fetchBackupList(), fetchSQLiteVacuumStatus(), fetchMessageVisibleCharCountRepairStatus()])
+  await Promise.all([fetchBackupList(), fetchSQLiteVacuumStatus(), fetchMessageVisibleCharCountRepairStatus(), fetchStorageStatus()])
 })
 </script>
 
@@ -551,6 +656,123 @@ onMounted(async () => {
           </n-form-item>
         </n-collapse-item>
 
+        <n-collapse-item title="对象存储（S3）" name="object-storage-s3">
+          <div class="s3-status-strip">
+            <div class="s3-status-summary">
+              <span class="font-medium">当前运行状态</span>
+              <div v-if="storageStatus" class="s3-status-tags">
+                <n-tag size="small" :type="storageStatus.enabled ? 'success' : 'default'">
+                  S3 {{ storageStatus.enabled ? '已启用' : '未启用' }}
+                </n-tag>
+                <n-tag size="small" :type="storageStatus.remoteReady ? 'success' : storageStatus.lastError ? 'error' : 'default'">
+                  远端{{ storageStatus.remoteReady ? '已初始化' : '未就绪' }}
+                </n-tag>
+                <n-tag size="small">ActiveBackend：{{ backendLabel(storageStatus.activeBackend) }}</n-tag>
+              </div>
+              <n-text v-else :type="storageStatusError ? 'error' : 'default'">
+                {{ storageStatusError || '读取中…' }}
+              </n-text>
+            </div>
+
+            <template v-if="storageStatus">
+              <dl class="s3-status-details">
+                <div><dt>Endpoint</dt><dd>{{ storageStatus.endpoint || '未配置' }}</dd></div>
+                <div><dt>Region</dt><dd>{{ storageStatus.region || '默认' }}</dd></div>
+                <div><dt>Bucket</dt><dd>{{ storageStatus.bucket || '未配置' }}</dd></div>
+              </dl>
+
+              <div class="s3-status-modules">
+                <span class="s3-status-section-label">实际写入位置</span>
+                <div class="s3-status-module-values">
+                  <span>附件 {{ backendLabel(storageStatus.modules.attachments) }}</span>
+                  <span>音频 {{ backendLabel(storageStatus.modules.audio) }}</span>
+                  <span v-if="storageStatus.modules.theaterAttachments === storageStatus.modules.theaterAudio">
+                    小剧场 {{ backendLabel(storageStatus.modules.theaterAttachments) }}
+                  </span>
+                  <span v-else>
+                    小剧场附件 {{ backendLabel(storageStatus.modules.theaterAttachments) }} / 音频 {{ backendLabel(storageStatus.modules.theaterAudio) }}
+                  </span>
+                  <span>字体 {{ backendLabel(storageStatus.modules.fonts) }}</span>
+                </div>
+              </div>
+            </template>
+
+            <div class="s3-status-actions">
+              <n-button size="small" :loading="storageStatusLoading" @click="fetchStorageStatus">刷新状态</n-button>
+            </div>
+
+            <div class="s3-status-footer">
+              <n-text v-if="storageStatus?.lastError" type="error">{{ storageStatus.lastError }}</n-text>
+              <span class="s3-hint">运行状态来自启动时加载的配置；下方修改保存后重启生效。</span>
+            </div>
+          </div>
+
+          <div class="s3-config-heading">快速配置</div>
+          <div class="s3-config-grid">
+            <n-form-item label="启用 S3" label-placement="top" :show-feedback="false">
+              <n-switch :value="s3Config.enabled ?? false" @update:value="s3Config.enabled = $event" />
+            </n-form-item>
+            <n-form-item label="存储模式" label-placement="top" :show-feedback="false">
+              <n-select :value="storageConfig.mode || 'local'" :options="storageModeOptions" @update:value="storageConfig.mode = $event" />
+            </n-form-item>
+            <n-form-item label="服务商预设" label-placement="top" :show-feedback="false">
+              <n-select v-model:value="s3Provider" :options="s3Presets" />
+            </n-form-item>
+          </div>
+          <div class="s3-hint">{{ s3Preset.hint }} 预设仅提供填写提示。</div>
+          <div v-if="!s3Config.enabled && s3Config.bucket?.trim()" class="s3-hint">
+            关闭 S3 不会清除现有 Endpoint、Bucket 与凭据；保存后重启生效。
+          </div>
+          <div class="s3-config-grid">
+            <n-form-item label="Endpoint" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.endpoint" :placeholder="s3Preset.endpoint" />
+            </n-form-item>
+            <n-form-item label="Region" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.region" :placeholder="s3Preset.region" />
+            </n-form-item>
+            <n-form-item label="Bucket" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.bucket" placeholder="Bucket 名称" />
+            </n-form-item>
+            <n-form-item label="Access Key" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.accessKey" type="password" show-password-on="click" placeholder="留空保持当前凭据" autocomplete="off" />
+            </n-form-item>
+            <n-form-item label="Secret Key" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.secretKey" type="password" show-password-on="click" placeholder="留空保持当前凭据" autocomplete="new-password" />
+            </n-form-item>
+            <n-form-item label="Session Token（可选）" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.sessionToken" type="password" show-password-on="click" placeholder="留空沿用当前 Token；填写则替换" autocomplete="off" />
+            </n-form-item>
+            <n-form-item label="Public Base URL" label-placement="top" :show-feedback="false">
+              <n-input v-model:value="s3Config.publicBaseUrl" placeholder="可选：公开访问或 CDN 地址" />
+            </n-form-item>
+          </div>
+          <div class="s3-module-options">
+            <n-checkbox :checked="s3Config.useSSL ?? true" @update:checked="s3Config.useSSL = $event">Use SSL</n-checkbox>
+            <n-checkbox :checked="s3Config.forcePathStyle ?? false" @update:checked="s3Config.forcePathStyle = $event">Force Path Style</n-checkbox>
+          </div>
+
+          <div class="s3-config-heading">使用对象存储的模块</div>
+          <div class="s3-module-options">
+            <n-checkbox
+              v-for="option in s3ModuleOptions"
+              :key="option.key"
+              :checked="moduleChecked(option.key)"
+              :indeterminate="moduleIndeterminate(option.key)"
+              @update:checked="s3Config[option.key] = $event"
+            >
+              {{ option.label }}
+              <span v-if="option.key === 'theaterEnabled' && s3Config.theaterEnabled == null" class="s3-inherit-label">（继承附件/音频）</span>
+            </n-checkbox>
+            <n-checkbox :checked="false" disabled>TTS 结果（下一步接入）</n-checkbox>
+          </div>
+          <div class="s3-hint">仅影响新写入资源；已有资源请使用下方‘存储迁移’处理。</div>
+          <div class="s3-test-row">
+            <n-button size="small" :loading="s3Testing" @click="testS3Connection">测试连接</n-button>
+            <n-text v-if="s3TestResult" :type="s3TestResult.success ? 'success' : 'error'">{{ s3TestResult.message }}</n-text>
+            <span v-else class="s3-hint">验证当前表单的 Bucket 读写能力，不保存配置。</span>
+          </div>
+        </n-collapse-item>
+
         <n-collapse-item title="存储迁移" name="storage-migration">
           <n-form-item label="迁移类型">
             <n-select
@@ -671,5 +893,143 @@ onMounted(async () => {
 
 .settings-collapse {
   width: 100%;
+}
+
+.s3-status-strip {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(420px, 1.6fr) minmax(320px, 1.2fr) auto;
+  gap: 14px 24px;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 12px 0 10px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.s3-status-summary,
+.s3-status-modules {
+  min-width: 0;
+}
+
+.s3-status-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.s3-status-tags,
+.s3-status-module-values,
+.s3-module-options,
+.s3-test-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.s3-status-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(110px, 0.7fr) minmax(140px, 0.9fr);
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.s3-status-details > div,
+.s3-config-grid > * {
+  min-width: 0;
+}
+
+.s3-status-details dt,
+.s3-status-section-label,
+.s3-hint,
+.s3-inherit-label {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.s3-status-details dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.s3-status-modules {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.s3-status-actions {
+  align-self: start;
+}
+
+.s3-status-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  min-width: 0;
+}
+
+.s3-status-footer .s3-hint {
+  margin: 0;
+}
+
+.s3-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+}
+
+.s3-hint {
+  margin: 8px 0 12px;
+}
+
+@media (max-width: 1180px) {
+  .s3-status-strip {
+    grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1.6fr) auto;
+  }
+
+  .s3-status-modules {
+    grid-column: 1 / -2;
+  }
+}
+
+@media (max-width: 760px) {
+  .s3-status-strip {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .s3-status-details {
+    grid-template-columns: 1fr;
+  }
+
+  .s3-status-modules,
+  .s3-status-actions,
+  .s3-status-footer {
+    grid-column: 1;
+  }
+
+  .s3-status-actions {
+    justify-self: start;
+  }
+}
+
+.s3-config-heading {
+  font-weight: 500;
+  margin: 16px 0 10px;
+}
+
+.s3-test-row {
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+
+.s3-test-row .s3-hint {
+  margin: 0;
 }
 </style>

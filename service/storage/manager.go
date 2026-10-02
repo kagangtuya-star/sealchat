@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"mime"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,60 @@ type Manager struct {
 	preferred     BackendType
 	localBaseURL  string
 	remoteBaseURL string
+}
+
+// Status contains only non-secret settings captured when the manager started.
+type Status struct {
+	Configured    bool                   `json:"configured"`
+	Initialized   bool                   `json:"initialized"`
+	Enabled       bool                   `json:"enabled"`
+	RemoteReady   bool                   `json:"remoteReady"`
+	ActiveBackend BackendType            `json:"activeBackend"`
+	Endpoint      string                 `json:"endpoint"`
+	Region        string                 `json:"region"`
+	Bucket        string                 `json:"bucket"`
+	Modules       map[string]BackendType `json:"modules"`
+	LastError     string                 `json:"lastError"`
+}
+
+func (m *Manager) Status() Status {
+	status := Status{
+		ActiveBackend: BackendLocal,
+		Modules: map[string]BackendType{
+			"attachments": BackendLocal, "audio": BackendLocal,
+			"theaterAttachments": BackendLocal, "theaterAudio": BackendLocal, "fonts": BackendLocal,
+		},
+	}
+	if m == nil {
+		status.LastError = "存储管理器尚未初始化"
+		return status
+	}
+	s3 := m.cfg.S3
+	status.Configured = strings.TrimSpace(s3.Endpoint) != "" && strings.TrimSpace(s3.Bucket) != ""
+	status.Initialized = true
+	status.Enabled = s3.Enabled
+	status.RemoteReady = m.HasRemote()
+	status.ActiveBackend = m.ActiveBackend()
+	// Strip URL credentials, query parameters and fragments even from a malformed endpoint.
+	endpoint := strings.TrimSpace(s3.Endpoint)
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "//" + endpoint
+	}
+	if parsed, err := url.Parse(endpoint); err == nil {
+		status.Endpoint = parsed.Host
+	}
+	status.Region = s3.Region
+	status.Bucket = s3.Bucket
+	status.Modules["attachments"] = m.ActiveBackendForAttachment()
+	status.Modules["audio"] = m.ActiveBackendForAudio()
+	status.Modules["theaterAttachments"] = m.ActiveBackendForTheaterAttachment()
+	status.Modules["theaterAudio"] = m.ActiveBackendForTheaterAudio()
+	status.Modules["fonts"] = m.ActiveBackendForFont()
+	if m.RemoteInitError() != nil {
+		// SDK errors may contain URLs or credentials; never serialize the raw error.
+		status.LastError = "S3 初始化失败，当前回退到本地；请检查配置并测试连接"
+	}
+	return status
 }
 
 func NewManager(cfg utils.StorageConfig) (*Manager, error) {

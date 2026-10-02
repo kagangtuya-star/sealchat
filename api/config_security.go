@@ -72,6 +72,13 @@ func normalizeAndValidateCertificateConfigForWrite(cfg *utils.AppConfig) error {
 	return utils.ValidateCertificateConfig(cfg.Certificate)
 }
 
+func validateS3CredentialsForWrite(cfg utils.S3StorageConfig) error {
+	if (strings.TrimSpace(cfg.AccessKey) == "") != (strings.TrimSpace(cfg.SecretKey) == "") {
+		return fmt.Errorf("Access Key 和 Secret Key 必须成对填写，或同时留空")
+	}
+	return nil
+}
+
 func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *utils.AppConfig {
 	if incoming == nil {
 		if current == nil {
@@ -116,14 +123,14 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	if strings.TrimSpace(out.LogUpload.Token) == "" {
 		out.LogUpload.Token = current.LogUpload.Token
 	}
-	if strings.TrimSpace(out.Storage.S3.AccessKey) == "" {
+	// A blank key pair keeps the existing keys. A supplied token replaces the old
+	// token; an empty token keeps it. A new key pair owns its token value directly.
+	if strings.TrimSpace(out.Storage.S3.AccessKey) == "" && strings.TrimSpace(out.Storage.S3.SecretKey) == "" {
 		out.Storage.S3.AccessKey = current.Storage.S3.AccessKey
-	}
-	if strings.TrimSpace(out.Storage.S3.SecretKey) == "" {
 		out.Storage.S3.SecretKey = current.Storage.S3.SecretKey
-	}
-	if strings.TrimSpace(out.Storage.S3.SessionToken) == "" {
-		out.Storage.S3.SessionToken = current.Storage.S3.SessionToken
+		if strings.TrimSpace(out.Storage.S3.SessionToken) == "" {
+			out.Storage.S3.SessionToken = current.Storage.S3.SessionToken
+		}
 	}
 
 	if strings.TrimSpace(out.Captcha.Turnstile.SecretKey) == "" {
@@ -199,6 +206,23 @@ func mergeConfigPatchForWrite(current *utils.AppConfig, raw []byte) (*utils.AppC
 	out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
 	if err := applyJSONConfigPatch(reflect.ValueOf(&out).Elem(), payload); err != nil {
 		return nil, err
+	}
+	var incoming struct {
+		Storage struct {
+			S3 *utils.S3StorageConfig `json:"s3"`
+		} `json:"storage"`
+	}
+	if err := json.Unmarshal(raw, &incoming); err != nil {
+		return nil, err
+	}
+	if s3 := incoming.Storage.S3; s3 != nil {
+		if err := validateS3CredentialsForWrite(*s3); err != nil {
+			return nil, err
+		}
+		// Omitted credentials must not be taken from the patched current snapshot.
+		out.Storage.S3.AccessKey = s3.AccessKey
+		out.Storage.S3.SecretKey = s3.SecretKey
+		out.Storage.S3.SessionToken = s3.SessionToken
 	}
 	return mergeConfigForWrite(current, &out), nil
 }

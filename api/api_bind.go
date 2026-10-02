@@ -947,6 +947,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
 	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
+	v1AuthAdmin.Get("/admin/storage/status", AdminStorageStatus)
+	v1AuthAdmin.Post("/admin/storage/s3/test", AdminStorageS3Test)
 	v1AuthAdmin.Get("/admin/sqlite/vacuum/status", AdminSQLiteVacuumStatus)
 	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
 	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
@@ -1031,7 +1033,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		}
 		newConfig, err := mergeConfigPatchForWrite(appConfig, ctx.Body())
 		if err != nil {
-			return err
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 		if err := utils.ValidateSpeechConfig(newConfig.AI.Speech); err != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})

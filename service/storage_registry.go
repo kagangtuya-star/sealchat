@@ -22,3 +22,11 @@ func InitStorageManager(cfg utils.StorageConfig) (*storage.Manager, error) {
 func GetStorageManager() *storage.Manager {
 	return objectStorage
 }
+
+func GetStorageStatus() storage.Status {
+	return GetStorageManager().Status()
+}
+
+func TestStorageS3(cfg utils.StorageConfig) error {
+	return storage.TestS3(cfg)
+}

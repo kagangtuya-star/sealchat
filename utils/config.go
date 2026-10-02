@@ -751,7 +751,8 @@ func ReadConfig() *AppConfig {
 	// })
 
 	isNotExist := false
-	if err := k.Load(f, yaml.Parser()); err != nil {
+	fileConfig := koanf.New(".")
+	if err := fileConfig.Load(f, yaml.Parser()); err != nil {
 		fmt.Printf("配置读取失败: %v\n", err)
 
 		if os.IsNotExist(err) {
@@ -764,9 +765,14 @@ func ReadConfig() *AppConfig {
 	if isNotExist {
 		WriteConfig(nil)
 	} else {
+		lo.Must0(k.Merge(fileConfig))
 		if err := k.Unmarshal("", &config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)
 			os.Exit(-1)
+		}
+		// Check the file before defaults obscure whether enabled was explicitly set.
+		if !fileConfig.Exists("storage.s3.enabled") && strings.TrimSpace(config.Storage.S3.Bucket) != "" {
+			config.Storage.S3.Enabled = true
 		}
 	}
 
@@ -2436,9 +2442,6 @@ func (cfg *StorageConfig) normalize() {
 	}
 	if cfg.S3.PublicBaseURL == "" {
 		cfg.S3.PublicBaseURL = cfg.S3.BaseURL
-	}
-	if !cfg.S3.Enabled && strings.TrimSpace(cfg.S3.Bucket) != "" {
-		cfg.S3.Enabled = true
 	}
 	if cfg.PresignTTL <= 0 {
 		cfg.PresignTTL = 900

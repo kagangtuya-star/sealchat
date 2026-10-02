@@ -34,6 +34,13 @@ type s3Backend struct {
 
 const defaultS3UploadTimeout = 20 * time.Second
 
+// TestS3 uses the same bucket write/read/delete self-check as initialization,
+// without replacing the running manager or persisting configuration.
+func TestS3(cfg utils.StorageConfig) error {
+	_, err := newS3Backend(cfg.S3, time.Duration(cfg.UploadTimeoutSeconds)*time.Second)
+	return err
+}
+
 func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Backend, error) {
 	if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" {
 		return nil, fmt.Errorf("S3 配置不完整")
