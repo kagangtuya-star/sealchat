@@ -65,6 +65,7 @@ type TTSJob struct {
 	RequestKey        string    `json:"-" gorm:"size:128;uniqueIndex"`
 	PayerUserID       string    `json:"-" gorm:"size:100;index"`
 	ChannelID         string    `json:"channelId,omitempty" gorm:"size:100;index"`
+	WorldID           string    `json:"worldId" gorm:"size:100;not null;default:'';index"`
 	MessageID         string    `json:"messageId,omitempty" gorm:"size:100;index"`
 	MessageRevision   int64     `json:"messageRevision"`
 	VoiceID           string    `json:"voiceId,omitempty" gorm:"size:100;index"`
@@ -107,7 +108,7 @@ func MigrateTTS(db *gorm.DB) error {
 			}
 		}
 	}
-	if err := db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &TTSUserPolicy{}, &TTSVoice{}, &ChannelIdentityTTSConfig{}, &TTSJob{}, &TTSCache{}); err != nil {
+	if err := db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &TTSUserPolicy{}, &TTSWorldPolicy{}, &TTSVoice{}, &ChannelIdentityTTSConfig{}, &TTSJob{}, &TTSCache{}); err != nil {
 		return err
 	}
 	for _, table := range []any{&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}} {

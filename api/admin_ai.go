@@ -235,6 +235,7 @@ func AdminAIUsageLogs(c *fiber.Ctx) error {
 	}
 	result, err := aiService.AdminListUsageLogs(aiService.AdminUsageLogQuery{
 		QuotaKind:  kind,
+		WorldID:    c.Query("worldId"),
 		Page:       c.QueryInt("page", 1),
 		PageSize:   c.QueryInt("pageSize", 20),
 		Query:      c.Query("query"),

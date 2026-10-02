@@ -192,10 +192,12 @@ async function poll(id: string) {
     job.value = value
     if (['queued', 'running', 'storage_pending'].includes(value.status)) {
       timer = setTimeout(() => void poll(id), 1500)
-    } else { await reloadVoices(); await speech.refresh() }
+    } else { await reloadVoices(); await speech.refresh(currentChannel.value || '') }
   } catch (e) { if (alive) error.value = speechError(e) }
 }
 async function submit(kind: 'audition' | 'design' | 'clone') {
+  if (!speech.quota?.enabled) return
+  const channelId = currentChannel.value || ''
   const userId = user.info.id
   const target = kind === 'audition' ? undefined : selectedCreationTarget.value
   if (kind !== 'audition' && (!target || kind !== operation.value)) throw new Error('请选择支持当前创建方式的目标模型。')
@@ -206,11 +208,11 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
     if (!alive || userId !== user.info.id || selectedFile !== source.value) return
     uploadedSource = { file: selectedFile, id: sourceResourceId }
   }
-  if (!alive || userId !== user.info.id) return
+  if (!alive || userId !== user.info.id || channelId !== (currentChannel.value || '') || !speech.quota?.enabled) return
   if (target && (kind !== operation.value || target.value !== selectedCreationTarget.value?.value)) return
   if (kind === 'clone' && !sourceResourceId) throw new Error('请选择自己有权使用的样本并确认授权。')
   const value = await speechAPI.submit(kind, {
-    requestKey: crypto.randomUUID(), text: text.value, name: name.value, description: description.value,
+    requestKey: crypto.randomUUID(), channelId, text: text.value, name: name.value, description: description.value,
     sourceResourceId,
     ...(kind === 'clone' ? { cloneLanguageHint: cloneLanguageHint.value, clonePreprocess: clonePreprocess.value } : {}),
     ...(target ? { providerId: target.providerId, modelId: target.modelId } : requestVoiceFields(selection.value)),
@@ -219,10 +221,10 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
   job.value = value
   void poll(value.id)
 }
-async function save(voice: SpeechVoice) { await speechAPI.save(voice.id, replaceId.value); replaceId.value = ''; await reloadVoices(); await speech.refresh() }
-async function remove(voice: SpeechVoice) { await speechAPI.remove(voice.id); await reloadVoices(); await speech.refresh() }
+async function save(voice: SpeechVoice) { await speechAPI.save(voice.id, replaceId.value); replaceId.value = ''; await reloadVoices(); await speech.refresh(currentChannel.value || '') }
+async function remove(voice: SpeechVoice) { await speechAPI.remove(voice.id); await reloadVoices(); await speech.refresh(currentChannel.value || '') }
 async function update(voice: SpeechVoice) { if (voice.parameters) JSON.parse(voice.parameters); await speechAPI.update(voice); await reloadVoices() }
-onMounted(() => void run(async () => { await speech.refresh(); await load(); await loadCreationProviders() }))
+onMounted(() => void run(async () => { await speech.refresh(currentChannel.value || ''); await load(); await loadCreationProviders() }))
 onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(timer) })
 </script>
 
@@ -351,7 +353,7 @@ onBeforeUnmount(() => { alive = false; serial++; replaceSerial++; clearTimeout(t
 
       <div v-if="tab === 'settings'" class="sp-body sp-scroll">
         <div class="sp-settings">
-          <label class="sp-check">自动合成 <NSwitch :value="speech.quota?.autoSynthesis ?? false" :loading="busy" @update:value="value => run(async () => { await speechAPI.settings(value); await speech.refresh() })" /></label>
+          <label class="sp-check">自动合成 <NSwitch :value="speech.quota?.autoSynthesis ?? false" :loading="busy" @update:value="value => run(async () => { await speechAPI.settings(value); await speech.refresh(currentChannel || '') })" /></label>
           <label class="sp-check">当前浏览器自动播放 <NSwitch :value="speechPlayer.state.preferred" @update:value="value => run(() => speechPlayer.setAutomatic(value))" /></label>
           <span v-if="speechPlayer.state.preferred && !speechPlayer.state.automatic" class="autoplay-pending">等待页面交互后自动启用</span>
           <span>已保存音色 {{ speech.quota?.saved ?? 0 }} / {{ speech.quota?.slots ?? 0 }}</span>

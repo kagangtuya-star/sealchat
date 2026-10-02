@@ -42,6 +42,41 @@ Token 用量和实际费用以新增可空字段保存，现有任务通过既�
 该分支没有可确认的 Token 用量时同样暂停结算。
 3.1 的 68 个官方系统音色按 `providerKind + models[]` 严格隔离，`targetModel` 仅为单模型音色的 API 兼容派生字段；不修改用户自定义音色结构。详见 [能力目录](tts-catalog.md)。
 
+## 世界访问与额度
+
+`speech.worldAccessMode` 接受 `all` / `whitelist`，历史配置和空值默认为
+`all`。`whitelist` 模式只允许 `TTSWorldPolicy.Allowlisted=true` 的世界。
+`speech.worldActivationCode` 留空时关闭自助激活，仅管理员配置接口可读取此值。
+
+`GET /api/v1/tts/me` 保持全局个人语音语义；可选 `channelId` 由服务端解析真实
+世界，返回的 `enabled` 为当前世界 capability，另附 `worldAccess` 的
+`worldId`、`allowed`、`reason`、`canActivate`、`policy` 和 `usage`。
+额度耗尽在预留时拒绝，capability 不因余额耗尽隐藏。前端统一使用 speech store，
+频道切换刷新 capability，未加入白名单时隐藏语音入口。
+
+世界主或世界管理员可调用 `POST /api/v1/tts/worlds/:worldId/activate`，请求体为
+`{"code":"激活码"}`。成功仅更新白名单及激活人/时间，保留已设置额度。
+平台管理员使用以下接口管理现有世界：
+
+- `GET /api/v1/tts/admin/worlds?page=1&pageSize=20&search=世界名或ID`
+- `GET /api/v1/tts/admin/worlds/:worldId`
+- `PATCH /api/v1/tts/admin/worlds/:worldId`，仅接受 `allowlisted`、
+  `quotaOverrideEnabled`、`dailyLimit`、`monthlyLimit`、`lifetimeLimit`。
+  额度 `null` 表示不限，省略字段保持原值。
+- `GET /api/v1/admin/ai/usage-logs?quotaKind=speech&worldId=...`，可叠加
+  `providerId`、`model`、`featureKey` 明细过滤。
+
+独立世界额度是用户额度之外的第二层约束；关闭 `quotaOverrideEnabled` 表示
+无额外世界限额。金额沿用 `TotalCost`，日/月/累计消费读取 speech ledger，
+加上同世界全部 active reservation（包括等待核对的预留）。预留和结算固定按
+用户、世界顺序取得数据库写锁，世界额度检查与新预留在同一事务中。
+
+Job、reservation、log、ledger 记录服务端从 Channel 推导的 `WorldID`；
+消息合成必须归属有效世界，世界内的角色试听与音色创建也按频道归属。
+全局个人音色请求及平台 `system_preview` 的 `WorldID` 为空；系统试听继续
+沿用平台计费和缓存行为。迁移仅添加列和世界 policy 表，历史 `WorldID` 保持
+空字符串。缓存命中仍检查世界白名单，缓存回放继续沿用原有不重复收费语义。
+
 ## 官方依据
 
 - [3.1 Flash 模型及价格](https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-tts-flash)

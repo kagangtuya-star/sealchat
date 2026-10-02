@@ -201,6 +201,7 @@ func ttsMaintainVoices(parent context.Context) {
 }
 
 type TTSQuota struct {
+	WorldAccess      *TTSWorldAccess               `json:"worldAccess,omitempty"`
 	Enabled          bool                          `json:"enabled"`
 	AutoSynthesis    bool                          `json:"autoSynthesis"`
 	Policy           utils.AIQuotaPolicyConfig     `json:"policy"`
@@ -403,7 +404,11 @@ func TTSResolveUnknown(actor, jobID, action, note string, units int64, tokenUsag
 	if len(strings.TrimSpace(note)) < 3 {
 		return TTSValidationError("请填写核对依据与供应商 request ID")
 	}
-	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+	var owner model.TTSJob
+	if err := model.GetDB().Select("payer_user_id, world_id").Where("id = ? AND status = ?", jobID, "usage_unknown").First(&owner).Error; err != nil {
+		return err
+	}
+	return withTTSQuotaPolicies(model.GetDB(), owner.PayerUserID, owner.WorldID, func(tx *gorm.DB, _ *model.TTSUserPolicy, _ model.TTSWorldPolicy) error {
 		var j model.TTSJob
 		if err := tx.Where("id = ? AND status = ?", jobID, "usage_unknown").First(&j).Error; err != nil {
 			return err
@@ -416,7 +421,7 @@ func TTSResolveUnknown(actor, jobID, action, note string, units int64, tokenUsag
 			if len(tokenUsage) == 1 {
 				usage = &tokenUsage[0]
 			}
-			if err := ttsSettleUsageJob(tx, j.ID, units, usage, time.Now()); err != nil {
+			if err := ttsSettleUsageJobLocked(tx, j.ID, units, usage, time.Now()); err != nil {
 				return err
 			}
 		} else if action == "release" {

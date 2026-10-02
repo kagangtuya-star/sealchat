@@ -25,6 +25,7 @@ const ttsMessageSynthesisMaxRunes = 20000
 
 type TTSRequest struct {
 	RequestKey            string  `json:"requestKey"`
+	ChannelID             string  `json:"channelId,omitempty"`
 	Text                  string  `json:"text"`
 	VoiceID               string  `json:"voiceId"`
 	SystemVoice           string  `json:"systemVoice"`
@@ -484,8 +485,40 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 	if len(r.RequestKey) < 8 || len(r.RequestKey) > 100 {
 		return nil, TTSValidationError("缺少稳定的 requestKey")
 	}
-	key := ttsHash(userID + ":" + r.RequestKey)
+	// Hash the client's original intent, preserving retries of older role requests
+	// that did not send the newly added channel context.
 	inputRaw, _ := json.Marshal(r)
+	// A role is also channel context, including untranslated auditions.
+	if r.IdentityID != "" {
+		if _, err := TTSRoleConfig(userID, r.IdentityID); err != nil {
+			return nil, err
+		}
+		var identity model.ChannelIdentityModel
+		if err := model.GetDB().Where("id = ? AND deleted_at IS NULL", r.IdentityID).First(&identity).Error; err != nil {
+			return nil, err
+		}
+		if r.ChannelID != "" && r.ChannelID != identity.ChannelID {
+			return nil, ErrTTSDenied
+		}
+		r.ChannelID = identity.ChannelID
+	}
+	if _, err := ttsConfig(); err != nil {
+		return nil, err
+	}
+	if r.ChannelID != "" {
+		resolve := ResolveTTSWorldAccess
+		if r.IdentityID != "" {
+			resolve = resolveTTSWorldAccess
+		}
+		access, err := resolve(userID, r.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		if !access.Allowed {
+			return nil, ErrTTSWorldDenied
+		}
+	}
+	key := ttsHash(userID + ":" + r.RequestKey)
 	inputHash := ttsHash(operation + string(inputRaw))
 	var existing model.TTSJob
 	if err := model.GetDB().Where("request_key = ? AND payer_user_id = ?", key, userID).First(&existing).Error; err == nil {
@@ -538,7 +571,7 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 		s.Fingerprint = auditionFingerprint
 	}
 	b, _ := json.Marshal(s)
-	job := &model.TTSJob{Operation: operation, RequestKey: key, PayerUserID: userID, Snapshot: string(b), InputHash: inputHash, Deadline: time.Now().Add(2 * time.Minute), VoiceID: r.VoiceID}
+	job := &model.TTSJob{Operation: operation, RequestKey: key, PayerUserID: userID, ChannelID: r.ChannelID, Snapshot: string(b), InputHash: inputHash, Deadline: time.Now().Add(2 * time.Minute), VoiceID: r.VoiceID}
 	// Auditions are cached only inside this authenticated user's safety domain.
 	// Resource ownership is checked again on every playback authorization.
 	if operation == "audition" {
@@ -557,7 +590,14 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 							request := TTSSystemPreviewRequest{SystemVoice: s.Input.Voice, ProviderKind: s.Provider.EffectiveProviderKind(), ProviderID: s.Provider.ID, ModelID: s.Provider.Model}
 							go func() { _, _ = TTSEnsureSystemPreview(request) }()
 						}
-						if err := model.GetDB().Create(job).Error; err != nil {
+						cfg, err := ttsConfig()
+						if err != nil {
+							return nil, err
+						}
+						if err := ttsReserveJob(model.GetDB(), cfg, job, s.Provider, 0, time.Now()); err != nil {
+							if errors.Is(err, ErrTTSWorldDenied) {
+								return nil, err
+							}
 							var duplicate model.TTSJob
 							if model.GetDB().Where("request_key = ? AND payer_user_id = ? AND input_hash = ?", key, userID, inputHash).First(&duplicate).Error == nil {
 								ensureSystemPreview()

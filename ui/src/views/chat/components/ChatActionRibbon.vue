@@ -26,6 +26,8 @@ import {
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
 import ObserverFilterModal from '../../components/ObserverFilterModal.vue'
+import { useSpeechStore } from '@/features/tts/store'
+import TTSWorldActivationDialog from '@/features/tts/TTSWorldActivationDialog.vue'
 
 interface FilterState {
   icFilter: 'all' | 'ic' | 'ooc'
@@ -115,6 +117,7 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const speech = useSpeechStore()
 
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
@@ -214,7 +217,9 @@ const allActionButtons = computed<ActionButton[]>(() => {
     })
   }
 
-  buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive', disabled: () => props.speechEnabled === false })
+  if (speech.quota?.enabled && props.speechEnabled !== false) {
+    buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive' })
+  }
 
   // 便签入口（置于“分屏”之后）
   if (props.stickyNoteEnabled !== false) {
@@ -585,6 +590,7 @@ const cycleIcFilter = () => {
 
 <template>
   <div class="action-ribbon">
+    <TTSWorldActivationDialog v-if="!speech.quota?.enabled && speech.quota?.worldAccess?.canActivate" />
     <!-- 筛选区域 -->
     <div class="ribbon-section ribbon-section--filters">
       <div class="filter-group">

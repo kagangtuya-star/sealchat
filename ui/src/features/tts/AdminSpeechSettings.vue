@@ -5,6 +5,7 @@ import { speechAPI, speechError } from './api'
 import type { ResolvedSpeechModel, ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
 import { speechPlayer } from './player'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
+import AdminTTSWorldManager from './AdminTTSWorldManager.vue'
 import { defaultVoiceForContext, isTencentMPSModel, systemVoiceSupported } from './voice-catalog'
 const newProviderTarget = '__new_provider__'
 const quickProviderDefinitions = [{
@@ -28,7 +29,11 @@ const quickProviderDefinitions = [{
   onlinePricingSource: '',
   baseUrlFor: () => '',
 }]
-const config = ref<SpeechConfig>({ enabled: false, providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
+const config = ref<SpeechConfig>({ enabled: false, worldAccessMode: 'all', worldActivationCode: '', providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
+const originalSnapshot = ref('')
+const snapshotOf = (value: SpeechConfig) => JSON.stringify(value)
+const isModified = computed(() => snapshotOf(config.value) !== originalSnapshot.value)
+const worldManagerVisible = ref(false)
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
@@ -115,6 +120,7 @@ function removeProvider(index: number) {
 async function save() {
   const saved = await speechAPI.saveAdminConfig(config.value)
   config.value = saved
+  originalSnapshot.value = snapshotOf(saved)
   quickApiKey.value = ''
   quickSecretId.value = ''
   quickSecretKey.value = ''
@@ -323,10 +329,20 @@ onMounted(() => void run(async () => {
   const [value, directory, models] = await Promise.all([speechAPI.adminConfig(), speechAPI.voices({ page: 1 }), speechAPI.models()])
   if (!alive) return
   if (value) config.value = value
+  originalSnapshot.value = snapshotOf(config.value)
   systemVoices.value = directory.system
   modelCatalog.value = models
   selectQuickProvider(config.value.defaultProvider || config.value.providers[0]?.id || newProviderTarget)
 }))
+async function saveFromHeader() {
+  await run(save)
+}
+
+defineExpose({
+  save: saveFromHeader,
+  isModified: () => isModified.value,
+})
+
 onBeforeUnmount(() => {
   alive = false
   testGeneration++
@@ -349,13 +365,6 @@ onBeforeUnmount(() => {
           <NSwitch v-model:value="config.enabled" />
         </div>
       </div>
-      <NButton
-        type="primary"
-        :loading="busy"
-        @click="run(save)"
-      >
-        保存配置
-      </NButton>
     </div>
 
     <NSpace vertical :size="12">
@@ -396,6 +405,16 @@ onBeforeUnmount(() => {
                 当前生产格式仅支持 WAV / MP3；不会自动换格式重试调用。私有 TTS 文件存放于本地受保护目录。
               </template>
             </NFormItem>
+          </NCollapseItem>
+
+          <NCollapseItem title="世界访问与限额" name="world-access">
+            <NFormItem label="世界访问模式">
+              <NSelect v-model:value="config.worldAccessMode" :options="[{ label: '全部世界', value: 'all' }, { label: '仅白名单世界', value: 'whitelist' }]" />
+            </NFormItem>
+            <NFormItem label="世界激活码" feedback="留空关闭自助激活；仅世界主和管理员可以使用激活码加入白名单。">
+              <NInput v-model:value="config.worldActivationCode" type="password" show-password-on="click" placeholder="留空关闭自助激活" />
+            </NFormItem>
+            <NButton @click="worldManagerVisible = true">管理世界白名单与额度</NButton>
           </NCollapseItem>
 
           <NCollapseItem title="用户限制与预览" name="quota">
@@ -580,6 +599,7 @@ onBeforeUnmount(() => {
         </NCollapse>
       </NForm>
     </NSpace>
+    <AdminTTSWorldManager v-if="worldManagerVisible" @close="worldManagerVisible = false" />
   </div>
 </template>
 

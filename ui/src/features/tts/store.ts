@@ -15,9 +15,11 @@ export const useSpeechStore = defineStore('tts', () => {
     : quota.value.characterPrice != null))
   const temporary = ref<Record<string, boolean>>({})
   let generation = 0
+  let quotaChannel = ''
   function reset() {
     clearSpeechSubmissionKeys()
     generation++
+    quotaChannel = ''
     visible.value = false
     scopeChannel.value = ''
     quota.value = null
@@ -25,15 +27,32 @@ export const useSpeechStore = defineStore('tts', () => {
     temporary.value = {}
     speechPlayer.stop()
   }
-  async function refresh() {
-    const current = generation
-    const result = await speechAPI.me()
-    if (current === generation) quota.value = result
+  async function refresh(channelId = '') {
+    if (quotaChannel !== channelId) {
+      quota.value = null
+      visible.value = false
+    }
+    quotaChannel = channelId
+    scopeChannel.value = channelId
+    const current = ++generation
+    try {
+      const result = await speechAPI.me(channelId)
+      if (current !== generation) return
+      quota.value = result
+      if (!result.enabled) visible.value = false
+    } catch (error) {
+      if (current === generation) { quota.value = null; visible.value = false }
+      throw error
+    }
   }
   function optIn(channelId: string) {
-    return !!channelId && !!quota.value?.enabled && !!quota.value.autoSynthesis && temporary.value[channelId] !== false
+    return !!channelId && channelId === quotaChannel && !!quota.value?.enabled && !!quota.value.autoSynthesis && temporary.value[channelId] !== false
   }
-  function open(channelId = '') {
+  async function open(channelId = '') {
+    if (channelId !== quotaChannel) {
+      try { await refresh(channelId) } catch { return }
+    }
+    if (channelId !== quotaChannel || !quota.value?.enabled) return
     if (window.parent !== window) {
       window.parent.postMessage({ type: 'sealchat:tts-intent', action: 'open', channelId, userId: useUserStore().info.id }, window.location.origin)
     } else {

@@ -27,6 +27,12 @@ func (e TTSValidationError) Error() string { return string(e) }
 // The first actual write serializes quota and voice-slot operations across
 // processes and SQL backends. No provider or storage I/O belongs in this callback.
 func withTTSUserPolicy(db *gorm.DB, userID string, fn func(*gorm.DB, *model.TTSUserPolicy) error) error {
+	return withTTSQuotaPolicies(db, userID, "", func(tx *gorm.DB, p *model.TTSUserPolicy, _ model.TTSWorldPolicy) error {
+		return fn(tx, p)
+	})
+}
+
+func withTTSQuotaPolicies(db *gorm.DB, userID, worldID string, fn func(*gorm.DB, *model.TTSUserPolicy, model.TTSWorldPolicy) error) error {
 	if strings.TrimSpace(userID) == "" {
 		return ErrTTSDenied
 	}
@@ -42,11 +48,21 @@ func withTTSUserPolicy(db *gorm.DB, userID string, fn func(*gorm.DB, *model.TTSU
 		if r.RowsAffected != 1 {
 			return ErrTTSConflict
 		}
+		// Acquire both locks before the first snapshot read. This also preserves
+		// current world usage on MySQL's default REPEATABLE READ isolation.
+		var worldPolicy model.TTSWorldPolicy
+		if worldID != "" {
+			var err error
+			worldPolicy, err = ttsLockWorldPolicy(tx, worldID)
+			if err != nil {
+				return err
+			}
+		}
 		p = model.TTSUserPolicy{}
 		if err := tx.Where("user_id = ? AND deleted_at IS NULL", userID).First(&p).Error; err != nil {
 			return err
 		}
-		return fn(tx, &p)
+		return fn(tx, &p, worldPolicy)
 	})
 }
 
@@ -65,6 +81,9 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 	if cfg == nil || job == nil || strings.TrimSpace(job.RequestKey) == "" || len(job.RequestKey) > 128 {
 		return ErrTTSConflict
 	}
+	if !cfg.Enabled {
+		return ErrTTSDisabled
+	}
 	switch job.Operation {
 	case "audition", "message_synthesis", "design", "clone", "system_preview":
 	default:
@@ -74,16 +93,37 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 	if err != nil {
 		return err
 	}
-	return withTTSUserPolicy(db, job.PayerUserID, func(tx *gorm.DB, p *model.TTSUserPolicy) error {
+	// Resolve immutable request scope before taking locks; policy/usage checks
+	// and reservation creation are all inside the following transaction.
+	job.WorldID = ""
+	if job.Operation != "system_preview" {
+		if job.ChannelID == "" && job.Operation == "message_synthesis" {
+			return TTSValidationError("消息语音需要有效的世界归属")
+		}
+		if job.ChannelID != "" {
+			job.WorldID, err = ttsChannelWorld(db, job.ChannelID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return withTTSQuotaPolicies(db, job.PayerUserID, job.WorldID, func(tx *gorm.DB, p *model.TTSUserPolicy, worldPolicy model.TTSWorldPolicy) error {
+		if job.WorldID != "" && !ttsWorldAllowed(cfg, worldPolicy) {
+			return ErrTTSWorldDenied
+		}
 		var existing model.TTSJob
 		if err := tx.Where("request_key = ?", job.RequestKey).First(&existing).Error; err == nil {
-			if existing.PayerUserID != job.PayerUserID || existing.Operation != job.Operation || existing.Snapshot != job.Snapshot {
+			if existing.PayerUserID != job.PayerUserID || existing.Operation != job.Operation || existing.Snapshot != job.Snapshot || existing.ChannelID != job.ChannelID {
 				return ErrTTSConflict
 			}
 			*job = existing
 			return nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		if job.UsageStatus == "cached" && job.ResourceID != "" && job.Operation == "audition" {
+			job.Status = "succeeded"
+			return tx.Create(job).Error
 		}
 		if err := ttsCapacityLock(tx); err != nil {
 			return err
@@ -125,6 +165,11 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 			if policy.DailyLimit != nil && usage.DailySettled+usage.ActiveReserved+cost > *policy.DailyLimit || policy.MonthlyLimit != nil && usage.MonthlySettled+usage.ActiveReserved+cost > *policy.MonthlyLimit || policy.LifetimeLimit != nil && usage.LifetimeSettled+usage.ActiveReserved+cost > *policy.LifetimeLimit {
 				return TTSValidationError("语音用量不足")
 			}
+			if job.WorldID != "" {
+				if err := ttsWorldQuotaAvailable(tx, worldPolicy, cost, now); err != nil {
+					return err
+				}
+			}
 		}
 		if job.Operation == "design" || job.Operation == "clone" {
 			if provider.AccountVoiceLimit != nil {
@@ -157,7 +202,7 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 			}
 			job.VoiceID = voice.ID
 		}
-		r := model.AIQuotaReservationModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, FeatureKey: job.Operation, ProviderID: provider.ID, Model: provider.Model, ReservedCost: cost, Status: "active", ExpiresAt: now.Add(24 * time.Hour)}
+		r := model.AIQuotaReservationModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, WorldID: job.WorldID, FeatureKey: job.Operation, ProviderID: provider.ID, Model: provider.Model, ReservedCost: cost, Status: "active", ExpiresAt: now.Add(24 * time.Hour)}
 		if err := tx.Create(&r).Error; err != nil {
 			return err
 		}
@@ -210,69 +255,74 @@ func ttsSynthesisUsageConfirmed(provider utils.SpeechProviderConfig, result ttsp
 
 func ttsSettleUsageJob(db *gorm.DB, jobID string, units int64, usage *ttsprovider.Result, now time.Time) error {
 	var owner model.TTSJob
-	if err := db.Select("payer_user_id").Where("id = ?", jobID).First(&owner).Error; err != nil {
+	if err := db.Select("payer_user_id, world_id").Where("id = ?", jobID).First(&owner).Error; err != nil {
 		return err
 	}
 	// Settlement moves money from reservations to the ledger. It must take the
-	// same user lock as reservation snapshots, including on READ COMMITTED DBs.
-	return withTTSUserPolicy(db, owner.PayerUserID, func(tx *gorm.DB, _ *model.TTSUserPolicy) error {
-		var job model.TTSJob
-		if err := tx.Where("id = ?", jobID).First(&job).Error; err != nil {
+	// same user/world locks as reservation snapshots, including on READ COMMITTED DBs.
+	return withTTSQuotaPolicies(db, owner.PayerUserID, owner.WorldID, func(tx *gorm.DB, _ *model.TTSUserPolicy, _ model.TTSWorldPolicy) error {
+		return ttsSettleUsageJobLocked(tx, jobID, units, usage, now)
+	})
+}
+
+// Caller must already hold the matching user/world quota locks.
+func ttsSettleUsageJobLocked(tx *gorm.DB, jobID string, units int64, usage *ttsprovider.Result, now time.Time) error {
+	var job model.TTSJob
+	if err := tx.Where("id = ?", jobID).First(&job).Error; err != nil {
+		return err
+	}
+	if job.UsageStatus == "settled" {
+		return nil
+	}
+	price := job.UnitPrice
+	cost, err := ttsCost(units, price)
+	updates := map[string]any{"usage_status": "settled", "actual_units": units}
+	log := model.AIUsageLogModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, WorldID: job.WorldID, FeatureKey: job.Operation, Source: "platform", Status: "success", BillingUnits: units, UnitPrice: price, StartedAt: job.CreatedAt, FinishedAt: now}
+	if TTSJobPricingMode(&job) == ttsprovider.PricingToken {
+		var snapshot TTSSnapshot
+		if err := json.Unmarshal([]byte(job.Snapshot), &snapshot); err != nil {
 			return err
 		}
+		log.PromptCost, log.CompletionCost, cost, err = ttsTokenCosts(snapshot.Provider, usage)
+		if err == nil {
+			updates["input_tokens"], updates["output_tokens"] = *usage.InputTokens, *usage.OutputTokens
+			updates["actual_units"] = nil
+			log.BillingUnits, log.UnitPrice = 0, 0
+			log.PromptTokens, log.CompletionTokens = *usage.InputTokens, *usage.OutputTokens
+			log.PromptPricePer1M, log.CompletionPricePer1M = *snapshot.Provider.InputTokenPrice*1000000, *snapshot.Provider.OutputTokenPrice*1000000
+		}
+	}
+	if err != nil {
+		return err
+	}
+	updates["actual_cost"] = cost
+	r := tx.Model(&model.TTSJob{}).Where("id = ? AND usage_status IN ?", jobID, []string{"reserved", "unknown"}).Updates(updates)
+	if r.Error != nil {
+		return r.Error
+	}
+	if r.RowsAffected != 1 {
 		if job.UsageStatus == "settled" {
 			return nil
 		}
-		price := job.UnitPrice
-		cost, err := ttsCost(units, price)
-		updates := map[string]any{"usage_status": "settled", "actual_units": units}
-		log := model.AIUsageLogModel{QuotaKind: model.QuotaKindSpeech, UserID: job.PayerUserID, FeatureKey: job.Operation, Source: "platform", Status: "success", BillingUnits: units, UnitPrice: price, StartedAt: job.CreatedAt, FinishedAt: now}
-		if TTSJobPricingMode(&job) == ttsprovider.PricingToken {
-			var snapshot TTSSnapshot
-			if err := json.Unmarshal([]byte(job.Snapshot), &snapshot); err != nil {
-				return err
-			}
-			log.PromptCost, log.CompletionCost, cost, err = ttsTokenCosts(snapshot.Provider, usage)
-			if err == nil {
-				updates["input_tokens"], updates["output_tokens"] = *usage.InputTokens, *usage.OutputTokens
-				updates["actual_units"] = nil
-				log.BillingUnits, log.UnitPrice = 0, 0
-				log.PromptTokens, log.CompletionTokens = *usage.InputTokens, *usage.OutputTokens
-				log.PromptPricePer1M, log.CompletionPricePer1M = *snapshot.Provider.InputTokenPrice*1000000, *snapshot.Provider.OutputTokenPrice*1000000
-			}
-		}
-		if err != nil {
-			return err
-		}
-		updates["actual_cost"] = cost
-		r := tx.Model(&model.TTSJob{}).Where("id = ? AND usage_status IN ?", jobID, []string{"reserved", "unknown"}).Updates(updates)
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			if job.UsageStatus == "settled" {
-				return nil
-			}
-			return ErrTTSConflict
-		}
-		var reservation model.AIQuotaReservationModel
-		if err := tx.Where("id = ? AND quota_kind = ? AND user_id = ?", job.ReservationID, model.QuotaKindSpeech, job.PayerUserID).First(&reservation).Error; err != nil {
-			return err
-		}
-		r = tx.Model(&model.AIQuotaReservationModel{}).Where("id = ? AND quota_kind = ? AND status = ?", reservation.ID, model.QuotaKindSpeech, "active").Update("status", "settled")
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return ErrTTSConflict
-		}
-		log.ProviderID, log.Model, log.TotalCost = reservation.ProviderID, reservation.Model, cost
-		if err := tx.Create(&log).Error; err != nil {
-			return err
-		}
-		key := "speech:" + job.ID
-		return tx.Create(&model.AIUsageLedgerModel{QuotaKind: model.QuotaKindSpeech, OperationKey: &key, UserID: job.PayerUserID, FeatureKey: job.Operation, ProviderID: reservation.ProviderID, Model: reservation.Model, BillingDay: now.Format("2006-01-02"), BillingMonth: now.Format("2006-01"), TotalCost: cost, LogID: log.ID}).Error
-	})
+		return ErrTTSConflict
+	}
+	var reservation model.AIQuotaReservationModel
+	if err := tx.Where("id = ? AND quota_kind = ? AND user_id = ?", job.ReservationID, model.QuotaKindSpeech, job.PayerUserID).First(&reservation).Error; err != nil {
+		return err
+	}
+	r = tx.Model(&model.AIQuotaReservationModel{}).Where("id = ? AND quota_kind = ? AND status = ?", reservation.ID, model.QuotaKindSpeech, "active").Update("status", "settled")
+	if r.Error != nil {
+		return r.Error
+	}
+	if r.RowsAffected != 1 {
+		return ErrTTSConflict
+	}
+	log.ProviderID, log.Model, log.TotalCost = reservation.ProviderID, reservation.Model, cost
+	if err := tx.Create(&log).Error; err != nil {
+		return err
+	}
+	key := "speech:" + job.ID
+	return tx.Create(&model.AIUsageLedgerModel{QuotaKind: model.QuotaKindSpeech, OperationKey: &key, UserID: job.PayerUserID, WorldID: job.WorldID, FeatureKey: job.Operation, ProviderID: reservation.ProviderID, Model: reservation.Model, BillingDay: now.Format("2006-01-02"), BillingMonth: now.Format("2006-01"), TotalCost: cost, LogID: log.ID}).Error
 }
 
 func ttsReleaseJob(db *gorm.DB, jobID string) error {

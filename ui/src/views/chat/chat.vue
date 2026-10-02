@@ -15513,7 +15513,7 @@ onBeforeUnmount(() => {
           @open-import="importDialogVisible = true"
           @open-identity-manager="openIdentityManager"
           @open-speech="useSpeechStore().open(chat.curChannel?.id || '')"
-          :speech-enabled="true"
+          :speech-enabled="!!useSpeechStore().quota?.enabled"
           :speech-active="useSpeechStore().visible"
           @open-gallery="openGalleryPanel"
           @open-display-settings="openDisplaySettings('appearance')"

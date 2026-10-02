@@ -12,6 +12,7 @@ export interface VoiceContext {
 }
 export interface SpeechQuota {
   enabled: boolean
+  worldAccess?: SpeechWorldAccess
   autoSynthesis: boolean
   policy: { dailyLimit: number | null; monthlyLimit: number | null; lifetimeLimit: number | null }
   usage: { DailySettled: number; MonthlySettled: number; LifetimeSettled: number; ActiveReserved: number }
@@ -65,6 +66,7 @@ export interface VoiceDirectoryQuery {
 }
 export interface SpeechRequest {
   requestKey: string
+  channelId?: string
   identityId?: string
   text?: string
   voiceId?: string
@@ -134,9 +136,46 @@ export interface SpeechProvider {
 }
 export interface SpeechConfig {
   enabled: boolean; providers: SpeechProvider[]; defaultProvider: string; defaultVoice: string
+  worldAccessMode: 'all' | 'whitelist'; worldActivationCode: string
   format: string; quotaDefault: SpeechQuota['policy']; defaultSlots: number
   previewTTLMinutes: number; previewLimit: number; requestTimeoutSeconds: number
   maxConcurrent: number; channelQueueLimit: number
+}
+export interface SpeechWorldPolicy {
+  worldId: string
+  allowlisted: boolean
+  quotaOverrideEnabled: boolean
+  dailyLimit: number | null
+  monthlyLimit: number | null
+  lifetimeLimit: number | null
+  activatedBy: string
+  activatedAt: string | null
+}
+export interface SpeechWorldAccess {
+  worldId: string
+  enabled: boolean
+  allowed: boolean
+  reason: string
+  canActivate: boolean
+  policy: SpeechWorldPolicy
+  usage: SpeechQuota['usage']
+}
+export type SpeechWorldPatch = Pick<SpeechWorldPolicy, 'allowlisted' | 'quotaOverrideEnabled' | 'dailyLimit' | 'monthlyLimit' | 'lifetimeLimit'>
+export interface AdminSpeechWorld {
+  worldId: string
+  name: string
+  ownerId: string
+  ownerUsername: string
+  ownerNickname: string
+  policy: SpeechWorldPolicy
+  usage: SpeechQuota['usage']
+  lastUsedAt: string | null
+}
+export interface AdminSpeechWorldList {
+  items: AdminSpeechWorld[]
+  total: number
+  page: number
+  pageSize: number
 }
 export interface ResolvedSpeechModel {
   id: string

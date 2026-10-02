@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechProviderResolveRequest, SpeechQuota, SpeechRequest, SpeechVoice, SystemPreviewJob, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
+import type { AdminSpeechWorld, AdminSpeechWorldList, SpeechWorldPatch, MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechProviderResolveRequest, SpeechQuota, SpeechRequest, SpeechVoice, SystemPreviewJob, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -24,7 +24,11 @@ export const speechAPI = {
   async resolveProvider(request: SpeechProviderResolveRequest) {
     return (await api.post<ResolvedSpeechProvider>(`${root}/admin/provider/resolve`, request)).data
   },
-  async me() { return (await api.get<SpeechQuota>(`${root}/me`)).data },
+  async me(channelId = '') { return (await api.get<SpeechQuota>(`${root}/me`, { params: channelId ? { channelId } : undefined })).data },
+  async activateWorld(worldId: string, code: string) { await api.post(`${root}/worlds/${id(worldId)}/activate`, { code }) },
+  async worlds(params: { page: number; pageSize: number; search?: string }) { return (await api.get<AdminSpeechWorldList>(`${root}/admin/worlds`, { params })).data },
+  async world(worldId: string) { return (await api.get<AdminSpeechWorld>(`${root}/admin/worlds/${id(worldId)}`)).data },
+  async saveWorld(worldId: string, policy: SpeechWorldPatch) { return (await api.patch<AdminSpeechWorld>(`${root}/admin/worlds/${id(worldId)}`, policy)).data },
   async voiceTargets() { return (await api.get<VoiceCreationProvider[]>(`${root}/voice-targets`)).data },
   async settings(autoSynthesis: boolean) { await api.patch(`${root}/settings`, { autoSynthesis }) },
   async source(file: File) {

@@ -20,7 +20,7 @@ watch(metadata, (value) => {
 })
 </script>
 <template>
-  <NTooltip v-if="metadata?.status === 'ready' && metadata.audioResourceId" trigger="hover">
+  <NTooltip v-if="speech.quota?.enabled && metadata?.status === 'ready' && metadata.audioResourceId" trigger="hover">
     <template #trigger>
       <NButton text size="small" aria-label="播放或停止已保存语音" :loading="active && speechPlayer.state.loading" @click.stop="speechPlayer.play('messages', message.id)">
         <NIcon :component="active ? Volume : Volume2" size="18" />

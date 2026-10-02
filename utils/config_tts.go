@@ -75,6 +75,8 @@ func (p SpeechProviderConfig) SynthesisPriceConfirmed() bool {
 
 type SpeechConfig struct {
 	Enabled               bool                   `json:"enabled" yaml:"enabled"`
+	WorldAccessMode       string                 `json:"worldAccessMode" yaml:"worldAccessMode"`
+	WorldActivationCode   string                 `json:"worldActivationCode" yaml:"worldActivationCode"`
 	Providers             []SpeechProviderConfig `json:"providers" yaml:"providers"`
 	DefaultProvider       string                 `json:"defaultProvider" yaml:"defaultProvider"`
 	DefaultVoice          string                 `json:"defaultVoice" yaml:"defaultVoice"`
@@ -103,6 +105,9 @@ func normalizeSpeechConfig(cfg *SpeechConfig, repairVoice bool) *SpeechConfig {
 		return nil
 	}
 	out := *cfg
+	if out.WorldAccessMode == "" || (repairVoice && out.WorldAccessMode != "whitelist") {
+		out.WorldAccessMode = "all"
+	}
 	out.Providers = append([]SpeechProviderConfig{}, cfg.Providers...)
 	if out.Format == "" || out.Format == "opus" {
 		out.Format = "wav"
@@ -206,6 +211,9 @@ func validateSpeechProviderConfig(p SpeechProviderConfig, spec ttsprovider.Model
 func ValidateSpeechConfig(cfg *SpeechConfig) error {
 	if cfg == nil {
 		return nil
+	}
+	if cfg.WorldAccessMode != "all" && cfg.WorldAccessMode != "whitelist" {
+		return fmt.Errorf("世界语音访问模式无效")
 	}
 	if cfg.DefaultSlots < 0 || cfg.PreviewLimit < 1 || cfg.PreviewLimit > 10 || cfg.PreviewTTLMinutes < 1 || cfg.PreviewTTLMinutes > 1440 || cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > 8 || cfg.ChannelQueueLimit < 1 || cfg.ChannelQueueLimit > 100 || cfg.RequestTimeoutSeconds < 1 || cfg.RequestTimeoutSeconds > 300 {
 		return fmt.Errorf("语音容量或时限配置无效")

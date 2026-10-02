@@ -185,8 +185,7 @@ function onIntent(event: MessageEvent) {
       const entries = Object.entries(value.temporary).filter(([key, enabled]) => /^[A-Za-z0-9_-]{1,100}$/.test(key) && typeof enabled === 'boolean')
       speech.temporary = Object.fromEntries(entries.slice(0, 512)) as Record<string, boolean>
     }
-    if (speech.quota && typeof value.enabled === 'boolean' && typeof value.autoSynthesis === 'boolean') {
-      speech.quota.enabled = value.enabled
+    if (speech.quota && typeof value.autoSynthesis === 'boolean') {
       speech.quota.autoSynthesis = value.autoSynthesis
     }
     if (typeof value.playingKey === 'string' && typeof value.loading === 'boolean' && typeof value.playing === 'boolean') {
@@ -239,13 +238,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', resumePreferredPlayback, true)
   if (mainWindow) speechPlayer.stop()
 })
-watch(() => user.info.id, async (id) => {
+watch(() => user.info.id, (id) => {
   speech.reset()
   speechPlayer.state.automatic = false
-  if (id) { try { await speech.refresh() } catch { /* Panel displays request failures locally. */ } }
   if (!mainWindow && id === user.info.id) window.parent.postMessage({ type: 'sealchat:tts-intent', action: 'state', userId: id }, window.location.origin)
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
 watch(() => chat.curChannel?.id, channelId => { if (mainWindow && channelId) speech.scopeChannel = channelId }, { immediate: true })
+watch([currentChannel, () => user.info.id], ([channelId, userId]) => {
+  if (userId) void speech.refresh(channelId || '').catch(() => { /* Failed capabilities stay unavailable. */ })
+}, { immediate: true, flush: 'sync' })
 watch([currentChannel, () => user.info.id], ([channelId, userId], _, cleanup) => {
   speechPlayer.stop()
   speech.messageStates = {}
@@ -266,5 +267,5 @@ watch([currentChannel, () => user.info.id], ([channelId, userId], _, cleanup) =>
 </script>
 
 <template>
-  <SpeechPanel v-if="mainWindow && speech.visible" />
+  <SpeechPanel v-if="mainWindow && speech.visible && speech.quota?.enabled" />
 </template>

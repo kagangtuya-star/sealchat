@@ -35,6 +35,9 @@ func ttsError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrTTSDisabled) {
 		status, message = 403, service.ErrTTSDisabled.Error()
 	}
+	if errors.Is(err, service.ErrTTSWorldDenied) {
+		status, message = 403, service.ErrTTSWorldDenied.Error()
+	}
 	if errors.Is(err, service.ErrTTSDenied) || errors.Is(err, service.ErrChannelPermissionDenied) {
 		status = 403
 		message = "无权访问此语音资源"
@@ -57,11 +60,28 @@ func BindTTSPublicRoutes(v1 fiber.Router) {
 func BindTTSRoutes(auth fiber.Router) {
 	r := auth.Group("/tts")
 	r.Get("/me", func(c *fiber.Ctx) error {
-		q, err := service.TTSQuotaForUser(getCurUser(c).ID)
+		q, err := service.TTSQuotaForChannel(getCurUser(c).ID, c.Query("channelId"))
 		if err != nil {
 			return ttsError(c, err)
 		}
 		return c.JSON(q)
+	})
+	r.Post("/worlds/:worldId/activate", func(c *fiber.Ctx) error {
+		var body struct {
+			Code string `json:"code"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(string(c.Body())))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&body); err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		if err := service.ActivateTTSWorld(getCurUser(c).ID, c.Params("worldId"), body.Code); err != nil {
+			return ttsError(c, err)
+		}
+		return c.JSON(fiber.Map{"ok": true})
 	})
 	r.Patch("/settings", func(c *fiber.Ctx) error {
 		var b struct {
@@ -221,6 +241,40 @@ func BindTTSRoutes(auth fiber.Router) {
 
 func BindTTSAdminRoutes(authAdmin fiber.Router) {
 	admin := authAdmin.Group("/tts/admin")
+	admin.Get("/worlds", func(c *fiber.Ctx) error {
+		result, err := service.AdminListTTSWorlds(c.QueryInt("page", 1), c.QueryInt("pageSize", 20), c.Query("search"), "")
+		if err != nil {
+			return ttsError(c, err)
+		}
+		return c.JSON(result)
+	})
+	admin.Get("/worlds/:worldId", ttsAdminWorldDetail)
+	admin.Patch("/worlds/:worldId", func(c *fiber.Ctx) error {
+		var patch service.TTSWorldPatch
+		decoder := json.NewDecoder(strings.NewReader(string(c.Body())))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&patch); err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(c.Body(), &fields); err != nil || fields == nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		present := map[string]bool{}
+		for key := range fields {
+			present[key] = true
+		}
+		if present["allowlisted"] && patch.Allowlisted == nil || present["quotaOverrideEnabled"] && patch.QuotaOverrideEnabled == nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		if err := service.TTSPatchWorldPolicy(c.Params("worldId"), patch, present); err != nil {
+			return ttsError(c, err)
+		}
+		return ttsAdminWorldDetail(c)
+	})
 	admin.Get("/config", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"config": sanitizeConfigForAdmin(appConfig).AI.Speech})
 	})
@@ -280,6 +334,17 @@ func BindTTSAdminRoutes(authAdmin fiber.Router) {
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	})
+}
+
+func ttsAdminWorldDetail(c *fiber.Ctx) error {
+	result, err := service.AdminListTTSWorlds(1, 1, "", c.Params("worldId"))
+	if err != nil {
+		return ttsError(c, err)
+	}
+	if len(result.Items) == 0 {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
+	return c.JSON(result.Items[0])
 }
 
 func ttsJobResponse(job *model.TTSJob) any {

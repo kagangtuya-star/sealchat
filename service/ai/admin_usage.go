@@ -13,6 +13,7 @@ import (
 
 type AdminUsageLogQuery struct {
 	QuotaKind  string
+	WorldID    string
 	Page       int
 	PageSize   int
 	Query      string
@@ -70,6 +71,9 @@ func AdminListUsageLogs(q AdminUsageLogQuery) (*AdminUsageLogListResult, error) 
 		return nil, errors.New("invalid quota kind")
 	}
 	db := model.GetDB().Model(&model.AIUsageLogModel{}).Where("quota_kind = ?", q.QuotaKind)
+	if value := strings.TrimSpace(q.WorldID); value != "" {
+		db = db.Where("world_id = ?", value)
+	}
 	if query := strings.TrimSpace(q.Query); query != "" {
 		like := "%" + query + "%"
 		db = db.Where("user_id LIKE ? OR username_snapshot LIKE ? OR nickname_snapshot LIKE ?", like, like, like)

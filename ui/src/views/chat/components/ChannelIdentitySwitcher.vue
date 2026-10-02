@@ -385,7 +385,7 @@ const renderMobileActionRow = () => (
         </button>
       </>
     ) : null}
-    <button
+    {speech.quota?.enabled ? <button
       type="button"
       class={['identity-action-bar-inline__btn', 'identity-action--tts', ttsEnabled.value ? '' : 'is-disabled-state']}
       title={ttsActionTitle.value}
@@ -396,7 +396,7 @@ const renderMobileActionRow = () => (
       onClick={handleMobileTtsAction}
     >
       {renderActionIconByKey('__tts_toggle')}
-    </button>
+    </button> : null}
   </div>
 );
 
@@ -461,7 +461,7 @@ const options = computed<DropdownMixedOption[]>(() => {
       },
     );
   }
-  result.push({
+  if (speech.quota?.enabled) result.push({
     key: '__tts_toggle',
     label: '语音合成',
     disabled: !ttsAvailable.value,
@@ -752,7 +752,7 @@ const applyDropdownMenuLayout = (): boolean => {
   const rowHeight = optionEls[0]?.offsetHeight || 36;
   const dividerHeight = menuEl.querySelector<HTMLElement>('.n-dropdown-divider')?.offsetHeight || 8;
   const visibleRoleCount = Math.min(identityOptionCount.value, MAX_VISIBLE_ROLE_COUNT);
-  const actionCount = isMobile.value ? 1 : (2 + (canManageIdentities.value ? 2 : 0)); // mobile action bar, or desktop toggle + TTS (+ create/manage)
+  const actionCount = isMobile.value ? 1 : (1 + (speech.quota?.enabled ? 1 : 0) + (canManageIdentities.value ? 2 : 0)); // mobile action bar, or desktop toggle (+ TTS/create/manage)
   const menuPadding = 8;
   const desiredHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
   const viewportHeight = Math.max(

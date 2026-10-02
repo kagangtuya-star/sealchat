@@ -622,6 +622,7 @@ export interface AIFeatureCapability {
 
 export interface AdminAIUsageLogItem {
   quotaKind?: 'text' | 'speech';
+  worldId?: string;
   billingUnits?: number;
   unitPrice?: number;
   id: string;

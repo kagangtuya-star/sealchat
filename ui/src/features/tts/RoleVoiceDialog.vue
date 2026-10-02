@@ -89,7 +89,7 @@ watch([speechLanguages, () => role.value?.speechLanguage], () => {
     role.value.speechLanguage = compatibleSpeechLanguage(role.value.speechLanguage ?? '', speechLanguages.value)
   }
 }, { flush: 'sync' })
-watch([() => user.info.id, () => props.identityId], () => { generation++; visible.value = false; role.value = null; selection.value = { type: 'inherit' }; job.value = null; busy.value = false }, { flush: 'sync' })
+watch([() => user.info.id, () => props.identityId, () => speech.quota?.enabled], () => { generation++; visible.value = false; role.value = null; selection.value = { type: 'inherit' }; job.value = null; busy.value = false }, { flush: 'sync' })
 watch(visible, () => {
   generation++
   busy.value = false
@@ -119,7 +119,7 @@ const titleId = computed(() => `role-voice-title-${props.identityId}`)
 const voiceContext = computed(() => speech.quota?.voiceContext ?? null)
 const voiceContexts = computed(() => speech.quota?.voiceContexts?.length ? speech.quota.voiceContexts : voiceContext.value ? [voiceContext.value] : [])
 async function open() {
-  if (visible.value) return
+  if (visible.value || !speech.quota?.enabled) return
   visible.value = true
   busy.value = true
   error.value = ''
@@ -130,7 +130,7 @@ async function open() {
   const identityId = props.identityId
   const current = generation
   try {
-    await speech.refresh()
+    await speech.refresh(speech.scopeChannel)
     if (current !== generation || !visible.value || identityId !== props.identityId) return
     const value = await speechAPI.role(identityId)
     if (current !== generation || !visible.value || identityId !== props.identityId) return
@@ -225,7 +225,7 @@ async function pollAudition(current: number, id: string) {
 }
 </script>
 <template>
-  <NButton text size="small" @click="open">音色</NButton>
+  <NButton v-if="speech.quota?.enabled" text size="small" @click="open">音色</NButton>
   <NModal v-model:show="visible" :auto-focus="false" :trap-focus="false">
     <section class="rv-shell" role="dialog" aria-modal="true" :aria-labelledby="titleId">
       <header class="rv-head">
