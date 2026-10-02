@@ -23,6 +23,7 @@
 *.test.tsx
 *.test.js
 *.test.jsx
+*.test.mjs
 info.db
 record.log
 go.sum
