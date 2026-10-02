@@ -30,6 +30,7 @@ const emit = defineEmits(['close']);
 const activeTab = ref<AdminTab>(props.initialTab);
 const basicSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const aiSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const speechSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const certificateSettingsRef = ref<AdminSettingsTabExpose | null>(null);
@@ -50,6 +51,9 @@ const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
   }
   if (activeTab.value === 'ai') {
     return aiSettingsRef.value;
+  }
+  if (activeTab.value === 'ai-speech') {
+    return speechSettingsRef.value;
   }
   if (activeTab.value === 'certificate') {
     return certificateSettingsRef.value;
@@ -143,7 +147,7 @@ const saveCurrentTab = async () => {
         />
       </n-tab-pane>
       <n-tab-pane name="ai-speech" tab="AI语音配置">
-        <AdminSpeechSettings />
+        <AdminSpeechSettings ref="speechSettingsRef" />
       </n-tab-pane>
       <n-tab-pane name="channel-embed-tools" tab="频道嵌入工具">
         <AdminSettingsChannelEmbedTools />
