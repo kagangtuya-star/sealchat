@@ -72,6 +72,21 @@ type TTSTranslationSnapshot struct {
 }
 
 func ttsHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+
+// Translated auditions reuse speech by normalized source intent, not AI wording.
+// Call before translation; ordinary auditions keep their existing cache identity.
+func ttsAuditionFingerprint(s TTSSnapshot) string {
+	if s.Translation == nil {
+		return s.Fingerprint
+	}
+	s.Fingerprint = ""
+	translation := *s.Translation
+	translation.StartedAt, translation.State = 0, "pending"
+	s.Translation = &translation
+	b, _ := json.Marshal(s)
+	return ttsHash(string(b))
+}
+
 func ttsConfig() (*utils.SpeechConfig, error) {
 	cfg := utils.GetConfig()
 	if cfg == nil || !cfg.AI.Enabled || cfg.AI.Speech == nil || !cfg.AI.Speech.Enabled {
@@ -460,6 +475,9 @@ func TTSPrepareMessageIntent(m *model.MessageModel, user *model.UserModel, optIn
 }
 
 func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
+	if operation != "design" && operation != "clone" && operation != "audition" {
+		return nil, ErrTTSConflict
+	}
 	if len(r.Name) > 200 || len(r.Description) > 2000 {
 		return nil, TTSValidationError("音色名称或描述过长")
 	}
@@ -477,9 +495,6 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 		return &existing, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
-	}
-	if operation != "design" && operation != "clone" && operation != "audition" {
-		return nil, ErrTTSConflict
 	}
 	if operation == "audition" {
 		text, err := TTSPlainText(r.Text)
@@ -506,6 +521,7 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 		}
 	}
 	if operation == "audition" && s.Translation != nil {
+		auditionFingerprint := ttsAuditionFingerprint(s)
 		var user model.UserModel
 		if err := model.GetDB().Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
 			return nil, err
@@ -519,6 +535,7 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 			return nil, err
 		}
 		ttsCompleteTranslation(&s, text)
+		s.Fingerprint = auditionFingerprint
 	}
 	b, _ := json.Marshal(s)
 	job := &model.TTSJob{Operation: operation, RequestKey: key, PayerUserID: userID, Snapshot: string(b), InputHash: inputHash, Deadline: time.Now().Add(2 * time.Minute), VoiceID: r.VoiceID}
@@ -533,13 +550,22 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 					if _, statErr := os.Stat(path); statErr == nil {
 						job.Status, job.UsageStatus = "succeeded", "cached"
 						job.ResourceID, job.MediaJSON = cached.ResourceID, cached.Metadata
+						ensureSystemPreview := func() {
+							if s.VoiceID != "" || s.Input.Voice == "" {
+								return
+							}
+							request := TTSSystemPreviewRequest{SystemVoice: s.Input.Voice, ProviderKind: s.Provider.EffectiveProviderKind(), ProviderID: s.Provider.ID, ModelID: s.Provider.Model}
+							go func() { _, _ = TTSEnsureSystemPreview(request) }()
+						}
 						if err := model.GetDB().Create(job).Error; err != nil {
 							var duplicate model.TTSJob
 							if model.GetDB().Where("request_key = ? AND payer_user_id = ? AND input_hash = ?", key, userID, inputHash).First(&duplicate).Error == nil {
+								ensureSystemPreview()
 								return &duplicate, nil
 							}
 							return nil, err
 						}
+						ensureSystemPreview()
 						return job, nil
 					}
 				}

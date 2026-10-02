@@ -330,6 +330,10 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 			return
 		}
 	}
+	if j.Status == "queued" && (j.Operation == "message_synthesis" || j.Operation == "audition") && s.VoiceID == "" && s.Input.Voice != "" {
+		request := TTSSystemPreviewRequest{SystemVoice: s.Input.Voice, ProviderKind: s.Provider.EffectiveProviderKind(), ProviderID: s.Provider.ID, ModelID: s.Provider.Model}
+		go func() { _, _ = TTSEnsureSystemPreview(request) }()
+	}
 	if j.UsageStatus == "cached" {
 		r := db.Model(&model.TTSJob{}).Where("id = ? AND status = ? AND usage_status = ?", j.ID, "queued", "cached").Update("status", "running")
 		if r.Error != nil || r.RowsAffected != 1 {

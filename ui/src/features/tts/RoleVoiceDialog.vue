@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NInputNumber, NModal, NSelect } from 'naive-ui'
+import { NAlert, NButton, NIcon, NInput, NInputNumber, NModal, NSelect } from 'naive-ui'
+import { Volume, Volume2 } from '@vicons/tabler'
 import { speechAPI, speechError } from './api'
 import { useSpeechStore } from './store'
 import type { RoleSpeechConfig, SpeechJob } from './types'
@@ -17,8 +18,59 @@ const error = ref('')
 const busy = ref(false)
 const text = ref('你好，这是我的角色语音试听。')
 const job = ref<SpeechJob | null>(null)
+const auditionPending = ref(false)
+const auditionResourceId = ref('')
+const auditionResultKey = ref('')
+const auditionDraftReady = ref(false)
+const auditionReplayAvailable = computed(() => !!auditionResourceId.value && auditionResultKey.value === auditionDraftKey.value)
+const auditionActive = computed(() => auditionReplayAvailable.value && speechPlayer.state.key === `resources:${auditionResourceId.value}`)
+let auditionTimer: ReturnType<typeof setTimeout> | undefined
+let auditionTimeout: ReturnType<typeof setTimeout> | undefined
+function clearAuditionTimers() {
+  clearTimeout(auditionTimer)
+  clearTimeout(auditionTimeout)
+  auditionTimer = auditionTimeout = undefined
+}
+function clearAuditionRuntime() {
+  clearAuditionTimers()
+  // Ownership survives a draft change even though replay is already invalid.
+  if (auditionResourceId.value && speechPlayer.state.key === `resources:${auditionResourceId.value}`) speechPlayer.stop()
+  auditionPending.value = false
+  job.value = null
+}
+function clearAuditionResult() {
+  auditionResourceId.value = ''
+  auditionResultKey.value = ''
+  try { sessionStorage.removeItem(auditionStorageKey.value) } catch { /* Storage is optional. */ }
+}
 const role = ref<RoleSpeechConfig | null>(null)
 const selection = ref<VoiceSelection>({ type: 'inherit' })
+const auditionDraftKey = computed(() => JSON.stringify({
+  ...roleVoiceFields(selection.value),
+  text: text.value.trim(),
+  speechLanguage: role.value?.speechLanguage ?? '',
+  instruction: role.value?.instruction ?? '',
+  rate: role.value?.rate ?? 1,
+  pitch: role.value?.pitch ?? 1,
+  volume: role.value?.volume ?? 50,
+}))
+const auditionStorageKey = computed(() => `sealchat:tts:audition:${user.info.id}:${props.identityId}`)
+function saveAuditionResult() {
+  try {
+    sessionStorage.setItem(auditionStorageKey.value, JSON.stringify({ version: 1, draftKey: auditionResultKey.value, resourceId: auditionResourceId.value, expiresAt: Date.now() + 30 * 60 * 1000 }))
+  } catch { /* Storage is optional. */ }
+}
+function restoreAuditionResult() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(auditionStorageKey.value) ?? 'null')
+    if (stored?.version === 1 && typeof stored.resourceId === 'string' && stored.resourceId.trim() && typeof stored.expiresAt === 'number' && stored.expiresAt > Date.now() && stored.draftKey === auditionDraftKey.value) {
+      auditionResourceId.value = stored.resourceId
+      auditionResultKey.value = stored.draftKey
+      return
+    }
+  } catch { /* Invalid or unavailable storage must not interrupt auditions. */ }
+  clearAuditionResult()
+}
 const speechLanguages = ref<string[] | null>(null)
 const systemModel = ref('')
 const tencentTraditional = computed(() => systemModel.value === 'tencent-tts-classic' || systemModel.value === 'tencent-tts-large')
@@ -38,8 +90,29 @@ watch([speechLanguages, () => role.value?.speechLanguage], () => {
   }
 }, { flush: 'sync' })
 watch([() => user.info.id, () => props.identityId], () => { generation++; visible.value = false; role.value = null; selection.value = { type: 'inherit' }; job.value = null; busy.value = false }, { flush: 'sync' })
-watch(visible, () => { generation++; busy.value = false }, { flush: 'sync' })
-onBeforeUnmount(() => { generation++ })
+watch(visible, () => {
+  generation++
+  busy.value = false
+  auditionDraftReady.value = false
+  clearAuditionRuntime()
+  auditionResourceId.value = ''
+  auditionResultKey.value = ''
+}, { flush: 'sync' })
+onBeforeUnmount(() => { generation++; clearAuditionRuntime() })
+// Picker metadata arrives asynchronously. Wait for its language/model emits
+// and language normalization before comparing the initialized draft to storage.
+watch([busy, speechLanguages, systemModel, visible], () => {
+  if (!visible.value || busy.value || !role.value || speechLanguages.value === null || auditionDraftReady.value) return
+  if (selection.value.type === 'system' && !systemModel.value) return
+  restoreAuditionResult()
+  auditionDraftReady.value = true
+}, { flush: 'post' })
+watch(auditionDraftKey, key => {
+  if (!auditionDraftReady.value || key === auditionResultKey.value) return
+  if (auditionPending.value) generation++
+  clearAuditionRuntime()
+  clearAuditionResult()
+}, { flush: 'sync' })
 const titleId = computed(() => `role-voice-title-${props.identityId}`)
 // Keep the picker-side selection separate from the persisted role fields so a
 // system voice can retain its model/provider-qualified identity while editing.
@@ -79,27 +152,76 @@ async function save() {
   finally { if (current === generation) busy.value = false }
 }
 async function audition() {
-  if (!role.value || busy.value || incompatibleParameters.value) return
-  busy.value = true
+  if (!role.value || !auditionDraftReady.value || busy.value || auditionPending.value || incompatibleParameters.value) return
+  clearAuditionRuntime()
+  clearAuditionResult()
+  auditionPending.value = true
   error.value = ''
-  const current = generation
+  const current = ++generation
   try {
+    await speechPlayer.unlock()
+    if (current !== generation || !visible.value || !auditionPending.value) return
+    // Stop accepting an in-flight GET/POST if the frontend deadline expires.
+    auditionTimeout = setTimeout(() => {
+      if (current !== generation || !visible.value || !auditionPending.value) return
+      clearAuditionTimers()
+      auditionPending.value = false
+      error.value = '试听生成超时，请稍后再试。'
+    }, 3 * 60 * 1000)
     const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), speechLanguage: role.value.speechLanguage, text: text.value, requestKey: crypto.randomUUID() })
-    if (current === generation) job.value = value
+    if (current !== generation || !visible.value || !auditionPending.value || job.value !== null) return
+    job.value = value
+    followAudition(current, value.id)
   }
-  catch (e) { if (current === generation) error.value = speechError(e) }
-  finally { if (current === generation) busy.value = false }
+  catch (e) {
+    if (current !== generation || !visible.value || !auditionPending.value || job.value !== null) return
+    clearAuditionTimers()
+    auditionPending.value = false
+    error.value = speechError(e)
+  }
 }
-async function query() {
-  if (!job.value || busy.value) return
-  const id = job.value.id
-  const current = generation
-  busy.value = true
+function followAudition(current: number, id: string) {
+  if (current !== generation || !visible.value || !auditionPending.value || job.value?.id !== id) return
+  const value = job.value
+  if (['pending', 'queued', 'running', 'storage_pending', 'archiving'].includes(value.status)) {
+    auditionTimer = setTimeout(() => { auditionTimer = undefined; void pollAudition(current, id) }, 500)
+    return
+  }
+  clearAuditionTimers()
+  auditionPending.value = false
+  if (value.status === 'succeeded' && value.audioResourceId) {
+    auditionResourceId.value = value.audioResourceId
+    auditionResultKey.value = auditionDraftKey.value
+    saveAuditionResult()
+    playAudition(value.audioResourceId, current)
+  } else {
+    error.value = value.message || '试听生成失败，请稍后再试。'
+  }
+}
+function playAudition(resourceId: string, current: number) {
+  if (current !== generation || !visible.value || !auditionReplayAvailable.value || auditionResourceId.value !== resourceId) return
+  error.value = ''
+  void speechPlayer.play('resources', resourceId, false, result => {
+    if (result !== 'failed' || current !== generation || !visible.value || !auditionReplayAvailable.value || auditionResourceId.value !== resourceId) return
+    error.value = speechPlayer.state.error || '试听播放失败，请点击声音图标重试。'
+  })
+}
+function replayAudition() {
+  if (auditionReplayAvailable.value) playAudition(auditionResourceId.value, generation)
+}
+async function pollAudition(current: number, id: string) {
+  if (current !== generation || !visible.value || !auditionPending.value || job.value?.id !== id) return
   try {
     const value = await speechAPI.job(id)
-    if (current === generation && job.value?.id === id) job.value = value
-  } catch (e) { if (current === generation) error.value = speechError(e) }
-  finally { if (current === generation) busy.value = false }
+    if (current !== generation || !visible.value || !auditionPending.value || job.value?.id !== id) return
+    job.value = value
+    followAudition(current, id)
+  } catch (e) {
+    if (current !== generation || !visible.value || !auditionPending.value || job.value?.id !== id) return
+    clearAuditionTimers()
+    auditionPending.value = false
+    error.value = speechError(e)
+  }
 }
 </script>
 <template>
@@ -148,13 +270,13 @@ async function query() {
             <h3>试听</h3>
             <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
             <p class="rv-hint">按当前选择与参数合成新音频；已有结果可重放。</p>
-            <NButton :loading="busy" :disabled="!speech.canSynthesize || incompatibleParameters" @click="audition">确认试听</NButton>
-            <div v-if="job" class="rv-job">
-              <span>试听任务：{{ job.status }} {{ job.errorCode }}</span>
-              <div class="rv-job__actions">
-                <NButton size="small" @click="query">查询试听状态</NButton>
-                <NButton v-if="job.audioResourceId" size="small" @click="speechPlayer.play('resources', job.audioResourceId)">重放 / 停止</NButton>
-              </div>
+            <NButton :disabled="busy || !auditionDraftReady || auditionPending || !speech.canSynthesize || incompatibleParameters" @click="audition">确认试听</NButton>
+            <div v-if="auditionPending || auditionReplayAvailable" class="rv-audition" role="status" aria-live="polite" :aria-busy="auditionPending">
+              <NIcon v-if="auditionPending" :component="Volume2" size="22" class="rv-audition__generating" aria-hidden="true" />
+              <NButton v-else text :class="{ 'rv-audition__playing': auditionActive && speechPlayer.state.playing }" :aria-label="auditionActive ? '停止试听' : '重播试听'" :aria-pressed="auditionActive" @click="replayAudition">
+                <NIcon :component="auditionActive ? Volume : Volume2" size="22" />
+              </NButton>
+              <span>{{ auditionPending ? '正在生成试听…' : auditionActive ? (speechPlayer.state.loading ? '正在加载试听…' : '正在播放试听，点击停止') : '点击声音图标重播' }}</span>
             </div>
           </section>
         </aside>
@@ -228,8 +350,14 @@ async function query() {
 .rv-numbers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .rv-numbers .rv-field { display: grid; grid-template-columns: 3em minmax(0, 1fr); align-items: center; }
 .rv-hint { margin: 0; font-size: 12px; color: var(--sc-text-secondary); }
-.rv-job { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-.rv-job__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-audition { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--sc-text-secondary); }
+.rv-audition > span { min-width: 0; overflow-wrap: anywhere; }
+.rv-audition :deep(.n-icon), .rv-audition :deep(.n-button) { flex: none; }
+.rv-audition__generating { animation: rv-audition-rotate 1s linear infinite; }
+.rv-audition__playing :deep(.n-icon) { animation: rv-audition-pulse 1.2s ease-in-out infinite; }
+.rv-audition__playing { color: var(--sc-text-primary); }
+@keyframes rv-audition-rotate { to { transform: rotate(360deg); } }
+@keyframes rv-audition-pulse { 50% { opacity: .45; transform: scale(.9); } }
 .rv-empty { flex: 1 1 auto; margin: 0; padding: 24px; text-align: center; color: var(--sc-text-secondary); }
 .rv-foot {
   display: flex;

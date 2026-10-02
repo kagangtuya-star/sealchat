@@ -1,7 +1,7 @@
 import { api } from '@/stores/_config'
 import type { AdminAIUsageLogListResult } from '@/types'
 import { SpeechRequestKeys } from './runtime'
-import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechProviderResolveRequest, SpeechQuota, SpeechRequest, SpeechVoice, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
+import type { MessageSpeech, ResolvedSpeechModel, ResolvedSpeechProvider, RoleSpeechConfig, SpeechConfig, SpeechJob, SpeechPolicy, SpeechProviderResolveRequest, SpeechQuota, SpeechRequest, SpeechVoice, SystemPreviewJob, UnknownSpeechUsage, VoiceCreationProvider, VoiceDirectory, VoiceDirectoryQuery } from './types'
 
 const root = 'api/v1/tts'
 const id = encodeURIComponent
@@ -42,6 +42,10 @@ export const speechAPI = {
     return (await api.post<SpeechJob>(`${root}/jobs/${operation}`, { ...request, requestKey })).data
   },
   async job(jobId: string) { return (await api.get<SpeechJob>(`${root}/jobs/${id(jobId)}`)).data },
+  async ensureSystemPreview(request: { systemVoice: string; providerKind: string; providerId: string; modelId: string }) {
+    return (await api.post<SystemPreviewJob>(`${root}/system-previews`, request)).data
+  },
+  async systemPreview(jobId: string) { return (await api.get<SystemPreviewJob>(`${root}/system-previews/${id(jobId)}`)).data },
   async save(voiceId: string, replaceId = '') { await api.post(`${root}/voices/${id(voiceId)}/save`, { replaceId }) },
   async update(voice: SpeechVoice) { await api.patch(`${root}/voices/${id(voice.id)}`, voice) },
   async remove(voiceId: string) { await api.delete(`${root}/voices/${id(voiceId)}`) },

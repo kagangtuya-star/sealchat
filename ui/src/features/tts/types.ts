@@ -104,6 +104,12 @@ export interface SpeechJob {
   outputTokens?: number | null
   media?: { codec: string; container: string; sampleRate: number; channelCount: number; durationMs: number }
 }
+export interface SystemPreviewJob {
+  id: string
+  status: SpeechJob['status']
+  audioResourceId?: string
+  message?: string
+}
 export interface RoleSpeechConfig {
   identityId: string
   voiceId: string

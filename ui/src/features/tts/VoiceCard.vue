@@ -1,12 +1,31 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { speechAPI } from './api'
 import { speechPlayer } from './player'
-import type { SpeechPresetSource, SpeechProviderMeta } from './types'
+import type { SpeechPresetSource, SpeechProviderMeta, SystemPreviewJob } from './types'
 import { isDisplayVoiceTag, voiceKindLabel, voiceLanguageLabel, voiceSourceLabel, type VoiceCatalogItem } from './voice-catalog'
 
 const props = defineProps<{ item: VoiceCatalogItem; providers: SpeechProviderMeta[]; presetSources?: SpeechPresetSource[]; selected: boolean }>()
 const emit = defineEmits<{ select: [item: VoiceCatalogItem] }>()
-const previewing = computed(() => !!props.item.previewResourceId && speechPlayer.state.key === `resources:${props.item.previewResourceId}`)
+const systemPreviewResourceId = ref('')
+const previewPending = ref(false)
+const previewError = ref('')
+let generation = 0
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+const previewResourceId = computed(() => props.item.source === 'system' ? systemPreviewResourceId.value || props.item.previewResourceId : props.item.previewResourceId)
+const canPreview = computed(() => props.item.source === 'system' || !!props.item.previewResourceId)
+const previewing = computed(() => !!previewResourceId.value && speechPlayer.state.key === `resources:${previewResourceId.value}`)
+
+function resetPreview() {
+  generation++
+  clearTimeout(pollTimer)
+  pollTimer = undefined
+  systemPreviewResourceId.value = ''
+  previewPending.value = false
+  previewError.value = ''
+}
+watch(() => props.item.key, resetPreview, { flush: 'sync' })
+onBeforeUnmount(resetPreview)
 // Keep one compact language summary so multi-language support cannot hide
 // voice traits and use-case tags. Provider age metadata remains excluded.
 const chips = computed(() => {
@@ -19,9 +38,68 @@ const chips = computed(() => {
     ...details.map(text => ({ text, language: false })),
   ]
 })
-// Only an existing preview file is replayed here; it never submits synthesis.
-function preview() {
-  if (props.item.previewResourceId) void speechPlayer.play('resources', props.item.previewResourceId)
+function previewFailed(token: number, unknownUsage = false) {
+  if (token !== generation) return
+  clearTimeout(pollTimer)
+  pollTimer = undefined
+  previewPending.value = false
+  previewError.value = unknownUsage ? '试听暂不可用，请联系管理员处理' : '试听暂不可用，请重试'
+}
+
+function playPreview(resourceId: string, token = generation) {
+  void speechPlayer.play('resources', resourceId, false, result => {
+    if (token !== generation || result !== 'failed') return
+    if (systemPreviewResourceId.value === resourceId) systemPreviewResourceId.value = ''
+    previewError.value = '试听资源已失效，请重试'
+  })
+}
+
+function acceptPreview(job: SystemPreviewJob, token: number) {
+  if (token !== generation) return
+  if (job.status === 'succeeded' && job.audioResourceId) {
+    clearTimeout(pollTimer)
+    pollTimer = undefined
+    systemPreviewResourceId.value = job.audioResourceId
+    previewPending.value = false
+    playPreview(job.audioResourceId, token)
+  } else if (['queued', 'running', 'storage_pending', 'archiving'].includes(job.status)) {
+    // Schedule only after the previous response, keeping polls serial.
+    pollTimer = setTimeout(async () => {
+      pollTimer = undefined
+      if (token !== generation) return
+      try {
+        acceptPreview(await speechAPI.systemPreview(job.id), token)
+      } catch {
+        previewFailed(token)
+      }
+    }, 500)
+  } else {
+    previewFailed(token, job.status === 'usage_unknown')
+  }
+}
+
+async function preview() {
+  if (previewPending.value) return
+  if (previewResourceId.value) {
+    previewError.value = ''
+    playPreview(previewResourceId.value)
+    return
+  }
+  if (props.item.source !== 'system') return
+  const token = ++generation
+  const item = props.item
+  previewPending.value = true
+  previewError.value = ''
+  try {
+    await speechPlayer.unlock()
+    if (token !== generation) return
+    acceptPreview(await speechAPI.ensureSystemPreview({
+      systemVoice: item.id, providerKind: item.providerKind ?? '',
+      providerId: item.providerId ?? '', modelId: item.modelId,
+    }), token)
+  } catch {
+    previewFailed(token)
+  }
 }
 </script>
 
@@ -53,12 +131,14 @@ function preview() {
         {{ voiceKindLabel(item.kind) }}<template v-if="!item.available"> · 当前不可用</template>
       </span>
       <button
-        v-if="item.previewResourceId"
+        v-if="canPreview"
         type="button"
         class="voice-card__preview"
-        :aria-label="previewing ? `停止试听 ${item.name}` : `试听 ${item.name} 的已有音频`"
+        :disabled="previewPending"
+        :title="previewError || undefined"
+        :aria-label="previewing ? `停止试听 ${item.name}` : `试听 ${item.name}`"
         @click="preview"
-      >{{ previewing ? (speechPlayer.state.loading ? '加载中…' : '停止') : '试听' }}</button>
+      >{{ previewPending ? '生成中…' : previewing ? (speechPlayer.state.loading ? '加载中…' : '停止') : previewError ? '重试' : '试听' }}</button>
     </div>
   </article>
 </template>

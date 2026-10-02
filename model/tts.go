@@ -60,7 +60,7 @@ type ChannelIdentityTTSConfig struct {
 
 type TTSJob struct {
 	StringPKBaseModel
-	Operation         string    `json:"operation" gorm:"size:32;index"`
+	Operation         string    `json:"operation" gorm:"size:32;index;index:idx_tts_job_operation_input,priority:1"`
 	QueueOrder        int64     `json:"-" gorm:"default:0;index"`
 	RequestKey        string    `json:"-" gorm:"size:128;uniqueIndex"`
 	PayerUserID       string    `json:"-" gorm:"size:100;index"`
@@ -86,7 +86,7 @@ type TTSJob struct {
 	AuditActor        string    `json:"-"`
 	AuditNote         string    `json:"-"`
 	MediaJSON         string    `json:"-" gorm:"type:text"`
-	InputHash         string    `json:"-" gorm:"size:64"`
+	InputHash         string    `json:"-" gorm:"size:64;index:idx_tts_job_operation_input,priority:2"`
 }
 
 type TTSCache struct {

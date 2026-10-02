@@ -96,6 +96,8 @@ func BindTTSRoutes(auth fiber.Router) {
 		return c.JSON(service.TTSPersonalVoiceResponse(voice))
 	})
 	r.Post("/sources", ttsSourceUpload)
+	r.Post("/system-previews", ttsEnsureSystemPreview)
+	r.Get("/system-previews/:id", ttsSystemPreview)
 	r.Patch("/voices/:id", func(c *fiber.Ctx) error {
 		var b model.TTSVoice
 		if err := c.BodyParser(&b); err != nil {
@@ -322,6 +324,43 @@ func ttsJobResponse(job *model.TTSJob) any {
 	}{&publicJob, media, actualCost, ttsJobMessage(&publicJob), modelID, service.TTSJobPricingMode(job)}
 }
 
+func ttsSystemPreviewResponse(job *model.TTSJob) any {
+	// Platform diagnostics must not leak through the message's fallback either.
+	messageJob := *job
+	messageJob.ErrorCode = ""
+	return struct {
+		ID              string `json:"id"`
+		Status          string `json:"status"`
+		AudioResourceID string `json:"audioResourceId,omitempty"`
+		Message         string `json:"message,omitempty"`
+	}{job.ID, job.Status, job.ResourceID, ttsJobMessage(&messageJob)}
+}
+
+func ttsEnsureSystemPreview(c *fiber.Ctx) error {
+	var body service.TTSSystemPreviewRequest
+	decoder := json.NewDecoder(strings.NewReader(string(c.Body())))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return c.SendStatus(fiber.StatusBadRequest)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return c.SendStatus(fiber.StatusBadRequest)
+	}
+	job, err := service.TTSEnsureSystemPreview(body)
+	if err != nil {
+		return ttsError(c, err)
+	}
+	return c.Status(fiber.StatusAccepted).JSON(ttsSystemPreviewResponse(job))
+}
+
+func ttsSystemPreview(c *fiber.Ctx) error {
+	job, err := service.TTSReadSystemPreviewJob(c.Params("id"))
+	if err != nil {
+		return ttsError(c, err)
+	}
+	return c.JSON(ttsSystemPreviewResponse(job))
+}
+
 func ttsJobMessage(job *model.TTSJob) string {
 	if job == nil {
 		return ""
@@ -453,6 +492,9 @@ func ttsReadResource(userID, id string) (*model.AttachmentModel, error) {
 		}
 		if j.MessageID != "" {
 			return nil, service.ErrTTSDenied
+		}
+		if userID != "" && j.Operation == "system_preview" && j.Status == "succeeded" && j.ResourceID == a.ID {
+			return &a, nil
 		}
 	} else {
 		return nil, service.ErrTTSDenied

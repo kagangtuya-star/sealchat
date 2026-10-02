@@ -66,7 +66,7 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 		return ErrTTSConflict
 	}
 	switch job.Operation {
-	case "audition", "message_synthesis", "design", "clone":
+	case "audition", "message_synthesis", "design", "clone", "system_preview":
 	default:
 		return ErrTTSConflict
 	}
@@ -113,16 +113,18 @@ func ttsReserveJob(db *gorm.DB, cfg *utils.SpeechConfig, job *model.TTSJob, prov
 			job.Status = "queued"
 			return tx.Create(job).Error
 		}
-		policy := cfg.QuotaDefault
-		if p.OverrideEnabled {
-			policy = utils.AIQuotaPolicyConfig{DailyLimit: p.DailyLimit, MonthlyLimit: p.MonthlyLimit, LifetimeLimit: p.LifetimeLimit}
-		}
-		usage, err := aiService.QueryQuotaUsageSnapshotForKind(tx, model.QuotaKindSpeech, job.PayerUserID, now)
-		if err != nil {
-			return err
-		}
-		if policy.DailyLimit != nil && usage.DailySettled+usage.ActiveReserved+cost > *policy.DailyLimit || policy.MonthlyLimit != nil && usage.MonthlySettled+usage.ActiveReserved+cost > *policy.MonthlyLimit || policy.LifetimeLimit != nil && usage.LifetimeSettled+usage.ActiveReserved+cost > *policy.LifetimeLimit {
-			return TTSValidationError("语音用量不足")
+		if job.Operation != "system_preview" {
+			policy := cfg.QuotaDefault
+			if p.OverrideEnabled {
+				policy = utils.AIQuotaPolicyConfig{DailyLimit: p.DailyLimit, MonthlyLimit: p.MonthlyLimit, LifetimeLimit: p.LifetimeLimit}
+			}
+			usage, err := aiService.QueryQuotaUsageSnapshotForKind(tx, model.QuotaKindSpeech, job.PayerUserID, now)
+			if err != nil {
+				return err
+			}
+			if policy.DailyLimit != nil && usage.DailySettled+usage.ActiveReserved+cost > *policy.DailyLimit || policy.MonthlyLimit != nil && usage.MonthlySettled+usage.ActiveReserved+cost > *policy.MonthlyLimit || policy.LifetimeLimit != nil && usage.LifetimeSettled+usage.ActiveReserved+cost > *policy.LifetimeLimit {
+				return TTSValidationError("语音用量不足")
+			}
 		}
 		if job.Operation == "design" || job.Operation == "clone" {
 			if provider.AccountVoiceLimit != nil {
