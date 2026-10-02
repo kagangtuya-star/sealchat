@@ -346,10 +346,20 @@ func ttsRun(parent context.Context, j *model.TTSJob) {
 			ttsMessageStatus(j, "failed", nil)
 			return
 		}
+		path := ""
+		if resource.StorageType != model.StorageS3 {
+			var err error
+			path, err = TTSResourcePath(&resource)
+			if err != nil {
+				_ = db.Model(&model.TTSJob{}).Where("id = ?", j.ID).Updates(map[string]any{"status": "failed", "error_code": "cache_unavailable"}).Error
+				ttsMessageStatus(j, "failed", nil)
+				return
+			}
+		}
 		if err := db.Model(&model.TTSJob{}).Where("id = ? AND status = ?", j.ID, "running").Update("status", "succeeded").Error; err != nil {
 			return
 		}
-		ttsPublishMessage(parent, j, s, &resource, media)
+		ttsPublishMessage(parent, j, s, &resource, media, path)
 		return
 	}
 	dir, err := TTSSpoolDir()
@@ -660,11 +670,12 @@ func ttsArchive(ctx context.Context, j *model.TTSJob, s TTSSnapshot) {
 		// Expiry drops reuse eligibility, never the durable attachment reference.
 		_ = db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "fingerprint"}}, DoUpdates: clause.AssignmentColumns([]string{"resource_id", "metadata", "complete", "expires_at"})}).Create(&cache).Error
 	}
-	ttsPublishMessage(ctx, j, s, a, media)
+	// Publish from this validated local spool even when the archive is remote.
+	ttsPublishMessage(ctx, j, s, a, media, j.SpoolPath)
 	_ = os.Remove(j.SpoolPath)
 }
 
-func ttsPublishMessage(ctx context.Context, j *model.TTSJob, s TTSSnapshot, a *model.AttachmentModel, media ttsprovider.Media) {
+func ttsPublishMessage(ctx context.Context, j *model.TTSJob, s TTSSnapshot, a *model.AttachmentModel, media ttsprovider.Media, archiveLocalPath string) {
 	if j.MessageID != "" && ttsMessageCurrent(j, s) {
 		if !ttsMessageStatus(j, "ready", &protocol.MessageTTS{Status: "ready", AudioResourceID: a.ID, DurationMS: media.DurationMS, Format: media.Container, MessageRevision: int(j.MessageRevision)}) {
 			return
@@ -672,7 +683,6 @@ func ttsPublishMessage(ctx context.Context, j *model.TTSJob, s TTSSnapshot, a *m
 		if j.Status == "storage_pending" {
 			return // Never announce while recovering storage; clients poll the state.
 		}
-		path, e := TTSResourcePath(a)
 		stop := make(chan struct{})
 		ttsTimelines.Lock()
 		ttsTimelines.items[j.MessageID] = stop
@@ -680,13 +690,11 @@ func ttsPublishMessage(ctx context.Context, j *model.TTSJob, s TTSSnapshot, a *m
 		// A lane includes its audio timeline, not just upstream generation time.
 		// A realtime stream already spent it; then the archive is only announced.
 		wait := time.Duration(0)
-		if e == nil {
-			ttsCallbacks.RLock()
-			fn := ttsCallbacks.ready
-			ttsCallbacks.RUnlock()
-			if fn != nil && fn(*j, media, path, ctx.Value(ttsLiveContextKey{}) == true) {
-				wait = time.Duration(media.DurationMS+300) * time.Millisecond
-			}
+		ttsCallbacks.RLock()
+		fn := ttsCallbacks.ready
+		ttsCallbacks.RUnlock()
+		if fn != nil && fn(*j, media, archiveLocalPath, ctx.Value(ttsLiveContextKey{}) == true) {
+			wait = time.Duration(media.DurationMS+300) * time.Millisecond
 		}
 		timer := time.NewTimer(wait)
 		select {

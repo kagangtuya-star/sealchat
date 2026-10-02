@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/service"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
@@ -33,6 +35,9 @@ func AdminStorageS3Test(c *fiber.Ctx) error {
 	incoming.Storage = cfg
 	merged := mergeConfigForWrite(appConfig, &incoming)
 	if err := service.TestStorageS3(merged.Storage); err != nil {
+		if errors.Is(err, storage.ErrTTSPrivateReadUnverified) {
+			return c.JSON(fiber.Map{"success": false, "message": storage.ErrTTSPrivateReadUnverified.Error()})
+		}
 		// Do not expose SDK errors, which may include credentials or signed URLs.
 		return c.JSON(fiber.Map{"success": false, "message": "S3 读写测试失败，请检查 Endpoint、Region、Bucket、凭据及读写权限"})
 	}

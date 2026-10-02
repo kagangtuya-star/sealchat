@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -579,35 +578,37 @@ func TTSSubmit(userID, operation string, r TTSRequest) (*model.TTSJob, error) {
 		if model.GetDB().Where("fingerprint = ? AND complete = ? AND expires_at > ? AND deleted_at IS NULL", s.Fingerprint, true, time.Now()).First(&cached).Error == nil {
 			var resource model.AttachmentModel
 			if model.GetDB().Where("id = ? AND user_id = ? AND root_id_type = ? AND deleted_at IS NULL", cached.ResourceID, userID, "tts").First(&resource).Error == nil {
-				if path, pathErr := TTSResourcePath(&resource); pathErr == nil {
-					if _, statErr := os.Stat(path); statErr == nil {
-						job.Status, job.UsageStatus = "succeeded", "cached"
-						job.ResourceID, job.MediaJSON = cached.ResourceID, cached.Metadata
-						ensureSystemPreview := func() {
-							if s.VoiceID != "" || s.Input.Voice == "" {
-								return
-							}
-							request := TTSSystemPreviewRequest{SystemVoice: s.Input.Voice, ProviderKind: s.Provider.EffectiveProviderKind(), ProviderID: s.Provider.ID, ModelID: s.Provider.Model}
-							go func() { _, _ = TTSEnsureSystemPreview(request) }()
+				exists, err := TTSResourceExists(context.Background(), &resource)
+				if err != nil {
+					return nil, err
+				}
+				if exists {
+					job.Status, job.UsageStatus = "succeeded", "cached"
+					job.ResourceID, job.MediaJSON = cached.ResourceID, cached.Metadata
+					ensureSystemPreview := func() {
+						if s.VoiceID != "" || s.Input.Voice == "" {
+							return
 						}
-						cfg, err := ttsConfig()
-						if err != nil {
-							return nil, err
-						}
-						if err := ttsReserveJob(model.GetDB(), cfg, job, s.Provider, 0, time.Now()); err != nil {
-							if errors.Is(err, ErrTTSWorldDenied) {
-								return nil, err
-							}
-							var duplicate model.TTSJob
-							if model.GetDB().Where("request_key = ? AND payer_user_id = ? AND input_hash = ?", key, userID, inputHash).First(&duplicate).Error == nil {
-								ensureSystemPreview()
-								return &duplicate, nil
-							}
-							return nil, err
-						}
-						ensureSystemPreview()
-						return job, nil
+						request := TTSSystemPreviewRequest{SystemVoice: s.Input.Voice, ProviderKind: s.Provider.EffectiveProviderKind(), ProviderID: s.Provider.ID, ModelID: s.Provider.Model}
+						go func() { _, _ = TTSEnsureSystemPreview(request) }()
 					}
+					cfg, err := ttsConfig()
+					if err != nil {
+						return nil, err
+					}
+					if err := ttsReserveJob(model.GetDB(), cfg, job, s.Provider, 0, time.Now()); err != nil {
+						if errors.Is(err, ErrTTSWorldDenied) {
+							return nil, err
+						}
+						var duplicate model.TTSJob
+						if model.GetDB().Where("request_key = ? AND payer_user_id = ? AND input_hash = ?", key, userID, inputHash).First(&duplicate).Error == nil {
+							ensureSystemPreview()
+							return &duplicate, nil
+						}
+						return nil, err
+					}
+					ensureSystemPreview()
+					return job, nil
 				}
 			}
 		}
@@ -647,11 +648,13 @@ func ttsReserveSnapshot(job *model.TTSJob, s TTSSnapshot) error {
 		if model.GetDB().Where("fingerprint = ? AND complete = ? AND expires_at > ? AND deleted_at IS NULL", s.Fingerprint, true, time.Now()).First(&cached).Error == nil {
 			var resource model.AttachmentModel
 			if model.GetDB().Where("id = ? AND user_id = ? AND channel_id = ? AND root_id_type = ? AND deleted_at IS NULL", cached.ResourceID, job.PayerUserID, job.ChannelID, "tts").First(&resource).Error == nil {
-				if path, err := TTSResourcePath(&resource); err == nil {
-					if _, err := os.Stat(path); err == nil {
-						job.UsageStatus, job.ResourceID, job.MediaJSON = "cached", cached.ResourceID, cached.Metadata
-						return ttsReserveJob(model.GetDB(), cfg, job, s.Provider, 0, time.Now())
-					}
+				exists, err := TTSResourceExists(context.Background(), &resource)
+				if err != nil {
+					return err
+				}
+				if exists {
+					job.UsageStatus, job.ResourceID, job.MediaJSON = "cached", cached.ResourceID, cached.Metadata
+					return ttsReserveJob(model.GetDB(), cfg, job, s.Provider, 0, time.Now())
 				}
 			}
 		}

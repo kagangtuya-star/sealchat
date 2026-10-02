@@ -409,6 +409,7 @@ export interface S3StorageConfig {
   enabled?: boolean;
   attachmentsEnabled?: boolean | null;
   audioEnabled?: boolean | null;
+  ttsEnabled?: boolean;
   fontsEnabled?: boolean | null;
   theaterEnabled?: boolean | null;
   endpoint?: string;
@@ -435,7 +436,7 @@ export interface AdminStorageStatus {
   endpoint: string;
   region: string;
   bucket: string;
-  modules: Record<'attachments' | 'audio' | 'theaterAttachments' | 'theaterAudio' | 'fonts', 'local' | 's3'>;
+  modules: Record<'attachments' | 'audio' | 'tts' | 'theaterAttachments' | 'theaterAudio' | 'fonts', 'local' | 's3'>;
   lastError: string;
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,18 +60,28 @@ func TTSPersistAudio(userID, channelID, jobID, kind, path string, media ttsprovi
 	}
 	id := utils.NewID()
 	key := "tts-private/resources/" + id
-	result, err := m.UploadWithBackend(context.Background(), storage.BackendLocal, storage.UploadInput{ObjectKey: key, LocalPath: copyPath, ContentType: ttsMIME(media.Container)})
+	ctx := context.Background()
+	input := storage.UploadInput{ObjectKey: key, LocalPath: copyPath, ContentType: ttsMIME(media.Container)}
+	var result *storage.UploadResult
+	if kind == "job_audio" {
+		result, err = m.UploadTTS(ctx, input)
+	} else {
+		// Clone samples and unknown kinds never opt into remote storage.
+		result, err = m.UploadWithBackend(ctx, storage.BackendLocal, input)
+	}
 	if err != nil {
 		return nil, err
 	}
 	meta, _ := json.Marshal(media)
-	a := &model.AttachmentModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, UserID: userID, ChannelID: channelID, RootIDType: "tts", RootID: jobID, ParentIDType: kind, StorageType: model.StorageLocal, ObjectKey: result.ObjectKey, Size: int64(len(b)), MimeType: ttsMIME(media.Container), Filename: "speech." + media.Container, Note: string(meta)}
+	storageType := model.StorageLocal
+	if result.Backend == storage.BackendS3 {
+		storageType = model.StorageS3
+	}
+	a := &model.AttachmentModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, UserID: userID, ChannelID: channelID, RootIDType: "tts", RootID: jobID, ParentIDType: kind, StorageType: storageType, ObjectKey: result.ObjectKey, Size: int64(len(b)), MimeType: ttsMIME(media.Container), Filename: "speech." + media.Container, Note: string(meta)}
 	if err = model.GetDB().Create(a).Error; err != nil {
 		// This object was created by this attempt and has no durable reference.
-		// Remove only that exact local object; preserve the synthesis spool.
-		if orphanPath, pathErr := m.ResolveLocalPath(result.ObjectKey); pathErr == nil {
-			_ = os.Remove(orphanPath)
-		}
+		// Remove the actual stored object; preserve the synthesis spool for retry.
+		_ = m.Delete(ctx, result.Backend, result.ObjectKey)
 		return nil, err
 	}
 	return a, nil
@@ -98,4 +109,43 @@ func TTSResourcePath(a *model.AttachmentModel) (string, error) {
 func TTSValidateSpool(path string) bool {
 	dir, err := TTSSpoolDir()
 	return err == nil && filepath.Dir(path) == dir && strings.HasPrefix(filepath.Base(path), "synthesis-")
+}
+
+func ttsResourceBackend(a *model.AttachmentModel) (storage.BackendType, error) {
+	if a == nil || !a.IsTTSManaged() || a.DeletedAt != nil || !strings.HasPrefix(a.ObjectKey, "tts-private/resources/") {
+		return "", ErrTTSDenied
+	}
+	switch a.StorageType {
+	case model.StorageLocal:
+		return storage.BackendLocal, nil
+	case model.StorageS3:
+		return storage.BackendS3, nil
+	default:
+		return "", ErrTTSDenied
+	}
+}
+
+func TTSResourceExists(ctx context.Context, a *model.AttachmentModel) (bool, error) {
+	backend, err := ttsResourceBackend(a)
+	if err != nil {
+		return false, err
+	}
+	m := GetStorageManager()
+	if m == nil {
+		return false, ErrTTSDisabled
+	}
+	return m.Exists(ctx, backend, a.ObjectKey)
+}
+
+// TTSOpenResource is used only after ticket/resource authorization.
+func TTSOpenResource(ctx context.Context, a *model.AttachmentModel) (io.ReadCloser, error) {
+	backend, err := ttsResourceBackend(a)
+	if err != nil {
+		return nil, err
+	}
+	m := GetStorageManager()
+	if m == nil {
+		return nil, ErrTTSDisabled
+	}
+	return m.OpenRead(ctx, backend, a.ObjectKey)
 }

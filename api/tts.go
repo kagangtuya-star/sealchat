@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"io"
@@ -622,6 +623,22 @@ func ttsCloneSource(c *fiber.Ctx) error {
 }
 
 func ttsSendAttachment(c *fiber.Ctx, a *model.AttachmentModel) error {
+	if a != nil && a.StorageType == model.StorageS3 {
+		reader, err := service.TTSOpenResource(c.UserContext(), a)
+		if err != nil {
+			return c.SendStatus(404)
+		}
+		c.Set("Cache-Control", "private, no-store")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("Content-Type", a.MimeType)
+		// Fiber writes after the handler returns. Close in the stream writer,
+		// not here; Range is intentionally ignored for remote resources.
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer reader.Close()
+			_, _ = io.Copy(w, reader)
+		})
+		return nil
+	}
 	path, err := service.TTSResourcePath(a)
 	if err != nil {
 		return c.SendStatus(404)

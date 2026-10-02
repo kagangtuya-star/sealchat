@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -22,23 +24,32 @@ import (
 )
 
 type s3Backend struct {
-	client           *minio.Client
-	listCompatClient *minio.Client
-	bucket           string
-	publicBaseURL    string
-	publicExplicit   bool
-	forcePathStyle   bool
-	uploadTimeout    time.Duration
-	presignURLFunc   func(context.Context, string, time.Duration) (string, error)
+	client              *minio.Client
+	listCompatClient    *minio.Client
+	bucket              string
+	publicBaseURL       string
+	publicExplicit      bool
+	forcePathStyle      bool
+	uploadTimeout       time.Duration
+	privateReadVerified bool
+	presignURLFunc      func(context.Context, string, time.Duration) (string, error)
 }
 
 const defaultS3UploadTimeout = 20 * time.Second
 
+var ErrTTSPrivateReadUnverified = errors.New("S3 连接正常，但 TTS 结果要求私有对象存储；当前 Bucket/CDN 无法确认禁止匿名读取")
+
 // TestS3 uses the same bucket write/read/delete self-check as initialization,
 // without replacing the running manager or persisting configuration.
 func TestS3(cfg utils.StorageConfig) error {
-	_, err := newS3Backend(cfg.S3, time.Duration(cfg.UploadTimeoutSeconds)*time.Second)
-	return err
+	remote, err := newS3Backend(cfg.S3, time.Duration(cfg.UploadTimeoutSeconds)*time.Second)
+	if err != nil {
+		return err
+	}
+	if cfg.S3.TTSEnabled && !remote.privateReadVerified {
+		return ErrTTSPrivateReadUnverified
+	}
+	return nil
 }
 
 func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Backend, error) {
@@ -78,11 +89,16 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 		uploadTimeout = defaultS3UploadTimeout
 	}
 	publicBase := strings.TrimSpace(cfg.PublicBaseURL)
-	publicExplicit := publicBase != ""
 	if publicBase == "" {
-		publicBase = derivePublicURL(endpoint, secure, cfg.Bucket, cfg.ForcePathStyle)
+		// Match StorageConfig.normalize's legacy public URL fallback.
+		publicBase = strings.TrimSpace(cfg.BaseURL)
 	}
-	return &s3Backend{
+	publicExplicit := publicBase != ""
+	directBase := derivePublicURL(endpoint, secure, cfg.Bucket, cfg.ForcePathStyle)
+	if publicBase == "" {
+		publicBase = directBase
+	}
+	backend := &s3Backend{
 		client:           client,
 		listCompatClient: listCompatClient,
 		bucket:           cfg.Bucket,
@@ -90,7 +106,15 @@ func newS3Backend(cfg utils.S3StorageConfig, uploadTimeout time.Duration) (*s3Ba
 		publicExplicit:   publicExplicit,
 		forcePathStyle:   cfg.ForcePathStyle,
 		uploadTimeout:    uploadTimeout,
-	}, nil
+	}
+	if cfg.TTSEnabled {
+		publicBases := []string{strings.TrimRight(directBase, "/")}
+		if publicExplicit && backend.publicBaseURL != publicBases[0] {
+			publicBases = append(publicBases, backend.publicBaseURL)
+		}
+		backend.privateReadVerified = backend.verifyTTSPrivateRead(publicBases)
+	}
+	return backend, nil
 }
 
 func (s *s3Backend) upload(ctx context.Context, input UploadInput) (*UploadResult, error) {
@@ -125,7 +149,16 @@ func (s *s3Backend) upload(ctx context.Context, input UploadInput) (*UploadResul
 }
 
 func (s *s3Backend) exists(ctx context.Context, objectKey string) (bool, error) {
-	_, err := s.client.StatObject(ctx, s.bucket, objectKey, minio.StatObjectOptions{})
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	statTimeout := s.uploadTimeout
+	if statTimeout <= 0 {
+		statTimeout = defaultS3UploadTimeout
+	}
+	statCtx, cancel := context.WithTimeout(ctx, statTimeout)
+	_, err := s.client.StatObject(statCtx, s.bucket, objectKey, minio.StatObjectOptions{})
+	cancel()
 	if err != nil {
 		if minio.ToErrorResponse(err).StatusCode == 404 {
 			return false, nil
@@ -338,6 +371,28 @@ func (s *s3Backend) presignedURL(ctx context.Context, objectKey string, ttl time
 	return target.String()
 }
 
+func (s *s3Backend) openRead(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("S3 存储未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	statTimeout := s.uploadTimeout
+	if statTimeout <= 0 {
+		statTimeout = defaultS3UploadTimeout
+	}
+	statCtx, cancel := context.WithTimeout(ctx, statTimeout)
+	// GetObject is lazy: fail before installing the response stream if missing.
+	_, err := s.client.StatObject(statCtx, s.bucket, objectKey, minio.StatObjectOptions{})
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	// Streaming uses the caller's context, without the metadata deadline.
+	return s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
+}
+
 func (s *s3Backend) downloadToPath(ctx context.Context, objectKey string, targetPath string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("S3 存储未初始化")
@@ -413,6 +468,76 @@ func logS3Fallback(err error) {
 		return
 	}
 	log.Printf("[storage] S3 操作失败，已回退到本地: %v", err)
+}
+
+func (s *s3Backend) verifyTTSPrivateRead(publicBases []string) bool {
+	if s == nil || s.client == nil || len(publicBases) == 0 {
+		return false
+	}
+	rnd := make([]byte, 12)
+	if _, err := rand.Read(rnd); err != nil {
+		return false
+	}
+	// Match the exact key shape used by persisted TTS job_audio objects so
+	// prefix/path policies cannot treat the privacy probe more strictly.
+	key := "tts-private/resources/" + hex.EncodeToString(rnd)
+	payload := []byte("sealchat-tts-privacy-check")
+	probeTimeout := s.uploadTimeout
+	if probeTimeout <= 0 {
+		probeTimeout = defaultS3UploadTimeout
+	}
+	putCtx, putCancel := context.WithTimeout(context.Background(), probeTimeout)
+	_, err := s.client.PutObject(putCtx, s.bucket, key, bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{ContentType: "text/plain"})
+	putCancel()
+	if err != nil {
+		return false
+	}
+	defer func() {
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer deleteCancel()
+		_ = s.client.RemoveObject(deleteCtx, s.bucket, key, minio.RemoveObjectOptions{})
+	}()
+	verified := true
+	for _, publicBase := range publicBases {
+		if !verifyS3PrivateRead(publicBase, key, payload) {
+			verified = false
+		}
+	}
+	return verified
+}
+
+func verifyS3PrivateRead(publicBaseURL, objectKey string, payload []byte) bool {
+	target, err := url.Parse(publicBaseURL)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
+		return false
+	}
+	target.Path = strings.TrimRight(target.Path, "/") + "/" + objectKey
+	target.RawPath = ""
+	req, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		// Redirects may lead to login pages or signed URLs; neither proves privacy.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return true
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(len(payload))+1))
+		if readErr == nil && bytes.Equal(data, payload) {
+			return false // The TTS privacy probe is anonymously readable.
+		}
+	}
+	// Missing, mismatched or unreachable objects do not establish private reads.
+	return false
 }
 
 func verifyS3ReadWrite(client *minio.Client, bucket string) error {

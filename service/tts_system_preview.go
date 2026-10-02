@@ -1,9 +1,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -78,18 +78,7 @@ func ttsSystemPreviewResourceExists(job *model.TTSJob) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	path, err := TTSResourcePath(&attachment)
-	if err != nil {
-		return false, err
-	}
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return info.Mode().IsRegular(), nil
+	return TTSResourceExists(context.Background(), &attachment)
 }
 
 // GET only validates the existing asset; rebuilding belongs to ensure/POST.

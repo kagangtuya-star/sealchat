@@ -201,6 +201,7 @@ type S3StorageConfig struct {
 	Enabled            bool   `json:"enabled" yaml:"enabled"`
 	AttachmentsEnabled *bool  `json:"attachmentsEnabled" yaml:"attachmentsEnabled"`
 	AudioEnabled       *bool  `json:"audioEnabled" yaml:"audioEnabled"`
+	TTSEnabled         bool   `json:"ttsEnabled" yaml:"ttsEnabled"`
 	FontsEnabled       *bool  `json:"fontsEnabled" yaml:"fontsEnabled"`
 	TheaterEnabled     *bool  `json:"theaterEnabled" yaml:"theaterEnabled"`
 	Endpoint           string `json:"endpoint" yaml:"endpoint"`
@@ -1955,6 +1956,7 @@ func WriteConfig(config *AppConfig) {
 		if config.Storage.S3.AudioEnabled != nil {
 			_ = k.Set("storage.s3.audioEnabled", *config.Storage.S3.AudioEnabled)
 		}
+		_ = k.Set("storage.s3.ttsEnabled", config.Storage.S3.TTSEnabled)
 		if config.Storage.S3.FontsEnabled != nil {
 			_ = k.Set("storage.s3.fontsEnabled", *config.Storage.S3.FontsEnabled)
 		}

@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,7 +43,7 @@ func (m *Manager) Status() Status {
 	status := Status{
 		ActiveBackend: BackendLocal,
 		Modules: map[string]BackendType{
-			"attachments": BackendLocal, "audio": BackendLocal,
+			"attachments": BackendLocal, "audio": BackendLocal, "tts": BackendLocal,
 			"theaterAttachments": BackendLocal, "theaterAudio": BackendLocal, "fonts": BackendLocal,
 		},
 	}
@@ -67,12 +69,15 @@ func (m *Manager) Status() Status {
 	status.Bucket = s3.Bucket
 	status.Modules["attachments"] = m.ActiveBackendForAttachment()
 	status.Modules["audio"] = m.ActiveBackendForAudio()
+	status.Modules["tts"] = m.ActiveBackendForTTS()
 	status.Modules["theaterAttachments"] = m.ActiveBackendForTheaterAttachment()
 	status.Modules["theaterAudio"] = m.ActiveBackendForTheaterAudio()
 	status.Modules["fonts"] = m.ActiveBackendForFont()
 	if m.RemoteInitError() != nil {
 		// SDK errors may contain URLs or credentials; never serialize the raw error.
 		status.LastError = "S3 初始化失败，当前回退到本地；请检查配置并测试连接"
+	} else if s3.TTSEnabled && m.remote != nil && !m.remote.privateReadVerified {
+		status.LastError = "TTS 对象存储未启用：无法确认 Bucket/CDN 禁止匿名读取，当前 TTS 回退到本地"
 	}
 	return status
 }
@@ -136,6 +141,15 @@ func (m *Manager) ActiveBackendForAudio() BackendType {
 			return true
 		}
 		return *s3.AudioEnabled
+	})
+}
+
+func (m *Manager) ActiveBackendForTTS() BackendType {
+	if m == nil || m.remote == nil || !m.remote.privateReadVerified {
+		return BackendLocal
+	}
+	return m.activeBackendWithToggle(func(s3 utils.S3StorageConfig) bool {
+		return s3.TTSEnabled
 	})
 }
 
@@ -208,6 +222,10 @@ func (m *Manager) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 
 func (m *Manager) UploadAttachment(ctx context.Context, input UploadInput) (*UploadResult, error) {
 	return m.uploadWithFallback(ctx, m.ActiveBackendForAttachment(), input)
+}
+
+func (m *Manager) UploadTTS(ctx context.Context, input UploadInput) (*UploadResult, error) {
+	return m.uploadWithFallback(ctx, m.ActiveBackendForTTS(), input)
 }
 
 func (m *Manager) UploadTheaterAttachment(ctx context.Context, input UploadInput) (*UploadResult, error) {
@@ -297,6 +315,28 @@ func (m *Manager) ListS3Prefix(ctx context.Context, prefix string) ([]ObjectInfo
 		return nil, fmt.Errorf("S3 存储未初始化")
 	}
 	return m.remote.listPrefix(ctx, prefix)
+}
+
+// OpenRead exposes private bytes to authorized server-side callers, never a URL.
+func (m *Manager) OpenRead(ctx context.Context, backend BackendType, objectKey string) (io.ReadCloser, error) {
+	if m == nil {
+		return nil, fmt.Errorf("存储尚未初始化")
+	}
+	switch backend {
+	case BackendLocal:
+		path, err := m.ResolveLocalPath(objectKey)
+		if err != nil {
+			return nil, err
+		}
+		return os.Open(path)
+	case BackendS3:
+		if m.remote == nil {
+			return nil, fmt.Errorf("未启用 S3 存储")
+		}
+		return m.remote.openRead(ctx, objectKey)
+	default:
+		return nil, fmt.Errorf("无效存储类型")
+	}
 }
 
 func (m *Manager) DownloadToPath(ctx context.Context, backend BackendType, objectKey string, targetPath string) error {

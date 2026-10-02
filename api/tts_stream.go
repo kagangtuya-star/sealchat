@@ -151,7 +151,7 @@ func ttsSend(l *ttsListener, f ttsFrame) bool {
 func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string, streamed bool) bool {
 	// Cache metadata intentionally omits file offsets. Recover them from the
 	// validated archive before sending raw PCM, never send RIFF headers as PCM.
-	if media.Container == "wav" && !streamed {
+	if path != "" && media.Container == "wav" && !streamed {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return false
@@ -205,7 +205,7 @@ func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string, str
 	go func() {
 		mode := "file"
 		var snapshot service.TTSSnapshot
-		if media.Container == "wav" && media.Codec == "pcm_s16le" && json.Unmarshal([]byte(j.Snapshot), &snapshot) == nil && ttsprovider.SupportsLivePCM(snapshot.Provider.EffectiveProviderKind(), snapshot.Provider.Model) {
+		if path != "" && media.Container == "wav" && media.Codec == "pcm_s16le" && json.Unmarshal([]byte(j.Snapshot), &snapshot) == nil && ttsprovider.SupportsLivePCM(snapshot.Provider.EffectiveProviderKind(), snapshot.Provider.Model) {
 			mode = "pcm"
 		}
 		start := ttsJSON(fiber.Map{"type": "start", "epoch": epoch, "utterance": j.ID, "messageId": j.MessageID, "media": media, "mode": mode, "startsAt": time.Now().Add(300 * time.Millisecond).UnixMilli()})

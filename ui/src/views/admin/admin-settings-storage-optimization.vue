@@ -99,11 +99,13 @@ const storageModeOptions = [
 const s3ModuleOptions = [
   { key: 'attachmentsEnabled', label: '附件' },
   { key: 'audioEnabled', label: '音频素材' },
+  { key: 'ttsEnabled', label: 'TTS 结果' },
   { key: 'theaterEnabled', label: '小剧场资源' },
   { key: 'fontsEnabled', label: '字体资源' },
 ] as const
 type S3ModuleKey = typeof s3ModuleOptions[number]['key']
 const moduleChecked = (key: S3ModuleKey) => {
+  if (key === 'ttsEnabled') return s3Config.value.ttsEnabled ?? false
   if (key === 'theaterEnabled' && s3Config.value.theaterEnabled == null) {
     return (s3Config.value.attachmentsEnabled ?? true) && (s3Config.value.audioEnabled ?? true)
   }
@@ -686,6 +688,7 @@ onMounted(async () => {
                 <div class="s3-status-module-values">
                   <span>附件 {{ backendLabel(storageStatus.modules.attachments) }}</span>
                   <span>音频 {{ backendLabel(storageStatus.modules.audio) }}</span>
+                  <span>TTS {{ backendLabel(storageStatus.modules.tts) }}</span>
                   <span v-if="storageStatus.modules.theaterAttachments === storageStatus.modules.theaterAudio">
                     小剧场 {{ backendLabel(storageStatus.modules.theaterAttachments) }}
                   </span>
@@ -763,9 +766,9 @@ onMounted(async () => {
               {{ option.label }}
               <span v-if="option.key === 'theaterEnabled' && s3Config.theaterEnabled == null" class="s3-inherit-label">（继承附件/音频）</span>
             </n-checkbox>
-            <n-checkbox :checked="false" disabled>TTS 结果（下一步接入）</n-checkbox>
           </div>
-          <div class="s3-hint">仅影响新写入资源；已有资源请使用下方‘存储迁移’处理。</div>
+          <div class="s3-hint">TTS 结果仅包含合成后的语音，不包含音色复刻源样本；仅影响新写入资源。</div>
+          <div class="s3-hint">模块开关仅影响新写入资源；当前存储迁移仅支持下方已有类型，历史 TTS 暂不自动迁移。</div>
           <div class="s3-test-row">
             <n-button size="small" :loading="s3Testing" @click="testS3Connection">测试连接</n-button>
             <n-text v-if="s3TestResult" :type="s3TestResult.success ? 'success' : 'error'">{{ s3TestResult.message }}</n-text>
