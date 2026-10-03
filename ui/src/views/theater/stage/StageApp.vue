@@ -4058,19 +4058,22 @@ const moveActionByKeyboard = (actionId: string, offset: -1 | 1) => {
 
 const triggerObjectActions = (object: StageObject) => {
   if (!canInteractObject(object)) return
+  const actions = object.actions.flatMap((action) => {
+    const parsed = stageActionSchema.safeParse(action)
+    return parsed.success ? [parsed.data] : []
+  })
+  if (!actions.length) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
   const execution = {
     id: actionId(),
     mode: object.metadata.actionExecutionMode === 'sequential' ? 'sequential' as const : 'parallel' as const,
-    total: object.actions.length,
+    total: actions.length,
   }
-  object.actions.forEach((action, index) => {
-    const parsed = stageActionSchema.safeParse(action)
-    if (!parsed.success) return
+  actions.forEach((action, index) => {
     emit('actionTriggered', {
       objectId: object.id,
-      actionId: parsed.data.id,
-      action: parsed.data,
+      actionId: action.id,
+      action,
       execution: { ...execution, index },
       ...(pointer ? {
         pointer: {
