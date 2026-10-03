@@ -382,12 +382,23 @@ onBeforeUnmount(() => {
       </NAlert>
       <div class="speech-settings__docs">
         <NText depth="3">相关文档</NText>
-        <NSpace :size="12">
-          <a href="https://help.aliyun.com/zh/model-studio/get-api-key" target="_blank" rel="noopener noreferrer">获取 API Key</a>
-          <a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#732535cfc959h" target="_blank" rel="noopener noreferrer">业务空间/地域说明</a>
-          <a href="https://help.aliyun.com/zh/model-studio/cosyvoice-tts-http-api" target="_blank" rel="noopener noreferrer">合成接口文档</a>
-          <a href="https://help.aliyun.com/zh/model-studio/voice-design-api-references" target="_blank" rel="noopener noreferrer">音色接口文档</a>
-        </NSpace>
+        <div class="speech-settings__doc-groups">
+          <div class="speech-settings__doc-group">
+            <span class="speech-settings__doc-provider">阿里云</span>
+            <a href="https://help.aliyun.com/zh/model-studio/get-api-key" target="_blank" rel="noopener noreferrer">获取 API Key</a>
+            <a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#732535cfc959h" target="_blank" rel="noopener noreferrer">业务空间/地域说明</a>
+            <a href="https://help.aliyun.com/zh/model-studio/cosyvoice-tts-http-api" target="_blank" rel="noopener noreferrer">合成接口文档</a>
+            <a href="https://help.aliyun.com/zh/model-studio/voice-design-api-references" target="_blank" rel="noopener noreferrer">音色接口文档</a>
+          </div>
+          <div class="speech-settings__doc-group">
+            <span class="speech-settings__doc-provider">腾讯云</span>
+            <a href="https://cloud.tencent.com/document/product/598/40488" target="_blank" rel="noopener noreferrer">获取 SecretId / SecretKey</a>
+            <a href="https://cloud.tencent.com/document/product/1073/37995" target="_blank" rel="noopener noreferrer">基础 TTS 接口</a>
+            <a href="https://cloud.tencent.com/document/product/1073/92668" target="_blank" rel="noopener noreferrer">TTS 音色列表</a>
+            <a href="https://cloud.tencent.com/document/product/862/129150" target="_blank" rel="noopener noreferrer">MPS 语音合成</a>
+            <a href="https://cloud.tencent.com/document/product/862/129151" target="_blank" rel="noopener noreferrer">MPS 音色列表</a>
+          </div>
+        </div>
       </div>
 
       <NForm label-placement="left" label-width="120">
@@ -690,8 +701,26 @@ onBeforeUnmount(() => {
 
 .speech-settings__docs {
   gap: 12px;
+  align-items: flex-start;
   flex-wrap: wrap;
   font-size: 13px;
+}
+
+.speech-settings__doc-groups,
+.speech-settings__doc-group {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  flex-wrap: wrap;
+}
+
+.speech-settings__doc-groups {
+  gap: 6px 18px;
+}
+
+.speech-settings__doc-provider {
+  color: var(--n-text-color-2);
+  font-weight: 600;
 }
 
 .settings-collapse,
