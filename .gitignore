@@ -91,3 +91,4 @@ ui/scripts/quickdraw-inline-style.test.mjs
 /perf
 mutagen.yml
 mutagen.yml.lock
+ui/src/features/tts/voice-catalog.test.mjs
