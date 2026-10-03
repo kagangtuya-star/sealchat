@@ -712,6 +712,8 @@ func ttsSourceUpload(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"id": a.ID, "durationMs": media.DurationMS})
 }
 func ttsAdminConfig(c *fiber.Ctx) error {
+	configMutationMu.Lock()
+	defer configMutationMu.Unlock()
 	var b map[string]json.RawMessage
 	if err := json.Unmarshal(c.Body(), &b); err != nil || b == nil {
 		return c.SendStatus(400)
@@ -739,8 +741,12 @@ func ttsAdminConfig(c *fiber.Ctx) error {
 	if err = service.ValidateTTSDynamicDefaultVoice(merged.AI.Speech); err != nil {
 		return ttsError(c, err)
 	}
+	if err := utils.WriteConfigChecked(merged); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "配置文件写入失败，运行配置未修改",
+		})
+	}
 	appConfig = merged
-	utils.WriteConfig(appConfig)
 	SyncConfigToDB(appConfig, "api")
 	go service.TTSPrimeMPSCatalogs()
 	return c.JSON(fiber.Map{"config": sanitizeConfigForAdmin(appConfig).AI.Speech})

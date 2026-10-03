@@ -352,11 +352,12 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async configSet(data: ServerConfig) {
+    async configSet(data: ServerConfig, options?: { timeout?: number }) {
       const user = useUserStore();
       const display = useDisplayStore();
       const resp = await api.put('api/v1/config', data, {
-        headers: { 'Authorization': user.token }
+        headers: { 'Authorization': user.token },
+        ...(options?.timeout ? { timeout: options.timeout } : {}),
       })
       this.config = cloneDeep(data);
       applyPageTitle(this.config?.pageTitle);

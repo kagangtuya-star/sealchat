@@ -33,6 +33,8 @@ func AdminAIConfigGet(ctx *fiber.Ctx) error {
 }
 
 func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
+	configMutationMu.Lock()
+	defer configMutationMu.Unlock()
 	var body struct {
 		Config json.RawMessage `json:"config"`
 	}
@@ -70,8 +72,12 @@ func AdminAIConfigUpdate(ctx *fiber.Ctx) error {
 	if err := utils.ValidateAIConfig(merged.AI); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 	}
+	if err := utils.WriteConfigChecked(merged); err != nil {
+		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "配置文件写入失败，运行配置未修改",
+		})
+	}
 	appConfig = merged
-	utils.WriteConfig(appConfig)
 	SyncConfigToDB(appConfig, "api")
 	return ctx.JSON(fiber.Map{
 		"config": sanitizeConfigForAdmin(appConfig).AI,

@@ -137,14 +137,17 @@ func resolveFFmpegPathsLegacy(cfg *utils.AudioConfig) (ffmpegPath, ffprobePath s
 
 	if ffmpegPath != "" && !configSpecified {
 		cfg.FFmpegPath = ffmpegPath
-		go func() {
-			appCfg := utils.GetConfig()
-			if appCfg != nil {
-				appCfg.Audio.FFmpegPath = ffmpegPath
-				utils.WriteConfig(appCfg)
+		appCfg := utils.GetConfig()
+		if appCfg != nil {
+			oldFFmpegPath := appCfg.Audio.FFmpegPath
+			appCfg.Audio.FFmpegPath = ffmpegPath
+			if err := utils.WriteConfigChecked(appCfg); err != nil {
+				appCfg.Audio.FFmpegPath = oldFFmpegPath
+				log.Printf("[音频] 自动发现 FFmpeg，但写入配置失败: %v", err)
+			} else {
 				log.Printf("[音频] 已自动发现 FFmpeg 并写入配置: %s", ffmpegPath)
 			}
-		}()
+		}
 	}
 
 	if ffmpegPath == "" {
@@ -428,9 +431,10 @@ func (svc *audioService) importFromPath(filePath string, opts AudioUploadOptions
 }
 
 func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string, opts AudioUploadOptions) (*model.AudioAsset, error) {
+	manager := svc.currentObjectStore()
 	asset := svc.newAssetRecord(originalName, opts)
-	if svc.shouldUseObjectStore(opts) {
-		if remote, err := svc.persistWithObjectStore(asset, tempPath, mimeType, originalName); err == nil {
+	if shouldUseAudioObjectStore(manager, opts) {
+		if remote, err := svc.persistWithObjectStore(manager, asset, tempPath, mimeType, originalName); err == nil {
 			return remote, nil
 		} else {
 			log.Printf("[audio] 上传对象存储失败，使用本地存储: %v", err)
@@ -477,14 +481,25 @@ func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOpt
 	return asset
 }
 
+func (svc *audioService) currentObjectStore() *storage.Manager {
+	if manager := GetStorageManager(); manager != nil {
+		return manager
+	}
+	return svc.objectStore
+}
+
 func (svc *audioService) shouldUseObjectStore(opts AudioUploadOptions) bool {
-	if svc.objectStore == nil {
+	return shouldUseAudioObjectStore(svc.currentObjectStore(), opts)
+}
+
+func shouldUseAudioObjectStore(manager *storage.Manager, opts AudioUploadOptions) bool {
+	if manager == nil {
 		return false
 	}
 	if opts.UseTheaterStorage {
-		return svc.objectStore.ActiveBackendForTheaterAudio() == storage.BackendS3
+		return manager.ActiveBackendForTheaterAudio() == storage.BackendS3
 	}
-	return svc.objectStore.ActiveBackendForAudio() == storage.BackendS3
+	return manager.ActiveBackendForAudio() == storage.BackendS3
 }
 
 func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mimeType string) (*model.AudioAsset, error) {
@@ -502,13 +517,13 @@ func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mi
 	return asset, nil
 }
 
-func (svc *audioService) persistWithObjectStore(asset *model.AudioAsset, tempPath, mimeType, originalName string) (*model.AudioAsset, error) {
-	if svc.objectStore == nil {
+func (svc *audioService) persistWithObjectStore(manager *storage.Manager, asset *model.AudioAsset, tempPath, mimeType, originalName string) (*model.AudioAsset, error) {
+	if manager == nil {
 		return nil, errors.New("对象存储未配置")
 	}
 	objectKey := storage.BuildAudioObjectKey(asset.ID, originalName)
 	duration, _ := svc.probeDurationFromFile(tempPath)
-	result, err := svc.objectStore.UploadToS3(context.Background(), storage.UploadInput{
+	result, err := manager.UploadToS3(context.Background(), storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: mimeType,
@@ -904,13 +919,14 @@ func (svc *audioService) RemoveLocalAsset(objectKey string) error {
 }
 
 func (svc *audioService) removeAssetObject(storageType model.StorageType, objectKey string) {
+	manager := svc.currentObjectStore()
 	if strings.TrimSpace(objectKey) == "" {
 		return
 	}
 	switch storageType {
 	case model.StorageS3:
-		if svc.objectStore != nil {
-			_ = svc.objectStore.Delete(context.Background(), storage.BackendS3, objectKey)
+		if manager != nil {
+			_ = manager.Delete(context.Background(), storage.BackendS3, objectKey)
 		}
 	default:
 		_ = svc.RemoveLocalAsset(objectKey)

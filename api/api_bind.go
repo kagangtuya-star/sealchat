@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -26,10 +28,12 @@ import (
 	"sealchat/model"
 	"sealchat/service"
 	"sealchat/service/perfprofiler"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
 var appConfig *utils.AppConfig
+var configMutationMu sync.Mutex
 var appFs afero.Fs
 var agentCrawlGuideMarkdown string
 var serveAppWithOptionalCertificateForInit = serveAppWithOptionalCertificate
@@ -1018,6 +1022,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
+		configMutationMu.Lock()
+		defer configMutationMu.Unlock()
 		var rawConfigPayload map[string]json.RawMessage
 		if err := json.Unmarshal(ctx.Body(), &rawConfigPayload); err == nil && rawConfigPayload != nil {
 			if rawAI, exists := rawConfigPayload["ai"]; exists {
@@ -1078,8 +1084,29 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
 
+		newConfig.Storage = utils.NormalizeStorageConfig(newConfig.Storage)
+		restartRequired := service.StorageReloadRequiresRestart(newConfig.Storage)
+		storageChanged := appConfig == nil || !reflect.DeepEqual(appConfig.Storage, newConfig.Storage)
+		var storageCandidate *storage.Manager
+		if storageChanged && !restartRequired {
+			candidate, err := service.PrepareStorageManager(newConfig.Storage)
+			if err != nil {
+				return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"message": "对象存储配置无法应用，已保留当前运行配置；请检查配置或先测试连接",
+				})
+			}
+			storageCandidate = candidate
+		}
+
+		if err := utils.WriteConfigChecked(newConfig); err != nil {
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "配置文件写入失败，运行配置未修改",
+			})
+		}
 		appConfig = newConfig
-		utils.WriteConfig(appConfig)
+		if storageCandidate != nil {
+			service.ActivateStorageManager(storageCandidate)
+		}
 		service.ConfirmCursorThemeAttachments(newConfig.CursorTheme)
 		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
 			_ = manager.Reconfigure(perfprofiler.ConfigFromApp(appConfig.PerformanceProfiler))
@@ -1088,7 +1115,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		// 同步到数据库
 		SyncConfigToDB(appConfig, "api")
 
-		return nil
+		return ctx.JSON(fiber.Map{"storageRestartRequired": restartRequired})
 	})
 
 	oneBotHTTPWorks(app)

@@ -106,6 +106,24 @@ func NewManager(cfg utils.StorageConfig) (*Manager, error) {
 	return mgr, nil
 }
 
+// RequiresRestartFor compares storage identities against the running configuration.
+func (m *Manager) RequiresRestartFor(cfg utils.StorageConfig) bool {
+	if m == nil {
+		return false
+	}
+	if m.cfg.Local.UploadDir != cfg.Local.UploadDir ||
+		m.cfg.Local.AudioDir != cfg.Local.AudioDir ||
+		m.cfg.Local.FontDir != cfg.Local.FontDir {
+		return true
+	}
+	if m.cfg.S3.Enabled {
+		return !cfg.S3.Enabled ||
+			strings.TrimSpace(m.cfg.S3.Endpoint) != strings.TrimSpace(cfg.S3.Endpoint) ||
+			strings.TrimSpace(m.cfg.S3.Bucket) != strings.TrimSpace(cfg.S3.Bucket)
+	}
+	return false
+}
+
 func (m *Manager) decidePreferred() BackendType {
 	switch cfgMode := strings.ToLower(string(m.cfg.Mode)); cfgMode {
 	case string(utils.StorageModeS3):

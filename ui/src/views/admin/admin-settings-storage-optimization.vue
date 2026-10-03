@@ -220,10 +220,14 @@ const save = async () => {
         Object.assign(payload.storage.s3, { [key]: value })
       }
     }
-    await utils.configSet(payload)
+    const saveResp = await utils.configSet(payload, { timeout: 120000 })
     await resetFromConfig()
     await fetchStorageStatus()
-    message.success('备份与储存优化已保存；存储配置重启后生效')
+    if (saveResp.data.storageRestartRequired) {
+      message.warning('配置已保存；存储目标发生变化，需重启服务后生效')
+    } else {
+      message.success('备份与储存优化已保存')
+    }
   } catch (error: any) {
     message.error(error?.response?.data?.message || error?.message || '保存失败')
   }
@@ -706,7 +710,7 @@ onMounted(async () => {
 
             <div class="s3-status-footer">
               <n-text v-if="storageStatus?.lastError" type="error">{{ storageStatus.lastError }}</n-text>
-              <span class="s3-hint">运行状态来自启动时加载的配置；下方修改保存后重启生效。</span>
+              <span class="s3-hint">模块开关与同一存储目标内的配置可即时生效；Endpoint、Bucket 或本地存储目录变更需重启。</span>
             </div>
           </div>
 
@@ -724,7 +728,7 @@ onMounted(async () => {
           </div>
           <div class="s3-hint">{{ s3Preset.hint }} 预设仅提供填写提示。</div>
           <div v-if="!s3Config.enabled && s3Config.bucket?.trim()" class="s3-hint">
-            关闭 S3 不会清除现有 Endpoint、Bucket 与凭据；保存后重启生效。
+            关闭 S3 不会清除现有 Endpoint、Bucket 与凭据；需重启服务后生效。
           </div>
           <div class="s3-config-grid">
             <n-form-item label="Endpoint" label-placement="top" :show-feedback="false">
