@@ -75,6 +75,8 @@ func (p SpeechProviderConfig) SynthesisPriceConfirmed() bool {
 
 type SpeechConfig struct {
 	Enabled               bool                   `json:"enabled" yaml:"enabled"`
+	LocalFirstPlayback    bool                   `json:"localFirstPlayback" yaml:"localFirstPlayback"`
+	ParallelArchive       bool                   `json:"parallelArchive" yaml:"parallelArchive"`
 	WorldAccessMode       string                 `json:"worldAccessMode" yaml:"worldAccessMode"`
 	WorldActivationCode   string                 `json:"worldActivationCode" yaml:"worldActivationCode"`
 	Providers             []SpeechProviderConfig `json:"providers" yaml:"providers"`
@@ -105,6 +107,9 @@ func normalizeSpeechConfig(cfg *SpeechConfig, repairVoice bool) *SpeechConfig {
 		return nil
 	}
 	out := *cfg
+	if !out.LocalFirstPlayback {
+		out.ParallelArchive = false
+	}
 	if out.WorldAccessMode == "" || (repairVoice && out.WorldAccessMode != "whitelist") {
 		out.WorldAccessMode = "all"
 	}

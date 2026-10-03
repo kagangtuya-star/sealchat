@@ -255,10 +255,16 @@ export const normalizeStageSequenceAction = (value: unknown): StageSequenceActio
     const stepId = typeof step.id === 'string' ? step.id.trim() : ''
     const descriptor = normalizeAtomicDescriptor(step.action)
     if (!stepId || seen.has(stepId) || !descriptor) return result
+    const storedSceneId = typeof step.sceneId === 'string' && step.sceneId.trim() ? step.sceneId.trim() : null
+    const sceneId = descriptor.type === 'scene.apply'
+      ? descriptor.payload.sceneId
+      : descriptor.type === 'object.toggle' || descriptor.type === 'effect.play'
+        ? storedSceneId
+        : null
     seen.add(stepId)
     result.push({
       id: stepId,
-      sceneId: typeof step.sceneId === 'string' && step.sceneId.trim() ? step.sceneId.trim() : null,
+      sceneId,
       timing: normalizeTiming(step.timing),
       action: descriptor,
     })

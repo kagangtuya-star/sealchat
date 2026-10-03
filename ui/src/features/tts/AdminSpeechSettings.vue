@@ -29,7 +29,14 @@ const quickProviderDefinitions = [{
   onlinePricingSource: '',
   baseUrlFor: () => '',
 }]
-const config = ref<SpeechConfig>({ enabled: false, worldAccessMode: 'all', worldActivationCode: '', providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
+const config = ref<SpeechConfig>({ enabled: false, localFirstPlayback: true, parallelArchive: false, worldAccessMode: 'all', worldActivationCode: '', providers: [], defaultProvider: '', defaultVoice: '', format: 'wav', quotaDefault: { dailyLimit: 0, monthlyLimit: 0, lifetimeLimit: 0 }, defaultSlots: 0, previewTTLMinutes: 30, previewLimit: 2, requestTimeoutSeconds: 90, maxConcurrent: 2, channelQueueLimit: 8 })
+function normalizePlaybackOptions(value: SpeechConfig): SpeechConfig {
+  const localFirstPlayback = value.localFirstPlayback !== false
+  return { ...value, localFirstPlayback, parallelArchive: localFirstPlayback && value.parallelArchive === true }
+}
+watch(() => config.value.localFirstPlayback, enabled => {
+  if (!enabled) config.value.parallelArchive = false
+}, { flush: 'sync' })
 const originalSnapshot = ref('')
 const snapshotOf = (value: SpeechConfig) => JSON.stringify(value)
 const isModified = computed(() => snapshotOf(config.value) !== originalSnapshot.value)
@@ -119,8 +126,8 @@ function removeProvider(index: number) {
 }
 async function save() {
   const saved = await speechAPI.saveAdminConfig(config.value)
-  config.value = saved
-  originalSnapshot.value = snapshotOf(saved)
+  config.value = normalizePlaybackOptions(saved)
+  originalSnapshot.value = snapshotOf(config.value)
   quickApiKey.value = ''
   quickSecretId.value = ''
   quickSecretKey.value = ''
@@ -328,7 +335,7 @@ function refreshTestJob() {
 onMounted(() => void run(async () => {
   const [value, directory, models] = await Promise.all([speechAPI.adminConfig(), speechAPI.voices({ page: 1 }), speechAPI.models()])
   if (!alive) return
-  if (value) config.value = value
+  if (value) config.value = normalizePlaybackOptions(value)
   originalSnapshot.value = snapshotOf(config.value)
   systemVoices.value = directory.system
   modelCatalog.value = models
@@ -402,7 +409,7 @@ onBeforeUnmount(() => {
             <NFormItem label="合成格式">
               <NSelect v-model:value="config.format" :options="[{ label: 'WAV（PCM16 增量播放）', value: 'wav' }, { label: 'MP3（兼容文件播放）', value: 'mp3' }]" />
               <template #feedback>
-                当前生产格式仅支持 WAV / MP3；不会自动换格式重试调用。私有 TTS 文件存放于本地受保护目录。
+                当前生产格式仅支持 WAV / MP3；不会自动换格式重试调用。TTS 结果按当前存储配置归档。
               </template>
             </NFormItem>
           </NCollapseItem>
@@ -438,6 +445,22 @@ onBeforeUnmount(() => {
                 <NFormItem label="预览有效分钟"><NInputNumber v-model:value="config.previewTTLMinutes" :min="1" :max="1440" /></NFormItem>
               </NGi>
             </NGrid>
+          </NCollapseItem>
+
+          <NCollapseItem title="播放与归档优化" name="playback-archive">
+            <NFormItem label="新合成优先本地首播" label-placement="top" class="speech-playback-option">
+              <NSwitch v-model:value="config.localFirstPlayback" />
+              <template #feedback>
+                <NText depth="3">新生成的 PCM16 WAV 首次自动播放优先读取服务器本地临时文件；缓存、历史消息和手动重播仍使用正式归档资源。</NText>
+              </template>
+            </NFormItem>
+            <NFormItem label="首播与云端归档并行" label-placement="top" class="speech-playback-option">
+              <NSwitch v-model:value="config.parallelArchive" :disabled="!config.localFirstPlayback" />
+              <template #feedback>
+                <NText depth="3">本地首播与 S3 持久化同时进行，减少远端存储造成的首次播放等待；仅在上项开启且 TTS 实际使用 S3 时生效。</NText>
+              </template>
+            </NFormItem>
+            <NText depth="3">WAV 可使用低延迟本地首播；MP3 自动沿用原有文件播放链路。</NText>
           </NCollapseItem>
 
           <NCollapseItem name="providers">
@@ -604,6 +627,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.speech-playback-option {
+  margin-bottom: 8px;
+}
+
 .admin-settings-scroll {
   max-height: 61vh;
   overflow-x: hidden;

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/binary"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -34,7 +34,8 @@ var ttsHub = struct {
 	epochs     map[string]uint32
 	messages   map[string]string
 	suppressed map[string]string
-}{clients: map[*ttsListener]bool{}, epochs: map[string]uint32{}, messages: map[string]string{}, suppressed: map[string]string{}}
+	localPCM   map[string]uint32
+}{clients: map[*ttsListener]bool{}, epochs: map[string]uint32{}, messages: map[string]string{}, suppressed: map[string]string{}, localPCM: map[string]uint32{}}
 
 func ttsWSUpgrade(c *fiber.Ctx) error {
 	if !ttsOriginMatchesHost(c.Get("Origin"), string(c.Context().Request.Header.Host())) {
@@ -144,7 +145,7 @@ func ttsSend(l *ttsListener, f ttsFrame) bool {
 }
 
 // Reports whether the lane must wait for the playback timeline of this file.
-// After a realtime stream (streamed) the stream already paced the lane: the
+// After a PCM stream (streamed) the service owns any remaining lane wait: the
 // archive is only announced, in file mode, so that connections which did not
 // finish it can play the file. Whether a browser actually heard an utterance
 // is known only to that browser, which drops archives it already played.
@@ -244,49 +245,7 @@ func ttsBroadcastReady(j model.TTSJob, media ttsprovider.Media, path string, str
 		if _, err := f.Seek(int64(media.DataOffset), io.SeekStart); err != nil {
 			return
 		}
-		reader := io.LimitReader(f, int64(media.DataSize))
-		chunkSize := media.SampleRate * media.ChannelCount * 2 / 10
-		buf := make([]byte, chunkSize)
-		seq := uint32(0)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			ttsHub.Lock()
-			current := ttsHub.epochs[j.ChannelID]
-			ttsHub.Unlock()
-			if current != epoch {
-				return
-			}
-			n, err := reader.Read(buf)
-			if n > 0 {
-				packet := make([]byte, 8+n)
-				binary.BigEndian.PutUint32(packet, epoch)
-				binary.BigEndian.PutUint32(packet[4:], seq)
-				copy(packet[8:], buf[:n])
-				seq++
-				next := eligible[:0]
-				for _, l := range eligible {
-					if _, e := ttsReadMessage(l.user, j.MessageID); e != nil {
-						ttsSend(l, ttsJSON(fiber.Map{"type": "cancel", "epoch": epoch}))
-						continue
-					}
-					if ttsSend(l, ttsFrame{kind: websocket.BinaryMessage, data: packet}) {
-						next = append(next, l)
-					} else { // Drain only this connection, then mark it desynchronized.
-						ttsDrain(l)
-						ttsSend(l, ttsJSON(fiber.Map{"type": "desynced", "epoch": epoch}))
-					}
-				}
-				eligible = next
-			}
-			if err != nil {
-				break
-			}
-			<-ticker.C
-		}
-		for _, l := range eligible {
-			ttsSend(l, ttsJSON(fiber.Map{"type": "end", "epoch": epoch}))
-		}
+		ttsPumpLocalPCM(context.Background(), j, media, f, epoch, eligible, false)
 	}()
 	return true
 }
@@ -306,6 +265,7 @@ func ttsBroadcastCancel(messageID string) {
 	defer ttsHub.Unlock()
 	for ch, msg := range ttsHub.messages {
 		if msg == messageID {
+			delete(ttsHub.localPCM, ch)
 			// Preserve skip/stop across the short realtime-end -> ready gap.
 			ttsHub.suppressed[ch] = messageID
 			epoch := ttsHub.epochs[ch]

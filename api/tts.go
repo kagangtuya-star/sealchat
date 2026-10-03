@@ -237,7 +237,7 @@ func BindTTSRoutes(auth fiber.Router) {
 		c.Set("Cache-Control", "private, no-store")
 		return c.JSON(items)
 	})
-	service.TTSSetCallbacks(ttsBroadcastReady, ttsBroadcastCancel, ttsBroadcastLive)
+	service.TTSSetCallbacks(ttsBroadcastReady, ttsBroadcastCancel, ttsBroadcastLive, ttsBroadcastLocalPlayback)
 }
 
 func BindTTSAdminRoutes(authAdmin fiber.Router) {

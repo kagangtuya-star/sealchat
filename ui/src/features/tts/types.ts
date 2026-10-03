@@ -135,6 +135,7 @@ export interface SpeechProvider {
   accountVoiceLimit: number | null; revision: number
 }
 export interface SpeechConfig {
+  localFirstPlayback: boolean; parallelArchive: boolean
   enabled: boolean; providers: SpeechProvider[]; defaultProvider: string; defaultVoice: string
   worldAccessMode: 'all' | 'whitelist'; worldActivationCode: string
   format: string; quotaDefault: SpeechQuota['policy']; defaultSlots: number
