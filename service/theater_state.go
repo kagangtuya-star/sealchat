@@ -29,6 +29,8 @@ var theaterSceneStateAllowedKeys = map[string]struct{}{
 	"sceneFolders":  {},
 	"resources":     {},
 	"ccfolia":       {},
+	// Scene-level theater sequencer configuration (frontend-normalized).
+	"theaterSequences": {},
 }
 
 func isTheaterSceneStateKeyAllowed(key string) bool {

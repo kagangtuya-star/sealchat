@@ -43,6 +43,7 @@ import {
   Search,
   Select,
   Settings,
+  Sitemap,
   Stars,
   Stack2,
   Trash,
@@ -107,7 +108,7 @@ import {
   type StageSurfaceStyle,
   type StageSurfaceTarget,
 } from '../shared/stage-types'
-import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
+import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult, type StageSequenceTriggeredPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
 import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
@@ -160,6 +161,8 @@ import TheaterPresentationPreview from '@/components/theater-presentation/Theate
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
 import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
+import { TheaterSequenceRuntime } from '../sequences/theater-sequence-runtime'
+import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
 import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
 import {
   emptyTheaterPanelOrganizer,
@@ -222,6 +225,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   floatingWindowAction: [action: TheaterFloatingWindowAction]
   actionTriggered: [payload: StageActionTriggeredPayload]
+  sequenceTriggered: [payload: StageSequenceTriggeredPayload]
   pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
@@ -294,6 +298,7 @@ let imageAnnotationTimer: number | null = null
 let imageAnnotationPendingObjectId = ''
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
+const sequencePanelOpen = ref(false)
 const overlayPanelOpen = ref(false)
 const floatingPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
@@ -325,6 +330,7 @@ const portraitPerformanceHidden = ref(initialTheaterPerformanceVisibility.portra
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
+const TheaterSequencePanel = defineAsyncComponent(() => import('../sequences/TheaterSequencePanel.vue'))
 const TheaterAssetManager = defineAsyncComponent(() => import('../effects/TheaterAssetManager.vue'))
 const TheaterFloatingManagerPanel = defineAsyncComponent(() => import('./TheaterFloatingManagerPanel.vue'))
 const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
@@ -1025,6 +1031,20 @@ const effectRuntime = new TheaterEffectRuntime({
   },
 })
 const unsubscribeEffectRuntime = effectRuntime.subscribe((playbacks) => { effectPlaybacks.value = playbacks })
+const activeTheaterSequences = computed(() => theaterSequencesFromServerState(props.store.state.liveState.serverState))
+const sequenceClickObjectIds = computed(() => new Set(activeTheaterSequences.value
+  .filter((sequence) => sequence.enabled)
+  .flatMap((sequence) => sequence.triggers.flatMap((trigger) => (
+    trigger.type === 'component.click' ? [trigger.objectId] : []
+  )))))
+const emitSequenceTriggered = (sequenceId: string, triggerId: string) => {
+  emit('sequenceTriggered', { sequenceId, triggerId, executionId: actionId() })
+}
+const sequenceRuntime = new TheaterSequenceRuntime({
+  dialogueRuntime: props.dialogueRuntime,
+  getSequences: () => activeTheaterSequences.value,
+  onTrigger: emitSequenceTriggered,
+})
 const theaterPopoverThemeOverrides = {
   color: 'color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent)',
   boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
@@ -1218,7 +1238,7 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && object.visible
   && object.interactive
   && !(iframeInteractionDisabled.value && object.type === 'iframe')
-  && hasConfiguredObjectAction(object)
+  && (hasConfiguredObjectAction(object) || sequenceClickObjectIds.value.has(object.id))
   && isStageActionTarget(object.type),
 )
 
@@ -1351,7 +1371,7 @@ const saveImageAnnotation = (annotation: StageImageAnnotation) => {
   closeImageAnnotationEditor()
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset' | 'floating'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'sequence' | 'overlay' | 'asset' | 'floating'
 
 const canOpenPanel = (id: PanelId) => {
   if (id === 'floating') return true
@@ -2122,6 +2142,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   inspector: { width: 240, height: 240 },
   layer: { width: 280, height: 220 },
   effect: { width: 320, height: 320 },
+  sequence: { width: 300, height: 260 },
   overlay: { width: 520, height: 360 },
   floating: { width: 280, height: 220 },
   asset: { width: 320, height: 280 },
@@ -2143,7 +2164,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'floating' ? 340 : id === 'effect' || id === 'asset' ? 340 : 300
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'floating' ? 340 : id === 'effect' || id === 'sequence' || id === 'asset' ? 340 : 300
   const availableFloatingHeight = Math.max(1, workspaceHeight - panelTopInset - 12)
   const height = id === 'floating'
     ? Math.min(340, Math.max(240, Math.round(availableFloatingHeight * 0.5)))
@@ -2247,6 +2268,7 @@ const togglePanel = (id: PanelId) => {
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
   else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
+  else if (id === 'sequence') sequencePanelOpen.value = !sequencePanelOpen.value
   else if (id === 'overlay') overlayPanelOpen.value = !overlayPanelOpen.value
   else if (id === 'floating') floatingPanelOpen.value = !floatingPanelOpen.value
   else assetPanelOpen.value = !assetPanelOpen.value
@@ -2259,9 +2281,11 @@ const togglePanel = (id: PanelId) => {
         ? layerPanelOpen.value
         : id === 'effect'
           ? effectPanelOpen.value
-          : id === 'overlay'
-            ? overlayPanelOpen.value
-            : id === 'floating' ? floatingPanelOpen.value : assetPanelOpen.value
+          : id === 'sequence'
+            ? sequencePanelOpen.value
+            : id === 'overlay'
+              ? overlayPanelOpen.value
+              : id === 'floating' ? floatingPanelOpen.value : assetPanelOpen.value
   if (isOpen) bringPanelToFront(id)
 }
 
@@ -2275,6 +2299,7 @@ const resetWorkspaceLayout = async () => {
     ['inspector', inspectorPanelOpen.value],
     ['layer', layerPanelOpen.value],
     ['effect', effectPanelOpen.value],
+    ['sequence', sequencePanelOpen.value],
     ['overlay', overlayPanelOpen.value],
     ['asset', assetPanelOpen.value],
     ['floating', floatingPanelOpen.value],
@@ -2317,7 +2342,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'sequence', 'overlay', 'asset', 'floating']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -4058,6 +4083,7 @@ const moveActionByKeyboard = (actionId: string, offset: -1 | 1) => {
 
 const triggerObjectActions = (object: StageObject) => {
   if (!canInteractObject(object)) return
+  sequenceRuntime.notifyComponentClick(object.id)
   const actions = object.actions.flatMap((action) => {
     const parsed = stageActionSchema.safeParse(action)
     return parsed.success ? [parsed.data] : []
@@ -8113,6 +8139,11 @@ watch(() => props.store.state.persistentObjects, () => {
   else syncObjects()
   effectRuntime.reconcile()
 }, { deep: true })
+watch(() => [props.store.state.activeSceneId, activeTheaterSequences.value] as const, ([sceneId]) => {
+  sequenceRuntime.reconcile(sceneId)
+}, { immediate: true })
+// Click-triggered sequences make otherwise action-less components hit-testable.
+watch(sequenceClickObjectIds, () => syncObjects())
 watch(() => props.store.state.camera, () => {
   applyCamera()
   scheduleGridSync()
@@ -8145,6 +8176,7 @@ watch(() => [props.syncReady, ...props.permissions], () => {
   if (!canOpenPanel('inspector')) inspectorPanelOpen.value = false
   if (!canOpenPanel('layer')) layerPanelOpen.value = false
   if (!canOpenPanel('effect')) effectPanelOpen.value = false
+  if (!canOpenPanel('sequence')) sequencePanelOpen.value = false
   if (!canOpenPanel('overlay')) overlayPanelOpen.value = false
   if (!canOpenPanel('asset')) {
     assetPanelOpen.value = false
@@ -8177,9 +8209,9 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   else syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, overlayPanelOpen, assetPanelOpen, floatingPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, sequencePanelOpen, overlayPanelOpen, assetPanelOpen, floatingPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'sequence', 'overlay', 'asset', 'floating']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
@@ -8226,6 +8258,7 @@ onBeforeUnmount(() => {
   stopPackagePolling()
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
+  sequenceRuntime.dispose()
   theaterAudioSequences.clear()
   scenePreloadPulseTimers.forEach((timer) => window.clearTimeout(timer))
   scenePreloadPulseTimers.clear()
@@ -8358,6 +8391,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           特效层
+        </n-tooltip>
+        <n-tooltip v-if="canEditAllObjects" trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': sequencePanelOpen }" aria-label="切换序列器面板" @click="togglePanel('sequence')">
+              <template #icon><n-icon><Sitemap /></n-icon></template>
+            </n-button>
+          </template>
+          序列器
         </n-tooltip>
         <n-tooltip v-if="canEditAllObjects" trigger="hover">
           <template #trigger>
@@ -9715,6 +9756,22 @@ onBeforeUnmount(() => {
           @collapse-folder="setTheaterPanelFolderCollapsed"
           @reorder-folders="folderIds => reorderTheaterPanelFolders('effect', folderIds)"
           @reorder-items="(folderId, targetIds) => reorderTheaterPanelItems('effect', folderId, targetIds)"
+        />
+      </aside>
+
+      <aside v-if="sequencePanelOpen && canOpenPanel('sequence')" class="theater-floating-panel" data-panel-id="sequence" :style="panelStyle('sequence')" @pointerdown.capture="bringPanelToFront('sequence')" @focusin="bringPanelToFront('sequence')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('sequence', $event)">
+          <span>序列器</span>
+          <div class="theater-panel-heading__actions">
+            <small>{{ activeTheaterSequences.length }}</small>
+            <n-button class="theater-panel-close" text size="tiny" aria-label="关闭序列器面板" @click="sequencePanelOpen = false"><n-icon><X /></n-icon></n-button>
+          </div>
+        </div>
+        <TheaterSequencePanel
+          :store="store"
+          :can-edit="canEditAllObjects"
+          :can-test="canTriggerActions"
+          @test="emitSequenceTriggered($event, 'manual')"
         />
       </aside>
 

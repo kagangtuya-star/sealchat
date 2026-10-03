@@ -501,6 +501,7 @@ export interface TheaterStageStore {
   updateSceneSwitchAudio: (sceneId: string, audio: StageAudioRef | null) => boolean
   updateSceneMusicSnapshot: (sceneId: string, snapshot: StageMusicSnapshot | null) => boolean
   updateSceneOverlays: (sceneId: string, overlays: StageSceneOverlayBinding[]) => boolean
+  updateSceneServerStateExtension: (sceneId: string, key: string, value: unknown) => boolean
   createSceneFolder: (name: string) => SceneFolder | null
   renameSceneFolder: (folderId: string, name: string) => boolean
   deleteSceneFolder: (folderId: string) => boolean
@@ -811,6 +812,18 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (JSON.stringify(scene.state.sceneOverlays) === JSON.stringify(normalized)) return false
     scene.state.sceneOverlays = normalized
     if (sceneId === state.activeSceneId) state.liveState.sceneOverlays = clone(normalized)
+    return true
+  }
+
+  // Callers normalize extension values; unknown serverState keys are preserved.
+  const updateSceneServerStateExtension = (sceneId: string, key: string, value: unknown) => {
+    const scene = state.scenes[sceneId]
+    if (!scene || !key) return false
+    if (JSON.stringify(scene.state.serverState?.[key]) === JSON.stringify(value)) return false
+    scene.state.serverState = { ...scene.state.serverState, [key]: clone(value) }
+    if (sceneId === state.activeSceneId) {
+      state.liveState.serverState = { ...state.liveState.serverState, [key]: clone(value) }
+    }
     return true
   }
 
@@ -1643,6 +1656,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     updateSceneSwitchAudio,
     updateSceneMusicSnapshot,
     updateSceneOverlays,
+    updateSceneServerStateExtension,
     createSceneFolder,
     renameSceneFolder,
     deleteSceneFolder,

@@ -1586,6 +1586,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :read-clue-options="readClueOptions"
           :read-clue-access="readClueAccess"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
+          @sequence-triggered="theaterBridge?.triggerStageSequence($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @scene-switch-requested="requestSceneSwitch"

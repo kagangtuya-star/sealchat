@@ -147,7 +147,7 @@ const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Nu
 // These state extensions are part of the server contract but are not rendered
 // directly by the stage store. Keep them explicitly; never round-trip unknown
 // top-level keys from persisted state.
-const sceneStateExtensionKeys = ['resources', 'ccfolia'] as const
+const sceneStateExtensionKeys = ['resources', 'ccfolia', 'theaterSequences'] as const
 const sceneStateExtensionsFromRaw = (raw: JsonObject): JsonObject => Object.fromEntries(
   sceneStateExtensionKeys.flatMap((key) => (
     Object.prototype.hasOwnProperty.call(raw, key) ? [[key, clone(raw[key])]] : []

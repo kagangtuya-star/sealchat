@@ -242,14 +242,10 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
   return null
 }
 
-export const normalizeStageSequenceAction = (value: unknown): StageSequenceAction | null => {
-  if (!value || typeof value !== 'object') return null
-  const action = value as { id?: unknown, type?: unknown, schedule?: unknown, payload?: Record<string, unknown> }
-  const actionId = typeof action.id === 'string' ? action.id.trim() : ''
-  if (!actionId || action.type !== 'action.sequence' || !action.payload || action.payload.version !== 1) return null
-  const rawSteps = Array.isArray(action.payload.steps) ? action.payload.steps : []
+export const normalizeStageSequenceSteps = (value: unknown): StageSequenceStep[] => {
+  const rawSteps = Array.isArray(value) ? value : []
   const seen = new Set<string>()
-  const steps = rawSteps.reduce<StageSequenceStep[]>((result, raw) => {
+  return rawSteps.reduce<StageSequenceStep[]>((result, raw) => {
     if (result.length >= STAGE_SEQUENCE_MAX_STEPS || !raw || typeof raw !== 'object') return result
     const step = raw as { id?: unknown, sceneId?: unknown, timing?: unknown, action?: unknown }
     const stepId = typeof step.id === 'string' ? step.id.trim() : ''
@@ -270,6 +266,14 @@ export const normalizeStageSequenceAction = (value: unknown): StageSequenceActio
     })
     return result
   }, [])
+}
+
+export const normalizeStageSequenceAction = (value: unknown): StageSequenceAction | null => {
+  if (!value || typeof value !== 'object') return null
+  const action = value as { id?: unknown, type?: unknown, schedule?: unknown, payload?: Record<string, unknown> }
+  const actionId = typeof action.id === 'string' ? action.id.trim() : ''
+  if (!actionId || action.type !== 'action.sequence' || !action.payload || action.payload.version !== 1) return null
+  const steps = normalizeStageSequenceSteps(action.payload.steps)
   return {
     id: actionId,
     type: 'action.sequence',

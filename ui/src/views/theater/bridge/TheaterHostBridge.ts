@@ -2,6 +2,7 @@ import type { TheaterStageStore } from '../stage/StageStore'
 import { isStageActionTarget, normalizeStageActionSchedule } from '../shared/stage-types'
 import { sequenceStepAction } from '../shared/stage-actions'
 import { runStageActionSequence, STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
+import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
@@ -32,6 +33,7 @@ import {
   type SelectCharacterVariantPayload,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageSequenceTriggeredPayload,
   type TheaterBridgeContext,
   type TheaterDialogueMessagePayload,
   type TheaterDialogueMessageRemovedPayload,
@@ -289,6 +291,15 @@ export class TheaterHostBridge {
     }
   }
 
+  triggerStageSequence(payload: StageSequenceTriggeredPayload) {
+    if (!this.started) return
+    try {
+      this.stageClient.emit('host', 'stage.sequence.triggered', payload)
+    } catch (error) {
+      this.debug('invalid stage sequence rejected', error)
+    }
+  }
+
   async sendChatMessage(payload: ChatMessageSendPayload) {
     if (!this.started) {
       throw new TheaterBridgeRequestError('BRIDGE_NOT_READY', 'Theater bridge is not ready')
@@ -484,6 +495,8 @@ export class TheaterHostBridge {
     if (message.target === 'host') {
       if (message.kind === 'event' && message.name === 'stage.action.triggered') {
         void this.handleStageActionTriggered(message.payload as StageActionTriggeredPayload)
+      } else if (message.kind === 'event' && message.name === 'stage.sequence.triggered') {
+        void this.executeTheaterSequence(message.payload as StageSequenceTriggeredPayload)
       }
       return
     }
@@ -661,6 +674,60 @@ export class TheaterHostBridge {
         }
         await this.executeStageAction(atomicAction)
       })
+    } finally {
+      this.runningSequenceActions.delete(key)
+    }
+  }
+
+  private async executeTheaterSequence(payload: StageSequenceTriggeredPayload) {
+    if (!this.options.permissions.includes('stage.action.trigger')) {
+      this.debug('stage sequence permission denied', payload.sequenceId)
+      return
+    }
+    // Execute only the saved active-scene configuration, never client-provided steps.
+    const sequence = theaterSequencesFromServerState(this.options.stageStore.state.liveState.serverState)
+      .find((item) => item.id === payload.sequenceId)
+    if (!sequence || !sequence.enabled || !sequence.steps.length) {
+      this.debug('stage sequence rejected', payload.sequenceId)
+      return
+    }
+    const key = `theater-sequence:${sequence.id}`
+    if (this.runningSequenceActions.has(key)) return
+    const generation = this.sequenceGeneration
+    let expectedSceneId = this.options.stageStore.state.activeSceneId
+    this.runningSequenceActions.add(key)
+    try {
+      for (let loopIndex = 0; loopIndex < sequence.loopCount; loopIndex += 1) {
+        if (
+          !this.started || generation !== this.sequenceGeneration
+          || this.options.stageStore.state.activeSceneId !== expectedSceneId
+        ) return
+        const result = await runStageActionSequence(sequence.steps, async (step) => {
+          if (
+            !this.started || generation !== this.sequenceGeneration
+            || this.options.stageStore.state.activeSceneId !== expectedSceneId
+          ) return STAGE_ACTION_CANCELLED
+          // Every client evaluates triggers; clients without scene switching rely on scene sync.
+          if (step.action.type === 'scene.apply' && !this.options.permissions.includes('stage.scene.switch')) {
+            expectedSceneId = step.action.payload.sceneId
+            return
+          }
+          const execution = this.executeStageAction({
+            ...sequenceStepAction(step),
+            id: `${payload.executionId}:${loopIndex}:${step.id}`,
+          })
+          if (
+            step.action.type === 'scene.apply'
+            && this.options.stageStore.state.activeSceneId === step.action.payload.sceneId
+          ) {
+            expectedSceneId = step.action.payload.sceneId
+          }
+          await execution
+        })
+        if (result === STAGE_ACTION_CANCELLED) return
+      }
+    } catch (error) {
+      this.debug('stage sequence failed', error)
     } finally {
       this.runningSequenceActions.delete(key)
     }

@@ -684,6 +684,13 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
   }).optional(),
 })
 
+// Only identifiers cross the bridge; the host re-reads the saved sequence.
+export const stageSequenceTriggeredPayloadSchema = z.strictObject({
+  sequenceId: nonEmptyIdSchema,
+  triggerId: nonEmptyIdSchema,
+  executionId: nonEmptyIdSchema,
+})
+
 export const chatMessageSendPayloadSchema = z.strictObject({
   content: z.string().min(1).max(10_000),
   channelId: nonEmptyIdSchema.optional(),
@@ -815,6 +822,7 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['command:chat.clue.access.read', chatClueAccessReadPayloadSchema],
   ['result:chat.clue.access.read.result', chatClueAccessReadResultSchema],
   ['event:stage.action.triggered', stageActionTriggeredPayloadSchema],
+  ['event:stage.sequence.triggered', stageSequenceTriggeredPayloadSchema],
   ['command:chat.message.send', chatMessageSendPayloadSchema],
   ['result:chat.message.send.result', chatMessageSendResultSchema],
   ['command:chat.composer.insert', chatComposerInsertPayloadSchema],
@@ -856,6 +864,7 @@ export type ChatClueOptionsReadResult = z.infer<typeof chatClueOptionsReadResult
 export type ChatClueAccessReadResult = z.infer<typeof chatClueAccessReadResultSchema>
 export type StageAction = z.infer<typeof stageActionSchema>
 export type StageActionTriggeredPayload = z.infer<typeof stageActionTriggeredPayloadSchema>
+export type StageSequenceTriggeredPayload = z.infer<typeof stageSequenceTriggeredPayloadSchema>
 export type ChatMessageSendPayload = z.infer<typeof chatMessageSendPayloadSchema>
 export type ChatMessageSendResult = z.infer<typeof chatMessageSendResultSchema>
 export type ChatComposerInsertPayload = z.infer<typeof chatComposerInsertPayloadSchema>
