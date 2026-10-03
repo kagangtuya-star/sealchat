@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NEmpty, NIcon, NInput, NPopover, NSpace, useDialog, useMessage } from 'naive-ui'
-import { Check, ChevronLeft, Columns, Copy, Edit, ExternalLink, FileText, Folder, GridDots, GripVertical, LayoutBoard, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
+import { Check, ChevronLeft, Columns, Copy, Edit, ExternalLink, EyeOff, FileText, Folder, GridDots, GripVertical, LayoutBoard, List, MessagePlus, Photo, Pin, Pinned, PictureInPicture, Plus, Presentation, Search, Star, Trash, World, X } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
@@ -377,6 +377,36 @@ function batchPresent() {
         message.success(`已展示 ${items.length} 项`)
       } catch (error: any) {
         message.error(error?.response?.data?.message || '展示失败')
+      }
+    },
+  })
+}
+function batchHide() {
+  if (!props.canManage || !selectedItems.value.length) return
+  const worldId = props.worldId
+  const items = [...selectedItems.value]
+  const publishedItems = items.filter(item => item.status === 'published')
+  if (!publishedItems.length) {
+    message.info('所选线索均为未展示状态')
+    return
+  }
+  dialog.warning({
+    title: '批量隐藏线索',
+    content: `确定隐藏已选线索吗？其中 ${publishedItems.length} 项将恢复为未展示状态。`,
+    positiveText: '隐藏',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+        for (const item of publishedItems) {
+          if (props.worldId !== worldId) { message.error('世界已切换，请重新选择线索'); return }
+          const saved = await store.unpublish(worldId, item.id, item.publishSeq)
+          if (editingClue.value?.id === saved.id) editingClue.value = saved
+        }
+        clearSelectedClues()
+        message.success(`已隐藏 ${publishedItems.length} 项`)
+      } catch (error: any) {
+        message.error(error?.response?.data?.message || '隐藏失败')
       }
     },
   })
@@ -866,6 +896,7 @@ defineExpose({ toggleVisibility, openBoard })
       </div>
       <div class="clue-box__batch-actions">
         <NButton v-if="canManage" quaternary size="small" :disabled="!selectedCount" @click="batchPresent"><template #icon><NIcon><Presentation /></NIcon></template>展示</NButton>
+        <NButton v-if="canManage" quaternary size="small" :disabled="!selectedCount" @click="batchHide"><template #icon><NIcon><EyeOff /></NIcon></template>隐藏</NButton>
         <NButton v-if="canManage" quaternary size="small" type="error" :disabled="!selectedCount" @click="batchDelete"><template #icon><NIcon><Trash /></NIcon></template>删除</NButton>
         <NPopover v-if="canManageCurrentScope" v-model:show="folderPopoverVisible" trigger="click" placement="top-end">
           <template #trigger><NButton quaternary size="small" :disabled="!selectedCount"><template #icon><NIcon><Folder /></NIcon></template>移动文件夹</NButton></template>
