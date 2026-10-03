@@ -76,8 +76,6 @@ func (m *Manager) Status() Status {
 	if m.RemoteInitError() != nil {
 		// SDK errors may contain URLs or credentials; never serialize the raw error.
 		status.LastError = "S3 初始化失败，当前回退到本地；请检查配置并测试连接"
-	} else if s3.TTSEnabled && m.remote != nil && !m.remote.privateReadVerified {
-		status.LastError = "TTS 对象存储未启用：无法确认 Bucket/CDN 禁止匿名读取，当前 TTS 回退到本地"
 	}
 	return status
 }
@@ -95,7 +93,9 @@ func NewManager(cfg utils.StorageConfig) (*Manager, error) {
 	}
 	if cfg.S3.Enabled {
 		uploadTimeout := time.Duration(cfg.UploadTimeoutSeconds) * time.Second
-		if remote, err := newS3Backend(cfg.S3, uploadTimeout); err != nil {
+		backendCfg := cfg.S3
+		backendCfg.TTSEnabled = false
+		if remote, err := newS3Backend(backendCfg, uploadTimeout); err != nil {
 			mgr.remoteInitErr = err
 			log.Printf("[storage] 初始化 S3 失败，回退到本地：%v", err)
 		} else {
@@ -163,9 +163,6 @@ func (m *Manager) ActiveBackendForAudio() BackendType {
 }
 
 func (m *Manager) ActiveBackendForTTS() BackendType {
-	if m == nil || m.remote == nil || !m.remote.privateReadVerified {
-		return BackendLocal
-	}
 	return m.activeBackendWithToggle(func(s3 utils.S3StorageConfig) bool {
 		return s3.TTSEnabled
 	})

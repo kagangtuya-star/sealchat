@@ -67,5 +67,6 @@ func GetStorageStatus() storage.Status {
 }
 
 func TestStorageS3(cfg utils.StorageConfig) error {
+	cfg.S3.TTSEnabled = false
 	return storage.TestS3(cfg)
 }
