@@ -4,11 +4,15 @@
 
 本文件适用于 `ui/src/views/theater/stage/`，并叠加父级小剧场指引和前端指引。
 
-## Teleport 与层级
+## Teleport、焦点与层级
+
+先遵循父级 `ui/src/views/theater/AGENTS.md` 的“嵌套弹层、焦点与 Teleport”规则。本目录再补充：
 
 - `Teleport to="body"` 的内容不会继承编辑器 CSS 变量。每个 Teleport 根节点都要定义所需变量（例如两个 modal 根节点），并复用同一套主题值。
-- Naive UI 的 select/dropdown 应沿用 `TheaterActionSequenceEditor.vue` 的 `menu-props.class` 写法，并保留专用 class（例如 `theater-clue-select-menu`）。针对实际菜单类（如 `.n-select-menu.n-base-select-menu.<feature-class>`）设置样式，只提升该功能的 follower；不要修改全局 select。
+- 舞台浮动面板中再打开 `n-modal` / picker / editor 时，必须检查其内部 Select/Dropdown follower 是否 Teleport 到该 modal focus scope 外。如果会，优先沿用小剧场已有的嵌套编辑器模式：保持 follower 专用 class，并在确有焦点竞争时为子 modal 显式设置 `:auto-focus="false" :trap-focus="false"`；不要修单个输入框。
+- Naive UI 的 select/dropdown 应沿用 `TheaterActionSequenceEditor.vue` 的 `menu-props.class` 写法，并保留专用 class（例如 `theater-clue-select-menu`、`theater-sequence-select-menu`）。针对实际菜单类（如 `.n-select-menu.n-base-select-menu.<feature-class>`）设置样式，只提升该功能的 follower；不要修改全局 select。
 - 应在 modal/follower 层修复 stacking context。禁止使用 `top`、`margin`、`translate` 或 `transform` 人工伪造弹层位置。
+- 如果现象是“输入框能点中但无法持续输入”或“下拉能展开但无法稳定搜索/选择”，先检查 focus trap / Teleport 关系，再检查 z-index；不要先改 `v-model` 或加事件拦截。
 
 ## 异步 UI 与生命周期
 
