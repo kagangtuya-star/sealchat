@@ -1808,9 +1808,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       console.warn('[CharacterCard] Failed to load card avatar bindings for snapshot', error);
     }
     try {
+      await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
       await templateStore.ensureBindingsLoaded(channelId);
     } catch (error) {
-      console.warn('[CharacterCard] Failed to load character template bindings for snapshot', error);
+      console.warn('[CharacterCard] Failed to load character templates for snapshot', error);
     }
     const identity = chatStore.getActiveIdentity(channelId);
     if (!identity?.id) return null;
@@ -1828,6 +1829,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
     const cardId = getActiveCardId(channelId);
     const templateBinding = cardId ? templateStore.getBinding(channelId, cardId) : null;
+    const templateText = cardId && active
+      ? templateStore.resolveCardTemplate(channelId, cardId, active.type, active.templateText || '')
+      : active?.templateText || '';
     const platformTemplateRef = templateBinding?.mode === 'managed' && isPlatformCharacterCardTemplateRef(templateBinding.templateId)
       ? templateBinding.templateId
       : '';
@@ -1871,7 +1875,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
             sheetType: active.type,
             avatarAttachmentId: cardAvatarAttachmentId,
             attrs: active.attrs || {},
-            ...(active.templateText ? { templateText: active.templateText } : {}),
+            ...(templateText ? { templateText } : {}),
             ...(platformTemplateRef ? { platformTemplateRef } : {}),
           },
         } : {}),
