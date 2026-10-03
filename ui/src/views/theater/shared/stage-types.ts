@@ -271,6 +271,7 @@ export type StageSequenceTiming =
 
 export interface StageSequenceStep {
   id: string
+  // scene.apply uses the destination scene; object/effect actions use the target owning scene; null means scene-independent/cross-scene.
   sceneId: string | null
   timing: StageSequenceTiming
   action: StageAtomicActionDescriptor

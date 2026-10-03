@@ -76,42 +76,44 @@ const sequenceDropdownMenuProps = () => ({
   class: 'theater-sequence-select-menu',
 })
 const sceneOptions = computed(() => props.scenes.map((scene) => ({ label: scene.name, value: scene.id })))
-const allObjectOptions = computed(() => {
-  const values = new Map<string, { label: string, value: string }>()
-  props.scenes.forEach((scene) => Object.values(scene.state.sceneObjects).forEach((object) => {
-    if (object.type !== 'group') values.set(object.id, { label: `${object.name} · ${scene.name}`, value: object.id })
-  }))
-  Object.values(props.persistentObjects).forEach((object) => {
-    if (object.type !== 'group') values.set(object.id, { label: `${object.name} · 跨场景`, value: object.id })
-  })
-  return [...values.values()]
-})
-
 const objectOptions = (sceneId: string | null) => {
-  const scene = sceneId ? props.scenes.find((item) => item.id === sceneId) : null
-  const local = scene
+  if (!sceneId) {
+    return Object.values(props.persistentObjects)
+      .filter((object) => object.type !== 'group')
+      .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
+  }
+  const scene = props.scenes.find((item) => item.id === sceneId)
+  return scene
     ? Object.values(scene.state.sceneObjects)
       .filter((object) => object.type !== 'group')
       .map((object) => ({ label: object.name, value: object.id }))
-    : allObjectOptions.value
-  const fixed = Object.values(props.persistentObjects)
-    .filter((object) => object.type !== 'group')
-    .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
-  const values = new Map([...local, ...fixed].map((option) => [option.value, option]))
-  return [...values.values()]
+    : []
 }
 
 const effectOptions = (sceneId: string | null) => {
-  const scene = sceneId ? props.scenes.find((item) => item.id === sceneId) : null
-  const local = scene
+  if (!sceneId) {
+    return Object.values(props.persistentObjects)
+      .filter(isTheaterEffectObject)
+      .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
+  }
+  const scene = props.scenes.find((item) => item.id === sceneId)
+  return scene
     ? Object.values(scene.state.sceneObjects)
       .filter(isTheaterEffectObject)
       .map((object) => ({ label: object.name, value: object.id }))
     : []
-  const fixed = Object.values(props.persistentObjects)
-    .filter(isTheaterEffectObject)
-    .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
-  return [...new Map([...local, ...fixed].map((option) => [option.value, option])).values()]
+}
+
+const targetSceneOptions = (type: StageAtomicAction['type']) => {
+  const persistentOptions = type === 'effect.play' ? effectOptions(null) : objectOptions(null)
+  return persistentOptions.length
+    ? [...sceneOptions.value, { label: '跨场景', value: '' }]
+    : sceneOptions.value
+}
+
+const objectSceneId = (objectId: string) => {
+  if (props.persistentObjects[objectId]) return null
+  return props.scenes.find((scene) => Boolean(scene.state.sceneObjects[objectId]))?.id || null
 }
 
 const firstObjectId = (sceneId: string | null) => objectOptions(sceneId)[0]?.value || ''
@@ -120,11 +122,16 @@ const addStep = async (type: StageAtomicAction['type']) => {
   const action = props.action
   if (!action || action.payload.steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
   const sceneId = props.activeSceneId || props.scenes[0]?.id || ''
-  const targetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : firstObjectId(sceneId)
-  if (type === 'effect.play' && !targetId) return
+  const localTargetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : firstObjectId(sceneId)
+  const persistentTargetId = type === 'effect.play' ? effectOptions(null)[0]?.value || '' : firstObjectId(null)
+  const targetId = localTargetId || persistentTargetId
+  if ((type === 'effect.play' || type === 'object.toggle') && !targetId) return
   if (type === 'clue.execute' && !props.readClueOptions) return
-  const step = createStageSequenceStep(sceneId, firstObjectId(sceneId))
+  const step = createStageSequenceStep(sceneId, targetId)
   step.action = createStageAtomicActionDescriptor(type, sceneId, targetId)
+  if (type === 'scene.apply') step.sceneId = sceneId || null
+  else if (type === 'effect.play' || type === 'object.toggle') step.sceneId = objectSceneId(targetId)
+  else step.sceneId = null
   if (type === 'clue.execute' && props.readClueOptions) {
     let result: ChatClueOptionsReadResult
     try {
@@ -184,25 +191,30 @@ const saveClue = (payload: Extract<StageAtomicAction, { type: 'clue.execute' }>[
 }
 
 const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
-  if (step.action.type === 'effect.play' && !effectOptions(sceneId || null).length) {
+  if (step.action.type === 'scene.apply') {
+    step.sceneId = sceneId || null
+    step.action.payload.sceneId = sceneId
     openSelectKey.value = ''
     return
   }
-  step.sceneId = sceneId || null
-  if (step.action.type === 'scene.apply') step.action.payload.sceneId = sceneId
+  if (step.action.type !== 'object.toggle' && step.action.type !== 'effect.play') {
+    step.sceneId = null
+    openSelectKey.value = ''
+    return
+  }
+  const targetSceneId = sceneId || null
+  const options = step.action.type === 'effect.play' ? effectOptions(targetSceneId) : objectOptions(targetSceneId)
+  if (!options.length) {
+    openSelectKey.value = ''
+    return
+  }
+  step.sceneId = targetSceneId
   if (step.action.type === 'object.toggle') {
-    const options = objectOptions(step.sceneId)
-    const objectId = step.action.payload.objectId
-    if (options.length && !options.some((option) => option.value === objectId)) {
+    if (!options.some((option) => option.value === step.action.payload.objectId)) {
       step.action.payload.objectId = options[0].value
     }
-  }
-  if (step.action.type === 'effect.play') {
-    const options = effectOptions(step.sceneId)
-    const effectId = step.action.payload.effectId
-    if (options.length && !options.some((option) => option.value === effectId)) {
-      step.action.payload.effectId = options[0].value
-    }
+  } else if (!options.some((option) => option.value === step.action.payload.effectId)) {
+    step.action.payload.effectId = options[0].value
   }
   openSelectKey.value = ''
 }
@@ -215,12 +227,14 @@ const updateTiming = (step: StageSequenceStep, mode: 'after' | 'delay' | 'sync')
 const updateStepObject = (step: StageSequenceStep, objectId: string) => {
   if (step.action.type !== 'object.toggle') return
   step.action.payload.objectId = objectId
+  step.sceneId = objectSceneId(objectId)
   openSelectKey.value = ''
 }
 
 const updateStepEffect = (step: StageSequenceStep, effectId: string) => {
   if (step.action.type !== 'effect.play') return
   step.action.payload.effectId = effectId
+  step.sceneId = objectSceneId(effectId)
   openSelectKey.value = ''
 }
 
@@ -327,7 +341,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="theater-sequence-grid theater-sequence-grid--heading">
-          <span></span><span>操作内容 / 组件</span><span>动作类型</span><span>场景</span><span>时延</span><span></span>
+          <span></span><span>操作内容 / 组件</span><span>动作类型</span><span>目标场景</span><span>时延</span><span></span>
         </div>
         <div class="theater-sequence-editor__rows">
           <div
@@ -389,15 +403,28 @@ onBeforeUnmount(() => {
             <span class="theater-sequence-row__type">{{ actionTypeLabel(step.action.type) }}</span>
 
             <n-select
-              :value="step.action.type === 'scene.apply' ? step.action.payload.sceneId : step.sceneId"
+              v-if="step.action.type === 'scene.apply'"
+              :value="step.action.payload.sceneId"
               :show="isSequenceSelectOpen('scene', step.id)"
               :options="sceneOptions"
               filterable
               :menu-props="sequenceSelectMenuProps"
-              placeholder="当前场景"
+              placeholder="切换到场景"
               @update:show="updateSelectShow('scene', step, $event)"
               @update:value="updateStepScene(step, $event)"
             />
+            <n-select
+              v-else-if="step.action.type === 'object.toggle' || step.action.type === 'effect.play'"
+              :value="step.sceneId || ''"
+              :show="isSequenceSelectOpen('scene', step.id)"
+              :options="targetSceneOptions(step.action.type)"
+              filterable
+              :menu-props="sequenceSelectMenuProps"
+              placeholder="目标所属场景"
+              @update:show="updateSelectShow('scene', step, $event)"
+              @update:value="updateStepScene(step, $event)"
+            />
+            <span v-else class="theater-sequence-row__operation">无场景约束</span>
 
             <div class="theater-sequence-row__timing">
               <n-select

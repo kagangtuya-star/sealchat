@@ -80,6 +80,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	}
 	var selected *theaterStoredAction
 	var selectedSceneID *string
+	selectedFromSequence := false
 	for index := range actions {
 		if actions[index].ID == command.ActionID {
 			selected = &actions[index]
@@ -90,6 +91,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		return nil, newTheaterError(TheaterErrorNotFound, "StageAction 不存在", 404, nil)
 	}
 	if selected.Type == "action.sequence" {
+		selectedFromSequence = true
 		stepID := strings.TrimSpace(command.StepID)
 		if stepID == "" {
 			return nil, theaterPayloadError("action.sequence 缺少 stepId")
@@ -143,8 +145,14 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		if target.Kind != "effect" || (target.SceneID != "" && target.SceneID != room.ActiveSceneID) {
 			return nil, newTheaterError(TheaterErrorNotFound, "可播放特效不存在", 404, nil)
 		}
-		if selectedSceneID != nil && strings.TrimSpace(*selectedSceneID) != "" && target.SceneID != "" && target.SceneID != strings.TrimSpace(*selectedSceneID) {
-			return nil, newTheaterError(TheaterErrorNotFound, "特效不属于动作声明场景", 404, nil)
+		if selectedFromSequence {
+			declaredSceneID := ""
+			if selectedSceneID != nil {
+				declaredSceneID = strings.TrimSpace(*selectedSceneID)
+			}
+			if target.SceneID != declaredSceneID {
+				return nil, newTheaterError(TheaterErrorNotFound, "特效不属于动作声明场景", 404, nil)
+			}
 		}
 		if !target.Visible {
 			return nil, newTheaterError(TheaterErrorNotFound, "特效未启用", 404, nil)
@@ -161,6 +169,19 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		}
 		if strings.TrimSpace(payload.ObjectID) == "" {
 			return nil, theaterPayloadError("object.toggle action 缺少 objectId")
+		}
+		target, err := loadTheaterObject(model.GetDB(), room.ID, strings.TrimSpace(payload.ObjectID))
+		if err != nil {
+			return nil, err
+		}
+		if selectedFromSequence {
+			declaredSceneID := ""
+			if selectedSceneID != nil {
+				declaredSceneID = strings.TrimSpace(*selectedSceneID)
+			}
+			if target.SceneID != declaredSceneID {
+				return nil, newTheaterError(TheaterErrorNotFound, "组件不属于动作声明场景", 404, nil)
+			}
 		}
 		raw, _ := json.Marshal(payload)
 		result, err := applyTheaterActionMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectToggle, Payload: raw}, meta)
