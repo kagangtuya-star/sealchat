@@ -469,7 +469,7 @@ const executeMigration = async (dryRun: boolean = false) => {
   }
 }
 
-const s3MigrationType = ref<'images' | 'audio' | 'theater'>('images')
+const s3MigrationType = ref<'images' | 'audio' | 'theater' | 'tts' | 'fonts'>('images')
 const s3MigrationTarget = ref<'s3' | 'local'>('s3')
 const s3MigrationStats = ref<{
   total: number
@@ -771,8 +771,6 @@ onMounted(async () => {
               <span v-if="option.key === 'theaterEnabled' && s3Config.theaterEnabled == null" class="s3-inherit-label">（继承附件/音频）</span>
             </n-checkbox>
           </div>
-          <div class="s3-hint">TTS 结果仅包含合成后的语音，不包含音色复刻源样本；沿用当前 Bucket/CDN 访问策略，与附件一致。</div>
-          <div class="s3-hint">模块开关仅影响新写入资源；当前存储迁移仅支持下方已有类型，历史 TTS 暂不自动迁移。</div>
           <div class="s3-test-row">
             <n-button size="small" :loading="s3Testing" @click="testS3Connection">测试连接</n-button>
             <n-text v-if="s3TestResult" :type="s3TestResult.success ? 'success' : 'error'">{{ s3TestResult.message }}</n-text>
@@ -788,6 +786,8 @@ onMounted(async () => {
                 { label: '图片附件', value: 'images' },
                 { label: '音频', value: 'audio' },
                 { label: '小剧场资源', value: 'theater' },
+                { label: 'TTS 结果', value: 'tts' },
+                { label: '字体资源', value: 'fonts' },
               ]"
               class="w-52"
             />

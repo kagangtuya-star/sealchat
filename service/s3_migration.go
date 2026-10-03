@@ -25,6 +25,8 @@ const (
 	S3MigrationKindImages  S3MigrationKind = "images"
 	S3MigrationKindAudio   S3MigrationKind = "audio"
 	S3MigrationKindTheater S3MigrationKind = "theater"
+	S3MigrationKindTTS     S3MigrationKind = "tts"
+	S3MigrationKindFonts   S3MigrationKind = "fonts"
 )
 
 var (
@@ -61,7 +63,7 @@ func GetS3MigrationPreview(kind S3MigrationKind) (*S3MigrationStats, error) {
 
 	switch kind {
 	case S3MigrationKindImages:
-		if err := db.Model(&model.AttachmentModel{}).
+		if err := model.ExcludeTTSAttachments(db.Model(&model.AttachmentModel{})).
 			Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id")).
 			Where("storage_type = ? OR storage_type = ?", "local", "").
 			Where("filename NOT LIKE ?", "%.gif").
@@ -121,7 +123,7 @@ func ExecuteS3Migration(kind S3MigrationKind, batchSize int, dryRun bool, delete
 
 func executeS3ImageMigration(db *gorm.DB, manager *storage.Manager, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
 	var attachments []*model.AttachmentModel
-	if err := db.Model(&model.AttachmentModel{}).
+	if err := model.ExcludeTTSAttachments(db.Model(&model.AttachmentModel{})).
 		Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id")).
 		Where("storage_type = ? OR storage_type = ?", "local", "").
 		Where("filename NOT LIKE ?", "%.gif").
@@ -204,7 +206,7 @@ func loadAttachmentGroup(db *gorm.DB, att *model.AttachmentModel) ([]*model.Atta
 	}
 	var group []*model.AttachmentModel
 	if strings.TrimSpace(att.ObjectKey) != "" {
-		if err := db.
+		if err := model.ExcludeTTSAttachments(db).
 			Where("storage_type = ? OR storage_type = ?", "local", "").
 			Where("object_key = ?", att.ObjectKey).
 			Order("created_at ASC").
@@ -216,7 +218,7 @@ func loadAttachmentGroup(db *gorm.DB, att *model.AttachmentModel) ([]*model.Atta
 	if len(att.Hash) == 0 || att.Size <= 0 {
 		return nil, errors.New("missing hash/size")
 	}
-	if err := db.
+	if err := model.ExcludeTTSAttachments(db).
 		Where("storage_type = ? OR storage_type = ?", "local", "").
 		Where("hash = ? AND size = ?", []byte(att.Hash), att.Size).
 		Order("created_at ASC").

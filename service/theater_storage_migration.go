@@ -27,6 +27,9 @@ func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTar
 	if target == "" {
 		target = StorageMigrationTargetS3
 	}
+	if kind == S3MigrationKindFonts {
+		return getPlatformFontStorageMigrationPreview(target)
+	}
 	if kind == S3MigrationKindAudio {
 		source, err := storageMigrationSource(target)
 		if err != nil {
@@ -40,7 +43,7 @@ func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTar
 		stats.Total = stats.Pending
 		return stats, nil
 	}
-	if kind != S3MigrationKindTheater {
+	if kind != S3MigrationKindTheater && kind != S3MigrationKindTTS {
 		if target != StorageMigrationTargetS3 {
 			return nil, fmt.Errorf("%w: %s 暂不支持迁移到本地存储", ErrS3MigrationBadRequest, kind)
 		}
@@ -52,6 +55,9 @@ func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTar
 	}
 	stats := &S3MigrationStats{}
 	query := applyStorageSourceFilter(theaterAttachmentScope(model.GetDB()), source)
+	if kind == S3MigrationKindTTS {
+		query = applyStorageSourceFilter(ttsAttachmentScope(model.GetDB()), source)
+	}
 	if err := query.Count(&stats.Pending).Error; err != nil {
 		return nil, err
 	}
@@ -63,10 +69,13 @@ func ExecuteStorageMigration(kind S3MigrationKind, target StorageMigrationTarget
 	if target == "" {
 		target = StorageMigrationTargetS3
 	}
+	if kind == S3MigrationKindFonts {
+		return executePlatformFontStorageMigration(target, batchSize, dryRun, deleteSource)
+	}
 	if kind == S3MigrationKindAudio {
 		return executeAudioStorageMigration(target, batchSize, dryRun, deleteSource)
 	}
-	if kind != S3MigrationKindTheater {
+	if kind != S3MigrationKindTheater && kind != S3MigrationKindTTS {
 		if target != StorageMigrationTargetS3 {
 			return nil, nil, fmt.Errorf("%w: %s 暂不支持迁移到本地存储", ErrS3MigrationBadRequest, kind)
 		}
@@ -95,6 +104,9 @@ func ExecuteStorageMigration(kind S3MigrationKind, target StorageMigrationTarget
 	}
 	var candidates []*model.AttachmentModel
 	query := applyStorageSourceFilter(theaterAttachmentScope(model.GetDB()), sourceType)
+	if kind == S3MigrationKindTTS {
+		query = applyStorageSourceFilter(ttsAttachmentScope(model.GetDB()), sourceType)
+	}
 	err = query.Order("created_at ASC").Limit(batchSize).Find(&candidates).Error
 	if err != nil {
 		return nil, nil, err
@@ -109,13 +121,17 @@ func ExecuteStorageMigration(kind S3MigrationKind, target StorageMigrationTarget
 			continue
 		}
 		processed[key] = struct{}{}
-		group, loadErr := loadStorageAttachmentGroup(model.GetDB(), candidate)
+		groupDB := model.GetDB()
+		if kind == S3MigrationKindTTS {
+			groupDB = ttsAttachmentScope(groupDB)
+		}
+		group, loadErr := loadStorageAttachmentGroup(groupDB, candidate)
 		if loadErr != nil {
 			results = append(results, S3MigrationItemResult{Kind: kind, PrimaryID: candidate.ID, Error: loadErr.Error()})
 			stats.Failed++
 			continue
 		}
-		result := migrateAttachmentGroup(context.Background(), model.GetDB(), manager, group, targetBackend, dryRun, deleteSource)
+		result := migrateAttachmentGroup(context.Background(), model.GetDB(), manager, group, targetBackend, dryRun, deleteSource, kind)
 		result.Kind = kind
 		results = append(results, result)
 		switch {
@@ -172,6 +188,12 @@ func theaterAttachmentScope(db *gorm.DB) *gorm.DB {
 	)
 }
 
+func ttsAttachmentScope(db *gorm.DB) *gorm.DB {
+	// The private resource prefix implies IsTTSManaged; samples and spool are excluded.
+	return db.Model(&model.AttachmentModel{}).
+		Where("parent_id_type = ? AND object_key LIKE ? AND deleted_at IS NULL", "job_audio", "tts-private/resources/%")
+}
+
 func loadStorageAttachmentGroup(db *gorm.DB, attachment *model.AttachmentModel) ([]*model.AttachmentModel, error) {
 	if db == nil || attachment == nil {
 		return nil, errors.New("invalid input")
@@ -192,7 +214,7 @@ func loadStorageAttachmentGroup(db *gorm.DB, attachment *model.AttachmentModel) 
 	return group, query.Order("created_at ASC").Find(&group).Error
 }
 
-func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.Manager, group []*model.AttachmentModel, target storage.BackendType, dryRun bool, deleteSource bool) S3MigrationItemResult {
+func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.Manager, group []*model.AttachmentModel, target storage.BackendType, dryRun bool, deleteSource bool, kind S3MigrationKind) S3MigrationItemResult {
 	primary := firstNonNilAttachment(group)
 	result := S3MigrationItemResult{PrimaryID: "", RecordCount: len(group)}
 	if primary == nil {
@@ -201,6 +223,12 @@ func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.M
 		return result
 	}
 	result.PrimaryID = primary.ID
+	isTTS := kind == S3MigrationKindTTS
+	if isTTS && (!primary.IsTTSManaged() || primary.ParentIDType != "job_audio" || primary.DeletedAt != nil || !strings.HasPrefix(primary.ObjectKey, "tts-private/resources/")) {
+		result.Skipped = true
+		result.SkipReason = "not a final TTS result"
+		return result
+	}
 	source := convertModelToBackend(primary.StorageType)
 	if source == target {
 		result.Skipped = true
@@ -208,7 +236,7 @@ func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.M
 		return result
 	}
 	objectKey := strings.TrimSpace(primary.ObjectKey)
-	if objectKey == "" || !strings.HasPrefix(objectKey, "attachments/") {
+	if !isTTS && (objectKey == "" || !strings.HasPrefix(objectKey, "attachments/")) {
 		createdAt := primary.CreatedAt
 		if createdAt.IsZero() {
 			createdAt = time.Now()
@@ -220,7 +248,25 @@ func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.M
 		result.Success = true
 		return result
 	}
-	tempPath, err := MaterializeAttachmentToTempFile(primary)
+	var tempPath string
+	var err error
+	if isTTS {
+		// Keep the public attachment materializer's private-resource guard intact.
+		var temp *os.File
+		temp, err = os.CreateTemp("", "sealchat-tts-migration-*")
+		if err == nil {
+			tempPath = temp.Name()
+			err = temp.Close()
+			if err == nil {
+				err = manager.DownloadToPath(ctx, source, primary.ObjectKey, tempPath)
+			}
+			if err != nil {
+				_ = os.Remove(tempPath)
+			}
+		}
+	} else {
+		tempPath, err = MaterializeAttachmentToTempFile(primary)
+	}
 	if err != nil {
 		result.Error = fmt.Sprintf("读取源文件失败: %v", err)
 		return result
@@ -262,9 +308,13 @@ func migrateAttachmentGroup(ctx context.Context, db *gorm.DB, manager *storage.M
 	}
 	if deleteSource && strings.TrimSpace(primary.ObjectKey) != "" {
 		var remaining int64
-		if err := db.Model(&model.AttachmentModel{}).
-			Where("storage_type = ? AND object_key = ?", primary.StorageType, primary.ObjectKey).
-			Count(&remaining).Error; err == nil && remaining == 0 {
+		remainingQuery := db.Model(&model.AttachmentModel{}).Where("object_key = ?", primary.ObjectKey)
+		if isTTS {
+			remainingQuery = applyStorageSourceFilter(remainingQuery, convertBackendToModel(source))
+		} else {
+			remainingQuery = remainingQuery.Where("storage_type = ?", primary.StorageType)
+		}
+		if err := remainingQuery.Count(&remaining).Error; err == nil && remaining == 0 {
 			_ = manager.Delete(ctx, source, primary.ObjectKey)
 		}
 	}
