@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance, watch } from 'vue'
-import { NIcon } from 'naive-ui'
+import { NIcon, useMessage } from 'naive-ui'
 import { calculateVisibleActionCount } from './chatActionRibbonLayout'
 import {
   Archive as ArchiveIcon,
@@ -46,7 +46,6 @@ interface RoleOption {
 
 interface Props {
   speechActive?: boolean
-  speechEnabled?: boolean
   filters: FilterState
   roles: RoleOption[]
   archiveActive?: boolean
@@ -118,6 +117,7 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 const speech = useSpeechStore()
+const message = useMessage()
 
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
@@ -217,9 +217,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     })
   }
 
-  if (speech.quota?.enabled && props.speechEnabled !== false) {
-    buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive' })
-  }
+  buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive' })
 
   // 便签入口（置于“分屏”之后）
   if (props.stickyNoteEnabled !== false) {
@@ -304,6 +302,15 @@ const moreMenuOptions = computed(() => {
   })
 })
 
+const emitAction = (button: ActionButton) => {
+  if (button.disabled?.() === true) return
+  if (button.key === 'speech' && !speech.quota?.enabled) {
+    message.warning('功能未开启，请平台管理员前往“平台设置 → AI语音配置”开启语音朗读。')
+    return
+  }
+  emit(button.emitEvent as any)
+}
+
 const handleMoreMenuSelect = (key: string) => {
   if (key === THEATER_MORE_STANDARD_KEY) {
     emit('open-theater', 'standard')
@@ -326,17 +333,12 @@ const handleMoreMenuSelect = (key: string) => {
     return
   }
   const button = allActionButtons.value.find(btn => btn.key === key)
-  if (!button || button.disabled?.() === true) {
-    return
-  }
-  emit(button.emitEvent as any)
+  if (!button) return
+  emitAction(button)
 }
 
 const handleButtonClick = (button: ActionButton) => {
-  if (button.disabled?.() === true) {
-    return
-  }
-  emit(button.emitEvent as any)
+  emitAction(button)
 }
 
 const handleSplitChooserPointerEnter = (button: ActionButton) => {
