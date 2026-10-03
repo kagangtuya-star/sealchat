@@ -37,9 +37,9 @@ const filteredSequences = computed(() => {
     : sequences.value
 })
 const clickTargetOptions = computed(() => Object.values(props.store.activeObjects.value)
-  .filter((object) => isStageActionTarget(object.type))
+  .filter((object) => object.visible && object.interactive && isStageActionTarget(object.type))
   .map((object) => ({
-    label: `${object.name}${props.store.state.persistentObjects[object.id] ? ' · 跨场景' : ''}${object.interactive ? '' : '（未开启成员交互）'}`,
+    label: `${object.name}${props.store.state.persistentObjects[object.id] ? ' · 跨场景' : ''}`,
     value: object.id,
   })))
 

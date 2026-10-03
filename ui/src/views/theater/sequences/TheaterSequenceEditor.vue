@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NDropdown, NIcon, NInput, NInputNumber, NModal, NSwitch } from 'naive-ui'
 import { Click, Message, Plus, Trash, X } from '@vicons/tabler'
 import NSelect from '@/components/NSelect.vue'
-import TheaterSequenceStepsEditor, { stageSequenceActionTypeOptions } from '../stage/TheaterSequenceStepsEditor.vue'
+import TheaterSequenceStepsEditor from '../stage/TheaterSequenceStepsEditor.vue'
 import { STAGE_SEQUENCE_MAX_STEPS } from '../shared/stage-actions'
 import type { StageObject, StageScene } from '../shared/stage-types'
 import { cloneStageData } from '../stage/stage-editing'
@@ -17,6 +17,7 @@ import {
   THEATER_SEQUENCE_MAX_TRIGGERS,
   type TheaterSequence,
   type TheaterSequenceTriggerType,
+  type TheaterSequenceStepActionType,
 } from './theater-sequence-types'
 
 const props = defineProps<{
@@ -49,8 +50,12 @@ watch(() => [props.show, props.sequence] as const, ([show, sequence]) => {
   )))
 }, { immediate: true })
 
-const addStepOptions = stageSequenceActionTypeOptions
-  .filter((option) => isTheaterSequenceStepActionType(option.value))
+const theaterSequenceActionTypeOptions: Array<{ label: string, value: TheaterSequenceStepActionType }> = [
+  { label: '播放特效', value: 'effect.play' },
+  { label: '切换场景', value: 'scene.apply' },
+  { label: '触发组件点击动作', value: 'object.trigger' },
+]
+const addStepOptions = theaterSequenceActionTypeOptions
   .map(({ label, value }) => ({ label, key: value }))
 const sequenceMenuProps = { class: 'theater-sequence-select-menu' }
 const sequenceDropdownMenuProps = () => sequenceMenuProps
@@ -101,7 +106,7 @@ const save = () => {
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" @update:show="emit('update:show', $event)">
+  <n-modal :show="show" :mask-closable="false" :auto-focus="false" :trap-focus="false" @update:show="emit('update:show', $event)">
     <section class="theater-sequencer-editor" role="dialog" aria-modal="true" aria-label="序列编辑器">
       <header class="theater-sequencer-editor__header">
         <div>

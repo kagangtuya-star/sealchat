@@ -22,12 +22,14 @@ import {
   createStageSequenceStep,
   STAGE_SEQUENCE_MAX_STEPS,
 } from '../shared/stage-actions'
-import type {
-  StageObject,
-  StageScene,
-  StageSequenceStep,
+import {
+  isStageActionTarget,
+  type StageAtomicActionDescriptor,
+  type StageObject,
+  type StageScene,
+  type StageSequenceStep,
 } from '../shared/stage-types'
-import type { ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
+import { stageActionSchema, type ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
 import { isTheaterEffectObject } from '../effects/theater-effect-types'
 
 // Steps are edited in place, matching the existing auto-saving action editor contract.
@@ -48,7 +50,10 @@ const emit = defineEmits<{
 }>()
 
 const actionTypeLabel = (type: StageAtomicAction['type']) => (
-  stageSequenceActionTypeOptions.find((option) => option.value === type)?.label || type
+  type === 'object.trigger' ? '触发组件点击动作' : stageSequenceActionTypeOptions.find((option) => option.value === type)?.label || type
+)
+const isObjectTargetAction = (action: StageAtomicActionDescriptor): action is Extract<StageAtomicActionDescriptor, { type: 'object.toggle' | 'object.trigger' }> => (
+  action.type === 'object.toggle' || action.type === 'object.trigger'
 )
 const timingOptions = [
   { label: '依次', value: 'after' },
@@ -89,6 +94,31 @@ const objectOptions = (sceneId: string | null) => {
     : []
 }
 
+const isTriggerableObject = (object: StageObject) => (
+  object.visible
+  && object.interactive
+  && isStageActionTarget(object.type)
+  && object.actions.some((action) => stageActionSchema.safeParse(action).success)
+)
+
+const triggerObjectOptions = (sceneId: string | null) => {
+  if (!sceneId) {
+    return Object.values(props.persistentObjects)
+      .filter(isTriggerableObject)
+      .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
+  }
+  const scene = props.scenes.find((item) => item.id === sceneId)
+  return scene
+    ? Object.values(scene.state.sceneObjects)
+      .filter(isTriggerableObject)
+      .map((object) => ({ label: object.name, value: object.id }))
+    : []
+}
+
+const objectTargetOptions = (type: StageAtomicAction['type'], sceneId: string | null) => (
+  type === 'object.trigger' ? triggerObjectOptions(sceneId) : objectOptions(sceneId)
+)
+
 const effectOptions = (sceneId: string | null) => {
   if (!sceneId) {
     return Object.values(props.persistentObjects)
@@ -104,7 +134,7 @@ const effectOptions = (sceneId: string | null) => {
 }
 
 const targetSceneOptions = (type: StageAtomicAction['type']) => {
-  const persistentOptions = type === 'effect.play' ? effectOptions(null) : objectOptions(null)
+  const persistentOptions = type === 'effect.play' ? effectOptions(null) : objectTargetOptions(type, null)
   return persistentOptions.length
     ? [...sceneOptions.value, { label: '跨场景', value: '' }]
     : sceneOptions.value
@@ -115,21 +145,20 @@ const objectSceneId = (objectId: string) => {
   return props.scenes.find((scene) => Boolean(scene.state.sceneObjects[objectId]))?.id || null
 }
 
-const firstObjectId = (sceneId: string | null) => objectOptions(sceneId)[0]?.value || ''
-
 const addStep = async (type: StageAtomicAction['type']) => {
   const steps = props.steps
   if (steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
   const sceneId = props.activeSceneId || props.scenes[0]?.id || ''
-  const localTargetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : firstObjectId(sceneId)
-  const persistentTargetId = type === 'effect.play' ? effectOptions(null)[0]?.value || '' : firstObjectId(null)
+  const localTargetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : objectTargetOptions(type, sceneId)[0]?.value || ''
+  const persistentTargetId = type === 'effect.play' ? effectOptions(null)[0]?.value || '' : objectTargetOptions(type, null)[0]?.value || ''
   const targetId = localTargetId || persistentTargetId
-  if ((type === 'effect.play' || type === 'object.toggle') && !targetId) return
+  const action = createStageAtomicActionDescriptor(type, sceneId, targetId)
+  if ((type === 'effect.play' || isObjectTargetAction(action)) && !targetId) return
   if (type === 'clue.execute' && !props.readClueOptions) return
   const step = createStageSequenceStep(sceneId, targetId)
-  step.action = createStageAtomicActionDescriptor(type, sceneId, targetId)
+  step.action = action
   if (type === 'scene.apply') step.sceneId = sceneId || null
-  else if (type === 'effect.play' || type === 'object.toggle') step.sceneId = objectSceneId(targetId)
+  else if (type === 'effect.play' || isObjectTargetAction(action)) step.sceneId = objectSceneId(targetId)
   else step.sceneId = null
   if (type === 'clue.execute' && props.readClueOptions) {
     let result: ChatClueOptionsReadResult
@@ -159,19 +188,19 @@ const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
     openSelectKey.value = ''
     return
   }
-  if (step.action.type !== 'object.toggle' && step.action.type !== 'effect.play') {
+  if (!isObjectTargetAction(step.action) && step.action.type !== 'effect.play') {
     step.sceneId = null
     openSelectKey.value = ''
     return
   }
   const targetSceneId = sceneId || null
-  const options = step.action.type === 'effect.play' ? effectOptions(targetSceneId) : objectOptions(targetSceneId)
+  const options = step.action.type === 'effect.play' ? effectOptions(targetSceneId) : objectTargetOptions(step.action.type, targetSceneId)
   if (!options.length) {
     openSelectKey.value = ''
     return
   }
   step.sceneId = targetSceneId
-  if (step.action.type === 'object.toggle') {
+  if (isObjectTargetAction(step.action)) {
     const objectId = step.action.payload.objectId
     if (!options.some((option) => option.value === objectId)) {
       step.action.payload.objectId = options[0].value
@@ -189,7 +218,7 @@ const updateTiming = (step: StageSequenceStep, mode: 'after' | 'delay' | 'sync')
 }
 
 const updateStepObject = (step: StageSequenceStep, objectId: string) => {
-  if (step.action.type !== 'object.toggle') return
+  if (!isObjectTargetAction(step.action)) return
   step.action.payload.objectId = objectId
   step.sceneId = objectSceneId(objectId)
   openSelectKey.value = ''
@@ -317,13 +346,13 @@ defineExpose({ addStep })
         编辑随机表 · {{ step.action.payload.name }} · {{ step.action.payload.formula }} · {{ step.action.payload.entries.length }} 项
       </n-button>
       <n-select
-        v-else-if="step.action.type === 'object.toggle'"
+        v-else-if="isObjectTargetAction(step.action)"
         :value="step.action.payload.objectId"
         :show="isSequenceSelectOpen('object', step.id)"
-        :options="objectOptions(step.sceneId)"
+        :options="objectTargetOptions(step.action.type, step.sceneId)"
         filterable
         :menu-props="sequenceSelectMenuProps"
-        placeholder="选择组件"
+        placeholder="选择已配置点击动作的可交互组件"
         @update:show="updateSelectShow('object', step, $event)"
         @update:value="updateStepObject(step, $event)"
       />
@@ -357,7 +386,7 @@ defineExpose({ addStep })
         @update:value="updateStepScene(step, $event)"
       />
       <n-select
-        v-else-if="step.action.type === 'object.toggle' || step.action.type === 'effect.play'"
+        v-else-if="isObjectTargetAction(step.action) || step.action.type === 'effect.play'"
         :value="step.sceneId || ''"
         :show="isSequenceSelectOpen('scene', step.id)"
         :options="targetSceneOptions(step.action.type)"
@@ -411,6 +440,10 @@ defineExpose({ addStep })
 .theater-sequence-row__type { color: var(--sc-text-primary, #f8fafc); font-size: 12px; }
 .theater-sequence-row__timing { min-width: 0; display: grid; grid-template-columns: minmax(92px, 1fr) minmax(80px, .7fr); gap: 6px; }
 .theater-sequence-editor__empty { min-height: 120px; display: grid; place-items: center; color: var(--sc-text-secondary, #a1a1aa); font-size: 12px; }
+:global(.v-binder-follower-container:has(.n-select-menu.n-base-select-menu.theater-sequence-select-menu)),
+:global(.v-binder-follower-container:has(.n-dropdown-menu.theater-sequence-select-menu)) {
+  z-index: 10020 !important;
+}
 :global(.n-select-menu.n-base-select-menu.theater-sequence-select-menu),
 :global(.n-dropdown-menu.theater-sequence-select-menu),
 :global(:root[data-custom-theme='true'] .n-select-menu.n-base-select-menu.theater-sequence-select-menu) {

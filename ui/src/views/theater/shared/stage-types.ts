@@ -240,6 +240,13 @@ type StageAtomicActionData =
       objectId: string
     }
   }
+  | {
+    id: string
+    type: 'object.trigger'
+    payload: {
+      objectId: string
+    }
+  }
 
 export type StageAtomicAction = StageAtomicActionData & {
   schedule: StageActionSchedule

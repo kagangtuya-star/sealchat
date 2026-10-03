@@ -265,6 +265,7 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
   'effect.play': '触发特效',
   'clue.execute': '线索',
   'object.toggle': '显隐切换',
+  'object.trigger': '触发组件点击动作',
   'action.sequence': '组合动作',
 }
 
@@ -9412,7 +9413,7 @@ onBeforeUnmount(() => {
                   </div>
                   <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" class="theater-action-row__target" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" class="theater-action-row__target" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                  <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-select v-else-if="action.type === 'object.toggle' || action.type === 'object.trigger'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-button v-else-if="action.type === 'clue.execute'" class="theater-action-row__target" size="tiny" secondary @click="openClueEditor(action.id)">编辑线索 · {{ action.payload.entries.length }} 条</n-button>
                   <n-button v-else class="theater-action-row__target" size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
                   <n-input-number

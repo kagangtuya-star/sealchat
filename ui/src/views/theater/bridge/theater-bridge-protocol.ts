@@ -313,6 +313,13 @@ const objectToggleActionSchema = z.strictObject({
   payload: z.strictObject({ objectId: nonEmptyIdSchema }),
 })
 
+const objectTriggerActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('object.trigger'),
+  schedule: stageActionScheduleSchema,
+  payload: z.strictObject({ objectId: nonEmptyIdSchema }),
+})
+
 const clueAccessModeSchema = z.enum(['keep', 'inherit', 'none', 'view', 'edit'])
 const clueActionTargetSchema = z.strictObject({ userId: z.string().trim().min(1).max(128), access: clueAccessModeSchema })
 const clueActionEntrySchema = z.strictObject({
@@ -352,6 +359,7 @@ const stageAtomicActionSchema = z.discriminatedUnion('type', [
   effectPlayActionSchema,
   clueExecuteActionSchema,
   objectToggleActionSchema,
+  objectTriggerActionSchema,
 ])
 
 const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
@@ -362,6 +370,7 @@ const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
   effectPlayActionSchema.omit({ id: true, schedule: true }),
   clueExecuteActionSchema.omit({ id: true, schedule: true }),
   objectToggleActionSchema.omit({ id: true, schedule: true }),
+  objectTriggerActionSchema.omit({ id: true, schedule: true }),
 ])
 
 const stageSequenceActionSchema = z.strictObject({

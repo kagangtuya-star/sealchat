@@ -345,7 +345,7 @@ const normalizeActions = (input: unknown): StageAction[] => {
     } else if (action.type === 'clue.execute') {
       const payload = normalizeStageClueExecutePayload(action.payload)
       if (payload) result.push({ id, type: action.type, schedule, payload })
-    } else if (action.type === 'object.toggle') {
+    } else if (action.type === 'object.toggle' || action.type === 'object.trigger') {
       const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
       if (objectId) result.push({ id, type: action.type, schedule, payload: { objectId } })
     } else if (action.type === 'action.sequence') {

@@ -87,7 +87,7 @@ export const cloneStageActionsForCopy = (
   if (copiedAction.type === 'scene.apply' && sceneIdMap.has(copiedAction.payload.sceneId)) {
     copiedAction.payload.sceneId = sceneIdMap.get(copiedAction.payload.sceneId)!
   }
-  if (copiedAction.type === 'object.toggle' && objectIdMap.has(copiedAction.payload.objectId)) {
+  if ((copiedAction.type === 'object.toggle' || copiedAction.type === 'object.trigger') && objectIdMap.has(copiedAction.payload.objectId)) {
     copiedAction.payload.objectId = objectIdMap.get(copiedAction.payload.objectId)!
   }
   if (copiedAction.type === 'effect.play' && objectIdMap.has(copiedAction.payload.effectId)) {
@@ -99,7 +99,7 @@ export const cloneStageActionsForCopy = (
       if (step.action.type === 'scene.apply' && sceneIdMap.has(step.action.payload.sceneId)) {
         step.action.payload.sceneId = sceneIdMap.get(step.action.payload.sceneId)!
       }
-      if (step.action.type === 'object.toggle' && objectIdMap.has(step.action.payload.objectId)) {
+      if ((step.action.type === 'object.toggle' || step.action.type === 'object.trigger') && objectIdMap.has(step.action.payload.objectId)) {
         step.action.payload.objectId = objectIdMap.get(step.action.payload.objectId)!
       }
       if (step.action.type === 'effect.play' && objectIdMap.has(step.action.payload.effectId)) {

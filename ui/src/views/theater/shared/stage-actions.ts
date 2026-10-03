@@ -235,7 +235,7 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
     const payload = normalizeStageClueExecutePayload(action.payload)
     return payload ? { type: action.type, payload } : null
   }
-  if (action.type === 'object.toggle') {
+  if (action.type === 'object.toggle' || action.type === 'object.trigger') {
     const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
     return objectId ? { type: action.type, payload: { objectId } } : null
   }
@@ -254,7 +254,7 @@ export const normalizeStageSequenceSteps = (value: unknown): StageSequenceStep[]
     const storedSceneId = typeof step.sceneId === 'string' && step.sceneId.trim() ? step.sceneId.trim() : null
     const sceneId = descriptor.type === 'scene.apply'
       ? descriptor.payload.sceneId
-      : descriptor.type === 'object.toggle' || descriptor.type === 'effect.play'
+      : descriptor.type === 'object.toggle' || descriptor.type === 'object.trigger' || descriptor.type === 'effect.play'
         ? storedSceneId
         : null
     seen.add(stepId)

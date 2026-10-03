@@ -10,8 +10,8 @@ export const THEATER_SEQUENCE_MAX_HIT_INTERVAL = 65_535
 export const THEATER_SEQUENCE_MAX_COOLDOWN_MS = 300_000
 export const THEATER_SEQUENCE_MAX_LOOP_COUNT = 100
 
-// First version only exposes idempotent, multi-client safe step actions.
-export const theaterSequenceStepActionTypes = ['effect.play', 'scene.apply'] as const satisfies readonly StageAtomicAction['type'][]
+// Keep the first-version step allowlist explicit; object.trigger executes saved actions only.
+export const theaterSequenceStepActionTypes = ['effect.play', 'scene.apply', 'object.trigger'] as const satisfies readonly StageAtomicAction['type'][]
 export type TheaterSequenceStepActionType = typeof theaterSequenceStepActionTypes[number]
 
 interface TheaterSequenceTriggerCounter {
