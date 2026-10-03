@@ -114,6 +114,7 @@ export interface SystemPreviewJob {
 }
 export interface RoleSpeechConfig {
   identityId: string
+  disabled: boolean
   voiceId: string
   systemVoice: string
   systemVoiceProvider: string

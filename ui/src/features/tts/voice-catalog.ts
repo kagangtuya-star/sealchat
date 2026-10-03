@@ -4,6 +4,7 @@ import type { ResolvedSpeechModel, RoleSpeechConfig, SpeechPresetSource, SpeechP
 export type VoiceOwnership = 'platform' | 'mine' | 'public'
 export type VoiceVisibility = 'system' | 'private' | 'public'
 export type VoiceSelection =
+  | { type: 'none' }
   | { type: 'inherit' }
   | { type: 'system'; id: string; modelId?: string; providerKind?: string; providerId?: string }
   | { type: 'personal'; id: string }
@@ -141,7 +142,7 @@ export function compatibleSpeechLanguage(language: string, languages: string[]):
   return languages.includes(language) ? language : ''
 }
 export function selectedSpeechLanguages(selection: VoiceSelection, voices: SystemVoice[] | null, contexts: VoiceContext[], defaultContext: VoiceContext | null, defaultVoice: string): string[] | null {
-  if (selection.type === 'personal') return []
+  if (selection.type === 'personal' || selection.type === 'none') return []
   if (voices === null) return null // Loading must not clear an existing binding.
   if (selection.type === 'inherit') {
     const voice = voices.find(voice => voice.id === defaultVoice && systemVoiceSupported(voice, defaultContext))
@@ -240,7 +241,7 @@ export function defaultVoiceForContext(voices: SystemVoice[], models: ResolvedSp
 }
 
 export function sameSelection(a: VoiceSelection, b: VoiceSelection): boolean {
-  if (a.type === 'inherit' || b.type === 'inherit') return a.type === b.type
+  if (a.type === 'inherit' || b.type === 'inherit' || a.type === 'none' || b.type === 'none') return a.type === b.type
   if (a.type === 'system' && b.type === 'system') {
     return a.id === b.id && a.modelId === b.modelId && a.providerKind === b.providerKind && a.providerId === b.providerId
   }
@@ -248,7 +249,7 @@ export function sameSelection(a: VoiceSelection, b: VoiceSelection): boolean {
 }
 // Only a completely empty namespace is a legacy UI binding.
 export function selectsItem(selection: VoiceSelection, item: VoiceCatalogItem): boolean {
-  if (selection.type === 'inherit' || selection.type !== item.source || selection.id !== item.id) return false
+  if (selection.type === 'inherit' || selection.type === 'none' || selection.type !== item.source || selection.id !== item.id) return false
   if (selection.type !== 'system') return true
   const legacy = !selection.modelId && !selection.providerKind && !selection.providerId
   return legacy || (selection.modelId === item.modelId && selection.providerKind === item.providerKind && selection.providerId === item.providerId)
@@ -259,14 +260,15 @@ export function itemSelection(item: VoiceCatalogItem): VoiceSelection {
     : { type: 'personal', id: item.id }
 }
 
-type RoleVoiceFields = Pick<RoleSpeechConfig, 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceProviderId' | 'systemVoiceModel'>
+type RoleVoiceFields = Pick<RoleSpeechConfig, 'disabled' | 'voiceId' | 'systemVoice' | 'systemVoiceProvider' | 'systemVoiceProviderId' | 'systemVoiceModel'>
 export function roleVoiceSelection(role: RoleVoiceFields): VoiceSelection {
+  if (role.disabled) return { type: 'none' }
   if (role.voiceId) return { type: 'personal', id: role.voiceId }
   if (role.systemVoice) return { type: 'system', id: role.systemVoice, providerKind: role.systemVoiceProvider || undefined, providerId: role.systemVoiceProviderId || undefined, modelId: role.systemVoiceModel || undefined }
   return { type: 'inherit' }
 }
 export function roleVoiceFields(selection: VoiceSelection): RoleVoiceFields {
-  const empty = { voiceId: '', systemVoice: '', systemVoiceProvider: '', systemVoiceProviderId: '', systemVoiceModel: '' }
+  const empty = { disabled: selection.type === 'none', voiceId: '', systemVoice: '', systemVoiceProvider: '', systemVoiceProviderId: '', systemVoiceModel: '' }
   if (selection.type === 'personal') return { ...empty, voiceId: selection.id }
   if (selection.type === 'system') return { ...empty, systemVoice: selection.id, systemVoiceProvider: selection.providerKind ?? '', systemVoiceProviderId: selection.providerId ?? '', systemVoiceModel: selection.modelId ?? '' }
   return empty

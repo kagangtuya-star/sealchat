@@ -177,9 +177,10 @@ watch([missingPersonalId, () => user.info.id, resolveEpoch], async ([id, userId]
   if (current === resolveSerial && userId === user.info.id) resolved.value = { ...resolved.value, [id]: item }
 }, { immediate: true })
 
-type CurrentState = { status: 'inherit' } | { status: 'pending' } | { status: 'ready'; item: VoiceCatalogItem } | { status: 'unavailable' }
+type CurrentState = { status: 'none' } | { status: 'inherit' } | { status: 'pending' } | { status: 'ready'; item: VoiceCatalogItem } | { status: 'unavailable' }
 const current = computed<CurrentState>(() => {
   const value = selection.value
+  if (value.type === 'none') return { status: 'none' }
   if (value.type === 'inherit') return { status: 'inherit' }
   if (value.type === 'system') {
     if (!system.value) return { status: 'pending' }
@@ -208,6 +209,7 @@ function isItemSelected(item: VoiceCatalogItem): boolean {
 
 function choose(item: VoiceCatalogItem) { if (item.available) selection.value = itemSelection(item) }
 function followDefault() { selection.value = { type: 'inherit' } }
+function clearSelection() { selection.value = { type: 'none' } }
 function reselect() {
   gridRef.value?.scrollTo({ top: 0 })
   searchRef.value?.focus()
@@ -291,7 +293,8 @@ defineExpose({ reload })
         ><span class="vp-default__dot" aria-hidden="true" />跟随平台默认音色</button>
         <span class="vp-current__state">
           <span class="vp-current__label">当前：</span>
-          <template v-if="current.status === 'inherit'">跟随平台默认音色</template>
+          <template v-if="current.status === 'none'">未选择（不播放）</template>
+          <template v-else-if="current.status === 'inherit'">跟随平台默认音色</template>
           <template v-else-if="current.status === 'pending'">正在确认音色…</template>
           <template v-else-if="current.status === 'ready'">
             <strong class="vp-current__name">{{ current.item.name }}</strong>
@@ -299,6 +302,13 @@ defineExpose({ reload })
           </template>
           <strong v-else class="vp-current__name">{{ mode === 'select' ? '当前绑定音色已不可用' : '所选音色已不可用' }}</strong>
         </span>
+        <button
+          v-if="mode === 'select' && selection.type !== 'none'"
+          type="button"
+          class="vp-clear-selection"
+          title="清除角色音色并停止该角色的 TTS 播放"
+          @click="clearSelection"
+        >清除选择</button>
       </div>
       <div v-if="current.status === 'unavailable'" class="vp-current__warning">
         <small>当前模型不可用，需要重新选择；也可能已删除、改为私有或服务不可用。</small>
@@ -472,6 +482,18 @@ defineExpose({ reload })
 .vp-current__label { flex: none; color: var(--sc-text-secondary); }
 .vp-current__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vp-current__source { flex: none; font-size: 12px; color: var(--vp-accent); }
+.vp-clear-selection {
+  flex: none;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--sc-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vp-clear-selection:hover { color: var(--sc-text-primary); }
+.vp-clear-selection:focus-visible { outline: 2px solid var(--vp-accent); outline-offset: 1px; }
 .vp-current__warning { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; min-width: 0; }
 .vp-current__warning small { flex: 1 1 200px; min-width: 0; font-size: 12px; color: var(--sc-text-secondary); }
 .vp-current__actions { display: flex; flex-wrap: wrap; gap: 6px; }

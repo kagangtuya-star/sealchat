@@ -305,7 +305,7 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 			return err
 		}
 	}
-	if input.VoiceID != "" || input.SystemVoice != "" || input.SpeechLanguage != "" {
+	if !input.Disabled && (input.VoiceID != "" || input.SystemVoice != "" || input.SpeechLanguage != "") {
 		s, err := ttsSnapshot(userID, TTSRequest{VoiceID: input.VoiceID, SystemVoice: input.SystemVoice, SystemVoiceProvider: input.SystemVoiceProvider, SystemVoiceProviderID: input.SystemVoiceProviderID, SystemVoiceModel: input.SystemVoiceModel, SpeechLanguage: input.SpeechLanguage, Instruction: input.Instruction, Rate: input.Rate, Pitch: input.Pitch, Volume: &input.Volume}, "role")
 		if err != nil {
 			return err
@@ -328,7 +328,7 @@ func TTSSaveRoleConfig(userID, identityID string, input model.ChannelIdentityTTS
 		input.StringPKBaseModel = model.StringPKBaseModel{}
 		return model.GetDB().Create(&input).Error
 	}
-	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"voice_id": input.VoiceID, "system_voice": input.SystemVoice, "system_voice_provider": input.SystemVoiceProvider, "system_voice_provider_id": input.SystemVoiceProviderID, "system_voice_model": input.SystemVoiceModel, "speech_language": input.SpeechLanguage, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
+	r := model.GetDB().Model(&model.ChannelIdentityTTSConfig{}).Where("id = ? AND revision = ?", old.ID, old.Revision).Updates(map[string]any{"disabled": input.Disabled, "voice_id": input.VoiceID, "system_voice": input.SystemVoice, "system_voice_provider": input.SystemVoiceProvider, "system_voice_provider_id": input.SystemVoiceProviderID, "system_voice_model": input.SystemVoiceModel, "speech_language": input.SpeechLanguage, "instruction": input.Instruction, "rate": input.Rate, "pitch": input.Pitch, "volume": input.Volume, "revision": input.Revision})
 	if r.Error != nil {
 		return r.Error
 	}

@@ -45,6 +45,7 @@ type TTSVoice struct {
 type ChannelIdentityTTSConfig struct {
 	StringPKBaseModel
 	IdentityID            string  `json:"identityId" gorm:"size:100;uniqueIndex"`
+	Disabled              bool    `json:"disabled" gorm:"not null;default:false"`
 	VoiceID               string  `json:"voiceId"`
 	SystemVoice           string  `json:"systemVoice"`
 	SystemVoiceProvider   string  `json:"systemVoiceProvider"`
@@ -106,6 +107,13 @@ func MigrateTTS(db *gorm.DB) error {
 			if err := db.Model(table).Where("quota_kind IS NULL OR quota_kind = ?", "").Update("quota_kind", QuotaKindText).Error; err != nil {
 				return err
 			}
+		}
+	}
+	// A previous nullable version of the role TTS flag may already exist. Repair
+	// those rows before SQLite rebuilds the table to apply NOT NULL.
+	if db.Migrator().HasColumn(&ChannelIdentityTTSConfig{}, "disabled") {
+		if err := db.Model(&ChannelIdentityTTSConfig{}).Where("disabled IS NULL").UpdateColumn("disabled", false).Error; err != nil {
+			return err
 		}
 	}
 	if err := db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &TTSUserPolicy{}, &TTSWorldPolicy{}, &TTSVoice{}, &ChannelIdentityTTSConfig{}, &TTSJob{}, &TTSCache{}); err != nil {

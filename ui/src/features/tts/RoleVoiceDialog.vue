@@ -152,7 +152,7 @@ async function save() {
   finally { if (current === generation) busy.value = false }
 }
 async function audition() {
-  if (!role.value || !auditionDraftReady.value || busy.value || auditionPending.value || incompatibleParameters.value) return
+  if (!role.value || selection.value.type === 'none' || !auditionDraftReady.value || busy.value || auditionPending.value || incompatibleParameters.value) return
   clearAuditionRuntime()
   clearAuditionResult()
   auditionPending.value = true
@@ -270,7 +270,7 @@ async function pollAudition(current: number, id: string) {
             <h3>试听</h3>
             <NInput v-model:value="text" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="试听文字" />
             <p class="rv-hint">按当前选择与参数合成新音频；已有结果可重放。</p>
-            <NButton :disabled="busy || !auditionDraftReady || auditionPending || !speech.canSynthesize || incompatibleParameters" @click="audition">确认试听</NButton>
+            <NButton :disabled="selection.type === 'none' || busy || !auditionDraftReady || auditionPending || !speech.canSynthesize || incompatibleParameters" @click="audition">确认试听</NButton>
             <div v-if="auditionPending || auditionReplayAvailable" class="rv-audition" role="status" aria-live="polite" :aria-busy="auditionPending">
               <NIcon v-if="auditionPending" :component="Volume2" size="22" class="rv-audition__generating" aria-hidden="true" />
               <NButton v-else text :class="{ 'rv-audition__playing': auditionActive && speechPlayer.state.playing }" :aria-label="auditionActive ? '停止试听' : '重播试听'" :aria-pressed="auditionActive" @click="replayAudition">
@@ -283,7 +283,7 @@ async function pollAudition(current: number, id: string) {
       </div>
       <p v-else class="rv-empty">{{ busy ? '正在读取角色音色…' : '' }}</p>
       <footer class="rv-foot">
-        <span class="rv-foot__hint">选择“跟随平台默认音色”并保存即可清除绑定。</span>
+        <span class="rv-foot__hint">“清除选择”会让该角色不再自动播放 TTS；“跟随平台默认音色”仍会使用平台默认音色。</span>
         <div class="rv-foot__actions">
           <NButton @click="visible = false">取消</NButton>
           <NButton type="primary" :loading="busy" :disabled="!role || incompatibleParameters" @click="save">保存绑定</NButton>
