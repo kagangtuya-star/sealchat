@@ -31,6 +31,8 @@ import {
   Focus,
   GripVertical,
   LayoutSidebarLeftExpand,
+  LayoutSidebar,
+  LayoutNavbar,
   LetterT,
   Lock,
   LockOpen,
@@ -270,6 +272,7 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
 }
 
 const containerRef = ref<HTMLDivElement | null>(null)
+const stageAppRef = ref<HTMLElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const sceneVisualRef = ref<HTMLDivElement | null>(null)
 const sceneMorphContainerRef = ref<HTMLDivElement | null>(null)
@@ -305,8 +308,34 @@ const floatingPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
+const panelSwitchesColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
 const iframeInteractionDisabled = ref(false)
+type TheaterToolbarLayout = 'horizontal' | 'vertical'
+const theaterToolbarLayoutStorageKey = 'sealchat.theater.toolbar-layout.v1'
+const readTheaterToolbarLayout = (): TheaterToolbarLayout => {
+  try {
+    if (typeof window === 'undefined') return 'horizontal'
+    const stored = window.localStorage.getItem(theaterToolbarLayoutStorageKey)
+    if (stored === 'horizontal' || stored === 'vertical') return stored
+    if (stored === null) return 'horizontal'
+    const parsed: unknown = JSON.parse(stored)
+    return parsed === 'horizontal' || parsed === 'vertical' ? parsed : 'horizontal'
+  } catch {
+    return 'horizontal'
+  }
+}
+const theaterToolbarLayout = ref<TheaterToolbarLayout>(readTheaterToolbarLayout())
+const theaterToolbarLayoutLabel = computed(() => theaterToolbarLayout.value === 'horizontal' ? '切换为左侧工具栏' : '切换为顶部工具栏')
+const toggleTheaterToolbarLayout = () => {
+  const nextLayout: TheaterToolbarLayout = theaterToolbarLayout.value === 'horizontal' ? 'vertical' : 'horizontal'
+  theaterToolbarLayout.value = nextLayout
+  try {
+    window.localStorage.setItem(theaterToolbarLayoutStorageKey, nextLayout)
+  } catch {
+    // Browser storage may be unavailable; keep the current layout in memory.
+  }
+}
 const theaterPerformanceVisibilityStorageKey = 'sealchat.theater.performance-visibility.v1'
 const readTheaterPerformanceVisibility = () => {
   const defaults = { dialogueHidden: false, portraitHidden: false }
@@ -1082,6 +1111,13 @@ const handleToolbarFocusOut = (event: FocusEvent) => {
   const toolbar = event.currentTarget as HTMLElement | null
   if (event.relatedTarget instanceof Node && toolbar?.contains(event.relatedTarget)) return
   hideToolbarColors()
+}
+const revealPanelSwitchesColors = () => { panelSwitchesColorsVisible.value = true }
+const hidePanelSwitchesColors = () => { panelSwitchesColorsVisible.value = false }
+const handlePanelSwitchesFocusOut = (event: FocusEvent) => {
+  const controls = event.currentTarget as HTMLElement | null
+  if (event.relatedTarget instanceof Node && controls?.contains(event.relatedTarget)) return
+  hidePanelSwitchesColors()
 }
 
 type ImageTarget =
@@ -8329,7 +8365,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="theater-stage-app">
+  <section ref="stageAppRef" class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/apng,image/jpeg,image/webp,image/gif,video/webm,.apng,.webm" @change="handleImageInput">
     <input ref="sceneAudioInputRef" class="theater-image-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleSceneAudioInput">
     <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
@@ -8356,7 +8392,35 @@ onBeforeUnmount(() => {
         </button>
       </n-dropdown>
       <div v-else class="theater-stage-title" :title="store.activeScene.value.name">{{ store.activeScene.value.name }}</div>
-      <n-button-group class="theater-panel-switches" size="small">
+      <Teleport
+        :to="stageAppRef || '.theater-stage-app'"
+        :disabled="theaterToolbarLayout === 'horizontal' || !stageAppRef"
+      >
+        <div
+          class="theater-panel-switches-wrap"
+          :class="{ 'is-vertical': theaterToolbarLayout === 'vertical', 'is-controls-visible': panelSwitchesColorsVisible }"
+          @pointerenter="revealPanelSwitchesColors"
+          @pointerleave="hidePanelSwitchesColors"
+          @focusin="revealPanelSwitchesColors"
+          @focusout="handlePanelSwitchesFocusOut"
+        >
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  class="theater-panel-layout-toggle"
+                  quaternary
+                  size="small"
+                  :aria-label="theaterToolbarLayoutLabel"
+                  @click="toggleTheaterToolbarLayout"
+                >
+                  <template #icon>
+                    <n-icon><component :is="theaterToolbarLayout === 'horizontal' ? LayoutSidebar : LayoutNavbar" /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ theaterToolbarLayoutLabel }}
+            </n-tooltip>
+            <n-button-group class="theater-panel-switches" :class="{ 'is-vertical': theaterToolbarLayout === 'vertical' }" size="small">
         <n-tooltip v-if="canBrowseScenes" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': scenePanelOpen }" aria-label="切换场景面板" @click="togglePanel('scene')">
@@ -8446,7 +8510,9 @@ onBeforeUnmount(() => {
           </n-dropdown>
         </span>
         <TheaterDialogueControllerPanel v-if="dialogueController && saveDialogueController" :world-id="worldId" :controller="dialogueController" :can-manage="canManageDialogue === true" :save="saveDialogueController" />
-      </n-button-group>
+            </n-button-group>
+        </div>
+      </Teleport>
       <n-popover
         trigger="click"
         placement="bottom-start"
@@ -10051,7 +10117,25 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
 .theater-stage-toolbar::-webkit-scrollbar { display: none; }
-.theater-stage-toolbar :deep(.n-button) {
+.theater-panel-switches-wrap {
+  position: relative; display: inline-flex; align-items: center; flex: 0 0 auto;
+}
+.theater-panel-switches-wrap.is-vertical {
+  position: absolute; z-index: 9998; top: 46px; left: 0; box-sizing: border-box;
+  width: 52px; max-height: calc(100% - 46px); display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 4px 2px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none;
+  border: 1px solid transparent; border-radius: 0 5px 5px 0;
+  background: transparent; box-shadow: none;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.theater-panel-switches-wrap.is-vertical::-webkit-scrollbar { display: none; }
+.theater-panel-switches-wrap.is-vertical.is-controls-visible {
+  border-color: var(--sc-border-mute, rgba(255, 255, 255, .08));
+  background: color-mix(in srgb, var(--sc-bg-header, #262626) 92%, transparent);
+  box-shadow: 4px 8px 18px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.theater-stage-toolbar :deep(.n-button), .theater-panel-switches-wrap :deep(.n-button) {
   transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 .theater-component-actions-toolbar {
@@ -10076,6 +10160,7 @@ onBeforeUnmount(() => {
   .theater-component-actions-toolbar { right: 8px; max-width: calc(100% - 16px); }
 }
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)),
+.theater-panel-switches-wrap.is-vertical:not(.is-controls-visible) :deep(.n-button:not(:disabled)),
 .theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)) {
   --n-color: transparent !important;
   --n-color-hover: transparent !important;
@@ -10095,10 +10180,21 @@ onBeforeUnmount(() => {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72));
 }
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)),
+.theater-panel-switches-wrap.is-vertical:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)),
 .theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
   box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
 }
-.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-panel-switches-wrap.is-vertical :deep(.n-button.is-active:not(:disabled)) {
+  box-shadow: inset 2px 0 rgba(255, 255, 255, .82) !important;
+}
+.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches-wrap, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-panel-layout-toggle {
+  position: absolute; z-index: 1; left: -34px; width: 30px; min-width: 30px; height: 34px; padding: 0;
+}
+.theater-panel-switches-wrap.is-vertical .theater-panel-layout-toggle { position: static; order: -1; flex: 0 0 auto; }
+.theater-panel-switches.is-vertical {
+  width: 48px; display: flex; flex-direction: column; align-items: center; flex: 0 0 auto;
+}
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
@@ -10470,6 +10566,7 @@ onBeforeUnmount(() => {
 .theater-action-row__timing :deep(.n-input__input-el) { padding-right: 0; }
 @media (max-width: 1100px) {
   .theater-stage-toolbar { gap: 5px; padding: 0 6px; }
+  .theater-toolbar-controls { gap: 5px; }
   .theater-stage-character-bridge { width: 176px; flex-basis: 176px; }
 }
 @media (max-width: 720px) {
@@ -10477,7 +10574,7 @@ onBeforeUnmount(() => {
   .theater-stage-reset-camera { width: 34px; padding: 0; font-size: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .theater-stage-toolbar, .theater-stage-toolbar :deep(.n-button), .theater-floating-panel { transition: none; }
+  .theater-stage-toolbar, .theater-toolbar-controls, .theater-stage-toolbar :deep(.n-button), .theater-toolbar-controls :deep(.n-button), .theater-floating-panel { transition: none; }
   .theater-floating-panel { animation: none; }
 }
 </style>
