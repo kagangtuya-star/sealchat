@@ -724,7 +724,7 @@ const rubyBaseFontId = ref<string | null>(null);
 const rubyRtFontId = ref<string | null>(null);
 const rubyBaseFontSizeInput = ref('');
 const rubyRtFontSizeInput = ref('');
-const performanceEffect = ref<PerformanceEffect>('wave');
+const performanceEffect = ref<PerformanceEffect | null>(null);
 const performanceEnterMode = ref<PerformanceEnterMode>('normal');
 const performanceEnterSpeed = ref(5);
 const performanceToneIntensity = ref(0);
@@ -782,7 +782,8 @@ const performanceEnterModeOptions: ReadonlyArray<{ label: string; value: Perform
   { label: '重击', value: 'slam' },
   { label: '闪现', value: 'flash' },
 ];
-const performanceEffectOptions: ReadonlyArray<{ label: string; value: PerformanceEffect }> = [
+const performanceEffectOptions: ReadonlyArray<{ label: string; value: PerformanceEffect | null }> = [
+  { label: '正常', value: null },
   { label: '波浪', value: 'wave' },
   { label: '抖动', value: 'shake' },
   { label: '虹彩', value: 'rainbow' },
@@ -1216,13 +1217,10 @@ const closePerformancePopoverAfterSubmit = () => {
 
 const syncPerformanceControlsFromSelection = () => {
   const attrs = (editor.value?.getAttributes('performance') || {}) as Record<string, any>;
-  const effect = normalizePerformanceEffect(attrs.effect);
+  performanceEffect.value = normalizePerformanceEffect(attrs.effect);
   const enterMode = normalizePerformanceEnterMode(attrs.enterMode);
   const enterSpeed = Number(attrs.enterSpeed);
   const toneIntensity = Number(attrs.toneIntensity);
-  if (effect) {
-    performanceEffect.value = effect;
-  }
   if (enterMode) {
     performanceEnterMode.value = enterMode;
   }
@@ -1300,6 +1298,11 @@ const getSelectedTextBlockRanges = (selection = getSelectionSnapshot()) => {
   return [];
 };
 
+const hasPerformanceAttrs = (attrs: Record<string, unknown>) => (
+  ['effect', 'enterMode', 'enterSpeed', 'toneIntensity', 'scale']
+    .some((key) => attrs[key] != null && attrs[key] !== '')
+);
+
 const updatePerformanceMarksInRange = (
   from: number,
   to: number,
@@ -1326,8 +1329,14 @@ const updatePerformanceMarksInRange = (
     }
     const currentMark = node.marks.find((mark) => mark.type === markType);
     const nextAttrs = updater({ ...(currentMark?.attrs || {}) });
+    const hasAttrs = hasPerformanceAttrs(nextAttrs);
+    if (!currentMark && !hasAttrs) {
+      return;
+    }
     tr = tr.removeMark(start, end, markType);
-    tr = tr.addMark(start, end, markType.create(nextAttrs));
+    if (hasAttrs) {
+      tr = tr.addMark(start, end, markType.create(nextAttrs));
+    }
     touched = true;
   });
   if (!touched) {
@@ -1375,24 +1384,37 @@ const applyPerformanceEffectToSelection = () => {
   if (!ed) {
     return;
   }
-  if (!applyPerformanceBlockSettings({ silent: false })) {
+  const selection = getSelectionSnapshot();
+  if (!selection || selection.from === selection.to
+    || !ed.state.doc.textBetween(selection.from, selection.to)) {
+    message.info('请先选择文字');
     return;
   }
   restoreEditorSelection();
-  const selection = getSelectionSnapshot();
-  const blockRanges = getSelectedTextBlockRanges(selection);
-  if (blockRanges.length === 0) {
-    return;
-  }
-  const baseAttrs = getPerformanceBlockAttrs();
-  const { from, to } = selection || ed.state.selection;
-  const targetFrom = from === to ? blockRanges[0].from : from;
-  const targetTo = from === to ? blockRanges[blockRanges.length - 1].to : to;
-  updatePerformanceMarksInRange(targetFrom, targetTo, (attrs) => ({
+  updatePerformanceMarksInRange(selection.from, selection.to, (attrs) => ({
     ...attrs,
-    ...baseAttrs,
     effect: performanceEffect.value,
   }));
+  closePerformancePopoverAfterSubmit();
+};
+
+const clearPerformanceEffectFromSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+  const selection = getSelectionSnapshot();
+  if (!selection || selection.from === selection.to
+    || !ed.state.doc.textBetween(selection.from, selection.to)) {
+    message.info('请先选择文字');
+    return;
+  }
+  restoreEditorSelection();
+  updatePerformanceMarksInRange(selection.from, selection.to, (attrs) => ({
+    ...attrs,
+    effect: null,
+  }));
+  performanceEffect.value = null;
   closePerformancePopoverAfterSubmit();
 };
 
@@ -3526,14 +3548,17 @@ defineExpose({
                 <div class="tiptap-performance-panel__chips">
                   <button
                     v-for="option in performanceEffectOptions"
-                    :key="option.value"
+                    :key="option.value ?? 'normal'"
                     type="button"
                     class="tiptap-performance-chip"
                     :class="{ 'is-active': performanceEffect === option.value }"
                     @click="performanceEffect = option.value"
                   >{{ option.label }}</button>
                 </div>
-                <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+                <n-space size="small">
+                  <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+                  <n-button size="tiny" secondary @click="clearPerformanceEffectFromSelection">清除选区文字效果</n-button>
+                </n-space>
               </div>
               <div class="tiptap-performance-panel__section">
                 <div class="tiptap-performance-panel__header">
@@ -4167,14 +4192,17 @@ defineExpose({
                   <div class="tiptap-performance-panel__chips">
                     <button
                       v-for="option in performanceEffectOptions"
-                      :key="option.value"
+                      :key="option.value ?? 'normal'"
                       type="button"
                       class="tiptap-performance-chip"
                       :class="{ 'is-active': performanceEffect === option.value }"
                       @click="performanceEffect = option.value"
                     >{{ option.label }}</button>
                   </div>
-                  <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+                  <n-space size="small">
+                    <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+                    <n-button size="tiny" secondary @click="clearPerformanceEffectFromSelection">清除选区文字效果</n-button>
+                  </n-space>
                 </div>
                 <div class="tiptap-performance-panel__section">
                   <div class="tiptap-performance-panel__header">
