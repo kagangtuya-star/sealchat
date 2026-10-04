@@ -31,10 +31,13 @@ import {
 import {
   normalizePerformanceEffect,
   normalizePerformanceEnterMode,
+  normalizePerformanceScale,
+  type PerformanceMarkAttrs,
   type PerformanceEffect,
   type PerformanceEnterMode,
 } from '@/utils/tiptap-performance-mark';
 import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
+import PerformanceEffectPreview from './PerformanceEffectPreview.vue';
 import { MessageCircle } from '@vicons/tabler';
 import {
   MESSAGE_ACTION_NODE_TYPE,
@@ -730,6 +733,17 @@ const performanceEnterSpeed = ref(5);
 const performanceToneIntensity = ref(0);
 const performanceCommandType = ref<PerformanceCommandType>('delay');
 const performanceCommandValue = ref('500');
+const performancePreviewHover = ref<{
+  kind: 'enter' | 'effect'
+  value: PerformanceEnterMode | PerformanceEffect | null
+} | null>(null);
+const appliedPerformancePreviewAttrs = ref<PerformanceMarkAttrs>({
+  effect: null,
+  enterMode: 'normal',
+  enterSpeed: 5,
+  toneIntensity: 0,
+  scale: null,
+});
 
 watch(linkModalShow, (visible) => {
   if (!visible) {
@@ -815,6 +829,31 @@ const performanceSpeedLabel = computed(() => (
     : performanceEnterSpeed.value >= 7 ? '快'
       : '中'
 ));
+const pendingPerformancePreviewAttrs = computed<PerformanceMarkAttrs>(() => ({
+  effect: performancePreviewHover.value?.kind === 'effect'
+    ? normalizePerformanceEffect(performancePreviewHover.value.value)
+    : performanceEffect.value,
+  enterMode: performancePreviewHover.value?.kind === 'enter'
+    ? normalizePerformanceEnterMode(performancePreviewHover.value.value) || 'normal'
+    : performanceEnterMode.value,
+  enterSpeed: clampPerformanceEnterSpeed(performanceEnterSpeed.value),
+  toneIntensity: clampPerformanceToneIntensity(performanceToneIntensity.value),
+  scale: null,
+}));
+
+const setPerformancePreviewHover = (
+  kind: 'enter' | 'effect',
+  value: PerformanceEnterMode | PerformanceEffect | null,
+) => {
+  if (isMobile.value) {
+    return;
+  }
+  performancePreviewHover.value = { kind, value };
+};
+
+const clearPerformancePreviewHover = () => {
+  performancePreviewHover.value = null;
+};
 
 const applySmartLinkImage = (
   source: SmartLinkUploadSource,
@@ -1210,6 +1249,7 @@ const handlePlatformFontSelectShowUpdate = (show: boolean) => {
 };
 
 const closePerformancePopover = () => {
+  clearPerformancePreviewHover();
   performancePopoverShow.value = false;
 };
 
@@ -1225,6 +1265,13 @@ const syncPerformanceControlsFromSelection = () => {
   const enterMode = normalizePerformanceEnterMode(attrs.enterMode);
   const enterSpeed = Number(attrs.enterSpeed);
   const toneIntensity = Number(attrs.toneIntensity);
+  appliedPerformancePreviewAttrs.value = {
+    effect: normalizePerformanceEffect(attrs.effect),
+    enterMode: enterMode || 'normal',
+    enterSpeed: Number.isFinite(enterSpeed) ? clampPerformanceEnterSpeed(enterSpeed) : 5,
+    toneIntensity: Number.isFinite(toneIntensity) ? clampPerformanceToneIntensity(toneIntensity) : 0,
+    scale: normalizePerformanceScale(attrs.scale),
+  };
   if (enterMode) {
     performanceEnterMode.value = enterMode;
   }
@@ -1349,6 +1396,18 @@ const updatePerformanceMarksInRange = (
   ed.view.dispatch(tr);
   rememberEditorSelection();
   bumpEditorStateVersion();
+  const attrs = (ed.getAttributes('performance') || {}) as Record<string, any>;
+  appliedPerformancePreviewAttrs.value = {
+    effect: normalizePerformanceEffect(attrs.effect),
+    enterMode: normalizePerformanceEnterMode(attrs.enterMode) || 'normal',
+    enterSpeed: Number.isFinite(Number(attrs.enterSpeed))
+      ? clampPerformanceEnterSpeed(Number(attrs.enterSpeed))
+      : 5,
+    toneIntensity: Number.isFinite(Number(attrs.toneIntensity))
+      ? clampPerformanceToneIntensity(Number(attrs.toneIntensity))
+      : 0,
+    scale: normalizePerformanceScale(attrs.scale),
+  };
   return true;
 };
 
@@ -3490,11 +3549,17 @@ defineExpose({
                 <div class="tiptap-performance-panel__title">文字演出</div>
                 <button type="button" class="tiptap-performance-panel__close" @click="closePerformancePopover">×</button>
               </div>
-              <div class="tiptap-performance-panel__section">
-                <div class="tiptap-performance-panel__header">
-                  <div class="tiptap-performance-panel__label">当前文本块</div>
-                  <div class="tiptap-performance-panel__hint">进入方式与语气实时应用到当前块</div>
+              <div class="tiptap-performance-panel__previews">
+                <div class="tiptap-performance-panel__preview-card">
+                  <div class="tiptap-performance-panel__preview-label">选择效果预览</div>
+                  <PerformanceEffectPreview :attrs="pendingPerformancePreviewAttrs" />
                 </div>
+                <div class="tiptap-performance-panel__preview-card">
+                  <div class="tiptap-performance-panel__preview-label">应用效果预览</div>
+                  <PerformanceEffectPreview :attrs="appliedPerformancePreviewAttrs" />
+                </div>
+              </div>
+              <div class="tiptap-performance-panel__section">
                 <div class="tiptap-performance-panel__subsection">
                   <div class="tiptap-performance-panel__label">文本进入</div>
                   <div class="tiptap-performance-panel__chips">
@@ -3504,6 +3569,8 @@ defineExpose({
                       type="button"
                       class="tiptap-performance-chip"
                       :class="{ 'is-active': performanceEnterMode === option.value }"
+                      @pointerenter="setPerformancePreviewHover('enter', option.value)"
+                      @pointerleave="clearPerformancePreviewHover"
                       @click="setPerformanceEnterMode(option.value)"
                     >{{ option.label }}</button>
                   </div>
@@ -3556,6 +3623,8 @@ defineExpose({
                     type="button"
                     class="tiptap-performance-chip"
                     :class="{ 'is-active': performanceEffect === option.value }"
+                    @pointerenter="setPerformancePreviewHover('effect', option.value)"
+                    @pointerleave="clearPerformancePreviewHover"
                     @click="performanceEffect = option.value"
                   >{{ option.label }}</button>
                 </div>
@@ -4134,11 +4203,17 @@ defineExpose({
                 <button type="button" class="tiptap-performance-panel__close" @click="closePerformancePopover">×</button>
               </div>
               <div class="tiptap-performance-sheet__body">
-                <div class="tiptap-performance-panel__section">
-                  <div class="tiptap-performance-panel__header">
-                    <div class="tiptap-performance-panel__label">当前文本块</div>
-                    <div class="tiptap-performance-panel__hint">进入方式与语气实时应用到当前块</div>
+                <div class="tiptap-performance-panel__previews">
+                  <div class="tiptap-performance-panel__preview-card">
+                    <div class="tiptap-performance-panel__preview-label">选择效果预览</div>
+                    <PerformanceEffectPreview :attrs="pendingPerformancePreviewAttrs" />
                   </div>
+                  <div class="tiptap-performance-panel__preview-card">
+                    <div class="tiptap-performance-panel__preview-label">应用效果预览</div>
+                    <PerformanceEffectPreview :attrs="appliedPerformancePreviewAttrs" />
+                  </div>
+                </div>
+                <div class="tiptap-performance-panel__section">
                   <div class="tiptap-performance-panel__subsection">
                     <div class="tiptap-performance-panel__label">文本进入</div>
                     <div class="tiptap-performance-panel__chips">
@@ -4148,6 +4223,8 @@ defineExpose({
                         type="button"
                         class="tiptap-performance-chip"
                         :class="{ 'is-active': performanceEnterMode === option.value }"
+                        @pointerenter="setPerformancePreviewHover('enter', option.value)"
+                        @pointerleave="clearPerformancePreviewHover"
                         @click="setPerformanceEnterMode(option.value)"
                       >{{ option.label }}</button>
                     </div>
@@ -4200,6 +4277,8 @@ defineExpose({
                       type="button"
                       class="tiptap-performance-chip"
                       :class="{ 'is-active': performanceEffect === option.value }"
+                      @pointerenter="setPerformancePreviewHover('effect', option.value)"
+                      @pointerleave="clearPerformancePreviewHover"
                       @click="performanceEffect = option.value"
                     >{{ option.label }}</button>
                   </div>
@@ -4888,6 +4967,31 @@ defineExpose({
   font-size: 0.86rem;
   font-weight: 700;
   color: var(--sc-text-primary, #0f172a);
+}
+
+.tiptap-performance-panel__previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.tiptap-performance-panel__preview-card {
+  min-width: 0;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--sc-bg-surface, #fff) 92%, transparent);
+  overflow: hidden;
+}
+
+.tiptap-performance-panel__preview-label {
+  margin-bottom: 0.15rem;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .tiptap-performance-panel__close {
