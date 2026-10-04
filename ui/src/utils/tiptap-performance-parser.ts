@@ -1,4 +1,11 @@
-import { normalizePerformanceEffect, type PerformanceEffect, type PerformanceEnterMode, type PerformanceScale } from './tiptap-performance-mark';
+import {
+  normalizePerformanceEffect,
+  normalizePerformanceEnterMode,
+  normalizePerformanceScale,
+  type PerformanceEffect,
+  type PerformanceEnterMode,
+  type PerformanceScale,
+} from './tiptap-performance-mark';
 import type { PerformanceCommandType } from './tiptap-performance-node';
 import { MESSAGE_ACTION_NODE_TYPE, normalizeMessageActionAttrs } from './tiptap-message-action';
 
@@ -39,13 +46,14 @@ const readPerformanceAttrs = (marks: TipTapNode['marks']) => {
   const mark = (marks || []).find((item) => item?.type === 'performance');
   const toneIntensity = Number(mark?.attrs?.toneIntensity);
   const enterSpeed = Number(mark?.attrs?.enterSpeed);
+  const scale = normalizePerformanceScale(mark?.attrs?.scale) || undefined;
   return {
     effect: normalizePerformanceEffect(mark?.attrs?.effect) || undefined,
-    scale: mark?.attrs?.scale as PerformanceScale | undefined,
+    scale,
     toneIntensity: Number.isFinite(toneIntensity)
       ? toneIntensity
-      : (mark?.attrs?.scale === 'shout' ? 3 : mark?.attrs?.scale === 'whisper' ? -3 : undefined),
-    enterMode: mark?.attrs?.enterMode as PerformanceEnterMode | undefined,
+      : (scale === 'shout' ? 3 : scale === 'whisper' ? -3 : undefined),
+    enterMode: normalizePerformanceEnterMode(mark?.attrs?.enterMode) || undefined,
     enterSpeed: Number.isFinite(enterSpeed) ? enterSpeed : undefined,
   };
 };

@@ -5,7 +5,7 @@
 
 import { urlBase } from '@/stores/_config';
 import { isLocalChatLink, parseChatLink } from './messageLink';
-import { normalizePerformanceEffect } from './tiptap-performance-mark';
+import { normalizePerformanceEffect, normalizePerformanceEnterMode, normalizePerformanceScale } from './tiptap-performance-mark';
 import {
   SMART_LINK_DATA_ATTR,
   SMART_LINK_IMAGE_ROLE_ATTR,
@@ -391,10 +391,10 @@ function applyPerformanceMark(text: string, mark: { type: string; attrs?: Record
   const attrs = mark.attrs || {};
   const normalizedEffect = normalizePerformanceEffect(attrs.effect);
   const effect = normalizedEffect ? escapeHtml(normalizedEffect) : '';
-  const enterMode = escapeHtml(String(attrs.enterMode || '').trim());
+  const enterMode = normalizePerformanceEnterMode(attrs.enterMode);
   const enterSpeed = Number(attrs.enterSpeed);
   const toneIntensity = Number(attrs.toneIntensity);
-  const scale = escapeHtml(String(attrs.scale || '').trim());
+  const scale = normalizePerformanceScale(attrs.scale);
   const dataAttrs: string[] = [];
   const classNames = ['tiptap-performance'];
   const styleVars: string[] = [];

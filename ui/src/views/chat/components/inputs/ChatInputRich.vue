@@ -28,7 +28,12 @@ import {
   type SmartLinkTextType,
   type SmartLinkUrlType,
 } from '@/utils/tiptapSmartLink';
-import { normalizePerformanceEffect, type PerformanceEffect, type PerformanceEnterMode } from '@/utils/tiptap-performance-mark';
+import {
+  normalizePerformanceEffect,
+  normalizePerformanceEnterMode,
+  type PerformanceEffect,
+  type PerformanceEnterMode,
+} from '@/utils/tiptap-performance-mark';
 import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
 import { MessageCircle } from '@vicons/tabler';
 import {
@@ -764,11 +769,28 @@ const resetRubyModalState = () => {
 
 const clampPerformanceToneIntensity = (value: number) => Math.max(-4, Math.min(4, Math.round(value)));
 const clampPerformanceEnterSpeed = (value: number) => Math.max(1, Math.min(9, Math.round(value)));
-const performanceEnterModeOptions = [
+const performanceEnterModeOptions: ReadonlyArray<{ label: string; value: PerformanceEnterMode }> = [
   { label: '正常', value: 'normal' },
   { label: '朦胧显现', value: 'blur' },
   { label: '逐字', value: 'typewriter' },
-] as const;
+  { label: '淡入', value: 'fade' },
+  { label: '上浮', value: 'rise' },
+  { label: '落下', value: 'drop' },
+  { label: '放大显现', value: 'zoom' },
+  { label: '字距收拢', value: 'tracking' },
+  { label: '故障显现', value: 'glitch' },
+  { label: '重击', value: 'slam' },
+  { label: '闪现', value: 'flash' },
+];
+const performanceEffectOptions: ReadonlyArray<{ label: string; value: PerformanceEffect }> = [
+  { label: '波浪', value: 'wave' },
+  { label: '抖动', value: 'shake' },
+  { label: '虹彩', value: 'rainbow' },
+  { label: '故障', value: 'glitch' },
+  { label: '闪烁', value: 'blink' },
+  { label: '呼吸发光', value: 'glow' },
+  { label: '脉冲', value: 'pulse' },
+];
 const performanceToneMarks = {
   [-4]: '低语',
   [-1]: '压低',
@@ -1195,13 +1217,13 @@ const closePerformancePopoverAfterSubmit = () => {
 const syncPerformanceControlsFromSelection = () => {
   const attrs = (editor.value?.getAttributes('performance') || {}) as Record<string, any>;
   const effect = normalizePerformanceEffect(attrs.effect);
-  const enterMode = String(attrs.enterMode || '').trim();
+  const enterMode = normalizePerformanceEnterMode(attrs.enterMode);
   const enterSpeed = Number(attrs.enterSpeed);
   const toneIntensity = Number(attrs.toneIntensity);
   if (effect) {
     performanceEffect.value = effect;
   }
-  if (enterMode === 'normal' || enterMode === 'blur' || enterMode === 'typewriter') {
+  if (enterMode) {
     performanceEnterMode.value = enterMode;
   }
   if (Number.isFinite(enterSpeed)) {
@@ -3502,18 +3524,21 @@ defineExpose({
                 </div>
                 <div class="tiptap-performance-panel__label">文字效果</div>
                 <div class="tiptap-performance-panel__chips">
-                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'wave' }" @click="performanceEffect = 'wave'">波浪</button>
-                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'shake' }" @click="performanceEffect = 'shake'">抖动</button>
-                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'rainbow' }" @click="performanceEffect = 'rainbow'">虹彩</button>
-                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'glitch' }" @click="performanceEffect = 'glitch'">故障</button>
-                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'blink' }" @click="performanceEffect = 'blink'">闪烁</button>
+                  <button
+                    v-for="option in performanceEffectOptions"
+                    :key="option.value"
+                    type="button"
+                    class="tiptap-performance-chip"
+                    :class="{ 'is-active': performanceEffect === option.value }"
+                    @click="performanceEffect = option.value"
+                  >{{ option.label }}</button>
                 </div>
                 <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
               </div>
               <div class="tiptap-performance-panel__section">
                 <div class="tiptap-performance-panel__header">
                   <div class="tiptap-performance-panel__label">节奏命令</div>
-                  <div class="tiptap-performance-panel__hint">仅在朦胧显现 / 逐字时生效</div>
+                  <div class="tiptap-performance-panel__hint">仅在出现效果不是“正常”时生效</div>
                 </div>
                 <div class="tiptap-performance-panel__chips">
                   <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'delay' }" @click="performanceCommandType = 'delay'">停顿</button>
@@ -4140,18 +4165,21 @@ defineExpose({
                   </div>
                   <div class="tiptap-performance-panel__label">文字效果</div>
                   <div class="tiptap-performance-panel__chips">
-                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'wave' }" @click="performanceEffect = 'wave'">波浪</button>
-                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'shake' }" @click="performanceEffect = 'shake'">抖动</button>
-                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'rainbow' }" @click="performanceEffect = 'rainbow'">虹彩</button>
-                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'glitch' }" @click="performanceEffect = 'glitch'">故障</button>
-                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'blink' }" @click="performanceEffect = 'blink'">闪烁</button>
+                    <button
+                      v-for="option in performanceEffectOptions"
+                      :key="option.value"
+                      type="button"
+                      class="tiptap-performance-chip"
+                      :class="{ 'is-active': performanceEffect === option.value }"
+                      @click="performanceEffect = option.value"
+                    >{{ option.label }}</button>
                   </div>
                   <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
                 </div>
                 <div class="tiptap-performance-panel__section">
                   <div class="tiptap-performance-panel__header">
                     <div class="tiptap-performance-panel__label">节奏命令</div>
-                    <div class="tiptap-performance-panel__hint">仅在朦胧显现 / 逐字时生效</div>
+                    <div class="tiptap-performance-panel__hint">仅在出现效果不是“正常”时生效</div>
                   </div>
                   <div class="tiptap-performance-panel__chips">
                     <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'delay' }" @click="performanceCommandType = 'delay'">停顿</button>

@@ -773,8 +773,7 @@ onBeforeUnmount(() => {
 }
 
 /* Keep persistent text effects visible; reduced motion only removes entrance motion. */
-.theater-dialogue-overlay.is-reduced-motion .theater-dialogue-rich-text :deep(.enter-blur),
-.theater-dialogue-overlay.is-reduced-motion .theater-dialogue-rich-text :deep(.enter-typewriter) {
+.theater-dialogue-overlay.is-reduced-motion .theater-dialogue-rich-text :deep(.performance-enter) {
   animation: none !important;
 }
 </style>

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import DOMPurify from 'dompurify';
 import { tiptapJsonToHtml } from '@/utils/tiptap-render';
 import { hasPerformanceContent, parsePerformanceInstructions } from '@/utils/tiptap-performance-parser';
+import { isAnimatedPerformanceEnterMode, resolvePerformanceEnterClassNames } from '@/utils/tiptap-performance-mark';
 import { createTwinLayerPlayback } from './twinLayerPlayback';
 import type { TwinLayerPlaybackChar } from './twinLayerPlayback';
 
@@ -38,6 +39,7 @@ const playing = ref(false);
 const completed = ref(false);
 const overlayTextRef = ref<HTMLElement | null>(null);
 const mounted = ref(false);
+let trackingSegmentIndex = 0;
 
 const debug = (event: string, detail?: Record<string, unknown>) => {
   if (!props.debugPlayback) return;
@@ -68,8 +70,11 @@ const hasBlurBackdrop = computed(() => instructions.value.some((entry) => (
   entry.type === 'char' && entry.effects.enterMode === 'blur'
 )));
 
-const hasTypewriterEnter = computed(() => instructions.value.some((entry) => (
-  entry.type === 'char' && entry.effects.enterMode === 'typewriter'
+// 除朦胧显现外的逐字进入效果都从空白开始，播放期间隐藏底层静态文本。
+const hasHiddenBackdrop = computed(() => instructions.value.some((entry) => (
+  entry.type === 'char'
+  && entry.effects.enterMode !== 'blur'
+  && isAnimatedPerformanceEnterMode(entry.effects.enterMode)
 )));
 
 const baseHtml = computed(() => {
@@ -91,11 +96,12 @@ const syncDom = () => {
   root.classList.toggle('is-playing', playing.value);
   root.classList.toggle('is-completed', completed.value);
   root.classList.toggle('has-blur-backdrop', hasBlurBackdrop.value);
-  root.classList.toggle('has-typewriter', hasTypewriterEnter.value);
+  root.classList.toggle('has-hidden-backdrop', hasHiddenBackdrop.value);
 };
 
 const clearOverlayDom = () => {
   visibleText.value = '';
+  trackingSegmentIndex = 0;
   if (overlayTextRef.value) {
     overlayTextRef.value.textContent = '';
   }
@@ -202,10 +208,7 @@ const applyVisualMarks = (span: HTMLElement, marks: TwinLayerPlaybackChar['marks
         applyTextStyleAttrs(span, attrs);
         break;
       case 'performance':
-        span.classList.add('tiptap-performance');
-        if (attrs.enterMode) {
-          span.classList.add(`enter-${String(attrs.enterMode)}`);
-        }
+        span.classList.add('tiptap-performance', ...resolvePerformanceEnterClassNames(attrs.enterMode));
         if (Number.isFinite(Number(attrs.enterSpeed))) {
           span.style.setProperty('--performance-enter-speed', String(Number(attrs.enterSpeed)));
         }
@@ -232,8 +235,13 @@ const appendChar = (entry: TwinLayerPlaybackChar) => {
   if (entry.effects.effect) {
     glyph.classList.add(`fx-${entry.effects.effect}`);
   }
-  if (entry.effects.enterMode) {
-    span.classList.add(`enter-${entry.effects.enterMode}`);
+  span.classList.add(...resolvePerformanceEnterClassNames(entry.effects.enterMode));
+  if (entry.effects.enterMode === 'tracking') {
+    const trackingOffset = Math.min(0.2 + trackingSegmentIndex * 0.06, 1.2);
+    span.style.setProperty('--performance-tracking-offset', `${trackingOffset.toFixed(2)}em`);
+    trackingSegmentIndex += 1;
+  } else {
+    trackingSegmentIndex = 0;
   }
   if (entry.effects.scale) {
     span.classList.add(`scale-${entry.effects.scale}`);
@@ -248,6 +256,7 @@ const appendChar = (entry: TwinLayerPlaybackChar) => {
 
 const appendBreak = () => {
   visibleText.value += '\n';
+  trackingSegmentIndex = 0;
   const host = overlayTextRef.value;
   if (!host) {
     return;
@@ -402,12 +411,12 @@ onBeforeUnmount(() => {
   filter: blur(3px);
 }
 
-.twin-layer-message.has-typewriter:not(.is-completed) .twin-layer-message__base {
+.twin-layer-message.has-hidden-backdrop:not(.is-completed) .twin-layer-message__base {
   opacity: 0;
   filter: none;
 }
 
-.twin-layer-message.has-typewriter:not(.is-completed) .twin-layer-message__base .tiptap-performance {
+.twin-layer-message.has-hidden-backdrop:not(.is-completed) .twin-layer-message__base .tiptap-performance {
   opacity: 0;
 }
 
@@ -498,12 +507,53 @@ onBeforeUnmount(() => {
   animation: performance-blink 1.6s ease-in-out infinite;
 }
 
+.fx-glow {
+  animation: performance-glow 2.8s ease-in-out infinite;
+}
+
+.fx-pulse {
+  animation: performance-pulse 1.8s ease-in-out infinite;
+}
+
 .enter-blur {
   animation: performance-enter-blur 0.42s ease-out both;
 }
 
 .enter-typewriter {
   animation: performance-enter-typewriter calc(140ms + (10 - var(--performance-enter-speed, 5)) * 26ms) cubic-bezier(.17,.84,.44,1) both;
+}
+
+/* 进入动画挂在字符外层 span，持续效果挂在内层 glyph，两者 transform 逐层叠加。 */
+.enter-fade {
+  animation: performance-enter-fade calc(220ms + (10 - var(--performance-enter-speed, 5)) * 34ms) ease-out both;
+}
+
+.enter-rise {
+  animation: performance-enter-rise calc(240ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.17,.84,.44,1) both;
+}
+
+.enter-drop {
+  animation: performance-enter-drop calc(260ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.3,.7,.4,1) both;
+}
+
+.enter-zoom {
+  animation: performance-enter-zoom calc(240ms + (10 - var(--performance-enter-speed, 5)) * 30ms) cubic-bezier(.2,.8,.3,1) both;
+}
+
+.enter-tracking {
+  animation: performance-enter-tracking calc(280ms + (10 - var(--performance-enter-speed, 5)) * 36ms) cubic-bezier(.17,.84,.44,1) both;
+}
+
+.enter-flash {
+  animation: performance-enter-flash calc(260ms + (10 - var(--performance-enter-speed, 5)) * 30ms) linear both;
+}
+
+.enter-glitch {
+  animation: performance-enter-glitch calc(280ms + (10 - var(--performance-enter-speed, 5)) * 30ms) steps(1, end) both;
+}
+
+.enter-slam {
+  animation: performance-enter-slam calc(180ms + (10 - var(--performance-enter-speed, 5)) * 22ms) both;
 }
 
 @keyframes performance-wave {
@@ -593,5 +643,110 @@ onBeforeUnmount(() => {
     transform: var(--performance-scale);
     filter: brightness(var(--performance-tone-brightness));
   }
+}
+
+@keyframes performance-glow {
+  0%, 100% {
+    text-shadow: 0 0 0.1em color-mix(in srgb, currentColor 30%, transparent);
+  }
+  50% {
+    text-shadow:
+      0 0 0.16em color-mix(in srgb, currentColor 65%, transparent),
+      0 0 0.42em color-mix(in srgb, currentColor 35%, transparent);
+  }
+}
+
+@keyframes performance-pulse {
+  0%, 100% { opacity: 1; transform: var(--performance-scale) scale(1); }
+  50% { opacity: 0.8; transform: var(--performance-scale) scale(1.06); }
+}
+
+@keyframes performance-enter-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes performance-enter-rise {
+  from { opacity: 0; transform: var(--performance-scale) translateY(0.5em); }
+  to { opacity: 1; transform: var(--performance-scale); }
+}
+
+@keyframes performance-enter-drop {
+  0% { opacity: 0; transform: var(--performance-scale) translateY(-0.7em); }
+  65% { opacity: 1; transform: var(--performance-scale) translateY(0.06em); }
+  100% { opacity: 1; transform: var(--performance-scale); }
+}
+
+@keyframes performance-enter-zoom {
+  0% { opacity: 0; transform: var(--performance-scale) scale(0.35); }
+  70% { opacity: 1; transform: var(--performance-scale) scale(1.08); }
+  100% { opacity: 1; transform: var(--performance-scale); }
+}
+
+/* 只位移字符本身，不改真实 letter-spacing，避免播放中整行重排。 */
+@keyframes performance-enter-tracking {
+  from {
+    opacity: 0;
+    transform: var(--performance-scale) translateX(var(--performance-tracking-offset, 0.2em));
+  }
+  to { opacity: 1; transform: var(--performance-scale); }
+}
+
+@keyframes performance-enter-flash {
+  0% { opacity: 0; }
+  18% { opacity: 1; text-shadow: 0 0 0.32em currentColor; }
+  36% { opacity: 0.25; }
+  56% { opacity: 1; }
+  74% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+@keyframes performance-enter-glitch {
+  0% {
+    opacity: 0;
+    transform: var(--performance-scale) translateX(-0.14em) skewX(-14deg);
+  }
+  12% {
+    opacity: 1;
+    transform: var(--performance-scale) translateX(0.1em) skewX(10deg);
+    text-shadow:
+      -0.06em 0 0 rgba(255, 59, 59, 0.8),
+      0.06em 0 0 rgba(80, 180, 255, 0.8);
+  }
+  28% {
+    opacity: 0.35;
+    transform: var(--performance-scale) translate(-0.06em, 0.03em) skewX(-6deg);
+    text-shadow:
+      0.05em 0 0 rgba(255, 59, 59, 0.7),
+      -0.04em 0 0 rgba(80, 180, 255, 0.7);
+  }
+  44% {
+    opacity: 1;
+    transform: var(--performance-scale) translateX(0.05em);
+    text-shadow: 0 0 0 transparent;
+  }
+  62% {
+    opacity: 0.6;
+    transform: var(--performance-scale) translateX(-0.03em) skewX(4deg);
+  }
+  80%, 100% {
+    opacity: 1;
+    transform: var(--performance-scale);
+  }
+}
+
+@keyframes performance-enter-slam {
+  0% {
+    opacity: 0;
+    transform: var(--performance-scale) scale(2.4);
+    animation-timing-function: cubic-bezier(.55, 0, 1, .45);
+  }
+  45% {
+    opacity: 1;
+    transform: var(--performance-scale) scale(0.9);
+    animation-timing-function: cubic-bezier(.2, .7, .4, 1);
+  }
+  70% { transform: var(--performance-scale) scale(1.05); }
+  100% { opacity: 1; transform: var(--performance-scale); }
 }
 </style>

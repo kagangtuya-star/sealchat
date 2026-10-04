@@ -1,5 +1,10 @@
 import type { PerformanceInstruction } from '@/utils/tiptap-performance-parser';
-import type { PerformanceEffect, PerformanceEnterMode, PerformanceScale } from '@/utils/tiptap-performance-mark';
+import {
+  isAnimatedPerformanceEnterMode,
+  type PerformanceEffect,
+  type PerformanceEnterMode,
+  type PerformanceScale,
+} from '@/utils/tiptap-performance-mark';
 import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
 
 export type TwinLayerPlaybackChar = {
@@ -30,8 +35,7 @@ const wait = (ms: number) => new Promise<void>((resolve) => {
 });
 
 const isTruthyNumber = (value: unknown) => Number.isFinite(Number(value)) && Number(value) > 0;
-const isAnimatedEnterMode = (mode?: PerformanceEnterMode) => mode === 'blur' || mode === 'typewriter';
-const isImmediateEnterMode = (mode?: PerformanceEnterMode) => !mode || mode === 'normal';
+const isImmediateEnterMode = (mode?: PerformanceEnterMode) => !isAnimatedPerformanceEnterMode(mode);
 export const resolveCharactersPerSecondDelay = (charactersPerSecond?: number) => (
   Number.isFinite(charactersPerSecond) && Number(charactersPerSecond) > 0
     ? 1_000 / Math.min(60, Math.max(1, Number(charactersPerSecond)))
@@ -66,7 +70,7 @@ export const resolvePunctuationPauseExtra = (char: string, baseDelayMs: number) 
 const findNearestAnimatedContext = (instructions: PerformanceInstruction[], index: number) => {
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     const entry = instructions[cursor];
-    if (entry.type === 'char' && isAnimatedEnterMode(entry.effects.enterMode)) {
+    if (entry.type === 'char' && isAnimatedPerformanceEnterMode(entry.effects.enterMode)) {
       return entry as TwinLayerPlaybackChar;
     }
     if (entry.type === 'break') {
@@ -75,7 +79,7 @@ const findNearestAnimatedContext = (instructions: PerformanceInstruction[], inde
   }
   for (let cursor = index + 1; cursor < instructions.length; cursor += 1) {
     const entry = instructions[cursor];
-    if (entry.type === 'char' && isAnimatedEnterMode(entry.effects.enterMode)) {
+    if (entry.type === 'char' && isAnimatedPerformanceEnterMode(entry.effects.enterMode)) {
       return entry as TwinLayerPlaybackChar;
     }
     if (entry.type === 'break') {
