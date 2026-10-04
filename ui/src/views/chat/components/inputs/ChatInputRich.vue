@@ -786,11 +786,15 @@ const performanceEffectOptions: ReadonlyArray<{ label: string; value: Performanc
   { label: '正常', value: null },
   { label: '波浪', value: 'wave' },
   { label: '抖动', value: 'shake' },
+  { label: '漂浮', value: 'float' },
+  { label: '摇摆', value: 'sway' },
+  { label: '脉冲', value: 'pulse' },
+  { label: '心跳', value: 'heartbeat' },
   { label: '虹彩', value: 'rainbow' },
+  { label: '呼吸发光', value: 'glow' },
   { label: '故障', value: 'glitch' },
   { label: '闪烁', value: 'blink' },
-  { label: '呼吸发光', value: 'glow' },
-  { label: '脉冲', value: 'pulse' },
+  { label: '扭曲', value: 'wobble' },
 ];
 const performanceToneMarks = {
   [-4]: '低语',

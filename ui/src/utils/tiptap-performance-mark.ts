@@ -1,6 +1,18 @@
 type TiptapCoreModule = typeof import('@tiptap/core');
 
-export const PERFORMANCE_EFFECTS = ['shake', 'wave', 'rainbow', 'glitch', 'blink', 'glow', 'pulse'] as const;
+export const PERFORMANCE_EFFECTS = [
+  'shake',
+  'wave',
+  'rainbow',
+  'glitch',
+  'blink',
+  'glow',
+  'pulse',
+  'float',
+  'sway',
+  'heartbeat',
+  'wobble',
+] as const;
 export const PERFORMANCE_ENTER_MODES = [
   'normal',
   'blur',

@@ -515,6 +515,32 @@ onBeforeUnmount(() => {
   animation: performance-pulse 1.8s ease-in-out infinite;
 }
 
+.fx-float {
+  animation: performance-float 3.2s ease-in-out infinite;
+  animation-delay: calc(var(--performance-char-index) * -110ms);
+}
+
+/* 摇摆以字符底部为支点；选择器需压过 base 层 .tiptap-performance 的 transform-origin，且只作用于 sway。 */
+.twin-layer-message__char-glyph.fx-sway,
+.tiptap-performance.fx-sway {
+  transform-origin: center bottom;
+}
+
+.fx-sway {
+  animation: performance-sway 2.6s ease-in-out infinite;
+  animation-delay: calc(var(--performance-char-index) * -90ms);
+}
+
+/* 心跳整段同步，不做逐字错相，避免变成波浪式缩放。 */
+.fx-heartbeat {
+  animation: performance-heartbeat 1.8s ease-out infinite;
+}
+
+.fx-wobble {
+  animation: performance-wobble 1.8s ease-in-out infinite;
+  animation-delay: calc(var(--performance-char-index) * -70ms);
+}
+
 .enter-blur {
   animation: performance-enter-blur 0.42s ease-out both;
 }
@@ -659,6 +685,36 @@ onBeforeUnmount(() => {
 @keyframes performance-pulse {
   0%, 100% { opacity: 1; transform: var(--performance-scale) scale(1); }
   50% { opacity: 0.8; transform: var(--performance-scale) scale(1.06); }
+}
+
+@keyframes performance-float {
+  0%, 100% { transform: var(--performance-scale) translate(0, 0); }
+  25% { transform: var(--performance-scale) translate(0.02em, -0.06em); }
+  50% { transform: var(--performance-scale) translate(0, -0.12em); }
+  75% { transform: var(--performance-scale) translate(-0.02em, -0.06em); }
+}
+
+@keyframes performance-sway {
+  0%, 100% { transform: var(--performance-scale) translateX(0) rotate(0deg); }
+  25% { transform: var(--performance-scale) translate(0.015em, -0.02em) rotate(2deg); }
+  50% { transform: var(--performance-scale) translateX(0) rotate(0deg); }
+  75% { transform: var(--performance-scale) translate(-0.015em, -0.02em) rotate(-2deg); }
+}
+
+@keyframes performance-heartbeat {
+  0%, 55%, 100% { transform: var(--performance-scale) scale(1); }
+  8% { transform: var(--performance-scale) scale(1.12); }
+  14% { transform: var(--performance-scale) scale(1); }
+  22% { transform: var(--performance-scale) scale(1.07); }
+  30% { transform: var(--performance-scale) scale(1); }
+}
+
+@keyframes performance-wobble {
+  0%, 100% { transform: var(--performance-scale) rotate(0deg) scale(1, 1); }
+  20% { transform: var(--performance-scale) translateX(0.01em) rotate(-1.5deg) scale(1.04, 0.96); }
+  40% { transform: var(--performance-scale) translateY(-0.01em) rotate(1deg) scale(0.97, 1.05); }
+  60% { transform: var(--performance-scale) rotate(0deg) scale(1, 1); }
+  80% { transform: var(--performance-scale) translateX(-0.01em) rotate(1.5deg) scale(0.96, 1.04); }
 }
 
 @keyframes performance-enter-fade {
