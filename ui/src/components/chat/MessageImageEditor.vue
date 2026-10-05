@@ -2,10 +2,13 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useElementSize, useEventListener, useWindowSize } from '@vueuse/core';
 import { NButton, NIcon, NSlider, NSpin, NTooltip } from 'naive-ui';
-import { ArrowBackUp, ArrowForwardUp, Check, Refresh, X } from '@vicons/tabler';
+import { Adjustments, ArrowBackUp, ArrowForwardUp, Check, Refresh, X } from '@vicons/tabler';
 import 'vue-paint/themes/default.css';
 import { VpImage, type SaveParameters, useEditor } from 'vue-paint';
 import { useMessageImageEditor, type MessageImageEditorTool } from '@/composables/useMessageImageEditor';
+import { createDefaultMediaFxSpec, mediaFxFilterHasContent, resolveMediaFxCapabilities } from '@/features/media-fx/media-fx';
+import { vMediaFx } from '@/features/media-fx/media-fx-dom';
+import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue';
 
 const props = defineProps<{
   show: boolean;
@@ -30,10 +33,12 @@ const {
   imageWidth,
   isPreparing,
   isSaving,
+  mediaFx,
   restoreLastDrawTool,
   restoreBeforeCrop,
   selectTool,
   setColor,
+  setMediaFx,
   setThickness,
   settings,
   tools,
@@ -81,6 +86,16 @@ const canvasShellStyle = computed(() => ({
 const imageStyle = computed(() => ({
   width: `${Math.max(1, Math.round(imageWidth.value * renderScale.value))}px`,
   height: `${Math.max(1, Math.round(imageHeight.value * renderScale.value))}px`,
+}));
+// Live CSS preview of the bake filter; blur is scaled so the preview matches the
+// baked full-resolution result.
+const mediaFxPanelOpen = ref(false);
+const mediaFxCapabilities = resolveMediaFxCapabilities('bake');
+const mediaFxActive = computed(() => mediaFxFilterHasContent(mediaFx.value.filter));
+const mediaFxPreview = computed(() => ({
+  spec: mediaFx.value,
+  motion: false,
+  blurScale: renderScale.value,
 }));
 
 const handleEditorSave = async (payload: SaveParameters) => {
@@ -337,13 +352,19 @@ const handleResetAction = async () => {
     }
   }
   await reset();
+  setMediaFx(createDefaultMediaFxSpec());
   resetZoom();
 };
 
 watch(
   () => props.show,
   (show) => {
+    if (!show) {
+      mediaFxPanelOpen.value = false;
+    }
     if (show) {
+      // A reopened session starts without effects, like the drawing history reset below.
+      setMediaFx(createDefaultMediaFxSpec());
       nextTick(() => {
         void reset();
         resetZoom();
@@ -429,6 +450,7 @@ onUnmounted(() => {
       </div>
 
       <template v-else>
+        <div class="message-image-editor__workspace">
         <div
           ref="editorViewportRef"
           class="message-image-editor__viewport"
@@ -447,7 +469,7 @@ onUnmounted(() => {
           @touchcancel="handleTouchEnd"
         >
           <div ref="viewportCenterRef" class="message-image-editor__viewport-center">
-            <div class="message-image-editor__canvas-shell" :style="canvasShellStyle">
+            <div v-media-fx="mediaFxPreview" class="message-image-editor__canvas-shell" :style="canvasShellStyle">
               <VpImage
                 ref="vpImageRef"
                 :key="editorKey"
@@ -461,6 +483,16 @@ onUnmounted(() => {
               />
             </div>
           </div>
+        </div>
+        <aside v-if="mediaFxPanelOpen" class="message-image-editor__fx-panel" aria-label="图像效果">
+          <MediaFxPanel
+            :model-value="mediaFx"
+            mode="bake"
+            :capabilities="mediaFxCapabilities"
+            :disabled="isSaving"
+            @update:model-value="setMediaFx"
+          />
+        </aside>
         </div>
 
         <div class="message-image-editor__controls">
@@ -520,6 +552,27 @@ onUnmounted(() => {
                 </n-button>
               </template>
               裁剪
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  circle
+                  quaternary
+                  class="message-image-editor__tool"
+                  :class="{
+                    'message-image-editor__tool--active': mediaFxPanelOpen,
+                    'message-image-editor__tool--marked': mediaFxActive && !mediaFxPanelOpen,
+                  }"
+                  aria-label="效果"
+                  :aria-expanded="mediaFxPanelOpen"
+                  @click="mediaFxPanelOpen = !mediaFxPanelOpen"
+                >
+                  <template #icon>
+                    <n-icon :component="Adjustments" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              效果
             </n-tooltip>
             <div class="message-image-editor__action-icons">
               <n-tooltip trigger="hover">
@@ -742,6 +795,27 @@ onUnmounted(() => {
   color: #ef4444;
 }
 
+.message-image-editor__workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.message-image-editor__fx-panel {
+  flex: 0 0 260px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem;
+  border-radius: 18px;
+  border: 1px solid var(--editor-shell-border);
+  background: var(--editor-panel-bg);
+  background-color: var(--sc-bg-layer, #f5f5f7);
+  color: var(--editor-fg);
+}
+
 .message-image-editor__viewport {
   flex: 1 1 auto;
   min-height: 0;
@@ -841,6 +915,10 @@ onUnmounted(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 28%, transparent);
 }
 
+.message-image-editor__tool--marked {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color, #3388de) 45%, transparent);
+}
+
 .message-image-editor__spacer {
   flex: 1 1 auto;
 }
@@ -933,6 +1011,16 @@ onUnmounted(() => {
 }
 
 @media (max-width: 767px) {
+  .message-image-editor__workspace {
+    flex-direction: column;
+  }
+
+  .message-image-editor__fx-panel {
+    flex: 0 1 auto;
+    max-height: 38vh;
+    padding: 0.6rem 0.75rem;
+  }
+
   .message-image-editor__style-row,
   .message-image-editor__tool-row,
   .message-image-editor__thickness-row {

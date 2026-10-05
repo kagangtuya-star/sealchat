@@ -1,3 +1,5 @@
+import { compactMediaFxSpec, normalizeMediaFxSpec, type MediaFxSpec } from '../../../features/media-fx/media-fx'
+
 export const WORLD_UNIT_PX = 24
 
 export type StageObjectFit = 'fill' | 'cover' | 'contain'
@@ -623,6 +625,19 @@ export const normalizeStageEntranceConfig = (input: unknown): StageEntranceConfi
       : fallback.preset,
     durationMs,
   }
+}
+
+// Media FX lives in StageObject.metadata.mediaFx (stored transparently by the server).
+// Read paths normalize; existing metadata is not rewritten on load.
+export const stageObjectMediaFx = (object: Pick<StageObject, 'metadata'>): MediaFxSpec => (
+  normalizeMediaFxSpec(object.metadata?.mediaFx)
+)
+
+export const setStageObjectMediaFx = (object: Pick<StageObject, 'metadata'>, spec: unknown) => {
+  const compact = compactMediaFxSpec(spec)
+  const metadata = { ...(object.metadata || {}) }
+  delete metadata.mediaFx
+  object.metadata = compact ? { ...metadata, mediaFx: compact } : metadata
 }
 
 export interface StageSurfaceStyle {

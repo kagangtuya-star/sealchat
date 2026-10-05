@@ -10,6 +10,8 @@ import {
   useRectangle,
 } from 'vue-paint';
 import { compressImage } from '@/composables/useImageCompressor';
+import { createDefaultMediaFxSpec, mediaFxFilterHasContent, normalizeMediaFxSpec, type MediaFxSpec } from '@/features/media-fx/media-fx';
+import { bakeMediaFxFilterToCanvas } from '@/features/media-fx/media-fx-canvas';
 
 export type MessageImageEditorTool = 'move' | 'freehand' | 'rectangle' | 'crop';
 
@@ -84,6 +86,8 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
   const lastDrawTool = ref<MessageImageEditorTool>('freehand');
   const workingFile = ref<File | null>(null);
   const cropSnapshots = ref<CropSnapshot[]>([]);
+  // Bake-only Media FX: previewed with CSS while editing, baked once on export.
+  const mediaFx = ref<MediaFxSpec>(createDefaultMediaFxSpec());
   let loadTaskId = 0;
 
   const resetEditorState = (tool: MessageImageEditorTool = 'freehand') => {
@@ -98,6 +102,7 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     };
     errorMessage.value = '';
     lastDrawTool.value = tool === 'crop' ? 'freehand' : tool;
+    mediaFx.value = createDefaultMediaFxSpec();
     editorKey.value += 1;
   };
 
@@ -302,6 +307,10 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     };
   };
 
+  const setMediaFx = (value: MediaFxSpec) => {
+    mediaFx.value = normalizeMediaFxSpec(value);
+  };
+
   const exportEditedFile = async (params: SaveParameters) => {
     const originalFile = workingFile.value;
     if (!originalFile) {
@@ -315,7 +324,11 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
         ...params,
         canvas,
       } as any);
-      const blob = await canvasToBlob(canvas);
+      const filter = mediaFx.value.filter;
+      const outputCanvas = mediaFxFilterHasContent(filter)
+        ? bakeMediaFxFilterToCanvas(canvas, { width: canvas.width, height: canvas.height }, filter)
+        : canvas;
+      const blob = await canvasToBlob(outputCanvas);
       const pngFile = new File([blob], buildExportPngName(originalFile.name), {
         type: 'image/png',
         lastModified: Date.now(),
@@ -346,10 +359,12 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     imageWidth,
     isPreparing,
     isSaving,
+    mediaFx,
     restoreLastDrawTool,
     restoreBeforeCrop,
     selectTool,
     setColor,
+    setMediaFx,
     setThickness,
     setTool,
     settings,

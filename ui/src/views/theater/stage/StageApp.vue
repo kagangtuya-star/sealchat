@@ -82,6 +82,8 @@ import {
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   resolveSafeStageIframeUrl,
+  setStageObjectMediaFx,
+  stageObjectMediaFx,
   stageSceneTransitionTypes,
   type StageEntranceConfig,
   type StageEntrancePlayback,
@@ -137,6 +139,9 @@ import TheaterClueActionEditor from './TheaterClueActionEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import { mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import { createKonvaMediaFxController, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
+import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
 import type { DialogueController, DialogueControllerTemplate, DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
@@ -2804,6 +2809,8 @@ const finishPointerTrace = () => {
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 const objectEntranceTweens = new Map<string, Konva.Tween>()
+// Media FX motion/filter controllers for image objects, keyed by object id.
+const objectMediaFxControllers = new Map<string, KonvaMediaFxController>()
 const pendingObjectEntrances = new Set<string>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
 const activeAnimatedMedia = new Set<StageMediaSource>()
@@ -3517,6 +3524,46 @@ const updateSelectedEntrancePreset = (value: string) => updateSelectedEntrance({
 const updateSelectedEntranceDuration = (value: number | null) => {
   if (value !== null) updateSelectedEntrance({ durationMs: value })
 }
+
+// Media FX for image objects is stored in metadata.mediaFx. Member-delegated edits are
+// limited to metadata.entrance by the server, so the editor is admin-only.
+const selectedMediaFxOpen = ref(false)
+const mediaFxPreviewPaused = ref(false)
+const selectedObjectSupportsMediaFx = computed(() => (
+  selectedObject.value?.type === 'image' && canEditAllObjects.value
+))
+const selectedMediaFx = computed(() => (
+  selectedObject.value ? stageObjectMediaFx(selectedObject.value) : null
+))
+const selectedMediaFxActive = computed(() => mediaFxHasContent(selectedMediaFx.value))
+const selectedMediaFxCapabilities = computed(() => resolveMediaFxCapabilities(
+  'konva',
+  selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+))
+let selectedMediaFxEditing = false
+const beginSelectedMediaFxEdit = () => {
+  if (selectedMediaFxEditing || selectedObject.value?.type !== 'image' || !canEditAllObjects.value) return
+  props.store.beginObjectEdit('修改图像效果')
+  selectedMediaFxEditing = true
+}
+const endSelectedMediaFxEdit = () => {
+  if (!selectedMediaFxEditing) return
+  selectedMediaFxEditing = false
+  props.store.commitObjectEdit()
+}
+const updateSelectedMediaFx = (spec: MediaFxSpec) => {
+  const object = selectedObject.value
+  if (object?.type !== 'image' || !canEditAllObjects.value) return
+  const discreteEdit = !selectedMediaFxEditing
+  if (discreteEdit) beginSelectedMediaFxEdit()
+  setStageObjectMediaFx(object, spec)
+  if (discreteEdit) endSelectedMediaFxEdit()
+}
+watch(() => props.store.state.selectedObjectId, () => {
+  endSelectedMediaFxEdit()
+  mediaFxPreviewPaused.value = false
+})
+watch(mediaFxPreviewPaused, () => syncObjects())
 
 const previewSelectedEntrance = () => {
   const object = selectedObject.value
@@ -6318,6 +6365,7 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     wrapper.setAttr('stageImageUrl', '')
   }
   releaseObjectMedia(wrapper)
+  disposeObjectMediaFx(object.id)
   wrapper.destroyChildren()
   wrapper.setAttr('stageObjectType', object.type)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
@@ -6340,7 +6388,11 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     return
   }
   if (object.type === 'image') {
-    wrapper.add(
+    // Inner Media FX group: continuous motion stays off the root group, which owns
+    // layout, drag, transformer and entrance tweens.
+    const mediaFxGroup = new Konva.Group({ name: 'theater-object-media-fx' })
+    wrapper.add(mediaFxGroup)
+    mediaFxGroup.add(
       new Konva.Rect({
         name: 'theater-object-image-frame',
         width,
@@ -6639,6 +6691,38 @@ const createObjectNode = (object: StageObject) => {
   return wrapper
 }
 
+const disposeObjectMediaFx = (objectId: string) => {
+  objectMediaFxControllers.get(objectId)?.dispose()
+  objectMediaFxControllers.delete(objectId)
+}
+
+const syncObjectMediaFx = (wrapper: Konva.Group, object: StageObject, width: number, height: number) => {
+  const spec = stageObjectMediaFx(object)
+  let controller = objectMediaFxControllers.get(object.id)
+  if (!mediaFxHasContent(spec)) {
+    // No effect: release the controller so no tween/cache survives for this object.
+    if (controller) disposeObjectMediaFx(object.id)
+    return
+  }
+  const motionNode = wrapper.findOne<Konva.Group>('.theater-object-media-fx')
+  if (!motionNode) return
+  if (!controller) {
+    controller = createKonvaMediaFxController({
+      motionNode,
+      imageNode: motionNode.findOne<Konva.Image>('.theater-object-image'),
+    })
+    objectMediaFxControllers.set(object.id, controller)
+  }
+  controller.update(spec, {
+    width,
+    height,
+    // Static cache filters would freeze animated images / video on one frame.
+    filters: isStaticImageObject(object),
+    paused: mediaFxPreviewPaused.value && props.store.state.selectedObjectId === object.id,
+    reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+  })
+}
+
 const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: number, height: number) => {
   const frame = wrapper.findOne<Konva.Rect>('.theater-object-image-frame')
   const image = wrapper.findOne<Konva.Image>('.theater-object-image')
@@ -6709,6 +6793,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
         objectImageFit(object),
       )
       image.visible(true)
+      objectMediaFxControllers.get(object.id)?.refreshFilter()
       if (!isVideoSource(loadedSource)) {
         const previewUrl = stageMediaObjectUrls.get(loadedSource) || location!.url
         if (previewUrl) setLayerPreviewUrl(object.id, previewUrl)
@@ -6785,6 +6870,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     })
   } else if (object.type === 'image') {
     syncObjectImage(wrapper, object, width, height)
+    syncObjectMediaFx(wrapper, object, width, height)
   } else if (object.type === 'button') {
     wrapper.findOne<Konva.Rect>('.theater-object-content')?.setAttrs({ width, height, fill: object.fill })
     wrapper.findOne<Konva.Text>('.theater-object-button-label')?.setAttrs({
@@ -6930,6 +7016,7 @@ const syncObjects = () => {
     textEntranceTimers.delete(objectId)
     delete textEntrancePlaybacks[objectId]
     imageLoadVersions.delete(objectId)
+    disposeObjectMediaFx(objectId)
     releaseObjectMedia(node)
     node.destroy()
     objectNodes.delete(objectId)
@@ -8278,6 +8365,7 @@ watch([dialoguePerformanceHidden, portraitPerformanceHidden], ([dialogueHidden, 
 }, { flush: 'sync' })
 
 onBeforeUnmount(() => {
+  endSelectedMediaFxEdit()
   quickToolPickerEpoch += 1
   quickToolPickerOpen.value = false
   hideImageAnnotation()
@@ -8332,6 +8420,8 @@ onBeforeUnmount(() => {
   mediaAnimation = null
   objectEntranceTweens.forEach((tween) => tween.destroy())
   objectEntranceTweens.clear()
+  objectMediaFxControllers.forEach((controller) => controller.dispose())
+  objectMediaFxControllers.clear()
   pendingObjectEntrances.clear()
   textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
   textEntranceTimers.clear()
@@ -9326,6 +9416,35 @@ onBeforeUnmount(() => {
               >
                 <template #suffix>ms</template>
               </n-input-number>
+            </template>
+            <template v-if="selectedObjectSupportsMediaFx && selectedMediaFx">
+              <label>图像效果</label>
+              <n-button
+                class="theater-media-fx-toggle"
+                size="small"
+                :type="selectedMediaFxActive ? 'primary' : 'default'"
+                secondary
+                :aria-expanded="selectedMediaFxOpen"
+                @click="selectedMediaFxOpen = !selectedMediaFxOpen"
+              >
+                <template #icon><n-icon><component :is="selectedMediaFxOpen ? ChevronDown : ChevronRight" /></n-icon></template>
+                {{ selectedMediaFxActive ? '已启用图像效果' : '设置图像效果' }}
+              </n-button>
+              <MediaFxPanel
+                v-if="selectedMediaFxOpen"
+                class="theater-media-fx-panel"
+                :model-value="selectedMediaFx"
+                mode="live"
+                :capabilities="selectedMediaFxCapabilities"
+                preview-control
+                :preview-paused="mediaFxPreviewPaused"
+                @focusin.stop
+                @focusout.stop
+                @edit-start="beginSelectedMediaFxEdit"
+                @edit-end="endSelectedMediaFxEdit"
+                @update:model-value="updateSelectedMediaFx"
+                @update:preview-paused="mediaFxPreviewPaused = $event"
+              />
             </template>
             <template v-if="selectedObject.type === 'drawing' && selectedObject.drawing">
               <label>描边</label>
@@ -10456,6 +10575,8 @@ onBeforeUnmount(() => {
 .theater-scene-overlay-settings-row .theater-image-actions { min-width: 0; }
 .theater-scene-overlay-settings-row small { overflow: hidden; color: var(--sc-text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .theater-entrance-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.theater-media-fx-toggle { justify-content: flex-start; }
+.theater-media-fx-panel { padding: 8px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
 .theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
 .theater-surface-settings > * { min-width: 0; }
 .theater-surface-settings__heading { color: var(--sc-text-primary, #f4f4f5); font-size: 13px; font-weight: 700; }
