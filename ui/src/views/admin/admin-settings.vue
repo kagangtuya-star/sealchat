@@ -14,9 +14,10 @@ import AdminSettingsUser from './admin-settings-user.vue'
 import AdminSettingsUpdate from './admin-settings-update.vue'
 import AdminSettingsChannelEmbedTools from './admin-settings-channel-embed-tools.vue'
 import AdminSettingsCharacterCardTemplates from './admin-settings-character-card-templates.vue'
+import AdminMCPSettings from './AdminMCPSettings.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'ai-speech' | 'certificate' | 'channel-embed-tools' | 'character-card-templates'
+type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'ai-speech' | 'certificate' | 'channel-embed-tools' | 'character-card-templates' | 'mcp'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
@@ -34,12 +35,14 @@ const speechSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const certificateSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const mcpSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const audioDrawerVisible = ref(false);
 const aiOpsDrawerVisible = ref(false);
 const aiQuotaModalVisible = ref(false);
 const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
 const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
+  if (activeTab.value === 'mcp') return mcpSettingsRef.value;
   if (activeTab.value === 'basic') {
     return basicSettingsRef.value;
   }
@@ -146,6 +149,7 @@ const saveCurrentTab = async () => {
           @open-quota-management="openAIQuotaModal"
         />
       </n-tab-pane>
+      <n-tab-pane name="mcp" tab="MCP 接入"><AdminMCPSettings ref="mcpSettingsRef" /></n-tab-pane>
       <n-tab-pane name="ai-speech" tab="AI语音配置">
         <AdminSpeechSettings ref="speechSettingsRef" />
       </n-tab-pane>

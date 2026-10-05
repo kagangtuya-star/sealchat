@@ -69,6 +69,7 @@ func AttachmentFindByHashAndSize(hash []byte, size int64) (*AttachmentModel, err
 	var att AttachmentModel
 	err := ExcludeTTSAttachments(GetDB()).
 		Where("hash = ? AND size = ?", hash, size).
+		Where("(extra IS NULL OR extra <> ?)", "mcp-upload").
 		Order("created_at ASC").
 		Limit(1).
 		Find(&att).Error

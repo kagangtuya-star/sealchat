@@ -75,15 +75,20 @@ func ListBattleReports(channelID string, userID string) ([]*model.BattleReportMo
 	if err != nil {
 		return nil, err
 	}
-	if err := EnsureBattleReportWorldAccess(userID, channel.WorldID); err != nil {
+	q, err := BattleReportListQuery(channel.WorldID, userID)
+	if err != nil {
 		return nil, err
 	}
 	var items []*model.BattleReportModel
-	err = model.GetDB().
-		Where("world_id = ? AND is_deleted = ?", channel.WorldID, false).
-		Order("sort_order DESC, period_start DESC, created_at DESC").
-		Find(&items).Error
+	err = q.Find(&items).Error
 	return items, err
+}
+
+func BattleReportListQuery(worldID, userID string) (*gorm.DB, error) {
+	if err := EnsureBattleReportWorldAccess(userID, worldID); err != nil {
+		return nil, err
+	}
+	return model.GetDB().Model(&model.BattleReportModel{}).Where("world_id = ? AND is_deleted = ?", worldID, false).Order("sort_order DESC, period_start DESC, created_at DESC"), nil
 }
 
 // ListBattleReportsForObserver returns world reports whose source channels are

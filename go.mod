@@ -1,6 +1,6 @@
 module sealchat
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/caddyserver/certmagic v0.25.2
@@ -10,6 +10,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gofiber/contrib/websocket v1.2.2
 	github.com/gofiber/fiber/v2 v2.52.5
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/pprof v0.0.0-20221118152302-e6195bd50e26
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/kardianos/service v1.2.2
@@ -17,9 +18,10 @@ require (
 	github.com/knadh/koanf/v2 v2.1.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mholt/acmez/v3 v3.1.6
-	github.com/mmonterroca/docxgo/v2 v2.12.0
 	github.com/mikespook/gorbac v2.3.0+incompatible
 	github.com/minio/minio-go/v7 v7.0.64
+	github.com/mmonterroca/docxgo/v2 v2.12.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/orisano/wyhash v1.1.0
 	github.com/samber/lo v1.38.1
 	github.com/sealdice/dicescript v0.0.0-20240927083134-65269b7d051c
@@ -74,18 +76,23 @@ require (
 	github.com/rs/xid v1.5.0 // indirect
 	github.com/sashabaranov/go-openai v1.41.2 // indirect
 	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.52.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
 	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

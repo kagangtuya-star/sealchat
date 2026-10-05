@@ -34,6 +34,7 @@ func cloneTheaterPresentation(value *protocol.TheaterPresentation) *protocol.The
 }
 
 type ChannelIdentityInput struct {
+	ConfirmMCPAvatar           bool `json:"-"` // Internal: bind a verified MCP temporary avatar in the primary write transaction.
 	ChannelID                  string
 	DisplayName                string
 	Color                      string
@@ -247,7 +248,10 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 			return nil, err
 		}
 	}
-	if err := model.ChannelIdentityUpsert(item); err != nil {
+	if input.ConfirmMCPAvatar && item.ID == "" {
+		item.Init()
+	}
+	if err := persistMCPIdentityAvatar(input, ownerUserID, operatorUserID, item.ID, func(tx *gorm.DB) error { return tx.Save(item).Error }); err != nil {
 		return nil, err
 	}
 
@@ -547,7 +551,12 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 		values["theater_presentation"] = input.TheaterPresentation
 	}
 
-	if err := model.ChannelIdentityUpdate(identity.ID, values); err != nil {
+	if err := model.ChannelIdentityEncodeStoredValues(values); err != nil {
+		return nil, err
+	}
+	if err := persistMCPIdentityAvatar(input, ownerUserID, operatorUserID, identity.ID, func(tx *gorm.DB) error {
+		return tx.Model(&model.ChannelIdentityModel{}).Where("id = ?", identity.ID).Updates(values).Error
+	}); err != nil {
 		return nil, err
 	}
 

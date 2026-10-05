@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -87,41 +88,15 @@ func canManageStickyNote(userID, channelID, creatorID string) (bool, error) {
 }
 
 func ensureStickyNoteChannelMembership(userID, channelID string) error {
-	member, err := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false)
-	if err != nil {
-		return err
+	err := service.EnsureStickyNoteChannelMembership(userID, channelID)
+	if errors.Is(err, service.ErrWorldPermission) {
+		return errors.New("仅频道成员可操作便签")
 	}
-	if member == nil {
-		return fmt.Errorf("仅频道成员可操作便签")
-	}
-	return nil
+	return err
 }
 
 func parseStickyNoteUserIDs(raw string) map[string]struct{} {
-	result := make(map[string]struct{})
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return result
-	}
-	var ids []string
-	if err := json.Unmarshal([]byte(raw), &ids); err == nil {
-		for _, id := range ids {
-			id = strings.TrimSpace(id)
-			if id == "" {
-				continue
-			}
-			result[id] = struct{}{}
-		}
-		return result
-	}
-	for _, part := range strings.Split(raw, ",") {
-		id := strings.TrimSpace(part)
-		if id == "" {
-			continue
-		}
-		result[id] = struct{}{}
-	}
-	return result
+	return service.ParseStickyNoteUserIDs(raw)
 }
 
 func buildStickyNoteUserIDs(ids map[string]struct{}) string {
@@ -141,34 +116,7 @@ func buildStickyNoteUserIDs(ids map[string]struct{}) string {
 }
 
 func canViewStickyNote(note *model.StickyNoteModel, userID string) bool {
-	if note == nil {
-		return false
-	}
-	if note.Visibility == "" || note.Visibility == model.StickyNoteVisibilityAll {
-		return true
-	}
-	if userID == "" {
-		return false
-	}
-	if note.CreatorID == userID {
-		return true
-	}
-	editors := parseStickyNoteUserIDs(note.EditorIDs)
-	if _, ok := editors[userID]; ok {
-		return true
-	}
-	switch note.Visibility {
-	case model.StickyNoteVisibilityOwner:
-		return false
-	case model.StickyNoteVisibilityEditors:
-		return false
-	case model.StickyNoteVisibilityViewers:
-		viewers := parseStickyNoteUserIDs(note.ViewerIDs)
-		_, ok := viewers[userID]
-		return ok
-	default:
-		return true
-	}
+	return service.CanViewStickyNote(note, userID)
 }
 
 func listConnectedStickyNoteUserIDs(channelID string) []string {
@@ -935,18 +883,7 @@ func apiStickyNoteDeleteRest(c *fiber.Ctx) error {
 	channelID := note.ChannelID
 
 	// 权限检查：仅创建者或频道管理员可删除
-	isCreator := note.CreatorID == user.ID
-	isAdmin := false
-	if !isCreator {
-		roleIDs, _ := model.UserRoleMappingListByUserID(user.ID, channelID, "channel")
-		for _, roleID := range roleIDs {
-			if strings.HasSuffix(roleID, "-owner") || strings.HasSuffix(roleID, "-admin") {
-				isAdmin = true
-				break
-			}
-		}
-	}
-	if !isCreator && !isAdmin {
+	if !service.MCPCanDeleteStickyNote(note, user.ID) {
 		return c.Status(403).JSON(fiber.Map{"error": "只有创建者或管理员可以删除便签"})
 	}
 

@@ -733,6 +733,7 @@ export interface AdminAIQuotaListResult {
 }
 
 export interface ServerConfig {
+  mcp?: import('@/api/mcp').MCPConfig;
   serveAt: string;
   domain: string;
   registerOpen: boolean;

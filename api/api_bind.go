@@ -446,9 +446,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		return fasthttp.RequestConfig{MaxRequestBodySize: bodyLimit}
 	}
 	app.Use(certificateHTTPRedirectMiddleware(config))
-	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
+	bindMCPRoutes(app, config.WebUrl)
+	app.Use(corsConfig)
 	app.Use(frontendCompressMiddleware(config.WebUrl))
 	bindAppNotificationRoutes(app, config.WebUrl)
 
@@ -532,6 +533,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
+	bindPersonalAPIKeyRoutes(v1Auth)
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
@@ -1042,6 +1044,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 		if err := utils.ValidateSpeechConfig(newConfig.AI.Speech); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+		newConfig.MCP = utils.NormalizeMCPConfig(newConfig.MCP)
+		if err := utils.ValidateMCPConfig(newConfig.MCP); err != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 		if err := normalizeAndValidateCertificateConfigForWrite(newConfig); err != nil {

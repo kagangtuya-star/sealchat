@@ -56,7 +56,7 @@ func StartBattleReportSummary(channelID string, userID string, input BattleRepor
 		PeriodEnd:          input.PeriodEnd,
 		ContextReportCount: input.ContextReportCount,
 	}
-	if err := ensureBattleReportSummaryInputWithinLimit(preflightReport, channels, input.AIConfig); err != nil {
+	if err := ensureBattleReportSummaryInputWithinLimit(preflightReport, channels, input.AIConfig, userID); err != nil {
 		return nil, err
 	}
 	item, err := CreateBattleReport(channelID, userID, BattleReportInput{
@@ -102,7 +102,7 @@ func BuildBattleReportSummaryPrompt(channelID string, userID string, input Battl
 		PeriodEnd:          input.PeriodEnd,
 		ContextReportCount: input.ContextReportCount,
 	}
-	messageGroups, err := loadBattleReportMessageGroups(channels, preflightReport.PeriodStart, preflightReport.PeriodEnd)
+	messageGroups, err := loadBattleReportMessageGroups(channels, preflightReport.PeriodStart, preflightReport.PeriodEnd, userID)
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +132,7 @@ func runBattleReportSummaryTask(ctx context.Context, reportID string, opts Battl
 	if err != nil {
 		return markBattleReportSummaryFailed(report.ID, err)
 	}
-	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd)
+	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd, opts.User.ID)
 	if err != nil {
 		return err
 	}
@@ -224,13 +224,13 @@ func resolveBattleReportSourceChannels(primaryChannelID string, worldID string, 
 	return channels, nil
 }
 
-func loadBattleReportMessageGroups(channels []*model.ChannelModel, start time.Time, end time.Time) ([]BattleReportMessageGroup, error) {
+func loadBattleReportMessageGroups(channels []*model.ChannelModel, start time.Time, end time.Time, viewerUserIDs ...string) ([]BattleReportMessageGroup, error) {
 	groups := make([]BattleReportMessageGroup, 0, len(channels))
 	for _, channel := range channels {
 		if channel == nil {
 			continue
 		}
-		messages, err := loadBattleReportMessages(channel.ID, start, end)
+		messages, err := loadBattleReportMessages(channel.ID, start, end, viewerUserIDs...)
 		if err != nil {
 			return nil, err
 		}
@@ -259,8 +259,8 @@ func battleReportSummaryMaxInputChars(cfg utils.AIConfig) int {
 	return normalized.Features[aiService.FeatureBattleSummary].Params.MaxInputChars
 }
 
-func ensureBattleReportSummaryInputWithinLimit(report *model.BattleReportModel, channels []*model.ChannelModel, cfg utils.AIConfig) error {
-	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd)
+func ensureBattleReportSummaryInputWithinLimit(report *model.BattleReportModel, channels []*model.ChannelModel, cfg utils.AIConfig, viewerUserIDs ...string) error {
+	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd, viewerUserIDs...)
 	if err != nil {
 		return err
 	}
@@ -287,13 +287,16 @@ func countBattleReportInputChars(input string) int {
 	return len([]rune(strings.TrimSpace(input)))
 }
 
-func loadBattleReportMessages(channelID string, start time.Time, end time.Time) ([]*model.MessageModel, error) {
+func loadBattleReportMessages(channelID string, start time.Time, end time.Time, viewerUserIDs ...string) ([]*model.MessageModel, error) {
 	query := model.GetDB().Model(&model.MessageModel{}).
 		Where("channel_id = ?", strings.TrimSpace(channelID)).
 		Where("is_deleted = ?", false).
 		Where("is_revoked = ?", false).
 		Preload("Member").
 		Preload("User")
+	if len(viewerUserIDs) > 0 {
+		query = ApplyWhisperVisibilityFilter(query, viewerUserIDs[0], channelID)
+	}
 	if !start.IsZero() {
 		query = query.Where("created_at >= ?", start)
 	}

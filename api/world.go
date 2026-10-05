@@ -49,43 +49,15 @@ func WorldList(c *fiber.Ctx) error {
 	}
 	offset := (page - 1) * pageSize
 
-	q := db.Table("worlds").Where("worlds.status = ?", "active")
-	if keyword != "" {
-		like := "%" + keyword + "%"
-		q = q.Where("worlds.name LIKE ? OR worlds.description LIKE ?", like, like)
-	}
-	memberSub := db.Table("world_members").Select("world_id").Where("user_id = ?", user.ID)
-	archiveSub := db.Table("world_archives").Select("world_id").Where("user_id = ?", user.ID)
-	if joinedOnly {
-		q = q.Where("worlds.id IN (?)", memberSub)
-		if archivedOnly {
-			q = q.Where("worlds.id IN (?)", archiveSub)
-		} else if !includeArchived {
-			q = q.Where("worlds.id NOT IN (?)", archiveSub)
-		}
-	} else {
-		if visibility != "" {
-			q = q.Where("worlds.visibility = ?", visibility)
-		} else {
-			q = q.Where("worlds.visibility = ? OR worlds.id IN (?)", model.WorldVisibilityPublic, memberSub)
-		}
-	}
+	q := service.UserWorldListQuery(user.ID, service.UserWorldListOptions{JoinedOnly: joinedOnly, ArchivedOnly: archivedOnly, IncludeArchived: includeArchived, Keyword: keyword, Visibility: visibility})
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界列表失败"})
 	}
 
-	lastActiveSub := db.Table("channels").
-		Select("world_id, MAX(recent_sent_at) as last_active").
-		Group("world_id")
-
 	var worlds []*model.WorldModel
-	if err := q.Joins("LEFT JOIN (?) as world_last_activity ON world_last_activity.world_id = worlds.id", lastActiveSub).
-		Joins("LEFT JOIN world_favorites wf ON wf.world_id = worlds.id AND wf.user_id = ?", user.ID).
-		Order("CASE WHEN wf.world_id IS NULL THEN 0 ELSE 1 END DESC").
-		Order("COALESCE(world_last_activity.last_active, 0) DESC").
-		Order("worlds.created_at DESC").
+	if err := service.OrderUserWorldListQuery(q, user.ID).
 		Select("worlds.*").
 		Offset(offset).Limit(pageSize).
 		Find(&worlds).Error; err != nil {

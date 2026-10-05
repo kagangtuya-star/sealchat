@@ -454,6 +454,7 @@ type WebSocketConfig struct {
 }
 
 type AppConfig struct {
+	MCP                       MCPConfig                 `json:"mcp" yaml:"mcp"`
 	ServeAt                   string                    `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                    `json:"domain" yaml:"domain"`
 	ImageBaseURL              string                    `json:"imageBaseUrl" yaml:"imageBaseUrl"`
@@ -819,6 +820,10 @@ func ReadConfig() *AppConfig {
 	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
+	config.MCP = NormalizeMCPConfig(config.MCP)
+	if err := ValidateMCPConfig(config.MCP); err != nil {
+		panic(err)
+	}
 	config.AI = NormalizeAIConfig(config.AI)
 	applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 
@@ -1834,6 +1839,11 @@ func WriteConfigChecked(config *AppConfig) error {
 		return fmt.Errorf("配置复制失败: %w", err)
 	}
 	if config != nil {
+		config.MCP = NormalizeMCPConfig(config.MCP)
+		if err := ValidateMCPConfig(config.MCP); err != nil {
+			return err
+		}
+		_ = candidateK.Set("mcp", config.MCP)
 		config.Captcha.normalize()
 		config.Storage.normalize()
 		config.Proxy = NormalizeProxyConfig(config.Proxy)

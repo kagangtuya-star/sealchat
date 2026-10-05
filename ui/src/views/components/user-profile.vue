@@ -5,6 +5,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, withDefaults } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
+import PersonalAPIKeys from './PersonalAPIKeys.vue'
 import { api, urlBase } from '@/stores/_config';
 import { NIcon, useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
@@ -61,6 +62,7 @@ const emailCodeCountdown = ref(0);
 let emailCodeTimer: ReturnType<typeof setInterval> | null = null;
 const lastEmailForCode = ref('');
 const aiSettingsVisible = ref(false);
+const personalKeysVisible = ref(false);
 const aiSettingsSaving = ref(false);
 const aiSettingsSource = ref<AIRunSource>('platform');
 const aiProfileDrafts = ref<UserAIProviderProfile[]>([]);
@@ -719,6 +721,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-col gap-2 w-full">
           <n-button @click="passwordChange">修改密码</n-button>
           <n-button @click="openAISettings">AI 设置</n-button>
+          <n-button @click="personalKeysVisible = !personalKeysVisible">Personal API Keys / MCP</n-button>
 
           <!-- 邮箱绑定区域 -->
           <template v-if="emailAuthEnabled">
@@ -786,6 +789,7 @@ onBeforeUnmount(() => {
         </n-form-item>
       </template>
     </n-form>
+    <PersonalAPIKeys v-if="personalKeysVisible" @close="personalKeysVisible = false" />
     <div class="flex justify-end mb-4 space-x-4">
       <n-button @click="emit('close')">{{ $t('userProfile.cancel') }}</n-button>
       <n-button @click="save" type="primary">{{ $t('userProfile.save') }}</n-button>
