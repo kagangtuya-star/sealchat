@@ -36,6 +36,9 @@ type AudioAssetFilters struct {
 	Scope             model.AudioAssetScope
 	WorldID           *string
 	IncludeCommon     bool
+	SearchOrder       bool       // Internal: timestamp/ID order for bounded search candidates.
+	UpdatedFrom       *time.Time // Internal: inclusive query bounds; not persisted.
+	UpdatedTo         *time.Time
 }
 
 type AudioAssetUpdateInput struct {
@@ -559,6 +562,12 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 		if filters.DurationMax > 0 {
 			q = q.Where("duration <= ?", filters.DurationMax)
 		}
+		if filters.UpdatedFrom != nil {
+			q = q.Where("updated_at >= ?", *filters.UpdatedFrom)
+		}
+		if filters.UpdatedTo != nil {
+			q = q.Where("updated_at <= ?", *filters.UpdatedTo)
+		}
 		// scope/worldId 过滤
 		if filters.Scope != "" {
 			if filters.Scope == model.AudioScopeWorld && filters.WorldID != nil {
@@ -576,6 +585,9 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			} else {
 				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 			}
+		}
+		if filters.SearchOrder {
+			return q.Order("updated_at DESC, id DESC")
 		}
 		return applyAudioAssetListOrder(q, filters.SortBy, filters.SortOrder, filters.ManualSortEnabled)
 	})

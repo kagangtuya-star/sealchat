@@ -55,14 +55,18 @@ func mcpIdentityResource(actor *service.ChannelIdentityActorContext, channelID, 
 	return identity, nil
 }
 func mcpIdentityTools() []mcpToolSpec {
-	ret := []mcpToolSpec{
-		mcpSpec("channel_identity_list", "读取可管理目标的现有频道角色，不创建 BOT 身份或修复资料。", []string{"identity:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpIdentityListInput) (any, error) {
-			if in.ResourceID != "" {
-				return nil, mcpFailure("invalid_argument", "列表不接受 resourceId")
-			}
+	return []mcpToolSpec{
+		mcpSpec("identity_read", "无 resourceId 分页读取可管理目标的可见频道角色；有 resourceId 读取详情。沿用原生委托规则。", []string{"identity:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpIdentityListInput) (any, error) {
 			actor, err := mcpIdentityActor(a, in.mcpIdentityInput)
 			if err != nil {
 				return nil, err
+			}
+			if in.ResourceID != "" {
+				v, err := mcpIdentityResource(actor, in.ChannelID, in.ResourceID)
+				if err != nil {
+					return nil, err
+				}
+				return mcpDetail(mcpIdentityDTOFrom(v)), nil
 			}
 			page, limit, err := in.bounds()
 			if err != nil {
@@ -83,36 +87,10 @@ func mcpIdentityTools() []mcpToolSpec {
 			}
 			return mcpPaged(items, page, limit, total), nil
 		}),
-		mcpSpec("channel_identity_get", "通过原生委托/共享角色规则读取指定 ChannelIdentity。", []string{"identity:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpIdentityInput) (any, error) {
-			actor, err := mcpIdentityActor(a, in)
-			if err != nil {
-				return nil, err
+		mcpSpec("identity_delete", "删除可管理的用户频道角色，保留共享角色删除与广播。", []string{"identity:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpIdentityInput) (any, error) {
+			if in.ResourceID == "" {
+				return nil, mcpFailure("invalid_argument", "resourceId 必填")
 			}
-			v, err := mcpIdentityResource(actor, in.ChannelID, in.ResourceID)
-			if err != nil {
-				return nil, err
-			}
-			return mcpDetail(mcpIdentityDTOFrom(v)), nil
-		}),
-		mcpSpec("channel_identity_manage_targets", "查询当前用户按原生等级和委托开关可管理的目标。", []string{"identity:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in struct {
-			mcpChannelInput
-			mcpPageInput
-			Keyword string `json:"keyword,omitempty"`
-		}) (any, error) {
-			if _, err := mcpChannel(a, in.WorldID, in.ChannelID); err != nil {
-				return nil, err
-			}
-			page, limit, err := in.bounds()
-			if err != nil {
-				return nil, err
-			}
-			v, err := service.ListChannelIdentityManageCandidates(service.ChannelIdentityManageCandidateQuery{ChannelID: in.ChannelID, ActorID: a.User.ID, Page: page, PageSize: limit, Keyword: in.Keyword})
-			if err != nil {
-				return nil, err
-			}
-			return mcpPaged(v.Items, page, limit, v.Total), nil
-		}),
-		mcpSpec("channel_identity_delete", "删除可管理的用户频道角色，保留共享角色删除与广播。", []string{"identity:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpIdentityInput) (any, error) {
 			actor, err := mcpIdentityActor(a, in)
 			if err != nil {
 				return nil, err
@@ -139,12 +117,10 @@ func mcpIdentityTools() []mcpToolSpec {
 			}
 			return mcpOK{true}, nil
 		}),
-	}
-	for _, op := range []string{"create", "update"} {
-		operation := op
-		ret = append(ret, mcpSpec("channel_identity_"+op, "编辑显示名称、颜色和头像。目标仅用于原生角色委托，操作人始终为 Key 所属用户。", []string{"identity:write"}, true, op == "update", false, func(_ context.Context, a *service.MCPActor, in mcpIdentityWriteInput) (any, error) {
-			if operation == "create" && in.ResourceID != "" {
-				return nil, mcpFailure("invalid_argument", "创建不接受 resourceId")
+		mcpSpec("identity_save", "无 resourceId 创建；有 resourceId 部分更新显示名称、颜色和头像。目标仅用于原生委托，操作人始终为 Key 所属用户。", []string{"identity:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpIdentityWriteInput) (any, error) {
+			operation := "create"
+			if in.ResourceID != "" {
+				operation = "update"
 			}
 			actor, err := mcpIdentityActor(a, in.mcpIdentityInput)
 			if err != nil {
@@ -190,9 +166,8 @@ func mcpIdentityTools() []mcpToolSpec {
 			}
 			broadcastUpdatedSharedChannelIdentityCopies(v, actor.TargetUserID, a.User.ID, "identity-"+operation, false)
 			return mcpWriteDetail(a, "identity:read", mcpIdentityDTOFrom(v), mcpWriteRef{ID: v.ID, WorldID: in.WorldID, ChannelID: in.ChannelID}), nil
-		}))
+		}),
 	}
-	return ret
 }
 
 type mcpAudioAssetInput struct {
@@ -286,7 +261,7 @@ func mcpAudioAccess(a *service.MCPActor, worldID, channelID string) error {
 }
 func mcpAudioTools() []mcpToolSpec {
 	return []mcpToolSpec{
-		mcpSpec("audio_assets_list", "读取当前世界及通用音频资产的公开资料，不返回存储内部字段。", []string{"audio:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpAudioAssetInput) (any, error) {
+		mcpSpec("audio_assets", "读取当前世界及通用音频资产的公开资料，不返回存储内部字段。", []string{"audio:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpAudioAssetInput) (any, error) {
 			if err := mcpAudioAccess(a, in.WorldID, ""); err != nil {
 				return nil, err
 			}
@@ -304,14 +279,14 @@ func mcpAudioTools() []mcpToolSpec {
 			}
 			return mcpPaged(items, page, limit, total), nil
 		}),
-		mcpSpec("audio_state_get", "读取真实作用范围和 revision；空状态的频道 revision 为 0。", []string{"audio:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpChannelInput) (any, error) {
+		mcpSpec("audio_state", "读取真实作用范围和 revision；空状态的频道 revision 为 0。", []string{"audio:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpChannelInput) (any, error) {
 			if err := mcpAudioAccess(a, in.WorldID, in.ChannelID); err != nil {
 				return nil, err
 			}
 			v, err := service.AudioGetPlaybackState(in.ChannelID)
 			return mcpDetail(mcpAudioState(v, in.ChannelID)), err
 		}),
-		mcpSpec("audio_state_update", "保留未提交状态；要求读取时的 scopeType/scopeId/revision。切换世界播放必须显式提交 worldPlaybackEnabled。", []string{"audio:write"}, true, true, false, mcpAudioUpdate),
+		mcpSpec("audio_update", "保留未提交状态；要求读取时的 scopeType/scopeId/revision。切换世界播放必须显式提交 worldPlaybackEnabled。", []string{"audio:write"}, true, true, false, mcpAudioUpdate),
 	}
 }
 func mcpAudioUpdate(_ context.Context, a *service.MCPActor, in mcpAudioUpdateInput) (any, error) {

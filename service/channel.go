@@ -164,35 +164,27 @@ func CanReadChannelByUserId(userId, channelId string) bool {
 
 // ChannelList 获取可见的频道（等待重构）
 func ChannelList(userId, worldID string) ([]*model.ChannelModel, error) {
-	worldID = strings.TrimSpace(worldID)
-	if worldID == "" {
-		return []*model.ChannelModel{}, nil
-	}
-	if !IsWorldMember(worldID, userId) {
-		return []*model.ChannelModel{}, nil
-	}
-	channels, err := ChannelListByWorld(worldID)
+	q, err := ChannelListQuery(userId, worldID)
 	if err != nil {
 		return nil, err
+	}
+	var channels []*model.ChannelModel
+	err = q.Order("sort_order DESC, created_at ASC").Find(&channels).Error
+	return channels, err
+}
+
+// ChannelListQuery applies the same visibility rules before pagination.
+func ChannelListQuery(userId, worldID string) (*gorm.DB, error) {
+	q := model.GetDB().Model(&model.ChannelModel{})
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" || !IsWorldMember(worldID, userId) {
+		return q.Where("1 = 0"), nil
 	}
 	allowed, err := ChannelIdListByWorld(userId, worldID, false)
 	if err != nil {
 		return nil, err
 	}
-	allowedSet := map[string]struct{}{}
-	for _, id := range allowed {
-		allowedSet[id] = struct{}{}
-	}
-	visible := make([]*model.ChannelModel, 0, len(channels))
-	for _, ch := range channels {
-		if ch == nil || strings.TrimSpace(ch.ID) == "" {
-			continue
-		}
-		if _, ok := allowedSet[ch.ID]; ok {
-			visible = append(visible, ch)
-		}
-	}
-	return visible, nil
+	return q.Where("world_id = ? AND status = ? AND is_private = ? AND id IN ?", worldID, "active", false, allowed), nil
 }
 
 func ChannelListByWorld(worldID string) ([]*model.ChannelModel, error) {

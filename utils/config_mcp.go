@@ -27,7 +27,7 @@ type MCPScope struct {
 }
 
 var MCPScopeCatalog = []MCPScope{
-	{"chat:read", "读取聊天记录", false}, {"search:read", "搜索消息", false},
+	{"chat:read", "读取聊天记录", false}, {"search:read", "使用综合搜索", false},
 	{"battle_report:read", "读取战报", false}, {"battle_report:write", "创建、编辑、删除世界共享战报", false},
 	{"clue:read", "读取线索", false}, {"clue:write", "编辑线索内容", false},
 	{"glossary:read", "读取世界术语", false}, {"glossary:write", "编辑世界术语", false},

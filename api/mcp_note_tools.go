@@ -14,6 +14,7 @@ import (
 type mcpNoteListInput struct {
 	mcpChannelInput
 	mcpPageInput
+	ResourceID string `json:"resourceId,omitempty"`
 }
 type mcpNoteWriteInput struct {
 	mcpChannelInput
@@ -67,7 +68,14 @@ func mcpNoteResource(a *service.MCPActor, in mcpResourceInput) (*model.StickyNot
 }
 func mcpNoteTools() []mcpToolSpec {
 	return []mcpToolSpec{
-		mcpSpec("note_list", "分页读取可见频道便签；私人便签不进入计数和分页。", []string{"note:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpNoteListInput) (any, error) {
+		mcpSpec("note_read", "无 resourceId 分页读取可见便签；有 resourceId 读取详情。私人便签先过滤再计数和分页。", []string{"note:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpNoteListInput) (any, error) {
+			if in.ResourceID != "" {
+				n, err := mcpNoteResource(a, mcpResourceInput{in.WorldID, in.ChannelID, in.ResourceID})
+				if err != nil {
+					return nil, err
+				}
+				return mcpDetail(mcpNoteDTOFrom(n)), nil
+			}
 			if _, err := mcpChannel(a, in.WorldID, in.ChannelID); err != nil {
 				return nil, err
 			}
@@ -101,20 +109,13 @@ func mcpNoteTools() []mcpToolSpec {
 			}
 			return mcpPaged(items, page, limit, total), nil
 		}),
-		mcpSpec("note_get", "先检查频道，再读取便签可见内容。", []string{"note:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpResourceInput) (any, error) {
-			n, err := mcpNoteResource(a, in)
-			if err != nil {
-				return nil, err
+		mcpSpec("note_save", "无 resourceId 创建普通文本便签；有 resourceId 部分更新正常内容字段，保留类型、外观、可见范围和布局并尊重编辑锁。", []string{"note:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpNoteWriteInput) (any, error) {
+			if in.ResourceID != "" {
+				return mcpNoteUpdate(a, in)
 			}
-			return mcpDetail(mcpNoteDTOFrom(n)), nil
-		}),
-		mcpSpec("note_create", "创建普通文本频道便签，沿用默认外观及全频道可见范围。", []string{"note:write"}, true, false, false, func(_ context.Context, a *service.MCPActor, in mcpNoteWriteInput) (any, error) {
 			ch, err := mcpChannel(a, in.WorldID, in.ChannelID)
 			if err != nil {
 				return nil, err
-			}
-			if in.ResourceID != "" {
-				return nil, mcpFailure("invalid_argument", "创建不接受 resourceId")
 			}
 			if err := service.EnsureStickyNoteChannelMembership(a.User.ID, ch.ID); err != nil {
 				return nil, err
@@ -145,37 +146,6 @@ func mcpNoteTools() []mcpToolSpec {
 			broadcastStickyNoteToVisibleUsers(ch.ID, protocol.EventStickyNoteCreated, "create", n)
 			return mcpWriteDetail(a, "note:read", mcpNoteDTOFrom(n), mcpWriteRef{ID: n.ID, WorldID: n.WorldID, ChannelID: n.ChannelID}), nil
 		}),
-		mcpSpec("note_update", "更新正常内容字段，保留类型、外观、可见名单及布局；尊重现有编辑锁。", []string{"note:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpNoteWriteInput) (any, error) {
-			n, err := mcpNoteResource(a, mcpResourceInput{in.WorldID, in.ChannelID, in.ResourceID})
-			if err != nil {
-				return nil, err
-			}
-			if err := service.EnsureStickyNoteChannelMembership(a.User.ID, n.ChannelID); err != nil {
-				return nil, err
-			}
-			now := time.Now()
-			if n.IsEditingLockActive(now) && n.EditingLockUserID != a.User.ID {
-				return nil, mcpFailure("conflict", "便签正在被其他用户编辑")
-			}
-			updates, err := mcpNoteUpdates(in)
-			if err != nil {
-				return nil, err
-			}
-			updates["updated_at"] = now
-			r := model.GetDB().Model(&model.StickyNoteModel{}).Where("id = ? AND is_deleted = ? AND updated_at = ?", n.ID, false, n.UpdatedAt).Where("(editing_lock_user_id = '' OR editing_lock_user_id IS NULL OR editing_lock_expire_at IS NULL OR editing_lock_expire_at <= ? OR editing_lock_user_id = ?)", now, a.User.ID).Updates(updates)
-			if r.Error != nil {
-				return nil, r.Error
-			}
-			if r.RowsAffected != 1 {
-				return nil, mcpFailure("conflict", "便签或编辑锁已改变")
-			}
-			current, err := loadStickyNoteForResponse(n.ID)
-			if err != nil {
-				return nil, err
-			}
-			broadcastStickyNoteUpdateTransition(n.ChannelID, n, current)
-			return mcpWriteDetail(a, "note:read", mcpNoteDTOFrom(current), mcpWriteRef{ID: current.ID, WorldID: current.WorldID, ChannelID: current.ChannelID}), nil
-		}),
 		mcpSpec("note_delete", "仅创建者或频道管理员可删除可见便签；通知仍只发送给原可见用户。", []string{"note:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpResourceInput) (any, error) {
 			n, err := mcpNoteResource(a, in)
 			if err != nil {
@@ -191,6 +161,38 @@ func mcpNoteTools() []mcpToolSpec {
 			return mcpOK{true}, nil
 		}),
 	}
+}
+
+func mcpNoteUpdate(a *service.MCPActor, in mcpNoteWriteInput) (any, error) {
+	n, err := mcpNoteResource(a, mcpResourceInput{in.WorldID, in.ChannelID, in.ResourceID})
+	if err != nil {
+		return nil, err
+	}
+	if err := service.EnsureStickyNoteChannelMembership(a.User.ID, n.ChannelID); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if n.IsEditingLockActive(now) && n.EditingLockUserID != a.User.ID {
+		return nil, mcpFailure("conflict", "便签正在被其他用户编辑")
+	}
+	updates, err := mcpNoteUpdates(in)
+	if err != nil {
+		return nil, err
+	}
+	updates["updated_at"] = now
+	r := model.GetDB().Model(&model.StickyNoteModel{}).Where("id = ? AND is_deleted = ? AND updated_at = ?", n.ID, false, n.UpdatedAt).Where("(editing_lock_user_id = '' OR editing_lock_user_id IS NULL OR editing_lock_expire_at IS NULL OR editing_lock_expire_at <= ? OR editing_lock_user_id = ?)", now, a.User.ID).Updates(updates)
+	if r.Error != nil {
+		return nil, r.Error
+	}
+	if r.RowsAffected != 1 {
+		return nil, mcpFailure("conflict", "便签或编辑锁已改变")
+	}
+	current, err := loadStickyNoteForResponse(n.ID)
+	if err != nil {
+		return nil, err
+	}
+	broadcastStickyNoteUpdateTransition(n.ChannelID, n, current)
+	return mcpWriteDetail(a, "note:read", mcpNoteDTOFrom(current), mcpWriteRef{ID: current.ID, WorldID: current.WorldID, ChannelID: current.ChannelID}), nil
 }
 func mcpNoteUpdates(in mcpNoteWriteInput) (map[string]any, error) {
 	m := map[string]any{}

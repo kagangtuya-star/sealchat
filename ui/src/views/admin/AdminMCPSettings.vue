@@ -12,7 +12,7 @@ const initial = ref('')
 const loading = ref(true)
 const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file'; label: string; scopes: string; modes: MCPMode[] }[] = [
   { key: 'chat', label: '聊天记录', scopes: 'chat:read', modes: ['off', 'read'] },
-  { key: 'search', label: '消息搜索', scopes: 'search:read', modes: ['off', 'read'] },
+  { key: 'search', label: '综合搜索', scopes: 'search:read', modes: ['off', 'read'] },
   { key: 'battleReport', label: '战报总结', scopes: 'battle_report:read / battle_report:write', modes: ['off', 'read', 'write'] },
   { key: 'clue', label: '线索箱', scopes: 'clue:read / clue:write', modes: ['off', 'read', 'write'] },
   { key: 'glossary', label: '世界术语', scopes: 'glossary:read / glossary:write', modes: ['off', 'read', 'write'] },
@@ -64,6 +64,7 @@ defineExpose({ save, isModified })
           <n-select v-model:value="draft[module.key]" :options="module.modes.map(value => ({ value, label: value === 'write' && module.key === 'file' ? '上传' : modeLabels[value] }))" />
         </div>
         <p>“读写”只展开为此处列出的读取和写入 scopes，不自动包含未来能力。</p>
+        <p>允许 Agent 在已获得读取权限的消息、线索、战报、术语、便签等内容中统一检索；不会额外授予这些数据的读取权限。</p>
         <n-form-item label="额外授权（默认关闭）">
           <n-space vertical>
             <n-checkbox v-model:checked="draft.battleReportGenerate" :disabled="draft.battleReport !== 'write'">battle_report:generate：调用原生 AI，可能计费，并创建世界内可见战报</n-checkbox>
