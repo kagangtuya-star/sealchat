@@ -6294,17 +6294,13 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
       savedIdentity = createdIdentity;
-      // Handle character card binding for new identity
-      if (createdIdentity?.id && chat.curChannel?.id) {
+      // A newly created identity has no existing card binding to clear.
+      if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId) {
         if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
           message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
         } else {
           try {
-            if (identityForm.characterCardId) {
-              await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
-            } else {
-              await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
-            }
+            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
           } catch (e) {
             console.warn('Failed to bind character card', e);
           }
