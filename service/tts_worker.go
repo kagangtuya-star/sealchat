@@ -40,6 +40,28 @@ var ttsCallbacks struct {
 	localPlayback func(context.Context, model.TTSJob, ttsprovider.Media, string) (bool, <-chan struct{})
 }
 
+var ttsMessageStateCallback struct {
+	sync.RWMutex
+	fn func(string)
+}
+
+// TTSSetMessageStateCallback observes persisted message metadata independently
+// of the playback callbacks.
+func TTSSetMessageStateCallback(fn func(string)) {
+	ttsMessageStateCallback.Lock()
+	ttsMessageStateCallback.fn = fn
+	ttsMessageStateCallback.Unlock()
+}
+
+func ttsNotifyMessageState(messageID string) {
+	ttsMessageStateCallback.RLock()
+	fn := ttsMessageStateCallback.fn
+	ttsMessageStateCallback.RUnlock()
+	if fn != nil && messageID != "" {
+		fn(messageID)
+	}
+}
+
 // The live finish function reports whether a PCM start frame was dispatched,
 // i.e. whether the realtime stream already paced the channel lane. ready is
 // told so, and reports whether the lane must still wait for the file timeline.
@@ -85,7 +107,21 @@ func TTSCancelMessage(id string) {
 }
 
 func TTSClearChannelPending(channelID string) error {
-	return model.GetDB().Model(&model.MessageModel{}).Where("channel_id = ? AND tts_status = ? AND deleted_at IS NULL", channelID, "pending").Updates(map[string]any{"tts_status": "cancelled", "tts_intent": ""}).Error
+	db := model.GetDB()
+	var messageIDs []string
+	if err := db.Model(&model.MessageModel{}).Where("channel_id = ? AND tts_status = ? AND deleted_at IS NULL", channelID, "pending").Pluck("id", &messageIDs).Error; err != nil {
+		return err
+	}
+	for _, id := range messageIDs {
+		r := db.Model(&model.MessageModel{}).Where("id = ? AND channel_id = ? AND tts_status = ? AND deleted_at IS NULL", id, channelID, "pending").Updates(map[string]any{"tts_status": "cancelled", "tts_intent": ""})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected == 1 {
+			ttsNotifyMessageState(id)
+		}
+	}
+	return nil
 }
 
 func TTSStopPlayback(id string) {
@@ -220,7 +256,10 @@ func ttsRecoverOutboxWithContext(ctx context.Context) {
 				status = "skipped"
 			}
 		}
-		_ = db.Model(&model.MessageModel{}).Where("id = ? AND tts_status = ? AND edit_count = ? AND tts_intent = ?", m.ID, "pending", m.EditCount, m.TTSIntent).Update("tts_status", status).Error
+		r := db.Model(&model.MessageModel{}).Where("id = ? AND tts_status = ? AND edit_count = ? AND tts_intent = ?", m.ID, "pending", m.EditCount, m.TTSIntent).Update("tts_status", status)
+		if r.Error == nil && r.RowsAffected == 1 {
+			ttsNotifyMessageState(m.ID)
+		}
 	}
 }
 
@@ -710,7 +749,7 @@ func ttsPublishMessageWithLocal(ctx context.Context, j *model.TTSJob, s TTSSnaps
 			return
 		}
 		if j.Status == "storage_pending" {
-			return // Never announce while recovering storage; clients poll the state.
+			return // Storage recovery publishes metadata without repeating playback.
 		}
 		if local != nil {
 			local.start()
@@ -770,5 +809,9 @@ func ttsMessageStatusWithDB(db *gorm.DB, j *model.TTSJob, status string, data *p
 		updates["tts_data"] = string(b)
 	}
 	r := db.Model(&model.MessageModel{}).Where("id = ? AND edit_count = ? AND tts_intent = ? AND deleted_at IS NULL AND is_deleted = ? AND (is_revoked = ? OR is_revoked IS NULL)", j.MessageID, j.MessageRevision, j.Snapshot, false, false).Updates(updates)
-	return r.Error == nil && r.RowsAffected == 1
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false
+	}
+	ttsNotifyMessageState(j.MessageID)
+	return true
 }

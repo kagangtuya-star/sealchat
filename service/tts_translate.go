@@ -176,7 +176,10 @@ func ttsTranslationMessageCAS(db *gorm.DB, m model.MessageModel) *gorm.DB {
 }
 
 func ttsFailTranslation(db *gorm.DB, m model.MessageModel) {
-	_ = ttsTranslationMessageCAS(db, m).Update("tts_status", "unavailable").Error
+	r := ttsTranslationMessageCAS(db, m).Update("tts_status", "unavailable")
+	if r.Error == nil && r.RowsAffected == 1 {
+		ttsNotifyMessageState(m.ID)
+	}
 }
 
 func ttsFinalizeTranslation(ctx context.Context, db *gorm.DB, m model.MessageModel, s TTSSnapshot) {

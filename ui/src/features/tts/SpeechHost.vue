@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { useChatStore } from '@/stores/chat'
+import { chatEvent, useChatStore } from '@/stores/chat'
 import { useSpeechStore } from './store'
 import { speechPlayer } from './player'
 import { speechAPI } from './api'
 import { api } from '@/stores/_config'
 import { SpeechQueue, type SpeechEnd } from './runtime'
+import type { MessageSpeech } from './types'
 
 const SpeechPanel = defineAsyncComponent(() => import('./SpeechPanel.vue'))
 const speech = useSpeechStore()
@@ -65,7 +66,7 @@ watch([() => speechPlayer.state.preferred, currentChannel, () => user.info.id], 
           return
         }
         // Normally the archive's start frame arrives first; the slow recheck
-        // only covers states that are never broadcast (e.g. storage recovery).
+        // only covers missing playback announcements (e.g. storage recovery).
         if (state && waitingStatuses.has(state.status)) {
           recheck()
           return
@@ -227,12 +228,50 @@ function resumePreferredPlayback() {
   // Iframe gestures never reach the parent DOM; ask the main-window player to resume instead.
   window.parent.postMessage({ type: 'sealchat:tts-intent', action: 'resume', userId: user.info.id }, window.location.origin)
 }
+let metadataActive = true
+let metadataScope = 0
+let snapshotSeq = 0
+let latestAppliedSnapshotSeq = 0
+let liveSeq = 0
+const liveSeqByMessage = new Map<string, number>()
+async function syncMessageStates(channelId: string, userId: string) {
+  if (!metadataActive || !channelId || !userId) return
+  const scope = metadataScope
+  const requestSeq = ++snapshotSeq
+  const startedSeq = liveSeq
+  try {
+    const items = await speechAPI.states(channelId)
+    if (!metadataActive || scope !== metadataScope || requestSeq < latestAppliedSnapshotSeq || channelId !== currentChannel.value || userId !== user.info.id) return
+    for (const item of items) {
+      // Live events received during this request take precedence over its snapshot.
+      if ((liveSeqByMessage.get(item.id) || 0) > startedSeq) continue
+      speech.messageStates[item.id] = item.tts
+    }
+    latestAppliedSnapshotSeq = requestSeq
+  } catch { /* Recovery is retried on gateway reconnect; playback reports authorization failures. */ }
+}
+function onMessageTTSUpdated(event?: { channel?: { id?: string }; message?: { id?: string; tts?: MessageSpeech | null } }) {
+  const messageId = event?.message?.id
+  if (!metadataActive || !user.info.id || !currentChannel.value || event?.channel?.id !== currentChannel.value || typeof messageId !== 'string' || !messageId) return
+  liveSeqByMessage.set(messageId, ++liveSeq)
+  speech.messageStates[messageId] = event?.message?.tts ?? null
+}
+function onChannelSwitchTo(event?: { argv?: { channelId?: string } }) {
+  if (event?.argv?.channelId !== currentChannel.value) return
+  // channel-switch-to follows successful channel.enter, closing the subscription gap.
+  void syncMessageStates(currentChannel.value || '', user.info.id)
+}
 onMounted(() => {
+  chatEvent.on('message-tts-updated', onMessageTTSUpdated)
+  chatEvent.on('channel-switch-to', onChannelSwitchTo)
   window.addEventListener('message', onIntent)
   window.addEventListener('pointerdown', resumePreferredPlayback, true)
   window.addEventListener('keydown', resumePreferredPlayback, true)
 })
 onBeforeUnmount(() => {
+  metadataActive = false
+  chatEvent.off('message-tts-updated', onMessageTTSUpdated)
+  chatEvent.off('channel-switch-to', onChannelSwitchTo)
   window.removeEventListener('message', onIntent)
   window.removeEventListener('pointerdown', resumePreferredPlayback, true)
   window.removeEventListener('keydown', resumePreferredPlayback, true)
@@ -247,23 +286,14 @@ watch(() => chat.curChannel?.id, channelId => { if (mainWindow && channelId) spe
 watch([currentChannel, () => user.info.id], ([channelId, userId]) => {
   if (userId) void speech.refresh(channelId || '').catch(() => { /* Failed capabilities stay unavailable. */ })
 }, { immediate: true, flush: 'sync' })
-watch([currentChannel, () => user.info.id], ([channelId, userId], _, cleanup) => {
+watch([currentChannel, () => user.info.id], ([channelId, userId]) => {
   speechPlayer.stop()
   speech.messageStates = {}
-  let active = true
-  let timer: ReturnType<typeof setTimeout> | undefined
-  async function poll() {
-    if (!channelId || !userId || !active) return
-    try {
-      const items = await speechAPI.states(channelId)
-      if (!active) return
-      for (const item of items) speech.messageStates[item.id] = item.tts
-    } catch { /* Silent metadata refresh; explicit playback reports authorization failures. */ }
-    if (active) timer = setTimeout(poll, 3000)
-  }
-  void poll()
-  cleanup(() => { active = false; clearTimeout(timer) })
-}, { immediate: true })
+  metadataScope++
+  latestAppliedSnapshotSeq = 0
+  liveSeqByMessage.clear()
+  void syncMessageStates(channelId || '', userId)
+}, { immediate: true, flush: 'sync' })
 </script>
 
 <template>

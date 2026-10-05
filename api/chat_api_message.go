@@ -3448,6 +3448,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 	service.TTSCancelMessage(msg.ID)
+	ttsBroadcastMessageState(msg.ID)
 	if effectiveBuiltInDiceEnabled {
 		if err := model.MessageDiceRollReplace(msg.ID, updatedDiceRolls); err != nil {
 			return nil, err

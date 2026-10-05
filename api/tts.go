@@ -15,6 +15,7 @@ import (
 	"sealchat/model"
 	"sealchat/pkg/ttsprovider"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
 )
@@ -225,7 +226,7 @@ func BindTTSRoutes(auth fiber.Router) {
 			return c.SendStatus(403)
 		}
 		var messages []model.MessageModel
-		if err := model.GetDB().Where("channel_id = ? AND tts_status <> ? AND created_at >= ?", channelID, "", time.Now().Add(-5*time.Minute)).Order("created_at DESC, id DESC").Limit(100).Find(&messages).Error; err != nil {
+		if err := model.GetDB().Where("channel_id = ? AND tts_status <> ? AND deleted_at IS NULL", channelID, "").Order("updated_at DESC, id DESC").Limit(100).Find(&messages).Error; err != nil {
 			return ttsError(c, err)
 		}
 		items := []fiber.Map{}
@@ -238,6 +239,29 @@ func BindTTSRoutes(auth fiber.Router) {
 		return c.JSON(items)
 	})
 	service.TTSSetCallbacks(ttsBroadcastReady, ttsBroadcastCancel, ttsBroadcastLive, ttsBroadcastLocalPlayback)
+	service.TTSSetMessageStateCallback(ttsBroadcastMessageState)
+}
+
+func ttsBroadcastMessageState(messageID string) {
+	var message model.MessageModel
+	if model.GetDB().Where("id = ? AND is_deleted = ? AND deleted_at IS NULL", messageID, false).First(&message).Error != nil {
+		return
+	}
+	event := &protocol.Event{
+		Type:    protocol.EventMessageTTSUpdated,
+		Channel: &protocol.Channel{ID: message.ChannelID},
+		Message: &protocol.Message{ID: message.ID, TTS: message.ValidTTS()},
+	}
+	ctx := &ChatContext{ChannelUsersMap: getChannelUsersMap(), UserId2ConnInfo: getUserConnInfoMap()}
+	if ctx.UserId2ConnInfo == nil {
+		return
+	}
+	if message.IsWhisper {
+		recipients := resolveWhisperRecipients(message.WhisperTo, model.GetWhisperRecipientIDs(message.ID), message.UserID)
+		ctx.BroadcastEventInChannelToUsers(message.ChannelID, append(recipients, message.UserID), event)
+	} else {
+		ctx.BroadcastEventInChannel(message.ChannelID, event)
+	}
 }
 
 func BindTTSAdminRoutes(authAdmin fiber.Router) {

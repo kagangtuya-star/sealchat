@@ -34,6 +34,11 @@ or submit synthesis from message reception, history loading or component mount.
   FIFO: a busy page queues successors and plays their archived files later,
   never buffering their PCM. Only natural completion or an explicit stop/cancel
   settles a message; `/queue` is queried once per (re)connect, not polled.
+- `/states` is a recovery snapshot for channel/account scope entry and after a
+  successful `channel.enter`/re-enter (`channel-switch-to`); never poll it
+  periodically. Message TTS metadata normally arrives through the main chat
+  gateway's `message-tts-updated`; the dedicated TTS playback socket does not
+  synchronize metadata.
 - Preview promotion reuses a cloud voice. Expiration applies to previews/creating
   voices, never saved voices; cache expiry does not delete durable message audio.
 

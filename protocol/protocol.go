@@ -441,6 +441,7 @@ const (
 	EventMessageCreated                 EventName = "message-created"
 	EventMessageDeleted                 EventName = "message-deleted"
 	EventMessageUpdated                 EventName = "message-updated"
+	EventMessageTTSUpdated              EventName = "message-tts-updated"
 	EventMessageArchived                EventName = "message-archived"
 	EventMessageUnarchived              EventName = "message-unarchived"
 	EventMessagePinned                  EventName = "message-pinned"
