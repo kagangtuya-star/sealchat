@@ -145,6 +145,7 @@ import {
   mediaFxFilterToCss,
   mediaFxHasContent,
   resolveMediaFxCapabilities,
+  resolveMediaFxMotionOverscanScale,
   type MediaFxSpec,
 } from '@/features/media-fx/media-fx'
 import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
@@ -2860,12 +2861,15 @@ const drawWorldLayers = (immediate = false) => {
   gridTopLayer?.batchDraw()
 }
 
-// group: layout / clip only. mediaFxGroup: Media FX motion only. Overlay, placeholder
-// and label stay outside mediaFxGroup so they never follow the motion.
+// group: layout / clip only. mediaFxGroup: Media FX motion only.
+// mediaContentGroup: static render-only overscan. Overlay, placeholder and label
+// stay outside mediaFxGroup so they never follow the motion.
 interface SurfaceSlot {
+  target: StageSurfaceTarget
   group: Konva.Group
   base: Konva.Rect | null
   mediaFxGroup: Konva.Group
+  mediaContentGroup: Konva.Group
   mediaFxController: KonvaMediaFxController
   media: Konva.Shape
   directImage: Konva.Image
@@ -5762,7 +5766,7 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   context.restore()
 }
 
-const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
+const createSurfaceSlot = (cameraGroup: Konva.Group, target: StageSurfaceTarget, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
   const group = new Konva.Group()
   const base = withBase ? new Konva.Rect({ listening: false }) : null
   const directImage = new Konva.Image({ visible: false, listening: false })
@@ -5789,16 +5793,26 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
     listening: false,
   })
   const mediaFxGroup = new Konva.Group({ name: 'theater-surface-media-fx', listening: false })
-  mediaFxGroup.add(media, directImage)
+  const mediaContentGroup = new Konva.Group({ name: 'theater-surface-media-content', listening: false })
+  mediaContentGroup.add(media, directImage)
+  mediaFxGroup.add(mediaContentGroup)
   cameraGroup.add(group)
   if (base) group.add(base)
   group.add(mediaFxGroup, overlay, placeholder, label)
   slot = {
+    target,
     group,
     base,
     mediaFxGroup,
+    mediaContentGroup,
     // Motion only: the slot keeps its own base brightness / blur filter chain.
-    mediaFxController: createKonvaMediaFxController({ motionNode: mediaFxGroup }),
+    mediaFxController: createKonvaMediaFxController({
+      motionNode: mediaFxGroup,
+      onMotionComplete: () => {
+        mediaContentGroup.scale({ x: 1, y: 1 })
+        mediaContentGroup.getLayer()?.batchDraw()
+      },
+    }),
     media,
     directImage,
     overlay,
@@ -5817,17 +5831,34 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   return slot
 }
 
+const surfaceMediaFxOverscanScale = (slot: SurfaceSlot, style: StageSurfaceStyle, reducedMotion: boolean) => {
+  if (slot.target !== 'background' || (style.fit !== 'cover' && style.fit !== 'fill') || !style.mediaFx || reducedMotion) return 1
+  return resolveMediaFxMotionOverscanScale(style.mediaFx.motion)
+}
+
 const syncSurfaceMediaFx = (slot: SurfaceSlot, box: { width: number, height: number }) => {
-  if (!slot.source || !mediaFxHasContent(slot.style.mediaFx)) {
-    slot.mediaFxController.clear()
-    return
+  const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
+  const hasFx = Boolean(slot.source && mediaFxHasContent(slot.style.mediaFx))
+  if (!hasFx) slot.mediaFxController.clear()
+  else {
+    slot.mediaFxController.update(slot.style.mediaFx, {
+      width: box.width,
+      height: box.height,
+      motion: true,
+      filters: false,
+      reducedMotion,
+    })
   }
-  slot.mediaFxController.update(slot.style.mediaFx, {
-    width: box.width,
-    height: box.height,
-    motion: true,
-    filters: false,
-    reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+  const overscan = hasFx && slot.mediaFxController.isMotionActive()
+    ? surfaceMediaFxOverscanScale(slot, slot.style, reducedMotion)
+    : 1
+  slot.mediaContentGroup.setAttrs({
+    offsetX: box.width / 2,
+    offsetY: box.height / 2,
+    x: box.width / 2,
+    y: box.height / 2,
+    scaleX: overscan,
+    scaleY: overscan,
   })
 }
 
@@ -5987,7 +6018,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
-    slot.mediaFxController.clear()
+    syncSurfaceMediaFx(slot, box)
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -6000,7 +6031,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
-    slot.mediaFxController.clear()
+    syncSurfaceMediaFx(slot, box)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
@@ -6018,6 +6049,7 @@ const updateSurfaceSlot = (
   }
   if (slot.url === resolved && !slot.ready) {
     applyStyle(renderedStyle)
+    syncSurfaceMediaFx(slot, box)
     return
   }
   const previousUrl = slot.url
@@ -6030,6 +6062,7 @@ const updateSurfaceSlot = (
   slot.placeholder.visible(false)
   slot.label.visible(false)
   if (previousSource) applyStyle(renderedStyle)
+  syncSurfaceMediaFx(slot, box)
   let source: StageMediaSource | null = null
   source = loadStageMedia(imageRef, location!, (loadedSource) => {
     if (slot.version !== version || slot.url !== resolved) {
@@ -6113,14 +6146,13 @@ const updateSurfaceSlot = (
       slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
       slot.placeholder.visible(false)
       slot.label.visible(false)
-      syncSurfaceMediaFx(slot, box)
     } else {
-      slot.mediaFxController.clear()
       slot.media.visible(false)
       slot.overlay.visible(false)
       slot.placeholder.visible(true)
       slot.label.text(`${loadingLabel}加载失败：${errorMessage}`).visible(true)
     }
+    syncSurfaceMediaFx(slot, box)
     theaterMediaDebug('surface error', { resourceId: imageRef.resourceId, errorMessage, box })
     slot.group.getLayer()?.batchDraw()
   })
@@ -8253,8 +8285,8 @@ onMounted(() => {
     strokeWidth: 2,
     dash: [6, 4],
   })
-  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
-  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
+  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, 'background', true, props.store.state.liveState.surfaceStyles.background)
+  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, 'foreground', false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot)
   worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
   gridTopLayer.add(gridTopCameraGroup)

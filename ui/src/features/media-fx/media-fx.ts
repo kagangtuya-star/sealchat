@@ -218,6 +218,19 @@ export const resolveMediaFxMotionTrack = (motion: MediaFxMotion): MediaFxMotionT
   }
 }
 
+// Static renderer compensation for a centered surface that already covers its box.
+export const resolveMediaFxMotionOverscanScale = (motion: MediaFxMotion): number => {
+  const track = resolveMediaFxMotionTrack(motion)
+  let overscan = 1
+  for (const frame of track?.frames ?? []) {
+    const safeScale = Math.max(frame.scale, 0.0001)
+    overscan = Math.max(overscan, (1 + 2 * Math.abs(frame.x)) / safeScale, (1 + 2 * Math.abs(frame.y)) / safeScale)
+  }
+  // Keep four decimal places without rounding below the required coverage.
+  const rounded = roundTo(overscan, 4)
+  return rounded < overscan ? roundTo(rounded + 0.0001, 4) : rounded
+}
+
 // ---------------------------------------------------------------------------
 // Defaults, normalization and emptiness
 // ---------------------------------------------------------------------------

@@ -25,6 +25,8 @@ import { canvasFilterSupported } from './media-fx-canvas'
 export interface KonvaMediaFxNodes {
   motionNode: Konva.Group
   imageNode?: Konva.Image | null
+  // Called only when a non-looping motion reaches its natural end.
+  onMotionComplete?: () => void
 }
 
 export interface KonvaMediaFxContext {
@@ -42,6 +44,7 @@ export interface KonvaMediaFxController {
   update(spec: unknown, context: KonvaMediaFxContext): void
   // Re-evaluates the filter cache after the image source or its fit changed.
   refreshFilter(): void
+  isMotionActive(): boolean
   clear(): void
   dispose(): void
 }
@@ -99,7 +102,7 @@ const fallbackKonvaFilters = (imageNode: Konva.Image, filter: MediaFxFilter) => 
 }
 
 export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMediaFxController => {
-  const { motionNode } = nodes
+  const { motionNode, onMotionComplete } = nodes
   const imageNode = nodes.imageNode || null
   let filter: MediaFxFilter | null = null
   let filtersEnabled = true
@@ -148,8 +151,10 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
       else {
         tween?.destroy()
         tween = null
+        track = null
         applyFrame(null)
         requestDraw()
+        onMotionComplete?.()
       }
       return
     }
@@ -251,6 +256,9 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
     },
     refreshFilter() {
       if (!disposed) applyFilter()
+    },
+    isMotionActive() {
+      return Boolean(track)
     },
     clear,
     dispose() {
