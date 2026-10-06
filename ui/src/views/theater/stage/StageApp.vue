@@ -3525,25 +3525,34 @@ const updateSelectedEntranceDuration = (value: number | null) => {
   if (value !== null) updateSelectedEntrance({ durationMs: value })
 }
 
-// Media FX for image objects is stored in metadata.mediaFx. Member-delegated edits are
-// limited to metadata.entrance by the server, so the editor is admin-only.
+// Media FX for image and iframe objects is stored in metadata.mediaFx. Member-delegated
+// edits are limited to metadata.entrance by the server, so the editor is admin-only.
 const selectedMediaFxOpen = ref(false)
 const mediaFxPreviewPaused = ref(false)
+const supportsStageObjectMediaFx = (object: StageObject | null | undefined) => (
+  object?.type === 'image' || object?.type === 'iframe'
+)
 const selectedObjectSupportsMediaFx = computed(() => (
-  selectedObject.value?.type === 'image' && canEditAllObjects.value
+  supportsStageObjectMediaFx(selectedObject.value) && canEditAllObjects.value
 ))
 const selectedMediaFx = computed(() => (
   selectedObject.value ? stageObjectMediaFx(selectedObject.value) : null
 ))
 const selectedMediaFxActive = computed(() => mediaFxHasContent(selectedMediaFx.value))
-const selectedMediaFxCapabilities = computed(() => resolveMediaFxCapabilities(
-  'konva',
-  selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+// Image objects render through Konva (filters are cached, so animated media disables
+// them). Iframe objects render as DOM, where CSS filter composites the live frame.
+const selectedMediaFxCapabilities = computed(() => (
+  selectedObject.value?.type === 'iframe'
+    ? resolveMediaFxCapabilities('dom', false)
+    : resolveMediaFxCapabilities(
+      'konva',
+      selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+    )
 ))
 let selectedMediaFxEditing = false
 const beginSelectedMediaFxEdit = () => {
-  if (selectedMediaFxEditing || selectedObject.value?.type !== 'image' || !canEditAllObjects.value) return
-  props.store.beginObjectEdit('修改图像效果')
+  if (selectedMediaFxEditing || !supportsStageObjectMediaFx(selectedObject.value) || !canEditAllObjects.value) return
+  props.store.beginObjectEdit('修改视觉效果')
   selectedMediaFxEditing = true
 }
 const endSelectedMediaFxEdit = () => {
@@ -3553,7 +3562,7 @@ const endSelectedMediaFxEdit = () => {
 }
 const updateSelectedMediaFx = (spec: MediaFxSpec) => {
   const object = selectedObject.value
-  if (object?.type !== 'image' || !canEditAllObjects.value) return
+  if (!object || !supportsStageObjectMediaFx(object) || !canEditAllObjects.value) return
   const discreteEdit = !selectedMediaFxEditing
   if (discreteEdit) beginSelectedMediaFxEdit()
   setStageObjectMediaFx(object, spec)
@@ -9418,7 +9427,7 @@ onBeforeUnmount(() => {
               </n-input-number>
             </template>
             <template v-if="selectedObjectSupportsMediaFx && selectedMediaFx">
-              <label>图像效果</label>
+              <label>视觉效果</label>
               <n-button
                 class="theater-media-fx-toggle"
                 size="small"
@@ -9428,7 +9437,7 @@ onBeforeUnmount(() => {
                 @click="selectedMediaFxOpen = !selectedMediaFxOpen"
               >
                 <template #icon><n-icon><component :is="selectedMediaFxOpen ? ChevronDown : ChevronRight" /></n-icon></template>
-                {{ selectedMediaFxActive ? '已启用图像效果' : '设置图像效果' }}
+                {{ selectedMediaFxActive ? '已启用视觉效果' : '设置视觉效果' }}
               </n-button>
               <MediaFxPanel
                 v-if="selectedMediaFxOpen"
@@ -9436,7 +9445,7 @@ onBeforeUnmount(() => {
                 :model-value="selectedMediaFx"
                 mode="live"
                 :capabilities="selectedMediaFxCapabilities"
-                preview-control
+                :preview-control="selectedObject.type === 'image'"
                 :preview-paused="mediaFxPreviewPaused"
                 @focusin.stop
                 @focusout.stop

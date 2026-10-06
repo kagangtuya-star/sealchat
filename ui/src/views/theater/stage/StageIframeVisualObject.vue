@@ -5,9 +5,12 @@ import type { ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHo
 import { useChatStore } from '@/stores/chat'
 import { useIFormStore } from '@/stores/iform'
 import { useUtilsStore } from '@/stores/utils'
+import { resolveMediaFxCapabilities } from '@/features/media-fx/media-fx'
+import { vMediaFx, type MediaFxDirectiveValue } from '@/features/media-fx/media-fx-dom'
 import { parseInternalSurfaceLink } from '@/utils/internalSurfaceLink'
-import { normalizeStageIframeContent, resolveSafeStageIframeUrl, type StageObject } from '../shared/stage-types'
+import { normalizeStageIframeContent, resolveSafeStageIframeUrl, stageObjectMediaFx, type StageObject } from '../shared/stage-types'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 
 const props = defineProps<{
   object: StageObject
@@ -144,19 +147,45 @@ const frameStyle = computed<CSSProperties>(() => ({
   transformOrigin: 'top left',
   pointerEvents: pointerEvents.value,
 }))
+// Media FX applies to the whole frame from its own wrapper, so WAAPI motion never
+// replaces frameStyle's content scale and nothing reaches into the embedded document.
+const showsFrame = computed(() => (
+  internalIFormTarget.value
+    ? Boolean(internalIFormContextMatches.value && directIForm.value)
+    : Boolean(iframeSrc.value)
+))
+const mediaFxBinding = computed<MediaFxDirectiveValue>(() => ({
+  spec: stageObjectMediaFx(props.object),
+  filters: resolveMediaFxCapabilities('dom', false).filters,
+  reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+}))
 </script>
 
 <template>
   <div class="theater-iframe-visual-object" :style="{ pointerEvents }">
-    <IFormEmbedFrame
-      v-if="internalIFormTarget && internalIFormContextMatches && directIForm"
-      class="theater-iframe-visual-object__iform"
-      :form="directIForm"
-      :channel-id="internalIFormTarget.channelId"
-      :enable-channel-embed="true"
-      :theater-character-source="theaterCharacterSource"
-      :style="frameStyle"
-    />
+    <div v-if="showsFrame" v-media-fx="mediaFxBinding" class="theater-iframe-visual-object__media-fx">
+      <IFormEmbedFrame
+        v-if="internalIFormTarget && directIForm"
+        class="theater-iframe-visual-object__iform"
+        :form="directIForm"
+        :channel-id="internalIFormTarget.channelId"
+        :enable-channel-embed="true"
+        :theater-character-source="theaterCharacterSource"
+        :style="frameStyle"
+      />
+      <iframe
+        v-else
+        class="theater-iframe-visual-object__frame"
+        :src="iframeSrc || undefined"
+        :title="props.object.name || '网页内容'"
+        :data-stage-object-id="props.object.id"
+        :style="frameStyle"
+        allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups"
+        referrerpolicy="no-referrer"
+        loading="lazy"
+      ></iframe>
+    </div>
     <span
       v-else-if="internalIFormTarget"
       class="theater-iframe-visual-object__placeholder"
@@ -171,18 +200,6 @@ const frameStyle = computed<CSSProperties>(() => ({
               : 'IForm 不存在或当前用户不可见'
       }}
     </span>
-    <iframe
-      v-else-if="iframeSrc"
-      class="theater-iframe-visual-object__frame"
-      :src="iframeSrc"
-      :title="props.object.name || '网页内容'"
-      :data-stage-object-id="props.object.id"
-      :style="frameStyle"
-      allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write"
-      sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups"
-      referrerpolicy="no-referrer"
-      loading="lazy"
-    ></iframe>
     <span v-else class="theater-iframe-visual-object__placeholder">
       {{ configuredUrl ? '仅支持 HTTP/HTTPS URL' : '请配置 URL' }}
     </span>
@@ -196,11 +213,21 @@ const frameStyle = computed<CSSProperties>(() => ({
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* Clips the scaled frame exactly as the root did; the root stays unclipped so
+   Media FX motion moves the whole clipped frame instead of panning inside it. */
+.theater-iframe-visual-object__media-fx {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .theater-iframe-visual-object__frame {
