@@ -17,6 +17,9 @@ type DropdownMixedOption = DropdownOption | DropdownGroupOption | DropdownDivide
 type DropdownRenderLabelFn = NonNullable<DropdownProps['renderLabel']>;
 type IdentityDropdownOption = DropdownOption & {
   rawLabel?: string;
+  props?: DropdownOption['props'] & {
+    'data-identity-id'?: string;
+  };
 };
 
 const props = withDefaults(defineProps<{
@@ -405,6 +408,9 @@ const options = computed<DropdownMixedOption[]>(() => {
     key: item.id,
     label: item.displayName,
     rawLabel: item.displayName,
+    props: {
+      'data-identity-id': item.id,
+    },
     icon: () => (
       <AvatarVue
         size={24}
@@ -730,6 +736,17 @@ const getDropdownMenuElement = (): HTMLElement | null => {
   return matches[matches.length - 1] ?? null;
 };
 
+const ensureActiveIdentityOptionVisible = () => {
+  const activeId = displayIdentityId.value;
+  if (!dropdownVisible.value || !activeId) {
+    return;
+  }
+  const menuEl = getDropdownMenuElement();
+  const activeOption = Array.from(menuEl?.querySelectorAll<HTMLElement>('[data-identity-id]') || [])
+    .find(option => option.dataset.identityId === activeId);
+  activeOption?.scrollIntoView({ block: 'nearest' });
+};
+
 const ensureDropdownMenuHooks = (menuEl: HTMLElement) => {
   menuEl.classList.add('identity-dropdown-menu');
   menuEl.classList.toggle('identity-dropdown-menu--night', isNightPalette.value);
@@ -781,6 +798,9 @@ const syncDropdownMenuLayout = (attempt = 0) => {
   void nextTick(() => {
     window.requestAnimationFrame(() => {
       const applied = applyDropdownMenuLayout();
+      if (applied) {
+        ensureActiveIdentityOptionVisible();
+      }
       if (!applied && attempt < 8) {
         window.setTimeout(() => {
           syncDropdownMenuLayout(attempt + 1);
@@ -803,6 +823,25 @@ const handleDropdownShowUpdate = (show: boolean) => {
     syncDropdownMenuLayout();
   }
 };
+
+// 供父组件在快捷选择模式中控制原有角色菜单
+const openDropdown = () => {
+  if (!resolvedChannelId.value || props.disabled) {
+    return;
+  }
+  const activeId = displayIdentityId.value;
+  if (activeId && !filteredIdentities.value.some(identity => identity.id === activeId)) {
+    filterMode.value = 'all';
+  }
+  handleDropdownShowUpdate(true);
+};
+
+const closeDropdown = () => {
+  keepDropdownOpenAfterToggle.value = false;
+  dropdownVisible.value = false;
+};
+
+defineExpose({ openDropdown, closeDropdown });
 
 const handleViewportResize = () => {
   updateIsMobile();
@@ -872,6 +911,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
     <n-dropdown
       trigger="click"
       :options="options"
+      :value="displayIdentityId"
       :show="dropdownVisible"
       :show-arrow="false"
       placement="top-start"
@@ -886,7 +926,8 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         tertiary
         size="small"
         class="identity-switcher"
-        :class="{ 'identity-switcher--compact': isCompactButton }"
+        :class="{ 'identity-switcher--compact': isCompactButton, 'identity-switcher--accented': !!displayColor }"
+        :style="displayColor ? { '--identity-switcher-accent': displayColor } : undefined"
         :disabled="!resolvedChannelId || disabled"
         :title="displayName"
       >
@@ -938,7 +979,15 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.9));
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   color: var(--sc-text-primary, #374151);
-  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 当前角色色：按钮微抬，并在与输入框相接的底边显示一条细色线 */
+.identity-switcher--accented {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--identity-switcher-accent) 72%, transparent),
+    0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .identity-switcher--compact {
@@ -986,6 +1035,11 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   font-weight: 600;
 }
 
+/* 当前角色直接复用 Naive Dropdown 的 hover 高光变量。 */
+:global(.identity-dropdown-menu .n-dropdown-option-body--active::before) {
+  background-color: var(--n-option-color-hover);
+}
+
 .identity-option__label {
   display: inline-flex;
   align-items: center;
@@ -1025,10 +1079,6 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 .identity-option-node {
   padding: 0.3rem 0.6rem;
   border-radius: 8px;
-}
-
-.identity-option-node--active {
-  background: rgba(59, 130, 246, 0.08);
 }
 
 .identity-option-node--action {
@@ -1134,10 +1184,13 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   color: rgba(248, 250, 252, 0.95);
 }
 
-:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option:hover),
-:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option.n-dropdown-option--active) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option:hover) {
   background-color: rgba(59, 130, 246, 0.25);
   color: #fff;
+}
+
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option-body--active::before) {
+  background-color: rgba(59, 130, 246, 0.25);
 }
 
 :global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-divider) {

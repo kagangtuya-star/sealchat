@@ -67,6 +67,7 @@ export type ToolbarHotkeyKey =
   | 'wideInput'
   | 'history'
   | 'diceTray'
+  | 'identityWheel'
 
 export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSeconds'
 
@@ -131,6 +132,8 @@ export interface DisplaySettings {
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
   identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
+  identityQuickBarEnabled: boolean        // 输入框旁快速角色栏，默认关闭
+  identityQuickBarLimit: number           // 快速角色栏最多显示角色数
   interjectSwitchRule: InterjectSwitchRule // 插话后第二条消息的模式切换规则
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
@@ -187,6 +190,14 @@ export const MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS = {
   DEFAULT: MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
   MIN: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN,
   MAX: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX,
+}
+const IDENTITY_QUICK_BAR_LIMIT_DEFAULT = 5
+const IDENTITY_QUICK_BAR_LIMIT_MIN = 2
+const IDENTITY_QUICK_BAR_LIMIT_MAX = 10
+export const IDENTITY_QUICK_BAR_LIMITS = {
+  DEFAULT: IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+  MIN: IDENTITY_QUICK_BAR_LIMIT_MIN,
+  MAX: IDENTITY_QUICK_BAR_LIMIT_MAX,
 }
 const HISTORY_NAVIGATION_OPACITY_DEFAULT = 65
 const HISTORY_NAVIGATION_OPACITY_MIN = 20
@@ -409,11 +420,21 @@ const isPlainObject = (value: unknown): value is Record<string, any> =>
 
 const composeHotkeyComboLabel = (key: string, flags: { ctrl?: boolean; meta?: boolean; alt?: boolean; shift?: boolean }) => {
   const parts: string[] = []
-  if (flags.ctrl) parts.push('Ctrl')
-  if (flags.meta) parts.push('Cmd')
-  if (flags.alt) parts.push('Alt')
-  if (flags.shift) parts.push('Shift')
-  parts.push(key.length === 1 ? key.toUpperCase() : key)
+  const modifierOnly = key === 'Control' || key === 'Meta' || key === 'Alt' || key === 'Shift'
+  if (modifierOnly) {
+    if (flags.ctrl) parts.push('Ctrl')
+    if (flags.meta) parts.push('Cmd')
+    if (flags.alt) parts.push('Alt')
+    if (flags.shift) parts.push('Shift')
+    if (!parts.length) parts.push(key === 'Control' ? 'Ctrl' : key === 'Meta' ? 'Cmd' : key)
+    return parts.join('+')
+  }
+  if (flags.ctrl && key !== 'Control') parts.push('Ctrl')
+  if (flags.meta && key !== 'Meta') parts.push('Cmd')
+  if (flags.alt && key !== 'Alt') parts.push('Alt')
+  if (flags.shift && key !== 'Shift') parts.push('Shift')
+  const keyLabel = key === 'Control' ? 'Ctrl' : key === 'Meta' ? 'Cmd' : key
+  parts.push(keyLabel.length === 1 ? keyLabel.toUpperCase() : keyLabel)
   return parts.join('+')
 }
 
@@ -517,6 +538,10 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
     enabled: true,
     hotkey: { combo: 'Ctrl+D', key: 'D', ctrl: true },
   },
+  identityWheel: {
+    enabled: true,
+    hotkey: { combo: 'Shift', key: 'Shift', shift: true },
+  },
 })
 
 
@@ -581,6 +606,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordQuickInputTrigger: '/',
   identityQuickSwitchTrigger: '/',
   identityVariantQuickSwitchTrigger: '=',
+  identityQuickBarEnabled: false,
+  identityQuickBarLimit: IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
   interjectSwitchRule: 'invert',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
@@ -638,9 +665,15 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
     'wideInput',
     'history',
     'diceTray',
+    'identityWheel',
   ]
   keys.forEach((key) => {
-    result[key] = value[key] ? normalizeToolbarHotkeyConfig(value[key]) : defaults[key]
+    const normalized = value[key] ? normalizeToolbarHotkeyConfig(value[key]) : defaults[key]
+    if (key === 'identityWheel' && normalized.hotkey?.key === 'Wheel') {
+      result[key] = defaults[key]
+      return
+    }
+    result[key] = normalized
   })
   return result as Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
 }
@@ -904,6 +937,13 @@ const parseStoredSettingsInternal = (
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
       identityVariantQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityVariantQuickSwitchTrigger || '='),
+      identityQuickBarEnabled: coerceBoolean((parsed as any)?.identityQuickBarEnabled ?? false),
+      identityQuickBarLimit: coerceNumberInRange(
+        (parsed as any)?.identityQuickBarLimit,
+        IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+        IDENTITY_QUICK_BAR_LIMIT_MIN,
+        IDENTITY_QUICK_BAR_LIMIT_MAX,
+      ),
       interjectSwitchRule: coerceInterjectSwitchRule((parsed as any)?.interjectSwitchRule),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
@@ -1312,6 +1352,19 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantQuickSwitchTrigger')
       ? coerceQuickInputTrigger((patch as any).identityVariantQuickSwitchTrigger || '=')
       : base.identityVariantQuickSwitchTrigger,
+  identityQuickBarEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickBarEnabled')
+      ? coerceBoolean((patch as any).identityQuickBarEnabled)
+      : base.identityQuickBarEnabled,
+  identityQuickBarLimit:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickBarLimit')
+      ? coerceNumberInRange(
+        (patch as any).identityQuickBarLimit,
+        IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+        IDENTITY_QUICK_BAR_LIMIT_MIN,
+        IDENTITY_QUICK_BAR_LIMIT_MAX,
+      )
+      : base.identityQuickBarLimit,
   interjectSwitchRule:
     patch && Object.prototype.hasOwnProperty.call(patch, 'interjectSwitchRule')
       ? coerceInterjectSwitchRule((patch as any).interjectSwitchRule)

@@ -14,6 +14,7 @@ import { NIcon, c } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
+import ChannelIdentityQuickBar from './components/ChannelIdentityQuickBar.vue'
 import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
@@ -175,7 +176,7 @@ import {
   type IdentityExportVariantItem,
 } from '@/utils/channelIdentityMigration'
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
-import { isHotkeyMatchingEvent } from '@/utils/hotkey';
+import { isHotkeyMatchingEvent, isHotkeyReleaseEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
@@ -13349,6 +13350,149 @@ const handleEditingIdentitySelected = (identityId: string) => {
   emitEditingPreview();
 };
 
+// 快速角色栏与滚轮切换共用的角色切换入口，行为与 ChannelIdentitySwitcher 选择角色保持一致
+const switchCurrentIdentity = async (identityId: string) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const nextIdentityId = String(identityId || '').trim();
+  if (!channelId || !nextIdentityId) {
+    return false;
+  }
+  if (!(chat.channelIdentities[channelId] || []).some((item) => item.id === nextIdentityId)) {
+    return false;
+  }
+  // 编辑消息时只修改被编辑消息的身份，不改变正常发送角色
+  if (isEditingCurrentChannel.value) {
+    handleEditingIdentitySelected(nextIdentityId);
+    return true;
+  }
+  chat.setActiveIdentity(channelId, nextIdentityId);
+  if (!isInObserverMode()) {
+    try {
+      await characterCardStore.syncCardForIdentity(channelId, nextIdentityId, {
+        preserveWhenUnbound: true,
+      });
+    } catch (e) {
+      console.warn('Failed to sync character card for identity', e);
+    }
+  }
+  handleIdentitySwitcherChange();
+  return true;
+};
+
+type IdentitySwitcherHandle = {
+  openDropdown: () => void;
+  closeDropdown: () => void;
+};
+
+const identitySwitcherRef = ref<IdentitySwitcherHandle | null>(null);
+const minimalIdentitySwitcherRef = ref<IdentitySwitcherHandle | null>(null);
+
+const currentComposerIdentityId = computed(() => {
+  if (isEditingCurrentChannel.value) {
+    return String(chat.editing?.identityId || '');
+  }
+  return chat.getActiveIdentityId(chat.curChannel?.id || '');
+});
+
+const identityQuickBarVisible = computed(() => display.settings.identityQuickBarEnabled);
+const identityQuickBarIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+
+const handleIdentityQuickBarSelect = (identityId: string) => {
+  void switchCurrentIdentity(identityId);
+};
+
+const identityWheelHoldActive = ref(false);
+
+const getVisibleIdentitySwitcher = () => (
+  isMinimalInputActive.value ? minimalIdentitySwitcherRef.value : identitySwitcherRef.value
+);
+
+const canUseIdentityWheelMode = () => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId || isInObserverMode() || spectatorInputDisabled.value) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  return identities.length >= 2;
+};
+
+const closeIdentityWheelMode = () => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  identityWheelHoldActive.value = false;
+  getVisibleIdentitySwitcher()?.closeDropdown();
+};
+
+const handleIdentityWheelHotkeyDown = (event: KeyboardEvent) => {
+  const config = display.settings.toolbarHotkeys?.identityWheel;
+  if (!config?.enabled || !config.hotkey || identityWheelHoldActive.value || event.repeat) {
+    return;
+  }
+  if (!isHotkeyMatchingEvent(event, config.hotkey) || !canUseIdentityWheelMode()) {
+    return;
+  }
+  identityWheelHoldActive.value = true;
+  void nextTick(() => getVisibleIdentitySwitcher()?.openDropdown());
+};
+
+const handleIdentityWheelHotkeyUp = (event: KeyboardEvent) => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  const hotkey = display.settings.toolbarHotkeys?.identityWheel?.hotkey;
+  if (isHotkeyReleaseEvent(event, hotkey)) {
+    closeIdentityWheelMode();
+  }
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'keydown', handleIdentityWheelHotkeyDown, { capture: true });
+  useEventListener(window, 'keyup', handleIdentityWheelHotkeyUp, { capture: true });
+  useEventListener(window, 'blur', closeIdentityWheelMode);
+}
+
+const cycleCurrentIdentity = (step: 1 | -1) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId || isInObserverMode() || spectatorInputDisabled.value) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  if (identities.length < 2) {
+    return false;
+  }
+  const currentIndex = identities.findIndex((item) => item.id === currentComposerIdentityId.value);
+  const nextIndex = currentIndex < 0
+    ? (step > 0 ? 0 : identities.length - 1)
+    : (currentIndex + step + identities.length) % identities.length;
+  const nextIdentityId = identities[nextIndex]?.id;
+  if (!nextIdentityId) {
+    return false;
+  }
+  void switchCurrentIdentity(nextIdentityId);
+  void nextTick(() => {
+    getVisibleIdentitySwitcher()?.openDropdown();
+  });
+  return true;
+};
+
+const handleIdentityWheel = (event: WheelEvent) => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  const delta = event.deltaY || event.deltaX;
+  if (!delta) {
+    return;
+  }
+  if (cycleCurrentIdentity(delta > 0 ? 1 : -1)) {
+    event.preventDefault();
+  }
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'wheel', handleIdentityWheel, { capture: true, passive: false });
+}
+
 const handleDiceRollNow = (expr: string) => {
   // 骰子"立即掷骰"功能：直接发送表达式，不插入到输入框
   // 支持快速连续点击，每次点击都独立发送一条消息
@@ -15010,7 +15154,9 @@ const handleChatInputBlur = () => {
   syncSessionDraftSnapshot();
 };
 
-const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+type KeyboardToolbarHotkeyKey = Exclude<ToolbarHotkeyKey, 'identityWheel'>;
+
+const toolbarHotkeyOrder: KeyboardToolbarHotkeyKey[] = [
   'send',
   'icToggle',
   'interject',
@@ -15024,7 +15170,7 @@ const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'diceTray',
 ];
 
-const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
+const toolbarHotkeyHandlers: Record<KeyboardToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
   send: (event) => {
     if (event.isComposing) {
       return false;
@@ -16591,6 +16737,18 @@ onBeforeUnmount(() => {
           :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
         >
           <div
+            v-if="chat.curChannel && identityQuickBarVisible"
+            class="identity-quick-bar-edge"
+          >
+            <ChannelIdentityQuickBar
+              :channel-id="chat.curChannel.id"
+              :identities="identityQuickBarIdentities"
+              :active-identity-id="currentComposerIdentityId"
+              :limit="display.settings.identityQuickBarLimit"
+              @select="handleIdentityQuickBarSelect"
+            />
+          </div>
+          <div
             v-if="!isMobileWideInput"
             class="chat-input-resize-handle"
             aria-hidden="true"
@@ -16642,6 +16800,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    ref="identitySwitcherRef"
                     :controlled-selection="isEditingCurrentChannel"
                     :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
                     :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"
@@ -17137,6 +17296,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    ref="minimalIdentitySwitcherRef"
                     :controlled-selection="isEditingCurrentChannel"
                     :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
                     :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"

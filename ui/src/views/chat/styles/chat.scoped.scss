@@ -2369,6 +2369,20 @@
   gap: 0.45rem;
 }
 
+.identity-quick-bar-edge {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 0.65rem;
+  max-width: calc(100% - 1.3rem);
+  transform: translateY(-52%);
+  pointer-events: none;
+}
+
+.identity-quick-bar-edge :deep(.identity-quick-bar) {
+  pointer-events: auto;
+}
+
 .chat-input-editor-row {
   display: flex;
   align-items: flex-end;
@@ -3236,6 +3250,9 @@
 .identity-switcher-cell {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .identity-switcher-cell--minimal {

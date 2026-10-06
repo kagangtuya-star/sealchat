@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { useDisplayStore } from '@/stores/display'
-import type { ToolbarHotkeyKey, ToolbarHotkeyConfig } from '@/stores/display'
+import type { FavoriteHotkey, ToolbarHotkeyKey, ToolbarHotkeyConfig } from '@/stores/display'
 import { useMessage } from 'naive-ui'
 import { useEventListener } from '@vueuse/core'
-import { buildHotkeyDescriptor, formatHotkeyCombo } from '@/utils/hotkey'
+import { buildHoldHotkeyDescriptor, buildHotkeyDescriptor, formatHotkeyCombo, isHotkeyReleaseEvent } from '@/utils/hotkey'
 
 interface Props {
   show: boolean
@@ -37,6 +37,7 @@ const hotkeyItems: HotkeyItem[] = [
   { key: 'wideInput', label: '广域输入模式', description: '切换广域输入面板' },
   { key: 'history', label: '输入历史', description: '打开输入历史面板' },
   { key: 'diceTray', label: '掷骰面板', description: '打开/关闭掷骰托盘' },
+  { key: 'identityWheel', label: '频道角色选择模式', description: '按住设定快捷键打开角色选择器，保持按住时滚动鼠标滚轮切换角色' },
 ]
 
 // 本地草稿，避免直接修改 store
@@ -45,6 +46,8 @@ const draft = ref<Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>>({} as any)
 // 录制状态
 const recordingTarget = ref<ToolbarHotkeyKey | null>(null)
 let stopListener: (() => void) | null = null
+let stopKeyupListener: (() => void) | null = null
+let pendingHoldHotkey: FavoriteHotkey | null = null
 
 // 初始化草稿
 const initDraft = () => {
@@ -63,6 +66,9 @@ const initDraft = () => {
 const stopRecording = () => {
   stopListener?.()
   stopListener = null
+  stopKeyupListener?.()
+  stopKeyupListener = null
+  pendingHoldHotkey = null
   recordingTarget.value = null
 }
 
@@ -79,11 +85,33 @@ const handleKeyCapture = (event: KeyboardEvent) => {
     return
   }
 
-  const descriptor = buildHotkeyDescriptor(event)
+  const isHoldShortcut = recordingTarget.value === 'identityWheel'
+  const descriptor = isHoldShortcut ? buildHoldHotkeyDescriptor(event) : buildHotkeyDescriptor(event)
   if (!descriptor) {
-    message.warning('请按下包含 Ctrl/Cmd/Alt 的组合键')
+    message.warning(isHoldShortcut
+      ? '请按下修饰键或包含修饰键的组合键'
+      : '请按下包含 Ctrl/Cmd/Alt 的组合键')
     return
   }
+
+  if (isHoldShortcut && ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) {
+    pendingHoldHotkey = descriptor
+    return
+  }
+
+  applyRecordedHotkey(descriptor)
+}
+
+const handleKeyCaptureEnd = (event: KeyboardEvent) => {
+  if (recordingTarget.value !== 'identityWheel' || !pendingHoldHotkey) return
+  if (!isHotkeyReleaseEvent(event, pendingHoldHotkey)) return
+  const descriptor = pendingHoldHotkey
+  pendingHoldHotkey = null
+  applyRecordedHotkey(descriptor)
+}
+
+const applyRecordedHotkey = (descriptor: FavoriteHotkey) => {
+  if (!recordingTarget.value) return
 
   // 检查冲突
   const conflict = Object.entries(draft.value).find(
@@ -111,6 +139,14 @@ const beginRecording = (key: ToolbarHotkeyKey) => {
     capture: true,
     passive: false,
   })
+  if (key === 'identityWheel') {
+    stopKeyupListener = useEventListener(window, 'keyup', handleKeyCaptureEnd, {
+      capture: true,
+      passive: false,
+    })
+    message.info('请按下用于进入角色选择模式的快捷键，按 ESC 取消')
+    return
+  }
   message.info('请按下要绑定的组合键，按 ESC 取消')
 }
 

@@ -2,6 +2,7 @@
 import { reactive, watch, computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
+  IDENTITY_QUICK_BAR_LIMITS,
   MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS,
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
@@ -290,12 +291,14 @@ type NumericSettingKey =
   | 'historyNavigationOpacity'
   | 'quickGalleryPageSize'
   | 'messageImageSnapshotWidth'
+  | 'identityQuickBarLimit'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
 }
 const handleQuickGalleryPageSizeUpdate = (value: number | null) => handleNumericInput('quickGalleryPageSize', value)
 const handleMessageImageSnapshotWidthUpdate = (value: number | null) => handleNumericInput('messageImageSnapshotWidth', value)
+const handleIdentityQuickBarLimitUpdate = (value: number | null) => handleNumericInput('identityQuickBarLimit', value)
 const handleFontSizeUpdate = (value: number | null) => handleNumericInput('fontSize', value)
 const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lineHeight', value)
 const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
@@ -1090,6 +1093,34 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             @blur="handleIdentityVariantQuickSwitchTriggerBlur"
           />
           <span class="quick-input-hint">示例：{{ identityVariantQuickSwitchTriggerDraft || '=' }}差分 正文</span>
+        </div>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快速角色栏</p>
+            <p class="section-desc">在聊天输入框旁显示最近发言的频道角色头像，点击即可快速切换</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <n-switch v-model:value="draft.identityQuickBarEnabled">
+            <template #checked>已开启</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <template v-if="draft.identityQuickBarEnabled">
+            <span class="quick-input-hint">最多显示角色数</span>
+            <n-input-number
+              :value="draft.identityQuickBarLimit"
+              size="small"
+              :min="IDENTITY_QUICK_BAR_LIMITS.MIN"
+              :max="IDENTITY_QUICK_BAR_LIMITS.MAX"
+              :step="1"
+              :precision="0"
+              style="width: 110px"
+              @update:value="handleIdentityQuickBarLimitUpdate"
+            />
+          </template>
         </div>
       </section>
 
