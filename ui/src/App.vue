@@ -2751,6 +2751,13 @@ nav a:first-of-type {
     backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
     -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
   }
+  @include ordinary-glass-surface('.composer-context-hints') {
+    background: color-mix(in srgb, var(--sc-glass-elevated) 68%, transparent) !important;
+    border-color: color-mix(in srgb, var(--sc-glass-border) 88%, transparent) !important;
+    box-shadow: 0 8px 24px #00000012;
+    backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+    -webkit-backdrop-filter: blur(var(--sc-glass-effective-blur)) saturate(var(--sc-glass-saturation));
+  }
   .sc-header { background: var(--sc-glass-header) !important; }
   .sc-sidebar { background: var(--sc-glass-sidebar) !important; }
   .chat-root-container > .edit-area { background: var(--sc-glass-input) !important; }
@@ -2776,6 +2783,32 @@ nav a:first-of-type {
   }
   @include ordinary-glass-surface('.sticky-note-rail__action--add:hover') {
     background: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.16) !important;
+  }
+  @include ordinary-glass-surface('.composer-context-hints__item') {
+    border-color: color-mix(in srgb, var(--sc-glass-border) 72%, transparent) !important;
+    background: color-mix(in srgb, var(--sc-glass-elevated) 46%, transparent) !important;
+  }
+  @include ordinary-glass-surface('.composer-context-hints__item:hover, .composer-context-hints__item:focus-visible, .composer-context-hints__item.is-active') {
+    border-color: color-mix(in srgb, var(--primary-color, #3388de) 52%, var(--sc-glass-border)) !important;
+    background: color-mix(in srgb, var(--primary-color, #3388de) 14%, var(--sc-glass-elevated)) !important;
+  }
+  @include ordinary-glass-surface('.input-hint-position-group .n-button') {
+    --n-color: color-mix(in srgb, var(--sc-glass-elevated) 42%, transparent) !important;
+    --n-color-hover: color-mix(in srgb, var(--sc-glass-elevated) 64%, transparent) !important;
+    --n-color-pressed: color-mix(in srgb, var(--sc-glass-elevated) 72%, transparent) !important;
+    --n-color-focus: color-mix(in srgb, var(--sc-glass-elevated) 64%, transparent) !important;
+    --n-border: 1px solid var(--sc-glass-border) !important;
+    --n-border-hover: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 35%, var(--sc-glass-border)) !important;
+    --n-border-pressed: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 48%, var(--sc-glass-border)) !important;
+    --n-border-focus: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 42%, var(--sc-glass-border)) !important;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary) 7%, transparent);
+  }
+  @include ordinary-glass-surface('.input-hint-position-group .n-button[aria-pressed="true"]') {
+    --n-color: color-mix(in srgb, var(--primary-color, #3388de) 18%, var(--sc-glass-elevated)) !important;
+    --n-color-hover: color-mix(in srgb, var(--primary-color, #3388de) 22%, var(--sc-glass-elevated)) !important;
+    --n-color-pressed: color-mix(in srgb, var(--primary-color, #3388de) 25%, var(--sc-glass-elevated)) !important;
+    --n-color-focus: color-mix(in srgb, var(--primary-color, #3388de) 22%, var(--sc-glass-elevated)) !important;
+    --n-border: 1px solid color-mix(in srgb, var(--primary-color, #3388de) 55%, var(--sc-glass-border)) !important;
   }
   @include ordinary-glass-surface('.sticky-note-rail__color-picker, .sticky-note-rail__push-popup, .sticky-note-type-popup__content') {
     background: var(--sc-glass-elevated) !important;

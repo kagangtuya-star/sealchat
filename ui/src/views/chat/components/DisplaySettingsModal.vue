@@ -2,6 +2,7 @@
 import { reactive, watch, computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
+  COMPOSER_HINTS_SCALE_LIMITS,
   IDENTITY_QUICK_BAR_LIMITS,
   MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS,
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
@@ -137,6 +138,11 @@ const interjectSwitchRuleOptions: Array<{ label: string; value: DisplaySettings[
   { label: '不反转', value: 'preserve' },
   { label: '固定场外', value: 'forceOoc' },
   { label: '固定场内', value: 'forceIc' },
+]
+const composerHintsPositionOptions: Array<{ label: string; value: DisplaySettings['composerHintsPosition'] }> = [
+  { label: '左', value: 'left' },
+  { label: '中', value: 'center' },
+  { label: '右', value: 'right' },
 ]
 const editingSelfActionsPlacementOptions: Array<{ label: string; value: DisplaySettings['editingSelfActionsPlacement'] }> = [
   { label: '左置', value: 'left' },
@@ -1137,6 +1143,54 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入智能提示</p>
+            <p class="section-desc">输入内容命中表情备注或当前角色的差分关键词时，在输入框上方显示快捷候选；点击后插入表情或切换差分。</p>
+          </div>
+        </header>
+        <div class="input-hint-settings">
+          <div class="input-hint-settings__row">
+            <p class="indent-label">表情关键词提示</p>
+            <n-switch v-model:value="draft.emojiInputHintEnabled" size="small" />
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">差分关键词提示</p>
+            <n-switch v-model:value="draft.identityVariantInputHintEnabled" size="small" />
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">快捷候选位置</p>
+            <div class="input-hint-position-group" role="group" aria-label="快捷候选位置">
+              <n-button
+                v-for="option in composerHintsPositionOptions"
+                :key="option.value"
+                size="tiny"
+                :type="draft.composerHintsPosition === option.value ? 'primary' : 'default'"
+                :secondary="draft.composerHintsPosition !== option.value"
+                :aria-pressed="draft.composerHintsPosition === option.value"
+                @click="draft.composerHintsPosition = option.value"
+              >
+                {{ option.label }}
+              </n-button>
+            </div>
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">快捷候选大小</p>
+            <div class="input-hint-size-control">
+              <n-slider
+                v-model:value="draft.composerHintsScalePercent"
+                :min="COMPOSER_HINTS_SCALE_LIMITS.MIN"
+                :max="COMPOSER_HINTS_SCALE_LIMITS.MAX"
+                :step="5"
+                :tooltip="false"
+              />
+              <span>{{ draft.composerHintsScalePercent }}%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
@@ -2070,6 +2124,45 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 .indent-label {
   font-size: 0.85rem;
   color: var(--sc-text-primary);
+}
+
+.input-hint-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-hint-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.input-hint-settings__row .indent-label {
+  margin: 0;
+}
+
+.input-hint-position-group {
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.input-hint-size-control {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) 42px;
+  align-items: center;
+  gap: 8px;
+  width: min(220px, 52vw);
+}
+
+.input-hint-size-control > span {
+  color: var(--sc-text-secondary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .indent-unit {

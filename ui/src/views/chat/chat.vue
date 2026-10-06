@@ -15,6 +15,8 @@ import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
 import ChannelIdentityQuickBar from './components/ChannelIdentityQuickBar.vue'
+import ComposerContextHints, { type ComposerEmojiHintView, type ComposerVariantHintView } from './components/ComposerContextHints.vue'
+import { buildEmojiHintIndex, resolveEmojiInputHints, resolveIdentityVariantHints } from './composerContextHints'
 import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
@@ -15497,6 +15499,74 @@ const handleGalleryEmojiClick = (item: GalleryItem) => {
   insertGalleryInline(item.attachmentId);
 };
 
+// 输入框上方上下文快捷提示：仅在 textToSend 变化时按光标附近文本匹配，点击才执行
+const emojiHintIndex = computed(() => (
+  display.settings.emojiInputHintEnabled ? buildEmojiHintIndex(emojiItems.value) : []
+));
+watch(
+  () => [display.settings.emojiInputHintEnabled, textToSend.value, emojiItems.value.length, user.info?.id] as const,
+  ([enabled, draft, itemCount, userId]) => {
+    if (!enabled || !userId || itemCount > 0 || !String(draft || '').trim()) return;
+    void ensureEmojiCollectionLoaded();
+  },
+  { flush: 'post' },
+);
+const composerHintsSuppressed = computed(() => (
+  !chat.curChannel?.id
+  || spectatorInputDisabled.value
+  || keywordSuggestVisible.value
+  || emojiPopoverShow.value
+  || whisperPanelVisible.value
+  || historyPopoverVisible.value
+));
+const resolveComposerHintSource = () => {
+  if (inputMode.value === 'rich') {
+    // 富文本 draft 为 TipTap JSON，取纯文本并退化为末尾光标
+    const text = String(textInputRef.value?.getEditor?.()?.getText?.() || '');
+    return { text, cursor: text.length };
+  }
+  return { text: textToSend.value, cursor: captureSelectionRange().end };
+};
+const composerHintMatches = computed(() => {
+  const draft = textToSend.value;
+  const variantHintEnabled = display.settings.identityVariantInputHintEnabled;
+  if (!draft || composerHintsSuppressed.value || (!emojiHintIndex.value.length && !variantHintEnabled)) {
+    return { emojis: [] as GalleryItem[], variants: [] as ChannelIdentityVariant[] };
+  }
+  const { text, cursor } = resolveComposerHintSource();
+  return {
+    emojis: resolveEmojiInputHints({ text, cursor, index: emojiHintIndex.value, usageMap: emojiUsageMap.value }),
+    variants: variantHintEnabled
+      ? resolveIdentityVariantHints({ text, cursor, variants: activeIdentityVariantOptions.value })
+      : [],
+  };
+});
+const composerEmojiHintViews = computed<ComposerEmojiHintView[]>(() => composerHintMatches.value.emojis.map((item) => ({
+  id: item.id,
+  src: getEmojiItemSrc(item),
+  label: item.remark?.trim() || '',
+})));
+const composerVariantHintViews = computed<ComposerVariantHintView[]>(() => {
+  const identity = activeIdentityForEmojiPanel.value;
+  if (!identity) return [];
+  const fallbackAvatar = identity.isTemporary ? '' : (user.info.avatar || '');
+  return composerHintMatches.value.variants.map((variant) => ({
+    id: variant.id,
+    src: resolveAttachmentUrl(variant.avatarAttachmentId || identity.avatarAttachmentId) || fallbackAvatar,
+    label: String(variant.keyword || '').trim() || resolveVariantNote(variant),
+    title: describeIdentityVariantCard(variant),
+  }));
+});
+const composerActiveVariantId = computed(() => activeIdentityVariantForEmojiPanel.value?.id || '');
+
+const handleComposerHintEmojiSelect = (id: string) => {
+  const item = composerHintMatches.value.emojis.find((entry) => entry.id === id);
+  if (!item) return;
+  const selection = captureSelectionRange();
+  recordEmojiUsage(item.id);
+  insertGalleryInline(item.attachmentId, selection);
+};
+
 const isFavoriteQuickGalleryEmoji = (item: GalleryItem) => {
   return !!gallery.favoritesCollectionId && item.collectionId === gallery.favoritesCollectionId;
 };
@@ -16754,6 +16824,18 @@ onBeforeUnmount(() => {
               @select="handleIdentityQuickBarSelect"
             />
           </div>
+          <ComposerContextHints
+            :class="{ 'composer-context-hints--raised': chat.curChannel && identityQuickBarVisible }"
+            :emoji-items="composerEmojiHintViews"
+            :variant-items="composerVariantHintViews"
+            :active-variant-id="composerActiveVariantId"
+            :show-reset="!!composerActiveVariantId && composerVariantHintViews.length > 0"
+            :position="display.settings.composerHintsPosition"
+            :size-percent="display.settings.composerHintsScalePercent"
+            @select-emoji="handleComposerHintEmojiSelect"
+            @select-variant="handleEmojiVariantSelect"
+            @reset-variant="handleEmojiVariantSelect('')"
+          />
           <div
             v-if="!isMobileWideInput"
             class="chat-input-resize-handle"

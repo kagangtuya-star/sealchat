@@ -39,6 +39,7 @@ export interface SystemThemeBinding {
 export type BotBadgeStyle = 'solidBlue' | 'solidTone' | 'outline' | 'dice'
 export type EditingSelfActionsPlacement = 'left' | 'right'
 export type InterjectSwitchRule = 'invert' | 'preserve' | 'forceOoc' | 'forceIc'
+export type ComposerHintsPosition = 'left' | 'center' | 'right'
 export type { CustomTheme, CustomThemeColors, PlatformTheme, ThemeSelectionMode } from '@/services/theme/themeTypes'
 
 export interface FavoriteHotkey {
@@ -135,6 +136,10 @@ export interface DisplaySettings {
   identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
   identityQuickBarEnabled: boolean        // 输入框旁快速角色栏，默认关闭
   identityQuickBarLimit: number           // 快速角色栏最多显示角色数
+  emojiInputHintEnabled: boolean          // 输入内容命中表情备注时在输入框上方提示，默认开启
+  identityVariantInputHintEnabled: boolean // 输入内容命中当前角色差分关键词时提示，默认开启
+  composerHintsPosition: ComposerHintsPosition // 快捷候选横向位置，默认居中
+  composerHintsScalePercent: number       // 快捷候选尺寸百分比
   interjectSwitchRule: InterjectSwitchRule // 插话后第二条消息的模式切换规则
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
@@ -302,6 +307,18 @@ const coerceQuickInputTrigger = (value?: string): string => {
   if (typeof value === 'string' && value.length === 1) return value
   return QUICK_INPUT_TRIGGER_DEFAULT
 }
+const COMPOSER_HINTS_POSITION_DEFAULT: ComposerHintsPosition = 'center'
+const COMPOSER_HINTS_SCALE_DEFAULT = 115
+const COMPOSER_HINTS_SCALE_MIN = 85
+const COMPOSER_HINTS_SCALE_MAX = 150
+export const COMPOSER_HINTS_SCALE_LIMITS = {
+  DEFAULT: COMPOSER_HINTS_SCALE_DEFAULT,
+  MIN: COMPOSER_HINTS_SCALE_MIN,
+  MAX: COMPOSER_HINTS_SCALE_MAX,
+}
+const coerceComposerHintsPosition = (value: unknown): ComposerHintsPosition => (
+  value === 'left' || value === 'right' ? value : COMPOSER_HINTS_POSITION_DEFAULT
+)
 const coerceInterjectSwitchRule = (value: unknown): InterjectSwitchRule => {
   if (value === 'preserve' || value === 'forceOoc' || value === 'forceIc') {
     return value
@@ -610,6 +627,10 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   identityVariantQuickSwitchTrigger: '=',
   identityQuickBarEnabled: false,
   identityQuickBarLimit: IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+  emojiInputHintEnabled: true,
+  identityVariantInputHintEnabled: true,
+  composerHintsPosition: COMPOSER_HINTS_POSITION_DEFAULT,
+  composerHintsScalePercent: COMPOSER_HINTS_SCALE_DEFAULT,
   interjectSwitchRule: 'invert',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
@@ -946,6 +967,15 @@ const parseStoredSettingsInternal = (
         IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
         IDENTITY_QUICK_BAR_LIMIT_MIN,
         IDENTITY_QUICK_BAR_LIMIT_MAX,
+      ),
+      emojiInputHintEnabled: coerceBoolean((parsed as any)?.emojiInputHintEnabled ?? true),
+      identityVariantInputHintEnabled: coerceBoolean((parsed as any)?.identityVariantInputHintEnabled ?? true),
+      composerHintsPosition: coerceComposerHintsPosition((parsed as any)?.composerHintsPosition),
+      composerHintsScalePercent: coerceNumberInRange(
+        (parsed as any)?.composerHintsScalePercent,
+        COMPOSER_HINTS_SCALE_DEFAULT,
+        COMPOSER_HINTS_SCALE_MIN,
+        COMPOSER_HINTS_SCALE_MAX,
       ),
       interjectSwitchRule: coerceInterjectSwitchRule((parsed as any)?.interjectSwitchRule),
       toolbarHotkeys,
@@ -1372,6 +1402,27 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
         IDENTITY_QUICK_BAR_LIMIT_MAX,
       )
       : base.identityQuickBarLimit,
+  emojiInputHintEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'emojiInputHintEnabled')
+      ? coerceBoolean((patch as any).emojiInputHintEnabled)
+      : base.emojiInputHintEnabled,
+  identityVariantInputHintEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantInputHintEnabled')
+      ? coerceBoolean((patch as any).identityVariantInputHintEnabled)
+      : base.identityVariantInputHintEnabled,
+  composerHintsPosition:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'composerHintsPosition')
+      ? coerceComposerHintsPosition((patch as any).composerHintsPosition)
+      : base.composerHintsPosition,
+  composerHintsScalePercent:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'composerHintsScalePercent')
+      ? coerceNumberInRange(
+        (patch as any).composerHintsScalePercent,
+        COMPOSER_HINTS_SCALE_DEFAULT,
+        COMPOSER_HINTS_SCALE_MIN,
+        COMPOSER_HINTS_SCALE_MAX,
+      )
+      : base.composerHintsScalePercent,
   interjectSwitchRule:
     patch && Object.prototype.hasOwnProperty.call(patch, 'interjectSwitchRule')
       ? coerceInterjectSwitchRule((patch as any).interjectSwitchRule)
