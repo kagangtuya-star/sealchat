@@ -139,7 +139,15 @@ import TheaterClueActionEditor from './TheaterClueActionEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
-import { mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import {
+  compactMediaFxSpec,
+  createDefaultMediaFxSpec,
+  mediaFxFilterToCss,
+  mediaFxHasContent,
+  resolveMediaFxCapabilities,
+  type MediaFxSpec,
+} from '@/features/media-fx/media-fx'
+import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
 import { createKonvaMediaFxController, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
@@ -1151,6 +1159,16 @@ const updateSurfacePercentage = (target: StageSurfaceTarget, key: 'brightness' |
 }
 const updateSurfaceOverlay = (target: StageSurfaceTarget, patch: Partial<StageSurfaceStyle['overlay']>) => {
   props.store.patchSceneSurfaceStyle(target, { overlay: patch })
+}
+// Surface Media FX is layered over the base display parameters; an all-default spec
+// (including the panel's own reset) removes the field instead of storing it.
+const surfaceMediaFx = (target: StageSurfaceTarget) => surfaceStyle(target).mediaFx ?? createDefaultMediaFxSpec()
+const surfaceMediaFxCapabilities = (target: StageSurfaceTarget) => {
+  const image = props.store.state.liveState[target]
+  return resolveMediaFxCapabilities('konva', Boolean(image && (image.animated === true || image.mimeType?.startsWith('video/'))))
+}
+const updateSurfaceMediaFx = (target: StageSurfaceTarget, spec: MediaFxSpec) => {
+  props.store.patchSceneSurfaceStyle(target, { mediaFx: compactMediaFxSpec(spec) })
 }
 
 interface TheaterResourceResponse {
@@ -2842,9 +2860,13 @@ const drawWorldLayers = (immediate = false) => {
   gridTopLayer?.batchDraw()
 }
 
+// group: layout / clip only. mediaFxGroup: Media FX motion only. Overlay, placeholder
+// and label stay outside mediaFxGroup so they never follow the motion.
 interface SurfaceSlot {
   group: Konva.Group
   base: Konva.Rect | null
+  mediaFxGroup: Konva.Group
+  mediaFxController: KonvaMediaFxController
   media: Konva.Shape
   directImage: Konva.Image
   overlay: Konva.Rect
@@ -2855,6 +2877,8 @@ interface SurfaceSlot {
   version: number
   source: StageMediaSource | null
   ready: boolean
+  // Animated image / video: Media FX filters are disabled (V1 capability rule).
+  animatedMedia: boolean
   directImageSource: StageMediaSource | null
   directImageSignature: string
   debugDrawCount: number
@@ -5682,6 +5706,22 @@ const surfaceDrawRect = (
   return { x, y, width: renderedWidth, height: renderedHeight }
 }
 
+// Base Surface brightness / blur keep their legacy ranges and output; Media FX filters
+// are appended after them so the two layers compose instead of overriding each other.
+// Every token comes from normalized numbers, never from persisted CSS text.
+const surfaceMediaFxFilterCss = (slot: SurfaceSlot) => {
+  const mediaFx = slot.style.mediaFx
+  if (!mediaFx || slot.animatedMedia || (slot.source && isVideoSource(slot.source))) return ''
+  return mediaFxFilterToCss(mediaFx.filter)
+}
+
+const surfaceFilterCss = (style: StageSurfaceStyle, mediaFxCss: string) => {
+  const parts: string[] = []
+  if (style.brightness !== 1 || style.blurPx > 0) parts.push(`brightness(${style.brightness}) blur(${style.blurPx}px)`)
+  if (mediaFxCss) parts.push(mediaFxCss)
+  return parts.join(' ')
+}
+
 const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   const source = slot.source
   if (!source) return
@@ -5701,9 +5741,8 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   const height = slot.placeholder.height()
   const style = slot.style
   context.save()
-  if (style.brightness !== 1 || style.blurPx > 0) {
-    context.filter = `brightness(${style.brightness}) blur(${style.blurPx}px)`
-  }
+  const filter = surfaceFilterCss(style, surfaceMediaFxFilterCss(slot))
+  if (filter) context.filter = filter
   context.imageSmoothingEnabled = true
   if (style.fit === 'tile') {
     const pattern = context.createPattern(source, 'repeat')
@@ -5749,12 +5788,17 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
     fontSize: 18,
     listening: false,
   })
+  const mediaFxGroup = new Konva.Group({ name: 'theater-surface-media-fx', listening: false })
+  mediaFxGroup.add(media, directImage)
   cameraGroup.add(group)
   if (base) group.add(base)
-  group.add(media, directImage, overlay, placeholder, label)
+  group.add(mediaFxGroup, overlay, placeholder, label)
   slot = {
     group,
     base,
+    mediaFxGroup,
+    // Motion only: the slot keeps its own base brightness / blur filter chain.
+    mediaFxController: createKonvaMediaFxController({ motionNode: mediaFxGroup }),
     media,
     directImage,
     overlay,
@@ -5765,6 +5809,7 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
     version: 0,
     source: null,
     ready: false,
+    animatedMedia: false,
     directImageSource: null,
     directImageSignature: '',
     debugDrawCount: 0,
@@ -5772,12 +5817,46 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   return slot
 }
 
+const syncSurfaceMediaFx = (slot: SurfaceSlot, box: { width: number, height: number }) => {
+  if (!slot.source || !mediaFxHasContent(slot.style.mediaFx)) {
+    slot.mediaFxController.clear()
+    return
+  }
+  slot.mediaFxController.update(slot.style.mediaFx, {
+    width: box.width,
+    height: box.height,
+    motion: true,
+    filters: false,
+    reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+  })
+}
+
 const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
   style.fit !== 'tile'
 )
 
+// Konva 10.3 parses mixed CSS/function filters through an incomplete fallback.
+// Apply the full native CSS chain to the pixels AFTER the legacy function filters.
+// These temporary canvases are not node caches and never mutate filter attributes.
+const surfaceMediaFxCanvasFilter = (css: string): Konva.Filter => (imageData: ImageData) => {
+  const source = document.createElement('canvas')
+  const output = document.createElement('canvas')
+  source.width = output.width = imageData.width
+  source.height = output.height = imageData.height
+  const sourceContext = source.getContext('2d')
+  const outputContext = output.getContext('2d')
+  if (!sourceContext || !outputContext) return
+  sourceContext.putImageData(imageData, 0, 0)
+  outputContext.filter = css
+  outputContext.drawImage(source, 0, 0)
+  imageData.data.set(outputContext.getImageData(0, 0, output.width, output.height).data)
+}
+
 const clearDirectSurfaceImage = (slot: SurfaceSlot) => {
   if (slot.directImageSource || slot.directImage.image()) slot.directImage.clearCache()
+  slot.directImage.brightness(0)
+  slot.directImage.blurRadius(0)
+  slot.directImage.filters([])
   slot.directImage.image(undefined)
   slot.directImage.visible(false)
   slot.directImageSource = null
@@ -5803,6 +5882,8 @@ const updateDirectSurfaceImage = (
   }
   const dimensions = stageMediaDimensions(source)
   const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
+  // Without Canvas filter support only the legacy Konva base filters are kept.
+  const mediaFxCss = canvasFilterSupported() ? surfaceMediaFxFilterCss(slot) : ''
   const signature = [
     stageMediaObjectUrls.get(source) || '',
     dimensions.width,
@@ -5817,6 +5898,7 @@ const updateDirectSurfaceImage = (
     slot.style.zoom,
     slot.style.brightness,
     slot.style.blurPx,
+    mediaFxCss,
   ].join(':')
   if (
     slot.directImageSource === source
@@ -5844,6 +5926,9 @@ const updateDirectSurfaceImage = (
     filters.push(Konva.Filters.Blur)
   } else {
     slot.directImage.blurRadius(0)
+  }
+  if (mediaFxCss) {
+    filters.push(filters.length ? surfaceMediaFxCanvasFilter(mediaFxCss) : mediaFxCss)
   }
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
@@ -5879,6 +5964,7 @@ const updateSurfaceSlot = (
     })
   }
   applyStyle(style)
+  slot.animatedMedia = Boolean(imageRef && (imageRef.animated === true || imageRef.mimeType?.startsWith('video/')))
 
   const location = imageRef ? resolveTheaterStageMedia(imageRef) : null
   const resolved = location?.url || null
@@ -5901,6 +5987,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
+    slot.mediaFxController.clear()
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -5913,6 +6000,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
+    slot.mediaFxController.clear()
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
@@ -5923,6 +6011,7 @@ const updateSurfaceSlot = (
     updateDirectSurfaceImage(slot, slot.source, box)
     slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
+    syncSurfaceMediaFx(slot, box)
     slot.group.getLayer()?.batchDraw()
     settleSceneMedia(mediaKey, resolved, undefined, () => activateStageMedia(slot.source!, imageRef))
     return
@@ -5968,6 +6057,7 @@ const updateSurfaceSlot = (
       slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
       slot.placeholder.visible(false)
       slot.label.visible(false)
+      syncSurfaceMediaFx(slot, box)
       theaterMediaDebug('surface visible', {
         resourceId: imageRef.resourceId,
         visible: slot.media.visible(),
@@ -6023,7 +6113,9 @@ const updateSurfaceSlot = (
       slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
       slot.placeholder.visible(false)
       slot.label.visible(false)
+      syncSurfaceMediaFx(slot, box)
     } else {
+      slot.mediaFxController.clear()
       slot.media.visible(false)
       slot.overlay.visible(false)
       slot.placeholder.visible(true)
@@ -8432,6 +8524,8 @@ onBeforeUnmount(() => {
   objectEntranceTweens.clear()
   objectMediaFxControllers.forEach((controller) => controller.dispose())
   objectMediaFxControllers.clear()
+  backgroundSlot?.mediaFxController.dispose()
+  foregroundSlot?.mediaFxController.dispose()
   pendingObjectEntrances.clear()
   textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
   textEntranceTimers.clear()
@@ -9683,6 +9777,7 @@ onBeforeUnmount(() => {
                 </template>
                 <div class="theater-surface-settings">
                   <div class="theater-surface-settings__heading">{{ surface.label }}设置</div>
+                  <div class="theater-surface-settings__section">基础显示</div>
                   <div class="theater-surface-settings__fit">
                     <span>填充方式</span>
                     <n-radio-group :value="surfaceStyle(surface.target).fit" size="small" @update:value="updateSurfaceFit(surface.target, $event)">
@@ -9722,6 +9817,14 @@ onBeforeUnmount(() => {
                     <n-slider :value="Math.round(surfaceStyle(surface.target).overlay.opacity * 100)" :disabled="!surfaceStyle(surface.target).overlay.enabled" :min="0" :max="100" :step="1" @update:value="updateSurfaceOverlay(surface.target, { opacity: $event / 100 })" />
                     <output>{{ Math.round(surfaceStyle(surface.target).overlay.opacity * 100) }}%</output>
                   </div>
+                  <div class="theater-surface-settings__section">视觉效果</div>
+                  <p class="theater-surface-settings__hint">视觉效果叠加在基础显示参数之上。</p>
+                  <MediaFxPanel
+                    :model-value="surfaceMediaFx(surface.target)"
+                    mode="live"
+                    :capabilities="surfaceMediaFxCapabilities(surface.target)"
+                    @update:model-value="updateSurfaceMediaFx(surface.target, $event)"
+                  />
                   <n-button class="theater-surface-settings__reset" text size="small" @click="store.resetSceneSurfaceStyle(surface.target)">重置为默认</n-button>
                 </div>
               </n-popover>
@@ -10588,9 +10691,11 @@ onBeforeUnmount(() => {
 .theater-entrance-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .theater-media-fx-toggle { justify-content: flex-start; }
 .theater-media-fx-panel { padding: 8px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
-.theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
+.theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; max-height: min(72vh, 680px); box-sizing: border-box; display: grid; gap: 11px; overflow-x: hidden; overflow-y: auto; }
 .theater-surface-settings > * { min-width: 0; }
 .theater-surface-settings__heading { color: var(--sc-text-primary, #f4f4f5); font-size: 13px; font-weight: 700; }
+.theater-surface-settings__section { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; font-weight: 600; }
+.theater-surface-settings__hint { margin: -6px 0 0; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-surface-settings__fit { display: grid; gap: 7px; }
 .theater-surface-settings__fit > span, .theater-surface-settings__slider > span, .theater-surface-settings__toggle > span, .theater-surface-settings__overlay > span {
   color: var(--sc-text-secondary, #b5b5c5); font-size: 11px;

@@ -1432,14 +1432,17 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const patchSceneSurfaceStyle = (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => {
     const current = state.liveState.surfaceStyles[target]
-    state.liveState.surfaceStyles[target] = normalizeStageSurfaceStyle({
+    const next: Record<string, unknown> = {
       ...current,
       ...patch,
       overlay: {
         ...current.overlay,
         ...patch.overlay,
       },
-    }, current.fit)
+    }
+    if (patch.mediaFx === null) delete next.mediaFx
+    else if (patch.mediaFx === undefined) next.mediaFx = current.mediaFx
+    state.liveState.surfaceStyles[target] = normalizeStageSurfaceStyle(next, current.fit)
   }
 
   const resetSceneSurfaceStyle = (target: StageSurfaceTarget) => {

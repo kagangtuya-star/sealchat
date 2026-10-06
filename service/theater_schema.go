@@ -10,6 +10,8 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"sealchat/protocol"
 )
 
 var theaterImageAnnotationColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -606,7 +608,7 @@ func validateTheaterSurfaceStyles(value any) error {
 		if !ok {
 			return theaterPayloadError("surfaceStyles." + target + " 无效")
 		}
-		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true}
+		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true, "mediaFx": true}
 		for key := range style {
 			if !allowed[key] {
 				return theaterPayloadError("surfaceStyles." + target + " 包含禁止字段: " + key)
@@ -643,6 +645,29 @@ func validateTheaterSurfaceStyles(value any) error {
 		if !valid || math.IsNaN(opacity) || math.IsInf(opacity, 0) || opacity < 0 || opacity > 1 {
 			return theaterPayloadError("surfaceStyles." + target + ".overlay.opacity 无效")
 		}
+		if err := validateTheaterSurfaceMediaFx(style["mediaFx"], "surfaceStyles."+target+".mediaFx"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTheaterSurfaceMediaFx strictly decodes an optional MediaFxSpec and reuses the
+// protocol validator, so presets and ranges are defined in one place.
+func validateTheaterSurfaceMediaFx(input any, path string) error {
+	if input == nil {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return theaterPayloadError(path + " 无效")
+	}
+	var spec protocol.MediaFxSpec
+	if err := decodeStrictJSON(raw, &spec); err != nil {
+		return theaterPayloadError(path + " 无效: " + err.Error())
+	}
+	if err := protocol.ValidateMediaFx(&spec); err != nil {
+		return theaterPayloadError(path + " 无效: " + err.Error())
 	}
 	return nil
 }

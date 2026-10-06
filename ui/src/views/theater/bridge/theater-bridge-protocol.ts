@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { mediaFxSpecSchema } from '../../../features/media-fx/media-fx-schema'
 import {
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
@@ -462,6 +463,7 @@ const stageSurfaceStyleSchema = z.strictObject({
     color: z.string().trim().min(1).max(64),
     opacity: z.number().finite().min(0).max(1),
   }),
+  mediaFx: mediaFxSpecSchema.optional(),
 })
 
 const sceneTransitionTypeSchema = z.enum(['none', 'fade', 'slide', 'dissolve', 'zoom', 'mask', 'flip', 'blur', 'rotate', 'curtain'])

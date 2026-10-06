@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -308,7 +309,7 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	sourceSceneID := "source-scene-" + utils.NewIDWithLength(6)
 	if err := model.GetDB().Create(&model.TheaterSceneModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: sourceSceneID}, RoomID: sourceRoom.ID,
-		Name: "Imported Scene", SwitchText: "Imported dialogue", SortOrder: 1, StateJSON: `{}`, SchemaVersion: model.TheaterSchemaVersion,
+		Name: "Imported Scene", SwitchText: "Imported dialogue", SortOrder: 1, StateJSON: theaterPackageSurfaceMediaFxState, SchemaVersion: model.TheaterSchemaVersion,
 		CreatedBy: actorID, UpdatedBy: actorID,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -323,6 +324,9 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := model.GetDB().Model(&model.TheaterRoomModel{}).Where("id = ?", sourceRoom.ID).Updates(map[string]any{"active_scene_id": sourceSceneID, "state_json": `{}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Model(&model.WorldModel{}).Where("id = ?", sourceWorldID).Update("theater_presentation_template_json", theaterPackageWorldPresentationJSON).Error; err != nil {
 		t.Fatal(err)
 	}
 	resourceBytes := []byte("theater-package-resource")
@@ -429,6 +433,30 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	if importedScene.SwitchText != "Imported dialogue" {
 		t.Fatalf("imported switch text = %q", importedScene.SwitchText)
 	}
+	var importedState struct {
+		SurfaceStyles struct {
+			Background struct {
+				MediaFx *protocol.MediaFxSpec `json:"mediaFx"`
+			} `json:"background"`
+			Foreground map[string]any `json:"foreground"`
+		} `json:"surfaceStyles"`
+	}
+	if err := json.Unmarshal([]byte(importedScene.StateJSON), &importedState); err != nil {
+		t.Fatal(err)
+	}
+	if fx := importedState.SurfaceStyles.Background.MediaFx; fx == nil || fx.Motion.Preset != protocol.MediaFxMotionDrift || fx.Filter.Brightness != 0.6 {
+		t.Fatalf("surface mediaFx not preserved: %s", importedScene.StateJSON)
+	}
+	if _, ok := importedState.SurfaceStyles.Foreground["mediaFx"]; ok {
+		t.Fatalf("foreground gained mediaFx: %s", importedScene.StateJSON)
+	}
+	var targetWorld model.WorldModel
+	if err := model.GetDB().Where("id = ?", targetWorldID).First(&targetWorld).Error; err != nil {
+		t.Fatal(err)
+	}
+	if portrait := targetWorld.GetTheaterPresentationTemplate().Portrait; portrait == nil || portrait.MediaFx == nil || portrait.MediaFx.Motion.Preset != protocol.MediaFxMotionBreathe {
+		t.Fatalf("world presentation mediaFx not imported: %s", targetWorld.TheaterPresentationTemplateJSON)
+	}
 	if _, err := importTheaterPackage(t.Context(), importJob); err != nil {
 		t.Fatal(err)
 	}
@@ -465,6 +493,122 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	}
 	if string(actualResourceBytes) != string(resourceBytes) {
 		t.Fatalf("resource content mismatch: %q", actualResourceBytes)
+	}
+}
+
+const theaterPackageSurfaceMediaFxState = `{"surfaceStyles":{` +
+	`"background":{"brightness":0,"blurPx":40,"opacity":0.9,"zoom":1.2,"fit":"cover","overlay":{"enabled":true,"color":"#000000","opacity":0.4},` +
+	`"mediaFx":{"version":1,"motion":{"preset":"drift","intensity":0.5,"durationMs":12000,"loop":true},` +
+	`"filter":{"brightness":0.6,"contrast":1.08,"saturation":0.5,"grayscale":0,"sepia":0,"hueRotate":10,"blurPx":0}}},` +
+	`"foreground":{"brightness":1,"blurPx":0,"opacity":1,"zoom":1,"fit":"cover","overlay":{"enabled":false,"color":"#000000","opacity":0.4}}}}`
+
+const theaterPackageWorldPresentationJSON = `{"portrait":{"enabled":true,` +
+	`"transform":{"x":0,"y":0,"width":1,"height":1,"rotation":0,"opacity":1,"zIndex":0},` +
+	`"fit":"cover","playbackRate":1,"blendMode":"normal","fadeDurationMs":0,` +
+	`"mediaFx":{"version":1,"motion":{"preset":"breathe","intensity":0.5,"durationMs":4000,"loop":true},` +
+	`"filter":{"brightness":1,"contrast":1,"saturation":1,"grayscale":0,"sepia":0,"hueRotate":0,"blurPx":0}}}}`
+
+func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
+	normalized, err := normalizeTheaterPackageWorldPresentation([]byte(theaterPackageWorldPresentationJSON))
+	if err != nil {
+		t.Fatalf("valid world presentation rejected: %v", err)
+	}
+	var template protocol.WorldTheaterPresentationTemplate
+	if err := json.Unmarshal(normalized, &template); err != nil || template.Portrait == nil || template.Portrait.MediaFx == nil {
+		t.Fatalf("normalized world presentation lost mediaFx: %s (%v)", normalized, err)
+	}
+	for name, raw := range map[string]string{
+		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
+		"mediaFx preset":  strings.Replace(theaterPackageWorldPresentationJSON, `"breathe"`, `"spin"`, 1),
+		"mediaFx range":   strings.Replace(theaterPackageWorldPresentationJSON, `"blurPx":0}`, `"blurPx":99}`, 1),
+		"unknown field":   strings.Replace(theaterPackageWorldPresentationJSON, `{"portrait"`, `{"script":"x","portrait"`, 1),
+		"trailing value":  theaterPackageWorldPresentationJSON + `{}`,
+	} {
+		if raw == theaterPackageWorldPresentationJSON {
+			t.Fatalf("%s: fixture replacement did not apply", name)
+		}
+		if _, err := normalizeTheaterPackageWorldPresentation([]byte(raw)); err == nil {
+			t.Fatalf("%s: invalid world presentation accepted", name)
+		}
+	}
+
+	dialogue := protocol.DefaultTheaterDialogueStyle()
+	template.Dialogue = &protocol.TheaterDialogueBoxTemplate{
+		Transform: dialogue.Transform, Padding: dialogue.Padding, NameGap: dialogue.NameGap,
+		TextAlign: dialogue.TextAlign, ContentColor: dialogue.ContentColor,
+		CharactersPerSecond: dialogue.CharactersPerSecond,
+		Frame: &protocol.TheaterVisualLayer{
+			ID: "frame", Enabled: true, Space: protocol.TheaterLayerSpaceDialogue,
+			Media: protocol.TheaterMediaRef{
+				AssetID: "frame-asset", ResourceAttachmentID: "frame-attachment",
+				MIMEType: "image/png", Kind: protocol.TheaterMediaKindStaticImage, Width: 100, Height: 100,
+			},
+			Transform: protocol.DefaultTheaterTransform(), Fit: protocol.TheaterObjectFitCover,
+			PlaybackRate: 1, BlendMode: protocol.TheaterBlendModeNormal, MediaFx: template.Portrait.MediaFx,
+		},
+	}
+	validRaw, err := json.Marshal(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation(validRaw); err != nil {
+		t.Fatalf("valid dialogue frame rejected: %v", err)
+	}
+	for _, path := range [][]string{
+		{"portrait", "unexpectedField"},
+		{"portrait", "transform", "unexpectedField"},
+		{"dialogue", "unexpectedField"},
+		{"dialogue", "frame", "unexpectedField"},
+		{"dialogue", "frame", "media", "unexpectedField"},
+		{"dialogue", "frame", "transform", "unexpectedField"},
+		{"portrait", "mediaFx", "unknown"},
+		{"portrait", "mediaFx", "motion", "unknown"},
+		{"portrait", "mediaFx", "filter", "shader"},
+		{"dialogue", "frame", "mediaFx", "unknown"},
+		{"dialogue", "frame", "mediaFx", "motion", "unknown"},
+		{"dialogue", "frame", "mediaFx", "filter", "shader"},
+	} {
+		t.Run(strings.Join(path, "."), func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal(validRaw, &document); err != nil {
+				t.Fatal(err)
+			}
+			object := document
+			for _, key := range path[:len(path)-1] {
+				object = object[key].(map[string]any)
+			}
+			field := path[len(path)-1]
+			object[field] = true
+			raw, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := normalizeTheaterPackageWorldPresentation(raw); err == nil || !strings.Contains(err.Error(), `unknown field "`+field+`"`) {
+				t.Fatalf("expected unknown-field rejection, got %v", err)
+			}
+		})
+	}
+
+	// Import-only structural checking must not replace protocol defaults.
+	var document map[string]any
+	if err := json.Unmarshal(validRaw, &document); err != nil {
+		t.Fatal(err)
+	}
+	delete(document["portrait"].(map[string]any), "fadeDurationMs")
+	delete(document["dialogue"].(map[string]any)["frame"].(map[string]any), "fadeDurationMs")
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err = normalizeTheaterPackageWorldPresentation(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(normalized, &template); err != nil {
+		t.Fatal(err)
+	}
+	if template.Portrait.FadeDurationMS != protocol.DefaultTheaterPortraitFadeDurationMS || template.Dialogue.Frame.FadeDurationMS != protocol.DefaultTheaterPortraitFadeDurationMS {
+		t.Fatal("import lost historical fade duration defaults")
 	}
 }
 

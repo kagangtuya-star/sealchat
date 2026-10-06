@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -362,11 +363,20 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 				if err != nil {
 					return err
 				}
+				// Check the original JSON before remapping can discard trailing values
+				// or overwritten object members.
+				if err := decodeStrictJSON(raw, &theaterPackageWorldPresentationStrict{}); err != nil {
+					return theaterPayloadError("world-presentation.json 无效: " + err.Error())
+				}
 				remapped, _, err := remapTheaterPackageJSON(raw, remap)
 				if err != nil {
 					return err
 				}
-				if err := tx.Model(&model.WorldModel{}).Where("id = ?", job.TargetWorldID).Update("theater_presentation_template_json", string(remapped)).Error; err != nil {
+				normalized, err := normalizeTheaterPackageWorldPresentation(remapped)
+				if err != nil {
+					return err
+				}
+				if err := tx.Model(&model.WorldModel{}).Where("id = ?", job.TargetWorldID).Update("theater_presentation_template_json", string(normalized)).Error; err != nil {
 					return err
 				}
 				summary.WorldPresentationImported = true
@@ -1300,4 +1310,62 @@ func appendWarning(warnings []string, value string) []string {
 		}
 	}
 	return append(warnings, value)
+}
+
+// Import-only DTOs have no custom unmarshaler, so DisallowUnknownFields reaches
+// every nested object. Protocol decoding still owns historical defaults.
+type theaterPackageWorldPresentationStrict struct {
+	Portrait *theaterPackageVisualStyleStrict `json:"portrait,omitempty"`
+	Speaker  *protocol.TheaterTextLayer       `json:"speaker,omitempty"`
+	Content  *protocol.TheaterTextLayer       `json:"content,omitempty"`
+	Dialogue *theaterPackageDialogueStrict    `json:"dialogue,omitempty"`
+}
+
+type theaterPackageVisualStyleStrict struct {
+	Enabled        bool                      `json:"enabled"`
+	Transform      protocol.TheaterTransform `json:"transform"`
+	Fit            protocol.TheaterObjectFit `json:"fit"`
+	PlaybackRate   float64                   `json:"playbackRate"`
+	BlendMode      protocol.TheaterBlendMode `json:"blendMode"`
+	FadeDurationMS int64                     `json:"fadeDurationMs"`
+	MediaFx        *protocol.MediaFxSpec     `json:"mediaFx,omitempty"`
+}
+
+type theaterPackageVisualLayerStrict struct {
+	ID             string                     `json:"id"`
+	Enabled        bool                       `json:"enabled"`
+	Media          protocol.TheaterMediaRef   `json:"media"`
+	Space          protocol.TheaterLayerSpace `json:"space"`
+	Transform      protocol.TheaterTransform  `json:"transform"`
+	Fit            protocol.TheaterObjectFit  `json:"fit"`
+	PlaybackRate   float64                    `json:"playbackRate"`
+	BlendMode      protocol.TheaterBlendMode  `json:"blendMode"`
+	FadeDurationMS int64                      `json:"fadeDurationMs"`
+	MediaFx        *protocol.MediaFxSpec      `json:"mediaFx,omitempty"`
+}
+
+type theaterPackageDialogueStrict struct {
+	Transform           protocol.TheaterTransform        `json:"transform"`
+	Frame               *theaterPackageVisualLayerStrict `json:"frame"`
+	Padding             protocol.TheaterSpacing          `json:"padding"`
+	NameGap             float64                          `json:"nameGap"`
+	TextAlign           protocol.TheaterTextAlign        `json:"textAlign"`
+	ContentColor        string                           `json:"contentColor"`
+	CharactersPerSecond float64                          `json:"charactersPerSecond"`
+}
+
+// normalizeTheaterPackageWorldPresentation strictly decodes an imported world template
+// and runs the same validator as the world settings API before it is persisted.
+func normalizeTheaterPackageWorldPresentation(raw []byte) ([]byte, error) {
+	if err := decodeStrictJSON(raw, &theaterPackageWorldPresentationStrict{}); err != nil {
+		return nil, theaterPayloadError("world-presentation.json 无效: " + err.Error())
+	}
+	var template protocol.WorldTheaterPresentationTemplate
+	if err := json.Unmarshal(raw, &template); err != nil {
+		return nil, theaterPayloadError("world-presentation.json 无效: " + err.Error())
+	}
+	if err := protocol.ValidateWorldTheaterPresentationTemplate(template); err != nil {
+		return nil, theaterPayloadError("world-presentation.json 无效: " + err.Error())
+	}
+	return json.Marshal(template)
 }

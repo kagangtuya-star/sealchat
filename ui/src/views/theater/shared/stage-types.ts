@@ -651,10 +651,15 @@ export interface StageSurfaceStyle {
     color: string
     opacity: number
   }
+  // Media FX layered on top of the base display parameters above. Omitted when it
+  // carries no effect; the legacy brightness / blurPx keep their own wider ranges.
+  mediaFx?: MediaFxSpec
 }
 
-export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay'>> & {
+// mediaFx: undefined keeps the current spec, null (or an all-default spec) removes it.
+export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay' | 'mediaFx'>> & {
   overlay?: Partial<StageSurfaceStyle['overlay']>
+  mediaFx?: MediaFxSpec | null
 }
 
 export const createDefaultStageSurfaceStyle = (fit: StageSurfaceFit = 'cover', overrides: Partial<StageSurfaceStyle> = {}): StageSurfaceStyle => ({
@@ -686,6 +691,7 @@ export const normalizeStageSurfaceStyle = (
     ? value.overlay
     : {}
   const fits: StageSurfaceFit[] = ['fill', 'cover', 'contain', 'tile', 'center']
+  const mediaFx = compactMediaFxSpec(value.mediaFx)
   return {
     brightness: finiteRange(value.brightness, base.brightness, 0, 2),
     blurPx: finiteRange(value.blurPx, base.blurPx, 0, 40),
@@ -699,6 +705,7 @@ export const normalizeStageSurfaceStyle = (
         : '#000000',
       opacity: finiteRange(overlay.opacity, base.overlay.opacity, 0, 1),
     },
+    ...(mediaFx ? { mediaFx } : {}),
   }
 }
 

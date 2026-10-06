@@ -108,6 +108,12 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 	return errors.Join(problems...)
 }
 
+// ValidateMediaFx exposes the single Media FX validator to other packages that embed
+// MediaFxSpec in their own documents (e.g. theater stage surface styles).
+func ValidateMediaFx(spec *MediaFxSpec) error {
+	return validateMediaFx(spec, "mediaFx")
+}
+
 func mediaFxHasContent(spec *MediaFxSpec) bool {
 	if spec == nil {
 		return false
