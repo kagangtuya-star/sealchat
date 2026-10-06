@@ -13,11 +13,14 @@ import (
 )
 
 type recordingWSOutboundSocket struct {
-	mu       sync.Mutex
-	payloads [][]byte
-	wrote    chan struct{}
-	entered  chan struct{}
-	block    <-chan struct{}
+	mu                sync.Mutex
+	payloads          [][]byte
+	wrote             chan struct{}
+	entered           chan struct{}
+	block             <-chan struct{}
+	closeCalled       chan struct{}
+	closedDuringWrite bool
+	writeActive       bool
 }
 
 func (s *recordingWSOutboundSocket) SetWriteDeadline(time.Time) error {
@@ -25,6 +28,14 @@ func (s *recordingWSOutboundSocket) SetWriteDeadline(time.Time) error {
 }
 
 func (s *recordingWSOutboundSocket) WriteMessage(_ int, payload []byte) error {
+	s.mu.Lock()
+	s.writeActive = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.writeActive = false
+		s.mu.Unlock()
+	}()
 	if s.entered != nil {
 		select {
 		case s.entered <- struct{}{}:
@@ -39,6 +50,21 @@ func (s *recordingWSOutboundSocket) WriteMessage(_ int, payload []byte) error {
 	s.mu.Unlock()
 	if s.wrote != nil {
 		s.wrote <- struct{}{}
+	}
+	return nil
+}
+
+func (s *recordingWSOutboundSocket) Close() error {
+	s.mu.Lock()
+	if s.writeActive {
+		s.closedDuringWrite = true
+	}
+	s.mu.Unlock()
+	if s.closeCalled != nil {
+		select {
+		case s.closeCalled <- struct{}{}:
+		default:
+		}
 	}
 	return nil
 }
@@ -410,6 +436,57 @@ func TestWsSyncConnCloseReleasesSynchronousWrite(t *testing.T) {
 		t.Fatal("synchronous write remained blocked after close")
 	}
 	close(block)
+}
+
+func TestWsSyncConnCloseWaitsForActiveWriteBeforeClosingSocket(t *testing.T) {
+	block := make(chan struct{})
+	socket := &recordingWSOutboundSocket{
+		entered:     make(chan struct{}, 1),
+		block:       block,
+		closeCalled: make(chan struct{}, 1),
+	}
+	c := newTestWsSyncConn(socket, 1)
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- c.WriteJSON("blocked")
+	}()
+
+	select {
+	case <-socket.entered:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not start")
+	}
+
+	if err := c.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	select {
+	case <-socket.closeCalled:
+		t.Fatal("socket closed while WriteMessage was active")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(block)
+	select {
+	case <-socket.closeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("socket was not closed after active write finished")
+	}
+	select {
+	case err := <-writeDone:
+		if !errors.Is(err, errWSConnectionClosed) {
+			t.Fatalf("write error = %v, want connection closed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("synchronous write did not return")
+	}
+
+	socket.mu.Lock()
+	closedDuringWrite := socket.closedDuringWrite
+	socket.mu.Unlock()
+	if closedDuringWrite {
+		t.Fatal("socket Close overlapped active WriteMessage")
+	}
 }
 
 func TestNewWsSyncConnUsesDefaultQueueSize(t *testing.T) {

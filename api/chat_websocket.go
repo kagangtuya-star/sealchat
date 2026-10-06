@@ -76,6 +76,7 @@ type wsOutboundMessage struct {
 type wsOutboundSocket interface {
 	SetWriteDeadline(time.Time) error
 	WriteMessage(int, []byte) error
+	Close() error
 }
 
 type WsSyncConn struct {
@@ -97,12 +98,16 @@ func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
 	if queueSize <= 0 {
 		queueSize = defaultWSOutboundQueueSize
 	}
+	var outboundSocket wsOutboundSocket
+	if raw != nil {
+		outboundSocket = raw
+	}
 	c := &WsSyncConn{
 		Conn:                raw,
 		outbound:            make(chan wsOutboundMessage, queueSize),
 		interactiveOutbound: make(chan wsOutboundMessage, wsInteractiveQueueSize),
 		done:                make(chan struct{}),
-		outboundSocket:      raw,
+		outboundSocket:      outboundSocket,
 		coalesced:           make(map[string]wsCoalescedEntry),
 		coalescedWake:       make(chan struct{}, 1),
 	}
@@ -401,11 +406,17 @@ func (c *WsSyncConn) outboundWriter() {
 }
 
 func (c *WsSyncConn) writeOutboundMessage(message wsOutboundMessage) error {
+	c.Mux.Lock()
+	defer c.Mux.Unlock()
+
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
 	if c.outboundSocket == nil {
 		return errors.New("websocket connection unavailable")
 	}
-	c.Mux.Lock()
-	defer c.Mux.Unlock()
 
 	if message.timeout > 0 {
 		if err := c.outboundSocket.SetWriteDeadline(time.Now().Add(message.timeout)); err != nil {
@@ -427,11 +438,28 @@ func (c *WsSyncConn) Close() error {
 		if c.done != nil {
 			close(c.done)
 		}
-		if c.Conn != nil {
-			closeErr = c.Conn.Close()
+		if c.Mux.TryLock() {
+			closeErr = c.closeSocketLocked()
+			c.Mux.Unlock()
+			return
 		}
+		go func() {
+			c.Mux.Lock()
+			defer c.Mux.Unlock()
+			_ = c.closeSocketLocked()
+		}()
 	})
 	return closeErr
+}
+
+func (c *WsSyncConn) closeSocketLocked() error {
+	if c.outboundSocket != nil {
+		return c.outboundSocket.Close()
+	}
+	if c.Conn != nil {
+		return c.Conn.Close()
+	}
+	return nil
 }
 
 type ConnInfo struct {
