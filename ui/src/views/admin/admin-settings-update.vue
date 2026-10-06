@@ -292,7 +292,10 @@ onBeforeUnmount(stopPolling);
         <h3>版本检测与更新</h3>
         <p>当前版本：<code>{{ overview?.currentVersion || '未写入构建版本' }}</code></p>
       </div>
-      <n-button :loading="loading" :disabled="jobActive" @click="() => checkUpdates()">重新检查</n-button>
+      <div class="update-header-actions">
+        <n-button :loading="loading" @click="() => fetchStatus()">重新检查更新状态</n-button>
+        <n-button :loading="loading" :disabled="jobActive" @click="() => checkUpdates()">重新检查版本</n-button>
+      </div>
     </div>
 
     <n-alert v-if="errorText" type="error" class="mb-3">{{ errorText }}</n-alert>
@@ -417,6 +420,13 @@ onBeforeUnmount(stopPolling);
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+.update-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -635,6 +645,11 @@ onBeforeUnmount(stopPolling);
   .release-heading-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .update-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .update-settings-scroll {
