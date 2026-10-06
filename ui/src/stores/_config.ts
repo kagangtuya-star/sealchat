@@ -26,7 +26,7 @@ function detectBasePathFromURL(): string {
 const _effectiveBase = _appBase || detectBasePathFromURL();
 
 export const urlBase = import.meta.env.MODE === 'development'
-  ? '//' + window.location.hostname + ":" + 3212
+  ? '//' + window.location.host
   : '//' + window.location.host + _effectiveBase;
 
 console.log('mode', import.meta.env.MODE)
