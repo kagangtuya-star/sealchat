@@ -43,6 +43,7 @@ import DiceTrayFloatingWindow from './components/DiceTrayFloatingWindow.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
 import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
 import { shouldApplyMessageCreateAck } from './messageCreateAck';
+import { resolveMessageSortBasis, type MessageSortBasis } from '@/utils/messageSortBasis';
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
@@ -10383,11 +10384,13 @@ interface SendDisplayOrderResolution {
   typingDurationMs?: number;
 }
 
-type MessageSortBasis = 'typing_start' | 'send_time';
-
 const resolveConfiguredMessageSortBasis = (): MessageSortBasis => {
-  const raw = String((utils.config as any)?.messageSortBasis || '').trim().toLowerCase();
-  return raw === 'send_time' ? 'send_time' : 'typing_start';
+  const channel: SChannel | null = chat.curChannel;
+  const worldId = isPrivateChatChannel(channel) ? '' : String(channel?.worldId || '').trim();
+  return resolveMessageSortBasis(worldId ? [
+    chat.worldMap[worldId]?.messageSortBasis,
+    chat.worldDetailMap[worldId]?.world?.messageSortBasis,
+  ] : [], utils.config?.messageSortBasis);
 };
 
 const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
@@ -13541,6 +13544,10 @@ watch(textToSend, (value) => {
     emitTypingPreview();
   }
   syncSelfTypingPreview();
+});
+
+watch(resolveConfiguredMessageSortBasis, () => {
+  syncDraftStartedAt(textToSend.value);
 });
 
 watch(filteredWhisperCandidates, (list) => {

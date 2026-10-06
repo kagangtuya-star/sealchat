@@ -41,6 +41,8 @@ var (
 	ErrWorldStickyNoteAppearance  = errors.New("world sticky note appearance invalid")
 )
 
+var ErrWorldMessageSortBasisInvalid = errors.New("世界消息排序配置无效，仅支持 typing_start / send_time")
+
 const (
 	worldDescriptionMaxLength     = 100
 	worldDescriptionMaxWidthUnits = worldDescriptionMaxLength * 2
@@ -72,6 +74,7 @@ type WorldUpdateParams struct {
 	Visibility                            string
 	Avatar                                string
 	EnforceMembership                     *bool
+	MessageSortBasis                      *utils.MessageSortBasis `json:"messageSortBasis"`
 	AllowAdminEditMessages                *bool
 	AllowManageOtherUserChannelIdentities *bool
 	AllowMemberEditKeywords               *bool
@@ -573,6 +576,26 @@ func GetWorldByID(worldID string) (*model.WorldModel, error) {
 	return &world, nil
 }
 
+func ResolveMessageSortBasisForWorld(worldID string) utils.MessageSortBasis {
+	if worldID = strings.TrimSpace(worldID); worldID != "" && model.GetDB() != nil {
+		var world model.WorldModel
+		if err := model.GetDB().Select("message_sort_basis").Where("id = ?", worldID).Limit(1).Find(&world).Error; err == nil {
+			switch world.MessageSortBasis {
+			case utils.MessageSortBasisTypingStart, utils.MessageSortBasisSendTime:
+				return world.MessageSortBasis
+			}
+		}
+	}
+	return model.DefaultWorldMessageSortBasis()
+}
+
+func ResolveMessageSortBasisForChannel(channel *model.ChannelModel) utils.MessageSortBasis {
+	if channel == nil || channel.IsPrivate {
+		return model.DefaultWorldMessageSortBasis()
+	}
+	return ResolveMessageSortBasisForWorld(channel.WorldID)
+}
+
 func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *model.ChannelModel, error) {
 	// 检查是否允许非平台管理员创建世界
 	config := utils.GetConfig()
@@ -685,6 +708,14 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	}
 	if params.EnforceMembership != nil {
 		updates["enforce_membership"] = *params.EnforceMembership
+	}
+	if params.MessageSortBasis != nil {
+		switch *params.MessageSortBasis {
+		case utils.MessageSortBasisTypingStart, utils.MessageSortBasisSendTime:
+			updates["message_sort_basis"] = *params.MessageSortBasis
+		default:
+			return nil, ErrWorldMessageSortBasisInvalid
+		}
 	}
 	if params.AllowAdminEditMessages != nil {
 		updates["allow_admin_edit_messages"] = *params.AllowAdminEditMessages

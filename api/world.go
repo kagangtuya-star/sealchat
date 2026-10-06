@@ -392,6 +392,8 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权编辑世界"})
 		case errors.Is(err, service.ErrWorldDescriptionTooLong):
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		case errors.Is(err, service.ErrWorldMessageSortBasisInvalid):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		case errors.Is(err, service.ErrWorldDefaultDiceMode):
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认掷骰方式无效"})
 		case errors.Is(err, service.ErrWorldDefaultDiceBotEmpty):

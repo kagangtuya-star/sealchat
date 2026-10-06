@@ -224,7 +224,6 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
   payload.pageDescription = normalizePageDescription(model.value.pageDescription);
   payload.faviconAttachmentId = (model.value.faviconAttachmentId || '').trim();
   payload.chatHistoryPersistentDays = model.value.chatHistoryPersistentDays;
-  payload.messageSortBasis = model.value.messageSortBasis;
   payload.imageSizeLimit = model.value.imageSizeLimit;
   payload.imageCompress = model.value.imageCompress;
   payload.imageCompressQuality = model.value.imageCompressQuality;
@@ -439,14 +438,6 @@ const sendSmtpTestEmail = async () => {
         <n-input-number v-model:value="model.chatHistoryPersistentDays" type="number">
           <template #suffix>天</template>
         </n-input-number>
-      </n-form-item>
-      <n-form-item label="消息排序方式" feedback="仅影响新发送消息的默认排序依据；手动拖拽预览和插入定位优先级更高。">
-        <n-radio-group v-model:value="model.messageSortBasis">
-          <n-space>
-            <n-radio-button value="typing_start">开始输入时间戳</n-radio-button>
-            <n-radio-button value="send_time">发送时间戳</n-radio-button>
-          </n-space>
-        </n-radio-group>
       </n-form-item>
       <n-form-item label="图片大小上限">
         <n-input-number v-model:value="model.imageSizeLimit" type="number">

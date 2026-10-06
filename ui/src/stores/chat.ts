@@ -2291,6 +2291,7 @@ export const useChatStore = defineStore({
       visibility?: string;
       avatar?: string;
       enforceMembership?: boolean;
+      messageSortBasis?: 'typing_start' | 'send_time';
       allowAdminEditMessages?: boolean;
       allowManageOtherUserChannelIdentities?: boolean;
       allowMemberEditKeywords?: boolean;

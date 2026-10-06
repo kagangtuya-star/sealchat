@@ -2376,10 +2376,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
-	messageSortBasis := utils.MessageSortBasisTypingStart
-	if cfg := utils.GetConfig(); cfg != nil {
-		messageSortBasis = utils.NormalizeMessageSortBasis(cfg.MessageSortBasis)
-	}
+	messageSortBasis := service.ResolveMessageSortBasisForChannel(channel)
 	hasPlacement := strings.TrimSpace(data.BeforeID) != "" || strings.TrimSpace(data.AfterID) != ""
 	if !hasExplicitDisplayOrder && hasPlacement {
 		resolvedOrder, err := resolveMessageDisplayOrderForPlacement(db, channelId, messageOrderPlacement{
