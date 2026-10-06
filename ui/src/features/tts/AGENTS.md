@@ -6,6 +6,9 @@ or submit synthesis from message reception, history loading or component mount.
 
 - Keep all HTTP calls in `api.ts`. Charged POSTs use stable request keys; an
   ambiguous response must not generate a new key and repeat a possible charge.
+- Frontend runtime IDs and request keys must not assume `crypto.randomUUID()` is
+  available: HTTP/LAN deployments and older WebViews may lack it. Reuse the
+  feature's compatibility helper or guard the API and provide a fallback.
 - Speech money, text money and audio-library storage bytes are separate. Saved
   private and public personal voices both occupy the author's slots; browsing
   others' voices and replaying existing files do not charge or occupy slots.

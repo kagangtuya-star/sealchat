@@ -6,6 +6,7 @@ import { speechAPI, speechError } from './api'
 import { useSpeechStore } from './store'
 import type { RoleSpeechConfig, SpeechJob } from './types'
 import { speechPlayer } from './player'
+import { speechRuntimeId } from './runtime'
 import { useUserStore } from '@/stores/user'
 import VoicePicker from './VoicePicker.vue'
 import { compatibleSpeechLanguage, isTencentMPSModel, roleVoiceFields, roleVoiceSelection, speechLanguageOptions, type VoiceSelection } from './voice-catalog'
@@ -168,7 +169,7 @@ async function audition() {
       auditionPending.value = false
       error.value = '试听生成超时，请稍后再试。'
     }, 3 * 60 * 1000)
-    const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), speechLanguage: role.value.speechLanguage, text: text.value, requestKey: crypto.randomUUID() })
+    const value = await speechAPI.submit('audition', { ...role.value, ...roleVoiceFields(selection.value), speechLanguage: role.value.speechLanguage, text: text.value, requestKey: speechRuntimeId() })
     if (current !== generation || !visible.value || !auditionPending.value || job.value !== null) return
     job.value = value
     followAudition(current, value.id)

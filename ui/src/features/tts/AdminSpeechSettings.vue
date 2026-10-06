@@ -4,6 +4,7 @@ import { NAlert, NButton, NCollapse, NCollapseItem, NForm, NFormItem, NGi, NGrid
 import { speechAPI, speechError } from './api'
 import type { ResolvedSpeechModel, ResolvedSpeechProvider, SpeechConfig, SpeechJob, SpeechProvider, SystemVoice } from './types'
 import { speechPlayer } from './player'
+import { speechRuntimeId } from './runtime'
 import AdminSpeechUsage from './AdminSpeechUsage.vue'
 import AdminTTSWorldManager from './AdminTTSWorldManager.vue'
 import { defaultVoiceForContext, isTencentMPSModel, systemVoiceSupported } from './voice-catalog'
@@ -109,7 +110,7 @@ function blankProvider(id: string, enabled = false): SpeechProvider {
   return { id, providerKind: model?.providerKind ?? '', enabled, credentialScope: '', region: 'cn-beijing', workspace: '', apiKey: '', synthesisEndpoint: '', voiceEndpoint: '', model: model?.id ?? '', pricingMode: model?.pricingMode ?? 'character', characterPrice: null, inputTokenPrice: null, outputTokenPrice: null, designPrice: null, clonePrice: null, accountVoiceLimit: null, revision: 1 }
 }
 function add() {
-  const id = crypto.randomUUID()
+  const id = speechRuntimeId()
   config.value.providers.push(blankProvider(id))
   localProviderIds.add(id)
 }
@@ -276,7 +277,7 @@ const waitOneSecond = () => new Promise<void>((resolve) => {
 })
 async function testProvider() {
   const generation = ++testGeneration
-  const job = await speechAPI.submit('audition', { requestKey: crypto.randomUUID(), text: '这是一次语音测试。' })
+  const job = await speechAPI.submit('audition', { requestKey: speechRuntimeId(), text: '这是一次语音测试。' })
   testJob.value = job
   testNotice.value = `已提交合成测试 ${job.id}，正在查询结果。`
   for (let attempt = 0; attempt < 30 && !terminalTestStates.has(testJob.value.status); attempt++) {

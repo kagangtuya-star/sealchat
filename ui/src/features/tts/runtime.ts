@@ -8,6 +8,15 @@ export class SpeechEpoch {
 
 export type SpeechEnd = 'played' | 'stopped' | 'failed'
 
+export function speechRuntimeId() {
+  const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
+  if (typeof cryptoObj?.randomUUID === 'function') return cryptoObj.randomUUID()
+  const values = new Uint32Array(4)
+  if (typeof cryptoObj?.getRandomValues === 'function') cryptoObj.getRandomValues(values)
+  else for (let i = 0; i < values.length; i++) values[i] = Math.floor(Math.random() * 0x100000000)
+  return `${Date.now().toString(36)}-${Array.from(values, value => value.toString(16).padStart(8, '0')).join('-')}`
+}
+
 // One browser's automatic playback queue for one channel subscription. The
 // server orders utterances; only this page knows what it actually finished.
 // `settled` means played to the end, stopped or cancelled here: never again.

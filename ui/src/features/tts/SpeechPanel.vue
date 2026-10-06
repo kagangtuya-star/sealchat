@@ -4,6 +4,7 @@ import { NAlert, NButton, NInput, NModal, NPagination, NSelect, NSwitch, useThem
 import { speechAPI, speechError } from './api'
 import { useSpeechStore } from './store'
 import { speechPlayer } from './player'
+import { speechRuntimeId } from './runtime'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import type { SpeechJob, SpeechVoice, VoiceCreationProvider, VoiceDirectory } from './types'
@@ -212,7 +213,7 @@ async function submit(kind: 'audition' | 'design' | 'clone') {
   if (target && (kind !== operation.value || target.value !== selectedCreationTarget.value?.value)) return
   if (kind === 'clone' && !sourceResourceId) throw new Error('请选择自己有权使用的样本并确认授权。')
   const value = await speechAPI.submit(kind, {
-    requestKey: crypto.randomUUID(), channelId, text: text.value, name: name.value, description: description.value,
+    requestKey: speechRuntimeId(), channelId, text: text.value, name: name.value, description: description.value,
     sourceResourceId,
     ...(kind === 'clone' ? { cloneLanguageHint: cloneLanguageHint.value, clonePreprocess: clonePreprocess.value } : {}),
     ...(target ? { providerId: target.providerId, modelId: target.modelId } : requestVoiceFields(selection.value)),

@@ -7,7 +7,17 @@ import ts from 'typescript'
 const source = readFileSync(new URL('./runtime.ts', import.meta.url), 'utf8')
 const { outputText, diagnostics } = ts.transpileModule(source, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } })
 assert.deepEqual(diagnostics, [], 'pure runtime module must have no syntax diagnostics')
-const { SpeechEpoch, SpeechRequestKeys, SpeechQueue, speechAvailableAmount } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const { SpeechEpoch, SpeechRequestKeys, SpeechQueue, speechAvailableAmount, speechRuntimeId } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+
+test('runtime id falls back when randomUUID is unavailable', () => {
+  const original = globalThis.crypto
+  try {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues(values) { values.set([1, 2, 3, 4]); return values } } })
+    assert.match(speechRuntimeId(), /^[a-z0-9]+-00000001-00000002-00000003-00000004$/)
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: original })
+  }
+})
 
 test('stop/reset invalidates all pending playback callbacks', () => {
   const epoch = new SpeechEpoch()
