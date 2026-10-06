@@ -942,6 +942,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">上传图片时打开编辑器</p>
+            <p class="section-desc">通过输入工具区选择图片后打开编辑器；关闭后直接插入输入框，与拖入或粘贴图片一致</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.inputToolbarImageEditorEnabled">
+          <template #checked>已开启</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">编辑消息按钮位置</p>
             <p class="section-desc">控制编辑自己消息时“保存 / 取消”按钮显示在预览下方左侧或右侧</p>
           </div>

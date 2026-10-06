@@ -113,6 +113,7 @@ export interface DisplaySettings {
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
   autoCorrectPunctuation: boolean
+  inputToolbarImageEditorEnabled: boolean
   mobileMinimalInputEnabled: boolean
   mobileTheaterHideWhileTyping: boolean
   mobileTheaterPipEnabled: boolean
@@ -587,6 +588,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
   autoCorrectPunctuation: true,
+  inputToolbarImageEditorEnabled: true,
   mobileMinimalInputEnabled: isMobileBrowserRuntime(),
   mobileTheaterHideWhileTyping: false,
   mobileTheaterPipEnabled: false,
@@ -907,6 +909,7 @@ const parseStoredSettingsInternal = (
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
       autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
+      inputToolbarImageEditorEnabled: coerceBoolean(parsed.inputToolbarImageEditorEnabled ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       mobileTheaterHideWhileTyping: coerceBoolean((parsed as any)?.mobileTheaterHideWhileTyping ?? false),
       mobileTheaterPipEnabled: coerceBoolean((parsed as any)?.mobileTheaterPipEnabled ?? false),
@@ -1271,6 +1274,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'autoCorrectPunctuation')
       ? coerceBoolean((patch as any).autoCorrectPunctuation)
       : base.autoCorrectPunctuation,
+  inputToolbarImageEditorEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'inputToolbarImageEditorEnabled')
+      ? coerceBoolean(patch.inputToolbarImageEditorEnabled ?? true)
+      : base.inputToolbarImageEditorEnabled,
   mobileMinimalInputEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)

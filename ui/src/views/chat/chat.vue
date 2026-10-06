@@ -12748,7 +12748,13 @@ const handleInlineFileChange = (event: Event) => {
 
   const files = Array.from(input.files);
 
-  if (pendingInlineUploadSource !== 'default' || inputMode.value === 'rich') {
+  if (pendingInlineUploadSource === 'rich-toolbar' && !display.settings.inputToolbarImageEditorEnabled) {
+    if (inputMode.value === 'rich') {
+      void handleRichImageInsert(files);
+    } else {
+      insertInlineImages(files, pendingInlineSelection || undefined);
+    }
+  } else if (pendingInlineUploadSource !== 'default' || inputMode.value === 'rich') {
     openRichInlineImageEditor(files, pendingInlineUploadSource, pendingInlineSelection);
   } else {
     // 纯文本模式：调用纯文本图片插入
