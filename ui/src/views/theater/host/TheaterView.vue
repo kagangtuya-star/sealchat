@@ -34,7 +34,7 @@ import {
   parseTheaterDialogueSurfaceUrl,
   type TheaterDialogueSurfaceContext,
 } from '../dialogue/theater-dialogue-surface'
-import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, type TheaterPresentation, type TheaterTransform } from '@/types/theaterPresentation'
+import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, theaterVisualStyleSchema, type TheaterPresentation, type TheaterTransform, type TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
@@ -270,6 +270,7 @@ type AppearancePreviewState = {
   previewName: string
   previewText: string
   controllerArea?: TheaterTransform
+  controllerPortraitStyle?: TheaterVisualStyle
   multiplayerPortraitTransform?: TheaterTransform
 }
 const appearancePreview = ref<AppearancePreviewState | null>(null)
@@ -1391,8 +1392,9 @@ const handleTheaterContext = (event: MessageEvent) => {
   if (data.type === 'sealchat.theater.appearance-preview.start' || data.type === 'sealchat.theater.appearance-preview.update') {
     const parsed = theaterPresentationSchema.safeParse(data.draft)
     const controllerArea = data.controllerArea === undefined ? undefined : theaterTransformSchema.safeParse(data.controllerArea)
+    const controllerPortraitStyle = data.controllerPortraitStyle === undefined ? undefined : theaterVisualStyleSchema.safeParse(data.controllerPortraitStyle)
     const multiplayerPortraitTransform = data.multiplayerPortraitTransform === undefined ? undefined : theaterTransformSchema.safeParse(data.multiplayerPortraitTransform)
-    if (!parsed.success || controllerArea?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
+    if (!parsed.success || controllerArea?.success === false || controllerPortraitStyle?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
     appearancePreview.value = {
       previewId: data.previewId,
       draft: parsed.data,
@@ -1401,6 +1403,7 @@ const handleTheaterContext = (event: MessageEvent) => {
       previewName: typeof data.previewName === 'string' ? data.previewName : '角色名',
       previewText: typeof data.previewText === 'string' ? data.previewText : '夜色正好，我们该出发了。',
       controllerArea: controllerArea?.data,
+      controllerPortraitStyle: controllerPortraitStyle?.data,
       multiplayerPortraitTransform: multiplayerPortraitTransform?.data,
     }
     return

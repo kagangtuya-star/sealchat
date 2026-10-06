@@ -163,7 +163,7 @@ import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
-import type { TheaterPresentation, TheaterTransform } from '@/types/theaterPresentation'
+import type { TheaterPresentation, TheaterTransform, TheaterVisualStyle } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
@@ -221,6 +221,7 @@ const props = defineProps<{
     previewName: string
     previewText: string
     controllerArea?: TheaterTransform
+    controllerPortraitStyle?: TheaterVisualStyle
     multiplayerPortraitTransform?: TheaterTransform
   } | null
   sceneDialogueEnabled: boolean
@@ -8909,6 +8910,7 @@ onBeforeUnmount(() => {
             :preview-name="appearancePreview.previewName"
             :preview-text="appearancePreview.previewText"
             :controller-area="appearancePreview.controllerArea"
+            :controller-portrait-style="appearancePreview.controllerPortraitStyle"
             :multiplayer-portrait-transform="appearancePreview.multiplayerPortraitTransform"
             @dispatch="(command, options) => emit('appearancePreviewCommand', command, options?.transient)"
             @gesture-start="emit('appearancePreviewPhase', 'start')"

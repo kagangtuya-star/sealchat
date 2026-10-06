@@ -1,5 +1,7 @@
+import { compactMediaFxSpec, type MediaFxSpec } from '@/features/media-fx/media-fx'
 import {
   MAX_THEATER_PORTRAIT_DECORATIONS,
+  applyTheaterVisualStyle,
   createDefaultTheaterDialogueStyle,
   createDefaultTheaterNarrationStyle,
   createDefaultTheaterPresentation,
@@ -34,6 +36,7 @@ export type TheaterEditorCommand =
   | { type: 'set-transform'; target: TheaterSelection; transform: Partial<TheaterTransform> }
   | { type: 'set-media'; target: TheaterSelection; media: TheaterMediaRef | null }
   | { type: 'set-layer-property'; target: TheaterSelection; property: 'enabled' | 'fit' | 'blendMode' | 'playbackRate' | 'fadeDurationMs' | 'fontScale' | 'fontAssetId'; value: boolean | string | number }
+  | { type: 'set-media-fx'; target: TheaterSelection; mediaFx: MediaFxSpec | null }
   | { type: 'add-decoration'; layer: TheaterVisualLayer }
   | { type: 'remove-decoration'; id: string }
   | { type: 'reorder-decoration'; id: string; beforeId: string | null }
@@ -183,17 +186,7 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
     if (!current && command.media) {
       const space = command.target.kind === 'portrait' ? 'viewport' : command.target.kind === 'dialogue-frame' ? 'dialogue' : 'portrait'
       const layer = createTheaterVisualLayer(command.media, space, command.target.kind === 'decoration' ? command.target.id : command.target.kind)
-      const style = command.target.kind === 'portrait'
-        ? state.worldTemplate.portrait
-        : null
-      if (style) {
-        layer.enabled = style.enabled
-        layer.transform = clone(style.transform)
-        layer.fit = style.fit
-        layer.playbackRate = style.playbackRate
-        layer.blendMode = style.blendMode
-        layer.fadeDurationMs = style.fadeDurationMs
-      }
+      if (command.target.kind === 'portrait') applyTheaterVisualStyle(layer, state.worldTemplate.portrait)
       replaceLayer(state.draft, command.target, () => layer)
     } else {
       replaceLayer(state.draft, command.target, (layer) => command.media && layer ? { ...layer, media: clone(command.media) } : null)
@@ -221,6 +214,18 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
     const layer = findLayer(state.draft, command.target)
     if (!layer) return false
     replaceLayer(state.draft, command.target, (current) => current ? ({ ...current, [command.property]: command.value }) as TheaterVisualLayer : null)
+    markCustom(state, sectionForSelection(command.target))
+    return true
+  }
+  if (command.type === 'set-media-fx') {
+    if (!findLayer(state.draft, command.target)) return false
+    // Default effects are never persisted: an empty spec removes the field.
+    const mediaFx = compactMediaFxSpec(command.mediaFx)
+    replaceLayer(state.draft, command.target, (current) => {
+      if (!current) return null
+      const { mediaFx: _previous, ...layer } = current
+      return mediaFx ? { ...layer, mediaFx } : layer
+    })
     markCustom(state, sectionForSelection(command.target))
     return true
   }
@@ -271,16 +276,9 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
       if (!state.worldTemplate.portrait || !state.draft.portrait) {
         state.draft.portrait = null
       } else {
-        const style = state.worldTemplate.portrait
-        state.draft.portrait = {
-          ...state.draft.portrait,
-          enabled: style.enabled,
-          transform: clone(style.transform),
-          fit: style.fit,
-          playbackRate: style.playbackRate,
-          blendMode: style.blendMode,
-          fadeDurationMs: style.fadeDurationMs,
-        }
+        const portrait = clone(state.draft.portrait)
+        applyTheaterVisualStyle(portrait, state.worldTemplate.portrait)
+        state.draft.portrait = portrait
       }
     }
     if (command.section === 'speaker') state.draft.dialogue.speaker = clone(defaults.dialogue.speaker)

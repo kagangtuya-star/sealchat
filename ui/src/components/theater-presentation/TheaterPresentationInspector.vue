@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch, type VNodeChild } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch, type VNodeChild } from 'vue'
 import { ArrowDown, ArrowUp, Refresh, Trash } from '@vicons/tabler'
 import type { SelectOption } from 'naive-ui'
 import { listPlatformFonts } from '@/services/font/platformFontApi'
 import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
+import { compactMediaFxSpec, mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import type { TheaterPresentation, TheaterTransform, TheaterVisualLayer, TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSectionMode, TheaterSelection } from './theaterPresentationEditorState'
+import { isAnimatedTheaterMedia } from './theaterPresentationMedia'
 
 const props = defineProps<{
   draft: TheaterPresentation
@@ -15,6 +18,8 @@ const props = defineProps<{
   sectionModes: Record<TheaterSection, TheaterSectionMode>
   portraitStyle?: TheaterVisualStyle | null
   portraitAutoWidth?: boolean
+  // The public controller style is read-only while adjusting one multiplayer portrait.
+  portraitStyleReadonly?: boolean
 }>()
 const emit = defineEmits<{
   dispatch: [command: TheaterEditorCommand, options?: { transient?: boolean }]
@@ -59,6 +64,57 @@ const setTransform = (key: keyof TheaterTransform, value: number | null) => {
   }
   emit('dispatch', { type: 'set-transform', target: props.selection, transform: { [key]: value } }, { transient: true })
 }
+// Media FX applies to image layers only (portrait, decoration, dialogue frame); text
+// layers and the dialogue box itself never carry an effect. The dialogue tab selects the
+// box, so its frame image effect is edited there while still targeting the frame layer.
+const mediaFxTarget = computed<TheaterSelection | null>(() => {
+  const selection = props.selection
+  if (selection.kind === 'portrait' || selection.kind === 'decoration') return layer.value ? selection : null
+  if ((selection.kind === 'dialogue' || selection.kind === 'dialogue-frame') && props.draft.dialogue.frame) return { kind: 'dialogue-frame' }
+  return null
+})
+const mediaFxLayer = computed(() => mediaFxTarget.value?.kind === 'dialogue-frame' ? props.draft.dialogue.frame : layer.value)
+const mediaFxValue = computed(() => mediaFxLayer.value?.mediaFx ?? null)
+const mediaFxActive = computed(() => mediaFxHasContent(mediaFxValue.value))
+const mediaFxDisabled = computed(() => props.selection.kind === 'portrait' && Boolean(props.portraitStyle) && props.portraitStyleReadonly === true)
+// Controller styles have no media of their own; the draft portrait (if any) decides.
+const mediaFxMedia = computed(() => {
+  const target = mediaFxTarget.value
+  if (target?.kind === 'dialogue-frame') return props.draft.dialogue.frame?.media
+  if (target?.kind === 'decoration') return props.draft.portraitDecorations.find((item) => item.id === target.id)?.media
+  return props.draft.portrait?.media
+})
+const mediaFxCapabilities = computed(() => resolveMediaFxCapabilities('dom', isAnimatedTheaterMedia(mediaFxMedia.value)))
+let mediaFxEditing = false
+const beginMediaFxEdit = () => {
+  if (mediaFxEditing) return
+  mediaFxEditing = true
+  emit('transactionStart')
+}
+const endMediaFxEdit = () => {
+  if (!mediaFxEditing) return
+  mediaFxEditing = false
+  emit('transactionEnd')
+}
+// Slider drags stay transient inside one transaction; discrete edits (presets, reset)
+// are committed immediately, so each produces exactly one undo step.
+const updateMediaFx = (spec: MediaFxSpec) => {
+  const target = mediaFxTarget.value
+  if (!target || mediaFxDisabled.value) return
+  const mediaFx = compactMediaFxSpec(spec)
+  if (target.kind === 'portrait' && props.portraitStyle) {
+    const { mediaFx: _previous, ...style } = props.portraitStyle
+    emit('update:portraitStyle', mediaFx ? { ...style, mediaFx } : style)
+    return
+  }
+  emit('dispatch', { type: 'set-media-fx', target, mediaFx }, { transient: mediaFxEditing })
+}
+// Editor dispatches clone the selection, so compare the target by key, not identity.
+watch(() => {
+  const target = mediaFxTarget.value
+  return target?.kind === 'decoration' ? `decoration:${target.id}` : target?.kind || ''
+}, () => endMediaFxEdit())
+onBeforeUnmount(endMediaFxEdit)
 const setLayerProperty = (property: 'enabled' | 'blendMode' | 'playbackRate' | 'fadeDurationMs', value: boolean | string | number, options?: { transient?: boolean }) => {
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property, value }, options)
 }
@@ -328,6 +384,21 @@ onMounted(() => { void refreshPlatformFonts() })
       </n-input-number>
     </template>
 
+    <details v-if="mediaFxTarget" class="theater-inspector__media-fx">
+      <summary class="theater-inspector__label">
+        {{ mediaFxTarget.kind === 'dialogue-frame' ? '对话框图片视觉效果' : '视觉效果' }}<small v-if="mediaFxActive">已启用</small>
+      </summary>
+      <MediaFxPanel
+        :model-value="mediaFxValue"
+        mode="live"
+        :capabilities="mediaFxCapabilities"
+        :disabled="mediaFxDisabled"
+        @edit-start="beginMediaFxEdit"
+        @edit-end="endMediaFxEdit"
+        @update:model-value="updateMediaFx"
+      />
+    </details>
+
     <template v-if="selection.kind === 'dialogue'">
       <div class="theater-inspector__label">对话框内容</div>
       <div class="theater-inspector__number-grid">
@@ -407,6 +478,10 @@ onMounted(() => { void refreshPlatformFonts() })
 .theater-inspector__slider-field { display: grid; grid-template-columns: 52px minmax(0, 1fr) 42px; align-items: center; gap: 8px; font-size: 12px; }
 .theater-inspector__slider-field > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .theater-inspector__sync-values { color: var(--sc-text-secondary, #64748b); font-size: 12px; font-variant-numeric: tabular-nums; }
+.theater-inspector__media-fx { display: flex; flex-direction: column; gap: 8px; }
+.theater-inspector__media-fx > summary { cursor: pointer; user-select: none; }
+.theater-inspector__media-fx > summary small { margin-left: 6px; color: var(--primary-color, #3388de); font-weight: 500; }
+.theater-inspector__media-fx[open] > summary { margin-bottom: 8px; }
 .theater-inspector__decoration-list { display: flex; flex-direction: column; gap: 6px; }
 .theater-inspector__actions { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--sc-border-mute, rgba(148,163,184,.24)); padding-top: 8px; }
 .theater-inspector__narration { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--sc-border-mute, rgba(148,163,184,.24)); }

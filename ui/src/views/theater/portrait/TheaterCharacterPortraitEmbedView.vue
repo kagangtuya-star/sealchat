@@ -10,7 +10,10 @@ import {
   type EmbedTheaterCharacterSnapshot,
 } from '@/bridge/channelEmbedSdk'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
+import { resolveTheaterMediaFxBinding } from '@/components/theater-presentation/theaterPresentationMedia'
+import { vMediaFx } from '@/features/media-fx/media-fx-dom'
 import { resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import '@/components/theater-presentation/theaterComposition.css'
 import {
   normalizeTheaterCharacterPortraitEmbedSettings,
@@ -83,6 +86,10 @@ const decorationStyle = (layer: TheaterVisualLayer): CSSProperties => ({
   ...resolveTheaterTransformStyle(layer.transform),
   mixBlendMode: layer.blendMode,
 })
+// Same reduced-motion source as the dialogue runtime. Media FX stays on an inner
+// wrapper so it never merges with the root rotation or decoration transforms.
+const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
+const mediaFxBinding = (layer: TheaterVisualLayer) => resolveTheaterMediaFxBinding(layer.mediaFx, layer.media, reducedMotion)
 
 const normalizeRevision = (input: unknown) => typeof input === 'number' && Number.isInteger(input) && input >= 0 ? input : undefined
 const updateCharacters = (input: unknown) => {
@@ -349,7 +356,9 @@ onBeforeUnmount(() => {
     <div class="portrait-embed__composition theater-composition-host">
       <div class="portrait-embed__portrait-root" :style="portraitRootStyle">
         <div v-if="portrait" class="portrait-embed__portrait" :style="portraitStyle">
-          <TheaterPresentationMedia :media="portrait.media" :playback-rate="portrait.playbackRate" />
+          <div v-media-fx="mediaFxBinding(portrait)" class="theater-media-fx">
+            <TheaterPresentationMedia :media="portrait.media" :playback-rate="portrait.playbackRate" />
+          </div>
         </div>
         <div
           v-for="layer in decorations"
@@ -357,7 +366,9 @@ onBeforeUnmount(() => {
           class="portrait-embed__decoration"
           :style="decorationStyle(layer)"
         >
-          <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
+          <div v-media-fx="mediaFxBinding(layer)" class="theater-media-fx">
+            <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
+          </div>
         </div>
       </div>
     </div>

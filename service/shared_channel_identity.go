@@ -940,6 +940,12 @@ func mapSharedTheaterPresentationTx(tx *gorm.DB, sourceChannelID, sourceIdentity
 		return nil, nil
 	}
 	result := cloneTheaterPresentation(presentation)
+	// Shared roots are outside the startup presentation cleanup and may still hold v2.
+	// v2 is a lossless subset of v3, so projected copies are written as v3 and keep
+	// matching what current clients submit.
+	if result.SchemaVersion == protocol.LegacyTheaterPresentationSchemaVersion {
+		result.SchemaVersion = protocol.TheaterPresentationSchemaVersion
+	}
 	var worldTemplateRef *protocol.TheaterMediaRef
 	worldID, err := sharedChannelIdentityWorldIDTx(tx, target.ChannelID)
 	if err != nil {

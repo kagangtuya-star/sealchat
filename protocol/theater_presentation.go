@@ -10,12 +10,16 @@ import (
 )
 
 const (
-	TheaterPresentationSchemaVersion           = 2
+	TheaterPresentationSchemaVersion           = 3
 	MaxTheaterPortraitDecorations              = 16
 	DefaultTheaterPortraitFadeDurationMS int64 = 90
 	MinTheaterPortraitFadeDurationMS     int64 = 50
 	MaxTheaterPortraitFadeDurationMS     int64 = 5000
 )
+
+// LegacyTheaterPresentationSchemaVersion is a strict subset of v3: v3 only adds the
+// optional layer/style mediaFx, so v2 upgrades by changing the version only.
+const LegacyTheaterPresentationSchemaVersion = 2
 
 type TheaterMediaKind string
 
@@ -89,6 +93,7 @@ type TheaterVisualLayer struct {
 	PlaybackRate   float64           `json:"playbackRate"`
 	BlendMode      TheaterBlendMode  `json:"blendMode"`
 	FadeDurationMS int64             `json:"fadeDurationMs"`
+	MediaFx        *MediaFxSpec      `json:"mediaFx,omitempty"`
 }
 
 func (layer *TheaterVisualLayer) UnmarshalJSON(data []byte) error {
@@ -166,6 +171,7 @@ type TheaterVisualStyle struct {
 	PlaybackRate   float64          `json:"playbackRate"`
 	BlendMode      TheaterBlendMode `json:"blendMode"`
 	FadeDurationMS int64            `json:"fadeDurationMs"`
+	MediaFx        *MediaFxSpec     `json:"mediaFx,omitempty"`
 }
 
 func (style *TheaterVisualStyle) UnmarshalJSON(data []byte) error {
@@ -309,6 +315,8 @@ func applyTheaterVisualStyle(layer *TheaterVisualLayer, style *TheaterVisualStyl
 	layer.PlaybackRate = style.PlaybackRate
 	layer.BlendMode = style.BlendMode
 	layer.FadeDurationMS = style.FadeDurationMS
+	// Media FX is part of the portrait style; a style without it clears the effect.
+	layer.MediaFx = cloneMediaFx(style.MediaFx)
 }
 
 func ApplyWorldTheaterPresentationTemplate(value TheaterPresentation, template WorldTheaterPresentationTemplate) TheaterPresentation {
@@ -345,9 +353,12 @@ func TheaterVisualStyleFromLayer(layer *TheaterVisualLayer) *TheaterVisualStyle 
 		PlaybackRate:   layer.PlaybackRate,
 		BlendMode:      layer.BlendMode,
 		FadeDurationMS: layer.FadeDurationMS,
+		MediaFx:        cloneMediaFx(layer.MediaFx),
 	}
 }
 
+// theaterVisualStylesEqual compares field values; MediaFx is a pointer, so a plain
+// struct comparison would compare addresses instead of effects.
 func theaterVisualStylesEqual(left, right *TheaterVisualStyle) bool {
 	if left == nil && right == nil {
 		return true
@@ -355,7 +366,10 @@ func theaterVisualStylesEqual(left, right *TheaterVisualStyle) bool {
 	if left == nil || right == nil {
 		return false
 	}
-	return *left == *right
+	return left.Enabled == right.Enabled && left.Transform == right.Transform &&
+		left.Fit == right.Fit && left.PlaybackRate == right.PlaybackRate &&
+		left.BlendMode == right.BlendMode && left.FadeDurationMS == right.FadeDurationMS &&
+		mediaFxEqual(left.MediaFx, right.MediaFx)
 }
 
 func theaterLayersEqual(left, right *TheaterVisualLayer) bool {
@@ -368,7 +382,7 @@ func theaterLayersEqual(left, right *TheaterVisualLayer) bool {
 	if left.ID != right.ID || left.Enabled != right.Enabled || left.Space != right.Space ||
 		left.Transform != right.Transform || left.Fit != right.Fit ||
 		left.PlaybackRate != right.PlaybackRate || left.BlendMode != right.BlendMode ||
-		left.FadeDurationMS != right.FadeDurationMS {
+		left.FadeDurationMS != right.FadeDurationMS || !mediaFxEqual(left.MediaFx, right.MediaFx) {
 		return false
 	}
 	return theaterMediaRefsEqual(left.Media, right.Media)
@@ -581,6 +595,7 @@ func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationT
 		if style.BlendMode != TheaterBlendModeNormal && style.BlendMode != TheaterBlendModeMultiply && style.BlendMode != TheaterBlendModeScreen && style.BlendMode != TheaterBlendModeOverlay {
 			problems = append(problems, fmt.Errorf("%s.blendMode is invalid", path))
 		}
+		problems = appendError(problems, validateMediaFx(style.MediaFx, path+".mediaFx"))
 	}
 	validateStyle(template.Portrait, "portrait")
 	if template.Speaker != nil {
@@ -612,6 +627,10 @@ func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationT
 }
 
 func NormalizeTheaterPresentation(value TheaterPresentation) TheaterPresentation {
+	if value.SchemaVersion == LegacyTheaterPresentationSchemaVersion {
+		// Lossless upgrade: v2 layers have no mediaFx, which already means "no effect".
+		value.SchemaVersion = TheaterPresentationSchemaVersion
+	}
 	if value.SchemaVersion != TheaterPresentationSchemaVersion {
 		return DefaultTheaterPresentation()
 	}
@@ -683,7 +702,7 @@ func ResolveTheaterPresentation(base TheaterPresentation, patch *TheaterPresenta
 		transform := *resolved.MultiplayerPortraitTransform
 		resolved.MultiplayerPortraitTransform = &transform
 	}
-	resolved.PortraitDecorations = append([]TheaterVisualLayer(nil), resolved.PortraitDecorations...)
+	resolved.PortraitDecorations = cloneTheaterLayers(resolved.PortraitDecorations)
 	resolved.Dialogue.Frame = cloneTheaterLayer(resolved.Dialogue.Frame)
 	if patch == nil {
 		return resolved
@@ -694,7 +713,7 @@ func ResolveTheaterPresentation(base TheaterPresentation, patch *TheaterPresenta
 	if patch.PortraitDecorations.Set {
 		resolved.PortraitDecorations = []TheaterVisualLayer{}
 		if patch.PortraitDecorations.Value != nil {
-			resolved.PortraitDecorations = append(resolved.PortraitDecorations, (*patch.PortraitDecorations.Value)...)
+			resolved.PortraitDecorations = cloneTheaterLayers(*patch.PortraitDecorations.Value)
 		}
 	}
 	if patch.Dialogue.Set {
@@ -933,6 +952,7 @@ func validateTheaterLayer(layer TheaterVisualLayer, expectedSpace TheaterLayerSp
 	if !validTheaterPortraitFadeDurationMS(layer.FadeDurationMS) {
 		problems = append(problems, fmt.Errorf("%s.fadeDurationMs must be 0 or between %d and %d", path, MinTheaterPortraitFadeDurationMS, MaxTheaterPortraitFadeDurationMS))
 	}
+	problems = appendError(problems, validateMediaFx(layer.MediaFx, path+".mediaFx"))
 	return errors.Join(problems...)
 }
 
@@ -1032,5 +1052,14 @@ func cloneTheaterLayer(layer *TheaterVisualLayer) *TheaterVisualLayer {
 		duration := *layer.Media.DurationMS
 		clone.Media.DurationMS = &duration
 	}
+	clone.MediaFx = cloneMediaFx(layer.MediaFx)
 	return &clone
+}
+
+func cloneTheaterLayers(layers []TheaterVisualLayer) []TheaterVisualLayer {
+	clones := make([]TheaterVisualLayer, 0, len(layers))
+	for index := range layers {
+		clones = append(clones, *cloneTheaterLayer(&layers[index]))
+	}
+	return clones
 }

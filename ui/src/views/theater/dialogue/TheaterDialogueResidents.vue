@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue'
 import { useMessage } from 'naive-ui'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
+import { resolveTheaterMediaFxBinding } from '@/components/theater-presentation/theaterPresentationMedia'
+import { vMediaFx } from '@/features/media-fx/media-fx-dom'
 import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCache'
 import { normalizeTheaterTransform, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { DialogueResidency, dialogueActorKey, type DialogueActorReference } from './theater-dialogue-residency'
@@ -38,6 +40,10 @@ const decorationStyle = (layer: TheaterVisualLayer): CSSProperties => ({
   ...resolveTheaterTransformStyle(layer.transform),
   mixBlendMode: layer.blendMode,
 })
+// Media FX sits below .dialogue-resident so the inactive dim/grayscale filter and the
+// effect filter compose instead of overwriting each other. Residents use the public
+// controller portrait style; decorations keep their own layer effect.
+const reducedMotion = ref(props.runtime.getSnapshot().reducedMotion)
 const refresh = () => { residents.value = residency.snapshot() }
 const playPortrait = (actor: DialogueActorReference, presentation: TheaterPresentation | null | undefined) => {
   const portrait = presentation?.portrait
@@ -59,6 +65,7 @@ const endGesture = () => {
 const cancelGesture = (event: PointerEvent) => { if (gesture?.id === event.pointerId) endGesture() }
 const playCurrent = () => {
   const snapshot = props.runtime.getSnapshot()
+  reducedMotion.value = snapshot.reducedMotion
   if (snapshot.queue.dismissedThroughSequence !== dismissed) {
     dismissed = snapshot.queue.dismissedThroughSequence
     residency.clear(); endGesture(); lastSignature = ''; epoch++
@@ -128,10 +135,12 @@ onBeforeUnmount(() => { epoch++; endGesture(); unsubscribe?.(); observer?.discon
       :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px`, transform: `rotate(${item.rotation}deg)`, opacity: item.opacity, zIndex: item.zIndex }"
       @pointerdown="down($event, item)" @pointermove="move" @pointerup="up" @pointercancel.stop="cancelGesture" @lostpointercapture="cancelGesture" @click.stop>
       <div class="dialogue-resident__portrait">
-        <TheaterPresentationMedia :key="item.resident.portrait.portrait.media.assetId" :media="item.resident.portrait.portrait.media" :playback-rate="template.portraitStyle.playbackRate"
-          @dimensions="(width, height) => { if (width > 0 && height > 0) dimensions[item.actorKey] = width / height }" />
+        <div v-media-fx="resolveTheaterMediaFxBinding(template.portraitStyle.mediaFx, item.resident.portrait.portrait.media, reducedMotion)" class="theater-media-fx">
+          <TheaterPresentationMedia :key="item.resident.portrait.portrait.media.assetId" :media="item.resident.portrait.portrait.media" :playback-rate="template.portraitStyle.playbackRate"
+            @dimensions="(width, height) => { if (width > 0 && height > 0) dimensions[item.actorKey] = width / height }" />
+        </div>
       </div>
-      <div v-for="layer in template.presentation.portraitDecorations.filter(item => item.enabled)" :key="layer.id" class="dialogue-decoration" :style="decorationStyle(layer)"><TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" /></div>
+      <div v-for="layer in template.presentation.portraitDecorations.filter(item => item.enabled)" :key="layer.id" class="dialogue-decoration" :style="decorationStyle(layer)"><div v-media-fx="resolveTheaterMediaFxBinding(layer.mediaFx, layer.media, reducedMotion)" class="theater-media-fx"><TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" /></div></div>
     </div>
   </div>
 </template>
