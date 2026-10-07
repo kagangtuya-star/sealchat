@@ -45,3 +45,28 @@ export const personalAPIKeys = {
   revoke: (id: string) => api.delete(`api/v1/user/api-keys/${encodeURIComponent(id)}`),
   rotate: (id: string) => api.post<{ key: PersonalAPIKey; token: string }>(`api/v1/user/api-keys/${encodeURIComponent(id)}/rotate`),
 }
+
+export interface MCPOAuthConsentRequest {
+  client: string
+  requestedScopes: { id: string; description: string; extra: boolean }[]
+  expiresAt: string
+}
+
+export interface MCPOAuthGrant {
+  id: string
+  client: string
+  scopes: string[]
+  createdAt: string
+  lastUsedAt: string | null
+  accessExpiresAt: string
+  refreshExpiresAt: string
+  revokedAt: string | null
+}
+
+export const mcpOAuth = {
+  grants: () => api.get<{ items: MCPOAuthGrant[] }>('api/v1/user/mcp-oauth-grants'),
+  revoke: (id: string) => api.delete(`api/v1/user/mcp-oauth-grants/${encodeURIComponent(id)}`),
+  request: (id: string) => api.get<MCPOAuthConsentRequest>(`api/v1/mcp/oauth/requests/${encodeURIComponent(id)}`),
+  decide: (id: string, decision: 'allow' | 'deny') =>
+    api.post<{ redirectUrl: string }>(`api/v1/mcp/oauth/requests/${encodeURIComponent(id)}`, { decision }),
+}

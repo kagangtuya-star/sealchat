@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 )
 
 type mcpActorContextKey struct{}
+type mcpResourceContextKey struct{}
 type mcpToolSpec struct {
 	tool    *mcp.Tool
 	scopes  []string
@@ -58,6 +60,53 @@ func mcpToolError(err error) *mcp.CallToolResult {
 	}
 	return mcpResult(e, true)
 }
+
+func mcpMissingReauthorizableScopes(actor *service.MCPActor, required, platformAllowed []string) []string {
+	if actor == nil || actor.CredentialType != "oauth" {
+		return nil
+	}
+	allowed := &service.MCPActor{Scopes: platformAllowed}
+	granted := &service.MCPActor{Scopes: actor.GrantedScopes}
+	missing := []string{}
+	seen := map[string]bool{}
+	for _, scope := range required {
+		// Reconnecting cannot restore a capability closed by the platform.
+		if !allowed.Allows(scope) {
+			return nil
+		}
+		if !granted.Allows(scope) && !seen[scope] {
+			missing = append(missing, scope)
+			seen[scope] = true
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func mcpOAuthBearerChallenge(resourceMetadataURL, errorCode, errorDescription string, scopes []string) string {
+	challenge := `Bearer resource_metadata="` + resourceMetadataURL + `", error="` + errorCode + `", error_description="` + errorDescription + `"`
+	if len(scopes) > 0 {
+		challenge += `, scope="` + strings.Join(scopes, " ") + `"`
+	}
+	return challenge
+}
+
+func mcpOAuthScopeChallenge(resourceMetadataURL string, missingScopes []string) string {
+	return mcpOAuthBearerChallenge(resourceMetadataURL, "insufficient_scope", "Additional authorization is required", missingScopes)
+}
+
+func mcpScopeToolError(ctx context.Context, actor *service.MCPActor, required []string) *mcp.CallToolResult {
+	result := mcpToolError(service.ErrMCPScopeDenied)
+	cfg := mcpConfigSnapshot().MCP
+	missing := mcpMissingReauthorizableScopes(actor, required, cfg.AllowedScopes())
+	resource, _ := ctx.Value(mcpResourceContextKey{}).(string)
+	u, err := url.Parse(resource)
+	if cfg.Enabled && len(missing) > 0 && err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil {
+		result.Meta = mcp.Meta{"mcp/www_authenticate": []string{mcpOAuthScopeChallenge(u.Scheme+"://"+u.Host+"/.well-known/oauth-protected-resource", missing)}}
+	}
+	return result
+}
+
 func mcpSpec[T any](name, description string, scopes []string, write, destructive, idempotent bool, handler func(context.Context, *service.MCPActor, T) (any, error)) mcpToolSpec {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
@@ -70,9 +119,11 @@ func mcpSpec[T any](name, description string, scopes []string, write, destructiv
 	}
 	open := false
 	spec := mcpToolSpec{tool: &mcp.Tool{Name: name, Description: description, InputSchema: schema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: !write, DestructiveHint: &destructive, IdempotentHint: idempotent, OpenWorldHint: &open}}, scopes: scopes, write: write}
+	spec.tool.Meta = mcp.Meta{"securitySchemes": []any{map[string]any{"type": "oauth2", "scopes": append([]string{}, scopes...)}}}
 	spec.handler = func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		actor, _ := ctx.Value(mcpActorContextKey{}).(*service.MCPActor)
-		if actor == nil || !actor.Allows(scopes...) {
+		// Preserve PAT's existing scope-denial result and validation order.
+		if actor == nil || (!actor.Allows(scopes...) && actor.CredentialType != "oauth") {
 			return mcpToolError(service.ErrMCPScopeDenied), nil
 		}
 		var in T
@@ -94,6 +145,9 @@ func mcpSpec[T any](name, description string, scopes []string, write, destructiv
 		if err := decodeMCPJSON(arguments, &in); err != nil {
 			return mcpToolError(mcpFailure("invalid_argument", "参数格式无效或含未知字段")), nil
 		}
+		if actor == nil || !actor.Allows(scopes...) {
+			return mcpScopeToolError(ctx, actor, scopes), nil
+		}
 		start := time.Now()
 		v, err := handler(ctx, actor, in)
 		if write {
@@ -111,7 +165,7 @@ func mcpSpec[T any](name, description string, scopes []string, write, destructiv
 			if req.Extra != nil {
 				requestID = req.Extra.Header.Get("X-SealChat-MCP-Request-ID")
 			}
-			slog.Info("mcp_write", "requestId", requestID, "keyId", actor.Key.ID, "actorUserId", actor.User.ID, "tool", name, "worldId", target.WorldID, "channelId", target.ChannelID, "resourceId", target.ResourceID, "result", result, "durationMs", time.Since(start).Milliseconds())
+			slog.Info("mcp_write", "requestId", requestID, "keyId", actor.CredentialID, "credentialType", actor.CredentialType, "actorUserId", actor.User.ID, "tool", name, "worldId", target.WorldID, "channelId", target.ChannelID, "resourceId", target.ResourceID, "result", result, "durationMs", time.Since(start).Milliseconds())
 		}
 		if err != nil {
 			return mcpToolError(err), nil
@@ -147,7 +201,8 @@ func newMCPServer(limiter *service.MCPRateLimiter) *mcp.Server {
 				token = mcpBearer(extra.Header.Get("Authorization"))
 			}
 			cfg := mcpConfigSnapshot()
-			actor, err := service.AuthenticatePersonalAPIKey(token, cfg.MCP)
+			resource, _ := ctx.Value(mcpResourceContextKey{}).(string)
+			actor, err := service.AuthenticateMCPCredential(token, cfg.MCP, resource)
 			if err != nil {
 				if method == "tools/call" {
 					return mcpToolError(mcpFailure("unauthorized", "Key 已失效或平台已关闭")), nil
@@ -160,7 +215,9 @@ func newMCPServer(limiter *service.MCPRateLimiter) *mcp.Server {
 				spec, ok := byName[r.Params.Name]
 				if ok {
 					if !actor.Allows(spec.scopes...) {
-						return mcpToolError(service.ErrMCPScopeDenied), nil
+						// The shared wrapper validates arguments before emitting a scope
+						// challenge, without executing business logic or charging a call.
+						return spec.handler(ctx, r)
 					}
 					if !limiter.Allow(actor.User.ID, spec.write, true, cfg.MCP) {
 						return mcpToolError(mcpFailure("rate_limited", "业务调用过于频繁")), nil
@@ -198,7 +255,7 @@ func mcpPublicOrigins(cfg utils.AppConfig, protocol string) []string {
 			domain = protocol + "://" + domain
 		}
 		u, err := url.Parse(domain)
-		if err != nil || u.Host == "" {
+		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || u.RawQuery != "" || u.Fragment != "" {
 			continue
 		}
 		origin := strings.ToLower(u.Scheme + "://" + u.Host)
@@ -228,29 +285,44 @@ func mcpIsLocalHost(host string) bool {
 	ip := net.ParseIP(host)
 	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
 }
+
+// Only configured origins may become OAuth issuers. The loopback fallback is PAT-only.
+func mcpRequestOrigin(c *fiber.Ctx, cfg utils.AppConfig, oauth bool) (string, error) {
+	protocol := "http"
+	trustedProxy := len(cfg.Proxy.TrustedProxies) > 0 && c.App().Config().EnableTrustedProxyCheck && c.IsProxyTrusted()
+	host := string(c.Request().URI().Host())
+	if trustedProxy {
+		host = c.Hostname()
+	}
+	if c.Context().IsTLS() {
+		protocol = "https"
+	} else if trustedProxy {
+		protocol = c.Protocol()
+	}
+	origins := mcpPublicOrigins(cfg, protocol)
+	origin := mcpPublicOriginForHost(origins, host)
+	if !oauth && origin == "" && len(origins) == 0 && mcpIsLocalHost(host) && c.Context().RemoteIP().IsLoopback() {
+		origin = protocol + "://" + host
+	}
+	if origin == "" {
+		return "", mcpFailure("invalid_host", "站点 Host 无效")
+	}
+	u, _ := url.Parse(origin)
+	localConnection := u != nil && mcpIsLocalHost(u.Host) && c.Context().RemoteIP().IsLoopback()
+	if u == nil || (oauth || !localConnection) && (protocol != "https" || u.Scheme != "https") {
+		return "", mcpFailure("https_required", "需要 HTTPS")
+	}
+	return origin, nil
+}
+
 func mcpHTTPGuard(limiter *service.MCPRateLimiter) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		c.Set("Cache-Control", "private, no-store")
 		c.Set("X-Content-Type-Options", "nosniff")
 		cfg := mcpConfigSnapshot()
-		protocol := "http"
-		trustedProxy := len(cfg.Proxy.TrustedProxies) > 0 && c.App().Config().EnableTrustedProxyCheck && c.IsProxyTrusted()
-		host := string(c.Request().URI().Host())
-		if trustedProxy {
-			host = c.Hostname()
-		}
-		if c.Context().IsTLS() {
-			protocol = "https"
-		} else if trustedProxy {
-			protocol = c.Protocol()
-		}
-		origins := mcpPublicOrigins(cfg, protocol)
-		origin := mcpPublicOriginForHost(origins, host)
-		if origin == "" && len(origins) == 0 && mcpIsLocalHost(host) && c.Context().RemoteIP().IsLoopback() {
-			origin = protocol + "://" + host
-		}
-		if origin == "" {
-			return c.Status(403).JSON(mcpError{"invalid_host", "站点 Host 无效"})
+		origin, err := mcpRequestOrigin(c, cfg, false)
+		if err != nil {
+			return c.Status(403).JSON(err)
 		}
 		if value := c.Get("Origin"); value != "" {
 			u, err := url.Parse(value)
@@ -258,30 +330,28 @@ func mcpHTTPGuard(limiter *service.MCPRateLimiter) fiber.Handler {
 				return c.Status(403).JSON(fiber.Map{"code": "invalid_origin"})
 			}
 		}
-		publicURL, _ := url.Parse(origin)
-		localConnection := publicURL != nil && mcpIsLocalHost(publicURL.Host) && c.Context().RemoteIP().IsLoopback()
-		if publicURL == nil || publicURL.Host == "" || (!localConnection && (protocol != "https" || publicURL.Scheme != "https")) {
-			return c.Status(403).JSON(fiber.Map{"code": "https_required"})
-		}
-		actor, err := service.AuthenticatePersonalAPIKey(mcpBearer(c.Get("Authorization")), cfg.MCP)
+		resource := origin + joinWebPath(cfg.WebUrl, "mcp")
+		actor, err := service.AuthenticateMCPCredential(mcpBearer(c.Get("Authorization")), cfg.MCP, resource)
 		if err != nil {
 			if errors.Is(err, service.ErrMCPDisabled) {
 				return c.Status(503).JSON(fiber.Map{"code": "mcp_disabled"})
 			}
-			c.Set("WWW-Authenticate", "Bearer")
+			c.Set("WWW-Authenticate", mcpOAuthBearerChallenge(origin+"/.well-known/oauth-protected-resource", "invalid_token", "Authentication required", nil))
 			return c.Status(401).JSON(fiber.Map{"code": "invalid_key"})
 		}
 		c.Locals("mcpActor", actor)
+		c.Context().SetUserValue(mcpResourceContextKey{}, resource)
 		if !limiter.Allow(actor.User.ID, false, false, cfg.MCP) {
 			c.Set("Retry-After", "60")
 			return c.Status(429).JSON(mcpError{"rate_limited", "请求过于频繁"})
 		}
 		c.Request().Header.Set("X-SealChat-MCP-Request-ID", utils.NewID())
-		service.TouchPersonalAPIKey(&actor.Key)
+		service.TouchMCPCredential(actor)
 		return c.Next()
 	}
 }
 func bindMCPRoutes(app *fiber.App, webURL string) {
+	bindMCPOAuthPublicRoutes(app, webURL)
 	limiter := service.NewMCPRateLimiter()
 	s := newMCPServer(limiter)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})

@@ -62,6 +62,21 @@ func personalKeyHTTPError(c *fiber.Ctx, err error) error {
 	return c.Status(status).JSON(fiber.Map{"message": message})
 }
 func bindPersonalAPIKeyRoutes(r fiber.Router) {
+	r.Get("/user/mcp-oauth-grants", func(c *fiber.Ctx) error {
+		c.Set("Cache-Control", "private, no-store")
+		items, err := service.ListMCPOAuthGrants(getCurUser(c).ID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"message": "OAuth 连接读取失败"})
+		}
+		return c.JSON(fiber.Map{"items": items})
+	})
+	r.Delete("/user/mcp-oauth-grants/:id", func(c *fiber.Ctx) error {
+		c.Set("Cache-Control", "private, no-store")
+		if err := service.RevokeMCPOAuthGrant(getCurUser(c).ID, c.Params("id")); err != nil {
+			return c.Status(500).JSON(fiber.Map{"message": "OAuth 连接撤销失败"})
+		}
+		return c.SendStatus(204)
+	})
 	r.Get("/user/api-keys", func(c *fiber.Ctx) error {
 		c.Set("Cache-Control", "private, no-store")
 		cfg := mcpConfigSnapshot()

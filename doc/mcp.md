@@ -14,7 +14,53 @@ Key 只用于 `/mcp` 和专用上传端点，不能认证账号或平台管理 A
 
 关闭平台后可以在个人信息查看和撤销已有 Key，但不能新建、编辑或轮换。停用模块只使对应授权暂时无效，保留 Key 保存的 scopes；编辑时允许保留或删除已有授权，但不能新增当前平台未开放的 scope。撤销、降权或关闭平台阻止后续调用，不能回滚已提交写入或取消已接受的原生 AI 任务。轮换使旧 secret 立即失效，不延长到期时间。
 
-第一版是个人 Bearer 凭证接入（PAT），不实现 OAuth 授权端点、动态客户端注册或授权码流程。客户端须支持配置自定义 Bearer 凭证和 Streamable HTTP；只有 OAuth 自动授权能力的客户端不一定兼容。
+SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorization Code + PKCE**。PAT 适合 Claude、Codex 和支持自定义 Bearer 的普通 MCP Client；OAuth 主要用于 ChatGPT 等标准 OAuth MCP Client。两种凭证最终解析成同一个 `MCPActor`，完整复用 28 个工具、17 个 scopes、实时业务 ACL、限流和审计日志。OAuth access/refresh token 不能认证普通 SealChat REST API，也不会转换成网页登录 token。
+
+## ChatGPT OAuth
+
+在 ChatGPT 自定义 MCP 中选择 **OAuth** Authentication 模式，再选择 **CIMD**（public client token endpoint authentication 为 `none`），填写本站公开 HTTPS MCP URL，不提供静态 client credentials。此版本只预认可 ChatGPT stable public client：`client_id=https://chatgpt.com/oauth/client.json`，回调精确为 `https://chatgpt.com/connector_platform_oauth_redirect`。不填写 client secret；若客户端要求任意 client ID、secret 或动态注册，本版不支持该连接方式。不支持 DCR、OIDC、ID Token、JWT/JWKS、client_credentials、password 或 implicit flow，没有额外 OAuth 平台配置。选择纯 OAuth，因为 MCP 握手和 tools/list 同样要求认证；官方接入说明见 [Add custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server) 和 [Authentication](https://developers.openai.com/plugins/build/auth)。
+
+`client_id_metadata_document_supported=true` 对应实际 CIMD 获取与校验：只 GET 上述固定 HTTPS URL，不接受任意 client URL，也不跟随 HTTP redirect。专用 HTTP Client 总超时 5 秒，JSON body 上限 64 KiB，要求 2xx 与 JSON Content-Type。文档须声明精确 client_id、固定 redirect，以及 `code`、`authorization_code`、`none` 能力；可以同时列出其他认证方法，但 SealChat 只接受 public client `none`。成功验证的必要 metadata 在进程内缓存 1 小时，TTL 内不重复请求；冷启动或缓存过期后获取失败时返回 `temporarily_unavailable`，不使用过期缓存放行。参数校验先于远程请求，非法 client_id 不触发网络访问。
+
+标准公开 discovery 路径（不需要 Bearer，响应 `application/json`、`Cache-Control: no-store`）：
+
+- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-authorization-server`
+
+这些路径始终注册在站点根目录。子路径部署同时兼容 `<webUrl>/.well-known/...`，以及 `/.well-known/oauth-protected-resource<webUrl>/mcp` 的 resource 路径形式。MCP 401 响应的 `WWW-Authenticate` 指向当前域名的根 protected-resource metadata。
+
+完整流程：
+
+1. ChatGPT 发现 metadata，使用 `response_type=code`、固定 client/redirect、空格分隔 scope、opaque state、PKCE `S256` challenge 和精确 resource 访问 `<webUrl>/oauth/authorize`。
+2. 服务端验证平台开关、每个已知且开放的 scope 和当前可信 Host，并完成上述 CIMD 校验，创建 5 分钟有效的随机 authorization request，跳转到 `/#/oauth/mcp/authorize?request=...`（保留部署子路径）。
+3. 前端复用现有登录页和 API Authorization header。登录后显示当前账号、中文权限描述和写入、AI 额度、线索发布风险，用户明确允许或拒绝。`GET/POST <webUrl>/api/v1/mcp/oauth/requests/:requestId` 仅供普通网页登录用户使用。
+4. 允许将当前登录 userId 绑定请求，返回 ChatGPT 回调 URL；一次性 code 有效 2 分钟。拒绝返回 `error=access_denied`。授权成功及安全错误跳转都携带原样 state 和 `iss`；非法 client/redirect 在本站直接拒绝。
+5. ChatGPT 以 `application/x-www-form-urlencoded` POST 到 `<webUrl>/oauth/token`，携带 `grant_type=authorization_code`、code、client_id、redirect_uri、resource、code_verifier。服务端校验 S256 和 issuer/resource 后返回 opaque access/refresh token，无 ID Token。
+6. access token 格式 `sc_oauth_<publicId>.<secret>`，有效 **1 小时**；refresh token 格式 `sc_oauth_r_<publicId>.<secret>`，有效 **30 天**。数据库 `mcp_oauth_grants` 只保存 SHA-256 secret 摘要。`grant_type=refresh_token` 必须携带固定 client_id、原 resource 和 refresh_token；每次刷新轮换两个 secret，旧 access/refresh 立即失效，refresh 原始到期点不延长。每个连接独立创建 grant。
+
+每次调用仍取 **平台 AllowedScopes ∩ OAuth 原授权 scopes ∩ 当前实时业务权限**。平台关闭某 scope 不改写原 grant，但立即影响 `tools/list`、`tools/call` 与上传；刷新不自动扩大授权。用户禁用、删除、BOT 状态、凭证撤销或到期均拒绝后续调用。MCP 关闭时 discovery 仍可读取，authorize/token 不签发权限，MCP 返回既有 `503 mcp_disabled`。
+
+多 domain 的 OAuth issuer 是**当前已匹配 config.domain 的 HTTPS origin**，resource 是 `origin + <webUrl>/mcp`，不固定使用主域名。请求 Host 必须先匹配已配置域名；仅信任现有 trusted proxy 提供的 forwarded Host/proto。domainA 与 domainB 各自独立签发，domainA 的 code、refresh 和 access token 不能用于 domainB。OAuth 始终要求 HTTPS；PAT 既有本机回环开发例外保留。
+
+临时 authorization request/code 保存在带 mutex 的进程内存中；**服务重启会使进行中的授权流程失效**，需要从 ChatGPT 重新连接。多实例部署应使 authorize、consent 与 code exchange 落到同一进程；持久 grant 刷新使用数据库条件更新防止并发重放。现有数据库清理 worker 删除 refresh 到期超过 7 天的 grant，不增加独立 worker。
+
+公开 authorize/token 另有进程内 IP 固定窗口限流：每 IP 每分钟分别最多 30/60 次，IP 复用 Fiber 配置的可信代理规则。两个端点共用最多 4096 个 bucket，过期条目懒清理；容量满时拒绝新 bucket。命中限流返回本站 HTTP 429、OAuth `temporarily_unavailable` JSON、`Cache-Control: no-store` 和 `Retry-After`，不跳转未验证回调；discovery 不限流。authorization request/code 合计最多 4096 条。这些限额按进程计算，不是分布式限流。
+
+用户可在“个人信息 → Personal API Keys / MCP”下方的“OAuth 连接”查看 ChatGPT 原授权 scopes、创建/最近使用/refresh 到期时间及状态，并确认撤销。`GET /api/v1/user/mcp-oauth-grants` 和 `DELETE /api/v1/user/mcp-oauth-grants/:id`（均保留部署基础路径）只接受现有网页登录认证，查询和撤销仅限自己的 grant；平台关闭后仍可操作。列表使用明确字段白名单，不返回 token、public token ID、hash、issuer 或 resource。撤销使该连接 access/refresh 同时失效；其他连接和 domain 的 grant 不受影响。不支持编辑 scope，变更授权须重新连接；本版没有 RFC7009 撤销端点。
+
+SDK v1.8.0 尚无顶层 Tool `securitySchemes`，本版为所有工具输出 `_meta.securitySchemes=[{type: "oauth2", scopes: [...]}]`，作为兼容镜像；这是当前 SDK 的字段限制，并不提供标准顶层字段。基础发现工具的 scopes 为空数组但仍需认证。保持原 annotations 和 SDK 版本。
+
+OAuth 直接调用缺少 scope 的工具时，仅当工具要求的 scopes 仍全部由平台开放、且原 grant 缺少授权时，错误结果额外携带 `_meta["mcp/www_authenticate"]` challenge 数组，例如 `Bearer resource_metadata="https://当前域名/.well-known/oauth-protected-resource", error="insufficient_scope", error_description="Additional authorization is required", scope="clue:write"`；多个缺失 scope 去重并稳定排序。PAT scope 不足、平台关闭 scope、业务 ACL 拒绝、参数错误、revision conflict 和资源不存在均不发此信号。`structuredContent`、文本内容与 `isError=true` 保持原格式；HTTP 401 使用同一标准 Bearer challenge 生成逻辑并返回 `invalid_token`。`tools/list` 继续按有效 scope 过滤，不为重授权暴露隐藏工具，因此客户端能否自动触发重授权仍取决于其缓存或直接调用行为。
+
+排障顺序：
+
+1. 确认 MCP 已开启、模块 scopes 已开放，ChatGPT 选择 OAuth 且没有 client secret。
+2. 在实际连接域名读取两个根 discovery 路径，核对 issuer、resource、authorize/token URL 和 HTTPS；子路径部署的反向代理也要转发根 well-known 路径。
+3. `invalid_host` 检查 `config.domain` 和代理 Host；`https_required` 检查 trusted proxy 与 forwarded proto，不通过信任任意 Host 解决。
+4. `invalid_scope` 检查请求是否只含 17 个已有 scope 且平台当前开放；`invalid_client/invalid_request` 检查固定 client/redirect、resource、S256 和 form 编码。
+5. `expired/invalid_grant` 检查授权超时、服务重启、跨 domain、code 重放、verifier、连接撤销和 refresh rotation，重新连接获取新请求。MCP 401 可先查看 `resource_metadata` challenge，再检查用户状态和 access token 到期；503 检查平台开关，429 检查公开端点 IP 限流或共用用户限流。authorize 的 `temporarily_unavailable` 也可能是 CIMD 不可达/不符合必要能力或临时 store 已满。
+
+真实 ChatGPT OAuth 联调仍需要部署域名、HTTPS/代理配置、根 well-known 路由及服务器到固定 CIMD URL 的可达性；本地 stub/HTTP 测试不代表 ChatGPT 端到端连接已验证。
 
 ## Scopes 与工具
 
@@ -100,9 +146,9 @@ Key 只用于 `/mcp` 和专用上传端点，不能认证账号或平台管理 A
 
 `audio_update` 须传 `expectedScopeType/expectedScopeId/expectedRevision`，对应最近 `audio_state` 的 `scopeType/scopeId/revision`；作用范围变化也会冲突，不以相同 revision 混淆两个范围。未提交的音轨、位置、循环、倍速、场景和 `worldPlaybackEnabled` 保留；改变播放范围须显式提交 `worldPlaybackEnabled`。更新结果返回真实影响范围和新 revision。
 
-HTTP 层区分 401（Key 无效）、403（Origin/HTTPS/上传 scope）、503（平台停用）和 429（限流）。进入工具执行后的参数、权限、资源修订冲突等返回 SDK `CallToolResult`：`isError=true`，`structuredContent` 与文本内容含稳定 `code/message`，例如 `invalid_argument`、`scope_denied`、`forbidden`、`not_found`、`conflict`、`rate_limited`、`operation_failed`。未知协议方法及错误版本按 SDK 处理。所有带用户数据响应禁止共享缓存。
+HTTP 层区分 401（MCP 凭证无效）、403（Origin/HTTPS/上传 scope）、503（平台停用）和 429（限流）。进入工具执行后的参数、权限、资源修订冲突等返回 SDK `CallToolResult`：`isError=true`，`structuredContent` 与文本内容含稳定 `code/message`，例如 `invalid_argument`、`scope_denied`、`forbidden`、`not_found`、`conflict`、`rate_limited`、`operation_failed`。未知协议方法及错误版本按 SDK 处理。所有带用户数据响应禁止共享缓存。
 
-默认每用户每分钟 120 次业务调用，其中写入最多 30 次；多个 Key 共用用户额度。HTTP 请求另有有界保护额度。限流不替代 AI 配额或文件大小限制。写入日志仅包含追踪 requestId、公开 keyId、操作人、工具、目标、结果和耗时；requestId 不是幂等键。
+默认每用户每分钟 120 次业务调用，其中写入最多 30 次；多个 PAT/OAuth grant 共用用户额度。HTTP 请求另有有界保护额度。限流不替代 AI 配额或文件大小限制。写入日志仅包含追踪 requestId、公开凭证 ID（兼容原 `keyId` 字段）、credentialType、操作人、工具、目标、结果和耗时；requestId 不是幂等键。`sealchat_me.keyId` 同样返回当前 PAT 或 OAuth grant 的公开记录 ID，不返回 secret。
 
 ## 文件上传
 

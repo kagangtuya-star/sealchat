@@ -67,7 +67,7 @@ func mcpUpload(c *fiber.Ctx, limiter *service.MCPRateLimiter) (err error) {
 		if err != nil || c.Response().StatusCode() >= 400 {
 			result = "error"
 		}
-		slog.Info("mcp_write", "requestId", c.Get("X-SealChat-MCP-Request-ID"), "keyId", a.Key.ID, "actorUserId", a.User.ID, "tool", "file_upload", "resourceId", resourceID, "result", result, "durationMs", time.Since(start).Milliseconds())
+		slog.Info("mcp_write", "requestId", c.Get("X-SealChat-MCP-Request-ID"), "keyId", a.CredentialID, "credentialType", a.CredentialType, "actorUserId", a.User.ID, "tool", "file_upload", "resourceId", resourceID, "result", result, "durationMs", time.Since(start).Milliseconds())
 	}()
 	form, err := c.MultipartForm()
 	if err != nil {

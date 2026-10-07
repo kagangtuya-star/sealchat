@@ -545,6 +545,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
 	bindPersonalAPIKeyRoutes(v1Auth)
+	bindMCPOAuthConsentRoutes(v1Auth)
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)

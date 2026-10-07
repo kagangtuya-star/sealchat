@@ -46,9 +46,12 @@ type PersonalKeyPatch struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 type MCPActor struct {
-	Key    model.PersonalAPIKeyModel
-	User   *model.UserModel
-	Scopes []string
+	Key            model.PersonalAPIKeyModel
+	User           *model.UserModel
+	GrantedScopes  []string
+	Scopes         []string
+	CredentialID   string
+	CredentialType string
 }
 
 func (a *MCPActor) Allows(scopes ...string) bool {
@@ -298,7 +301,7 @@ func AuthenticatePersonalAPIKey(token string, cfg utils.MCPConfig) (*MCPActor, e
 			effective = append(effective, s)
 		}
 	}
-	return &MCPActor{Key: key, User: &user, Scopes: effective}, nil
+	return &MCPActor{Key: key, User: &user, GrantedScopes: append([]string{}, key.Scopes...), Scopes: effective, CredentialID: key.ID, CredentialType: "pat"}, nil
 }
 
 func TouchPersonalAPIKey(key *model.PersonalAPIKeyModel) {

@@ -162,8 +162,8 @@ type mcpCapabilitiesDTO struct {
 
 func mcpBasicTools() []mcpToolSpec {
 	return []mcpToolSpec{
-		mcpSpec("sealchat_me", "认证用户与个人 Key 的公开标识。", nil, false, false, true, func(_ context.Context, a *service.MCPActor, _ mcpEmpty) (any, error) {
-			return mcpMeDTO{a.User.ID, a.User.Username, a.User.Nickname, a.Key.ID}, nil
+		mcpSpec("sealchat_me", "认证用户与 MCP 凭证的公开标识。", nil, false, false, true, func(_ context.Context, a *service.MCPActor, _ mcpEmpty) (any, error) {
+			return mcpMeDTO{a.User.ID, a.User.Username, a.User.Nickname, a.CredentialID}, nil
 		}),
 		mcpSpec("sealchat_capabilities", "当前 Key 与平台能力的交集上限；实际操作仍实时检查目标资源权限。", nil, false, false, true, func(_ context.Context, a *service.MCPActor, _ mcpEmpty) (any, error) {
 			tools := []string{}

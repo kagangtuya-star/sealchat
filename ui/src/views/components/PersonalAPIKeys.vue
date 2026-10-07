@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useMessage } from 'naive-ui'
+import { NPopconfirm, useMessage } from 'naive-ui'
 import { useUserStore } from '@/stores/user'
-import { personalAPIKeys, type PersonalAPIKey, type PersonalAPIKeyCatalog } from '@/api/mcp'
+import { mcpOAuth, personalAPIKeys, type MCPOAuthGrant, type PersonalAPIKey, type PersonalAPIKeyCatalog } from '@/api/mcp'
 
 const emit = defineEmits<{ close: [] }>()
 const user = useUserStore()
 const message = useMessage()
 const catalog = ref<PersonalAPIKeyCatalog | null>(null)
+const grants = ref<MCPOAuthGrant[]>([])
+const grantLoadFailed = ref(false)
 const busy = ref(false)
 const name = ref('')
 const scopes = ref<string[]>([])
@@ -26,13 +28,18 @@ const reportError = (error: unknown) => {
   message.error(text || '个人 Key 操作失败')
 }
 const load = async (generation: number) => {
-  const response = await personalAPIKeys.list()
+  const [response, connections] = await Promise.allSettled([personalAPIKeys.list(), mcpOAuth.grants()])
   if (generation !== epoch) return
-  catalog.value = response.data
+  if (response.status === 'fulfilled') catalog.value = response.value.data
+  grantLoadFailed.value = connections.status === 'rejected'
+  if (connections.status === 'fulfilled') grants.value = connections.value.data.items
+  else reportError(connections.reason)
+  // A failed OAuth list must not disable the existing PAT management area.
+  if (response.status === 'rejected') throw response.reason
 }
 watch(() => [user.info.id, user.token], async () => {
   const generation = ++epoch
-  resetSecret(); catalog.value = null; resetDraft(); busy.value = true
+  resetSecret(); catalog.value = null; grants.value = []; grantLoadFailed.value = false; resetDraft(); busy.value = true
   try { await load(generation); if (generation === epoch) resetDraft() }
   catch (error) { if (generation === epoch) reportError(error) }
   finally { if (generation === epoch) busy.value = false }
@@ -73,6 +80,17 @@ const copy = async () => {
   try { await navigator.clipboard.writeText(plainKey.value); message.success('已复制') }
   catch { message.error('无法访问剪贴板，请选中下方 Key 手动复制') }
 }
+const revokeGrant = async (grant: MCPOAuthGrant) => {
+  if (busy.value || grant.revokedAt) return
+  const generation = epoch
+  busy.value = true
+  try {
+    await mcpOAuth.revoke(grant.id)
+    await load(generation)
+  } catch (error) { if (generation === epoch) reportError(error) }
+  finally { if (generation === epoch) busy.value = false }
+}
+const grantStatus = (grant: MCPOAuthGrant) => grant.revokedAt ? '已撤销' : new Date(grant.refreshExpiresAt).getTime() <= Date.now() ? '已到期' : '已连接'
 const close = () => { ++epoch; resetSecret(); emit('close') }
 const formatDate = (value: string | null) => value ? new Date(value).toLocaleDateString() : '不过期'
 </script>
@@ -81,7 +99,7 @@ const formatDate = (value: string | null) => value ? new Date(value).toLocaleDat
   <section class="personal-keys" aria-label="Personal API Key 管理">
     <div class="personal-keys-header"><h3>Personal API Keys</h3><n-button size="small" @click="close">关闭 Key 管理</n-button></div>
     <p v-if="catalog">MCP 地址：<span class="key-url">{{ endpoint }}</span></p>
-    <n-alert v-if="catalog && !catalog.enabled" type="info">平台 MCP 已关闭。仍可查看和撤销已有 Key。</n-alert>
+    <n-alert v-if="catalog && !catalog.enabled" type="info">平台 MCP 已关闭。仍可查看和撤销已有 Key 和 OAuth 连接。</n-alert>
     <n-alert v-if="plainKey" type="warning" class="key-secret">
       <p>完整 Key 仅此次显示。关闭后无法再次读取；请保存在自己的凭证管理工具中。</p>
       <n-input :value="plainKey" readonly type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" aria-label="本次创建或轮换的完整 Key" />
@@ -115,6 +133,21 @@ const formatDate = (value: string | null) => value ? new Date(value).toLocaleDat
           <n-button size="small" type="error" :disabled="busy" @click="mutate(key, false)">撤销</n-button>
         </n-space>
       </article>
+      <div class="oauth-connections" aria-label="OAuth 连接管理">
+        <h3>OAuth 连接</h3>
+        <small v-if="grantLoadFailed">OAuth 连接暂时无法读取</small>
+        <small v-else-if="!grants.length">暂无 OAuth 连接</small>
+        <article v-for="grant in grants" :key="grant.id" class="key-entry">
+          <strong>{{ grant.client }}</strong><span> · {{ grantStatus(grant) }}</span>
+          <small>{{ grant.scopes.join('、') || '仅基础发现能力' }}</small>
+          <small>创建：{{ formatDate(grant.createdAt) }} · 最近使用：{{ grant.lastUsedAt ? formatDate(grant.lastUsedAt) : '尚未使用' }}</small>
+          <small>刷新授权到期：{{ formatDate(grant.refreshExpiresAt) }}</small>
+          <NPopconfirm v-if="!grant.revokedAt" @positive-click="revokeGrant(grant)">
+            <template #trigger><n-button size="small" type="error" class="key-actions" :disabled="busy">撤销连接</n-button></template>
+            撤销后此连接立即失效，需要在 ChatGPT 中重新连接并授权。
+          </NPopconfirm>
+        </article>
+      </div>
     </n-spin>
   </section>
 </template>
@@ -130,4 +163,5 @@ const formatDate = (value: string | null) => value ? new Date(value).toLocaleDat
 .key-scopes small, .key-entry small { display: block; color: var(--sc-text-secondary); }
 .key-actions { margin-top: 12px; }
 .key-secret { margin: 16px 0; }
+.oauth-connections { margin-top: 16px; }
 </style>
