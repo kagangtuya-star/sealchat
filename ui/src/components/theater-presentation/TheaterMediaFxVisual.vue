@@ -22,8 +22,8 @@ import {
 // basic filter) around TheaterPresentationMedia; consumers keep layout, opacity, blend
 // mode and fades on their own layer element outside it. For eligible static images the
 // static advanced output (basic filter + advanced baked) replaces the <img> once ready,
-// and the wrapper then drops its CSS basic filter. Until then, or on any failure, the
-// plain DOM path stays visible.
+// and the wrapper then drops its CSS basic filter. The original stays hidden while the
+// first advanced output is pending; a processing failure reveals the plain DOM fallback.
 
 const props = withDefaults(defineProps<{
   media: TheaterMediaRef
@@ -38,6 +38,7 @@ const hostRef = ref<HTMLElement | null>(null)
 const outputRef = ref<HTMLCanvasElement | null>(null)
 const gpuAvailable = ref(mediaFxGpuSupported())
 const advancedReady = ref(false)
+const advancedFallback = ref(false)
 const loadedImage = shallowRef<TheaterMediaFxImage<HTMLImageElement> | null>(null)
 const fit = ref<TheaterMediaFit | null>(null)
 const box = ref<TheaterMediaSize | null>(null)
@@ -56,7 +57,9 @@ const binding = computed(() => {
   const base = resolveTheaterMediaFxBinding(props.mediaFx, props.media, props.reducedMotion)
   return advancedReady.value ? { ...base, filters: false } : base
 })
-const mediaStyle = computed<CSSProperties | undefined>(() => (advancedReady.value ? { visibility: 'hidden' } : undefined))
+const mediaStyle = computed<CSSProperties | undefined>(() => (
+  advancedReady.value || (advancedEligible.value && !advancedFallback.value) ? { visibility: 'hidden' } : undefined
+))
 
 const controller = createTheaterMediaFxAdvancedController<HTMLImageElement, CanvasImageSource, HTMLCanvasElement>({
   maxTextureSize: mediaFxGpuMaxTextureSize,
@@ -80,6 +83,9 @@ const controller = createTheaterMediaFxAdvancedController<HTMLImageElement, Canv
   onReadyChange: (ready) => {
     advancedReady.value = ready
   },
+  onFallbackChange: (fallback) => {
+    advancedFallback.value = fallback
+  },
 })
 
 const readFit = () => {
@@ -93,9 +99,10 @@ const handleImageLoad = (element: HTMLImageElement, attachmentId: string) => {
 }
 
 // Compare attachment values: editor/live presentation clones keep the same loaded image.
-// A new source starts on the DOM path; the previous output is dropped right away.
+// A new source waits for its own output instead of briefly showing an unprocessed image.
 watch([() => props.media.resourceAttachmentId, () => props.media.fallbackAttachmentId], () => {
   loadedImage.value = null
+  advancedFallback.value = false
 })
 
 // Size / DPR tracking only exists while the layer actually uses the advanced path.
@@ -148,6 +155,14 @@ const updateController = () => controller.update({
   devicePixelRatio: pixelRatio.value,
 })
 
+// Candidate changes include primary -> fallback and URL refreshes, even when the
+// stored media IDs stay the same. Clear stale output before the new image loads.
+const handleImageLoading = () => {
+  loadedImage.value = null
+  advancedFallback.value = false
+  updateController()
+}
+
 onMounted(() => {
   setTracking(advancedEligible.value)
   watch(advancedEligible, (enabled) => {
@@ -178,6 +193,7 @@ onBeforeUnmount(() => {
       :style="mediaStyle"
       @dimensions="(width, height) => emit('dimensions', width, height)"
       @image-load="handleImageLoad"
+      @image-loading="handleImageLoading"
     />
     <canvas v-if="advancedEligible" v-show="advancedReady" ref="outputRef" class="theater-media-fx__output" aria-hidden="true" />
   </div>

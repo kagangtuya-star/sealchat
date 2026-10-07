@@ -13,7 +13,8 @@ import { fetchAttachmentBlobById } from '../../composables/useAttachmentResolver
 //   source -> object-fit geometry -> basic filter -> advanced GPU   (bakeMediaFxToCanvas)
 // at the rendered box size x device pixel ratio, shows that output in place of the <img>
 // and drops its CSS basic filter (already baked). Motion stays on the host wrapper, so
-// motion edits never re-raster. Any failure keeps the DOM path visible.
+// motion edits never re-raster. Failures notify the host to reveal the DOM fallback;
+// waiting for an image / layout / raster is not itself a failure.
 //
 // This module owns the decisions (eligibility, raster size, geometry, signature,
 // single-flight and stale guards). Element access, rasterizing and presenting are
@@ -133,6 +134,8 @@ export interface TheaterMediaFxAdvancedDeps<TElement, TSource, TOutput> {
   // Drops the shown output so the DOM fallback is visible again.
   clear: () => void
   onReadyChange: (ready: boolean) => void
+  // True only after an actual failure; pending images/layout must not reveal raw pixels.
+  onFallbackChange?: (fallback: boolean) => void
   delayMs?: number
   setTimer?: (callback: () => void, delayMs: number) => unknown
   clearTimer?: (handle: unknown) => void
@@ -172,12 +175,20 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
   let committed: { key: string, sourceId: string } | null = null
   let loaded: { sourceId: string, value: TheaterMediaFxLoadedSource<TSource> } | null = null
   let ready = false
+  let fallback = false
+  let previousSourceId: string | null = null
   let disposed = false
 
   const setReady = (next: boolean) => {
     if (ready === next) return
     ready = next
     deps.onReadyChange(next)
+  }
+
+  const setFallback = (next: boolean) => {
+    if (fallback === next) return
+    fallback = next
+    deps.onFallbackChange?.(next)
   }
 
   const clearOutput = () => {
@@ -229,6 +240,7 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
       const source = await acquireSource(image)
       if (desired?.key !== job.key) return null
       if (!source) {
+        setFallback(true)
         clearOutput()
         return null
       }
@@ -239,6 +251,7 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
         output = null
       }
       if (!output) {
+        setFallback(true)
         clearOutput()
         return null
       }
@@ -247,10 +260,12 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
     commit: ({ job, output }) => {
       if (disposed || desired?.key !== job.key) return
       if (!deps.present(output)) {
+        setFallback(true)
         clearOutput()
         return
       }
       committed = { key: job.key, sourceId: sourceIdentity(job) }
+      setFallback(false)
       setReady(true)
     },
   })
@@ -266,15 +281,26 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
       input = next
       const image = next.image
       const sourceId = image ? sourceIdentity(image) : null
+      if (sourceId !== previousSourceId) {
+        previousSourceId = sourceId
+        setFallback(false)
+      }
       if (loaded && loaded.sourceId !== sourceId) releaseSource()
       // An output of a previous source never stands in for the new one.
       if (committed && committed.sourceId !== sourceId) clearOutput()
-      if (
-        !image
-        || !next.fit
-        || sourceReadCoolingDown(sourceIdentity(image))
-        || !theaterMediaFxAdvancedEligible(next.spec, next.media, next.gpuAvailable)
-      ) {
+      if (!theaterMediaFxAdvancedEligible(next.spec, next.media, next.gpuAvailable)) {
+        setFallback(false)
+        stopRaster()
+        clearOutput()
+        return
+      }
+      if (!image) {
+        stopRaster()
+        clearOutput()
+        return
+      }
+      if (!next.fit || sourceReadCoolingDown(sourceIdentity(image))) {
+        setFallback(true)
         stopRaster()
         clearOutput()
         return
@@ -287,6 +313,7 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
       const maxTextureSize = deps.maxTextureSize()
       const raster = maxTextureSize ? resolveTheaterMediaFxRaster(next.box, next.devicePixelRatio, maxTextureSize) : null
       if (!raster) {
+        setFallback(true)
         stopRaster()
         clearOutput()
         return

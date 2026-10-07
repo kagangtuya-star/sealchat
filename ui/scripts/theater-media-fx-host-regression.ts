@@ -28,13 +28,23 @@ export const runAdvancedHostTests = async () => {
     width: number
     height: number
     getBoundingClientRect(): { width: number, height: number }
-    getContext(): { drawImage(output: unknown): void }
+    getContext(): { drawImage(output: unknown): void } | null
   }
+  const control = {
+    gate: null as Promise<void> | null,
+    failSource: false,
+    failRaster: false,
+    failPresent: false,
+    fit: 'cover' as 'cover' | null,
+    maxTextureSize: 4096 as number | null,
+    gpuAvailable: true,
+  }
+  let notifyGpu: ((available: boolean) => void) | null = null
   const presented: unknown[] = []
   const node = (tag: string): Node => ({
     tag, props: {}, children: [], style: { display: '' }, width: 300, height: 150,
     getBoundingClientRect: () => ({ width: 300, height: 150 }),
-    getContext: () => ({ drawImage: output => { presented.push(output) } }),
+    getContext: () => control.failPresent ? null : ({ drawImage: output => { presented.push(output) } }),
   })
   const renderer = createRenderer<Node, Node>({
     createElement: node,
@@ -64,22 +74,27 @@ export const runAdvancedHostTests = async () => {
     if (id === '@/composables/useAttachmentResolver') return { resolveAttachmentUrl: (id: string) => `https://cdn.test/${id}.png` }
     if (id === '@/features/media-fx/media-fx-dom') return { vMediaFx: {} }
     if (id === '@/features/media-fx/media-fx-gpu') return {
-      mediaFxGpuSupported: () => true,
-      mediaFxGpuMaxTextureSize: () => 4096,
-      subscribeMediaFxGpuAvailability: () => () => undefined,
+      mediaFxGpuSupported: () => control.gpuAvailable,
+      mediaFxGpuMaxTextureSize: () => control.maxTextureSize,
+      subscribeMediaFxGpuAvailability: (listener: (available: boolean) => void) => {
+        notifyGpu = listener
+        return () => { notifyGpu = null }
+      },
     }
     if (id === './TheaterPresentationMedia.vue') return mediaComponent
     if (id === './theaterPresentationMedia') return require('../src/components/theater-presentation/theaterPresentationMedia')
     if (id === './theaterMediaFxAdvanced') return {
       ...advancedModule,
-      readTheaterMediaFit: () => 'cover',
+      readTheaterMediaFit: () => control.fit,
       loadTheaterMediaFxSource: async (image: { attachmentId: string }) => {
         loads.push(image.attachmentId)
-        return { source: image.attachmentId, width: 400, height: 800 }
+        const fail = control.failSource
+        if (control.gate) await control.gate
+        return fail ? null : { source: image.attachmentId, width: 400, height: 800 }
       },
       rasterizeTheaterMediaFx: (_source: unknown, job: TheaterMediaFxRasterJob) => {
         rasters.push(job)
-        return { width: job.raster.width, height: job.raster.height }
+        return control.failRaster ? null : { width: job.raster.width, height: job.raster.height }
       },
       createTheaterMediaFxAdvancedController: (deps: Parameters<typeof createTheaterMediaFxAdvancedController>[0]) => createTheaterMediaFxAdvancedController({
         ...deps,
@@ -111,7 +126,8 @@ export const runAdvancedHostTests = async () => {
   const dispatch = (command: Parameters<typeof dispatchTheaterEditorCommand>[1]) => {
     state.value = dispatchTheaterEditorCommand(state.value, command, { recordHistory: false })
   }
-  const app = renderer.createApp({ render: () => h(visualComponent.default, { media: layer().media, mediaFx: layer().mediaFx }) })
+  const createApp = () => renderer.createApp({ render: () => h(visualComponent.default, { media: layer().media, mediaFx: layer().mediaFx }) })
+  let app = createApp()
   const originalDocument = globalThis.document
   const originalWindow = globalThis.window
   globalThis.document = { createElement: () => ({ canPlayType: () => 'probably' }) } as unknown as Document
@@ -119,6 +135,8 @@ export const runAdvancedHostTests = async () => {
   const root = node('root')
   const image = () => root.children[0].children.find(child => child.tag === 'img')!
   const canvas = () => root.children[0].children.find(child => child.tag === 'canvas')!
+  const originalHidden = () => (image().props.style as { visibility?: string } | undefined)?.visibility === 'hidden'
+  const changeSource = (id: string) => dispatch({ type: 'set-media', target: { kind: 'dialogue-frame' }, media: { ...layer().media, resourceAttachmentId: id } })
   const loadImage = () => {
     const img = image()
     const element = { complete: true, naturalWidth: 400, naturalHeight: 800, currentSrc: img.props.src, dataset: { attachmentId: img.props['data-attachment-id'] } }
@@ -136,11 +154,15 @@ export const runAdvancedHostTests = async () => {
   }
   try {
     app.mount(root)
+    assert.equal(originalHidden(), false, 'basic-only layers display normally')
     loadImage()
     await flush()
     const initialImage = image()
     const initialMedia = layer().media
     dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: glitch() })
+    await nextTick()
+    assert.equal(originalHidden(), true, 'pending Advanced never flashes the basic-only image')
+    assert.equal(canvas().style.display, 'none')
     await flush()
     assert.notEqual(layer().media, initialMedia, 'real editor dispatch replaces the media object')
     assert.equal(image(), initialImage, 'unchanged attachment reuses the image without another load')
@@ -158,6 +180,8 @@ export const runAdvancedHostTests = async () => {
     assert.equal(canvas().style.display, '')
 
     dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: { ...glitch(), advanced: { ...glitch().advanced, edge: 0.8 } } })
+    await nextTick()
+    assert.equal(canvas().style.display, '', 'same-source edits retain the previous processed output while pending')
     await flush()
     assert.equal(rasters.length, 2, 'later slider edits still rasterize without a load event')
     assert.equal(rasters[1].spec.advanced.edge, 0.8)
@@ -168,12 +192,15 @@ export const runAdvancedHostTests = async () => {
     assert.notEqual(image(), initialImage)
     assert.equal(canvas().width, 0, 'actual primary change clears the previous output before loading')
     assert.equal(canvas().style.display, 'none')
+    assert.equal(originalHidden(), true, 'a new primary waits without flashing its original')
     loadImage()
     await flush()
     assert.equal(rasters.at(-1)?.attachmentId, 'host-new-primary')
 
     ;(image().props.onError as () => void)()
     await nextTick()
+    assert.equal(canvas().width, 0, 'candidate switch clears stale output before fallback load')
+    assert.equal(originalHidden(), true, 'fallback loading also suppresses the unprocessed image')
     loadImage()
     await flush()
     const fallbackImage = image()
@@ -191,6 +218,108 @@ export const runAdvancedHostTests = async () => {
     assert.equal(canvas().style.display, 'none')
     assert.equal(image().props['data-attachment-id'], 'host-new-primary')
     assert.ok(presented.length >= 4)
+
+    // Initial mount, including a long decode/proxy wait, must never expose original pixels.
+    changeSource('host-first-appearance')
+    await nextTick()
+    app.unmount()
+    app = createApp()
+    app.mount(root)
+    assert.equal(originalHidden(), true, 'first Advanced appearance is hidden before image load')
+    let release!: () => void
+    control.gate = new Promise(resolve => { release = resolve })
+    loadImage()
+    await flush()
+    assert.equal(originalHidden(), true, 'slow source acquisition keeps original pixels hidden')
+    assert.equal(canvas().style.display, 'none')
+    control.gate = null
+    release()
+    await settle()
+    await nextTick()
+    assert.equal(canvas().style.display, '')
+    assert.equal(originalHidden(), true)
+
+    // Every terminal failure must reveal the fallback even before the first commit.
+    for (const failure of ['source', 'raster', 'present', 'fit', 'texture'] as const) {
+      control.failSource = failure === 'source'
+      control.failRaster = failure === 'raster'
+      control.failPresent = failure === 'present'
+      control.fit = failure === 'fit' ? null : 'cover'
+      control.maxTextureSize = failure === 'texture' ? null : 4096
+      changeSource(`host-failure-${failure}`)
+      await nextTick()
+      assert.equal(originalHidden(), true, `${failure}: a new source starts hidden`)
+      loadImage()
+      await flush()
+      assert.equal(originalHidden(), false, `${failure}: processing failure reveals the DOM fallback`)
+      assert.equal(canvas().style.display, 'none')
+      if (failure === 'source') {
+        const loadCount = loads.length
+        app.unmount()
+        app = createApp()
+        app.mount(root)
+        loadImage()
+        await flush()
+        assert.equal(loads.length, loadCount, 'a source in cooldown is not fetched again')
+        assert.equal(originalHidden(), false, 'cooldown remount reveals fallback instead of staying hidden')
+      }
+    }
+    control.failPresent = false
+    control.maxTextureSize = 4096
+
+    changeSource('host-retry-raster')
+    control.failRaster = true
+    await nextTick()
+    loadImage()
+    await flush()
+    assert.equal(originalHidden(), false)
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: glitch() })
+    await nextTick()
+    assert.equal(originalHidden(), false, 'retrying a failed source does not blink the visible fallback')
+    control.failRaster = false
+    await flush()
+    assert.equal(canvas().style.display, '', 'a later successful pass replaces the fallback')
+
+    notifyGpu!(false)
+    await nextTick()
+    assert.equal(originalHidden(), false, 'GPU availability loss reveals the DOM fallback')
+    assert.equal(canvas(), undefined)
+    notifyGpu!(true)
+    await nextTick()
+    assert.equal(originalHidden(), true, 'GPU recovery waits for processed output')
+    await flush()
+    assert.equal(canvas().style.display, '')
+
+    // Failure from a replaced source must not reveal the new source's original pixels.
+    let releaseOld!: () => void
+    let releaseNew!: () => void
+    control.gate = new Promise(resolve => { releaseOld = resolve })
+    control.failSource = true
+    changeSource('host-stale-failure')
+    await nextTick()
+    loadImage()
+    await flush()
+    control.failSource = false
+    control.gate = new Promise(resolve => { releaseNew = resolve })
+    changeSource('host-current-pending')
+    await nextTick()
+    loadImage()
+    await flush()
+    releaseOld()
+    await settle()
+    await nextTick()
+    assert.equal(originalHidden(), true, 'stale failure cannot expose the current pending image')
+    assert.equal(canvas().style.display, 'none')
+    control.gate = null
+    releaseNew()
+    await settle()
+    await nextTick()
+    assert.equal(canvas().style.display, '')
+
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: night() })
+    await flush()
+    assert.equal(originalHidden(), false, 'turning Advanced off restores the basic DOM path')
+    assert.equal(canvas(), undefined)
   } finally {
     app.unmount()
     globalThis.document = originalDocument

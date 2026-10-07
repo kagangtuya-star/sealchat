@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
 }>(), { playbackRate: 1, active: true })
 
 const display = useDisplayStore()
-const emit = defineEmits<{ dimensions: [width: number, height: number], imageLoad: [image: HTMLImageElement, attachmentId: string] }>()
+const emit = defineEmits<{ dimensions: [width: number, height: number], imageLoad: [image: HTMLImageElement, attachmentId: string], imageLoading: [] }>()
 const failedIndex = ref(-1)
 const supportsVideo = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -46,6 +46,8 @@ const candidates = computed(() => resolveTheaterMediaCandidates(props.media, {
 }))
 const candidate = computed(() => candidates.value[failedIndex.value + 1] || null)
 const src = computed(() => resolveAttachmentUrl(candidate.value?.attachmentId || ''))
+
+watch([() => candidate.value?.attachmentId, src], () => emit('imageLoading'), { flush: 'sync' })
 
 const handleError = () => { failedIndex.value += 1 }
 const handleVideoLoaded = () => {
