@@ -102,7 +102,7 @@ SQLite 是默认且部署最简单的选择。使用外部数据库时，应在�
 
 反向代理必须转发普通 HTTP 请求和 WebSocket 升级头。根路径部署保持 `webUrl: /`；部署到 `/chat/` 一类子路径时，将 `webUrl` 配置为不带尾斜杠的 `/chat`，并确保代理的保留或剥离前缀策略与之匹配。
 
-若要让日志、限流和快捷登录风控获得真实客户端 IP，请设置 `proxy.proxyHeader` 和 `proxy.trustedProxies`。只信任实际反向代理的地址或网段，不要使用 `0.0.0.0/0`。TLS 可在反向代理终止；示例配置中也提供面向公网 IP 的内置证书选项，启用前应确认挑战端口和发行版本说明。
+若要让日志、限流和快捷登录风控获得真实客户端 IP，请设置 `proxy.proxyHeader` 和 `proxy.trustedProxies`。默认配置只信任本机回环代理 `127.0.0.1` 与 `::1`；Docker、Cloudflare Tunnel、EdgeOne 或远程 Nginx/Caddy 应额外填写 SealChat 实际看到的直接上一跳代理地址或网段，不要使用 `0.0.0.0/0`。TLS 可在反向代理终止，但可信代理应正确传递原始 HTTPS 协议。若同一实例有多个公开入口，`domain` 可用 `;` 分隔，例如 `https://chat.example;https://chat-tunnel.example`，第一个条目作为默认主域名。示例配置中也提供面向公网 IP 的内置证书选项，启用前应确认挑战端口和发行版本说明。
 
 ## 8. NAS 与 Docker 挂载注意事项
 

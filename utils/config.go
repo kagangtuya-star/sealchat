@@ -2356,20 +2356,39 @@ func NormalizeServeAt(addr string) (string, bool) {
 	return normalized, normalized != trimmed
 }
 
-func NormalizeDomain(domain string) (string, bool) {
+func DomainList(domain string) []string {
+	parts := strings.Split(domain, ";")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func PrimaryDomain(domain string) string {
+	items := DomainList(domain)
+	if len(items) == 0 {
+		return ""
+	}
+	return items[0]
+}
+
+func normalizeSingleDomain(domain string) string {
 	trimmed := strings.TrimSpace(domain)
 	if trimmed == "" {
-		return "", false
+		return ""
 	}
 	lower := strings.ToLower(trimmed)
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		parsed, err := url.Parse(trimmed)
 		if err != nil || parsed.Host == "" {
-			return trimmed, false
+			return trimmed
 		}
 		host := parsed.Hostname()
 		if host == "" {
-			return trimmed, false
+			return trimmed
 		}
 		port := parsed.Port()
 		if port != "" {
@@ -2377,20 +2396,30 @@ func NormalizeDomain(domain string) (string, bool) {
 		} else {
 			parsed.Host = EnsureIPv6Bracket(host)
 		}
-		normalized := parsed.String()
-		return normalized, normalized != trimmed
+		return parsed.String()
 	}
 
 	host, port := splitHostPort(trimmed)
 	if host == "" {
-		return trimmed, false
+		return trimmed
 	}
 	if port == "" {
-		normalized := EnsureIPv6Bracket(host)
-		return normalized, normalized != trimmed
+		return EnsureIPv6Bracket(host)
 	}
-	normalized := FormatHostPort(host, port)
-	return normalized, normalized != trimmed
+	return FormatHostPort(host, port)
+}
+
+func NormalizeDomain(domain string) (string, bool) {
+	items := DomainList(domain)
+	if len(items) == 0 {
+		return "", strings.TrimSpace(domain) != ""
+	}
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		normalized = append(normalized, normalizeSingleDomain(item))
+	}
+	value := strings.Join(normalized, ";")
+	return value, value != strings.TrimSpace(domain)
 }
 
 func splitHostPort(addr string) (string, string) {

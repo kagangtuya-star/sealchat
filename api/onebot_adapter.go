@@ -305,7 +305,7 @@ func resolveOneBotAttachmentBaseURL() string {
 	if base := strings.TrimSpace(cfg.ImageBaseURL); base != "" {
 		return normalizeOneBotDomainToURL(base)
 	}
-	if domain := strings.TrimSpace(cfg.Domain); domain != "" {
+	if domain := utils.PrimaryDomain(cfg.Domain); domain != "" {
 		return normalizeOneBotDomainToURL(domain)
 	}
 	return ""

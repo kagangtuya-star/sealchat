@@ -189,16 +189,36 @@ func newMCPServer(limiter *service.MCPRateLimiter) *mcp.Server {
 	return s
 }
 
-func mcpPublicOrigin(cfg utils.AppConfig, protocol string) string {
-	domain := strings.TrimSpace(cfg.Domain)
-	if !strings.Contains(domain, "://") {
-		domain = protocol + "://" + domain
+func mcpPublicOrigins(cfg utils.AppConfig, protocol string) []string {
+	domains := utils.DomainList(cfg.Domain)
+	origins := make([]string, 0, len(domains))
+	seen := make(map[string]struct{}, len(domains))
+	for _, domain := range domains {
+		if !strings.Contains(domain, "://") {
+			domain = protocol + "://" + domain
+		}
+		u, err := url.Parse(domain)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		origin := strings.ToLower(u.Scheme + "://" + u.Host)
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
 	}
-	u, err := url.Parse(domain)
-	if err != nil || u.Host == "" {
-		return ""
+	return origins
+}
+
+func mcpPublicOriginForHost(origins []string, host string) string {
+	for _, origin := range origins {
+		u, err := url.Parse(origin)
+		if err == nil && strings.EqualFold(u.Host, host) {
+			return origin
+		}
 	}
-	return strings.ToLower(u.Scheme + "://" + u.Host)
+	return ""
 }
 func mcpIsLocalHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -224,9 +244,13 @@ func mcpHTTPGuard(limiter *service.MCPRateLimiter) fiber.Handler {
 		} else if trustedProxy {
 			protocol = c.Protocol()
 		}
-		origin := mcpPublicOrigin(cfg, protocol)
-		if origin == "" && mcpIsLocalHost(host) && c.Context().RemoteIP().IsLoopback() {
+		origins := mcpPublicOrigins(cfg, protocol)
+		origin := mcpPublicOriginForHost(origins, host)
+		if origin == "" && len(origins) == 0 && mcpIsLocalHost(host) && c.Context().RemoteIP().IsLoopback() {
 			origin = protocol + "://" + host
+		}
+		if origin == "" {
+			return c.Status(403).JSON(mcpError{"invalid_host", "站点 Host 无效"})
 		}
 		if value := c.Get("Origin"); value != "" {
 			u, err := url.Parse(value)
@@ -235,9 +259,6 @@ func mcpHTTPGuard(limiter *service.MCPRateLimiter) fiber.Handler {
 			}
 		}
 		publicURL, _ := url.Parse(origin)
-		if publicURL != nil && publicURL.Host != "" && !strings.EqualFold(host, publicURL.Host) {
-			return c.Status(403).JSON(mcpError{"invalid_host", "站点 Host 无效"})
-		}
 		localConnection := publicURL != nil && mcpIsLocalHost(publicURL.Host) && c.Context().RemoteIP().IsLoopback()
 		if publicURL == nil || publicURL.Host == "" || (!localConnection && (protocol != "https" || publicURL.Scheme != "https")) {
 			return c.Status(403).JSON(fiber.Map{"code": "https_required"})

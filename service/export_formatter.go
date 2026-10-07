@@ -2707,8 +2707,7 @@ func resolveAttachmentBaseURL() string {
 		if base := strings.TrimSpace(cfg.ImageBaseURL); base != "" {
 			return normalizeDomainToURL(base)
 		}
-		domain := strings.TrimSpace(cfg.Domain)
-		if domain != "" {
+		if domain := utils.PrimaryDomain(cfg.Domain); domain != "" {
 			return normalizeDomainToURL(domain)
 		}
 	}

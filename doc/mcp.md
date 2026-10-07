@@ -2,7 +2,7 @@
 
 平台管理员在“平台管理 → MCP 接入”开启服务并配置模块上限，使用标题栏的保存按钮。默认关闭。用户在共用的“个人信息 → Personal API Keys / MCP”自行创建 Key，无审批、世界或频道绑定。默认授权只读、有效期 90 天，可明确选择不过期；每用户最多 10 个未撤销 Key。
 
-地址为公开站点基础路径加 `/mcp`，例如 `https://chat.example/mcp` 或子路径部署的 `https://chat.example/sealchat/mcp`。它与旧 `agt_` 世界访问链接无关。反向代理应保留站点基础路径，并在既有 `proxy.trustedProxies` 中配置可信代理，由可信代理提供 HTTPS 协议头；公网 HTTP 拒绝访问。MCP 路由只接受站点自身 Origin，无 Origin 的非浏览器请求可以访问。
+地址为公开站点基础路径加 `/mcp`，例如 `https://chat.example/mcp` 或子路径部署的 `https://chat.example/sealchat/mcp`。它与旧 `agt_` 世界访问链接无关。`config.yaml` 的 `domain` 可用 `;` 分隔多个公开域名，例如 `https://chat.example;https://chat-tunnel.example`；第一个域名仍作为需要单一公开地址的默认主域名，MCP Host/Origin 校验接受配置中的任意域名。反向代理应保留站点基础路径，并在既有 `proxy.trustedProxies` 中配置可信代理，由可信代理提供 HTTPS 协议头；默认仅信任本机回环代理 `127.0.0.1` 与 `::1`，Docker/远程代理仍需显式配置实际地址或网段。公网 HTTP 拒绝访问。MCP 路由只接受当前请求对应的已配置站点 Origin，无 Origin 的非浏览器请求可以访问。
 
 这是 Go SDK v1.8.0 的 MCP Streamable HTTP，使用无会话状态及 JSON 响应。握手、协议版本协商与 JSON-RPC 格式由 SDK 处理。只声明 Tools；没有 Resources、Prompts、Sampling 或通用 Tasks。
 

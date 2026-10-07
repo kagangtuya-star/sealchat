@@ -98,7 +98,7 @@ func TTSCloneReadURL(job *model.TTSJob) (string, error) {
 	if cfg == nil {
 		return "", TTSValidationError("复刻样本读取需要配置公开 HTTPS Domain")
 	}
-	base, err := url.Parse(cfg.Domain)
+	base, err := url.Parse(utils.PrimaryDomain(cfg.Domain))
 	if err != nil || base.Scheme != "https" || base.Host == "" || base.Hostname() == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" {
 		return "", TTSValidationError("复刻样本读取需要配置公开 HTTPS Domain")
 	}

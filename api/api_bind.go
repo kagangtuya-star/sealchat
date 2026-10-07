@@ -103,13 +103,10 @@ func classifyListenMode(host string) listenMode {
 	return listenIPv4
 }
 
-func updateDomainPort(domain, newPort string) (string, bool) {
-	if strings.TrimSpace(newPort) == "" {
-		return domain, false
-	}
+func updateSingleDomainPort(domain, newPort string) (string, bool) {
 	trimmed := strings.TrimSpace(domain)
 	if trimmed == "" {
-		return utils.FormatHostPort("127.0.0.1", newPort), true
+		return "", false
 	}
 
 	lower := strings.ToLower(trimmed)
@@ -133,12 +130,26 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 		}
 		return utils.FormatHostPort(host, newPort), true
 	}
+	return utils.FormatHostPort(trimmed, newPort), true
+}
 
-	host = trimmed
-	if host == "" {
-		host = "127.0.0.1"
+func updateDomainPort(domain, newPort string) (string, bool) {
+	if strings.TrimSpace(newPort) == "" {
+		return domain, false
 	}
-	return utils.FormatHostPort(host, newPort), true
+	domains := utils.DomainList(domain)
+	if len(domains) == 0 {
+		return utils.FormatHostPort("127.0.0.1", newPort), true
+	}
+	updated := make([]string, 0, len(domains))
+	for _, item := range domains {
+		value, ok := updateSingleDomainPort(item, newPort)
+		if !ok {
+			return domain, false
+		}
+		updated = append(updated, value)
+	}
+	return strings.Join(updated, ";"), true
 }
 
 func buildIndexPaths(webURL string) []string {
