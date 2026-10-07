@@ -17,4 +17,9 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
   fileName: filename,
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText, filename)
-require(path.join(__dirname, 'theater-presentation-media-fx.spec.ts'))
+require(path.join(__dirname, 'theater-media-fx-host-regression.ts')).runAdvancedHostTests().then(() => {
+  require(path.join(__dirname, 'theater-presentation-media-fx.spec.ts'))
+}, (error) => {
+  console.error(error)
+  process.exitCode = 1
+})

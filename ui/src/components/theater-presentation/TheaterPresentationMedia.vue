@@ -17,7 +17,8 @@ const failedIndex = ref(-1)
 const supportsVideo = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
 
-watch(() => [props.media.resourceAttachmentId, props.media.fallbackAttachmentId], () => {
+// Keep the displayed fallback when only the surrounding presentation is replaced.
+watch([() => props.media.resourceAttachmentId, () => props.media.fallbackAttachmentId], () => {
   failedIndex.value = -1
 })
 watch(() => [display.settings.preferStaticAvatarDecoration, supportsVideo.value], () => {

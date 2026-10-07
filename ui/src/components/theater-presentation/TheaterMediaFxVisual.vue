@@ -92,8 +92,9 @@ const handleImageLoad = (element: HTMLImageElement, attachmentId: string) => {
   readFit()
 }
 
+// Compare attachment values: editor/live presentation clones keep the same loaded image.
 // A new source starts on the DOM path; the previous output is dropped right away.
-watch(() => [props.media.resourceAttachmentId, props.media.fallbackAttachmentId], () => {
+watch([() => props.media.resourceAttachmentId, () => props.media.fallbackAttachmentId], () => {
   loadedImage.value = null
 })
 
