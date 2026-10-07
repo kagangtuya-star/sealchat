@@ -3,6 +3,7 @@ import type { Filter as KonvaFilter } from 'konva/lib/Node'
 
 import {
   mediaFxAdvancedHasContent,
+  mediaFxAdvancedKeys,
   mediaFxFilterToCss,
   normalizeMediaFxSpec,
   prefersReducedMotion,
@@ -132,7 +133,7 @@ const cssImageDataFilter = (css: string): KonvaFilter => (imageData) => {
 }
 
 export const mediaFxAdvancedSignature = (advanced: MediaFxAdvanced) => (
-  `${advanced.pixelate}|${advanced.rgbSplit}|${advanced.scanline}`
+  mediaFxAdvancedKeys.map((key) => advanced[key]).join('|')
 )
 
 // Basic Media FX first, advanced GPU pixel effect last.

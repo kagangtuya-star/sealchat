@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
 }>(), { playbackRate: 1, active: true })
 
 const display = useDisplayStore()
-const emit = defineEmits<{ dimensions: [width: number, height: number] }>()
+const emit = defineEmits<{ dimensions: [width: number, height: number], imageLoad: [image: HTMLImageElement, attachmentId: string] }>()
 const failedIndex = ref(-1)
 const supportsVideo = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -73,13 +73,15 @@ const handleVideoLoaded = () => {
   />
   <img
     v-else-if="candidate?.kind === 'image' && src"
+    :key="candidate.attachmentId"
     class="theater-media"
     :src="src"
+    :data-attachment-id="candidate.attachmentId"
     alt=""
     draggable="false"
     style="object-fit: cover"
     @error="handleError"
-    @load="event => { const image = event.target as HTMLImageElement; emit('dimensions', image.naturalWidth, image.naturalHeight) }"
+    @load="event => { const image = event.target as HTMLImageElement; emit('dimensions', image.naturalWidth, image.naturalHeight); emit('imageLoad', image, image.dataset.attachmentId || '') }"
   >
 </template>
 

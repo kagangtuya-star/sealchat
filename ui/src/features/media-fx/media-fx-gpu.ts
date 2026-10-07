@@ -2,8 +2,8 @@ import { mediaFxAdvancedHasContent, normalizeMediaFxAdvanced, type MediaFxAdvanc
 
 // WebGL2 adapter for MediaFxAdvanced.
 //
-// A single lazily created, page-wide processor runs one fixed fragment shader over an
-// ImageData synchronously (ImageData -> texture -> draw -> readPixels -> same
+// A single lazily created, page-wide processor runs one fixed single-pass fragment
+// shader over an ImageData synchronously (ImageData -> texture -> draw -> readPixels -> same
 // ImageData). It is meant to be the last step of a static Konva cache filter chain:
 // it only runs when that cache is rebuilt, never per frame, and owns no RAF or timers.
 //
@@ -17,6 +17,12 @@ const PIXELATE_MAX_BLOCK_PX = 48
 const RGB_SPLIT_MAX_OFFSET_PX = 12
 const SCANLINE_MAX_DARKEN = 0.25
 const SCANLINE_PERIOD_PX = 3
+const VIGNETTE_MAX_DARKEN = 0.85
+const GRAIN_MAX_AMPLITUDE = 0.22
+// Posterize goes from barely visible banding (many levels) to a hard poster look.
+const POSTERIZE_MAX_LEVELS = 24
+const POSTERIZE_MIN_LEVELS = 2
+const SHARPEN_MAX_AMOUNT = 2
 
 const VERTEX_SHADER = `#version 300 es
 void main() {
@@ -29,6 +35,20 @@ void main() {
 // Pixel space: framebuffer row y renders source row y, and readPixels returns rows
 // from y = 0 upwards, so the output keeps the exact row order of the uploaded
 // ImageData without any flip. texelFetch keeps samples exact (no interpolation).
+//
+// Fixed effect order (one pass, every consumer gets the same result):
+//   1. pixelate   sampling grid      (where pixels are read from)
+//   2. rgbSplit   channel sampling
+//   3. sharpen    3x3 neighborhood   (on the sampled grid)
+//   4. edge       3x3 neighborhood
+//   5. posterize  tone
+//   6. negative   tone
+//   7. grain      surface texture    (deterministic per output pixel, no time input)
+//   8. scanline   surface texture
+//   9. vignette   lens / frame edge
+// Each step is skipped by a uniform branch when its strength is 0; the neighborhood
+// (at most 8 extra fetches) is only read when sharpen or edge is on. Only rgb is
+// changed: alpha always stays the source alpha of the sampled pixel.
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -36,13 +56,35 @@ uniform sampler2D uTexture;
 uniform vec2 uResolution;
 uniform float uPixelate;
 uniform float uRgbSplit;
+uniform float uKernelStep;
+uniform float uSharpen;
+uniform float uEdge;
+uniform float uPosterizeLevels;
+uniform float uNegative;
+uniform float uGrain;
+uniform float uGrainCell;
 uniform float uScanline;
 uniform float uScanlinePeriod;
+uniform float uVignette;
 out vec4 outColor;
+
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+const float EDGE_GAIN = 1.5;
 
 vec4 fetchPixel(vec2 position) {
   ivec2 size = ivec2(uResolution);
   return texelFetch(uTexture, clamp(ivec2(floor(position)), ivec2(0), size - 1), 0);
+}
+
+// Integer hash: identical on every GPU for the same cell, unlike sin()-based noise.
+float hashCell(uvec2 cell) {
+  uint h = cell.x * 0x8da6b343u ^ cell.y * 0xd8163841u;
+  h ^= h >> 16;
+  h *= 0x7feb352du;
+  h ^= h >> 15;
+  h *= 0x846ca68bu;
+  h ^= h >> 16;
+  return float(h >> 8) / 16777216.0;
 }
 
 void main() {
@@ -50,16 +92,53 @@ void main() {
   if (uPixelate > 1.0) {
     position = floor(position / uPixelate) * uPixelate + floor(uPixelate * 0.5);
   }
-  vec4 color = fetchPixel(position);
+  vec4 center = fetchPixel(position);
+  vec4 color = center;
   if (uRgbSplit > 0.0) {
     color.r = fetchPixel(position + vec2(uRgbSplit, 0.0)).r;
     color.b = fetchPixel(position - vec2(uRgbSplit, 0.0)).b;
+  }
+  if (uSharpen > 0.0 || uEdge > 0.0) {
+    vec2 d = vec2(uKernelStep, 0.0);
+    vec3 n = fetchPixel(position + d.yx).rgb;
+    vec3 s = fetchPixel(position - d.yx).rgb;
+    vec3 e = fetchPixel(position + d.xy).rgb;
+    vec3 w = fetchPixel(position - d.xy).rgb;
+    if (uSharpen > 0.0) {
+      color.rgb += uSharpen * (center.rgb - 0.25 * (n + s + e + w));
+      color.rgb = clamp(color.rgb, 0.0, 1.0);
+    }
+    if (uEdge > 0.0) {
+      float ne = dot(fetchPixel(position + vec2(uKernelStep, uKernelStep)).rgb, LUMA);
+      float nw = dot(fetchPixel(position + vec2(-uKernelStep, uKernelStep)).rgb, LUMA);
+      float se = dot(fetchPixel(position + vec2(uKernelStep, -uKernelStep)).rgb, LUMA);
+      float sw = dot(fetchPixel(position - vec2(uKernelStep, uKernelStep)).rgb, LUMA);
+      float gx = (ne + 2.0 * dot(e, LUMA) + se) - (nw + 2.0 * dot(w, LUMA) + sw);
+      float gy = (ne + 2.0 * dot(n, LUMA) + nw) - (se + 2.0 * dot(s, LUMA) + sw);
+      float magnitude = clamp(length(vec2(gx, gy)) * EDGE_GAIN, 0.0, 1.0);
+      color.rgb = mix(color.rgb, vec3(magnitude), uEdge);
+    }
+  }
+  if (uPosterizeLevels > 1.0) {
+    float steps = uPosterizeLevels - 1.0;
+    color.rgb = floor(color.rgb * steps + 0.5) / steps;
+  }
+  if (uNegative > 0.0) {
+    color.rgb = mix(color.rgb, 1.0 - color.rgb, uNegative);
+  }
+  if (uGrain > 0.0) {
+    float noise = hashCell(uvec2(floor(gl_FragCoord.xy / uGrainCell))) * 2.0 - 1.0;
+    color.rgb = clamp(color.rgb + noise * uGrain, 0.0, 1.0);
   }
   if (uScanline > 0.0) {
     float phase = mod(floor(gl_FragCoord.y), uScanlinePeriod) / uScanlinePeriod;
     color.rgb *= 1.0 - uScanline * (0.5 + 0.5 * cos(phase * 6.28318531));
   }
-  outColor = color;
+  if (uVignette > 0.0) {
+    vec2 uv = gl_FragCoord.xy / uResolution * 2.0 - 1.0;
+    color.rgb *= 1.0 - uVignette * smoothstep(0.35, 1.4, length(uv));
+  }
+  outColor = vec4(color.rgb, center.a);
 }
 `
 
@@ -74,8 +153,16 @@ interface MediaFxGpuProcessor {
     resolution: WebGLUniformLocation | null
     pixelate: WebGLUniformLocation | null
     rgbSplit: WebGLUniformLocation | null
+    kernelStep: WebGLUniformLocation | null
+    sharpen: WebGLUniformLocation | null
+    edge: WebGLUniformLocation | null
+    posterizeLevels: WebGLUniformLocation | null
+    negative: WebGLUniformLocation | null
+    grain: WebGLUniformLocation | null
+    grainCell: WebGLUniformLocation | null
     scanline: WebGLUniformLocation | null
     scanlinePeriod: WebGLUniformLocation | null
+    vignette: WebGLUniformLocation | null
   }
 }
 
@@ -185,8 +272,16 @@ const createProcessor = (): MediaFxGpuProcessor => {
       resolution: gl.getUniformLocation(program, 'uResolution'),
       pixelate: gl.getUniformLocation(program, 'uPixelate'),
       rgbSplit: gl.getUniformLocation(program, 'uRgbSplit'),
+      kernelStep: gl.getUniformLocation(program, 'uKernelStep'),
+      sharpen: gl.getUniformLocation(program, 'uSharpen'),
+      edge: gl.getUniformLocation(program, 'uEdge'),
+      posterizeLevels: gl.getUniformLocation(program, 'uPosterizeLevels'),
+      negative: gl.getUniformLocation(program, 'uNegative'),
+      grain: gl.getUniformLocation(program, 'uGrain'),
+      grainCell: gl.getUniformLocation(program, 'uGrainCell'),
       scanline: gl.getUniformLocation(program, 'uScanline'),
       scanlinePeriod: gl.getUniformLocation(program, 'uScanlinePeriod'),
+      vignette: gl.getUniformLocation(program, 'uVignette'),
     },
   }
   // A lost context is simply dropped; the next call lazily builds a fresh processor.
@@ -209,9 +304,14 @@ const acquireProcessor = () => {
   return processor
 }
 
+// Largest texture side the processor accepts, so callers can size their raster before
+// a pass. It lazily creates the page-wide processor: only call it when an advanced pass
+// is about to run. null when WebGL2 is unavailable (availability listeners are notified).
+export const mediaFxGpuMaxTextureSize = (): number | null => acquireProcessor()?.maxTextureSize ?? null
+
 export interface MediaFxGpuOptions {
   // Device pixels per layout pixel of the ImageData (e.g. the Konva cache pixelRatio),
-  // so block / offset sizes look the same at any cache resolution.
+  // so block / offset / kernel / grain sizes look the same at any cache resolution.
   pixelRatio?: number
 }
 
@@ -221,14 +321,29 @@ export const resolveMediaFxGpuParams = (input: MediaFxAdvanced, options: MediaFx
   const scale = typeof options.pixelRatio === 'number' && Number.isFinite(options.pixelRatio) && options.pixelRatio > 0
     ? options.pixelRatio
     : 1
+  // Non-linear so the low end of the slider stays fine-grained.
+  const blockPx = advanced.pixelate > 0
+    ? Math.max(1, Math.round((1 + advanced.pixelate * advanced.pixelate * (PIXELATE_MAX_BLOCK_PX - 1)) * scale))
+    : 1
+  const devicePx = Math.max(1, Math.round(scale))
   return {
-    // Non-linear so the low end of the slider stays fine-grained.
-    blockPx: advanced.pixelate > 0
-      ? Math.max(1, Math.round((1 + advanced.pixelate * advanced.pixelate * (PIXELATE_MAX_BLOCK_PX - 1)) * scale))
-      : 1,
+    blockPx,
     rgbSplitPx: advanced.rgbSplit * RGB_SPLIT_MAX_OFFSET_PX * scale,
+    // Neighborhood distance for sharpen / edge: one layout pixel, or one block when
+    // pixelated so the kernel compares neighboring blocks.
+    kernelStepPx: blockPx > 1 ? blockPx : devicePx,
+    sharpenAmount: advanced.sharpen * SHARPEN_MAX_AMOUNT,
+    edgeMix: advanced.edge,
+    // 0 = off; otherwise the number of levels per channel (>= 2).
+    posterizeLevels: advanced.posterize > 0
+      ? Math.round(POSTERIZE_MAX_LEVELS - advanced.posterize * (POSTERIZE_MAX_LEVELS - POSTERIZE_MIN_LEVELS))
+      : 0,
+    negativeMix: advanced.negative,
+    grainAmplitude: advanced.grain * GRAIN_MAX_AMPLITUDE,
+    grainCellPx: devicePx,
     scanlineDarken: advanced.scanline * SCANLINE_MAX_DARKEN,
     scanlinePeriodPx: Math.max(2, SCANLINE_PERIOD_PX * scale),
+    vignetteDarken: advanced.vignette * VIGNETTE_MAX_DARKEN,
   }
 }
 
@@ -258,8 +373,16 @@ export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced,
     gl.uniform2f(uniforms.resolution, width, height)
     gl.uniform1f(uniforms.pixelate, params.blockPx)
     gl.uniform1f(uniforms.rgbSplit, params.rgbSplitPx)
+    gl.uniform1f(uniforms.kernelStep, params.kernelStepPx)
+    gl.uniform1f(uniforms.sharpen, params.sharpenAmount)
+    gl.uniform1f(uniforms.edge, params.edgeMix)
+    gl.uniform1f(uniforms.posterizeLevels, params.posterizeLevels)
+    gl.uniform1f(uniforms.negative, params.negativeMix)
+    gl.uniform1f(uniforms.grain, params.grainAmplitude)
+    gl.uniform1f(uniforms.grainCell, params.grainCellPx)
     gl.uniform1f(uniforms.scanline, params.scanlineDarken)
     gl.uniform1f(uniforms.scanlinePeriod, params.scanlinePeriodPx)
+    gl.uniform1f(uniforms.vignette, params.vignetteDarken)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) return false
     // A failed readPixels writes nothing, so the source pixels stay intact.

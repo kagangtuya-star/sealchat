@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -11,10 +13,12 @@ import (
 // whitelisted presets and bounded numbers; renderers never receive raw CSS or shaders.
 // Keep the ranges below in sync with media-fx.ts and media-fx-schema.ts.
 //
-// v2 adds the required `advanced` object. Stored v1 specs stay valid as they are and
-// are upgraded lazily by clients on their next save; there is no data migration.
+// v2 adds the required `advanced` object with pixelate / rgbSplit / scanline; v3 adds
+// six more static effects to it. Stored v1 / v2 specs stay valid as they are and are
+// upgraded lazily by clients on their next save; there is no data migration.
 const (
-	MediaFxVersion       = 2
+	MediaFxVersion       = 3
+	MediaFxV2Version     = 2
 	LegacyMediaFxVersion = 1
 )
 
@@ -56,13 +60,90 @@ type MediaFxFilter struct {
 }
 
 // MediaFxAdvanced holds normalized 0..1 strengths; renderers map them to pixels.
+//
+// The v3-only effects are pointers so the strict decoder records their presence: a v2
+// spec must not carry them and a v3 spec must carry all of them, while the v2 fields
+// keep their plain shape. Compare through fields() / mediaFxAdvancedEqual, never the
+// struct itself; a missing v3 effect always reads as 0 (off).
 type MediaFxAdvanced struct {
 	Pixelate float64 `json:"pixelate"`
 	RGBSplit float64 `json:"rgbSplit"`
 	Scanline float64 `json:"scanline"`
+
+	Vignette  *float64 `json:"vignette,omitempty"`
+	Grain     *float64 `json:"grain,omitempty"`
+	Posterize *float64 `json:"posterize,omitempty"`
+	Negative  *float64 `json:"negative,omitempty"`
+	Sharpen   *float64 `json:"sharpen,omitempty"`
+	Edge      *float64 `json:"edge,omitempty"`
+
+	v3NullPresence uint8
+	unknownField   string
 }
 
-// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 specs must,
+const (
+	mediaFxAdvancedVignettePresent uint8 = 1 << iota
+	mediaFxAdvancedGrainPresent
+	mediaFxAdvancedPosterizePresent
+	mediaFxAdvancedNegativePresent
+	mediaFxAdvancedSharpenPresent
+	mediaFxAdvancedEdgePresent
+)
+
+// UnmarshalJSON only remembers v3-only fields that were explicitly null. A non-null
+// field already has a non-nil *float64, while an omitted field stays nil; this tiny bit
+// of transient state closes the version-2 `grain:null` loophole without changing the
+// shape or equality of valid decoded specs. Unknown fields are recorded for the shared
+// validator instead of making ordinary json.Unmarshal stricter than before.
+func (advanced *MediaFxAdvanced) UnmarshalJSON(data []byte) error {
+	type mediaFxAdvancedAlias MediaFxAdvanced
+	var decoded mediaFxAdvancedAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*advanced = MediaFxAdvanced(decoded)
+	for key, raw := range fields {
+		null := bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+		switch key {
+		case "pixelate", "rgbSplit", "scanline":
+		case "vignette":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedVignettePresent
+			}
+		case "grain":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedGrainPresent
+			}
+		case "posterize":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedPosterizePresent
+			}
+		case "negative":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedNegativePresent
+			}
+		case "sharpen":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedSharpenPresent
+			}
+		case "edge":
+			if null {
+				advanced.v3NullPresence |= mediaFxAdvancedEdgePresent
+			}
+		default:
+			if advanced.unknownField == "" {
+				advanced.unknownField = key
+			}
+		}
+	}
+	return nil
+}
+
+// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 / v3 specs must,
 // so the validator can tell a v1 document from an incomplete v2 one.
 type MediaFxSpec struct {
 	Version  int              `json:"version"`
@@ -89,12 +170,39 @@ func (filter MediaFxFilter) fields() []mediaFxFilterField {
 	}
 }
 
+// mediaFxAdvancedV3Field describes one v3-only effect; value is nil when absent.
+type mediaFxAdvancedV3Field struct {
+	name    string
+	value   *float64
+	present bool
+}
+
+func (advanced MediaFxAdvanced) v3Fields() []mediaFxAdvancedV3Field {
+	return []mediaFxAdvancedV3Field{
+		{"vignette", advanced.Vignette, advanced.Vignette != nil || advanced.v3NullPresence&mediaFxAdvancedVignettePresent != 0},
+		{"grain", advanced.Grain, advanced.Grain != nil || advanced.v3NullPresence&mediaFxAdvancedGrainPresent != 0},
+		{"posterize", advanced.Posterize, advanced.Posterize != nil || advanced.v3NullPresence&mediaFxAdvancedPosterizePresent != 0},
+		{"negative", advanced.Negative, advanced.Negative != nil || advanced.v3NullPresence&mediaFxAdvancedNegativePresent != 0},
+		{"sharpen", advanced.Sharpen, advanced.Sharpen != nil || advanced.v3NullPresence&mediaFxAdvancedSharpenPresent != 0},
+		{"edge", advanced.Edge, advanced.Edge != nil || advanced.v3NullPresence&mediaFxAdvancedEdgePresent != 0},
+	}
+}
+
+// fields lists every advanced effect with a missing v3 effect read as 0 (off).
 func (advanced MediaFxAdvanced) fields() []mediaFxFilterField {
-	return []mediaFxFilterField{
+	fields := []mediaFxFilterField{
 		{"pixelate", advanced.Pixelate, 0, 1, 0},
 		{"rgbSplit", advanced.RGBSplit, 0, 1, 0},
 		{"scanline", advanced.Scanline, 0, 1, 0},
 	}
+	for _, field := range advanced.v3Fields() {
+		value := 0.0
+		if field.value != nil {
+			value = *field.value
+		}
+		fields = append(fields, mediaFxFilterField{field.name, value, 0, 1, 0})
+	}
+	return fields
 }
 
 // normalizedAdvanced treats a missing (v1) advanced as all zero.
@@ -103,6 +211,25 @@ func (spec *MediaFxSpec) normalizedAdvanced() MediaFxAdvanced {
 		return MediaFxAdvanced{}
 	}
 	return *spec.Advanced
+}
+
+// mediaFxAdvancedEqual compares effect values, so an absent v3 effect equals 0.
+func mediaFxAdvancedEqual(left, right MediaFxAdvanced) bool {
+	leftFields, rightFields := left.fields(), right.fields()
+	for index := range leftFields {
+		if leftFields[index].value != rightFields[index].value {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneMediaFxFloat(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
@@ -115,7 +242,8 @@ func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
 }
 
 // validateMediaFx accepts nil (no effect) and otherwise requires a complete v1 spec
-// (without advanced) or a complete v2 spec (with advanced).
+// (without advanced), a complete v2 spec (advanced without v3-only effects) or a
+// complete v3 spec (advanced with every effect present).
 func validateMediaFx(spec *MediaFxSpec, path string) error {
 	if spec == nil {
 		return nil
@@ -126,18 +254,29 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 		if spec.Advanced != nil {
 			problems = append(problems, fmt.Errorf("%s.advanced is not allowed in version %d", path, LegacyMediaFxVersion))
 		}
-	case MediaFxVersion:
+	case MediaFxV2Version, MediaFxVersion:
 		if spec.Advanced == nil {
-			problems = append(problems, fmt.Errorf("%s.advanced is required in version %d", path, MediaFxVersion))
-		} else {
-			for _, field := range spec.Advanced.fields() {
-				if !finiteInRange(field.value, field.minimum, field.maximum) {
-					problems = append(problems, fmt.Errorf("%s.advanced.%s must be finite and between %g and %g", path, field.name, field.minimum, field.maximum))
-				}
+			problems = append(problems, fmt.Errorf("%s.advanced is required in version %d", path, spec.Version))
+			break
+		}
+		if spec.Advanced.unknownField != "" {
+			problems = append(problems, fmt.Errorf("%s.advanced: json: unknown field %q", path, spec.Advanced.unknownField))
+		}
+		for _, field := range spec.Advanced.v3Fields() {
+			if spec.Version == MediaFxV2Version && field.present {
+				problems = append(problems, fmt.Errorf("%s.advanced.%s is not allowed in version %d", path, field.name, MediaFxV2Version))
+			}
+			if spec.Version == MediaFxVersion && (!field.present || field.value == nil) {
+				problems = append(problems, fmt.Errorf("%s.advanced.%s is required in version %d", path, field.name, MediaFxVersion))
+			}
+		}
+		for _, field := range spec.Advanced.fields() {
+			if !finiteInRange(field.value, field.minimum, field.maximum) {
+				problems = append(problems, fmt.Errorf("%s.advanced.%s must be finite and between %g and %g", path, field.name, field.minimum, field.maximum))
 			}
 		}
 	default:
-		problems = append(problems, fmt.Errorf("%s.version must be %d or %d", path, LegacyMediaFxVersion, MediaFxVersion))
+		problems = append(problems, fmt.Errorf("%s.version must be %d, %d or %d", path, LegacyMediaFxVersion, MediaFxV2Version, MediaFxVersion))
 	}
 	if !validMediaFxMotionPreset(spec.Motion.Preset) {
 		problems = append(problems, fmt.Errorf("%s.motion.preset is invalid", path))
@@ -183,15 +322,15 @@ func mediaFxHasContent(spec *MediaFxSpec) bool {
 }
 
 // mediaFxEqual compares effect content, never pointer identity or version. A missing
-// spec and an all-default spec both mean "no effect", and a v1 spec equals the v2 spec
-// with the same motion / filter and an all-zero advanced.
+// spec and an all-default spec both mean "no effect"; a v1 / v2 spec equals the v3 spec
+// with the same motion / filter / advanced values and the effects it lacks at 0.
 func mediaFxEqual(left, right *MediaFxSpec) bool {
 	leftActive, rightActive := mediaFxHasContent(left), mediaFxHasContent(right)
 	if !leftActive || !rightActive {
 		return leftActive == rightActive
 	}
 	return left.Motion == right.Motion && left.Filter == right.Filter &&
-		left.normalizedAdvanced() == right.normalizedAdvanced()
+		mediaFxAdvancedEqual(left.normalizedAdvanced(), right.normalizedAdvanced())
 }
 
 func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
@@ -201,6 +340,12 @@ func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
 	clone := *spec
 	if spec.Advanced != nil {
 		advanced := *spec.Advanced
+		advanced.Vignette = cloneMediaFxFloat(advanced.Vignette)
+		advanced.Grain = cloneMediaFxFloat(advanced.Grain)
+		advanced.Posterize = cloneMediaFxFloat(advanced.Posterize)
+		advanced.Negative = cloneMediaFxFloat(advanced.Negative)
+		advanced.Sharpen = cloneMediaFxFloat(advanced.Sharpen)
+		advanced.Edge = cloneMediaFxFloat(advanced.Edge)
 		clone.Advanced = &advanced
 	}
 	return &clone

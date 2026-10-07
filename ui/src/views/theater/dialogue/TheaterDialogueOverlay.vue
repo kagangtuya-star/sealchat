@@ -3,9 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSPro
 import { NButton, NIcon, NTooltip } from 'naive-ui'
 import { PlayerSkipForward, X } from '@vicons/tabler'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
-import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
-import { resolveTheaterMediaFxBinding } from '@/components/theater-presentation/theaterPresentationMedia'
-import { vMediaFx } from '@/features/media-fx/media-fx-dom'
+import TheaterMediaFxVisual from '@/components/theater-presentation/TheaterMediaFxVisual.vue'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { createDefaultTheaterPresentation, DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
@@ -377,11 +375,6 @@ const layerStyle = (layer: TheaterVisualLayer): CSSProperties => ({
 const frameStyle = computed<CSSProperties | undefined>(() => frame.value
   ? { ...layerStyle(frame.value), zIndex: '1' }
   : undefined)
-// Media FX lives on an inner wrapper: the layer element keeps its layout transform and
-// the portrait fade, and motion never pauses or replays dialogue playback.
-const mediaFxBinding = (layer: TheaterVisualLayer) => (
-  resolveTheaterMediaFxBinding(layer.mediaFx, layer.media, snapshot.value.reducedMotion)
-)
 
 const completeCurrent = () => {
   if (!typing.value) return
@@ -539,27 +532,28 @@ onBeforeUnmount(() => {
         @enter-cancelled="handlePortraitEnterCancelled"
       >
         <div v-if="current && !textOnly && portrait && !narration.enabled" :key="portraitKey" :data-portrait-key="portraitKey" :data-message-id="message?.messageId || ''" class="theater-dialogue-portrait" :style="portraitStyle">
-          <div v-media-fx="mediaFxBinding(portrait)" class="theater-media-fx">
-            <TheaterPresentationMedia
-              class="theater-dialogue-portrait__base"
-              :media="portrait.media"
-              :playback-rate="portrait.playbackRate"
-              :active="mediaActive"
-            />
-          </div>
+          <!-- Media FX lives on an inner wrapper: the layer element keeps its layout transform
+               and the portrait fade, and motion never pauses or replays dialogue playback. -->
+          <TheaterMediaFxVisual
+            :media="portrait.media"
+            :media-fx="portrait.mediaFx"
+            :reduced-motion="snapshot.reducedMotion"
+            :playback-rate="portrait.playbackRate"
+            :active="mediaActive"
+          />
           <div
             v-for="decoration in portraitDecorations"
             :key="decoration.id"
             class="theater-dialogue-portrait__decoration"
             :style="layerStyle(decoration)"
           >
-            <div v-media-fx="mediaFxBinding(decoration)" class="theater-media-fx">
-              <TheaterPresentationMedia
-                :media="decoration.media"
-                :playback-rate="decoration.playbackRate"
-                :active="mediaActive"
-              />
-            </div>
+            <TheaterMediaFxVisual
+              :media="decoration.media"
+              :media-fx="decoration.mediaFx"
+              :reduced-motion="snapshot.reducedMotion"
+              :playback-rate="decoration.playbackRate"
+              :active="mediaActive"
+            />
           </div>
         </div>
       </Transition>
@@ -567,13 +561,13 @@ onBeforeUnmount(() => {
       <section v-if="current" class="theater-dialogue-shell" :style="dialogueStyle">
         <div v-if="!textOnly && !frame && !narration.enabled" class="theater-dialogue-shell__default" />
         <div v-if="!textOnly && frame && !narration.enabled" class="theater-dialogue-frame" :style="frameStyle">
-          <div v-media-fx="mediaFxBinding(frame)" class="theater-media-fx">
-            <TheaterPresentationMedia
-              :media="frame.media"
-              :playback-rate="frame.playbackRate"
-              :active="mediaActive"
-            />
-          </div>
+          <TheaterMediaFxVisual
+            :media="frame.media"
+            :media-fx="frame.mediaFx"
+            :reduced-motion="snapshot.reducedMotion"
+            :playback-rate="frame.playbackRate"
+            :active="mediaActive"
+          />
         </div>
         <div class="theater-dialogue-content" @click="completeCurrent">
           <div v-if="textOnly || !narration.enabled" class="theater-dialogue-speaker" :style="speakerStyle">
@@ -680,7 +674,6 @@ onBeforeUnmount(() => {
 }
 
 .theater-dialogue-portrait { opacity: var(--theater-portrait-opacity, 1); }
-.theater-dialogue-portrait__base,
 .theater-dialogue-portrait__decoration { transition: transform 180ms ease; }
 .theater-dialogue-frame { transition: opacity 180ms ease, transform 180ms ease; }
 .theater-portrait-fade-enter-active,

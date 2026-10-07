@@ -7,6 +7,7 @@ import {
   MEDIA_FX_DURATION_RANGE,
   MEDIA_FX_FILTER_RANGES,
   MEDIA_FX_INTENSITY_RANGE,
+  MEDIA_FX_V2_VERSION,
   MEDIA_FX_VERSION,
   mediaFxMotionPresets,
   type MediaFxRange,
@@ -35,18 +36,37 @@ const mediaFxFilterSchema = z.strictObject({
   blurPx: rangeNumber(MEDIA_FX_FILTER_RANGES.blurPx),
 })
 
-const mediaFxAdvancedSchema = z.strictObject({
+// v2 advanced: exactly the three effects v2 knew. A v2 spec carrying any v3-only
+// effect is not a valid v2 document and is rejected by the strict object.
+const mediaFxV2AdvancedSchema = z.strictObject({
   pixelate: rangeNumber(MEDIA_FX_ADVANCED_RANGES.pixelate),
   rgbSplit: rangeNumber(MEDIA_FX_ADVANCED_RANGES.rgbSplit),
   scanline: rangeNumber(MEDIA_FX_ADVANCED_RANGES.scanline),
 })
 
-export const mediaFxV2SpecSchema = z.strictObject({
+const mediaFxAdvancedSchema = z.strictObject({
+  ...mediaFxV2AdvancedSchema.shape,
+  vignette: rangeNumber(MEDIA_FX_ADVANCED_RANGES.vignette),
+  grain: rangeNumber(MEDIA_FX_ADVANCED_RANGES.grain),
+  posterize: rangeNumber(MEDIA_FX_ADVANCED_RANGES.posterize),
+  negative: rangeNumber(MEDIA_FX_ADVANCED_RANGES.negative),
+  sharpen: rangeNumber(MEDIA_FX_ADVANCED_RANGES.sharpen),
+  edge: rangeNumber(MEDIA_FX_ADVANCED_RANGES.edge),
+})
+
+export const mediaFxV3SpecSchema = z.strictObject({
   version: z.literal(MEDIA_FX_VERSION),
   motion: mediaFxMotionSchema,
   filter: mediaFxFilterSchema,
   advanced: mediaFxAdvancedSchema,
 }) satisfies z.ZodType<MediaFxSpec>
+
+export const mediaFxV2SpecSchema = z.strictObject({
+  version: z.literal(MEDIA_FX_V2_VERSION),
+  motion: mediaFxMotionSchema,
+  filter: mediaFxFilterSchema,
+  advanced: mediaFxV2AdvancedSchema,
+})
 
 // Historical v1 documents (TheaterPresentation v3, stage surfaces, bridge payloads)
 // stay strict: a v1 spec carrying `advanced` or any unknown field is rejected.
@@ -56,9 +76,16 @@ export const mediaFxV1SpecSchema = z.strictObject({
   filter: mediaFxFilterSchema,
 })
 
-// Accepts strict v2, or strict v1 upgraded losslessly to the canonical v2 shape.
+// Accepts strict v3, or strict v1 / v2 upgraded losslessly to the canonical v3 shape
+// (effects the old version did not know are off).
 export const mediaFxSpecSchema = z.union([
-  mediaFxV2SpecSchema,
+  mediaFxV3SpecSchema,
+  mediaFxV2SpecSchema.transform((spec): MediaFxSpec => ({
+    version: MEDIA_FX_VERSION,
+    motion: spec.motion,
+    filter: spec.filter,
+    advanced: { ...createDefaultMediaFxAdvanced(), ...spec.advanced },
+  })),
   mediaFxV1SpecSchema.transform((spec): MediaFxSpec => ({
     version: MEDIA_FX_VERSION,
     motion: spec.motion,

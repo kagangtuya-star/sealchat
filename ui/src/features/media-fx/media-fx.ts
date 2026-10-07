@@ -5,9 +5,11 @@
 // Every value is a whitelisted enum or a clamped finite number. Never persist or
 // execute caller-provided CSS filter strings, animation names or keyframes.
 
-export const MEDIA_FX_VERSION = 2 as const
-// v1 specs carry no `advanced`; they are read losslessly and upgraded to v2.
+export const MEDIA_FX_VERSION = 3 as const
+// v1 specs carry no `advanced`; v2 specs carry only the first three advanced effects.
+// Both are read losslessly and upgraded to v3 with the missing effects off.
 export const LEGACY_MEDIA_FX_VERSION = 1 as const
+export const MEDIA_FX_V2_VERSION = 2 as const
 
 export const mediaFxMotionPresets = [
   'none',
@@ -39,12 +41,20 @@ export interface MediaFxFilter {
   blurPx: number
 }
 
-// Advanced pixel effects. Every value is a normalized 0..1 strength; renderers map it
-// to concrete pixels themselves, so no renderer constant is ever persisted.
+// Advanced static pixel effects. Every value is a normalized 0..1 strength where 0 means
+// off; renderers map it to concrete pixels / levels / kernels themselves, so no renderer
+// constant is ever persisted. pixelate / rgbSplit / scanline exist since v2, the rest
+// since v3.
 export interface MediaFxAdvanced {
   pixelate: number
   rgbSplit: number
   scanline: number
+  vignette: number
+  grain: number
+  posterize: number
+  negative: number
+  sharpen: number
+  edge: number
 }
 
 export interface MediaFxSpec {
@@ -76,13 +86,23 @@ export const MEDIA_FX_FILTER_RANGES: Readonly<Record<MediaFxFilterKey, MediaFxRa
 
 export const mediaFxFilterKeys = Object.keys(MEDIA_FX_FILTER_RANGES) as MediaFxFilterKey[]
 
+const ADVANCED_STRENGTH_RANGE: Readonly<MediaFxRange> = { min: 0, max: 1, step: 0.01, defaultValue: 0 }
+
 export const MEDIA_FX_ADVANCED_RANGES: Readonly<Record<MediaFxAdvancedKey, MediaFxRange>> = {
-  pixelate: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
-  rgbSplit: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
-  scanline: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
+  pixelate: ADVANCED_STRENGTH_RANGE,
+  rgbSplit: ADVANCED_STRENGTH_RANGE,
+  scanline: ADVANCED_STRENGTH_RANGE,
+  vignette: ADVANCED_STRENGTH_RANGE,
+  grain: ADVANCED_STRENGTH_RANGE,
+  posterize: ADVANCED_STRENGTH_RANGE,
+  negative: ADVANCED_STRENGTH_RANGE,
+  sharpen: ADVANCED_STRENGTH_RANGE,
+  edge: ADVANCED_STRENGTH_RANGE,
 }
 
 export const mediaFxAdvancedKeys = Object.keys(MEDIA_FX_ADVANCED_RANGES) as MediaFxAdvancedKey[]
+// The advanced fields a v2 spec may carry; every other key is v3-only.
+export const mediaFxV2AdvancedKeys = ['pixelate', 'rgbSplit', 'scanline'] as const satisfies readonly MediaFxAdvancedKey[]
 
 export const MEDIA_FX_INTENSITY_RANGE: Readonly<MediaFxRange> = { min: 0, max: 1, step: 0.01, defaultValue: 0.5 }
 export const MEDIA_FX_DURATION_RANGE: Readonly<MediaFxRange> = { min: 300, max: 20_000, step: 10, defaultValue: 4_000 }
@@ -276,6 +296,12 @@ export const createDefaultMediaFxAdvanced = (): MediaFxAdvanced => ({
   pixelate: 0,
   rgbSplit: 0,
   scanline: 0,
+  vignette: 0,
+  grain: 0,
+  posterize: 0,
+  negative: 0,
+  sharpen: 0,
+  edge: 0,
 })
 
 export const createDefaultMediaFxSpec = (): MediaFxSpec => ({
@@ -296,10 +322,14 @@ export const normalizeMediaFxFilter = (input: unknown): MediaFxFilter => {
   return filter
 }
 
-export const normalizeMediaFxAdvanced = (input: unknown): MediaFxAdvanced => {
+// `keys` limits which fields are read (v2 data only knew three); the rest stay off.
+export const normalizeMediaFxAdvanced = (
+  input: unknown,
+  keys: readonly MediaFxAdvancedKey[] = mediaFxAdvancedKeys,
+): MediaFxAdvanced => {
   const value = isPlainObject(input) ? input : {}
   const advanced = createDefaultMediaFxAdvanced()
-  mediaFxAdvancedKeys.forEach((key) => {
+  keys.forEach((key) => {
     const range = MEDIA_FX_ADVANCED_RANGES[key]
     const normalized = roundTo(finiteInRange(value[key], range), 3)
     advanced[key] = Math.abs(normalized - range.defaultValue) < FILTER_EPSILON ? range.defaultValue : normalized
@@ -323,18 +353,23 @@ export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
   }
 }
 
-// Unknown fields and versions are dropped; the result only contains whitelisted keys.
-// v1 (and version-less historical data) keeps motion / filter and gains a default
-// `advanced`, so upgrading the spec never loses a stored effect.
+// Unknown fields and versions are dropped; the result is always canonical v3 with only
+// whitelisted keys. v1 (and version-less historical data) keeps motion / filter and
+// gains a default `advanced`; v2 keeps its three advanced effects and only those, so
+// upgrading the spec never loses a stored effect nor reads fields v2 never had.
 export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
   const value = isPlainObject(input) ? input : {}
   const legacy = value.version === undefined || value.version === LEGACY_MEDIA_FX_VERSION
-  if (!legacy && value.version !== MEDIA_FX_VERSION) return createDefaultMediaFxSpec()
+  if (!legacy && value.version !== MEDIA_FX_V2_VERSION && value.version !== MEDIA_FX_VERSION) {
+    return createDefaultMediaFxSpec()
+  }
   return {
     version: MEDIA_FX_VERSION,
     motion: normalizeMediaFxMotion(value.motion),
     filter: normalizeMediaFxFilter(value.filter),
-    advanced: legacy ? createDefaultMediaFxAdvanced() : normalizeMediaFxAdvanced(value.advanced),
+    advanced: legacy
+      ? createDefaultMediaFxAdvanced()
+      : normalizeMediaFxAdvanced(value.advanced, value.version === MEDIA_FX_V2_VERSION ? mediaFxV2AdvancedKeys : mediaFxAdvancedKeys),
   }
 }
 
@@ -421,6 +456,10 @@ export const mediaFxAdvancedPresets: readonly MediaFxAdvancedPreset[] = [
   { id: 'low-res', label: '低像素', advanced: { pixelate: 0.45 } },
   { id: 'glitch', label: '数字故障', advanced: { rgbSplit: 0.35, scanline: 0.18 } },
   { id: 'old-tv', label: '旧电视', advanced: { rgbSplit: 0.08, scanline: 0.55 } },
+  { id: 'film', label: '胶片', advanced: { grain: 0.4, vignette: 0.5, sharpen: 0.15 } },
+  { id: 'comic', label: '漫画', advanced: { posterize: 0.7, sharpen: 0.5 } },
+  { id: 'anomaly', label: '异常视觉', advanced: { negative: 1, rgbSplit: 0.3, grain: 0.25 } },
+  { id: 'psychic', label: '灵视', advanced: { edge: 0.85, scanline: 0.3, vignette: 0.55 } },
 ]
 
 export const mediaFxAdvancedFromPreset = (presetId: string): MediaFxAdvanced | null => {
@@ -481,8 +520,8 @@ export type MediaFxRendererKind = 'dom' | 'konva' | 'bake'
 // Animated media is excluded from live filters so the Konva static cache path never
 // freezes a frame and all live surfaces share one rule. Bake never has motion.
 // Advanced effects stay off unless the consumer opts in (Stage static images, static
-// non-tile Stage surfaces, the image editor); an unsupported renderer keeps the data
-// untouched, it just does not render it.
+// non-tile Stage surfaces, the image editor, TheaterPresentation static image layers);
+// an unsupported renderer keeps the data untouched, it just does not render it.
 export const resolveMediaFxCapabilities = (
   renderer: MediaFxRendererKind,
   animatedMedia = false,

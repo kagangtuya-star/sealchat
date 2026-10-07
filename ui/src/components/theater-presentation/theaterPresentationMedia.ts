@@ -1,4 +1,4 @@
-import { resolveMediaFxCapabilities } from '../../features/media-fx/media-fx'
+import { resolveMediaFxCapabilities, type MediaFxCapabilities } from '../../features/media-fx/media-fx'
 import type { MediaFxDirectiveValue } from '../../features/media-fx/media-fx-dom'
 import type { TheaterMediaRef } from '../../types/theaterPresentation'
 
@@ -20,6 +20,19 @@ export const resolveTheaterMediaCandidates = (
 }
 
 export const isAnimatedTheaterMedia = (media: TheaterMediaRef | null | undefined) => Boolean(media && media.kind !== 'static_image')
+
+// Capabilities follow the stored media kind, never the candidate currently shown: an
+// animated / video layer that falls back to its static PNG stays without advanced
+// effects. Advanced additionally needs page-level GPU availability; when it is off the
+// stored advanced values are kept, only not rendered.
+export const resolveTheaterMediaFxCapabilities = (
+  media: TheaterMediaRef | null | undefined,
+  gpuAvailable: boolean,
+): MediaFxCapabilities => resolveMediaFxCapabilities(
+  'dom',
+  isAnimatedTheaterMedia(media),
+  gpuAvailable && media?.kind === 'static_image',
+)
 
 // v-media-fx binding for one theater visual layer. Animated media keeps the Media FX v1
 // capability rule (motion only, no live filters); reduced motion stops motion but keeps

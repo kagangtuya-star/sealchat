@@ -103,6 +103,8 @@ async function run() {
   bakeMediaFxToCanvas(source, size, withFx({ filter: filter({ blurPx: 4 }), advanced: advanced({ pixelate: 0.5 }) }), { pixelRatio: 0.25 })
   assert.equal(env.draws.at(-1).filter, 'blur(1px)', 'preview pixel ratio scales blur')
   assert.equal(gpu.calls.at(-1).options.pixelRatio, 0.25, 'preview pixel ratio reaches the GPU mapping')
+  bakeMediaFxToCanvas(source, size, withFx({ advanced: advanced({ posterize: 0.6, edge: 0.4 }) }))
+  assert.deepEqual(gpu.calls.at(-1).advanced, advanced({ posterize: 0.6, edge: 0.4 }), 'v3 effects reach the shared GPU bake')
 
   const callsBefore = gpu.calls.length
   canvas = bakeMediaFxToCanvas(source, size, withFx({ motion }))
@@ -139,6 +141,8 @@ async function run() {
   assert.equal(mediaFxStaticSignature({ ...base, motion: { ...motion, intensity: 0.2, durationMs: 900, loop: false } }), signature)
   assert.notEqual(mediaFxStaticSignature({ ...base, filter: filter({ brightness: 1.3 }) }), signature)
   assert.notEqual(mediaFxStaticSignature({ ...base, advanced: advanced({ pixelate: 0.31 }) }), signature)
+  assert.notEqual(mediaFxStaticSignature({ ...base, advanced: advanced({ pixelate: 0.3, sharpen: 0.2 }) }), signature, 'v3 effects re-rasterize the preview')
+  assert.equal(mediaFxStaticPreviewSpec({ ...base, advanced: advanced({ negative: 0.7 }) }, { filters: true, advanced: true }).advanced.negative, 0.7)
   const staticOnly = mediaFxStaticPreviewSpec({ ...base, motion }, { filters: true, advanced: true })
   assert.equal(staticOnly.motion.preset, 'none', 'static preview spec never carries motion')
   assert.equal(staticOnly.advanced.pixelate, 0.3)
@@ -261,6 +265,11 @@ async function run() {
   assert.equal(bakeCalls.length, 1)
   assert.equal(bakeCalls[0][3].requireAdvanced, true, 'bake confirm requires advanced')
   assert.equal(result.mediaFx, null)
+  bake.setMediaFx(withFx({ advanced: advanced({ vignette: 0.5, grain: 0.3 }) }))
+  await bake.exportEditedFile({})
+  assert.equal(bakeCalls.length, 2, 'a v3-only effect is baked')
+  assert.equal(bakeCalls[1][2].advanced.grain, 0.3)
+  assert.equal(bakeCalls[1][3].requireAdvanced, true, 'v3 effects are required in a bake too')
   gpu.available = false
   await assert.rejects(() => bake.exportEditedFile({}), MediaFxAdvancedBakeError, 'GPU failure never silently drops advanced')
   assert.equal(bake.isSaving.value, false, 'saving state is released after a failed bake')

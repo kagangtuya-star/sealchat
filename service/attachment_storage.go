@@ -114,6 +114,17 @@ func ResolveLocalAttachmentPath(objectKey string) (string, error) {
 	return manager.ResolveLocalPath(objectKey)
 }
 
+// OpenAttachmentRead returns stored bytes; callers must enforce attachment access.
+func OpenAttachmentRead(ctx context.Context, att *model.AttachmentModel) (io.ReadCloser, error) {
+	if att == nil || strings.TrimSpace(att.ObjectKey) == "" {
+		return nil, errors.New("附件文件不存在")
+	}
+	if att.IsTTSManaged() {
+		return nil, errors.New("受保护的语音资源")
+	}
+	return GetStorageManager().OpenRead(ctx, convertModelToBackend(att.StorageType), att.ObjectKey)
+}
+
 func attachmentHistoricalUploadRoots() []string {
 	roots := make([]string, 0, 4)
 	seen := map[string]struct{}{}

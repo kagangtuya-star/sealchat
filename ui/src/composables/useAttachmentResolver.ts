@@ -80,6 +80,19 @@ export const fetchAttachmentMetaById = async (attachmentId: string): Promise<Att
   return attachmentMetaStore[normalized] || null;
 };
 
+export const fetchAttachmentBlobById = async (
+  attachmentId: string,
+  options: { proxy?: boolean } = {},
+): Promise<Blob | null> => {
+  const normalized = normalizeAttachmentId(attachmentId);
+  if (!normalized) return null;
+  const resp = await api.get<Blob>(`api/v1/attachment/${encodeURIComponent(normalized)}`, {
+    responseType: 'blob',
+    ...(options.proxy ? { params: { proxy: '1' } } : {}),
+  });
+  return resp.data || null;
+};
+
 export const fetchAttachmentFileById = async (attachmentId: string, fallbackName?: string): Promise<File | null> => {
   const normalized = normalizeAttachmentId(attachmentId);
   if (!normalized) {
@@ -87,10 +100,7 @@ export const fetchAttachmentFileById = async (attachmentId: string, fallbackName
   }
 
   const meta = await fetchAttachmentMetaById(normalized);
-  const resp = await api.get<Blob>(`api/v1/attachment/${normalized}`, {
-    responseType: 'blob',
-  });
-  const blob = resp.data;
+  const blob = await fetchAttachmentBlobById(normalized);
   if (!blob) {
     return null;
   }

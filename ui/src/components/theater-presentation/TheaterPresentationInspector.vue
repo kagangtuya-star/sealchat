@@ -5,11 +5,12 @@ import type { SelectOption } from 'naive-ui'
 import { listPlatformFonts } from '@/services/font/platformFontApi'
 import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
-import { compactMediaFxSpec, mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import { compactMediaFxSpec, mediaFxHasContent, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import type { TheaterPresentation, TheaterTransform, TheaterVisualLayer, TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSectionMode, TheaterSelection } from './theaterPresentationEditorState'
-import { isAnimatedTheaterMedia } from './theaterPresentationMedia'
+import { resolveTheaterMediaFxCapabilities } from './theaterPresentationMedia'
 
 const props = defineProps<{
   draft: TheaterPresentation
@@ -84,7 +85,14 @@ const mediaFxMedia = computed(() => {
   if (target?.kind === 'decoration') return props.draft.portraitDecorations.find((item) => item.id === target.id)?.media
   return props.draft.portrait?.media
 })
-const mediaFxCapabilities = computed(() => resolveMediaFxCapabilities('dom', isAnimatedTheaterMedia(mediaFxMedia.value)))
+// Same capability rule as the rendering host: advanced only for static images while the
+// GPU is available; unsupported advanced data is shown read-only and kept.
+const mediaFxGpuAvailable = ref(mediaFxGpuSupported())
+const unsubscribeMediaFxGpuAvailability = subscribeMediaFxGpuAvailability((available) => {
+  mediaFxGpuAvailable.value = available
+})
+onBeforeUnmount(unsubscribeMediaFxGpuAvailability)
+const mediaFxCapabilities = computed(() => resolveTheaterMediaFxCapabilities(mediaFxMedia.value, mediaFxGpuAvailable.value))
 let mediaFxEditing = false
 const beginMediaFxEdit = () => {
   if (mediaFxEditing) return

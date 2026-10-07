@@ -519,7 +519,8 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	}
 	for name, raw := range map[string]string{
 		"mediaFx v2 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
-		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":3`, 1),
+		"mediaFx v3 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":3`, 1),
+		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":4`, 1),
 		"mediaFx preset":  strings.Replace(theaterPackageWorldPresentationJSON, `"breathe"`, `"spin"`, 1),
 		"mediaFx range":   strings.Replace(theaterPackageWorldPresentationJSON, `"blurPx":0}`, `"blurPx":99}`, 1),
 		"unknown field":   strings.Replace(theaterPackageWorldPresentationJSON, `{"portrait"`, `{"script":"x","portrait"`, 1),
@@ -543,6 +544,20 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	}
 	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v2Raw, `"scanline":0.2`, `"scanline":0.2,"shader":"x"`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "shader"`) {
 		t.Fatalf("unknown advanced field must be rejected, got %v", err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v2Raw, `"scanline":0.2`, `"scanline":0.2,"grain":0`, 1))); err == nil {
+		t.Fatal("v2 mediaFx carrying a v3-only effect must be rejected")
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v2Raw, `"scanline":0.2`, `"scanline":0.2,"grain":null`, 1))); err == nil {
+		t.Fatal("v2 mediaFx carrying a null v3-only effect must be rejected")
+	}
+	v3Raw := strings.Replace(strings.Replace(v2Raw, `"version":2`, `"version":3`, 1),
+		`"scanline":0.2`, `"scanline":0.2,"vignette":0.4,"grain":0,"posterize":0,"negative":0,"sharpen":0,"edge":0.3`, 1)
+	if v3Normalized, err := normalizeTheaterPackageWorldPresentation([]byte(v3Raw)); err != nil || !strings.Contains(string(v3Normalized), `"grain":0,`) || !strings.Contains(string(v3Normalized), `"edge":0.3`) {
+		t.Fatalf("valid v3 world presentation rejected or lost advanced: %s (%v)", v3Normalized, err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3`, `"edge":0.3,"bloom":1`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "bloom"`) {
+		t.Fatalf("unknown v3 advanced field must be rejected, got %v", err)
 	}
 
 	dialogue := protocol.DefaultTheaterDialogueStyle()

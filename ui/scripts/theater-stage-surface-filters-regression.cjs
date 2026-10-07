@@ -27,7 +27,7 @@ async function run() {
   }).join('\n')
   const mediaFxModule = { exports: {} }
   new Function('exports', compile(fs.readFileSync(path.join(__dirname, '../src/features/media-fx/media-fx.ts'), 'utf8')))(mediaFxModule.exports)
-  const { createDefaultMediaFxSpec, mediaFxFilterToCss, mediaFxAdvancedHasContent } = mediaFxModule.exports
+  const { createDefaultMediaFxSpec, mediaFxFilterToCss, mediaFxAdvancedHasContent, mediaFxAdvancedKeys } = mediaFxModule.exports
   let supported = true
   // GPU adapter stub: records the pixels it receives so ordering can be asserted.
   let gpuSupported = true
@@ -40,7 +40,8 @@ async function run() {
     step.gpu = true
     return step
   }
-  const mediaFxAdvancedSignature = advanced => `${advanced.pixelate}|${advanced.rgbSplit}|${advanced.scanline}`
+  // Same shape as media-fx-konva's signature: every advanced key, in key order.
+  const mediaFxAdvancedSignature = advanced => mediaFxAdvancedKeys.map(key => advanced[key]).join('|')
   const cssDraws = []
   // Canvas calls are observed; browser pixel rendering is not simulated.
   const document = { createElement: () => {
@@ -179,6 +180,10 @@ async function run() {
   update(slot, source, box)
   assert.equal(caches, cachesBefore + 2, 'advanced change rebuilds the cache')
   assert.equal(gpuCreates.at(-1).advanced.pixelate, 0.41)
+  slot.style.mediaFx.advanced = { ...createDefaultMediaFxSpec().advanced, pixelate: 0.41, vignette: 0.5 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 3, 'a v3 advanced effect is part of the surface cache signature')
+  assert.equal(gpuCreates.at(-1).advanced.vignette, 0.5, 'v3 effects reach the shared GPU step')
 
   slot.style.brightness = 1
   slot.style.blurPx = 0

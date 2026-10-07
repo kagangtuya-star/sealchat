@@ -5,7 +5,7 @@ import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
 import { vMediaFx } from '@/features/media-fx/media-fx-dom'
 import { resolveTheaterReducedMotion } from '@/views/theater/shared/theater-reduced-motion'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from './theaterPresentationEditorState'
-import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
+import TheaterMediaFxVisual from './TheaterMediaFxVisual.vue'
 import { resolveTheaterMediaFxBinding } from './theaterPresentationMedia'
 import './theaterComposition.css'
 
@@ -209,7 +209,6 @@ const selectedMediaAspect = (target: TheaterSelection) => {
 
 // Same reduced-motion source as the theater dialogue runtime, so preview and play match.
 const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
-const mediaFxBinding = (layer: TheaterVisualLayer) => resolveTheaterMediaFxBinding(layer.mediaFx, layer.media, reducedMotion)
 
 const layerStyle = (layer: TheaterVisualLayer) => ({
   ...resolveTheaterTransformStyle(layer.transform),
@@ -295,14 +294,22 @@ const narrationStyle = computed<CSSProperties>(() => ({
           :style="controllerAreaStyle"
           @pointerdown="beginGesture($event, 'drag', { kind: 'portrait' }, controllerArea)"
         >
+          <TheaterMediaFxVisual
+            v-if="controllerPortraitStyle?.enabled && draft.portrait"
+            :media="draft.portrait.media"
+            :media-fx="controllerPortraitStyle.mediaFx"
+            :reduced-motion="reducedMotion"
+            :playback-rate="controllerPortraitStyle.playbackRate"
+            :style="{ mixBlendMode: controllerPortraitStyle.blendMode }"
+          />
+          <!-- Placeholder style preview: DOM basic filter / motion only, never advanced. -->
           <div
-            v-if="controllerPortraitStyle?.enabled"
+            v-else-if="controllerPortraitStyle?.enabled"
             v-media-fx="resolveTheaterMediaFxBinding(controllerPortraitStyle.mediaFx, draft.portrait?.media, reducedMotion)"
             class="theater-media-fx"
             :style="{ mixBlendMode: controllerPortraitStyle.blendMode }"
           >
-            <TheaterPresentationMedia v-if="draft.portrait" :media="draft.portrait.media" :playback-rate="controllerPortraitStyle.playbackRate" />
-            <svg v-else width="100%" height="100%" viewBox="0 0 200 300" :preserveAspectRatio="controllerPortraitStyle.fit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'" role="img" aria-label="公共立绘样式预览">
+            <svg width="100%" height="100%" viewBox="0 0 200 300" :preserveAspectRatio="controllerPortraitStyle.fit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'" role="img" aria-label="公共立绘样式预览">
               <circle cx="100" cy="65" r="45" fill="#f5c49c" />
               <path d="M20 300V180a80 80 0 0 1 160 0v120Z" fill="#60a5fa" />
               <path d="m70 135 30 35 30-35" fill="#f5c49c" />
@@ -322,9 +329,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
             :style="layerStyle(layer)"
             @pointerdown="beginGesture($event, 'drag', { kind: 'decoration', id: layer.id }, layer.transform)"
           >
-            <div v-media-fx="mediaFxBinding(layer)" class="theater-media-fx">
-              <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
-            </div>
+            <TheaterMediaFxVisual :media="layer.media" :media-fx="layer.mediaFx" :reduced-motion="reducedMotion" :playback-rate="layer.playbackRate" />
             <template v-if="sameSelection(selection, { kind: 'decoration', id: layer.id })">
               <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'decoration', id: layer.id }, layer.transform, corner)" />
               <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'decoration', id: layer.id }, layer.transform)" />
@@ -341,9 +346,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
           :style="portraitRootStyle"
           @pointerdown="draft.portrait && beginGesture($event, 'drag', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait.transform)"
         >
-          <div v-if="draft.portrait" v-media-fx="mediaFxBinding(draft.portrait)" class="theater-media-fx">
-            <TheaterPresentationMedia :media="draft.portrait.media" :playback-rate="draft.portrait.playbackRate" />
-          </div>
+          <TheaterMediaFxVisual v-if="draft.portrait" :media="draft.portrait.media" :media-fx="draft.portrait.mediaFx" :reduced-motion="reducedMotion" :playback-rate="draft.portrait.playbackRate" />
           <template v-if="draft.portrait && sameSelection(selection, { kind: 'portrait' })">
             <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait!.transform, corner)" />
             <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'portrait' }, multiplayerPortraitTransform || draft.portrait!.transform)" />
@@ -357,9 +360,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
             :style="layerStyle(layer)"
             @pointerdown="!multiplayerPortraitTransform && beginGesture($event, 'drag', { kind: 'decoration', id: layer.id }, layer.transform)"
           >
-            <div v-media-fx="mediaFxBinding(layer)" class="theater-media-fx">
-              <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
-            </div>
+            <TheaterMediaFxVisual :media="layer.media" :media-fx="layer.mediaFx" :reduced-motion="reducedMotion" :playback-rate="layer.playbackRate" />
             <template v-if="!multiplayerPortraitTransform && sameSelection(selection, { kind: 'decoration', id: layer.id })">
               <button v-for="corner in resizeCorners" :key="corner" class="theater-preview__handle" :class="`theater-preview__handle--${corner}`" :aria-label="`从 ${corner} 调整大小`" @pointerdown="beginGesture($event, 'resize', { kind: 'decoration', id: layer.id }, layer.transform, corner)" />
               <button class="theater-preview__handle theater-preview__handle--rotate" aria-label="旋转" @pointerdown="beginGesture($event, 'rotate', { kind: 'decoration', id: layer.id }, layer.transform)" />
@@ -381,9 +382,7 @@ const narrationStyle = computed<CSSProperties>(() => ({
           class="theater-preview__frame"
           :style="dialogueFrameStyle(draft.dialogue.frame)"
         >
-          <div v-media-fx="mediaFxBinding(draft.dialogue.frame)" class="theater-media-fx">
-            <TheaterPresentationMedia :media="draft.dialogue.frame.media" :playback-rate="draft.dialogue.frame.playbackRate" />
-          </div>
+          <TheaterMediaFxVisual :media="draft.dialogue.frame.media" :media-fx="draft.dialogue.frame.mediaFx" :reduced-motion="reducedMotion" :playback-rate="draft.dialogue.frame.playbackRate" />
         </div>
         <div
           data-transform-target

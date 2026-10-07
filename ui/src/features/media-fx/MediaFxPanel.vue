@@ -81,10 +81,36 @@ const filterRows: Array<{ key: MediaFxFilterKey, label: string }> = [
   { key: 'blurPx', label: '模糊' },
 ]
 
-const advancedRows: Array<{ key: MediaFxAdvancedKey, label: string }> = [
-  { key: 'pixelate', label: '像素化' },
-  { key: 'rgbSplit', label: '色差' },
-  { key: 'scanline', label: '扫描线' },
+// Nine advanced effects are grouped by what they do to the picture so the section stays
+// scannable; grouping is UI-only and does not affect the fixed GPU effect order.
+const advancedGroups: Array<{ id: string, label: string, rows: Array<{ key: MediaFxAdvancedKey, label: string }> }> = [
+  {
+    id: 'screen',
+    label: '数字 / 屏幕',
+    rows: [
+      { key: 'pixelate', label: '像素化' },
+      { key: 'rgbSplit', label: '色差' },
+      { key: 'scanline', label: '扫描线' },
+    ],
+  },
+  {
+    id: 'texture',
+    label: '画面 / 质感',
+    rows: [
+      { key: 'vignette', label: '暗角' },
+      { key: 'grain', label: '颗粒' },
+      { key: 'sharpen', label: '锐化' },
+    ],
+  },
+  {
+    id: 'stylize',
+    label: '风格化',
+    rows: [
+      { key: 'posterize', label: '海报化' },
+      { key: 'negative', label: '负片' },
+      { key: 'edge', label: '边缘化' },
+    ],
+  },
 ]
 
 const motionOptions: Array<{ value: MediaFxMotionPreset, label: string }> = [
@@ -245,8 +271,9 @@ const resetAll = () => {
           @click="applyAdvancedPreset(preset.id)"
         >{{ preset.label }}</button>
       </div>
-      <div class="media-fx-panel__rows">
-        <div v-for="row in advancedRows" :key="row.key" class="media-fx-panel__row">
+      <div v-for="group in advancedGroups" :key="group.id" class="media-fx-panel__rows">
+        <span class="media-fx-panel__group">{{ group.label }}</span>
+        <div v-for="row in group.rows" :key="row.key" class="media-fx-panel__row">
           <span class="media-fx-panel__label" title="双击恢复默认" @dblclick="resetAdvancedValue(row.key)">{{ row.label }}</span>
           <n-slider
             :value="spec.advanced[row.key]"
@@ -377,6 +404,7 @@ const resetAll = () => {
 .media-fx-panel__chip.is-active { border-color: var(--media-fx-accent); background: color-mix(in srgb, var(--media-fx-accent) 18%, transparent); }
 .media-fx-panel__chip:disabled { cursor: not-allowed; opacity: .5; }
 .media-fx-panel__rows { display: grid; gap: 2px; }
+.media-fx-panel__group { font-size: 11px; opacity: .6; }
 .media-fx-panel__row { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) 3.6em 18px; align-items: center; gap: 6px; min-width: 0; }
 .media-fx-panel__label { overflow: hidden; opacity: .75; white-space: nowrap; user-select: none; }
 .media-fx-panel__value { font-variant-numeric: tabular-nums; opacity: .75; text-align: right; white-space: nowrap; }
