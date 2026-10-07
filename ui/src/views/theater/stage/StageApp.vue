@@ -114,7 +114,7 @@ import {
 } from '../shared/stage-types'
 import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult, type StageSequenceTriggeredPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
-import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
+import { compareStageLayersBottomToTop, compareStageLayersTopToBottom, planStageObjectRenderBands } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
 import { stageSceneTransitionKeyframes, stageSceneTransitionOptions } from './stage-scene-transition'
@@ -2481,9 +2481,7 @@ const actionId = () => {
 let stage: Konva.Stage | null = null
 let backgroundLayer: Konva.Layer | null = null
 let worldLayer: Konva.Layer | null = null
-let worldOverlayLayer: Konva.Layer | null = null
-let foregroundLayer: Konva.Layer | null = null
-let gridTopLayer: Konva.Layer | null = null
+let topVisualLayer: Konva.Layer | null = null
 let interactionLayer: Konva.Layer | null = null
 let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
@@ -2492,11 +2490,10 @@ let foregroundCameraGroup: Konva.Group | null = null
 let gridTopCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
-const objectRootLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group }>()
+// Band 0 belongs to worldLayer/worldCameraGroup/objectRoot and is never destroyed here.
+const extraObjectRenderBands: Array<{ layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }> = []
 const rootStackingOrder = ref<Record<string, number>>({})
-const OBJECT_ROOT_LAYER_Z_BASE = 100
-const WORLD_OVERLAY_LAYER_Z = 8990
-const GRID_TOP_LAYER_Z = 9990
+const TOP_VISUAL_LAYER_Z = 9990
 let sceneMorphStage: Konva.Stage | null = null
 const sceneMorphLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }>()
 const sceneMorphTextCameras = new Map<string, HTMLDivElement>()
@@ -2725,7 +2722,7 @@ const clearPointerTrace = (traceId: string) => {
   visual.group.destroy()
   pointerTraceVisuals.delete(traceId)
   localPointerTraceIds.delete(traceId)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const keepPointerTrace = (traceId: string) => {
@@ -2769,7 +2766,7 @@ const appendPointerTraceVisual = (trace: StagePointerTrace) => {
     visual.line.points([...visual.line.points(), ...trace.points])
   }
   keepPointerTrace(trace.traceId)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const appendPointerTrace = (trace: StagePointerTrace) => {
@@ -2863,15 +2860,16 @@ let batchTransformRootIds: string[] | null = null
 const drawWorldLayers = (immediate = false) => {
   if (immediate) {
     worldLayer?.draw()
-    objectRootLayers.forEach(({ layer }) => layer.draw())
-    worldOverlayLayer?.draw()
-    gridTopLayer?.draw()
+    extraObjectRenderBands.forEach(({ layer }) => layer.draw())
     return
   }
   worldLayer?.batchDraw()
-  objectRootLayers.forEach(({ layer }) => layer.batchDraw())
-  worldOverlayLayer?.batchDraw()
-  gridTopLayer?.batchDraw()
+  extraObjectRenderBands.forEach(({ layer }) => layer.batchDraw())
+}
+
+const drawTopVisualLayer = (immediate = false) => {
+  if (immediate) topVisualLayer?.draw()
+  else topVisualLayer?.batchDraw()
 }
 
 // group: layout / clip only. mediaFxGroup: Media FX motion only.
@@ -4329,13 +4327,13 @@ const applyCamera = () => {
   sceneMorphTextCameras.forEach((camera) => {
     camera.style.transform = `translate(${position.x}px, ${position.y}px) scale(${scale.x})`
   })
-  objectRootLayers.forEach(({ camera }) => {
+  extraObjectRenderBands.forEach(({ camera }) => {
     camera.position(position)
     camera.scale(scale)
   })
   // Background camera stays fixed; camera movement does not invalidate its canvas.
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   interactionLayer?.batchDraw()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
 }
@@ -4540,14 +4538,12 @@ const syncMediaAnimation = () => {
     mediaAnimation?.stop()
     return
   }
-  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer && gridTopLayer) {
+  if (!mediaAnimation && backgroundLayer && worldLayer && topVisualLayer) {
     mediaAnimation = new Konva.Animation(() => {}, [
       backgroundLayer,
       worldLayer,
-      ...[...objectRootLayers.values()].map(({ layer }) => layer),
-      worldOverlayLayer,
-      foregroundLayer,
-      gridTopLayer,
+      ...extraObjectRenderBands.map(({ layer }) => layer),
+      topVisualLayer,
     ])
   }
   mediaAnimation?.start()
@@ -5185,7 +5181,7 @@ const finishSceneMorph = () => {
   clearSceneCompositeTransition()
   backgroundLayer?.batchDraw()
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
   if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
   else if (composite?.started) playPendingSceneEntrances(composite.sceneId)
@@ -5350,7 +5346,7 @@ const primeSceneMorphTargets = () => {
   })
   backgroundLayer?.batchDraw()
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
 }
 
@@ -5490,8 +5486,8 @@ const startSceneMorph = (sceneId: string) => {
       transition.overlay = null
       visual.style.visibility = 'visible'
       backgroundLayer?.draw()
-      foregroundLayer?.draw()
       drawWorldLayers(true)
+      drawTopVisualLayer(true)
       startSharedElementMorph(sceneId, openDurationMs, false)
       const openAnimations = curtainPanels.map((panel) => panel.animate([
         { transform: 'translateX(0)' },
@@ -5525,8 +5521,8 @@ const startSceneMorph = (sceneId: string) => {
   }
   visual.style.visibility = 'visible'
   backgroundLayer?.draw()
-  foregroundLayer?.draw()
   drawWorldLayers(true)
+  drawTopVisualLayer(true)
   if (!transition.animations.length) {
     const generation = transition.generation
     requestAnimationFrame(() => {
@@ -5634,8 +5630,8 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
     if (sceneMediaBatch !== batch) return
     batch.ready = true
     backgroundLayer?.draw()
-    foregroundLayer?.draw()
     drawWorldLayers(true)
+    drawTopVisualLayer(true)
     requestAnimationFrame(() => {
       if (sceneMediaBatch === batch) startSceneMorph(batch.sceneId)
     })
@@ -5657,7 +5653,12 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void, activat
 
 const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effectId, triggerId)
 
-defineExpose({ preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions })
+// Development-only inspection of the main Stage; excludes the temporary morph Stage.
+const getMainStageLayerCount = () => stage?.getLayers().length ?? 0
+defineExpose({
+  preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions,
+  ...(import.meta.env.DEV ? { getMainStageLayerCount } : {}),
+})
 
 const setImageFit = (
   node: Konva.Image,
@@ -6197,6 +6198,8 @@ const syncGridLayer = () => {
   if (!target || gridGroup.getParent() === target) return false
   const previousLayer = gridGroup.getLayer()
   gridGroup.moveTo(target)
+  // Band 0 now also contains objects; returning the grid must keep it below them.
+  if (target === worldCameraGroup) gridGroup.moveToBottom()
   previousLayer?.batchDraw()
   target.getLayer()?.batchDraw()
   return true
@@ -6286,7 +6289,7 @@ const syncGrid = () => {
   const box = { x: -width / 2, y: -height / 2, width, height }
   if (rebuildGrid(box.x, box.y, width, height) || moved) {
     worldLayer?.batchDraw()
-    gridTopLayer?.batchDraw()
+    topVisualLayer?.batchDraw()
   }
 }
 
@@ -6312,7 +6315,7 @@ const syncSurfaceSlots = () => {
   updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景', 'surface:background')
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
   backgroundLayer?.batchDraw()
-  foregroundLayer?.batchDraw()
+  topVisualLayer?.batchDraw()
 }
 
 const syncField = () => {
@@ -6508,7 +6511,7 @@ const renderDrawingDraft = () => {
   const group = new Konva.Group({ x: result.preview.x, y: result.preview.y, listening: false })
   group.add(createDrawingNode(result.drawing, result.preview.width, result.preview.height))
   drawingDraftRoot.add(group)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const cancelDrawingSession = () => {
@@ -6516,7 +6519,7 @@ const cancelDrawingSession = () => {
   drawingSession = null
   drawingDraftRoot?.destroyChildren()
   if (hadSession) setGridSnapPreview(false)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const releaseObjectMedia = (wrapper: Konva.Group) => {
@@ -7054,55 +7057,49 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
 const canvasStageObjects = () => Object.fromEntries(Object.entries(stageObjects.value)
   .filter(([, object]) => !isTheaterEffectObject(object)))
 
-const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
-  if (!stage || !worldCameraGroup) return
-  const roots = Object.values(objects)
-    .filter((object) => !object.parentId || !objects[object.parentId])
-    .sort(compareStageLayersBottomToTop)
-  const rootIds = new Set(roots.map((object) => object.id))
-  let changed = false
-
-  objectRootLayers.forEach((entry, objectId) => {
-    if (rootIds.has(objectId)) return
-    entry.layer.destroy()
-    objectRootLayers.delete(objectId)
-    changed = true
-  })
-
-  const stackingOrder: Record<string, number> = {}
-  roots.forEach((object, index) => {
-    const canvasZIndex = OBJECT_ROOT_LAYER_Z_BASE + index * 2
-    stackingOrder[object.id] = canvasZIndex + 1
-    let entry = objectRootLayers.get(object.id)
-    if (!entry) {
-      const layer = new Konva.Layer()
-      layer.getNativeCanvasElement().style.pointerEvents = 'none'
-      const camera = new Konva.Group()
-      layer.add(camera)
-      stage!.add(layer)
-      entry = { layer, camera }
-      objectRootLayers.set(object.id, entry)
-      changed = true
-    }
-    entry.camera.position(worldCameraGroup.position())
-    entry.camera.scale(worldCameraGroup.scale())
-    entry.layer.getNativeCanvasElement().style.zIndex = String(canvasZIndex)
-    const node = objectNodes.get(object.id)
-    if (node && node.getParent() !== entry.camera) node.moveTo(entry.camera)
-  })
-  backgroundLayer?.moveToTop()
-  worldLayer?.moveToTop()
-  roots.forEach((object) => objectRootLayers.get(object.id)?.layer.moveToTop())
-  worldOverlayLayer?.moveToTop()
-  foregroundLayer?.moveToTop()
-  gridTopLayer?.moveToTop()
-  interactionLayer?.moveToTop()
-  rootStackingOrder.value = stackingOrder
-  if (changed) {
+const syncObjectRenderBands = (objects: Record<string, StageObject>) => {
+  if (!stage || !worldLayer || !worldCameraGroup || !objectRoot) return
+  const firstBand = { layer: worldLayer, camera: worldCameraGroup, root: objectRoot }
+  const plan = planStageObjectRenderBands(objects)
+  const extraBandCount = plan.bands.length - 1
+  const layersChanged = extraObjectRenderBands.length !== extraBandCount
+  if (layersChanged) {
+    // Stop before any old layer is destroyed. A root reorder alone keeps the Animation.
     mediaAnimation?.stop()
     mediaAnimation = null
-    syncMediaAnimation()
   }
+  while (extraObjectRenderBands.length < extraBandCount) {
+    const layer = new Konva.Layer()
+    layer.getNativeCanvasElement().style.pointerEvents = 'none'
+    const camera = new Konva.Group()
+    const root = new Konva.Group()
+    camera.add(root)
+    layer.add(camera)
+    stage.add(layer)
+    extraObjectRenderBands.push({ layer, camera, root })
+  }
+  plan.bands.forEach((band, index) => {
+    const entry = index === 0 ? firstBand : extraObjectRenderBands[index - 1]
+    entry.camera.position(firstBand.camera.position())
+    entry.camera.scale(firstBand.camera.scale())
+    entry.layer.getNativeCanvasElement().style.zIndex = String(band.canvasZIndex)
+    band.roots.forEach((object) => {
+      const node = objectNodes.get(object.id)
+      if (!node) return
+      if (node.getParent() !== entry.root) node.moveTo(entry.root)
+      // Explicit order, independent of Map insertion and previous band assignment.
+      node.moveToTop()
+    })
+  })
+  // All surviving subtrees have been moved out before destroying surplus bands.
+  extraObjectRenderBands.splice(extraBandCount).forEach(({ layer }) => layer.destroy())
+  backgroundLayer?.moveToTop()
+  worldLayer.moveToTop()
+  extraObjectRenderBands.forEach(({ layer }) => layer.moveToTop())
+  topVisualLayer?.moveToTop()
+  interactionLayer?.moveToTop()
+  rootStackingOrder.value = plan.rootStackingOrder
+  if (layersChanged) syncMediaAnimation()
 }
 
 const syncGroupControls = (objects: Record<string, StageObject>) => {
@@ -7165,7 +7162,7 @@ const syncLayerHierarchy = () => {
     if (object && node) updateObjectNode(node, object)
   })
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
-  syncObjectRootLayers(objects)
+  syncObjectRenderBands(objects)
   syncGroupControls(objects)
   drawWorldLayers()
   nextTick(updateTransformer)
@@ -7194,7 +7191,7 @@ const syncObjects = () => {
     updateObjectNode(node, object)
   }
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
-  syncObjectRootLayers(objects)
+  syncObjectRenderBands(objects)
   syncGroupControls(objects)
   drawWorldLayers()
   primeSceneMorphTargets()
@@ -8194,9 +8191,7 @@ onMounted(() => {
   sceneMorphStage = new Konva.Stage({ container: sceneMorphContainerRef.value, width: 1, height: 1, listening: false })
   backgroundLayer = new Konva.Layer({ listening: false })
   worldLayer = new Konva.Layer()
-  worldOverlayLayer = new Konva.Layer({ listening: false })
-  foregroundLayer = new Konva.Layer({ listening: false })
-  gridTopLayer = new Konva.Layer({ listening: false })
+  topVisualLayer = new Konva.Layer({ listening: false })
   interactionLayer = new Konva.Layer()
   backgroundCameraGroup = new Konva.Group()
   worldCameraGroup = new Konva.Group()
@@ -8370,22 +8365,16 @@ onMounted(() => {
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, 'foreground', false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot)
   worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
-  gridTopLayer.add(gridTopCameraGroup)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
-  worldOverlayLayer.add(worldOverlayCameraGroup)
-  foregroundLayer.add(foregroundCameraGroup)
+  topVisualLayer.add(worldOverlayCameraGroup, foregroundCameraGroup, gridTopCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
-  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, gridTopLayer, interactionLayer)
+  stage.add(backgroundLayer, worldLayer, topVisualLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
   worldLayer.getCanvas()._canvas.style.zIndex = '10'
-  worldOverlayLayer.getCanvas()._canvas.style.zIndex = String(WORLD_OVERLAY_LAYER_Z)
-  foregroundLayer.getCanvas()._canvas.style.zIndex = '9000'
-  gridTopLayer.getCanvas()._canvas.style.zIndex = String(GRID_TOP_LAYER_Z)
+  topVisualLayer.getNativeCanvasElement().style.zIndex = String(TOP_VISUAL_LAYER_Z)
   interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
-  worldOverlayLayer.getCanvas()._canvas.style.pointerEvents = 'none'
-  foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
-  gridTopLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  topVisualLayer.getNativeCanvasElement().style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
@@ -8660,12 +8649,11 @@ onBeforeUnmount(() => {
   sceneMorphStage = null
   stage?.destroy()
   stage = null
-  objectRootLayers.clear()
+  extraObjectRenderBands.length = 0
   rootStackingOrder.value = {}
-  gridTopLayer = null
+  topVisualLayer = null
   gridTopCameraGroup = null
   gridGroup = null
-  worldOverlayLayer = null
   worldOverlayCameraGroup = null
   drawingDraftRoot = null
   pointerTraceRoot = null
