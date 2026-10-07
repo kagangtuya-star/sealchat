@@ -24,7 +24,10 @@ const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' |
 const modeLabels = { off: '关闭', read: '只读', write: '读写' }
 const endpoint = computed(() => {
   const config = utils.config
-  const domain = config?.domain || window.location.origin
+  const domain = (config?.domain || '')
+    .split(';')
+    .map(value => value.trim())
+    .find(Boolean) || window.location.origin
   const origin = domain.includes('://') ? new URL(domain).origin : `${window.location.protocol}//${domain}`
   const base = (config?.webUrl || '').replace(/^\/+|\/+$/g, '')
   return `${origin}/${base ? `${base}/` : ''}mcp`
