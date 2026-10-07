@@ -279,11 +279,40 @@ defineExpose({
   isModified: () => modified.value,
 })
 
+const publicAddressLinks = computed(() => {
+  const webUrl = (model.value.webUrl || '/').trim()
+  const suffix = !webUrl || webUrl === '/' ? '/' : (webUrl.startsWith('/') ? webUrl : `/${webUrl}`)
+  return (model.value.domain || '')
+    .split(';')
+    .map((domain) => domain.trim())
+    .filter(Boolean)
+    .map((domain) => {
+      const base = domain.replace(/\/+$/, '')
+      return {
+        label: `${base}${suffix}`,
+        href: `${/^https?:\/\//i.test(base) ? base : `//${base}`}${suffix}`,
+      }
+    })
+})
+
 const link = computed(() => {
-  return <span class="text-sm font-bold">
-    <span>地址 </span>
-    <a target="_blank" href={`//${model.value.domain}${model.value.webUrl}`} class="text-blue-500 dark:text-blue-400 hover:underline">{`${model.value.domain}${model.value.webUrl}`}</a>
-  </span>
+  if (!publicAddressLinks.value.length) {
+    return <span class="text-sm">多个公开地址请使用 ; 分隔</span>
+  }
+  return <div class="text-sm font-bold flex flex-col gap-1">
+    <span>地址（多个公开地址请使用 ; 分隔）</span>
+    {publicAddressLinks.value.map((item) => (
+      <a
+        key={item.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        href={item.href}
+        class="text-blue-500 dark:text-blue-400 hover:underline"
+      >
+        {item.label}
+      </a>
+    ))}
+  </div>
 })
 
 const feedbackAdminShow = ref(false)
@@ -391,7 +420,12 @@ const sendSmtpTestEmail = async () => {
         </div>
       </n-form-item>
       <n-form-item label="可访问地址" :feedback="feedbackAdminShow ? link : ''">
-        <n-input v-model:value="model.domain" @focus="feedbackAdminShow = true" @blur="feedbackAdminShow = false" />
+        <n-input
+          v-model:value="model.domain"
+          placeholder="多个公开地址请使用 ; 分隔，例如 https://a.example;https://b.example"
+          @focus="feedbackAdminShow = true"
+          @blur="feedbackAdminShow = false"
+        />
       </n-form-item>
       <n-form-item label="开放注册">
         <div class="flex gap-3 items-center w-full">
