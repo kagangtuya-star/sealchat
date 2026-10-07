@@ -697,7 +697,8 @@ func ReadConfig() *AppConfig {
 			},
 		},
 		Proxy: NormalizeProxyConfig(ProxyConfig{
-			ProxyHeader: "X-Forwarded-For",
+			ProxyHeader:    "X-Forwarded-For",
+			TrustedProxies: []string{"127.0.0.1", "::1"},
 		}),
 		LoginBackground: LoginBackgroundConfig{
 			Mode:                "cover",
