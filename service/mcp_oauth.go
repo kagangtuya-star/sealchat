@@ -123,8 +123,12 @@ func (s *MCPOAuthAuthorizationStore) Create(in MCPOAuthAuthorizationInput, cfg u
 	if err != nil {
 		return "", err
 	}
-	if err := s.cimd.validate(); err != nil {
-		return "", err
+	// Explicit compatibility mode pins the same ChatGPT CIMD identity without
+	// remote metadata fetch. The exact client/redirect pair is validated above.
+	if !cfg.ChatGPTFixedClient {
+		if err := s.cimd.validate(); err != nil {
+			return "", err
+		}
 	}
 	id, err := randomPersonalKey(32)
 	if err != nil {

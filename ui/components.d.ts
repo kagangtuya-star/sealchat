@@ -136,6 +136,7 @@ declare module 'vue' {
     SandboxedUrlFrame: typeof import('./src/components/world-clue/SandboxedUrlFrame.vue')['default']
     ScenePlaylist: typeof import('./src/components/audio/ScenePlaylist.vue')['default']
     SlashSuggestPanel: typeof import('./src/components/chat/SlashSuggestPanel.vue')['default']
+    TheaterMediaFxVisual: typeof import('./src/components/theater-presentation/TheaterMediaFxVisual.vue')['default']
     TheaterPresentationEditorModal: typeof import('./src/components/theater-presentation/TheaterPresentationEditorModal.vue')['default']
     TheaterPresentationInspector: typeof import('./src/components/theater-presentation/TheaterPresentationInspector.vue')['default']
     TheaterPresentationMedia: typeof import('./src/components/theater-presentation/TheaterPresentationMedia.vue')['default']

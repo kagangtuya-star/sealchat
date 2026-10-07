@@ -76,6 +76,8 @@ func bindMCPOAuthPublicRoutes(app *fiber.App, webURL string) {
 		if err != nil {
 			return mcpOAuthHTTPError(c, err)
 		}
+		// Keep ChatGPT's CIMD client identity selection in both modes; fixed-client
+		// compatibility only skips SealChat's remote metadata fetch at authorization.
 		return c.JSON(fiber.Map{
 			"issuer":                                         issuer,
 			"authorization_endpoint":                         issuer + joinWebPath(webURL, "oauth/authorize"),

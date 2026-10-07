@@ -7,7 +7,7 @@ import type { MCPConfig, MCPMode } from '@/api/mcp'
 
 const utils = useUtilsStore()
 const message = useMessage()
-const draft = ref<MCPConfig>({ enabled: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
+const draft = ref<MCPConfig>({ enabled: false, chatgptFixedClient: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
 const initial = ref('')
 const loading = ref(true)
 const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file'; label: string; scopes: string; modes: MCPMode[] }[] = [
@@ -33,7 +33,12 @@ const endpoint = computed(() => {
   return `${origin}/${base ? `${base}/` : ''}mcp`
 })
 onMounted(async () => {
-  try { await utils.configGet(); Object.assign(draft.value, utils.config?.mcp); initial.value = JSON.stringify(draft.value) }
+  try {
+    await utils.configGet()
+    Object.assign(draft.value, utils.config?.mcp)
+    draft.value.chatgptFixedClient = utils.config?.mcp?.chatgptFixedClient === true
+    initial.value = JSON.stringify(draft.value)
+  }
   catch { message.error('读取 MCP 配置失败') }
   finally { loading.value = false }
 })
@@ -60,8 +65,18 @@ defineExpose({ save, isModified })
     <n-spin :show="loading">
       <n-form label-placement="top">
         <n-form-item label="平台 MCP 接入"><n-switch v-model:value="draft.enabled" /></n-form-item>
-        <n-form-item label="接入地址"><n-input :value="endpoint" readonly /></n-form-item>
-        <p>用户在个人信息中自行创建 Personal API Key。权限始终取平台能力、个人授权与当前业务权限的交集。</p>
+        <n-form-item label="默认接入地址"><n-input :value="endpoint" readonly /></n-form-item>
+        <p>此处展示可访问地址中的第一个公开域名；其他已配置公开域名同样可用于 MCP 接入。用户在个人信息中自行创建 Personal API Key。权限始终取平台能力、个人授权与当前业务权限的交集。</p>
+        <n-collapse>
+          <n-collapse-item title="OAuth 兼容设置" name="oauth-compatibility">
+            <n-form-item label="ChatGPT 固定客户端兼容模式"><n-switch v-model:value="draft.chatgptFixedClient" /></n-form-item>
+            <p>开启后，SealChat 将使用内置的 ChatGPT 固定客户端信息完成 OAuth 授权，不再主动访问 chatgpt.com 获取客户端元数据。适用于服务器无法访问 ChatGPT 的部署环境。</p>
+            <p><small>关闭时使用标准在线 CIMD 校验，安全性更完整，推荐服务器网络允许时保持关闭。</small></p>
+            <n-alert v-if="draft.chatgptFixedClient" type="warning" :show-icon="true">
+              已启用兼容模式：SealChat 不会在线校验 ChatGPT 客户端元数据，仅接受内置的固定 ChatGPT client_id 与 redirect_uri。
+            </n-alert>
+          </n-collapse-item>
+        </n-collapse>
         <div v-for="module in modules" :key="module.key" class="mcp-module">
           <div><strong>{{ module.label }}</strong><small>{{ module.scopes }}</small></div>
           <n-select v-model:value="draft[module.key]" :options="module.modes.map(value => ({ value, label: value === 'write' && module.key === 'file' ? '上传' : modeLabels[value] }))" />
@@ -94,6 +109,7 @@ defineExpose({ save, isModified })
 }
 .mcp-settings :deep(.n-spin-content) { max-width: 760px; }
 .mcp-settings p { margin: 8px 0 20px; color: var(--sc-text-secondary); }
+.mcp-settings :deep(.n-collapse) { margin-bottom: 20px; }
 .mcp-module { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 16px; align-items: center; margin-bottom: 16px; }
 .mcp-module small { display: block; overflow-wrap: anywhere; color: var(--sc-text-secondary); }
 .mcp-limits { display: flex; flex-wrap: wrap; gap: 20px; }

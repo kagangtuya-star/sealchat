@@ -18,9 +18,9 @@ SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorizati
 
 ## ChatGPT OAuth
 
-在 ChatGPT 自定义 MCP 中选择 **OAuth** Authentication 模式，再选择 **CIMD**（public client token endpoint authentication 为 `none`），填写本站公开 HTTPS MCP URL，不提供静态 client credentials。此版本只预认可 ChatGPT stable public client：`client_id=https://chatgpt.com/oauth/client.json`，回调精确为 `https://chatgpt.com/connector_platform_oauth_redirect`。不填写 client secret；若客户端要求任意 client ID、secret 或动态注册，本版不支持该连接方式。不支持 DCR、OIDC、ID Token、JWT/JWKS、client_credentials、password 或 implicit flow，没有额外 OAuth 平台配置。选择纯 OAuth，因为 MCP 握手和 tools/list 同样要求认证；官方接入说明见 [Add custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server) 和 [Authentication](https://developers.openai.com/plugins/build/auth)。
+在 ChatGPT 自定义 MCP 中选择 **OAuth** Authentication 模式，再选择 **CIMD**（public client token endpoint authentication 为 `none`），填写本站公开 HTTPS MCP URL，不提供静态 client credentials。此版本只预认可 ChatGPT stable public client：`client_id=https://chatgpt.com/oauth/client.json`，回调精确为 `https://chatgpt.com/connector_platform_oauth_redirect`。不填写 client secret；若客户端要求任意 client ID、secret 或动态注册，本版不支持该连接方式。不支持 DCR、OIDC、ID Token、JWT/JWKS、client_credentials、password 或 implicit flow，默认不需要额外 OAuth 平台配置。选择纯 OAuth，因为 MCP 握手和 tools/list 同样要求认证；官方接入说明见 [Add custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server) 和 [Authentication](https://developers.openai.com/plugins/build/auth)。
 
-`client_id_metadata_document_supported=true` 对应实际 CIMD 获取与校验：只 GET 上述固定 HTTPS URL，不接受任意 client URL，也不跟随 HTTP redirect。专用 HTTP Client 总超时 5 秒，JSON body 上限 64 KiB，要求 2xx 与 JSON Content-Type。文档须声明精确 client_id、固定 redirect，以及 `code`、`authorization_code`、`none` 能力；可以同时列出其他认证方法，但 SealChat 只接受 public client `none`。成功验证的必要 metadata 在进程内缓存 1 小时，TTL 内不重复请求；冷启动或缓存过期后获取失败时返回 `temporarily_unavailable`，不使用过期缓存放行。参数校验先于远程请求，非法 client_id 不触发网络访问。
+默认执行在线 CIMD 获取与校验：只 GET 上述固定 HTTPS URL，不接受任意 client URL，也不跟随 HTTP redirect。专用 HTTP Client 总超时 5 秒，JSON body 上限 64 KiB，要求 2xx 与 JSON Content-Type。文档须声明精确 client_id、固定 redirect，以及 `code`、`authorization_code`、`none` 能力；可以同时列出其他认证方法，但 SealChat 只接受 public client `none`。成功验证的必要 metadata 在进程内缓存 1 小时，TTL 内不重复请求；冷启动或缓存过期后获取失败时返回 `temporarily_unavailable`，不使用过期缓存放行。参数校验先于远程请求，非法 client_id 不触发网络访问。两种模式均保留 `client_id_metadata_document_supported=true`，使 ChatGPT 继续选择同一个 CIMD client identity；兼容模式仅改变 SealChat 是否在线获取 metadata。
 
 标准公开 discovery 路径（不需要 Bearer，响应 `application/json`、`Cache-Control: no-store`）：
 
@@ -32,7 +32,7 @@ SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorizati
 完整流程：
 
 1. ChatGPT 发现 metadata，使用 `response_type=code`、固定 client/redirect、空格分隔 scope、opaque state、PKCE `S256` challenge 和精确 resource 访问 `<webUrl>/oauth/authorize`。
-2. 服务端验证平台开关、每个已知且开放的 scope 和当前可信 Host，并完成上述 CIMD 校验，创建 5 分钟有效的随机 authorization request，跳转到 `/#/oauth/mcp/authorize?request=...`（保留部署子路径）。
+2. 服务端验证平台开关、固定 client/redirect、PKCE S256、精确 resource、每个已知且开放的 scope 和当前可信 Host，默认完成上述在线 CIMD 校验；显式开启兼容模式时使用内置固定身份。随后创建 5 分钟有效的随机 authorization request，跳转到 `/#/oauth/mcp/authorize?request=...`（保留部署子路径）。
 3. 前端复用现有登录页和 API Authorization header。登录后显示当前账号、中文权限描述和写入、AI 额度、线索发布风险，用户明确允许或拒绝。`GET/POST <webUrl>/api/v1/mcp/oauth/requests/:requestId` 仅供普通网页登录用户使用。
 4. 允许将当前登录 userId 绑定请求，返回 ChatGPT 回调 URL；一次性 code 有效 2 分钟。拒绝返回 `error=access_denied`。授权成功及安全错误跳转都携带原样 state 和 `iss`；非法 client/redirect 在本站直接拒绝。
 5. ChatGPT 以 `application/x-www-form-urlencoded` POST 到 `<webUrl>/oauth/token`，携带 `grant_type=authorization_code`、code、client_id、redirect_uri、resource、code_verifier。服务端校验 S256 和 issuer/resource 后返回 opaque access/refresh token，无 ID Token。
@@ -60,7 +60,20 @@ OAuth 直接调用缺少 scope 的工具时，仅当工具要求的 scopes 仍�
 4. `invalid_scope` 检查请求是否只含 17 个已有 scope 且平台当前开放；`invalid_client/invalid_request` 检查固定 client/redirect、resource、S256 和 form 编码。
 5. `expired/invalid_grant` 检查授权超时、服务重启、跨 domain、code 重放、verifier、连接撤销和 refresh rotation，重新连接获取新请求。MCP 401 可先查看 `resource_metadata` challenge，再检查用户状态和 access token 到期；503 检查平台开关，429 检查公开端点 IP 限流或共用用户限流。authorize 的 `temporarily_unavailable` 也可能是 CIMD 不可达/不符合必要能力或临时 store 已满。
 
-真实 ChatGPT OAuth 联调仍需要部署域名、HTTPS/代理配置、根 well-known 路由及服务器到固定 CIMD URL 的可达性；本地 stub/HTTP 测试不代表 ChatGPT 端到端连接已验证。
+真实 ChatGPT OAuth 联调仍需要部署域名、HTTPS/代理配置及根 well-known 路由；默认模式还需要服务器可访问固定 CIMD URL，显式兼容模式无需这项出站访问。本地 stub/HTTP 测试不代表 ChatGPT 端到端连接已验证。
+
+### ChatGPT 固定客户端兼容模式
+
+默认关闭（`mcp.chatgptFixedClient: false`，旧配置未包含该字段时也为 false）。默认 SealChat 在线读取并验证 `https://chatgpt.com/oauth/client.json`，服务器网络允许时推荐保持关闭。
+
+仅当 SealChat 服务器无法访问 `chatgpt.com` 时，由管理员在“平台管理 → MCP 接入 → OAuth 兼容设置”（默认折叠）显式开启“ChatGPT 固定客户端兼容模式”，或设置 `mcp.chatgptFixedClient: true`。开启后使用 pinned ChatGPT CIMD identity，不执行远程 metadata fetch；新 authorization request 只接受内置固定参数：
+
+- `client_id`: `https://chatgpt.com/oauth/client.json`
+- `redirect_uri`: `https://chatgpt.com/connector_platform_oauth_redirect`
+
+此模式不会放宽为任意 OAuth client，不接受 client secret、DCR client 或其他 CIMD URL，也不是通用 predefined OAuth client registry。平台开关、scope、resource、response_type=code 和 PKCE S256 校验继续生效。不会在 CIMD 失败时自动 fallback，可以随时关闭并恢复在线 CIMD 校验。
+
+ChatGPT 仍填写原公开 `/mcp` 地址并选择 OAuth/CIMD，无需新建 client secret、手工填写新 client_id、改用 DCR 或更改 callback；用户登录和授权流程不变。切换模式不会主动撤销或改变已有 OAuth grant，access/refresh token 继续按既有到期、撤销、用户状态、平台 scope 与 resource 规则验证。PAT 不受影响，token endpoint 不进行 CIMD 网络请求。
 
 ## Scopes 与工具
 

@@ -3,6 +3,7 @@ import { api } from '@/stores/_config'
 export type MCPMode = 'off' | 'read' | 'write'
 export interface MCPConfig {
   enabled: boolean
+  chatgptFixedClient: boolean
   chat: MCPMode
   search: MCPMode
   battleReport: MCPMode

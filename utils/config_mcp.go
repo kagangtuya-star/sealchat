@@ -5,6 +5,7 @@ import "fmt"
 // Modes expand only to the explicit scopes below; new capabilities are opt-in.
 type MCPConfig struct {
 	Enabled              bool   `json:"enabled" yaml:"enabled"`
+	ChatGPTFixedClient   bool   `json:"chatgptFixedClient" yaml:"chatgptFixedClient"`
 	Chat                 string `json:"chat" yaml:"chat"`
 	Search               string `json:"search" yaml:"search"`
 	BattleReport         string `json:"battleReport" yaml:"battleReport"`
