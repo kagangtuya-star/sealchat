@@ -2,22 +2,27 @@ import Konva from 'konva'
 import type { Filter as KonvaFilter } from 'konva/lib/Node'
 
 import {
+  mediaFxAdvancedHasContent,
   mediaFxFilterToCss,
   normalizeMediaFxSpec,
   prefersReducedMotion,
   resolveMediaFxMotionTrack,
+  type MediaFxAdvanced,
   type MediaFxFilter,
   type MediaFxMotionFrame,
   type MediaFxMotionTrack,
 } from './media-fx'
 import { canvasFilterSupported } from './media-fx-canvas'
+import { createMediaFxGpuFilter, mediaFxGpuSupported } from './media-fx-gpu'
 
 // Konva adapter.
 //
 // Layering contract:
 //   object root group  -> business layout / drag / transformer / entrance tweens
 //   motionNode (inner) -> Media FX motion only (x/y/scale around the content center)
-//   imageNode          -> Media FX filters (cached, static images only)
+//   imageNode          -> Media FX filters (cached, static images only); when the
+//                         consumer enables `advanced`, the WebGL2 pass runs as the
+//                         last step of the same cache filter chain
 //
 // The controller never touches the root group, so continuous motion cannot fight
 // with drag, rotation, entrance tweens or persisted object.transform values.
@@ -36,6 +41,8 @@ export interface KonvaMediaFxContext {
   motion?: boolean
   // Must be false for animated images / video: cache() would freeze one frame.
   filters?: boolean
+  // Advanced GPU pixel effects; requires filters and is opt-in per consumer.
+  advanced?: boolean
   paused?: boolean
   reducedMotion?: boolean
 }
@@ -101,11 +108,45 @@ const fallbackKonvaFilters = (imageNode: Konva.Image, filter: MediaFxFilter) => 
   return filters
 }
 
+// Canvas2D CSS filter applied to the filter ImageData. Only used when a function step
+// (the GPU pass) follows: Konva would otherwise run string filters through its own
+// limited CSS fallback parser instead of the native canvas filter.
+let cssScratch: { source: HTMLCanvasElement, target: HTMLCanvasElement } | null = null
+const cssImageDataFilter = (css: string): KonvaFilter => (imageData) => {
+  if (typeof document === 'undefined') return
+  cssScratch ??= { source: document.createElement('canvas'), target: document.createElement('canvas') }
+  const { source, target } = cssScratch
+  const { width, height } = imageData
+  source.width = target.width = width
+  source.height = target.height = height
+  const sourceContext = source.getContext('2d')
+  const targetContext = target.getContext('2d', { willReadFrequently: true })
+  if (sourceContext && targetContext) {
+    sourceContext.putImageData(imageData, 0, 0)
+    targetContext.filter = css
+    targetContext.drawImage(source, 0, 0)
+    targetContext.filter = 'none'
+    imageData.data.set(targetContext.getImageData(0, 0, width, height).data)
+  }
+  source.width = source.height = target.width = target.height = 1
+}
+
+export const mediaFxAdvancedSignature = (advanced: MediaFxAdvanced) => (
+  `${advanced.pixelate}|${advanced.rgbSplit}|${advanced.scanline}`
+)
+
+// Basic Media FX first, advanced GPU pixel effect last.
+export const composeKonvaMediaFxFilters = (basic: KonvaFilter[], gpu: KonvaFilter | null): KonvaFilter[] => (
+  gpu ? [...basic, gpu] : basic
+)
+
 export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMediaFxController => {
   const { motionNode, onMotionComplete } = nodes
   const imageNode = nodes.imageNode || null
   let filter: MediaFxFilter | null = null
   let filtersEnabled = true
+  let advanced: MediaFxAdvanced | null = null
+  let advancedEnabled = false
   let filterSignature = ''
   let motionSignature = ''
   let track: MediaFxMotionTrack | null = null
@@ -200,9 +241,15 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
     if (!imageNode) return
     const source = imageNode.image() as CanvasImageSource | undefined
     const css = filter && filtersEnabled && source ? mediaFxFilterToCss(filter) : ''
-    const signature = css
+    // WebGL2 support is checked independently of Canvas2D filter support.
+    const gpuAdvanced = advanced && advancedEnabled && filtersEnabled && source
+      && mediaFxAdvancedHasContent(advanced) && mediaFxGpuSupported()
+      ? advanced
+      : null
+    const signature = css || gpuAdvanced
       ? [
           css,
+          gpuAdvanced ? mediaFxAdvancedSignature(gpuAdvanced) : '',
           sourceIdentity(source),
           imageNode.width(),
           imageNode.height(),
@@ -216,7 +263,7 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
     if (signature === filterSignature) return
     const hadFilter = Boolean(filterSignature)
     filterSignature = signature
-    if (!css) {
+    if (!css && !gpuAdvanced) {
       if (hadFilter) {
         imageNode.clearCache()
         imageNode.filters([])
@@ -225,22 +272,29 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
       return
     }
     imageNode.clearCache()
-    imageNode.filters(canvasFilterSupported() ? [css] : fallbackKonvaFilters(imageNode, filter!))
     const nodeWidth = Math.max(1, imageNode.width())
     const nodeHeight = Math.max(1, imageNode.height())
     const sourceEdge = imageNode.cropWidth() || sourceWidth(source)
-    const pixelRatio = Math.min(
+    const pixelRatio = Math.max(0.25, Math.min(
       MAX_CACHE_PIXEL_RATIO,
       MAX_CACHE_EDGE_PX / Math.max(nodeWidth, nodeHeight),
       Math.max(Konva.pixelRatio || 1, sourceEdge / nodeWidth, 1),
-    )
-    imageNode.cache({ pixelRatio: Math.max(0.25, pixelRatio) })
+    ))
+    const gpuFilter = gpuAdvanced ? createMediaFxGpuFilter(gpuAdvanced, { pixelRatio }) : null
+    let basic: KonvaFilter[] = []
+    if (css) {
+      if (!canvasFilterSupported()) basic = fallbackKonvaFilters(imageNode, filter!)
+      else basic = [gpuFilter ? cssImageDataFilter(css) : css]
+    }
+    imageNode.filters(composeKonvaMediaFxFilters(basic, gpuFilter))
+    imageNode.cache({ pixelRatio })
     requestDraw()
   }
 
   const clear = () => {
     stopMotion()
     filter = null
+    advanced = null
     applyFilter()
   }
 
@@ -251,6 +305,8 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
       applyLayout(Math.max(0, context.width), Math.max(0, context.height))
       filter = spec.filter
       filtersEnabled = context.filters !== false
+      advanced = spec.advanced
+      advancedEnabled = context.advanced === true
       applyFilter()
       applyMotion(spec, context)
     },

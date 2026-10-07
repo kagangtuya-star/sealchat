@@ -150,6 +150,7 @@ import {
 } from '@/features/media-fx/media-fx'
 import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
 import { createKonvaMediaFxController, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
+import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
@@ -3558,6 +3559,10 @@ const updateSelectedEntranceDuration = (value: number | null) => {
 // edits are limited to metadata.entrance by the server, so the editor is admin-only.
 const selectedMediaFxOpen = ref(false)
 const mediaFxPreviewPaused = ref(false)
+const mediaFxGpuAvailable = ref(mediaFxGpuSupported())
+const unsubscribeMediaFxGpuAvailability = subscribeMediaFxGpuAvailability((available) => {
+  mediaFxGpuAvailable.value = available
+})
 const supportsStageObjectMediaFx = (object: StageObject | null | undefined) => (
   object?.type === 'image' || object?.type === 'iframe'
 )
@@ -3570,12 +3575,14 @@ const selectedMediaFx = computed(() => (
 const selectedMediaFxActive = computed(() => mediaFxHasContent(selectedMediaFx.value))
 // Image objects render through Konva (filters are cached, so animated media disables
 // them). Iframe objects render as DOM, where CSS filter composites the live frame.
+// Advanced GPU effects are only offered for static images.
 const selectedMediaFxCapabilities = computed(() => (
   selectedObject.value?.type === 'iframe'
     ? resolveMediaFxCapabilities('dom', false)
     : resolveMediaFxCapabilities(
       'konva',
       selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+      isStaticImageObject(selectedObject.value) && mediaFxGpuAvailable.value,
     )
 ))
 let selectedMediaFxEditing = false
@@ -6852,6 +6859,7 @@ const syncObjectMediaFx = (wrapper: Konva.Group, object: StageObject, width: num
     height,
     // Static cache filters would freeze animated images / video on one frame.
     filters: isStaticImageObject(object),
+    advanced: isStaticImageObject(object) && mediaFxGpuAvailable.value,
     paused: mediaFxPreviewPaused.value && props.store.state.selectedObjectId === object.id,
     reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
   })
@@ -8500,6 +8508,7 @@ watch([dialoguePerformanceHidden, portraitPerformanceHidden], ([dialogueHidden, 
 
 onBeforeUnmount(() => {
   endSelectedMediaFxEdit()
+  unsubscribeMediaFxGpuAvailability()
   quickToolPickerEpoch += 1
   quickToolPickerOpen.value = false
   hideImageAnnotation()

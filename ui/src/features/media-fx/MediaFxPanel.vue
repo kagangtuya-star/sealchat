@@ -3,11 +3,17 @@ import { computed } from 'vue'
 import { NButton, NCheckbox, NSlider } from 'naive-ui'
 
 import {
+  createDefaultMediaFxAdvanced,
   createDefaultMediaFxFilter,
   createDefaultMediaFxSpec,
+  MEDIA_FX_ADVANCED_RANGES,
   MEDIA_FX_FILTER_RANGES,
   MEDIA_FX_INTENSITY_RANGE,
+  matchMediaFxAdvancedPreset,
   matchMediaFxFilterPreset,
+  mediaFxAdvancedFromPreset,
+  mediaFxAdvancedHasContent,
+  mediaFxAdvancedPresets,
   mediaFxDurationForSpeed,
   mediaFxFilterFromPreset,
   mediaFxFilterHasContent,
@@ -15,6 +21,8 @@ import {
   mediaFxHasContent,
   mediaFxMotionSpeed,
   normalizeMediaFxSpec,
+  type MediaFxAdvanced,
+  type MediaFxAdvancedKey,
   type MediaFxCapabilities,
   type MediaFxFilter,
   type MediaFxFilterKey,
@@ -56,6 +64,12 @@ const motionVisible = computed(() => props.mode === 'live' && props.capabilities
 const activeFilterPreset = computed(() => matchMediaFxFilterPreset(spec.value.filter))
 const filterChanged = computed(() => mediaFxFilterHasContent(spec.value.filter))
 const anyChanged = computed(() => mediaFxHasContent(spec.value))
+const advancedChanged = computed(() => mediaFxAdvancedHasContent(spec.value.advanced))
+const advancedAvailable = computed(() => props.capabilities.advanced === true && !isAnimatedMedia.value)
+// Consumers without advanced rendering never see the section unless the data already
+// carries advanced values (e.g. imported); it is then shown read-only and kept as is.
+const advancedVisible = computed(() => advancedAvailable.value || advancedChanged.value)
+const activeAdvancedPreset = computed(() => matchMediaFxAdvancedPreset(spec.value.advanced))
 
 const filterRows: Array<{ key: MediaFxFilterKey, label: string }> = [
   { key: 'brightness', label: '亮度' },
@@ -65,6 +79,12 @@ const filterRows: Array<{ key: MediaFxFilterKey, label: string }> = [
   { key: 'sepia', label: '褐色' },
   { key: 'hueRotate', label: '色相' },
   { key: 'blurPx', label: '模糊' },
+]
+
+const advancedRows: Array<{ key: MediaFxAdvancedKey, label: string }> = [
+  { key: 'pixelate', label: '像素化' },
+  { key: 'rgbSplit', label: '色差' },
+  { key: 'scanline', label: '扫描线' },
 ]
 
 const motionOptions: Array<{ value: MediaFxMotionPreset, label: string }> = [
@@ -109,6 +129,24 @@ const applyFilterPreset = (presetId: string) => {
 }
 
 const resetFilter = () => updateFilter(createDefaultMediaFxFilter())
+
+const updateAdvanced = (patch: Partial<MediaFxAdvanced>) => {
+  if (!advancedAvailable.value) return
+  emitSpec({ ...spec.value, advanced: { ...spec.value.advanced, ...patch } })
+}
+
+const updateAdvancedValue = (key: MediaFxAdvancedKey, value: number | number[]) => {
+  updateAdvanced({ [key]: Array.isArray(value) ? value[0] : value })
+}
+
+const resetAdvancedValue = (key: MediaFxAdvancedKey) => updateAdvanced({ [key]: MEDIA_FX_ADVANCED_RANGES[key].defaultValue })
+
+const applyAdvancedPreset = (presetId: string) => {
+  const advanced = mediaFxAdvancedFromPreset(presetId)
+  if (advanced) updateAdvanced(advanced)
+}
+
+const resetAdvanced = () => updateAdvanced(createDefaultMediaFxAdvanced())
 
 const updateMotion = (patch: Partial<MediaFxMotion>) => {
   emitSpec({ ...spec.value, motion: { ...spec.value.motion, ...patch } })
@@ -184,6 +222,52 @@ const resetAll = () => {
             :aria-label="`恢复${row.label}默认值`"
             title="恢复默认"
             @click="resetFilterValue(row.key)"
+          >↺</button>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="advancedVisible" class="media-fx-panel__section">
+      <header class="media-fx-panel__heading">
+        <span>高级效果</span>
+        <n-button text size="tiny" :disabled="disabled || !advancedAvailable || !advancedChanged" @click="resetAdvanced">重置高级效果</n-button>
+      </header>
+      <p v-if="!advancedAvailable" class="media-fx-panel__hint">当前媒体暂不支持高级效果</p>
+      <div class="media-fx-panel__chips" role="group" aria-label="高级效果预设">
+        <button
+          v-for="preset in mediaFxAdvancedPresets"
+          :key="preset.id"
+          type="button"
+          class="media-fx-panel__chip"
+          :class="{ 'is-active': activeAdvancedPreset === preset.id }"
+          :disabled="disabled || !advancedAvailable"
+          :aria-pressed="activeAdvancedPreset === preset.id"
+          @click="applyAdvancedPreset(preset.id)"
+        >{{ preset.label }}</button>
+      </div>
+      <div class="media-fx-panel__rows">
+        <div v-for="row in advancedRows" :key="row.key" class="media-fx-panel__row">
+          <span class="media-fx-panel__label" title="双击恢复默认" @dblclick="resetAdvancedValue(row.key)">{{ row.label }}</span>
+          <n-slider
+            :value="spec.advanced[row.key]"
+            :min="MEDIA_FX_ADVANCED_RANGES[row.key].min"
+            :max="MEDIA_FX_ADVANCED_RANGES[row.key].max"
+            :step="MEDIA_FX_ADVANCED_RANGES[row.key].step"
+            :tooltip="false"
+            :disabled="disabled || !advancedAvailable"
+            @dragstart="emit('edit-start')"
+            @dragend="emit('edit-end')"
+            @update:value="updateAdvancedValue(row.key, $event)"
+          />
+          <span class="media-fx-panel__value">{{ Math.round(spec.advanced[row.key] * 100) }}%</span>
+          <button
+            type="button"
+            class="media-fx-panel__reset"
+            :class="{ 'is-hidden': spec.advanced[row.key] === MEDIA_FX_ADVANCED_RANGES[row.key].defaultValue }"
+            :disabled="disabled || !advancedAvailable"
+            :aria-label="`恢复${row.label}默认值`"
+            title="恢复默认"
+            @click="resetAdvancedValue(row.key)"
           >↺</button>
         </div>
       </div>

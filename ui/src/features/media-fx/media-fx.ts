@@ -1,11 +1,13 @@
-// Media FX core: a renderer-agnostic, versioned description of image motion and
-// static visual adjustments. Business code only stores MediaFxSpec; DOM / Konva /
+// Media FX core: a renderer-agnostic, versioned description of image motion,
+// static visual adjustments and advanced pixel effects. Business code only stores MediaFxSpec; DOM / Konva /
 // Canvas adapters translate it into concrete rendering primitives.
 //
 // Every value is a whitelisted enum or a clamped finite number. Never persist or
 // execute caller-provided CSS filter strings, animation names or keyframes.
 
-export const MEDIA_FX_VERSION = 1 as const
+export const MEDIA_FX_VERSION = 2 as const
+// v1 specs carry no `advanced`; they are read losslessly and upgraded to v2.
+export const LEGACY_MEDIA_FX_VERSION = 1 as const
 
 export const mediaFxMotionPresets = [
   'none',
@@ -37,13 +39,23 @@ export interface MediaFxFilter {
   blurPx: number
 }
 
+// Advanced pixel effects. Every value is a normalized 0..1 strength; renderers map it
+// to concrete pixels themselves, so no renderer constant is ever persisted.
+export interface MediaFxAdvanced {
+  pixelate: number
+  rgbSplit: number
+  scanline: number
+}
+
 export interface MediaFxSpec {
   version: typeof MEDIA_FX_VERSION
   motion: MediaFxMotion
   filter: MediaFxFilter
+  advanced: MediaFxAdvanced
 }
 
 export type MediaFxFilterKey = keyof MediaFxFilter
+export type MediaFxAdvancedKey = keyof MediaFxAdvanced
 
 export interface MediaFxRange {
   min: number
@@ -63,6 +75,14 @@ export const MEDIA_FX_FILTER_RANGES: Readonly<Record<MediaFxFilterKey, MediaFxRa
 }
 
 export const mediaFxFilterKeys = Object.keys(MEDIA_FX_FILTER_RANGES) as MediaFxFilterKey[]
+
+export const MEDIA_FX_ADVANCED_RANGES: Readonly<Record<MediaFxAdvancedKey, MediaFxRange>> = {
+  pixelate: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
+  rgbSplit: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
+  scanline: { min: 0, max: 1, step: 0.01, defaultValue: 0 },
+}
+
+export const mediaFxAdvancedKeys = Object.keys(MEDIA_FX_ADVANCED_RANGES) as MediaFxAdvancedKey[]
 
 export const MEDIA_FX_INTENSITY_RANGE: Readonly<MediaFxRange> = { min: 0, max: 1, step: 0.01, defaultValue: 0.5 }
 export const MEDIA_FX_DURATION_RANGE: Readonly<MediaFxRange> = { min: 300, max: 20_000, step: 10, defaultValue: 4_000 }
@@ -252,10 +272,17 @@ export const createDefaultMediaFxMotion = (): MediaFxMotion => ({
   loop: true,
 })
 
+export const createDefaultMediaFxAdvanced = (): MediaFxAdvanced => ({
+  pixelate: 0,
+  rgbSplit: 0,
+  scanline: 0,
+})
+
 export const createDefaultMediaFxSpec = (): MediaFxSpec => ({
   version: MEDIA_FX_VERSION,
   motion: createDefaultMediaFxMotion(),
   filter: createDefaultMediaFxFilter(),
+  advanced: createDefaultMediaFxAdvanced(),
 })
 
 export const normalizeMediaFxFilter = (input: unknown): MediaFxFilter => {
@@ -267,6 +294,17 @@ export const normalizeMediaFxFilter = (input: unknown): MediaFxFilter => {
     filter[key] = Math.abs(normalized - range.defaultValue) < FILTER_EPSILON ? range.defaultValue : normalized
   })
   return filter
+}
+
+export const normalizeMediaFxAdvanced = (input: unknown): MediaFxAdvanced => {
+  const value = isPlainObject(input) ? input : {}
+  const advanced = createDefaultMediaFxAdvanced()
+  mediaFxAdvancedKeys.forEach((key) => {
+    const range = MEDIA_FX_ADVANCED_RANGES[key]
+    const normalized = roundTo(finiteInRange(value[key], range), 3)
+    advanced[key] = Math.abs(normalized - range.defaultValue) < FILTER_EPSILON ? range.defaultValue : normalized
+  })
+  return advanced
 }
 
 export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
@@ -286,13 +324,17 @@ export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
 }
 
 // Unknown fields and versions are dropped; the result only contains whitelisted keys.
+// v1 (and version-less historical data) keeps motion / filter and gains a default
+// `advanced`, so upgrading the spec never loses a stored effect.
 export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
   const value = isPlainObject(input) ? input : {}
-  if (value.version !== undefined && value.version !== MEDIA_FX_VERSION) return createDefaultMediaFxSpec()
+  const legacy = value.version === undefined || value.version === LEGACY_MEDIA_FX_VERSION
+  if (!legacy && value.version !== MEDIA_FX_VERSION) return createDefaultMediaFxSpec()
   return {
     version: MEDIA_FX_VERSION,
     motion: normalizeMediaFxMotion(value.motion),
     filter: normalizeMediaFxFilter(value.filter),
+    advanced: legacy ? createDefaultMediaFxAdvanced() : normalizeMediaFxAdvanced(value.advanced),
   }
 }
 
@@ -300,10 +342,20 @@ export const mediaFxFilterHasContent = (filter: MediaFxFilter) => mediaFxFilterK
   Math.abs(filter[key] - MEDIA_FX_FILTER_RANGES[key].defaultValue) >= FILTER_EPSILON
 ))
 
+export const mediaFxAdvancedHasContent = (advanced: MediaFxAdvanced | null | undefined) => Boolean(
+  advanced && mediaFxAdvancedKeys.some((key) => (
+    Math.abs(advanced[key] - MEDIA_FX_ADVANCED_RANGES[key].defaultValue) >= FILTER_EPSILON
+  )),
+)
+
 export const mediaFxMotionHasContent = (motion: MediaFxMotion) => motion.preset !== 'none' && motion.intensity > 0
 
 export const mediaFxHasContent = (spec: MediaFxSpec | null | undefined) => Boolean(
-  spec && (mediaFxMotionHasContent(spec.motion) || mediaFxFilterHasContent(spec.filter)),
+  spec && (
+    mediaFxMotionHasContent(spec.motion)
+    || mediaFxFilterHasContent(spec.filter)
+    || mediaFxAdvancedHasContent(spec.advanced)
+  ),
 )
 
 // Persistence helper: returns null when the spec carries no effect so callers can
@@ -319,6 +371,7 @@ export const mediaFxSpecsEqual = (left: MediaFxSpec, right: MediaFxSpec) => (
   && left.motion.durationMs === right.motion.durationMs
   && left.motion.loop === right.motion.loop
   && mediaFxFilterKeys.every((key) => left.filter[key] === right.filter[key])
+  && mediaFxAdvancedKeys.every((key) => (left.advanced?.[key] ?? 0) === (right.advanced?.[key] ?? 0))
 )
 
 // ---------------------------------------------------------------------------
@@ -352,6 +405,33 @@ export const matchMediaFxFilterPreset = (filter: MediaFxFilter): string | null =
   const preset = mediaFxFilterPresets.find((item) => {
     const candidate = mediaFxFilterFromPreset(item.id)
     return candidate && mediaFxFilterKeys.every((key) => candidate[key] === filter[key])
+  })
+  return preset?.id ?? null
+}
+
+// Advanced presets follow the same rule: they only fill MediaFxAdvanced values.
+export interface MediaFxAdvancedPreset {
+  id: string
+  label: string
+  advanced: Partial<MediaFxAdvanced>
+}
+
+export const mediaFxAdvancedPresets: readonly MediaFxAdvancedPreset[] = [
+  { id: 'none', label: '无', advanced: {} },
+  { id: 'low-res', label: '低像素', advanced: { pixelate: 0.45 } },
+  { id: 'glitch', label: '数字故障', advanced: { rgbSplit: 0.35, scanline: 0.18 } },
+  { id: 'old-tv', label: '旧电视', advanced: { rgbSplit: 0.08, scanline: 0.55 } },
+]
+
+export const mediaFxAdvancedFromPreset = (presetId: string): MediaFxAdvanced | null => {
+  const preset = mediaFxAdvancedPresets.find((item) => item.id === presetId)
+  return preset ? normalizeMediaFxAdvanced({ ...createDefaultMediaFxAdvanced(), ...preset.advanced }) : null
+}
+
+export const matchMediaFxAdvancedPreset = (advanced: MediaFxAdvanced): string | null => {
+  const preset = mediaFxAdvancedPresets.find((item) => {
+    const candidate = mediaFxAdvancedFromPreset(item.id)
+    return candidate && mediaFxAdvancedKeys.every((key) => candidate[key] === advanced[key])
   })
   return preset?.id ?? null
 }
@@ -390,17 +470,26 @@ export const mediaFxFilterToCss = (input: MediaFxFilter, options: MediaFxFilterC
 export interface MediaFxCapabilities {
   motion: boolean
   filters: boolean
+  // Advanced pixel effects (GPU). Off unless the consumer explicitly opts in.
+  advanced: boolean
   // The target renders animated media (animated image / video).
   animatedMedia: boolean
 }
 
 export type MediaFxRendererKind = 'dom' | 'konva' | 'bake'
 
-// Animated media is excluded from live filters in v1 so the Konva static cache path
-// never freezes a frame and all live surfaces share one rule. Bake never has motion.
-export const resolveMediaFxCapabilities = (renderer: MediaFxRendererKind, animatedMedia = false): MediaFxCapabilities => ({
+// Animated media is excluded from live filters so the Konva static cache path never
+// freezes a frame and all live surfaces share one rule. Bake never has motion.
+// Advanced effects stay off unless the consumer opts in (currently only Stage static
+// images); an unsupported renderer keeps the data untouched, it just does not render it.
+export const resolveMediaFxCapabilities = (
+  renderer: MediaFxRendererKind,
+  animatedMedia = false,
+  advanced = false,
+): MediaFxCapabilities => ({
   motion: renderer !== 'bake',
   filters: !animatedMedia,
+  advanced: advanced && !animatedMedia,
   animatedMedia,
 })
 

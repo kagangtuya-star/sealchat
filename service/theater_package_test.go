@@ -518,7 +518,8 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 		t.Fatalf("normalized world presentation lost mediaFx: %s (%v)", normalized, err)
 	}
 	for name, raw := range map[string]string{
-		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
+		"mediaFx v2 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
+		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":3`, 1),
 		"mediaFx preset":  strings.Replace(theaterPackageWorldPresentationJSON, `"breathe"`, `"spin"`, 1),
 		"mediaFx range":   strings.Replace(theaterPackageWorldPresentationJSON, `"blurPx":0}`, `"blurPx":99}`, 1),
 		"unknown field":   strings.Replace(theaterPackageWorldPresentationJSON, `{"portrait"`, `{"script":"x","portrait"`, 1),
@@ -530,6 +531,18 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 		if _, err := normalizeTheaterPackageWorldPresentation([]byte(raw)); err == nil {
 			t.Fatalf("%s: invalid world presentation accepted", name)
 		}
+	}
+
+	v2Raw := strings.Replace(strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
+		`"blurPx":0}}`, `"blurPx":0},"advanced":{"pixelate":0.5,"rgbSplit":0,"scanline":0.2}}`, 1)
+	if v2Raw == theaterPackageWorldPresentationJSON {
+		t.Fatal("v2 fixture replacement did not apply")
+	}
+	if v2Normalized, err := normalizeTheaterPackageWorldPresentation([]byte(v2Raw)); err != nil || !strings.Contains(string(v2Normalized), `"advanced":{"pixelate":0.5`) {
+		t.Fatalf("valid v2 world presentation rejected or lost advanced: %s (%v)", v2Normalized, err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v2Raw, `"scanline":0.2`, `"scanline":0.2,"shader":"x"`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "shader"`) {
+		t.Fatalf("unknown advanced field must be rejected, got %v", err)
 	}
 
 	dialogue := protocol.DefaultTheaterDialogueStyle()

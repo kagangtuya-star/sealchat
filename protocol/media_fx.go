@@ -6,11 +6,17 @@ import (
 	"math"
 )
 
-// MediaFxSpec mirrors the frontend Media FX v1 spec (ui/src/features/media-fx/media-fx.ts).
+// MediaFxSpec mirrors the frontend Media FX spec (ui/src/features/media-fx/media-fx.ts).
 // It is persisted inside theater presentation layers and styles, so it only carries
-// whitelisted presets and bounded numbers; renderers never receive raw CSS.
+// whitelisted presets and bounded numbers; renderers never receive raw CSS or shaders.
 // Keep the ranges below in sync with media-fx.ts and media-fx-schema.ts.
-const MediaFxVersion = 1
+//
+// v2 adds the required `advanced` object. Stored v1 specs stay valid as they are and
+// are upgraded lazily by clients on their next save; there is no data migration.
+const (
+	MediaFxVersion       = 2
+	LegacyMediaFxVersion = 1
+)
 
 type MediaFxMotionPreset string
 
@@ -49,10 +55,20 @@ type MediaFxFilter struct {
 	BlurPx     float64 `json:"blurPx"`
 }
 
+// MediaFxAdvanced holds normalized 0..1 strengths; renderers map them to pixels.
+type MediaFxAdvanced struct {
+	Pixelate float64 `json:"pixelate"`
+	RGBSplit float64 `json:"rgbSplit"`
+	Scanline float64 `json:"scanline"`
+}
+
+// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 specs must,
+// so the validator can tell a v1 document from an incomplete v2 one.
 type MediaFxSpec struct {
-	Version int           `json:"version"`
-	Motion  MediaFxMotion `json:"motion"`
-	Filter  MediaFxFilter `json:"filter"`
+	Version  int              `json:"version"`
+	Motion   MediaFxMotion    `json:"motion"`
+	Filter   MediaFxFilter    `json:"filter"`
+	Advanced *MediaFxAdvanced `json:"advanced,omitempty"`
 }
 
 type mediaFxFilterField struct {
@@ -73,6 +89,22 @@ func (filter MediaFxFilter) fields() []mediaFxFilterField {
 	}
 }
 
+func (advanced MediaFxAdvanced) fields() []mediaFxFilterField {
+	return []mediaFxFilterField{
+		{"pixelate", advanced.Pixelate, 0, 1, 0},
+		{"rgbSplit", advanced.RGBSplit, 0, 1, 0},
+		{"scanline", advanced.Scanline, 0, 1, 0},
+	}
+}
+
+// normalizedAdvanced treats a missing (v1) advanced as all zero.
+func (spec *MediaFxSpec) normalizedAdvanced() MediaFxAdvanced {
+	if spec == nil || spec.Advanced == nil {
+		return MediaFxAdvanced{}
+	}
+	return *spec.Advanced
+}
+
 func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
 	switch preset {
 	case MediaFxMotionNone, MediaFxMotionShake, MediaFxMotionShakeX, MediaFxMotionShakeY,
@@ -82,14 +114,30 @@ func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
 	return false
 }
 
-// validateMediaFx accepts nil (no effect) and otherwise requires a complete v1 spec.
+// validateMediaFx accepts nil (no effect) and otherwise requires a complete v1 spec
+// (without advanced) or a complete v2 spec (with advanced).
 func validateMediaFx(spec *MediaFxSpec, path string) error {
 	if spec == nil {
 		return nil
 	}
 	var problems []error
-	if spec.Version != MediaFxVersion {
-		problems = append(problems, fmt.Errorf("%s.version must be %d", path, MediaFxVersion))
+	switch spec.Version {
+	case LegacyMediaFxVersion:
+		if spec.Advanced != nil {
+			problems = append(problems, fmt.Errorf("%s.advanced is not allowed in version %d", path, LegacyMediaFxVersion))
+		}
+	case MediaFxVersion:
+		if spec.Advanced == nil {
+			problems = append(problems, fmt.Errorf("%s.advanced is required in version %d", path, MediaFxVersion))
+		} else {
+			for _, field := range spec.Advanced.fields() {
+				if !finiteInRange(field.value, field.minimum, field.maximum) {
+					problems = append(problems, fmt.Errorf("%s.advanced.%s must be finite and between %g and %g", path, field.name, field.minimum, field.maximum))
+				}
+			}
+		}
+	default:
+		problems = append(problems, fmt.Errorf("%s.version must be %d or %d", path, LegacyMediaFxVersion, MediaFxVersion))
 	}
 	if !validMediaFxMotionPreset(spec.Motion.Preset) {
 		problems = append(problems, fmt.Errorf("%s.motion.preset is invalid", path))
@@ -126,17 +174,24 @@ func mediaFxHasContent(spec *MediaFxSpec) bool {
 			return true
 		}
 	}
+	for _, field := range spec.normalizedAdvanced().fields() {
+		if math.Abs(field.value-field.defaultValue) >= mediaFxFilterEpsilon {
+			return true
+		}
+	}
 	return false
 }
 
-// mediaFxEqual compares effect content, never pointer identity. A missing spec and an
-// all-default spec both mean "no effect" and are therefore equal.
+// mediaFxEqual compares effect content, never pointer identity or version. A missing
+// spec and an all-default spec both mean "no effect", and a v1 spec equals the v2 spec
+// with the same motion / filter and an all-zero advanced.
 func mediaFxEqual(left, right *MediaFxSpec) bool {
 	leftActive, rightActive := mediaFxHasContent(left), mediaFxHasContent(right)
 	if !leftActive || !rightActive {
 		return leftActive == rightActive
 	}
-	return *left == *right
+	return left.Motion == right.Motion && left.Filter == right.Filter &&
+		left.normalizedAdvanced() == right.normalizedAdvanced()
 }
 
 func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
@@ -144,5 +199,9 @@ func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
 		return nil
 	}
 	clone := *spec
+	if spec.Advanced != nil {
+		advanced := *spec.Advanced
+		clone.Advanced = &advanced
+	}
 	return &clone
 }
