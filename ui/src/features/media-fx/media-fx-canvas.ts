@@ -1,14 +1,17 @@
 import {
+  mediaFxAdvancedHasContent,
   mediaFxFilterHasContent,
   mediaFxFilterToCss,
   normalizeMediaFxFilter,
   normalizeMediaFxSpec,
   type MediaFxFilter,
 } from './media-fx'
+import { applyMediaFxGpu } from './media-fx-gpu'
 
-// Canvas bake adapter: a one-shot conversion of a static image + MediaFxFilter into
-// new pixels. It is not a live renderer and never bakes motion (motion cannot be
-// represented by a still PNG/JPEG/WebP). Call it on explicit confirm, not per input.
+// Canvas bake adapter: a one-shot conversion of a static image + MediaFxSpec (basic
+// filter, then advanced GPU effects) into new pixels. It is not a live renderer and
+// never bakes motion (motion cannot be represented by a still PNG/JPEG/WebP). Call it
+// on explicit confirm or from a debounced preview, not per input.
 
 let cssFilterSupport: boolean | null = null
 
@@ -166,12 +169,16 @@ export interface MediaFxBakeSize {
   height: number
 }
 
-// Draws `source` at its own size with the filter baked in. Alpha is preserved.
-export const bakeMediaFxFilterToCanvas = (
+const resolvePixelRatio = (value: unknown) => (
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1
+)
+
+const drawFilteredCanvas = (
   source: CanvasImageSource,
   size: MediaFxBakeSize,
   input: MediaFxFilter,
-): HTMLCanvasElement => {
+  pixelRatio: number,
+) => {
   const filter = normalizeMediaFxFilter(input)
   const width = Math.max(1, Math.round(size.width))
   const height = Math.max(1, Math.round(size.height))
@@ -181,17 +188,69 @@ export const bakeMediaFxFilterToCanvas = (
   const context = canvas.getContext('2d')
   if (!context) throw new Error('无法创建图片处理画布')
   if (canvasFilterSupported()) {
-    context.filter = mediaFxFilterToCss(filter) || 'none'
+    context.filter = mediaFxFilterToCss(filter, { blurScale: pixelRatio }) || 'none'
     context.drawImage(source, 0, 0, width, height)
     context.filter = 'none'
-    return canvas
+    return { canvas, context }
   }
   context.drawImage(source, 0, 0, width, height)
-  if (!mediaFxFilterHasContent(filter)) return canvas
+  if (!mediaFxFilterHasContent(filter)) return { canvas, context }
   const imageData = context.getImageData(0, 0, width, height)
   applyColorStages(imageData.data, filter)
-  applyBlur(imageData.data, width, height, filter.blurPx)
+  applyBlur(imageData.data, width, height, filter.blurPx * pixelRatio)
   context.putImageData(imageData, 0, 0)
+  return { canvas, context }
+}
+
+// Draws `source` at its own size with the filter baked in. Alpha is preserved.
+export const bakeMediaFxFilterToCanvas = (
+  source: CanvasImageSource,
+  size: MediaFxBakeSize,
+  input: MediaFxFilter,
+): HTMLCanvasElement => drawFilteredCanvas(source, size, input, 1).canvas
+
+export const MEDIA_FX_ADVANCED_BAKE_ERROR_MESSAGE = '当前设备无法完成高级图片效果处理，请关闭高级效果后重试'
+
+// Thrown only when the caller requires advanced effects and the GPU pass cannot run,
+// so a confirm never silently produces an image without the requested effect.
+export class MediaFxAdvancedBakeError extends Error {
+  constructor(message = MEDIA_FX_ADVANCED_BAKE_ERROR_MESSAGE) {
+    super(message)
+    this.name = 'MediaFxAdvancedBakeError'
+  }
+}
+
+export interface MediaFxCanvasBakeOptions {
+  // Output pixels per pixel of the intended full-resolution result (e.g. < 1 for a
+  // downscaled preview), so blur radius and advanced block / offset sizes keep the
+  // same look at any output size.
+  pixelRatio?: number
+  // When advanced effects carry content and the GPU pass fails, throw instead of
+  // returning an image with only the basic filter.
+  requireAdvanced?: boolean
+}
+
+// Full static bake: source -> basic filter -> advanced GPU -> output. Motion is always
+// ignored. Without `requireAdvanced`, a GPU failure keeps the basic-filtered pixels.
+export const bakeMediaFxToCanvas = (
+  source: CanvasImageSource,
+  size: MediaFxBakeSize,
+  input: unknown,
+  options: MediaFxCanvasBakeOptions = {},
+): HTMLCanvasElement => {
+  const spec = normalizeMediaFxSpec(input)
+  const pixelRatio = resolvePixelRatio(options.pixelRatio)
+  const { canvas, context } = drawFilteredCanvas(source, size, spec.filter, pixelRatio)
+  if (!mediaFxAdvancedHasContent(spec.advanced)) return canvas
+  let applied = false
+  try {
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+    applied = applyMediaFxGpu(imageData, spec.advanced, { pixelRatio })
+    if (applied) context.putImageData(imageData, 0, 0)
+  } catch {
+    applied = false
+  }
+  if (!applied && options.requireAdvanced) throw new MediaFxAdvancedBakeError()
   return canvas
 }
 
@@ -222,15 +281,22 @@ const bakeOutputTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
 export interface MediaFxBakeOptions {
   type?: string
   quality?: number
+  requireAdvanced?: boolean
 }
 
 // Static-only: the spec's motion is ignored by design. Returns the input unchanged
-// when the filter has no content, so callers can always route through this helper.
-export const bakeMediaFxToBlob = async (file: Blob, spec: unknown, options: MediaFxBakeOptions = {}): Promise<Blob> => {
-  const { filter } = normalizeMediaFxSpec(spec)
-  if (!mediaFxFilterHasContent(filter)) return file
+// when neither the filter nor the advanced effects have content, so callers can always
+// route through this helper.
+export const bakeMediaFxToBlob = async (file: Blob, input: unknown, options: MediaFxBakeOptions = {}): Promise<Blob> => {
+  const spec = normalizeMediaFxSpec(input)
+  if (!mediaFxFilterHasContent(spec.filter) && !mediaFxAdvancedHasContent(spec.advanced)) return file
   const image = await decodeImageFile(file)
-  const canvas = bakeMediaFxFilterToCanvas(image, { width: image.naturalWidth, height: image.naturalHeight }, filter)
+  const canvas = bakeMediaFxToCanvas(
+    image,
+    { width: image.naturalWidth, height: image.naturalHeight },
+    spec,
+    { requireAdvanced: options.requireAdvanced },
+  )
   const type = options.type || (bakeOutputTypes.has(file.type) ? file.type : 'image/png')
   return canvasToBlob(canvas, type, options.quality)
 }

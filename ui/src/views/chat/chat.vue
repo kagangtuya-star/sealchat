@@ -190,6 +190,7 @@ import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
+import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { buildMessageCursor } from '@/utils/messageCursor';
@@ -2992,7 +2993,8 @@ const handleMessageInlineImageEdit = async (payload: { attachmentId: string; mes
   }
 };
 
-const handleRichInlineImageEditorConfirm = async (file: File) => {
+// Chat uses the default bake mode: effects are already in the static file.
+const handleRichInlineImageEditorConfirm = async ({ file }: MessageImageEditorResult) => {
   const activeSource = activeInlineEditorSource;
   const isSmartLinkUpload = activeSource === 'smart-link-text-image'
     || activeSource === 'smart-link-url-image';

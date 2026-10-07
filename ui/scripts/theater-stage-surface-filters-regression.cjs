@@ -17,7 +17,7 @@ async function run() {
   const ast = ts.createSourceFile(filename + '.ts', script, ts.ScriptTarget.Latest, true)
   const names = [
     'surfaceMediaFxFilterCss', 'surfaceFilterCss', 'surfaceMediaFxCanvasFilter',
-    'useDirectSurfaceImage', 'clearDirectSurfaceImage', 'updateDirectSurfaceImage',
+    'useDirectSurfaceImage', 'surfaceMediaFxAdvanced', 'clearDirectSurfaceImage', 'updateDirectSurfaceImage',
   ]
   const declarations = names.map(name => {
     const statement = ast.statements.find(node => ts.isVariableStatement(node)
@@ -27,8 +27,20 @@ async function run() {
   }).join('\n')
   const mediaFxModule = { exports: {} }
   new Function('exports', compile(fs.readFileSync(path.join(__dirname, '../src/features/media-fx/media-fx.ts'), 'utf8')))(mediaFxModule.exports)
-  const { createDefaultMediaFxSpec, mediaFxFilterToCss } = mediaFxModule.exports
+  const { createDefaultMediaFxSpec, mediaFxFilterToCss, mediaFxAdvancedHasContent } = mediaFxModule.exports
   let supported = true
+  // GPU adapter stub: records the pixels it receives so ordering can be asserted.
+  let gpuSupported = true
+  const gpuRuns = []
+  const gpuCreates = []
+  const createMediaFxGpuFilter = (advanced, options) => {
+    if (!gpuSupported || !mediaFxAdvancedHasContent(advanced)) return null
+    gpuCreates.push({ advanced: { ...advanced }, options })
+    const step = imageData => { gpuRuns.push(new Uint8ClampedArray(imageData.data)) }
+    step.gpu = true
+    return step
+  }
+  const mediaFxAdvancedSignature = advanced => `${advanced.pixelate}|${advanced.rgbSplit}|${advanced.scanline}`
   const cssDraws = []
   // Canvas calls are observed; browser pixel rendering is not simulated.
   const document = { createElement: () => {
@@ -46,6 +58,7 @@ async function run() {
   } }
   const { updateDirectSurfaceImage: update, clearDirectSurfaceImage: clear, surfaceFilterCss } = new Function(
     'Konva', 'document', 'mediaFxFilterToCss', 'canvasFilterSupported',
+    'mediaFxAdvancedHasContent', 'mediaFxGpuSupported', 'createMediaFxGpuFilter', 'mediaFxAdvancedSignature',
     compile(`
       const theaterMediaDebug = () => {}
       const isVideoSource = (source) => source.video === true
@@ -54,7 +67,10 @@ async function run() {
       const surfaceDrawRect = (_source, width, height) => ({ x: 0, y: 0, width, height })
       ${declarations}
     `) + '\nreturn { updateDirectSurfaceImage, clearDirectSurfaceImage, surfaceFilterCss }',
-  )(Konva, document, mediaFxFilterToCss, () => supported)
+  )(
+    Konva, document, mediaFxFilterToCss, () => supported,
+    mediaFxAdvancedHasContent, () => gpuSupported, createMediaFxGpuFilter, mediaFxAdvancedSignature,
+  )
   const image = new Konva.Image()
   let caches = 0, clears = 0
   image.cache = () => { caches++; return image }
@@ -130,6 +146,82 @@ async function run() {
   assert.equal(image.blurRadius(), 0)
   assert.equal(image.image(), undefined)
   assert.equal(clears, 7, 'each changed update and clear invalidates exactly once')
+
+  // --- Media FX advanced GPU on the direct-image path ------------------------
+  const isGpu = step => typeof step === 'function' && step.gpu === true
+  slot.style = { brightness: 1.5, blurPx: 8, opacity: 1, zoom: 1, fit: 'cover', mediaFx: createDefaultMediaFxSpec() }
+  update(slot, source, box)
+  assert.deepEqual(image.filters(), legacy, 'all-default advanced adds no GPU step')
+  assert.equal(gpuCreates.length, 0, 'all-default advanced never touches the GPU')
+  let cachesBefore = caches
+
+  slot.style.mediaFx.filter.grayscale = 0.5
+  slot.style.mediaFx.advanced = { pixelate: 0.4, rgbSplit: 0, scanline: 0 }
+  update(slot, source, box)
+  let filters = image.filters()
+  assert.equal(filters.length, 4)
+  assert.deepEqual(filters.slice(0, 2), legacy, 'legacy Brighten / Blur stay first')
+  assert.equal(typeof filters[2], 'function', 'basic CSS runs as a function step before the GPU')
+  assert.equal(isGpu(filters[2]), false)
+  assert.equal(isGpu(filters[3]), true, 'GPU step is last')
+  assert.equal(caches, cachesBefore + 1)
+  assert.ok(gpuCreates.at(-1).options.pixelRatio > 0, 'GPU step receives the cache pixel ratio')
+  assert.equal(image.brightness(), 0.5, 'advanced never mutates legacy brightness')
+  assert.equal(image.blurRadius(), 8, 'advanced never mutates legacy blur')
+  const chained = pixels()
+  filters.forEach(filter => filter.call(image, chained))
+  assert.deepEqual(gpuRuns.at(-1), cssDraws.at(-1).data, 'GPU receives the basic-filtered pixels')
+  assert.deepEqual(cssDraws.at(-1).data, expected.data, 'basic CSS still receives the legacy-filtered pixels')
+
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1, 'unchanged advanced reuses the cache')
+  slot.style.mediaFx.advanced = { pixelate: 0.41, rgbSplit: 0, scanline: 0 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'advanced change rebuilds the cache')
+  assert.equal(gpuCreates.at(-1).advanced.pixelate, 0.41)
+
+  slot.style.brightness = 1
+  slot.style.blurPx = 0
+  slot.style.mediaFx.filter.grayscale = 0
+  update(slot, source, box)
+  filters = image.filters()
+  assert.equal(filters.length, 1)
+  assert.equal(isGpu(filters[0]), true, 'advanced-only uses only the GPU step')
+  slot.style.mediaFx.filter.grayscale = 0.5
+  update(slot, source, box)
+  filters = image.filters()
+  assert.equal(filters.length, 2)
+  assert.equal(typeof filters[0], 'function', 'CSS-only before GPU avoids the Konva string fallback')
+  assert.equal(isGpu(filters[1]), true)
+
+  gpuSupported = false
+  cachesBefore = caches
+  update(slot, source, box)
+  assert.deepEqual(image.filters(), ['grayscale(0.5)'], 'without GPU the basic native path is unchanged')
+  assert.equal(caches, cachesBefore + 1, 'GPU capability is part of the cache signature')
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1)
+  gpuSupported = true
+
+  const storedAdvanced = { ...slot.style.mediaFx.advanced }
+  slot.style.fit = 'tile'
+  const createsBefore = gpuCreates.length
+  update(slot, source, box)
+  assert.equal(image.image(), undefined, 'tile never uses the direct image path')
+  assert.deepEqual(image.filters(), [])
+  assert.deepEqual(slot.style.mediaFx.advanced, storedAdvanced, 'tile keeps the advanced data')
+  slot.style.fit = 'cover'
+  update(slot, source, box)
+  assert.equal(isGpu(image.filters().at(-1)), true, 'switching back to cover restores advanced')
+
+  slot.animatedMedia = true
+  update(slot, source, box)
+  assert.equal(image.filters().some(isGpu), false, 'animated media never runs the GPU')
+  slot.animatedMedia = false
+  update(slot, { width: 10, height: 10, video: true }, box)
+  assert.equal(image.image(), undefined, 'video never uses the direct image path')
+  assert.equal(gpuCreates.length, createsBefore + 1, 'only the restored cover pass created a GPU step')
+  assert.deepEqual(slot.style.mediaFx.advanced, storedAdvanced, 'unsupported renderers never modify the spec')
   console.log('theater stage surface filter regression checks passed')
 }
 

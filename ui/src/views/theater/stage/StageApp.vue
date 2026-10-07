@@ -142,15 +142,20 @@ import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import {
   compactMediaFxSpec,
   createDefaultMediaFxSpec,
+  mediaFxAdvancedHasContent,
   mediaFxFilterToCss,
   mediaFxHasContent,
+  mediaFxSpecsEqual,
+  normalizeMediaFxSpec,
   resolveMediaFxCapabilities,
   resolveMediaFxMotionOverscanScale,
+  type MediaFxCapabilities,
   type MediaFxSpec,
 } from '@/features/media-fx/media-fx'
 import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
-import { createKonvaMediaFxController, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
-import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
+import { createKonvaMediaFxController, mediaFxAdvancedSignature, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
+import { createMediaFxGpuFilter, mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
+import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
@@ -1165,9 +1170,16 @@ const updateSurfaceOverlay = (target: StageSurfaceTarget, patch: Partial<StageSu
 // Surface Media FX is layered over the base display parameters; an all-default spec
 // (including the panel's own reset) removes the field instead of storing it.
 const surfaceMediaFx = (target: StageSurfaceTarget) => surfaceStyle(target).mediaFx ?? createDefaultMediaFxSpec()
+// Advanced GPU effects only render on the static direct-image path (not tile, video or
+// animated media). Unsupported cases keep any stored advanced values untouched.
 const surfaceMediaFxCapabilities = (target: StageSurfaceTarget) => {
   const image = props.store.state.liveState[target]
-  return resolveMediaFxCapabilities('konva', Boolean(image && (image.animated === true || image.mimeType?.startsWith('video/'))))
+  const animatedMedia = Boolean(image && (image.animated === true || image.mimeType?.startsWith('video/')))
+  return resolveMediaFxCapabilities(
+    'konva',
+    animatedMedia,
+    Boolean(image) && surfaceStyle(target).fit !== 'tile' && mediaFxGpuAvailable.value,
+  )
 }
 const updateSurfaceMediaFx = (target: StageSurfaceTarget, spec: MediaFxSpec) => {
   props.store.patchSceneSurfaceStyle(target, { mediaFx: compactMediaFxSpec(spec) })
@@ -5873,6 +5885,14 @@ const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
   style.fit !== 'tile'
 )
 
+// Advanced Media FX for the direct-image path only: static image, non-tile, GPU usable.
+// Returns null (no GPU step at all) otherwise; the stored spec is never modified.
+const surfaceMediaFxAdvanced = (slot: SurfaceSlot, source: StageMediaSource) => {
+  const advanced = slot.style.mediaFx?.advanced
+  if (!advanced || slot.animatedMedia || isVideoSource(source) || !useDirectSurfaceImage(slot.style)) return null
+  return mediaFxAdvancedHasContent(advanced) && mediaFxGpuSupported() ? advanced : null
+}
+
 // Konva 10.3 parses mixed CSS/function filters through an incomplete fallback.
 // Apply the full native CSS chain to the pixels AFTER the legacy function filters.
 // These temporary canvases are not node caches and never mutate filter attributes.
@@ -5922,6 +5942,7 @@ const updateDirectSurfaceImage = (
   const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
   // Without Canvas filter support only the legacy Konva base filters are kept.
   const mediaFxCss = canvasFilterSupported() ? surfaceMediaFxFilterCss(slot) : ''
+  const mediaFxAdvanced = surfaceMediaFxAdvanced(slot, source)
   const signature = [
     stageMediaObjectUrls.get(source) || '',
     dimensions.width,
@@ -5937,6 +5958,7 @@ const updateDirectSurfaceImage = (
     slot.style.brightness,
     slot.style.blurPx,
     mediaFxCss,
+    mediaFxAdvanced ? mediaFxAdvancedSignature(mediaFxAdvanced) : '',
   ].join(':')
   if (
     slot.directImageSource === source
@@ -5965,9 +5987,13 @@ const updateDirectSurfaceImage = (
   } else {
     slot.directImage.blurRadius(0)
   }
+  // Order: legacy Brighten -> legacy Blur -> Media FX basic -> Media FX advanced GPU.
+  // A failing GPU step leaves the pixels of the previous steps untouched.
+  const gpuFilter = mediaFxAdvanced ? createMediaFxGpuFilter(mediaFxAdvanced, { pixelRatio: Konva.pixelRatio || 1 }) : null
   if (mediaFxCss) {
-    filters.push(filters.length ? surfaceMediaFxCanvasFilter(mediaFxCss) : mediaFxCss)
+    filters.push(filters.length || gpuFilter ? surfaceMediaFxCanvasFilter(mediaFxCss) : mediaFxCss)
   }
+  if (gpuFilter) filters.push(gpuFilter)
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
   if (filters.length) slot.directImage.cache()
@@ -7730,16 +7756,63 @@ const closeImageEditor = () => {
   imageEditorTarget.value = null
 }
 
-const saveEditedImage = async (file: File) => {
+// The stage image editor runs in preserve mode: drawing edits go into the uploaded
+// file, Media FX (including motion) is returned separately and written only after the
+// upload succeeded. Media FX stays admin-only, like the inspector panels.
+const canEditImageEditorMediaFx = (target: ImageTarget | null) => {
+  if (!target || !canEditAllObjects.value) return false
+  return target.kind === 'scene' || supportsStageObjectMediaFx(props.store.activeObjects.value[target.objectId])
+}
+
+const imageEditorInitialMediaFx = computed<MediaFxSpec>(() => {
+  const target = imageEditorTarget.value
+  if (!target) return createDefaultMediaFxSpec()
+  if (target.kind === 'scene') return normalizeMediaFxSpec(surfaceStyle(target.target).mediaFx ?? createDefaultMediaFxSpec())
+  const object = props.store.activeObjects.value[target.objectId]
+  return object ? stageObjectMediaFx(object) : createDefaultMediaFxSpec()
+})
+
+const imageEditorMediaFxCapabilities = computed<Partial<MediaFxCapabilities>>(() => {
+  const target = imageEditorTarget.value
+  if (!target || !canEditImageEditorMediaFx(target)) return { motion: false, filters: false, advanced: false }
+  if (target.kind === 'scene') return surfaceMediaFxCapabilities(target.target)
+  const object = props.store.activeObjects.value[target.objectId]
+  return resolveMediaFxCapabilities(
+    'konva',
+    object?.type === 'image' && Boolean(object.image) && !isStaticImageObject(object),
+    isStaticImageObject(object) && mediaFxGpuAvailable.value,
+  )
+})
+
+const commitImageEditorMediaFx = (target: ImageTarget, mediaFx: MediaFxSpec | null) => {
+  if (!canEditImageEditorMediaFx(target)) return
+  const next = normalizeMediaFxSpec(mediaFx)
+  if (target.kind === 'scene') {
+    if (mediaFxSpecsEqual(normalizeMediaFxSpec(surfaceStyle(target.target).mediaFx), next)) return
+    props.store.patchSceneSurfaceStyle(target.target, { mediaFx: compactMediaFxSpec(next) })
+    return
+  }
+  const object = props.store.activeObjects.value[target.objectId]
+  if (!object || mediaFxSpecsEqual(stageObjectMediaFx(object), next)) return
+  endSelectedMediaFxEdit()
+  props.store.beginObjectEdit('修改视觉效果')
+  setStageObjectMediaFx(object, next)
+  props.store.commitObjectEdit()
+}
+
+const saveEditedImage = async (result: MessageImageEditorResult) => {
   const target = imageEditorTarget.value
   if (!target) return
   imageEditorVisible.value = false
   try {
-    await uploadImage(file, target)
-    closeImageEditor()
+    await uploadImage(result.file, target)
   } catch {
+    // Upload failed: Media FX was not touched; reopen the editor on the same target.
     imageEditorVisible.value = true
+    return
   }
+  commitImageEditorMediaFx(target, result.mediaFx)
+  closeImageEditor()
 }
 
 const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetIndex = 0) => {
@@ -10207,6 +10280,9 @@ onBeforeUnmount(() => {
       v-if="imageEditorVisible"
       :show="imageEditorVisible"
       :file="imageEditorFile"
+      effect-mode="preserve"
+      :initial-media-fx="imageEditorInitialMediaFx"
+      :media-fx-capabilities="imageEditorMediaFxCapabilities"
       @update:show="value => { imageEditorVisible = value }"
       @cancel="closeImageEditor"
       @confirm="saveEditedImage"

@@ -1,25 +1,61 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useElementSize, useEventListener, useWindowSize } from '@vueuse/core';
-import { NButton, NIcon, NSlider, NSpin, NTooltip } from 'naive-ui';
+import { NButton, NIcon, NSlider, NSpin, NSwitch, NTooltip } from 'naive-ui';
 import { Adjustments, ArrowBackUp, ArrowForwardUp, Check, Refresh, X } from '@vicons/tabler';
 import 'vue-paint/themes/default.css';
 import { VpImage, type SaveParameters, useEditor } from 'vue-paint';
-import { useMessageImageEditor, type MessageImageEditorTool } from '@/composables/useMessageImageEditor';
-import { createDefaultMediaFxSpec, mediaFxFilterHasContent, resolveMediaFxCapabilities } from '@/features/media-fx/media-fx';
+import {
+  useMessageImageEditor,
+  type MessageImageEditorResult,
+  type MessageImageEditorTool,
+} from '@/composables/useMessageImageEditor';
+import {
+  createDefaultMediaFxSpec,
+  mediaFxAdvancedHasContent,
+  mediaFxHasContent,
+  normalizeMediaFxSpec,
+  type MediaFxCapabilities,
+  type MediaFxSpec,
+} from '@/features/media-fx/media-fx';
+import { bakeMediaFxToCanvas, MediaFxAdvancedBakeError } from '@/features/media-fx/media-fx-canvas';
 import { vMediaFx } from '@/features/media-fx/media-fx-dom';
+import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu';
+import {
+  createMediaFxPreviewScheduler,
+  mediaFxStaticPreviewSpec,
+  mediaFxStaticSignature,
+} from '@/features/media-fx/media-fx-preview';
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue';
 
-const props = defineProps<{
+// effectMode:
+// - bake (default): filter / advanced are baked into the confirmed file; no motion.
+// - preserve: the file only carries drawing edits; the edited MediaFxSpec (including
+//   motion) is returned next to it for the caller to persist.
+const props = withDefaults(defineProps<{
   show: boolean;
   file: File | null;
-}>();
+  effectMode?: 'bake' | 'preserve';
+  // preserve only: the spec the session starts from. Ignored in bake mode.
+  initialMediaFx?: MediaFxSpec | null;
+  // What the caller's target renderer supports (preserve), or an opt-out (bake).
+  mediaFxCapabilities?: Partial<MediaFxCapabilities>;
+}>(), {
+  effectMode: 'bake',
+  initialMediaFx: null,
+  mediaFxCapabilities: () => ({}),
+});
 
 const emit = defineEmits<{
-  (event: 'confirm', file: File): void;
+  (event: 'confirm', result: MessageImageEditorResult): void;
   (event: 'cancel'): void;
   (event: 'update:show', value: boolean): void;
 }>();
+
+const isPreserveMode = computed(() => props.effectMode === 'preserve');
+const createSessionMediaFx = () => (
+  isPreserveMode.value ? normalizeMediaFxSpec(props.initialMediaFx) : createDefaultMediaFxSpec()
+);
 
 const {
   activeTool,
@@ -28,6 +64,7 @@ const {
   editorKey,
   errorMessage,
   exportEditedFile,
+  exportPreviewSnapshot,
   history,
   imageHeight,
   imageWidth,
@@ -42,7 +79,10 @@ const {
   setThickness,
   settings,
   tools,
-} = useMessageImageEditor(computed(() => props.file));
+} = useMessageImageEditor(computed(() => props.file), {
+  effectMode: () => props.effectMode,
+  initialMediaFx: createSessionMediaFx,
+});
 
 const { width: viewportWidth } = useWindowSize();
 const isMobileLayout = computed(() => (viewportWidth.value || 0) > 0 && viewportWidth.value < 768);
@@ -87,26 +127,158 @@ const imageStyle = computed(() => ({
   width: `${Math.max(1, Math.round(imageWidth.value * renderScale.value))}px`,
   height: `${Math.max(1, Math.round(imageHeight.value * renderScale.value))}px`,
 }));
-// Live CSS preview of the bake filter; blur is scaled so the preview matches the
-// baked full-resolution result.
 const mediaFxPanelOpen = ref(false);
-const mediaFxCapabilities = resolveMediaFxCapabilities('bake');
-const mediaFxActive = computed(() => mediaFxFilterHasContent(mediaFx.value.filter));
+const mediaFxGpuAvailable = ref(mediaFxGpuSupported());
+const unsubscribeMediaFxGpuAvailability = subscribeMediaFxGpuAvailability((available) => {
+  mediaFxGpuAvailable.value = available;
+});
+// bake: a still image has no motion, and advanced needs a working GPU at confirm time
+// (existing advanced values stay editable so they can be turned off after a failure).
+// preserve: the caller describes what its target renderer supports.
+const editorMediaFxCapabilities = computed<MediaFxCapabilities>(() => {
+  const caller = props.mediaFxCapabilities || {};
+  if (!isPreserveMode.value) {
+    return {
+      motion: false,
+      filters: caller.filters !== false,
+      advanced: caller.advanced !== false
+        && (mediaFxGpuAvailable.value || mediaFxAdvancedHasContent(mediaFx.value.advanced)),
+      animatedMedia: false,
+    };
+  }
+  return {
+    motion: caller.motion !== false,
+    filters: caller.filters !== false && caller.animatedMedia !== true,
+    advanced: caller.advanced === true && caller.animatedMedia !== true,
+    animatedMedia: caller.animatedMedia === true,
+  };
+});
+const mediaFxPanelMode = computed(() => (isPreserveMode.value ? 'live' : 'bake'));
+const mediaFxActive = computed(() => mediaFxHasContent(mediaFx.value));
+const applyEffectPreviewToEditor = ref(false);
+const effectPreviewReady = ref(false);
+const editorEffectPreviewActive = computed(() => applyEffectPreviewToEditor.value && effectPreviewReady.value);
+// CSS preview of the basic filter on the editing canvas. Motion is never applied here,
+// so drawing / crop / pan / zoom coordinates stay stable; blur is scaled to match the
+// full-resolution result. When the full preview overlay is active, static effects are
+// already baked into that overlay and must not be applied to the shell a second time.
 const mediaFxPreview = computed(() => ({
   spec: mediaFx.value,
   motion: false,
+  filters: editorMediaFxCapabilities.value.filters && !editorEffectPreviewActive.value,
   blurScale: renderScale.value,
 }));
+const saveErrorMessage = ref('');
+
+const handleMediaFxUpdate = (value: MediaFxSpec) => {
+  saveErrorMessage.value = '';
+  setMediaFx(value);
+};
 
 const handleEditorSave = async (payload: SaveParameters) => {
+  saveErrorMessage.value = '';
   try {
-    const file = await exportEditedFile(payload);
-    emit('confirm', file);
+    const result = await exportEditedFile(payload);
+    emit('confirm', result);
     emit('update:show', false);
   } catch (error) {
-    console.error('导出聊天插图失败', error);
+    console.error('导出编辑图片失败', error);
+    // The editor stays open; nothing is emitted without the requested effects.
+    if (error instanceof MediaFxAdvancedBakeError) {
+      mediaFxPanelOpen.value = true;
+    }
+    saveErrorMessage.value = error instanceof Error && error.message ? error.message : '图片导出失败，请重试';
   }
 };
+
+// Final-look preview: a downscaled raster of the current composition with the static
+// effects baked by the same helper as the export, wrapped in v-media-fx for motion
+// only. Only static changes (drawing, filter, advanced) re-rasterize; motion edits
+// just update the directive. Stale jobs are dropped by the scheduler's generation.
+const EFFECT_PREVIEW_MAX_EDGE = 480;
+const EFFECT_PREVIEW_DELAY_MS = 160;
+const effectPreviewCanvasRef = ref<HTMLCanvasElement | null>(null);
+const editorEffectPreviewCanvasRef = ref<HTMLCanvasElement | null>(null);
+const effectPreviewFrameRef = ref<HTMLElement | null>(null);
+const { width: effectPreviewFrameWidth, height: effectPreviewFrameHeight } = useElementSize(effectPreviewFrameRef);
+const effectPreviewSize = ref({ width: 0, height: 0 });
+// The motion wrapper matches the fitted image box, so motion offsets are relative to
+// the image like on the real renderers.
+const effectPreviewBoxStyle = computed(() => {
+  const { width, height } = effectPreviewSize.value;
+  if (!width || !height) {
+    return {};
+  }
+  const scale = Math.min(
+    (effectPreviewFrameWidth.value || 236) / width,
+    (effectPreviewFrameHeight.value || 150) / height,
+  );
+  return {
+    width: `${Math.max(1, Math.floor(width * scale))}px`,
+    height: `${Math.max(1, Math.floor(height * scale))}px`,
+  };
+});
+const effectPreviewError = ref('');
+const drawingRevision = ref(0);
+const effectPreviewStaticSpec = computed(() => mediaFxStaticPreviewSpec(mediaFx.value, {
+  filters: editorMediaFxCapabilities.value.filters,
+  advanced: editorMediaFxCapabilities.value.advanced,
+}));
+const effectPreviewKey = computed(() => [
+  editorKey.value,
+  imageWidth.value,
+  imageHeight.value,
+  drawingRevision.value,
+  mediaFxStaticSignature(effectPreviewStaticSpec.value),
+].join(':'));
+const effectPreviewMotion = computed(() => ({
+  spec: mediaFx.value,
+  filters: false,
+  motion: editorMediaFxCapabilities.value.motion,
+}));
+const releaseCanvas = (canvas: HTMLCanvasElement) => {
+  canvas.width = 0;
+  canvas.height = 0;
+};
+const paintEffectPreviewCanvas = (target: HTMLCanvasElement | null, source: HTMLCanvasElement) => {
+  if (!target) return;
+  target.width = source.width;
+  target.height = source.height;
+  target.getContext('2d')?.drawImage(source, 0, 0);
+};
+
+const effectPreviewScheduler = createMediaFxPreviewScheduler<HTMLCanvasElement>({
+  delayMs: EFFECT_PREVIEW_DELAY_MS,
+  render: async () => {
+    const snapshot = await exportPreviewSnapshot(getEditorSvg(), EFFECT_PREVIEW_MAX_EDGE);
+    if (!snapshot) {
+      return null;
+    }
+    try {
+      return bakeMediaFxToCanvas(
+        snapshot.canvas,
+        { width: snapshot.canvas.width, height: snapshot.canvas.height },
+        effectPreviewStaticSpec.value,
+        { pixelRatio: snapshot.scale },
+      );
+    } finally {
+      releaseCanvas(snapshot.canvas);
+    }
+  },
+  commit: (canvas) => {
+    paintEffectPreviewCanvas(effectPreviewCanvasRef.value, canvas);
+    paintEffectPreviewCanvas(editorEffectPreviewCanvasRef.value, canvas);
+    effectPreviewSize.value = { width: canvas.width, height: canvas.height };
+    effectPreviewReady.value = true;
+    effectPreviewError.value = '';
+    releaseCanvas(canvas);
+  },
+  discard: releaseCanvas,
+  onError: (error) => {
+    console.warn('生成效果预览失败', error);
+    effectPreviewError.value = '预览生成失败';
+  },
+});
 
 const {
   activeShape,
@@ -352,19 +524,24 @@ const handleResetAction = async () => {
     }
   }
   await reset();
-  setMediaFx(createDefaultMediaFxSpec());
+  handleMediaFxUpdate(createSessionMediaFx());
   resetZoom();
 };
 
 watch(
   () => props.show,
   (show) => {
+    saveErrorMessage.value = '';
     if (!show) {
       mediaFxPanelOpen.value = false;
     }
+    if (!show) {
+      applyEffectPreviewToEditor.value = false;
+    }
     if (show) {
-      // A reopened session starts without effects, like the drawing history reset below.
-      setMediaFx(createDefaultMediaFxSpec());
+      // A reopened session starts from its initial effects (default in bake mode, the
+      // caller's spec in preserve mode), like the drawing history reset below.
+      setMediaFx(createSessionMediaFx());
       nextTick(() => {
         void reset();
         resetZoom();
@@ -385,6 +562,30 @@ watch(
       resetZoom();
     });
   },
+);
+
+watch(
+  () => (props.show && mediaFxPanelOpen.value ? history.value : null),
+  (value) => {
+    if (value) {
+      drawingRevision.value += 1;
+    }
+  },
+  { deep: true },
+);
+
+watch(
+  () => (props.show && mediaFxPanelOpen.value && canEdit.value ? effectPreviewKey.value : null),
+  (key) => {
+    if (key === null) {
+      effectPreviewScheduler.invalidate();
+      effectPreviewReady.value = false;
+      effectPreviewError.value = '';
+      return;
+    }
+    effectPreviewScheduler.request(key);
+  },
+  { flush: 'post' },
 );
 
 watch(isMoveTool, (enabled) => {
@@ -415,6 +616,8 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
 });
 
 onUnmounted(() => {
+  effectPreviewScheduler.dispose();
+  unsubscribeMediaFxGpuAvailability();
   endPan();
   if (typeof document !== 'undefined') {
     document.body.style.overflow = '';
@@ -469,7 +672,12 @@ onUnmounted(() => {
           @touchcancel="handleTouchEnd"
         >
           <div ref="viewportCenterRef" class="message-image-editor__viewport-center">
-            <div v-media-fx="mediaFxPreview" class="message-image-editor__canvas-shell" :style="canvasShellStyle">
+            <div
+              v-media-fx="mediaFxPreview"
+              class="message-image-editor__canvas-shell"
+              :class="{ 'message-image-editor__canvas-shell--effect-preview': editorEffectPreviewActive }"
+              :style="canvasShellStyle"
+            >
               <VpImage
                 ref="vpImageRef"
                 :key="editorKey"
@@ -481,21 +689,53 @@ onUnmounted(() => {
                 :width="imageWidth"
                 :height="imageHeight"
               />
+              <div
+                v-media-fx="effectPreviewMotion"
+                class="message-image-editor__editor-effect-preview"
+                :class="{ 'is-active': editorEffectPreviewActive }"
+                aria-hidden="true"
+              >
+                <canvas
+                  ref="editorEffectPreviewCanvasRef"
+                  class="message-image-editor__editor-effect-preview-canvas"
+                />
+              </div>
             </div>
           </div>
         </div>
         <aside v-if="mediaFxPanelOpen" class="message-image-editor__fx-panel" aria-label="图像效果">
+          <section class="message-image-editor__fx-preview" aria-label="效果预览">
+            <header class="message-image-editor__fx-preview-heading">
+              <span>效果预览</span>
+              <small v-if="effectPreviewError">{{ effectPreviewError }}</small>
+              <small v-else-if="!effectPreviewReady">生成中…</small>
+            </header>
+            <div ref="effectPreviewFrameRef" class="message-image-editor__fx-preview-frame">
+              <div v-media-fx="effectPreviewMotion" class="message-image-editor__fx-preview-motion" :style="effectPreviewBoxStyle">
+                <canvas
+                  ref="effectPreviewCanvasRef"
+                  class="message-image-editor__fx-preview-canvas"
+                  :class="{ 'is-hidden': !effectPreviewReady }"
+                />
+              </div>
+            </div>
+            <label class="message-image-editor__fx-preview-toggle">
+              <span>应用到编辑区</span>
+              <n-switch v-model:value="applyEffectPreviewToEditor" size="small" />
+            </label>
+          </section>
           <MediaFxPanel
             :model-value="mediaFx"
-            mode="bake"
-            :capabilities="mediaFxCapabilities"
+            :mode="mediaFxPanelMode"
+            :capabilities="editorMediaFxCapabilities"
             :disabled="isSaving"
-            @update:model-value="setMediaFx"
+            @update:model-value="handleMediaFxUpdate"
           />
         </aside>
         </div>
 
         <div class="message-image-editor__controls">
+          <p v-if="saveErrorMessage" class="message-image-editor__save-error" role="alert">{{ saveErrorMessage }}</p>
           <div class="message-image-editor__tool-row">
             <n-tooltip trigger="hover">
               <template #trigger>
@@ -816,6 +1056,71 @@ onUnmounted(() => {
   color: var(--editor-fg);
 }
 
+.message-image-editor__fx-preview {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.message-image-editor__fx-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.message-image-editor__fx-preview-heading small {
+  font-weight: 400;
+  color: var(--editor-muted);
+}
+
+.message-image-editor__fx-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 150px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--editor-shell-border);
+  background: var(--editor-image-bg);
+  background-color: var(--sc-bg-surface, #ffffff);
+}
+
+.message-image-editor__fx-preview-motion {
+  flex: 0 0 auto;
+}
+
+.message-image-editor__fx-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.message-image-editor__fx-preview-canvas.is-hidden {
+  visibility: hidden;
+}
+
+.message-image-editor__fx-preview-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding: 1px 2px 0;
+  color: var(--editor-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.message-image-editor__save-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #ef4444;
+}
+
 .message-image-editor__viewport {
   flex: 1 1 auto;
   min-height: 0;
@@ -846,7 +1151,35 @@ onUnmounted(() => {
 }
 
 .message-image-editor__canvas-shell {
+  position: relative;
   flex: 0 0 auto;
+}
+
+.message-image-editor__canvas-shell--effect-preview .message-image-editor__image {
+  opacity: 0;
+}
+
+.message-image-editor__editor-effect-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  visibility: hidden;
+  border-radius: 18px;
+  border: 1px solid var(--editor-shell-border);
+  box-sizing: border-box;
+  transform-origin: center;
+}
+
+.message-image-editor__editor-effect-preview.is-active {
+  visibility: visible;
+}
+
+.message-image-editor__editor-effect-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
 }
 
 .message-image-editor__image {

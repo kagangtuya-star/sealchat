@@ -480,8 +480,9 @@ export type MediaFxRendererKind = 'dom' | 'konva' | 'bake'
 
 // Animated media is excluded from live filters so the Konva static cache path never
 // freezes a frame and all live surfaces share one rule. Bake never has motion.
-// Advanced effects stay off unless the consumer opts in (currently only Stage static
-// images); an unsupported renderer keeps the data untouched, it just does not render it.
+// Advanced effects stay off unless the consumer opts in (Stage static images, static
+// non-tile Stage surfaces, the image editor); an unsupported renderer keeps the data
+// untouched, it just does not render it.
 export const resolveMediaFxCapabilities = (
   renderer: MediaFxRendererKind,
   animatedMedia = false,
