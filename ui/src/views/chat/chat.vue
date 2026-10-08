@@ -13429,6 +13429,18 @@ const canUseIdentityWheelMode = () => {
   return identities.length >= 2;
 };
 
+const isIdentityWheelEditableTarget = (target: EventTarget | null) => {
+  const element = target instanceof Element ? target : null;
+  return Boolean(element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'));
+};
+
+const hasEditableIdentityWheelFocus = (eventTarget?: EventTarget | null) => {
+  if (isIdentityWheelEditableTarget(eventTarget ?? null)) {
+    return true;
+  }
+  return typeof document !== 'undefined' && isIdentityWheelEditableTarget(document.activeElement);
+};
+
 const closeIdentityWheelMode = () => {
   if (!identityWheelHoldActive.value) {
     return;
@@ -13440,6 +13452,9 @@ const closeIdentityWheelMode = () => {
 const handleIdentityWheelHotkeyDown = (event: KeyboardEvent) => {
   const config = display.settings.toolbarHotkeys?.identityWheel;
   if (!config?.enabled || !config.hotkey || identityWheelHoldActive.value || event.repeat) {
+    return;
+  }
+  if (hasEditableIdentityWheelFocus(event.target)) {
     return;
   }
   if (!isHotkeyMatchingEvent(event, config.hotkey) || !canUseIdentityWheelMode()) {
@@ -13491,6 +13506,10 @@ const cycleCurrentIdentity = (step: 1 | -1) => {
 
 const handleIdentityWheel = (event: WheelEvent) => {
   if (!identityWheelHoldActive.value) {
+    return;
+  }
+  if (hasEditableIdentityWheelFocus()) {
+    closeIdentityWheelMode();
     return;
   }
   const delta = event.deltaY || event.deltaX;
