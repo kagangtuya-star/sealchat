@@ -18,11 +18,11 @@ const state = reactive({
   embeds: { background: config() as ReturnType<typeof config> | null, foreground: null as ReturnType<typeof config> | null },
 })
 const snapshot = { revision: 0, updatedAt: 0, activeIdentityId: null, characters: [] }
-const object = {
+const object = reactive({
   id: 'object-iframe', type: 'iframe', parentId: null, name: 'Object frame',
   transform: { x: 0, y: 0, width: 3, height: 2, scaleX: 1, scaleY: 1, rotation: 0, z: 1, order: 1 },
   visible: true, interactive: true, content: { iframe: { url: `${origin}/page`, scale: 1 } }, metadata: {},
-}
+})
 const plan = planStageObjectRenderBands({ [object.id]: object } as never)
 const interactive = (target: 'background' | 'foreground') => state.editing ? state.test === target : state.embeds[target]?.interactive === true
 let stage: Konva.Stage, world: Konva.Group, foreground: Konva.Group, controls: Konva.Layer
@@ -91,6 +91,35 @@ async function run() {
   document.querySelector<HTMLButtonElement>('#exit')!.click(); await refresh()
   assert(surfaceFrame('background') === initialBackground && !state.test, 'exit restores editing without reloading')
   assert(hit(100, 60) instanceof HTMLCanvasElement, 'exit restores native stage pointer input')
+  // Ordinary objects do not pass blockFocus: interactive owns their whole input boundary.
+  const ordinaryFrame = ordinary as HTMLIFrameElement
+  const ordinaryRoot = ordinaryFrame.closest('.theater-iframe-frame') as HTMLElement
+  ordinaryFrame.focus()
+  assert(document.activeElement === ordinaryFrame, 'interactive ordinary iframe can receive focus')
+  object.interactive = false; await refresh()
+  assert(surfaceFrame('background') === initialBackground, 'ordinary toggle leaves surface frame intact')
+  assert(document.activeElement !== ordinaryFrame, 'ordinary true -> false releases iframe focus')
+  assert(ordinaryRoot.inert, 'ordinary noninteractive subtree blocks keyboard focus')
+  const canvasHit = hit(150, 100)
+  assert(canvasHit instanceof HTMLCanvasElement && canvasHit.closest('#stage'), 'ordinary noninteractive iframe hits Konva canvas')
+  for (const element of [ordinaryRoot, ...ordinaryRoot.querySelectorAll('*')]) {
+    const style = getComputedStyle(element)
+    assert(style.pointerEvents === 'none', 'entire ordinary host subtree skips pointer hit-testing')
+    assert(style.userSelect === 'none', 'noninteractive host subtree suppresses selection')
+    assert(style.getPropertyValue('-webkit-user-drag') === 'none', 'noninteractive host subtree suppresses native dragging')
+  }
+  // Descendant inline styles (e.g. a direct IForm embed) must not re-enable hits.
+  ordinaryFrame.style.pointerEvents = 'auto'
+  assert(getComputedStyle(ordinaryFrame).pointerEvents === 'none', 'disabled boundary overrides descendant inline pointer-events')
+  assert(hit(150, 100) === canvasHit, 'descendant override still passes input to the same canvas')
+  ordinaryFrame.style.removeProperty('pointer-events')
+  ordinaryFrame.focus()
+  assert(document.activeElement !== ordinaryFrame, 'disabled iframe cannot regain focus')
+  object.interactive = true; await refresh()
+  assert(document.querySelector('iframe[data-stage-object-id]') === ordinaryFrame, 'ordinary toggle preserves iframe identity')
+  assert(!ordinaryRoot.inert && hit(150, 100) === ordinaryFrame, 'ordinary false -> true restores native pointer ownership')
+  ordinaryFrame.focus()
+  assert(document.activeElement === ordinaryFrame, 'ordinary false -> true restores focus')
   state.editing = false; await refresh()
   assert(hit(15, 180) === initialBackground, 'player interactive config enables background')
   state.embeds.background!.interactive = false; await refresh()

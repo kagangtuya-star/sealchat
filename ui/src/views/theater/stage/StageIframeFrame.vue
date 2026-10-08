@@ -145,14 +145,17 @@ onBeforeUnmount(() => {
 })
 
 const frameRoot = ref<HTMLElement | null>(null)
-watch(() => props.blockFocus, blocked => {
-  if (blocked && document.activeElement instanceof HTMLIFrameElement && frameRoot.value?.contains(document.activeElement)) {
-    document.activeElement.blur()
+const inputDisabled = computed(() => !props.interactive || props.blockFocus === true)
+watch(inputDisabled, disabled => {
+  if (!disabled || typeof document === 'undefined') return
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement && frameRoot.value?.contains(activeElement)) {
+    activeElement.blur()
   }
 }, { flush: 'post' })
 
 const pointerEvents = computed<'auto' | 'none'>(() => (
-  props.interactive ? 'auto' : 'none'
+  inputDisabled.value ? 'none' : 'auto'
 ))
 const frameStyle = computed<CSSProperties>(() => ({
   width: `${100 / iframeContent.value.scale}%`,
@@ -171,7 +174,13 @@ const showsFrame = computed(() => (
 </script>
 
 <template>
-  <div ref="frameRoot" class="theater-iframe-frame" :style="{ pointerEvents }" :inert="blockFocus || undefined">
+  <div
+    ref="frameRoot"
+    class="theater-iframe-frame"
+    :class="{ 'is-input-disabled': inputDisabled }"
+    :style="{ pointerEvents }"
+    :inert="inputDisabled || undefined"
+  >
     <div v-if="showsFrame" v-media-fx="mediaFx" class="theater-iframe-visual-object__media-fx">
       <IFormEmbedFrame
         v-if="internalIFormTarget && directIForm"
@@ -227,6 +236,16 @@ const showsFrame = computed(() => (
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* Keep the entire host subtree out of hit-testing, including inline IForm embeds.
+   These rules affect only host DOM; native input passes through to the canvas. */
+.theater-iframe-frame.is-input-disabled,
+.theater-iframe-frame.is-input-disabled :deep(*) {
+  pointer-events: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-user-drag: none;
 }
 
 /* Clips the scaled frame exactly as the root did; the root stays unclipped so
