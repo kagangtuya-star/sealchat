@@ -23,6 +23,10 @@ interface TemplateItem {
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
+const settingsSaving = ref(false)
+const settingsVisible = ref(false)
+const maxEmbedCodeSizeKB = ref(128)
+const embedCodeSizeDraftKB = ref<number | null>(128)
 const modalVisible = ref(false)
 const editingId = ref('')
 const items = ref<TemplateItem[]>([])
@@ -113,11 +117,36 @@ const buildPayload = (source: any) => {
 const load = async () => {
   loading.value = true
   try {
-    const { data } = await api.get<{ items: TemplateItem[] }>('api/v1/admin/channel-embed-tools/templates', { params: { page: 1, pageSize: 100 } })
-    items.value = data?.items || []
+    const [templatesResponse, settingsResponse] = await Promise.all([
+      api.get<{ items: TemplateItem[] }>('api/v1/admin/channel-embed-tools/templates', { params: { page: 1, pageSize: 100 } }),
+      api.get<{ maxCodeSizeKB: number }>('api/v1/admin/channel-embed-tools/settings'),
+    ])
+    items.value = templatesResponse.data?.items || []
+    maxEmbedCodeSizeKB.value = Number(settingsResponse.data?.maxCodeSizeKB) || 128
   } catch (error: any) {
     message.error(error?.response?.data?.message || '读取频道嵌入工具失败')
   } finally { loading.value = false }
+}
+
+const openEmbedSettings = () => {
+  embedCodeSizeDraftKB.value = maxEmbedCodeSizeKB.value
+  settingsVisible.value = true
+}
+
+const saveEmbedSettings = async () => {
+  settingsSaving.value = true
+  try {
+    const { data } = await api.patch<{ maxCodeSizeKB: number }>('api/v1/admin/channel-embed-tools/settings', {
+      maxCodeSizeKB: embedCodeSizeDraftKB.value,
+    })
+    maxEmbedCodeSizeKB.value = Number(data?.maxCodeSizeKB) || 128
+    settingsVisible.value = false
+    message.success('嵌入代码大小限制已保存')
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '保存嵌入设置失败')
+  } finally {
+    settingsSaving.value = false
+  }
 }
 
 const openCreate = () => { reset(); modalVisible.value = true }
@@ -296,6 +325,7 @@ onMounted(load)
     <n-space justify="space-between" align="center" class="mb-3">
       <n-input v-model:value="searchText" clearable placeholder="搜索模板名称或描述" style="width: 280px" />
       <n-space>
+        <n-button secondary :disabled="loading" @click="openEmbedSettings">嵌入设置</n-button>
         <n-button secondary @click="triggerImport">导入模板</n-button>
         <n-button type="primary" @click="openCreate">创建平台模板</n-button>
       </n-space>
@@ -304,6 +334,38 @@ onMounted(load)
     <n-spin :show="loading">
       <n-data-table :columns="columns" :data="filteredItems" :bordered="false" />
     </n-spin>
+    <n-modal
+      v-model:show="settingsVisible"
+      preset="card"
+      title="嵌入设置"
+      size="small"
+      :closable="!settingsSaving"
+      :mask-closable="!settingsSaving"
+      :close-on-esc="!settingsSaving"
+      style="width: min(420px, 94vw);"
+    >
+      <n-space align="center" :wrap="true">
+        <span>嵌入代码大小上限</span>
+        <n-input-number
+          v-model:value="embedCodeSizeDraftKB"
+          :min="16"
+          :max="4096"
+          :step="16"
+          :precision="0"
+          :disabled="settingsSaving"
+          style="width: 150px"
+        >
+          <template #suffix>KB</template>
+        </n-input-number>
+      </n-space>
+      <n-text tag="div" depth="3" class="embed-settings-hint">默认 128 KB，适用于频道自定义嵌入和平台模板的 HTML 代码，保存后生效。</n-text>
+      <template #footer>
+        <n-space justify="end">
+          <n-button :disabled="settingsSaving" @click="settingsVisible = false">取消</n-button>
+          <n-button type="primary" :loading="settingsSaving" :disabled="embedCodeSizeDraftKB == null" @click="saveEmbedSettings">保存设置</n-button>
+        </n-space>
+      </template>
+    </n-modal>
     <n-modal v-model:show="modalVisible" preset="card" title="平台频道嵌入模板" style="width: min(720px, 94vw);">
       <n-form label-placement="left" label-width="110">
         <n-form-item label="名称"><n-input v-model:value="form.name" /></n-form-item>
@@ -380,6 +442,11 @@ onMounted(load)
 </template>
 
 <style scoped>
+.embed-settings-hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
 .template-import-input {
   display: none;
 }

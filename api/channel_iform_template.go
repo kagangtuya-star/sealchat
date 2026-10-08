@@ -18,6 +18,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 type channelIFormTemplateCatalogItem struct {
@@ -152,6 +153,50 @@ func requirePlatformAdmin(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "没有平台管理权限")
 	}
 	return nil
+}
+
+func AdminChannelIFormSettingsGet(c *fiber.Ctx) error {
+	if err := requirePlatformAdmin(c); err != nil {
+		return err
+	}
+	maxCodeSizeKB := utils.DefaultChannelEmbedMaxCodeSizeKB
+	if cfg := utils.GetConfig(); cfg != nil && cfg.ChannelEmbedTools.MaxCodeSizeKB > 0 {
+		maxCodeSizeKB = cfg.ChannelEmbedTools.MaxCodeSizeKB
+	}
+	return c.JSON(fiber.Map{"maxCodeSizeKB": maxCodeSizeKB})
+}
+
+func AdminChannelIFormSettingsUpdate(c *fiber.Ctx) error {
+	if err := requirePlatformAdmin(c); err != nil {
+		return err
+	}
+	var payload struct {
+		MaxCodeSizeKB int `json:"maxCodeSizeKB"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
+	}
+	if payload.MaxCodeSizeKB < utils.MinChannelEmbedMaxCodeSizeKB || payload.MaxCodeSizeKB > utils.MaxChannelEmbedMaxCodeSizeKB {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, fmt.Sprintf("嵌入代码大小限制必须在 %d-%d KB 之间", utils.MinChannelEmbedMaxCodeSizeKB, utils.MaxChannelEmbedMaxCodeSizeKB))
+	}
+
+	configMutationMu.Lock()
+	defer configMutationMu.Unlock()
+	current := appConfig
+	if current == nil {
+		current = utils.GetConfig()
+	}
+	if current == nil {
+		return wrapErrorStatus(c, fiber.StatusServiceUnavailable, nil, "配置未加载")
+	}
+	merged := *current
+	merged.ChannelEmbedTools.MaxCodeSizeKB = payload.MaxCodeSizeKB
+	if err := utils.WriteConfigChecked(&merged); err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "配置文件写入失败，运行配置未修改")
+	}
+	appConfig = &merged
+	SyncConfigToDB(appConfig, "api")
+	return c.JSON(fiber.Map{"maxCodeSizeKB": merged.ChannelEmbedTools.MaxCodeSizeKB})
 }
 
 func AdminChannelIFormTemplateList(c *fiber.Ctx) error {

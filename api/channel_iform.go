@@ -15,6 +15,7 @@ import (
 	"sealchat/pm"
 	"sealchat/protocol"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 const (
@@ -872,8 +873,12 @@ func sanitizeEmbedCode(raw string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
-	if len(trimmed) > 88192 {
-		return "", errors.New("嵌入代码过长")
+	maxSizeKB := utils.DefaultChannelEmbedMaxCodeSizeKB
+	if cfg := utils.GetConfig(); cfg != nil && cfg.ChannelEmbedTools.MaxCodeSizeKB > 0 {
+		maxSizeKB = cfg.ChannelEmbedTools.MaxCodeSizeKB
+	}
+	if len(trimmed) > maxSizeKB*1024 {
+		return "", fmt.Errorf("嵌入代码超过平台限制（%d KB）", maxSizeKB)
 	}
 	return trimmed, nil
 }

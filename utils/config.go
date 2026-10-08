@@ -453,6 +453,17 @@ type WebSocketConfig struct {
 	OutboundQueueSize int `json:"outboundQueueSize" yaml:"outboundQueueSize"`
 }
 
+const DefaultChannelEmbedMaxCodeSizeKB = 128
+
+const (
+	MinChannelEmbedMaxCodeSizeKB = 16
+	MaxChannelEmbedMaxCodeSizeKB = 4096
+)
+
+type ChannelEmbedToolsConfig struct {
+	MaxCodeSizeKB int `json:"maxCodeSizeKB" yaml:"maxCodeSizeKB"`
+}
+
 type AppConfig struct {
 	MCP                       MCPConfig                 `json:"mcp" yaml:"mcp"`
 	ServeAt                   string                    `json:"serveAt" yaml:"serveAt"`
@@ -500,6 +511,7 @@ type AppConfig struct {
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
 	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
 	WebSocket                 WebSocketConfig           `json:"websocket" yaml:"websocket"`
+	ChannelEmbedTools         ChannelEmbedToolsConfig   `json:"channelEmbedTools" yaml:"channelEmbedTools"`
 }
 
 type ExportConfig struct {
@@ -736,6 +748,9 @@ func ReadConfig() *AppConfig {
 		},
 		WebSocket: WebSocketConfig{
 			OutboundQueueSize: DefaultWebSocketOutboundQueueSize,
+		},
+		ChannelEmbedTools: ChannelEmbedToolsConfig{
+			MaxCodeSizeKB: DefaultChannelEmbedMaxCodeSizeKB,
 		},
 	}
 

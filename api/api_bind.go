@@ -937,6 +937,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/ai/models", AdminAIProviderModelsDiscover)
 	v1AuthAdmin.Get("/admin/ai/usage-logs", AdminAIUsageLogs)
 	v1AuthAdmin.Post("/admin/ai/usage-logs/cleanup", AdminAIUsageLogsCleanup)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/settings", AdminChannelIFormSettingsGet)
+	v1AuthAdmin.Patch("/admin/channel-embed-tools/settings", AdminChannelIFormSettingsUpdate)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/templates", AdminChannelIFormTemplateList)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/builtin/:key", AdminChannelIFormBuiltinGet)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/templates/:templateId", AdminChannelIFormTemplateGet)
