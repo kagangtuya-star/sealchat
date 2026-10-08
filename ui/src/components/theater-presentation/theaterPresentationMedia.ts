@@ -22,15 +22,16 @@ export const resolveTheaterMediaCandidates = (
 export const isAnimatedTheaterMedia = (media: TheaterMediaRef | null | undefined) => Boolean(media && media.kind !== 'static_image')
 
 // Capabilities follow the stored media kind, never the candidate currently shown: an
-// animated / video layer that falls back to its static PNG stays without advanced
-// effects. Advanced additionally needs page-level GPU availability; when it is off the
-// stored advanced values are kept, only not rendered.
+// animated / video layer that falls back to its static PNG stays without advanced or
+// temporal effects. Both additionally need page-level GPU availability; when it is off
+// the stored values are kept, only not rendered.
 export const resolveTheaterMediaFxCapabilities = (
   media: TheaterMediaRef | null | undefined,
   gpuAvailable: boolean,
 ): MediaFxCapabilities => resolveMediaFxCapabilities(
   'dom',
   isAnimatedTheaterMedia(media),
+  gpuAvailable && media?.kind === 'static_image',
   gpuAvailable && media?.kind === 'static_image',
 )
 

@@ -1,15 +1,18 @@
 // Media FX core: a renderer-agnostic, versioned description of image motion,
-// static visual adjustments and advanced pixel effects. Business code only stores MediaFxSpec; DOM / Konva /
-// Canvas adapters translate it into concrete rendering primitives.
+// static visual adjustments, advanced static pixel effects and time-driven (temporal)
+// pixel effects. Business code only stores MediaFxSpec; DOM / Konva / Canvas adapters
+// translate it into concrete rendering primitives.
 //
 // Every value is a whitelisted enum or a clamped finite number. Never persist or
 // execute caller-provided CSS filter strings, animation names or keyframes.
 
-export const MEDIA_FX_VERSION = 3 as const
-// v1 specs carry no `advanced`; v2 specs carry only the first three advanced effects.
-// Both are read losslessly and upgraded to v3 with the missing effects off.
+export const MEDIA_FX_VERSION = 4 as const
+// v1 specs carry no `advanced`; v2 specs carry only the first three advanced effects;
+// v3 specs carry all nine advanced effects but no `temporal`. All of them are read
+// losslessly and upgraded to v4 with the missing effects off.
 export const LEGACY_MEDIA_FX_VERSION = 1 as const
 export const MEDIA_FX_V2_VERSION = 2 as const
+export const MEDIA_FX_V3_VERSION = 3 as const
 
 export const mediaFxMotionPresets = [
   'none',
@@ -57,15 +60,32 @@ export interface MediaFxAdvanced {
   edge: number
 }
 
+// Temporal (time-driven) pixel effects, since v4. Unlike `advanced` they change over
+// time and are rendered live over the static final look; `advanced.grain` stays the
+// fixed grain texture while `temporal.grain` is grain that changes every few frames.
+// The four effects are normalized 0..1 strengths where 0 means off; `speed` scales the
+// time of every temporal effect and means nothing while all of them are off. Renderer
+// constants (rates, sizes, seeds) are never persisted.
+export interface MediaFxTemporal {
+  grain: number
+  flicker: number
+  glitch: number
+  scanlineRoll: number
+  speed: number
+}
+
 export interface MediaFxSpec {
   version: typeof MEDIA_FX_VERSION
   motion: MediaFxMotion
   filter: MediaFxFilter
   advanced: MediaFxAdvanced
+  temporal: MediaFxTemporal
 }
 
 export type MediaFxFilterKey = keyof MediaFxFilter
 export type MediaFxAdvancedKey = keyof MediaFxAdvanced
+export type MediaFxTemporalKey = keyof MediaFxTemporal
+export type MediaFxTemporalEffectKey = Exclude<MediaFxTemporalKey, 'speed'>
 
 export interface MediaFxRange {
   min: number
@@ -103,6 +123,18 @@ export const MEDIA_FX_ADVANCED_RANGES: Readonly<Record<MediaFxAdvancedKey, Media
 export const mediaFxAdvancedKeys = Object.keys(MEDIA_FX_ADVANCED_RANGES) as MediaFxAdvancedKey[]
 // The advanced fields a v2 spec may carry; every other key is v3-only.
 export const mediaFxV2AdvancedKeys = ['pixelate', 'rgbSplit', 'scanline'] as const satisfies readonly MediaFxAdvancedKey[]
+
+export const MEDIA_FX_TEMPORAL_RANGES: Readonly<Record<MediaFxTemporalKey, MediaFxRange>> = {
+  grain: ADVANCED_STRENGTH_RANGE,
+  flicker: ADVANCED_STRENGTH_RANGE,
+  glitch: ADVANCED_STRENGTH_RANGE,
+  scanlineRoll: ADVANCED_STRENGTH_RANGE,
+  speed: { min: 0.25, max: 3, step: 0.05, defaultValue: 1 },
+}
+
+export const mediaFxTemporalKeys = Object.keys(MEDIA_FX_TEMPORAL_RANGES) as MediaFxTemporalKey[]
+// The temporal fields that are effects; `speed` alone never makes a spec "active".
+export const mediaFxTemporalEffectKeys = ['grain', 'flicker', 'glitch', 'scanlineRoll'] as const satisfies readonly MediaFxTemporalEffectKey[]
 
 export const MEDIA_FX_INTENSITY_RANGE: Readonly<MediaFxRange> = { min: 0, max: 1, step: 0.01, defaultValue: 0.5 }
 export const MEDIA_FX_DURATION_RANGE: Readonly<MediaFxRange> = { min: 300, max: 20_000, step: 10, defaultValue: 4_000 }
@@ -304,11 +336,20 @@ export const createDefaultMediaFxAdvanced = (): MediaFxAdvanced => ({
   edge: 0,
 })
 
+export const createDefaultMediaFxTemporal = (): MediaFxTemporal => ({
+  grain: 0,
+  flicker: 0,
+  glitch: 0,
+  scanlineRoll: 0,
+  speed: 1,
+})
+
 export const createDefaultMediaFxSpec = (): MediaFxSpec => ({
   version: MEDIA_FX_VERSION,
   motion: createDefaultMediaFxMotion(),
   filter: createDefaultMediaFxFilter(),
   advanced: createDefaultMediaFxAdvanced(),
+  temporal: createDefaultMediaFxTemporal(),
 })
 
 export const normalizeMediaFxFilter = (input: unknown): MediaFxFilter => {
@@ -337,6 +378,17 @@ export const normalizeMediaFxAdvanced = (
   return advanced
 }
 
+export const normalizeMediaFxTemporal = (input: unknown): MediaFxTemporal => {
+  const value = isPlainObject(input) ? input : {}
+  const temporal = createDefaultMediaFxTemporal()
+  mediaFxTemporalKeys.forEach((key) => {
+    const range = MEDIA_FX_TEMPORAL_RANGES[key]
+    const normalized = roundTo(finiteInRange(value[key], range), key === 'speed' ? 2 : 3)
+    temporal[key] = Math.abs(normalized - range.defaultValue) < FILTER_EPSILON ? range.defaultValue : normalized
+  })
+  return temporal
+}
+
 export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
   const value = isPlainObject(input) ? input : {}
   const preset = mediaFxMotionPresets.includes(value.preset as MediaFxMotionPreset)
@@ -353,14 +405,21 @@ export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
   }
 }
 
-// Unknown fields and versions are dropped; the result is always canonical v3 with only
+// Unknown fields and versions are dropped; the result is always canonical v4 with only
 // whitelisted keys. v1 (and version-less historical data) keeps motion / filter and
-// gains a default `advanced`; v2 keeps its three advanced effects and only those, so
-// upgrading the spec never loses a stored effect nor reads fields v2 never had.
+// gains a default `advanced`; v2 keeps its three advanced effects and only those; v3
+// keeps all nine advanced effects. Only v4 reads `temporal`; older versions gain it
+// with every temporal effect off, so upgrading never loses a stored effect nor reads
+// fields the old version never had.
 export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
   const value = isPlainObject(input) ? input : {}
   const legacy = value.version === undefined || value.version === LEGACY_MEDIA_FX_VERSION
-  if (!legacy && value.version !== MEDIA_FX_V2_VERSION && value.version !== MEDIA_FX_VERSION) {
+  if (
+    !legacy
+    && value.version !== MEDIA_FX_V2_VERSION
+    && value.version !== MEDIA_FX_V3_VERSION
+    && value.version !== MEDIA_FX_VERSION
+  ) {
     return createDefaultMediaFxSpec()
   }
   return {
@@ -370,6 +429,7 @@ export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
     advanced: legacy
       ? createDefaultMediaFxAdvanced()
       : normalizeMediaFxAdvanced(value.advanced, value.version === MEDIA_FX_V2_VERSION ? mediaFxV2AdvancedKeys : mediaFxAdvancedKeys),
+    temporal: value.version === MEDIA_FX_VERSION ? normalizeMediaFxTemporal(value.temporal) : createDefaultMediaFxTemporal(),
   }
 }
 
@@ -383,6 +443,21 @@ export const mediaFxAdvancedHasContent = (advanced: MediaFxAdvanced | null | und
   )),
 )
 
+// Only the four effect strengths count; `speed` alone is not an effect.
+export const mediaFxTemporalHasContent = (temporal: MediaFxTemporal | null | undefined) => Boolean(
+  temporal && mediaFxTemporalEffectKeys.some((key) => (
+    Math.abs(temporal[key] - MEDIA_FX_TEMPORAL_RANGES[key].defaultValue) >= FILTER_EPSILON
+  )),
+)
+
+// Temporal without any effect equals the default whatever its speed.
+export const mediaFxTemporalEqual = (left: MediaFxTemporal | null | undefined, right: MediaFxTemporal | null | undefined) => {
+  const leftActive = mediaFxTemporalHasContent(left)
+  const rightActive = mediaFxTemporalHasContent(right)
+  if (!leftActive || !rightActive) return leftActive === rightActive
+  return mediaFxTemporalKeys.every((key) => left![key] === right![key])
+}
+
 export const mediaFxMotionHasContent = (motion: MediaFxMotion) => motion.preset !== 'none' && motion.intensity > 0
 
 export const mediaFxHasContent = (spec: MediaFxSpec | null | undefined) => Boolean(
@@ -390,14 +465,17 @@ export const mediaFxHasContent = (spec: MediaFxSpec | null | undefined) => Boole
     mediaFxMotionHasContent(spec.motion)
     || mediaFxFilterHasContent(spec.filter)
     || mediaFxAdvancedHasContent(spec.advanced)
+    || mediaFxTemporalHasContent(spec.temporal)
   ),
 )
 
 // Persistence helper: returns null when the spec carries no effect so callers can
-// delete the field instead of storing an all-default object.
+// delete the field instead of storing an all-default object. A temporal section without
+// any effect is stored as the default (a leftover speed is not kept).
 export const compactMediaFxSpec = (input: unknown): MediaFxSpec | null => {
   const spec = normalizeMediaFxSpec(input)
-  return mediaFxHasContent(spec) ? spec : null
+  if (!mediaFxHasContent(spec)) return null
+  return mediaFxTemporalHasContent(spec.temporal) ? spec : { ...spec, temporal: createDefaultMediaFxTemporal() }
 }
 
 export const mediaFxSpecsEqual = (left: MediaFxSpec, right: MediaFxSpec) => (
@@ -407,6 +485,7 @@ export const mediaFxSpecsEqual = (left: MediaFxSpec, right: MediaFxSpec) => (
   && left.motion.loop === right.motion.loop
   && mediaFxFilterKeys.every((key) => left.filter[key] === right.filter[key])
   && mediaFxAdvancedKeys.every((key) => (left.advanced?.[key] ?? 0) === (right.advanced?.[key] ?? 0))
+  && mediaFxTemporalEqual(left.temporal, right.temporal)
 )
 
 // ---------------------------------------------------------------------------
@@ -511,6 +590,9 @@ export interface MediaFxCapabilities {
   filters: boolean
   // Advanced pixel effects (GPU). Off unless the consumer explicitly opts in.
   advanced: boolean
+  // Temporal live pixel effects (GPU, shared clock). Off unless the consumer explicitly
+  // opts in; never available for animated media or bake output.
+  temporal: boolean
   // The target renders animated media (animated image / video).
   animatedMedia: boolean
 }
@@ -522,14 +604,17 @@ export type MediaFxRendererKind = 'dom' | 'konva' | 'bake'
 // Advanced effects stay off unless the consumer opts in (Stage static images, static
 // non-tile Stage surfaces, the image editor, TheaterPresentation static image layers);
 // an unsupported renderer keeps the data untouched, it just does not render it.
+// Temporal follows the same opt-in rule, and a still bake output can never carry it.
 export const resolveMediaFxCapabilities = (
   renderer: MediaFxRendererKind,
   animatedMedia = false,
   advanced = false,
+  temporal = false,
 ): MediaFxCapabilities => ({
   motion: renderer !== 'bake',
   filters: !animatedMedia,
   advanced: advanced && !animatedMedia,
+  temporal: temporal && renderer !== 'bake' && !animatedMedia,
   animatedMedia,
 })
 

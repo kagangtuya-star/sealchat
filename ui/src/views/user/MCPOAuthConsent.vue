@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAxiosError } from 'axios'
-import { NAlert, NButton, NCard, NScrollbar, NSpace, NSpin } from 'naive-ui'
+import { NAlert, NButton, NCard, NSpace, NSpin } from 'naive-ui'
 import { mcpOAuth, type MCPOAuthConsentRequest } from '@/api/mcp'
 import { useUserStore } from '@/stores/user'
 
@@ -82,7 +82,7 @@ async function decide(decision: 'allow' | 'deny') {
               <NButton type="primary" :loading="submitting" :disabled="expired" @click="decide('allow')">允许</NButton>
               <NButton :disabled="submitting || expired" @click="decide('deny')">拒绝</NButton>
             </NSpace>
-            <NScrollbar class="oauth-scope-scrollbar">
+            <div class="oauth-scope-scrollbar">
               <div class="oauth-scope-list">
                 <p>请求权限</p>
                 <ul v-if="consent.requestedScopes.length">
@@ -93,7 +93,7 @@ async function decide(decision: 'allow' | 'deny') {
                 </ul>
                 <p v-else>仅访问账号与世界、频道的基础发现信息。</p>
               </div>
-            </NScrollbar>
+            </div>
           </template>
         </NSpace>
       </NSpin>
@@ -102,9 +102,23 @@ async function decide(decision: 'allow' | 'deny') {
 </template>
 
 <style scoped>
-.oauth-consent { max-width: 560px; margin: 24px auto; padding: 0 16px 24px; box-sizing: border-box; }
+.oauth-consent {
+  width: 100%;
+  height: 100dvh;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
 .oauth-consent-actions { flex: none; }
-.oauth-scope-scrollbar { max-height: calc(100dvh - 250px); }
+.oauth-scope-scrollbar {
+  max-height: calc(100dvh - 250px);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
 .oauth-scope-list { padding-right: 8px; }
 p { margin: 0 0 8px; }
 ul { margin: 0; padding-left: 20px; }
@@ -112,7 +126,7 @@ li { margin-bottom: 16px; }
 code { display: block; font-size: 12px; margin: 4px 0; }
 
 @media (max-height: 560px) {
-  .oauth-consent { margin-top: 12px; padding-bottom: 12px; }
+  .oauth-consent { padding-top: 12px; padding-bottom: 12px; }
   .oauth-scope-scrollbar { max-height: calc(100dvh - 210px); }
 }
 </style>

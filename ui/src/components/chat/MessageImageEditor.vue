@@ -14,24 +14,29 @@ import {
   createDefaultMediaFxSpec,
   mediaFxAdvancedHasContent,
   mediaFxHasContent,
+  mediaFxTemporalHasContent,
   normalizeMediaFxSpec,
+  prefersReducedMotion,
   type MediaFxCapabilities,
   type MediaFxSpec,
 } from '@/features/media-fx/media-fx';
 import { bakeMediaFxToCanvas, MediaFxAdvancedBakeError } from '@/features/media-fx/media-fx-canvas';
 import { vMediaFx } from '@/features/media-fx/media-fx-dom';
-import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu';
+import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability, type MediaFxTemporalBaseline } from '@/features/media-fx/media-fx-gpu';
 import {
   createMediaFxPreviewScheduler,
   mediaFxStaticPreviewSpec,
   mediaFxStaticSignature,
 } from '@/features/media-fx/media-fx-preview';
+import { createMediaFxTemporalPlayer, presentMediaFxTemporalFrame } from '@/features/media-fx/media-fx-temporal';
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue';
 
 // effectMode:
-// - bake (default): filter / advanced are baked into the confirmed file; no motion.
+// - bake (default): filter / advanced are baked into the confirmed file; no motion and
+//   no temporal effects (a still file cannot carry them).
 // - preserve: the file only carries drawing edits; the edited MediaFxSpec (including
-//   motion) is returned next to it for the caller to persist.
+//   motion and, when the caller supports it, temporal) is returned next to it for the
+//   caller to persist.
 const props = withDefaults(defineProps<{
   show: boolean;
   file: File | null;
@@ -132,8 +137,9 @@ const mediaFxGpuAvailable = ref(mediaFxGpuSupported());
 const unsubscribeMediaFxGpuAvailability = subscribeMediaFxGpuAvailability((available) => {
   mediaFxGpuAvailable.value = available;
 });
-// bake: a still image has no motion, and advanced needs a working GPU at confirm time
-// (existing advanced values stay editable so they can be turned off after a failure).
+// bake: a still image has no motion or temporal effects, and advanced needs a working
+// GPU at confirm time (existing advanced values stay editable so they can be turned off
+// after a failure).
 // preserve: the caller describes what its target renderer supports.
 const editorMediaFxCapabilities = computed<MediaFxCapabilities>(() => {
   const caller = props.mediaFxCapabilities || {};
@@ -143,6 +149,7 @@ const editorMediaFxCapabilities = computed<MediaFxCapabilities>(() => {
       filters: caller.filters !== false,
       advanced: caller.advanced !== false
         && (mediaFxGpuAvailable.value || mediaFxAdvancedHasContent(mediaFx.value.advanced)),
+      temporal: false,
       animatedMedia: false,
     };
   }
@@ -150,6 +157,7 @@ const editorMediaFxCapabilities = computed<MediaFxCapabilities>(() => {
     motion: caller.motion !== false,
     filters: caller.filters !== false && caller.animatedMedia !== true,
     advanced: caller.advanced === true && caller.animatedMedia !== true,
+    temporal: caller.temporal === true && caller.animatedMedia !== true,
     animatedMedia: caller.animatedMedia === true,
   };
 });
@@ -247,7 +255,48 @@ const paintEffectPreviewCanvas = (target: HTMLCanvasElement | null, source: HTML
   target.getContext('2d')?.drawImage(source, 0, 0);
 };
 
-const effectPreviewScheduler = createMediaFxPreviewScheduler<HTMLCanvasElement>({
+// Temporal preview (preserve mode only): the committed static preview raster is the
+// baseline, live frames are painted onto the same two preview canvases, which stay
+// visual overlays only, so drawing coordinates / crop / pan / zoom and the vue-paint
+// state are never touched. The baseline copy is only kept while temporal can play.
+const temporalPreviewAvailable = computed(() => (
+  isPreserveMode.value
+  && editorMediaFxCapabilities.value.temporal
+  && mediaFxTemporalHasContent(mediaFx.value.temporal)
+));
+let temporalPreviewBaseline: MediaFxTemporalBaseline | null = null;
+let effectPreviewPixelRatio = 1;
+const setTemporalPreviewBaseline = (next: MediaFxTemporalBaseline | null) => {
+  const previous = temporalPreviewBaseline?.source as HTMLCanvasElement | undefined;
+  temporalPreviewBaseline = next;
+  temporalPreviewPlayer.setBaseline(next);
+  if (previous && previous !== next?.source) {
+    releaseCanvas(previous);
+  }
+};
+const paintEffectPreviewCanvases = (source: HTMLCanvasElement) => {
+  paintEffectPreviewCanvas(effectPreviewCanvasRef.value, source);
+  paintEffectPreviewCanvas(editorEffectPreviewCanvasRef.value, source);
+};
+const temporalPreviewPlayer = createMediaFxTemporalPlayer({
+  present: (frame) => {
+    const shown = presentMediaFxTemporalFrame(effectPreviewCanvasRef.value, frame);
+    presentMediaFxTemporalFrame(editorEffectPreviewCanvasRef.value, frame);
+    return shown;
+  },
+  onLiveChange: (live) => {
+    if (!live && temporalPreviewBaseline) {
+      paintEffectPreviewCanvases(temporalPreviewBaseline.source as HTMLCanvasElement);
+    }
+  },
+});
+
+interface EffectPreviewRaster {
+  canvas: HTMLCanvasElement;
+  pixelRatio: number;
+}
+
+const effectPreviewScheduler = createMediaFxPreviewScheduler<EffectPreviewRaster>({
   delayMs: EFFECT_PREVIEW_DELAY_MS,
   render: async () => {
     const snapshot = await exportPreviewSnapshot(getEditorSvg(), EFFECT_PREVIEW_MAX_EDGE);
@@ -255,25 +304,31 @@ const effectPreviewScheduler = createMediaFxPreviewScheduler<HTMLCanvasElement>(
       return null;
     }
     try {
-      return bakeMediaFxToCanvas(
+      const canvas = bakeMediaFxToCanvas(
         snapshot.canvas,
         { width: snapshot.canvas.width, height: snapshot.canvas.height },
         effectPreviewStaticSpec.value,
         { pixelRatio: snapshot.scale },
       );
+      return { canvas, pixelRatio: snapshot.scale };
     } finally {
       releaseCanvas(snapshot.canvas);
     }
   },
-  commit: (canvas) => {
-    paintEffectPreviewCanvas(effectPreviewCanvasRef.value, canvas);
-    paintEffectPreviewCanvas(editorEffectPreviewCanvasRef.value, canvas);
+  commit: ({ canvas, pixelRatio }) => {
+    paintEffectPreviewCanvases(canvas);
     effectPreviewSize.value = { width: canvas.width, height: canvas.height };
     effectPreviewReady.value = true;
     effectPreviewError.value = '';
-    releaseCanvas(canvas);
+    effectPreviewPixelRatio = pixelRatio;
+    if (temporalPreviewAvailable.value) {
+      setTemporalPreviewBaseline({ source: canvas, width: canvas.width, height: canvas.height, pixelRatio });
+    } else {
+      setTemporalPreviewBaseline(null);
+      releaseCanvas(canvas);
+    }
   },
-  discard: releaseCanvas,
+  discard: ({ canvas }) => releaseCanvas(canvas),
   onError: (error) => {
     console.warn('生成效果预览失败', error);
     effectPreviewError.value = '预览生成失败';
@@ -588,6 +643,45 @@ watch(
   { flush: 'post' },
 );
 
+// Temporal edits never re-raster: only the player's values change. When temporal is
+// turned on over an existing static preview, that preview (nothing live is drawn on it
+// yet) is copied as the baseline.
+const ensureTemporalPreviewBaseline = () => {
+  const canvas = effectPreviewCanvasRef.value;
+  if (temporalPreviewBaseline || temporalPreviewPlayer.live || !canvas?.width || !canvas.height) {
+    return;
+  }
+  const copy = document.createElement('canvas');
+  copy.width = canvas.width;
+  copy.height = canvas.height;
+  const context = copy.getContext('2d');
+  if (!context) {
+    return;
+  }
+  context.drawImage(canvas, 0, 0);
+  setTemporalPreviewBaseline({ source: copy, width: copy.width, height: copy.height, pixelRatio: effectPreviewPixelRatio });
+};
+watch(
+  () => [
+    temporalPreviewAvailable.value,
+    props.show,
+    mediaFxPanelOpen.value,
+    effectPreviewReady.value,
+    mediaFx.value.temporal,
+  ] as const,
+  ([available, show, panelOpen, ready]) => {
+    const active = available && show && panelOpen && ready && !prefersReducedMotion();
+    if (active) {
+      ensureTemporalPreviewBaseline();
+    }
+    temporalPreviewPlayer.update({ temporal: mediaFx.value.temporal, active });
+    if (!(available && show && panelOpen)) {
+      setTemporalPreviewBaseline(null);
+    }
+  },
+  { flush: 'post' },
+);
+
 watch(isMoveTool, (enabled) => {
   if (!enabled) {
     endPan();
@@ -616,6 +710,8 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
 });
 
 onUnmounted(() => {
+  temporalPreviewPlayer.dispose();
+  setTemporalPreviewBaseline(null);
   effectPreviewScheduler.dispose();
   unsubscribeMediaFxGpuAvailability();
   endPan();

@@ -520,7 +520,8 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	for name, raw := range map[string]string{
 		"mediaFx v2 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
 		"mediaFx v3 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":3`, 1),
-		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":4`, 1),
+		"mediaFx v4 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":4`, 1),
+		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":5`, 1),
 		"mediaFx preset":  strings.Replace(theaterPackageWorldPresentationJSON, `"breathe"`, `"spin"`, 1),
 		"mediaFx range":   strings.Replace(theaterPackageWorldPresentationJSON, `"blurPx":0}`, `"blurPx":99}`, 1),
 		"unknown field":   strings.Replace(theaterPackageWorldPresentationJSON, `{"portrait"`, `{"script":"x","portrait"`, 1),
@@ -558,6 +559,26 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	}
 	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3`, `"edge":0.3,"bloom":1`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "bloom"`) {
 		t.Fatalf("unknown v3 advanced field must be rejected, got %v", err)
+	}
+	const temporal = `"temporal":{"grain":0.4,"flicker":0,"glitch":0.2,"scanlineRoll":0,"speed":1.5}`
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3}`, `"edge":0.3},`+temporal, 1))); err == nil {
+		t.Fatal("v3 mediaFx carrying temporal must be rejected")
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3}`, `"edge":0.3},"temporal":null`, 1))); err == nil {
+		t.Fatal("v3 mediaFx carrying temporal:null must be rejected")
+	}
+	v4Raw := strings.Replace(strings.Replace(v3Raw, `"version":3`, `"version":4`, 1), `"edge":0.3}`, `"edge":0.3},`+temporal, 1)
+	if v4Normalized, err := normalizeTheaterPackageWorldPresentation([]byte(v4Raw)); err != nil || !strings.Contains(string(v4Normalized), temporal) {
+		t.Fatalf("valid v4 world presentation rejected or lost temporal: %s (%v)", v4Normalized, err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v4Raw, `"speed":1.5`, `"speed":1.5,"seed":3`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "seed"`) {
+		t.Fatalf("unknown v4 temporal field must be rejected, got %v", err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v4Raw, `,"speed":1.5`, ``, 1))); err == nil {
+		t.Fatal("v4 mediaFx missing a temporal field must be rejected")
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v4Raw, temporal, `"temporal":null`, 1))); err == nil {
+		t.Fatal("v4 mediaFx carrying temporal:null must be rejected")
 	}
 
 	dialogue := protocol.DefaultTheaterDialogueStyle()

@@ -1,5 +1,5 @@
 // Run with node scripts/media-fx-v2-regression.cjs.
-// MediaFxSpec v1 / v2 -> v3 core / strict schema / GPU parameter mapping and the Konva filter
+// MediaFxSpec v1 / v2 -> v4 core / strict schema / GPU parameter mapping and the Konva filter
 // composition. Real WebGL is not available in Node; the GPU shader itself is covered
 // by the browser smoke test, here the GPU step is stubbed to check ordering and caching.
 const assert = require('node:assert/strict')
@@ -35,9 +35,10 @@ async function run() {
     MEDIA_FX_VERSION, LEGACY_MEDIA_FX_VERSION, createDefaultMediaFxSpec, createDefaultMediaFxAdvanced,
     normalizeMediaFxSpec, normalizeMediaFxAdvanced, mediaFxAdvancedHasContent, mediaFxHasContent,
     compactMediaFxSpec, mediaFxSpecsEqual, resolveMediaFxCapabilities, mediaFxAdvancedFromPreset,
-    matchMediaFxAdvancedPreset,
+    matchMediaFxAdvancedPreset, createDefaultMediaFxTemporal,
   } = core
-  assert.equal(MEDIA_FX_VERSION, 3)
+  assert.equal(MEDIA_FX_VERSION, 4)
+  const temporalOff = createDefaultMediaFxTemporal()
   assert.equal(LEGACY_MEDIA_FX_VERSION, 1)
   const off = createDefaultMediaFxAdvanced()
   const v3Keys = ['vignette', 'grain', 'posterize', 'negative', 'sharpen', 'edge']
@@ -50,17 +51,17 @@ async function run() {
   const filter = { ...createDefaultMediaFxSpec().filter, brightness: 0.7, sepia: 0.3 }
   const v1 = { version: 1, motion, filter }
   const upgraded = normalizeMediaFxSpec(v1)
-  assert.deepEqual(upgraded, { version: 3, motion, filter, advanced: off })
+  assert.deepEqual(upgraded, { version: 4, motion, filter, advanced: off, temporal: temporalOff })
   assert.deepEqual(normalizeMediaFxSpec({ motion, filter }), upgraded, 'version-less data reads as legacy v1')
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, advanced: { pixelate: 1 } }).advanced, off, 'v1 never carries advanced')
-  assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: 4 }), createDefaultMediaFxSpec(), 'unknown version falls back to default')
+  assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: 5 }), createDefaultMediaFxSpec(), 'unknown version falls back to default')
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: '2' }), createDefaultMediaFxSpec())
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: '3' }), createDefaultMediaFxSpec())
 
   // --- core: v2 -> v3 keeps the three v2 effects and nothing else -------------
   const v2 = { version: 2, motion, filter, advanced: { pixelate: 0.45, rgbSplit: 0.123456, scanline: 0.5 } }
   const v2Upgraded = normalizeMediaFxSpec(v2)
-  assert.deepEqual(v2Upgraded, { version: 3, motion, filter, advanced: adv({ pixelate: 0.45, rgbSplit: 0.123, scanline: 0.5 }) })
+  assert.deepEqual(v2Upgraded, { version: 4, motion, filter, advanced: adv({ pixelate: 0.45, rgbSplit: 0.123, scanline: 0.5 }), temporal: temporalOff })
   assert.deepEqual(normalizeMediaFxSpec({ ...v2, advanced: { ...v2.advanced, grain: 0.8, edge: 1 } }), v2Upgraded, 'v2 never reads v3-only fields')
 
   // --- core: v3 normalize / clamp / finite --------------------------------------
@@ -144,7 +145,7 @@ async function run() {
     'v2 unknown field': { ...strictV2, uniforms: {} },
     'v3 unknown field': { ...canonicalV3, uniforms: {} },
     'filter unknown field': { ...canonicalV3, filter: { ...filter, fragmentShader: 'x' } },
-    'unknown version': { ...canonicalV3, version: 4 },
+    'unknown version': { ...canonicalV3, version: 5 },
     'missing version': { motion, filter },
   }
   for (const [name, value] of Object.entries(rejected)) {
@@ -196,7 +197,8 @@ async function run() {
 
   // Static, single-pass shader contract: no time input, no frame loop, no extra passes.
   const gpuSource = fs.readFileSync(path.join(featureDir, 'media-fx-gpu.ts'), 'utf8')
-  for (const forbidden of [/uTime/, /requestAnimationFrame/, /setTimeout|setInterval/, /Date\.now|performance\.now|Math\.random/, /createFramebuffer|bindFramebuffer|createRenderbuffer/, /three/i]) {
+  // V3.5 adds time uniforms for live temporal passes; the clock lives elsewhere.
+  for (const forbidden of [/requestAnimationFrame/, /setTimeout|setInterval/, /Date\.now|performance\.now|Math\.random/, /createFramebuffer|bindFramebuffer|createRenderbuffer/, /three/i, /getImageData/]) {
     assert.equal(forbidden.test(gpuSource), false, `GPU adapter must not contain ${forbidden}`)
   }
 
@@ -290,9 +292,13 @@ async function run() {
   assert.ok(positions.every(position => position > 0), 'every effect is guarded by its own branch')
   assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'effect order is fixed')
   const neighborhood = shader.slice(positions[2], positions[3])
-  assert.equal((shader.match(/fetchPixel\(/g) || []).length - (neighborhood.match(/fetchPixel\(/g) || []).length, 4, 'outside the guarded neighborhood only pixelate / rgbSplit fetch')
-  assert.equal((neighborhood.match(/fetchPixel\(/g) || []).length, 8, 'the neighborhood is a bounded 3x3 kernel')
-  assert.ok(shader.includes('outColor = vec4(color.rgb, center.a);'), 'alpha always comes from the source pixel')
+  const glitchBlock = shader.slice(shader.indexOf('if (uGlitch > 0.0)'), shader.indexOf('if (uFlicker > 0.0)'))
+  const fetches = source => (source.match(/fetchPixel\(/g) || []).length
+  assert.equal(fetches(shader) - fetches(neighborhood) - fetches(glitchBlock), 4, 'outside the guarded neighborhood / glitch only pixelate / rgbSplit fetch')
+  assert.equal(fetches(neighborhood), 8, 'the neighborhood is a bounded 3x3 kernel')
+  assert.equal(fetches(glitchBlock), 3, 'glitch reads one shifted pixel plus two channel offsets')
+  assert.ok(shader.includes('float alpha = center.a;') && shader.includes('outColor = vec4(color.rgb, alpha);'), 'alpha comes from the source pixel')
+  assert.equal((shader.match(/alpha = /g) || []).length, 2, 'only glitch moves a sampled alpha')
 
   const failing = image()
   mock.readError = true

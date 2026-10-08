@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue'
+import { mediaFxTemporalHasContent, mediaFxTemporalKeys, normalizeMediaFxSpec } from '@/features/media-fx/media-fx'
 import { vMediaFx } from '@/features/media-fx/media-fx-dom'
-import { mediaFxGpuMaxTextureSize, mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
+import {
+  mediaFxGpuMaxTextureSize,
+  mediaFxGpuSupported,
+  subscribeMediaFxGpuAvailability,
+  type MediaFxTemporalBaseline,
+} from '@/features/media-fx/media-fx-gpu'
 import { mediaFxStaticSignature } from '@/features/media-fx/media-fx-preview'
+import { createMediaFxTemporalPlayer, presentMediaFxTemporalFrame } from '@/features/media-fx/media-fx-temporal'
 import type { TheaterMediaRef } from '@/types/theaterPresentation'
 import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
-import { resolveTheaterMediaFxBinding } from './theaterPresentationMedia'
+import { resolveTheaterMediaFxBinding, resolveTheaterMediaFxCapabilities } from './theaterPresentationMedia'
 import {
   createTheaterMediaFxAdvancedController,
   loadTheaterMediaFxSource,
@@ -24,6 +31,12 @@ import {
 // static advanced output (basic filter + advanced baked) replaces the <img> once ready,
 // and the wrapper then drops its CSS basic filter. The original stays hidden while the
 // first advanced output is pending; a processing failure reveals the plain DOM fallback.
+//
+// Temporal effects reuse that static output as their baseline: a shared-clock player
+// draws live frames into the same output canvas while the layer is active, on screen,
+// not paused by reduced motion, and repaints the baseline whenever live output stops or
+// fails. Temporal-only specs use the same raster path (basic filter baked) so the live
+// frames have a baseline; motion stays on the wrapper (WAAPI), never on the frame loop.
 
 const props = withDefaults(defineProps<{
   media: TheaterMediaRef
@@ -48,7 +61,17 @@ const unsubscribeGpuAvailability = subscribeMediaFxGpuAvailability((available) =
   gpuAvailable.value = available
 })
 
-const advancedEligible = computed(() => theaterMediaFxAdvancedEligible(props.mediaFx, props.media, gpuAvailable.value))
+// Temporal values only (not the static look): their changes never re-raster.
+const temporalSpec = computed(() => normalizeMediaFxSpec(props.mediaFx).temporal)
+const temporalSignature = computed(() => mediaFxTemporalKeys.map((key) => temporalSpec.value[key]).join('|'))
+const temporalLive = computed(() => (
+  !props.reducedMotion
+  && resolveTheaterMediaFxCapabilities(props.media, gpuAvailable.value).temporal
+  && mediaFxTemporalHasContent(temporalSpec.value)
+))
+const advancedEligible = computed(() => theaterMediaFxAdvancedEligible(props.mediaFx, props.media, gpuAvailable.value, temporalLive.value))
+// Off-screen layers keep their static look and do no live work.
+const onScreen = ref(true)
 // Track the actual static pixel values, not only the spec object identity. Editor
 // transactions may update a nested spec without replacing every surrounding object;
 // basic/motion still refresh through the directive, so Advanced needs its own stable key.
@@ -61,24 +84,72 @@ const mediaStyle = computed<CSSProperties | undefined>(() => (
   advancedReady.value || (advancedEligible.value && !advancedFallback.value) ? { visibility: 'hidden' } : undefined
 ))
 
+// Static output kept as the temporal baseline, only while temporal plays live; an
+// advanced-only layer does not hold a second copy of its raster.
+let baseline: MediaFxTemporalBaseline | null = null
+let rasterPixelRatio = 1
+
+const releaseCanvas = (canvas: HTMLCanvasElement | null | undefined) => {
+  if (canvas) canvas.width = canvas.height = 0
+}
+
+const setBaseline = (next: MediaFxTemporalBaseline | null) => {
+  const previous = baseline?.source as HTMLCanvasElement | undefined
+  baseline = next
+  temporalPlayer.setBaseline(next)
+  if (previous !== next?.source) releaseCanvas(previous)
+}
+
+const paintOutput = (source: HTMLCanvasElement) => {
+  const canvas = outputRef.value
+  const context = canvas?.getContext('2d')
+  if (!canvas || !context) return false
+  canvas.width = source.width
+  canvas.height = source.height
+  context.drawImage(source, 0, 0)
+  return true
+}
+
+// Temporal became live over an output that is already shown: while nothing live runs
+// the output canvas holds exactly the static look, so a copy of it is the baseline.
+const ensureBaseline = () => {
+  const canvas = outputRef.value
+  if (baseline || !temporalLive.value || !advancedReady.value || !canvas?.width || !canvas.height || temporalPlayer.live) return
+  const copy = document.createElement('canvas')
+  copy.width = canvas.width
+  copy.height = canvas.height
+  const context = copy.getContext('2d')
+  if (!context) return
+  context.drawImage(canvas, 0, 0)
+  setBaseline({ source: copy, width: copy.width, height: copy.height, pixelRatio: rasterPixelRatio })
+}
+
+const temporalPlayer = createMediaFxTemporalPlayer({
+  present: (frame) => presentMediaFxTemporalFrame(outputRef.value, frame),
+  // Inactive, failed or cleared: the static output is shown again.
+  onLiveChange: (live) => {
+    if (!live && baseline) paintOutput(baseline.source as HTMLCanvasElement)
+  },
+})
+
 const controller = createTheaterMediaFxAdvancedController<HTMLImageElement, CanvasImageSource, HTMLCanvasElement>({
   maxTextureSize: mediaFxGpuMaxTextureSize,
   loadSource: loadTheaterMediaFxSource,
   rasterize: rasterizeTheaterMediaFx,
-  present: (output) => {
-    const canvas = outputRef.value
-    const context = canvas?.getContext('2d')
-    if (!canvas || !context) return false
-    canvas.width = output.width
-    canvas.height = output.height
-    context.drawImage(output, 0, 0)
+  present: (output, job) => {
+    if (!paintOutput(output)) return false
+    rasterPixelRatio = job.raster.pixelRatio
+    if (temporalLive.value) {
+      setBaseline({ source: output, width: output.width, height: output.height, pixelRatio: rasterPixelRatio })
+    } else {
+      setBaseline(null)
+      releaseCanvas(output)
+    }
     return true
   },
   clear: () => {
-    const canvas = outputRef.value
-    if (!canvas) return
-    canvas.width = 0
-    canvas.height = 0
+    setBaseline(null)
+    releaseCanvas(outputRef.value)
   },
   onReadyChange: (ready) => {
     advancedReady.value = ready
@@ -153,7 +224,34 @@ const updateController = () => controller.update({
   fit: fit.value,
   box: box.value,
   devicePixelRatio: pixelRatio.value,
+  temporalLive: temporalLive.value,
 })
+
+// Visibility gate for live frames only; the static output never depends on it.
+let intersectionObserver: IntersectionObserver | null = null
+const setVisibilityTracking = (enabled: boolean) => {
+  if (!enabled) {
+    intersectionObserver?.disconnect()
+    intersectionObserver = null
+    onScreen.value = true
+    return
+  }
+  const host = hostRef.value
+  if (intersectionObserver || !host || typeof IntersectionObserver === 'undefined') return
+  intersectionObserver = new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1]
+    if (entry) onScreen.value = entry.isIntersecting
+  })
+  intersectionObserver.observe(host)
+}
+
+const updateTemporal = () => {
+  ensureBaseline()
+  temporalPlayer.update({
+    temporal: temporalSpec.value,
+    active: temporalLive.value && props.active && onScreen.value && advancedReady.value,
+  })
+}
 
 // Candidate changes include primary -> fallback and URL refreshes, even when the
 // stored media IDs stay the same. Clear stale output before the new image loads.
@@ -170,17 +268,28 @@ onMounted(() => {
     readFit()
   })
   watch(
-    () => [staticFxSignature.value, props.media, gpuAvailable.value, loadedImage.value, fit.value, box.value, pixelRatio.value],
+    () => [staticFxSignature.value, temporalLive.value, props.media, gpuAvailable.value, loadedImage.value, fit.value, box.value, pixelRatio.value],
     updateController,
     { flush: 'post' },
   )
   updateController()
+  setVisibilityTracking(temporalLive.value)
+  watch(temporalLive, setVisibilityTracking, { flush: 'post' })
+  watch(
+    () => [temporalSignature.value, temporalLive.value, props.active, onScreen.value, advancedReady.value],
+    updateTemporal,
+    { flush: 'post' },
+  )
+  updateTemporal()
 })
 
 onBeforeUnmount(() => {
+  temporalPlayer.dispose()
   controller.dispose()
+  setBaseline(null)
   unsubscribeGpuAvailability()
   setTracking(false)
+  setVisibilityTracking(false)
 })
 </script>
 

@@ -47,7 +47,7 @@ async function run() {
   const filename = path.join(__dirname, '../src/views/theater/stage/StageApp.vue')
   const script = parse(fs.readFileSync(filename, 'utf8')).descriptor.scriptSetup.content
   const ast = ts.createSourceFile(filename + '.ts', script, ts.ScriptTarget.Latest, true)
-  const declarations = ['surfaceMediaFxOverscanScale', 'syncSurfaceMediaFx'].map(name => {
+  const declarations = ['surfaceMediaFxOverscanScale', 'syncSurfaceMediaFx', 'surfaceMediaFxTemporal', 'useDirectSurfaceImage'].map(name => {
     const statement = ast.statements.find(node => ts.isVariableStatement(node)
       && node.declarationList.declarations.some(declaration => declaration.name.getText(ast) === name))
     assert.ok(statement, `missing StageApp function ${name}`)
@@ -56,8 +56,13 @@ async function run() {
   let reducedMotion = false
   const { syncSurfaceMediaFx: sync } = new Function(
     'resolveMediaFxMotionOverscanScale', 'mediaFxHasContent', 'resolveTheaterReducedMotion',
+    'mediaFxTemporalHasContent', 'mediaFxGpuSupported', 'isVideoSource',
     compile(declarations) + '\nreturn { syncSurfaceMediaFx }',
-  )(resolveMediaFxMotionOverscanScale, mediaFxHasContent, () => ({ effectiveReducedMotion: reducedMotion }))
+  )(
+    resolveMediaFxMotionOverscanScale, mediaFxHasContent, () => ({ effectiveReducedMotion: reducedMotion }),
+    mediaFx.mediaFxTemporalHasContent, () => true, source => source.video === true,
+  )
+  const temporalUpdates = []
   const updates = []
   let clears = 0
   let motionActive = false
@@ -78,6 +83,8 @@ async function run() {
       isMotionActive: () => motionActive,
       clear: () => { clears++; motionActive = false; motionSignature = '' },
     },
+    mediaFxTemporal: { update: (temporal, active) => temporalUpdates.push({ temporal, active }) },
+    directImage: { visible: () => true },
     style: { fit: 'cover', zoom: 1.2, mediaFx: { ...createDefaultMediaFxSpec(), motion: motion('drift') } },
   }
   const box = { width: 800, height: 600 }
@@ -120,12 +127,37 @@ async function run() {
   slot.mediaContentGroup.scale({ x: 1, y: 1 })
   expectScale(1)
 
+  // Temporal never changes the motion overscan, and only runs on static non-tile images.
   slot.style.mediaFx.motion = motion('drift')
+  slot.style.mediaFx.temporal = { ...createDefaultMediaFxSpec().temporal, grain: 0.5 }
+  expectScale(1.06)
+  assert.equal(temporalUpdates.at(-1).active, true, 'static cover surface runs temporal')
+  assert.equal(temporalUpdates.at(-1).temporal.grain, 0.5)
+  reducedMotion = true
+  expectScale(1)
+  assert.equal(temporalUpdates.at(-1).active, false, 'reduced motion stops temporal')
+  reducedMotion = false
+  slot.style.fit = 'tile'
+  expectScale(1)
+  assert.equal(temporalUpdates.at(-1).active, false, 'tile never runs temporal')
+  slot.style.fit = 'cover'
+  slot.style.mediaFx.motion = motion('none')
+  expectScale(1)
+  assert.equal(temporalUpdates.at(-1).active, true, 'temporal-only surfaces keep base scale')
+  slot.style.mediaFx.temporal = createDefaultMediaFxSpec().temporal
+  slot.style.mediaFx.motion = motion('drift')
+  expectScale(1.06)
+  assert.equal(temporalUpdates.at(-1).active, false)
+
   for (const source of [{ video: true }, { animated: true }]) {
     slot.source = source
     slot.animatedMedia = true
+    slot.style.mediaFx.temporal = { ...createDefaultMediaFxSpec().temporal, glitch: 0.5 }
     expectScale(1.06)
     assert.equal(updates.at(-1).context.filters, false, 'animated media never enables cached filters')
+    assert.equal(temporalUpdates.at(-1).active, false, 'animated media / video never run temporal')
+    assert.equal(slot.style.mediaFx.temporal.glitch, 0.5, 'unsupported media keeps the temporal data')
+    slot.style.mediaFx.temporal = createDefaultMediaFxSpec().temporal
   }
   slot.source = null
   expectScale(1)

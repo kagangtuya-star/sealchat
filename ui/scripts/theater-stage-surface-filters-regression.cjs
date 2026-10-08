@@ -17,7 +17,7 @@ async function run() {
   const ast = ts.createSourceFile(filename + '.ts', script, ts.ScriptTarget.Latest, true)
   const names = [
     'surfaceMediaFxFilterCss', 'surfaceFilterCss', 'surfaceMediaFxCanvasFilter',
-    'useDirectSurfaceImage', 'surfaceMediaFxAdvanced', 'clearDirectSurfaceImage', 'updateDirectSurfaceImage',
+    'useDirectSurfaceImage', 'surfaceMediaFxAdvanced', 'surfaceMediaFxTemporal', 'clearDirectSurfaceImage', 'updateDirectSurfaceImage',
   ]
   const declarations = names.map(name => {
     const statement = ast.statements.find(node => ts.isVariableStatement(node)
@@ -27,7 +27,8 @@ async function run() {
   }).join('\n')
   const mediaFxModule = { exports: {} }
   new Function('exports', compile(fs.readFileSync(path.join(__dirname, '../src/features/media-fx/media-fx.ts'), 'utf8')))(mediaFxModule.exports)
-  const { createDefaultMediaFxSpec, mediaFxFilterToCss, mediaFxAdvancedHasContent, mediaFxAdvancedKeys } = mediaFxModule.exports
+  const { createDefaultMediaFxSpec, mediaFxFilterToCss, mediaFxAdvancedHasContent, mediaFxAdvancedKeys, mediaFxTemporalHasContent } = mediaFxModule.exports
+  let reducedMotion = false
   let supported = true
   // GPU adapter stub: records the pixels it receives so ordering can be asserted.
   let gpuSupported = true
@@ -60,6 +61,7 @@ async function run() {
   const { updateDirectSurfaceImage: update, clearDirectSurfaceImage: clear, surfaceFilterCss } = new Function(
     'Konva', 'document', 'mediaFxFilterToCss', 'canvasFilterSupported',
     'mediaFxAdvancedHasContent', 'mediaFxGpuSupported', 'createMediaFxGpuFilter', 'mediaFxAdvancedSignature',
+    'mediaFxTemporalHasContent', 'resolveTheaterReducedMotion',
     compile(`
       const theaterMediaDebug = () => {}
       const isVideoSource = (source) => source.video === true
@@ -71,6 +73,7 @@ async function run() {
   )(
     Konva, document, mediaFxFilterToCss, () => supported,
     mediaFxAdvancedHasContent, () => gpuSupported, createMediaFxGpuFilter, mediaFxAdvancedSignature,
+    mediaFxTemporalHasContent, () => ({ effectiveReducedMotion: reducedMotion }),
   )
   const image = new Konva.Image()
   let caches = 0, clears = 0
@@ -78,9 +81,11 @@ async function run() {
   image.clearCache = () => { clears++; return image }
   const source = { width: 10, height: 10 }
   const box = { width: 10, height: 10 }
+  let baselineInvalidations = 0
   const slot = {
     directImage: image, directImageSource: null, directImageSignature: '', source,
     animatedMedia: false,
+    mediaFxTemporal: { invalidateBaseline: () => { baselineInvalidations++ } },
     style: { brightness: 1.5, blurPx: 8, opacity: 1, zoom: 1, fit: 'cover' },
   }
   const legacy = [Konva.Filters.Brighten, Konva.Filters.Blur]
@@ -227,6 +232,62 @@ async function run() {
   assert.equal(image.image(), undefined, 'video never uses the direct image path')
   assert.equal(gpuCreates.length, createsBefore + 1, 'only the restored cover pass created a GPU step')
   assert.deepEqual(slot.style.mediaFx.advanced, storedAdvanced, 'unsupported renderers never modify the spec')
+
+  // --- Media FX temporal baseline on the direct-image path -------------------
+  const temporalOn = { ...createDefaultMediaFxSpec().temporal, flicker: 0.4 }
+  slot.style = { brightness: 1, blurPx: 0, opacity: 1, zoom: 1, fit: 'cover', mediaFx: createDefaultMediaFxSpec() }
+  update(slot, source, box)
+  assert.deepEqual(image.filters(), [])
+  cachesBefore = caches
+  let invalidationsBefore = baselineInvalidations
+  slot.style.mediaFx.temporal = temporalOn
+  update(slot, source, box)
+  assert.deepEqual(image.filters(), [], 'temporal adds no static filter')
+  assert.equal(caches, cachesBefore + 1, 'temporal-only builds the cache it uses as its baseline')
+  assert.equal(baselineInvalidations, invalidationsBefore + 1, 'a rebuilt cache invalidates the temporal baseline')
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1, 'unchanged temporal reuses the cache')
+  slot.style.mediaFx.temporal = { ...temporalOn, flicker: 0.9, speed: 2 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1, 'temporal value changes never rebuild the static cache')
+  slot.style.mediaFx.filter.grayscale = 0.5
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'a basic filter change rebuilds the baseline cache')
+  invalidationsBefore = baselineInvalidations
+  slot.style.mediaFx.temporal = createDefaultMediaFxSpec().temporal
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'turning temporal off over static filters keeps the cache')
+  slot.style.mediaFx.temporal = temporalOn
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'turning temporal on over static filters keeps the cache')
+  assert.equal(baselineInvalidations, invalidationsBefore, 'no rebuild, no baseline invalidation')
+  slot.style.mediaFx.filter.grayscale = 0
+  reducedMotion = true
+  update(slot, source, box)
+  assert.deepEqual(image.filters(), [])
+  assert.equal(caches, cachesBefore + 2, 'reduced motion needs no temporal cache')
+  reducedMotion = false
+  gpuSupported = false
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'without GPU there is no temporal cache')
+  gpuSupported = true
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 3)
+  slot.style.fit = 'tile'
+  update(slot, source, box)
+  assert.equal(image.image(), undefined, 'tile never runs temporal')
+  slot.style.fit = 'cover'
+  slot.animatedMedia = true
+  const cachesAnimated = caches
+  update(slot, source, box)
+  assert.equal(caches, cachesAnimated, 'animated media never caches for temporal')
+  slot.animatedMedia = false
+  update(slot, { width: 10, height: 10, video: true }, box)
+  assert.equal(image.image(), undefined, 'video never runs temporal')
+  assert.deepEqual(slot.style.mediaFx.temporal, temporalOn, 'unsupported renderers keep the temporal data')
+  invalidationsBefore = baselineInvalidations
+  clear(slot)
+  assert.equal(baselineInvalidations, invalidationsBefore + 1, 'clearing the direct image invalidates the baseline')
   console.log('theater stage surface filter regression checks passed')
 }
 

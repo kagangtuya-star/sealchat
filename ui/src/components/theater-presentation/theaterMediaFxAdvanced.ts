@@ -1,20 +1,24 @@
-import { mediaFxAdvancedHasContent, normalizeMediaFxSpec, type MediaFxSpec } from '../../features/media-fx/media-fx'
+import { mediaFxAdvancedHasContent, mediaFxTemporalHasContent, normalizeMediaFxSpec, type MediaFxSpec } from '../../features/media-fx/media-fx'
 import { bakeMediaFxToCanvas } from '../../features/media-fx/media-fx-canvas'
 import { createMediaFxPreviewScheduler, mediaFxStaticPreviewSpec, mediaFxStaticSignature } from '../../features/media-fx/media-fx-preview'
 import type { TheaterMediaRef } from '../../types/theaterPresentation'
 import { resolveTheaterMediaFxCapabilities } from './theaterPresentationMedia'
 import { fetchAttachmentBlobById } from '../../composables/useAttachmentResolver'
 
-// Static advanced Media FX for TheaterPresentation DOM layers.
+// Static advanced Media FX for TheaterPresentation DOM layers, and the static baseline
+// of temporal (live) effects.
 //
 // The DOM path (TheaterPresentationMedia + v-media-fx: CSS basic filter, WAAPI motion)
 // is always rendered and is the fallback. Only for a static image whose spec has
-// advanced content while the GPU is available, the host rasterizes
+// advanced content, or temporal content that will play live, while the GPU is
+// available, the host rasterizes
 //   source -> object-fit geometry -> basic filter -> advanced GPU   (bakeMediaFxToCanvas)
 // at the rendered box size x device pixel ratio, shows that output in place of the <img>
 // and drops its CSS basic filter (already baked). Motion stays on the host wrapper, so
-// motion edits never re-raster. Failures notify the host to reveal the DOM fallback;
-// waiting for an image / layout / raster is not itself a failure.
+// motion edits never re-raster. Temporal values are not part of the raster either: the
+// host plays them live over the presented output (the temporal baseline), so temporal
+// edits never re-raster. Failures notify the host to reveal the DOM fallback; waiting for
+// an image / layout / raster is not itself a failure.
 //
 // This module owns the decisions (eligibility, raster size, geometry, signature,
 // single-flight and stale guards). Element access, rasterizing and presenting are
@@ -38,15 +42,20 @@ export interface TheaterMediaFxRaster extends TheaterMediaSize {
 // lowered instead, which keeps the effect scale in layout pixels.
 export const THEATER_MEDIA_FX_MAX_RASTER_PIXELS = 2048 * 2048
 
+// `temporalLive`: the host would play temporal effects now (not reduced motion). Temporal
+// alone needs the raster only as its baseline; otherwise the plain DOM path is enough.
 export const theaterMediaFxAdvancedEligible = (
   spec: unknown,
   media: TheaterMediaRef | null | undefined,
   gpuAvailable: boolean,
-) => Boolean(
-  spec
-  && resolveTheaterMediaFxCapabilities(media, gpuAvailable).advanced
-  && mediaFxAdvancedHasContent(normalizeMediaFxSpec(spec).advanced),
-)
+  temporalLive = false,
+) => {
+  if (!spec) return false
+  const capabilities = resolveTheaterMediaFxCapabilities(media, gpuAvailable)
+  const normalized = normalizeMediaFxSpec(spec)
+  return (capabilities.advanced && mediaFxAdvancedHasContent(normalized.advanced))
+    || (temporalLive && capabilities.temporal && mediaFxTemporalHasContent(normalized.temporal))
+}
 
 export const resolveTheaterMediaFxRaster = (
   box: TheaterMediaSize,
@@ -122,6 +131,8 @@ export interface TheaterMediaFxAdvancedInput<TElement> {
   // Layout size of the visual box; null / empty while it is not laid out.
   box: TheaterMediaSize | null
   devicePixelRatio: number
+  // The host plays temporal effects live over the output (see theaterMediaFxAdvancedEligible).
+  temporalLive?: boolean
 }
 
 export interface TheaterMediaFxAdvancedDeps<TElement, TSource, TOutput> {
@@ -129,8 +140,9 @@ export interface TheaterMediaFxAdvancedDeps<TElement, TSource, TOutput> {
   loadSource: (image: TheaterMediaFxImage<TElement>) => Promise<TheaterMediaFxLoadedSource<TSource> | null>
   // Returns null (or throws) when the static bake or the GPU pass fails.
   rasterize: (source: TheaterMediaFxLoadedSource<TSource>, job: TheaterMediaFxRasterJob) => TOutput | null
-  // Shows a finished output; false when the host can no longer show it.
-  present: (output: TOutput) => boolean
+  // Shows a finished output; false when the host can no longer show it. The job tells
+  // the raster scale, e.g. for a temporal baseline.
+  present: (output: TOutput, job: TheaterMediaFxRasterJob) => boolean
   // Drops the shown output so the DOM fallback is visible again.
   clear: () => void
   onReadyChange: (ready: boolean) => void
@@ -259,7 +271,7 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
     },
     commit: ({ job, output }) => {
       if (disposed || desired?.key !== job.key) return
-      if (!deps.present(output)) {
+      if (!deps.present(output, job)) {
         setFallback(true)
         clearOutput()
         return
@@ -288,7 +300,7 @@ export const createTheaterMediaFxAdvancedController = <TElement, TSource, TOutpu
       if (loaded && loaded.sourceId !== sourceId) releaseSource()
       // An output of a previous source never stands in for the new one.
       if (committed && committed.sourceId !== sourceId) clearOutput()
-      if (!theaterMediaFxAdvancedEligible(next.spec, next.media, next.gpuAvailable)) {
+      if (!theaterMediaFxAdvancedEligible(next.spec, next.media, next.gpuAvailable, next.temporalLive === true)) {
         setFallback(false)
         stopRaster()
         clearOutput()

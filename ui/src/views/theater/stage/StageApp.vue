@@ -146,6 +146,7 @@ import {
   mediaFxFilterToCss,
   mediaFxHasContent,
   mediaFxSpecsEqual,
+  mediaFxTemporalHasContent,
   normalizeMediaFxSpec,
   resolveMediaFxCapabilities,
   resolveMediaFxMotionOverscanScale,
@@ -153,7 +154,13 @@ import {
   type MediaFxSpec,
 } from '@/features/media-fx/media-fx'
 import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
-import { createKonvaMediaFxController, mediaFxAdvancedSignature, type KonvaMediaFxController } from '@/features/media-fx/media-fx-konva'
+import {
+  createKonvaMediaFxController,
+  createKonvaMediaFxTemporalController,
+  mediaFxAdvancedSignature,
+  type KonvaMediaFxController,
+  type KonvaMediaFxTemporalController,
+} from '@/features/media-fx/media-fx-konva'
 import { createMediaFxGpuFilter, mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
 import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
@@ -1170,16 +1177,13 @@ const updateSurfaceOverlay = (target: StageSurfaceTarget, patch: Partial<StageSu
 // Surface Media FX is layered over the base display parameters; an all-default spec
 // (including the panel's own reset) removes the field instead of storing it.
 const surfaceMediaFx = (target: StageSurfaceTarget) => surfaceStyle(target).mediaFx ?? createDefaultMediaFxSpec()
-// Advanced GPU effects only render on the static direct-image path (not tile, video or
-// animated media). Unsupported cases keep any stored advanced values untouched.
+// Advanced and temporal GPU effects only render on the static direct-image path (not
+// tile, video or animated media). Unsupported cases keep any stored values untouched.
 const surfaceMediaFxCapabilities = (target: StageSurfaceTarget) => {
   const image = props.store.state.liveState[target]
   const animatedMedia = Boolean(image && (image.animated === true || image.mimeType?.startsWith('video/')))
-  return resolveMediaFxCapabilities(
-    'konva',
-    animatedMedia,
-    Boolean(image) && surfaceStyle(target).fit !== 'tile' && mediaFxGpuAvailable.value,
-  )
+  const gpuPixels = Boolean(image) && surfaceStyle(target).fit !== 'tile' && mediaFxGpuAvailable.value
+  return resolveMediaFxCapabilities('konva', animatedMedia, gpuPixels, gpuPixels)
 }
 const updateSurfaceMediaFx = (target: StageSurfaceTarget, spec: MediaFxSpec) => {
   props.store.patchSceneSurfaceStyle(target, { mediaFx: compactMediaFxSpec(spec) })
@@ -2882,6 +2886,8 @@ interface SurfaceSlot {
   mediaFxGroup: Konva.Group
   mediaContentGroup: Konva.Group
   mediaFxController: KonvaMediaFxController
+  // Temporal live frames drawn in place of directImage's cached static look.
+  mediaFxTemporal: KonvaMediaFxTemporalController
   media: Konva.Shape
   directImage: Konva.Image
   overlay: Konva.Rect
@@ -3585,13 +3591,14 @@ const selectedMediaFx = computed(() => (
 const selectedMediaFxActive = computed(() => mediaFxHasContent(selectedMediaFx.value))
 // Image objects render through Konva (filters are cached, so animated media disables
 // them). Iframe objects render as DOM, where CSS filter composites the live frame.
-// Advanced GPU effects are only offered for static images.
+// Advanced and temporal GPU effects are only offered for static images.
 const selectedMediaFxCapabilities = computed(() => (
   selectedObject.value?.type === 'iframe'
     ? resolveMediaFxCapabilities('dom', false)
     : resolveMediaFxCapabilities(
       'konva',
       selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+      isStaticImageObject(selectedObject.value) && mediaFxGpuAvailable.value,
       isStaticImageObject(selectedObject.value) && mediaFxGpuAvailable.value,
     )
 ))
@@ -5833,6 +5840,7 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, target: StageSurfaceTarget,
         mediaContentGroup.getLayer()?.batchDraw()
       },
     }),
+    mediaFxTemporal: createKonvaMediaFxTemporalController(directImage),
     media,
     directImage,
     overlay,
@@ -5869,6 +5877,12 @@ const syncSurfaceMediaFx = (slot: SurfaceSlot, box: { width: number, height: num
       reducedMotion,
     })
   }
+  // Temporal runs after legacy brightness / blur -> Media FX basic -> advanced, over the
+  // directImage cache; it never changes the motion overscan below.
+  slot.mediaFxTemporal.update(
+    slot.style.mediaFx?.temporal,
+    Boolean(hasFx && slot.source && slot.directImage.visible() && surfaceMediaFxTemporal(slot, slot.source)),
+  )
   const overscan = hasFx && slot.mediaFxController.isMotionActive()
     ? surfaceMediaFxOverscanScale(slot, slot.style, reducedMotion)
     : 1
@@ -5894,6 +5908,18 @@ const surfaceMediaFxAdvanced = (slot: SurfaceSlot, source: StageMediaSource) => 
   return mediaFxAdvancedHasContent(advanced) && mediaFxGpuSupported() ? advanced : null
 }
 
+// Temporal follows the advanced rule (static image, non-tile direct image, GPU usable)
+// and only counts while it would actually play (reduced motion keeps the static look).
+const surfaceMediaFxTemporal = (slot: SurfaceSlot, source: StageMediaSource) => {
+  const temporal = slot.style.mediaFx?.temporal
+  if (!temporal || slot.animatedMedia || isVideoSource(source) || !useDirectSurfaceImage(slot.style)) return null
+  return mediaFxTemporalHasContent(temporal)
+    && mediaFxGpuSupported()
+    && !resolveTheaterReducedMotion().effectiveReducedMotion
+    ? temporal
+    : null
+}
+
 // Konva 10.3 parses mixed CSS/function filters through an incomplete fallback.
 // Apply the full native CSS chain to the pixels AFTER the legacy function filters.
 // These temporary canvases are not node caches and never mutate filter attributes.
@@ -5913,6 +5939,7 @@ const surfaceMediaFxCanvasFilter = (css: string): Konva.Filter => (imageData: Im
 
 const clearDirectSurfaceImage = (slot: SurfaceSlot) => {
   if (slot.directImageSource || slot.directImage.image()) slot.directImage.clearCache()
+  slot.mediaFxTemporal.invalidateBaseline()
   slot.directImage.brightness(0)
   slot.directImage.blurRadius(0)
   slot.directImage.filters([])
@@ -5944,6 +5971,13 @@ const updateDirectSurfaceImage = (
   // Without Canvas filter support only the legacy Konva base filters are kept.
   const mediaFxCss = canvasFilterSupported() ? surfaceMediaFxFilterCss(slot) : ''
   const mediaFxAdvanced = surfaceMediaFxAdvanced(slot, source)
+  // Temporal needs a cache as its static baseline; it only adds one when no static
+  // filter already builds it, so toggling temporal never rebuilds an existing cache.
+  const temporalCacheOnly = Boolean(surfaceMediaFxTemporal(slot, source))
+    && slot.style.brightness === 1
+    && !(slot.style.blurPx > 0)
+    && !mediaFxCss
+    && !mediaFxAdvanced
   const signature = [
     stageMediaObjectUrls.get(source) || '',
     dimensions.width,
@@ -5960,6 +5994,7 @@ const updateDirectSurfaceImage = (
     slot.style.blurPx,
     mediaFxCss,
     mediaFxAdvanced ? mediaFxAdvancedSignature(mediaFxAdvanced) : '',
+    temporalCacheOnly ? 'temporal-baseline' : '',
   ].join(':')
   if (
     slot.directImageSource === source
@@ -5997,7 +6032,8 @@ const updateDirectSurfaceImage = (
   if (gpuFilter) filters.push(gpuFilter)
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
-  if (filters.length) slot.directImage.cache()
+  if (filters.length || temporalCacheOnly) slot.directImage.cache()
+  slot.mediaFxTemporal.invalidateBaseline()
   slot.directImageSource = source
   slot.directImageSignature = signature
   slot.directImage.visible(true)
@@ -6866,6 +6902,19 @@ const disposeObjectMediaFx = (objectId: string) => {
   objectMediaFxControllers.delete(objectId)
 }
 
+// Temporal is allowed to subscribe only while the image is actually visible in the
+// Stage object hierarchy. Use store state rather than Konva update order so a hidden
+// parent stops descendants in the same sync pass; entrance/exit tweens remain visible.
+const stageObjectMediaFxVisible = (object: StageObject) => {
+  if (!props.syncReady) return false
+  let current: StageObject | undefined = object
+  while (current) {
+    if (hasPendingSceneEntrance(current.id) || (!current.visible && !objectEntranceTweens.has(current.id))) return false
+    current = current.parentId ? props.store.activeObjects.value[current.parentId] : undefined
+  }
+  return true
+}
+
 const syncObjectMediaFx = (wrapper: Konva.Group, object: StageObject, width: number, height: number) => {
   const spec = stageObjectMediaFx(object)
   let controller = objectMediaFxControllers.get(object.id)
@@ -6889,6 +6938,7 @@ const syncObjectMediaFx = (wrapper: Konva.Group, object: StageObject, width: num
     // Static cache filters would freeze animated images / video on one frame.
     filters: isStaticImageObject(object),
     advanced: isStaticImageObject(object) && mediaFxGpuAvailable.value,
+    temporal: isStaticImageObject(object) && mediaFxGpuAvailable.value && stageObjectMediaFxVisible(object),
     paused: mediaFxPreviewPaused.value && props.store.state.selectedObjectId === object.id,
     reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
   })
@@ -7778,6 +7828,7 @@ const imageEditorMediaFxCapabilities = computed<Partial<MediaFxCapabilities>>(()
     'konva',
     object?.type === 'image' && Boolean(object.image) && !isStaticImageObject(object),
     isStaticImageObject(object) && mediaFxGpuAvailable.value,
+    isStaticImageObject(object) && mediaFxGpuAvailable.value,
   )
 })
 
@@ -8629,6 +8680,8 @@ onBeforeUnmount(() => {
   objectMediaFxControllers.clear()
   backgroundSlot?.mediaFxController.dispose()
   foregroundSlot?.mediaFxController.dispose()
+  backgroundSlot?.mediaFxTemporal.dispose()
+  foregroundSlot?.mediaFxTemporal.dispose()
   pendingObjectEntrances.clear()
   textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
   textEntranceTimers.clear()

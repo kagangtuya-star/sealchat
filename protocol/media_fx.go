@@ -14,10 +14,12 @@ import (
 // Keep the ranges below in sync with media-fx.ts and media-fx-schema.ts.
 //
 // v2 adds the required `advanced` object with pixelate / rgbSplit / scanline; v3 adds
-// six more static effects to it. Stored v1 / v2 specs stay valid as they are and are
-// upgraded lazily by clients on their next save; there is no data migration.
+// six more static effects to it; v4 adds the required `temporal` object (time-driven
+// pixel effects). Stored v1 / v2 / v3 specs stay valid as they are and are upgraded
+// lazily by clients on their next save; there is no data migration.
 const (
-	MediaFxVersion       = 3
+	MediaFxVersion       = 4
+	MediaFxV3Version     = 3
 	MediaFxV2Version     = 2
 	LegacyMediaFxVersion = 1
 )
@@ -143,13 +145,177 @@ func (advanced *MediaFxAdvanced) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 / v3 specs must,
-// so the validator can tell a v1 document from an incomplete v2 one.
+// MediaFxTemporal holds the v4 time-driven effects: four normalized 0..1 strengths
+// (0 = off) and a speed multiplier that means nothing while every effect is off.
+// Every field is a pointer so the validator can require all of them in v4; unknown
+// fields are recorded for the shared validator like MediaFxAdvanced does.
+type MediaFxTemporal struct {
+	Grain        *float64 `json:"grain"`
+	Flicker      *float64 `json:"flicker"`
+	Glitch       *float64 `json:"glitch"`
+	ScanlineRoll *float64 `json:"scanlineRoll"`
+	Speed        *float64 `json:"speed"`
+
+	unknownField string
+}
+
+func (temporal *MediaFxTemporal) UnmarshalJSON(data []byte) error {
+	type mediaFxTemporalAlias MediaFxTemporal
+	var decoded mediaFxTemporalAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*temporal = MediaFxTemporal(decoded)
+	for key := range fields {
+		switch key {
+		case "grain", "flicker", "glitch", "scanlineRoll", "speed":
+		default:
+			if temporal.unknownField == "" {
+				temporal.unknownField = key
+			}
+		}
+	}
+	return nil
+}
+
+const (
+	minMediaFxTemporalSpeed     = 0.25
+	maxMediaFxTemporalSpeed     = 3.0
+	defaultMediaFxTemporalSpeed = 1.0
+)
+
+type mediaFxTemporalField struct {
+	name             string
+	value            *float64
+	minimum, maximum float64
+	defaultValue     float64
+	effect           bool
+}
+
+func (temporal MediaFxTemporal) fields() []mediaFxTemporalField {
+	return []mediaFxTemporalField{
+		{"grain", temporal.Grain, 0, 1, 0, true},
+		{"flicker", temporal.Flicker, 0, 1, 0, true},
+		{"glitch", temporal.Glitch, 0, 1, 0, true},
+		{"scanlineRoll", temporal.ScanlineRoll, 0, 1, 0, true},
+		{"speed", temporal.Speed, minMediaFxTemporalSpeed, maxMediaFxTemporalSpeed, defaultMediaFxTemporalSpeed, false},
+	}
+}
+
+// current reads a field with a missing value as its default (off / 1x).
+func (field mediaFxTemporalField) current() float64 {
+	if field.value == nil {
+		return field.defaultValue
+	}
+	return *field.value
+}
+
+// mediaFxTemporalHasContent only looks at the four effects; speed alone is no effect.
+func mediaFxTemporalHasContent(temporal *MediaFxTemporal) bool {
+	if temporal == nil {
+		return false
+	}
+	for _, field := range temporal.fields() {
+		if field.effect && math.Abs(field.current()-field.defaultValue) >= mediaFxFilterEpsilon {
+			return true
+		}
+	}
+	return false
+}
+
+// mediaFxTemporalEqual treats every temporal without an effect as equal, whatever its
+// speed, so a v1 / v2 / v3 spec equals the v4 spec with temporal off.
+func mediaFxTemporalEqual(left, right *MediaFxTemporal) bool {
+	leftActive, rightActive := mediaFxTemporalHasContent(left), mediaFxTemporalHasContent(right)
+	if !leftActive || !rightActive {
+		return leftActive == rightActive
+	}
+	leftFields, rightFields := left.fields(), right.fields()
+	for index := range leftFields {
+		if leftFields[index].current() != rightFields[index].current() {
+			return false
+		}
+	}
+	return true
+}
+
+// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 / v3 / v4 specs
+// must, so the validator can tell a v1 document from an incomplete v2 one. Temporal
+// follows the same rule: only v4 carries it, and v4 must. `temporalNullPresence` remembers
+// an explicit top-level temporal:null just long enough for old-version strict validation;
+// valid decoded specs keep no transient presence state.
 type MediaFxSpec struct {
 	Version  int              `json:"version"`
 	Motion   MediaFxMotion    `json:"motion"`
 	Filter   MediaFxFilter    `json:"filter"`
 	Advanced *MediaFxAdvanced `json:"advanced,omitempty"`
+	Temporal *MediaFxTemporal `json:"temporal,omitempty"`
+
+	temporalNullPresence bool
+	unknownField         string
+	unknownFieldPath     string
+}
+
+// UnmarshalJSON preserves the distinction between an omitted temporal field and an
+// explicit null without changing the public spec shape. Unknown fields are recorded for
+// the shared validator, matching MediaFxAdvanced / MediaFxTemporal strict validation.
+func (spec *MediaFxSpec) UnmarshalJSON(data []byte) error {
+	type mediaFxSpecAlias MediaFxSpec
+	var decoded mediaFxSpecAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*spec = MediaFxSpec(decoded)
+	for key, raw := range fields {
+		switch key {
+		case "version", "advanced":
+		case "motion":
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &nested); err == nil {
+				for nestedKey := range nested {
+					switch nestedKey {
+					case "preset", "intensity", "durationMs", "loop":
+					default:
+						if spec.unknownField == "" {
+							spec.unknownField = nestedKey
+							spec.unknownFieldPath = ".motion"
+						}
+					}
+				}
+			}
+		case "filter":
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &nested); err == nil {
+				for nestedKey := range nested {
+					switch nestedKey {
+					case "brightness", "contrast", "saturation", "grayscale", "sepia", "hueRotate", "blurPx":
+					default:
+						if spec.unknownField == "" {
+							spec.unknownField = nestedKey
+							spec.unknownFieldPath = ".filter"
+						}
+					}
+				}
+			}
+		case "temporal":
+			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+				spec.temporalNullPresence = true
+			}
+		default:
+			if spec.unknownField == "" {
+				spec.unknownField = key
+			}
+		}
+	}
+	return nil
 }
 
 type mediaFxFilterField struct {
@@ -242,19 +408,26 @@ func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
 }
 
 // validateMediaFx accepts nil (no effect) and otherwise requires a complete v1 spec
-// (without advanced), a complete v2 spec (advanced without v3-only effects) or a
-// complete v3 spec (advanced with every effect present).
+// (without advanced), a complete v2 spec (advanced without v3-only effects), a
+// complete v3 spec (advanced with every effect present) or a complete v4 spec (a v3
+// advanced plus a temporal with every field present). Only v4 may carry temporal.
 func validateMediaFx(spec *MediaFxSpec, path string) error {
 	if spec == nil {
 		return nil
 	}
 	var problems []error
+	if spec.unknownField != "" {
+		problems = append(problems, fmt.Errorf("%s%s: json: unknown field %q", path, spec.unknownFieldPath, spec.unknownField))
+	}
+	if spec.Version != MediaFxVersion && (spec.Temporal != nil || spec.temporalNullPresence) {
+		problems = append(problems, fmt.Errorf("%s.temporal is not allowed in version %d", path, spec.Version))
+	}
 	switch spec.Version {
 	case LegacyMediaFxVersion:
 		if spec.Advanced != nil {
 			problems = append(problems, fmt.Errorf("%s.advanced is not allowed in version %d", path, LegacyMediaFxVersion))
 		}
-	case MediaFxV2Version, MediaFxVersion:
+	case MediaFxV2Version, MediaFxV3Version, MediaFxVersion:
 		if spec.Advanced == nil {
 			problems = append(problems, fmt.Errorf("%s.advanced is required in version %d", path, spec.Version))
 			break
@@ -266,8 +439,8 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 			if spec.Version == MediaFxV2Version && field.present {
 				problems = append(problems, fmt.Errorf("%s.advanced.%s is not allowed in version %d", path, field.name, MediaFxV2Version))
 			}
-			if spec.Version == MediaFxVersion && (!field.present || field.value == nil) {
-				problems = append(problems, fmt.Errorf("%s.advanced.%s is required in version %d", path, field.name, MediaFxVersion))
+			if spec.Version != MediaFxV2Version && (!field.present || field.value == nil) {
+				problems = append(problems, fmt.Errorf("%s.advanced.%s is required in version %d", path, field.name, spec.Version))
 			}
 		}
 		for _, field := range spec.Advanced.fields() {
@@ -276,7 +449,10 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 			}
 		}
 	default:
-		problems = append(problems, fmt.Errorf("%s.version must be %d, %d or %d", path, LegacyMediaFxVersion, MediaFxV2Version, MediaFxVersion))
+		problems = append(problems, fmt.Errorf("%s.version must be %d, %d, %d or %d", path, LegacyMediaFxVersion, MediaFxV2Version, MediaFxV3Version, MediaFxVersion))
+	}
+	if spec.Version == MediaFxVersion {
+		problems = append(problems, validateMediaFxTemporal(spec.Temporal, path+".temporal")...)
 	}
 	if !validMediaFxMotionPreset(spec.Motion.Preset) {
 		problems = append(problems, fmt.Errorf("%s.motion.preset is invalid", path))
@@ -293,6 +469,26 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 		}
 	}
 	return errors.Join(problems...)
+}
+
+func validateMediaFxTemporal(temporal *MediaFxTemporal, path string) []error {
+	if temporal == nil {
+		return []error{fmt.Errorf("%s is required in version %d", path, MediaFxVersion)}
+	}
+	var problems []error
+	if temporal.unknownField != "" {
+		problems = append(problems, fmt.Errorf("%s: json: unknown field %q", path, temporal.unknownField))
+	}
+	for _, field := range temporal.fields() {
+		if field.value == nil {
+			problems = append(problems, fmt.Errorf("%s.%s is required in version %d", path, field.name, MediaFxVersion))
+			continue
+		}
+		if !finiteInRange(*field.value, field.minimum, field.maximum) {
+			problems = append(problems, fmt.Errorf("%s.%s must be finite and between %g and %g", path, field.name, field.minimum, field.maximum))
+		}
+	}
+	return problems
 }
 
 // ValidateMediaFx exposes the single Media FX validator to other packages that embed
@@ -318,19 +514,21 @@ func mediaFxHasContent(spec *MediaFxSpec) bool {
 			return true
 		}
 	}
-	return false
+	return mediaFxTemporalHasContent(spec.Temporal)
 }
 
 // mediaFxEqual compares effect content, never pointer identity or version. A missing
-// spec and an all-default spec both mean "no effect"; a v1 / v2 spec equals the v3 spec
-// with the same motion / filter / advanced values and the effects it lacks at 0.
+// spec and an all-default spec both mean "no effect"; a v1 / v2 / v3 spec equals the v4
+// spec with the same motion / filter / advanced values, the effects it lacks at 0 and
+// temporal off (any speed).
 func mediaFxEqual(left, right *MediaFxSpec) bool {
 	leftActive, rightActive := mediaFxHasContent(left), mediaFxHasContent(right)
 	if !leftActive || !rightActive {
 		return leftActive == rightActive
 	}
 	return left.Motion == right.Motion && left.Filter == right.Filter &&
-		mediaFxAdvancedEqual(left.normalizedAdvanced(), right.normalizedAdvanced())
+		mediaFxAdvancedEqual(left.normalizedAdvanced(), right.normalizedAdvanced()) &&
+		mediaFxTemporalEqual(left.Temporal, right.Temporal)
 }
 
 func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
@@ -347,6 +545,15 @@ func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
 		advanced.Sharpen = cloneMediaFxFloat(advanced.Sharpen)
 		advanced.Edge = cloneMediaFxFloat(advanced.Edge)
 		clone.Advanced = &advanced
+	}
+	if spec.Temporal != nil {
+		temporal := *spec.Temporal
+		temporal.Grain = cloneMediaFxFloat(temporal.Grain)
+		temporal.Flicker = cloneMediaFxFloat(temporal.Flicker)
+		temporal.Glitch = cloneMediaFxFloat(temporal.Glitch)
+		temporal.ScanlineRoll = cloneMediaFxFloat(temporal.ScanlineRoll)
+		temporal.Speed = cloneMediaFxFloat(temporal.Speed)
+		clone.Temporal = &temporal
 	}
 	return &clone
 }

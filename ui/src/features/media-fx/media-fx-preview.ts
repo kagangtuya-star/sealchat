@@ -2,6 +2,7 @@ import {
   createDefaultMediaFxAdvanced,
   createDefaultMediaFxFilter,
   createDefaultMediaFxMotion,
+  createDefaultMediaFxTemporal,
   mediaFxAdvancedKeys,
   mediaFxFilterKeys,
   normalizeMediaFxSpec,
@@ -9,8 +10,9 @@ import {
 } from './media-fx'
 
 // Static preview helpers for editors that show a rasterized "final look" next to the
-// editing surface. Only filter / advanced change pixels; motion is played on the
-// preview element by the DOM adapter, so motion edits never trigger a re-raster.
+// editing surface. Only filter / advanced change static pixels; motion is played on the
+// preview element by the DOM adapter and temporal runs live over the static raster, so
+// motion / temporal edits never trigger a re-raster.
 
 export interface MediaFxStaticPreviewOptions {
   filters?: boolean
@@ -18,12 +20,14 @@ export interface MediaFxStaticPreviewOptions {
 }
 
 // Static part of a spec as the target renderer will draw it. Disabled sections fall
-// back to defaults (the stored data itself is untouched); motion is always reset.
+// back to defaults (the stored data itself is untouched); motion and temporal are
+// always reset.
 export const mediaFxStaticPreviewSpec = (input: unknown, options: MediaFxStaticPreviewOptions = {}): MediaFxSpec => {
   const spec = normalizeMediaFxSpec(input)
   return {
     ...spec,
     motion: createDefaultMediaFxMotion(),
+    temporal: createDefaultMediaFxTemporal(),
     filter: options.filters === false ? createDefaultMediaFxFilter() : spec.filter,
     advanced: options.advanced === true ? spec.advanced : createDefaultMediaFxAdvanced(),
   }

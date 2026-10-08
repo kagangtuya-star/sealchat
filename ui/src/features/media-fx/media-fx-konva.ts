@@ -5,6 +5,7 @@ import {
   mediaFxAdvancedHasContent,
   mediaFxAdvancedKeys,
   mediaFxFilterToCss,
+  mediaFxTemporalHasContent,
   normalizeMediaFxSpec,
   prefersReducedMotion,
   resolveMediaFxMotionTrack,
@@ -12,9 +13,17 @@ import {
   type MediaFxFilter,
   type MediaFxMotionFrame,
   type MediaFxMotionTrack,
+  type MediaFxTemporal,
 } from './media-fx'
 import { canvasFilterSupported } from './media-fx-canvas'
 import { createMediaFxGpuFilter, mediaFxGpuSupported } from './media-fx-gpu'
+import {
+  createMediaFxTemporalPlayer,
+  presentMediaFxTemporalFrame,
+  resolveMediaFxTemporalRaster,
+  type MediaFxTemporalPlayer,
+  type MediaFxTemporalPlayerOptions,
+} from './media-fx-temporal'
 
 // Konva adapter.
 //
@@ -23,7 +32,9 @@ import { createMediaFxGpuFilter, mediaFxGpuSupported } from './media-fx-gpu'
 //   motionNode (inner) -> Media FX motion only (x/y/scale around the content center)
 //   imageNode          -> Media FX filters (cached, static images only); when the
 //                         consumer enables `advanced`, the WebGL2 pass runs as the
-//                         last step of the same cache filter chain
+//                         last step of the same cache filter chain. When the consumer
+//                         enables `temporal`, live frames are drawn in place of the
+//                         node's cached canvas (see createKonvaMediaFxTemporalController)
 //
 // The controller never touches the root group, so continuous motion cannot fight
 // with drag, rotation, entrance tweens or persisted object.transform values.
@@ -44,6 +55,9 @@ export interface KonvaMediaFxContext {
   filters?: boolean
   // Advanced GPU pixel effects; requires filters and is opt-in per consumer.
   advanced?: boolean
+  // Temporal live pixel effects; requires filters and is opt-in per consumer. Paused /
+  // reduced motion stop it like motion, the static look stays.
+  temporal?: boolean
   paused?: boolean
   reducedMotion?: boolean
 }
@@ -141,6 +155,142 @@ export const composeKonvaMediaFxFilters = (basic: KonvaFilter[], gpu: KonvaFilte
   gpu ? [...basic, gpu] : basic
 )
 
+// ---------------------------------------------------------------------------
+// Temporal live output on a cached Konva.Image
+// ---------------------------------------------------------------------------
+
+export interface KonvaMediaFxTemporalController {
+  // Call after the image node cache was rebuilt or cleared: the static final look (the
+  // temporal baseline) changed. The next update() reads it again.
+  invalidateBaseline(): void
+  // `active` is the consumer's gate (capability, pause, reduced motion, ...). Live output
+  // additionally needs a cached node and at least one temporal effect.
+  update(temporal: MediaFxTemporal | null | undefined, active: boolean): void
+  readonly live: boolean
+  dispose(): void
+}
+
+export interface KonvaMediaFxTemporalDeps {
+  createPlayer?: (options: MediaFxTemporalPlayerOptions) => MediaFxTemporalPlayer
+  createCanvas?: () => HTMLCanvasElement
+}
+
+// The cached canvas of a Konva node is its static final look (basic filters + the
+// advanced GPU step, or just the scene when it has no filter), so it is reused as the
+// temporal baseline: one downscaled copy per cache rebuild, uploaded once by the shared
+// GPU session. Live frames are drawn exactly where Konva draws the cached canvas, with
+// the node's own opacity / composite operation, so the node keeps its transform, hit
+// region, z-order and Layer; only that Layer is redrawn per frame. Konva cache and
+// filters are never rebuilt for a temporal frame.
+export const createKonvaMediaFxTemporalController = (
+  imageNode: Konva.Image,
+  deps: KonvaMediaFxTemporalDeps = {},
+): KonvaMediaFxTemporalController => {
+  const createCanvas = deps.createCanvas ?? (() => document.createElement('canvas'))
+  let output: HTMLCanvasElement | null = null
+  let baselineDirty = true
+  let installed = false
+  let disposed = false
+
+  const requestDraw = () => imageNode.getLayer()?.batchDraw()
+
+  function drawLiveCachedCanvas(this: Konva.Image, context: Konva.Context) {
+    const cache = this._getCanvasCache()
+    const scene = cache?.scene as { width: number, height: number, pixelRatio: number } | undefined
+    if (!output || !scene) {
+      Konva.Image.prototype._drawCachedSceneCanvas.call(this, context)
+      return
+    }
+    const ratio = scene.pixelRatio || 1
+    context.save()
+    context._applyOpacity(this)
+    context._applyGlobalCompositeOperation(this)
+    context.translate(cache.x, cache.y)
+    context.drawImage(output, 0, 0, scene.width / ratio, scene.height / ratio)
+    context.restore()
+  }
+
+  const install = () => {
+    if (installed) return
+    installed = true
+    imageNode._drawCachedSceneCanvas = drawLiveCachedCanvas
+  }
+
+  const uninstall = () => {
+    if (!installed) return
+    installed = false
+    delete (imageNode as unknown as { _drawCachedSceneCanvas?: unknown })._drawCachedSceneCanvas
+  }
+
+  const player = (deps.createPlayer ?? createMediaFxTemporalPlayer)({
+    present: (frame) => {
+      output ??= createCanvas()
+      if (!presentMediaFxTemporalFrame(output, frame)) return false
+      install()
+      requestDraw()
+      return true
+    },
+    onLiveChange: (live) => {
+      if (live) return
+      uninstall()
+      requestDraw()
+    },
+    canRender: () => imageNode.isCached() && imageNode.isVisible() && Boolean(imageNode.getLayer()),
+  })
+
+  const readBaseline = () => {
+    baselineDirty = false
+    if (!imageNode.isCached()) {
+      player.setBaseline(null)
+      return
+    }
+    // Same lazily filtered canvas Konva draws next; reading it here does not filter twice.
+    const cached = imageNode._getCachedSceneCanvas()
+    const ratio = cached.pixelRatio || 1
+    const raster = resolveMediaFxTemporalRaster(
+      cached.width / ratio,
+      cached.height / ratio,
+      Math.min(ratio, Konva.pixelRatio || 1),
+    )
+    const baseline = raster ? createCanvas() : null
+    const drawContext = baseline?.getContext('2d')
+    if (!raster || !baseline || !drawContext) {
+      player.setBaseline(null)
+      return
+    }
+    baseline.width = raster.width
+    baseline.height = raster.height
+    drawContext.drawImage(cached._canvas, 0, 0, raster.width, raster.height)
+    player.setBaseline({ source: baseline, width: raster.width, height: raster.height, pixelRatio: raster.pixelRatio })
+  }
+
+  return {
+    invalidateBaseline() {
+      if (disposed) return
+      baselineDirty = true
+      // Never stretch a frame of the previous geometry over the new cache.
+      uninstall()
+    },
+    update(temporal, active) {
+      if (disposed) return
+      const run = active && mediaFxTemporalHasContent(temporal) && imageNode.isCached()
+      if (run && baselineDirty) readBaseline()
+      player.update({ temporal, active: run })
+    },
+    get live() {
+      return player.live
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      uninstall()
+      player.dispose()
+      if (output) output.width = output.height = 0
+      output = null
+    },
+  }
+}
+
 export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMediaFxController => {
   const { motionNode, onMotionComplete } = nodes
   const imageNode = nodes.imageNode || null
@@ -148,6 +298,9 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
   let filtersEnabled = true
   let advanced: MediaFxAdvanced | null = null
   let advancedEnabled = false
+  let temporal: MediaFxTemporal | null = null
+  let temporalActive = false
+  let temporalController: KonvaMediaFxTemporalController | null = null
   let filterSignature = ''
   let motionSignature = ''
   let track: MediaFxMotionTrack | null = null
@@ -247,7 +400,9 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
       && mediaFxAdvancedHasContent(advanced) && mediaFxGpuSupported()
       ? advanced
       : null
-    const signature = css || gpuAdvanced
+    // Live temporal output needs a cached static look even without any static filter.
+    const temporalBaseline = Boolean(temporalActive && source)
+    const signature = css || gpuAdvanced || temporalBaseline
       ? [
           css,
           gpuAdvanced ? mediaFxAdvancedSignature(gpuAdvanced) : '',
@@ -264,10 +419,11 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
     if (signature === filterSignature) return
     const hadFilter = Boolean(filterSignature)
     filterSignature = signature
-    if (!css && !gpuAdvanced) {
+    if (!css && !gpuAdvanced && !temporalBaseline) {
       if (hadFilter) {
         imageNode.clearCache()
         imageNode.filters([])
+        temporalController?.invalidateBaseline()
         requestDraw()
       }
       return
@@ -289,14 +445,30 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
     }
     imageNode.filters(composeKonvaMediaFxFilters(basic, gpuFilter))
     imageNode.cache({ pixelRatio })
+    temporalController?.invalidateBaseline()
     requestDraw()
+  }
+
+  const applyTemporal = () => {
+    if (!imageNode) return
+    if (temporalActive && !temporalController) {
+      temporalController = createKonvaMediaFxTemporalController(imageNode)
+    }
+    // Hidden Konva targets keep their warm baseline but leave the page-wide clock, so
+    // an otherwise idle scene has zero Media FX RAF work. canRender remains the cheap
+    // per-tick safety gate for visibility changes between controller updates.
+    temporalController?.update(temporal, temporalActive && imageNode.isVisible())
   }
 
   const clear = () => {
     stopMotion()
     filter = null
     advanced = null
+    temporal = null
+    temporalActive = false
     applyFilter()
+    temporalController?.dispose()
+    temporalController = null
   }
 
   return {
@@ -308,11 +480,23 @@ export const createKonvaMediaFxController = (nodes: KonvaMediaFxNodes): KonvaMed
       filtersEnabled = context.filters !== false
       advanced = spec.advanced
       advancedEnabled = context.advanced === true
+      temporal = spec.temporal
+      // Temporal is a dynamic effect: pause and reduced motion stop it like motion.
+      temporalActive = Boolean(imageNode)
+        && context.temporal === true
+        && filtersEnabled
+        && !context.paused
+        && !(context.reducedMotion ?? prefersReducedMotion())
+        && mediaFxTemporalHasContent(spec.temporal)
+        && mediaFxGpuSupported()
       applyFilter()
+      applyTemporal()
       applyMotion(spec, context)
     },
     refreshFilter() {
-      if (!disposed) applyFilter()
+      if (disposed) return
+      applyFilter()
+      applyTemporal()
     },
     isMotionActive() {
       return Boolean(track)

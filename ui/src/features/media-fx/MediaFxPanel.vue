@@ -6,9 +6,11 @@ import {
   createDefaultMediaFxAdvanced,
   createDefaultMediaFxFilter,
   createDefaultMediaFxSpec,
+  createDefaultMediaFxTemporal,
   MEDIA_FX_ADVANCED_RANGES,
   MEDIA_FX_FILTER_RANGES,
   MEDIA_FX_INTENSITY_RANGE,
+  MEDIA_FX_TEMPORAL_RANGES,
   matchMediaFxAdvancedPreset,
   matchMediaFxFilterPreset,
   mediaFxAdvancedFromPreset,
@@ -20,6 +22,7 @@ import {
   mediaFxFilterPresets,
   mediaFxHasContent,
   mediaFxMotionSpeed,
+  mediaFxTemporalHasContent,
   normalizeMediaFxSpec,
   type MediaFxAdvanced,
   type MediaFxAdvancedKey,
@@ -29,6 +32,8 @@ import {
   type MediaFxMotion,
   type MediaFxMotionPreset,
   type MediaFxSpec,
+  type MediaFxTemporal,
+  type MediaFxTemporalEffectKey,
 } from './media-fx'
 
 // Shared editor for MediaFxSpec. It knows nothing about stage objects, chat messages
@@ -38,7 +43,8 @@ const props = withDefaults(defineProps<{
   mode?: 'live' | 'bake'
   capabilities?: Partial<MediaFxCapabilities>
   disabled?: boolean
-  // Shows the local "pause preview" toggle; the paused state is never persisted.
+  // Shows the local "pause preview" toggle (motion and temporal); the paused state is
+  // never persisted.
   previewControl?: boolean
   previewPaused?: boolean
 }>(), {
@@ -70,6 +76,14 @@ const advancedAvailable = computed(() => props.capabilities.advanced === true &&
 // carries advanced values (e.g. imported); it is then shown read-only and kept as is.
 const advancedVisible = computed(() => advancedAvailable.value || advancedChanged.value)
 const activeAdvancedPreset = computed(() => matchMediaFxAdvancedPreset(spec.value.advanced))
+const temporalChanged = computed(() => mediaFxTemporalHasContent(spec.value.temporal))
+// Temporal is live-only and opt-in like advanced; unsupported consumers only show (and
+// keep) existing temporal data, read-only.
+const temporalAvailable = computed(() => (
+  props.mode === 'live' && props.capabilities.temporal === true && !isAnimatedMedia.value
+))
+const temporalVisible = computed(() => temporalAvailable.value || temporalChanged.value)
+const previewPauseAvailable = computed(() => spec.value.motion.preset !== 'none' || temporalChanged.value)
 
 const filterRows: Array<{ key: MediaFxFilterKey, label: string }> = [
   { key: 'brightness', label: '亮度' },
@@ -111,6 +125,15 @@ const advancedGroups: Array<{ id: string, label: string, rows: Array<{ key: Medi
       { key: 'edge', label: '边缘化' },
     ],
   },
+]
+
+// Time-driven pixel effects, rendered live over the static look. Distinct from the
+// static advanced effects (e.g. fixed grain) and from transform motion.
+const temporalRows: Array<{ key: MediaFxTemporalEffectKey, label: string }> = [
+  { key: 'grain', label: '动态颗粒' },
+  { key: 'flicker', label: '闪烁' },
+  { key: 'glitch', label: '故障' },
+  { key: 'scanlineRoll', label: '滚动扫描线' },
 ]
 
 const motionOptions: Array<{ value: MediaFxMotionPreset, label: string }> = [
@@ -173,6 +196,19 @@ const applyAdvancedPreset = (presetId: string) => {
 }
 
 const resetAdvanced = () => updateAdvanced(createDefaultMediaFxAdvanced())
+
+const updateTemporal = (patch: Partial<MediaFxTemporal>) => {
+  if (!temporalAvailable.value) return
+  emitSpec({ ...spec.value, temporal: { ...spec.value.temporal, ...patch } })
+}
+
+const updateTemporalValue = (key: keyof MediaFxTemporal, value: number | number[]) => {
+  updateTemporal({ [key]: Array.isArray(value) ? value[0] : value })
+}
+
+const resetTemporalValue = (key: keyof MediaFxTemporal) => updateTemporal({ [key]: MEDIA_FX_TEMPORAL_RANGES[key].defaultValue })
+
+const resetTemporal = () => updateTemporal(createDefaultMediaFxTemporal())
 
 const updateMotion = (patch: Partial<MediaFxMotion>) => {
   emitSpec({ ...spec.value, motion: { ...spec.value.motion, ...patch } })
@@ -300,6 +336,64 @@ const resetAll = () => {
       </div>
     </section>
 
+    <section v-if="temporalVisible" class="media-fx-panel__section">
+      <header class="media-fx-panel__heading">
+        <span>动态像素效果</span>
+        <n-button text size="tiny" :disabled="disabled || !temporalAvailable || !temporalChanged" @click="resetTemporal">重置动态效果</n-button>
+      </header>
+      <p v-if="!temporalAvailable" class="media-fx-panel__hint">当前媒体暂不支持动态像素效果</p>
+      <div class="media-fx-panel__rows">
+        <div v-for="row in temporalRows" :key="row.key" class="media-fx-panel__row">
+          <span class="media-fx-panel__label" title="双击恢复默认" @dblclick="resetTemporalValue(row.key)">{{ row.label }}</span>
+          <n-slider
+            :value="spec.temporal[row.key]"
+            :min="MEDIA_FX_TEMPORAL_RANGES[row.key].min"
+            :max="MEDIA_FX_TEMPORAL_RANGES[row.key].max"
+            :step="MEDIA_FX_TEMPORAL_RANGES[row.key].step"
+            :tooltip="false"
+            :disabled="disabled || !temporalAvailable"
+            @dragstart="emit('edit-start')"
+            @dragend="emit('edit-end')"
+            @update:value="updateTemporalValue(row.key, $event)"
+          />
+          <span class="media-fx-panel__value">{{ Math.round(spec.temporal[row.key] * 100) }}%</span>
+          <button
+            type="button"
+            class="media-fx-panel__reset"
+            :class="{ 'is-hidden': spec.temporal[row.key] === MEDIA_FX_TEMPORAL_RANGES[row.key].defaultValue }"
+            :disabled="disabled || !temporalAvailable"
+            :aria-label="`恢复${row.label}默认值`"
+            title="恢复默认"
+            @click="resetTemporalValue(row.key)"
+          >↺</button>
+        </div>
+        <div class="media-fx-panel__row">
+          <span class="media-fx-panel__label" title="双击恢复默认" @dblclick="resetTemporalValue('speed')">速度</span>
+          <n-slider
+            :value="spec.temporal.speed"
+            :min="MEDIA_FX_TEMPORAL_RANGES.speed.min"
+            :max="MEDIA_FX_TEMPORAL_RANGES.speed.max"
+            :step="MEDIA_FX_TEMPORAL_RANGES.speed.step"
+            :tooltip="false"
+            :disabled="disabled || !temporalAvailable || !temporalChanged"
+            @dragstart="emit('edit-start')"
+            @dragend="emit('edit-end')"
+            @update:value="updateTemporalValue('speed', $event)"
+          />
+          <span class="media-fx-panel__value">{{ spec.temporal.speed.toFixed(2) }}×</span>
+          <button
+            type="button"
+            class="media-fx-panel__reset"
+            :class="{ 'is-hidden': spec.temporal.speed === MEDIA_FX_TEMPORAL_RANGES.speed.defaultValue }"
+            :disabled="disabled || !temporalAvailable || !temporalChanged"
+            aria-label="恢复速度默认值"
+            title="恢复默认"
+            @click="resetTemporalValue('speed')"
+          >↺</button>
+        </div>
+      </div>
+    </section>
+
     <section v-if="motionVisible" class="media-fx-panel__section">
       <header class="media-fx-panel__heading">
         <span>图像动效</span>
@@ -307,7 +401,7 @@ const resetAll = () => {
           v-if="previewControl"
           text
           size="tiny"
-          :disabled="spec.motion.preset === 'none'"
+          :disabled="!previewPauseAvailable"
           @click="emit('update:previewPaused', !previewPaused)"
         >{{ previewPaused ? '继续预览' : '暂停预览' }}</n-button>
       </header>

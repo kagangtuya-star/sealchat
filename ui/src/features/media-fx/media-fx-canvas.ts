@@ -10,7 +10,8 @@ import { applyMediaFxGpu } from './media-fx-gpu'
 
 // Canvas bake adapter: a one-shot conversion of a static image + MediaFxSpec (basic
 // filter, then advanced GPU effects) into new pixels. It is not a live renderer and
-// never bakes motion (motion cannot be represented by a still PNG/JPEG/WebP). Call it
+// never bakes motion or temporal effects (neither can be represented by a still
+// PNG/JPEG/WebP, and no random time frame is ever frozen into a file). Call it
 // on explicit confirm or from a debounced preview, not per input.
 
 let cssFilterSupport: boolean | null = null
@@ -230,8 +231,8 @@ export interface MediaFxCanvasBakeOptions {
   requireAdvanced?: boolean
 }
 
-// Full static bake: source -> basic filter -> advanced GPU -> output. Motion is always
-// ignored. Without `requireAdvanced`, a GPU failure keeps the basic-filtered pixels.
+// Full static bake: source -> basic filter -> advanced GPU -> output. Motion and
+// temporal are always ignored. Without `requireAdvanced`, a GPU failure keeps the basic-filtered pixels.
 export const bakeMediaFxToCanvas = (
   source: CanvasImageSource,
   size: MediaFxBakeSize,
@@ -284,7 +285,7 @@ export interface MediaFxBakeOptions {
   requireAdvanced?: boolean
 }
 
-// Static-only: the spec's motion is ignored by design. Returns the input unchanged
+// Static-only: the spec's motion and temporal are ignored by design. Returns the input unchanged
 // when neither the filter nor the advanced effects have content, so callers can always
 // route through this helper.
 export const bakeMediaFxToBlob = async (file: Blob, input: unknown, options: MediaFxBakeOptions = {}): Promise<Blob> => {

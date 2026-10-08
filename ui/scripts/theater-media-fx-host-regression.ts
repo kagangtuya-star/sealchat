@@ -13,6 +13,7 @@ const still: TheaterMediaRef = { assetId: 'host-still', resourceAttachmentId: 'h
 const frame = createTheaterVisualLayer(still, 'dialogue', 'frame')
 const night = () => ({ ...createDefaultMediaFxSpec(), filter: { ...createDefaultMediaFxSpec().filter, brightness: 0.6 } })
 const glitch = () => ({ ...night(), advanced: { ...createDefaultMediaFxSpec().advanced, rgbSplit: 0.4, edge: 0.3, grain: 0.2 } })
+const rolling = (patch = {}) => ({ ...night(), temporal: { ...createDefaultMediaFxSpec().temporal, scanlineRoll: 0.5, ...patch } })
 const settle = () => new Promise(resolve => setImmediate(resolve))
 
 // Mount the real host and media component together for source-lifecycle regression.
@@ -64,6 +65,16 @@ export const runAdvancedHostTests = async () => {
     parentNode: el => el.parent || null,
     nextSibling: el => el.parent?.children[el.parent.children.indexOf(el) + 1] || null,
   })
+  // Temporal player stub: the real player / clock are covered by media-fx-temporal-regression.
+  type TemporalPlayerStub = {
+    options: { present: (frame: unknown) => boolean, onLiveChange?: (live: boolean) => void }
+    baselines: Array<{ source: unknown, width: number, height: number, pixelRatio: number } | null>
+    updates: Array<{ temporal: { glitch: number, scanlineRoll: number }, active: boolean }>
+    live: boolean
+    disposed: boolean
+  }
+  const temporalPlayers: TemporalPlayerStub[] = []
+  const hostProps = shallowRef<Record<string, unknown>>({})
   const timers: Array<() => void> = []
   const rasters: TheaterMediaFxRasterJob[] = []
   const loads: string[] = []
@@ -80,6 +91,19 @@ export const runAdvancedHostTests = async () => {
         notifyGpu = listener
         return () => { notifyGpu = null }
       },
+    }
+    if (id === '@/features/media-fx/media-fx-temporal') return {
+      createMediaFxTemporalPlayer: (options: TemporalPlayerStub['options']) => {
+        const player: TemporalPlayerStub & Record<string, unknown> = {
+          options, baselines: [], updates: [], live: false, disposed: false,
+          setBaseline(baseline: TemporalPlayerStub['baselines'][number]) { player.baselines.push(baseline) },
+          update(input: TemporalPlayerStub['updates'][number]) { player.updates.push(input) },
+          dispose() { player.disposed = true },
+        }
+        temporalPlayers.push(player)
+        return player
+      },
+      presentMediaFxTemporalFrame: () => true,
     }
     if (id === './TheaterPresentationMedia.vue') return mediaComponent
     if (id === './theaterPresentationMedia') return require('../src/components/theater-presentation/theaterPresentationMedia')
@@ -126,11 +150,11 @@ export const runAdvancedHostTests = async () => {
   const dispatch = (command: Parameters<typeof dispatchTheaterEditorCommand>[1]) => {
     state.value = dispatchTheaterEditorCommand(state.value, command, { recordHistory: false })
   }
-  const createApp = () => renderer.createApp({ render: () => h(visualComponent.default, { media: layer().media, mediaFx: layer().mediaFx }) })
+  const createApp = () => renderer.createApp({ render: () => h(visualComponent.default, { media: layer().media, mediaFx: layer().mediaFx, ...hostProps.value }) })
   let app = createApp()
   const originalDocument = globalThis.document
   const originalWindow = globalThis.window
-  globalThis.document = { createElement: () => ({ canPlayType: () => 'probably' }) } as unknown as Document
+  globalThis.document = { createElement: () => ({ canPlayType: () => 'probably', width: 0, height: 0, getContext: () => ({ drawImage: () => undefined }) }) } as unknown as Document
   globalThis.window = { devicePixelRatio: 1 } as unknown as Window & typeof globalThis
   const root = node('root')
   const image = () => root.children[0].children.find(child => child.tag === 'img')!
@@ -320,6 +344,66 @@ export const runAdvancedHostTests = async () => {
     await flush()
     assert.equal(originalHidden(), false, 'turning Advanced off restores the basic DOM path')
     assert.equal(canvas(), undefined)
+
+    // --- V3.5 Temporal over the static baseline ---------------------------------------
+    const player = temporalPlayers.at(-1)!
+    assert.ok(player.updates.every(update => !update.active), 'without temporal content the player never runs')
+    let temporalRasters = rasters.length
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: rolling() })
+    await nextTick()
+    assert.equal(originalHidden(), true, 'temporal-only waits for its static baseline instead of flashing')
+    await flush()
+    assert.equal(rasters.length, temporalRasters + 1, 'temporal-only rasterizes the basic look once as the baseline')
+    assert.deepEqual(rasters.at(-1)!.spec.temporal, createDefaultMediaFxSpec().temporal, 'temporal never reaches the static raster')
+    assert.deepEqual(rasters.at(-1)!.spec.filter, night().filter, 'basic filter is baked into the baseline')
+    assert.equal(canvas().style.display, '', 'the baseline is shown')
+    const baseline = player.baselines.at(-1)!
+    assert.ok(baseline && baseline.width === 300 && baseline.pixelRatio === 1, 'the presented output becomes the baseline')
+    assert.equal(player.updates.at(-1)!.active, true, 'the player runs once the baseline is ready')
+    assert.equal(player.updates.at(-1)!.temporal.scanlineRoll, 0.5)
+
+    temporalRasters = rasters.length
+    const baselineCount = player.baselines.length
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: rolling({ glitch: 0.3 }) })
+    await flush()
+    assert.equal(rasters.length, temporalRasters, 'temporal edits never re-raster')
+    assert.equal(player.baselines.length, baselineCount, 'temporal edits keep the uploaded baseline')
+    assert.equal(player.updates.at(-1)!.temporal.glitch, 0.3)
+    assert.equal(player.updates.at(-1)!.active, true)
+
+    // A live failure (or stop) repaints the static baseline; the visual never disappears.
+    const presentedBefore = presented.length
+    player.options.onLiveChange?.(false)
+    assert.equal(presented.at(-1), baseline.source, 'live stop repaints the baseline')
+    assert.ok(presented.length > presentedBefore)
+    assert.equal(canvas().style.display, '')
+    assert.equal(originalHidden(), true)
+
+    // Static edits invalidate the baseline; a new output replaces it.
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: { ...rolling({ glitch: 0.3 }), advanced: glitch().advanced } })
+    await flush()
+    assert.equal(rasters.length, temporalRasters + 1, 'advanced change rebuilds the baseline once')
+    assert.notEqual(player.baselines.at(-1), baseline, 'a new static output is a new baseline')
+
+    // Reduced motion: temporal stops, the static look stays (advanced keeps its output).
+    hostProps.value = { reducedMotion: true }
+    await flush()
+    assert.equal(player.updates.at(-1)!.active, false, 'reduced motion stops the live tick')
+    assert.equal(canvas().style.display, '', 'advanced output stays under reduced motion')
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: rolling() })
+    await flush()
+    assert.equal(canvas(), undefined, 'temporal-only under reduced motion keeps the plain DOM path')
+    assert.equal(originalHidden(), false)
+    hostProps.value = { active: false }
+    await flush()
+    assert.equal(player.updates.at(-1)!.active, false, 'an inactive layer does no live work')
+    hostProps.value = {}
+    await flush()
+    assert.equal(player.updates.at(-1)!.active, true)
+    app.unmount()
+    assert.equal(player.disposed, true, 'unmount disposes the player')
+    app = createApp()
+    app.mount(root)
   } finally {
     app.unmount()
     globalThis.document = originalDocument

@@ -125,7 +125,18 @@ async function run() {
   assert.doesNotThrow(() => bakeMediaFxToCanvas(source, size, withFx({ filter: filter({ contrast: 1.2 }) }), { requireAdvanced: true }), 'no advanced content means nothing is required')
   gpu.available = true
 
+  // Temporal is never baked: no frame of a random time is frozen into a still file.
+  const temporal = (patch) => ({ ...createDefaultMediaFxSpec().temporal, ...patch })
+  const gpuCallsBeforeTemporal = gpu.calls.length
+  canvas = bakeMediaFxToCanvas(source, size, withFx({ temporal: temporal({ grain: 0.8, glitch: 0.5 }) }), { requireAdvanced: true })
+  assert.equal(gpu.calls.length, gpuCallsBeforeTemporal, 'temporal-only never touches the GPU bake')
+  assert.equal(env.draws.at(-1).filter, 'none', 'temporal is never baked')
+  assert.equal(canvas.put, undefined)
+  bakeMediaFxToCanvas(source, size, withFx({ advanced: advanced({ grain: 0.2 }), temporal: temporal({ grain: 0.9 }) }))
+  assert.deepEqual(gpu.calls.at(-1).advanced, advanced({ grain: 0.2 }), 'static grain bakes alone; temporal grain stays out')
+
   const blob = { type: 'image/png' }
+  assert.equal(await bakeMediaFxToBlob(blob, withFx({ temporal: temporal({ flicker: 1 }) })), blob, 'temporal-only blob is returned unchanged')
   assert.equal(await bakeMediaFxToBlob(blob, withFx({ motion })), blob, 'motion-only blob is returned unchanged')
   assert.equal(await bakeMediaFxToBlob(blob, createDefaultMediaFxSpec()), blob)
 
@@ -149,6 +160,12 @@ async function run() {
   assert.equal(mediaFxStaticPreviewSpec(base, { filters: true, advanced: false }).advanced.pixelate, 0, 'unsupported advanced is not previewed')
   assert.equal(mediaFxStaticPreviewSpec(base, { filters: false, advanced: true }).filter.brightness, 1)
   assert.equal(base.advanced.pixelate, 0.3, 'preview never mutates the edited spec')
+  assert.equal(mediaFxStaticSignature({ ...base, temporal: temporal({ glitch: 0.7, speed: 2 }) }), signature, 'temporal edits never re-rasterize')
+  assert.deepEqual(
+    mediaFxStaticPreviewSpec({ ...base, temporal: temporal({ glitch: 0.7 }) }, { filters: true, advanced: true }).temporal,
+    createDefaultMediaFxSpec().temporal,
+    'static preview spec never carries temporal',
+  )
 
   // --- preview scheduler: coalescing, single-flight and stale results ------
   const timers = []
@@ -250,6 +267,14 @@ async function run() {
   preserve.setMediaFx(withFx({ motion }))
   result = await preserve.exportEditedFile({})
   assert.deepEqual(result.mediaFx.motion, motion, 'motion-only survives preserve export')
+  const live = withFx({ advanced: advanced({ scanline: 0.2 }), temporal: temporal({ scanlineRoll: 0.6, flicker: 0.2, speed: 1.75 }) })
+  preserve.setMediaFx(live)
+  result = await preserve.exportEditedFile({})
+  assert.equal(bakeCalls.length, 0, 'preserve never bakes temporal')
+  assert.equal(result.mediaFx.version, 4)
+  assert.deepEqual(result.mediaFx.temporal, live.temporal, 'preserve returns MediaFxSpec v4 temporal unchanged')
+  preserve.setMediaFx(withFx({ temporal: temporal({ speed: 2.5 }) }))
+  assert.equal((await preserve.exportEditedFile({})).mediaFx, null, 'speed alone is no effect')
   preserve.setMediaFx(createDefaultMediaFxSpec())
   assert.equal((await preserve.exportEditedFile({})).mediaFx, null, 'all-default preserve returns null')
 
@@ -260,6 +285,10 @@ async function run() {
   result = await bake.exportEditedFile({})
   assert.equal(bakeCalls.length, 0, 'motion alone is never baked')
   assert.equal(result.mediaFx, null, 'bake never returns a spec')
+  bake.setMediaFx(withFx({ temporal: temporal({ glitch: 0.4 }) }))
+  result = await bake.exportEditedFile({})
+  assert.equal(bakeCalls.length, 0, 'temporal alone is never baked')
+  assert.equal(result.mediaFx, null, 'bake never returns temporal')
   bake.setMediaFx(withFx({ motion, filter: filter({ sepia: 0.5 }), advanced: advanced({ pixelate: 0.2 }) }))
   result = await bake.exportEditedFile({})
   assert.equal(bakeCalls.length, 1)

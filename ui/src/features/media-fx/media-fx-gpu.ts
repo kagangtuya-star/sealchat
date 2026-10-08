@@ -1,15 +1,30 @@
-import { mediaFxAdvancedHasContent, normalizeMediaFxAdvanced, type MediaFxAdvanced } from './media-fx'
+import {
+  mediaFxAdvancedHasContent,
+  mediaFxTemporalHasContent,
+  normalizeMediaFxAdvanced,
+  normalizeMediaFxTemporal,
+  type MediaFxAdvanced,
+  type MediaFxTemporal,
+} from './media-fx'
 
-// WebGL2 adapter for MediaFxAdvanced.
+// WebGL2 adapter for MediaFxAdvanced (static) and MediaFxTemporal (live).
 //
-// A single lazily created, page-wide processor runs one fixed single-pass fragment
-// shader over an ImageData synchronously (ImageData -> texture -> draw -> readPixels -> same
-// ImageData). It is meant to be the last step of a static Konva cache filter chain:
-// it only runs when that cache is rebuilt, never per frame, and owns no RAF or timers.
+// A single lazily created, page-wide processor owns the only WebGL2 context and runs one
+// fixed single-pass fragment shader. It has two entry points:
 //
+// - Static: applyMediaFxGpu processes an ImageData synchronously (ImageData -> texture ->
+//   draw -> readPixels -> same ImageData). It is the last step of a static Konva cache
+//   filter chain / bake: it only runs when that output is rebuilt, never per frame.
+// - Live: a temporal session keeps the static final look (the baseline) as its own
+//   texture of the shared context, uploaded once per baseline. Each frame only binds
+//   that texture, updates the time uniforms and draws; the frame is then copied by the
+//   caller from the shared canvas (GPU to GPU), never read back into JS memory.
+//
+// This module owns no RAF or timers: the shared temporal clock drives live frames.
 // Any failure (no WebGL2, context creation, shader compile/link, oversized input,
-// GL error, context loss) leaves the ImageData untouched, so the image keeps its basic
-// Media FX look instead of disappearing. WebGL objects never leave this module.
+// GL error, context loss) leaves the ImageData untouched / returns no frame, so the
+// image keeps its static look instead of disappearing. WebGL objects never leave this
+// module; only the shared canvas is handed out for an immediate copy.
 
 // Renderer-only mapping of the normalized 0..1 strengths. These constants are never
 // persisted; another renderer may map the same spec differently.
@@ -23,6 +38,14 @@ const GRAIN_MAX_AMPLITUDE = 0.22
 const POSTERIZE_MAX_LEVELS = 24
 const POSTERIZE_MIN_LEVELS = 2
 const SHARPEN_MAX_AMOUNT = 2
+// Temporal renderer constants (never persisted). Sizes are in layout pixels and are
+// scaled by the live raster pixel ratio in the shader.
+const TEMPORAL_GRAIN_MAX_AMPLITUDE = 0.2
+// Flicker changes exposure by at most +-18%: never black, always readable.
+const FLICKER_MAX_GAIN = 0.18
+const SCANLINE_ROLL_MAX_DARKEN = 0.3
+// Temporal time is wrapped so float precision in the shader stays fine on long sessions.
+export const MEDIA_FX_TEMPORAL_TIME_WRAP_SECONDS = 3600
 
 const VERTEX_SHADER = `#version 300 es
 void main() {
@@ -33,10 +56,14 @@ void main() {
 `
 
 // Pixel space: framebuffer row y renders source row y, and readPixels returns rows
-// from y = 0 upwards, so the output keeps the exact row order of the uploaded
-// ImageData without any flip. texelFetch keeps samples exact (no interpolation).
+// from y = 0 upwards, so the static output keeps the exact row order of the uploaded
+// ImageData without any flip. A live frame is displayed as a canvas image instead
+// (bottom row last), so live passes set uFlipY to read source rows top-down; static
+// passes keep uFlipY = 0 and therefore the exact v3 pixel math. texelFetch keeps
+// samples exact (no interpolation).
 //
 // Fixed effect order (one pass, every consumer gets the same result):
+//   static (advanced; time independent)
 //   1. pixelate   sampling grid      (where pixels are read from)
 //   2. rgbSplit   channel sampling
 //   3. sharpen    3x3 neighborhood   (on the sampled grid)
@@ -46,9 +73,16 @@ void main() {
 //   7. grain      surface texture    (deterministic per output pixel, no time input)
 //   8. scanline   surface texture
 //   9. vignette   lens / frame edge
+//   temporal (live only; the texture is then already the baked static baseline, so
+//   every static uniform above is 0 there and static passes have every temporal one 0)
+//   T1. glitch        row-band displacement + short channel offset (moves RGBA together)
+//   T2. flicker       frame-wide exposure
+//   T3. grain         time-varying grain
+//   T4. scanlineRoll  scrolling scanlines + a slow rolling band
 // Each step is skipped by a uniform branch when its strength is 0; the neighborhood
 // (at most 8 extra fetches) is only read when sharpen or edge is on. Only rgb is
-// changed: alpha always stays the source alpha of the sampled pixel.
+// changed, alpha stays the source alpha of the sampled pixel; only glitch moves a whole
+// sampled pixel (alpha included), it never invents alpha.
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -66,6 +100,13 @@ uniform float uGrainCell;
 uniform float uScanline;
 uniform float uScanlinePeriod;
 uniform float uVignette;
+uniform float uFlipY;
+uniform float uTime;
+uniform float uTemporalScale;
+uniform float uTemporalGrain;
+uniform float uFlicker;
+uniform float uGlitch;
+uniform float uScanlineRoll;
 out vec4 outColor;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -87,8 +128,21 @@ float hashCell(uvec2 cell) {
   return float(h >> 8) / 16777216.0;
 }
 
+// Smooth 1D value noise in [0, 1] over a time axis; salt picks an independent curve.
+float timeNoise(float t, uint salt) {
+  float cell = floor(t);
+  float a = hashCell(uvec2(uint(cell), salt));
+  float b = hashCell(uvec2(uint(cell) + 1u, salt));
+  return mix(a, b, smoothstep(0.0, 1.0, t - cell));
+}
+
 void main() {
-  vec2 position = floor(gl_FragCoord.xy);
+  // Image-space pixel of this fragment (row 0 = first source row).
+  vec2 pixel = floor(gl_FragCoord.xy);
+  if (uFlipY > 0.5) {
+    pixel.y = uResolution.y - 1.0 - pixel.y;
+  }
+  vec2 position = pixel;
   if (uPixelate > 1.0) {
     position = floor(position / uPixelate) * uPixelate + floor(uPixelate * 0.5);
   }
@@ -138,7 +192,53 @@ void main() {
     vec2 uv = gl_FragCoord.xy / uResolution * 2.0 - 1.0;
     color.rgb *= 1.0 - uVignette * smoothstep(0.35, 1.4, length(uv));
   }
-  outColor = vec4(color.rgb, center.a);
+  float alpha = center.a;
+  if (uGlitch > 0.0) {
+    // About nine slices per second; a slice glitches with a chance that grows with the
+    // strength, so the effect stays intermittent. Inside a glitching slice, random row
+    // bands shift sideways and get a short red / blue offset.
+    float slice = floor(uTime * 9.0);
+    uint sliceId = uint(slice);
+    if (hashCell(uvec2(sliceId, 101u)) < 0.1 + 0.6 * uGlitch) {
+      float bandHeight = max(1.0, floor(mix(4.0, 36.0, hashCell(uvec2(sliceId, 7u))) * uTemporalScale));
+      uint band = uint(floor(pixel.y / bandHeight));
+      if (hashCell(uvec2(band, sliceId ^ 0x5bd1e995u)) < 0.25 + 0.35 * uGlitch) {
+        float direction = hashCell(uvec2(band, sliceId ^ 0x27d4eb2du)) * 2.0 - 1.0;
+        float shift = floor(direction * uGlitch * 32.0 * uTemporalScale);
+        float chroma = floor(uGlitch * 6.0 * uTemporalScale);
+        vec4 shifted = fetchPixel(pixel - vec2(shift, 0.0));
+        color = shifted;
+        alpha = shifted.a;
+        if (chroma > 0.0) {
+          color.r = fetchPixel(pixel - vec2(shift - chroma, 0.0)).r;
+          color.b = fetchPixel(pixel - vec2(shift + chroma, 0.0)).b;
+        }
+      }
+    }
+  }
+  if (uFlicker > 0.0) {
+    float wave = timeNoise(uTime * 10.0, 17u) * 0.65 + timeNoise(uTime * 2.7, 43u) * 0.35;
+    color.rgb = clamp(color.rgb * (1.0 + uFlicker * (wave * 2.0 - 1.0)), 0.0, 1.0);
+  }
+  if (uTemporalGrain > 0.0) {
+    // New grain about 24 times per second; the same time always gives the same grain.
+    uint frame = uint(floor(uTime * 24.0));
+    uvec2 cell = uvec2(floor(pixel / max(1.0, floor(uTemporalScale + 0.5))));
+    float noise = hashCell(cell ^ uvec2(frame * 0x9e3779b9u, frame * 0x7f4a7c15u)) * 2.0 - 1.0;
+    color.rgb = clamp(color.rgb + noise * uTemporalGrain, 0.0, 1.0);
+  }
+  if (uScanlineRoll > 0.0) {
+    // Fine lines (4 layout px) scroll down at 30 layout px/s; a soft bright band rolls
+    // over the picture about every eight seconds.
+    float period = max(2.0, 4.0 * uTemporalScale);
+    float phase = fract((pixel.y - uTime * 30.0 * uTemporalScale) / period);
+    float lines = 0.5 + 0.5 * cos(phase * 6.28318531);
+    float offset = pixel.y / uResolution.y - fract(uTime * 0.12);
+    offset -= floor(offset + 0.5);
+    float rollBand = exp(-offset * offset * 180.0);
+    color.rgb = clamp(color.rgb * (1.0 - uScanlineRoll * lines) + uScanlineRoll * 0.35 * rollBand, 0.0, 1.0);
+  }
+  outColor = vec4(color.rgb, alpha);
 }
 `
 
@@ -163,6 +263,13 @@ interface MediaFxGpuProcessor {
     scanline: WebGLUniformLocation | null
     scanlinePeriod: WebGLUniformLocation | null
     vignette: WebGLUniformLocation | null
+    flipY: WebGLUniformLocation | null
+    time: WebGLUniformLocation | null
+    temporalScale: WebGLUniformLocation | null
+    temporalGrain: WebGLUniformLocation | null
+    flicker: WebGLUniformLocation | null
+    glitch: WebGLUniformLocation | null
+    scanlineRoll: WebGLUniformLocation | null
   }
 }
 
@@ -170,6 +277,7 @@ let processor: MediaFxGpuProcessor | null = null
 // Set after a non-recoverable setup failure; the page then stays on the CPU look.
 let unavailable = false
 let warned = false
+let temporalWarned = false
 
 type MediaFxGpuAvailabilityListener = (available: boolean) => void
 const availabilityListeners = new Set<MediaFxGpuAvailabilityListener>()
@@ -193,6 +301,12 @@ export const mediaFxGpuSupported = () => (
 export const subscribeMediaFxGpuAvailability = (listener: MediaFxGpuAvailabilityListener) => {
   availabilityListeners.add(listener)
   return () => availabilityListeners.delete(listener)
+}
+
+const warnTemporalOnce = (error: unknown) => {
+  if (temporalWarned) return
+  temporalWarned = true
+  console.warn('[media-fx] 动态像素效果渲染失败，保持静态效果', error ?? '')
 }
 
 const markUnavailable = () => {
@@ -282,6 +396,13 @@ const createProcessor = (): MediaFxGpuProcessor => {
       scanline: gl.getUniformLocation(program, 'uScanline'),
       scanlinePeriod: gl.getUniformLocation(program, 'uScanlinePeriod'),
       vignette: gl.getUniformLocation(program, 'uVignette'),
+      flipY: gl.getUniformLocation(program, 'uFlipY'),
+      time: gl.getUniformLocation(program, 'uTime'),
+      temporalScale: gl.getUniformLocation(program, 'uTemporalScale'),
+      temporalGrain: gl.getUniformLocation(program, 'uTemporalGrain'),
+      flicker: gl.getUniformLocation(program, 'uFlicker'),
+      glitch: gl.getUniformLocation(program, 'uGlitch'),
+      scanlineRoll: gl.getUniformLocation(program, 'uScanlineRoll'),
     },
   }
   // A lost context is simply dropped; the next call lazily builds a fresh processor.
@@ -347,6 +468,75 @@ export const resolveMediaFxGpuParams = (input: MediaFxAdvanced, options: MediaFx
   }
 }
 
+type MediaFxGpuAdvancedParams = ReturnType<typeof resolveMediaFxGpuParams>
+
+const OFF_ADVANCED_PARAMS: MediaFxGpuAdvancedParams = resolveMediaFxGpuParams(normalizeMediaFxAdvanced(null))
+
+export interface MediaFxTemporalGpuOptions {
+  // Device pixels per layout pixel of the live raster, so grain cells, glitch bands and
+  // scanline periods keep their layout size at any DPR / raster scale.
+  pixelRatio?: number
+}
+
+// Renderer mapping of the normalized temporal strengths. Speed is not a GPU parameter:
+// the temporal player scales the time it passes in.
+export const resolveMediaFxTemporalGpuParams = (input: MediaFxTemporal, options: MediaFxTemporalGpuOptions = {}) => {
+  const temporal = normalizeMediaFxTemporal(input)
+  const scale = typeof options.pixelRatio === 'number' && Number.isFinite(options.pixelRatio) && options.pixelRatio > 0
+    ? options.pixelRatio
+    : 1
+  return {
+    scale,
+    grainAmplitude: temporal.grain * TEMPORAL_GRAIN_MAX_AMPLITUDE,
+    flickerGain: temporal.flicker * FLICKER_MAX_GAIN,
+    glitch: temporal.glitch,
+    scanlineRollDarken: temporal.scanlineRoll * SCANLINE_ROLL_MAX_DARKEN,
+  }
+}
+
+type MediaFxGpuTemporalParams = ReturnType<typeof resolveMediaFxTemporalGpuParams>
+
+const OFF_TEMPORAL_PARAMS: MediaFxGpuTemporalParams = { scale: 1, grainAmplitude: 0, flickerGain: 0, glitch: 0, scanlineRollDarken: 0 }
+
+const wrapTemporalTime = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  return seconds % MEDIA_FX_TEMPORAL_TIME_WRAP_SECONDS
+}
+
+// Every uniform is written on every pass: static and live passes share one program, so
+// neither may inherit the other's values.
+const writeUniforms = (
+  current: MediaFxGpuProcessor,
+  width: number,
+  height: number,
+  advanced: MediaFxGpuAdvancedParams,
+  temporal: MediaFxGpuTemporalParams,
+  live: { flipY: boolean, time: number },
+) => {
+  const { gl, uniforms } = current
+  gl.uniform1i(uniforms.texture, 0)
+  gl.uniform2f(uniforms.resolution, width, height)
+  gl.uniform1f(uniforms.pixelate, advanced.blockPx)
+  gl.uniform1f(uniforms.rgbSplit, advanced.rgbSplitPx)
+  gl.uniform1f(uniforms.kernelStep, advanced.kernelStepPx)
+  gl.uniform1f(uniforms.sharpen, advanced.sharpenAmount)
+  gl.uniform1f(uniforms.edge, advanced.edgeMix)
+  gl.uniform1f(uniforms.posterizeLevels, advanced.posterizeLevels)
+  gl.uniform1f(uniforms.negative, advanced.negativeMix)
+  gl.uniform1f(uniforms.grain, advanced.grainAmplitude)
+  gl.uniform1f(uniforms.grainCell, advanced.grainCellPx)
+  gl.uniform1f(uniforms.scanline, advanced.scanlineDarken)
+  gl.uniform1f(uniforms.scanlinePeriod, advanced.scanlinePeriodPx)
+  gl.uniform1f(uniforms.vignette, advanced.vignetteDarken)
+  gl.uniform1f(uniforms.flipY, live.flipY ? 1 : 0)
+  gl.uniform1f(uniforms.time, live.time)
+  gl.uniform1f(uniforms.temporalScale, temporal.scale)
+  gl.uniform1f(uniforms.temporalGrain, temporal.grainAmplitude)
+  gl.uniform1f(uniforms.flicker, temporal.flickerGain)
+  gl.uniform1f(uniforms.glitch, temporal.glitch)
+  gl.uniform1f(uniforms.scanlineRoll, temporal.scanlineRollDarken)
+}
+
 // Processes imageData in place. Returns false (with imageData unchanged) when the
 // effect is empty or the GPU path is unavailable for any reason.
 export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced, options: MediaFxGpuOptions = {}): boolean => {
@@ -355,7 +545,7 @@ export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced,
   if (!width || !height || data.length !== width * height * 4) return false
   const current = acquireProcessor()
   if (!current) return false
-  const { gl, canvas, texture, uniforms } = current
+  const { gl, canvas, texture } = current
   if (width > current.maxTextureSize || height > current.maxTextureSize) return false
   const params = resolveMediaFxGpuParams(advanced, options)
   try {
@@ -369,20 +559,8 @@ export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced,
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
     gl.useProgram(current.program)
-    gl.uniform1i(uniforms.texture, 0)
-    gl.uniform2f(uniforms.resolution, width, height)
-    gl.uniform1f(uniforms.pixelate, params.blockPx)
-    gl.uniform1f(uniforms.rgbSplit, params.rgbSplitPx)
-    gl.uniform1f(uniforms.kernelStep, params.kernelStepPx)
-    gl.uniform1f(uniforms.sharpen, params.sharpenAmount)
-    gl.uniform1f(uniforms.edge, params.edgeMix)
-    gl.uniform1f(uniforms.posterizeLevels, params.posterizeLevels)
-    gl.uniform1f(uniforms.negative, params.negativeMix)
-    gl.uniform1f(uniforms.grain, params.grainAmplitude)
-    gl.uniform1f(uniforms.grainCell, params.grainCellPx)
-    gl.uniform1f(uniforms.scanline, params.scanlineDarken)
-    gl.uniform1f(uniforms.scanlinePeriod, params.scanlinePeriodPx)
-    gl.uniform1f(uniforms.vignette, params.vignetteDarken)
+    // Static pass: no flip, every temporal effect off, so the v3 pixel math is unchanged.
+    writeUniforms(current, width, height, params, OFF_TEMPORAL_PARAMS, { flipY: false, time: 0 })
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) return false
     // A failed readPixels writes nothing, so the source pixels stay intact.
@@ -409,5 +587,144 @@ export const createMediaFxGpuFilter = (advanced: MediaFxAdvanced, options: Media
   const filterOptions = { ...options }
   return (imageData: ImageData) => {
     applyMediaFxGpu(imageData, snapshot, filterOptions)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Live temporal sessions
+// ---------------------------------------------------------------------------
+
+export interface MediaFxTemporalBaseline {
+  // The static final look (source -> fit -> basic filter -> advanced), already at the
+  // live raster size. It is only read when the texture has to be (re)uploaded.
+  source: TexImageSource
+  width: number
+  height: number
+  // Device pixels per layout pixel of this raster.
+  pixelRatio: number
+}
+
+export interface MediaFxTemporalGpuFrame {
+  // The shared processor canvas. Copy the region right away (drawImage); it is reused by
+  // the next session's frame and is not preserved after the current task.
+  canvas: HTMLCanvasElement
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface MediaFxTemporalGpuSession {
+  // Sets or clears the baseline. Never uploads by itself: the next frame uploads it once.
+  setBaseline(baseline: MediaFxTemporalBaseline | null): void
+  // Draws one live frame for `timeSeconds` of (speed-scaled) temporal time. null when
+  // there is nothing to draw or the GPU path failed; the caller keeps its static look.
+  render(temporal: MediaFxTemporal, timeSeconds: number): MediaFxTemporalGpuFrame | null
+  dispose(): void
+}
+
+const liveSessions = new Set<object>()
+
+// Releases the shared drawing buffer once no live session is left.
+const shrinkSharedCanvas = () => {
+  const current = processor
+  if (liveSessions.size || !current || current.gl.isContextLost()) return
+  current.canvas.width = 1
+  current.canvas.height = 1
+}
+
+export const createMediaFxTemporalGpuSession = (): MediaFxTemporalGpuSession => {
+  const token = {}
+  let baseline: MediaFxTemporalBaseline | null = null
+  // The texture belongs to one processor (context); a new context means a new texture.
+  let owner: MediaFxGpuProcessor | null = null
+  let texture: WebGLTexture | null = null
+  let uploaded = false
+  let disposed = false
+
+  const releaseTexture = () => {
+    if (owner && texture && !owner.gl.isContextLost()) owner.gl.deleteTexture(texture)
+    owner = null
+    texture = null
+    uploaded = false
+  }
+
+  return {
+    setBaseline(next) {
+      if (disposed) return
+      baseline = next && next.width >= 1 && next.height >= 1 ? next : null
+      uploaded = false
+      if (!baseline) {
+        releaseTexture()
+        liveSessions.delete(token)
+        shrinkSharedCanvas()
+      }
+    },
+    render(temporal, timeSeconds) {
+      if (disposed || !baseline || !mediaFxTemporalHasContent(temporal)) return null
+      const current = acquireProcessor()
+      if (!current) return null
+      const { gl, canvas } = current
+      const { width, height } = baseline
+      if (width > current.maxTextureSize || height > current.maxTextureSize) return null
+      try {
+        for (let index = 0; index < 8 && gl.getError() !== gl.NO_ERROR; index += 1) { /* drain */ }
+        if (owner !== current) {
+          // Textures of a lost context are gone; rebuild lazily in the new one.
+          owner = current
+          texture = null
+          uploaded = false
+        }
+        if (!texture) {
+          texture = gl.createTexture()
+          if (!texture) return null
+          gl.bindTexture(gl.TEXTURE_2D, texture)
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        }
+        liveSessions.add(token)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, texture)
+        if (!uploaded) {
+          // The only upload: once per baseline (and once more after a context loss).
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, baseline.source)
+          if (gl.getError() !== gl.NO_ERROR) return null
+          uploaded = true
+        }
+        // The shared canvas only grows while live sessions run; each frame draws into
+        // its bottom-left corner, which the caller copies from the top-left region below.
+        if (canvas.width < width || canvas.height < height) {
+          canvas.width = Math.max(canvas.width, width)
+          canvas.height = Math.max(canvas.height, height)
+        }
+        if (gl.drawingBufferWidth < width || gl.drawingBufferHeight < height) return null
+        gl.viewport(0, 0, width, height)
+        gl.useProgram(current.program)
+        writeUniforms(
+          current,
+          width,
+          height,
+          OFF_ADVANCED_PARAMS,
+          resolveMediaFxTemporalGpuParams(temporal, { pixelRatio: baseline.pixelRatio }),
+          { flipY: true, time: wrapTemporalTime(timeSeconds) },
+        )
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+        if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) return null
+        return { canvas, x: 0, y: canvas.height - height, width, height }
+      } catch (error) {
+        warnTemporalOnce(error)
+        return null
+      }
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      baseline = null
+      releaseTexture()
+      liveSessions.delete(token)
+      shrinkSharedCanvas()
+    },
   }
 }
