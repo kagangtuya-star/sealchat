@@ -6,13 +6,15 @@
 // Every value is a whitelisted enum or a clamped finite number. Never persist or
 // execute caller-provided CSS filter strings, animation names or keyframes.
 
-export const MEDIA_FX_VERSION = 4 as const
+export const MEDIA_FX_VERSION = 5 as const
 // v1 specs carry no `advanced`; v2 specs carry only the first three advanced effects;
-// v3 specs carry all nine advanced effects but no `temporal`. All of them are read
-// losslessly and upgraded to v4 with the missing effects off.
+// v3 specs carry the nine original advanced effects but no `temporal`; v4 specs carry
+// those nine effects plus `temporal`. All of them are read losslessly and upgraded to
+// v5 with the missing effects off. v5 adds the bloom / glow light effects.
 export const LEGACY_MEDIA_FX_VERSION = 1 as const
 export const MEDIA_FX_V2_VERSION = 2 as const
 export const MEDIA_FX_V3_VERSION = 3 as const
+export const MEDIA_FX_V4_VERSION = 4 as const
 
 export const mediaFxMotionPresets = [
   'none',
@@ -46,8 +48,8 @@ export interface MediaFxFilter {
 
 // Advanced static pixel effects. Every value is a normalized 0..1 strength where 0 means
 // off; renderers map it to concrete pixels / levels / kernels themselves, so no renderer
-// constant is ever persisted. pixelate / rgbSplit / scanline exist since v2, the rest
-// since v3.
+// constant is ever persisted. pixelate / rgbSplit / scanline exist since v2, the next
+// six since v3, bloom / glow (light effects, rendered with extra GPU passes) since v5.
 export interface MediaFxAdvanced {
   pixelate: number
   rgbSplit: number
@@ -58,6 +60,10 @@ export interface MediaFxAdvanced {
   negative: number
   sharpen: number
   edge: number
+  // Soft light from the bright parts of the picture only.
+  bloom: number
+  // Soft light from every visible color, also inside transparent raster areas.
+  glow: number
 }
 
 // Temporal (time-driven) pixel effects, since v4. Unlike `advanced` they change over
@@ -118,11 +124,17 @@ export const MEDIA_FX_ADVANCED_RANGES: Readonly<Record<MediaFxAdvancedKey, Media
   negative: ADVANCED_STRENGTH_RANGE,
   sharpen: ADVANCED_STRENGTH_RANGE,
   edge: ADVANCED_STRENGTH_RANGE,
+  bloom: ADVANCED_STRENGTH_RANGE,
+  glow: ADVANCED_STRENGTH_RANGE,
 }
 
 export const mediaFxAdvancedKeys = Object.keys(MEDIA_FX_ADVANCED_RANGES) as MediaFxAdvancedKey[]
-// The advanced fields a v2 spec may carry; every other key is v3-only.
+// The advanced fields a v2 spec may carry; every other key is v3+ only.
 export const mediaFxV2AdvancedKeys = ['pixelate', 'rgbSplit', 'scanline'] as const satisfies readonly MediaFxAdvancedKey[]
+// The advanced fields a v3 / v4 spec carries; bloom / glow are v5-only.
+export const mediaFxV3AdvancedKeys = [
+  ...mediaFxV2AdvancedKeys, 'vignette', 'grain', 'posterize', 'negative', 'sharpen', 'edge',
+] as const satisfies readonly MediaFxAdvancedKey[]
 
 export const MEDIA_FX_TEMPORAL_RANGES: Readonly<Record<MediaFxTemporalKey, MediaFxRange>> = {
   grain: ADVANCED_STRENGTH_RANGE,
@@ -334,6 +346,8 @@ export const createDefaultMediaFxAdvanced = (): MediaFxAdvanced => ({
   negative: 0,
   sharpen: 0,
   edge: 0,
+  bloom: 0,
+  glow: 0,
 })
 
 export const createDefaultMediaFxTemporal = (): MediaFxTemporal => ({
@@ -363,7 +377,7 @@ export const normalizeMediaFxFilter = (input: unknown): MediaFxFilter => {
   return filter
 }
 
-// `keys` limits which fields are read (v2 data only knew three); the rest stay off.
+// `keys` limits which fields are read (v2 data only knew three, v3 / v4 nine); the rest stay off.
 export const normalizeMediaFxAdvanced = (
   input: unknown,
   keys: readonly MediaFxAdvancedKey[] = mediaFxAdvancedKeys,
@@ -405,12 +419,12 @@ export const normalizeMediaFxMotion = (input: unknown): MediaFxMotion => {
   }
 }
 
-// Unknown fields and versions are dropped; the result is always canonical v4 with only
+// Unknown fields and versions are dropped; the result is always canonical v5 with only
 // whitelisted keys. v1 (and version-less historical data) keeps motion / filter and
-// gains a default `advanced`; v2 keeps its three advanced effects and only those; v3
-// keeps all nine advanced effects. Only v4 reads `temporal`; older versions gain it
-// with every temporal effect off, so upgrading never loses a stored effect nor reads
-// fields the old version never had.
+// gains a default `advanced`; v2 keeps its three advanced effects and only those; v3 / v4
+// keep the nine original advanced effects; only v5 reads bloom / glow. Only v4 / v5 read
+// `temporal`; older versions gain it with every temporal effect off, so upgrading never
+// loses a stored effect nor reads fields the old version never had.
 export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
   const value = isPlainObject(input) ? input : {}
   const legacy = value.version === undefined || value.version === LEGACY_MEDIA_FX_VERSION
@@ -418,18 +432,21 @@ export const normalizeMediaFxSpec = (input: unknown): MediaFxSpec => {
     !legacy
     && value.version !== MEDIA_FX_V2_VERSION
     && value.version !== MEDIA_FX_V3_VERSION
+    && value.version !== MEDIA_FX_V4_VERSION
     && value.version !== MEDIA_FX_VERSION
   ) {
     return createDefaultMediaFxSpec()
   }
+  const advancedKeys = value.version === MEDIA_FX_V2_VERSION
+    ? mediaFxV2AdvancedKeys
+    : value.version === MEDIA_FX_VERSION ? mediaFxAdvancedKeys : mediaFxV3AdvancedKeys
+  const hasTemporal = value.version === MEDIA_FX_V4_VERSION || value.version === MEDIA_FX_VERSION
   return {
     version: MEDIA_FX_VERSION,
     motion: normalizeMediaFxMotion(value.motion),
     filter: normalizeMediaFxFilter(value.filter),
-    advanced: legacy
-      ? createDefaultMediaFxAdvanced()
-      : normalizeMediaFxAdvanced(value.advanced, value.version === MEDIA_FX_V2_VERSION ? mediaFxV2AdvancedKeys : mediaFxAdvancedKeys),
-    temporal: value.version === MEDIA_FX_VERSION ? normalizeMediaFxTemporal(value.temporal) : createDefaultMediaFxTemporal(),
+    advanced: legacy ? createDefaultMediaFxAdvanced() : normalizeMediaFxAdvanced(value.advanced, advancedKeys),
+    temporal: hasTemporal ? normalizeMediaFxTemporal(value.temporal) : createDefaultMediaFxTemporal(),
   }
 }
 
@@ -539,6 +556,8 @@ export const mediaFxAdvancedPresets: readonly MediaFxAdvancedPreset[] = [
   { id: 'comic', label: '漫画', advanced: { posterize: 0.7, sharpen: 0.5 } },
   { id: 'anomaly', label: '异常视觉', advanced: { negative: 1, rgbSplit: 0.3, grain: 0.25 } },
   { id: 'psychic', label: '灵视', advanced: { edge: 0.85, scanline: 0.3, vignette: 0.55 } },
+  { id: 'neon', label: '霓虹', advanced: { bloom: 0.7, vignette: 0.3 } },
+  { id: 'soft-glow', label: '柔光', advanced: { glow: 0.55 } },
 ]
 
 export const mediaFxAdvancedFromPreset = (presetId: string): MediaFxAdvanced | null => {

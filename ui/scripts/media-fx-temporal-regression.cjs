@@ -1,5 +1,5 @@
 // Run with node scripts/media-fx-temporal-regression.cjs.
-// Media FX V3.5 temporal: MediaFxSpec v4 core / schema, the shared temporal clock, the
+// Media FX V3.5 temporal: MediaFxSpec v4 (now read into v5) core / schema, the shared temporal clock, the
 // live GPU session (mock WebGL2), the temporal player and the Konva live output. No
 // browser or real WebGL: the shader itself is covered by the headless Chrome smoke test.
 const assert = require('node:assert/strict')
@@ -120,29 +120,34 @@ async function run() {
   const {
     MEDIA_FX_VERSION, createDefaultMediaFxSpec, createDefaultMediaFxTemporal, normalizeMediaFxSpec,
     normalizeMediaFxTemporal, mediaFxTemporalHasContent, mediaFxHasContent, compactMediaFxSpec, mediaFxSpecsEqual,
-    resolveMediaFxCapabilities, MEDIA_FX_TEMPORAL_RANGES,
+    resolveMediaFxCapabilities, MEDIA_FX_TEMPORAL_RANGES, mediaFxV3AdvancedKeys,
   } = core
   const off = createDefaultMediaFxTemporal()
   const temporal = (patch = {}) => ({ ...off, ...patch })
 
-  // --- MediaFxSpec v4 core ---------------------------------------------------
-  assert.equal(MEDIA_FX_VERSION, 4)
+  // --- MediaFxSpec v4 temporal, read into canonical v5 -------------------------
+  assert.equal(MEDIA_FX_VERSION, 5)
   assert.deepEqual(off, { grain: 0, flicker: 0, glitch: 0, scanlineRoll: 0, speed: 1 })
   assert.deepEqual(MEDIA_FX_TEMPORAL_RANGES.speed, { min: 0.25, max: 3, step: 0.05, defaultValue: 1 })
   const motion = { preset: 'float', intensity: 0.6, durationMs: 4000, loop: true }
   const filter = { ...createDefaultMediaFxSpec().filter, sepia: 0.3 }
-  const advanced = { ...createDefaultMediaFxSpec().advanced, pixelate: 0.2, grain: 0.4, edge: 0.1 }
+  const advancedV5 = { ...createDefaultMediaFxSpec().advanced, pixelate: 0.2, grain: 0.4, edge: 0.1 }
+  // Stored v3 / v4 documents carry exactly the nine original advanced effects.
+  const advanced = Object.fromEntries(mediaFxV3AdvancedKeys.map(key => [key, advancedV5[key]]))
   const v1 = { version: 1, motion, filter }
   const v2 = { version: 2, motion, filter, advanced: { pixelate: 0.2, rgbSplit: 0.1, scanline: 0 } }
   const v3 = { version: 3, motion, filter, advanced }
   const v4 = { version: 4, motion, filter, advanced, temporal: temporal({ grain: 0.5, glitch: 0.25, speed: 1.5 }) }
-  assert.deepEqual(normalizeMediaFxSpec(v1), { version: 4, motion, filter, advanced: createDefaultMediaFxSpec().advanced, temporal: off })
+  const v4Canonical = { ...v4, version: 5, advanced: advancedV5 }
+  const v5 = { ...v4Canonical, advanced: { ...advancedV5, bloom: 0.4 } }
+  assert.deepEqual(normalizeMediaFxSpec(v1), { version: 5, motion, filter, advanced: createDefaultMediaFxSpec().advanced, temporal: off })
   assert.deepEqual(normalizeMediaFxSpec(v2).advanced, { ...createDefaultMediaFxSpec().advanced, pixelate: 0.2, rgbSplit: 0.1 })
   assert.deepEqual(normalizeMediaFxSpec(v2).temporal, off)
-  assert.deepEqual(normalizeMediaFxSpec(v3), { version: 4, motion, filter, advanced, temporal: off }, 'v3 keeps all nine advanced effects')
-  assert.deepEqual(normalizeMediaFxSpec(v4), v4)
+  assert.deepEqual(normalizeMediaFxSpec(v3), { version: 5, motion, filter, advanced: advancedV5, temporal: off }, 'v3 keeps all nine advanced effects')
+  assert.deepEqual(normalizeMediaFxSpec(v4), v4Canonical, 'v4 temporal is read completely')
+  assert.deepEqual(normalizeMediaFxSpec(v5), v5, 'v5 temporal is read completely next to bloom / glow')
   assert.deepEqual(normalizeMediaFxSpec({ ...v3, temporal: temporal({ glitch: 1 }) }).temporal, off, 'v3 never reads temporal')
-  assert.deepEqual(normalizeMediaFxSpec({ ...v4, version: 5 }), createDefaultMediaFxSpec())
+  assert.deepEqual(normalizeMediaFxSpec({ ...v4, version: 6 }), createDefaultMediaFxSpec())
   assert.deepEqual(
     normalizeMediaFxTemporal({ grain: 4, flicker: -1, glitch: Number.NaN, scanlineRoll: '1', speed: 9, seed: 3, uniforms: {} }),
     { grain: 1, flicker: 0, glitch: 0, scanlineRoll: 0, speed: 3 },
@@ -168,7 +173,8 @@ async function run() {
   }
   assert.equal(mediaFxTemporalHasContent(temporal({ grain: 0.0004 })), false, 'near-zero temporal is off')
   assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v3), normalizeMediaFxSpec({ ...v3, version: 4, temporal: temporal({ speed: 2 }) })), true, 'v3 equals v4 with temporal off, any speed')
-  assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v1), normalizeMediaFxSpec({ ...v1, version: 4, advanced: createDefaultMediaFxSpec().advanced, temporal: off })), true)
+  assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v1), normalizeMediaFxSpec({ ...v1, version: 5, advanced: createDefaultMediaFxSpec().advanced, temporal: off })), true)
+  assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v4), normalizeMediaFxSpec({ ...v5, advanced: advancedV5 })), true, 'v4 equals v5 with bloom / glow at 0')
   assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v3), normalizeMediaFxSpec(v4)), false)
   assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v4), normalizeMediaFxSpec({ ...v4, temporal: { ...v4.temporal, speed: 2 } })), false, 'speed matters while an effect is on')
 
@@ -181,10 +187,11 @@ async function run() {
 
   // --- strict zod schema ------------------------------------------------------
   const { mediaFxSpecSchema, mediaFxV3SpecSchema, mediaFxV4SpecSchema } = loadModule('./media-fx-schema')
-  assert.deepEqual(mediaFxSpecSchema.parse(v1), normalizeMediaFxSpec(v1), 'v1 -> v4')
-  assert.deepEqual(mediaFxSpecSchema.parse(v2), normalizeMediaFxSpec(v2), 'v2 -> v4')
-  assert.deepEqual(mediaFxSpecSchema.parse(v3), normalizeMediaFxSpec(v3), 'v3 -> v4 losslessly')
-  assert.deepEqual(mediaFxSpecSchema.parse(v4), v4)
+  assert.deepEqual(mediaFxSpecSchema.parse(v1), normalizeMediaFxSpec(v1), 'v1 -> v5')
+  assert.deepEqual(mediaFxSpecSchema.parse(v2), normalizeMediaFxSpec(v2), 'v2 -> v5')
+  assert.deepEqual(mediaFxSpecSchema.parse(v3), normalizeMediaFxSpec(v3), 'v3 -> v5 losslessly')
+  assert.deepEqual(mediaFxSpecSchema.parse(v4), v4Canonical, 'v4 -> v5 keeps temporal unchanged')
+  assert.deepEqual(mediaFxSpecSchema.parse(v5), v5)
   assert.equal(mediaFxV3SpecSchema.safeParse(v4).success, false)
   assert.equal(mediaFxV4SpecSchema.safeParse(v3).success, false)
   const rejected = {
@@ -205,7 +212,9 @@ async function run() {
     'v4 speed string': { ...v4, temporal: { ...v4.temporal, speed: '1' } },
     'v4 missing v3 advanced field': { ...v4, advanced: { pixelate: 0, rgbSplit: 0, scanline: 0 } },
     'v4 unknown field': { ...v4, framebuffer: {} },
-    'unknown version': { ...v4, version: 5 },
+    'v5 null temporal': { ...v5, temporal: null },
+    'v5 temporal seed': { ...v5, temporal: { ...v5.temporal, seed: 1 } },
+    'unknown version': { ...v4, version: 6 },
   }
   for (const [name, value] of Object.entries(rejected)) {
     assert.equal(mediaFxSpecSchema.safeParse(value).success, false, `schema must reject ${name}`)
@@ -363,13 +372,20 @@ async function run() {
   assert.equal(session.render(temporal({ grain: 0.5 }), 7), null, 'a disposed session never draws')
 
   const gpuSource = fs.readFileSync(path.join(featureDir, 'media-fx-gpu.ts'), 'utf8')
-  for (const forbidden of [/createFramebuffer|bindFramebuffer|createRenderbuffer/, /uTexture2/, /requestAnimationFrame/, /getImageData/, /Math\.random/]) {
+  for (const forbidden of [/createRenderbuffer/, /uTexture2/, /requestAnimationFrame/, /getImageData/, /Math\.random/]) {
     assert.equal(forbidden.test(gpuSource), false, `GPU adapter must not contain ${forbidden}`)
   }
   const liveSection = gpuSource.slice(gpuSource.indexOf('export const createMediaFxTemporalGpuSession'))
   assert.equal(/readPixels/.test(liveSection), false, 'the live session never reads pixels back')
   assert.equal((liveSection.match(/texImage2D/g) || []).length, 1, 'the live session has a single, guarded upload')
-  const shader = mock.sources.find(text => text.includes('outColor'))
+  // Live frames never run the bloom / glow light pipeline: it is already in the baseline.
+  for (const forbidden of [/createFramebuffer/, /acquireLightPipeline|runLightPasses/, /\.composite\b|\.extract\b|\.blur\b/, /TEXTURE1/]) {
+    assert.equal(forbidden.test(liveSection), false, `the live session must not contain ${forbidden}`)
+  }
+  assert.equal(mock.sources.some(text => text.includes('#define MEDIA_FX_LIGHT')), false, 'temporal-only work never builds the light pipeline')
+  // The single-pass program (light variant blocks are preprocessed away).
+  const shader = mock.sources.find(text => text.includes('uniform sampler2D uTexture'))
+    .replace(/#ifdef MEDIA_FX_LIGHT[\s\S]*?#endif/g, '')
   const order = ['uGlitch > 0.0', 'uFlicker > 0.0', 'uTemporalGrain > 0.0', 'uScanlineRoll > 0.0']
   const positions = order.map(token => shader.indexOf(`if (${token})`))
   assert.ok(positions.every(position => position > shader.indexOf('if (uVignette > 0.0)')), 'temporal runs after every static effect')
@@ -604,6 +620,79 @@ async function run() {
   assert.equal(konvaPlayer.options.canRender(), false, 'an uncached node (temporal off) does no GPU work')
   controller.dispose()
   assert.equal(konvaPlayer.disposed, true, 'dispose releases the player')
+
+  // --- Bloom / glow are static baseline content (V3.6) --------------------------------
+  // The light pipeline runs inside the GPU cache filter, i.e. only when the static cache
+  // is rebuilt; temporal frames and temporal edits never rebuild it.
+  const lightFilters = []
+  const lightKonva = loadModule('./media-fx-konva', {
+    konva: { __esModule: true, default: Konva },
+    './media-fx-gpu': {
+      mediaFxGpuSupported: () => true,
+      createMediaFxGpuFilter: (value) => {
+        if (!core.mediaFxAdvancedHasContent(value)) return null
+        lightFilters.push({ ...value })
+        const step = () => {}
+        step.gpu = true
+        return step
+      },
+    },
+    './media-fx-canvas': { canvasFilterSupported: () => true },
+    './media-fx-temporal': { ...temporalModule, createMediaFxTemporalPlayer: playerStub },
+  })
+  const lightMotion = new Konva.Group()
+  lightMotion.getLayer = () => layer
+  const lightImage = new Konva.Image({ image: { width: 200, height: 100 }, width: 200, height: 100 })
+  lightMotion.add(lightImage)
+  let lightCaches = 0
+  let lightCache = { pixelRatio: 2, width: 400, height: 200, _canvas: { id: 'bloom-1' } }
+  lightImage.cache = () => { lightCaches += 1; lightImage._cache.set('canvas', { scene: lightCache, filter: lightCache, x: 0, y: 0 }); return lightImage }
+  lightImage.clearCache = () => { lightImage._cache.delete('canvas'); return lightImage }
+  lightImage._getCachedSceneCanvas = () => lightCache
+  const lightController = lightKonva.createKonvaMediaFxController({ motionNode: lightMotion, imageNode: lightImage })
+  const lit = (advancedPatch, temporalPatch) => ({
+    ...createDefaultMediaFxSpec(),
+    advanced: { ...createDefaultMediaFxSpec().advanced, ...advancedPatch },
+    temporal: temporal(temporalPatch),
+  })
+  const playersBefore = playerStubs.length
+  lightController.update(lit({ bloom: 0.6, glow: 0.2 }, { glitch: 0.4 }), context)
+  const lightPlayer = playerStubs[playersBefore]
+  assert.equal(lightCaches, 1, 'bloom / glow + temporal build one static cache')
+  assert.equal(lightFilters.length, 1, 'the light pipeline is part of that single static rebuild')
+  assert.equal(lightFilters[0].bloom, 0.6)
+  assert.equal(lightPlayer.baselines.length, 1, 'the baseline is the cache that already contains bloom / glow')
+  assert.equal(lightPlayer.baselines[0].source.draws[0][0].id, 'bloom-1')
+  assert.equal(lightPlayer.updates.at(-1).active, true)
+  for (let index = 0; index < 20; index += 1) lightPlayer.options.present({ canvas: { id: 'gl' }, x: 0, y: 0, width: 200, height: 100 })
+  assert.equal(lightCaches, 1, 'temporal frames never rebuild the bloom cache')
+  assert.equal(lightFilters.length, 1, 'temporal frames never rerun the light pipeline')
+  lightController.update(lit({ bloom: 0.6, glow: 0.2 }, { glitch: 0.9, flicker: 0.3, speed: 2.5 }), context)
+  assert.equal(lightCaches, 1, 'temporal edits never rebuild the static raster')
+  assert.equal(lightFilters.length, 1, 'temporal edits never rerun bloom / glow')
+  assert.equal(lightPlayer.baselines.length, 1, 'temporal edits keep the baseline')
+  lightCache = { pixelRatio: 2, width: 400, height: 200, _canvas: { id: 'bloom-2' } }
+  lightController.update(lit({ bloom: 0.8, glow: 0.2 }, { glitch: 0.9, flicker: 0.3, speed: 2.5 }), context)
+  assert.equal(lightCaches, 2, 'a bloom edit rebuilds the static cache exactly once')
+  assert.equal(lightFilters.length, 2)
+  assert.equal(lightPlayer.baselines.length, 2, 'a bloom edit invalidates the baseline exactly once')
+  assert.equal(lightPlayer.baselines[1].source.draws[0][0].id, 'bloom-2', 'the new baseline is the new static output')
+  assert.equal(lightPlayer.updates.at(-1).active, true, 'temporal resumes over the new baseline')
+  assert.equal(Object.prototype.hasOwnProperty.call(lightImage, '_drawCachedSceneCanvas'), false, 'no stale live frame over the new bloom cache')
+  lightController.update(lit({ bloom: 0.8, glow: 0.2 }, { glitch: 0.9, flicker: 0.3, speed: 2.5 }), context)
+  assert.equal(lightPlayer.baselines.length, 2, 'an unchanged spec never re-reads the baseline')
+  lightCache = { pixelRatio: 2, width: 400, height: 200, _canvas: { id: 'bloom-3' } }
+  lightController.update(lit({ bloom: 0.8, glow: 0.5 }, { glitch: 0.9, flicker: 0.3, speed: 2.5 }), context)
+  assert.equal(lightCaches, 3, 'a glow edit rebuilds once')
+  assert.equal(lightPlayer.baselines.length, 3)
+  // Reduced motion stops temporal only; the static bloom / glow cache stays.
+  lightController.update(lit({ bloom: 0.8, glow: 0.5 }, { glitch: 0.9 }), { ...context, reducedMotion: true })
+  assert.equal(lightPlayer.updates.at(-1).active, false, 'reduced motion stops temporal')
+  assert.equal(lightCaches, 3, 'reduced motion keeps the static bloom / glow cache')
+  assert.equal(lightImage.filters().length, 1, 'the bloom / glow GPU step stays in the static filter chain')
+  assert.equal(lightMotion.children.length, 1, 'bloom / glow + temporal never add a node or layer')
+  lightController.dispose()
+  assert.equal(lightPlayer.disposed, true, 'unmount releases the temporal player')
 
   console.log('media-fx temporal regression passed')
 }

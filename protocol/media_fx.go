@@ -15,10 +15,12 @@ import (
 //
 // v2 adds the required `advanced` object with pixelate / rgbSplit / scanline; v3 adds
 // six more static effects to it; v4 adds the required `temporal` object (time-driven
-// pixel effects). Stored v1 / v2 / v3 specs stay valid as they are and are upgraded
-// lazily by clients on their next save; there is no data migration.
+// pixel effects); v5 adds the bloom / glow light effects to `advanced`. Stored v1 / v2 /
+// v3 / v4 specs stay valid as they are and are upgraded lazily by clients on their next
+// save; there is no data migration.
 const (
-	MediaFxVersion       = 4
+	MediaFxVersion       = 5
+	MediaFxV4Version     = 4
 	MediaFxV3Version     = 3
 	MediaFxV2Version     = 2
 	LegacyMediaFxVersion = 1
@@ -63,10 +65,11 @@ type MediaFxFilter struct {
 
 // MediaFxAdvanced holds normalized 0..1 strengths; renderers map them to pixels.
 //
-// The v3-only effects are pointers so the strict decoder records their presence: a v2
-// spec must not carry them and a v3 spec must carry all of them, while the v2 fields
-// keep their plain shape. Compare through fields() / mediaFxAdvancedEqual, never the
-// struct itself; a missing v3 effect always reads as 0 (off).
+// The v3+ effects are pointers so the strict decoder records their presence: a v2 spec
+// must not carry them and a v3 / v4 / v5 spec must carry all of them, while the v2 fields
+// keep their plain shape. Bloom / glow follow the same rule one version later: only v5
+// carries them, and v5 must. Compare through fields() / mediaFxAdvancedEqual, never the
+// struct itself; a missing effect always reads as 0 (off).
 type MediaFxAdvanced struct {
 	Pixelate float64 `json:"pixelate"`
 	RGBSplit float64 `json:"rgbSplit"`
@@ -79,8 +82,11 @@ type MediaFxAdvanced struct {
 	Sharpen   *float64 `json:"sharpen,omitempty"`
 	Edge      *float64 `json:"edge,omitempty"`
 
-	v3NullPresence uint8
-	unknownField   string
+	Bloom *float64 `json:"bloom,omitempty"`
+	Glow  *float64 `json:"glow,omitempty"`
+
+	nullPresence uint8
+	unknownField string
 }
 
 const (
@@ -90,13 +96,16 @@ const (
 	mediaFxAdvancedNegativePresent
 	mediaFxAdvancedSharpenPresent
 	mediaFxAdvancedEdgePresent
+	mediaFxAdvancedBloomPresent
+	mediaFxAdvancedGlowPresent
 )
 
-// UnmarshalJSON only remembers v3-only fields that were explicitly null. A non-null
+// UnmarshalJSON only remembers optional fields that were explicitly null. A non-null
 // field already has a non-nil *float64, while an omitted field stays nil; this tiny bit
-// of transient state closes the version-2 `grain:null` loophole without changing the
-// shape or equality of valid decoded specs. Unknown fields are recorded for the shared
-// validator instead of making ordinary json.Unmarshal stricter than before.
+// of transient state closes the version-2 `grain:null` (and version-4 `bloom:null`)
+// loophole without changing the shape or equality of valid decoded specs. Unknown
+// fields are recorded for the shared validator instead of making ordinary
+// json.Unmarshal stricter than before.
 func (advanced *MediaFxAdvanced) UnmarshalJSON(data []byte) error {
 	type mediaFxAdvancedAlias MediaFxAdvanced
 	var decoded mediaFxAdvancedAlias
@@ -114,27 +123,35 @@ func (advanced *MediaFxAdvanced) UnmarshalJSON(data []byte) error {
 		case "pixelate", "rgbSplit", "scanline":
 		case "vignette":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedVignettePresent
+				advanced.nullPresence |= mediaFxAdvancedVignettePresent
 			}
 		case "grain":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedGrainPresent
+				advanced.nullPresence |= mediaFxAdvancedGrainPresent
 			}
 		case "posterize":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedPosterizePresent
+				advanced.nullPresence |= mediaFxAdvancedPosterizePresent
 			}
 		case "negative":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedNegativePresent
+				advanced.nullPresence |= mediaFxAdvancedNegativePresent
 			}
 		case "sharpen":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedSharpenPresent
+				advanced.nullPresence |= mediaFxAdvancedSharpenPresent
 			}
 		case "edge":
 			if null {
-				advanced.v3NullPresence |= mediaFxAdvancedEdgePresent
+				advanced.nullPresence |= mediaFxAdvancedEdgePresent
+			}
+		case "bloom":
+			if null {
+				advanced.nullPresence |= mediaFxAdvancedBloomPresent
+			}
+		case "glow":
+			if null {
+				advanced.nullPresence |= mediaFxAdvancedGlowPresent
 			}
 		default:
 			if advanced.unknownField == "" {
@@ -228,7 +245,7 @@ func mediaFxTemporalHasContent(temporal *MediaFxTemporal) bool {
 }
 
 // mediaFxTemporalEqual treats every temporal without an effect as equal, whatever its
-// speed, so a v1 / v2 / v3 spec equals the v4 spec with temporal off.
+// speed, so a v1 / v2 / v3 spec equals the v4 / v5 spec with temporal off.
 func mediaFxTemporalEqual(left, right *MediaFxTemporal) bool {
 	leftActive, rightActive := mediaFxTemporalHasContent(left), mediaFxTemporalHasContent(right)
 	if !leftActive || !rightActive {
@@ -243,9 +260,9 @@ func mediaFxTemporalEqual(left, right *MediaFxTemporal) bool {
 	return true
 }
 
-// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 / v3 / v4 specs
-// must, so the validator can tell a v1 document from an incomplete v2 one. Temporal
-// follows the same rule: only v4 carries it, and v4 must. `temporalNullPresence` remembers
+// Advanced is a pointer on purpose: v1 specs must not carry it, while v2 / v3 / v4 / v5
+// specs must, so the validator can tell a v1 document from an incomplete v2 one. Temporal
+// follows the same rule: only v4 / v5 carry it, and they must. `temporalNullPresence` remembers
 // an explicit top-level temporal:null just long enough for old-version strict validation;
 // valid decoded specs keep no transient presence state.
 type MediaFxSpec struct {
@@ -336,32 +353,45 @@ func (filter MediaFxFilter) fields() []mediaFxFilterField {
 	}
 }
 
-// mediaFxAdvancedV3Field describes one v3-only effect; value is nil when absent.
-type mediaFxAdvancedV3Field struct {
+// mediaFxAdvancedOptionalField describes one v3+ or v5 effect; value is nil when absent.
+type mediaFxAdvancedOptionalField struct {
 	name    string
 	value   *float64
 	present bool
 }
 
-func (advanced MediaFxAdvanced) v3Fields() []mediaFxAdvancedV3Field {
-	return []mediaFxAdvancedV3Field{
-		{"vignette", advanced.Vignette, advanced.Vignette != nil || advanced.v3NullPresence&mediaFxAdvancedVignettePresent != 0},
-		{"grain", advanced.Grain, advanced.Grain != nil || advanced.v3NullPresence&mediaFxAdvancedGrainPresent != 0},
-		{"posterize", advanced.Posterize, advanced.Posterize != nil || advanced.v3NullPresence&mediaFxAdvancedPosterizePresent != 0},
-		{"negative", advanced.Negative, advanced.Negative != nil || advanced.v3NullPresence&mediaFxAdvancedNegativePresent != 0},
-		{"sharpen", advanced.Sharpen, advanced.Sharpen != nil || advanced.v3NullPresence&mediaFxAdvancedSharpenPresent != 0},
-		{"edge", advanced.Edge, advanced.Edge != nil || advanced.v3NullPresence&mediaFxAdvancedEdgePresent != 0},
+func (advanced MediaFxAdvanced) optionalField(name string, value *float64, bit uint8) mediaFxAdvancedOptionalField {
+	return mediaFxAdvancedOptionalField{name, value, value != nil || advanced.nullPresence&bit != 0}
+}
+
+// v3Fields lists the six effects added in v3 (also carried by v4 / v5).
+func (advanced MediaFxAdvanced) v3Fields() []mediaFxAdvancedOptionalField {
+	return []mediaFxAdvancedOptionalField{
+		advanced.optionalField("vignette", advanced.Vignette, mediaFxAdvancedVignettePresent),
+		advanced.optionalField("grain", advanced.Grain, mediaFxAdvancedGrainPresent),
+		advanced.optionalField("posterize", advanced.Posterize, mediaFxAdvancedPosterizePresent),
+		advanced.optionalField("negative", advanced.Negative, mediaFxAdvancedNegativePresent),
+		advanced.optionalField("sharpen", advanced.Sharpen, mediaFxAdvancedSharpenPresent),
+		advanced.optionalField("edge", advanced.Edge, mediaFxAdvancedEdgePresent),
 	}
 }
 
-// fields lists every advanced effect with a missing v3 effect read as 0 (off).
+// v5Fields lists the light effects that only v5 carries.
+func (advanced MediaFxAdvanced) v5Fields() []mediaFxAdvancedOptionalField {
+	return []mediaFxAdvancedOptionalField{
+		advanced.optionalField("bloom", advanced.Bloom, mediaFxAdvancedBloomPresent),
+		advanced.optionalField("glow", advanced.Glow, mediaFxAdvancedGlowPresent),
+	}
+}
+
+// fields lists every advanced effect with a missing v3 / v5 effect read as 0 (off).
 func (advanced MediaFxAdvanced) fields() []mediaFxFilterField {
 	fields := []mediaFxFilterField{
 		{"pixelate", advanced.Pixelate, 0, 1, 0},
 		{"rgbSplit", advanced.RGBSplit, 0, 1, 0},
 		{"scanline", advanced.Scanline, 0, 1, 0},
 	}
-	for _, field := range advanced.v3Fields() {
+	for _, field := range append(advanced.v3Fields(), advanced.v5Fields()...) {
 		value := 0.0
 		if field.value != nil {
 			value = *field.value
@@ -379,7 +409,7 @@ func (spec *MediaFxSpec) normalizedAdvanced() MediaFxAdvanced {
 	return *spec.Advanced
 }
 
-// mediaFxAdvancedEqual compares effect values, so an absent v3 effect equals 0.
+// mediaFxAdvancedEqual compares effect values, so an absent v3 / v5 effect equals 0.
 func mediaFxAdvancedEqual(left, right MediaFxAdvanced) bool {
 	leftFields, rightFields := left.fields(), right.fields()
 	for index := range leftFields {
@@ -407,10 +437,26 @@ func validMediaFxMotionPreset(preset MediaFxMotionPreset) bool {
 	return false
 }
 
+// validateOptionalAdvancedFields requires every field when `required` and rejects any
+// present field (explicit null included) otherwise.
+func validateOptionalAdvancedFields(fields []mediaFxAdvancedOptionalField, required bool, version int, path string) []error {
+	var problems []error
+	for _, field := range fields {
+		if !required && field.present {
+			problems = append(problems, fmt.Errorf("%s.advanced.%s is not allowed in version %d", path, field.name, version))
+		}
+		if required && (!field.present || field.value == nil) {
+			problems = append(problems, fmt.Errorf("%s.advanced.%s is required in version %d", path, field.name, version))
+		}
+	}
+	return problems
+}
+
 // validateMediaFx accepts nil (no effect) and otherwise requires a complete v1 spec
-// (without advanced), a complete v2 spec (advanced without v3-only effects), a
-// complete v3 spec (advanced with every effect present) or a complete v4 spec (a v3
-// advanced plus a temporal with every field present). Only v4 may carry temporal.
+// (without advanced), a complete v2 spec (advanced without v3+ effects), a complete v3
+// spec (the nine original advanced effects), a complete v4 spec (a v3 advanced plus a
+// temporal with every field present) or a complete v5 spec (a v4 spec whose advanced
+// also carries bloom / glow). Only v4 / v5 may carry temporal, only v5 bloom / glow.
 func validateMediaFx(spec *MediaFxSpec, path string) error {
 	if spec == nil {
 		return nil
@@ -419,7 +465,8 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 	if spec.unknownField != "" {
 		problems = append(problems, fmt.Errorf("%s%s: json: unknown field %q", path, spec.unknownFieldPath, spec.unknownField))
 	}
-	if spec.Version != MediaFxVersion && (spec.Temporal != nil || spec.temporalNullPresence) {
+	hasTemporal := spec.Version == MediaFxV4Version || spec.Version == MediaFxVersion
+	if !hasTemporal && (spec.Temporal != nil || spec.temporalNullPresence) {
 		problems = append(problems, fmt.Errorf("%s.temporal is not allowed in version %d", path, spec.Version))
 	}
 	switch spec.Version {
@@ -427,7 +474,7 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 		if spec.Advanced != nil {
 			problems = append(problems, fmt.Errorf("%s.advanced is not allowed in version %d", path, LegacyMediaFxVersion))
 		}
-	case MediaFxV2Version, MediaFxV3Version, MediaFxVersion:
+	case MediaFxV2Version, MediaFxV3Version, MediaFxV4Version, MediaFxVersion:
 		if spec.Advanced == nil {
 			problems = append(problems, fmt.Errorf("%s.advanced is required in version %d", path, spec.Version))
 			break
@@ -435,24 +482,18 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 		if spec.Advanced.unknownField != "" {
 			problems = append(problems, fmt.Errorf("%s.advanced: json: unknown field %q", path, spec.Advanced.unknownField))
 		}
-		for _, field := range spec.Advanced.v3Fields() {
-			if spec.Version == MediaFxV2Version && field.present {
-				problems = append(problems, fmt.Errorf("%s.advanced.%s is not allowed in version %d", path, field.name, MediaFxV2Version))
-			}
-			if spec.Version != MediaFxV2Version && (!field.present || field.value == nil) {
-				problems = append(problems, fmt.Errorf("%s.advanced.%s is required in version %d", path, field.name, spec.Version))
-			}
-		}
+		problems = append(problems, validateOptionalAdvancedFields(spec.Advanced.v3Fields(), spec.Version != MediaFxV2Version, spec.Version, path)...)
+		problems = append(problems, validateOptionalAdvancedFields(spec.Advanced.v5Fields(), spec.Version == MediaFxVersion, spec.Version, path)...)
 		for _, field := range spec.Advanced.fields() {
 			if !finiteInRange(field.value, field.minimum, field.maximum) {
 				problems = append(problems, fmt.Errorf("%s.advanced.%s must be finite and between %g and %g", path, field.name, field.minimum, field.maximum))
 			}
 		}
 	default:
-		problems = append(problems, fmt.Errorf("%s.version must be %d, %d, %d or %d", path, LegacyMediaFxVersion, MediaFxV2Version, MediaFxV3Version, MediaFxVersion))
+		problems = append(problems, fmt.Errorf("%s.version must be %d, %d, %d, %d or %d", path, LegacyMediaFxVersion, MediaFxV2Version, MediaFxV3Version, MediaFxV4Version, MediaFxVersion))
 	}
-	if spec.Version == MediaFxVersion {
-		problems = append(problems, validateMediaFxTemporal(spec.Temporal, path+".temporal")...)
+	if hasTemporal {
+		problems = append(problems, validateMediaFxTemporal(spec.Temporal, spec.Version, path+".temporal")...)
 	}
 	if !validMediaFxMotionPreset(spec.Motion.Preset) {
 		problems = append(problems, fmt.Errorf("%s.motion.preset is invalid", path))
@@ -471,9 +512,9 @@ func validateMediaFx(spec *MediaFxSpec, path string) error {
 	return errors.Join(problems...)
 }
 
-func validateMediaFxTemporal(temporal *MediaFxTemporal, path string) []error {
+func validateMediaFxTemporal(temporal *MediaFxTemporal, version int, path string) []error {
 	if temporal == nil {
-		return []error{fmt.Errorf("%s is required in version %d", path, MediaFxVersion)}
+		return []error{fmt.Errorf("%s is required in version %d", path, version)}
 	}
 	var problems []error
 	if temporal.unknownField != "" {
@@ -481,7 +522,7 @@ func validateMediaFxTemporal(temporal *MediaFxTemporal, path string) []error {
 	}
 	for _, field := range temporal.fields() {
 		if field.value == nil {
-			problems = append(problems, fmt.Errorf("%s.%s is required in version %d", path, field.name, MediaFxVersion))
+			problems = append(problems, fmt.Errorf("%s.%s is required in version %d", path, field.name, version))
 			continue
 		}
 		if !finiteInRange(*field.value, field.minimum, field.maximum) {
@@ -518,9 +559,9 @@ func mediaFxHasContent(spec *MediaFxSpec) bool {
 }
 
 // mediaFxEqual compares effect content, never pointer identity or version. A missing
-// spec and an all-default spec both mean "no effect"; a v1 / v2 / v3 spec equals the v4
-// spec with the same motion / filter / advanced values, the effects it lacks at 0 and
-// temporal off (any speed).
+// spec and an all-default spec both mean "no effect"; a v1 / v2 / v3 / v4 spec equals the
+// v5 spec with the same motion / filter / advanced / temporal values, the effects it
+// lacks at 0 and temporal off (any speed).
 func mediaFxEqual(left, right *MediaFxSpec) bool {
 	leftActive, rightActive := mediaFxHasContent(left), mediaFxHasContent(right)
 	if !leftActive || !rightActive {
@@ -544,6 +585,8 @@ func cloneMediaFx(spec *MediaFxSpec) *MediaFxSpec {
 		advanced.Negative = cloneMediaFxFloat(advanced.Negative)
 		advanced.Sharpen = cloneMediaFxFloat(advanced.Sharpen)
 		advanced.Edge = cloneMediaFxFloat(advanced.Edge)
+		advanced.Bloom = cloneMediaFxFloat(advanced.Bloom)
+		advanced.Glow = cloneMediaFxFloat(advanced.Glow)
 		clone.Advanced = &advanced
 	}
 	if spec.Temporal != nil {

@@ -288,6 +288,53 @@ async function run() {
   invalidationsBefore = baselineInvalidations
   clear(slot)
   assert.equal(baselineInvalidations, invalidationsBefore + 1, 'clearing the direct image invalidates the baseline')
+
+  // --- V3.6 bloom / glow on the direct-image path --------------------------------
+  slot.style = { brightness: 1, blurPx: 0, opacity: 1, zoom: 1, fit: 'cover', mediaFx: createDefaultMediaFxSpec() }
+  update(slot, source, box)
+  cachesBefore = caches
+  const noOpCreates = gpuCreates.length
+  slot.style.mediaFx.advanced = { ...createDefaultMediaFxSpec().advanced, bloom: 0, glow: 0 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore, 'bloom / glow at 0 build no cache')
+  assert.equal(gpuCreates.length, noOpCreates, 'bloom / glow at 0 never touch the GPU')
+  slot.style.mediaFx.advanced = { ...createDefaultMediaFxSpec().advanced, bloom: 0.6 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1, 'bloom builds one surface cache')
+  assert.equal(image.filters().length, 1)
+  assert.equal(isGpu(image.filters()[0]), true, 'bloom runs through the shared GPU step')
+  assert.equal(gpuCreates.at(-1).advanced.bloom, 0.6)
+  const rect = [image.x(), image.y(), image.width(), image.height()]
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 1, 'unchanged bloom reuses the cache')
+  invalidationsBefore = baselineInvalidations
+  slot.style.mediaFx.advanced = { ...slot.style.mediaFx.advanced, glow: 0.4 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'a glow change is part of the surface cache signature')
+  assert.equal(baselineInvalidations, invalidationsBefore + 1, 'a bloom / glow rebuild invalidates the temporal baseline once')
+  assert.equal(gpuCreates.at(-1).advanced.glow, 0.4)
+  assert.deepEqual([image.x(), image.y(), image.width(), image.height()], rect, 'bloom / glow never change the surface geometry')
+  slot.style.mediaFx.temporal = temporalOn
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'temporal over bloom keeps the bloom cache as its baseline')
+  slot.style.mediaFx.temporal = { ...temporalOn, flicker: 0.8 }
+  update(slot, source, box)
+  assert.equal(caches, cachesBefore + 2, 'temporal edits never rebuild the bloom cache')
+  const storedLight = { ...slot.style.mediaFx.advanced }
+  const lightCreates = gpuCreates.length
+  slot.animatedMedia = true
+  update(slot, source, box)
+  assert.equal(image.filters().some(isGpu), false, 'animated media never runs bloom / glow')
+  slot.animatedMedia = false
+  slot.style.fit = 'tile'
+  update(slot, source, box)
+  assert.equal(image.image(), undefined, 'tile never runs bloom / glow')
+  slot.style.fit = 'cover'
+  update(slot, { width: 10, height: 10, video: true }, box)
+  assert.equal(image.image(), undefined, 'video never runs bloom / glow')
+  assert.equal(gpuCreates.length, lightCreates, 'unsupported surfaces never create a GPU step')
+  assert.deepEqual(slot.style.mediaFx.advanced, storedLight, 'unsupported renderers keep the bloom / glow data')
+  clear(slot)
   console.log('theater stage surface filter regression checks passed')
 }
 

@@ -400,6 +400,63 @@ export const runAdvancedHostTests = async () => {
     hostProps.value = {}
     await flush()
     assert.equal(player.updates.at(-1)!.active, true)
+
+    // --- V3.6 Bloom / glow: static raster content, the temporal baseline ----------------
+    const lit = (advancedPatch: Record<string, number>, temporalPatch: Record<string, number> = {}) => ({
+      ...rolling(temporalPatch),
+      advanced: { ...createDefaultMediaFxSpec().advanced, ...advancedPatch },
+    })
+    const lightRasters = rasters.length
+    const lightBaselines = player.baselines.length
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: lit({ bloom: 0.6 }) })
+    await nextTick()
+    assert.equal(originalHidden(), true, 'a pending bloom raster never flashes the unprocessed image')
+    await flush()
+    assert.equal(rasters.length, lightRasters + 1, 'a bloom edit re-rasterizes once')
+    assert.equal(rasters.at(-1)!.spec.advanced.bloom, 0.6, 'bloom reaches the shared static raster job')
+    assert.deepEqual(rasters.at(-1)!.spec.temporal, createDefaultMediaFxSpec().temporal, 'temporal never reaches the bloom raster')
+    assert.equal(player.baselines.length, lightBaselines + 1, 'the bloom output becomes the new temporal baseline')
+    assert.equal(player.updates.at(-1)!.active, true, 'temporal resumes over the bloom baseline')
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: lit({ bloom: 0.6 }, { glitch: 0.7, speed: 2 }) })
+    await flush()
+    assert.equal(rasters.length, lightRasters + 1, 'temporal edits never re-raster bloom')
+    assert.equal(player.baselines.length, lightBaselines + 1, 'temporal edits keep the bloom baseline')
+    assert.equal(player.updates.at(-1)!.temporal.glitch, 0.7)
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: lit({ bloom: 0.6, glow: 0.3 }, { glitch: 0.7, speed: 2 }) })
+    await flush()
+    assert.equal(rasters.length, lightRasters + 2, 'a glow edit re-rasterizes once')
+    assert.equal(rasters.at(-1)!.spec.advanced.glow, 0.3, 'the static signature includes glow')
+    assert.equal(player.baselines.length, lightBaselines + 2)
+    const glowOnly = { ...night(), advanced: { ...createDefaultMediaFxSpec().advanced, glow: 0.4 } }
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: glowOnly })
+    await flush()
+    assert.equal(canvas().style.display, '', 'static glow alone uses the processed output')
+    assert.equal(rasters.at(-1)!.spec.advanced.glow, 0.4)
+    assert.deepEqual([rasters.at(-1)!.raster.width, rasters.at(-1)!.raster.height], [300, 150], 'glow never changes the raster / layer geometry')
+    control.failRaster = true
+    dispatch({ type: 'set-media-fx', target: { kind: 'dialogue-frame' }, mediaFx: { ...glowOnly, advanced: { ...glowOnly.advanced, bloom: 0.9 } } })
+    await flush()
+    assert.equal(originalHidden(), false, 'a failed bloom / glow raster reveals the DOM fallback, never an empty layer')
+    assert.equal(canvas().style.display, 'none')
+    control.failRaster = false
+    // A slow load of an old source with bloom never replaces the current source's output.
+    let releaseLightOld!: () => void
+    control.gate = new Promise(resolve => { releaseLightOld = resolve })
+    changeSource('host-light-old')
+    await nextTick()
+    loadImage()
+    await flush()
+    control.gate = null
+    changeSource('host-light-current')
+    await nextTick()
+    assert.equal(originalHidden(), true, 'the current bloom source waits hidden')
+    loadImage()
+    await flush()
+    releaseLightOld()
+    await settle()
+    await nextTick()
+    assert.equal(rasters.at(-1)!.attachmentId, 'host-light-current', 'the stale bloom job never commits over the new source')
+    assert.equal(canvas().style.display, '')
     app.unmount()
     assert.equal(player.disposed, true, 'unmount disposes the player')
     app = createApp()

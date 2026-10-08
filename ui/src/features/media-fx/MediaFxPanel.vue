@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { NButton, NCheckbox, NSlider } from 'naive-ui'
 
 import {
@@ -35,6 +35,10 @@ import {
   type MediaFxTemporal,
   type MediaFxTemporalEffectKey,
 } from './media-fx'
+import {
+  mediaFxGpuLightSupported,
+  subscribeMediaFxGpuLightAvailability,
+} from './media-fx-gpu'
 
 // Shared editor for MediaFxSpec. It knows nothing about stage objects, chat messages
 // or stores: callers own persistence and decide capabilities per render target.
@@ -72,6 +76,15 @@ const filterChanged = computed(() => mediaFxFilterHasContent(spec.value.filter))
 const anyChanged = computed(() => mediaFxHasContent(spec.value))
 const advancedChanged = computed(() => mediaFxAdvancedHasContent(spec.value.advanced))
 const advancedAvailable = computed(() => props.capabilities.advanced === true && !isAnimatedMedia.value)
+const lightGpuAvailable = ref(mediaFxGpuLightSupported())
+const stopLightAvailability = subscribeMediaFxGpuLightAvailability((available) => {
+  lightGpuAvailable.value = available
+})
+onBeforeUnmount(stopLightAvailability)
+const isLightAdvancedKey = (key: MediaFxAdvancedKey) => key === 'bloom' || key === 'glow'
+const advancedValueAvailable = (key: MediaFxAdvancedKey) => (
+  advancedAvailable.value && (!isLightAdvancedKey(key) || lightGpuAvailable.value)
+)
 // Consumers without advanced rendering never see the section unless the data already
 // carries advanced values (e.g. imported); it is then shown read-only and kept as is.
 const advancedVisible = computed(() => advancedAvailable.value || advancedChanged.value)
@@ -95,8 +108,10 @@ const filterRows: Array<{ key: MediaFxFilterKey, label: string }> = [
   { key: 'blurPx', label: '模糊' },
 ]
 
-// Nine advanced effects are grouped by what they do to the picture so the section stays
-// scannable; grouping is UI-only and does not affect the fixed GPU effect order.
+// Advanced effects are grouped by what they do to the picture so the section stays
+// scannable; grouping is UI-only and does not affect the fixed GPU effect order. Only
+// strengths are editable: thresholds / radii / gains of the light effects are renderer
+// constants.
 const advancedGroups: Array<{ id: string, label: string, rows: Array<{ key: MediaFxAdvancedKey, label: string }> }> = [
   {
     id: 'screen',
@@ -123,6 +138,14 @@ const advancedGroups: Array<{ id: string, label: string, rows: Array<{ key: Medi
       { key: 'posterize', label: '海报化' },
       { key: 'negative', label: '负片' },
       { key: 'edge', label: '边缘化' },
+    ],
+  },
+  {
+    id: 'light',
+    label: '光效',
+    rows: [
+      { key: 'bloom', label: '泛光' },
+      { key: 'glow', label: '辉光' },
     ],
   },
 ]
@@ -185,12 +208,22 @@ const updateAdvanced = (patch: Partial<MediaFxAdvanced>) => {
 }
 
 const updateAdvancedValue = (key: MediaFxAdvancedKey, value: number | number[]) => {
+  if (!advancedValueAvailable(key)) return
   updateAdvanced({ [key]: Array.isArray(value) ? value[0] : value })
 }
 
-const resetAdvancedValue = (key: MediaFxAdvancedKey) => updateAdvanced({ [key]: MEDIA_FX_ADVANCED_RANGES[key].defaultValue })
+const resetAdvancedValue = (key: MediaFxAdvancedKey) => {
+  if (!advancedValueAvailable(key)) return
+  updateAdvanced({ [key]: MEDIA_FX_ADVANCED_RANGES[key].defaultValue })
+}
+
+const advancedPresetRequiresLight = (preset: (typeof mediaFxAdvancedPresets)[number]) => (
+  (preset.advanced.bloom ?? 0) > 0 || (preset.advanced.glow ?? 0) > 0
+)
 
 const applyAdvancedPreset = (presetId: string) => {
+  const preset = mediaFxAdvancedPresets.find((item) => item.id === presetId)
+  if (!preset || (!lightGpuAvailable.value && advancedPresetRequiresLight(preset))) return
   const advanced = mediaFxAdvancedFromPreset(presetId)
   if (advanced) updateAdvanced(advanced)
 }
@@ -295,6 +328,7 @@ const resetAll = () => {
         <n-button text size="tiny" :disabled="disabled || !advancedAvailable || !advancedChanged" @click="resetAdvanced">重置高级效果</n-button>
       </header>
       <p v-if="!advancedAvailable" class="media-fx-panel__hint">当前媒体暂不支持高级效果</p>
+      <p v-else-if="!lightGpuAvailable" class="media-fx-panel__hint">当前设备的泛光 / 辉光不可用，其他高级效果仍可使用</p>
       <div class="media-fx-panel__chips" role="group" aria-label="高级效果预设">
         <button
           v-for="preset in mediaFxAdvancedPresets"
@@ -302,7 +336,7 @@ const resetAll = () => {
           type="button"
           class="media-fx-panel__chip"
           :class="{ 'is-active': activeAdvancedPreset === preset.id }"
-          :disabled="disabled || !advancedAvailable"
+          :disabled="disabled || !advancedAvailable || (!lightGpuAvailable && advancedPresetRequiresLight(preset))"
           :aria-pressed="activeAdvancedPreset === preset.id"
           @click="applyAdvancedPreset(preset.id)"
         >{{ preset.label }}</button>
@@ -317,7 +351,7 @@ const resetAll = () => {
             :max="MEDIA_FX_ADVANCED_RANGES[row.key].max"
             :step="MEDIA_FX_ADVANCED_RANGES[row.key].step"
             :tooltip="false"
-            :disabled="disabled || !advancedAvailable"
+            :disabled="disabled || !advancedValueAvailable(row.key)"
             @dragstart="emit('edit-start')"
             @dragend="emit('edit-end')"
             @update:value="updateAdvancedValue(row.key, $event)"
@@ -327,7 +361,7 @@ const resetAll = () => {
             type="button"
             class="media-fx-panel__reset"
             :class="{ 'is-hidden': spec.advanced[row.key] === MEDIA_FX_ADVANCED_RANGES[row.key].defaultValue }"
-            :disabled="disabled || !advancedAvailable"
+            :disabled="disabled || !advancedValueAvailable(row.key)"
             :aria-label="`恢复${row.label}默认值`"
             title="恢复默认"
             @click="resetAdvancedValue(row.key)"

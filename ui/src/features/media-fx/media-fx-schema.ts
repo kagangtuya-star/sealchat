@@ -11,6 +11,7 @@ import {
   MEDIA_FX_TEMPORAL_RANGES,
   MEDIA_FX_V2_VERSION,
   MEDIA_FX_V3_VERSION,
+  MEDIA_FX_V4_VERSION,
   MEDIA_FX_VERSION,
   mediaFxMotionPresets,
   type MediaFxRange,
@@ -47,7 +48,9 @@ const mediaFxV2AdvancedSchema = z.strictObject({
   scanline: rangeNumber(MEDIA_FX_ADVANCED_RANGES.scanline),
 })
 
-const mediaFxAdvancedSchema = z.strictObject({
+// v3 / v4 advanced: the nine original effects. bloom / glow are v5-only and rejected
+// here by the strict object.
+const mediaFxV3AdvancedSchema = z.strictObject({
   ...mediaFxV2AdvancedSchema.shape,
   vignette: rangeNumber(MEDIA_FX_ADVANCED_RANGES.vignette),
   grain: rangeNumber(MEDIA_FX_ADVANCED_RANGES.grain),
@@ -57,7 +60,15 @@ const mediaFxAdvancedSchema = z.strictObject({
   edge: rangeNumber(MEDIA_FX_ADVANCED_RANGES.edge),
 })
 
-// v4 temporal: every field is required, unknown fields (seeds, uniforms, shaders) are
+// v5 advanced: all eleven effects are required. Renderer parameters (threshold, blur
+// radius, gain, buffer scale) are derived from the strengths, never stored.
+const mediaFxAdvancedSchema = z.strictObject({
+  ...mediaFxV3AdvancedSchema.shape,
+  bloom: rangeNumber(MEDIA_FX_ADVANCED_RANGES.bloom),
+  glow: rangeNumber(MEDIA_FX_ADVANCED_RANGES.glow),
+})
+
+// v4 / v5 temporal: every field is required, unknown fields (seeds, uniforms, shaders) are
 // rejected. Renderer parameters are derived from these values, never stored.
 const mediaFxTemporalSchema = z.strictObject({
   grain: rangeNumber(MEDIA_FX_TEMPORAL_RANGES.grain),
@@ -67,7 +78,7 @@ const mediaFxTemporalSchema = z.strictObject({
   speed: rangeNumber(MEDIA_FX_TEMPORAL_RANGES.speed),
 })
 
-export const mediaFxV4SpecSchema = z.strictObject({
+export const mediaFxV5SpecSchema = z.strictObject({
   version: z.literal(MEDIA_FX_VERSION),
   motion: mediaFxMotionSchema,
   filter: mediaFxFilterSchema,
@@ -75,13 +86,23 @@ export const mediaFxV4SpecSchema = z.strictObject({
   temporal: mediaFxTemporalSchema,
 }) satisfies z.ZodType<MediaFxSpec>
 
-// v3 knew all nine advanced effects but no temporal; a v3 spec carrying `temporal`
-// is rejected by the strict object.
+// v4 knew the nine original advanced effects plus temporal; a v4 spec carrying bloom /
+// glow is rejected by the strict advanced object.
+export const mediaFxV4SpecSchema = z.strictObject({
+  version: z.literal(MEDIA_FX_V4_VERSION),
+  motion: mediaFxMotionSchema,
+  filter: mediaFxFilterSchema,
+  advanced: mediaFxV3AdvancedSchema,
+  temporal: mediaFxTemporalSchema,
+})
+
+// v3 knew the nine original advanced effects but no temporal; a v3 spec carrying
+// `temporal` is rejected by the strict object.
 export const mediaFxV3SpecSchema = z.strictObject({
   version: z.literal(MEDIA_FX_V3_VERSION),
   motion: mediaFxMotionSchema,
   filter: mediaFxFilterSchema,
-  advanced: mediaFxAdvancedSchema,
+  advanced: mediaFxV3AdvancedSchema,
 })
 
 export const mediaFxV2SpecSchema = z.strictObject({
@@ -99,15 +120,22 @@ export const mediaFxV1SpecSchema = z.strictObject({
   filter: mediaFxFilterSchema,
 })
 
-// Accepts strict v4, or strict v1 / v2 / v3 upgraded losslessly to the canonical v4
+// Accepts strict v5, or strict v1 / v2 / v3 / v4 upgraded losslessly to the canonical v5
 // shape (effects the old version did not know are off).
 export const mediaFxSpecSchema = z.union([
-  mediaFxV4SpecSchema,
+  mediaFxV5SpecSchema,
+  mediaFxV4SpecSchema.transform((spec): MediaFxSpec => ({
+    version: MEDIA_FX_VERSION,
+    motion: spec.motion,
+    filter: spec.filter,
+    advanced: { ...createDefaultMediaFxAdvanced(), ...spec.advanced },
+    temporal: spec.temporal,
+  })),
   mediaFxV3SpecSchema.transform((spec): MediaFxSpec => ({
     version: MEDIA_FX_VERSION,
     motion: spec.motion,
     filter: spec.filter,
-    advanced: spec.advanced,
+    advanced: { ...createDefaultMediaFxAdvanced(), ...spec.advanced },
     temporal: createDefaultMediaFxTemporal(),
   })),
   mediaFxV2SpecSchema.transform((spec): MediaFxSpec => ({

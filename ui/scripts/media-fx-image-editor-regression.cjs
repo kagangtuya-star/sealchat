@@ -105,6 +105,10 @@ async function run() {
   assert.equal(gpu.calls.at(-1).options.pixelRatio, 0.25, 'preview pixel ratio reaches the GPU mapping')
   bakeMediaFxToCanvas(source, size, withFx({ advanced: advanced({ posterize: 0.6, edge: 0.4 }) }))
   assert.deepEqual(gpu.calls.at(-1).advanced, advanced({ posterize: 0.6, edge: 0.4 }), 'v3 effects reach the shared GPU bake')
+  canvas = bakeMediaFxToCanvas(source, size, withFx({ advanced: advanced({ bloom: 0.7, glow: 0.3 }) }))
+  assert.deepEqual(gpu.calls.at(-1).advanced, advanced({ bloom: 0.7, glow: 0.3 }), 'bloom / glow reach the shared GPU bake')
+  assert.ok(canvas.data.every(value => value === 7), 'bloom / glow are baked into the output pixels')
+  assert.deepEqual([canvas.width, canvas.height], [4, 2], 'bloom / glow never change the output size')
 
   const callsBefore = gpu.calls.length
   canvas = bakeMediaFxToCanvas(source, size, withFx({ motion }))
@@ -123,6 +127,13 @@ async function run() {
     'required advanced failure throws a clear error',
   )
   assert.doesNotThrow(() => bakeMediaFxToCanvas(source, size, withFx({ filter: filter({ contrast: 1.2 }) }), { requireAdvanced: true }), 'no advanced content means nothing is required')
+  for (const light of [{ bloom: 0.5 }, { glow: 0.5 }]) {
+    assert.throws(
+      () => bakeMediaFxToCanvas(source, size, withFx({ advanced: advanced(light) }), { requireAdvanced: true }),
+      MediaFxAdvancedBakeError,
+      `a failed multi-pass ${Object.keys(light)[0]} bake throws instead of dropping the light effect`,
+    )
+  }
   gpu.available = true
 
   // Temporal is never baked: no frame of a random time is frozen into a still file.
@@ -271,8 +282,24 @@ async function run() {
   preserve.setMediaFx(live)
   result = await preserve.exportEditedFile({})
   assert.equal(bakeCalls.length, 0, 'preserve never bakes temporal')
-  assert.equal(result.mediaFx.version, 4)
-  assert.deepEqual(result.mediaFx.temporal, live.temporal, 'preserve returns MediaFxSpec v4 temporal unchanged')
+  assert.equal(result.mediaFx.version, 5)
+  assert.deepEqual(result.mediaFx.temporal, live.temporal, 'preserve returns MediaFxSpec v5 temporal unchanged')
+  const lit = withFx({ advanced: advanced({ bloom: 0.6, glow: 0.25 }), temporal: temporal({ glitch: 0.4 }) })
+  preserve.setMediaFx(lit)
+  result = await preserve.exportEditedFile({})
+  assert.equal(bakeCalls.length, 0, 'preserve never bakes bloom / glow')
+  assert.equal(result.mediaFx.version, 5, 'preserve stores canonical v5')
+  assert.deepEqual(result.mediaFx.advanced, lit.advanced, 'preserve keeps bloom / glow')
+  assert.deepEqual(result.mediaFx.temporal, lit.temporal)
+  const storedV4 = { version: 4, motion: createDefaultMediaFxSpec().motion, filter: filter({ sepia: 0.2 }),
+    advanced: { pixelate: 0, rgbSplit: 0.1, scanline: 0, vignette: 0, grain: 0, posterize: 0, negative: 0, sharpen: 0, edge: 0 },
+    temporal: temporal({ flicker: 0.3 }) }
+  const upgradedEditor = createEditor('preserve', core.normalizeMediaFxSpec(storedV4))
+  await tick(); await tick()
+  result = await upgradedEditor.exportEditedFile({})
+  assert.equal(result.mediaFx.version, 5, 'a stored v4 spec is saved back as v5')
+  assert.deepEqual([result.mediaFx.advanced.bloom, result.mediaFx.advanced.glow, result.mediaFx.advanced.rgbSplit], [0, 0, 0.1])
+  assert.deepEqual(result.mediaFx.temporal, storedV4.temporal, 'v4 temporal survives the upgrade-on-save')
   preserve.setMediaFx(withFx({ temporal: temporal({ speed: 2.5 }) }))
   assert.equal((await preserve.exportEditedFile({})).mediaFx, null, 'speed alone is no effect')
   preserve.setMediaFx(createDefaultMediaFxSpec())
@@ -299,7 +326,15 @@ async function run() {
   assert.equal(bakeCalls.length, 2, 'a v3-only effect is baked')
   assert.equal(bakeCalls[1][2].advanced.grain, 0.3)
   assert.equal(bakeCalls[1][3].requireAdvanced, true, 'v3 effects are required in a bake too')
+  bake.setMediaFx(withFx({ advanced: advanced({ bloom: 0.8 }), temporal: temporal({ glitch: 0.6 }) }))
+  await bake.exportEditedFile({})
+  assert.equal(bakeCalls.length, 3, 'bloom is baked')
+  assert.equal(bakeCalls[2][2].advanced.bloom, 0.8)
+  assert.equal(bakeCalls[2][3].requireAdvanced, true, 'bloom is required in a bake')
+  assert.deepEqual(gpu.calls.at(-1).advanced, advanced({ bloom: 0.8 }), 'only the static part reaches the GPU; temporal is never baked')
   gpu.available = false
+  await assert.rejects(() => bake.exportEditedFile({}), MediaFxAdvancedBakeError, 'a failed bloom pass never silently exports without the light effect')
+  bake.setMediaFx(withFx({ advanced: advanced({ vignette: 0.5, grain: 0.3 }) }))
   await assert.rejects(() => bake.exportEditedFile({}), MediaFxAdvancedBakeError, 'GPU failure never silently drops advanced')
   assert.equal(bake.isSaving.value, false, 'saving state is released after a failed bake')
   gpu.available = true

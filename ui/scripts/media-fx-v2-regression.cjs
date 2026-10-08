@@ -1,5 +1,5 @@
 // Run with node scripts/media-fx-v2-regression.cjs.
-// MediaFxSpec v1 / v2 -> v4 core / strict schema / GPU parameter mapping and the Konva filter
+// MediaFxSpec v1 / v2 / v3 / v4 -> v5 core / strict schema / GPU parameter mapping and the Konva filter
 // composition. Real WebGL is not available in Node; the GPU shader itself is covered
 // by the browser smoke test, here the GPU step is stubbed to check ordering and caching.
 const assert = require('node:assert/strict')
@@ -35,14 +35,17 @@ async function run() {
     MEDIA_FX_VERSION, LEGACY_MEDIA_FX_VERSION, createDefaultMediaFxSpec, createDefaultMediaFxAdvanced,
     normalizeMediaFxSpec, normalizeMediaFxAdvanced, mediaFxAdvancedHasContent, mediaFxHasContent,
     compactMediaFxSpec, mediaFxSpecsEqual, resolveMediaFxCapabilities, mediaFxAdvancedFromPreset,
-    matchMediaFxAdvancedPreset, createDefaultMediaFxTemporal,
+    matchMediaFxAdvancedPreset, createDefaultMediaFxTemporal, mediaFxV3AdvancedKeys, MEDIA_FX_V4_VERSION,
   } = core
-  assert.equal(MEDIA_FX_VERSION, 4)
+  assert.equal(MEDIA_FX_VERSION, 5)
+  assert.equal(MEDIA_FX_V4_VERSION, 4)
   const temporalOff = createDefaultMediaFxTemporal()
   assert.equal(LEGACY_MEDIA_FX_VERSION, 1)
   const off = createDefaultMediaFxAdvanced()
   const v3Keys = ['vignette', 'grain', 'posterize', 'negative', 'sharpen', 'edge']
-  assert.deepEqual(Object.keys(off), ['pixelate', 'rgbSplit', 'scanline', ...v3Keys])
+  const lightKeys = ['bloom', 'glow']
+  assert.deepEqual(Object.keys(off), ['pixelate', 'rgbSplit', 'scanline', ...v3Keys, ...lightKeys])
+  assert.deepEqual([...mediaFxV3AdvancedKeys], ['pixelate', 'rgbSplit', 'scanline', ...v3Keys], 'v3 / v4 carry the nine original effects')
   assert.ok(Object.values(off).every(value => value === 0), 'every advanced default means off')
   const adv = patch => ({ ...off, ...patch })
 
@@ -51,22 +54,37 @@ async function run() {
   const filter = { ...createDefaultMediaFxSpec().filter, brightness: 0.7, sepia: 0.3 }
   const v1 = { version: 1, motion, filter }
   const upgraded = normalizeMediaFxSpec(v1)
-  assert.deepEqual(upgraded, { version: 4, motion, filter, advanced: off, temporal: temporalOff })
+  assert.deepEqual(upgraded, { version: 5, motion, filter, advanced: off, temporal: temporalOff })
   assert.deepEqual(normalizeMediaFxSpec({ motion, filter }), upgraded, 'version-less data reads as legacy v1')
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, advanced: { pixelate: 1 } }).advanced, off, 'v1 never carries advanced')
-  assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: 5 }), createDefaultMediaFxSpec(), 'unknown version falls back to default')
+  assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: 6 }), createDefaultMediaFxSpec(), 'unknown version falls back to default')
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: '2' }), createDefaultMediaFxSpec())
   assert.deepEqual(normalizeMediaFxSpec({ ...v1, version: '3' }), createDefaultMediaFxSpec())
 
   // --- core: v2 -> v3 keeps the three v2 effects and nothing else -------------
   const v2 = { version: 2, motion, filter, advanced: { pixelate: 0.45, rgbSplit: 0.123456, scanline: 0.5 } }
   const v2Upgraded = normalizeMediaFxSpec(v2)
-  assert.deepEqual(v2Upgraded, { version: 4, motion, filter, advanced: adv({ pixelate: 0.45, rgbSplit: 0.123, scanline: 0.5 }), temporal: temporalOff })
-  assert.deepEqual(normalizeMediaFxSpec({ ...v2, advanced: { ...v2.advanced, grain: 0.8, edge: 1 } }), v2Upgraded, 'v2 never reads v3-only fields')
+  assert.deepEqual(v2Upgraded, { version: 5, motion, filter, advanced: adv({ pixelate: 0.45, rgbSplit: 0.123, scanline: 0.5 }), temporal: temporalOff })
+  assert.deepEqual(normalizeMediaFxSpec({ ...v2, advanced: { ...v2.advanced, grain: 0.8, edge: 1, bloom: 1 } }), v2Upgraded, 'v2 never reads v3+ fields')
 
   // --- core: v3 normalize / clamp / finite --------------------------------------
   const v3Advanced = adv({ pixelate: 0.2, vignette: 0.4, grain: 0.123456, posterize: 0.6, negative: 0.5, sharpen: 0.3, edge: 0.7 })
   assert.deepEqual(normalizeMediaFxSpec({ version: 3, motion, filter, advanced: v3Advanced }).advanced, { ...v3Advanced, grain: 0.123 })
+
+  // --- core: v3 / v4 never read bloom / glow; v5 reads all eleven ---------------
+  const temporalOn = { ...temporalOff, glitch: 0.3, speed: 2 }
+  const v4 = { version: 4, motion, filter, advanced: v3Advanced, temporal: temporalOn }
+  const v4Upgraded = normalizeMediaFxSpec(v4)
+  assert.deepEqual(v4Upgraded, { version: 5, motion, filter, advanced: { ...v3Advanced, grain: 0.123 }, temporal: temporalOn }, 'v4 -> v5 keeps advanced and temporal')
+  assert.equal(v4Upgraded.advanced.bloom, 0)
+  assert.equal(v4Upgraded.advanced.glow, 0)
+  assert.deepEqual(normalizeMediaFxSpec({ ...v4, advanced: { ...v3Advanced, bloom: 0.9, glow: 0.4 } }), v4Upgraded, 'v4 never reads bloom / glow')
+  assert.deepEqual(normalizeMediaFxSpec({ version: 3, motion, filter, advanced: { ...v3Advanced, bloom: 1 } }).advanced.bloom, 0, 'v3 never reads bloom')
+  const v5 = { version: 5, motion, filter, advanced: { ...v3Advanced, grain: 0.123, bloom: 0.6, glow: 0.25 }, temporal: temporalOn }
+  assert.deepEqual(normalizeMediaFxSpec(v5), v5, 'canonical v5 is a fixed point')
+  assert.deepEqual(normalizeMediaFxAdvanced({ bloom: 2, glow: -1, threshold: 0.5 }), adv({ bloom: 1 }), 'bloom / glow clamp to 0..1, renderer params are dropped')
+  assert.equal(normalizeMediaFxAdvanced({ bloom: 0.0004, glow: Number.NaN }).bloom, 0, 'near-zero bloom is off')
+
   assert.deepEqual(
     normalizeMediaFxAdvanced({ pixelate: 4, rgbSplit: -1, scanline: Number.NaN, vignette: 2, grain: -0.5, posterize: Infinity, negative: '1', sharpen: 0.0004, edge: 1.0000001, shader: 'x' }),
     adv({ pixelate: 1, vignette: 1, edge: 1 }),
@@ -79,10 +97,17 @@ async function run() {
   assert.equal(mediaFxAdvancedHasContent(advancedOnly.advanced), true)
   assert.equal(mediaFxHasContent(advancedOnly), true)
   assert.deepEqual(compactMediaFxSpec(advancedOnly), advancedOnly, 'advanced-only spec must survive compaction')
-  for (const key of v3Keys) {
+  for (const key of [...v3Keys, ...lightKeys]) {
     const only = { ...createDefaultMediaFxSpec(), advanced: adv({ [key]: 0.3 }) }
+    assert.equal(mediaFxHasContent(only), true, `${key} alone counts as content`)
     assert.deepEqual(compactMediaFxSpec(only), only, `${key}-only spec must survive compaction`)
   }
+  assert.equal(compactMediaFxSpec({ ...createDefaultMediaFxSpec(), advanced: adv({ bloom: 0, glow: 0 }) }), null, 'bloom / glow at 0 never keep a spec alive')
+  assert.equal(compactMediaFxSpec({ ...createDefaultMediaFxSpec(), advanced: adv({ glow: 0.0004 }) }), null, 'near-zero glow compacts away')
+  assert.equal(mediaFxSpecsEqual(v4Upgraded, normalizeMediaFxSpec({ ...v5, advanced: { ...v5.advanced, bloom: 0, glow: 0 } })), true, 'v4 equals the v5 spec with bloom / glow at 0')
+  assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec({ version: 3, motion, filter, advanced: v3Advanced }), normalizeMediaFxSpec({ ...v5, temporal: temporalOff, advanced: { ...v5.advanced, bloom: 0, glow: 0 } })), true, 'v3 equals the equivalent v5')
+  assert.equal(mediaFxSpecsEqual(v4Upgraded, normalizeMediaFxSpec(v5)), false, 'bloom / glow make specs differ')
+  assert.equal(mediaFxSpecsEqual(normalizeMediaFxSpec(v5), normalizeMediaFxSpec({ ...v5, advanced: { ...v5.advanced, glow: 0.26 } })), false)
   assert.equal(compactMediaFxSpec(createDefaultMediaFxSpec()), null, 'all-default v3 compacts to null')
   assert.equal(compactMediaFxSpec({ version: 3, motion: createDefaultMediaFxSpec().motion, filter: createDefaultMediaFxSpec().filter, advanced: adv({ grain: 0.0004 }) }), null)
   assert.equal(compactMediaFxSpec({ version: 1, motion: createDefaultMediaFxSpec().motion, filter: createDefaultMediaFxSpec().filter }), null)
@@ -98,7 +123,9 @@ async function run() {
   assert.equal(matchMediaFxAdvancedPreset(adv({ pixelate: 0.45 })), 'low-res')
   assert.equal(matchMediaFxAdvancedPreset(createDefaultMediaFxAdvanced()), 'none')
   assert.equal(mediaFxAdvancedFromPreset('missing'), null)
-  for (const id of ['film', 'comic', 'anomaly', 'psychic']) {
+  assert.deepEqual(mediaFxAdvancedFromPreset('neon'), adv({ bloom: 0.7, vignette: 0.3 }), 'bloom-led preset')
+  assert.deepEqual(mediaFxAdvancedFromPreset('soft-glow'), adv({ glow: 0.55 }), 'glow-led preset')
+  for (const id of ['film', 'comic', 'anomaly', 'psychic', 'neon', 'soft-glow']) {
     const preset = mediaFxAdvancedFromPreset(id)
     assert.ok(preset && mediaFxAdvancedHasContent(preset), `${id} preset fills advanced values`)
     assert.equal(matchMediaFxAdvancedPreset(preset), id)
@@ -113,16 +140,44 @@ async function run() {
   assert.equal(resolveMediaFxCapabilities('konva', true, true).advanced, false, 'animated media never runs advanced')
 
   // --- strict zod schema ----------------------------------------------------
-  const { mediaFxSpecSchema, mediaFxV1SpecSchema, mediaFxV2SpecSchema, mediaFxV3SpecSchema } = loadModule('./media-fx-schema')
-  assert.deepEqual(mediaFxSpecSchema.parse(v1), upgraded, 'strict v1 parses into canonical v3')
+  const { mediaFxSpecSchema, mediaFxV1SpecSchema, mediaFxV2SpecSchema, mediaFxV3SpecSchema, mediaFxV4SpecSchema, mediaFxV5SpecSchema } = loadModule('./media-fx-schema')
+  assert.deepEqual(mediaFxSpecSchema.parse(v1), upgraded, 'strict v1 parses into canonical v5')
   const strictV2 = { ...v2, advanced: { pixelate: 0.45, rgbSplit: 0.123, scanline: 0.5 } }
-  assert.deepEqual(mediaFxSpecSchema.parse(strictV2), v2Upgraded, 'strict v2 parses into canonical v3')
-  const canonicalV3 = normalizeMediaFxSpec({ version: 3, motion, filter, advanced: v3Advanced })
+  assert.deepEqual(mediaFxSpecSchema.parse(strictV2), v2Upgraded, 'strict v2 parses into canonical v5')
+  // Strict v3 / v4 documents carry exactly the nine original effects.
+  const strictV3Advanced = Object.fromEntries(mediaFxV3AdvancedKeys.map(key => [key, key === 'grain' ? 0.123 : v3Advanced[key]]))
+  const strictV3 = { version: 3, motion, filter, advanced: strictV3Advanced }
+  const canonicalV3 = normalizeMediaFxSpec(strictV3)
+  assert.equal(canonicalV3.version, 5)
+  assert.deepEqual(mediaFxSpecSchema.parse(strictV3), canonicalV3, 'strict v3 parses into canonical v5')
   assert.deepEqual(mediaFxSpecSchema.parse(canonicalV3), canonicalV3)
+  const strictV4 = { version: 4, motion, filter, advanced: strictV3Advanced, temporal: temporalOn }
+  assert.deepEqual(mediaFxSpecSchema.parse(strictV4), v4Upgraded, 'strict v4 parses into canonical v5, temporal intact')
+  assert.deepEqual(mediaFxSpecSchema.parse(v5), v5, 'strict v5 keeps bloom / glow and temporal')
   assert.equal(mediaFxV1SpecSchema.safeParse(strictV2).success, false)
   assert.equal(mediaFxV2SpecSchema.safeParse(canonicalV3).success, false)
   assert.equal(mediaFxV3SpecSchema.safeParse(strictV2).success, false)
+  assert.equal(mediaFxV4SpecSchema.safeParse(v5).success, false, 'v4 schema rejects v5 data')
+  assert.equal(mediaFxV5SpecSchema.safeParse(strictV4).success, false, 'v5 schema rejects v4 data')
+  const v5Advanced = v5.advanced
   const rejected = {
+    'v4 with bloom': { ...strictV4, advanced: { ...strictV3Advanced, bloom: 0 } },
+    'v4 with glow': { ...strictV4, advanced: { ...strictV3Advanced, glow: 0.2 } },
+    'v4 with bloom and glow': { ...strictV4, advanced: v5Advanced },
+    'v3 with bloom': { ...strictV3, advanced: { ...strictV3Advanced, bloom: 0.5 } },
+    'v2 with glow': { ...strictV2, advanced: { ...strictV2.advanced, glow: 0 } },
+    'v5 missing bloom': { ...v5, advanced: (({ bloom, ...rest }) => rest)(v5Advanced) },
+    'v5 missing glow': { ...v5, advanced: (({ glow, ...rest }) => rest)(v5Advanced) },
+    'v5 missing both': { ...v5, advanced: strictV3Advanced },
+    'v5 bloom > 1': { ...v5, advanced: { ...v5Advanced, bloom: 1.01 } },
+    'v5 bloom < 0': { ...v5, advanced: { ...v5Advanced, bloom: -0.01 } },
+    'v5 glow NaN': { ...v5, advanced: { ...v5Advanced, glow: Number.NaN } },
+    'v5 glow string': { ...v5, advanced: { ...v5Advanced, glow: '0.5' } },
+    'v5 unknown advanced field': { ...v5, advanced: { ...v5Advanced, threshold: 0.8 } },
+    'v5 blur radius': { ...v5, advanced: { ...v5Advanced, blurRadius: 12 } },
+    'v5 without temporal': { version: 5, motion, filter, advanced: v5Advanced },
+    'v5 temporal missing speed': { ...v5, temporal: { grain: 0, flicker: 0, glitch: 0.3, scanlineRoll: 0 } },
+    'v5 unknown field': { ...v5, framebuffer: {} },
     'v2 missing advanced': { version: 2, motion, filter },
     'v3 missing advanced': { version: 3, motion, filter },
     'v2 with v3-only field': { ...strictV2, advanced: { ...strictV2.advanced, grain: 0 } },
@@ -139,13 +194,13 @@ async function run() {
     'edge > 1': { ...canonicalV3, advanced: { ...canonicalV3.advanced, edge: 2 } },
     'v2 advanced.shader': { ...strictV2, advanced: { ...strictV2.advanced, shader: 'void main(){}' } },
     'v3 advanced.shader': { ...canonicalV3, advanced: { ...canonicalV3.advanced, shader: 'void main(){}' } },
-    'v3 advanced.bloom': { ...canonicalV3, advanced: { ...canonicalV3.advanced, bloom: 0.5 } },
+    'v3 advanced.halo': { ...strictV3, advanced: { ...strictV3Advanced, halo: 0.5 } },
     'v1 with advanced': { ...v1, advanced: createDefaultMediaFxAdvanced() },
     'v1 unknown field': { ...v1, glsl: 'x' },
     'v2 unknown field': { ...strictV2, uniforms: {} },
     'v3 unknown field': { ...canonicalV3, uniforms: {} },
     'filter unknown field': { ...canonicalV3, filter: { ...filter, fragmentShader: 'x' } },
-    'unknown version': { ...canonicalV3, version: 5 },
+    'unknown version': { ...v5, version: 6 },
     'missing version': { motion, filter },
   }
   for (const [name, value] of Object.entries(rejected)) {
@@ -195,12 +250,15 @@ async function run() {
   const clamped = params({ ...off, vignette: 9, grain: -1, posterize: Number.NaN, negative: Infinity, sharpen: 5, edge: '1' })
   assert.deepEqual([clamped.vignetteDarken, clamped.grainAmplitude, clamped.posterizeLevels, clamped.negativeMix, clamped.sharpenAmount, clamped.edgeMix], [0.85, 0, 0, 0, 2, 0])
 
-  // Static, single-pass shader contract: no time input, no frame loop, no extra passes.
+  // Static shader contract: no time input, no frame loop. V3.5 adds time uniforms for live
+  // temporal passes (the clock lives elsewhere); V3.6 adds framebuffers, but only inside
+  // the bloom / glow light pipeline (see media-fx-multipass-regression.cjs).
   const gpuSource = fs.readFileSync(path.join(featureDir, 'media-fx-gpu.ts'), 'utf8')
-  // V3.5 adds time uniforms for live temporal passes; the clock lives elsewhere.
-  for (const forbidden of [/requestAnimationFrame/, /setTimeout|setInterval/, /Date\.now|performance\.now|Math\.random/, /createFramebuffer|bindFramebuffer|createRenderbuffer/, /three/i, /getImageData/]) {
+  for (const forbidden of [/requestAnimationFrame/, /setTimeout|setInterval/, /Date\.now|performance\.now|Math\.random/, /createRenderbuffer/, /three/i, /getImageData/]) {
     assert.equal(forbidden.test(gpuSource), false, `GPU adapter must not contain ${forbidden}`)
   }
+  assert.equal((gpuSource.match(/createFramebuffer\(/g) || []).length, 1, 'framebuffers are only created for the light targets')
+  assert.equal((gpuSource.match(/getContext\(/g) || []).length, 1, 'one WebGL2 context per page')
 
   // Lazy capability starts optimistic when WebGL2 exists, then becomes unavailable
   // and notifies consumers if actual context creation fails.
@@ -265,8 +323,9 @@ async function run() {
   assert.equal(mock.contexts, 0, 'all-default never creates a WebGL context')
   assert.equal(mock.draws, 0, 'all-default never runs a GPU pass')
 
-  const fragment = () => mock.sources.find(source => source.includes('outColor'))
-  for (const key of Object.keys(off)) {
+  // The single-pass program is the main shader without the light variant.
+  const fragment = () => mock.sources.find(source => source.includes('uniform sampler2D uTexture'))
+  for (const key of mediaFxV3AdvancedKeys) {
     const single = image()
     assert.equal(mockGpu.applyMediaFxGpu(single, adv({ [key]: 0.5 })), true, `${key} alone runs the GPU pass`)
     const expected = params(adv({ [key]: 0.5 }))
@@ -279,14 +338,20 @@ async function run() {
     assert.deepEqual([single.data[3], single.data[7]], [0, 128], `${key}: alpha bytes survive the upload / readback plumbing`)
   }
   assert.equal(mock.contexts, 1, 'one lazy singleton context serves every pass')
+  assert.equal(mock.sources.some(source => source.includes('#define MEDIA_FX_LIGHT')), false, 'bloom / glow off never builds the light pipeline')
   const combo = adv({ pixelate: 0.3, rgbSplit: 0.2, scanline: 0.4, vignette: 0.5, grain: 0.3, posterize: 0.5, negative: 0.2, sharpen: 0.4, edge: 0.3 })
   assert.equal(mockGpu.applyMediaFxGpu(image(), combo, { pixelRatio: 2 }), true)
   assert.equal(mock.uniforms.uKernelStep, params(combo, { pixelRatio: 2 }).kernelStepPx)
   assert.equal(mock.uniforms.uVignette, params(combo).vignetteDarken)
-  assert.equal(mock.draws, Object.keys(off).length + 1, 'one draw per pass, even for a full combination')
+  assert.equal(mock.draws, mediaFxV3AdvancedKeys.length + 1, 'one draw per pass, even for a full combination')
 
   // The fixed order is in the single shader; the neighborhood is only read when needed.
-  const shader = fragment()
+  // The light composite block only exists in the light variant (MEDIA_FX_LIGHT).
+  const fullShader = fragment()
+  const lightBlocks = fullShader.match(/#ifdef MEDIA_FX_LIGHT[\s\S]*?#endif/g) || []
+  assert.equal(lightBlocks.length, 2, 'the light variant only adds its uniforms and the composite block')
+  const shader = lightBlocks.reduce((text, block) => text.replace(block, ''), fullShader)
+  assert.equal(fullShader.indexOf('#define MEDIA_FX_LIGHT'), -1, 'the single-pass program never defines the light variant')
   const order = ['uPixelate > 1.0', 'uRgbSplit > 0.0', 'uSharpen > 0.0 || uEdge > 0.0', 'uPosterizeLevels > 1.0', 'uNegative > 0.0', 'uGrain > 0.0', 'uScanline > 0.0', 'uVignette > 0.0']
   const positions = order.map(token => shader.indexOf(`if (${token})`))
   assert.ok(positions.every(position => position > 0), 'every effect is guarded by its own branch')
@@ -330,8 +395,9 @@ async function run() {
     './media-fx-gpu': gpuStub,
     './media-fx-canvas': { canvasFilterSupported: () => capability.canvas },
   })
-  assert.equal(mediaFxAdvancedSignature(adv({ pixelate: 0.1, rgbSplit: 0.2, scanline: 0.3 })), '0.1|0.2|0.3|0|0|0|0|0|0')
+  assert.equal(mediaFxAdvancedSignature(adv({ pixelate: 0.1, rgbSplit: 0.2, scanline: 0.3 })), '0.1|0.2|0.3|0|0|0|0|0|0|0|0')
   assert.notEqual(mediaFxAdvancedSignature(adv({ grain: 0.1 })), mediaFxAdvancedSignature(adv({ edge: 0.1 })), 'v3 effects are part of the cache signature')
+  assert.notEqual(mediaFxAdvancedSignature(adv({ bloom: 0.1 })), mediaFxAdvancedSignature(adv({ glow: 0.1 })), 'bloom / glow are part of the cache signature')
   const basicStep = () => {}
   const gpuStep = () => {}
   assert.deepEqual(composeKonvaMediaFxFilters([basicStep], gpuStep), [basicStep, gpuStep])
@@ -385,6 +451,22 @@ async function run() {
   controller.update(withFx({ advanced: adv({ grain: 0.3, edge: 0.2 }) }), context)
   assert.equal(caches, cachesNow + 1, 'v3 effect change rebuilds the cache')
   assert.deepEqual(gpuCalls.at(-1).advanced, adv({ grain: 0.3, edge: 0.2 }))
+  // Bloom / glow reach the cache through the same single GPU step; a change rebuilds once.
+  const bloomOnly = withFx({ advanced: adv({ bloom: 0.5 }) })
+  controller.update(bloomOnly, context)
+  assert.equal(imageNode.filters().length, 1)
+  assert.equal(isGpu(imageNode.filters()[0]), true, 'bloom-only uses only the GPU step')
+  const cachesBloom = caches
+  controller.update(bloomOnly, context)
+  assert.equal(caches, cachesBloom, 'unchanged bloom reuses the cache')
+  controller.update(withFx({ advanced: adv({ bloom: 0.5, glow: 0.3 }) }), context)
+  assert.equal(caches, cachesBloom + 1, 'a glow change rebuilds the cache once')
+  assert.deepEqual(gpuCalls.at(-1).advanced, adv({ bloom: 0.5, glow: 0.3 }))
+  assert.equal(motionNode.children.length, 1, 'bloom / glow never add a node or layer')
+  assert.deepEqual([imageNode.width(), imageNode.height()], [200, 100], 'bloom / glow never change the node geometry')
+  // A stored v4 spec never renders bloom / glow it could not carry.
+  controller.update({ version: 4, motion: createDefaultMediaFxSpec().motion, filter: createDefaultMediaFxSpec().filter, advanced: { ...adv({ rgbSplit: 0.2 }), bloom: 1 }, temporal: createDefaultMediaFxTemporal() }, context)
+  assert.deepEqual(gpuCalls.at(-1).advanced, adv({ rgbSplit: 0.2 }))
   // A stored v2 spec renders its v2 effects with the v3 effects off.
   controller.update({ version: 2, motion: createDefaultMediaFxSpec().motion, filter: createDefaultMediaFxSpec().filter, advanced: { pixelate: 0, rgbSplit: 0.2, scanline: 0, grain: 1 } }, context)
   assert.deepEqual(gpuCalls.at(-1).advanced, adv({ rgbSplit: 0.2 }))

@@ -9,22 +9,31 @@ import {
 
 // WebGL2 adapter for MediaFxAdvanced (static) and MediaFxTemporal (live).
 //
-// A single lazily created, page-wide processor owns the only WebGL2 context and runs one
-// fixed single-pass fragment shader. It has two entry points:
+// A single lazily created, page-wide processor owns the only WebGL2 context. Its main
+// program is one fixed single-pass fragment shader. It has two entry points:
 //
 // - Static: applyMediaFxGpu processes an ImageData synchronously (ImageData -> texture ->
 //   draw -> readPixels -> same ImageData). It is the last step of a static Konva cache
 //   filter chain / bake: it only runs when that output is rebuilt, never per frame.
+//   With bloom and glow off this is exactly the single pass above. Only when bloom or
+//   glow is on, a small fixed multi-pass chain runs first (see "Light pipeline"):
+//     source -> extract light (downscaled scratch A) -> blur H (A -> B) -> blur V (B -> A)
+//     -> main pass with the light variant of the shader (source + A) -> readPixels
+//   Its programs and two scratch targets are created lazily once per context and reused;
+//   the scratch storage is shrunk to 1x1 again after every static pass.
 // - Live: a temporal session keeps the static final look (the baseline) as its own
 //   texture of the shared context, uploaded once per baseline. Each frame only binds
 //   that texture, updates the time uniforms and draws; the frame is then copied by the
 //   caller from the shared canvas (GPU to GPU), never read back into JS memory.
 //
-// This module owns no RAF or timers: the shared temporal clock drives live frames.
-// Any failure (no WebGL2, context creation, shader compile/link, oversized input,
-// GL error, context loss) leaves the ImageData untouched / returns no frame, so the
-// image keeps its static look instead of disappearing. WebGL objects never leave this
-// module; only the shared canvas is handed out for an immediate copy.
+// This module owns no RAF or timers: the shared temporal clock drives live frames, and
+// live frames never run the light pipeline (bloom / glow are already in the baseline).
+// Any failure (no WebGL2, context creation, shader compile/link, incomplete framebuffer,
+// oversized input, GL error, context loss) leaves the ImageData untouched / returns no
+// frame, so the image keeps its static look instead of disappearing. A light pipeline
+// failure only affects specs with bloom / glow; the single-pass effects keep working.
+// WebGL objects never leave this module; only the shared canvas is handed out for an
+// immediate copy.
 
 // Renderer-only mapping of the normalized 0..1 strengths. These constants are never
 // persisted; another renderer may map the same spec differently.
@@ -44,6 +53,25 @@ const TEMPORAL_GRAIN_MAX_AMPLITUDE = 0.2
 // Flicker changes exposure by at most +-18%: never black, always readable.
 const FLICKER_MAX_GAIN = 0.18
 const SCANLINE_ROLL_MAX_DARKEN = 0.3
+// Light (bloom / glow) renderer constants. Blur sizes are in layout pixels (scaled by the
+// raster pixel ratio); a stronger effect lowers the bloom threshold and widens the blur.
+const BLOOM_MAX_GAIN = 2.5
+const BLOOM_THRESHOLD_LOW_STRENGTH = 0.82
+const BLOOM_THRESHOLD_HIGH_STRENGTH = 0.5
+const BLOOM_KNEE = 0.2
+const BLOOM_SIGMA_RANGE_PX: [number, number] = [3, 14]
+const GLOW_MAX_GAIN = 0.7
+// Glow also lifts alpha inside transparent raster areas (a soft halo within the raster).
+const GLOW_MAX_ALPHA_GAIN = 1.6
+const GLOW_SIGMA_RANGE_PX: [number, number] = [3, 12]
+// Fixed blur kernel: at most this many taps per side, radius = ceil(3 sigma). The light
+// raster is downscaled until the blur fits, which also bounds the cost per pass.
+const LIGHT_BLUR_MAX_RADIUS = 16
+const LIGHT_BLUR_SIGMAS = 3
+// Light raster budget: never more than half the input resolution and never more than
+// this many pixels per scratch target (two RGBA8 targets ~ 4 MiB in total).
+const LIGHT_MAX_SCALE = 0.5
+export const MEDIA_FX_GPU_LIGHT_MAX_PIXELS = 512 * 1024
 // Temporal time is wrapped so float precision in the shader stays fine on long sessions.
 export const MEDIA_FX_TEMPORAL_TIME_WRAP_SECONDS = 3600
 
@@ -70,6 +98,7 @@ void main() {
 //   4. edge       3x3 neighborhood
 //   5. posterize  tone
 //   6. negative   tone
+//   L. light      bloom / glow composite (light variant only, see the light pipeline)
 //   7. grain      surface texture    (deterministic per output pixel, no time input)
 //   8. scanline   surface texture
 //   9. vignette   lens / frame edge
@@ -82,7 +111,9 @@ void main() {
 // Each step is skipped by a uniform branch when its strength is 0; the neighborhood
 // (at most 8 extra fetches) is only read when sharpen or edge is on. Only rgb is
 // changed, alpha stays the source alpha of the sampled pixel; only glitch moves a whole
-// sampled pixel (alpha included), it never invents alpha.
+// sampled pixel (alpha included), it never invents alpha. The light composite (L) is
+// compiled only into the light variant (MEDIA_FX_LIGHT): the single-pass program has no
+// light sampler at all. It may raise alpha inside the raster for the light halo.
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -107,6 +138,11 @@ uniform float uTemporalGrain;
 uniform float uFlicker;
 uniform float uGlitch;
 uniform float uScanlineRoll;
+#ifdef MEDIA_FX_LIGHT
+uniform sampler2D uLight;
+uniform float uLightGain;
+uniform float uGlowAlpha;
+#endif
 out vec4 outColor;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -180,6 +216,28 @@ void main() {
   if (uNegative > 0.0) {
     color.rgb = mix(color.rgb, 1.0 - color.rgb, uNegative);
   }
+  float alpha = center.a;
+#ifdef MEDIA_FX_LIGHT
+  {
+    // Blurred light: premultiplied emission + coverage, bilinear upscaled.
+    vec4 light = texture(uLight, (position + 0.5) / uResolution);
+    // Glow halo behind (dst-over) the less opaque pixels: the hue of the nearby light at
+    // full brightness, its opacity from the coverage and how bright that light is, so
+    // dark content never casts a shadow-like halo.
+    vec3 average = light.a > 0.0001 ? light.rgb / light.a : vec3(0.0);
+    float peak = max(average.r, max(average.g, average.b));
+    vec3 haloColor = peak > 0.0001 ? average / peak : vec3(0.0);
+    float halo = clamp(light.a * uGlowAlpha, 0.0, 1.0) * clamp(peak, 0.0, 1.0) * (1.0 - alpha);
+    vec3 lit = color.rgb * alpha + haloColor * halo;
+    float litAlpha = alpha + halo;
+    // Emission is screen-blended in premultiplied space: highlights saturate, never clip.
+    vec3 emission = min(light.rgb * uLightGain, vec3(1.0));
+    lit = lit + emission - lit * emission;
+    litAlpha = max(litAlpha, max(lit.r, max(lit.g, lit.b)));
+    color.rgb = litAlpha > 0.0 ? clamp(lit / litAlpha, 0.0, 1.0) : color.rgb;
+    alpha = litAlpha;
+  }
+#endif
   if (uGrain > 0.0) {
     float noise = hashCell(uvec2(floor(gl_FragCoord.xy / uGrainCell))) * 2.0 - 1.0;
     color.rgb = clamp(color.rgb + noise * uGrain, 0.0, 1.0);
@@ -192,7 +250,6 @@ void main() {
     vec2 uv = gl_FragCoord.xy / uResolution * 2.0 - 1.0;
     color.rgb *= 1.0 - uVignette * smoothstep(0.35, 1.4, length(uv));
   }
-  float alpha = center.a;
   if (uGlitch > 0.0) {
     // About nine slices per second; a slice glitches with a chance that grows with the
     // strength, so the effect stays intermittent. Inside a glitching slice, random row
@@ -242,35 +299,143 @@ void main() {
 }
 `
 
+// Light variant of the main shader: same effects plus the bloom / glow composite.
+const LIGHT_FRAGMENT_SHADER = FRAGMENT_SHADER.replace('#version 300 es\n', '#version 300 es\n#define MEDIA_FX_LIGHT 1\n')
+
+// Light extraction: one light texel averages a fixed 4x4 grid of the source pixels it
+// covers (premultiplied, so transparent pixels add no color). rgb is the emission:
+// highlights above the bloom threshold plus every visible color for glow, weighted so
+// it fits 0..1 (the composite multiplies the gain back); alpha is the coverage that
+// glow turns into a halo. Same row order as the source, no flip.
+const LIGHT_EXTRACT_SHADER = `#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D uSource;
+uniform vec2 uSourceSize;
+uniform vec2 uLightSize;
+uniform float uBloomWeight;
+uniform float uGlowWeight;
+uniform float uThreshold;
+uniform float uKnee;
+out vec4 outColor;
+
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+void main() {
+  vec2 cell = uSourceSize / uLightSize;
+  vec2 origin = floor(gl_FragCoord.xy) * cell;
+  ivec2 last = ivec2(uSourceSize) - 1;
+  vec3 emission = vec3(0.0);
+  float coverage = 0.0;
+  for (int y = 0; y < 4; y++) {
+    for (int x = 0; x < 4; x++) {
+      vec2 point = origin + (vec2(float(x), float(y)) + 0.5) * cell * 0.25;
+      vec4 texel = texelFetch(uSource, clamp(ivec2(floor(point)), ivec2(0), last), 0);
+      float bright = smoothstep(uThreshold, uThreshold + uKnee, dot(texel.rgb, LUMA));
+      emission += texel.rgb * texel.a * (uBloomWeight * bright + uGlowWeight);
+      coverage += texel.a;
+    }
+  }
+  outColor = vec4(emission / 16.0, coverage / 16.0);
+}
+`
+
+// Separable Gaussian blur over premultiplied light; one direction per pass. The loop
+// bound is a constant, the effective radius a uniform (never above the constant).
+const LIGHT_BLUR_SHADER = `#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D uInput;
+uniform vec2 uSize;
+uniform ivec2 uDirection;
+uniform int uRadius;
+uniform float uSigma;
+out vec4 outColor;
+
+void main() {
+  ivec2 pixel = ivec2(floor(gl_FragCoord.xy));
+  ivec2 last = ivec2(uSize) - 1;
+  vec4 sum = vec4(0.0);
+  float total = 0.0;
+  for (int i = -${LIGHT_BLUR_MAX_RADIUS}; i <= ${LIGHT_BLUR_MAX_RADIUS}; i++) {
+    if (i < -uRadius || i > uRadius) continue;
+    float weight = exp(-0.5 * float(i * i) / (uSigma * uSigma));
+    sum += weight * texelFetch(uInput, clamp(pixel + uDirection * i, ivec2(0), last), 0);
+    total += weight;
+  }
+  outColor = sum / total;
+}
+`
+
+interface MediaFxGpuMainUniforms {
+  texture: WebGLUniformLocation | null
+  resolution: WebGLUniformLocation | null
+  pixelate: WebGLUniformLocation | null
+  rgbSplit: WebGLUniformLocation | null
+  kernelStep: WebGLUniformLocation | null
+  sharpen: WebGLUniformLocation | null
+  edge: WebGLUniformLocation | null
+  posterizeLevels: WebGLUniformLocation | null
+  negative: WebGLUniformLocation | null
+  grain: WebGLUniformLocation | null
+  grainCell: WebGLUniformLocation | null
+  scanline: WebGLUniformLocation | null
+  scanlinePeriod: WebGLUniformLocation | null
+  vignette: WebGLUniformLocation | null
+  flipY: WebGLUniformLocation | null
+  time: WebGLUniformLocation | null
+  temporalScale: WebGLUniformLocation | null
+  temporalGrain: WebGLUniformLocation | null
+  flicker: WebGLUniformLocation | null
+  glitch: WebGLUniformLocation | null
+  scanlineRoll: WebGLUniformLocation | null
+}
+
+interface MediaFxGpuLightTarget {
+  texture: WebGLTexture
+  framebuffer: WebGLFramebuffer
+}
+
+// Lazily created per context, only for specs with bloom / glow, then reused.
+interface MediaFxGpuLightPipeline {
+  composite: WebGLProgram
+  compositeUniforms: MediaFxGpuMainUniforms & {
+    light: WebGLUniformLocation | null
+    lightGain: WebGLUniformLocation | null
+    glowAlpha: WebGLUniformLocation | null
+  }
+  extract: WebGLProgram
+  extractUniforms: {
+    source: WebGLUniformLocation | null
+    sourceSize: WebGLUniformLocation | null
+    lightSize: WebGLUniformLocation | null
+    bloomWeight: WebGLUniformLocation | null
+    glowWeight: WebGLUniformLocation | null
+    threshold: WebGLUniformLocation | null
+    knee: WebGLUniformLocation | null
+  }
+  blur: WebGLProgram
+  blurUniforms: {
+    input: WebGLUniformLocation | null
+    size: WebGLUniformLocation | null
+    direction: WebGLUniformLocation | null
+    radius: WebGLUniformLocation | null
+    sigma: WebGLUniformLocation | null
+  }
+  // Ping-pong: extract -> [0], blur H [0] -> [1], blur V [1] -> [0]; [0] feeds the composite.
+  targets: [MediaFxGpuLightTarget, MediaFxGpuLightTarget]
+}
+
 interface MediaFxGpuProcessor {
   canvas: HTMLCanvasElement
   gl: WebGL2RenderingContext
   program: WebGLProgram
   texture: WebGLTexture
   maxTextureSize: number
-  uniforms: {
-    texture: WebGLUniformLocation | null
-    resolution: WebGLUniformLocation | null
-    pixelate: WebGLUniformLocation | null
-    rgbSplit: WebGLUniformLocation | null
-    kernelStep: WebGLUniformLocation | null
-    sharpen: WebGLUniformLocation | null
-    edge: WebGLUniformLocation | null
-    posterizeLevels: WebGLUniformLocation | null
-    negative: WebGLUniformLocation | null
-    grain: WebGLUniformLocation | null
-    grainCell: WebGLUniformLocation | null
-    scanline: WebGLUniformLocation | null
-    scanlinePeriod: WebGLUniformLocation | null
-    vignette: WebGLUniformLocation | null
-    flipY: WebGLUniformLocation | null
-    time: WebGLUniformLocation | null
-    temporalScale: WebGLUniformLocation | null
-    temporalGrain: WebGLUniformLocation | null
-    flicker: WebGLUniformLocation | null
-    glitch: WebGLUniformLocation | null
-    scanlineRoll: WebGLUniformLocation | null
-  }
+  uniforms: MediaFxGpuMainUniforms
+  light: MediaFxGpuLightPipeline | null
+  // A light pipeline that failed to build is not retried in this context.
+  lightFailed: boolean
 }
 
 let processor: MediaFxGpuProcessor | null = null
@@ -278,9 +443,11 @@ let processor: MediaFxGpuProcessor | null = null
 let unavailable = false
 let warned = false
 let temporalWarned = false
+let lightWarned = false
 
 type MediaFxGpuAvailabilityListener = (available: boolean) => void
 const availabilityListeners = new Set<MediaFxGpuAvailabilityListener>()
+const lightAvailabilityListeners = new Set<MediaFxGpuAvailabilityListener>()
 
 const warnOnce = (message: string, error?: unknown) => {
   if (warned) return
@@ -295,12 +462,41 @@ export const mediaFxGpuSupported = () => (
   && typeof WebGL2RenderingContext !== 'undefined'
 )
 
+export const mediaFxGpuLightSupported = () => (
+  mediaFxGpuSupported()
+  && processor?.lightFailed !== true
+)
+
+const notifyLightAvailability = () => {
+  const available = mediaFxGpuLightSupported()
+  lightAvailabilityListeners.forEach((listener) => {
+    try { listener(available) } catch { /* consumer notification must not break fallback */ }
+  })
+}
+
 // Lets consumers react when a lazy WebGL2 initialization proves unavailable. The
 // initial cheap capability probe stays allocation-free; listeners are only notified
 // after that optimistic capability is disproved at runtime.
 export const subscribeMediaFxGpuAvailability = (listener: MediaFxGpuAvailabilityListener) => {
   availabilityListeners.add(listener)
   return () => availabilityListeners.delete(listener)
+}
+
+export const subscribeMediaFxGpuLightAvailability = (listener: MediaFxGpuAvailabilityListener) => {
+  lightAvailabilityListeners.add(listener)
+  return () => lightAvailabilityListeners.delete(listener)
+}
+
+const warnLightOnce = (message: string, error?: unknown) => {
+  if (lightWarned) return
+  lightWarned = true
+  console.warn(`[media-fx] 光效（泛光 / 辉光）处理失败，保留原有静态外观：${message}`, error ?? '')
+}
+
+const markLightUnavailable = (current: MediaFxGpuProcessor) => {
+  if (current.gl.isContextLost() || current.lightFailed) return
+  current.lightFailed = true
+  notifyLightAvailability()
 }
 
 const warnTemporalOnce = (error: unknown) => {
@@ -316,6 +512,7 @@ const markUnavailable = () => {
   availabilityListeners.forEach((listener) => {
     try { listener(available) } catch { /* consumer notification must not break fallback */ }
   })
+  notifyLightAvailability()
 }
 
 const compileShader = (gl: WebGL2RenderingContext, type: number, source: string) => {
@@ -331,6 +528,58 @@ const compileShader = (gl: WebGL2RenderingContext, type: number, source: string)
   return shader
 }
 
+const linkProgram = (gl: WebGL2RenderingContext, fragmentSource: string) => {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER)
+  let fragment: WebGLShader
+  try {
+    fragment = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource)
+  } catch (error) {
+    gl.deleteShader(vertex)
+    throw error
+  }
+  const program = gl.createProgram()
+  if (!program) {
+    gl.deleteShader(vertex)
+    gl.deleteShader(fragment)
+    throw new Error('createProgram failed')
+  }
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+  gl.linkProgram(program)
+  gl.deleteShader(vertex)
+  gl.deleteShader(fragment)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(program)
+    gl.deleteProgram(program)
+    throw new Error(`program link failed: ${log || 'unknown'}`)
+  }
+  return program
+}
+
+const readMainUniforms = (gl: WebGL2RenderingContext, program: WebGLProgram): MediaFxGpuMainUniforms => ({
+  texture: gl.getUniformLocation(program, 'uTexture'),
+  resolution: gl.getUniformLocation(program, 'uResolution'),
+  pixelate: gl.getUniformLocation(program, 'uPixelate'),
+  rgbSplit: gl.getUniformLocation(program, 'uRgbSplit'),
+  kernelStep: gl.getUniformLocation(program, 'uKernelStep'),
+  sharpen: gl.getUniformLocation(program, 'uSharpen'),
+  edge: gl.getUniformLocation(program, 'uEdge'),
+  posterizeLevels: gl.getUniformLocation(program, 'uPosterizeLevels'),
+  negative: gl.getUniformLocation(program, 'uNegative'),
+  grain: gl.getUniformLocation(program, 'uGrain'),
+  grainCell: gl.getUniformLocation(program, 'uGrainCell'),
+  scanline: gl.getUniformLocation(program, 'uScanline'),
+  scanlinePeriod: gl.getUniformLocation(program, 'uScanlinePeriod'),
+  vignette: gl.getUniformLocation(program, 'uVignette'),
+  flipY: gl.getUniformLocation(program, 'uFlipY'),
+  time: gl.getUniformLocation(program, 'uTime'),
+  temporalScale: gl.getUniformLocation(program, 'uTemporalScale'),
+  temporalGrain: gl.getUniformLocation(program, 'uTemporalGrain'),
+  flicker: gl.getUniformLocation(program, 'uFlicker'),
+  glitch: gl.getUniformLocation(program, 'uGlitch'),
+  scanlineRoll: gl.getUniformLocation(program, 'uScanlineRoll'),
+})
+
 const createProcessor = (): MediaFxGpuProcessor => {
   const canvas = document.createElement('canvas')
   canvas.width = 1
@@ -344,18 +593,7 @@ const createProcessor = (): MediaFxGpuProcessor => {
     preserveDrawingBuffer: false,
   })
   if (!gl) throw new Error('WebGL2 context unavailable')
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER)
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER)
-  const program = gl.createProgram()
-  if (!program) throw new Error('createProgram failed')
-  gl.attachShader(program, vertex)
-  gl.attachShader(program, fragment)
-  gl.linkProgram(program)
-  gl.deleteShader(vertex)
-  gl.deleteShader(fragment)
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    throw new Error(`program link failed: ${gl.getProgramInfoLog(program) || 'unknown'}`)
-  }
+  const program = linkProgram(gl, FRAGMENT_SHADER)
   const texture = gl.createTexture()
   if (!texture) throw new Error('createTexture failed')
   gl.bindTexture(gl.TEXTURE_2D, texture)
@@ -381,33 +619,18 @@ const createProcessor = (): MediaFxGpuProcessor => {
     program,
     texture,
     maxTextureSize,
-    uniforms: {
-      texture: gl.getUniformLocation(program, 'uTexture'),
-      resolution: gl.getUniformLocation(program, 'uResolution'),
-      pixelate: gl.getUniformLocation(program, 'uPixelate'),
-      rgbSplit: gl.getUniformLocation(program, 'uRgbSplit'),
-      kernelStep: gl.getUniformLocation(program, 'uKernelStep'),
-      sharpen: gl.getUniformLocation(program, 'uSharpen'),
-      edge: gl.getUniformLocation(program, 'uEdge'),
-      posterizeLevels: gl.getUniformLocation(program, 'uPosterizeLevels'),
-      negative: gl.getUniformLocation(program, 'uNegative'),
-      grain: gl.getUniformLocation(program, 'uGrain'),
-      grainCell: gl.getUniformLocation(program, 'uGrainCell'),
-      scanline: gl.getUniformLocation(program, 'uScanline'),
-      scanlinePeriod: gl.getUniformLocation(program, 'uScanlinePeriod'),
-      vignette: gl.getUniformLocation(program, 'uVignette'),
-      flipY: gl.getUniformLocation(program, 'uFlipY'),
-      time: gl.getUniformLocation(program, 'uTime'),
-      temporalScale: gl.getUniformLocation(program, 'uTemporalScale'),
-      temporalGrain: gl.getUniformLocation(program, 'uTemporalGrain'),
-      flicker: gl.getUniformLocation(program, 'uFlicker'),
-      glitch: gl.getUniformLocation(program, 'uGlitch'),
-      scanlineRoll: gl.getUniformLocation(program, 'uScanlineRoll'),
-    },
+    uniforms: readMainUniforms(gl, program),
+    light: null,
+    lightFailed: false,
   }
   // A lost context is simply dropped; the next call lazily builds a fresh processor.
   canvas.addEventListener('webglcontextlost', () => {
-    if (processor === next) processor = null
+    if (processor === next) {
+      processor = null
+      // A fresh context may support the light pipeline again, so return to optimistic
+      // availability until the replacement context proves otherwise.
+      notifyLightAvailability()
+    }
   }, { once: true })
   return next
 }
@@ -472,6 +695,60 @@ type MediaFxGpuAdvancedParams = ReturnType<typeof resolveMediaFxGpuParams>
 
 const OFF_ADVANCED_PARAMS: MediaFxGpuAdvancedParams = resolveMediaFxGpuParams(normalizeMediaFxAdvanced(null))
 
+const mixRange = (range: [number, number], amount: number) => range[0] + (range[1] - range[0]) * amount
+
+// Renderer mapping of bloom / glow. `active` is false when both are off: the static pass
+// then never touches the light pipeline. Weights split the 0..1 extraction range between
+// bloom and glow; `gain` restores their absolute strength in the composite.
+export const resolveMediaFxGpuLightParams = (input: MediaFxAdvanced, options: MediaFxGpuOptions = {}) => {
+  const advanced = normalizeMediaFxAdvanced(input)
+  const scale = typeof options.pixelRatio === 'number' && Number.isFinite(options.pixelRatio) && options.pixelRatio > 0
+    ? options.pixelRatio
+    : 1
+  const bloomGain = advanced.bloom * BLOOM_MAX_GAIN
+  const glowGain = advanced.glow * GLOW_MAX_GAIN
+  const gain = bloomGain + glowGain
+  // The wider of the two blurs is used for the shared light buffer.
+  const sigmaLayoutPx = Math.max(
+    advanced.bloom > 0 ? mixRange(BLOOM_SIGMA_RANGE_PX, advanced.bloom) : 0,
+    advanced.glow > 0 ? mixRange(GLOW_SIGMA_RANGE_PX, advanced.glow) : 0,
+  )
+  return {
+    active: gain > 0,
+    bloomWeight: gain > 0 ? bloomGain / gain : 0,
+    glowWeight: gain > 0 ? glowGain / gain : 0,
+    gain,
+    glowAlpha: advanced.glow * GLOW_MAX_ALPHA_GAIN,
+    threshold: BLOOM_THRESHOLD_LOW_STRENGTH + (BLOOM_THRESHOLD_HIGH_STRENGTH - BLOOM_THRESHOLD_LOW_STRENGTH) * advanced.bloom,
+    knee: BLOOM_KNEE,
+    sigmaPx: sigmaLayoutPx * scale,
+  }
+}
+
+export type MediaFxGpuLightParams = ReturnType<typeof resolveMediaFxGpuLightParams>
+
+// Size of the light scratch targets for one static pass: at most half the input size,
+// at most MEDIA_FX_GPU_LIGHT_MAX_PIXELS, and small enough that the blur radius fits the
+// fixed kernel. Pure, so callers / tests can check the budget without WebGL.
+export const resolveMediaFxGpuLightRaster = (width: number, height: number, sigmaPx: number) => {
+  if (!(width >= 1 && height >= 1)) return null
+  const safeSigma = Number.isFinite(sigmaPx) && sigmaPx > 0 ? sigmaPx : 1
+  const scale = Math.min(
+    LIGHT_MAX_SCALE,
+    Math.sqrt(MEDIA_FX_GPU_LIGHT_MAX_PIXELS / (width * height)),
+    LIGHT_BLUR_MAX_RADIUS / LIGHT_BLUR_SIGMAS / safeSigma,
+  )
+  const lightWidth = Math.max(1, Math.min(width, Math.floor(width * scale)))
+  const lightHeight = Math.max(1, Math.min(height, Math.floor(height * scale)))
+  const sigma = Math.max(0.5, safeSigma * Math.min(lightWidth / width, lightHeight / height))
+  return {
+    width: lightWidth,
+    height: lightHeight,
+    sigma,
+    radius: Math.min(LIGHT_BLUR_MAX_RADIUS, Math.max(1, Math.ceil(sigma * LIGHT_BLUR_SIGMAS))),
+  }
+}
+
 export interface MediaFxTemporalGpuOptions {
   // Device pixels per layout pixel of the live raster, so grain cells, glitch bands and
   // scanline periods keep their layout size at any DPR / raster scale.
@@ -503,17 +780,17 @@ const wrapTemporalTime = (seconds: number) => {
   return seconds % MEDIA_FX_TEMPORAL_TIME_WRAP_SECONDS
 }
 
-// Every uniform is written on every pass: static and live passes share one program, so
-// neither may inherit the other's values.
+// Every uniform is written on every pass: static and live passes share one program (and
+// the light variant has the same main uniforms), so no pass inherits another's values.
 const writeUniforms = (
-  current: MediaFxGpuProcessor,
+  gl: WebGL2RenderingContext,
+  uniforms: MediaFxGpuMainUniforms,
   width: number,
   height: number,
   advanced: MediaFxGpuAdvancedParams,
   temporal: MediaFxGpuTemporalParams,
   live: { flipY: boolean, time: number },
 ) => {
-  const { gl, uniforms } = current
   gl.uniform1i(uniforms.texture, 0)
   gl.uniform2f(uniforms.resolution, width, height)
   gl.uniform1f(uniforms.pixelate, advanced.blockPx)
@@ -537,8 +814,174 @@ const writeUniforms = (
   gl.uniform1f(uniforms.scanlineRoll, temporal.scanlineRollDarken)
 }
 
+// ---------------------------------------------------------------------------
+// Light pipeline (bloom / glow): a fixed extract -> blur H -> blur V chain
+// ---------------------------------------------------------------------------
+
+const createLightTarget = (gl: WebGL2RenderingContext, track: { textures: WebGLTexture[], framebuffers: WebGLFramebuffer[] }) => {
+  const texture = gl.createTexture()
+  if (!texture) throw new Error('createTexture failed')
+  track.textures.push(texture)
+  gl.bindTexture(gl.TEXTURE_2D, texture)
+  // Linear: the composite upscales the light bilinearly (passes use exact texelFetch).
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  const framebuffer = gl.createFramebuffer()
+  if (!framebuffer) throw new Error('createFramebuffer failed')
+  track.framebuffers.push(framebuffer)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  return { texture, framebuffer }
+}
+
+// Built once per context on the first bloom / glow pass, then reused for every later
+// pass (slider edits never compile again). A build failure only disables the light
+// effects of this context; the single-pass program is untouched.
+const acquireLightPipeline = (current: MediaFxGpuProcessor): MediaFxGpuLightPipeline | null => {
+  if (current.lightFailed) return null
+  if (current.light) return current.light
+  const { gl } = current
+  const track = { programs: [] as WebGLProgram[], textures: [] as WebGLTexture[], framebuffers: [] as WebGLFramebuffer[] }
+  const link = (source: string) => {
+    const program = linkProgram(gl, source)
+    track.programs.push(program)
+    return program
+  }
+  try {
+    const composite = link(LIGHT_FRAGMENT_SHADER)
+    const extract = link(LIGHT_EXTRACT_SHADER)
+    const blur = link(LIGHT_BLUR_SHADER)
+    const targets: [MediaFxGpuLightTarget, MediaFxGpuLightTarget] = [createLightTarget(gl, track), createLightTarget(gl, track)]
+    gl.bindTexture(gl.TEXTURE_2D, current.texture)
+    current.light = {
+      composite,
+      compositeUniforms: {
+        ...readMainUniforms(gl, composite),
+        light: gl.getUniformLocation(composite, 'uLight'),
+        lightGain: gl.getUniformLocation(composite, 'uLightGain'),
+        glowAlpha: gl.getUniformLocation(composite, 'uGlowAlpha'),
+      },
+      extract,
+      extractUniforms: {
+        source: gl.getUniformLocation(extract, 'uSource'),
+        sourceSize: gl.getUniformLocation(extract, 'uSourceSize'),
+        lightSize: gl.getUniformLocation(extract, 'uLightSize'),
+        bloomWeight: gl.getUniformLocation(extract, 'uBloomWeight'),
+        glowWeight: gl.getUniformLocation(extract, 'uGlowWeight'),
+        threshold: gl.getUniformLocation(extract, 'uThreshold'),
+        knee: gl.getUniformLocation(extract, 'uKnee'),
+      },
+      blur,
+      blurUniforms: {
+        input: gl.getUniformLocation(blur, 'uInput'),
+        size: gl.getUniformLocation(blur, 'uSize'),
+        direction: gl.getUniformLocation(blur, 'uDirection'),
+        radius: gl.getUniformLocation(blur, 'uRadius'),
+        sigma: gl.getUniformLocation(blur, 'uSigma'),
+      },
+      targets,
+    }
+    return current.light
+  } catch (error) {
+    if (!gl.isContextLost()) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      track.framebuffers.forEach((framebuffer) => gl.deleteFramebuffer(framebuffer))
+      track.textures.forEach((texture) => gl.deleteTexture(texture))
+      track.programs.forEach((program) => gl.deleteProgram(program))
+      markLightUnavailable(current)
+    }
+    warnLightOnce('多通道渲染初始化失败', error)
+    return null
+  }
+}
+
+// Runs extract -> blur H -> blur V into targets[0]. Every pass binds its own framebuffer,
+// viewport, program, input texture (unit 0) and uniforms; unit 1 stays empty, and no
+// texture is ever read while it is the current render target.
+const runLightPasses = (
+  current: MediaFxGpuProcessor,
+  pipeline: MediaFxGpuLightPipeline,
+  light: MediaFxGpuLightParams,
+  width: number,
+  height: number,
+) => {
+  const { gl } = current
+  const raster = resolveMediaFxGpuLightRaster(width, height, light.sigmaPx)
+  if (!raster) return false
+  const [first, second] = pipeline.targets
+  gl.activeTexture(gl.TEXTURE1)
+  gl.bindTexture(gl.TEXTURE_2D, null)
+  gl.activeTexture(gl.TEXTURE0)
+  for (const target of pipeline.targets) {
+    gl.bindTexture(gl.TEXTURE_2D, target.texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, raster.width, raster.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  }
+  if (gl.getError() !== gl.NO_ERROR) return false
+  for (const target of pipeline.targets) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      // RGBA8 scratch framebuffer incompleteness is a context capability failure, not an
+      // input-size failure. Latch only the light path so slider edits do not repeat a
+      // deterministically failing multi-pass setup; the original single-pass stays live.
+      markLightUnavailable(current)
+      warnLightOnce('帧缓冲不完整')
+      return false
+    }
+  }
+
+  // 1. Extract: source (unit 0) -> first.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, first.framebuffer)
+  gl.viewport(0, 0, raster.width, raster.height)
+  gl.useProgram(pipeline.extract)
+  gl.activeTexture(gl.TEXTURE0)
+  gl.bindTexture(gl.TEXTURE_2D, current.texture)
+  const extract = pipeline.extractUniforms
+  gl.uniform1i(extract.source, 0)
+  gl.uniform2f(extract.sourceSize, width, height)
+  gl.uniform2f(extract.lightSize, raster.width, raster.height)
+  gl.uniform1f(extract.bloomWeight, light.bloomWeight)
+  gl.uniform1f(extract.glowWeight, light.glowWeight)
+  gl.uniform1f(extract.threshold, light.threshold)
+  gl.uniform1f(extract.knee, light.knee)
+  gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+  // 2. / 3. Separable blur: first -> second (horizontal), second -> first (vertical).
+  const blur = pipeline.blurUniforms
+  for (const [input, output, dx, dy] of [[first, second, 1, 0], [second, first, 0, 1]] as const) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, output.framebuffer)
+    gl.viewport(0, 0, raster.width, raster.height)
+    gl.useProgram(pipeline.blur)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, input.texture)
+    gl.uniform1i(blur.input, 0)
+    gl.uniform2f(blur.size, raster.width, raster.height)
+    gl.uniform2i(blur.direction, dx, dy)
+    gl.uniform1i(blur.radius, raster.radius)
+    gl.uniform1f(blur.sigma, raster.sigma)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
+  return gl.getError() === gl.NO_ERROR && !gl.isContextLost()
+}
+
+// Shrinks the scratch storage again: no large light buffer outlives a static pass.
+const releaseLightTargets = (gl: WebGL2RenderingContext, pipeline: MediaFxGpuLightPipeline) => {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  gl.activeTexture(gl.TEXTURE1)
+  gl.bindTexture(gl.TEXTURE_2D, null)
+  gl.activeTexture(gl.TEXTURE0)
+  for (const target of pipeline.targets) {
+    gl.bindTexture(gl.TEXTURE_2D, target.texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  }
+}
+
 // Processes imageData in place. Returns false (with imageData unchanged) when the
-// effect is empty or the GPU path is unavailable for any reason.
+// effect is empty or the GPU path is unavailable for any reason. Only a complete result
+// is read back: every pass is checked before the single readPixels.
 export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced, options: MediaFxGpuOptions = {}): boolean => {
   if (!mediaFxAdvancedHasContent(advanced)) return false
   const { width, height, data } = imageData
@@ -548,30 +991,56 @@ export const applyMediaFxGpu = (imageData: ImageData, advanced: MediaFxAdvanced,
   const { gl, canvas, texture } = current
   if (width > current.maxTextureSize || height > current.maxTextureSize) return false
   const params = resolveMediaFxGpuParams(advanced, options)
+  const light = resolveMediaFxGpuLightParams(advanced, options)
+  // Bloom / glow off: the original single pass; the light pipeline is never built.
+  const pipeline = light.active ? acquireLightPipeline(current) : null
+  if (light.active && !pipeline) return false
   try {
     // Drop stale error flags so the checks below only see this pass.
     for (let index = 0; index < 8 && gl.getError() !== gl.NO_ERROR; index += 1) { /* drain */ }
     canvas.width = width
     canvas.height = height
     if (gl.drawingBufferWidth !== width || gl.drawingBufferHeight !== height) return false
-    gl.viewport(0, 0, width, height)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
-    gl.useProgram(current.program)
-    // Static pass: no flip, every temporal effect off, so the v3 pixel math is unchanged.
-    writeUniforms(current, width, height, params, OFF_TEMPORAL_PARAMS, { flipY: false, time: 0 })
+    if (pipeline) {
+      if (!runLightPasses(current, pipeline, light, width, height)) return false
+      // Final pass: the light variant reads the source (unit 0) and the light (unit 1).
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.viewport(0, 0, width, height)
+      gl.useProgram(pipeline.composite)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, texture)
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, pipeline.targets[0].texture)
+      const uniforms = pipeline.compositeUniforms
+      writeUniforms(gl, uniforms, width, height, params, OFF_TEMPORAL_PARAMS, { flipY: false, time: 0 })
+      gl.uniform1i(uniforms.light, 1)
+      gl.uniform1f(uniforms.lightGain, light.gain)
+      gl.uniform1f(uniforms.glowAlpha, light.glowAlpha)
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.viewport(0, 0, width, height)
+      gl.useProgram(current.program)
+      // Static pass: no flip, every temporal effect off, so the v3 pixel math is unchanged.
+      writeUniforms(gl, current.uniforms, width, height, params, OFF_TEMPORAL_PARAMS, { flipY: false, time: 0 })
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) return false
     // A failed readPixels writes nothing, so the source pixels stay intact.
     gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
     return gl.getError() === gl.NO_ERROR && !gl.isContextLost()
   } catch (error) {
-    warnOnce('GPU 处理失败', error)
+    if (pipeline) warnLightOnce('多通道渲染失败', error)
+    else warnOnce('GPU 处理失败', error)
     return false
   } finally {
-    // Release the large texture / drawing buffer between cache rebuilds.
+    // Release the large textures / drawing buffer between cache rebuilds.
     if (!gl.isContextLost()) {
+      if (pipeline) releaseLightTargets(gl, pipeline)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, texture)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
       canvas.width = 1
       canvas.height = 1
@@ -700,10 +1169,13 @@ export const createMediaFxTemporalGpuSession = (): MediaFxTemporalGpuSession => 
           canvas.height = Math.max(canvas.height, height)
         }
         if (gl.drawingBufferWidth < width || gl.drawingBufferHeight < height) return null
+        // Live frames always use the single-pass program on the default framebuffer.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null)
         gl.viewport(0, 0, width, height)
         gl.useProgram(current.program)
         writeUniforms(
-          current,
+          gl,
+          current.uniforms,
           width,
           height,
           OFF_ADVANCED_PARAMS,

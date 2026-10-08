@@ -521,7 +521,8 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 		"mediaFx v2 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":2`, 1),
 		"mediaFx v3 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":3`, 1),
 		"mediaFx v4 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":4`, 1),
-		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":5`, 1),
+		"mediaFx v5 bare": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":5`, 1),
+		"mediaFx version": strings.Replace(theaterPackageWorldPresentationJSON, `"version":1`, `"version":6`, 1),
 		"mediaFx preset":  strings.Replace(theaterPackageWorldPresentationJSON, `"breathe"`, `"spin"`, 1),
 		"mediaFx range":   strings.Replace(theaterPackageWorldPresentationJSON, `"blurPx":0}`, `"blurPx":99}`, 1),
 		"unknown field":   strings.Replace(theaterPackageWorldPresentationJSON, `{"portrait"`, `{"script":"x","portrait"`, 1),
@@ -557,8 +558,11 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	if v3Normalized, err := normalizeTheaterPackageWorldPresentation([]byte(v3Raw)); err != nil || !strings.Contains(string(v3Normalized), `"grain":0,`) || !strings.Contains(string(v3Normalized), `"edge":0.3`) {
 		t.Fatalf("valid v3 world presentation rejected or lost advanced: %s (%v)", v3Normalized, err)
 	}
-	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3`, `"edge":0.3,"bloom":1`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "bloom"`) {
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3`, `"edge":0.3,"halo":1`, 1))); err == nil || !strings.Contains(err.Error(), `unknown field "halo"`) {
 		t.Fatalf("unknown v3 advanced field must be rejected, got %v", err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3`, `"edge":0.3,"bloom":1`, 1))); err == nil || !strings.Contains(err.Error(), `advanced.bloom is not allowed in version 3`) {
+		t.Fatalf("v3 mediaFx carrying bloom must be rejected, got %v", err)
 	}
 	const temporal = `"temporal":{"grain":0.4,"flicker":0,"glitch":0.2,"scanlineRoll":0,"speed":1.5}`
 	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v3Raw, `"edge":0.3}`, `"edge":0.3},`+temporal, 1))); err == nil {
@@ -579,6 +583,19 @@ func TestTheaterPackageWorldPresentationValidation(t *testing.T) {
 	}
 	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v4Raw, temporal, `"temporal":null`, 1))); err == nil {
 		t.Fatal("v4 mediaFx carrying temporal:null must be rejected")
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v4Raw, `"edge":0.3`, `"edge":0.3,"glow":0`, 1))); err == nil || !strings.Contains(err.Error(), `advanced.glow is not allowed in version 4`) {
+		t.Fatalf("v4 mediaFx carrying glow must be rejected, got %v", err)
+	}
+	v5Raw := strings.Replace(strings.Replace(v4Raw, `"version":4`, `"version":5`, 1), `"edge":0.3`, `"edge":0.3,"bloom":0.6,"glow":0`, 1)
+	if v5Normalized, err := normalizeTheaterPackageWorldPresentation([]byte(v5Raw)); err != nil || !strings.Contains(string(v5Normalized), `"bloom":0.6,"glow":0}`) || !strings.Contains(string(v5Normalized), temporal) {
+		t.Fatalf("valid v5 world presentation rejected or lost bloom / glow: %s (%v)", v5Normalized, err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v5Raw, `,"glow":0`, ``, 1))); err == nil || !strings.Contains(err.Error(), `advanced.glow is required in version 5`) {
+		t.Fatalf("v5 mediaFx missing glow must be rejected, got %v", err)
+	}
+	if _, err := normalizeTheaterPackageWorldPresentation([]byte(strings.Replace(v5Raw, `"bloom":0.6`, `"bloom":1.6`, 1))); err == nil {
+		t.Fatal("v5 mediaFx with bloom out of range must be rejected")
 	}
 
 	dialogue := protocol.DefaultTheaterDialogueStyle()
