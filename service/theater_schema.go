@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -460,6 +461,11 @@ func validateSceneState(state map[string]any) error {
 			return err
 		}
 	}
+	if embeds, ok := state["surfaceEmbeds"]; ok {
+		if err := validateTheaterSurfaceEmbeds(embeds); err != nil {
+			return err
+		}
+	}
 	if audio, ok := state["switchAudio"]; ok {
 		if err := validateTheaterAudioRef(audio, "scene.switchAudio"); err != nil {
 			return err
@@ -473,6 +479,48 @@ func validateSceneState(state map[string]any) error {
 	raw, _ := json.Marshal(state)
 	if len(raw) > 64<<10 {
 		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterSurfaceEmbeds(input any) error {
+	embeds, ok := input.(map[string]any)
+	if !ok || len(embeds) != 2 {
+		return theaterPayloadError("surfaceEmbeds 图层无效")
+	}
+	for _, target := range []string{"background", "foreground"} {
+		raw, exists := embeds[target]
+		if !exists {
+			return theaterPayloadError("surfaceEmbeds." + target + " 缺失")
+		}
+		if raw == nil {
+			continue
+		}
+		embed, ok := raw.(map[string]any)
+		if !ok || len(embed) != 3 || embed["type"] != "iframe" {
+			return theaterPayloadError("surfaceEmbeds." + target + " 无效")
+		}
+		if _, ok := embed["interactive"].(bool); !ok {
+			return theaterPayloadError("surfaceEmbeds." + target + ".interactive 无效")
+		}
+		frame, ok := embed["iframe"].(map[string]any)
+		if !ok || len(frame) != 2 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe 无效")
+		}
+		source, ok := frame["url"].(string)
+		if !ok || len(source) > 8192 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe.url 无效")
+		}
+		if source = strings.TrimSpace(source); source != "" {
+			parsed, err := url.Parse(source)
+			if err != nil || parsed.Host == "" || (!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+				return theaterPayloadError("surfaceEmbeds." + target + ".iframe.url 仅支持 HTTP/HTTPS")
+			}
+		}
+		scale, valid := theaterNumericValue(frame["scale"])
+		if !valid || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0.25 || scale > 5 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe.scale 无效")
+		}
 	}
 	return nil
 }

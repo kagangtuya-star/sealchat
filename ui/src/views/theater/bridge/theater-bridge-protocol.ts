@@ -8,6 +8,8 @@ import {
   STAGE_ACTION_DELAY_STEP_MS,
   STAGE_ACTION_MAX_DELAY_MS,
   isSafeStageImageUrl,
+  stageSceneOverlayBlendModes,
+  stageSceneOverlayLayers,
 } from '../shared/stage-types'
 import { normalizeStageRandomTablePayload } from '../shared/stage-actions'
 
@@ -506,9 +508,38 @@ const legacySceneTransitionSchema = z.strictObject({
   durationMs: z.number().int().min(0).max(60_000).optional(),
 })
 
+const stageSurfaceEmbedSchema = z.strictObject({
+  type: z.literal('iframe'),
+  iframe: z.strictObject({ url: z.string().max(8192), scale: z.number().finite().min(0.25).max(5) }),
+  interactive: z.boolean(),
+})
+
+const stageSceneOverlaySchema = z.strictObject({
+  version: z.literal(1),
+  id: nonEmptyIdSchema,
+  effectId: nonEmptyIdSchema,
+  name: z.string().max(128),
+  enabled: z.boolean(),
+  opacity: z.number().finite().min(0).max(1),
+  blendMode: z.enum(stageSceneOverlayBlendModes),
+  layer: z.enum(stageSceneOverlayLayers),
+  media: z.strictObject({
+    resourceId: nonEmptyIdSchema,
+    variant: z.string().optional(),
+    mimeType: z.string().optional(),
+    animated: z.boolean().optional(),
+    loopCount: z.number().int().positive().max(65_535).optional(),
+  }).optional(),
+  params: z.record(z.string(), z.union([z.string(), z.number().finite(), z.boolean(), z.null()])),
+})
+
 const stageSceneStateSchema = z.strictObject({
   background: stageImageRefSchema.nullable(),
   foreground: stageImageRefSchema.nullable(),
+  surfaceEmbeds: z.strictObject({
+    background: stageSurfaceEmbedSchema.nullable(),
+    foreground: stageSurfaceEmbedSchema.nullable(),
+  }).default({ background: null, foreground: null }),
   surfaceStyles: z.strictObject({
     background: stageSurfaceStyleSchema,
     foreground: stageSurfaceStyleSchema,
@@ -525,6 +556,7 @@ const stageSceneStateSchema = z.strictObject({
   transition: sceneTransitionSchema,
   switchAudio: stageAudioRefSchema.nullable(),
   musicSnapshot: stageMusicSnapshotSchema.nullable(),
+  sceneOverlays: z.array(stageSceneOverlaySchema).default([]),
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -540,6 +572,7 @@ const stageSceneSchema = z.strictObject({
   order: z.number().finite(),
   folderId: nonEmptyIdSchema.optional(),
   locked: z.boolean(),
+  published: z.boolean().default(false),
   state: stageSceneStateSchema,
 })
 

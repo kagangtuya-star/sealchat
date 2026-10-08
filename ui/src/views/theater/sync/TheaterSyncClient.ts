@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { SceneFolder, StageAction, StageActionTriggeredPayload, StageClueActionEntry, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle, normalizeStageSurfaceEmbeds } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
@@ -249,6 +249,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
   return {
     background: imageRef(raw.background),
     foreground: imageRef(raw.foreground),
+    surfaceEmbeds: normalizeStageSurfaceEmbeds(raw.surfaceEmbeds),
     surfaceStyles: {
       background: normalizeStageSurfaceStyle(surfaceStyles.background, legacyFit, { opacity: 0.9, blurPx: 10 }),
       foreground: normalizeStageSurfaceStyle(surfaceStyles.foreground, legacyFit),
@@ -274,6 +275,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
   ...sceneStateExtensionsFromRaw(asObject(state.serverState)),
   background: state.background,
   foreground: state.foreground,
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(state.surfaceEmbeds),
   surfaceStyles: clone(state.surfaceStyles),
   fieldWidth: state.fieldWidth,
   fieldHeight: state.fieldHeight,

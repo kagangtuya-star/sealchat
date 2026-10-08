@@ -116,6 +116,7 @@ async function run() {
     let objects = {}
     const getObject = id => objects[id]
     const canInteractObject = object => Boolean(object)
+    const surfaceIframeInteractive = () => false
     const objectNodeIntersectsStagePoint = () => true
     ${names.map(declaration).join('\n')}
     ${initialization}

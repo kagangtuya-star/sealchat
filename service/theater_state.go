@@ -18,6 +18,7 @@ var theaterSceneStateAllowedKeys = map[string]struct{}{
 	"background":    {},
 	"foreground":    {},
 	"surfaceStyles": {},
+	"surfaceEmbeds": {},
 	"fieldWidth":    {},
 	"fieldHeight":   {},
 	// Grid options, including the newer onTop flag, stay nested here.

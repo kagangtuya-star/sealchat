@@ -5,6 +5,9 @@ import {
   isStageActionTarget,
   isSafeStageImageUrl,
   normalizeStageIframeContent,
+  normalizeStageSurfaceEmbed,
+  normalizeStageSurfaceEmbeds,
+  resolveSafeStageIframeUrl,
   normalizeStageImageAnnotation,
   normalizeStageEntranceConfig,
   normalizeStageAudioRef,
@@ -30,6 +33,8 @@ import {
   type StageSceneTransition,
   type StageSurfaceStylePatch,
   type StageSurfaceTarget,
+  type StageSurfaceEmbed,
+  type StageSurfaceEmbedPatch,
   type StageWorkspaceState,
 } from '../shared/stage-types'
 import { normalizeStageClueExecutePayload, normalizeStageRandomTablePayload, normalizeStageSequenceAction } from '../shared/stage-actions'
@@ -238,6 +243,7 @@ const makeObject = (
 const createLiveState = (color: string, sceneObjects: Record<string, StageObject> = {}): StageLiveState => ({
   background: null,
   foreground: null,
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(null),
   surfaceStyles: {
     background: createDefaultStageSurfaceStyle('cover', { opacity: 0.9, blurPx: 10, brightness: 1, overlay: { enabled: false, color: '#000000', opacity: 0.4 } }),
     foreground: createDefaultStageSurfaceStyle(),
@@ -452,6 +458,7 @@ const normalizeObjects = (input: unknown) => {
 const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallbackColor = '#111827'): StageLiveState => ({
   background: normalizeImageRef(input?.background),
   foreground: normalizeImageRef(input?.foreground),
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(input?.surfaceEmbeds),
   surfaceStyles: {
     background: normalizeStageSurfaceStyle(input?.surfaceStyles?.background, input?.fieldObjectFit || 'cover', { opacity: 0.9, blurPx: 10 }),
     foreground: normalizeStageSurfaceStyle(input?.surfaceStyles?.foreground, input?.fieldObjectFit || 'cover'),
@@ -548,6 +555,9 @@ export interface TheaterStageStore {
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean, loopCount?: number) => boolean
   patchSceneSurfaceStyle: (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => void
   resetSceneSurfaceStyle: (target: StageSurfaceTarget) => void
+  setSceneSurfaceEmbed: (target: StageSurfaceTarget, embed: StageSurfaceEmbed | null) => boolean
+  patchSceneSurfaceEmbed: (target: StageSurfaceTarget, patch: StageSurfaceEmbedPatch) => boolean
+  removeSceneSurfaceEmbed: (target: StageSurfaceTarget) => boolean
   setObjectImage: (
     objectId: string,
     url: string,
@@ -595,7 +605,12 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   ))
   const selectedObjects = computed(() => selectionGroup.value.members)
   const editingState = reactive({ historyDepth: 0, clipboardReady: false })
-  const history: NonNullable<ReturnType<typeof createObjectHistoryEntry>>[] = []
+  const history: (NonNullable<ReturnType<typeof createObjectHistoryEntry>> | {
+    kind: 'surface-embed'
+    sceneId: string
+    target: StageSurfaceTarget
+    before: StageSurfaceEmbed | null
+  })[] = []
   let clipboard: StageClipboardBundle | null = null
   let pasteCount = 0
   let transaction: {
@@ -1266,6 +1281,11 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       editingState.historyDepth = history.length
       const scene = state.scenes[entry.sceneId]
       if (!scene) continue
+      if ('kind' in entry && entry.kind === 'surface-embed') {
+        const liveState = entry.sceneId === state.activeSceneId ? state.liveState : scene.state
+        liveState.surfaceEmbeds[entry.target] = clone(entry.before)
+        return true
+      }
       const sceneObjects = entry.sceneId === state.activeSceneId
         ? state.liveState.sceneObjects
         : scene.state.sceneObjects
@@ -1451,6 +1471,26 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       : createDefaultStageSurfaceStyle()
   }
 
+  const setSceneSurfaceEmbed = (target: StageSurfaceTarget, embed: StageSurfaceEmbed | null) => {
+    const next = normalizeStageSurfaceEmbed(embed)
+    if (embed && (!next || next.iframe.url.length > 8192 || (next.iframe.url && !resolveSafeStageIframeUrl(next.iframe.url)))) return false
+    const before = state.liveState.surfaceEmbeds[target]
+    if (JSON.stringify(before) === JSON.stringify(next)) return false
+    commitObjectEdit()
+    history.push({ kind: 'surface-embed', sceneId: state.activeSceneId, target, before: clone(before) })
+    if (history.length > 100) history.shift()
+    editingState.historyDepth = history.length
+    state.liveState.surfaceEmbeds[target] = next
+    return true
+  }
+
+  const patchSceneSurfaceEmbed = (target: StageSurfaceTarget, patch: StageSurfaceEmbedPatch) => {
+    const current = state.liveState.surfaceEmbeds[target]
+    if (!current) return false
+    return setSceneSurfaceEmbed(target, { ...current, ...patch, iframe: { ...current.iframe, ...patch.iframe } })
+  }
+  const removeSceneSurfaceEmbed = (target: StageSurfaceTarget) => setSceneSurfaceEmbed(target, null)
+
   const setObjectImage = (
     objectId: string,
     url: string,
@@ -1615,6 +1655,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const replaceState = (next: StageWorkspaceState) => {
     transaction = null
     const value = clone(next)
+    value.liveState.surfaceEmbeds = normalizeStageSurfaceEmbeds(value.liveState.surfaceEmbeds)
+    Object.values(value.scenes).forEach(scene => {
+      scene.state.surfaceEmbeds = normalizeStageSurfaceEmbeds(scene.state.surfaceEmbeds)
+    })
     value.sceneFolders = Array.isArray(value.sceneFolders)
       ? value.sceneFolders.filter((folder) => folder && typeof folder.id === 'string' && typeof folder.name === 'string' && folder.id.trim() && folder.name.trim())
         .map((folder) => ({ id: folder.id.trim(), name: folder.name.trim() }))
@@ -1696,6 +1740,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setSceneImage,
     patchSceneSurfaceStyle,
     resetSceneSurfaceStyle,
+    setSceneSurfaceEmbed,
+    patchSceneSurfaceEmbed,
+    removeSceneSurfaceEmbed,
     setObjectImage,
     addObjectAction,
     removeObjectAction,

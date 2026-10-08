@@ -132,6 +132,8 @@ import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
+import StageSurfaceIframe from './StageSurfaceIframe.vue'
+import StageSurfaceEmbedSettings from './StageSurfaceEmbedSettings.vue'
 import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
@@ -339,6 +341,8 @@ const toolbarColorsVisible = ref(false)
 const panelSwitchesColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
 const iframeInteractionDisabled = ref(false)
+// Disposable GM preview; never enters StageStore, history, or synchronization.
+const surfaceInteractionTest = ref<StageSurfaceTarget | null>(null)
 type TheaterToolbarLayout = 'horizontal' | 'vertical'
 const theaterToolbarLayoutStorageKey = 'sealchat.theater.toolbar-layout.v1'
 const readTheaterToolbarLayout = (): TheaterToolbarLayout => {
@@ -1258,6 +1262,24 @@ const workspaceRef = ref<HTMLDivElement | null>(null)
 const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
 const canBrowseScenes = computed(() => hasPermission('stage.view'))
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
+const surfaceIframeInteractive = (target: StageSurfaceTarget) => (
+  canEditAllObjects.value
+    ? surfaceInteractionTest.value === target
+    : props.store.state.liveState.surfaceEmbeds[target]?.interactive === true
+)
+const toggleSurfaceInteractionTest = (target: StageSurfaceTarget) => {
+  if (!canEditAllObjects.value || !props.store.state.liveState.surfaceEmbeds[target]) return
+  surfaceInteractionTest.value = surfaceInteractionTest.value === target ? null : target
+}
+watch(() => [props.worldId, props.channelId, props.store.state.activeSceneId, canEditAllObjects.value], () => {
+  surfaceInteractionTest.value = null
+})
+watch(() => ([
+  surfaceInteractionTest.value,
+  surfaceInteractionTest.value ? props.store.state.liveState.surfaceEmbeds[surfaceInteractionTest.value]?.iframe.url : undefined,
+] as const), ([target, url], [previousTarget, previousUrl]) => {
+  if (target && (url === undefined || (target === previousTarget && url !== previousUrl))) surfaceInteractionTest.value = null
+})
 const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.delegated'))
 const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
 const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
@@ -2100,6 +2122,13 @@ const isEditableShortcutTarget = (target: EventTarget | null) => {
 const copySelectedObjects = () => props.store.copySelectedObjects(copyMode.value)
 
 const handleStageShortcut = (event: KeyboardEvent) => {
+  if (surfaceInteractionTest.value) {
+    if (event.key === 'Escape') {
+      surfaceInteractionTest.value = null
+      event.preventDefault()
+    }
+    return
+  }
   if (
     event.isComposing
     || event.altKey
@@ -4946,14 +4975,22 @@ const resetSceneVisualStyle = () => {
 const captureSceneTransitionOverlay = () => {
   if (!stage || !viewportRef.value) return null
   const interactionWasVisible = interactionLayer?.visible() !== false
-  interactionLayer?.hide()
+  // A foreground webpage sits between the foreground image and the top grid.
+  // Preserve that grid in image transition captures while hiding editor controls.
+  const gridInInteraction = gridTopCameraGroup?.getParent() === interactionLayer
+  const visibleControls = gridInInteraction
+    ? interactionLayer?.getChildren().filter(node => node !== gridTopCameraGroup && node.visible()) || []
+    : []
+  if (gridInInteraction) visibleControls.forEach(node => node.hide())
+  else interactionLayer?.hide()
   interactionLayer?.draw()
   const snapshot = stage.toCanvas({
     width: stage.width(),
     height: stage.height(),
     pixelRatio: Math.min(2, window.devicePixelRatio || 1),
   })
-  if (interactionWasVisible) interactionLayer?.show()
+  if (gridInInteraction) visibleControls.forEach(node => node.show())
+  else if (interactionWasVisible) interactionLayer?.show()
   interactionLayer?.draw()
   snapshot.style.width = '100%'
   snapshot.style.height = '100%'
@@ -6326,6 +6363,7 @@ const syncGrid = () => {
   if (rebuildGrid(box.x, box.y, width, height) || moved) {
     worldLayer?.batchDraw()
     topVisualLayer?.batchDraw()
+    if (gridTopCameraGroup?.getParent() === interactionLayer) interactionLayer?.batchDraw()
   }
 }
 
@@ -6344,6 +6382,15 @@ const scheduleGridSync = () => {
 const syncSurfaceSlots = () => {
   if (!backgroundSlot || !foregroundSlot) return
   const liveState = props.store.state.liveState
+  // Reuse the existing interaction Canvas above the webpage for the top grid;
+  // it remains non-listening and below selection controls. No extra Layer needed.
+  const gridLayer = liveState.surfaceEmbeds.foreground ? interactionLayer : topVisualLayer
+  if (gridLayer && gridTopCameraGroup && gridTopCameraGroup.getParent() !== gridLayer) {
+    gridTopCameraGroup.moveTo(gridLayer)
+    if (gridLayer === interactionLayer) gridTopCameraGroup.moveToBottom()
+    else gridTopCameraGroup.moveToTop()
+    interactionLayer?.batchDraw()
+  }
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
@@ -8427,6 +8474,9 @@ onMounted(() => {
   interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
   topVisualLayer.getNativeCanvasElement().style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  // An interactive background owns native pointer input across the viewport.
+  // Canvas visuals remain visible; ordinary DOM iframe objects above it keep their own native interaction.
+  worldLayer.getNativeCanvasElement().style.pointerEvents = surfaceIframeInteractive('background') ? 'none' : ''
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
   stage.on('pointermove', movePan)
@@ -8454,6 +8504,9 @@ watch(() => props.store.state.activeSceneId, (sceneId, previousSceneId) => {
   effectRuntime.invalidateCurrentMessage()
   beginSceneMediaBatch(sceneId, true, previousSceneId)
 }, { flush: 'sync' })
+watch(() => surfaceIframeInteractive('background'), (interactive) => {
+  if (worldLayer) worldLayer.getNativeCanvasElement().style.pointerEvents = interactive ? 'none' : ''
+}, { flush: 'post' })
 watch(
   () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
   (next, previous) => {
@@ -8500,6 +8553,7 @@ watch(() => ({
   background: props.store.state.liveState.background,
   foreground: props.store.state.liveState.foreground,
   surfaceStyles: props.store.state.liveState.surfaceStyles,
+  foregroundEmbed: Boolean(props.store.state.liveState.surfaceEmbeds.foreground),
   backgroundColor: props.store.state.liveState.backgroundColor,
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
@@ -9084,6 +9138,24 @@ onBeforeUnmount(() => {
       >
         <div ref="sceneVisualRef" class="theater-scene-visual">
           <div ref="containerRef" class="theater-stage-canvas" />
+          <template v-for="target in (['background', 'foreground'] as const)" :key="target">
+            <StageSurfaceIframe
+              v-if="store.state.liveState.surfaceEmbeds[target]"
+              :key="`${worldId}:${channelId}:${store.state.activeSceneId}:${target}`"
+              :target="target"
+              :embed="store.state.liveState.surfaceEmbeds[target]!"
+              :interactive="surfaceIframeInteractive(target)"
+              :camera="store.state.camera"
+              :viewport-width="viewportSize.width"
+              :viewport-height="viewportSize.height"
+              :field-width="store.state.liveState.fieldWidth"
+              :field-height="store.state.liveState.fieldHeight"
+              :world-id="worldId"
+              :channel-id="channelId"
+              :character-snapshot="characterSnapshot"
+              :style="{ zIndex: target === 'background' ? 5 : TOP_VISUAL_LAYER_Z + 1 }"
+            />
+          </template>
           <SceneOverlayStageHost
             :scene-id="store.state.activeSceneId"
             :overlays="store.state.liveState.sceneOverlays"
@@ -9107,6 +9179,10 @@ onBeforeUnmount(() => {
             :style="imageAnnotationOverlayStyle"
           >{{ imageAnnotationOverlay.annotation.text }}</div>
           <div ref="sceneMorphContainerRef" class="theater-scene-morph-overlay" />
+        </div>
+        <div v-if="surfaceInteractionTest" class="theater-surface-test-exit">
+          <span>正在测试{{ surfaceInteractionTest === 'background' ? '背景' : '前景' }}网页</span>
+          <n-button size="small" type="warning" @click="surfaceInteractionTest = null">退出网页测试</n-button>
         </div>
         <div
           v-if="isBatchSelection && selectionQuickBar.visible"
@@ -9981,6 +10057,15 @@ onBeforeUnmount(() => {
                     @update:model-value="updateSurfaceMediaFx(surface.target, $event)"
                   />
                   <n-button class="theater-surface-settings__reset" text size="small" @click="store.resetSceneSurfaceStyle(surface.target)">重置为默认</n-button>
+                  <StageSurfaceEmbedSettings
+                    :key="`${worldId}:${channelId}:${store.state.activeSceneId}:${surface.target}`"
+                    :embed="store.state.liveState.surfaceEmbeds[surface.target]"
+                    :testing="surfaceInteractionTest === surface.target"
+                    @set="store.setSceneSurfaceEmbed(surface.target, $event)"
+                    @patch="store.patchSceneSurfaceEmbed(surface.target, $event)"
+                    @remove="store.removeSceneSurfaceEmbed(surface.target)"
+                    @test="toggleSurfaceInteractionTest(surface.target)"
+                  />
                 </div>
               </n-popover>
               <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState[surface.target]" @click="clearImage({ kind: 'scene', target: surface.target })">清除</n-button>
@@ -10677,6 +10762,8 @@ onBeforeUnmount(() => {
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object),
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object__frame) { pointer-events: none !important; }
+.theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object *) { pointer-events: none !important; }
+.theater-surface-test-exit { position: absolute; z-index: 10002; top: 8px; right: 8px; max-width: calc(100% - 16px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--theater-panel); color: var(--sc-text-primary, #f4f4f5); font-size: 12px; pointer-events: auto; }
 .theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }

@@ -20,6 +20,30 @@ export interface StageIframeContent {
   scale: number
 }
 
+export interface StageSurfaceEmbed {
+  type: 'iframe'
+  iframe: StageIframeContent
+  interactive: boolean
+}
+
+export type StageSurfaceEmbedPatch = {
+  iframe?: Partial<StageIframeContent>
+  interactive?: boolean
+}
+
+export const normalizeStageSurfaceEmbed = (input: unknown): StageSurfaceEmbed | null => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const value = input as Partial<StageSurfaceEmbed>
+  if (value.type !== 'iframe') return null
+  return { type: 'iframe', iframe: normalizeStageIframeContent(value.iframe), interactive: value.interactive === true }
+}
+
+export const normalizeStageSurfaceEmbeds = (input: unknown): Record<StageSurfaceTarget, StageSurfaceEmbed | null> => {
+  const value = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Partial<Record<StageSurfaceTarget, unknown>> : {}
+  return { background: normalizeStageSurfaceEmbed(value.background), foreground: normalizeStageSurfaceEmbed(value.foreground) }
+}
+
 export const STAGE_IFRAME_MIN_SCALE = 0.25
 export const STAGE_IFRAME_MAX_SCALE = 5
 
@@ -747,6 +771,7 @@ export interface StageObject {
 export interface StageLiveState {
   background: StageImageRef | null
   foreground: StageImageRef | null
+  surfaceEmbeds: Record<StageSurfaceTarget, StageSurfaceEmbed | null>
   surfaceStyles: Record<StageSurfaceTarget, StageSurfaceStyle>
   backgroundColor: string
   fieldWidth: number
