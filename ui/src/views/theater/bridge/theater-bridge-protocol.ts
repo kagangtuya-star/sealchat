@@ -713,6 +713,11 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
   actionId: nonEmptyIdSchema,
   stepId: nonEmptyIdSchema.optional(),
   direct: z.literal(true).optional(),
+  embedEvent: z.strictObject({
+    eventId: nonEmptyIdSchema,
+    formId: nonEmptyIdSchema,
+    topic: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/),
+  }).optional(),
   action: stageActionSchema,
   execution: z.strictObject({
     id: nonEmptyIdSchema,

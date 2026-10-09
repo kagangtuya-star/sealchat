@@ -7,10 +7,10 @@ import type { MCPConfig, MCPMode } from '@/api/mcp'
 
 const utils = useUtilsStore()
 const message = useMessage()
-const draft = ref<MCPConfig>({ enabled: false, chatgptFixedClient: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', theater: 'off', theaterControl: false, theaterCapture: false, theaterChat: false, battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
+const draft = ref<MCPConfig>({ enabled: false, chatgptFixedClient: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', theater: 'off', embed: 'off', theaterControl: false, theaterCapture: false, theaterChat: false, battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
 const initial = ref('')
 const loading = ref(true)
-const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file' | 'theater'; label: string; scopes: string; modes: MCPMode[] }[] = [
+const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file' | 'theater' | 'embed'; label: string; scopes: string; modes: MCPMode[] }[] = [
   { key: 'chat', label: '聊天记录', scopes: 'chat:read', modes: ['off', 'read'] },
   { key: 'search', label: '综合搜索', scopes: 'search:read', modes: ['off', 'read'] },
   { key: 'battleReport', label: '战报总结', scopes: 'battle_report:read / battle_report:write', modes: ['off', 'read', 'write'] },
@@ -21,6 +21,7 @@ const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' |
   { key: 'note', label: '频道便签', scopes: 'note:read / note:write', modes: ['off', 'read', 'write'] },
   { key: 'file', label: '基础文件上传', scopes: 'file:write', modes: ['off', 'write'] },
   { key: 'theater', label: '小剧场', scopes: 'theater:read / theater:write', modes: ['off', 'read', 'write'] },
+  { key: 'embed', label: '频道嵌入', scopes: 'embed:read / embed:write', modes: ['off', 'read', 'write'] },
 ]
 const modeLabels = { off: '关闭', read: '只读', write: '读写' }
 const endpoint = computed(() => {
@@ -83,6 +84,7 @@ defineExpose({ save, isModified })
           <n-select v-model:value="draft[module.key]" :options="module.modes.map(value => ({ value, label: value === 'write' && module.key === 'file' ? '上传' : modeLabels[value] }))" />
         </div>
         <p>“读写”只展开为此处列出的读取和写入 scopes，不自动包含未来能力。</p>
+        <p>频道嵌入的 embed:write 可创建和修改频道 HTML/CSS/JS 嵌入代码，独立于小剧场 theater:write；仍受频道 iForm 管理权限、平台代码大小限制和模板规则约束，不包含平台模板管理。</p>
         <p>允许 Agent 在已获得读取权限的消息、线索、战报、术语、便签等内容中统一检索；不会额外授予这些数据的读取权限。</p>
         <n-form-item label="额外授权（默认关闭）">
           <n-space vertical>

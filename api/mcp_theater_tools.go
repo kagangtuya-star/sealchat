@@ -192,6 +192,13 @@ type mcpTheaterObjectFields struct {
 	Editable          *bool               `json:"editable,omitempty"`
 	Content           *mcpTheaterContent  `json:"content,omitempty"`
 	Actions           *[]mcpTheaterAction `json:"actions,omitempty"`
+	// Stored as metadata.embedEventBindings and merged at expectedRevision, so
+	// other metadata keys are preserved. Only iframe objects accept it.
+	EmbedEventBindings *[]mcpTheaterEmbedEventBinding `json:"embedEventBindings,omitempty"`
+}
+type mcpTheaterEmbedEventBinding struct {
+	Topic     string   `json:"topic"`
+	ActionIDs []string `json:"actionIds"`
 }
 type mcpTheaterContent struct {
 	Fill       *string           `json:"fill,omitempty"`
@@ -535,7 +542,9 @@ func mcpTheaterObject(ctx context.Context, a *service.MCPActor, in mcpTheaterObj
 		}
 		object := map[string]any{"id": in.ObjectID, "kind": in.Kind, "width": 8.0, "height": 5.0, "visible": true, "content": map[string]any{}, "actions": []any{}, "metadata": map[string]any{}}
 		for k, v := range fields {
-			if k != "sceneId" {
+			if k == "embedEventBindings" {
+				object["metadata"] = map[string]any{"embedEventBindings": v}
+			} else if k != "sceneId" {
 				object[k] = v
 			}
 		}
@@ -549,16 +558,22 @@ func mcpTheaterObject(ctx context.Context, a *service.MCPActor, in mcpTheaterObj
 		}
 		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, typ, payload, nil)
 	case "update":
-		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectUpdate, map[string]any{"objectId": in.ObjectID, "fields": fields}, nil)
+		patch := mcpTheaterObjectMetadataPatch(in.ObjectID, fields, nil)
+		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectUpdate, map[string]any{"objectId": in.ObjectID, "fields": fields}, patch)
 	case "batch_update":
+		var patch map[string]any
+		updates := make([]map[string]any, 0, len(in.Updates))
 		for _, u := range in.Updates {
 			if u.Fields.Content != nil && u.Fields.Content.Iframe != nil {
 				if err := mcpTheaterValidateIframe(a, in.TheaterScope, u.Fields.Content.Iframe.URL); err != nil {
 					return nil, err
 				}
 			}
+			updateFields := mcpTheaterMap(u.Fields)
+			patch = mcpTheaterObjectMetadataPatch(u.ObjectID, updateFields, patch)
+			updates = append(updates, map[string]any{"objectId": u.ObjectID, "fields": updateFields})
 		}
-		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectBatchUpdate, map[string]any{"updates": in.Updates}, nil)
+		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectBatchUpdate, map[string]any{"updates": updates}, patch)
 	case "delete":
 		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectDelete, map[string]any{"objectId": in.ObjectID, "cascade": in.Cascade}, nil)
 	case "toggle":
@@ -573,6 +588,21 @@ func mcpTheaterObject(ctx context.Context, a *service.MCPActor, in mcpTheaterObj
 	}
 }
 
+// mcpTheaterObjectMetadataPatch moves the typed embedEventBindings field out of
+// native object fields into a metadata key patch merged by the service.
+func mcpTheaterObjectMetadataPatch(objectID string, fields map[string]any, patch map[string]any) map[string]any {
+	bindings, ok := fields["embedEventBindings"]
+	if !ok {
+		return patch
+	}
+	delete(fields, "embedEventBindings")
+	if patch == nil {
+		patch = map[string]any{"objectMetadata": map[string]any{}}
+	}
+	patch["objectMetadata"].(map[string]any)[objectID] = map[string]any{"embedEventBindings": bindings}
+	return patch
+}
+
 func mcpTheaterValidateIframe(a *service.MCPActor, s service.TheaterScope, source string) error {
 	var err error
 	s, err = service.NormalizeTheaterMCPScope(a.User.ID, s)
@@ -585,17 +615,10 @@ func mcpTheaterValidateIframe(a *service.MCPActor, s service.TheaterScope, sourc
 	}
 	// Only configured internal origins are interpreted as channel iForm links.
 	cfg := mcpConfigSnapshot()
-	trusted := false
-	for _, origin := range mcpPublicOrigins(cfg, u.Scheme) {
-		if strings.EqualFold(origin, u.Scheme+"://"+u.Host) {
-			trusted = true
-		}
-	}
 	if !strings.HasPrefix(u.Fragment, "/internal/iform/") {
 		return nil
 	}
-	base := "/" + strings.Trim(cfg.WebUrl, "/")
-	if !trusted || (base != "/" && u.Path != base && !strings.HasPrefix(u.Path, base+"/")) {
+	if !service.IsTheaterInternalIFormURL(cfg, u) {
 		return mcpFailure("invalid_argument", "内部 iForm URL 必须使用已配置可信域名和 webUrl 路径")
 	}
 	fragment, e := url.Parse(u.Fragment)
@@ -640,6 +663,12 @@ func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterRe
 		out["fields"] = mcpTheaterObjectSchemaFields()
 		out["actions"] = []string{"object.toggle", "effect.play", "scene.apply", "action.sequence", "chat.send", "chat.insert", "chat.random-table", "clue.execute"}
 		out["sceneSequenceActions"] = []string{"object.trigger", "effect.play", "scene.apply"}
+		out["clickActionKinds"] = []string{"drawing", "text", "image", "button"}
+		out["embedEventBindings"] = map[string]any{
+			"objectKinds": []string{"iframe"}, "maxBindings": service.TheaterMaxEmbedEventBindings, "maxActionsPerBinding": service.TheaterMaxEmbedEventBindingActions,
+			"topicPattern": service.ChannelEmbedTopicPattern.String(), "storedAt": "metadata.embedEventBindings",
+			"note": "精确 topic 映射到同一 iframe 对象已保存的 actions；事件 payload 不参与动作选择。iframe 不获得舞台点击语义，也不能作为 object.trigger 目标。",
+		}
 		out["coordinates"] = service.TheaterMCPLimits()
 	case "effects":
 		out["builtinThemes"] = service.TheaterEffectThemes
@@ -673,7 +702,7 @@ func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterRe
 	return out, nil
 }
 func mcpTheaterObjectSchemaFields() any {
-	return []string{"sceneId", "parentId", "name", "x", "y", "width", "height", "rotation", "scale", "scaleX", "scaleY", "z", "orderKey", "visible", "locked", "aspectRatioLocked", "interactive", "editable", "content", "actions"}
+	return []string{"sceneId", "parentId", "name", "x", "y", "width", "height", "rotation", "scale", "scaleX", "scaleY", "z", "orderKey", "visible", "locked", "aspectRatioLocked", "interactive", "editable", "content", "actions", "embedEventBindings"}
 }
 func mcpTheaterOperationFields(input any, operation string, operations map[string]string) error {
 	fields, ok := operations[operation]
@@ -730,7 +759,7 @@ func mcpTheaterTools() []mcpToolSpec {
 		mcpTheaterSpec("theater_read", "读取权限投影后的小剧场，按场景/对象分页。summary 对象页为指定或当前场景加常驻对象。普通对象采用中心锚点、WORLD_UNIT_PX=24；特效使用独立 1920x1080 设计坐标。world scope 的 channelId 必须为空，聊天使用 inputChannelId。", []string{"summary", "scene", "object", "events", "renderers"}, []string{"theater:read"}, false, false, true, mcpTheaterRead),
 		mcpTheaterSpec("theater_catalog", "小剧场原生类型、动作、特效、环境叠层、素材和限制；浏览器注册表仅在 renderer 在线时可用。", []string{"object_types", "effects", "overlays", "resources", "limits"}, []string{"theater:read"}, false, false, true, mcpTheaterCatalog),
 		mcpTheaterSpec("theater_scene", "结构化场景控制。state 局部更新在 expectedRevision 合并，保留其他字段；冲突后重读并使用新 mutationId。apply 另需 theater:control 与场景切换权限。", []string{"create", "update", "reorder", "delete", "apply", "folders_update", "surface_update", "surface_embed_set", "surface_embed_clear", "overlay_update", "music_update", "transition_update", "sequence_update"}, []string{"theater:write"}, true, true, true, mcpTheaterScene),
-		mcpTheaterSpec("theater_object", "普通对象 CRUD、原生 object.batchUpdate、显隐和角色绑定。支持 content.iframe={url,scale} 与 interactive；仅引用已有频道 iForm，不管理代码。batch_update 仅原子更新已有对象。content/actions 的更新遵循原生整体替换语义。", []string{"create", "update", "batch_update", "delete", "toggle", "bind_character"}, []string{"theater:write"}, true, true, true, mcpTheaterObject),
+		mcpTheaterSpec("theater_object", "普通对象 CRUD、原生 object.batchUpdate、显隐和角色绑定。支持 content.iframe={url,scale} 与 interactive；仅引用已有频道 iForm，不管理代码（频道嵌入代码用 embed_save）。iframe 可保存 actions 并用 embedEventBindings=[{topic,actionIds}] 把嵌入 events.publish 的精确 topic 绑定到这些动作。batch_update 仅原子更新已有对象。content/actions/embedEventBindings 的更新遵循整体替换语义。", []string{"create", "update", "batch_update", "delete", "toggle", "bind_character"}, []string{"theater:write"}, true, true, true, mcpTheaterObject),
 		mcpTheaterSpec("theater_control", "执行保存的动作/序列，查询或取消 execution。浏览器动作返回明确任务状态；所有业务步骤以 MCP Actor 服务端鉴权，不借用浏览器账户权限。", []string{"apply_scene", "trigger_action", "trigger_sequence", "execution_status", "cancel_execution"}, []string{"theater:control"}, true, false, false, mcpTheaterControl),
 		mcpTheaterSpec("theater_view", "指定同账号、同 scope 授权 renderer 的本地相机和选择；不写共享状态。", []string{"get", "camera_set", "fit_scene", "focus_object", "select_objects", "clear_selection"}, []string{"theater:read"}, true, false, false, mcpTheaterView),
 		mcpTheaterSpec("theater_capture", "浏览器协作截图 capture/status/cancel；返回 MCP ImageContent 和版本、坐标映射、缺失图层。无法完整捕获 iframe 等内容时返回 partial。", []string{"capture", "status", "cancel"}, []string{"theater:capture"}, true, false, false, mcpTheaterCapture),

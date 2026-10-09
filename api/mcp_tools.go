@@ -434,5 +434,6 @@ func mcpToolRegistry() []mcpToolSpec {
 	ret = append(ret, mcpNoteTools()...)
 	ret = append(ret, mcpFileTools()...)
 	ret = append(ret, mcpTheaterTools()...)
+	ret = append(ret, mcpEmbedTools()...)
 	return ret
 }

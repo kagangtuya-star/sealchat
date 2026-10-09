@@ -827,6 +827,9 @@ func validateObjectInput(object *theaterObjectInput) error {
 			return err
 		}
 	}
+	if err := validateTheaterEmbedEventBindings(object.Kind, object.Metadata, object.Actions); err != nil {
+		return err
+	}
 	if object.Kind == "effect" {
 		if object.ParentID != nil && strings.TrimSpace(*object.ParentID) != "" {
 			return theaterPayloadError("effect 不能设置 parent")

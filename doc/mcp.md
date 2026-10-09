@@ -14,7 +14,7 @@ Key 只用于 `/mcp` 和专用上传端点，不能认证账号或平台管理 A
 
 关闭平台后可以在个人信息查看和撤销已有 Key，但不能新建、编辑或轮换。停用模块只使对应授权暂时无效，保留 Key 保存的 scopes；编辑时允许保留或删除已有授权，但不能新增当前平台未开放的 scope。撤销、降权或关闭平台阻止后续调用，不能回滚已提交写入或取消已接受的原生 AI 任务。轮换使旧 secret 立即失效，不延长到期时间。
 
-SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorization Code + PKCE**。PAT 适合 Claude、Codex 和支持自定义 Bearer 的普通 MCP Client；OAuth 主要用于 ChatGPT 等标准 OAuth MCP Client。两种凭证最终解析成同一个 `MCPActor`，完整复用 35 个工具、22 个 scopes、实时业务 ACL、限流和审计日志。OAuth access/refresh token 不能认证普通 SealChat REST API，也不会转换成网页登录 token。
+SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorization Code + PKCE**。PAT 适合 Claude、Codex 和支持自定义 Bearer 的普通 MCP Client；OAuth 主要用于 ChatGPT 等标准 OAuth MCP Client。两种凭证最终解析成同一个 `MCPActor`，完整复用 39 个工具、24 个 scopes、实时业务 ACL、限流和审计日志。OAuth access/refresh token 不能认证普通 SealChat REST API，也不会转换成网页登录 token。
 
 ## ChatGPT OAuth
 
@@ -57,7 +57,7 @@ OAuth 直接调用缺少 scope 的工具时，仅当工具要求的 scopes 仍�
 1. 确认 MCP 已开启、模块 scopes 已开放，ChatGPT 选择 OAuth 且没有 client secret。
 2. 在实际连接域名读取两个根 discovery 路径，核对 issuer、resource、authorize/token URL 和 HTTPS；子路径部署的反向代理也要转发根 well-known 路径。
 3. `invalid_host` 检查 `config.domain` 和代理 Host；`https_required` 检查 trusted proxy 与 forwarded proto，不通过信任任意 Host 解决。
-4. `invalid_scope` 检查请求是否只含 22 个已知 scope 且平台当前开放；`invalid_client/invalid_request` 检查固定 client/redirect、resource、S256 和 form 编码。
+4. `invalid_scope` 检查请求是否只含 24 个已知 scope 且平台当前开放；`invalid_client/invalid_request` 检查固定 client/redirect、resource、S256 和 form 编码。
 5. `expired/invalid_grant` 检查授权超时、服务重启、跨 domain、code 重放、verifier、连接撤销和 refresh rotation，重新连接获取新请求。MCP 401 可先查看 `resource_metadata` challenge，再检查用户状态和 access token 到期；503 检查平台开关，429 检查公开端点 IP 限流或共用用户限流。authorize 的 `temporarily_unavailable` 也可能是 CIMD 不可达/不符合必要能力或临时 store 已满。
 
 真实 ChatGPT OAuth 联调仍需要部署域名、HTTPS/代理配置及根 well-known 路由；默认模式还需要服务器可访问固定 CIMD URL，显式兼容模式无需这项出站访问。本地 stub/HTTP 测试不代表 ChatGPT 端到端连接已验证。
@@ -77,7 +77,7 @@ ChatGPT 仍填写原公开 `/mcp` 地址并选择 OAuth/CIMD，无需新建 clie
 
 ## Scopes 与工具
 
-原有 28 个工具、17 个 scope ID 保持不变；小剧场第一期新增 7 个工具及 5 个 scopes。模块的“读写”明确展开为下表中的读取与写入 scopes，不使用通配符。Theater 模块默认关闭；控制、截图、聊天副作用额外授权默认关闭。旧 Key 不会自动获得新增 scopes。
+原有 28 个工具、17 个 scope ID 保持不变；小剧场第一期新增 7 个工具及 5 个 scopes；频道嵌入（小剧场第二期）新增 4 个工具及 `embed:read`、`embed:write` 2 个 scopes。模块的“读写”明确展开为下表中的读取与写入 scopes，不使用通配符。Theater 与频道嵌入模块默认关闭；控制、截图、聊天副作用额外授权默认关闭。旧 Key 不会自动获得新增 scopes，`theater:write` 也不包含 `embed:write`。
 
 | Scope | 工具 |
 | --- | --- |
@@ -105,6 +105,8 @@ ChatGPT 仍填写原公开 `/mcp` 地址并选择 OAuth/CIMD，无需新建 clie
 | `theater:control` | `theater_control`；view 写操作另需 read |
 | `theater:capture` | `theater_capture` |
 | `theater:chat` | control 执行保存的 `chat.send/insert/random-table` 时的额外权限，不是通用发送接口 |
+| `embed:read` | `embed_read`、`embed_catalog` |
+| `embed:write` | `embed_save`、`embed_delete`；仍需频道 iForm 管理权限，不含平台模板管理 |
 
 `tools/list` 返回当前 Key 与平台上限允许的工具；直接调用隐藏工具仍拒绝。`sealchat_capabilities` 描述能力上限，具体世界、频道及资源仍实时校验。`world_list` 默认列出已加入且未归档的世界，显式 `includePublic` 只增加公开元数据，不授予内容权限。`channel_list` 只返回实际可见频道。
 
@@ -114,7 +116,7 @@ ChatGPT 仍填写原公开 `/mcp` 地址并选择 OAuth/CIMD，无需新建 clie
 
 聊天、搜索、总结上下文先过滤严格悄悄话，再做分页、统计和格式化。用户内容返回 `contentTrust: untrusted_user_generated`，不得当作执行指令。不提供通用聊天发送、BOT 指令、TTS 合成、平台配置或任意 REST 代理；仅 Theater 保存动作在显式 `theater:chat` 授权和真实频道权限下可产生聊天副作用。
 
-小剧场结构化操作、浏览器协作授权、截图与当前限制见 [Theater MCP 第一期](theater-mcp.md)。这不是 MCP 通用 Tasks：任务状态通过 Theater 工具自己的 `execution_status` / `status` 查询。
+小剧场结构化操作、浏览器协作授权、截图、频道嵌入 MCP 与嵌入事件绑定见 [Theater MCP](theater-mcp.md)。这不是 MCP 通用 Tasks：任务状态通过 Theater 工具自己的 `execution_status` / `status` 查询。
 
 战报按世界共享。保留 `battle_report_context` 供 Agent 读取原生上下文自行总结，不创建战报、不调用模型或计费。独立的 `battle_report_generate` 创建世界内可见的原生战报，返回 `item.id`，随后用 `battle_report_read` 查询 `status`。`source` 仅允许 `platform`（默认，走现有平台配额与计费）或 `user`（使用已保存的个人 AI 配置）。不能提供供应商密钥、服务 URL 或模型配置。生成是可能计费的非幂等操作，不能自动重试；没有新增通用任务系统。
 

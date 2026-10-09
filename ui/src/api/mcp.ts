@@ -14,6 +14,7 @@ export interface MCPConfig {
   note: MCPMode
   file: MCPMode
   theater: MCPMode
+  embed: MCPMode
   theaterControl: boolean
   theaterCapture: boolean
   theaterChat: boolean

@@ -76,6 +76,13 @@ func ApplyTheaterMCPMutation(ctx context.Context, actorID, credentialID string, 
 		command.Payload = json.RawMessage(existing.PayloadJSON)
 		return ApplyTheaterMutation(ctx, actorID, command, meta)
 	}
+	if statePatch != nil && (command.Type == TheaterMutationObjectUpdate || command.Type == TheaterMutationObjectBatchUpdate) {
+		command.Payload, err = mergeTheaterMCPObjectMetadata(ctx, actorID, command, statePatch)
+		if err != nil {
+			return nil, err
+		}
+		return ApplyTheaterMutation(ctx, actorID, command, meta)
+	}
 	if statePatch != nil {
 		if command.Type != TheaterMutationSceneUpdate {
 			return nil, theaterPayloadError("局部 state 仅支持 scene.update")
@@ -125,6 +132,79 @@ func ApplyTheaterMCPMutation(ctx context.Context, actorID, credentialID string, 
 		// rejection and preserves its idempotent retry semantics.
 	}
 	return ApplyTheaterMutation(ctx, actorID, command, meta)
+}
+
+// mergeTheaterMCPObjectMetadata applies patch["objectMetadata"][objectId] keys
+// onto each target object's metadata read at the caller's revision, preserving
+// every other metadata key. A stale revision keeps the current metadata so the
+// native CAS records the conflict instead of rebasing the patch.
+func mergeTheaterMCPObjectMetadata(ctx context.Context, actorID string, command TheaterMutationCommand, patch map[string]any) (json.RawMessage, error) {
+	objectPatches, ok := patch["objectMetadata"].(map[string]any)
+	if !ok || len(patch) != 1 || len(objectPatches) == 0 {
+		return nil, theaterPayloadError("对象 metadata 局部更新无效")
+	}
+	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionObjectEdit); err != nil {
+		return nil, err
+	}
+	snapshot, err := GetTheaterSnapshot(ctx, actorID, command.WorldID, command.ChannelID, TheaterSnapshotOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var updates []theaterObjectUpdatePayload
+	var batch theaterObjectBatchUpdatePayload
+	if command.Type == TheaterMutationObjectUpdate {
+		var single theaterObjectUpdatePayload
+		if err := decodeStrictJSON(command.Payload, &single); err != nil {
+			return nil, theaterPayloadError("object patch 无效")
+		}
+		updates = []theaterObjectUpdatePayload{single}
+	} else {
+		if err := decodeStrictJSON(command.Payload, &batch); err != nil {
+			return nil, theaterPayloadError("object patch 无效")
+		}
+		updates = batch.Updates
+	}
+	applied := map[string]bool{}
+	for index := range updates {
+		changes, ok := objectPatches[updates[index].ObjectID].(map[string]any)
+		if !ok {
+			continue
+		}
+		object, found := snapshot.Snapshot.PersistentObjects[updates[index].ObjectID]
+		for _, scene := range snapshot.Snapshot.Scenes {
+			if found {
+				break
+			}
+			object, found = scene.Objects[updates[index].ObjectID]
+		}
+		if !found {
+			return nil, newTheaterError(TheaterErrorNotFound, "对象不存在", 404, nil)
+		}
+		metadata := map[string]any{}
+		if len(object.Metadata) > 0 {
+			if err := json.Unmarshal(object.Metadata, &metadata); err != nil || metadata == nil {
+				metadata = map[string]any{}
+			}
+		}
+		if snapshot.Revision == command.ExpectedRevision {
+			for key, value := range changes {
+				metadata[key] = value
+			}
+		}
+		if updates[index].Fields == nil {
+			updates[index].Fields = map[string]any{}
+		}
+		updates[index].Fields["metadata"] = metadata
+		applied[updates[index].ObjectID] = true
+	}
+	if len(applied) != len(objectPatches) {
+		return nil, theaterPayloadError("对象 metadata 局部更新目标无效")
+	}
+	if command.Type == TheaterMutationObjectUpdate {
+		return json.Marshal(updates[0])
+	}
+	batch.Updates = updates
+	return json.Marshal(batch)
 }
 
 func mergeTheaterMCPState(state, patch map[string]any) {

@@ -145,7 +145,13 @@ func PrepareTheaterMCPExecution(ctx context.Context, a *MCPActor, s TheaterScope
 		if err != nil {
 			return n, err
 		}
-		if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+		// object.trigger keeps click-target semantics. Only an explicit top-level
+		// actionId may run an iframe action, and only when an embed event binds it.
+		runnable := isTheaterActionTargetKind(object.Kind)
+		if !runnable && depth == 0 && selected != "" {
+			runnable = theaterObjectCanRunSavedAction(object, selected)
+		}
+		if !object.Interactive || !runnable {
 			return n, newTheaterError(TheaterErrorPermissionDenied, "对象未开放交互", 403, nil)
 		}
 		if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
@@ -338,6 +344,7 @@ func (e *TheaterMCPExecution) Execute(ctx context.Context, a *MCPActor, s Theate
 	// A plan becomes invalid on edits. Re-resolve saved actions in the native
 	// service, which prevents a browser from supplying a new business payload.
 	command := leaf.command
+	command.actionSource = theaterActionSourceMCPControl
 	command.ActionRequestID = executionID + ":" + stepID
 	command.ExpectedRevision = revision
 	meta := TheaterRequestMeta{Source: "mcp", RequestID: command.ActionRequestID, SessionID: a.CredentialID}

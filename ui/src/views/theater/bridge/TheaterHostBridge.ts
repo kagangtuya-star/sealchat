@@ -1,5 +1,5 @@
 import type { TheaterStageStore } from '../stage/StageStore'
-import { isStageActionTarget, normalizeStageActionSchedule } from '../shared/stage-types'
+import { canStageObjectRunSavedAction, isStageActionTarget, normalizeStageActionSchedule, resolveStageEmbedEventActions } from '../shared/stage-types'
 import { sequenceStepAction } from '../shared/stage-actions'
 import { runStageActionSequence, STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
@@ -639,8 +639,14 @@ export class TheaterHostBridge {
       return
     }
     const object = this.options.stageStore.activeObjects.value[payload.objectId]
-    if (!object || !object.interactive || !isStageActionTarget(object.type)) {
+    // Click targets run any saved action; an iframe only runs actions bound to
+    // its embed events. object.trigger below keeps the click-target rule.
+    if (!object || !object.interactive || !canStageObjectRunSavedAction(object, payload.actionId)) {
       this.debug('stage action object rejected', payload.objectId)
+      return
+    }
+    if (object.type === 'iframe' && (!payload.embedEvent || !resolveStageEmbedEventActions(object, payload.embedEvent.topic).some(action => action.id === payload.actionId))) {
+      this.debug('stage embed event context rejected', payload.actionId)
       return
     }
     const action = object.actions.find((item) => item.id === payload.actionId)
@@ -661,15 +667,18 @@ export class TheaterHostBridge {
   ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
     const action = payload.action
     if (action.type === 'action.sequence') {
-      return this.executeStageActionSequence(payload.objectId, action, objectTriggerChain)
+      return this.executeStageActionSequence(payload.objectId, action, objectTriggerChain, payload.embedEvent)
     }
     // object.trigger stays host-local; only the target's saved actions use the callback.
-    if (action.type !== 'object.trigger' && this.options.triggerStageAction) {
+    if ((action.type !== 'object.trigger' || payload.embedEvent) && this.options.triggerStageAction) {
       const handled = await this.options.triggerStageAction(payload)
       if (handled === STAGE_ACTION_CANCELLED) return STAGE_ACTION_CANCELLED
       if (handled === true) return
       if (handled) return this.executeStageAction(handled, objectTriggerChain)
     }
+    // Embed event actions must complete the server receipt check before any
+    // host-local execution, including object.trigger and local descriptors.
+    if (payload.embedEvent) return
     return this.executeStageAction(action, objectTriggerChain)
   }
 
@@ -715,6 +724,7 @@ export class TheaterHostBridge {
     objectId: string,
     action: Extract<StageAction, { type: 'action.sequence' }>,
     objectTriggerChain: ReadonlySet<string> = new Set(),
+    embedEvent?: StageActionTriggeredPayload['embedEvent'],
   ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
     const key = `${objectId}:${action.id}`
     if (this.runningSequenceActions.has(key)) return
@@ -729,6 +739,7 @@ export class TheaterHostBridge {
           objectId,
           actionId: action.id,
           stepId: step.id,
+          ...(embedEvent ? { embedEvent } : {}),
           action: sequenceStepAction(step),
         }, objectTriggerChain)
       })

@@ -53,7 +53,7 @@ func isTheaterActionTargetKind(kind string) bool {
 	return kind == "drawing" || kind == "text" || kind == "image" || kind == "button"
 }
 
-func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterActionCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
+func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterActionCommand, meta TheaterRequestMeta) (result *TheaterActionResult, resultErr error) {
 	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
 		return nil, err
 	}
@@ -68,8 +68,20 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	// Visibility controls hit testing in the client. Do not use it as an
 	// execution precondition: an action may hide its own source before later
 	// actions from the same click (for example, chat-driven effects) run.
-	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+	if !object.Interactive || !theaterObjectCanRunSavedAction(object, command.ActionID) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
+	if object.Kind == "iframe" && command.actionSource != theaterActionSourceMCPControl {
+		use, err := BeginTheaterEmbedEventUse(actorID, command.WorldID, command.ChannelID, command.InputChannelID, object, []string{command.ActionID}, command.StepID, command.EntryID, command.EmbedEvent)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr == nil && result != nil {
+				CommitTheaterEmbedEventUse(use)
+			}
+			ReleaseTheaterEmbedEventUse(use)
+		}()
 	}
 	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
 		return nil, err
@@ -247,7 +259,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 // TriggerTheaterActionBatch applies independent visibility toggles from one
 // click as one theater mutation. This gives every client one final snapshot
 // instead of visibly replaying each toggle after the previous revision.
-func TriggerTheaterActionBatch(ctx context.Context, actorID string, command TheaterActionBatchCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
+func TriggerTheaterActionBatch(ctx context.Context, actorID string, command TheaterActionBatchCommand, meta TheaterRequestMeta) (result *TheaterActionResult, resultErr error) {
 	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
 		return nil, err
 	}
@@ -266,8 +278,25 @@ func TriggerTheaterActionBatch(ctx context.Context, actorID string, command Thea
 	if err != nil {
 		return nil, err
 	}
-	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+	if !object.Interactive || (!isTheaterActionTargetKind(object.Kind) && object.Kind != "iframe") {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
+	for _, actionID := range command.ActionIDs {
+		if !theaterObjectCanRunSavedAction(object, actionID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+		}
+	}
+	if object.Kind == "iframe" {
+		use, err := BeginTheaterEmbedEventUse(actorID, command.WorldID, command.ChannelID, "", object, command.ActionIDs, "", "", command.EmbedEvent)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr == nil && result != nil {
+				CommitTheaterEmbedEventUse(use)
+			}
+			ReleaseTheaterEmbedEventUse(use)
+		}()
 	}
 	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
 		return nil, err

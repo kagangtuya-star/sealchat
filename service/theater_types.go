@@ -198,24 +198,28 @@ type TheaterResourceProcessing struct {
 }
 
 type TheaterActionCommand struct {
-	ActionRequestID  string `json:"actionRequestId"`
-	WorldID          string `json:"worldId"`
-	ChannelID        string `json:"channelId"`
-	InputChannelID   string `json:"inputChannelId"`
-	ObjectID         string `json:"objectId"`
-	ActionID         string `json:"actionId"`
-	StepID           string `json:"stepId"`
-	ExpectedRevision int64  `json:"expectedRevision"`
-	EntryID          string `json:"entryId"`
+	ActionRequestID  string                    `json:"actionRequestId"`
+	WorldID          string                    `json:"worldId"`
+	ChannelID        string                    `json:"channelId"`
+	InputChannelID   string                    `json:"inputChannelId"`
+	ObjectID         string                    `json:"objectId"`
+	ActionID         string                    `json:"actionId"`
+	StepID           string                    `json:"stepId"`
+	ExpectedRevision int64                     `json:"expectedRevision"`
+	EntryID          string                    `json:"entryId"`
+	EmbedEvent       *TheaterEmbedEventContext `json:"embedEvent,omitempty"`
+	// Set only by the authenticated MCP execution entry, never decoded from JSON.
+	actionSource theaterActionSource
 }
 
 type TheaterActionBatchCommand struct {
-	ActionRequestID  string   `json:"actionRequestId"`
-	WorldID          string   `json:"worldId"`
-	ChannelID        string   `json:"channelId"`
-	ObjectID         string   `json:"objectId"`
-	ActionIDs        []string `json:"actionIds"`
-	ExpectedRevision int64    `json:"expectedRevision"`
+	ActionRequestID  string                    `json:"actionRequestId"`
+	WorldID          string                    `json:"worldId"`
+	ChannelID        string                    `json:"channelId"`
+	ObjectID         string                    `json:"objectId"`
+	ActionIDs        []string                  `json:"actionIds"`
+	ExpectedRevision int64                     `json:"expectedRevision"`
+	EmbedEvent       *TheaterEmbedEventContext `json:"embedEvent,omitempty"`
 }
 
 type TheaterActionResult struct {

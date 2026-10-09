@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRaw, watch, type CSSProperties } from 'vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
-import type { ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHost'
+import type { ChannelEmbedTheaterCharacterSource, ChannelEmbedTheaterEventSink, ChannelEmbedTheaterContext } from '@/bridge/channelEmbedHost'
 import { useChatStore } from '@/stores/chat'
 import { useIFormStore } from '@/stores/iform'
 import { useUtilsStore } from '@/stores/utils'
@@ -19,7 +19,10 @@ const props = defineProps<{
   mediaFx?: MediaFxDirectiveValue
   worldId?: string
   channelId?: string
+  scopeType?: 'world' | 'channel'
   characterSnapshot: ChatCharactersSnapshotPayload
+  // Only plain iframe objects pass a sink; surface embeds keep no event linkage.
+  embedEventSink?: ChannelEmbedTheaterEventSink
 }>()
 
 const chat = useChatStore()
@@ -36,7 +39,22 @@ const normalizeBasePath = (value: string) => {
 const pathMatchesBase = (url: URL, basePath: string) => (
   !basePath || url.pathname === basePath || url.pathname.startsWith(`${basePath}/`)
 )
+const matchesConfiguredInternalDomain = (url: URL, domain: string, basePath: string) => {
+  try {
+    const hasExplicitProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(domain)
+    const canonicalUrl = new URL(hasExplicitProtocol ? domain : `http://${domain}`)
+    if (!['http:', 'https:'].includes(canonicalUrl.protocol) || canonicalUrl.username || canonicalUrl.password) return false
+    const hostMatches = hasExplicitProtocol
+      ? url.origin === canonicalUrl.origin
+      : url.hostname === canonicalUrl.hostname
+        && (canonicalUrl.port ? (url.port || (url.protocol === 'https:' ? '443' : '80')) === canonicalUrl.port : !url.port)
+    return hostMatches && pathMatchesBase(url, basePath)
+  } catch {
+    return false
+  }
+}
 const isTrustedInternalSurfaceUrl = (url: URL) => {
+  if (!['http:', 'https:'].includes(url.protocol)) return false
   try {
     const documentUrl = new URL(window.location.href.split('#', 1)[0])
     if (
@@ -44,16 +62,9 @@ const isTrustedInternalSurfaceUrl = (url: URL) => {
       && pathMatchesBase(url, normalizeBasePath(documentUrl.pathname))
     ) return true
 
-    const configuredDomain = utilsStore.config?.domain?.trim() || ''
-    if (!configuredDomain) return false
-    const hasExplicitProtocol = /^https?:\/\//i.test(configuredDomain)
-    const canonicalUrl = new URL(hasExplicitProtocol ? configuredDomain : `http://${configuredDomain}`)
-    const hostMatches = hasExplicitProtocol
-      ? url.origin === canonicalUrl.origin
-      : url.hostname === canonicalUrl.hostname
-        && (canonicalUrl.port ? (url.port || (url.protocol === 'https:' ? '443' : '80')) === canonicalUrl.port : !url.port)
     const canonicalBasePath = normalizeBasePath(utilsStore.config?.webUrl?.trim() || '')
-    return hostMatches && pathMatchesBase(url, canonicalBasePath)
+    return (utilsStore.config?.domain || '').split(';').map(domain => domain.trim()).filter(Boolean)
+      .some(domain => matchesConfiguredInternalDomain(url, domain, canonicalBasePath))
   } catch {
     return false
   }
@@ -139,6 +150,30 @@ watch(
   { immediate: true },
 )
 
+// Forward only events from the form this frame currently renders.
+const theaterContext = computed<ChannelEmbedTheaterContext | undefined>(() => {
+  const target = internalIFormTarget.value
+  if (!props.embedEventSink || !props.objectId || !props.scopeType || !target || !internalIFormContextMatches.value) return undefined
+  return {
+    worldId: target.worldId,
+    scopeType: props.scopeType,
+    channelId: props.scopeType === 'world' ? '' : target.channelId,
+    objectId: props.objectId,
+  }
+})
+
+const forwardEmbedEvent: ChannelEmbedTheaterEventSink = (event) => {
+  const target = internalIFormTarget.value
+  if (
+    !props.embedEventSink
+    || !target
+    || !internalIFormContextMatches.value
+    || event.formId !== target.id
+    || event.channelId !== target.channelId
+  ) return
+  props.embedEventSink(event)
+}
+
 onBeforeUnmount(() => {
   loadEpoch += 1
   Array.from(theaterCharacterSourceStops).forEach(stop => stop())
@@ -190,6 +225,8 @@ const showsFrame = computed(() => (
         :channel-id="internalIFormTarget.channelId"
         :enable-channel-embed="true"
         :theater-character-source="theaterCharacterSource"
+        :theater-event-sink="props.embedEventSink ? forwardEmbedEvent : undefined"
+        :theater-context="theaterContext"
         :style="frameStyle"
       />
       <iframe

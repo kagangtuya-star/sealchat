@@ -2,8 +2,10 @@ import { computed, reactive, watch, type ComputedRef } from 'vue'
 import {
   createDefaultStageSurfaceStyle,
   createDefaultStageSceneTransition,
-  isStageActionTarget,
+  isStageActionOwner,
   isSafeStageImageUrl,
+  setStageObjectEmbedEventBindings,
+  stageObjectEmbedEventBindings,
   normalizeStageIframeContent,
   normalizeStageSurfaceEmbed,
   normalizeStageSurfaceEmbeds,
@@ -40,9 +42,9 @@ import {
 import { normalizeStageClueExecutePayload, normalizeStageRandomTablePayload, normalizeStageSequenceAction } from '../shared/stage-actions'
 import {
   applyObjectHistoryEntry,
-  cloneStageActionsForCopy,
   cloneStageData,
   collectObjectSubtree,
+  copyStageObjectActions,
   createObjectHistoryEntry,
   instantiateClipboardBundle,
   type StageClipboardBundle,
@@ -947,7 +949,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes[scene.id] = scene
     const sceneIdMap = new Map([[source.id, scene.id]])
     Object.values(scene.state.sceneObjects).forEach((object) => {
-      object.actions = cloneStageActionsForCopy(object.actions, uid, idMap, sceneIdMap)
+      copyStageObjectActions(object, uid, idMap, sceneIdMap)
     })
     if (activateDuplicate) {
       state.activeSceneId = scene.id
@@ -1590,7 +1592,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
-    if (!object || !isStageActionTarget(object.type)) return false
+    if (!object || !isStageActionOwner(object.type)) return false
     const normalizedAction = normalizeActions([action])[0]
     if (!normalizedAction) return false
     const enableDrawingInteraction = object.type === 'drawing' && object.actions.length === 0
@@ -1605,6 +1607,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const index = object.actions.findIndex((action) => action.id === actionId)
     if (index < 0) return false
     object.actions.splice(index, 1)
+    // Prune in the same edit: the server rejects bindings to missing actions.
+    if (object.metadata?.embedEventBindings !== undefined) {
+      setStageObjectEmbedEventBindings(object, stageObjectEmbedEventBindings(object))
+    }
     return true
   })
 

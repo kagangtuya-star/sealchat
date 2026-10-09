@@ -900,6 +900,20 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 			updates["metadata_json"] = string(raw)
 		}
 	}
+	_, actionsChanged := updates["actions_json"]
+	_, metadataChanged := updates["metadata_json"]
+	if actionsChanged || metadataChanged {
+		actionsJSON, metadataJSON := object.ActionsJSON, object.MetadataJSON
+		if actionsChanged {
+			actionsJSON = updates["actions_json"].(string)
+		}
+		if metadataChanged {
+			metadataJSON = updates["metadata_json"].(string)
+		}
+		if err := validateTheaterEmbedEventBindings(object.Kind, []byte(metadataJSON), []byte(actionsJSON)); err != nil {
+			return err
+		}
+	}
 	return tx.Model(object).Updates(updates).Error
 }
 

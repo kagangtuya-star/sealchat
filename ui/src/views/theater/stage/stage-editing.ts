@@ -1,5 +1,5 @@
 import { toRaw } from 'vue'
-import type { StageAction, StageObject, StageObjectScope } from '../shared/stage-types'
+import { setStageObjectEmbedEventBindings, stageObjectEmbedEventBindings, type StageAction, type StageObject, type StageObjectScope } from '../shared/stage-types'
 
 export interface StageClipboardBundle {
   version: 2
@@ -109,6 +109,25 @@ export const cloneStageActionsForCopy = (
   }
   return copiedAction
 })
+
+// Copies keep embed event bindings attached to the copied actions' new IDs.
+export const copyStageObjectActions = (
+  object: StageObject,
+  makeId: (prefix: string) => string,
+  objectIdMap: ReadonlyMap<string, string>,
+  sceneIdMap: ReadonlyMap<string, string> = new Map(),
+) => {
+  const bindings = stageObjectEmbedEventBindings(object)
+  const copied = cloneStageActionsForCopy(object.actions, makeId, objectIdMap, sceneIdMap)
+  const actionIdMap = new Map(object.actions.map((action, index) => [action.id, copied[index].id]))
+  object.actions = copied
+  if (object.metadata?.embedEventBindings !== undefined) {
+    setStageObjectEmbedEventBindings(object, bindings.map(binding => ({
+      topic: binding.topic,
+      actionIds: binding.actionIds.map(id => actionIdMap.get(id) || id),
+    })))
+  }
+}
 
 const diffRecord = (
   target: StageObjectPatch['target'],
@@ -245,7 +264,7 @@ export const instantiateClipboardBundle = (
     object.parentId = rootIds.has(source.id)
       ? rootParentIds.get(source.id) || null
       : source.parentId ? idMap.get(source.parentId) || null : null
-    object.actions = cloneStageActionsForCopy(object.actions, makeId, idMap)
+    copyStageObjectActions(object, makeId, idMap)
     if (rootIds.has(source.id)) {
       object.name = `${object.name} 副本`
       object.transform.x += offset

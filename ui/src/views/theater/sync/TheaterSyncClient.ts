@@ -1219,6 +1219,7 @@ export class TheaterSyncClient {
       actionRequestId: mutationId('action'),
       objectId: payload.objectId,
       actionId: payload.actionId,
+      ...(payload.embedEvent ? { embedEvent: payload.embedEvent } : {}),
       ...(payload.stepId ? { stepId: payload.stepId } : {}),
       ...(entryId ? { entryId } : {}),
       inputChannelId: this.inputChannelId || this.options.channelId,
@@ -1238,6 +1239,7 @@ export class TheaterSyncClient {
       actionRequestId: mutationId('action-batch'),
       objectId: first.objectId,
       actionIds: payloads.map((payload) => payload.actionId),
+      ...(first.embedEvent ? { embedEvent: first.embedEvent } : {}),
       expectedRevision: this.revision,
     })
   }

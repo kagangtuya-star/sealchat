@@ -49,6 +49,25 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 	}
 	search := strings.ToLower(strings.TrimSpace(c.Query("search")))
 	originFilter := strings.TrimSpace(c.Query("origin"))
+	items, err := listChannelIFormTemplateCatalog(search, originFilter, CanWithSystemRole(c, pm.PermModAdmin))
+	if err != nil {
+		return wrapIFormMutationError(c, err)
+	}
+	total := len(items)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return c.JSON(fiber.Map{"items": items[start:end], "page": page, "pageSize": pageSize, "total": total})
+}
+
+// listChannelIFormTemplateCatalog returns builtin and platform templates. A
+// non-admin view only contains enabled, unarchived platform templates.
+func listChannelIFormTemplateCatalog(search, originFilter string, isAdmin bool) ([]channelIFormTemplateCatalogItem, error) {
 	items := make([]channelIFormTemplateCatalogItem, 0)
 	if originFilter == "" || originFilter == "builtin" {
 		for _, registration := range service.BuiltinChannelIFormTools() {
@@ -67,7 +86,6 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 		}
 	}
 	if originFilter == "" || originFilter == "platform" {
-		isAdmin := CanWithSystemRole(c, pm.PermModAdmin)
 		referenceCounts := map[string]int64{}
 		if isAdmin {
 			var counts []struct {
@@ -78,7 +96,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 				Select("template_ref, COUNT(*) AS reference_count").
 				Where("template_ref LIKE ?", "platform:%").
 				Group("template_ref").Scan(&counts).Error; err != nil {
-				return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板引用数量失败")
+				return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "读取频道嵌入模板引用数量失败")
 			}
 			for _, count := range counts {
 				referenceCounts[count.TemplateRef] = count.Count
@@ -87,7 +105,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 		var templates []model.ChannelIFormTemplateModel
 		query := model.GetDB().Order("updated_at DESC")
 		if err := query.Find(&templates).Error; err != nil {
-			return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
+			return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
 		}
 		for _, template := range templates {
 			if !isAdmin && (!template.Enabled || template.Archived) {
@@ -109,16 +127,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 			})
 		}
 	}
-	total := len(items)
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	return c.JSON(fiber.Map{"items": items[start:end], "page": page, "pageSize": pageSize, "total": total})
+	return items, nil
 }
 
 func catalogSearchMatch(search string, values ...string) bool {

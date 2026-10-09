@@ -16,6 +16,7 @@ type MCPConfig struct {
 	Note                 string `json:"note" yaml:"note"`
 	File                 string `json:"file" yaml:"file"`
 	Theater              string `json:"theater" yaml:"theater"`
+	Embed                string `json:"embed" yaml:"embed"`
 	TheaterControl       bool   `json:"theaterControl" yaml:"theaterControl"`
 	TheaterCapture       bool   `json:"theaterCapture" yaml:"theaterCapture"`
 	TheaterChat          bool   `json:"theaterChat" yaml:"theaterChat"`
@@ -43,12 +44,13 @@ var MCPScopeCatalog = []MCPScope{
 	{"theater:read", "读取小剧场可见场景和对象", false}, {"theater:write", "编辑小剧场场景和对象（不含频道嵌入代码）", false},
 	{"theater:control", "执行小剧场动作和浏览器视图控制", true}, {"theater:capture", "截取明确授权的小剧场浏览器画面", true},
 	{"theater:chat", "允许小剧场动作产生聊天副作用", true},
+	{"embed:read", "读取频道嵌入、模板目录和嵌入能力", false}, {"embed:write", "创建、修改、删除频道嵌入代码（独立于小剧场写入）", false},
 	{"battle_report:generate", "调用原生 AI，可能计费，并创建世界共享战报", true},
 	{"clue:publish", "发布、揭示或隐藏线索，影响其他用户", true},
 }
 
 func NormalizeMCPConfig(c MCPConfig) MCPConfig {
-	for _, p := range []*string{&c.Chat, &c.Search, &c.BattleReport, &c.Clue, &c.Glossary, &c.Identity, &c.Audio, &c.Note, &c.File, &c.Theater} {
+	for _, p := range []*string{&c.Chat, &c.Search, &c.BattleReport, &c.Clue, &c.Glossary, &c.Identity, &c.Audio, &c.Note, &c.File, &c.Theater, &c.Embed} {
 		if *p == "" {
 			*p = "off"
 		}
@@ -64,7 +66,7 @@ func NormalizeMCPConfig(c MCPConfig) MCPConfig {
 
 func ValidateMCPConfig(c MCPConfig) error {
 	c = NormalizeMCPConfig(c)
-	for _, m := range []string{c.Chat, c.Search, c.BattleReport, c.Clue, c.Glossary, c.Identity, c.Audio, c.Note, c.File, c.Theater} {
+	for _, m := range []string{c.Chat, c.Search, c.BattleReport, c.Clue, c.Glossary, c.Identity, c.Audio, c.Note, c.File, c.Theater, c.Embed} {
 		if m != "off" && m != "read" && m != "write" {
 			return fmt.Errorf("MCP 模块必须为 off/read/write")
 		}
@@ -87,7 +89,7 @@ func (c MCPConfig) AllowedScopes() []string {
 		{c.Chat, "chat:read", ""}, {c.Search, "search:read", ""}, {c.BattleReport, "battle_report:read", "battle_report:write"},
 		{c.Clue, "clue:read", "clue:write"}, {c.Glossary, "glossary:read", "glossary:write"}, {c.Identity, "identity:read", "identity:write"},
 		{c.Audio, "audio:read", "audio:write"}, {c.Note, "note:read", "note:write"}, {c.File, "", "file:write"},
-		{c.Theater, "theater:read", "theater:write"},
+		{c.Theater, "theater:read", "theater:write"}, {c.Embed, "embed:read", "embed:write"},
 	} {
 		if (m.mode == "read" || m.mode == "write") && m.read != "" {
 			ret = append(ret, m.read)

@@ -43,9 +43,9 @@ import { useUserStore } from '@/stores/user';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import { urlBase } from '@/stores/_config';
-import { createChannelEmbedHost, type ChannelEmbedTheaterCharacterSource } from '@/bridge/channelEmbedHost';
+import { createChannelEmbedHost, type ChannelEmbedTheaterCharacterSource, type ChannelEmbedTheaterEventSink, type ChannelEmbedTheaterContext } from '@/bridge/channelEmbedHost';
 
-const props = defineProps<{ form?: ChannelIForm | null; enableChannelEmbed?: boolean; channelId?: string | null; theaterCharacterSource?: ChannelEmbedTheaterCharacterSource }>();
+const props = defineProps<{ form?: ChannelIForm | null; enableChannelEmbed?: boolean; channelId?: string | null; theaterCharacterSource?: ChannelEmbedTheaterCharacterSource; theaterEventSink?: ChannelEmbedTheaterEventSink; theaterContext?: ChannelEmbedTheaterContext }>();
 const frameRoot = ref<HTMLElement | null>(null);
 const chat = useChatStore();
 const user = useUserStore();
@@ -175,11 +175,13 @@ const setupChannelEmbed = async () => {
     worldId: String(chat.currentWorldId || ''),
     channelId: props.channelId,
     theaterCharacterSource: props.theaterCharacterSource,
+    theaterEventSink: props.theaterEventSink,
+    theaterContext: props.theaterContext,
   });
 };
 
 onMounted(() => { void setupChannelEmbed(); });
-watch(() => [props.form?.id, props.form?.url, props.form?.embedCode, props.form?.bridgePolicy, props.channelId, props.theaterCharacterSource] as const, () => { void setupChannelEmbed(); });
+watch(() => [props.form?.id, props.form?.url, props.form?.embedCode, props.form?.bridgePolicy, props.channelId, props.theaterCharacterSource, props.theaterEventSink, props.theaterContext] as const, () => { void setupChannelEmbed(); });
 watch(() => user.info.id, (userId, previousUserId) => {
   if (!userId) {
     embedHost?.stop();

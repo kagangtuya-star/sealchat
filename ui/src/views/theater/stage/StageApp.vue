@@ -91,8 +91,15 @@ import {
   type StageEntrancePlayback,
   type StageEntrancePreset,
   isStageActionTarget,
+  isStageActionOwner,
+  setStageObjectEmbedEventBindings,
+  stageObjectEmbedEventBindings,
+  STAGE_EMBED_EVENT_BINDINGS_MAX,
+  STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX,
+  STAGE_EMBED_EVENT_TOPIC_PATTERN,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageEmbedEventBinding,
   type StageAudioRef,
   type StageDrawing,
   type StageDrawingStyle,
@@ -134,6 +141,7 @@ import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
+import { createStageEmbedEventTrigger } from './stage-embed-event-trigger'
 import StageSurfaceIframe from './StageSurfaceIframe.vue'
 import StageSurfaceEmbedSettings from './StageSurfaceEmbedSettings.vue'
 import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
@@ -4174,6 +4182,63 @@ const addAction = async (type: StageAction['type']) => {
   if (action.type === 'chat.random-table') randomTableEditorActionId.value = action.id
 }
 
+const embedEventTopicDraft = ref('')
+const selectedEmbedEventBindings = computed(() => (
+  selectedObject.value?.type === 'iframe' ? stageObjectEmbedEventBindings(selectedObject.value) : []
+))
+const embedEventActionOptions = computed(() => (selectedObject.value?.actions || []).map((action, index) => ({
+  label: `${index + 1}. ${stageActionDescriptions[action.type] || action.type}`,
+  value: action.id,
+})))
+const commitEmbedEventBindings = (label: string, next: StageEmbedEventBinding[]) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  props.store.beginObjectEdit(label)
+  setStageObjectEmbedEventBindings(object, next)
+  props.store.commitObjectEdit()
+}
+const addEmbedEventBinding = () => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe') return
+  const topic = embedEventTopicDraft.value.trim()
+  if (!STAGE_EMBED_EVENT_TOPIC_PATTERN.test(topic)) {
+    stageMessage.warning('topic 须以字母或数字开头，最长 64 位，仅含字母、数字和 . _ : -')
+    return
+  }
+  const current = selectedEmbedEventBindings.value
+  if (current.some(binding => binding.topic === topic)) {
+    stageMessage.warning('该 topic 已绑定')
+    return
+  }
+  if (current.length >= STAGE_EMBED_EVENT_BINDINGS_MAX) {
+    stageMessage.warning(`最多 ${STAGE_EMBED_EVENT_BINDINGS_MAX} 个事件绑定`)
+    return
+  }
+  if (!object.actions.length) {
+    stageMessage.warning('请先为该网页组件添加动作')
+    return
+  }
+  const actionIds = object.actions.slice(0, STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX).map(action => action.id)
+  commitEmbedEventBindings('添加嵌入事件绑定', [...current, { topic, actionIds }])
+  embedEventTopicDraft.value = ''
+}
+const updateEmbedEventBindingActions = (topic: string, actionIds: string[]) => {
+  if (!actionIds.length) {
+    stageMessage.warning('至少选择一个动作；不再需要时请删除绑定')
+    return
+  }
+  if (actionIds.length > STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX) {
+    stageMessage.warning(`每个绑定最多 ${STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX} 个动作`)
+    return
+  }
+  commitEmbedEventBindings('修改嵌入事件绑定', selectedEmbedEventBindings.value.map(binding => (
+    binding.topic === topic ? { topic, actionIds } : binding
+  )))
+}
+const removeEmbedEventBinding = (topic: string) => {
+  commitEmbedEventBindings('删除嵌入事件绑定', selectedEmbedEventBindings.value.filter(binding => binding.topic !== topic))
+}
+
 const actionDelaySeconds = (milliseconds: number | undefined) => (
   typeof milliseconds === 'number' && Number.isFinite(milliseconds) ? milliseconds / 1_000 : 0
 )
@@ -4327,6 +4392,13 @@ const triggerSingleObjectAction = (object: StageObject | null | undefined, actio
     },
   })
 }
+
+const triggerEmbedEventActions = createStageEmbedEventTrigger({
+  getObject,
+  canRun: object => canTriggerActions.value && object.visible && object.interactive && !iframeInteractionDisabled.value,
+  executionId: actionId,
+  emit: payload => emit('actionTriggered', payload),
+})
 
 const objectNodeIntersectsStagePoint = (node: Konva.Group, point: Konva.Vector2d) => {
   if (!stage || !node.isVisible()) return false
@@ -9273,8 +9345,12 @@ onBeforeUnmount(() => {
             :viewport-height="viewportSize.height"
             :entrance-playbacks="textEntrancePlaybacks"
             :hidden-object-ids="[...pendingTextEntranceIds, ...dialogueSuppressedObjectIds]"
+            :world-id="worldId"
+            :channel-id="channelId"
+            :scope-type="props.scopeType || 'channel'"
             :stacking-order="rootStackingOrder"
             :character-snapshot="characterSnapshot"
+            @embed-event-published="triggerEmbedEventActions"
           />
           <div
             v-if="imageAnnotationOverlay.visible"
@@ -9967,8 +10043,8 @@ onBeforeUnmount(() => {
                 @update:checked="updateSelectedAspectRatioLocked"
               >锁定比例</n-checkbox>
             </div>
-            <template v-if="canEditAllObjects && isStageActionTarget(selectedObject.type)">
-              <label>点击动作</label>
+            <template v-if="canEditAllObjects && isStageActionOwner(selectedObject.type)">
+              <label>{{ selectedObject.type === 'iframe' ? '嵌入事件动作' : '点击动作' }}</label>
               <label class="theater-action-execution-mode">
                 <span>执行方式</span>
                 <n-switch
@@ -10024,7 +10100,7 @@ onBeforeUnmount(() => {
                     <n-button size="tiny" secondary @click="openRandomTableEditor(action.id)">
                       编辑 · {{ action.payload.name }} · {{ action.payload.formula }} · {{ action.payload.entries.length }} 项
                     </n-button>
-                    <n-tooltip>
+                    <n-tooltip v-if="isStageActionTarget(selectedObject.type)">
                       <template #trigger>
                         <n-button
                           size="tiny"
@@ -10060,6 +10136,29 @@ onBeforeUnmount(() => {
                   <n-button text type="error" size="tiny" aria-label="删除动作" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)"><n-icon><Trash /></n-icon></n-button>
                 </div>
               </div>
+              <template v-if="selectedObject.type === 'iframe'">
+                <label>嵌入事件绑定</label>
+                <small class="theater-embed-event-hint">频道嵌入成功调用 events.publish 时，按精确 topic 执行下方勾选的本组件动作；事件内容不参与动作选择。网页组件需开启“可交互”，不支持舞台点击触发。</small>
+                <div v-for="binding in selectedEmbedEventBindings" :key="binding.topic" class="theater-embed-event-row">
+                  <code class="theater-embed-event-row__topic" :title="binding.topic">{{ binding.topic }}</code>
+                  <n-select
+                    :value="binding.actionIds"
+                    class="theater-embed-event-row__actions"
+                    :options="embedEventActionOptions"
+                    size="tiny"
+                    multiple
+                    :max-tag-count="2"
+                    :menu-props="theaterSecondaryMenuProps"
+                    :aria-label="`${binding.topic} 绑定的动作`"
+                    @update:value="updateEmbedEventBindingActions(binding.topic, $event)"
+                  />
+                  <n-button text type="error" size="tiny" :aria-label="`删除 ${binding.topic} 事件绑定`" @click="removeEmbedEventBinding(binding.topic)"><n-icon><Trash /></n-icon></n-button>
+                </div>
+                <div class="theater-embed-event-add">
+                  <n-input v-model:value="embedEventTopicDraft" size="tiny" maxlength="64" placeholder="topic，例如 door.open" @keydown.enter.prevent="addEmbedEventBinding" />
+                  <n-button size="tiny" :disabled="!selectedObject.actions.length || !embedEventTopicDraft.trim()" @click="addEmbedEventBinding">绑定</n-button>
+                </div>
+              </template>
             </template>
             <template v-if="canEditAllObjects">
               <label>父级</label>
@@ -11136,6 +11235,10 @@ onBeforeUnmount(() => {
 .theater-drawing-inspector-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
 .theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
 .theater-inspector-actions, .theater-action-add { display: flex; flex-wrap: wrap; gap: 4px; }
+.theater-embed-event-hint { color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; line-height: 1.4; }
+.theater-embed-event-row { display: grid; grid-template-columns: minmax(0, 88px) minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.theater-embed-event-row__topic { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.theater-embed-event-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
 .theater-action-execution-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-action-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
 .theater-action-row.is-dragging { opacity: .42; }

@@ -163,9 +163,95 @@ export const normalizeStageAudioRef = (input: unknown): StageAudioRef | null => 
   }
 }
 
+// Stage pointer-click semantics (canvas click, object.trigger, sequence click
+// triggers). Keep this unchanged; it is not the same as "can own actions".
 export const isStageActionTarget = (type: StageObjectType) => (
   type === 'drawing' || type === 'text' || type === 'image' || type === 'button'
 )
+
+// An iframe owns saved StageActions only to run them from its Channel Embed
+// events.publish bindings; it never becomes a pointer-click target.
+export const isStageActionOwner = (type: StageObjectType) => (
+  isStageActionTarget(type) || type === 'iframe'
+)
+
+export const STAGE_EMBED_EVENT_BINDINGS_MAX = 16
+export const STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX = 16
+// Same grammar as Channel Embed events.publish topics (service.ChannelEmbedTopicPattern).
+export const STAGE_EMBED_EVENT_TOPIC_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/
+
+export interface StageEmbedEventBinding {
+  topic: string
+  actionIds: string[]
+}
+
+// A server-accepted events.publish reported by the iframe object's own embed host.
+export interface StageEmbedEventPublished {
+  objectId: string
+  eventId: string
+  formId: string
+  channelId: string
+  topic: string
+}
+
+// Bindings live in metadata.embedEventBindings. Read paths drop invalid or
+// dangling entries so a removed action can never run from a stale binding.
+export const stageObjectEmbedEventBindings = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+): StageEmbedEventBinding[] => {
+  if (object.type !== 'iframe') return []
+  const raw = object.metadata?.embedEventBindings
+  if (!Array.isArray(raw)) return []
+  const actionIds = new Set(object.actions.map(action => action.id))
+  const topics = new Set<string>()
+  const result: StageEmbedEventBinding[] = []
+  for (const value of raw) {
+    if (result.length >= STAGE_EMBED_EVENT_BINDINGS_MAX) break
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const binding = value as Partial<StageEmbedEventBinding>
+    const topic = typeof binding.topic === 'string' ? binding.topic : ''
+    if (!STAGE_EMBED_EVENT_TOPIC_PATTERN.test(topic) || topics.has(topic) || !Array.isArray(binding.actionIds)) continue
+    const ids = [...new Set(binding.actionIds.filter((id): id is string => typeof id === 'string' && actionIds.has(id)))]
+      .slice(0, STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX)
+    if (!ids.length) continue
+    topics.add(topic)
+    result.push({ topic, actionIds: ids })
+  }
+  return result
+}
+
+export const setStageObjectEmbedEventBindings = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  bindings: readonly StageEmbedEventBinding[],
+) => {
+  const metadata = { ...(object.metadata || {}) }
+  delete metadata.embedEventBindings
+  const normalized = stageObjectEmbedEventBindings({ ...object, metadata: { embedEventBindings: bindings } })
+  object.metadata = normalized.length ? { ...metadata, embedEventBindings: normalized } : metadata
+}
+
+export const isStageEmbedEventBoundAction = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  actionId: string,
+) => stageObjectEmbedEventBindings(object).some(binding => binding.actionIds.includes(actionId))
+
+// The bound subset keeps the object's saved action order; the binding is a set.
+export const resolveStageEmbedEventActions = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  topic: string,
+): StageAction[] => {
+  const binding = stageObjectEmbedEventBindings(object).find(item => item.topic === topic)
+  if (!binding) return []
+  const bound = new Set(binding.actionIds)
+  return object.actions.filter(action => bound.has(action.id))
+}
+
+// Owning saved actions for execution: click targets always; iframe only for
+// actions referenced by its embed event bindings.
+export const canStageObjectRunSavedAction = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  actionId: string,
+) => isStageActionTarget(object.type) || isStageEmbedEventBoundAction(object, actionId)
 
 export interface StageDrawingStyle {
   stroke: string
@@ -328,6 +414,7 @@ export interface StageActionTriggeredPayload {
   actionId: string
   stepId?: string
   direct?: true
+  embedEvent?: Pick<StageEmbedEventPublished, 'eventId' | 'formId' | 'topic'>
   action: StageAction
   execution?: {
     id: string

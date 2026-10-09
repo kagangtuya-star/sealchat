@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +21,7 @@ const (
 	embedEventPayloadMax        = 16 * 1024
 )
 
-var embedTopicPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$`)
+var embedTopicPattern = service.ChannelEmbedTopicPattern
 var embedRateState = struct {
 	sync.Mutex
 	items map[string]embedRateEntry
@@ -124,8 +123,9 @@ type embedStorageListRequest struct {
 }
 type embedEventPublishRequest struct {
 	embedScopeRequest
-	Topic   string          `json:"topic"`
-	Payload json.RawMessage `json:"payload"`
+	Topic          string                              `json:"topic"`
+	Payload        json.RawMessage                     `json:"payload"`
+	TheaterContext *service.TheaterEmbedPublishContext `json:"theaterContext,omitempty"`
 }
 
 func resolveEmbedForm(ctx *ChatContext, scope embedScopeRequest, capability string) (*model.ChannelIFormModel, string, error) {
@@ -137,7 +137,7 @@ func resolveEmbedForm(ctx *ChatContext, scope embedScopeRequest, capability stri
 	if ctx == nil || ctx.User == nil {
 		return nil, "", errors.New("PERMISSION_DENIED")
 	}
-	if strings.HasPrefix(capability, "storage.") {
+	if strings.HasPrefix(capability, "storage.") || capability == embedEventsPublish {
 		if ctx.ConnInfo == nil || strings.TrimSpace(ctx.ConnInfo.ChannelId) == "" || strings.TrimSpace(ctx.ConnInfo.ChannelId) != channelID {
 			return nil, "", errors.New("CONTEXT_CHANGED")
 		}
@@ -345,11 +345,30 @@ func apiIFormEventPublish(ctx *ChatContext, data *embedEventPublishRequest) (any
 		return nil, errors.New("INVALID_PARAMS: payload must be JSON")
 	}
 	eventID := utils.NewID()
+	// A regular channel publish keeps its existing behavior. Theater context is
+	// only a locator: the service revalidates permissions and saved object state.
+	var recordReceipt func()
+	if data.TheaterContext != nil {
+		channel, err := model.ChannelGet(channelID)
+		if err != nil || channel == nil || channel.WorldID == "" {
+			return nil, errors.New("NOT_FOUND: channel")
+		}
+		scope, err := service.ValidateTheaterEmbedEventPublish(mcpConfigSnapshot(), ctx.User.ID, channel.WorldID, channelID, data.FormID, topic, *data.TheaterContext)
+		if err != nil {
+			return nil, errors.New("PERMISSION_DENIED: invalid Theater context")
+		}
+		recordReceipt = func() { service.RecordTheaterEmbedEventReceipt(eventID, scope) }
+	}
 	embedEvent := &protocol.ChannelIFormEmbedEventPayload{EventID: eventID, ChannelID: channelID, FormID: data.FormID, Topic: topic, Op: "event", Payload: payload, At: time.Now().UnixMilli()}
 	if form != nil && containsEmbedCapability(form.BridgePolicy.Capabilities, "events.subscribe") {
 		markEmbedSubscription(ctx, channelID, data.FormID, topic)
 	}
-	dispatchEmbedEvent(channelID, embedEvent, true)
+	if !dispatchEmbedEvent(channelID, embedEvent, true) {
+		return nil, errors.New("INTERNAL_ERROR")
+	}
+	if recordReceipt != nil {
+		recordReceipt()
+	}
 	return map[string]any{"eventId": eventID}, nil
 }
 
@@ -424,27 +443,31 @@ func hasEmbedSubscription(info *ConnInfo, channelID, formID, topic string) bool 
 	return ok
 }
 
-func dispatchEmbedEvent(channelID string, payload *protocol.ChannelIFormEmbedEventPayload, embedOnly bool) {
+func dispatchEmbedEvent(channelID string, payload *protocol.ChannelIFormEmbedEventPayload, embedOnly bool) bool {
 	if payload == nil || channelUsersMapGlobal == nil || userId2ConnInfoGlobal == nil {
-		return
+		return false
 	}
 	event := &protocol.Event{Type: protocol.EventChannelIFormEmbed, Channel: &protocol.Channel{ID: channelID}, ChannelIFormEmbed: payload}
 	ctx := &ChatContext{ChannelUsersMap: channelUsersMapGlobal, UserId2ConnInfo: userId2ConnInfoGlobal}
 	if !embedOnly {
 		ctx.BroadcastEventInChannel(channelID, event)
-		return
+		return true
 	}
+	dispatched := true
 	ctx.rangeChannelConnMaps(channelID, func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool {
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info == nil || !((indexed && info.ChannelId == "") || info.ChannelId == channelID) || !hasEmbedSubscription(info, channelID, payload.FormID, payload.Topic) {
 				return true
 			}
-			writeConnJSONAndPrune(connMap, conn, struct {
+			if !writeConnJSONAndPrune(connMap, conn, struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
-			}{Event: *event, Op: protocol.OpEvent})
+			}{Event: *event, Op: protocol.OpEvent}) {
+				dispatched = false
+			}
 			return true
 		})
 		return true
 	})
+	return dispatched
 }
