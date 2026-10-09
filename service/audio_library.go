@@ -578,9 +578,6 @@ func UploadAudioLibraryAsset(worldID string, file *multipart.FileHeader, rawPref
 	if err := ensureAudioLibraryS3Mode(cfg); err != nil {
 		return AudioLibraryAsset{}, err
 	}
-	if !isLikelyAudioKey(file.Filename) {
-		return AudioLibraryAsset{}, ErrAudioUnsupportedMime
-	}
 	if audioSvc != nil && audioSvc.maxUploadBytes() > 0 && file.Size > audioSvc.maxUploadBytes() {
 		return AudioLibraryAsset{}, ErrAudioTooLarge
 	}
@@ -588,9 +585,8 @@ func UploadAudioLibraryAsset(worldID string, file *multipart.FileHeader, rawPref
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(file.Filename, "/\\") {
 		return AudioLibraryAsset{}, errors.New("音频文件名包含非法路径")
 	}
-	key, err := JoinS3LibraryPrefix(prefix, name)
-	if err != nil {
-		return AudioLibraryAsset{}, err
+	if audioSvc == nil {
+		return AudioLibraryAsset{}, errors.New("音频服务未初始化")
 	}
 	tmp, err := os.CreateTemp(audioSvc.cfg.TempDir, "audio-library-")
 	if err != nil {
@@ -609,16 +605,43 @@ func UploadAudioLibraryAsset(worldID string, file *multipart.FileHeader, rawPref
 	if copyErr != nil {
 		return AudioLibraryAsset{}, copyErr
 	}
-	if detected, detectErr := mimetype.DetectFile(tmpPath); detectErr == nil && audioSvc != nil && len(audioSvc.allowedMimes) > 0 {
-		if _, allowed := audioSvc.allowedMimes[strings.ToLower(detected.String())]; !allowed {
+	detected, detectErr := mimetype.DetectFile(tmpPath)
+	if detectErr != nil {
+		return AudioLibraryAsset{}, detectErr
+	}
+	mimeType := strings.ToLower(detected.String())
+	if _, allowed := audioSvc.allowedMimes[mimeType]; !allowed && !audioSvc.cfg.EnableTranscode {
+		return AudioLibraryAsset{}, ErrAudioUnsupportedMime
+	}
+	preparedPath, preparedMime, cleanup, err := audioSvc.prepareAudioInput(tmpPath, mimeType)
+	if err != nil {
+		return AudioLibraryAsset{}, err
+	}
+	defer cleanup()
+	if preparedPath != tmpPath {
+		name = strings.TrimSuffix(name, filepath.Ext(name)) + ".ogg"
+	} else if !isLikelyAudioKey(name) {
+		ext := pickExtension(mimeType, "")
+		if ext == "" && mimeType == "audio/mp4" {
+			ext = ".m4a"
+		}
+		if ext == "" {
 			return AudioLibraryAsset{}, ErrAudioUnsupportedMime
 		}
+		name = strings.TrimSuffix(name, filepath.Ext(name)) + ext
+	}
+	key, err := JoinS3LibraryPrefix(prefix, name)
+	if err != nil {
+		return AudioLibraryAsset{}, err
 	}
 	contentType := strings.TrimSpace(file.Header.Get("Content-Type"))
+	if preparedPath != tmpPath {
+		contentType = preparedMime
+	}
 	if contentType == "" {
 		contentType = mime.TypeByExtension(filepath.Ext(name))
 	}
-	if _, err := store.Put(contextBackground(), audiolibrarybackend.UploadInput{ObjectKey: key, LocalPath: tmpPath, ContentType: contentType}); err != nil {
+	if _, err := store.Put(contextBackground(), audiolibrarybackend.UploadInput{ObjectKey: key, LocalPath: preparedPath, ContentType: contentType}); err != nil {
 		return AudioLibraryAsset{}, err
 	}
 	return ResolveAudioLibraryAssetsForKeys([]string{key}, cfg, store)

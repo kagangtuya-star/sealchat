@@ -308,6 +308,9 @@ func audioLibraryError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrWorldNotFound) {
 		status = http.StatusNotFound
 	}
+	if errors.Is(err, service.ErrAudioTooLarge) {
+		status = http.StatusRequestEntityTooLarge
+	}
 	var fiberErr *fiber.Error
 	if errors.As(err, &fiberErr) {
 		status = fiberErr.Code

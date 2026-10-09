@@ -333,7 +333,9 @@ func (svc *audioService) validateMime(file multipart.File) (string, error) {
 	mimeType := strings.ToLower(mt.String())
 	if len(svc.allowedMimes) > 0 {
 		if _, ok := svc.allowedMimes[mimeType]; !ok {
-			return "", fmt.Errorf("%w: %s", ErrAudioUnsupportedMime, mimeType)
+			if !svc.cfg.EnableTranscode || svc.ffmpegPath == "" {
+				return "", fmt.Errorf("%w: %s", ErrAudioUnsupportedMime, mimeType)
+			}
 		}
 	}
 	return mimeType, nil
@@ -430,11 +432,53 @@ func (svc *audioService) importFromPath(filePath string, opts AudioUploadOptions
 	return asset, nil
 }
 
+// prepareAudioInput accepts unknown MIME types only after successful audio decoding.
+func (svc *audioService) prepareAudioInput(path, mimeType string) (string, string, func(), error) {
+	noop := func() {}
+	if _, ok := svc.allowedMimes[mimeType]; ok {
+		return path, mimeType, noop, nil
+	}
+	if !svc.cfg.EnableTranscode || svc.ffmpegPath == "" {
+		return "", "", noop, ErrAudioUnsupportedMime
+	}
+	output, err := os.CreateTemp(svc.cfg.TempDir, "audio-normalized-*.ogg")
+	if err != nil {
+		return "", "", noop, err
+	}
+	outputPath := output.Name()
+	_ = output.Close()
+	cleanup := func() { _ = os.Remove(outputPath) }
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, svc.ffmpegPath, "-v", "error", "-y", "-i", path, "-map", "0:a:0", "-vn", "-c:a", "libopus", outputPath)
+	if err := cmd.Run(); err != nil {
+		cleanup()
+		return "", "", noop, fmt.Errorf("%w: 无法解码或转换文件", ErrAudioUnsupportedMime)
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil || info.Size() == 0 {
+		cleanup()
+		return "", "", noop, ErrAudioUnsupportedMime
+	}
+	return outputPath, "audio/ogg", cleanup, nil
+}
+
 func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string, opts AudioUploadOptions) (*model.AudioAsset, error) {
+	originalTempPath := tempPath
+	preparedPath, preparedMime, cleanup, err := svc.prepareAudioInput(tempPath, mimeType)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	tempPath, mimeType = preparedPath, preparedMime
 	manager := svc.currentObjectStore()
 	asset := svc.newAssetRecord(originalName, opts)
 	if shouldUseAudioObjectStore(manager, opts) {
-		if remote, err := svc.persistWithObjectStore(manager, asset, tempPath, mimeType, originalName); err == nil {
+		storageName := originalName
+		if preparedPath != originalTempPath {
+			storageName = strings.TrimSuffix(originalName, filepath.Ext(originalName)) + ".ogg"
+		}
+		if remote, err := svc.persistWithObjectStore(manager, asset, tempPath, mimeType, storageName); err == nil {
 			return remote, nil
 		} else {
 			log.Printf("[audio] 上传对象存储失败，使用本地存储: %v", err)
