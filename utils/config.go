@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -756,7 +758,7 @@ func ReadConfig() *AppConfig {
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
 
-	f := file.Provider("config.yaml")
+	f := file.Provider(ConfigFilePath())
 	// _ = f.Watch(func(event interface{}, err error) {
 	// 	if err != nil {
 	// 		log.Printf("watch error: %v", err)
@@ -2109,7 +2111,7 @@ func WriteConfigChecked(config *AppConfig) error {
 	if err != nil {
 		return fmt.Errorf("配置文件序列化失败: %w", err)
 	}
-	if err := writeConfigFileAtomic("./config.yaml", content, 0644); err != nil {
+	if err := writeConfigFileAtomic(ConfigFilePath(), content, 0644); err != nil {
 		return fmt.Errorf("配置文件写入失败: %w", err)
 	}
 	k = candidateK
@@ -2185,6 +2187,9 @@ func replaceConfigFile(tempPath, path string) error {
 		return err
 	}
 	if err := os.Rename(path, backupPath); err != nil {
+		if errors.Is(err, syscall.EBUSY) {
+			return writeBindMountedConfig(path, tempPath)
+		}
 		return err
 	}
 	if err := os.Rename(tempPath, path); err != nil {
@@ -2197,6 +2202,49 @@ func replaceConfigFile(tempPath, path string) error {
 	// behind the successfully saved file. Retain and report the backup instead.
 	if err := os.Remove(backupPath); err != nil {
 		fmt.Printf("警告: 配置文件已保存，但临时备份删除失败: %v\n", err)
+	}
+	return nil
+}
+
+// writeBindMountedConfig preserves the inode required by Docker file bind mounts.
+// It is not crash-atomic; new directory-mounted deployments use atomic rename.
+func writeBindMountedConfig(path, tempPath string) error {
+	content, err := os.ReadFile(tempPath)
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	write := func(data []byte) error {
+		if err := f.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			return err
+		}
+		if _, err := f.Write(data); err != nil {
+			return err
+		}
+		return f.Sync()
+	}
+	if err := write(content); err != nil {
+		if restoreErr := write(old); restoreErr != nil {
+			_ = f.Close()
+			return fmt.Errorf("配置写入失败: %w；恢复旧配置失败: %v", err, restoreErr)
+		}
+		_ = f.Close()
+		return err
+	}
+	// Sync succeeded: the new bytes are committed. A close error must not
+	// leave in-memory settings behind the already persisted configuration.
+	if err := f.Close(); err != nil {
+		fmt.Printf("警告: 配置文件已同步，但关闭文件失败: %v\n", err)
 	}
 	return nil
 }

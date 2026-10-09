@@ -14,6 +14,14 @@ const (
 	DefaultSQLite = "./data/chat.db"
 )
 
+// ConfigFilePath preserves the legacy path unless explicitly overridden.
+func ConfigFilePath() string {
+	if path := strings.TrimSpace(os.Getenv("SEALCHAT_CONFIG_PATH")); path != "" {
+		return path
+	}
+	return "config.yaml"
+}
+
 // GetMinimalDSN 获取最小 DSN 用于引导启动
 // 优先级：环境变量 > 默认 SQLite
 func GetMinimalDSN() string {
@@ -34,7 +42,7 @@ func GetDSNForCLI() string {
 	// 2. 尝试从配置文件读取
 	if ConfigFileExists() {
 		k := koanf.New(".")
-		if err := k.Load(file.Provider("config.yaml"), yaml.Parser()); err == nil {
+		if err := k.Load(file.Provider(ConfigFilePath()), yaml.Parser()); err == nil {
 			if dsn := strings.TrimSpace(k.String("dbUrl")); dsn != "" {
 				return dsn
 			}
@@ -47,6 +55,6 @@ func GetDSNForCLI() string {
 
 // ConfigFileExists 检查配置文件是否存在
 func ConfigFileExists() bool {
-	_, err := os.Stat("config.yaml")
+	_, err := os.Stat(ConfigFilePath())
 	return err == nil
 }

@@ -17,10 +17,11 @@ services:
       - ./data:/app/data                      # 数据库、临时文件、导出等
       - ./sealchat-data:/app/sealchat-data    # 上传的附件和音频文件
       - ./static:/app/static                  # 静态资源
-      # 配置文件
-      - ./config.yaml:/app/config.yaml
+      # 配置目录（新部署支持原子替换）
+      - ./config:/app/config
     environment:
       - TZ=Asia/Shanghai
+      - SEALCHAT_CONFIG_PATH=/app/config/config.yaml
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3212/"]
       interval: 30s
