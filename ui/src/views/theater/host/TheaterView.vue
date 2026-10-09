@@ -17,6 +17,8 @@ import {
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload, ChatClueAccessReadResult, ChatClueOptionsReadResult, TheaterDialogueMessagePayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
+import { TheaterRendererClient } from '../sync/TheaterRendererClient'
+import { requestTheaterDisplayCapture } from '../stage/theater-mcp-capture'
 import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StageClueActionEntry, type StagePointerTraceInput } from '../shared/stage-types'
 import { dialogAskConfirm } from '@/utils/dialog'
 import {
@@ -283,6 +285,68 @@ const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
 let theaterBridge: TheaterHostBridge | null = null
 let theaterBridgeGeneration = 0
 let theaterSync: TheaterSyncClient | null = null
+let theaterRenderer: TheaterRendererClient | null = null
+let rendererDisplayStream: MediaStream | null = null
+const rendererAuthorized = ref(false)
+const rendererAuthorizing = ref(false)
+const releaseRendererDisplayStream = () => {
+  const stream = rendererDisplayStream
+  rendererDisplayStream = null
+  stageAppRef.value?.setRendererDisplayStream(null)
+  stream?.getTracks().forEach(track => track.stop())
+}
+const revokeRenderer = () => {
+  theaterRenderer?.stop()
+  theaterRenderer = null
+  releaseRendererDisplayStream()
+  rendererAuthorized.value = false
+}
+const toggleRenderer = async () => {
+  if (rendererAuthorized.value) return revokeRenderer()
+  if (rendererAuthorizing.value || !theaterSync || !user.info?.id) return
+  rendererAuthorizing.value = true
+  const sync = theaterSync
+  const targetWorld = worldId.value, targetChannel = channelId.value
+  try {
+    const allowed = await dialogAskConfirm(dialog, '允许 AI 协作当前小剧场', '同账号、已授权的 MCP Key 可操作当前视图、执行有业务权限的动作及截图。为完整捕获网页嵌入、视频与跨域 iframe，浏览器会继续请求共享当前标签页；请选择当前 SealChat 标签页。关闭页面、停止共享、断线或切换世界/聊天频道后自动撤销。')
+    if (!allowed || theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel) return
+    const displayStream = await requestTheaterDisplayCapture()
+    if (theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel) {
+      displayStream.getTracks().forEach(track => track.stop())
+      return
+    }
+    rendererDisplayStream = displayStream
+    stageAppRef.value?.setRendererDisplayStream(displayStream)
+    const captureTrack = displayStream.getVideoTracks()[0]
+    if (!captureTrack || captureTrack.readyState !== 'live') throw new Error('浏览器画面共享已结束')
+    const client = new TheaterRendererClient({
+      scope: { worldId: targetWorld, scopeType: 'world', channelId: '', inputChannelId: targetChannel },
+      userId: String(user.info.id), sync, getStage: () => stageAppRef.value,
+      send: (name, data) => chat.sendAPI(name, data),
+      insert: async payload => {
+        if (!theaterBridge) throw new Error('chat_bridge_unavailable')
+        const result = await theaterBridge.insertRendererChat(payload)
+        if (!result.ok) throw new Error('chat_insert_failed')
+      },
+      confirm: async () => await dialogAskConfirm(dialog, '确认 AI 线索动作', 'AI 请求执行已保存的线索动作，是否继续？') === true,
+      onInvalidated: () => { if (theaterRenderer === client) revokeRenderer() },
+    })
+    theaterRenderer = client
+    captureTrack.addEventListener('ended', () => {
+      if (rendererDisplayStream === displayStream) revokeRenderer()
+    }, { once: true })
+    await client.start()
+    if (theaterRenderer === client && rendererDisplayStream === displayStream && captureTrack.readyState === 'live') {
+      rendererAuthorized.value = true
+    } else {
+      client.stop()
+    }
+  } catch (error) {
+    revokeRenderer()
+    message.warning(error instanceof Error ? error.message : 'renderer 授权失败')
+  } finally { rendererAuthorizing.value = false }
+}
+watch([worldId, channelId], revokeRenderer)
 let theaterSyncGeneration = 0
 const dialogueSurfaceTargets = new Map<Window, TheaterDialogueSurfaceContext>()
 interface DialogueSurfaceRuntimeEntry {
@@ -1226,6 +1290,7 @@ const reconnectTheaterChatBridge = () => {
 }
 
 const startTheaterSync = async () => {
+  revokeRenderer()
   const generation = ++theaterSyncGeneration
   const targetWorldId = worldId.value
   const targetChannelId = channelId.value
@@ -1482,6 +1547,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  revokeRenderer()
   cancelMobilePortraitUnlock()
   theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
@@ -1573,6 +1639,8 @@ function handleDice3DMessage(event: MessageEvent) {
           :chat-visible="chatVisible"
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
+          :renderer-authorized="rendererAuthorized"
+          :renderer-authorizing="rendererAuthorizing"
           :permissions="theaterPermissions"
           :construction-scene-id="constructionSceneId"
           :dialogue-runtime="dialogueRuntime"
@@ -1604,6 +1672,7 @@ function handleDice3DMessage(event: MessageEvent) {
           @toggle-chat="toggleChat"
           @disconnect-chat-bridge="disconnectTheaterChatBridge"
           @reconnect-chat-bridge="reconnectTheaterChatBridge"
+          @toggle-renderer="toggleRenderer"
           @reset-layout="resetLayout"
           @exit-theater="exitTheater"
           @appearance-preview-command="sendAppearancePreviewCommand"

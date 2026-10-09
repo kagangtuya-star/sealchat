@@ -96,6 +96,17 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			payload.allowedChannels = allowed
 		}
 	}
+	if payload, ok := decoded.(*theaterCharacterBindPayload); ok {
+		// Shared permission resolvers must run before the write transaction:
+		// SQLite deployments may have only one connection in their pool.
+		payload.ownerAuthorized = payload.OwnerUserID == actorID || IsWorldAdmin(command.WorldID, actorID) || pm.CanWithSystemRole(actorID, pm.PermModAdmin)
+		if !payload.ownerAuthorized {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "不能绑定他人角色", 403, nil)
+		}
+		if payload.InputChannelID != "" && !CanReadChannelByUserId(actorID, payload.InputChannelID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "无法访问角色频道", 403, nil)
+		}
+	}
 	payloadHash := theaterJSONHash(normalizedPayload)
 	room, err := model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
 	if err != nil {
@@ -357,7 +368,7 @@ var errTheaterConcurrentCAS = errors.New("theater revision CAS conflict")
 
 func normalizedRequestSource(value string) string {
 	switch value {
-	case "http", "websocket", "bridge", "admin":
+	case "http", "websocket", "bridge", "admin", "mcp":
 		return value
 	default:
 		return "http"
@@ -974,12 +985,22 @@ func applyTheaterObjectToggle(tx *gorm.DB, room *model.TheaterRoomModel, payload
 }
 
 func applyTheaterCharacterBind(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterCharacterBindPayload) error {
-	admin := IsWorldAdmin(room.WorldID, actorID) || pm.CanWithSystemRole(actorID, pm.PermModAdmin)
-	if payload.OwnerUserID != actorID && !admin {
+	if !payload.ownerAuthorized {
 		return newTheaterError(TheaterErrorPermissionDenied, "不能绑定他人角色", 403, nil)
 	}
+	identityChannelID := room.ChannelID
+	if payload.InputChannelID != "" {
+		if room.ChannelID != "" && payload.InputChannelID != room.ChannelID {
+			return theaterPayloadError("inputChannelId 必须匹配频道 Theater")
+		}
+		var channel model.ChannelModel
+		if err := tx.Where("id = ? AND world_id = ?", payload.InputChannelID, room.WorldID).First(&channel).Error; err != nil {
+			return theaterPayloadError("inputChannelId 不属于当前世界")
+		}
+		identityChannelID = channel.ID
+	}
 	var identity model.ChannelIdentityModel
-	if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", payload.IdentityID, room.ChannelID, payload.OwnerUserID).Limit(1).Find(&identity).Error; err != nil {
+	if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", payload.IdentityID, identityChannelID, payload.OwnerUserID).Limit(1).Find(&identity).Error; err != nil {
 		return err
 	}
 	if identity.ID == "" {

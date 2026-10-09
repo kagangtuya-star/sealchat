@@ -23,6 +23,7 @@ import (
 
 type mcpActorContextKey struct{}
 type mcpResourceContextKey struct{}
+type mcpCredentialContextKey struct{}
 type mcpToolSpec struct {
 	tool    *mcp.Tool
 	scopes  []string
@@ -37,6 +38,9 @@ type mcpError struct {
 func (e *mcpError) Error() string           { return e.Message }
 func mcpFailure(code, message string) error { return &mcpError{code, message} }
 func mcpResult(v any, isError bool) *mcp.CallToolResult {
+	if result, ok := v.(*mcp.CallToolResult); ok {
+		return result
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return mcpResult(mcpError{"internal", "结果编码失败"}, true)
@@ -47,7 +51,10 @@ func mcpToolError(err error) *mcp.CallToolResult {
 	e := mcpError{"operation_failed", "操作失败，请检查参数、业务权限和当前资源状态"}
 	var explicit *mcpError
 	var audioConflict *service.AudioPlaybackRevisionConflictError
-	if errors.As(err, &explicit) {
+	var theaterErr *service.TheaterError
+	if errors.As(err, &theaterErr) {
+		return mcpResult(map[string]any{"code": theaterErr.Code, "message": theaterErr.Message, "details": theaterErr.Details}, true)
+	} else if errors.As(err, &explicit) {
 		e = *explicit
 	} else if errors.Is(err, service.ErrWorldClueConflict) || errors.As(err, &audioConflict) {
 		e = mcpError{"conflict", "资源修订、播放范围或编辑锁已改变，请重新读取"}
@@ -107,12 +114,15 @@ func mcpScopeToolError(ctx context.Context, actor *service.MCPActor, required []
 	return result
 }
 
-func mcpSpec[T any](name, description string, scopes []string, write, destructive, idempotent bool, handler func(context.Context, *service.MCPActor, T) (any, error)) mcpToolSpec {
+func mcpSpec[T any](name, description string, scopes []string, write, destructive, idempotent bool, handler func(context.Context, *service.MCPActor, T) (any, error), adjust ...func(*jsonschema.Schema)) mcpToolSpec {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		panic(err)
 	}
 	schema.AdditionalProperties = &jsonschema.Schema{Not: &jsonschema.Schema{}}
+	for _, apply := range adjust {
+		apply(schema)
+	}
 	resolved, err := schema.Resolve(nil)
 	if err != nil {
 		panic(err)
@@ -210,6 +220,7 @@ func newMCPServer(limiter *service.MCPRateLimiter) *mcp.Server {
 				return nil, errors.New("MCP authorization invalid")
 			}
 			ctx = context.WithValue(ctx, mcpActorContextKey{}, actor)
+			ctx = context.WithValue(ctx, mcpCredentialContextKey{}, token)
 			if method == "tools/call" {
 				r := req.(*mcp.CallToolRequest)
 				spec, ok := byName[r.Params.Name]

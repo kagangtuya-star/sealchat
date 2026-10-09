@@ -17,6 +17,18 @@ import (
 
 var theaterImageAnnotationColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
+var TheaterObjectKinds = []string{"group", "drawing", "text", "image", "button", "character", "video", "effect", "iframe"}
+var TheaterEffectThemes = []string{"brush", "cyber", "cinematic", "impact", "glitch", "neon", "cleave", "eclipse"}
+
+func theaterContains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultTheaterImageAnnotation(text string) map[string]any {
 	runes := []rune(text)
 	if len(runes) > 2_000 {
@@ -174,10 +186,12 @@ type theaterEffectPlayPayload struct {
 }
 
 type theaterCharacterBindPayload struct {
-	SceneID     *string            `json:"sceneId"`
-	Object      theaterObjectInput `json:"object"`
-	IdentityID  string             `json:"identityId"`
-	OwnerUserID string             `json:"ownerUserId"`
+	InputChannelID  string             `json:"inputChannelId,omitempty"`
+	SceneID         *string            `json:"sceneId"`
+	Object          theaterObjectInput `json:"object"`
+	IdentityID      string             `json:"identityId"`
+	OwnerUserID     string             `json:"ownerUserId"`
+	ownerAuthorized bool
 }
 
 type theaterResourceReferencePayload struct {
@@ -385,6 +399,11 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 	case *theaterObjectTogglePayload:
 		return validateTheaterID(payload.ObjectID, "objectId")
 	case *theaterCharacterBindPayload:
+		if payload.InputChannelID != "" {
+			if err := validateTheaterID(payload.InputChannelID, "inputChannelId"); err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(payload.IdentityID) == "" || strings.TrimSpace(payload.OwnerUserID) == "" {
 			return theaterPayloadError("identityId 和 ownerUserId 必填")
 		}
@@ -770,8 +789,7 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if err := validateTheaterID(object.ID, "object.id"); err != nil {
 		return err
 	}
-	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true, "effect": true, "iframe": true}
-	if !allowedKinds[object.Kind] {
+	if !theaterContains(TheaterObjectKinds, object.Kind) {
 		return theaterPayloadError("object.kind 无效")
 	}
 	for _, value := range []float64{object.X, object.Y, object.Width, object.Height, object.Rotation, object.Z} {
@@ -967,8 +985,7 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		return theaterPayloadError("effect.builtin 无效")
 	}
 	theme, ok := builtin["theme"].(string)
-	allowedThemes := map[string]bool{"brush": true, "cyber": true, "cinematic": true, "impact": true, "glitch": true, "neon": true, "cleave": true, "eclipse": true}
-	if !ok || !allowedThemes[theme] {
+	if !ok || !theaterContains(TheaterEffectThemes, theme) {
 		return theaterPayloadError("effect.builtin.theme 无效")
 	}
 	format, ok := builtin["format"].(string)

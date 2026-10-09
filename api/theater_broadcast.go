@@ -220,6 +220,7 @@ func (info *ConnInfo) closeTheaterQueue() {
 	if info == nil {
 		return
 	}
+	service.TheaterRenderers.Disconnect(theaterRendererConnectionID(info))
 	info.theaterMu.Lock()
 	queue := info.theaterQueue
 	info.theaterQueue = nil

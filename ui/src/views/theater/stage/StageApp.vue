@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Konva from 'konva'
+import { captureTheaterViewport, waitForCaptureReady } from './theater-mcp-capture'
+import type { TheaterRendererCommand, TheaterRendererView } from '../shared/theater-renderer-protocol'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTabPane, NTabs, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
@@ -228,6 +230,8 @@ const props = defineProps<{
   chatVisible: boolean
   syncReady: boolean
   syncing: boolean
+  rendererAuthorized: boolean
+  rendererAuthorizing: boolean
   permissions: string[]
   constructionSceneId: string | null
   dialogueRuntime: TheaterDialogueRuntime
@@ -265,6 +269,7 @@ const emit = defineEmits<{
   toggleChat: []
   disconnectChatBridge: []
   reconnectChatBridge: []
+  toggleRenderer: []
   resetLayout: []
   exitTheater: []
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
@@ -5699,8 +5704,97 @@ const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effe
 
 // Development-only inspection of the main Stage; excludes the temporary morph Stage.
 const getMainStageLayerCount = () => stage?.getLayers().length ?? 0
+let rendererDisplayStream: MediaStream | null = null
+const setRendererDisplayStream = (stream: MediaStream | null) => { rendererDisplayStream = stream }
+
+const getRendererView = (): TheaterRendererView => ({
+  width: viewportSize.value.width, height: viewportSize.value.height,
+  camera: { ...props.store.state.camera }, selectedObjectIds: [...props.store.selection.selectedIds],
+})
+const rendererObjectBounds = (id: string) => {
+  const root = viewportRef.value
+  if (!root) throw new Error('renderer_unavailable')
+  const dom = stageTextVisualElement(id)
+  if (dom) {
+    const a = dom.getBoundingClientRect(), b = root.getBoundingClientRect()
+    return { x: a.x - b.x, y: a.y - b.y, width: a.width, height: a.height }
+  }
+  const node = objectNodes.get(id)
+  if (!node || !node.isVisible()) throw new Error('renderer_object_not_visible')
+  return node.getClientRect()
+}
+const applyRendererView = async (command: TheaterRendererCommand) => {
+  const payload = command.payload as { camera?: { x: number, y: number, zoom: number }, objectIds?: string[] }
+  const camera = props.store.state.camera
+  if (command.operation === 'camera_set') {
+    const next = payload.camera
+    if (!next || ![next.x, next.y, next.zoom].every(Number.isFinite) || Math.abs(next.x) > 1e6 || Math.abs(next.y) > 1e6 || next.zoom < 0.01 || next.zoom > 100) throw new Error('renderer_invalid_camera')
+    Object.assign(camera, next)
+  } else if (command.operation === 'fit_scene') {
+    camera.x = camera.y = 0
+    camera.zoom = Math.max(0.01, Math.min(100, viewportSize.value.width / (props.store.state.liveState.fieldWidth * WORLD_UNIT_PX), viewportSize.value.height / (props.store.state.liveState.fieldHeight * WORLD_UNIT_PX)) * 0.9)
+  } else if (command.operation === 'focus_object') {
+    const bounds = rendererObjectBounds(payload.objectIds?.[0] || '')
+    camera.x += viewportSize.value.width / 2 - bounds.x - bounds.width / 2
+    camera.y += viewportSize.value.height / 2 - bounds.y - bounds.height / 2
+  } else if (command.operation === 'select_objects') {
+    props.store.setSelectedObjectIds(payload.objectIds || [])
+  } else if (command.operation === 'clear_selection') props.store.clearSelection()
+  await nextTick()
+  return getRendererView()
+}
+const hideRendererCaptureControls = () => {
+  const visibleControls = interactionLayer?.getChildren().filter(node => node !== gridTopCameraGroup && node.visible()) || []
+  visibleControls.forEach(node => node.hide())
+  interactionLayer?.draw()
+  return () => {
+    visibleControls.forEach(node => node.show())
+    interactionLayer?.draw()
+  }
+}
+
+const snapshotRendererCanvases = () => {
+  const snapshots = new Map<HTMLCanvasElement, string | null>()
+  if (!stage) return snapshots
+  const restoreControls = hideRendererCaptureControls()
+  try {
+    stage.draw()
+    for (const layer of stage.getLayers()) {
+      const canvas = layer.getCanvas()._canvas
+      try { snapshots.set(canvas, canvas.toDataURL('image/png')) } catch { snapshots.set(canvas, null) }
+    }
+  } finally { restoreControls() }
+  return snapshots
+}
+const captureRenderer = async (command: TheaterRendererCommand, signal: AbortSignal, revision: number) => {
+  const root = viewportRef.value
+  if (!stage || !root) throw new Error('renderer_unavailable')
+  if (multiDrag || selectionGroupDrag || batchTransformRootIds || props.appearancePreview) throw new Error('renderer_uncommitted_edits')
+  await waitForCaptureReady(root, () => !sceneCompositeTransition && !pendingObjectEntrances.size && !objectEntranceTweens.size
+    && (!sceneMediaBatch || sceneMediaBatch.settled.size >= sceneMediaBatch.expected.size), signal)
+  const payload = command.payload as { mode: string, objectId?: string }
+  const bounds = payload.mode === 'object' ? rendererObjectBounds(payload.objectId || '') : undefined
+  const crop = bounds ? { x: Math.max(0, bounds.x), y: Math.max(0, bounds.y),
+    width: Math.max(0, Math.min(root.clientWidth, bounds.x + bounds.width) - Math.max(0, bounds.x)),
+    height: Math.max(0, Math.min(root.clientHeight, bounds.y + bounds.height) - Math.max(0, bounds.y)) } : undefined
+  const camera = { ...props.store.state.camera }
+  const viewport = { width: root.clientWidth, height: root.clientHeight }
+  const restoreControls = rendererDisplayStream ? hideRendererCaptureControls() : null
+  try {
+    const result = await captureTheaterViewport({
+      command, root, signal, revision, crop, camera,
+      snapshotCanvases: snapshotRendererCanvases,
+      displayStream: rendererDisplayStream,
+    })
+    if (viewport.width !== root.clientWidth || viewport.height !== root.clientHeight || JSON.stringify(camera) !== JSON.stringify(props.store.state.camera) || multiDrag || selectionGroupDrag || batchTransformRootIds || props.appearancePreview) throw new Error('capture_view_changed')
+    return result
+  } finally {
+    restoreControls?.()
+  }
+}
 defineExpose({
   preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions,
+  getRendererView, applyRendererView, captureRenderer, setRendererDisplayStream,
   ...(import.meta.env.DEV ? { getMainStageLayerCount } : {}),
 })
 
@@ -8975,6 +9069,17 @@ onBeforeUnmount(() => {
           <div class="theater-bridge-popover__sync">
             舞台同步：{{ syncing ? '同步中' : syncReady ? '已连接' : '未连接' }}
           </div>
+          <div class="theater-bridge-popover__renderer">
+            <span>AI 协作</span>
+            <n-switch
+              :value="rendererAuthorized"
+              size="small"
+              :loading="rendererAuthorizing"
+              :disabled="!syncReady || rendererAuthorizing"
+              :aria-label="rendererAuthorized ? '撤销 AI 协作' : '允许 AI 协作'"
+              @update:value="emit('toggleRenderer')"
+            />
+          </div>
         </div>
       </n-popover>
       <n-tooltip trigger="hover">
@@ -10746,6 +10851,7 @@ onBeforeUnmount(() => {
 .theater-bridge-popover__dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .12); }
 .theater-bridge-popover__actions { display: flex; justify-content: flex-end; }
 .theater-bridge-popover__sync { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-muted, rgba(255, 255, 255, .52)); }
+.theater-bridge-popover__renderer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; padding-top: 6px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-secondary, rgba(255, 255, 255, .72)); }
 .theater-stage-character-bridge {
   width: 218px; flex: 0 0 218px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px;
   padding: 3px 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px;

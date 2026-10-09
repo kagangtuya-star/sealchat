@@ -1525,6 +1525,18 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "theater.subscribe":
 						apiTheaterSubscribeWs(ctx, msg)
 						solved = true
+					case "theater.renderer.register":
+						apiTheaterRendererRegisterWs(ctx, msg)
+						solved = true
+					case "theater.renderer.reply":
+						apiTheaterRendererReplyWs(ctx, msg)
+						solved = true
+					case "theater.renderer.step":
+						apiTheaterRendererStepWs(ctx, msg)
+						solved = true
+					case "theater.renderer.unregister":
+						apiTheaterRendererUnregisterWs(ctx, msg)
+						solved = true
 					case "theater.unsubscribe":
 						apiTheaterUnsubscribeWs(ctx, msg)
 						solved = true

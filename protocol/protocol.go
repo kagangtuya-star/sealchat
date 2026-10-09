@@ -520,6 +520,7 @@ const (
 	EventTheaterEffectTriggered     EventName = "theater.effect.triggered"
 	EventTheaterSceneAudioTriggered EventName = "theater.scene.audio.triggered"
 	EventTheaterVisibilityTriggered EventName = "theater.visibility.triggered"
+	EventTheaterRendererCommand     EventName = "theater.renderer.command"
 )
 
 type TheaterEventPayload struct {

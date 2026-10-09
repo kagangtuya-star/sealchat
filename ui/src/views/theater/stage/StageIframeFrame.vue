@@ -177,6 +177,7 @@ const showsFrame = computed(() => (
   <div
     ref="frameRoot"
     class="theater-iframe-frame"
+    :data-stage-object-id="props.objectId || undefined"
     :class="{ 'is-input-disabled': inputDisabled }"
     :style="{ pointerEvents }"
     :inert="inputDisabled || undefined"

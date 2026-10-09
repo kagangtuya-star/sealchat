@@ -7,10 +7,10 @@ import type { MCPConfig, MCPMode } from '@/api/mcp'
 
 const utils = useUtilsStore()
 const message = useMessage()
-const draft = ref<MCPConfig>({ enabled: false, chatgptFixedClient: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
+const draft = ref<MCPConfig>({ enabled: false, chatgptFixedClient: false, chat: 'off', search: 'off', battleReport: 'off', clue: 'off', glossary: 'off', identity: 'off', audio: 'off', note: 'off', file: 'off', theater: 'off', theaterControl: false, theaterCapture: false, theaterChat: false, battleReportGenerate: false, cluePublish: false, callsPerMinute: 120, writesPerMinute: 30 })
 const initial = ref('')
 const loading = ref(true)
-const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file'; label: string; scopes: string; modes: MCPMode[] }[] = [
+const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' | 'identity' | 'audio' | 'note' | 'file' | 'theater'; label: string; scopes: string; modes: MCPMode[] }[] = [
   { key: 'chat', label: '聊天记录', scopes: 'chat:read', modes: ['off', 'read'] },
   { key: 'search', label: '综合搜索', scopes: 'search:read', modes: ['off', 'read'] },
   { key: 'battleReport', label: '战报总结', scopes: 'battle_report:read / battle_report:write', modes: ['off', 'read', 'write'] },
@@ -20,6 +20,7 @@ const modules: { key: 'chat' | 'search' | 'battleReport' | 'clue' | 'glossary' |
   { key: 'audio', label: '音频工作台', scopes: 'audio:read / audio:write', modes: ['off', 'read', 'write'] },
   { key: 'note', label: '频道便签', scopes: 'note:read / note:write', modes: ['off', 'read', 'write'] },
   { key: 'file', label: '基础文件上传', scopes: 'file:write', modes: ['off', 'write'] },
+  { key: 'theater', label: '小剧场', scopes: 'theater:read / theater:write', modes: ['off', 'read', 'write'] },
 ]
 const modeLabels = { off: '关闭', read: '只读', write: '读写' }
 const endpoint = computed(() => {
@@ -87,6 +88,9 @@ defineExpose({ save, isModified })
           <n-space vertical>
             <n-checkbox v-model:checked="draft.battleReportGenerate" :disabled="draft.battleReport !== 'write'">battle_report:generate：调用原生 AI，可能计费，并创建世界内可见战报</n-checkbox>
             <n-checkbox v-model:checked="draft.cluePublish" :disabled="draft.clue !== 'write'">clue:publish：发布、揭示或隐藏线索，会影响其他用户</n-checkbox>
+            <n-checkbox v-model:checked="draft.theaterControl" :disabled="draft.theater === 'off'">theater:control：切换场景、执行动作和控制已授权浏览器视图</n-checkbox>
+            <n-checkbox v-model:checked="draft.theaterCapture" :disabled="draft.theater === 'off'">theater:capture：截图已授权的小剧场浏览器</n-checkbox>
+            <n-checkbox v-model:checked="draft.theaterChat" :disabled="draft.theater === 'off' || !draft.theaterControl">theater:chat：允许动作产生真实聊天副作用</n-checkbox>
           </n-space>
         </n-form-item>
         <div class="mcp-limits">

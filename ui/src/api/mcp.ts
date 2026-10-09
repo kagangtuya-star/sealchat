@@ -13,6 +13,10 @@ export interface MCPConfig {
   audio: MCPMode
   note: MCPMode
   file: MCPMode
+  theater: MCPMode
+  theaterControl: boolean
+  theaterCapture: boolean
+  theaterChat: boolean
   battleReportGenerate: boolean
   cluePublish: boolean
   callsPerMinute: number

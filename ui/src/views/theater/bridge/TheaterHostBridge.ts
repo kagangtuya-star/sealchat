@@ -325,6 +325,12 @@ export class TheaterHostBridge {
     )
   }
 
+  // Only a server-authorized local chat.insert descriptor enters this path.
+  insertRendererChat(payload: ChatComposerInsertPayload) {
+    this.assertChatBridgeEnabled()
+    return this.stageClient.request<ChatComposerInsertPayload, ChatComposerInsertResult>('chat', 'chat.composer.insert', payload)
+  }
+
   applyChatAudioPlaybackSnapshot(payload: AudioPlaybackSnapshotApplyPayload) {
     this.assertChatBridgeEnabled()
     return this.stageClient.request<AudioPlaybackSnapshotApplyPayload, AudioPlaybackSnapshotApplyResult>(
