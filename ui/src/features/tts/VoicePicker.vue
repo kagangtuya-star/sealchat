@@ -226,7 +226,7 @@ defineExpose({ reload })
 
 <template>
   <div class="vp" :style="{ '--vp-accent': `var(--primary-color, ${theme.primaryColor})`, '--vp-warning': theme.warningColor, '--vp-error': theme.errorColor }">
-    <div class="vp-toolbar">
+    <div class="vp-catalog-toolbar">
       <div class="vp-search">
         <NInput
           ref="searchRef"
@@ -338,7 +338,7 @@ defineExpose({ reload })
 
     <div class="vp-footer">
       <small class="vp-footer__hint">已有试听会直接重放；其他音色会生成试听音频。</small>
-      <NPagination v-if="total > PAGE_SIZE" v-model:page="page" :item-count="total" :page-size="PAGE_SIZE" :page-slot="5" size="small" :disabled="loading" />
+      <NPagination v-if="total > PAGE_SIZE" v-model:page="page" :item-count="total" :page-size="PAGE_SIZE" :page-slot="5" size="small" :disabled="loading" :to="true" />
     </div>
   </div>
 </template>
@@ -357,12 +357,12 @@ defineExpose({ reload })
   min-width: 0;
   color: var(--sc-text-primary);
 }
-.vp-toolbar { display: flex; flex-direction: column; gap: 8px; flex: none; min-width: 0; }
+/* Keep this distinct from vue-paint's global .vp-toolbar button rules. */
+.vp-catalog-toolbar { display: flex; flex-direction: column; gap: 8px; flex: none; min-width: 0; }
 .vp-search { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .vp-search > :first-child { flex: 1 1 auto; min-width: 0; }
 .vp-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.vp-toolbar > .vp-chips { column-gap: 18px; row-gap: 6px; }
-.vp-categories { align-items: center; column-gap: 22px !important; }
+.vp-categories { align-items: center; gap: 6px 18px; }
 .vp-chips.is-scroll { max-height: 120px; overflow-y: auto; padding-right: 4px; }
 .vp-chip {
   max-width: 100%;
@@ -510,7 +510,7 @@ defineExpose({ reload })
    nested grid scroller; the search/category bar stays reachable. */
 @media (max-width: 720px) {
   .vp { height: auto; }
-  .vp-toolbar {
+  .vp-catalog-toolbar {
     position: sticky;
     top: 0;
     z-index: 1;
