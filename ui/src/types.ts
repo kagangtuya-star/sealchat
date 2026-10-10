@@ -21,6 +21,8 @@ declare module '@satorijs/protocol' {
     avatarDecoration?: AvatarDecoration;
   }
   interface Message {
+    tts?: import('@/features/tts/types').MessageSpeech | null;
+    _ttsAutoRequested?: boolean;
     whisperMeta?: WhisperMeta;
     whisperToIds?: User[];
     senderRoleId?: string;
@@ -185,10 +187,14 @@ export interface BotOneBotConfig {
 
 export interface SatoriMessage {
   id?: string;
+  user_id?: string;
+  userId?: string;
   channel?: Channel;
   guild?: Guild;
   user?: User;
   identity?: MessageIdentity;
+  senderIdentityId?: string;
+  senderSharedIdentityId?: string;
   senderRoleId?: string;
   member?: GuildMember;
   content?: string;
@@ -200,6 +206,9 @@ export interface SatoriMessage {
   displayOrder?: number;
 
   sender_member_name?: string;
+  sender_identity_id?: string;
+  sender_shared_identity_id?: string;
+  sender_identity_name?: string;
   sender_role_id?: string;
   sender_identity_variant_id?: string;
   sender_identity_is_temporary?: boolean;
@@ -380,7 +389,55 @@ export interface ServerAudioConfig {
 }
 
 export interface ServerStorageConfig {
+  mode?: 'local' | 's3' | 'auto';
+  baseUrl?: string;
+  presignTTL?: number;
   uploadTimeoutSeconds?: number;
+  maxSizeMB?: number;
+  logLevel?: string;
+  local?: {
+    uploadDir?: string;
+    audioDir?: string;
+    fontDir?: string;
+    tempDir?: string;
+    baseUrl?: string;
+  };
+  s3?: S3StorageConfig;
+}
+
+export interface S3StorageConfig {
+  enabled?: boolean;
+  attachmentsEnabled?: boolean | null;
+  audioEnabled?: boolean | null;
+  ttsEnabled?: boolean;
+  fontsEnabled?: boolean | null;
+  theaterEnabled?: boolean | null;
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  accessKey?: string;
+  secretKey?: string;
+  sessionToken?: string;
+  forcePathStyle?: boolean;
+  baseUrl?: string;
+  publicBaseUrl?: string;
+  useSSL?: boolean;
+  presignTTL?: number;
+  maxSizeMB?: number;
+  logLevel?: string;
+}
+
+export interface AdminStorageStatus {
+  configured: boolean;
+  initialized: boolean;
+  enabled: boolean;
+  remoteReady: boolean;
+  activeBackend: 'local' | 's3';
+  endpoint: string;
+  region: string;
+  bucket: string;
+  modules: Record<'attachments' | 'audio' | 'tts' | 'theaterAttachments' | 'theaterAudio' | 'fonts', 'local' | 's3'>;
+  lastError: string;
 }
 
 export interface BackupConfig {
@@ -612,6 +669,10 @@ export interface AIFeatureCapability {
 }
 
 export interface AdminAIUsageLogItem {
+  quotaKind?: 'text' | 'speech';
+  worldId?: string;
+  billingUnits?: number;
+  unitPrice?: number;
   id: string;
   userId: string;
   usernameSnapshot: string;
@@ -672,6 +733,7 @@ export interface AdminAIQuotaListResult {
 }
 
 export interface ServerConfig {
+  mcp?: import('@/api/mcp').MCPConfig;
   serveAt: string;
   domain: string;
   registerOpen: boolean;
@@ -1146,6 +1208,7 @@ export interface ChannelIdentityFolder {
 
 export interface MessageIdentity {
   id?: string;
+  sharedIdentityId?: string;
   variantId?: string;
   displayName?: string;
   color?: string;

@@ -37,6 +37,9 @@ func AvailableFeatures(cfg utils.AIConfig, userID string, worldID string) []Feat
 	features := BuiltinFeatures()
 	out := make([]FeatureCapability, 0, len(features))
 	for featureKey := range features {
+		if featureKey == FeatureTTSTranslate {
+			continue // Backend platform workflow; never a personal AI option.
+		}
 		featureCfg, ok := cfg.Features[featureKey]
 		if !ok {
 			featureCfg = utils.AIFeatureConfig{}

@@ -76,6 +76,7 @@ type wsOutboundMessage struct {
 type wsOutboundSocket interface {
 	SetWriteDeadline(time.Time) error
 	WriteMessage(int, []byte) error
+	Close() error
 }
 
 type WsSyncConn struct {
@@ -97,12 +98,16 @@ func newWsSyncConn(raw *websocket.Conn, queueSize int) *WsSyncConn {
 	if queueSize <= 0 {
 		queueSize = defaultWSOutboundQueueSize
 	}
+	var outboundSocket wsOutboundSocket
+	if raw != nil {
+		outboundSocket = raw
+	}
 	c := &WsSyncConn{
 		Conn:                raw,
 		outbound:            make(chan wsOutboundMessage, queueSize),
 		interactiveOutbound: make(chan wsOutboundMessage, wsInteractiveQueueSize),
 		done:                make(chan struct{}),
-		outboundSocket:      raw,
+		outboundSocket:      outboundSocket,
 		coalesced:           make(map[string]wsCoalescedEntry),
 		coalescedWake:       make(chan struct{}, 1),
 	}
@@ -401,11 +406,17 @@ func (c *WsSyncConn) outboundWriter() {
 }
 
 func (c *WsSyncConn) writeOutboundMessage(message wsOutboundMessage) error {
+	c.Mux.Lock()
+	defer c.Mux.Unlock()
+
+	select {
+	case <-c.done:
+		return errWSConnectionClosed
+	default:
+	}
 	if c.outboundSocket == nil {
 		return errors.New("websocket connection unavailable")
 	}
-	c.Mux.Lock()
-	defer c.Mux.Unlock()
 
 	if message.timeout > 0 {
 		if err := c.outboundSocket.SetWriteDeadline(time.Now().Add(message.timeout)); err != nil {
@@ -427,11 +438,28 @@ func (c *WsSyncConn) Close() error {
 		if c.done != nil {
 			close(c.done)
 		}
-		if c.Conn != nil {
-			closeErr = c.Conn.Close()
+		if c.Mux.TryLock() {
+			closeErr = c.closeSocketLocked()
+			c.Mux.Unlock()
+			return
 		}
+		go func() {
+			c.Mux.Lock()
+			defer c.Mux.Unlock()
+			_ = c.closeSocketLocked()
+		}()
 	})
 	return closeErr
+}
+
+func (c *WsSyncConn) closeSocketLocked() error {
+	if c.outboundSocket != nil {
+		return c.outboundSocket.Close()
+	}
+	if c.Conn != nil {
+		return c.Conn.Close()
+	}
+	return nil
 }
 
 type ConnInfo struct {
@@ -461,9 +489,10 @@ type ConnInfo struct {
 	SuppressExternalNotification bool
 	NotificationStateUpdatedAt   int64
 	BotLastMessageContext        *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastMessageEvent          *utils.SyncMap[string, BotMessageEventMarker]
 	BotLastWhisperTargets        *utils.SyncMap[string, []string]
 	BotHiddenDicePending         *utils.SyncMap[string, *BotHiddenDicePending]
-	BotNicknameSyncPending       *utils.SyncMap[string, *BotNicknameSyncPending]
+	botMessageContextMu          sync.Mutex
 	embedMu                      sync.RWMutex
 	embedSubscriptions           map[string]struct{}
 	BotCharacterSupport          BotCharacterSupportState
@@ -587,12 +616,6 @@ type BotHiddenDicePending struct {
 	TargetUserIDs []string
 	Count         int
 	CreatedAt     int64
-}
-
-type BotNicknameSyncPending struct {
-	TargetName   string
-	SenderUserID string
-	CreatedAt    int64
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -894,6 +917,9 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 		"message.get":                {},
 		"message.first":              {},
 		"message.context":            {},
+		"avatar.card.settings.get":    {},
+		"world.character_state.list":  {},
+		"character.snapshot.list":     {},
 		"theater.subscribe":          {},
 		"theater.unsubscribe":        {},
 	}
@@ -1484,6 +1510,10 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 
 					// Handle BOT response (api field is empty)
 					if apiMsg.Api == "" && apiMsg.Echo != "" {
+						if HandleBotInteractionResponse(ctx, apiMsg.Echo, apiMsg.Data) {
+							solved = true
+							continue
+						}
 						if len(apiMsg.Data) > 0 && HandleCharacterResponse(apiMsg.Echo, apiMsg.Data) {
 							solved = true
 							continue
@@ -1494,6 +1524,18 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					switch apiMsg.Api {
 					case "theater.subscribe":
 						apiTheaterSubscribeWs(ctx, msg)
+						solved = true
+					case "theater.renderer.register":
+						apiTheaterRendererRegisterWs(ctx, msg)
+						solved = true
+					case "theater.renderer.reply":
+						apiTheaterRendererReplyWs(ctx, msg)
+						solved = true
+					case "theater.renderer.step":
+						apiTheaterRendererStepWs(ctx, msg)
+						solved = true
+					case "theater.renderer.unregister":
+						apiTheaterRendererUnregisterWs(ctx, msg)
 						solved = true
 					case "theater.unsubscribe":
 						apiTheaterUnsubscribeWs(ctx, msg)
@@ -1685,8 +1727,11 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "bot.command.register":
 						apiBotCommandRegister(ctx, msg)
 						solved = true
-					case "bot.command.dispatch":
-						apiBotCommandDispatch(ctx, msg)
+					case "bot.interact":
+						apiBotInteractWs(ctx, msg)
+						solved = true
+					case "bot.nickname_sync.dispatch":
+						apiBotNicknameSyncDispatch(ctx, msg)
 						solved = true
 					case "bot.channel_member.set_name":
 						apiBotChannelMemberSetName(ctx, msg)
@@ -1758,6 +1803,27 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 						solved = true
 					case "character.snapshot.preference.update":
 						apiWrap(ctx, msg, apiCharacterSnapshotPreferenceUpdate)
+						solved = true
+					case "avatar.card.settings.get":
+						apiWrap(ctx, msg, apiAvatarCardSettingsGet)
+						solved = true
+					case "avatar.card.settings.update":
+						apiWrap(ctx, msg, apiAvatarCardSettingsUpdate)
+						solved = true
+					case "avatar.card.bot_mutation.status":
+						apiAvatarBotMutationStatusWs(ctx, msg)
+						solved = true
+					case "avatar.card.bot_mutation.delegate":
+						apiAvatarBotMutationDelegateWs(ctx, msg)
+						solved = true
+					case "avatar.card.bot_mutation.respond":
+						apiWrap(ctx, msg, apiAvatarBotMutationRespond)
+						solved = true
+					case "world.character_state.list":
+						apiWrap(ctx, msg, apiWorldCharacterStateList)
+						solved = true
+					case "world.character_state.patch":
+						apiWrap(ctx, msg, apiWorldCharacterStatePatch)
 						solved = true
 					case "character.remark.broadcast":
 						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)

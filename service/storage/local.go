@@ -48,6 +48,9 @@ func (l *localBackend) resolvePath(objectKey string) (string, error) {
 		return "", fmt.Errorf("非法 object key")
 	}
 	switch {
+	case strings.HasPrefix(clean, "tts-private/"):
+		// A sibling of the upload root, never below an attachment static route.
+		return filepath.Join(filepath.Dir(l.attachmentRoot), ".sealchat-tts-private", strings.TrimPrefix(clean, "tts-private/")), nil
 	case strings.HasPrefix(clean, "attachments/"):
 		return filepath.Join(l.attachmentRoot, strings.TrimPrefix(clean, "attachments/")), nil
 	case strings.HasPrefix(clean, "audio/"):

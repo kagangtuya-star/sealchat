@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowBackUp, ArrowForwardUp, Photo, Plus, Template, User, Users, X } from '@vicons/tabler'
 import { compressImage } from '@/composables/useImageCompressor'
+import { compactMediaFxSpec, mediaFxSpecsEqual } from '@/features/media-fx/media-fx'
 import { useTheaterPresentationEditor } from '@/composables/useTheaterPresentationEditor'
 import {
   getTheaterAssetErrorCode,
@@ -74,14 +75,18 @@ const editorPresentation = () => {
   delete presentation.multiplayerPortraitTransform
   if (props.presentation?.portrait) {
     const portraitStyle = props.controllerTemplate.portraitStyle
+    // Residents render the public style's Media FX, so the preview shows it too.
+    const { mediaFx: _personalMediaFx, ...portrait } = clone(props.presentation.portrait)
+    const mediaFx = compactMediaFxSpec(portraitStyle.mediaFx)
     presentation.portrait = {
-      ...clone(props.presentation.portrait),
+      ...portrait,
       enabled: portraitStyle.enabled,
       transform: createDefaultTheaterTransform(),
       fit: portraitStyle.fit,
       playbackRate: portraitStyle.playbackRate,
       blendMode: portraitStyle.blendMode,
       fadeDurationMs: portraitStyle.fadeDurationMs,
+      ...(mediaFx ? { mediaFx } : {}),
     }
   } else {
     presentation.portrait = null
@@ -105,15 +110,32 @@ const editor = useTheaterPresentationEditor({
   worldTemplate: props.worldTemplate,
 })
 const activeTab = ref<'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue'>('portrait')
-const controllerStyle = ref<DialogueControllerTemplate['portraitStyle'] | null>(editablePortraitStyle())
-type ControllerTransformHistory = {
-  past: TheaterTransform[]
-  future: TheaterTransform[]
-  transactionStart: TheaterTransform | null
+type ControllerStyle = DialogueControllerTemplate['portraitStyle']
+const controllerStyle = ref<ControllerStyle | null>(editablePortraitStyle())
+// One history for the whole controller portrait style (transform and Media FX), so
+// both kinds of edits undo in order instead of competing in separate stacks.
+type ControllerStyleHistory = {
+  past: ControllerStyle[]
+  future: ControllerStyle[]
+  transactionStart: ControllerStyle | null
 }
-const controllerTransformHistory = ref<ControllerTransformHistory>({ past: [], future: [], transactionStart: null })
+const controllerStyleHistory = ref<ControllerStyleHistory>({ past: [], future: [], transactionStart: null })
 const transformKeys: (keyof TheaterTransform)[] = ['x', 'y', 'width', 'height', 'rotation', 'opacity', 'zIndex']
 const sameTransform = (left: TheaterTransform, right: TheaterTransform) => transformKeys.every(key => left[key] === right[key])
+const sameMediaFx = (left: unknown, right: unknown) => {
+  const leftSpec = compactMediaFxSpec(left)
+  const rightSpec = compactMediaFxSpec(right)
+  return leftSpec && rightSpec ? mediaFxSpecsEqual(leftSpec, rightSpec) : leftSpec === rightSpec
+}
+const sameControllerStyle = (left: ControllerStyle, right: ControllerStyle) => (
+  sameTransform(left.transform, right.transform)
+  && left.enabled === right.enabled
+  && left.fit === right.fit
+  && left.playbackRate === right.playbackRate
+  && left.blendMode === right.blendMode
+  && left.fadeDurationMs === right.fadeDurationMs
+  && sameMediaFx(left.mediaFx, right.mediaFx)
+)
 const normalizeControllerTransform = (input: Partial<TheaterTransform>, fallback: TheaterTransform) => {
   const transform = normalizeTheaterTransform(input, fallback)
   transform.x = fallback.x
@@ -122,88 +144,91 @@ const normalizeControllerTransform = (input: Partial<TheaterTransform>, fallback
   transform.y = Math.max(0, Math.min(1 - transform.height, transform.y))
   return transform
 }
-const resetControllerTransformHistory = () => {
-  controllerTransformHistory.value = { past: [], future: [], transactionStart: null }
+const resetControllerStyleHistory = () => {
+  controllerStyleHistory.value = { past: [], future: [], transactionStart: null }
 }
-const recordControllerTransform = (previous: TheaterTransform, next: TheaterTransform) => {
-  if (sameTransform(previous, next) || controllerTransformHistory.value.transactionStart) return
-  controllerTransformHistory.value = {
-    ...controllerTransformHistory.value,
-    past: [...controllerTransformHistory.value.past, clone(previous)],
+const recordControllerStyle = (previous: ControllerStyle, next: ControllerStyle) => {
+  if (sameControllerStyle(previous, next) || controllerStyleHistory.value.transactionStart) return
+  controllerStyleHistory.value = {
+    ...controllerStyleHistory.value,
+    past: [...controllerStyleHistory.value.past, clone(previous)],
     future: [],
   }
 }
 const setControllerTransform = (input: Partial<TheaterTransform>) => {
   if (!controllerStyle.value) return
-  const previous = controllerStyle.value.transform
-  const transform = normalizeControllerTransform(input, previous)
-  recordControllerTransform(previous, transform)
-  controllerStyle.value = { ...controllerStyle.value, transform }
+  const previous = controllerStyle.value
+  const next = { ...previous, transform: normalizeControllerTransform(input, previous.transform) }
+  recordControllerStyle(previous, next)
+  controllerStyle.value = next
 }
-const controllerTransformHistoryActive = computed(() => (
+const restoreControllerStyle = (snapshot: ControllerStyle, current: ControllerStyle): ControllerStyle => ({
+  ...clone(snapshot),
+  transform: normalizeControllerTransform(snapshot.transform, current.transform),
+})
+const controllerStyleHistoryActive = computed(() => (
   (props.mode === 'controller' || props.mode === 'multiplayer') && activeTab.value === 'portrait'
 ))
 const beginEditTransaction = () => {
-  if (!controllerTransformHistoryActive.value) {
+  if (!controllerStyleHistoryActive.value) {
     editor.beginTransaction()
     return
   }
-  if (!controllerStyle.value || controllerTransformHistory.value.transactionStart) return
-  controllerTransformHistory.value = {
-    ...controllerTransformHistory.value,
-    transactionStart: clone(controllerStyle.value.transform),
+  if (!controllerStyle.value || controllerStyleHistory.value.transactionStart) return
+  controllerStyleHistory.value = {
+    ...controllerStyleHistory.value,
+    transactionStart: clone(controllerStyle.value),
   }
 }
 const commitEditTransaction = () => {
-  const start = controllerTransformHistory.value.transactionStart
+  const start = controllerStyleHistory.value.transactionStart
   if (!start) {
     editor.commitTransaction()
     return
   }
-  const current = controllerStyle.value?.transform
-  controllerTransformHistory.value = {
-    past: current && !sameTransform(start, current)
-      ? [...controllerTransformHistory.value.past, clone(start)]
-      : controllerTransformHistory.value.past,
-    future: current && !sameTransform(start, current) ? [] : controllerTransformHistory.value.future,
+  const current = controllerStyle.value
+  const changed = Boolean(current && !sameControllerStyle(start, current))
+  controllerStyleHistory.value = {
+    past: changed ? [...controllerStyleHistory.value.past, clone(start)] : controllerStyleHistory.value.past,
+    future: changed ? [] : controllerStyleHistory.value.future,
     transactionStart: null,
   }
 }
-const canUndo = computed(() => controllerTransformHistoryActive.value
-  ? controllerTransformHistory.value.past.length > 0
+const canUndo = computed(() => controllerStyleHistoryActive.value
+  ? controllerStyleHistory.value.past.length > 0
   : editor.history.value.past.length > 0)
-const canRedo = computed(() => controllerTransformHistoryActive.value
-  ? controllerTransformHistory.value.future.length > 0
+const canRedo = computed(() => controllerStyleHistoryActive.value
+  ? controllerStyleHistory.value.future.length > 0
   : editor.history.value.future.length > 0)
 const undo = () => {
-  if (!controllerTransformHistoryActive.value) {
+  if (!controllerStyleHistoryActive.value) {
     editor.undo()
     return
   }
   commitEditTransaction()
-  const previous = controllerTransformHistory.value.past.at(-1)
+  const previous = controllerStyleHistory.value.past.at(-1)
   if (!previous || !controllerStyle.value) return
-  const current = clone(controllerStyle.value.transform)
-  controllerStyle.value = { ...controllerStyle.value, transform: normalizeControllerTransform(previous, current) }
-  controllerTransformHistory.value = {
-    past: controllerTransformHistory.value.past.slice(0, -1),
-    future: [current, ...controllerTransformHistory.value.future],
+  const current = clone(controllerStyle.value)
+  controllerStyle.value = restoreControllerStyle(previous, current)
+  controllerStyleHistory.value = {
+    past: controllerStyleHistory.value.past.slice(0, -1),
+    future: [current, ...controllerStyleHistory.value.future],
     transactionStart: null,
   }
 }
 const redo = () => {
-  if (!controllerTransformHistoryActive.value) {
+  if (!controllerStyleHistoryActive.value) {
     editor.redo()
     return
   }
   commitEditTransaction()
-  const next = controllerTransformHistory.value.future[0]
+  const next = controllerStyleHistory.value.future[0]
   if (!next || !controllerStyle.value) return
-  const current = clone(controllerStyle.value.transform)
-  controllerStyle.value = { ...controllerStyle.value, transform: normalizeControllerTransform(next, current) }
-  controllerTransformHistory.value = {
-    past: [...controllerTransformHistory.value.past, current],
-    future: controllerTransformHistory.value.future.slice(1),
+  const current = clone(controllerStyle.value)
+  controllerStyle.value = restoreControllerStyle(next, current)
+  controllerStyleHistory.value = {
+    past: [...controllerStyleHistory.value.past, current],
+    future: controllerStyleHistory.value.future.slice(1),
     transactionStart: null,
   }
 }
@@ -234,6 +259,9 @@ const postPreviewMessage = (type: 'start' | 'update' | 'stop') => {
       : props.mode === 'controller' && controllerStyle.value
         ? { ...controllerStyle.value.transform }
         : undefined,
+    controllerPortraitStyle: type === 'stop' || props.mode !== 'controller' || !controllerStyle.value
+      ? undefined
+      : clone(controllerStyle.value),
     multiplayerPortraitTransform: type === 'stop' || props.mode !== 'multiplayer' || !controllerStyle.value
       ? undefined
       : { ...controllerStyle.value.transform },
@@ -249,8 +277,9 @@ const stopExternalPreview = () => {
 }
 
 watch(() => [props.show, props.mode] as const, ([show]) => {
+  commitEditTransaction()
   uploadGeneration += 1
-  resetControllerTransformHistory()
+  resetControllerStyleHistory()
   if (!show) return
   previewId = `appearance-preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   previewStarted = false
@@ -276,7 +305,7 @@ watch(() => props.worldTemplate, (template) => {
 }, { deep: true })
 
 watch(
-  () => [props.show, previewEnabled.value, editor.revision.value, props.previewName, controllerStyle.value?.transform] as const,
+  () => [props.show, previewEnabled.value, editor.revision.value, props.previewName, controllerStyle.value] as const,
   ([show, enabled]) => {
     if (!externalPreview) return
     if (!show || !enabled) {
@@ -300,6 +329,7 @@ const handlePreviewCommand = (event: MessageEvent) => {
 
 onMounted(() => window.addEventListener('message', handlePreviewCommand))
 onBeforeUnmount(() => {
+  commitEditTransaction()
   stopExternalPreview()
   window.removeEventListener('message', handlePreviewCommand)
 })
@@ -309,6 +339,7 @@ const canApply = computed(() => !uploading.value)
 const canUpload = computed(() => Boolean(props.channelId && props.identityId))
 
 const selectTab = (tab: 'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue') => {
+  commitEditTransaction()
   activeTab.value = tab
   if (tab === 'portrait') editor.dispatch({ type: 'select', target: { kind: 'portrait' } })
   if (tab === 'speaker') editor.dispatch({ type: 'select', target: { kind: 'speaker' } })
@@ -415,6 +446,7 @@ const handleFile = async (event: Event) => {
 
 const dispatch = (command: TheaterEditorCommand, options?: { transient?: boolean }) => {
   if (command.type === 'select') {
+    commitEditTransaction()
     if (command.target.kind === 'portrait') activeTab.value = 'portrait'
     if (command.target.kind === 'decoration') activeTab.value = 'decorations'
     if (command.target.kind === 'speaker') activeTab.value = 'speaker'
@@ -427,15 +459,16 @@ const dispatch = (command: TheaterEditorCommand, options?: { transient?: boolean
   }
   editor.dispatch(command, options)
 }
-const updateControllerStyle = (style: DialogueControllerTemplate['portraitStyle']) => {
+const updateControllerStyle = (style: ControllerStyle) => {
   if (!controllerStyle.value) return
-  const current = controllerStyle.value.transform
-  const transform = normalizeControllerTransform(style.transform, current)
-  recordControllerTransform(current, transform)
-  controllerStyle.value = { ...clone(style), transform }
+  const current = controllerStyle.value
+  const next = { ...clone(style), transform: normalizeControllerTransform(style.transform, current.transform) }
+  recordControllerStyle(current, next)
+  controllerStyle.value = next
 }
 const close = () => {
   if (props.applying) return
+  commitEditTransaction()
   stopExternalPreview()
   emit('update:show', false)
 }
@@ -522,6 +555,7 @@ const setWorldTemplate = () => {
             :preview-enabled="previewEnabled"
             :preview-name="previewName"
             :controller-area="mode === 'controller' ? controllerStyle?.transform : undefined"
+            :controller-portrait-style="mode === 'controller' ? controllerStyle || undefined : undefined"
             :multiplayer-portrait-transform="mode === 'multiplayer' ? controllerStyle?.transform : undefined"
             @dispatch="dispatch"
             @gesture-start="beginEditTransaction"
@@ -542,12 +576,14 @@ const setWorldTemplate = () => {
 
         <aside class="theater-editor-modal__inspector">
           <TheaterPresentationInspector
+            :key="previewId"
             :draft="editor.draft.value"
             :selection="editor.selection.value"
             :mode="mode === 'variant' ? 'variant' : 'base'"
             :section-modes="editor.sectionModes.value"
             :portrait-style="mode === 'controller' || mode === 'multiplayer' ? controllerStyle : null"
             :portrait-auto-width="mode === 'controller' || mode === 'multiplayer'"
+            :portrait-style-readonly="mode === 'multiplayer'"
             @dispatch="dispatch"
             @update:portrait-style="updateControllerStyle"
             @transaction-start="beginEditTransaction"

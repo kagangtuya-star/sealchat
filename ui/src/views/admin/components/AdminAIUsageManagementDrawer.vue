@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useUtilsStore } from '@/stores/utils'
+import { speechAPI } from '@/features/tts/api'
 import type { AdminAIUsageLogItem, AdminAIUsageLogListResult, AIConfig } from '@/types'
 import { Refresh, Search, Trash } from '@vicons/tabler'
 import { NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
@@ -19,6 +20,8 @@ const message = useMessage()
 const dialog = useDialog()
 
 const loading = ref(false)
+const quotaKind = ref<'text' | 'speech'>('text')
+let requestRevision = 0
 const rows = ref<AdminAIUsageLogItem[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -51,6 +54,10 @@ const statusOptions = [
 ]
 
 const featureOptions = computed(() => {
+  if (quotaKind.value === 'speech') return [
+    { label: '全部语音操作', value: null },
+    ...['message_synthesis', 'audition', 'design', 'clone'].map(value => ({ label: value, value })),
+  ]
   const items = Object.keys(configMeta.value?.features || {})
   return [
     { label: '全部功能', value: null },
@@ -103,21 +110,14 @@ const columns = computed<DataTableColumns<AdminAIUsageLogItem>>(() => [
       { default: () => row.status === 'success' ? '成功' : row.status },
     ),
   },
-  {
-    title: '输入',
-    key: 'promptTokens',
-    width: 88,
-  },
-  {
-    title: '输出',
-    key: 'completionTokens',
-    width: 88,
-  },
-  {
-    title: '缓存',
-    key: 'cacheTokens',
-    width: 88,
-  },
+  ...(quotaKind.value === 'speech' ? [
+    { title: '计费字符 / 创建次数', key: 'billingUnits', width: 150 },
+    { title: '确认单价', key: 'unitPrice', width: 100 },
+  ] : [
+    { title: '输入', key: 'promptTokens', width: 88 },
+    { title: '输出', key: 'completionTokens', width: 88 },
+    { title: '缓存', key: 'cacheTokens', width: 88 },
+  ]),
   {
     title: '消耗',
     key: 'totalCost',
@@ -188,16 +188,18 @@ const loadMeta = async () => {
 }
 
 const refresh = async () => {
+  const revision = ++requestRevision
   loading.value = true
   try {
-    const resp = await utils.adminAIUsageLogs(buildParams())
+    const resp = quotaKind.value === 'speech' ? await speechAPI.logs(buildParams()) : await utils.adminAIUsageLogs(buildParams())
+    if (revision !== requestRevision) return
     const data = resp.data as AdminAIUsageLogListResult
     rows.value = data.items || []
     total.value = Number(data.total || 0)
   } catch (error) {
     message.error(extractErrorMessage(error, '读取 AI 调用日志失败'))
   } finally {
-    loading.value = false
+    if (revision === requestRevision) loading.value = false
   }
 }
 
@@ -239,7 +241,7 @@ const handlePageSizeChange = (nextPageSize: number) => {
 const executeCleanup = async () => {
   cleanupLoading.value = true
   try {
-    const resp = await utils.adminAIUsageLogsCleanup({
+    const resp = quotaKind.value === 'speech' ? await speechAPI.cleanupLogs(cleanupDays.value ?? undefined) : await utils.adminAIUsageLogsCleanup({
       retentionDays: cleanupDays.value ?? undefined,
     })
     message.success(`已清理 ${resp.data?.affectedRows || 0} 条日志`)
@@ -338,6 +340,7 @@ const confirmCleanup = () => {
         </div>
 
         <div class="admin-ai-usage__summary">
+          <n-select v-model:value="quotaKind" style="width: 160px" :options="[{ label: '文本金额日志', value: 'text' }, { label: '语音金额日志', value: 'speech' }]" @update:value="resetFilters" />
           <n-tag size="small" type="info">当前保留 {{ cleanupDays || 30 }} 天</n-tag>
           <span>共 {{ total }} 条日志</span>
         </div>

@@ -297,7 +297,7 @@ func TestOneBotRuntimePublishProtocolEventRemovesSessionOnWriteFailure(t *testin
 	rt.registerSession(session)
 	session.Role = oneBotSessionRoleUniversal
 
-	rt.publishProtocolEvent(botUser.ID, &protocol.Event{
+	if rt.publishProtocolEvent(botUser.ID, &protocol.Event{
 		Type:      protocol.EventMessageCreated,
 		Timestamp: time.Now().Unix(),
 		Channel: &protocol.Channel{
@@ -313,10 +313,110 @@ func TestOneBotRuntimePublishProtocolEventRemovesSessionOnWriteFailure(t *testin
 			ID:      "msg-" + utils.NewIDWithLength(6),
 			Content: "hello",
 		},
-	}, "")
+	}, oneBotHTTPQuickOperationSessionPrefix) {
+		t.Fatal("expected failed event push to return false")
+	}
 
 	if _, ok := rt.sessions[session.ID]; ok {
 		t.Fatal("expected failed event push to unregister session")
+	}
+}
+
+func TestOneBotRuntimePublishProtocolEventReturnsFalseWithoutTransport(t *testing.T) {
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+
+	if rt.publishProtocolEvent("bot-without-transport", &protocol.Event{
+		Type: protocol.EventMessageCreated,
+	}, oneBotHTTPQuickOperationSessionPrefix) {
+		t.Fatal("expected event push without transport to return false")
+	}
+}
+
+func TestOneBotRuntimePublishProtocolEventReturnsTrueOnSessionDelivery(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "event-success", model.BotKindManual)
+	conn := &oneBotTestJSONConn{}
+	session := createOneBotTestSession(t, botUser)
+	session.Conn = conn
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+	rt.registerSession(session)
+	defer rt.unregisterSession(session.ID)
+
+	if !rt.publishProtocolEvent(botUser.ID, &protocol.Event{
+		Type:      protocol.EventMessageCreated,
+		Timestamp: time.Now().Unix(),
+		Channel: &protocol.Channel{
+			ID:   "private-" + utils.NewIDWithLength(6),
+			Type: protocol.DirectChannelType,
+		},
+		User: &protocol.User{
+			ID:   botUser.ID,
+			Nick: botUser.Nickname,
+		},
+		Message: &protocol.Message{
+			ID:      "msg-" + utils.NewIDWithLength(6),
+			Content: "hello",
+		},
+	}, oneBotHTTPQuickOperationSessionPrefix) {
+		t.Fatal("expected event push to return true")
+	}
+	if len(conn.payloads) < 2 {
+		t.Fatalf("expected lifecycle and event payloads, got %d", len(conn.payloads))
+	}
+}
+
+func TestOneBotRuntimePublishProtocolEventReturnsTrueOnHTTPPost(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "event-http-success", model.BotKindManual)
+	received := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	if _, err := model.BotOneBotConfigUpsert(&model.BotOneBotConfigModel{
+		BotUserID:          botUser.ID,
+		Enabled:            true,
+		TransportType:      model.OneBotTransportHTTP,
+		HTTPPostPathSuffix: server.URL,
+	}); err != nil {
+		t.Fatalf("save HTTP POST config failed: %v", err)
+	}
+
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+	if !rt.publishProtocolEvent(botUser.ID, &protocol.Event{
+		Type:      protocol.EventMessageCreated,
+		Timestamp: time.Now().Unix(),
+		Channel: &protocol.Channel{
+			ID:   "private-" + utils.NewIDWithLength(6),
+			Type: protocol.DirectChannelType,
+		},
+		User: &protocol.User{
+			ID:   botUser.ID,
+			Nick: botUser.Nickname,
+		},
+		Message: &protocol.Message{
+			ID:      "msg-" + utils.NewIDWithLength(6),
+			Content: "hello",
+		},
+	}, "") {
+		t.Fatal("expected HTTP POST event push to return true")
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP POST server did not receive event")
 	}
 }
 

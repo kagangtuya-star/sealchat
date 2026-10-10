@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { mediaFxSpecSchema } from '../../../features/media-fx/media-fx-schema'
 import {
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
@@ -7,6 +8,8 @@ import {
   STAGE_ACTION_DELAY_STEP_MS,
   STAGE_ACTION_MAX_DELAY_MS,
   isSafeStageImageUrl,
+  stageSceneOverlayBlendModes,
+  stageSceneOverlayLayers,
 } from '../shared/stage-types'
 import { normalizeStageRandomTablePayload } from '../shared/stage-actions'
 
@@ -313,6 +316,13 @@ const objectToggleActionSchema = z.strictObject({
   payload: z.strictObject({ objectId: nonEmptyIdSchema }),
 })
 
+const objectTriggerActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('object.trigger'),
+  schedule: stageActionScheduleSchema,
+  payload: z.strictObject({ objectId: nonEmptyIdSchema }),
+})
+
 const clueAccessModeSchema = z.enum(['keep', 'inherit', 'none', 'view', 'edit'])
 const clueActionTargetSchema = z.strictObject({ userId: z.string().trim().min(1).max(128), access: clueAccessModeSchema })
 const clueActionEntrySchema = z.strictObject({
@@ -352,6 +362,7 @@ const stageAtomicActionSchema = z.discriminatedUnion('type', [
   effectPlayActionSchema,
   clueExecuteActionSchema,
   objectToggleActionSchema,
+  objectTriggerActionSchema,
 ])
 
 const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
@@ -362,6 +373,7 @@ const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
   effectPlayActionSchema.omit({ id: true, schedule: true }),
   clueExecuteActionSchema.omit({ id: true, schedule: true }),
   objectToggleActionSchema.omit({ id: true, schedule: true }),
+  objectTriggerActionSchema.omit({ id: true, schedule: true }),
 ])
 
 const stageSequenceActionSchema = z.strictObject({
@@ -453,6 +465,7 @@ const stageSurfaceStyleSchema = z.strictObject({
     color: z.string().trim().min(1).max(64),
     opacity: z.number().finite().min(0).max(1),
   }),
+  mediaFx: mediaFxSpecSchema.optional(),
 })
 
 const sceneTransitionTypeSchema = z.enum(['none', 'fade', 'slide', 'dissolve', 'zoom', 'mask', 'flip', 'blur', 'rotate', 'curtain'])
@@ -495,9 +508,38 @@ const legacySceneTransitionSchema = z.strictObject({
   durationMs: z.number().int().min(0).max(60_000).optional(),
 })
 
+const stageSurfaceEmbedSchema = z.strictObject({
+  type: z.literal('iframe'),
+  iframe: z.strictObject({ url: z.string().max(8192), scale: z.number().finite().min(0.25).max(5) }),
+  interactive: z.boolean(),
+})
+
+const stageSceneOverlaySchema = z.strictObject({
+  version: z.literal(1),
+  id: nonEmptyIdSchema,
+  effectId: nonEmptyIdSchema,
+  name: z.string().max(128),
+  enabled: z.boolean(),
+  opacity: z.number().finite().min(0).max(1),
+  blendMode: z.enum(stageSceneOverlayBlendModes),
+  layer: z.enum(stageSceneOverlayLayers),
+  media: z.strictObject({
+    resourceId: nonEmptyIdSchema,
+    variant: z.string().optional(),
+    mimeType: z.string().optional(),
+    animated: z.boolean().optional(),
+    loopCount: z.number().int().positive().max(65_535).optional(),
+  }).optional(),
+  params: z.record(z.string(), z.union([z.string(), z.number().finite(), z.boolean(), z.null()])),
+})
+
 const stageSceneStateSchema = z.strictObject({
   background: stageImageRefSchema.nullable(),
   foreground: stageImageRefSchema.nullable(),
+  surfaceEmbeds: z.strictObject({
+    background: stageSurfaceEmbedSchema.nullable(),
+    foreground: stageSurfaceEmbedSchema.nullable(),
+  }).default({ background: null, foreground: null }),
   surfaceStyles: z.strictObject({
     background: stageSurfaceStyleSchema,
     foreground: stageSurfaceStyleSchema,
@@ -514,6 +556,7 @@ const stageSceneStateSchema = z.strictObject({
   transition: sceneTransitionSchema,
   switchAudio: stageAudioRefSchema.nullable(),
   musicSnapshot: stageMusicSnapshotSchema.nullable(),
+  sceneOverlays: z.array(stageSceneOverlaySchema).default([]),
   serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -529,6 +572,7 @@ const stageSceneSchema = z.strictObject({
   order: z.number().finite(),
   folderId: nonEmptyIdSchema.optional(),
   locked: z.boolean(),
+  published: z.boolean().default(false),
   state: stageSceneStateSchema,
 })
 
@@ -669,6 +713,11 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
   actionId: nonEmptyIdSchema,
   stepId: nonEmptyIdSchema.optional(),
   direct: z.literal(true).optional(),
+  embedEvent: z.strictObject({
+    eventId: nonEmptyIdSchema,
+    formId: nonEmptyIdSchema,
+    topic: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/),
+  }).optional(),
   action: stageActionSchema,
   execution: z.strictObject({
     id: nonEmptyIdSchema,
@@ -682,6 +731,13 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
     x: z.number().finite(),
     y: z.number().finite(),
   }).optional(),
+})
+
+// Only identifiers cross the bridge; the host re-reads the saved sequence.
+export const stageSequenceTriggeredPayloadSchema = z.strictObject({
+  sequenceId: nonEmptyIdSchema,
+  triggerId: nonEmptyIdSchema,
+  executionId: nonEmptyIdSchema,
 })
 
 export const chatMessageSendPayloadSchema = z.strictObject({
@@ -815,6 +871,7 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['command:chat.clue.access.read', chatClueAccessReadPayloadSchema],
   ['result:chat.clue.access.read.result', chatClueAccessReadResultSchema],
   ['event:stage.action.triggered', stageActionTriggeredPayloadSchema],
+  ['event:stage.sequence.triggered', stageSequenceTriggeredPayloadSchema],
   ['command:chat.message.send', chatMessageSendPayloadSchema],
   ['result:chat.message.send.result', chatMessageSendResultSchema],
   ['command:chat.composer.insert', chatComposerInsertPayloadSchema],
@@ -856,6 +913,7 @@ export type ChatClueOptionsReadResult = z.infer<typeof chatClueOptionsReadResult
 export type ChatClueAccessReadResult = z.infer<typeof chatClueAccessReadResultSchema>
 export type StageAction = z.infer<typeof stageActionSchema>
 export type StageActionTriggeredPayload = z.infer<typeof stageActionTriggeredPayloadSchema>
+export type StageSequenceTriggeredPayload = z.infer<typeof stageSequenceTriggeredPayloadSchema>
 export type ChatMessageSendPayload = z.infer<typeof chatMessageSendPayloadSchema>
 export type ChatMessageSendResult = z.infer<typeof chatMessageSendResultSchema>
 export type ChatComposerInsertPayload = z.infer<typeof chatComposerInsertPayloadSchema>

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { Minus } from '@vicons/tabler';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import { resolveTemplateValue } from '@/utils/characterCardTemplate';
+import { resolveCharacterStat, type ResolvedCharacterStat } from '@/utils/characterStatDisplay';
 import {
   buildInternalSurfaceResourceKey,
   generateInternalSurfaceLink,
@@ -15,9 +15,7 @@ import { useUserStore } from '@/stores/user';
 import { useUtilsStore } from '@/stores/utils';
 import {
   useChannelCharacterSnapshotStore,
-  type CharacterSnapshotNumericSource,
   type ChannelCharacterSnapshotItem,
-  type TheaterCharacterStatTemplate,
 } from '@/stores/channelCharacterSnapshot';
 
 const props = defineProps<{
@@ -37,26 +35,12 @@ interface OverlayLayout {
 }
 
 type MinimizedEdge = 'left' | 'right' | 'bottom';
-
-interface ResolvedStat {
-  id: string;
-  name: string;
-  current: number;
-  max: number | null;
-  min: number | null;
-  barColor: string;
-  textColor: string;
-  fillLeft: number;
-  fillWidth: number;
-  zeroLeft: number;
-}
-
 interface ResolvedCharacter {
   item: ChannelCharacterSnapshotItem;
   name: string;
   avatarUrl: string;
   preferredColumns: number;
-  stats: ResolvedStat[];
+  stats: ResolvedCharacterStat[];
 }
 
 const rootRef = ref<HTMLElement | null>(null);
@@ -289,72 +273,13 @@ const endInteraction = (event: PointerEvent) => {
   persistLayout();
 };
 
-const resolveNumericSource = (source: CharacterSnapshotNumericSource | undefined, attrs: Record<string, any>): number | null => {
-  if (!source) return null;
-  const raw = 'value' in source ? source.value : resolveTemplateValue(attrs, source.path);
-  if (raw === null || raw === undefined || raw === '') return null;
-  const value = typeof raw === 'number' ? raw : Number(String(raw).trim());
-  return Number.isFinite(value) ? value : null;
-};
-
-const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<string, any>): ResolvedStat | null => {
-  const current = resolveNumericSource(template.current, attrs);
-  const max = resolveNumericSource(template.max, attrs);
-  const min = resolveNumericSource(template.min, attrs);
-  if (current === null) return null;
-  if (max === null) {
-    return {
-      id: template.id,
-      name: template.name,
-      current,
-      max: null,
-      min,
-      barColor: template.barColor || '#ffffff',
-      textColor: template.textColor || '#ffffff',
-      fillLeft: 0,
-      fillWidth: 100,
-      zeroLeft: 0,
-    };
-  }
-  const rangeMin = min ?? 0;
-  if (max <= rangeMin) {
-    return {
-      id: template.id,
-      name: template.name,
-      current,
-      max: null,
-      min,
-      barColor: template.barColor || '#ffffff',
-      textColor: template.textColor || '#ffffff',
-      fillLeft: 0,
-      fillWidth: 100,
-      zeroLeft: 0,
-    };
-  }
-  const range = max - rangeMin;
-  const currentRatio = clamp((current - rangeMin) / range, 0, 1);
-  const zeroRatio = clamp((0 - rangeMin) / range, 0, 1);
-  return {
-    id: template.id,
-    name: template.name,
-    current,
-    max,
-    min,
-    barColor: template.barColor || '#ffffff',
-    textColor: template.textColor || '#ffffff',
-    fillLeft: Math.min(currentRatio, zeroRatio) * 100,
-    fillWidth: Math.abs(currentRatio - zeroRatio) * 100,
-    zeroLeft: zeroRatio * 100,
-  };
-};
-
 const snapshotItems = computed(() => snapshotStore.getChannelItems(props.channelId));
 
 const resolveCharacter = (item: ChannelCharacterSnapshotItem): ResolvedCharacter | null => {
   const template = snapshotStore.getOverlayTemplateForSnapshot(item);
   const attrs = item.data.card?.attrs || {};
   if (!template || !item.data.card) return null;
-  const stats = template.items.map(stat => resolveStat(stat, attrs)).filter((stat): stat is ResolvedStat => !!stat);
+  const stats = template.items.map(stat => resolveCharacterStat(stat, attrs)).filter((stat): stat is ResolvedCharacterStat => !!stat);
   if (!stats.length) return null;
   return {
     item,
@@ -534,8 +459,9 @@ onBeforeUnmount(() => {
             <div class="theater-character-stat-card__stats">
               <div v-for="stat in character.stats" :key="stat.id" class="theater-character-stat">
                 <div
+                  v-if="stat.displayMode === 'bar'"
                   class="theater-character-stat__bar"
-                  :style="{ color: stat.textColor }"
+                  :style="{ color: stat.textColor || '#ffffff' }"
                   @pointerdown="beginInteraction('drag', $event)"
                   @pointermove="moveInteraction"
                   @pointerup="endInteraction"
@@ -543,11 +469,37 @@ onBeforeUnmount(() => {
                 >
                   <span
                     class="theater-character-stat__fill"
-                    :style="{ left: `${stat.fillLeft}%`, width: `${stat.fillWidth}%`, backgroundColor: stat.barColor }"
+                    :style="{ left: `${stat.fillLeft}%`, width: `${stat.fillWidth}%`, backgroundColor: stat.barColor || '#ffffff' }"
                   />
                   <span v-if="stat.min !== null && stat.min < 0 && stat.max !== null && stat.max > 0" class="theater-character-stat__zero" :style="{ left: `${stat.zeroLeft}%` }" />
                   <span class="theater-character-stat__name">{{ stat.name }}</span>
                   <span class="theater-character-stat__value">{{ stat.max === null ? stat.current : `${stat.current}/${stat.max}` }}</span>
+                </div>
+                <div
+                  v-else
+                  class="theater-character-stat__icons"
+                  :style="{ color: stat.textColor || '#ffffff' }"
+                  @pointerdown="beginInteraction('drag', $event)"
+                  @pointermove="moveInteraction"
+                  @pointerup="endInteraction"
+                  @pointercancel="endInteraction"
+                >
+                  <div class="theater-character-stat__icon-line">
+                    <span class="theater-character-stat__icon-name">{{ stat.name }}</span>
+                    <span class="theater-character-stat__icon-value">{{ stat.current }}/{{ stat.max }}</span>
+                  </div>
+                  <div class="theater-character-stat__icon-list">
+                    <span v-for="(fill, index) in stat.iconFills" :key="index" class="theater-character-stat__icon">
+                      <span class="theater-character-stat__icon-base">
+                        <img v-if="stat.iconType === 'image'" :src="resolveAttachmentUrl(stat.iconValue)" alt="">
+                        <span v-else>{{ stat.iconValue }}</span>
+                      </span>
+                      <span class="theater-character-stat__icon-fill" :style="{ width: `${fill * 100}%` }">
+                        <img v-if="stat.iconType === 'image'" :src="resolveAttachmentUrl(stat.iconValue)" alt="">
+                        <span v-else>{{ stat.iconValue }}</span>
+                      </span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -593,6 +545,16 @@ onBeforeUnmount(() => {
 .theater-character-stat__fill { position: absolute; top: 0; bottom: 0; opacity: .46; }
 .theater-character-stat__zero { position: absolute; top: 0; bottom: 0; width: 1px; background: currentColor; opacity: .75; }
 .theater-character-stat__value { inset: 0 4px 0 auto; place-items: center end; }
+.theater-character-stat__icons { min-height: 16px; padding: 1px 3px 2px; overflow: hidden; background: rgba(0, 0, 0, .2); border-radius: 2px; cursor: move; touch-action: none; }
+.theater-character-stat__icon-line { display: flex; justify-content: space-between; gap: 4px; overflow: hidden; font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 13px; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+.theater-character-stat__icon-name { overflow: hidden; text-overflow: ellipsis; }
+.theater-character-stat__icon-value { flex: none; }
+.theater-character-stat__icon-list { display: flex; flex-wrap: wrap; gap: 1px; }
+.theater-character-stat__icon { position: relative; display: inline-block; width: 14px; height: 14px; overflow: hidden; font-size: 13px; line-height: 14px; }
+.theater-character-stat__icon-base, .theater-character-stat__icon-fill { position: absolute; inset: 0; display: block; overflow: hidden; white-space: nowrap; }
+.theater-character-stat__icon-base { filter: grayscale(1); opacity: .22; }
+.theater-character-stat__icon-fill { right: auto; }
+.theater-character-stat__icon img, .theater-character-stat__icon-base > span, .theater-character-stat__icon-fill > span { display: block; width: 14px; height: 14px; object-fit: contain; }
 .theater-character-overlay__minimize, .theater-character-overlay__resize { position: absolute; padding: 0; border: 0; opacity: 0; pointer-events: none; transition: opacity .14s ease, background-color .14s ease; }
 .is-chrome-visible .theater-character-overlay__minimize, .is-chrome-visible .theater-character-overlay__resize, .theater-character-overlay:focus-within .theater-character-overlay__minimize, .theater-character-overlay:focus-within .theater-character-overlay__resize { opacity: 1; pointer-events: auto; }
 .theater-character-overlay__minimize { top: 2px; right: 4px; display: grid; width: 18px; height: 16px; place-items: center; color: rgba(255, 255, 255, .76); background: rgba(255, 255, 255, .09); border-radius: 2px; cursor: pointer; }

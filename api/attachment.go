@@ -37,7 +37,7 @@ func UploadQuick(c *fiber.Ctx) error {
 
 	db := model.GetDB()
 	var item model.AttachmentModel
-	db.Where("hash = ? and size = ?", hashBytes, body.Size).Limit(1).Find(&item)
+	model.ExcludeTTSAttachments(db).Where("hash = ? and size = ?", hashBytes, body.Size).Limit(1).Find(&item)
 	if item.ID == "" {
 		return wrapError(c, nil, "此项数据无法进行快速上传")
 	}
@@ -153,7 +153,7 @@ func Upload(c *fiber.Ctx) error {
 func AttachmentList(c *fiber.Ctx) error {
 	var items []*model.AttachmentModel
 	user := getCurUser(c)
-	model.GetDB().Where("user_id = ?", user.ID).Select("id, created_at, hash").Find(&items)
+	model.ExcludeTTSAttachments(model.GetDB()).Where("user_id = ?", user.ID).Select("id, created_at, hash").Find(&items)
 
 	return c.JSON(fiber.Map{
 		"message": "ok",
@@ -161,7 +161,20 @@ func AttachmentList(c *fiber.Ctx) error {
 	})
 }
 
-func AttachmentGet(c *fiber.Ctx) error {
+func AttachmentGet(c *fiber.Ctx) (responseErr error) {
+	proxy := c.Query("proxy") == "1"
+	if proxy {
+		// Errors must never inherit the immutable attachment cache policy.
+		c.Set(fiber.HeaderCacheControl, "no-store")
+		defer func() {
+			if responseErr != nil || c.Response().StatusCode() >= fiber.StatusBadRequest {
+				c.Set(fiber.HeaderCacheControl, "no-store")
+				for _, header := range []string{"Expires", "ETag", "Last-Modified"} {
+					c.Response().Header.Del(header)
+				}
+			}
+		}()
+	}
 	attachmentID := c.Params("id")
 	if attachmentID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -180,13 +193,31 @@ func AttachmentGet(c *fiber.Ctx) error {
 			"message": "附件不存在",
 		})
 	}
-	if att.RootIDType == "world_clue" {
+	if att.RootIDType == "world_clue" || att.IsTTSManaged() {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
+	}
+	if proxy && att.StorageType == model.StorageS3 {
+		return serveAttachmentProxy(c, &att)
 	}
 	return serveAttachmentRecord(c, &att)
 }
 
+func serveAttachmentProxy(c *fiber.Ctx, att *model.AttachmentModel) error {
+	reader, err := service.OpenAttachmentRead(c.Context(), att)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件文件不存在"})
+	}
+	setAttachmentCacheHeaders(c, att)
+	c.Set(fiber.HeaderContentType, "application/octet-stream")
+	setAttachmentContentType(c, att)
+	// SendStream transfers ownership to fasthttp, which closes the reader after sending.
+	return c.SendStream(reader)
+}
+
 func serveAttachmentRecord(c *fiber.Ctx, att *model.AttachmentModel) error {
+	if att.IsTTSManaged() {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
 	if att.StorageType == model.StorageS3 {
 		if redirected := redirectAttachmentToRemote(c, att); redirected {
 			return nil
@@ -259,6 +290,9 @@ func AttachmentMeta(c *fiber.Ctx) error {
 	var att model.AttachmentModel
 	if err := model.GetDB().Where("id = ?", attachmentID).Limit(1).Find(&att).Error; err != nil {
 		return wrapError(c, err, "读取附件失败")
+	}
+	if att.IsTTSManaged() {
+		return c.SendStatus(fiber.StatusNotFound)
 	}
 	if att.ID == "" {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{

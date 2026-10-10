@@ -12,12 +12,13 @@ const props = withDefaults(defineProps<{
 }>(), { playbackRate: 1, active: true })
 
 const display = useDisplayStore()
-const emit = defineEmits<{ dimensions: [width: number, height: number] }>()
+const emit = defineEmits<{ dimensions: [width: number, height: number], imageLoad: [image: HTMLImageElement, attachmentId: string], imageLoading: [] }>()
 const failedIndex = ref(-1)
 const supportsVideo = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
 
-watch(() => [props.media.resourceAttachmentId, props.media.fallbackAttachmentId], () => {
+// Keep the displayed fallback when only the surrounding presentation is replaced.
+watch([() => props.media.resourceAttachmentId, () => props.media.fallbackAttachmentId], () => {
   failedIndex.value = -1
 })
 watch(() => [display.settings.preferStaticAvatarDecoration, supportsVideo.value], () => {
@@ -46,6 +47,8 @@ const candidates = computed(() => resolveTheaterMediaCandidates(props.media, {
 const candidate = computed(() => candidates.value[failedIndex.value + 1] || null)
 const src = computed(() => resolveAttachmentUrl(candidate.value?.attachmentId || ''))
 
+watch([() => candidate.value?.attachmentId, src], () => emit('imageLoading'), { flush: 'sync' })
+
 const handleError = () => { failedIndex.value += 1 }
 const handleVideoLoaded = () => {
   if (!videoRef.value) return
@@ -73,13 +76,15 @@ const handleVideoLoaded = () => {
   />
   <img
     v-else-if="candidate?.kind === 'image' && src"
+    :key="candidate.attachmentId"
     class="theater-media"
     :src="src"
+    :data-attachment-id="candidate.attachmentId"
     alt=""
     draggable="false"
     style="object-fit: cover"
     @error="handleError"
-    @load="event => { const image = event.target as HTMLImageElement; emit('dimensions', image.naturalWidth, image.naturalHeight) }"
+    @load="event => { const image = event.target as HTMLImageElement; emit('dimensions', image.naturalWidth, image.naturalHeight); emit('imageLoad', image, image.dataset.attachmentId || '') }"
   >
 </template>
 

@@ -1,4 +1,6 @@
 <script setup lang="tsx">
+import MessageSpeechButton from '@/features/tts/MessageSpeechButton.vue'
+import { speechPlayer } from '@/features/tts/player'
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
 import { onMounted, onUpdated, ref, h, Fragment, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
@@ -4017,8 +4019,9 @@ const handleRetrySend = () => {
       </span>
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
-        <div v-if="hasEditAction" class="message-action-bar"
-          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible }">
+        <div v-if="hasEditAction || item?.tts" class="message-action-bar"
+          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible, 'message-action-bar--speech': !!item?.tts, 'message-action-bar--playing': speechPlayer.state.key === `messages:${item?.id}` }">
+          <MessageSpeechButton v-if="item?.id" :message="{ id: item.id, tts: item.tts }" />
           <n-tooltip v-if="canShowEditAction" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="message-action-bar__btn" @click="handleEditClick">
@@ -4261,6 +4264,16 @@ const handleRetrySend = () => {
 }
 
 @media (hover: none), (pointer: coarse) {
+  .message-action-bar--speech {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .chat-item--layout-compact .message-action-bar--speech {
+    width: auto;
+    top: -1.8rem;
+    bottom: auto;
+  }
   .chat-item-revoked__trigger {
     color: var(--chat-text-secondary, #94a3b8);
     background: transparent;
@@ -4580,10 +4593,20 @@ const handleRetrySend = () => {
     calc(var(--chat-message-padding-x, 1.1rem) * 0.95);
 }
 
-.chat--has-background .chat-item--layout-bubble > .right > .content {
-  --chat-message-ic-bg: var(--chat-bubble-ic-bg, color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 34%, transparent));
+.chat--has-background .chat-item--layout-bubble > .right > .content,
+:root[data-sc-glass-background='true']
+  .chat
+  .chat-item--layout-bubble > .right > .content,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone
+  .chat-item--layout-bubble > .right > .content {
+  --chat-message-ic-bg: var(--chat-bubble-ic-bg, transparent);
   background: var(--chat-message-ic-bg);
   border: 1px solid color-mix(in srgb, var(--chat-bubble-border, rgba(15, 23, 42, 0.08)) 70%, transparent);
+}
+
+.chat--has-background
+  .chat-item--layout-bubble > .right > .content {
   backdrop-filter: blur(4px);
 }
 
@@ -5081,7 +5104,8 @@ const handleRetrySend = () => {
 
 .chat-item .content:hover .message-action-bar,
 .chat-item.is-editing .message-action-bar,
-.chat-item .message-action-bar--active {
+.chat-item .message-action-bar--active,
+.chat-item .message-action-bar--playing {
   opacity: 1;
   pointer-events: auto;
 }
@@ -5314,8 +5338,18 @@ const handleRetrySend = () => {
   font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
 }
 
-.chat--has-background .chat-item--layout-bubble.chat-item--ooc .right .content {
-  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, color-mix(in srgb, var(--chat-ooc-bg, #ffffff) 34%, transparent));
+.chat--has-background
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content,
+:root[data-sc-glass-background='true']
+  .chat
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content,
+:root[data-sc-glass-background='true']
+  .chat-pinned-zone
+  .chat-item--layout-bubble.chat-item--ooc
+  .right .content {
+  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, transparent);
   background: var(--chat-message-ooc-bg);
   border: 1px solid color-mix(in srgb, var(--chat-ooc-border, rgba(148, 163, 184, 0.35)) 72%, transparent);
 }

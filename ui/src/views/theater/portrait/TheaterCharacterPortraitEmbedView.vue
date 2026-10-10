@@ -9,8 +9,9 @@ import {
   type ChannelEmbedClient,
   type EmbedTheaterCharacterSnapshot,
 } from '@/bridge/channelEmbedSdk'
-import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
+import TheaterMediaFxVisual from '@/components/theater-presentation/TheaterMediaFxVisual.vue'
 import { resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import '@/components/theater-presentation/theaterComposition.css'
 import {
   normalizeTheaterCharacterPortraitEmbedSettings,
@@ -83,6 +84,9 @@ const decorationStyle = (layer: TheaterVisualLayer): CSSProperties => ({
   ...resolveTheaterTransformStyle(layer.transform),
   mixBlendMode: layer.blendMode,
 })
+// Same reduced-motion source as the dialogue runtime. Media FX stays on an inner
+// wrapper so it never merges with the root rotation or decoration transforms.
+const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
 
 const normalizeRevision = (input: unknown) => typeof input === 'number' && Number.isInteger(input) && input >= 0 ? input : undefined
 const updateCharacters = (input: unknown) => {
@@ -349,7 +353,7 @@ onBeforeUnmount(() => {
     <div class="portrait-embed__composition theater-composition-host">
       <div class="portrait-embed__portrait-root" :style="portraitRootStyle">
         <div v-if="portrait" class="portrait-embed__portrait" :style="portraitStyle">
-          <TheaterPresentationMedia :media="portrait.media" :playback-rate="portrait.playbackRate" />
+          <TheaterMediaFxVisual :media="portrait.media" :media-fx="portrait.mediaFx" :reduced-motion="reducedMotion" :playback-rate="portrait.playbackRate" />
         </div>
         <div
           v-for="layer in decorations"
@@ -357,7 +361,7 @@ onBeforeUnmount(() => {
           class="portrait-embed__decoration"
           :style="decorationStyle(layer)"
         >
-          <TheaterPresentationMedia :media="layer.media" :playback-rate="layer.playbackRate" />
+          <TheaterMediaFxVisual :media="layer.media" :media-fx="layer.mediaFx" :reduced-motion="reducedMotion" :playback-rate="layer.playbackRate" />
         </div>
       </div>
     </div>

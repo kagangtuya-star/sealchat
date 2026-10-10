@@ -2,6 +2,8 @@
 import { reactive, watch, computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
+  COMPOSER_HINTS_SCALE_LIMITS,
+  IDENTITY_QUICK_BAR_LIMITS,
   MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS,
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
@@ -136,6 +138,11 @@ const interjectSwitchRuleOptions: Array<{ label: string; value: DisplaySettings[
   { label: '不反转', value: 'preserve' },
   { label: '固定场外', value: 'forceOoc' },
   { label: '固定场内', value: 'forceIc' },
+]
+const composerHintsPositionOptions: Array<{ label: string; value: DisplaySettings['composerHintsPosition'] }> = [
+  { label: '左', value: 'left' },
+  { label: '中', value: 'center' },
+  { label: '右', value: 'right' },
 ]
 const editingSelfActionsPlacementOptions: Array<{ label: string; value: DisplaySettings['editingSelfActionsPlacement'] }> = [
   { label: '左置', value: 'left' },
@@ -290,12 +297,14 @@ type NumericSettingKey =
   | 'historyNavigationOpacity'
   | 'quickGalleryPageSize'
   | 'messageImageSnapshotWidth'
+  | 'identityQuickBarLimit'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
 }
 const handleQuickGalleryPageSizeUpdate = (value: number | null) => handleNumericInput('quickGalleryPageSize', value)
 const handleMessageImageSnapshotWidthUpdate = (value: number | null) => handleNumericInput('messageImageSnapshotWidth', value)
+const handleIdentityQuickBarLimitUpdate = (value: number | null) => handleNumericInput('identityQuickBarLimit', value)
 const handleFontSizeUpdate = (value: number | null) => handleNumericInput('fontSize', value)
 const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lineHeight', value)
 const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
@@ -845,6 +854,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">背景消息场内外区分</p>
+            <p class="section-desc">频道背景或玻璃背景开启时，使用半透明色调区分场内与场外消息；关闭后恢复全透明显示</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.backgroundMessageToneEnabled">
+          <template #checked>增强区分</template>
+          <template #unchecked>全透明</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
@@ -920,6 +942,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <n-switch v-model:value="draft.showInputPreview">
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">上传图片时打开编辑器</p>
+            <p class="section-desc">通过输入工具区选择图片后打开编辑器；关闭后直接插入输入框，与拖入或粘贴图片一致</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.inputToolbarImageEditorEnabled">
+          <template #checked>已开启</template>
+          <template #unchecked>已关闭</template>
         </n-switch>
       </section>
 
@@ -1077,6 +1112,82 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             @blur="handleIdentityVariantQuickSwitchTriggerBlur"
           />
           <span class="quick-input-hint">示例：{{ identityVariantQuickSwitchTriggerDraft || '=' }}差分 正文</span>
+        </div>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快速角色栏</p>
+            <p class="section-desc">在聊天输入框旁显示最近发言的频道角色头像，点击即可快速切换</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <n-switch v-model:value="draft.identityQuickBarEnabled">
+            <template #checked>已开启</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <template v-if="draft.identityQuickBarEnabled">
+            <span class="quick-input-hint">最多显示角色数</span>
+            <n-input-number
+              :value="draft.identityQuickBarLimit"
+              size="small"
+              :min="IDENTITY_QUICK_BAR_LIMITS.MIN"
+              :max="IDENTITY_QUICK_BAR_LIMITS.MAX"
+              :step="1"
+              :precision="0"
+              style="width: 110px"
+              @update:value="handleIdentityQuickBarLimitUpdate"
+            />
+          </template>
+        </div>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入智能提示</p>
+            <p class="section-desc">输入内容命中表情备注或当前角色的差分关键词时，在输入框上方显示快捷候选；点击后插入表情或切换差分。</p>
+          </div>
+        </header>
+        <div class="input-hint-settings">
+          <div class="input-hint-settings__row">
+            <p class="indent-label">表情关键词提示</p>
+            <n-switch v-model:value="draft.emojiInputHintEnabled" size="small" />
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">差分关键词提示</p>
+            <n-switch v-model:value="draft.identityVariantInputHintEnabled" size="small" />
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">快捷候选位置</p>
+            <div class="input-hint-position-group" role="group" aria-label="快捷候选位置">
+              <n-button
+                v-for="option in composerHintsPositionOptions"
+                :key="option.value"
+                size="tiny"
+                :type="draft.composerHintsPosition === option.value ? 'primary' : 'default'"
+                :secondary="draft.composerHintsPosition !== option.value"
+                :aria-pressed="draft.composerHintsPosition === option.value"
+                @click="draft.composerHintsPosition = option.value"
+              >
+                {{ option.label }}
+              </n-button>
+            </div>
+          </div>
+          <div class="input-hint-settings__row">
+            <p class="indent-label">快捷候选大小</p>
+            <div class="input-hint-size-control">
+              <n-slider
+                v-model:value="draft.composerHintsScalePercent"
+                :min="COMPOSER_HINTS_SCALE_LIMITS.MIN"
+                :max="COMPOSER_HINTS_SCALE_LIMITS.MAX"
+                :step="5"
+                :tooltip="false"
+              />
+              <span>{{ draft.composerHintsScalePercent }}%</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -2013,6 +2124,45 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 .indent-label {
   font-size: 0.85rem;
   color: var(--sc-text-primary);
+}
+
+.input-hint-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-hint-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.input-hint-settings__row .indent-label {
+  margin: 0;
+}
+
+.input-hint-position-group {
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.input-hint-size-control {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) 42px;
+  align-items: center;
+  gap: 8px;
+  width: min(220px, 52vw);
+}
+
+.input-hint-size-control > span {
+  color: var(--sc-text-secondary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .indent-unit {

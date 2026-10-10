@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue'
-import type { CameraState, StageEntrancePlayback, StageObject } from '../shared/stage-types'
-import { compareStageLayersBottomToTop } from './stage-layer-order'
+import type { CameraState, StageEmbedEventPublished, StageEntrancePlayback, StageObject } from '../shared/stage-types'
+import { compareStageLayersBottomToTop, stageObjectHasDomVisualDescendant } from './stage-layer-order'
 import StageTextVisualObject from './StageTextVisualObject.vue'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 
@@ -16,7 +16,11 @@ const props = defineProps<{
   hiddenObjectIds: string[]
   stackingOrder: Record<string, number>
   characterSnapshot: ChatCharactersSnapshotPayload
+  worldId?: string
+  channelId?: string
+  scopeType?: 'world' | 'channel'
 }>()
+const emit = defineEmits<{ embedEventPublished: [event: StageEmbedEventPublished] }>()
 
 const attrs = useAttrs()
 const hiddenObjectIds = computed(() => new Set(props.hiddenObjectIds))
@@ -27,16 +31,7 @@ const roots = computed(() => Object.values(props.objects)
   ))
   .sort(compareStageLayersBottomToTop))
 
-const hasDomVisualDescendant = (object: StageObject, visited = new Set<string>()): boolean => {
-  if (object.type === 'text' || object.type === 'iframe') return true
-  if (visited.has(object.id)) return false
-  visited.add(object.id)
-  return Object.values(props.objects).some((child) => (
-    child.parentId === object.id && hasDomVisualDescendant(child, visited)
-  ))
-}
-
-const domVisualRoots = computed(() => roots.value.filter((object) => hasDomVisualDescendant(object)))
+const domVisualRoots = computed(() => roots.value.filter((object) => stageObjectHasDomVisualDescendant(object, props.objects)))
 
 const cameraStyle = computed(() => ({
   transform: `translate(${props.viewportWidth / 2 + props.camera.x}px, ${props.viewportHeight / 2 + props.camera.y}px) scale(${props.camera.zoom})`,
@@ -60,10 +55,14 @@ const rootStyle = (object: StageObject) => ({
         <StageTextVisualObject
           :key="`${object.id}:${props.entrancePlaybacks[object.id]?.token || 0}`"
           :object="object"
+          :world-id="props.worldId"
+          :channel-id="props.channelId"
+          :scope-type="props.scopeType"
           :objects="props.objects"
           :entrance-playbacks="props.entrancePlaybacks"
           :hidden-object-ids="hiddenObjectIds"
           :character-snapshot="props.characterSnapshot"
+          @embed-event-published="emit('embedEventPublished', $event)"
         />
       </div>
     </div>

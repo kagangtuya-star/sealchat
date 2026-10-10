@@ -5,6 +5,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, withDefaults } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
+import PersonalAPIKeys from './PersonalAPIKeys.vue'
 import { api, urlBase } from '@/stores/_config';
 import { NIcon, useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
@@ -12,6 +13,7 @@ import router from '@/router';
 import type { AIRunSource, ServerConfig, UserAIFeatureBinding, UserAIProviderProfile } from '@/types';
 import { useCapWidget } from '@/composables/useCapWidget';
 import { Refresh } from '@vicons/tabler';
+import { isAxiosError } from 'axios';
 
 declare global {
   interface Window {
@@ -43,6 +45,18 @@ const model = ref({
   brief: '',
 })
 
+const savedProfile = ref<{ nick: string; brief: string } | null>(null)
+const profileSaving = ref(false)
+const profileClosing = ref(false)
+const profileSaveError = ref('')
+const profileDirty = computed(() => savedProfile.value !== null && (
+  model.value.nickname !== savedProfile.value.nick || model.value.brief !== savedProfile.value.brief
+))
+let profileSaveTimer: ReturnType<typeof setTimeout> | null = null
+let profileSavePromise: Promise<boolean> | null = null
+let profileUserId = ''
+let profileDisposed = false
+
 // Avatar editing state
 const avatarFile = ref<File | null>(null);
 const showEditor = ref(false);
@@ -61,6 +75,7 @@ const emailCodeCountdown = ref(0);
 let emailCodeTimer: ReturnType<typeof setInterval> | null = null;
 const lastEmailForCode = ref('');
 const aiSettingsVisible = ref(false);
+const personalKeysVisible = ref(false);
 const aiSettingsSaving = ref(false);
 const aiSettingsSource = ref<AIRunSource>('platform');
 const aiProfileDrafts = ref<UserAIProviderProfile[]>([]);
@@ -108,9 +123,17 @@ const shouldForceCaptchaRetry = (errMsg: string) => {
 };
 
 onMounted(async () => {
-  await user.infoUpdate();
-  model.value.nickname = user.info.nick;
-  model.value.brief = user.info.brief;
+  try {
+    const info = await user.infoUpdate();
+    if (profileDisposed) return;
+    profileUserId = info.id;
+    model.value.nickname = info.nick;
+    model.value.brief = info.brief;
+    savedProfile.value = { nick: info.nick, brief: info.brief };
+  } catch {
+    profileSaveError.value = '个人信息加载失败，请关闭后重试';
+    return;
+  }
   aiSettingsSource.value = aiStore.currentSource;
 
   try {
@@ -195,33 +218,85 @@ const handleEditorCancel = () => {
 
 const emit = defineEmits(['close'])
 
-const save = async () => {
-  try {
-    if (!model.value.nickname.trim()) {
-      message.error('昵称不能为空')
-      return
-    }
-    if (/\s/.test(model.value.nickname)) {
-      message.error('昵称中间不能存在空格')
-      return
-    }
-
-    await user.changeInfo({
-      nick: model.value.nickname,
-      brief: model.value.brief,
-    });
-    message.success('修改成功')
-    user.info.nick = model.value.nickname
-    user.info.brief = model.value.brief
-    emit('close')
-  } catch (error: any) {
-    let msg = error.response?.data?.message;
-    if (msg) {
-      message.error('出错: ' + msg)
-      return
-    }
-    message.error('修改失败: ' + (error as any).toString())
+const cancelProfileSave = () => {
+  if (profileSaveTimer !== null) {
+    clearTimeout(profileSaveTimer)
+    profileSaveTimer = null
   }
+}
+
+const persistProfile = async (): Promise<boolean> => {
+  cancelProfileSave()
+  // Manual saves and debounce callbacks share one in-flight request.
+  while (profileSavePromise) await profileSavePromise
+  if (profileDisposed || !savedProfile.value || user.info.id !== profileUserId) return false
+  if (!profileDirty.value) return true
+
+  const snapshot = { nick: model.value.nickname, brief: model.value.brief }
+  if (!snapshot.nick.trim() || /\s/.test(snapshot.nick)) {
+    profileSaveError.value = !snapshot.nick.trim() ? '昵称不能为空' : '昵称中间不能存在空格'
+    return false
+  }
+
+  profileSaving.value = true
+  profileSaveError.value = ''
+  profileSavePromise = (async () => {
+    try {
+      const resp = await user.changeInfo(snapshot)
+      // This endpoint also returns HTTP 200 for some validation failures.
+      if (!resp.data?.user) throw new Error(resp.data?.message || '个人信息保存失败')
+      if (profileDisposed || user.info.id !== profileUserId) return false
+      savedProfile.value = snapshot
+      user.info.nick = snapshot.nick
+      user.info.brief = snapshot.brief
+      return true
+    } catch (error) {
+      if (!profileDisposed && user.info.id === profileUserId) {
+        const detail = isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : ''
+        profileSaveError.value = '保存失败：' + (detail || (error instanceof Error ? error.message : String(error)))
+      }
+      return false
+    } finally {
+      profileSaving.value = false
+      profileSavePromise = null
+    }
+  })()
+  return profileSavePromise
+}
+
+watch([() => model.value.nickname, () => model.value.brief], () => {
+  cancelProfileSave()
+  profileSaveError.value = ''
+  // A revert must also follow an older in-flight save before it is considered clean.
+  if ((!profileDirty.value && !profileSaving.value) || profileDisposed) return
+  profileSaveTimer = setTimeout(() => {
+    profileSaveTimer = null
+    void persistProfile()
+  }, 800)
+})
+
+const save = async (notify = true) => {
+  if (profileClosing.value) return
+  profileClosing.value = true
+  try {
+    if (!await persistProfile()) {
+      if (profileSaveError.value) message.error(profileSaveError.value)
+      return
+    }
+    if (profileDisposed) return
+    if (notify) message.success('修改成功')
+    emit('close')
+  } finally {
+    profileClosing.value = false
+  }
+}
+
+const closeProfile = async () => {
+  if (!savedProfile.value) {
+    emit('close')
+    return
+  }
+  await save(false)
 }
 
 const passwordChange = () => {
@@ -679,6 +754,8 @@ const cancelEmailBind = () => {
 };
 
 onBeforeUnmount(() => {
+  profileDisposed = true;
+  cancelProfileSave();
   if (emailCodeTimer) {
     clearInterval(emailCodeTimer);
     emailCodeTimer = null;
@@ -690,10 +767,19 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="pointer-events-auto relative border px-4 py-2 rounded-md sc-form-scroll" style="min-width: 20rem; max-height: 80vh;">
-    <div class=" text-lg text-center mb-8">{{ $t('userProfile.title') }}</div>
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <div class="text-lg">{{ $t('userProfile.title') }}</div>
+      <div class="flex shrink-0 gap-2">
+        <n-button :disabled="profileClosing" @click="closeProfile">关闭</n-button>
+        <n-button type="primary" :loading="profileClosing" :disabled="!savedProfile" @click="save()">{{ $t('userProfile.save') }}</n-button>
+      </div>
+    </div>
+    <n-text class="block mb-4 text-xs" :type="profileSaveError ? 'error' : undefined" depth="3" aria-live="polite">
+      {{ profileSaveError || (!savedProfile ? '正在加载个人信息…' : profileSaving ? '正在保存…' : profileDirty ? '等待自动保存…' : '昵称与简介已保存（自动保存）') }}
+    </n-text>
     <n-form ref="formRef" :model="model" label-placement="left" label-width="64px" require-mark-placement="right-hanging">
       <n-form-item :label="$t('userProfile.nickname')" path="inputValue">
-        <n-input v-model:value="model.nickname" placeholder="你的名字" />
+        <n-input v-model:value="model.nickname" :disabled="!savedProfile || profileClosing" placeholder="你的名字" />
       </n-form-item>
       <n-form-item :label="$t('userProfile.avatar')" path="inputValue">
         <input type="file" ref="inputFileRef" @change="onFileChange" accept="image/*" class="input-file" />
@@ -710,7 +796,7 @@ onBeforeUnmount(() => {
         </div>
       </n-form-item>
       <n-form-item :label="$t('userProfile.brief')" path="textareaValue">
-        <n-input v-model:value="model.brief" :placeholder="$t('userProfile.briefPlaceholder')" type="textarea" :autosize="{
+        <n-input v-model:value="model.brief" :disabled="!savedProfile || profileClosing" :placeholder="$t('userProfile.briefPlaceholder')" type="textarea" :autosize="{
           minRows: 3,
           maxRows: 5
         }" />
@@ -719,6 +805,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-col gap-2 w-full">
           <n-button @click="passwordChange">修改密码</n-button>
           <n-button @click="openAISettings">AI 设置</n-button>
+          <n-button @click="personalKeysVisible = !personalKeysVisible">个人API密钥 MCP设置</n-button>
 
           <!-- 邮箱绑定区域 -->
           <template v-if="emailAuthEnabled">
@@ -786,10 +873,7 @@ onBeforeUnmount(() => {
         </n-form-item>
       </template>
     </n-form>
-    <div class="flex justify-end mb-4 space-x-4">
-      <n-button @click="emit('close')">{{ $t('userProfile.cancel') }}</n-button>
-      <n-button @click="save" type="primary">{{ $t('userProfile.save') }}</n-button>
-    </div>
+    <PersonalAPIKeys v-if="personalKeysVisible" @close="personalKeysVisible = false" />
 
     <n-modal
       v-model:show="aiSettingsVisible"

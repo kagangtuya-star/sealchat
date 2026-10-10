@@ -2,7 +2,7 @@
   <div :class="['upload-panel', { 'upload-panel--compact': props.compact }]" v-if="audio.canManage">
     <header>
       <h4>上传音频</h4>
-      <p>支持 OGG/MP3/WAV</p>
+      <p>支持常见音频格式，其他可解码格式将尝试转换</p>
     </header>
 
     <div class="upload-panel__scope" v-if="audio.isSystemAdmin">
@@ -68,7 +68,7 @@
     </div>
 
     <label class="upload-panel__drop" @dragover.prevent @drop.prevent="handleDrop">
-      <input type="file" multiple accept="audio/*" @change="handleChange" />
+      <input type="file" multiple accept="audio/*,.mp3,.ogg,.oga,.opus,.wav,.flac,.aac,.m4a,.mp4,.webm,.wma,.aif,.aiff,.caf,.amr,.3gp,.mka" @change="handleChange" />
       <span>拖拽文件或点击选择</span>
     </label>
 

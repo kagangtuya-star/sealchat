@@ -36,6 +36,7 @@ var (
 )
 
 type AgentFeedRequest struct {
+	viewerUserID    string // Only the user feed sets this; legacy Agent visibility is unchanged.
 	Resource        string
 	Format          string
 	Order           string
@@ -1047,8 +1048,12 @@ func buildAgentMessageQuery(channelID string, req AgentFeedRequest, cursor *Agen
 	q := model.GetDB().Model(&model.MessageModel{}).
 		Where("channel_id = ?", channelID).
 		Where("(is_revoked = ? OR is_revoked IS NULL)", false).
-		Where("(is_deleted = ? OR is_deleted IS NULL)", false).
-		Where("(is_whisper = ? OR is_whisper IS NULL)", false)
+		Where("(is_deleted = ? OR is_deleted IS NULL)", false)
+	if req.viewerUserID != "" {
+		q = ApplyWhisperVisibilityFilter(q, req.viewerUserID, channelID)
+	} else {
+		q = q.Where("(is_whisper = ? OR is_whisper IS NULL)", false)
+	}
 	if !req.IncludeArchived {
 		q = q.Where("(is_archived = ? OR is_archived IS NULL)", false)
 	}

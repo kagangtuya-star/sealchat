@@ -164,6 +164,7 @@ const (
 )
 
 type Message struct {
+	TTS              *MessageTTS        `json:"tts,omitempty"`
 	ID               string             `json:"id"`
 	MessageID        string             // Deprecated
 	Channel          *Channel           `json:"channel"`
@@ -201,6 +202,14 @@ type Message struct {
 	ClientID         string             `json:"clientId,omitempty"`
 	WhisperMeta      *WhisperMeta       `json:"whisperMeta,omitempty"`
 	DiceVisual       *DiceVisualPayload `json:"diceVisual,omitempty"`
+}
+
+type MessageTTS struct {
+	Status          string `json:"status"`
+	AudioResourceID string `json:"audioResourceId,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
+	Format          string `json:"format,omitempty"`
+	MessageRevision int    `json:"messageRevision"`
 }
 
 type MessageIdentity struct {
@@ -406,6 +415,25 @@ type Argv struct {
 
 type EventName string
 
+const EventWorldGlassBackgroundUpdated EventName = "world-glass-background-updated"
+
+type WorldGlassEventPayload struct {
+	WorldID  string `json:"worldId"`
+	Revision uint64 `json:"revision"`
+}
+
+type AvatarBotMutationPayload struct {
+	RequestID            string  `json:"requestId"`
+	ChannelID            string  `json:"channelId"`
+	IdentityID           string  `json:"identityId"`
+	ExpectedSourceCardID string  `json:"expectedSourceCardId"`
+	StatID               string  `json:"statId"`
+	Slot                 string  `json:"slot"`
+	SourcePath           string  `json:"sourcePath"`
+	Op                   string  `json:"op"`
+	Value                float64 `json:"value"`
+}
+
 const (
 	EventGenresAdded                    EventName = "genres-added"
 	EventGenresDeleted                  EventName = "genres-deleted"
@@ -413,6 +441,7 @@ const (
 	EventMessageCreated                 EventName = "message-created"
 	EventMessageDeleted                 EventName = "message-deleted"
 	EventMessageUpdated                 EventName = "message-updated"
+	EventMessageTTSUpdated              EventName = "message-tts-updated"
 	EventMessageArchived                EventName = "message-archived"
 	EventMessageUnarchived              EventName = "message-unarchived"
 	EventMessagePinned                  EventName = "message-pinned"
@@ -471,6 +500,9 @@ const (
 	EventCharacterSnapshotProbe             EventName = "character-snapshot-probe"
 	EventCharacterSnapshotSettingsUpdated   EventName = "character-snapshot-settings-updated"
 	EventCharacterSnapshotPreferenceUpdated EventName = "character-snapshot-preference-updated"
+	EventAvatarCardSettingsUpdated          EventName = "avatar-card-settings-updated"
+	EventAvatarCardBotMutationRequest       EventName = "avatar-card-bot-mutation-request"
+	EventWorldCharacterStateUpdated         EventName = "world-character-state-updated"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
@@ -488,6 +520,7 @@ const (
 	EventTheaterEffectTriggered     EventName = "theater.effect.triggered"
 	EventTheaterSceneAudioTriggered EventName = "theater.scene.audio.triggered"
 	EventTheaterVisibilityTriggered EventName = "theater.visibility.triggered"
+	EventTheaterRendererCommand     EventName = "theater.renderer.command"
 )
 
 type TheaterEventPayload struct {
@@ -517,6 +550,8 @@ type MessageContext struct {
 	WhisperToUserID string `json:"whisperToUserId,omitempty"` // 悄悄话目标用户ID
 	IsHiddenDice    bool   `json:"isHiddenDice,omitempty"`    // 是否为暗骰
 	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
+	InteractionID   string `json:"interactionId,omitempty"`   // 临时 BOT interaction 请求ID
+	IsEphemeral     bool   `json:"isEphemeral,omitempty"`     // 是否为不持久化的临时消息
 }
 
 type MessageReactionEvent struct {
@@ -529,6 +564,7 @@ type MessageReactionEvent struct {
 }
 
 type Event struct {
+	WorldGlass                  *WorldGlassEventPayload             `json:"worldGlass,omitempty"`
 	ID                          int64                               `json:"id"`
 	Type                        EventName                           `json:"type"`
 	SelfID                      string                              `json:"selfID"`
@@ -564,6 +600,9 @@ type Event struct {
 	CharacterSnapshotProbe      *CharacterSnapshotProbePayload      `json:"characterSnapshotProbe,omitempty"`
 	CharacterSnapshotSettings   *CharacterSnapshotSettingsPayload   `json:"characterSnapshotSettings,omitempty"`
 	CharacterSnapshotPreference *CharacterSnapshotPreferencePayload `json:"characterSnapshotPreference,omitempty"`
+	AvatarCardSettings          *AvatarCardSettingsPayload          `json:"avatarCardSettings,omitempty"`
+	AvatarCardBotMutation       *AvatarBotMutationPayload           `json:"avatarCardBotMutation,omitempty"`
+	WorldCharacterState         *WorldCharacterStatePayload         `json:"worldCharacterState,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
@@ -859,6 +898,7 @@ type CharacterSnapshotProbePayload struct {
 type CharacterSnapshotSettingsPayload struct {
 	ChannelID                  string `json:"channelId"`
 	BadgeTemplate              string `json:"badgeTemplate"`
+	TheaterOverlayTemplateMode string `json:"theaterOverlayTemplateMode"`
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
 	SchemaVersion              int    `json:"schemaVersion"`
 	ServerRevision             int64  `json:"serverRevision"`
@@ -874,6 +914,32 @@ type CharacterSnapshotPreferencePayload struct {
 	TheaterOverlayTemplateJSON string `json:"theaterOverlayTemplateJson"`
 	SchemaVersion              int    `json:"schemaVersion"`
 	ServerRevision             int64  `json:"serverRevision"`
+}
+
+type AvatarCardSettingsPayload struct {
+	ChannelID         string `json:"channelId"`
+	SourceMode        string `json:"sourceMode"`
+	BotTemplateJSON   string `json:"botTemplateJson"`
+	WorldTemplateJSON string `json:"worldTemplateJson"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	ServerRevision    int64  `json:"serverRevision"`
+	UpdatedBy         string `json:"updatedBy,omitempty"`
+}
+
+type WorldCharacterStatePayload struct {
+	WorldID          string         `json:"worldId"`
+	IdentityID       string         `json:"identityId"`
+	UserID           string         `json:"userId"`
+	SharedIdentityID string         `json:"sharedIdentityId,omitempty"`
+	SubjectKey       string         `json:"subjectKey"`
+	Attrs            map[string]any `json:"attrs"`
+	Revision         int64          `json:"revision"`
+}
+
+type WorldCharacterStateListPayload struct {
+	ChannelID string                        `json:"channelId"`
+	WorldID   string                        `json:"worldId"`
+	Items     []*WorldCharacterStatePayload `json:"items"`
 }
 
 // CharacterRemarkEventPayload 角色备注事件载荷

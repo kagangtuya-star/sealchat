@@ -56,6 +56,9 @@ func AITaskRun(ctx *fiber.Ctx) error {
 		return err
 	}
 	featureKey := strings.TrimSpace(ctx.Params("featureKey"))
+	if featureKey == aiService.FeatureTTSTranslate {
+		return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "语音翻译仅由后端朗读流程调用"})
+	}
 	runner := aiRunnerFactory(func() *utils.AppConfig { return appConfig })
 	cfg := utils.AIConfig{}
 	if appConfig != nil {

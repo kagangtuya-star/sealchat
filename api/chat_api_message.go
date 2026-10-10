@@ -857,6 +857,7 @@ func apiMessageDelete(ctx *ChatContext, data *messageDeletePayload) (any, error)
 
 		item.IsRevoked = true
 		db.Model(&item).Update("is_revoked", true)
+		service.TTSCancelMessage(item.ID)
 
 		var channel model.ChannelModel
 		db.Where("id = ?", data.ChannelID).Limit(1).Find(&channel)
@@ -962,6 +963,7 @@ func apiMessageRemove(ctx *ChatContext, data *messageRemovePayload) (any, error)
 
 	for _, msg := range messages {
 		msg.IsDeleted = true
+		service.TTSCancelMessage(msg.ID)
 		msg.DeletedBy = operatorID
 		msg.Content = ""
 		msg.DeletedAt = &now
@@ -1969,6 +1971,7 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
+	TTSAuto           bool     `json:"tts_auto"`
 	ChannelID         string   `json:"channel_id"`
 	QuoteID           string   `json:"quote_id"`
 	Content           string   `json:"content"`
@@ -1989,6 +1992,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
+	botMsgContext := resolveBotMessageContext(ctx, channelId)
+	if ack, captured := tryCaptureBotInteractionMessageCreate(ctx, channelId, data.QuoteID, data.Content, botMsgContext); captured {
+		return ack, nil
+	}
 	trimmedClientID := strings.TrimSpace(data.ClientID)
 	if strings.HasPrefix(trimmedClientID, "iform_embed:") {
 		parts := strings.SplitN(strings.TrimPrefix(trimmedClientID, "iform_embed:"), ":", 2)
@@ -2005,7 +2012,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 
 	var privateOtherUser string
-	botMsgContext := resolveBotMessageContext(ctx, channelId)
 	botContextICMode := ""
 	if botMsgContext != nil {
 		botContextICMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
@@ -2103,16 +2109,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 			// 不包含 Satori 标签的纯文本，保持原样
 			// 前端的 @satorijs/element toString() 会进行必要的 HTML 转义
-		}
-		if shouldSuppressBotNicknameSyncMessageCreate(ctx, channelId, content) {
-			return &protocol.Message{
-				ID:        "suppressed-bot-nickname-sync:" + utils.NewID(),
-				Channel:   &protocol.Channel{ID: channelId},
-				Content:   "",
-				Timestamp: time.Now().Unix(),
-				CreatedAt: time.Now().UnixMilli(),
-				UpdatedAt: time.Now().UnixMilli(),
-			}, nil
 		}
 	}
 
@@ -2380,10 +2376,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
-	messageSortBasis := utils.MessageSortBasisTypingStart
-	if cfg := utils.GetConfig(); cfg != nil {
-		messageSortBasis = utils.NormalizeMessageSortBasis(cfg.MessageSortBasis)
-	}
+	messageSortBasis := service.ResolveMessageSortBasisForChannel(channel)
 	hasPlacement := strings.TrimSpace(data.BeforeID) != "" || strings.TrimSpace(data.AfterID) != ""
 	if !hasExplicitDisplayOrder && hasPlacement {
 		resolvedOrder, err := resolveMessageDisplayOrderForPlacement(db, channelId, messageOrderPlacement{
@@ -2481,6 +2474,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.WhisperTargetMemberName = whisperMember.Nickname
 		}
 	}
+	service.TTSPrepareMessageIntent(&m, ctx.User, data.TTSAuto && botMsgContext == nil && !strings.HasPrefix(trimmedClientID, "iform_embed:") && (renderResult == nil || len(renderResult.Rolls) == 0))
 	trace.StageDone(perfprofiler.MessageStagePrepare, prepareStarted)
 	persistStarted := trace.StageStart()
 	createResult := db.Create(&m)
@@ -2504,6 +2498,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 	rows := createResult.RowsAffected
+	if m.TTSIntent != "" {
+		service.TTSWake()
+	}
 
 	if rows > 0 {
 		if renderResult != nil {
@@ -3402,6 +3399,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		"edit_count": msg.EditCount,
 		"updated_at": msg.UpdatedAt,
 	}
+	updates["tts_intent"] = ""
+	updates["tts_status"] = "invalidated"
+	updates["tts_data"] = nil
+	msg.TTSIntent = ""
+	msg.TTSStatus = "invalidated"
+	msg.TTSData = nil
 	if prevContent != newContent {
 		updates["content"] = msg.Content
 		updates["visible_char_count"] = contentstats.CountVisibleTextChars(msg.Content)
@@ -3441,6 +3444,8 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if err != nil {
 		return nil, err
 	}
+	service.TTSCancelMessage(msg.ID)
+	ttsBroadcastMessageState(msg.ID)
 	if effectiveBuiltInDiceEnabled {
 		if err := model.MessageDiceRollReplace(msg.ID, updatedDiceRolls); err != nil {
 			return nil, err
@@ -4256,15 +4261,34 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 }
 
 func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.MessageContext {
+	return resolveBotMessageContextWithBroker(botInteractions, ctx, channelId)
+}
+
+func resolveBotMessageContextWithBroker(broker *botInteractionBroker, ctx *ChatContext, channelId string) *protocol.MessageContext {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
 		return nil
 	}
-	if ctx.ConnInfo.BotLastMessageContext == nil {
+	ctx.ConnInfo.botMessageContextMu.Lock()
+	var msgContext *protocol.MessageContext
+	var ok bool
+	if ctx.ConnInfo.BotLastMessageContext != nil {
+		msgContext, ok = ctx.ConnInfo.BotLastMessageContext.Load(channelId)
+	}
+	ctx.ConnInfo.botMessageContextMu.Unlock()
+	if !ok || msgContext == nil {
 		return nil
 	}
-	msgContext, ok := ctx.ConnInfo.BotLastMessageContext.Load(channelId)
-	if !ok {
-		return nil
+	if msgContext.IsEphemeral && strings.TrimSpace(msgContext.InteractionID) != "" {
+		if broker == nil {
+			return nil
+		}
+		pending := broker.pendingForRequest(msgContext.InteractionID, time.Now())
+		if pending == nil ||
+			pending.BotUserID != ctx.User.ID ||
+			pending.BotConn != ctx.Conn ||
+			pending.ChannelID != channelId {
+			return nil
+		}
 	}
 	return msgContext
 }
@@ -4357,13 +4381,6 @@ func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenD
 		return nil
 	}
 	return pending
-}
-
-func shouldSuppressBotNicknameSyncMessageCreate(ctx *ChatContext, channelId, content string) bool {
-	if ctx == nil || ctx.User == nil || !ctx.User.IsBot {
-		return false
-	}
-	return shouldSuppressBotNicknameSyncContent(ctx.User.ID, channelId, content)
 }
 
 func builtinSealBotSolve(ctx *ChatContext, data *struct {

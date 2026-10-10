@@ -23,6 +23,7 @@
 *.test.tsx
 *.test.js
 *.test.jsx
+*.test.mjs
 info.db
 record.log
 go.sum
@@ -88,3 +89,7 @@ ui/scripts/quickdraw-inline-style.test.mjs
 *.spec.cjs
 *.spec.js
 /perf
+mutagen.yml
+mutagen.yml.lock
+ui/src/features/tts/voice-catalog.test.mjs
+/doc/promo-video

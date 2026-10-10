@@ -220,6 +220,7 @@ func (info *ConnInfo) closeTheaterQueue() {
 	if info == nil {
 		return
 	}
+	service.TheaterRenderers.Disconnect(theaterRendererConnectionID(info))
 	info.theaterMu.Lock()
 	queue := info.theaterQueue
 	info.theaterQueue = nil
@@ -331,7 +332,7 @@ func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, muta
 	payload := map[string]any{
 		"mutationId": mutation.MutationID, "revisionBefore": mutation.RevisionBefore,
 		"revision": *mutation.RevisionAfter, "type": mutation.Type,
-		"payload": json.RawMessage(mutation.PayloadJSON), "actorUserId": mutation.ActorUserID,
+		"payload": service.TheaterMutationEventPayload(mutation), "actorUserId": mutation.ActorUserID,
 		"checksum": result.Checksum,
 	}
 	event := theaterGatewayEvent(protocol.EventTheaterMutationApplied, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, mutation.ID, payload)

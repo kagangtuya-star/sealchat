@@ -235,11 +235,37 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
     const payload = normalizeStageClueExecutePayload(action.payload)
     return payload ? { type: action.type, payload } : null
   }
-  if (action.type === 'object.toggle') {
+  if (action.type === 'object.toggle' || action.type === 'object.trigger') {
     const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
     return objectId ? { type: action.type, payload: { objectId } } : null
   }
   return null
+}
+
+export const normalizeStageSequenceSteps = (value: unknown): StageSequenceStep[] => {
+  const rawSteps = Array.isArray(value) ? value : []
+  const seen = new Set<string>()
+  return rawSteps.reduce<StageSequenceStep[]>((result, raw) => {
+    if (result.length >= STAGE_SEQUENCE_MAX_STEPS || !raw || typeof raw !== 'object') return result
+    const step = raw as { id?: unknown, sceneId?: unknown, timing?: unknown, action?: unknown }
+    const stepId = typeof step.id === 'string' ? step.id.trim() : ''
+    const descriptor = normalizeAtomicDescriptor(step.action)
+    if (!stepId || seen.has(stepId) || !descriptor) return result
+    const storedSceneId = typeof step.sceneId === 'string' && step.sceneId.trim() ? step.sceneId.trim() : null
+    const sceneId = descriptor.type === 'scene.apply'
+      ? descriptor.payload.sceneId
+      : descriptor.type === 'object.toggle' || descriptor.type === 'object.trigger' || descriptor.type === 'effect.play'
+        ? storedSceneId
+        : null
+    seen.add(stepId)
+    result.push({
+      id: stepId,
+      sceneId,
+      timing: normalizeTiming(step.timing),
+      action: descriptor,
+    })
+    return result
+  }, [])
 }
 
 export const normalizeStageSequenceAction = (value: unknown): StageSequenceAction | null => {
@@ -247,23 +273,7 @@ export const normalizeStageSequenceAction = (value: unknown): StageSequenceActio
   const action = value as { id?: unknown, type?: unknown, schedule?: unknown, payload?: Record<string, unknown> }
   const actionId = typeof action.id === 'string' ? action.id.trim() : ''
   if (!actionId || action.type !== 'action.sequence' || !action.payload || action.payload.version !== 1) return null
-  const rawSteps = Array.isArray(action.payload.steps) ? action.payload.steps : []
-  const seen = new Set<string>()
-  const steps = rawSteps.reduce<StageSequenceStep[]>((result, raw) => {
-    if (result.length >= STAGE_SEQUENCE_MAX_STEPS || !raw || typeof raw !== 'object') return result
-    const step = raw as { id?: unknown, sceneId?: unknown, timing?: unknown, action?: unknown }
-    const stepId = typeof step.id === 'string' ? step.id.trim() : ''
-    const descriptor = normalizeAtomicDescriptor(step.action)
-    if (!stepId || seen.has(stepId) || !descriptor) return result
-    seen.add(stepId)
-    result.push({
-      id: stepId,
-      sceneId: typeof step.sceneId === 'string' && step.sceneId.trim() ? step.sceneId.trim() : null,
-      timing: normalizeTiming(step.timing),
-      action: descriptor,
-    })
-    return result
-  }, [])
+  const steps = normalizeStageSequenceSteps(action.payload.steps)
   return {
     id: actionId,
     type: 'action.sequence',

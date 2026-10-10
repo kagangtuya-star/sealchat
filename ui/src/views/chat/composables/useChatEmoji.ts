@@ -153,10 +153,30 @@ export const useChatEmoji = ({
   const allGalleryItems = computed(() => Object.values(gallery.items).flatMap((entry) => entry?.items ?? []));
   const emojiUsageMap = ref<Record<string, number>>({});
   const emojiUsageKey = 'sealchat_emoji_usage';
-  const ensureEmojiCollectionLoaded = async () => {
+  let emojiCollectionLoadPromise: Promise<void> | null = null;
+  let emojiCollectionLoadOwnerId = '';
+  let emojiCollectionReadyOwnerId = '';
+  let emojiCollectionRetryAfter = 0;
+  const ensureEmojiCollectionLoaded = async (force = false) => {
     const ownerId = user.info?.id;
     if (!ownerId) return;
-    try { await gallery.ensureEmojiCollection(ownerId); } catch { /* ignore load errors */ }
+    if (!force && emojiCollectionReadyOwnerId === ownerId) return;
+    if (!force && emojiCollectionRetryAfter > Date.now()) return;
+    if (emojiCollectionLoadPromise && emojiCollectionLoadOwnerId === ownerId) return emojiCollectionLoadPromise;
+    emojiCollectionLoadOwnerId = ownerId;
+    emojiCollectionLoadPromise = gallery.ensureEmojiCollection(ownerId)
+      .then(() => {
+        emojiCollectionReadyOwnerId = ownerId;
+        emojiCollectionRetryAfter = 0;
+      })
+      .catch(() => {
+        emojiCollectionRetryAfter = Date.now() + 5000;
+      })
+      .finally(() => {
+        emojiCollectionLoadPromise = null;
+        emojiCollectionLoadOwnerId = '';
+      });
+    return emojiCollectionLoadPromise;
   };
   const loadMoreEmojiPanelItems = async () => {
     const tabId = activeEmojiTab.value;
@@ -246,16 +266,24 @@ export const useChatEmoji = ({
     catch (error: any) { console.error('删除表情失败', error); message.error(error?.message || '删除失败，请稍后再试'); }
   };
 
-  watch(() => user.info.id, async (id) => { if (!id) return; gallery.loadEmojiPreference(id); await ensureEmojiCollectionLoaded(); }, { immediate: true });
+  watch(() => user.info.id, (id) => { if (id) gallery.loadEmojiPreference(id); }, { immediate: true });
+  watch(
+    [() => user.info.id, () => chat.curChannel?.id],
+    async ([id, channelId]) => {
+      if (!id || !channelId) return;
+      await ensureEmojiCollectionLoaded();
+    },
+    { immediate: true },
+  );
   watch(() => gallery.emojiCollectionIds, (ids) => { for (const id of ids) void gallery.loadItems(id); }, { deep: true });
   watch(emojiPopoverShow, (show, previous) => {
     if (!show) { isManagingEmoji.value = false; emojiSearchQuery.value = ''; }
-    else { refreshEmojiPanelRender(); nextTick(() => syncEmojiPopoverPosition()); void ensureEmojiCollectionLoaded(); }
+    else { refreshEmojiPanelRender(); nextTick(() => syncEmojiPopoverPosition()); void ensureEmojiCollectionLoaded(true); }
     if (show) chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
     else if (previous) chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: false } as any);
   });
   watch(hasIdentityVariantOptions, (hasOptions) => { if (!hasOptions && emojiPanelTab.value === 'variant') emojiPanelTab.value = 'gallery'; });
-  watch(isManagingEmoji, (value) => { if (value) void ensureEmojiCollectionLoaded(); });
+  watch(isManagingEmoji, (value) => { if (value) void ensureEmojiCollectionLoaded(true); });
   onBeforeUnmount(() => { emojiPopoverShow.value = false; pendingEmojiMetaFetch.clear(); });
 
   return {

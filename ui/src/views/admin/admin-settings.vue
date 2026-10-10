@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsAI from './admin-settings-ai.vue'
+import AdminSpeechSettings from '@/features/tts/AdminSpeechSettings.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
 import AdminSettingsCertificate from './admin-settings-certificate.vue'
 import AdminSettingsAudio from './admin-settings-audio.vue'
@@ -13,9 +14,10 @@ import AdminSettingsUser from './admin-settings-user.vue'
 import AdminSettingsUpdate from './admin-settings-update.vue'
 import AdminSettingsChannelEmbedTools from './admin-settings-channel-embed-tools.vue'
 import AdminSettingsCharacterCardTemplates from './admin-settings-character-card-templates.vue'
+import AdminMCPSettings from './AdminMCPSettings.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'certificate' | 'channel-embed-tools' | 'character-card-templates'
+type AdminTab = 'basic' | 'update' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'ai' | 'ai-speech' | 'certificate' | 'channel-embed-tools' | 'character-card-templates' | 'mcp'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
@@ -29,15 +31,18 @@ const emit = defineEmits(['close']);
 const activeTab = ref<AdminTab>(props.initialTab);
 const basicSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const aiSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const speechSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const certificateSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const mcpSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const audioDrawerVisible = ref(false);
 const aiOpsDrawerVisible = ref(false);
 const aiQuotaModalVisible = ref(false);
 const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
 const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
+  if (activeTab.value === 'mcp') return mcpSettingsRef.value;
   if (activeTab.value === 'basic') {
     return basicSettingsRef.value;
   }
@@ -49,6 +54,9 @@ const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
   }
   if (activeTab.value === 'ai') {
     return aiSettingsRef.value;
+  }
+  if (activeTab.value === 'ai-speech') {
+    return speechSettingsRef.value;
   }
   if (activeTab.value === 'certificate') {
     return certificateSettingsRef.value;
@@ -140,6 +148,10 @@ const saveCurrentTab = async () => {
           @open-usage-management="openAIOpsDrawer"
           @open-quota-management="openAIQuotaModal"
         />
+      </n-tab-pane>
+      <n-tab-pane name="mcp" tab="MCP 接入"><AdminMCPSettings ref="mcpSettingsRef" /></n-tab-pane>
+      <n-tab-pane name="ai-speech" tab="AI语音配置">
+        <AdminSpeechSettings ref="speechSettingsRef" />
       </n-tab-pane>
       <n-tab-pane name="channel-embed-tools" tab="频道嵌入工具">
         <AdminSettingsChannelEmbedTools />

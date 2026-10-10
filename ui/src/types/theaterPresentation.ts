@@ -1,6 +1,9 @@
 import { z } from 'zod'
+import { mediaFxSpecSchema } from '../features/media-fx/media-fx-schema'
 
-export const THEATER_PRESENTATION_SCHEMA_VERSION = 2 as const
+export const THEATER_PRESENTATION_SCHEMA_VERSION = 3 as const
+// v2 is a strict subset of v3: v3 only adds the optional layer/style `mediaFx`.
+export const LEGACY_THEATER_PRESENTATION_SCHEMA_VERSION = 2 as const
 export const MAX_THEATER_PORTRAIT_DECORATIONS = 16
 export const DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS = 90
 export const MIN_THEATER_PORTRAIT_FADE_DURATION_MS = 50
@@ -62,6 +65,7 @@ export const theaterVisualLayerSchema = z.strictObject({
   playbackRate: z.number().finite().min(0.25).max(4),
   blendMode: theaterBlendModeSchema,
   fadeDurationMs: theaterFadeDurationMsSchema,
+  mediaFx: mediaFxSpecSchema.optional(),
 })
 
 export const theaterVisualStyleSchema = z.strictObject({
@@ -71,6 +75,7 @@ export const theaterVisualStyleSchema = z.strictObject({
   playbackRate: z.number().finite().min(0.25).max(4),
   blendMode: theaterBlendModeSchema,
   fadeDurationMs: theaterFadeDurationMsSchema,
+  mediaFx: mediaFxSpecSchema.optional(),
 })
 
 export const theaterSpacingSchema = z.strictObject({
@@ -149,7 +154,7 @@ const portraitDecorationsSchema = z.array(theaterVisualLayerSchema)
     })
   })
 
-export const theaterPresentationSchema = z.strictObject({
+const theaterPresentationV3Schema = z.strictObject({
   schemaVersion: z.literal(THEATER_PRESENTATION_SCHEMA_VERSION),
   portrait: theaterVisualLayerSchema.nullable(),
   multiplayerPortraitTransform: theaterTransformSchema.optional(),
@@ -165,6 +170,20 @@ export const theaterPresentationSchema = z.strictObject({
     context.addIssue({ code: 'custom', path: ['portrait', 'space'], message: 'portrait must use viewport space' })
   }
 })
+
+// Lossless v2 -> v3 upgrade: only the version changes, every visual field is kept and
+// legacy layers simply have no mediaFx. Other versions are returned untouched.
+export const upgradeLegacyTheaterPresentation = (input: unknown): unknown => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input
+  const value = input as { schemaVersion?: unknown }
+  return value.schemaVersion === LEGACY_THEATER_PRESENTATION_SCHEMA_VERSION
+    ? { ...value, schemaVersion: THEATER_PRESENTATION_SCHEMA_VERSION }
+    : input
+}
+
+// Stored and frozen presentations may still be v2 (shared identities, message
+// snapshots, bridge payloads), so every parse upgrades them before strict v3 checks.
+export const theaterPresentationSchema = z.preprocess(upgradeLegacyTheaterPresentation, theaterPresentationV3Schema)
 
 export const theaterPresentationPatchSchema = z.strictObject({
   portrait: theaterVisualLayerSchema.nullable().optional(),
@@ -258,6 +277,7 @@ export const theaterVisualStyleFromLayer = (layer: TheaterVisualLayer | null): T
         playbackRate: layer.playbackRate,
         blendMode: layer.blendMode,
         fadeDurationMs: layer.fadeDurationMs,
+        ...(layer.mediaFx ? { mediaFx: layer.mediaFx } : {}),
       })
     : undefined
 )
@@ -272,7 +292,8 @@ export const theaterDialogueBoxTemplateFromStyle = (dialogue: TheaterDialogueSty
   charactersPerSecond: dialogue.charactersPerSecond,
 })
 
-const applyTheaterVisualStyle = (layer: TheaterVisualLayer | null, style?: TheaterVisualStyle | null) => {
+// Media FX belongs to the portrait style: a style without mediaFx clears the layer effect.
+export const applyTheaterVisualStyle = (layer: TheaterVisualLayer | null, style?: TheaterVisualStyle | null) => {
   if (!layer || !style) return
   layer.enabled = style.enabled
   layer.transform = cloneTheaterJson(style.transform)
@@ -280,6 +301,8 @@ const applyTheaterVisualStyle = (layer: TheaterVisualLayer | null, style?: Theat
   layer.playbackRate = style.playbackRate
   layer.blendMode = style.blendMode
   layer.fadeDurationMs = style.fadeDurationMs
+  if (style.mediaFx) layer.mediaFx = cloneTheaterJson(style.mediaFx)
+  else delete layer.mediaFx
 }
 
 export const applyWorldTheaterPresentationTemplate = (
@@ -373,9 +396,9 @@ const migrateLegacyDefaultDialogue = (dialogue: TheaterDialogueStyle): TheaterDi
 
 export const normalizeTheaterPresentation = (input: unknown): TheaterPresentation => {
   if (!input || typeof input !== 'object') return createDefaultTheaterPresentation()
-  const value = input as Partial<TheaterPresentation>
+  const value = upgradeLegacyTheaterPresentation(input) as Partial<TheaterPresentation>
   if (value.schemaVersion !== THEATER_PRESENTATION_SCHEMA_VERSION) return createDefaultTheaterPresentation()
-  const normalized = theaterPresentationSchema.parse({
+  const normalized = theaterPresentationV3Schema.parse({
     schemaVersion: THEATER_PRESENTATION_SCHEMA_VERSION,
     portrait: value.portrait ?? null,
     ...(value.multiplayerPortraitTransform ? { multiplayerPortraitTransform: value.multiplayerPortraitTransform } : {}),

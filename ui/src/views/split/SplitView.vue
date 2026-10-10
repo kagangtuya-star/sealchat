@@ -1,16 +1,23 @@
 <script setup lang="ts">
+import { useSpeechStore } from '@/features/tts/store'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent, useMessage } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
 import { debounce } from 'lodash-es';
 import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
+import GlassBackgroundPanel from '@/views/chat/components/GlassBackgroundPanel.vue';
 import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
 import { replaceChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { characterApiUnsupportedText } from '@/stores/characterCard';
+import {
+  clearWorldGlassExternalContext,
+  invalidateWorldGlass,
+  setWorldGlassExternalContext,
+} from '@/composables/useWorldGlassBackground';
 import {
   isSplitPaneFilterRestored,
   type SplitSessionPaneSnapshot,
@@ -102,12 +109,19 @@ type EmbedRefreshPresenceMessage = {
   silent?: boolean;
 };
 
+type EmbedWorldGlassInvalidatedMessage = {
+  type: 'sealchat.embed.worldGlassInvalidated';
+  worldId: string;
+  revision: number;
+};
+
 type EmbedMessage =
   | EmbedStateMessage
   | EmbedFocusMessage
   | EmbedToggleSidebarMessage
   | EmbedRestoreSessionMessage
-  | EmbedRefreshPresenceMessage;
+  | EmbedRefreshPresenceMessage
+  | EmbedWorldGlassInvalidatedMessage;
 
 interface PaneState {
   id: PaneId;
@@ -167,6 +181,7 @@ const notifyOwnerPaneId = ref<PaneId | null>(null);
 const webTargetPaneId = ref<PaneId>('A');
 
 const actionRibbonVisible = ref(false);
+const glassBackgroundPanelVisible = ref(false);
 
 const drawerVisible = ref(false);
 const sidebarCollapsed = ref(false);
@@ -332,6 +347,16 @@ const panes = computed(() => [paneA, paneB]);
 const getPaneById = (paneId: PaneId) => (paneId === 'A' ? paneA : paneB);
 const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
 const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
+const glassContextPane = computed<PaneState | null>(() => {
+  if (activePane.value.mode === 'chat') {
+    return activePane.value;
+  }
+  if (inactivePane.value.mode === 'chat') {
+    return inactivePane.value;
+  }
+  return null;
+});
+const glassChannelTree = computed(() => glassContextPane.value?.channelTree || []);
 const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
 const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
 const effectiveAudioPaneId = computed<PaneId>(() => {
@@ -346,6 +371,8 @@ const effectiveAudioPaneId = computed<PaneId>(() => {
   return preferredPaneId;
 });
 const activePaneHasChannel = computed(() => activePane.value.mode === 'chat' && !!activePane.value.channelId);
+watch(() => activePane.value.channelId, channelId => { useSpeechStore().scopeChannel = channelId || '' }, { immediate: true });
+onBeforeUnmount(() => { useSpeechStore().scopeChannel = '' });
 
 const activeChannelTitle = computed(() => {
   if (activePane.value.mode === 'web') {
@@ -378,6 +405,24 @@ const activePaneCharacterCardUnavailableReason = computed(() => {
 const activePaneCharacterCardActive = computed(() => activePaneCharacterCardEnabled.value && activePane.value.characterCardVisible);
 const activePaneEmbedPanelActive = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelActive);
 const activePaneEmbedPanelHasAttention = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelHasAttention);
+
+watch(
+  () => [
+    glassContextPane.value?.worldId || '',
+    glassContextPane.value?.channelId || '',
+  ] as const,
+  () => {
+    if (glassContextPane.value) {
+      setWorldGlassExternalContext(
+        glassContextPane.value.worldId,
+        glassContextPane.value.channelId,
+      );
+    } else {
+      clearWorldGlassExternalContext();
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   () => [activePaneId.value, activePane.value.channelName] as const,
@@ -430,6 +475,17 @@ const persistRouteQuery = () => {
 };
 
 const getPaneIframe = (paneId: PaneId) => document.getElementById(`sc-split-iframe-${paneId}`) as HTMLIFrameElement | null;
+
+const getChatPaneByMessageSource = (source: MessageEventSource | null): PaneState | null => {
+  if (!source) return null;
+  if (paneA.mode === 'chat' && getPaneIframe('A')?.contentWindow === source) {
+    return paneA;
+  }
+  if (paneB.mode === 'chat' && getPaneIframe('B')?.contentWindow === source) {
+    return paneB;
+  }
+  return null;
+};
 
 const postToPane = (paneId: PaneId, payload: any) => {
   const pane = getPaneById(paneId);
@@ -550,6 +606,21 @@ const handleEmbedMessage = (event: MessageEvent) => {
   if (!data || typeof data !== 'object') return;
   const type = (data as any).type;
   if (typeof type !== 'string') return;
+
+  if (type === 'sealchat.embed.worldGlassInvalidated') {
+    const sourcePane = getChatPaneByMessageSource(event.source);
+    if (!sourcePane) return;
+    const msg = data as EmbedWorldGlassInvalidatedMessage;
+    if (
+      typeof msg.worldId === 'string'
+      && msg.worldId.trim()
+      && typeof msg.revision === 'number'
+      && Number.isFinite(msg.revision)
+    ) {
+      invalidateWorldGlass(msg.worldId.trim(), msg.revision);
+    }
+    return;
+  }
 
   if (type === 'sealchat.embed.focus') {
     const paneId = (data as EmbedFocusMessage).paneId;
@@ -1022,6 +1093,7 @@ onBeforeUnmount(() => {
   schedulePersistSplitSession.flush();
   persistSplitSessionNow();
   schedulePersistSplitSession.cancel();
+  clearWorldGlassExternalContext();
   audioStudio.setPlaybackAuthority(true);
   window.removeEventListener('message', handleEmbedMessage);
 });
@@ -1127,6 +1199,7 @@ watch(
               :identity-active="false"
               :gallery-active="false"
               :display-active="false"
+              :glass-background-active="glassBackgroundPanelVisible"
               :favorite-active="false"
               :channel-images-active="false"
               :can-import="activePane.canImport"
@@ -1147,8 +1220,11 @@ watch(
               @open-export="openPanel('export')"
               @open-import="openPanel('import')"
               @open-identity-manager="openPanel('identity')"
+              @open-speech="useSpeechStore().open(activePane.channelId || '')"
+              :speech-active="useSpeechStore().visible"
               @open-gallery="openPanel('gallery')"
               @open-display-settings="openPanel('display')"
+              @open-glass-background="glassBackgroundPanelVisible = true"
               @open-favorites="openPanel('favorites')"
               @open-channel-images="openPanel('channel-images')"
               @open-character-remark="openPanel('character-remark')"
@@ -1256,6 +1332,13 @@ watch(
     </n-layout>
 
   </main>
+  <GlassBackgroundPanel
+    v-if="glassBackgroundPanelVisible"
+    :world-id="glassContextPane ? glassContextPane.worldId : ''"
+    :channel-id="glassContextPane?.channelId || ''"
+    :channel-tree="glassChannelTree"
+    @close="glassBackgroundPanelVisible = false"
+  />
 </template>
 
 <style scoped>

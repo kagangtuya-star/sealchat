@@ -34,6 +34,7 @@ func cloneTheaterPresentation(value *protocol.TheaterPresentation) *protocol.The
 }
 
 type ChannelIdentityInput struct {
+	ConfirmMCPAvatar           bool `json:"-"` // Internal: bind a verified MCP temporary avatar in the primary write transaction.
 	ChannelID                  string
 	DisplayName                string
 	Color                      string
@@ -247,7 +248,10 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 			return nil, err
 		}
 	}
-	if err := model.ChannelIdentityUpsert(item); err != nil {
+	if input.ConfirmMCPAvatar && item.ID == "" {
+		item.Init()
+	}
+	if err := persistMCPIdentityAvatar(input, ownerUserID, operatorUserID, item.ID, func(tx *gorm.DB) error { return tx.Save(item).Error }); err != nil {
 		return nil, err
 	}
 
@@ -423,6 +427,10 @@ func channelIdentityUpdateAndPromoteWithAccess(ownerUserID, operatorUserID strin
 				break
 			}
 		}
+		if err := migrateWorldCharacterStateSubjectTx(tx, locked.ChannelID,
+			WorldCharacterSubjectKey(&locked), WorldCharacterSubjectKey(&updated)); err != nil {
+			return err
+		}
 		if err := tx.Model(&model.ChannelIdentityFolderMemberModel{}).Where("identity_id = ?", updated.ID).
 			Order("sort_order ASC, created_at ASC").Pluck("folder_id", &updated.FolderIDs).Error; err != nil {
 			return err
@@ -543,7 +551,12 @@ func channelIdentityUpdateDetailedWithAccess(ownerUserID string, operatorUserID 
 		values["theater_presentation"] = input.TheaterPresentation
 	}
 
-	if err := model.ChannelIdentityUpdate(identity.ID, values); err != nil {
+	if err := model.ChannelIdentityEncodeStoredValues(values); err != nil {
+		return nil, err
+	}
+	if err := persistMCPIdentityAvatar(input, ownerUserID, operatorUserID, identity.ID, func(tx *gorm.DB) error {
+		return tx.Model(&model.ChannelIdentityModel{}).Where("id = ?", identity.ID).Updates(values).Error
+	}); err != nil {
 		return nil, err
 	}
 
@@ -714,6 +727,10 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 		if err := tx.Create(item).Error; err != nil {
 			return err
 		}
+		if err := migrateWorldCharacterStateSubjectTx(tx, identity.ChannelID,
+			WorldCharacterSubjectKey(identity), WorldCharacterSubjectKey(item)); err != nil {
+			return err
+		}
 		if err := reassignTheaterAppearanceAssetsIdentityTx(tx, identity.ID, item.ID, identity.ChannelID, identity.UserID); err != nil {
 			return err
 		}
@@ -870,6 +887,9 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 	}
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
+	}
+	if err := deleteWorldCharacterStateSubjectByChannel(channelID, WorldCharacterSubjectKey(identity)); err != nil {
+		log.Printf("删除频道身份世界状态孤儿清理失败[channel=%s identity=%s]: %v", channelID, identity.ID, err)
 	}
 	if err := model.ChannelIdentityModeConfigClearIdentityReferences(ownerUserID, channelID, identity.ID); err != nil {
 		return err

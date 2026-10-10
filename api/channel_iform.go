@@ -15,6 +15,7 @@ import (
 	"sealchat/pm"
 	"sealchat/protocol"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 const (
@@ -126,26 +127,9 @@ func ChannelIFormCreate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
 	}
-	var form *model.ChannelIFormModel
-	if strings.TrimSpace(payload.TemplateRef) != "" {
-		if jsonFieldPresent(c.Body(), "url") || jsonFieldPresent(c.Body(), "embedCode") {
-			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
-		}
-		if err := validateTemplateOverridesPayload(c.Body()); err != nil {
-			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
-		}
-		form, err = buildIFormModelFromTemplate(&payload, channelID, user.ID)
-	} else {
-		form, err = buildIFormModelFromCreate(&payload, channelID, user.ID)
-	}
+	form, err := createChannelIForm(user, channelID, &payload, c.Body())
 	if err != nil {
-		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
-	}
-	if err := model.ChannelIFormCreate(form); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "创建嵌入窗失败")
-	}
-	if err := broadcastIFormSnapshotsForFormIDs(user, []string{form.ID}); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
+		return wrapIFormMutationError(c, err)
 	}
 	responseForm, responseMeta := resolveIFormResponse(form)
 	return c.JSON(fiber.Map{
@@ -181,37 +165,13 @@ func ChannelIFormUpdate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
 	}
-	if strings.TrimSpace(form.TemplateRef) != "" && (jsonFieldPresent(c.Body(), "url") || jsonFieldPresent(c.Body(), "embedCode")) {
-		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
-	}
-	if jsonFieldPresent(c.Body(), "templateRef") {
-		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "模板引用关系不可直接修改")
-	}
-	if strings.TrimSpace(form.TemplateRef) != "" {
-		if err := validateTemplateOverridesPayload(c.Body()); err != nil {
-			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
-		}
-	}
-	var updates map[string]interface{}
-	if strings.TrimSpace(form.TemplateRef) != "" {
-		updates, err = buildIFormReferenceUpdateMap(&payload, form, c.Body())
-	} else {
-		updates, err = buildIFormUpdateMap(&payload, form)
-	}
+	form, changed, err := updateChannelIForm(user, form, sourceChannelID, &payload, c.Body())
 	if err != nil {
-		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		return wrapIFormMutationError(c, err)
 	}
-	if len(updates) == 0 {
+	if !changed {
 		return c.JSON(fiber.Map{"item": form, "message": "未检测到需要更新的字段"})
 	}
-	updates["updated_by"] = user.ID
-	if err := model.ChannelIFormUpdate(sourceChannelID, formID, updates); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新控件失败")
-	}
-	if err := broadcastIFormSnapshotsForFormIDs(user, []string{formID}); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
-	}
-	form, _ = model.ChannelIFormGet(sourceChannelID, formID)
 	responseForm, responseMeta := resolveIFormResponse(form)
 	return c.JSON(fiber.Map{
 		"item":             responseForm,
@@ -235,25 +195,126 @@ func ChannelIFormDelete(c *fiber.Ctx) error {
 	if formID == "" {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少控件ID")
 	}
+	if err := deleteChannelIForm(user, channelID, formID); err != nil {
+		return wrapIFormMutationError(c, err)
+	}
+	return c.JSON(fiber.Map{"message": "删除成功"})
+}
+
+// iformMutationError carries the REST status and public message chosen by the
+// shared create/update/delete rules, so REST and MCP map one outcome.
+type iformMutationError struct {
+	Status  int
+	Message string
+	Err     error
+}
+
+func (e *iformMutationError) Error() string { return e.Message }
+func (e *iformMutationError) Unwrap() error { return e.Err }
+
+func newIFormMutationError(status int, err error, message string) error {
+	return &iformMutationError{Status: status, Message: message, Err: err}
+}
+
+func wrapIFormMutationError(c *fiber.Ctx, err error) error {
+	var mutationErr *iformMutationError
+	if errors.As(err, &mutationErr) {
+		return wrapErrorStatus(c, mutationErr.Status, mutationErr.Err, mutationErr.Message)
+	}
+	return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "操作失败")
+}
+
+// createChannelIForm applies the native create rules after the caller has
+// verified iForm management permission for channelID. body is the original JSON
+// request; field presence and templateOverrides keys are validated from it.
+func createChannelIForm(user *model.UserModel, channelID string, payload *channelIFormCreateRequest, body []byte) (*model.ChannelIFormModel, error) {
+	var form *model.ChannelIFormModel
+	var err error
+	if strings.TrimSpace(payload.TemplateRef) != "" {
+		if jsonFieldPresent(body, "url") || jsonFieldPresent(body, "embedCode") {
+			return nil, newIFormMutationError(fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
+		}
+		if err := validateTemplateOverridesPayload(body); err != nil {
+			return nil, newIFormMutationError(fiber.StatusBadRequest, err, err.Error())
+		}
+		form, err = buildIFormModelFromTemplate(payload, channelID, user.ID)
+	} else {
+		form, err = buildIFormModelFromCreate(payload, channelID, user.ID)
+	}
+	if err != nil {
+		return nil, newIFormMutationError(fiber.StatusBadRequest, err, err.Error())
+	}
+	if err := model.ChannelIFormCreate(form); err != nil {
+		return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "创建嵌入窗失败")
+	}
+	if err := broadcastIFormSnapshotsForFormIDs(user, []string{form.ID}); err != nil {
+		return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "广播更新失败")
+	}
+	return form, nil
+}
+
+// updateChannelIForm updates an effective form (including a world-shared source
+// form) in sourceChannelID. It returns changed=false and the current form when
+// the payload contains no effective updates.
+func updateChannelIForm(user *model.UserModel, form *model.ChannelIFormModel, sourceChannelID string, payload *channelIFormUpdateRequest, body []byte) (*model.ChannelIFormModel, bool, error) {
+	formID := form.ID
+	if strings.TrimSpace(form.TemplateRef) != "" && (jsonFieldPresent(body, "url") || jsonFieldPresent(body, "embedCode")) {
+		return nil, false, newIFormMutationError(fiber.StatusBadRequest, nil, "模板引用控件的 URL 和嵌入代码由模板管理")
+	}
+	if jsonFieldPresent(body, "templateRef") {
+		return nil, false, newIFormMutationError(fiber.StatusBadRequest, nil, "模板引用关系不可直接修改")
+	}
+	if strings.TrimSpace(form.TemplateRef) != "" {
+		if err := validateTemplateOverridesPayload(body); err != nil {
+			return nil, false, newIFormMutationError(fiber.StatusBadRequest, err, err.Error())
+		}
+	}
+	var updates map[string]interface{}
+	var err error
+	if strings.TrimSpace(form.TemplateRef) != "" {
+		updates, err = buildIFormReferenceUpdateMap(payload, form, body)
+	} else {
+		updates, err = buildIFormUpdateMap(payload, form)
+	}
+	if err != nil {
+		return nil, false, newIFormMutationError(fiber.StatusBadRequest, err, err.Error())
+	}
+	if len(updates) == 0 {
+		return form, false, nil
+	}
+	updates["updated_by"] = user.ID
+	if err := model.ChannelIFormUpdate(sourceChannelID, formID, updates); err != nil {
+		return nil, false, newIFormMutationError(fiber.StatusInternalServerError, err, "更新控件失败")
+	}
+	if err := broadcastIFormSnapshotsForFormIDs(user, []string{formID}); err != nil {
+		return nil, false, newIFormMutationError(fiber.StatusInternalServerError, err, "广播更新失败")
+	}
+	form, _ = model.ChannelIFormGet(sourceChannelID, formID)
+	return form, true, nil
+}
+
+// deleteChannelIForm permanently deletes a form owned by channelID; world-shared
+// references from another channel are not deletable here.
+func deleteChannelIForm(user *model.UserModel, channelID, formID string) error {
 	form, err := model.ChannelIFormGet(channelID, formID)
 	if err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "获取控件失败")
+		return newIFormMutationError(fiber.StatusInternalServerError, err, "获取控件失败")
 	}
 	if form == nil {
-		return wrapErrorStatus(c, fiber.StatusNotFound, nil, "控件不存在")
+		return newIFormMutationError(fiber.StatusNotFound, nil, "控件不存在")
 	}
 	affectedChannels, err := collectAffectedChannelsForForms([]string{formID})
 	if err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "计算受影响频道失败")
+		return newIFormMutationError(fiber.StatusInternalServerError, err, "计算受影响频道失败")
 	}
 	if err := service.ChannelIFormPermanentDelete(channelID, formID); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除控件失败")
+		return newIFormMutationError(fiber.StatusInternalServerError, err, "删除控件失败")
 	}
 	_ = model.GetDB().Where("form_id = ?", formID).Delete(&model.WorldIFormBindingModel{}).Error
 	if err := broadcastIFormSnapshotsForChannels(user, affectedChannels); err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
+		return newIFormMutationError(fiber.StatusInternalServerError, err, "广播更新失败")
 	}
-	return c.JSON(fiber.Map{"message": "删除成功"})
+	return nil
 }
 
 func ChannelIFormPush(c *fiber.Ctx) error {
@@ -872,10 +933,19 @@ func sanitizeEmbedCode(raw string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
-	if len(trimmed) > 88192 {
-		return "", errors.New("嵌入代码过长")
+	maxSizeKB := channelEmbedMaxCodeSizeKB()
+	if len(trimmed) > maxSizeKB*1024 {
+		return "", fmt.Errorf("嵌入代码超过平台限制（%d KB）", maxSizeKB)
 	}
 	return trimmed, nil
+}
+
+// channelEmbedMaxCodeSizeKB is the current platform embedCode limit.
+func channelEmbedMaxCodeSizeKB() int {
+	if cfg := utils.GetConfig(); cfg != nil && cfg.ChannelEmbedTools.MaxCodeSizeKB > 0 {
+		return cfg.ChannelEmbedTools.MaxCodeSizeKB
+	}
+	return utils.DefaultChannelEmbedMaxCodeSizeKB
 }
 
 func sanitizeSize(input, fallback int) int {

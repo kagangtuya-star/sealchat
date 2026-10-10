@@ -36,6 +36,9 @@ type AudioAssetFilters struct {
 	Scope             model.AudioAssetScope
 	WorldID           *string
 	IncludeCommon     bool
+	SearchOrder       bool       // Internal: timestamp/ID order for bounded search candidates.
+	UpdatedFrom       *time.Time // Internal: inclusive query bounds; not persisted.
+	UpdatedTo         *time.Time
 }
 
 type AudioAssetUpdateInput struct {
@@ -273,6 +276,8 @@ type AudioSceneFilters struct {
 type AudioTrackState = model.AudioTrackState
 
 type AudioPlaybackUpdateInput struct {
+	ExpectedScopeType    string // Optional strict source-scope precondition for MCP.
+	ExpectedScopeID      string
 	ChannelID            string
 	SceneID              *string
 	Tracks               []AudioTrackState
@@ -557,6 +562,12 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 		if filters.DurationMax > 0 {
 			q = q.Where("duration <= ?", filters.DurationMax)
 		}
+		if filters.UpdatedFrom != nil {
+			q = q.Where("updated_at >= ?", *filters.UpdatedFrom)
+		}
+		if filters.UpdatedTo != nil {
+			q = q.Where("updated_at <= ?", *filters.UpdatedTo)
+		}
 		// scope/worldId 过滤
 		if filters.Scope != "" {
 			if filters.Scope == model.AudioScopeWorld && filters.WorldID != nil {
@@ -574,6 +585,9 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			} else {
 				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 			}
+		}
+		if filters.SearchOrder {
+			return q.Order("updated_at DESC, id DESC")
 		}
 		return applyAudioAssetListOrder(q, filters.SortBy, filters.SortOrder, filters.ManualSortEnabled)
 	})
@@ -1440,7 +1454,14 @@ func getRuntimeState(scopeType, scopeID string) *audioPlaybackRuntimeState {
 	key := playbackScopeKey(scopeType, scopeID)
 	audioPlaybackRuntimeStore.RLock()
 	defer audioPlaybackRuntimeStore.RUnlock()
-	return audioPlaybackRuntimeStore.states[key]
+	state := audioPlaybackRuntimeStore.states[key]
+	if state == nil {
+		return nil
+	}
+	copy := *state
+	copy.SceneID = cloneStringPtr(state.SceneID)
+	copy.Tracks = append([]AudioTrackState(nil), state.Tracks...)
+	return &copy
 }
 
 func persistPlaybackState(input AudioPlaybackUpdateInput, snapshot *AudioPlaybackStateSnapshot) error {
@@ -1575,8 +1596,8 @@ func AudioGetPlaybackState(channelID string) (*AudioPlaybackStateSnapshot, error
 	if state == nil {
 		return nil, nil
 	}
-	runtime := upsertRuntimeState(scopeType, scopeID, modelToRuntimeState(state, scopeType, scopeID))
-	return runtimeToSnapshot(runtime, time.Now()), nil
+	upsertRuntimeState(scopeType, scopeID, modelToRuntimeState(state, scopeType, scopeID))
+	return runtimeToSnapshot(getRuntimeState(scopeType, scopeID), time.Now()), nil
 }
 
 func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*AudioPlaybackStateSnapshot, error) {
@@ -1601,6 +1622,7 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*AudioPlaybackSta
 		return nil, err
 	}
 	seededRuntime := getRuntimeState(scopeType, scopeID)
+	targetExisted := seededRuntime != nil
 	if seededRuntime == nil {
 		if persistedState, persistedScopeType, _, loadErr := loadPlaybackStateFromDB(input.ChannelID); loadErr != nil {
 			return nil, loadErr
@@ -1615,7 +1637,35 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*AudioPlaybackSta
 	}
 	runtime := upsertRuntimeState(scopeType, scopeID, seededRuntime)
 	audioPlaybackRuntimeStore.Lock()
-	if input.BaseRevision > 0 && runtime.Revision > 0 && input.BaseRevision != runtime.Revision {
+	if input.ExpectedScopeType != "" {
+		current := audioPlaybackRuntimeStore.states[playbackScopeKey(AudioPlaybackScopeChannel, input.ChannelID)]
+		if scopeType == AudioPlaybackScopeChannel && !targetExisted {
+			current = nil
+		}
+		worldID := ""
+		if scopeType == AudioPlaybackScopeWorld {
+			worldID = scopeID
+		} else {
+			worldID = worldScopeIDForDisable
+		}
+		world := audioPlaybackRuntimeStore.states[playbackScopeKey(AudioPlaybackScopeWorld, worldID)]
+		if world != nil && world.WorldPlaybackEnabled && (current == nil || world.UpdatedAt.After(current.UpdatedAt) || !targetExisted && scopeType == AudioPlaybackScopeChannel) {
+			current = world
+		}
+		currentType, currentID, revision := AudioPlaybackScopeChannel, input.ChannelID, int64(0)
+		if current != nil {
+			currentType, currentID, revision = current.ScopeType, current.ScopeID, current.Revision
+		}
+		if currentType != input.ExpectedScopeType || currentID != input.ExpectedScopeID || revision != input.BaseRevision {
+			var snapshot *AudioPlaybackStateSnapshot
+			if current != nil {
+				snapshot = runtimeToSnapshot(current, time.Now())
+			}
+			audioPlaybackRuntimeStore.Unlock()
+			return nil, &AudioPlaybackRevisionConflictError{CurrentState: snapshot}
+		}
+	}
+	if input.ExpectedScopeType == "" && input.BaseRevision > 0 && runtime.Revision > 0 && input.BaseRevision != runtime.Revision {
 		current := runtimeToSnapshot(runtime, time.Now())
 		audioPlaybackRuntimeStore.Unlock()
 		return nil, &AudioPlaybackRevisionConflictError{CurrentState: current}

@@ -3371,8 +3371,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           }
           const resp = await api.post(uploadEndpoint, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
-            timeout: getUploadTimeoutMs(),
+            timeout: Math.max(getUploadTimeoutMs(), 180_000),
           });
+          if (!resp.data || typeof resp.data !== 'object' || !resp.data.item) {
+            task.status = 'error';
+            task.error = '上传接口返回了非预期响应，请检查服务器或反向代理的上传限制';
+            return false;
+          }
           const serverStatus = resp.data?.status;
           const uploadedAsset = this.audioLibrary.mode === 's3'
             ? (resp.data?.item ? normalizeS3LibraryAsset(resp.data.item as AudioLibraryAsset) : undefined)
@@ -3409,7 +3414,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             return doUpload();
           }
           task.status = 'error';
-          task.error = err?.response?.data?.message || err?.message || '上传失败';
+          const responseData = err?.response?.data;
+          const isHtmlResponse = (typeof responseData === 'string' && /<\s*!doctype html|<\s*html/i.test(responseData))
+            || /unexpected token.*</i.test(String(err?.message || ''));
+          task.error = isHtmlResponse
+            ? `服务器返回了 HTML 错误页（HTTP ${status || '未知'}），请检查反向代理上传限制与服务端日志`
+            : responseData?.message || responseData?.error || err?.message || '上传失败';
           return false;
         }
       };

@@ -28,6 +28,7 @@ func (LocalTheaterChatSender) SendTheaterChat(_ context.Context, request service
 		ChannelUsersMap: channelUsersMapGlobal, UserId2ConnInfo: userId2ConnInfoGlobal,
 	}
 	value, err := apiMessageCreate(ctx, &struct {
+		TTSAuto           bool     `json:"tts_auto"`
 		ChannelID         string   `json:"channel_id"`
 		QuoteID           string   `json:"quote_id"`
 		Content           string   `json:"content"`

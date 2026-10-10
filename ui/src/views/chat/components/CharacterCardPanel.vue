@@ -15,7 +15,9 @@ import {
   type CharacterSnapshotNumericSource,
   type TheaterCharacterOverlayTemplate,
 } from '@/stores/channelCharacterSnapshot';
+import { useAvatarCharacterStateStore, type AvatarCardSource } from '@/stores/avatarCharacterState';
 import {
+  AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
   getCharacterSnapshotTemplatePreset,
@@ -26,6 +28,7 @@ import {
 } from '@/utils/characterCardNarratorSettings';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, resolveTemplateValue, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { readHtmlFile } from '@/utils/htmlFile';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import AvatarVue from '@/components/avatar.vue';
 import AvatarEditor from '@/components/AvatarEditor.vue';
@@ -52,6 +55,7 @@ const displayStore = useDisplayStore();
 const userStore = useUserStore();
 const utilsStore = useUtilsStore();
 const snapshotStore = useChannelCharacterSnapshotStore();
+const avatarState = useAvatarCharacterStateStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 const updateViewportWidth = () => {
@@ -334,20 +338,26 @@ const autoSyncBotNicknameEnabled = computed({
 
 const badgeTemplate = ref('');
 const channelSnapshotTemplateManageAllowed = ref(false);
+const channelOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const theaterOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
 const theaterOverlaySettingsExpanded = ref(false);
+const avatarCardSettingsExpanded = ref(false);
+const avatarSourceDraft = ref<AvatarCardSource>('world');
+const avatarSettingsSaving = ref(false);
 const personalBadgeTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const personalBadgeTemplate = ref('');
 const personalOverlayTemplateMode = ref<'inherit' | 'custom' | 'off'>('inherit');
 const personalOverlayTemplateJson = ref(JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2));
 const snapshotTemplateSaving = ref(false);
 const overlayTemplateEditorVisible = ref(false);
-const overlayTemplateEditorTarget = ref<'channel' | 'personal'>('channel');
+type OverlayEditorTarget = 'channel' | 'personal' | 'avatar-bot' | 'avatar-world';
+const overlayTemplateEditorTarget = ref<OverlayEditorTarget>('channel');
 const draggingOverlayItemId = ref('');
 const overlayTemplateImportInput = ref<HTMLInputElement | null>(null);
 const templateHtmlFileInput = ref<HTMLInputElement | null>(null);
 const overlayTemplateEditorPreferredColumns = ref(2);
 let nextOverlayItemSerial = 1;
+const MAX_STAT_ICONS = 100;
 
 interface OverlayEditorSource {
   value: string;
@@ -362,26 +372,81 @@ interface OverlayEditorItem {
   max: OverlayEditorSource;
   barColor: string;
   textColor: string;
+  displayMode: 'bar' | 'icon';
+  iconType: 'text' | 'image';
+  iconValue: string;
+  valuePerIcon: string;
+  subdivisions: string;
 }
 
 const overlayTemplatePresets = CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS;
 const badgeTemplatePresets = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS;
 
 const overlayTemplateEditorItems = ref<OverlayEditorItem[]>([]);
-const templateModeOptions = [
-  { label: '继承频道', value: 'inherit' },
-  { label: '个人模板', value: 'custom' },
+const personalTemplateModeOptions = [
+  { label: '跟随有效模板', value: 'inherit' },
+  { label: '使用个人兜底', value: 'custom' },
   { label: '关闭', value: 'off' },
 ];
-const badgeTemplateModeOptions = [
-  { label: '跟随默认', value: 'inherit' },
-  { label: '使用个人兜底', value: 'custom' },
-  { label: '关闭徽章', value: 'off' },
+const channelOverlayTemplateModeOptions = [
+  { label: '跟随规则预设', value: 'inherit' },
+  { label: '频道自定义', value: 'custom' },
+  { label: '频道默认关闭', value: 'off' },
 ];
+const overlayDisplayModeOptions = [
+  { label: '数据条', value: 'bar' },
+  { label: '图标', value: 'icon' },
+];
+const overlayIconTypeOptions = [
+  { label: '文本图标', value: 'text' },
+  { label: '图片图标', value: 'image' },
+];
+const overlayWorldSourceKindOptions = [
+  { label: '字段', value: 'path' },
+  { label: '常量', value: 'literal' },
+];
+const isAvatarWorldTemplateEditor = computed(() => overlayTemplateEditorTarget.value === 'avatar-world');
+const isWritableWorldTemplatePath = (raw: unknown) => {
+  if (typeof raw !== 'string') return false;
+  const path = raw.trim();
+  if (!/^[\p{L}\p{N}_-]{1,128}$/u.test(path)) return false;
+  return !Number.isFinite(Number(path));
+};
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const theaterOverlaySettingsToggleIcon = computed(() => (
   theaterOverlaySettingsExpanded.value ? ChevronDown : ChevronRight
 ));
+const avatarCardSettingsToggleIcon = computed(() => avatarCardSettingsExpanded.value ? ChevronDown : ChevronRight);
+const avatarSettings = computed(() => avatarState.getSettings(resolvedChannelId.value));
+const avatarTemplateJson = computed(() => avatarSourceDraft.value === 'bot'
+  ? avatarSettings.value.botTemplateJson : avatarSettings.value.worldTemplateJson);
+const avatarTemplateSummary = computed(() => {
+  const parsed = parseOverlayTemplateForEditor(avatarTemplateJson.value);
+  if (!parsed?.items.length) return '暂无状态项';
+  const names = parsed.items.slice(0, 3).map(item => item.name).join('、');
+  return `${parsed.items.length} 个状态 · ${names}${parsed.items.length > 3 ? '…' : ''}`;
+});
+watch(
+  [
+    resolvedChannelId,
+    () => avatarSettings.value.sourceMode,
+    characterApiDisabled,
+    overlayTemplateEditorVisible,
+  ],
+  () => {
+    const channelId = resolvedChannelId.value;
+    if (!channelId || avatarSettingsSaving.value || overlayTemplateEditorVisible.value) return;
+
+    const explicitSource = avatarSettings.value.sourceMode;
+    if (explicitSource === '') {
+      avatarSourceDraft.value = avatarState.getEffectiveSource(channelId);
+      return;
+    }
+
+    avatarSourceDraft.value = explicitSource;
+  },
+  { immediate: true },
+);
 const activeCharacterCardAttrs = computed<Record<string, any>>(() => {
   const channelId = resolvedChannelId.value;
   return channelId ? cardStore.activeCards[channelId]?.attrs || {} : {};
@@ -419,11 +484,36 @@ const createOverlayEditorItem = (): OverlayEditorItem => ({
   id: `stat_${Date.now()}_${nextOverlayItemSerial++}`,
   name: '',
   current: { value: '', kind: 'path' },
-  min: { value: '', kind: 'path' },
+  min: isAvatarWorldTemplateEditor.value ? { value: '0', kind: 'literal' } : { value: '', kind: 'path' },
   max: { value: '', kind: 'path' },
   barColor: '#5b8ff9',
   textColor: '#f8fafc',
+  displayMode: 'bar',
+  iconType: 'text',
+  iconValue: '❤️',
+  valuePerIcon: '1',
+  subdivisions: '2',
 });
+
+const positiveNumberString = (value: unknown, fallback: string) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? String(numericValue) : fallback;
+};
+
+const subdivisionString = (value: unknown) => {
+  const numericValue = Math.floor(Number(value));
+  return Number.isFinite(numericValue) && numericValue >= 1 ? String(numericValue) : '2';
+};
+
+const resolveEditorValuePerIcon = (value: unknown) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 1;
+};
+
+const resolveEditorSubdivisions = (value: unknown) => {
+  const numericValue = Math.floor(Number(value));
+  return Number.isFinite(numericValue) && numericValue >= 1 ? numericValue : 1;
+};
 
 const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[]; preferredColumns: number } | null => {
   try {
@@ -436,24 +526,34 @@ const parseOverlayTemplateForEditor = (raw: string): { items: OverlayEditorItem[
         : 2,
       items: value.items
         .filter(item => item && typeof item === 'object')
-        .map((item, index) => ({
-          id: String(item.id || `stat_${Date.now()}_${index + 1}`),
-          name: String(item.name || ''),
-          current: sourceToEditorSource(item.current),
-          min: sourceToEditorSource(item.min),
-          max: sourceToEditorSource(item.max),
-          barColor: item.barColor || '#5b8ff9',
-          textColor: item.textColor || '#f8fafc',
-        })),
+        .map((item, index) => {
+          const displayMode = item.display?.mode === 'icon' ? 'icon' : 'bar';
+          return {
+            id: String(item.id || `stat_${Date.now()}_${index + 1}`),
+            name: String(item.name || ''),
+            current: sourceToEditorSource(item.current),
+            min: sourceToEditorSource(item.min),
+            max: sourceToEditorSource(item.max),
+            barColor: item.barColor || '#5b8ff9',
+            textColor: item.textColor || '#f8fafc',
+            displayMode,
+            iconType: item.display?.icon?.type === 'image' ? 'image' : 'text',
+            iconValue: String(item.display?.icon?.value || '❤️'),
+            valuePerIcon: positiveNumberString(item.display?.valuePerIcon, '1'),
+            subdivisions: subdivisionString(item.display?.subdivisions),
+          } satisfies OverlayEditorItem;
+        }),
     };
   } catch {
     return null;
   }
 };
 
-const openOverlayTemplateEditor = (target: 'channel' | 'personal') => {
+const openOverlayTemplateEditor = (target: OverlayEditorTarget) => {
   overlayTemplateEditorTarget.value = target;
-  const raw = target === 'channel' ? theaterOverlayTemplateJson.value : personalOverlayTemplateJson.value;
+  const raw = target === 'channel' ? theaterOverlayTemplateJson.value
+    : target === 'personal' ? personalOverlayTemplateJson.value
+      : target === 'avatar-bot' ? avatarSettings.value.botTemplateJson : avatarSettings.value.worldTemplateJson;
   const draft = parseOverlayTemplateForEditor(raw);
   overlayTemplateEditorItems.value = draft?.items || [];
   overlayTemplateEditorPreferredColumns.value = draft?.preferredColumns || 2;
@@ -466,7 +566,7 @@ const exportOverlayTemplate = () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `sealchat-theater-overlay-${overlayTemplateEditorTarget.value}.json`;
+  link.download = `sealchat-character-overlay-${overlayTemplateEditorTarget.value}.json`;
   link.click();
   URL.revokeObjectURL(url);
 };
@@ -525,9 +625,14 @@ const reorderOverlayTemplateEditorItem = (targetId: string) => {
 };
 
 const resolveOverlayEditorSource = (source: OverlayEditorSource): number | null => {
+  const editorAttrs = overlayTemplateEditorTarget.value === 'avatar-world'
+    ? avatarState.getWorldState(resolvedChannelId.value, currentIdentityId.value)?.attrs || {}
+    : overlayTemplateEditorTarget.value === 'avatar-bot'
+      ? snapshotStore.getSnapshot(resolvedChannelId.value, currentIdentityId.value)?.data.card?.attrs || {}
+      : activeCharacterCardAttrs.value;
   const raw = source.kind === 'literal'
     ? source.value
-    : resolveTemplateValue(activeCharacterCardAttrs.value, source.value);
+    : resolveTemplateValue(editorAttrs, source.value);
   if (raw === null || raw === undefined || raw === '') return null;
   const numericValue = typeof raw === 'number' ? raw : Number(String(raw).trim());
   return Number.isFinite(numericValue) ? numericValue : null;
@@ -545,13 +650,23 @@ const overlayTemplatePreviewItems = computed(() => overlayTemplateEditorItems.va
     const max = hasMax ? resolveOverlayEditorSource(item.max) : null;
     const min = resolveOverlayEditorSource(item.min);
     if (current === null) return null;
-    if (max === null) return { ...item, current, max: null, percent: 100 };
+    if (max === null) return { ...item, current, max: null, percent: 100, iconFills: [] as number[], iconPreviewTruncated: false };
     const rangeMin = min ?? 0;
-    if (max <= rangeMin) return { ...item, current, max: null, percent: 100 };
+    if (max <= rangeMin) return { ...item, current, max: null, percent: 100, iconFills: [] as number[], iconPreviewTruncated: false };
     const percent = Math.min(100, Math.max(0, ((current - rangeMin) / (max - rangeMin)) * 100));
-    return { ...item, current, max, percent };
+    if (item.displayMode !== 'icon') return { ...item, current, max, percent, iconFills: [] as number[], iconPreviewTruncated: false };
+    const valuePerIcon = resolveEditorValuePerIcon(item.valuePerIcon);
+    const subdivisions = resolveEditorSubdivisions(item.subdivisions);
+    const theoreticalIconCount = Math.ceil((max - rangeMin) / valuePerIcon);
+    const iconCount = Math.min(MAX_STAT_ICONS, theoreticalIconCount);
+    const filledValue = Math.min(max, Math.max(rangeMin, current)) - rangeMin;
+    const iconFills = Array.from({ length: iconCount }, (_, index) => {
+      const fill = Math.min(1, Math.max(0, (filledValue - (index * valuePerIcon)) / valuePerIcon));
+      return Math.min(1, Math.ceil(fill * subdivisions) / subdivisions);
+    });
+    return { ...item, current, max, percent, iconFills, iconPreviewTruncated: theoreticalIconCount > MAX_STAT_ICONS };
   })
-  .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number } => !!item));
+  .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number; iconFills: number[]; iconPreviewTruncated: boolean } => !!item));
 
 const serializeOverlayTemplateEditor = () => JSON.stringify({
   version: 1,
@@ -565,6 +680,17 @@ const serializeOverlayTemplateEditor = () => JSON.stringify({
       max: editorSourceToTemplateSource(item.max),
       barColor: item.barColor,
       textColor: item.textColor,
+      display: item.displayMode === 'icon'
+        ? {
+          mode: 'icon' as const,
+          icon: {
+            type: item.iconType,
+            value: item.iconValue.trim() || (item.iconType === 'text' ? '❤️' : ''),
+          },
+          valuePerIcon: resolveEditorValuePerIcon(item.valuePerIcon),
+          subdivisions: resolveEditorSubdivisions(item.subdivisions),
+        }
+        : { mode: 'bar' as const },
     }))
     .filter(item => item.name && item.current),
 }, null, 2);
@@ -604,6 +730,7 @@ const syncSnapshotTemplateDrafts = async () => {
   const preference = snapshotStore.preferenceByChannel[channelId];
   if (settings) {
     badgeTemplate.value = settings.badgeTemplate || badgeTemplate.value || DEFAULT_CARD_TEMPLATE;
+    channelOverlayTemplateMode.value = settings.theaterOverlayTemplateMode || 'inherit';
     theaterOverlayTemplateJson.value = formatTemplateJson(settings.theaterOverlayTemplateJson);
   }
   if (preference) {
@@ -612,6 +739,29 @@ const syncSnapshotTemplateDrafts = async () => {
     personalOverlayTemplateMode.value = preference.theaterOverlayTemplateMode || 'inherit';
     personalOverlayTemplateJson.value = formatTemplateJson(preference.theaterOverlayTemplateJson);
   }
+};
+
+const getPersistedChannelBadgeTemplate = () => {
+  const channelId = resolvedChannelId.value;
+  return channelId
+    ? String(snapshotStore.settingsByChannel[channelId]?.badgeTemplate || '')
+    : '';
+};
+
+const getPersistedChannelOverlaySettings = () => {
+  const channelId = resolvedChannelId.value;
+  const settings = channelId
+    ? snapshotStore.settingsByChannel[channelId]
+    : undefined;
+
+  return {
+    theaterOverlayTemplateMode: settings?.theaterOverlayTemplateMode || 'inherit',
+    theaterOverlayTemplateJson: settings?.theaterOverlayTemplateJson || JSON.stringify({
+      version: 1,
+      preferredColumns: 2,
+      items: [],
+    }),
+  };
 };
 
 const persistBadgeTemplate = () => {
@@ -637,18 +787,47 @@ const syncBadgeTemplateToWorld = async () => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return;
   const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
-  badgeTemplate.value = normalized;
-  persistBadgeTemplate();
   snapshotTemplateSaving.value = true;
   try {
+    await snapshotStore.initializeChannel(channelId);
+    const persistedSettings = snapshotStore.settingsByChannel[channelId];
+    if (!persistedSettings) {
+      message.error('频道模板设置尚未加载，请稍后重试');
+      return;
+    }
+    if (resolvedChannelId.value !== channelId) {
+      return;
+    }
+    badgeTemplate.value = normalized;
+    persistBadgeTemplate();
     await snapshotStore.updateSettings(channelId, {
       badgeTemplate: normalized,
-      theaterOverlayTemplateJson: theaterOverlayTemplateJson.value,
+      theaterOverlayTemplateMode: persistedSettings.theaterOverlayTemplateMode || 'inherit',
+      theaterOverlayTemplateJson: persistedSettings.theaterOverlayTemplateJson,
     });
     await snapshotStore.refreshChannel(channelId);
     message.success('频道人物卡模板已同步');
   } catch (e: any) {
     message.error(e?.response?.err || e?.message || '模板同步失败');
+  } finally {
+    snapshotTemplateSaving.value = false;
+  }
+};
+
+const saveChannelOverlaySettings = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  snapshotTemplateSaving.value = true;
+  try {
+    await snapshotStore.updateSettings(channelId, {
+      badgeTemplate: getPersistedChannelBadgeTemplate(),
+      theaterOverlayTemplateMode: channelOverlayTemplateMode.value,
+      theaterOverlayTemplateJson: theaterOverlayTemplateJson.value,
+    });
+    await snapshotStore.refreshChannel(channelId);
+    message.success('频道小剧场浮层策略已保存');
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '频道浮层策略保存失败');
   } finally {
     snapshotTemplateSaving.value = false;
   }
@@ -674,24 +853,52 @@ const savePersonalSnapshotTemplates = async () => {
   }
 };
 
+const normalizeAndValidateAvatarWorldOverlayTemplate = () => {
+  if (!isAvatarWorldTemplateEditor.value) return true;
+  for (const item of overlayTemplateEditorItems.value) {
+    for (const [slot, label, source] of [
+      ['current', '当前', item.current],
+      ['min', '最小', item.min],
+      ['max', '最大', item.max],
+    ] as const) {
+      const value = source.value.trim();
+      if (source.kind !== 'path' || !value || isWritableWorldTemplatePath(value)) continue;
+
+      if (Number.isFinite(Number(value))) {
+        if (slot === 'current') {
+          if (isWritableWorldTemplatePath(item.name.trim())) continue;
+          message.error('当前值使用数字初始值时，数据名字必须同时是合法的 world 字段名');
+          return false;
+        }
+        source.kind = 'literal';
+        continue;
+      }
+
+      message.error(`${item.name.trim() || '未命名数据'}的${label}来源不是合法字段名`);
+      return false;
+    }
+  }
+  return true;
+};
+
 const saveOverlayTemplateEditor = async () => {
   const channelId = resolvedChannelId.value;
   if (!channelId) return false;
+  if (!normalizeAndValidateAvatarWorldOverlayTemplate()) return false;
   const templateJson = serializeOverlayTemplateEditor();
   snapshotTemplateSaving.value = true;
   try {
     if (overlayTemplateEditorTarget.value === 'channel') {
-      const normalizedBadgeTemplate = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
-      badgeTemplate.value = normalizedBadgeTemplate;
-      persistBadgeTemplate();
       await snapshotStore.updateSettings(channelId, {
-        badgeTemplate: normalizedBadgeTemplate,
+        badgeTemplate: getPersistedChannelBadgeTemplate(),
+        theaterOverlayTemplateMode: 'custom',
         theaterOverlayTemplateJson: templateJson,
       });
+      channelOverlayTemplateMode.value = 'custom';
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
       message.success('小剧场数据浮层模板已保存');
-    } else {
+    } else if (overlayTemplateEditorTarget.value === 'personal') {
       personalOverlayTemplateJson.value = templateJson;
       await snapshotStore.updatePreference(channelId, {
         badgeTemplateMode: personalBadgeTemplateMode.value,
@@ -701,6 +908,10 @@ const saveOverlayTemplateEditor = async () => {
       });
       await snapshotStore.syncLocalSnapshot(channelId, true);
       message.success('个人小剧场浮层模板已保存');
+    } else {
+      const source: AvatarCardSource = overlayTemplateEditorTarget.value === 'avatar-bot' ? 'bot' : 'world';
+      await avatarState.updateSettings(channelId, { template: { source, json: templateJson } });
+      message.success('头像点击卡片模板已保存');
     }
     overlayTemplateEditorVisible.value = false;
     return true;
@@ -709,6 +920,38 @@ const saveOverlayTemplateEditor = async () => {
     return false;
   } finally {
     snapshotTemplateSaving.value = false;
+  }
+};
+
+const saveAvatarSource = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  avatarSettingsSaving.value = true;
+  try {
+    await avatarState.updateSettings(channelId, { sourceMode: avatarSourceDraft.value });
+    message.success('头像点击卡片数据来源已保存');
+  } catch (error: any) {
+    message.error(error?.response?.err || error?.message || '保存失败');
+  } finally {
+    avatarSettingsSaving.value = false;
+  }
+};
+
+const applyAvatarTemplatePreset = async (preset: keyof typeof overlayTemplatePresets) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  avatarSettingsSaving.value = true;
+  try {
+    const source = avatarSourceDraft.value;
+    const presets = source === 'bot'
+      ? CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS
+      : AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS;
+    await avatarState.updateSettings(channelId, { template: { source, json: JSON.stringify(presets[preset]) } });
+    message.success(`头像点击卡片已应用 ${preset === 'coc' ? 'COC' : '忍神'} 模板`);
+  } catch (error: any) {
+    message.error(error?.response?.err || error?.message || '应用模板失败');
+  } finally {
+    avatarSettingsSaving.value = false;
   }
 };
 
@@ -724,8 +967,10 @@ const applySnapshotTemplatePreset = async (target: 'channel' | 'personal', prese
       persistBadgeTemplate();
       await snapshotStore.updateSettings(channelId, {
         badgeTemplate: badgeTemplatePreset,
+        theaterOverlayTemplateMode: 'custom',
         theaterOverlayTemplateJson: templateJson,
       });
+      channelOverlayTemplateMode.value = 'custom';
       theaterOverlayTemplateJson.value = templateJson;
       await snapshotStore.refreshChannel(channelId);
     } else {
@@ -822,6 +1067,19 @@ watch(() => props.visible, async (val) => {
   pruneStaleNarratorIdentities();
   if (resolvedChannelId.value && !characterApiDisabled.value) {
     await loadPanelData(resolvedChannelId.value);
+  }
+}, { immediate: true });
+
+watch([() => props.visible, resolvedChannelId], async ([visible, channelId]) => {
+  if (!visible || !channelId) return;
+  await avatarState.initializeChannel(channelId);
+  try {
+    const allowed = await chatStore.hasChannelPermission(
+      channelId, 'func_channel_manage_info', userStore.info.id,
+    );
+    if (resolvedChannelId.value === channelId) channelSnapshotTemplateManageAllowed.value = allowed;
+  } catch {
+    if (resolvedChannelId.value === channelId) channelSnapshotTemplateManageAllowed.value = false;
   }
 }, { immediate: true });
 
@@ -1058,59 +1316,147 @@ const currentActiveCardId = computed(() => {
   return cardStore.getActiveCardId(channelId);
 });
 
+type EffectiveSnapshotTemplateSource = 'disabled' | 'card-template' | 'personal' | 'channel' | 'rule-preset' | 'system';
+
+interface EffectiveSnapshotTemplateInfo {
+  source: EffectiveSnapshotTemplateSource;
+  sourceLabel: string;
+  template: string;
+}
+
+const resolveEffectiveSnapshotTemplate = (options: {
+  disabled?: boolean;
+  cardTemplate?: string;
+  cardTemplateName?: string;
+  personalTemplate?: string;
+  channelTemplate?: string;
+  channelOff?: boolean;
+  rulePresetTemplate?: string;
+  rulePresetName?: string;
+  systemTemplate?: string;
+}): EffectiveSnapshotTemplateInfo => {
+  if (options.disabled) return { source: 'disabled', sourceLabel: '已关闭', template: '' };
+  if (options.cardTemplate?.trim()) {
+    return {
+      source: 'card-template',
+      sourceLabel: `人物卡 · ${options.cardTemplateName || '模板'}`,
+      template: options.cardTemplate.trim(),
+    };
+  }
+  if (options.personalTemplate?.trim()) {
+    return { source: 'personal', sourceLabel: '个人兜底', template: options.personalTemplate.trim() };
+  }
+  if (options.channelOff) return { source: 'disabled', sourceLabel: '已关闭', template: '' };
+  if (options.channelTemplate?.trim()) {
+    return { source: 'channel', sourceLabel: '频道默认', template: options.channelTemplate.trim() };
+  }
+  if (options.rulePresetTemplate?.trim()) {
+    return {
+      source: 'rule-preset',
+      sourceLabel: `${options.rulePresetName || ''} 规则预设`.trim(),
+      template: options.rulePresetTemplate.trim(),
+    };
+  }
+  return { source: 'system', sourceLabel: '系统默认', template: options.systemTemplate || '' };
+};
+
+const effectiveCardSnapshotTemplate = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const activeCardId = currentActiveCardId.value;
+  if (!channelId || !activeCardId) return undefined;
+  const binding = templateStore.getBinding(channelId, activeCardId);
+  const templateId = String(binding?.templateId || '').trim();
+  if (binding?.mode !== 'managed' || !templateId) return undefined;
+  return templateStore.templates.find(tpl => tpl.ref === templateId)
+    || templateStore.templates.find(tpl => tpl.id === templateId);
+});
+
+const activeSnapshotRulePreset = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const sheetType = channelId ? cardStore.activeCards[channelId]?.type || '' : '';
+  return getCharacterSnapshotTemplatePreset(sheetType);
+});
+
 const effectiveBadgeTemplateInfo = computed(() => {
   const channelId = resolvedChannelId.value;
-  const preference = channelId
-    ? snapshotStore.preferenceByChannel[channelId]
-    : undefined;
-  const settings = channelId
-    ? snapshotStore.settingsByChannel[channelId]
-    : undefined;
+  const preference = channelId ? snapshotStore.preferenceByChannel[channelId] : undefined;
+  const settings = channelId ? snapshotStore.settingsByChannel[channelId] : undefined;
+  const cardTemplate = effectiveCardSnapshotTemplate.value;
+  const preset = activeSnapshotRulePreset.value;
+  const cardBadgeTemplate = cardTemplate?.origin === 'platform'
+    ? cardTemplate.badgeTemplateOverride
+    : cardTemplate?.defaultBadgeTemplate;
 
-  if (preference?.badgeTemplateMode === 'off') {
+  return resolveEffectiveSnapshotTemplate({
+    disabled: preference?.badgeTemplateMode === 'off',
+    cardTemplate: cardBadgeTemplate,
+    cardTemplateName: cardTemplate?.name,
+    personalTemplate: preference?.badgeTemplateMode === 'custom' ? preference.badgeTemplate : '',
+    channelTemplate: settings?.badgeTemplate,
+    rulePresetTemplate: preset ? badgeTemplatePresets[preset] : '',
+    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+  });
+});
+
+const effectiveOverlayTemplateInfo = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const preference = channelId ? snapshotStore.preferenceByChannel[channelId] : undefined;
+  const settings = channelId ? snapshotStore.settingsByChannel[channelId] : undefined;
+  const cardTemplate = effectiveCardSnapshotTemplate.value;
+  const preset = activeSnapshotRulePreset.value;
+
+  return resolveEffectiveSnapshotTemplate({
+    disabled: preference?.theaterOverlayTemplateMode === 'off',
+    cardTemplate: cardTemplate?.theaterOverlayTemplateJson,
+    cardTemplateName: cardTemplate?.name,
+    personalTemplate: preference?.theaterOverlayTemplateMode === 'custom'
+      ? preference.theaterOverlayTemplateJson
+      : '',
+    channelTemplate: settings?.theaterOverlayTemplateMode === 'custom'
+      ? settings.theaterOverlayTemplateJson
+      : '',
+    channelOff: settings?.theaterOverlayTemplateMode === 'off',
+    rulePresetTemplate: preset ? JSON.stringify(overlayTemplatePresets[preset], null, 2) : '',
+    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+    systemTemplate: JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2),
+  });
+});
+
+interface EffectiveOverlayTemplatePreviewItem {
+  name: string;
+  displayMode: OverlayEditorItem['displayMode'];
+  current: number | null;
+  max: number | null;
+  currentResolved: boolean;
+}
+
+interface EffectiveOverlayTemplatePreview {
+  preferredColumns: number;
+  itemCount: number;
+  items: EffectiveOverlayTemplatePreviewItem[];
+}
+
+const effectiveOverlayTemplatePreview = computed<EffectiveOverlayTemplatePreview | null>(() => {
+  if (effectiveOverlayTemplateInfo.value.source === 'disabled') return null;
+  const parsed = parseOverlayTemplateForEditor(effectiveOverlayTemplateInfo.value.template);
+  if (!parsed) return null;
+
+  const items = parsed.items.map((item): EffectiveOverlayTemplatePreviewItem => {
+    const current = resolveOverlayEditorSource(item.current);
+    const max = item.max.value.trim() ? resolveOverlayEditorSource(item.max) : null;
     return {
-      source: 'disabled' as const,
-      sourceLabel: '已关闭',
-      template: '',
+      name: item.name.trim() || '未命名',
+      displayMode: item.displayMode,
+      current,
+      max,
+      currentResolved: current !== null,
     };
-  }
-
-  const activeCardId = currentActiveCardId.value;
-  if (channelId && activeCardId) {
-    const binding = templateStore.getBinding(channelId, activeCardId);
-    const templateId = String(binding?.templateId || '').trim();
-    if (binding?.mode === 'managed' && templateId) {
-      const managedTemplate = templateStore.templates.find(tpl => tpl.ref === templateId)
-        || templateStore.templates.find(tpl => tpl.id === templateId);
-      const managedBadgeTemplate = String(
-        managedTemplate?.badgeTemplateOverride
-          || managedTemplate?.defaultBadgeTemplate
-          || '',
-      ).trim();
-      if (managedTemplate && managedBadgeTemplate) {
-        return {
-          source: 'card-template' as const,
-          sourceLabel: `人物卡 · ${managedTemplate.name}`,
-          template: managedBadgeTemplate,
-          templateName: managedTemplate.name,
-        };
-      }
-    }
-  }
-
-  const personalTemplate = String(preference?.badgeTemplate || '').trim();
-  if (preference?.badgeTemplateMode === 'custom' && personalTemplate) {
-    return {
-      source: 'personal' as const,
-      sourceLabel: '个人兜底',
-      template: personalTemplate,
-    };
-  }
+  });
 
   return {
-    source: 'channel' as const,
-    sourceLabel: '频道模板',
-    template: String(settings?.badgeTemplate || '').trim(),
+    preferredColumns: parsed.preferredColumns,
+    itemCount: items.length,
+    items,
   };
 });
 
@@ -1545,16 +1891,6 @@ const handleCreateCard = async () => {
       throw new Error('人物卡创建失败');
     }
     const setupTasks: Array<{ label: string; task: Promise<unknown> }> = [];
-    const snapshotTemplatePreset = getCharacterSnapshotTemplatePreset(sheetType);
-    if (snapshotTemplatePreset) {
-      setupTasks.push({
-        label: '默认快照模板启用',
-        task: applySnapshotTemplatePreset(
-          canSyncBadgeTemplate.value ? 'channel' : 'personal',
-          snapshotTemplatePreset,
-        ),
-      });
-    }
     if (newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE) {
       setupTasks.push({
         label: '模板应用',
@@ -2115,7 +2451,7 @@ defineExpose({ openCardById });
             <div class="settings-row">
               <div>
                 <p class="settings-title">自动同步昵称</p>
-                <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
+                <p class="settings-desc">切换频道角色或人物卡后，通过隐式 BOT 交互同步昵称；成功匹配的回复不会显示在聊天中</p>
               </div>
               <n-switch v-model:value="autoSyncBotNicknameEnabled">
                 <template #checked>已启用</template>
@@ -2173,7 +2509,7 @@ defineExpose({ openCardById });
                 个人徽章策略已关闭，当前角色不显示徽章。
               </div>
               <div class="effective-badge-template__priority">
-                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道模板
+                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道默认 &gt; 规则预设 &gt; 系统默认
               </div>
             </div>
             <div class="settings-row settings-row--template">
@@ -2212,7 +2548,7 @@ defineExpose({ openCardById });
                 <p class="settings-desc">仅影响自己的快照；人物卡模板未提供默认徽章时，才使用个人兜底。</p>
               </div>
               <div class="settings-template-input">
-                <n-select v-model:value="personalBadgeTemplateMode" size="small" :options="badgeTemplateModeOptions" />
+                <n-select v-model:value="personalBadgeTemplateMode" size="small" :options="personalTemplateModeOptions" />
                 <n-input
                   v-if="personalBadgeTemplateMode === 'custom'"
                   v-model:value="personalBadgeTemplate"
@@ -2243,16 +2579,88 @@ defineExpose({ openCardById });
         </button>
         <n-collapse-transition :show="theaterOverlaySettingsExpanded">
           <div class="character-card-settings__body">
-            <div class="settings-row">
-              <p class="settings-title">小剧场数据浮层模板</p>
-              <n-button
-                size="small"
-                :disabled="!canSyncBadgeTemplate || snapshotTemplateSaving"
-                @click="openOverlayTemplateEditor('channel')"
+            <div class="effective-badge-template">
+              <div class="effective-badge-template__header">
+                <span class="settings-title">实际使用的小剧场浮层模板</span>
+                <n-tag
+                  size="small"
+                  :bordered="false"
+                  :type="effectiveOverlayTemplateInfo.source === 'card-template'
+                    ? 'success'
+                    : effectiveOverlayTemplateInfo.source === 'personal'
+                      ? 'info'
+                      : effectiveOverlayTemplateInfo.source === 'disabled'
+                        ? 'warning'
+                        : 'default'"
+                >
+                  {{ effectiveOverlayTemplateInfo.sourceLabel }}
+                </n-tag>
+              </div>
+              <div
+                v-if="effectiveOverlayTemplateInfo.source !== 'disabled'"
+                class="effective-badge-template__value"
               >
-                <template #icon><n-icon :component="Edit" /></template>
-                编辑
-              </n-button>
+                <div v-if="!effectiveOverlayTemplatePreview" class="effective-overlay-template-preview__empty">
+                  模板预览不可用
+                </div>
+                <template v-else>
+                  <div v-if="effectiveOverlayTemplatePreview.itemCount" class="effective-overlay-template-preview__summary">
+                    {{ effectiveOverlayTemplatePreview.itemCount }} 个状态 · {{ effectiveOverlayTemplatePreview.preferredColumns }} 列
+                  </div>
+                  <div v-if="effectiveOverlayTemplatePreview.items.length" class="effective-overlay-template-preview__items">
+                    <span
+                      v-for="(item, index) in effectiveOverlayTemplatePreview.items"
+                      :key="`${item.name}-${index}`"
+                      class="effective-overlay-template-preview__item"
+                    >
+                      <span class="effective-overlay-template-preview__name">{{ item.name }}</span>
+                      <span v-if="item.displayMode === 'icon'" class="effective-overlay-template-preview__mode">图标</span>
+                      <span class="effective-overlay-template-preview__value">
+                        {{ !item.currentResolved
+                          ? '未找到'
+                          : item.max === null
+                            ? item.current
+                            : `${item.current}/${item.max}` }}
+                      </span>
+                    </span>
+                  </div>
+                  <div v-else class="effective-overlay-template-preview__empty">暂无状态项</div>
+                </template>
+              </div>
+              <div v-else class="effective-badge-template__value">当前角色不显示小剧场数据浮层。</div>
+              <div class="effective-badge-template__priority">
+                优先级：关闭 &gt; 人物卡模板 &gt; 个人兜底 &gt; 频道默认 &gt; 规则预设 &gt; 系统默认
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
+              <div>
+                <p class="settings-title">频道小剧场浮层策略</p>
+                <p class="settings-desc">作为人物卡模板和个人兜底之后的频道默认；跟随规则预设时不提供频道覆盖。</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-select
+                  v-model:value="channelOverlayTemplateMode"
+                  size="small"
+                  :disabled="!canSyncBadgeTemplate"
+                  :options="channelOverlayTemplateModeOptions"
+                />
+                <n-button
+                  v-if="channelOverlayTemplateMode === 'custom'"
+                  size="small"
+                  :disabled="!canSyncBadgeTemplate || snapshotTemplateSaving"
+                  @click="openOverlayTemplateEditor('channel')"
+                >
+                  <template #icon><n-icon :component="Edit" /></template>
+                  编辑
+                </n-button>
+                <n-button
+                  size="small"
+                  type="primary"
+                  :disabled="!canSyncBadgeTemplate"
+                  :loading="snapshotTemplateSaving"
+                  @click="saveChannelOverlaySettings"
+                >保存</n-button>
+              </div>
             </div>
             <div class="settings-row settings-row--template">
               <p class="settings-title">启用默认模板</p>
@@ -2264,7 +2672,7 @@ defineExpose({ openCardById });
             <div class="settings-row settings-row--template">
               <p class="settings-title">个人小剧场浮层模板</p>
               <div class="settings-template-input settings-template-input--inline">
-                <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="templateModeOptions" />
+                <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="personalTemplateModeOptions" />
                 <n-button
                   v-if="personalOverlayTemplateMode === 'custom'"
                   size="small"
@@ -2274,6 +2682,56 @@ defineExpose({ openCardById });
                   编辑
                 </n-button>
                 <n-button size="small" type="primary" :loading="snapshotTemplateSaving" @click="savePersonalSnapshotTemplates">保存</n-button>
+              </div>
+            </div>
+          </div>
+        </n-collapse-transition>
+      </div>
+
+      <div class="character-card-settings">
+        <button
+          type="button"
+          class="settings-group-toggle"
+          :aria-expanded="avatarCardSettingsExpanded"
+          @click="avatarCardSettingsExpanded = !avatarCardSettingsExpanded"
+        >
+          <span class="settings-group-toggle__title-wrap">
+            <n-icon size="18" class="settings-group-toggle__icon">
+              <component :is="avatarCardSettingsToggleIcon" />
+            </n-icon>
+            <span class="settings-group-toggle__title">头像点击卡片浮窗</span>
+          </span>
+          <span class="settings-group-toggle__state">{{ avatarCardSettingsExpanded ? '收起' : '展开' }}</span>
+        </button>
+        <n-collapse-transition :show="avatarCardSettingsExpanded">
+          <div class="character-card-settings__body">
+            <div class="settings-row settings-row--template settings-row--stacked">
+              <div>
+                <p class="settings-title">数据来源</p>
+                <p class="settings-desc">两套数据和模板独立保存；未配置时按频道 BOT 人物卡能力自动选择。</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-radio-group v-model:value="avatarSourceDraft" size="small" :disabled="!canSyncBadgeTemplate">
+                  <n-radio-button value="bot">BOT人物卡</n-radio-button>
+                  <n-radio-button value="world">世界数据</n-radio-button>
+                </n-radio-group>
+                <n-button size="small" type="primary" :disabled="!canSyncBadgeTemplate" :loading="avatarSettingsSaving" @click="saveAvatarSource">保存</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template settings-row--stacked">
+              <div>
+                <p class="settings-title">{{ avatarSourceDraft === 'bot' ? 'BOT人物卡显示模板' : '世界数据显示模板' }}</p>
+                <p class="settings-desc">{{ avatarTemplateSummary }}</p>
+              </div>
+              <div class="settings-template-input settings-template-input--inline">
+                <n-button size="small" :disabled="!canSyncBadgeTemplate" @click="openOverlayTemplateEditor(avatarSourceDraft === 'bot' ? 'avatar-bot' : 'avatar-world')">编辑模板</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
+              <p class="settings-title">应用到当前来源</p>
+              <div class="overlay-template-presets">
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('coc')">COC</n-button>
               </div>
             </div>
           </div>
@@ -2571,8 +3029,8 @@ defineExpose({ openCardById });
   <n-modal
     v-model:show="overlayTemplateEditorVisible"
     preset="card"
-    title="编辑小剧场数据浮层"
-    style="width: min(980px, 94vw);"
+    class="sc-fluid-modal sc-fluid-modal--xwide"
+    :title="overlayTemplateEditorTarget.startsWith('avatar-') ? '编辑头像点击卡片模板' : '编辑小剧场数据浮层'"
     :bordered="false"
   >
     <div class="overlay-template-editor">
@@ -2597,12 +3055,17 @@ defineExpose({ openCardById });
           新增
         </n-button>
       </div>
+      <div v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__hint">
+        “字段”绑定 world 状态，可在头像卡直接输入或增减；“常量”仅用于固定显示。
+      </div>
+      <div class="sc-modal-table-scroll">
+      <div class="overlay-template-editor__table" :class="{ 'overlay-template-editor__table--world': isAvatarWorldTemplateEditor }">
       <div class="overlay-template-editor__header" aria-hidden="true">
         <span />
         <span>数据名字</span>
-        <span>当前值</span>
-        <span>最小值</span>
-        <span>最大值</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '当前来源' : '当前值' }}</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '最小来源' : '最小值' }}</span>
+        <span>{{ isAvatarWorldTemplateEditor ? '最大来源' : '最大值' }}</span>
         <span>文本颜色</span>
         <span>数据条颜色</span>
         <span />
@@ -2610,43 +3073,103 @@ defineExpose({ openCardById });
       <div
         v-for="item in overlayTemplateEditorItems"
         :key="item.id"
-        class="overlay-template-editor__row"
-        :class="{ 'overlay-template-editor__row--dragging': draggingOverlayItemId === item.id }"
+        class="overlay-template-editor__item"
+        :class="{ 'overlay-template-editor__item--dragging': draggingOverlayItemId === item.id }"
         @dragover.prevent
         @drop="reorderOverlayTemplateEditorItem(item.id)"
       >
-        <button
-          type="button"
-          class="overlay-template-editor__drag-handle"
-          title="拖动排序"
-          aria-label="拖动排序"
-          draggable="true"
-          @dragstart="beginOverlayTemplateItemDrag(item.id, $event)"
-          @dragend="draggingOverlayItemId = ''"
-        >
-          <n-icon :component="GripVertical" />
-        </button>
-        <n-input v-model:value="item.name" size="small" placeholder="生命值" />
-        <n-input v-model:value="item.current.value" size="small" placeholder="生命值">
-          <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
-        </n-input>
-        <n-input v-model:value="item.min.value" size="small" placeholder="0" />
-        <n-input v-model:value="item.max.value" size="small" placeholder="生命值上限" />
-        <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
-        <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
-        <n-button
-          quaternary
-          circle
-          size="small"
-          type="error"
-          title="删除"
-          aria-label="删除"
-          @click="removeOverlayTemplateEditorItem(item.id)"
-        >
-          <template #icon><n-icon :component="Trash" /></template>
-        </n-button>
+        <div class="overlay-template-editor__row">
+          <button
+            type="button"
+            class="overlay-template-editor__drag-handle"
+            title="拖动排序"
+            aria-label="拖动排序"
+            draggable="true"
+            @dragstart="beginOverlayTemplateItemDrag(item.id, $event)"
+            @dragend="draggingOverlayItemId = ''"
+          >
+            <n-icon :component="GripVertical" />
+          </button>
+          <div class="overlay-template-editor__field overlay-template-editor__field--name">
+            <span class="overlay-template-editor__field-label">数据名字</span>
+            <n-input v-model:value="item.name" size="small" placeholder="生命值" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--current">
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '当前来源' : '当前值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.current.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.current.value" size="small" :placeholder="item.current.kind === 'path' ? '生命值' : '2'">
+                <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+              </n-input>
+            </span>
+            <n-input v-else v-model:value="item.current.value" size="small" placeholder="生命值">
+              <template #suffix><span class="overlay-template-editor__resolved-value">{{ formatOverlayEditorCurrentValue(item.current) }}</span></template>
+            </n-input>
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--min">
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '最小来源' : '最小值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.min.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.min.value" size="small" :placeholder="item.min.kind === 'path' ? '生命值下限' : '0'" />
+            </span>
+            <n-input v-else v-model:value="item.min.value" size="small" placeholder="0" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--max">
+            <span class="overlay-template-editor__field-label">{{ isAvatarWorldTemplateEditor ? '最大来源' : '最大值' }}</span>
+            <span v-if="isAvatarWorldTemplateEditor" class="overlay-template-editor__source-inputs">
+              <n-select v-model:value="item.max.kind" size="small" :options="overlayWorldSourceKindOptions" />
+              <n-input v-model:value="item.max.value" size="small" :placeholder="item.max.kind === 'path' ? '生命值上限' : '8'" />
+            </span>
+            <n-input v-else v-model:value="item.max.value" size="small" placeholder="生命值上限" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--text-color">
+            <span class="overlay-template-editor__field-label">文本颜色</span>
+            <n-color-picker v-model:value="item.textColor" :show-alpha="false" size="small" />
+          </div>
+          <div class="overlay-template-editor__field overlay-template-editor__field--bar-color">
+            <span class="overlay-template-editor__field-label">数据条颜色</span>
+            <n-color-picker v-model:value="item.barColor" :show-alpha="false" size="small" />
+          </div>
+          <n-button
+            class="overlay-template-editor__delete"
+            quaternary
+            circle
+            size="small"
+            type="error"
+            title="删除"
+            aria-label="删除"
+            @click="removeOverlayTemplateEditorItem(item.id)"
+          >
+            <template #icon><n-icon :component="Trash" /></template>
+          </n-button>
+        </div>
+        <div class="overlay-template-editor__additional-row">
+          <label class="overlay-template-editor__additional-field">
+            <span>显示方式</span>
+            <n-select v-model:value="item.displayMode" size="small" :options="overlayDisplayModeOptions" />
+          </label>
+          <template v-if="item.displayMode === 'icon'">
+            <label class="overlay-template-editor__additional-field overlay-template-editor__additional-field--icon">
+              <span>图标</span>
+              <span class="overlay-template-editor__icon-inputs">
+                <n-select v-model:value="item.iconType" size="small" :options="overlayIconTypeOptions" />
+                <n-input v-model:value="item.iconValue" size="small" :placeholder="item.iconType === 'image' ? '图片地址或附件 ID' : '❤️'" />
+              </span>
+            </label>
+            <label class="overlay-template-editor__additional-field">
+              <span>每格数值</span>
+              <n-input v-model:value="item.valuePerIcon" size="small" placeholder="1" />
+            </label>
+            <label class="overlay-template-editor__additional-field">
+              <span>细分</span>
+              <n-input v-model:value="item.subdivisions" size="small" placeholder="2" />
+            </label>
+          </template>
+        </div>
       </div>
       <n-empty v-if="!overlayTemplateEditorItems.length" size="small" description="暂无数据项" class="overlay-template-editor__empty" />
+      </div>
+      </div>
 
       <div class="overlay-template-preview">
         <span class="overlay-template-preview__label">预览</span>
@@ -2656,9 +3179,25 @@ defineExpose({ openCardById });
               <span>{{ item.name }}</span>
               <span>{{ item.max === null ? item.current : `${item.current}/${item.max}` }}</span>
             </div>
-            <div class="overlay-template-preview__bar">
+            <div v-if="item.displayMode === 'bar'" class="overlay-template-preview__bar">
               <span :style="{ width: `${item.percent}%`, backgroundColor: item.barColor }" />
             </div>
+            <span v-else-if="item.max === null" class="overlay-template-preview__hint">图标模式需要最大值</span>
+            <template v-else>
+              <div class="overlay-template-preview__icons">
+                <span v-for="(fill, index) in item.iconFills" :key="index" class="overlay-template-preview__icon">
+                  <span class="overlay-template-preview__icon-base">
+                    <img v-if="item.iconType === 'image' && item.iconValue.trim()" :src="resolveAttachmentUrl(item.iconValue)" alt="">
+                    <span v-else>{{ item.iconValue || '❤️' }}</span>
+                  </span>
+                  <span class="overlay-template-preview__icon-fill" :style="{ width: `${fill * 100}%` }">
+                    <img v-if="item.iconType === 'image' && item.iconValue.trim()" :src="resolveAttachmentUrl(item.iconValue)" alt="">
+                    <span v-else>{{ item.iconValue || '❤️' }}</span>
+                  </span>
+                </span>
+              </div>
+              <span v-if="item.iconPreviewTruncated" class="overlay-template-preview__hint">图标数量过多，仅预览前 100 个</span>
+            </template>
           </div>
         </div>
         <span v-else class="overlay-template-preview__empty">暂无可预览数据</span>
@@ -3087,6 +3626,49 @@ defineExpose({ openCardById });
   opacity: 0.75;
 }
 
+.effective-overlay-template-preview__summary {
+  margin-bottom: 0.35rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.74rem;
+}
+
+.effective-overlay-template-preview__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.effective-overlay-template-preview__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28rem;
+  max-width: 100%;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--sc-border-color);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  line-height: 1.2;
+}
+
+.effective-overlay-template-preview__name {
+  color: var(--sc-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.effective-overlay-template-preview__mode {
+  color: var(--sc-text-tertiary);
+  font-size: 0.64rem;
+}
+
+.effective-overlay-template-preview__value {
+  color: var(--sc-text-secondary);
+  white-space: nowrap;
+}
+
+.effective-overlay-template-preview__empty {
+  color: var(--sc-text-secondary);
+}
+
 .overlay-template-presets {
   display: flex;
   gap: 0.4rem;
@@ -3100,12 +3682,67 @@ defineExpose({ openCardById });
 
 .overlay-template-editor__toolbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
 }
 
+.overlay-template-editor__hint {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--sc-border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 92%, black);
+  color: var(--sc-text-primary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.overlay-template-editor__source-inputs {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.overlay-template-editor__source-inputs :deep(.n-base-selection) {
+  min-width: 88px;
+}
+
+.overlay-template-editor :deep(.n-input),
+.overlay-template-editor :deep(.n-base-selection),
+.overlay-template-editor :deep(.n-color-picker-trigger) {
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 94%, black);
+}
+
+.overlay-template-editor :deep(.n-input__input-el),
+.overlay-template-editor :deep(.n-input__textarea-el),
+.overlay-template-editor :deep(.n-base-selection-label) {
+  color: var(--sc-text-primary);
+}
+
+.overlay-template-editor :deep(.n-input__placeholder),
+.overlay-template-editor :deep(.n-base-selection-placeholder) {
+  color: var(--sc-text-secondary);
+  opacity: 0.82;
+}
+
 .overlay-template-editor__file-input {
   display: none;
+}
+
+.overlay-template-editor__table {
+  min-width: 760px;
+}
+
+@media (min-width: 861px) {
+  .overlay-template-editor__table--world {
+    min-width: 1080px;
+  }
+
+  .overlay-template-editor__table--world .overlay-template-editor__header,
+  .overlay-template-editor__table--world .overlay-template-editor__row {
+    grid-template-columns: 28px minmax(110px, 1fr) minmax(210px, 1.7fr) minmax(170px, 1.2fr) minmax(210px, 1.5fr) 84px 84px 30px;
+  }
 }
 
 .overlay-template-editor__header,
@@ -3117,19 +3754,63 @@ defineExpose({ openCardById });
 }
 
 .overlay-template-editor__header {
-  padding: 0 0.25rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.74rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 88%, transparent);
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
-.overlay-template-editor__row {
-  padding: 0.45rem 0.25rem;
-  border-top: 1px solid var(--sc-border-color);
+.overlay-template-editor__field {
+  min-width: 0;
+}
+
+.overlay-template-editor__field-label {
+  display: none;
+}
+
+.overlay-template-editor__item {
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--sc-border-color) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #20232d) 78%, transparent);
   transition: background-color 0.16s ease;
 }
 
-.overlay-template-editor__row--dragging {
-  background: rgba(59, 130, 246, 0.08);
+.overlay-template-editor__item--dragging {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.overlay-template-editor__additional-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.7rem;
+  margin-top: 0.5rem;
+  padding: 0.55rem 30px 0 28px;
+  border-top: 1px dashed color-mix(in srgb, var(--sc-border-color) 70%, transparent);
+}
+
+.overlay-template-editor__additional-field {
+  display: grid;
+  grid-template-columns: max-content minmax(92px, 120px);
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
+}
+
+.overlay-template-editor__additional-field--icon {
+  flex: 1 1 310px;
+  grid-template-columns: max-content minmax(230px, 1fr);
+}
+
+.overlay-template-editor__icon-inputs {
+  display: grid;
+  grid-template-columns: 100px minmax(130px, 1fr);
+  gap: 0.4rem;
 }
 
 .overlay-template-editor__drag-handle {
@@ -3153,8 +3834,9 @@ defineExpose({ openCardById });
 .overlay-template-editor__resolved-value {
   max-width: 58px;
   overflow: hidden;
-  color: var(--sc-text-secondary);
+  color: var(--sc-text-primary);
   font-size: 0.72rem;
+  opacity: 0.78;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3164,17 +3846,18 @@ defineExpose({ openCardById });
 }
 
 .overlay-template-preview {
-  padding: 0.7rem 0.8rem;
+  padding: 0.8rem 0.9rem;
   border: 1px solid var(--sc-border-color);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--sc-bg-secondary, #1e1e24) 86%, black);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-secondary, #1e1e24) 94%, black);
 }
 
 .overlay-template-preview__label {
   display: block;
   margin-bottom: 0.5rem;
-  color: var(--sc-text-secondary);
-  font-size: 0.74rem;
+  color: var(--sc-text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
 .overlay-template-preview__stats {
@@ -3202,6 +3885,54 @@ defineExpose({ openCardById });
   display: block;
   height: 100%;
   border-radius: inherit;
+}
+
+.overlay-template-preview__icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.overlay-template-preview__icon {
+  position: relative;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 18px;
+}
+
+.overlay-template-preview__icon-base,
+.overlay-template-preview__icon-fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.overlay-template-preview__icon-base {
+  filter: grayscale(1);
+  opacity: 0.22;
+}
+
+.overlay-template-preview__icon-fill {
+  right: auto;
+}
+
+.overlay-template-preview__icon img,
+.overlay-template-preview__icon-base > span,
+.overlay-template-preview__icon-fill > span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.overlay-template-preview__hint {
+  color: var(--sc-text-secondary);
+  font-size: 0.72rem;
 }
 
 .overlay-template-preview__empty {
@@ -3581,58 +4312,6 @@ defineExpose({ openCardById });
     width: 100%;
   }
 
-  .overlay-template-editor__header {
-    display: none;
-  }
-
-  .overlay-template-editor__row {
-    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 30px;
-  }
-
-  .overlay-template-editor__row > :nth-child(1) {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(2) {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(3) {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .overlay-template-editor__row > :nth-child(4) {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .overlay-template-editor__row > :nth-child(5) {
-    grid-column: 3;
-    grid-row: 2;
-  }
-
-  .overlay-template-editor__row > :nth-child(6) {
-    grid-column: 2;
-    grid-row: 3;
-  }
-
-  .overlay-template-editor__row > :nth-child(7) {
-    grid-column: 3;
-    grid-row: 3;
-  }
-
-  .overlay-template-editor__row > :nth-child(8) {
-    grid-column: 4;
-    grid-row: 1 / span 3;
-  }
-
-  .overlay-template-preview__stats {
-    grid-template-columns: 1fr;
-  }
-
   .online-character-cards__header {
     align-items: center;
   }
@@ -3655,6 +4334,103 @@ defineExpose({ openCardById });
   .character-card-item :deep(.n-card-header__extra .n-button) {
     min-width: 30px;
     min-height: 30px;
+  }
+}
+
+@media (max-width: 860px) {
+  .overlay-template-editor__table {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .overlay-template-editor__header {
+    display: none;
+  }
+
+  .overlay-template-editor__item {
+    margin-bottom: 0.6rem;
+    padding: 0.6rem;
+    border: 1px solid var(--sc-border-color);
+    border-radius: 6px;
+  }
+
+  .overlay-template-editor__row {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding-top: 2rem;
+  }
+
+  .overlay-template-editor__drag-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  .overlay-template-editor__delete {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+
+  .overlay-template-editor__field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .overlay-template-editor__field--name,
+  .overlay-template-editor__field--current {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__field-label {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: var(--sc-text-primary);
+    font-size: 0.7rem;
+    font-weight: 500;
+  }
+
+  .overlay-template-editor__additional-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem 0 0;
+  }
+
+  .overlay-template-editor__additional-field,
+  .overlay-template-editor__additional-field--icon {
+    grid-template-columns: 68px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .overlay-template-editor__additional-field--icon {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__icon-inputs {
+    grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1.2fr);
+  }
+
+  .overlay-template-preview__stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 460px) {
+  .overlay-template-editor__field {
+    grid-column: 1 / -1;
+  }
+
+  .overlay-template-editor__additional-row {
+    grid-template-columns: 1fr;
+  }
+
+  .overlay-template-editor__additional-field--icon {
+    grid-column: auto;
   }
 }
 </style>

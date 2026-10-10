@@ -2,7 +2,7 @@
   chatHistoryPersistentDays: -1
   typingOrderWindowMs: 1000
   dbUrl: ./data/chat.db
-  domain: 127.0.0.1:3212 # 这里需要填写服务器IP或者域名地址，外置图片显示
+  domain: 127.0.0.1:3212 # 对外域名；多个入口用 ; 分隔，例如 https://chat.example;https://chat-tunnel.example
   imageBaseUrl: 127.0.0.1:3212 # 建议填写对外访问域名或 CDN 地址，可填 https://example.com
   imageCompress: true
   imageCompressQuality: 85
@@ -172,6 +172,13 @@ backup:
 authSession:
   maxAgeDays: 15                  # token 最大有效期（天）
   refreshThresholdDays: 7         # 剩余有效期小于等于该值时自动续签（天）
+
+# 反向代理配置。仅信任 SealChat 直接看到的上一跳代理；Docker/远程代理需自行追加实际地址或网段。
+proxy:
+  proxyHeader: X-Forwarded-For
+  trustedProxies:
+    - 127.0.0.1
+    - "::1"
 
 # 邮件通知配置（邮件提醒与邮箱验证码共用此 SMTP 配置）
 emailNotification:

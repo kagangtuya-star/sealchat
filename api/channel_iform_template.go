@@ -18,6 +18,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 type channelIFormTemplateCatalogItem struct {
@@ -48,6 +49,25 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 	}
 	search := strings.ToLower(strings.TrimSpace(c.Query("search")))
 	originFilter := strings.TrimSpace(c.Query("origin"))
+	items, err := listChannelIFormTemplateCatalog(search, originFilter, CanWithSystemRole(c, pm.PermModAdmin))
+	if err != nil {
+		return wrapIFormMutationError(c, err)
+	}
+	total := len(items)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return c.JSON(fiber.Map{"items": items[start:end], "page": page, "pageSize": pageSize, "total": total})
+}
+
+// listChannelIFormTemplateCatalog returns builtin and platform templates. A
+// non-admin view only contains enabled, unarchived platform templates.
+func listChannelIFormTemplateCatalog(search, originFilter string, isAdmin bool) ([]channelIFormTemplateCatalogItem, error) {
 	items := make([]channelIFormTemplateCatalogItem, 0)
 	if originFilter == "" || originFilter == "builtin" {
 		for _, registration := range service.BuiltinChannelIFormTools() {
@@ -66,7 +86,6 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 		}
 	}
 	if originFilter == "" || originFilter == "platform" {
-		isAdmin := CanWithSystemRole(c, pm.PermModAdmin)
 		referenceCounts := map[string]int64{}
 		if isAdmin {
 			var counts []struct {
@@ -77,7 +96,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 				Select("template_ref, COUNT(*) AS reference_count").
 				Where("template_ref LIKE ?", "platform:%").
 				Group("template_ref").Scan(&counts).Error; err != nil {
-				return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板引用数量失败")
+				return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "读取频道嵌入模板引用数量失败")
 			}
 			for _, count := range counts {
 				referenceCounts[count.TemplateRef] = count.Count
@@ -86,7 +105,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 		var templates []model.ChannelIFormTemplateModel
 		query := model.GetDB().Order("updated_at DESC")
 		if err := query.Find(&templates).Error; err != nil {
-			return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
+			return nil, newIFormMutationError(fiber.StatusInternalServerError, err, "读取频道嵌入模板失败")
 		}
 		for _, template := range templates {
 			if !isAdmin && (!template.Enabled || template.Archived) {
@@ -108,16 +127,7 @@ func ChannelIFormTemplateCatalog(c *fiber.Ctx) error {
 			})
 		}
 	}
-	total := len(items)
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	return c.JSON(fiber.Map{"items": items[start:end], "page": page, "pageSize": pageSize, "total": total})
+	return items, nil
 }
 
 func catalogSearchMatch(search string, values ...string) bool {
@@ -152,6 +162,50 @@ func requirePlatformAdmin(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "没有平台管理权限")
 	}
 	return nil
+}
+
+func AdminChannelIFormSettingsGet(c *fiber.Ctx) error {
+	if err := requirePlatformAdmin(c); err != nil {
+		return err
+	}
+	maxCodeSizeKB := utils.DefaultChannelEmbedMaxCodeSizeKB
+	if cfg := utils.GetConfig(); cfg != nil && cfg.ChannelEmbedTools.MaxCodeSizeKB > 0 {
+		maxCodeSizeKB = cfg.ChannelEmbedTools.MaxCodeSizeKB
+	}
+	return c.JSON(fiber.Map{"maxCodeSizeKB": maxCodeSizeKB})
+}
+
+func AdminChannelIFormSettingsUpdate(c *fiber.Ctx) error {
+	if err := requirePlatformAdmin(c); err != nil {
+		return err
+	}
+	var payload struct {
+		MaxCodeSizeKB int `json:"maxCodeSizeKB"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
+	}
+	if payload.MaxCodeSizeKB < utils.MinChannelEmbedMaxCodeSizeKB || payload.MaxCodeSizeKB > utils.MaxChannelEmbedMaxCodeSizeKB {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, fmt.Sprintf("嵌入代码大小限制必须在 %d-%d KB 之间", utils.MinChannelEmbedMaxCodeSizeKB, utils.MaxChannelEmbedMaxCodeSizeKB))
+	}
+
+	configMutationMu.Lock()
+	defer configMutationMu.Unlock()
+	current := appConfig
+	if current == nil {
+		current = utils.GetConfig()
+	}
+	if current == nil {
+		return wrapErrorStatus(c, fiber.StatusServiceUnavailable, nil, "配置未加载")
+	}
+	merged := *current
+	merged.ChannelEmbedTools.MaxCodeSizeKB = payload.MaxCodeSizeKB
+	if err := utils.WriteConfigChecked(&merged); err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "配置文件写入失败，运行配置未修改")
+	}
+	appConfig = &merged
+	SyncConfigToDB(appConfig, "api")
+	return c.JSON(fiber.Map{"maxCodeSizeKB": merged.ChannelEmbedTools.MaxCodeSizeKB})
 }
 
 func AdminChannelIFormTemplateList(c *fiber.Ctx) error {

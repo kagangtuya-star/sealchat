@@ -73,6 +73,14 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	if channel != nil && channel.Status != "" && channel.Status != model.ChannelStatusActive {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "归档频道不可写 Theater", 403, nil)
 	}
+	if plan, ok := decoded.(*TheaterDesignPlan); ok {
+		if command.ExpectedRevision < 0 {
+			return nil, theaterPayloadError("expectedRevision 无效")
+		}
+		if err := prepareTheaterDesign(ctx, actorID, command.WorldID, command.ChannelID, plan); err != nil {
+			return nil, err
+		}
+	}
 	if command.Type == TheaterMutationRoomDialoguePatch || command.Type == TheaterMutationRoomDialoguePositionSet {
 		if command.ChannelID != "" {
 			return nil, theaterPayloadError("对话框控制器仅支持世界房间")
@@ -96,10 +104,46 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			payload.allowedChannels = allowed
 		}
 	}
+	if payload, ok := decoded.(*theaterCharacterBindPayload); ok {
+		// Shared permission resolvers must run before the write transaction:
+		// SQLite deployments may have only one connection in their pool.
+		payload.ownerAuthorized = payload.OwnerUserID == actorID || IsWorldAdmin(command.WorldID, actorID) || pm.CanWithSystemRole(actorID, pm.PermModAdmin)
+		if !payload.ownerAuthorized {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "不能绑定他人角色", 403, nil)
+		}
+		if payload.InputChannelID != "" && !CanReadChannelByUserId(actorID, payload.InputChannelID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "无法访问角色频道", 403, nil)
+		}
+	}
 	payloadHash := theaterJSONHash(normalizedPayload)
-	room, err := model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
+	var room *model.TheaterRoomModel
+	if command.Type == TheaterMutationDesignApply {
+		room, err = model.TheaterRoomFindByScope(command.WorldID, command.ChannelID)
+	} else {
+		room, err = model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
+	}
 	if err != nil {
 		return nil, err
+	}
+	missingRoom := room == nil
+	if missingRoom {
+		room = emptyTheaterDesignRoom(actorID, command.WorldID, command.ChannelID)
+	}
+	if plan, ok := decoded.(*TheaterDesignPlan); ok {
+		var existing *model.TheaterMutationModel
+		if !missingRoom {
+			existing, err = model.TheaterMutationFindByID(room.ID, command.MutationID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if existing != nil {
+			if existing.ActorUserID != actorID || existing.Type != command.Type || existing.PayloadHash != payloadHash || (meta.Source == "mcp" && (existing.RequestSource != "mcp" || existing.SessionID != meta.SessionID)) {
+				return nil, newTheaterError(TheaterErrorMutationIDReused, "mutationId 已用于不同请求", 409, nil)
+			}
+		} else if err := validateTheaterDesignInputs(plan, command.WorldID, command.ChannelID); err != nil {
+			return nil, err
+		}
 	}
 	if command.Type == TheaterMutationRoomConstructionSet && !IsWorldAdmin(command.WorldID, actorID) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "只有世界管理员可以设置施工模式", 403, nil)
@@ -112,13 +156,25 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	var outcomeErr error
 	createdMutation := false
 	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		// A concurrent first apply may have created the scope after preflight.
+		// Resolve its room before the idempotency lookup, including initial plans.
+		if missingRoom {
+			var discovered model.TheaterRoomModel
+			if err := tx.Where("world_id = ? AND channel_id = ?", command.WorldID, command.ChannelID).Limit(1).Find(&discovered).Error; err != nil {
+				return err
+			}
+			if discovered.ID != "" {
+				room = &discovered
+				missingRoom = false
+			}
+		}
 		var existing model.TheaterMutationModel
 		findErr := tx.Where("room_id = ? AND mutation_id = ?", room.ID, command.MutationID).Limit(1).Find(&existing).Error
 		if findErr != nil {
 			return findErr
 		}
 		if existing.ID != "" {
-			if existing.ActorUserID != actorID || existing.Type != command.Type || existing.PayloadHash != payloadHash {
+			if existing.ActorUserID != actorID || existing.Type != command.Type || existing.PayloadHash != payloadHash || (meta.Source == "mcp" && (existing.RequestSource != "mcp" || existing.SessionID != meta.SessionID)) {
 				outcomeErr = newTheaterError(TheaterErrorMutationIDReused, "mutationId 已用于不同请求", 409, nil)
 				return nil
 			}
@@ -134,10 +190,22 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		}
 
 		var current model.TheaterRoomModel
-		if err := tx.Where("id = ?", room.ID).First(&current).Error; err != nil {
-			return err
+		if missingRoom {
+			if err := tx.Where("world_id = ? AND channel_id = ?", command.WorldID, command.ChannelID).Limit(1).Find(&current).Error; err != nil {
+				return err
+			}
+			if current.ID == "" {
+				current = *room
+			}
+		} else {
+			if err := tx.Where("id = ?", room.ID).First(&current).Error; err != nil {
+				return err
+			}
 		}
 		if current.Revision != command.ExpectedRevision {
+			if command.Type == TheaterMutationDesignApply {
+				return theaterDesignRevisionConflict(command.ExpectedRevision, current.Revision)
+			}
 			outcomeErr = newTheaterError(TheaterErrorRevisionConflict, "Theater revision 冲突", 409, map[string]any{"expectedRevision": command.ExpectedRevision, "currentRevision": current.Revision})
 			if err := persistRejectedTheaterMutation(tx, &current, actorID, command, normalizedPayload, payloadHash, meta, outcomeErr.(*TheaterError)); err != nil {
 				return err
@@ -145,6 +213,19 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			createdMutation = true
 			return nil
 		}
+		var planned *theaterDesignPlanned
+		if plan, ok := decoded.(*TheaterDesignPlan); ok {
+			planned, err = planTheaterDesign(tx, &current, plan)
+			if err != nil {
+				return err
+			}
+		}
+		if current.ID == "" {
+			if err := tx.Create(&current).Error; err != nil {
+				return err
+			}
+		}
+		room = &current
 		if delegatedObjectEdit {
 			switch payload := decoded.(type) {
 			case *theaterObjectUpdatePayload:
@@ -171,14 +252,38 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		current.Revision = nextRevision
 		current.UpdatedBy = actorID
 		actionVisibilityBatch := authorization == theaterMutationAuthorizationAction && command.Type == TheaterMutationObjectBatchUpdate
-		if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit, actionVisibilityBatch); err != nil {
-			return err
+		resultPayload := normalizedPayload
+		if planned != nil {
+			for _, step := range planned.commands {
+				if err := applyDecodedTheaterMutation(tx, &current, actorID, step.kind, step.decoded); err != nil {
+					return theaterDesignStepError(step.stepIndex, step.stepKind, err)
+				}
+			}
+			planned.summary.Revision = nextRevision
+			resultPayload, err = json.Marshal(planned.summary)
+			if err != nil {
+				return err
+			}
+		} else {
+			if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit, actionVisibilityBatch); err != nil {
+				return err
+			}
 		}
 		if command.Type == TheaterMutationObjectToggle {
 			normalizedPayload, err = json.Marshal(decoded)
 			if err != nil {
 				return err
 			}
+			resultPayload = normalizedPayload
+		}
+		switch payload := decoded.(type) {
+		case *theaterSceneDuplicatePayload:
+			resultPayload, err = json.Marshal(payload.result)
+		case *theaterObjectDuplicatePayload:
+			resultPayload, err = json.Marshal(payload.result)
+		}
+		if err != nil {
+			return err
 		}
 		if err := recalculateTheaterResourceReferences(tx, current.ID); err != nil {
 			return err
@@ -187,7 +292,7 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		if err != nil {
 			return err
 		}
-		result = &TheaterMutationResult{MutationID: command.MutationID, RevisionBefore: command.ExpectedRevision, Revision: nextRevision, Type: command.Type, Payload: normalizedPayload, Checksum: checksum}
+		result = &TheaterMutationResult{MutationID: command.MutationID, RevisionBefore: command.ExpectedRevision, Revision: nextRevision, Type: command.Type, Payload: resultPayload, Checksum: checksum}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
 			return err
@@ -210,9 +315,9 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			return err
 		}
 		if nextRevision%100 == 0 {
-			snapshotJSON, snapshotHash, err := canonicalTheaterJSON(snapshot)
+			snapshotJSON, err := json.Marshal(snapshot)
 			if err == nil {
-				item := &model.TheaterSnapshotModel{RoomID: current.ID, Revision: nextRevision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(snapshotJSON), SnapshotHash: snapshotHash, SnapshotBytes: int64(len(snapshotJSON)), Kind: "automatic", CreatedBy: actorID}
+				item := &model.TheaterSnapshotModel{RoomID: current.ID, Revision: nextRevision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(snapshotJSON), SnapshotHash: checksum, SnapshotBytes: int64(len(snapshotJSON)), Kind: "automatic", CreatedBy: actorID}
 				if err := tx.Create(item).Error; err != nil {
 					return err
 				}
@@ -223,6 +328,24 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		}
 		return nil
 	})
+	if err != nil && command.Type == TheaterMutationDesignApply {
+		// A losing CAS/unique-key transaction has already rolled back. Return a
+		// concurrently committed matching request without replaying or rebasing.
+		fresh, findErr := model.TheaterRoomFindByScope(command.WorldID, command.ChannelID)
+		if findErr == nil && fresh != nil {
+			existing, findErr := model.TheaterMutationFindByID(fresh.ID, command.MutationID)
+			if findErr == nil && existing != nil && existing.Status == "applied" {
+				if existing.ActorUserID != actorID || existing.Type != command.Type || existing.PayloadHash != payloadHash || (meta.Source == "mcp" && (existing.RequestSource != "mcp" || existing.SessionID != meta.SessionID)) {
+					return nil, newTheaterError(TheaterErrorMutationIDReused, "mutationId 已用于不同请求", 409, nil)
+				}
+				var committed TheaterMutationResult
+				if json.Unmarshal([]byte(existing.ResultJSON), &committed) == nil {
+					committed.Idempotent = true
+					return &committed, nil
+				}
+			}
+		}
+	}
 	if errors.Is(err, errTheaterConcurrentCAS) {
 		fresh, findErr := model.TheaterRoomFindByScope(command.WorldID, command.ChannelID)
 		if findErr != nil {
@@ -233,6 +356,9 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			currentRevision = fresh.Revision
 		}
 		conflict := newTheaterError(TheaterErrorRevisionConflict, "Theater revision 冲突", 409, map[string]any{"expectedRevision": command.ExpectedRevision, "currentRevision": currentRevision})
+		if command.Type == TheaterMutationDesignApply {
+			return nil, conflict
+		}
 		RecordTheaterMetric("theater_revision_conflict_total", nil, 1)
 		RecordTheaterMetric("theater_mutation_total", map[string]string{"type": command.Type, "outcome": "rejected"}, 1)
 		persistErr := model.GetDB().Transaction(func(tx *gorm.DB) error {
@@ -357,7 +483,7 @@ var errTheaterConcurrentCAS = errors.New("theater revision CAS conflict")
 
 func normalizedRequestSource(value string) string {
 	switch value {
-	case "http", "websocket", "bridge", "admin":
+	case "http", "websocket", "bridge", "admin", "mcp":
 		return value
 	default:
 		return "http"
@@ -408,6 +534,10 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 
 func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any, delegatedObjectEdit, actionVisibilityBatch bool) error {
 	switch payload := decoded.(type) {
+	case *theaterSceneDuplicatePayload:
+		return applyTheaterSceneDuplicate(tx, room, actorID, payload)
+	case *theaterObjectDuplicatePayload:
+		return applyTheaterObjectDuplicate(tx, room, actorID, payload)
 	case *theaterDialoguePatch:
 		return applyDialoguePatch(tx, room, actorID, payload)
 	case *theaterDialoguePositionSet:
@@ -729,6 +859,18 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 			return theaterPayloadError("parent 必须是组")
 		}
 	}
+	object := theaterObjectModelFromInput(room, actorID, sceneValue, input)
+	visible := object.Visible // GORM's default may mutate false to true on Create.
+	if err := tx.Select("*").Create(&object).Error; err != nil {
+		return err
+	}
+	if !visible {
+		return tx.Exec("UPDATE theater_objects SET visible = ? WHERE room_id = ? AND id = ?", false, room.ID, object.ID).Error
+	}
+	return nil
+}
+
+func theaterObjectModelFromInput(room *model.TheaterRoomModel, actorID, sceneValue string, input *theaterObjectInput) model.TheaterObjectModel {
 	if input.Kind == "group" {
 		input.Interactive = false
 		input.Editable = false
@@ -761,13 +903,7 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 		OwnerUserID: derefString(input.OwnerUserID), CharacterIdentityID: derefString(input.CharacterIdentityID), ContentJSON: defaultJSON(input.Content, `{}`), ActionsJSON: defaultJSON(input.Actions, `[]`), MetadataJSON: defaultJSON(input.Metadata, `{}`),
 		SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID,
 	}
-	if err := tx.Select("*").Create(&object).Error; err != nil {
-		return err
-	}
-	if !visible {
-		return tx.Exec("UPDATE theater_objects SET visible = ? WHERE room_id = ? AND id = ?", false, room.ID, object.ID).Error
-	}
-	return nil
+	return object
 }
 
 func loadTheaterObject(tx *gorm.DB, roomID, objectID string) (*model.TheaterObjectModel, error) {
@@ -823,15 +959,17 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
 	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "aspectRatioLocked": "aspect_ratio_locked", "interactive": "interactive", "editable": "editable"}
+	// Explicit axes override the uniform scale, as in object.create. Map iteration
+	// order must not decide the transform produced by a design update.
+	if value, ok := payload.Fields["scale"]; ok {
+		updates["scale"], updates["scale_x"], updates["scale_y"] = value, value, value
+	}
 	for key, value := range payload.Fields {
 		if key == "sceneId" {
 			updates["scene_id"] = desiredSceneID
 			continue
 		}
 		if key == "scale" {
-			updates["scale"] = value
-			updates["scale_x"] = value
-			updates["scale_y"] = value
 			continue
 		}
 		if key == "scaleX" {
@@ -887,6 +1025,20 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 		case "metadata":
 			raw, _ := json.Marshal(value)
 			updates["metadata_json"] = string(raw)
+		}
+	}
+	_, actionsChanged := updates["actions_json"]
+	_, metadataChanged := updates["metadata_json"]
+	if actionsChanged || metadataChanged {
+		actionsJSON, metadataJSON := object.ActionsJSON, object.MetadataJSON
+		if actionsChanged {
+			actionsJSON = updates["actions_json"].(string)
+		}
+		if metadataChanged {
+			metadataJSON = updates["metadata_json"].(string)
+		}
+		if err := validateTheaterEmbedEventBindings(object.Kind, []byte(metadataJSON), []byte(actionsJSON)); err != nil {
+			return err
 		}
 	}
 	return tx.Model(object).Updates(updates).Error
@@ -974,12 +1126,29 @@ func applyTheaterObjectToggle(tx *gorm.DB, room *model.TheaterRoomModel, payload
 }
 
 func applyTheaterCharacterBind(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterCharacterBindPayload) error {
-	admin := IsWorldAdmin(room.WorldID, actorID) || pm.CanWithSystemRole(actorID, pm.PermModAdmin)
-	if payload.OwnerUserID != actorID && !admin {
+	if err := validateTheaterCharacterBindReference(tx, room, payload); err != nil {
+		return err
+	}
+	return createTheaterObject(tx, room, actorID, payload.SceneID, &payload.Object)
+}
+
+func validateTheaterCharacterBindReference(tx *gorm.DB, room *model.TheaterRoomModel, payload *theaterCharacterBindPayload) error {
+	if !payload.ownerAuthorized {
 		return newTheaterError(TheaterErrorPermissionDenied, "不能绑定他人角色", 403, nil)
 	}
+	identityChannelID := room.ChannelID
+	if payload.InputChannelID != "" {
+		if room.ChannelID != "" && payload.InputChannelID != room.ChannelID {
+			return theaterPayloadError("inputChannelId 必须匹配频道 Theater")
+		}
+		var channel model.ChannelModel
+		if err := tx.Where("id = ? AND world_id = ?", payload.InputChannelID, room.WorldID).First(&channel).Error; err != nil {
+			return theaterPayloadError("inputChannelId 不属于当前世界")
+		}
+		identityChannelID = channel.ID
+	}
 	var identity model.ChannelIdentityModel
-	if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", payload.IdentityID, room.ChannelID, payload.OwnerUserID).Limit(1).Find(&identity).Error; err != nil {
+	if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", payload.IdentityID, identityChannelID, payload.OwnerUserID).Limit(1).Find(&identity).Error; err != nil {
 		return err
 	}
 	if identity.ID == "" {
@@ -988,7 +1157,7 @@ func applyTheaterCharacterBind(tx *gorm.DB, room *model.TheaterRoomModel, actorI
 	payload.Object.Kind = "character"
 	payload.Object.CharacterIdentityID = &payload.IdentityID
 	payload.Object.OwnerUserID = &payload.OwnerUserID
-	return createTheaterObject(tx, room, actorID, payload.SceneID, &payload.Object)
+	return nil
 }
 
 func applyTheaterResourceReference(tx *gorm.DB, room *model.TheaterRoomModel, attach bool, payload *theaterResourceReferencePayload) error {

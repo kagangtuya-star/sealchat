@@ -40,6 +40,11 @@ const router = createRouter({
       component: UserSigninVue
     },
     {
+      path: '/oauth/mcp/authorize',
+      name: 'mcp-oauth-consent',
+      component: () => import('@/views/user/MCPOAuthConsent.vue'),
+    },
+    {
       path: '/user/signup',
       name: 'user-signup',
       component: UserSignupVue

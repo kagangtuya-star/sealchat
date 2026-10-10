@@ -483,6 +483,37 @@ off()
 
 Event 不持久化，刷新后不重放。topic 最长 64 字符，payload 最大 16 KiB。需要刷新后保留的数据用 Storage。
 
+topic 规则：`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$`。服务端对每个用户的 publish 限流为每秒 60 次；只读/observer、无发言权限或 BridgePolicy 未授予 `events.publish` 时 publish 被拒绝。
+
+#### 小剧场普通 iframe 中的事件联动
+
+当该 iForm 作为小剧场**普通 iframe 对象**（`content.iframe.url` 为内部 iForm 链接）运行时，舞台编辑者可以在对象上保存 StageAction，并配置“嵌入事件绑定”：精确 topic → 该对象已保存的动作。此时 `events.publish` 的外部语义不变，额外效果只有：
+
+- 只有**发起这次 publish 的那个 Host 实例**在服务端成功返回 `eventId` 后，把 `{eventId, formId, channelId, topic}` 交回它所在的舞台对象，同一 eventId 只触发一次；被拒绝、超时或上下文已变化的 publish 不会触发；
+- `events.subscribe` 收到的 Gateway 广播不会触发小剧场动作，所以其他客户端、同一 iForm 的其他舞台实例都不会跟着执行；
+- 动作只由对象上保存的绑定选择。payload 继续只服务 Embed Event 本身，不能指定 actionId/sequenceId/objectId 或动作内容；
+- 动作随后走小剧场原有执行链（`stage.action.trigger` 权限、对象需开启可交互、revision、广播和副作用），多客户端通过原生同步看到结果；
+- 绑定是舞台配置数据，事件仍是瞬时的：刷新不重放，未绑定的 topic 什么也不触发；
+- 普通频道嵌入、抽屉、浮窗以及小剧场前景/背景 `surfaceEmbeds` 不参与此联动；嵌入页不会获得小剧场登录态、MCP Key 或额外 capability。
+
+最小示例（iForm 需启用 Embed API 并授予 `events.publish`）：
+
+```html
+<button id="door-button">开门</button>
+<script>
+  const config = window.__SEALCHAT_EMBED_CONFIG__ || {}
+  const script = document.createElement('script')
+  script.src = config.sdkUrl
+  script.onload = async () => {
+    const sealchat = await SealChatEmbed.connect({ targetOrigin: config.hostOrigin })
+    document.getElementById('door-button').onclick = () => sealchat.events.publish('door.open', { by: 'button' })
+  }
+  document.head.append(script)
+</script>
+```
+
+在小剧场中把该 iForm 放成普通 iframe 对象，在“组件编辑 → 嵌入事件动作”添加动作，并在“嵌入事件绑定”中把 `door.open` 绑定到这些动作。AI 通过 MCP 完成同样流程见 [Theater MCP 第二期](theater-mcp.md#第二期频道嵌入-mcp-与嵌入事件联动)。
+
 ### 发送频道消息
 
 | API | Capability | 说明 |

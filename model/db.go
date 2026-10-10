@@ -127,6 +127,7 @@ func DBInit(cfg *utils.AppConfig) {
 
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
+	db.AutoMigrate(&WorldGlassPresetModel{}, &WorldGlassStateModel{}, &WorldGlassTriggerModel{})
 	db.AutoMigrate(&MessageModel{})
 	db.AutoMigrate(&MessageAttachmentModel{}, &ChannelMessageAttachmentBackfillState{})
 	db.AutoMigrate(&MessageVisibleCharCountBackfillState{})
@@ -137,6 +138,12 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
+	if err := db.AutoMigrate(&PersonalAPIKeyModel{}); err != nil {
+		panic(fmt.Sprintf("初始化个人 API Key 数据表失败: %v", err))
+	}
+	if err := db.AutoMigrate(&MCPOAuthGrantModel{}); err != nil {
+		panic(fmt.Sprintf("初始化 MCP OAuth 数据表失败: %v", err))
+	}
 	db.AutoMigrate(&AppNotificationInstanceModel{}, &AppNotificationDeviceModel{}, &AppNotificationPreferenceModel{})
 	db.AutoMigrate(&MemberModel{})
 	db.AutoMigrate(&AttachmentModel{})
@@ -169,10 +176,14 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&WorldCharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
 	db.AutoMigrate(&ChannelCharacterSnapshotSettingsModel{}, &ChannelCharacterSnapshotPreferenceModel{}, &ChannelCharacterSnapshotModel{})
+	db.AutoMigrate(&ChannelAvatarCardSettingsModel{}, &WorldCharacterStateModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioImportJobModel{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
-	db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &AIUserQuotaOverrideModel{})
+	if err := MigrateTTS(db); err != nil {
+		panic(fmt.Sprintf("初始化语音与 AI 用量数据表失败: %v", err))
+	}
+	db.AutoMigrate(&AIUserQuotaOverrideModel{})
 	db.AutoMigrate(&PlatformFontAsset{})
 	db.AutoMigrate(&DiceMacroModel{})
 

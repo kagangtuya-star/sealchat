@@ -1,6 +1,7 @@
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue';
 import {
   canvasToBlob,
+  exportSvg,
   exportToCanvas,
   type SaveParameters,
   useBackground,
@@ -10,8 +11,39 @@ import {
   useRectangle,
 } from 'vue-paint';
 import { compressImage } from '@/composables/useImageCompressor';
+import {
+  compactMediaFxSpec,
+  createDefaultMediaFxSpec,
+  mediaFxAdvancedHasContent,
+  mediaFxFilterHasContent,
+  normalizeMediaFxSpec,
+  type MediaFxSpec,
+} from '@/features/media-fx/media-fx';
+import { bakeMediaFxToCanvas } from '@/features/media-fx/media-fx-canvas';
 
 export type MessageImageEditorTool = 'move' | 'freehand' | 'rectangle' | 'crop';
+
+// bake: filter / advanced are baked into the exported pixels, motion is unavailable.
+// preserve: the file only carries the drawing edits; the spec is returned separately.
+export type MessageImageEditorEffectMode = 'bake' | 'preserve';
+
+export interface MessageImageEditorResult {
+  file: File;
+  // Always null in bake mode; compacted (null when all-default) in preserve mode.
+  mediaFx: MediaFxSpec | null;
+}
+
+export interface MessageImageEditorOptions {
+  effectMode?: () => MessageImageEditorEffectMode;
+  // Spec a fresh editing session starts from (already normalized by the caller).
+  initialMediaFx?: () => MediaFxSpec;
+}
+
+export interface MessageImageEditorPreviewSnapshot {
+  canvas: HTMLCanvasElement;
+  // Snapshot pixels per pixel of the full-resolution export.
+  scale: number;
+}
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
@@ -66,7 +98,9 @@ interface CropSnapshot {
 
 const cloneHistory = (value: any[]) => JSON.parse(JSON.stringify(value || []));
 
-export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
+export const useMessageImageEditor = (fileRef: Ref<File | null>, options: MessageImageEditorOptions = {}) => {
+  const effectMode = () => options.effectMode?.() ?? 'bake';
+  const createInitialMediaFx = () => normalizeMediaFxSpec(options.initialMediaFx?.() ?? createDefaultMediaFxSpec());
   const editorKey = ref(0);
   const imageWidth = ref(DEFAULT_WIDTH);
   const imageHeight = ref(DEFAULT_HEIGHT);
@@ -84,6 +118,9 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
   const lastDrawTool = ref<MessageImageEditorTool>('freehand');
   const workingFile = ref<File | null>(null);
   const cropSnapshots = ref<CropSnapshot[]>([]);
+  // Edited Media FX: never applied to the editing canvas coordinates; baked once on
+  // export (bake) or returned next to the file (preserve).
+  const mediaFx = ref<MediaFxSpec>(createInitialMediaFx());
   let loadTaskId = 0;
 
   const resetEditorState = (tool: MessageImageEditorTool = 'freehand') => {
@@ -98,6 +135,7 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     };
     errorMessage.value = '';
     lastDrawTool.value = tool === 'crop' ? 'freehand' : tool;
+    mediaFx.value = createInitialMediaFx();
     editorKey.value += 1;
   };
 
@@ -302,7 +340,11 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     };
   };
 
-  const exportEditedFile = async (params: SaveParameters) => {
+  const setMediaFx = (value: MediaFxSpec) => {
+    mediaFx.value = normalizeMediaFxSpec(value);
+  };
+
+  const exportEditedFile = async (params: SaveParameters): Promise<MessageImageEditorResult> => {
     const originalFile = workingFile.value;
     if (!originalFile) {
       throw new Error('图片文件不存在');
@@ -310,23 +352,65 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
 
     isSaving.value = true;
     try {
+      const mode = effectMode();
+      const spec = mediaFx.value;
       const canvas = document.createElement('canvas');
       await exportToCanvas({
         ...params,
         canvas,
       } as any);
-      const blob = await canvasToBlob(canvas);
+      // Motion is never baked. Preserve keeps every effect out of the pixels.
+      const shouldBake = mode === 'bake'
+        && (mediaFxFilterHasContent(spec.filter) || mediaFxAdvancedHasContent(spec.advanced));
+      const outputCanvas = shouldBake
+        ? bakeMediaFxToCanvas(canvas, { width: canvas.width, height: canvas.height }, spec, { requireAdvanced: true })
+        : canvas;
+      const blob = await canvasToBlob(outputCanvas);
       const pngFile = new File([blob], buildExportPngName(originalFile.name), {
         type: 'image/png',
         lastModified: Date.now(),
       });
-      return await compressImage(pngFile, {
+      const file = await compressImage(pngFile, {
         maxWidth: imageWidth.value,
         maxHeight: imageHeight.value,
       });
+      return {
+        file,
+        mediaFx: mode === 'preserve' ? compactMediaFxSpec(spec) : null,
+      };
     } finally {
       isSaving.value = false;
     }
+  };
+
+  // Low-cost raster of the current composition (background + drawings + crop) for the
+  // effect preview. It reads the editor state only and never changes it.
+  const exportPreviewSnapshot = async (
+    svg: SVGElement | null,
+    maxEdge: number,
+  ): Promise<MessageImageEditorPreviewSnapshot | null> => {
+    if (!svg || !tools.value.length) {
+      return null;
+    }
+    const url = exportSvg({ svg, tools: tools.value, history: history.value } as any);
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error('预览生成失败'));
+      nextImage.src = url;
+    });
+    const sourceWidth = image.naturalWidth || image.width || imageWidth.value;
+    const sourceHeight = image.naturalHeight || image.height || imageHeight.value;
+    const scale = Math.min(1, maxEdge / Math.max(1, sourceWidth, sourceHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return null;
+    }
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return { canvas, scale };
   };
 
   onUnmounted(() => {
@@ -340,16 +424,19 @@ export const useMessageImageEditor = (fileRef: Ref<File | null>) => {
     editorKey,
     errorMessage,
     exportEditedFile,
+    exportPreviewSnapshot,
     hasPendingCrop,
     history,
     imageHeight,
     imageWidth,
     isPreparing,
     isSaving,
+    mediaFx,
     restoreLastDrawTool,
     restoreBeforeCrop,
     selectTool,
     setColor,
+    setMediaFx,
     setThickness,
     setTool,
     settings,

@@ -174,6 +174,14 @@ const ensureQuickLoginPrerequisites = async () => {
   return true;
 };
 
+const returnAfterSignIn = () => {
+  const request = router.currentRoute.value.query.mcpOAuthRequest;
+  if (typeof request === 'string' && /^[A-Za-z0-9_-]{43}$/.test(request)) {
+    return router.replace({ name: 'mcp-oauth-consent', query: { request } });
+  }
+  return router.replace({ name: 'home' });
+};
+
 const finishQuickLogin = async (token: string) => {
   if (!token) {
     throw new Error('缺少登录令牌');
@@ -181,8 +189,8 @@ const finishQuickLogin = async (token: string) => {
   resetQuickLoginRequestState(true);
   userStore.setAccessToken(token);
   await userStore.checkUserSession({ force: true });
-  message.success('快捷登录成功，即将返回首页');
-  await router.replace({ name: 'home' });
+  message.success('快捷登录成功');
+  await returnAfterSignIn();
 };
 
 const ensureTurnstileScript = async () => {
@@ -515,9 +523,9 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       } else if (captchaMode.value === 'cap') {
         resetCapWidget();
       }
-      message.success('验证成功，即将返回首页');
+      message.success('验证成功');
       if (ret.token) {
-        router.replace({ name: 'home' });
+        returnAfterSignIn();
       }
     } catch (err) {
       message.error('登录失败: ' + ((err as any)?.response?.data?.message || '账号或密码错误/连接服务器失败'));

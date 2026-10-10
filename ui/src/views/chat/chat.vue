@@ -1,21 +1,28 @@
 <script setup lang="tsx">
+import { useSpeechStore } from '@/features/tts/store'
+import RoleVoiceDialog from '@/features/tts/RoleVoiceDialog.vue'
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import MessageForwardDialog from './components/MessageForwardDialog.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type InlineChatSplitOpenPayload, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
-import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
+import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, SatoriMessage, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, MessagePlus, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
 import { NIcon, c } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
+import ChannelIdentityQuickBar from './components/ChannelIdentityQuickBar.vue'
+import ComposerContextHints, { type ComposerEmojiHintView, type ComposerVariantHintView } from './components/ComposerContextHints.vue'
+import { buildEmojiHintIndex, resolveEmojiInputHints, resolveIdentityVariantHints } from './composerContextHints'
 import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import GlassBackgroundPanel from './components/GlassBackgroundPanel.vue'
+import { buildBackgroundImageStyle, buildBackgroundOverlayStyle } from '@/utils/backgroundPresentation'
 import InlineChatSplitWindow from './components/InlineChatSplitWindow.vue'
 import ChatAiPolishDock from './components/ChatAiPolishDock.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
@@ -36,6 +43,7 @@ import DiceTrayFloatingWindow from './components/DiceTrayFloatingWindow.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
 import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
 import { shouldApplyMessageCreateAck } from './messageCreateAck';
+import { resolveMessageSortBasis, type MessageSortBasis } from '@/utils/messageSortBasis';
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
@@ -171,7 +179,7 @@ import {
   type IdentityExportVariantItem,
 } from '@/utils/channelIdentityMigration'
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
-import { isHotkeyMatchingEvent } from '@/utils/hotkey';
+import { isHotkeyMatchingEvent, isHotkeyReleaseEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
@@ -182,9 +190,20 @@ import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
+import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { buildMessageCursor } from '@/utils/messageCursor';
+import {
+  buildInternalSurfaceResourceKey,
+  generateInternalSurfaceLink,
+  resolveInternalSurfaceLinkBase,
+  type InternalSurfaceLinkParams,
+} from '@/utils/internalSurfaceLink';
+import {
+  isTheaterChatFrame,
+  requestTheaterFloatingOpen,
+} from '@/utils/theaterFloatingBridge';
 import { buildRoleSnapshot } from '@/bridge/sealchatBridgeSerializer';
 import type { BridgeRoleSnapshot } from '@/bridge/sealchatBridgeProtocol';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
@@ -267,6 +286,31 @@ const isEditingCurrentChannel = computed(() => {
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
+const theaterPipActiveFromHost = ref(false);
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'message', (event: MessageEvent) => {
+    if (!isTheaterEmbedMode.value) return;
+    if (event.origin !== window.location.origin || event.source !== window.parent) return;
+
+    const data = event.data as {
+      type?: string;
+      sessionId?: string;
+      pipActive?: boolean;
+    } | null;
+
+    if (data?.type !== 'sealchat.theater.layout-state') return;
+
+    const expectedSessionId =
+      typeof route.query.sessionId === 'string'
+        ? route.query.sessionId
+        : '';
+
+    if (expectedSessionId && data.sessionId !== expectedSessionId) return;
+    if (typeof data.pipActive !== 'boolean') return;
+
+    theaterPipActiveFromHost.value = data.pipActive;
+  });
+}
 const isToolbarEmbedMode = computed(
   () => isEmbedMode.value && route.query.toolbar === '1',
 );
@@ -923,17 +967,72 @@ const selectCharacterVariantForTheater = async (payload: TheaterCharacterVariant
   return { ok: true as const };
 };
 
-const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+const resolveOwnCharacterCardId = async (channelId: string, identityId: string) => {
+  const normalizedIdentityId = String(identityId || '').trim();
+  if (!channelId || !normalizedIdentityId) {
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+
+  let identities: ChannelIdentity[];
+  try {
+    identities = await chat.loadChannelIdentities(channelId, false);
+  } catch (error) {
+    console.warn('[character-card] failed to resolve identity ownership', error);
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+  const identity = identities.find(item => item.id === normalizedIdentityId);
+  const isOwn = !!identity && String(identity.userId || '') === String(user.info?.id || '');
+  if (!isOwn) {
+    return {
+      isOwn: false,
+      cardId: '',
+    };
+  }
+
+  const boundCardId = String(
+    characterCardStore.getBoundCardId(normalizedIdentityId, identity.sharedIdentityId)
+    || (
+      chat.getActiveIdentityId(channelId) === normalizedIdentityId
+        ? characterCardStore.getActiveCardId(channelId)
+        : ''
+    )
+    || '',
+  ).trim();
+
+  return {
+    isOwn: true,
+    cardId: boundCardId,
+  };
+};
+
+const openCharacterCardByIdentity = async (identityId: string) => {
   const channelId = String(chat.curChannel?.id || '').trim();
-  const identityId = String(payload.identityId || '').trim();
-  if (!channelId || !identityId) {
+  const normalizedIdentityId = String(identityId || '').trim();
+  if (!channelId || !normalizedIdentityId) {
     return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '人物卡参数无效' } };
   }
+
+  const ownCard = await resolveOwnCharacterCardId(channelId, normalizedIdentityId);
+  if (ownCard.cardId) {
+    try {
+      const opened = await characterCardPanelRef.value?.openCardById(ownCard.cardId, 'view');
+      if (opened) return { ok: true as const };
+    } catch (error) {
+      console.warn('[theater-bridge] failed to open bound character card', error);
+    }
+  }
+
   await channelCharacterSnapshotStore.initializeChannel(channelId);
-  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+  let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, normalizedIdentityId);
   if (!snapshot) {
     await channelCharacterSnapshotStore.refreshChannel(channelId);
-    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+    snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, normalizedIdentityId);
   }
   const card = snapshot?.data.card;
   if (!snapshot || !card) {
@@ -953,7 +1052,7 @@ const openCharacterCardForTheater = async (payload: { identityId: string }) => {
     message.warning('未能定位当前人物卡，已打开只读快照');
   }
   const windowId = characterSheetStore.openSheet({
-    id: `snapshot:${channelId}:${identityId}`,
+    id: `snapshot:${channelId}:${normalizedIdentityId}`,
     name: card.name,
     sheetType: card.sheetType,
     attrs: card.attrs,
@@ -973,6 +1072,10 @@ const openCharacterCardForTheater = async (payload: { identityId: string }) => {
   });
   characterSheetStore.setMode(windowId, 'view');
   return { ok: true as const };
+};
+
+const openCharacterCardForTheater = async (payload: { identityId: string }) => {
+  return openCharacterCardByIdentity(payload.identityId);
 };
 
 defineExpose({
@@ -1036,6 +1139,7 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const glassBackgroundPanelVisible = ref(false);
 type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'notifications' | 'other';
 const displaySettingsInitialCategory = ref<DisplaySettingsCategory>('appearance');
 const characterRemarkManagerVisible = ref(false);
@@ -1055,53 +1159,12 @@ const canManageWorldAnnouncements = computed(() => {
 
 const channelBackgroundStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
-  if (!channel?.backgroundAttachmentId) return null;
-  let settings: { mode?: string; opacity?: number; blur?: number; brightness?: number } = {
-    mode: 'cover', opacity: 30, blur: 0, brightness: 100
-  };
-  if (channel.backgroundSettings) {
-    try {
-      const parsed = typeof channel.backgroundSettings === 'string'
-        ? JSON.parse(channel.backgroundSettings)
-        : channel.backgroundSettings;
-      settings = { ...settings, ...parsed };
-    } catch { /* ignore */ }
-  }
-  const attachmentId = channel.backgroundAttachmentId;
-  const bgUrl = resolveAttachmentUrl(attachmentId.startsWith('id:') ? attachmentId : `id:${attachmentId}`);
-  let bgSize = 'cover';
-  let bgRepeat = 'no-repeat';
-  const bgPosition = 'center';
-  switch (settings.mode) {
-    case 'contain': bgSize = 'contain'; break;
-    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
-    case 'center': bgSize = 'auto'; break;
-  }
-  return {
-    backgroundImage: `url(${bgUrl})`,
-    backgroundSize: bgSize,
-    backgroundRepeat: bgRepeat,
-    backgroundPosition: bgPosition,
-    opacity: (settings.opacity ?? 30) / 100,
-    filter: `blur(${settings.blur ?? 0}px) brightness(${settings.brightness ?? 100}%)`,
-  };
+  return buildBackgroundImageStyle(channel?.backgroundAttachmentId, channel?.backgroundSettings);
 });
 
 const channelBackgroundOverlayStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
-  if (!channel?.backgroundAttachmentId || !channel.backgroundSettings) return null;
-  let settings: { overlayColor?: string; overlayOpacity?: number } = {};
-  try {
-    const parsed = typeof channel.backgroundSettings === 'string'
-      ? JSON.parse(channel.backgroundSettings)
-      : channel.backgroundSettings;
-    settings = parsed;
-  } catch { /* ignore */ }
-  if (!settings.overlayColor || !(settings.overlayOpacity ?? 0)) return null;
-  return {
-    backgroundColor: settings.overlayColor,
-    opacity: (settings.overlayOpacity ?? 0) / 100,
-  };
+  return channel?.backgroundAttachmentId ? buildBackgroundOverlayStyle(channel.backgroundSettings) : null;
 });
 
 const diceTrayWindowRef = ref<{
@@ -2930,7 +2993,8 @@ const handleMessageInlineImageEdit = async (payload: { attachmentId: string; mes
   }
 };
 
-const handleRichInlineImageEditorConfirm = async (file: File) => {
+// Chat uses the default bake mode: effects are already in the static file.
+const handleRichInlineImageEditorConfirm = async ({ file }: MessageImageEditorResult) => {
   const activeSource = activeInlineEditorSource;
   const isSmartLinkUpload = activeSource === 'smart-link-text-image'
     || activeSource === 'smart-link-url-image';
@@ -6236,17 +6300,13 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
       savedIdentity = createdIdentity;
-      // Handle character card binding for new identity
-      if (createdIdentity?.id && chat.curChannel?.id) {
+      // A newly created identity has no existing card binding to clear.
+      if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId) {
         if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
           message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
         } else {
           try {
-            if (identityForm.characterCardId) {
-              await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
-            } else {
-              await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
-            }
+            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
           } catch (e) {
             console.warn('Failed to bind character card', e);
           }
@@ -10326,11 +10386,13 @@ interface SendDisplayOrderResolution {
   typingDurationMs?: number;
 }
 
-type MessageSortBasis = 'typing_start' | 'send_time';
-
 const resolveConfiguredMessageSortBasis = (): MessageSortBasis => {
-  const raw = String((utils.config as any)?.messageSortBasis || '').trim().toLowerCase();
-  return raw === 'send_time' ? 'send_time' : 'typing_start';
+  const channel: SChannel | null = chat.curChannel;
+  const worldId = isPrivateChatChannel(channel) ? '' : String(channel?.worldId || '').trim();
+  return resolveMessageSortBasis(worldId ? [
+    chat.worldMap[worldId]?.messageSortBasis,
+    chat.worldDetailMap[worldId]?.world?.messageSortBasis,
+  ] : [], utils.config?.messageSortBasis);
 };
 
 const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
@@ -11349,6 +11411,79 @@ const resolveMessageIdentityId = (msg?: any): string | null => {
     return memberIdentity.id;
   }
   return null;
+};
+
+interface AvatarCharacterCardOpenPayload {
+  item: SatoriMessage | null;
+  clientX: number;
+  clientY: number;
+}
+
+const handleAvatarCharacterCardOpen = async (payload: AvatarCharacterCardOpenPayload) => {
+  const identityId = resolveMessageIdentityId(payload.item);
+  if (!identityId) {
+    message.warning('无法识别该角色');
+    return;
+  }
+
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (isTheaterChatFrame() && !theaterPipActiveFromHost.value) {
+    const ownCard = await resolveOwnCharacterCardId(channelId, identityId);
+    const isOwn = ownCard.isOwn;
+    let resourceId = ownCard.cardId;
+    let snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+
+    if (!resourceId) {
+      await channelCharacterSnapshotStore.initializeChannel(channelId);
+      snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+      if (!snapshot) {
+        await channelCharacterSnapshotStore.refreshChannel(channelId);
+        snapshot = channelCharacterSnapshotStore.getSnapshot(channelId, identityId);
+      }
+      if (!snapshot?.data.card) {
+        message.warning('该角色没有可查看的人物卡快照');
+        return;
+      }
+      const sourceCardId = String(snapshot.sourceCardId || '').trim();
+      if (isOwn && String(snapshot.userId || '') === String(user.info?.id || '') && sourceCardId) {
+        resourceId = sourceCardId;
+      } else {
+        resourceId = `snapshot:${channelId}:${identityId}`;
+      }
+    }
+
+    const rawAvatarUrl = String(payload.item?.member?.avatar || payload.item?.user?.avatar || '').trim();
+    const avatarUrl = rawAvatarUrl ? (resolveAttachmentUrl(rawAvatarUrl) || rawAvatarUrl) : '';
+    const params: InternalSurfaceLinkParams = {
+      type: 'character',
+      id: resourceId,
+      worldId,
+      channelId,
+    };
+    const resource = {
+      key: buildInternalSurfaceResourceKey(params),
+      url: generateInternalSurfaceLink(params, {
+        base: resolveInternalSurfaceLinkBase(utils.config),
+      }),
+      title: snapshot?.data.card?.name
+        || characterCardStore.getCardById(resourceId)?.name
+        || '人物卡',
+      presentation: avatarUrl ? { avatarUrl } : undefined,
+    };
+    const accepted = await requestTheaterFloatingOpen(resource, {
+      clientX: payload.clientX,
+      clientY: payload.clientY,
+    });
+    if (accepted) return;
+    message.warning('小剧场人物卡浮窗打开失败');
+    return;
+  }
+
+  const result = await openCharacterCardByIdentity(identityId);
+  if (!result.ok) {
+    message.warning(result.error.message);
+  }
 };
 
 type MessageIdentitySnapshot = {
@@ -12620,7 +12755,13 @@ const handleInlineFileChange = (event: Event) => {
 
   const files = Array.from(input.files);
 
-  if (pendingInlineUploadSource !== 'default' || inputMode.value === 'rich') {
+  if (pendingInlineUploadSource === 'rich-toolbar' && !display.settings.inputToolbarImageEditorEnabled) {
+    if (inputMode.value === 'rich') {
+      void handleRichImageInsert(files);
+    } else {
+      insertInlineImages(files, pendingInlineSelection || undefined);
+    }
+  } else if (pendingInlineUploadSource !== 'default' || inputMode.value === 'rich') {
     openRichInlineImageEditor(files, pendingInlineUploadSource, pendingInlineSelection);
   } else {
     // 纯文本模式：调用纯文本图片插入
@@ -12754,6 +12895,10 @@ const retrySendMessage = async (target?: Message) => {
       undefined,
       undefined,
       identityVariantId,
+      undefined,
+      undefined,
+      currentData._ttsAutoRequested === true
+        && useSpeechStore().optIn(chat.curChannel?.id || ''),
     );
 	  if (!newMsg) {
 	    throw new Error('message.create returned empty result');
@@ -12997,6 +13142,7 @@ const performSend = async (options?: {
     }
   }
   (tmpMsg as any).clientId = clientId;
+  tmpMsg._ttsAutoRequested = useSpeechStore().optIn(chat.curChannel?.id || '');
   if (chat.curChannel) {
     (tmpMsg as any).channel = chat.curChannel;
   }
@@ -13070,6 +13216,9 @@ const performSend = async (options?: {
       typingDurationMs,
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
       identityVariantIdOverride,
+      undefined,
+      undefined,
+      tmpMsg._ttsAutoRequested === true,
     );
 	  if (!newMsg) {
 	    throw new Error('message.create returned empty result');
@@ -13214,6 +13363,168 @@ const handleEditingIdentitySelected = (identityId: string) => {
   emitEditingPreview();
 };
 
+// 快速角色栏与滚轮切换共用的角色切换入口，行为与 ChannelIdentitySwitcher 选择角色保持一致
+const switchCurrentIdentity = async (identityId: string) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const nextIdentityId = String(identityId || '').trim();
+  if (!channelId || !nextIdentityId) {
+    return false;
+  }
+  if (!(chat.channelIdentities[channelId] || []).some((item) => item.id === nextIdentityId)) {
+    return false;
+  }
+  // 编辑消息时只修改被编辑消息的身份，不改变正常发送角色
+  if (isEditingCurrentChannel.value) {
+    handleEditingIdentitySelected(nextIdentityId);
+    return true;
+  }
+  chat.setActiveIdentity(channelId, nextIdentityId);
+  if (!isInObserverMode()) {
+    try {
+      await characterCardStore.syncCardForIdentity(channelId, nextIdentityId, {
+        preserveWhenUnbound: true,
+      });
+    } catch (e) {
+      console.warn('Failed to sync character card for identity', e);
+    }
+  }
+  handleIdentitySwitcherChange();
+  return true;
+};
+
+type IdentitySwitcherHandle = {
+  openDropdown: () => void;
+  closeDropdown: () => void;
+};
+
+const identitySwitcherRef = ref<IdentitySwitcherHandle | null>(null);
+const minimalIdentitySwitcherRef = ref<IdentitySwitcherHandle | null>(null);
+
+const currentComposerIdentityId = computed(() => {
+  if (isEditingCurrentChannel.value) {
+    return String(chat.editing?.identityId || '');
+  }
+  return chat.getActiveIdentityId(chat.curChannel?.id || '');
+});
+
+const identityQuickBarVisible = computed(() => display.settings.identityQuickBarEnabled);
+const identityQuickBarIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+
+const handleIdentityQuickBarSelect = (identityId: string) => {
+  void switchCurrentIdentity(identityId);
+};
+
+const identityWheelHoldActive = ref(false);
+
+const getVisibleIdentitySwitcher = () => (
+  isMinimalInputActive.value ? minimalIdentitySwitcherRef.value : identitySwitcherRef.value
+);
+
+const canUseIdentityWheelMode = () => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId || isInObserverMode() || spectatorInputDisabled.value) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  return identities.length >= 2;
+};
+
+const isIdentityWheelEditableTarget = (target: EventTarget | null) => {
+  const element = target instanceof Element ? target : null;
+  return Boolean(element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'));
+};
+
+const hasEditableIdentityWheelFocus = (eventTarget?: EventTarget | null) => {
+  if (isIdentityWheelEditableTarget(eventTarget ?? null)) {
+    return true;
+  }
+  return typeof document !== 'undefined' && isIdentityWheelEditableTarget(document.activeElement);
+};
+
+const closeIdentityWheelMode = () => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  identityWheelHoldActive.value = false;
+  getVisibleIdentitySwitcher()?.closeDropdown();
+};
+
+const handleIdentityWheelHotkeyDown = (event: KeyboardEvent) => {
+  const config = display.settings.toolbarHotkeys?.identityWheel;
+  if (!config?.enabled || !config.hotkey || identityWheelHoldActive.value || event.repeat) {
+    return;
+  }
+  if (hasEditableIdentityWheelFocus(event.target)) {
+    return;
+  }
+  if (!isHotkeyMatchingEvent(event, config.hotkey) || !canUseIdentityWheelMode()) {
+    return;
+  }
+  identityWheelHoldActive.value = true;
+  void nextTick(() => getVisibleIdentitySwitcher()?.openDropdown());
+};
+
+const handleIdentityWheelHotkeyUp = (event: KeyboardEvent) => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  const hotkey = display.settings.toolbarHotkeys?.identityWheel?.hotkey;
+  if (isHotkeyReleaseEvent(event, hotkey)) {
+    closeIdentityWheelMode();
+  }
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'keydown', handleIdentityWheelHotkeyDown, { capture: true });
+  useEventListener(window, 'keyup', handleIdentityWheelHotkeyUp, { capture: true });
+  useEventListener(window, 'blur', closeIdentityWheelMode);
+}
+
+const cycleCurrentIdentity = (step: 1 | -1) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId || isInObserverMode() || spectatorInputDisabled.value) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  if (identities.length < 2) {
+    return false;
+  }
+  const currentIndex = identities.findIndex((item) => item.id === currentComposerIdentityId.value);
+  const nextIndex = currentIndex < 0
+    ? (step > 0 ? 0 : identities.length - 1)
+    : (currentIndex + step + identities.length) % identities.length;
+  const nextIdentityId = identities[nextIndex]?.id;
+  if (!nextIdentityId) {
+    return false;
+  }
+  void switchCurrentIdentity(nextIdentityId);
+  void nextTick(() => {
+    getVisibleIdentitySwitcher()?.openDropdown();
+  });
+  return true;
+};
+
+const handleIdentityWheel = (event: WheelEvent) => {
+  if (!identityWheelHoldActive.value) {
+    return;
+  }
+  if (hasEditableIdentityWheelFocus()) {
+    closeIdentityWheelMode();
+    return;
+  }
+  const delta = event.deltaY || event.deltaX;
+  if (!delta) {
+    return;
+  }
+  if (cycleCurrentIdentity(delta > 0 ? 1 : -1)) {
+    event.preventDefault();
+  }
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'wheel', handleIdentityWheel, { capture: true, passive: false });
+}
+
 const handleDiceRollNow = (expr: string) => {
   // 骰子"立即掷骰"功能：直接发送表达式，不插入到输入框
   // 支持快速连续点击，每次点击都独立发送一条消息
@@ -13254,6 +13565,10 @@ watch(textToSend, (value) => {
     emitTypingPreview();
   }
   syncSelfTypingPreview();
+});
+
+watch(resolveConfiguredMessageSortBasis, () => {
+  syncDraftStartedAt(textToSend.value);
 });
 
 watch(filteredWhisperCandidates, (list) => {
@@ -14875,7 +15190,9 @@ const handleChatInputBlur = () => {
   syncSessionDraftSnapshot();
 };
 
-const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+type KeyboardToolbarHotkeyKey = Exclude<ToolbarHotkeyKey, 'identityWheel'>;
+
+const toolbarHotkeyOrder: KeyboardToolbarHotkeyKey[] = [
   'send',
   'icToggle',
   'interject',
@@ -14889,7 +15206,7 @@ const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'diceTray',
 ];
 
-const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
+const toolbarHotkeyHandlers: Record<KeyboardToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
   send: (event) => {
     if (event.isComposing) {
       return false;
@@ -15210,6 +15527,74 @@ const handleGalleryEmojiClick = (item: GalleryItem) => {
   insertGalleryInline(item.attachmentId);
 };
 
+// 输入框上方上下文快捷提示：仅在 textToSend 变化时按光标附近文本匹配，点击才执行
+const emojiHintIndex = computed(() => (
+  display.settings.emojiInputHintEnabled ? buildEmojiHintIndex(emojiItems.value) : []
+));
+watch(
+  () => [display.settings.emojiInputHintEnabled, textToSend.value, emojiItems.value.length, user.info?.id] as const,
+  ([enabled, draft, itemCount, userId]) => {
+    if (!enabled || !userId || itemCount > 0 || !String(draft || '').trim()) return;
+    void ensureEmojiCollectionLoaded();
+  },
+  { flush: 'post' },
+);
+const composerHintsSuppressed = computed(() => (
+  !chat.curChannel?.id
+  || spectatorInputDisabled.value
+  || keywordSuggestVisible.value
+  || emojiPopoverShow.value
+  || whisperPanelVisible.value
+  || historyPopoverVisible.value
+));
+const resolveComposerHintSource = () => {
+  if (inputMode.value === 'rich') {
+    // 富文本 draft 为 TipTap JSON，取纯文本并退化为末尾光标
+    const text = String(textInputRef.value?.getEditor?.()?.getText?.() || '');
+    return { text, cursor: text.length };
+  }
+  return { text: textToSend.value, cursor: captureSelectionRange().end };
+};
+const composerHintMatches = computed(() => {
+  const draft = textToSend.value;
+  const variantHintEnabled = display.settings.identityVariantInputHintEnabled;
+  if (!draft || composerHintsSuppressed.value || (!emojiHintIndex.value.length && !variantHintEnabled)) {
+    return { emojis: [] as GalleryItem[], variants: [] as ChannelIdentityVariant[] };
+  }
+  const { text, cursor } = resolveComposerHintSource();
+  return {
+    emojis: resolveEmojiInputHints({ text, cursor, index: emojiHintIndex.value, usageMap: emojiUsageMap.value }),
+    variants: variantHintEnabled
+      ? resolveIdentityVariantHints({ text, cursor, variants: activeIdentityVariantOptions.value })
+      : [],
+  };
+});
+const composerEmojiHintViews = computed<ComposerEmojiHintView[]>(() => composerHintMatches.value.emojis.map((item) => ({
+  id: item.id,
+  src: getEmojiItemSrc(item),
+  label: item.remark?.trim() || '',
+})));
+const composerVariantHintViews = computed<ComposerVariantHintView[]>(() => {
+  const identity = activeIdentityForEmojiPanel.value;
+  if (!identity) return [];
+  const fallbackAvatar = identity.isTemporary ? '' : (user.info.avatar || '');
+  return composerHintMatches.value.variants.map((variant) => ({
+    id: variant.id,
+    src: resolveAttachmentUrl(variant.avatarAttachmentId || identity.avatarAttachmentId) || fallbackAvatar,
+    label: String(variant.keyword || '').trim() || resolveVariantNote(variant),
+    title: describeIdentityVariantCard(variant),
+  }));
+});
+const composerActiveVariantId = computed(() => activeIdentityVariantForEmojiPanel.value?.id || '');
+
+const handleComposerHintEmojiSelect = (id: string) => {
+  const item = composerHintMatches.value.emojis.find((entry) => entry.id === id);
+  if (!item) return;
+  const selection = captureSelectionRange();
+  recordEmojiUsage(item.id);
+  insertGalleryInline(item.attachmentId, selection);
+};
+
 const isFavoriteQuickGalleryEmoji = (item: GalleryItem) => {
   return !!gallery.favoritesCollectionId && item.collectionId === gallery.favoritesCollectionId;
 };
@@ -15338,6 +15723,8 @@ onBeforeUnmount(() => {
           :identity-active="identityDialogVisible"
           :gallery-active="galleryPanelVisible"
           :display-active="displaySettingsVisible"
+          :glass-background-active="glassBackgroundPanelVisible"
+          @open-glass-background="glassBackgroundPanelVisible = true"
           :favorite-active="channelFavoritesVisible"
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
@@ -15371,6 +15758,8 @@ onBeforeUnmount(() => {
           @open-export="exportManagerVisible = true"
           @open-import="importDialogVisible = true"
           @open-identity-manager="openIdentityManager"
+          @open-speech="useSpeechStore().open(chat.curChannel?.id || '')"
+          :speech-active="useSpeechStore().visible"
           @open-gallery="openGalleryPanel"
           @open-display-settings="openDisplaySettings('appearance')"
           @open-favorites="channelFavoritesVisible = true"
@@ -15968,7 +16357,7 @@ onBeforeUnmount(() => {
     <div
       v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
       class="chat-pinned-zone px-4"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle, 'chat--background-tone-enabled': display.settings.backgroundMessageToneEnabled }]"
     >
       <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
         <span class="chat-pinned-zone__title">置顶消息</span>
@@ -16015,7 +16404,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle, 'chat--background-tone-enabled': display.settings.backgroundMessageToneEnabled }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
@@ -16452,6 +16841,30 @@ onBeforeUnmount(() => {
           :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
         >
           <div
+            v-if="chat.curChannel && identityQuickBarVisible"
+            class="identity-quick-bar-edge"
+          >
+            <ChannelIdentityQuickBar
+              :channel-id="chat.curChannel.id"
+              :identities="identityQuickBarIdentities"
+              :active-identity-id="currentComposerIdentityId"
+              :limit="display.settings.identityQuickBarLimit"
+              @select="handleIdentityQuickBarSelect"
+            />
+          </div>
+          <ComposerContextHints
+            :class="{ 'composer-context-hints--raised': chat.curChannel && identityQuickBarVisible }"
+            :emoji-items="composerEmojiHintViews"
+            :variant-items="composerVariantHintViews"
+            :active-variant-id="composerActiveVariantId"
+            :show-reset="!!composerActiveVariantId && composerVariantHintViews.length > 0"
+            :position="display.settings.composerHintsPosition"
+            :size-percent="display.settings.composerHintsScalePercent"
+            @select-emoji="handleComposerHintEmojiSelect"
+            @select-variant="handleEmojiVariantSelect"
+            @reset-variant="handleEmojiVariantSelect('')"
+          />
+          <div
             v-if="!isMobileWideInput"
             class="chat-input-resize-handle"
             aria-hidden="true"
@@ -16503,6 +16916,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    ref="identitySwitcherRef"
                     :controlled-selection="isEditingCurrentChannel"
                     :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
                     :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"
@@ -16998,6 +17412,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    ref="minimalIdentitySwitcherRef"
                     :controlled-selection="isEditingCurrentChannel"
                     :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
                     :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"
@@ -17299,7 +17714,7 @@ onBeforeUnmount(() => {
   </div>
 
   <RightClickMenu />
-  <AvatarClickMenu />
+  <AvatarClickMenu @open-character-card="handleAvatarCharacterCardOpen" />
   <MessageImageEditor
     :show="richInlineImageEditorVisible"
     :file="richInlineImageEditorFile"
@@ -17892,6 +18307,7 @@ onBeforeUnmount(() => {
     v-model:show="identityManageVisible"
     placement="right"
     :width="identityDrawerWidth"
+    :trap-focus="false"
   >
     <n-drawer-content :class="['identity-manage-drawer', { 'identity-manage-drawer--night': isNightPalette }]">
       <template #header>
@@ -18117,6 +18533,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="identity-list__actions">
+                <RoleVoiceDialog v-if="!isManagingBotIdentity" :identity-id="identity.id" :identity-name="identity.displayName" />
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
                 <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1 || (isManagingOtherUserIdentity && Boolean(identity.sharedIdentityId))" @click="deleteIdentity(identity)">删除</n-button>
               </div>
@@ -18409,6 +18826,7 @@ onBeforeUnmount(() => {
   />
   <IFormDrawer />
 
+  <GlassBackgroundPanel v-if="glassBackgroundPanelVisible" @close="glassBackgroundPanelVisible = false" />
   <DisplaySettingsModal
     v-model:visible="displaySettingsVisible"
     :settings="display.settings"

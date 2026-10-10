@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useUtilsStore } from '@/stores/utils'
+import AdminSpeechUsage from '@/features/tts/AdminSpeechUsage.vue'
 import type { AdminAIQuotaDetail, AdminAIQuotaListResult, AIQuotaPolicyConfig, UserInfo } from '@/types'
 import { Refresh, Search } from '@vicons/tabler'
 import { NTag, useMessage, type DataTableColumns } from 'naive-ui'
@@ -422,6 +423,7 @@ const clearOverride = async () => {
 
         <n-skeleton v-if="detailLoading" text :repeat="8" />
         <template v-else-if="detail">
+          <h4>文本金额配额</h4>
           <div class="ai-quota-modal__identity">
             <span class="ai-quota-modal__identity-id">ID: {{ detail.userId }}</span>
             <span class="ai-quota-modal__identity-side">当前策略：{{ selectedSourceLabel }}</span>
@@ -522,6 +524,7 @@ const clearOverride = async () => {
               <n-button :disabled="!detail.override" :loading="deleting" @click="clearOverride">删除覆盖值</n-button>
             </div>
           </div>
+          <AdminSpeechUsage :key="detail.userId" :user-id="detail.userId" policy-only />
         </template>
         <n-empty v-else class="ai-quota-modal__empty" description="左侧选择已设覆盖用户，或搜索任意用户开始设置" />
       </section>

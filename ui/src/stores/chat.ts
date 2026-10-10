@@ -43,6 +43,7 @@ const botIdleWaiters: Array<() => void> = [];
 const normalDrainWaiters: Array<() => void> = [];
 
 const isBotRelatedApi = (api: string) => botApiPrefixes.some((prefix) => api.startsWith(prefix));
+const shouldBypassApiScheduling = (api: string) => api === 'bot.interact';
 const waitForBotIdle = () => new Promise<void>((resolve) => {
   if (botApiPending === 0) {
     resolve();
@@ -1077,6 +1078,8 @@ const CHANNEL_SWITCH_WINDOW_MS = 1500;
 const CHANNEL_SWITCH_THRESHOLD = 6;
 const CHANNEL_SWITCH_BLOCK_MS = 1500;
 const CHANNEL_SWITCH_RELOAD_COOLDOWN_MS = 10_000;
+// 嵌入页初始化期间由 query 指定的初始频道；仅在自动回退选频道时作为首选候选，不持久化
+let initialChannelPreference: { worldId: string; channelId: string } | null = null;
 
 const clearWsReconnectTimer = (store?: { iReconnectAfterTime: number }) => {
   if (wsReconnectTimer) {
@@ -1964,9 +1967,9 @@ export const useChatStore = defineStore({
           this.subject.next({ api, data, echo });
         });
       };
-      const run = isBotRelatedApi(api)
-        ? enqueueBotApi(doSend)
-        : enqueueNormalApi(doSend);
+      const run = shouldBypassApiScheduling(api)
+        ? doSend()
+        : (isBotRelatedApi(api) ? enqueueBotApi(doSend) : enqueueNormalApi(doSend));
       return run.then((resp: any) => {
         if (resp?.err) {
           const error = new Error(resp.err);
@@ -1984,6 +1987,12 @@ export const useChatStore = defineStore({
         content: content
       }
       this.subject?.next(msg);
+    },
+
+    setInitialChannelPreference(preference: { worldId: string; channelId: string } | null) {
+      const worldId = String(preference?.worldId || '').trim();
+      const channelId = String(preference?.channelId || '').trim();
+      initialChannelPreference = worldId && channelId ? { worldId, channelId } : null;
     },
 
     setCurrentWorld(worldId: string) {
@@ -2282,6 +2291,7 @@ export const useChatStore = defineStore({
       visibility?: string;
       avatar?: string;
       enforceMembership?: boolean;
+      messageSortBasis?: 'typing_start' | 'send_time';
       allowAdminEditMessages?: boolean;
       allowManageOtherUserChannelIdentities?: boolean;
       allowMemberEditKeywords?: boolean;
@@ -4108,11 +4118,16 @@ export const useChatStore = defineStore({
       }
 
       if (!this.curChannel && options?.autoSwitch !== false && isCurrentWorldRequest) {
+        const initialChannelId = initialChannelPreference?.worldId === finalWorld
+          ? initialChannelPreference.channelId
+          : '';
         const targetChannelId = resolvePreferredChannelForWorld({
           worldId: finalWorld,
           tree: tree as SChannel[],
           defaultChannelId: this.worldMap[finalWorld]?.defaultChannelId,
-          lastChannelByWorld: this._lastChannelByWorld,
+          lastChannelByWorld: initialChannelId
+            ? { ...this._lastChannelByWorld, [finalWorld]: initialChannelId }
+            : this._lastChannelByWorld,
           fallbackLastChannel: this._lastChannel,
         });
         if (targetChannelId) {
@@ -5002,11 +5017,13 @@ export const useChatStore = defineStore({
       identityVariantId?: string,
       icMode?: 'ic' | 'ooc',
       channelIdOverride?: string,
+      ttsAuto = false,
     ) {
       const payload: Record<string, any> = {
         channel_id: channelIdOverride || this.curChannel?.id,
         content,
         ic_mode: icMode || this.icMode,
+        tts_auto: ttsAuto === true,
       };
       if (quote_id) {
         payload.quote_id = quote_id;
@@ -5572,7 +5589,7 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
-    async botCommandDispatch(channelId: string, command: string, options?: { silent?: boolean; reason?: string }) {
+    async botInteract(channelId: string, command: string, options?: { timeoutMs?: number; legacyQuiet?: boolean }) {
       const normalizedChannelId = String(channelId || '').trim();
       const normalizedCommand = String(command || '').trim();
       if (!normalizedChannelId) {
@@ -5581,14 +5598,42 @@ export const useChatStore = defineStore({
       if (!normalizedCommand) {
         throw new Error('缺少指令内容');
       }
-      const resp = await this.sendAPI<{ data?: { ok?: boolean; error?: string } }>('bot.command.dispatch', {
+      const requestedTimeout = options?.timeoutMs ?? 5_000;
+      const finiteTimeout = Number.isFinite(requestedTimeout) ? Math.trunc(requestedTimeout) : 5_000;
+      const serverTimeoutMs = Math.min(15_000, Math.max(1_000, finiteTimeout));
+      const quietExtraMs = options?.legacyQuiet === true ? 5_000 : 0;
+      const resp = await this.sendAPI<{
+        data?: {
+          ok: boolean;
+          request_id: string;
+          matched_by: 'structured' | 'quote' | 'context';
+          content: string;
+          data: unknown;
+        };
+      }>('bot.interact', {
         channel_id: normalizedChannelId,
         command: normalizedCommand,
-        silent: options?.silent !== false,
-        reason: String(options?.reason || '').trim(),
-      });
+        timeout_ms: serverTimeoutMs,
+        legacy_quiet: options?.legacyQuiet === true,
+      } as APIMessage, { timeoutMs: serverTimeoutMs + quietExtraMs + 2_000 });
+      return resp.data;
+    },
+
+    async botNicknameSyncDispatch(channelId: string, command: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedCommand = String(command || '').trim();
+      if (!normalizedChannelId) {
+        throw new Error('缺少频道 ID');
+      }
+      if (!normalizedCommand) {
+        throw new Error('缺少指令内容');
+      }
+      const resp = await this.sendAPI<{ data?: { ok?: boolean } }>('bot.nickname_sync.dispatch', {
+        channel_id: normalizedChannelId,
+        command: normalizedCommand,
+      } as APIMessage);
       if (resp?.data?.ok !== true) {
-        throw new Error(resp?.data?.error || 'BOT 指令转发失败');
+        throw new Error('BOT 昵称同步失败');
       }
       return resp.data;
     },

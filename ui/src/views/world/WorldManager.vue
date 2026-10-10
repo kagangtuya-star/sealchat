@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { useDialog, useMessage } from 'naive-ui';
 import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
 import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
@@ -14,10 +15,12 @@ import {
 import { resolveActionErrorMessage } from '@/utils/errorMessage';
 import CursorThemeEditorModal from '@/components/cursor/CursorThemeEditorModal.vue';
 import { normalizeCursorTheme } from '@/services/cursor/cursorRuntime';
+import { resolveMessageSortBasis } from '@/utils/messageSortBasis';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
 const chat = useChatStore();
+const utils = useUtilsStore();
 const message = useMessage();
 const dialog = useDialog();
 const form = ref<any>({});
@@ -56,6 +59,7 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
       name: detail.world?.name,
       description: detail.world?.description,
       visibility: detail.world?.visibility,
+      messageSortBasis: resolveMessageSortBasis([detail.world?.messageSortBasis], utils.config?.messageSortBasis),
       allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
       allowManageOtherUserChannelIdentities: detail.world?.allowManageOtherUserChannelIdentities ?? false,
       allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
@@ -157,6 +161,10 @@ const getDescriptionCountLabel = (value?: string) => {
         </n-form-item>
         <n-form-item label="管理权限">
           <div class="manager-permission-group">
+            <div class="manager-permission-row">
+              <n-switch v-model:value="form.messageSortBasis" checked-value="typing_start" unchecked-value="send_time" />
+              <span class="manager-permission-text">按开始输入时间排序新消息</span>
+            </div>
             <div class="manager-permission-row">
               <n-switch v-model:value="form.allowAdminEditMessages" />
               <span class="manager-permission-text">允许管理员编辑其他成员发言</span>

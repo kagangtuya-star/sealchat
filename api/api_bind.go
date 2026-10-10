@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -26,10 +28,12 @@ import (
 	"sealchat/model"
 	"sealchat/service"
 	"sealchat/service/perfprofiler"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
 var appConfig *utils.AppConfig
+var configMutationMu sync.Mutex
 var appFs afero.Fs
 var agentCrawlGuideMarkdown string
 var serveAppWithOptionalCertificateForInit = serveAppWithOptionalCertificate
@@ -99,13 +103,10 @@ func classifyListenMode(host string) listenMode {
 	return listenIPv4
 }
 
-func updateDomainPort(domain, newPort string) (string, bool) {
-	if strings.TrimSpace(newPort) == "" {
-		return domain, false
-	}
+func updateSingleDomainPort(domain, newPort string) (string, bool) {
 	trimmed := strings.TrimSpace(domain)
 	if trimmed == "" {
-		return utils.FormatHostPort("127.0.0.1", newPort), true
+		return "", false
 	}
 
 	lower := strings.ToLower(trimmed)
@@ -129,12 +130,26 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 		}
 		return utils.FormatHostPort(host, newPort), true
 	}
+	return utils.FormatHostPort(trimmed, newPort), true
+}
 
-	host = trimmed
-	if host == "" {
-		host = "127.0.0.1"
+func updateDomainPort(domain, newPort string) (string, bool) {
+	if strings.TrimSpace(newPort) == "" {
+		return domain, false
 	}
-	return utils.FormatHostPort(host, newPort), true
+	domains := utils.DomainList(domain)
+	if len(domains) == 0 {
+		return utils.FormatHostPort("127.0.0.1", newPort), true
+	}
+	updated := make([]string, 0, len(domains))
+	for _, item := range domains {
+		value, ok := updateSingleDomainPort(item, newPort)
+		if !ok {
+			return domain, false
+		}
+		updated = append(updated, value)
+	}
+	return strings.Join(updated, ";"), true
 }
 
 func buildIndexPaths(webURL string) []string {
@@ -442,9 +457,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		return fasthttp.RequestConfig{MaxRequestBodySize: bodyLimit}
 	}
 	app.Use(certificateHTTPRedirectMiddleware(config))
-	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
+	bindMCPRoutes(app, config.WebUrl)
+	app.Use(corsConfig)
 	app.Use(frontendCompressMiddleware(config.WebUrl))
 	bindAppNotificationRoutes(app, config.WebUrl)
 
@@ -469,6 +485,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
 
 	v1.Get("/config", OptionalSignCheckMiddleware, ConfigGetHandler)
+	BindTTSPublicRoutes(v1)
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
@@ -527,6 +544,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
+	bindPersonalAPIKeyRoutes(v1Auth)
+	bindMCPOAuthConsentRoutes(v1Auth)
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
@@ -669,6 +688,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	BindStickyNoteRoutes(v1Auth)
 	BindWorldTheaterRoutes(v1Auth)
 	BindTheaterAudioRoutes(v1Auth)
+	BindTTSRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")
@@ -682,6 +702,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/channels/:channelId/digest-push", DigestPushSettingsUpsert)
 	v1Auth.Delete("/channels/:channelId/digest-push", DigestPushSettingsDelete)
 	v1Auth.Post("/channels/:channelId/digest-push/test", DigestPushTest)
+	BindWorldGlassRoutes(v1Auth)
 	v1Auth.Get("/worlds/:worldId/digest-push", WorldDigestPushSettingsGet)
 	v1Auth.Post("/worlds/:worldId/digest-push", WorldDigestPushSettingsUpsert)
 	v1Auth.Delete("/worlds/:worldId/digest-push", WorldDigestPushSettingsDelete)
@@ -887,6 +908,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/bot-list", BotList)
 
 	v1AuthAdmin := v1Auth.Group("", UserRoleAdminMiddleware)
+	BindTTSAdminRoutes(v1AuthAdmin)
 	v1AuthAdmin.Get("/admin/bot-token-list", BotTokenList)
 	v1AuthAdmin.Post("/admin/bot-token-add", BotTokenAdd)
 	v1AuthAdmin.Post("/admin/bot-token-update", BotTokenUpdate)
@@ -915,6 +937,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/ai/models", AdminAIProviderModelsDiscover)
 	v1AuthAdmin.Get("/admin/ai/usage-logs", AdminAIUsageLogs)
 	v1AuthAdmin.Post("/admin/ai/usage-logs/cleanup", AdminAIUsageLogsCleanup)
+	v1AuthAdmin.Get("/admin/channel-embed-tools/settings", AdminChannelIFormSettingsGet)
+	v1AuthAdmin.Patch("/admin/channel-embed-tools/settings", AdminChannelIFormSettingsUpdate)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/templates", AdminChannelIFormTemplateList)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/builtin/:key", AdminChannelIFormBuiltinGet)
 	v1AuthAdmin.Get("/admin/channel-embed-tools/templates/:templateId", AdminChannelIFormTemplateGet)
@@ -943,6 +967,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
 	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
+	v1AuthAdmin.Get("/admin/storage/status", AdminStorageStatus)
+	v1AuthAdmin.Post("/admin/storage/s3/test", AdminStorageS3Test)
 	v1AuthAdmin.Get("/admin/sqlite/vacuum/status", AdminSQLiteVacuumStatus)
 	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
 	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
@@ -1012,9 +1038,31 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
+		configMutationMu.Lock()
+		defer configMutationMu.Unlock()
+		var rawConfigPayload map[string]json.RawMessage
+		if err := json.Unmarshal(ctx.Body(), &rawConfigPayload); err == nil && rawConfigPayload != nil {
+			if rawAI, exists := rawConfigPayload["ai"]; exists {
+				var rawAIConfig map[string]json.RawMessage
+				if err := json.Unmarshal(rawAI, &rawAIConfig); err == nil && rawAIConfig != nil {
+					if rawSpeech, exists := rawAIConfig["speech"]; exists {
+						if err := validateExplicitTTSFormatFromSpeechObject(rawSpeech); err != nil {
+							return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+						}
+					}
+				}
+			}
+		}
 		newConfig, err := mergeConfigPatchForWrite(appConfig, ctx.Body())
 		if err != nil {
-			return err
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+		if err := utils.ValidateSpeechConfig(newConfig.AI.Speech); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+		newConfig.MCP = utils.NormalizeMCPConfig(newConfig.MCP)
+		if err := utils.ValidateMCPConfig(newConfig.MCP); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 		if err := normalizeAndValidateCertificateConfigForWrite(newConfig); err != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
@@ -1056,8 +1104,29 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
 
+		newConfig.Storage = utils.NormalizeStorageConfig(newConfig.Storage)
+		restartRequired := service.StorageReloadRequiresRestart(newConfig.Storage)
+		storageChanged := appConfig == nil || !reflect.DeepEqual(appConfig.Storage, newConfig.Storage)
+		var storageCandidate *storage.Manager
+		if storageChanged && !restartRequired {
+			candidate, err := service.PrepareStorageManager(newConfig.Storage)
+			if err != nil {
+				return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"message": "对象存储配置无法应用，已保留当前运行配置；请检查配置或先测试连接",
+				})
+			}
+			storageCandidate = candidate
+		}
+
+		if err := utils.WriteConfigChecked(newConfig); err != nil {
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "配置文件写入失败，运行配置未修改",
+			})
+		}
 		appConfig = newConfig
-		utils.WriteConfig(appConfig)
+		if storageCandidate != nil {
+			service.ActivateStorageManager(storageCandidate)
+		}
 		service.ConfirmCursorThemeAttachments(newConfig.CursorTheme)
 		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
 			_ = manager.Reconfigure(perfprofiler.ConfigFromApp(appConfig.PerformanceProfiler))
@@ -1066,7 +1135,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		// 同步到数据库
 		SyncConfigToDB(appConfig, "api")
 
-		return nil
+		return ctx.JSON(fiber.Map{"storageRestartRequired": restartRequired})
 	})
 
 	oneBotHTTPWorks(app)

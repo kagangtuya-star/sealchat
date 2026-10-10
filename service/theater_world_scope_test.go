@@ -871,20 +871,29 @@ func TestTheaterScenePublishedUpdateAndSnapshotRoundTrip(t *testing.T) {
 }
 
 func TestApplyEffectiveCharacterSnapshotTemplatesTheaterOverlayPriority(t *testing.T) {
+	cardOverlay := `{"version":1,"preferredColumns":2,"items":[{"id":"card","name":"Card","current":{"value":1}}]}`
+	personalOverlay := `{"version":1,"preferredColumns":2,"items":[{"id":"personal","name":"Personal","current":{"value":1}}]}`
+	channelOverlay := `{"version":1,"preferredColumns":2,"items":[{"id":"channel","name":"Channel","current":{"value":1}}]}`
 	platformTemplate := &model.PlatformCharacterCardTemplateModel{
 		StringPKBaseModel:          model.StringPKBaseModel{ID: "platform-1"},
+		Name:                       "Platform",
 		Content:                    "platform-content",
 		BadgeTemplateOverride:      "platform-badge",
-		TheaterOverlayTemplateJSON: "platform-overlay",
+		TheaterOverlayTemplateJSON: cardOverlay,
 	}
 	platformTemplateCache := map[string]*model.PlatformCharacterCardTemplateModel{
 		platformTemplate.ID: platformTemplate,
 	}
 
-	newSettings := func(id, overlay string) *model.ChannelCharacterSnapshotSettingsModel {
+	newSettings := func(id, mode, overlay string, badge ...string) *model.ChannelCharacterSnapshotSettingsModel {
+		badgeTemplate := "channel-badge"
+		if len(badge) > 0 {
+			badgeTemplate = badge[0]
+		}
 		return &model.ChannelCharacterSnapshotSettingsModel{
 			StringPKBaseModel:          model.StringPKBaseModel{ID: id},
-			BadgeTemplate:              "channel-badge",
+			BadgeTemplate:              badgeTemplate,
+			TheaterOverlayTemplateMode: mode,
 			TheaterOverlayTemplateJSON: overlay,
 		}
 	}
@@ -896,12 +905,17 @@ func TestApplyEffectiveCharacterSnapshotTemplatesTheaterOverlayPriority(t *testi
 			TheaterOverlayTemplateJSON: theaterJSON,
 		}
 	}
-	newItem := func() *protocol.CharacterSnapshotItem {
+	newItem := func(sheetType string, managed bool) *protocol.CharacterSnapshotItem {
+		platformRef := ""
+		if managed {
+			platformRef = "platform:" + platformTemplate.ID
+		}
 		return &protocol.CharacterSnapshotItem{
 			Data: protocol.CharacterSnapshotData{
 				Card: &protocol.CharacterSnapshotCard{
 					TemplateText:        "original-content",
-					PlatformTemplateRef: "platform:" + platformTemplate.ID,
+					PlatformTemplateRef: platformRef,
+					SheetType:           sheetType,
 				},
 			},
 		}
@@ -909,6 +923,8 @@ func TestApplyEffectiveCharacterSnapshotTemplatesTheaterOverlayPriority(t *testi
 
 	tests := []struct {
 		name              string
+		sheetType         string
+		managed           bool
 		settings          *model.ChannelCharacterSnapshotSettingsModel
 		preference        *model.ChannelCharacterSnapshotPreferenceModel
 		wantOverlay       string
@@ -916,50 +932,73 @@ func TestApplyEffectiveCharacterSnapshotTemplatesTheaterOverlayPriority(t *testi
 		wantBadgeDisabled bool
 	}{
 		{
-			name:        "no channel settings and nil preference uses platform overlay",
-			settings:    newSettings("", defaultCharacterOverlayTemplate),
-			wantOverlay: platformTemplate.TheaterOverlayTemplateJSON,
-			wantBadge:   platformTemplate.BadgeTemplateOverride,
+			name: "coc rule preset fallback", sheetType: "coc7",
+			settings:    newSettings("", "inherit", defaultCharacterOverlayTemplate, ""),
+			wantOverlay: cocCharacterOverlayTemplate, wantBadge: cocCharacterBadgeTemplate,
 		},
 		{
-			name:        "no channel settings and inherit preference uses platform overlay",
-			settings:    newSettings("", defaultCharacterOverlayTemplate),
-			preference:  newPreference("inherit", ""),
-			wantOverlay: platformTemplate.TheaterOverlayTemplateJSON,
-			wantBadge:   platformTemplate.BadgeTemplateOverride,
+			name: "shinobigami rule preset fallback", sheetType: "忍神",
+			settings:    newSettings("", "inherit", defaultCharacterOverlayTemplate, ""),
+			wantOverlay: shinobigamiCharacterOverlayTemplate, wantBadge: shinobigamiCharacterBadgeTemplate,
 		},
 		{
-			name:        "explicit channel settings keep channel overlay",
-			settings:    newSettings("settings-1", "channel-overlay"),
-			preference:  newPreference("inherit", ""),
-			wantOverlay: "channel-overlay",
-			wantBadge:   platformTemplate.BadgeTemplateOverride,
+			name: "managed card overrides personal custom", sheetType: "coc7", managed: true,
+			settings:    newSettings("settings-1", "custom", channelOverlay),
+			preference:  newPreference("custom", personalOverlay),
+			wantOverlay: cardOverlay, wantBadge: platformTemplate.BadgeTemplateOverride,
 		},
 		{
-			name:        "custom preference keeps personal overlay",
-			settings:    newSettings("", defaultCharacterOverlayTemplate),
-			preference:  newPreference("custom", "personal-overlay"),
-			wantOverlay: "personal-overlay",
-			wantBadge:   platformTemplate.BadgeTemplateOverride,
+			name: "personal custom fallback", sheetType: "coc7",
+			settings:    newSettings("", "inherit", defaultCharacterOverlayTemplate),
+			preference:  newPreference("custom", personalOverlay),
+			wantOverlay: personalOverlay, wantBadge: "personal-badge",
 		},
 		{
-			name:        "off preference keeps overlay empty",
-			settings:    newSettings("", defaultCharacterOverlayTemplate),
-			preference:  newPreference("off", "personal-overlay"),
-			wantOverlay: "",
-			wantBadge:   platformTemplate.BadgeTemplateOverride,
+			name: "channel custom fallback", sheetType: "coc7",
+			settings:    newSettings("settings-2", "custom", channelOverlay),
+			wantOverlay: channelOverlay, wantBadge: "channel-badge",
+		},
+		{
+			name: "channel off fallback", sheetType: "coc7",
+			settings:    newSettings("settings-3", "off", channelOverlay),
+			wantOverlay: "", wantBadge: "channel-badge",
+		},
+		{
+			name: "personal off overrides managed card", sheetType: "coc7", managed: true,
+			settings:    newSettings("", "inherit", defaultCharacterOverlayTemplate),
+			preference:  &model.ChannelCharacterSnapshotPreferenceModel{BadgeTemplateMode: "off", TheaterOverlayTemplateMode: "off"},
+			wantOverlay: "", wantBadge: "", wantBadgeDisabled: true,
+		},
+		{
+			name: "legacy non-default overlay is custom", sheetType: "coc7",
+			settings:    newSettings("settings-4", "", channelOverlay),
+			wantOverlay: channelOverlay, wantBadge: "channel-badge",
+		},
+		{
+			name: "legacy default overlay inherits rule preset", sheetType: "coc7",
+			settings:    newSettings("settings-5", "", defaultCharacterOverlayTemplate),
+			wantOverlay: cocCharacterOverlayTemplate, wantBadge: "channel-badge",
+		},
+		{
+			name: "badge-only settings do not block card overlay", sheetType: "coc7", managed: true,
+			settings:    newSettings("settings-6", "inherit", defaultCharacterOverlayTemplate),
+			wantOverlay: cardOverlay, wantBadge: platformTemplate.BadgeTemplateOverride,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			item := newItem()
+			item := newItem(tt.sheetType, tt.managed)
 			applyEffectiveCharacterSnapshotTemplates(item, tt.settings, tt.preference, platformTemplateCache)
 			if item.TheaterOverlayTemplateJSON != tt.wantOverlay {
 				t.Fatalf("overlay = %q, want %q", item.TheaterOverlayTemplateJSON, tt.wantOverlay)
 			}
-			if item.Data.Card.TemplateText != platformTemplate.Content {
-				t.Fatalf("content = %q, want %q", item.Data.Card.TemplateText, platformTemplate.Content)
+			wantContent := "original-content"
+			if tt.managed {
+				wantContent = platformTemplate.Content
+			}
+			if item.Data.Card.TemplateText != wantContent {
+				t.Fatalf("content = %q, want %q", item.Data.Card.TemplateText, wantContent)
 			}
 			if item.BadgeTemplate != tt.wantBadge {
 				t.Fatalf("badge = %q, want %q", item.BadgeTemplate, tt.wantBadge)

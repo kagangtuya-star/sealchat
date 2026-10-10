@@ -461,7 +461,7 @@ func validateWorldClueAttachment(tx *gorm.DB, worldID, actorID, attachmentID, me
 	if (mediaType == "video") != strings.HasPrefix(mimeType, "video/") {
 		return fmt.Errorf("%w: media attachment type does not match", ErrWorldClueInvalid)
 	}
-	if attachment.RootID != worldID || attachment.RootIDType != "world_clue" {
+	if (attachment.RootID != worldID || attachment.RootIDType != "world_clue") && !isUnboundMCPAttachment(&attachment, actorID) {
 		return fmt.Errorf("%w: media attachment is not owned by this world", ErrWorldClueDenied)
 	}
 	if attachment.UserID != actorID {
@@ -491,7 +491,7 @@ func validateWorldClueBackgroundAttachment(tx *gorm.DB, worldID, actorID, attach
 	if (mediaType == "video") != strings.HasPrefix(mimeType, "video/") {
 		return fmt.Errorf("%w: background media attachment type does not match", ErrWorldClueInvalid)
 	}
-	if attachment.RootID != worldID || attachment.RootIDType != "world_clue" {
+	if (attachment.RootID != worldID || attachment.RootIDType != "world_clue") && !isUnboundMCPAttachment(&attachment, actorID) {
 		return fmt.Errorf("%w: background media attachment is not owned by this world", ErrWorldClueDenied)
 	}
 	if attachment.UserID != actorID {
@@ -506,13 +506,34 @@ func validateWorldClueBackgroundAttachment(tx *gorm.DB, worldID, actorID, attach
 	return nil
 }
 
-func confirmWorldClueAttachment(tx *gorm.DB, worldID, attachmentID string) error {
+func confirmWorldClueAttachment(tx *gorm.DB, worldID, attachmentID string, actorIDs ...string) error {
 	if attachmentID == "" {
 		return nil
 	}
-	return tx.Model(&model.AttachmentModel{}).Where("id = ? AND root_id = ? AND root_id_type = ?", attachmentID, worldID, "world_clue").Updates(map[string]any{
+	actorID := ""
+	if len(actorIDs) > 0 {
+		actorID = actorIDs[0]
+	}
+	var current model.AttachmentModel
+	if err := tx.Where("id = ?", attachmentID).First(&current).Error; err != nil {
+		return err
+	}
+	if current.DeletedAt != nil {
+		return ErrWorldClueNotFound
+	}
+	if !current.IsTemp && current.RootID == worldID && current.RootIDType == "world_clue" {
+		return nil
+	}
+	result := tx.Model(&model.AttachmentModel{}).Where("id = ? AND deleted_at IS NULL AND ((root_id = ? AND root_id_type = ?) OR (user_id = ? AND is_temp = ? AND extra = ? AND COALESCE(root_id, '') = '' AND COALESCE(root_id_type, '') = '' AND COALESCE(channel_id, '') = ''))", attachmentID, worldID, "world_clue", actorID, true, "mcp-upload").Updates(map[string]any{
 		"is_temp": false, "root_id": worldID, "root_id_type": "world_clue",
-	}).Error
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrWorldClueConflict
+	}
+	return nil
 }
 
 func encodeWorldCluePresentation(value *protocol.WorldCluePresentation) (string, protocol.WorldCluePresentation, error) {
@@ -597,10 +618,10 @@ func WorldClueCreate(worldID, actorID string, input WorldClueCreateInput) (*prot
 		if err := tx.Create(clue).Error; err != nil {
 			return err
 		}
-		if err := confirmWorldClueAttachment(tx, worldID, attachmentID); err != nil {
+		if err := confirmWorldClueAttachment(tx, worldID, attachmentID, actorID); err != nil {
 			return err
 		}
-		return confirmWorldClueAttachment(tx, worldID, presentation.BackgroundMediaAttachmentID)
+		return confirmWorldClueAttachment(tx, worldID, presentation.BackgroundMediaAttachmentID, actorID)
 	})
 	if err != nil {
 		return nil, err
@@ -757,6 +778,32 @@ func worldClueDetailDTO(clue *model.WorldClueModel, role string, accessRow *mode
 }
 
 func WorldClueList(worldID, actorID, keyword string) ([]protocol.WorldClueSummary, error) {
+	rows, err := worldClueList(worldID, actorID, keyword, 0, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]protocol.WorldClueSummary, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, row.Summary)
+	}
+	return items, nil
+}
+
+type WorldClueSearchSummary struct {
+	Summary   protocol.WorldClueSummary
+	UpdatedAt time.Time // Preserve query precision for deterministic merged pages.
+}
+
+// WorldClueSearch reuses visibility and summary shaping, retaining only bounded
+// visible matches. Private text is considered only for its own recipient.
+func WorldClueSearch(worldID, actorID, keyword string, limit int, from, to *time.Time) ([]WorldClueSearchSummary, error) {
+	if limit < 1 || limit > 1001 {
+		return nil, ErrWorldClueInvalid
+	}
+	return worldClueList(worldID, actorID, keyword, limit, from, to)
+}
+
+func worldClueList(worldID, actorID, keyword string, searchLimit int, from, to *time.Time) ([]WorldClueSearchSummary, error) {
 	db := model.GetDB()
 	role, err := worldClueRole(db, worldID, actorID)
 	if err != nil {
@@ -765,50 +812,75 @@ func WorldClueList(worldID, actorID, keyword string) ([]protocol.WorldClueSummar
 	if role == "" {
 		return nil, ErrWorldClueDenied
 	}
-	var clues []model.WorldClueModel
-	if err := db.Where("world_id = ? AND status <> ?", worldID, model.WorldClueStatusArchived).
-		Order("order_index ASC, updated_at DESC, id ASC").Limit(1000).Find(&clues).Error; err != nil {
-		return nil, err
-	}
-	var accessRows []model.WorldClueAccessModel
-	if err := db.Where("world_id = ? AND user_id = ?", worldID, actorID).Find(&accessRows).Error; err != nil {
-		return nil, err
-	}
-	var states []model.WorldClueUserStateModel
-	if err := db.Where("world_id = ? AND user_id = ?", worldID, actorID).Find(&states).Error; err != nil {
-		return nil, err
-	}
-	accessByClue := make(map[string]*model.WorldClueAccessModel, len(accessRows))
-	for i := range accessRows {
-		accessByClue[accessRows[i].ClueID] = &accessRows[i]
-	}
-	stateByClue := make(map[string]*model.WorldClueUserStateModel, len(states))
-	for i := range states {
-		stateByClue[states[i].ClueID] = &states[i]
+	q := db.Where("world_id = ? AND status <> ?", worldID, model.WorldClueStatusArchived)
+	batchSize := 1000
+	if searchLimit > 0 {
+		batchSize = 200
+		q = q.Order("updated_at DESC, id DESC")
+		if from != nil {
+			q = q.Where("updated_at >= ?", *from)
+		}
+		if to != nil {
+			q = q.Where("updated_at <= ?", *to)
+		}
+	} else {
+		q = q.Order("order_index ASC, updated_at DESC, id ASC")
 	}
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
-	result := make([]protocol.WorldClueSummary, 0, len(clues))
-	for i := range clues {
-		clue := &clues[i]
-		accessRow := accessByClue[clue.ID]
-		override := model.WorldClueAccessInherit
-		if accessRow != nil {
-			override = accessRow.AccessOverride
+	result := []WorldClueSearchSummary{}
+	for offset := 0; ; offset += batchSize {
+		var clues []model.WorldClueModel
+		if err := q.Offset(offset).Limit(batchSize).Find(&clues).Error; err != nil {
+			return nil, err
 		}
-		access := effectiveWorldClueAccess(role, clue.DefaultAccess, override)
-		if !canViewWorldClue(clue, role, access) {
-			continue
+		ids := make([]string, 0, len(clues))
+		for _, clue := range clues {
+			ids = append(ids, clue.ID)
 		}
-		if keyword != "" {
-			haystack := strings.ToLower(clue.Title + "\n" + clue.ContentText)
-			if accessRow != nil && clue.Status == model.WorldClueStatusPublished {
-				haystack += "\n" + strings.ToLower(accessRow.PrivateContentText)
+		var accessRows []model.WorldClueAccessModel
+		if err := db.Where("world_id = ? AND user_id = ? AND clue_id IN ?", worldID, actorID, ids).Find(&accessRows).Error; err != nil {
+			return nil, err
+		}
+		var states []model.WorldClueUserStateModel
+		if err := db.Where("world_id = ? AND user_id = ? AND clue_id IN ?", worldID, actorID, ids).Find(&states).Error; err != nil {
+			return nil, err
+		}
+		accessByClue := make(map[string]*model.WorldClueAccessModel, len(accessRows))
+		for i := range accessRows {
+			accessByClue[accessRows[i].ClueID] = &accessRows[i]
+		}
+		stateByClue := make(map[string]*model.WorldClueUserStateModel, len(states))
+		for i := range states {
+			stateByClue[states[i].ClueID] = &states[i]
+		}
+		for i := range clues {
+			clue := &clues[i]
+			accessRow := accessByClue[clue.ID]
+			override := model.WorldClueAccessInherit
+			if accessRow != nil {
+				override = accessRow.AccessOverride
 			}
-			if !strings.Contains(haystack, keyword) {
+			access := effectiveWorldClueAccess(role, clue.DefaultAccess, override)
+			if !canViewWorldClue(clue, role, access) {
 				continue
 			}
+			if keyword != "" {
+				haystack := strings.ToLower(clue.Title + "\n" + clue.ContentText)
+				if accessRow != nil && clue.Status == model.WorldClueStatusPublished {
+					haystack += "\n" + strings.ToLower(accessRow.PrivateContentText)
+				}
+				if !strings.Contains(haystack, keyword) {
+					continue
+				}
+			}
+			result = append(result, WorldClueSearchSummary{Summary: worldClueSummaryDTO(clue, role, accessRow, stateByClue[clue.ID], access), UpdatedAt: clue.UpdatedAt})
+			if searchLimit > 0 && len(result) == searchLimit {
+				return result, nil
+			}
 		}
-		result = append(result, worldClueSummaryDTO(clue, role, accessRow, stateByClue[clue.ID], access))
+		if searchLimit == 0 || len(clues) < batchSize {
+			break
+		}
 	}
 	return result, nil
 }
@@ -944,10 +1016,10 @@ func WorldClueUpdate(worldID, clueID, actorID string, input WorldClueUpdateInput
 		if result.RowsAffected != 1 {
 			return ErrWorldClueConflict
 		}
-		if err := confirmWorldClueAttachment(tx, worldID, attachmentID); err != nil {
+		if err := confirmWorldClueAttachment(tx, worldID, attachmentID, actorID); err != nil {
 			return err
 		}
-		return confirmWorldClueAttachment(tx, worldID, backgroundAttachmentID)
+		return confirmWorldClueAttachment(tx, worldID, backgroundAttachmentID, actorID)
 	})
 	if err != nil {
 		return nil, err
@@ -955,7 +1027,7 @@ func WorldClueUpdate(worldID, clueID, actorID string, input WorldClueUpdateInput
 	return WorldClueGet(worldID, clueID, actorID)
 }
 
-func WorldClueDelete(worldID, clueID, actorID string) error {
+func WorldClueDelete(worldID, clueID, actorID string, expectedRevisions ...int64) error {
 	db := model.GetDB()
 	role, err := worldClueRole(db, worldID, actorID)
 	if err != nil {
@@ -965,12 +1037,21 @@ func WorldClueDelete(worldID, clueID, actorID string) error {
 		return ErrWorldClueDenied
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&model.WorldClueModel{}).Where("world_id = ? AND id = ?", worldID, clueID).
-			Updates(map[string]any{"status": model.WorldClueStatusArchived, "updated_by": actorID, "updated_at": time.Now()})
+		query := tx.Model(&model.WorldClueModel{}).Where("world_id = ? AND id = ?", worldID, clueID)
+		if len(expectedRevisions) > 0 {
+			if expectedRevisions[0] <= 0 {
+				return ErrWorldClueInvalid
+			}
+			query = query.Where("revision = ?", expectedRevisions[0])
+		}
+		result := query.Updates(map[string]any{"status": model.WorldClueStatusArchived, "updated_by": actorID, "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
+			if len(expectedRevisions) > 0 {
+				return ErrWorldClueConflict
+			}
 			return ErrWorldClueNotFound
 		}
 		return tx.Unscoped().Where("world_id = ? AND clue_id = ?", worldID, clueID).Delete(&model.WorldClueEditLockModel{}).Error

@@ -24,6 +24,7 @@ import { compressImage } from '@/composables/useImageCompressor';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useChatStore } from '@/stores/chat';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { DEFAULT_BACKGROUND_PRESENTATION, normalizeBackgroundPresentationSettings, buildBackgroundImageStyle, buildBackgroundOverlayStyle } from '@/utils/backgroundPresentation';
 import type { SChannel, ChannelBackgroundSettings, BackgroundPreset } from '@/types';
 import {
   loadPresets,
@@ -48,26 +49,8 @@ const emit = defineEmits<{
 
 const message = useMessage();
 const chat = useChatStore();
-const defaultSettings: ChannelBackgroundSettings = {
-  mode: 'cover',
-  opacity: 30,
-  blur: 0,
-  brightness: 100,
-  overlayColor: undefined,
-  overlayOpacity: 0,
-};
-
-const parseSettings = (input?: ChannelBackgroundSettings | string): ChannelBackgroundSettings => {
-  if (!input) return { ...defaultSettings };
-  if (typeof input !== 'string') {
-    return { ...defaultSettings, ...input };
-  }
-  try {
-    return { ...defaultSettings, ...JSON.parse(input) };
-  } catch {
-    return { ...defaultSettings };
-  }
-};
+const defaultSettings = DEFAULT_BACKGROUND_PRESENTATION;
+const parseSettings = normalizeBackgroundPresentationSettings;
 
 const backgroundAttachmentId = ref<string>('');
 const settings = ref<ChannelBackgroundSettings>({ ...defaultSettings });
@@ -100,42 +83,8 @@ const backgroundUrl = computed(() => {
   return resolveAttachmentUrl(backgroundAttachmentId.value);
 });
 
-const previewStyle = computed(() => {
-  if (!backgroundUrl.value) return {};
-  const s = settings.value;
-  let bgSize = 'cover';
-  let bgRepeat = 'no-repeat';
-  let bgPosition = 'center';
-  switch (s.mode) {
-    case 'contain':
-      bgSize = 'contain';
-      break;
-    case 'tile':
-      bgSize = 'auto';
-      bgRepeat = 'repeat';
-      break;
-    case 'center':
-      bgSize = 'auto';
-      bgPosition = 'center';
-      break;
-  }
-  return {
-    backgroundImage: `url(${backgroundUrl.value})`,
-    backgroundSize: bgSize,
-    backgroundRepeat: bgRepeat,
-    backgroundPosition: bgPosition,
-    opacity: s.opacity / 100,
-    filter: `blur(${s.blur}px) brightness(${s.brightness}%)`,
-  };
-});
-
-const overlayStyle = computed(() => {
-  if (!enableOverlay.value || !settings.value.overlayColor) return {};
-  return {
-    backgroundColor: settings.value.overlayColor,
-    opacity: (settings.value.overlayOpacity ?? 0) / 100,
-  };
-});
+const previewStyle = computed(() => buildBackgroundImageStyle(backgroundAttachmentId.value, settings.value) ?? {});
+const overlayStyle = computed(() => enableOverlay.value ? buildBackgroundOverlayStyle(settings.value) ?? {} : {});
 
 const categoryOptions = computed<SelectOption[]>(() => {
   return categories.value.map((c) => ({ label: c, value: c }));

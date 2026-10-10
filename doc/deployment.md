@@ -22,11 +22,16 @@ Docker 路径需要 Docker Engine 与 Docker Compose，并开放默认端口 `32
 在包含 `docker-compose.yml` 的仓库或发行目录中执行：
 
 ```bash
-cp config.docker.yaml.example config.yaml
-docker compose up -d
+mkdir -p config && cp -n config.docker.yaml.example config/config.yaml && docker compose up -d
 ```
 
 访问 `http://localhost:3212/`。全新数据库中的第一个注册用户会获得平台管理员角色，并创建默认世界。
+
+### 从旧版单文件挂载升级
+
+已有用户若继续使用原 `./config.yaml:/app/config.yaml` 与未指定 `SEALCHAT_CONFIG_PATH` 的 Compose，无需迁移：后端针对 Docker 单文件挂载的 `EBUSY` 错误使用原地保存兼容路径。此模式不具备断电原子性，建议升级为目录挂载。
+
+要切换到新版 Compose，**先停止服务并备份**，再执行 `mkdir -p config && cp -n config.yaml config/config.yaml`。确认 `config/config.yaml` 内容与原文件一致、并且没有同名已存在配置时，才改用新版 Compose 执行 `docker compose up -d`。`cp -n` 不覆盖现有目标；如果目标已经存在，必须先人工核对差异，不要直接覆盖。原 `config.yaml` 保留作为回滚备份。新版本通过 `SEALCHAT_CONFIG_PATH=/app/config/config.yaml` 使用新路径，不会静默从旧路径导入或覆盖配置。
 
 ### 状态、日志与停止
 
@@ -46,7 +51,7 @@ Compose 配置包含 HTTP 健康检查，每 30 秒请求一次容器内的 `htt
 | `./data` | `/app/data` | 默认 SQLite 数据库、导出及其他运行数据 |
 | `./sealchat-data` | `/app/sealchat-data` | 附件、音频等本地资源 |
 | `./static` | `/app/static` | 静态资源和音频目录 |
-| `./config.yaml` | `/app/config.yaml` | 主配置文件 |
+| `./config` | `/app/config` | 主配置目录（`config/config.yaml`），支持原子保存 |
 
 当前 Compose 以 `0:0` 运行容器，主要用于避免宿主机挂载目录的写入权限问题。若改为非 root 用户，应先确保上述目录及配置文件对目标 UID/GID 可读写。
 
@@ -102,7 +107,7 @@ SQLite 是默认且部署最简单的选择。使用外部数据库时，应在�
 
 反向代理必须转发普通 HTTP 请求和 WebSocket 升级头。根路径部署保持 `webUrl: /`；部署到 `/chat/` 一类子路径时，将 `webUrl` 配置为不带尾斜杠的 `/chat`，并确保代理的保留或剥离前缀策略与之匹配。
 
-若要让日志、限流和快捷登录风控获得真实客户端 IP，请设置 `proxy.proxyHeader` 和 `proxy.trustedProxies`。只信任实际反向代理的地址或网段，不要使用 `0.0.0.0/0`。TLS 可在反向代理终止；示例配置中也提供面向公网 IP 的内置证书选项，启用前应确认挑战端口和发行版本说明。
+若要让日志、限流和快捷登录风控获得真实客户端 IP，请设置 `proxy.proxyHeader` 和 `proxy.trustedProxies`。默认配置只信任本机回环代理 `127.0.0.1` 与 `::1`；Docker、Cloudflare Tunnel、EdgeOne 或远程 Nginx/Caddy 应额外填写 SealChat 实际看到的直接上一跳代理地址或网段，不要使用 `0.0.0.0/0`。TLS 可在反向代理终止，但可信代理应正确传递原始 HTTPS 协议。若同一实例有多个公开入口，`domain` 可用 `;` 分隔，例如 `https://chat.example;https://chat-tunnel.example`，第一个条目作为默认主域名。示例配置中也提供面向公网 IP 的内置证书选项，启用前应确认挑战端口和发行版本说明。
 
 ## 8. NAS 与 Docker 挂载注意事项
 
@@ -122,7 +127,7 @@ audio:
 
 ## 9. 升级
 
-1. 备份数据库、`config.yaml` 和所有本地资源；外部数据库与 S3 另按服务商方式备份。
+1. 备份数据库、当前有效的 `config/config.yaml`（旧部署为根目录 `config.yaml`）和所有本地资源；外部数据库与 S3 另按服务商方式备份。
 2. 阅读目标版本 Release Notes，确认迁移或兼容要求。
 3. Docker 部署拉取并重建容器；二进制部署完整替换发行包程序和随附运行时文件。
 4. 启动后检查日志、健康状态、登录、消息发送及资源访问。

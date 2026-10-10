@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
   NButton,
   NButtonGroup,
@@ -17,7 +17,9 @@ import {
 } from 'naive-ui'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
 
-import type { StageObject } from '../shared/stage-types'
+import { setStageObjectMediaFx, stageObjectMediaFx, type StageObject } from '../shared/stage-types'
+import { mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
+import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import type { AudioAsset } from '@/types/audio'
 import type { TheaterStageStore } from '../stage/StageStore'
 import { compareStageLayersTopToBottom } from '../stage/stage-layer-order'
@@ -94,6 +96,14 @@ const selectedEffect = computed(() => {
 const config = computed(() => selectedEffect.value ? theaterEffectConfigFromObject(selectedEffect.value) : null)
 const hasMedia = computed(() => Boolean(config.value?.media || selectedEffect.value?.image))
 const hasAnimatedMedia = computed(() => (config.value?.media || selectedEffect.value?.image)?.animated === true)
+// Media effects share StageObject.metadata.mediaFx with image objects; the effect
+// config itself carries no Media FX fields.
+const mediaFx = computed(() => selectedEffect.value ? stageObjectMediaFx(selectedEffect.value) : null)
+const mediaFxActive = computed(() => mediaFxHasContent(mediaFx.value))
+const mediaFxCapabilities = computed(() => {
+  const media = config.value?.media || selectedEffect.value?.image
+  return resolveMediaFxCapabilities('dom', media?.animated === true || media?.mimeType?.startsWith('video/') === true)
+})
 const keywordDraft = ref('')
 const targetActorNameDraft = ref('')
 const audioInputRef = ref<HTMLInputElement | null>(null)
@@ -203,6 +213,34 @@ const editConfig = (label: string, mutate: (value: TheaterEffectConfig) => void)
   setTheaterEffectConfig(object, next)
   props.store.commitObjectEdit()
 }
+
+let mediaFxEditing = false
+const beginMediaFxEdit = () => {
+  if (mediaFxEditing || !selectedEffect.value || !props.canEdit) return
+  props.store.beginObjectEdit('修改特效图像效果')
+  mediaFxEditing = true
+}
+const endMediaFxEdit = () => {
+  if (!mediaFxEditing) return
+  mediaFxEditing = false
+  props.store.commitObjectEdit()
+}
+const updateMediaFx = (spec: MediaFxSpec) => {
+  const object = selectedEffect.value
+  if (!object || !props.canEdit) return
+  const discreteEdit = !mediaFxEditing
+  if (discreteEdit) beginMediaFxEdit()
+  setStageObjectMediaFx(object, spec)
+  if (discreteEdit) endMediaFxEdit()
+}
+
+watch(() => selectedEffect.value?.id, () => {
+  endMediaFxEdit()
+})
+
+onBeforeUnmount(() => {
+  endMediaFxEdit()
+})
 
 const addEffect = (kind: TheaterEffectKind) => {
   if (!props.canEdit) return
@@ -599,6 +637,18 @@ const handleAudioInput = (event: Event) => {
         <label>媒体旋转</label>
         <n-input-number :value="config.builtin.mediaTransform.rotation" :min="-360" :max="360" @update:value="value => value !== null && editConfig('修改特效媒体', next => { next.builtin.mediaTransform.rotation = value })" />
         <n-checkbox class="theater-effect-editor__option" :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
+        <details v-if="hasMedia && mediaFx" class="theater-effect-media-fx">
+          <summary>图像效果<small v-if="mediaFxActive">已启用</small></summary>
+          <MediaFxPanel
+            :model-value="mediaFx"
+            mode="live"
+            :capabilities="mediaFxCapabilities"
+            :disabled="!canEdit"
+            @edit-start="beginMediaFxEdit"
+            @edit-end="endMediaFxEdit"
+            @update:model-value="updateMediaFx"
+          />
+        </details>
       </template>
 
       <label>生效范围</label>
@@ -657,6 +707,10 @@ const handleAudioInput = (event: Event) => {
 .theater-effect-editor > label { color: var(--sc-text-secondary); font-size: 12px; }
 .theater-effect-editor__option { grid-column: 1 / -1; min-width: 0; }
 .theater-effect-media-row, .theater-effect-actions { display: flex; gap: 5px; }
+.theater-effect-media-fx { grid-column: 1 / -1; min-width: 0; padding: 6px 8px; border: 1px solid var(--theater-border); border-radius: 6px; }
+.theater-effect-media-fx > summary { color: var(--sc-text-secondary); font-size: 12px; cursor: pointer; }
+.theater-effect-media-fx > summary small { margin-left: 6px; color: var(--theater-accent); }
+.theater-effect-media-fx[open] > summary { margin-bottom: 8px; }
 .theater-effect-audio-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
 .theater-effect-audio-input { display: none; }
 .theater-effect-audio-error { grid-column: 1 / -1; margin: 0; color: #f87171; font-size: 11px; }

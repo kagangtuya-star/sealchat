@@ -596,7 +596,7 @@ func currentAppPublicOrigin() string {
 	if appConfig == nil {
 		return ""
 	}
-	return normalizeOneBotDomainToURL(appConfig.Domain)
+	return normalizeOneBotDomainToURL(utils.PrimaryDomain(appConfig.Domain))
 }
 
 func currentAppExternalWebURL() string {

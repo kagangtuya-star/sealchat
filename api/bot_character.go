@@ -81,7 +81,14 @@ func apiCharacterGet(ctx *ChatContext, msg []byte) {
 
 // apiCharacterSet handles character.set requests
 // This is a SealChat → SealDice API that writes character card data
+func canSetOwnCharacterCard(ctx *ChatContext, userID string) bool {
+	return ctx != nil && ctx.User != nil && !ctx.IsReadOnly() && strings.TrimSpace(userID) == ctx.User.ID
+}
+
 func apiCharacterSet(ctx *ChatContext, msg []byte) {
+	if ctx == nil || ctx.Conn == nil {
+		return
+	}
 	data := struct {
 		Echo string `json:"echo"`
 		Data struct {
@@ -93,6 +100,10 @@ func apiCharacterSet(ctx *ChatContext, msg []byte) {
 	}{}
 	if err := json.Unmarshal(msg, &data); err != nil {
 		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+	if !canSetOwnCharacterCard(ctx, data.Data.UserID) {
+		sendCharacterError(ctx, data.Echo, "PERMISSION_DENIED")
 		return
 	}
 

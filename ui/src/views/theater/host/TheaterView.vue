@@ -17,6 +17,8 @@ import {
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload, ChatClueAccessReadResult, ChatClueOptionsReadResult, TheaterDialogueMessagePayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
+import { TheaterRendererClient } from '../sync/TheaterRendererClient'
+import { requestTheaterDisplayCapture } from '../stage/theater-mcp-capture'
 import { normalizeStageIframeContent, stageMusicSnapshotHasContent, type StageClueActionEntry, type StagePointerTraceInput } from '../shared/stage-types'
 import { dialogAskConfirm } from '@/utils/dialog'
 import {
@@ -34,7 +36,7 @@ import {
   parseTheaterDialogueSurfaceUrl,
   type TheaterDialogueSurfaceContext,
 } from '../dialogue/theater-dialogue-surface'
-import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, type TheaterPresentation, type TheaterTransform } from '@/types/theaterPresentation'
+import { DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS, theaterPresentationSchema, theaterTransformSchema, theaterVisualStyleSchema, type TheaterPresentation, type TheaterTransform, type TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import TheaterFloatingHost from './TheaterFloatingHost.vue'
@@ -176,6 +178,10 @@ let mobilePipMove: {
   width: number
   height: number
 } | null = null
+// 竖屏标准模式下用户拖动后的舞台显式高度；null 表示沿用默认 16:9
+const mobileStageHeight = ref<number | null>(null)
+const mobileStageResizing = ref(false)
+let mobileStageResize: { pointerId: number, startY: number, startHeight: number } | null = null
 const isNarrow = computed(() => width.value < 840)
 const isPortrait = useMediaQuery('(orientation: portrait)')
 const mobilePortraitInputLock = ref(false)
@@ -213,6 +219,13 @@ const chatVisible = computed(() => (
       : !chatHidden.value
 ))
 const theaterDividerWidth = 7
+const mobileStageDividerHeight = 12
+const mobileStageResizeEnabled = computed(() => (
+  isMobilePortrait.value
+  && !theaterPipActive.value
+  && !chatHidden.value
+  && !mobileStageHiddenByInput.value
+))
 const chatBridgeOnline = ref(false)
 const chatBridgeStatus = ref<TheaterChatBridgeStatus>('connecting')
 const theaterSyncing = ref(false)
@@ -259,6 +272,7 @@ type AppearancePreviewState = {
   previewName: string
   previewText: string
   controllerArea?: TheaterTransform
+  controllerPortraitStyle?: TheaterVisualStyle
   multiplayerPortraitTransform?: TheaterTransform
 }
 const appearancePreview = ref<AppearancePreviewState | null>(null)
@@ -271,6 +285,70 @@ const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
 let theaterBridge: TheaterHostBridge | null = null
 let theaterBridgeGeneration = 0
 let theaterSync: TheaterSyncClient | null = null
+let theaterRenderer: TheaterRendererClient | null = null
+let rendererDisplayStream: MediaStream | null = null
+const rendererAuthorized = ref(false)
+const rendererAuthorizing = ref(false)
+const releaseRendererDisplayStream = () => {
+  const stream = rendererDisplayStream
+  rendererDisplayStream = null
+  stageAppRef.value?.setRendererDisplayStream(null)
+  stream?.getTracks().forEach(track => track.stop())
+}
+const revokeRenderer = () => {
+  theaterRenderer?.stop()
+  theaterRenderer = null
+  releaseRendererDisplayStream()
+  rendererAuthorized.value = false
+}
+const toggleRenderer = async () => {
+  if (rendererAuthorized.value) return revokeRenderer()
+  if (rendererAuthorizing.value || !theaterSync || !user.info?.id) return
+  rendererAuthorizing.value = true
+  const sync = theaterSync
+  const targetWorld = worldId.value, targetChannel = channelId.value
+  const targetUserId = String(user.info.id)
+  try {
+    const allowed = await dialogAskConfirm(dialog, '允许 AI 协作当前小剧场', '同账号、已授权的 MCP Key 可操作当前视图、执行有业务权限的动作及截图。为完整捕获网页嵌入、视频与跨域 iframe，浏览器会继续请求共享当前标签页；请选择当前 SealChat 标签页。关闭页面、停止共享、断线或切换世界后自动撤销。')
+    if (!allowed || theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel || user.info?.id !== targetUserId) return
+    const displayStream = await requestTheaterDisplayCapture()
+    if (theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel || user.info?.id !== targetUserId) {
+      displayStream.getTracks().forEach(track => track.stop())
+      return
+    }
+    rendererDisplayStream = displayStream
+    stageAppRef.value?.setRendererDisplayStream(displayStream)
+    const captureTrack = displayStream.getVideoTracks()[0]
+    if (!captureTrack || captureTrack.readyState !== 'live') throw new Error('浏览器画面共享已结束')
+    const client = new TheaterRendererClient({
+      scope: { worldId: targetWorld, scopeType: 'world', channelId: '', inputChannelId: targetChannel },
+      userId: targetUserId, sync, getStage: () => stageAppRef.value,
+      send: (name, data) => chat.sendAPI(name, data),
+      insert: async payload => {
+        if (!theaterBridge) throw new Error('chat_bridge_unavailable')
+        const result = await theaterBridge.insertRendererChat(payload)
+        if (!result.ok) throw new Error('chat_insert_failed')
+      },
+      confirm: async () => await dialogAskConfirm(dialog, '确认 AI 线索动作', 'AI 请求执行已保存的线索动作，是否继续？') === true,
+      onInvalidated: () => { if (theaterRenderer === client) revokeRenderer() },
+    })
+    theaterRenderer = client
+    captureTrack.addEventListener('ended', () => {
+      if (rendererDisplayStream === displayStream) revokeRenderer()
+    }, { once: true })
+    await client.start()
+    if (theaterRenderer === client && rendererDisplayStream === displayStream && captureTrack.readyState === 'live') {
+      rendererAuthorized.value = true
+    } else {
+      client.stop()
+    }
+  } catch (error) {
+    revokeRenderer()
+    message.warning(error instanceof Error ? error.message : 'renderer 授权失败')
+  } finally { rendererAuthorizing.value = false }
+}
+watch(worldId, revokeRenderer)
+watch(() => user.info?.id, revokeRenderer)
 let theaterSyncGeneration = 0
 const dialogueSurfaceTargets = new Map<Window, TheaterDialogueSurfaceContext>()
 interface DialogueSurfaceRuntimeEntry {
@@ -327,6 +405,14 @@ const stageSurfaceStyle = computed(() => {
     return style
   }
   if (!isNarrow.value && !chatHidden.value) return { width: splitPaneWidth(splitRatio.value) }
+  if (mobileStageResizeEnabled.value && mobileStageHeight.value !== null) {
+    // max-height 在视口变化（旋转、软键盘）时保护聊天区，不改写用户拖动得到的高度
+    return {
+      height: `${mobileStageHeight.value}px`,
+      maxHeight: `calc(100% - ${mobileStageDividerHeight}px - min(240px, 35%))`,
+      aspectRatio: 'auto',
+    }
+  }
   return undefined
 })
 
@@ -427,12 +513,59 @@ const stopMobilePipMove = (event: PointerEvent) => {
   ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
 }
 
+const clampMobileStageHeight = (value: number) => {
+  const layoutHeight = layoutRef.value?.getBoundingClientRect().height || 0
+  if (!layoutHeight) return value
+  const available = Math.max(0, layoutHeight - mobileStageDividerHeight)
+  // 聊天至少保留约 35% 可用高度（不超过 240px），舞台至少保留约 15%（不低于 96px）
+  const maximum = Math.max(0, available - Math.min(240, available * 0.35))
+  const minimum = Math.min(maximum, Math.max(96, available * 0.15))
+  return Math.min(maximum, Math.max(minimum, value))
+}
+
+const handleMobileStageResizeDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !mobileStageResizeEnabled.value) return
+  const stage = stageSurfaceRef.value?.getBoundingClientRect()
+  if (!stage) return
+  mobileStageResize = { pointerId: event.pointerId, startY: event.clientY, startHeight: stage.height }
+  mobileStageResizing.value = true
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+const handleMobileStageResizeMove = (event: PointerEvent) => {
+  if (!mobileStageResize || mobileStageResize.pointerId !== event.pointerId) return
+  mobileStageHeight.value = clampMobileStageHeight(
+    mobileStageResize.startHeight + event.clientY - mobileStageResize.startY,
+  )
+}
+
+const stopMobileStageResize = (event: PointerEvent) => {
+  if (!mobileStageResize || mobileStageResize.pointerId !== event.pointerId) return
+  mobileStageResize = null
+  mobileStageResizing.value = false
+  const target = event.currentTarget as HTMLElement | null
+  if (target?.hasPointerCapture?.(event.pointerId)) target.releasePointerCapture(event.pointerId)
+}
+
+const resetMobileStageHeight = () => {
+  mobileStageHeight.value = null
+}
+
+// 拖动中途拖动柄被卸载（输入隐藏舞台、进入画中画等）时不会再收到 pointerup，这里补做清理
+watch(mobileStageResizeEnabled, (enabled) => {
+  if (enabled) return
+  mobileStageResize = null
+  mobileStageResizing.value = false
+})
+
 const resetLayout = () => {
   splitRatio.value = 0.7
   chatHidden.value = false
   mobileTab.value = 'stage'
   mobilePipWidth.value = null
   mobilePipOffset.value = { x: 0, y: 0 }
+  mobileStageHeight.value = null
 }
 
 const toggleChat = () => {
@@ -1159,6 +1292,7 @@ const reconnectTheaterChatBridge = () => {
 }
 
 const startTheaterSync = async () => {
+  revokeRenderer()
   const generation = ++theaterSyncGeneration
   const targetWorldId = worldId.value
   const targetChannelId = channelId.value
@@ -1255,12 +1389,25 @@ const cancelMobilePortraitUnlock = () => {
   mobilePortraitUnlockFrame = null
 }
 
+const postTheaterLayoutState = () => {
+  iframeRef.value?.contentWindow?.postMessage({
+    type: 'sealchat.theater.layout-state',
+    sessionId,
+    pipActive: theaterPipActive.value,
+  }, window.location.origin)
+}
+
 const handleChatFrameLoad = () => {
   cancelMobilePortraitUnlock()
   chatComposerFocused.value = false
   mobilePortraitInputLock.value = false
   theaterBridge?.handleChatFrameLoad()
+  postTheaterLayoutState()
 }
+
+watch(theaterPipActive, () => {
+  postTheaterLayoutState()
+})
 
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
@@ -1312,8 +1459,9 @@ const handleTheaterContext = (event: MessageEvent) => {
   if (data.type === 'sealchat.theater.appearance-preview.start' || data.type === 'sealchat.theater.appearance-preview.update') {
     const parsed = theaterPresentationSchema.safeParse(data.draft)
     const controllerArea = data.controllerArea === undefined ? undefined : theaterTransformSchema.safeParse(data.controllerArea)
+    const controllerPortraitStyle = data.controllerPortraitStyle === undefined ? undefined : theaterVisualStyleSchema.safeParse(data.controllerPortraitStyle)
     const multiplayerPortraitTransform = data.multiplayerPortraitTransform === undefined ? undefined : theaterTransformSchema.safeParse(data.multiplayerPortraitTransform)
-    if (!parsed.success || controllerArea?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
+    if (!parsed.success || controllerArea?.success === false || controllerPortraitStyle?.success === false || multiplayerPortraitTransform?.success === false || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
     appearancePreview.value = {
       previewId: data.previewId,
       draft: parsed.data,
@@ -1322,6 +1470,7 @@ const handleTheaterContext = (event: MessageEvent) => {
       previewName: typeof data.previewName === 'string' ? data.previewName : '角色名',
       previewText: typeof data.previewText === 'string' ? data.previewText : '夜色正好，我们该出发了。',
       controllerArea: controllerArea?.data,
+      controllerPortraitStyle: controllerPortraitStyle?.data,
       multiplayerPortraitTransform: multiplayerPortraitTransform?.data,
     }
     return
@@ -1349,6 +1498,7 @@ const handleTheaterContext = (event: MessageEvent) => {
     })
   } else {
     theaterSync?.setInputChannelId(nextChannelId)
+    theaterRenderer?.setInputChannelId(nextChannelId)
     if (chat.curChannel?.id !== nextChannelId) {
       void chat.channelSwitchTo(nextChannelId)
     }
@@ -1400,6 +1550,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  revokeRenderer()
   cancelMobilePortraitUnlock()
   theaterBridgeGeneration += 1
   theaterSyncGeneration += 1
@@ -1461,6 +1612,7 @@ function handleDice3DMessage(event: MessageEvent) {
       class="theater-host-layout"
       :class="{
         'is-dragging': splitDragging,
+        'is-mobile-stage-resizing': mobileStageResizing,
         'is-narrow': isNarrow,
         'is-chat-hidden': chatHidden,
         'is-mobile-portrait': isMobilePortrait,
@@ -1490,6 +1642,8 @@ function handleDice3DMessage(event: MessageEvent) {
           :chat-visible="chatVisible"
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
+          :renderer-authorized="rendererAuthorized"
+          :renderer-authorizing="rendererAuthorizing"
           :permissions="theaterPermissions"
           :construction-scene-id="constructionSceneId"
           :dialogue-runtime="dialogueRuntime"
@@ -1506,6 +1660,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :read-clue-options="readClueOptions"
           :read-clue-access="readClueAccess"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
+          @sequence-triggered="theaterBridge?.triggerStageSequence($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @scene-switch-requested="requestSceneSwitch"
@@ -1520,6 +1675,7 @@ function handleDice3DMessage(event: MessageEvent) {
           @toggle-chat="toggleChat"
           @disconnect-chat-bridge="disconnectTheaterChatBridge"
           @reconnect-chat-bridge="reconnectTheaterChatBridge"
+          @toggle-renderer="toggleRenderer"
           @reset-layout="resetLayout"
           @exit-theater="exitTheater"
           @appearance-preview-command="sendAppearancePreviewCommand"
@@ -1531,7 +1687,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-			<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" @windows-change="floatingWindows = $event" />
+			<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" :dock-minimized-characters="isNarrow" @windows-change="floatingWindows = $event" />
         <div
           v-if="theaterPipActive"
           class="theater-mobile-pip-move"
@@ -1553,6 +1709,21 @@ function handleDice3DMessage(event: MessageEvent) {
           @pointercancel.stop="stopMobilePipResize"
         />
       </section>
+
+      <div
+        v-if="mobileStageResizeEnabled"
+        class="theater-mobile-stage-divider"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="调整舞台与聊天高度"
+        title="拖动调整舞台高度，双击恢复 16:9"
+        @pointerdown="handleMobileStageResizeDown"
+        @pointermove="handleMobileStageResizeMove"
+        @pointerup="stopMobileStageResize"
+        @pointercancel="stopMobileStageResize"
+        @lostpointercapture="stopMobileStageResize"
+        @dblclick="resetMobileStageHeight"
+      />
 
       <div
         v-if="!isNarrow && !chatHidden && !theaterPipActive"
@@ -1606,14 +1777,19 @@ function handleDice3DMessage(event: MessageEvent) {
 .theater-host-divider:hover::before, .is-dragging .theater-host-divider::before { background: #3b82f6; }
 .theater-host-chat { position: relative; border-left: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); background: var(--sc-bg-surface, #1b1b20); }
 .theater-host-chat-frame { width: 100%; height: 100%; display: block; box-sizing: border-box; margin: 0; border: 0; outline: 0; background: var(--sc-bg-surface, #1b1b20); }
-.is-dragging .theater-host-chat-frame { pointer-events: none; }
+.is-dragging .theater-host-chat-frame, .is-mobile-stage-resizing .theater-host-chat-frame { pointer-events: none; }
 .theater-host-chat-close { position: absolute; z-index: 4; top: 8px; left: 8px; width: 34px; height: 34px; background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 92%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
 .theater-host-layout.is-narrow { display: block; }
+/* 窄屏把隐藏聊天按钮移到右侧、聊天头部下方，避免覆盖 iframe 内左上频道切换入口与右侧头部操作 */
+.theater-host-layout.is-narrow .theater-host-chat-close { top: calc(3.5rem + max(8px, env(safe-area-inset-top, 0px))); right: max(8px, env(safe-area-inset-right, 0px)); left: auto; }
 .theater-host-layout.is-narrow .theater-host-stage, .theater-host-layout.is-narrow .theater-host-chat { width: 100%; }
 .theater-host-layout.is-mobile-portrait { display: flex; flex-direction: column; }
 .theater-host-layout.is-mobile-portrait .theater-host-stage { width: 100% !important; height: auto; aspect-ratio: 16 / 9; flex: 0 0 auto; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-host-layout.is-mobile-portrait.is-chat-hidden .theater-host-stage { height: 100%; flex: 1 1 auto; aspect-ratio: auto; }
 .theater-host-layout.is-mobile-portrait .theater-host-chat { width: 100% !important; height: auto; min-height: 0; flex: 1 1 auto; border-left: 0; }
+.theater-mobile-stage-divider { position: relative; z-index: 3; flex: 0 0 12px; height: 12px; touch-action: none; user-select: none; cursor: row-resize; background: var(--sc-bg-header, #262626); }
+.theater-mobile-stage-divider::after { position: absolute; top: 50%; left: 50%; width: 36px; height: 4px; border-radius: 999px; background: var(--sc-fg-muted, #71717a); transform: translate(-50%, -50%); content: ''; }
+.theater-mobile-stage-divider:active::after, .is-mobile-stage-resizing .theater-mobile-stage-divider::after { background: #3b82f6; }
 .theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions) { top: max(.416667cqw, env(safe-area-inset-top)); right: max(.416667cqw, env(safe-area-inset-right)); gap: max(4px, .208333cqw); }
 .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-dialogue-actions) { top: max(4px, .416667cqw); right: max(4px, .416667cqw); }
 .theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-dialogue-actions .n-button), .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-dialogue-actions .n-button) { width: clamp(24px, 2.291667cqw, 44px); height: clamp(24px, 2.291667cqw, 44px); min-width: clamp(24px, 2.291667cqw, 44px); padding: 0; }
@@ -1621,6 +1797,8 @@ function handleDice3DMessage(event: MessageEvent) {
 .theater-host-layout.is-mobile-portrait .theater-host-stage :deep(.theater-floating-host--stage), .theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-floating-host--stage) { position: fixed; inset: 0; overflow: hidden; }
 .theater-host-layout.is-theater-pip .theater-host-stage { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px + var(--mobile-theater-pip-translate-y, 0px)); right: calc(12px - var(--mobile-theater-pip-translate-x, 0px)); z-index: 30; width: var(--mobile-theater-pip-width, min(58vw, 320px)) !important; height: auto; aspect-ratio: 16 / 9; flex: none; overflow: hidden; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 14px; background: var(--sc-bg-page, #141418); box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
 .theater-host-layout.is-theater-pip .theater-host-chat { width: 100% !important; height: 100%; flex: 1 1 100%; border-left: 0; }
+/* 画中画时浮窗层铺满视口，停靠区优先放在画中画下方；按 48px 高度限制底部位置，确保头像可点击恢复 */
+.theater-host-layout.is-theater-pip .theater-host-stage :deep(.theater-floating-character-dock) { top: min(calc(env(safe-area-inset-top, 0px) + 20px + var(--mobile-theater-pip-translate-y, 0px) + var(--mobile-theater-pip-width, min(58vw, 320px)) * 9 / 16), calc(100dvh - env(safe-area-inset-bottom, 0px) - 48px - 8px)); right: max(8px, calc(12px - var(--mobile-theater-pip-translate-x, 0px))); }
 .theater-mobile-pip-move { position: absolute; z-index: 10020; top: 0; left: 50%; width: 52px; height: 24px; touch-action: none; cursor: move; transform: translateX(-50%); }
 .theater-mobile-pip-move::after { position: absolute; top: 6px; left: 50%; width: 24px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .82); box-shadow: 0 1px 3px rgba(0, 0, 0, .72); transform: translateX(-50%); content: ''; }
 .theater-mobile-pip-resize { position: absolute; z-index: 10020; bottom: 0; left: 0; width: 28px; height: 28px; touch-action: none; cursor: nesw-resize; }
@@ -1629,5 +1807,6 @@ function handleDice3DMessage(event: MessageEvent) {
 
 @media (max-width: 420px) {
   .theater-host-layout.is-mobile-portrait.is-theater-pip .theater-host-stage { width: var(--mobile-theater-pip-width, 54vw) !important; min-width: 200px; }
+  .theater-host-layout.is-mobile-portrait.is-theater-pip .theater-host-stage :deep(.theater-floating-character-dock) { top: min(calc(env(safe-area-inset-top, 0px) + 20px + var(--mobile-theater-pip-translate-y, 0px) + max(var(--mobile-theater-pip-width, 54vw), 200px) * 9 / 16), calc(100dvh - env(safe-area-inset-bottom, 0px) - 48px - 8px)); }
 }
 </style>

@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { SceneFolder, StageAction, StageActionTriggeredPayload, StageClueActionEntry, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageAudioRef, normalizeStageEntranceConfig, normalizeStageImageAnnotation, normalizeStageMusicSnapshot, normalizeStageSceneOverlays, normalizeStageSceneTransition, normalizeStageSurfaceStyle, normalizeStageSurfaceEmbeds } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
@@ -147,7 +147,7 @@ const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Nu
 // These state extensions are part of the server contract but are not rendered
 // directly by the stage store. Keep them explicitly; never round-trip unknown
 // top-level keys from persisted state.
-const sceneStateExtensionKeys = ['resources', 'ccfolia'] as const
+const sceneStateExtensionKeys = ['resources', 'ccfolia', 'theaterSequences'] as const
 const sceneStateExtensionsFromRaw = (raw: JsonObject): JsonObject => Object.fromEntries(
   sceneStateExtensionKeys.flatMap((key) => (
     Object.prototype.hasOwnProperty.call(raw, key) ? [[key, clone(raw[key])]] : []
@@ -249,6 +249,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
   return {
     background: imageRef(raw.background),
     foreground: imageRef(raw.foreground),
+    surfaceEmbeds: normalizeStageSurfaceEmbeds(raw.surfaceEmbeds),
     surfaceStyles: {
       background: normalizeStageSurfaceStyle(surfaceStyles.background, legacyFit, { opacity: 0.9, blurPx: 10 }),
       foreground: normalizeStageSurfaceStyle(surfaceStyles.foreground, legacyFit),
@@ -274,6 +275,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
   ...sceneStateExtensionsFromRaw(asObject(state.serverState)),
   background: state.background,
   foreground: state.foreground,
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(state.surfaceEmbeds),
   surfaceStyles: clone(state.surfaceStyles),
   fieldWidth: state.fieldWidth,
   fieldHeight: state.fieldHeight,
@@ -786,7 +788,7 @@ export class TheaterSyncClient {
 
   private readonly onGatewayEvent = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const revision = finite(theater.revision, 0)
     if (revision <= this.revision) return
     if (this.saving) {
@@ -803,7 +805,7 @@ export class TheaterSyncClient {
 
   private readonly onPreloadRequested = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const payload = asObject(theater.payload)
     const sceneIds = Array.isArray(payload.sceneIds)
       ? [...new Set(payload.sceneIds.filter((sceneId): sceneId is string => typeof sceneId === 'string' && Boolean(sceneId.trim())).map((sceneId) => sceneId.trim()))]
@@ -814,7 +816,7 @@ export class TheaterSyncClient {
 
   private readonly onPointerTrace = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const payload = asObject(theater.payload)
     const traceId = typeof payload.traceId === 'string' ? payload.traceId.trim() : ''
     const displayName = typeof payload.displayName === 'string' ? payload.displayName.trim() : ''
@@ -828,7 +830,7 @@ export class TheaterSyncClient {
 
   private readonly onEffectTriggered = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const payload = asObject(theater.payload)
     const effectId = typeof payload.effectId === 'string' ? payload.effectId.trim() : ''
     const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
@@ -843,7 +845,7 @@ export class TheaterSyncClient {
 
   private readonly onSceneAudioTriggered = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const payload = asObject(theater.payload)
     const assetId = typeof payload.assetId === 'string' ? payload.assetId.trim() : ''
     const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
@@ -890,7 +892,7 @@ export class TheaterSyncClient {
 
   private readonly onVisibilityTriggered = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== (this.options.scopeType === 'world' ? '' : this.options.channelId)) return
     const payload = asObject(theater.payload)
     const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
     const changes = Array.isArray(payload.changes)
@@ -917,6 +919,32 @@ export class TheaterSyncClient {
 
   setInputChannelId(channelId: string) {
     this.inputChannelId = channelId.trim()
+  }
+
+  getRendererState() {
+    return {
+      revision: this.revision,
+      sceneId: this.options.store.state.activeSceneId,
+      dirty: !this.hasLoaded || this.saving || this.applyingRemote
+        || diffDocuments(this.baseDocument, documentFromWorkspace(this.options.store.getSnapshot())).length > 0,
+    }
+  }
+
+  // Collaboration never flushes an editor draft on behalf of an MCP request.
+  async ensureRendererRevision(revision: number, sceneId: string) {
+    if (!this.started || this.getRendererState().dirty) throw new Error('renderer_uncommitted_edits')
+    if (this.revision < revision) await this.reload()
+    const state = this.getRendererState()
+    if (state.dirty || state.revision !== revision || state.sceneId !== sceneId) throw new Error('renderer_revision_mismatch')
+    return state
+  }
+
+  async acceptRendererActionRevision(revision: number) {
+    if (!this.started || this.getRendererState().dirty) throw new Error('renderer_uncommitted_edits')
+    await this.reload()
+    const state = this.getRendererState()
+    if (state.dirty || state.revision !== revision) throw new Error('renderer_revision_mismatch')
+    return state
   }
 
   async start() {
@@ -1191,6 +1219,7 @@ export class TheaterSyncClient {
       actionRequestId: mutationId('action'),
       objectId: payload.objectId,
       actionId: payload.actionId,
+      ...(payload.embedEvent ? { embedEvent: payload.embedEvent } : {}),
       ...(payload.stepId ? { stepId: payload.stepId } : {}),
       ...(entryId ? { entryId } : {}),
       inputChannelId: this.inputChannelId || this.options.channelId,
@@ -1210,6 +1239,7 @@ export class TheaterSyncClient {
       actionRequestId: mutationId('action-batch'),
       objectId: first.objectId,
       actionIds: payloads.map((payload) => payload.actionId),
+      ...(first.embedEvent ? { embedEvent: first.embedEvent } : {}),
       expectedRevision: this.revision,
     })
   }

@@ -1,4 +1,5 @@
 <script setup lang="tsx">
+import { useSpeechStore } from '@/features/tts/store'
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useCharacterCardStore } from '@/stores/characterCard';
@@ -8,7 +9,7 @@ import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownGroupOption, DropdownDividerOption, DropdownRenderOption, DropdownProps } from 'naive-ui';
 import { NDropdown, NButton, NIcon, NTooltip } from 'naive-ui';
-import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit } from '@vicons/tabler';
+import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit, Volume, Volume3 as VolumeOff } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 import { useI18n } from 'vue-i18n';
 
@@ -16,6 +17,9 @@ type DropdownMixedOption = DropdownOption | DropdownGroupOption | DropdownDivide
 type DropdownRenderLabelFn = NonNullable<DropdownProps['renderLabel']>;
 type IdentityDropdownOption = DropdownOption & {
   rawLabel?: string;
+  props?: DropdownOption['props'] & {
+    'data-identity-id'?: string;
+  };
 };
 
 const props = withDefaults(defineProps<{
@@ -60,8 +64,33 @@ const chat = useChatStore();
 const user = useUserStore();
 const display = useDisplayStore();
 const cardStore = useCharacterCardStore();
+const speech = useSpeechStore();
 
 const resolvedChannelId = computed(() => props.channelId || chat.curChannel?.id || '');
+
+// Per-tab, per-channel temporary override of automatic synthesis for messages this user sends.
+const ttsUnavailableReason = computed(() => {
+  if (!speech.quota?.enabled) return '平台未启用语音合成';
+  if (!speech.quota.autoSynthesis) return '请先在语音朗读中开启自动合成';
+  return '';
+});
+const ttsAvailable = computed(() => !!resolvedChannelId.value && !ttsUnavailableReason.value);
+const ttsEnabled = computed(() => {
+  const id = resolvedChannelId.value;
+  return !!id
+    && !!speech.quota?.enabled
+    && !!speech.quota.autoSynthesis
+    && speech.temporary[id] !== false;
+});
+const ttsActionTitle = computed(() => (
+  ttsUnavailableReason.value || (ttsEnabled.value ? '关闭语音合成' : '开启语音合成')
+));
+const toggleTemporarySpeech = () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || !ttsAvailable.value) return false;
+  speech.setTemporary(channelId, speech.temporary[channelId] === false);
+  return true;
+};
 
 const identities = computed(() => {
   const id = resolvedChannelId.value;
@@ -309,6 +338,13 @@ const renderActionIconByKey = (key: string) => {
       </NIcon>
     );
   }
+  if (key === '__tts_toggle') {
+    return (
+      <NIcon size={18}>
+        {ttsEnabled.value ? <Volume /> : <VolumeOff />}
+      </NIcon>
+    );
+  }
   return (
     <NIcon size={18}>
       <Settings />
@@ -352,6 +388,18 @@ const renderMobileActionRow = () => (
         </button>
       </>
     ) : null}
+    {speech.quota?.enabled ? <button
+      type="button"
+      class={['identity-action-bar-inline__btn', 'identity-action--tts', ttsEnabled.value ? '' : 'is-disabled-state']}
+      title={ttsActionTitle.value}
+      aria-label={ttsActionTitle.value}
+      aria-pressed={ttsEnabled.value}
+      aria-disabled={!ttsAvailable.value}
+      onMousedown={consumeDropdownActionPointer}
+      onClick={handleMobileTtsAction}
+    >
+      {renderActionIconByKey('__tts_toggle')}
+    </button> : null}
   </div>
 );
 
@@ -360,6 +408,9 @@ const options = computed<DropdownMixedOption[]>(() => {
     key: item.id,
     label: item.displayName,
     rawLabel: item.displayName,
+    props: {
+      'data-identity-id': item.id,
+    },
     icon: () => (
       <AvatarVue
         size={24}
@@ -416,6 +467,16 @@ const options = computed<DropdownMixedOption[]>(() => {
       },
     );
   }
+  if (speech.quota?.enabled) result.push({
+    key: '__tts_toggle',
+    label: '语音合成',
+    disabled: !ttsAvailable.value,
+    class: 'identity-option identity-option--action identity-action identity-action--tts',
+    props: {
+      class: ['identity-action--tts', ttsEnabled.value ? '' : 'is-disabled-state'],
+    },
+    icon: () => renderActionIconByKey('__tts_toggle'),
+  });
   return result;
 });
 
@@ -453,16 +514,21 @@ const handleMobileManageAction = (event: MouseEvent) => {
   dropdownVisible.value = false;
   emit('manage');
 };
+const handleMobileTtsAction = (event: MouseEvent) => {
+  consumeDropdownActionPointer(event);
+  toggleTemporarySpeech();
+};
 
 const renderLabel: DropdownRenderLabelFn = (option) => {
-  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle') {
+  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle' || option.key === '__tts_toggle') {
     const label = String(option.label || '');
     const hint = String((option as any).hint || '');
+    const title = option.key === '__tts_toggle' ? ttsActionTitle.value : label;
     return (
       <div
         class="identity-action-option identity-option-node identity-option-node--action"
-        title={label}
-        aria-label={label}
+        title={title}
+        aria-label={title}
       >
         <span class="identity-action-option__body">
           <span class="identity-action-option__text">{label}</span>
@@ -509,6 +575,12 @@ const handleSelect = async (key: string | number) => {
   }
   if (key === '__toggle') {
     applyToggleFilterMode(true);
+    return;
+  }
+  if (key === '__tts_toggle') {
+    if (toggleTemporarySpeech()) {
+      keepDropdownOpenAfterToggle.value = true;
+    }
     return;
   }
   if (key === '__mobile_actions') {
@@ -664,6 +736,17 @@ const getDropdownMenuElement = (): HTMLElement | null => {
   return matches[matches.length - 1] ?? null;
 };
 
+const ensureActiveIdentityOptionVisible = () => {
+  const activeId = displayIdentityId.value;
+  if (!dropdownVisible.value || !activeId) {
+    return;
+  }
+  const menuEl = getDropdownMenuElement();
+  const activeOption = Array.from(menuEl?.querySelectorAll<HTMLElement>('[data-identity-id]') || [])
+    .find(option => option.dataset.identityId === activeId);
+  activeOption?.scrollIntoView({ block: 'nearest' });
+};
+
 const ensureDropdownMenuHooks = (menuEl: HTMLElement) => {
   menuEl.classList.add('identity-dropdown-menu');
   menuEl.classList.toggle('identity-dropdown-menu--night', isNightPalette.value);
@@ -686,7 +769,7 @@ const applyDropdownMenuLayout = (): boolean => {
   const rowHeight = optionEls[0]?.offsetHeight || 36;
   const dividerHeight = menuEl.querySelector<HTMLElement>('.n-dropdown-divider')?.offsetHeight || 8;
   const visibleRoleCount = Math.min(identityOptionCount.value, MAX_VISIBLE_ROLE_COUNT);
-  const actionCount = isMobile.value ? 1 : (1 + (canManageIdentities.value ? 2 : 0)); // mobile action bar or desktop actions
+  const actionCount = isMobile.value ? 1 : (1 + (speech.quota?.enabled ? 1 : 0) + (canManageIdentities.value ? 2 : 0)); // mobile action bar, or desktop toggle (+ TTS/create/manage)
   const menuPadding = 8;
   const desiredHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
   const viewportHeight = Math.max(
@@ -715,6 +798,9 @@ const syncDropdownMenuLayout = (attempt = 0) => {
   void nextTick(() => {
     window.requestAnimationFrame(() => {
       const applied = applyDropdownMenuLayout();
+      if (applied) {
+        ensureActiveIdentityOptionVisible();
+      }
       if (!applied && attempt < 8) {
         window.setTimeout(() => {
           syncDropdownMenuLayout(attempt + 1);
@@ -737,6 +823,25 @@ const handleDropdownShowUpdate = (show: boolean) => {
     syncDropdownMenuLayout();
   }
 };
+
+// 供父组件在快捷选择模式中控制原有角色菜单
+const openDropdown = () => {
+  if (!resolvedChannelId.value || props.disabled) {
+    return;
+  }
+  const activeId = displayIdentityId.value;
+  if (activeId && !filteredIdentities.value.some(identity => identity.id === activeId)) {
+    filterMode.value = 'all';
+  }
+  handleDropdownShowUpdate(true);
+};
+
+const closeDropdown = () => {
+  keepDropdownOpenAfterToggle.value = false;
+  dropdownVisible.value = false;
+};
+
+defineExpose({ openDropdown, closeDropdown });
 
 const handleViewportResize = () => {
   updateIsMobile();
@@ -806,6 +911,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
     <n-dropdown
       trigger="click"
       :options="options"
+      :value="displayIdentityId"
       :show="dropdownVisible"
       :show-arrow="false"
       placement="top-start"
@@ -820,7 +926,8 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         tertiary
         size="small"
         class="identity-switcher"
-        :class="{ 'identity-switcher--compact': isCompactButton }"
+        :class="{ 'identity-switcher--compact': isCompactButton, 'identity-switcher--accented': !!displayColor }"
+        :style="displayColor ? { '--identity-switcher-accent': displayColor } : undefined"
         :disabled="!resolvedChannelId || disabled"
         :title="displayName"
       >
@@ -872,7 +979,15 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.9));
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   color: var(--sc-text-primary, #374151);
-  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 当前角色色：按钮微抬，并在与输入框相接的底边显示一条细色线 */
+.identity-switcher--accented {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--identity-switcher-accent) 72%, transparent),
+    0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .identity-switcher--compact {
@@ -920,6 +1035,11 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   font-weight: 600;
 }
 
+/* 当前角色直接复用 Naive Dropdown 的 hover 高光变量。 */
+:global(.identity-dropdown-menu .n-dropdown-option-body--active::before) {
+  background-color: var(--n-option-color-hover);
+}
+
 .identity-option__label {
   display: inline-flex;
   align-items: center;
@@ -961,10 +1081,6 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   border-radius: 8px;
 }
 
-.identity-option-node--active {
-  background: rgba(59, 130, 246, 0.08);
-}
-
 .identity-option-node--action {
   font-weight: 500;
 }
@@ -1002,6 +1118,22 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 :global(.identity-action-bar-inline__btn:active) {
   transform: scale(0.96);
+}
+
+/* TTS toggle: user-off state is only dimmed; it is not Naive UI's disabled state. */
+:global(.identity-action--tts.is-disabled-state .n-dropdown-option-body__prefix),
+:global(.identity-action--tts.is-disabled-state .n-dropdown-option-body__label) {
+  color: var(--sc-text-secondary, #64748b);
+  opacity: 0.55;
+}
+
+:global(.identity-action-bar-inline__btn.identity-action--tts.is-disabled-state) {
+  opacity: 0.55;
+}
+
+:global(.identity-action-bar-inline__btn.identity-action--tts[aria-disabled='true']) {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .identity-action-option {
@@ -1052,10 +1184,13 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   color: rgba(248, 250, 252, 0.95);
 }
 
-:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option:hover),
-:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option.n-dropdown-option--active) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option:hover) {
   background-color: rgba(59, 130, 246, 0.25);
   color: #fff;
+}
+
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option-body--active::before) {
+  background-color: rgba(59, 130, 246, 0.25);
 }
 
 :global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-divider) {

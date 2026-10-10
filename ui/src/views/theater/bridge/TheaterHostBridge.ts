@@ -1,7 +1,8 @@
 import type { TheaterStageStore } from '../stage/StageStore'
-import { isStageActionTarget, normalizeStageActionSchedule } from '../shared/stage-types'
+import { canStageObjectRunSavedAction, isStageActionTarget, normalizeStageActionSchedule, resolveStageEmbedEventActions } from '../shared/stage-types'
 import { sequenceStepAction } from '../shared/stage-actions'
 import { runStageActionSequence, STAGE_ACTION_CANCELLED } from '../stage/theater-action-sequence-runtime'
+import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
@@ -9,6 +10,7 @@ import {
   THEATER_STAGE_CAPABILITIES,
   createTheaterBridgeMessage,
   isNewerCharacterSnapshot,
+  stageActionSchema,
   type ApplyScenePayload,
   type AudioPlaybackSnapshotApplyPayload,
   type AudioPlaybackSnapshotApplyResult,
@@ -32,6 +34,7 @@ import {
   type SelectCharacterVariantPayload,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageSequenceTriggeredPayload,
   type TheaterBridgeContext,
   type TheaterDialogueMessagePayload,
   type TheaterDialogueMessageRemovedPayload,
@@ -116,6 +119,8 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
       return right.type === 'effect.play' && left.payload.effectId === right.payload.effectId
     case 'object.toggle':
       return right.type === 'object.toggle' && left.payload.objectId === right.payload.objectId
+    case 'object.trigger':
+      return right.type === 'object.trigger' && left.payload.objectId === right.payload.objectId
     case 'clue.execute':
       // Clue action payloads are redacted for ordinary members.
       return right.type === 'clue.execute'
@@ -142,6 +147,7 @@ export const mergeTheaterBridgePermissions = (
 export class TheaterHostBridge {
   private static readonly CHAT_QUEUE_LIMIT = 32
   private static readonly CHAT_QUEUE_TTL_MS = 6_000
+  private static readonly OBJECT_TRIGGER_MAX_DEPTH = 16
   private readonly chatTransport: PostMessageTransport
   private readonly hostStageTransport: MemoryTransport
   private readonly stageTransport: MemoryTransport
@@ -289,6 +295,15 @@ export class TheaterHostBridge {
     }
   }
 
+  triggerStageSequence(payload: StageSequenceTriggeredPayload) {
+    if (!this.started) return
+    try {
+      this.stageClient.emit('host', 'stage.sequence.triggered', payload)
+    } catch (error) {
+      this.debug('invalid stage sequence rejected', error)
+    }
+  }
+
   async sendChatMessage(payload: ChatMessageSendPayload) {
     if (!this.started) {
       throw new TheaterBridgeRequestError('BRIDGE_NOT_READY', 'Theater bridge is not ready')
@@ -308,6 +323,12 @@ export class TheaterHostBridge {
       'chat.audio.playback.snapshot.read',
       {},
     )
+  }
+
+  // Only a server-authorized local chat.insert descriptor enters this path.
+  insertRendererChat(payload: ChatComposerInsertPayload) {
+    this.assertChatBridgeEnabled()
+    return this.stageClient.request<ChatComposerInsertPayload, ChatComposerInsertResult>('chat', 'chat.composer.insert', payload)
   }
 
   applyChatAudioPlaybackSnapshot(payload: AudioPlaybackSnapshotApplyPayload) {
@@ -484,6 +505,8 @@ export class TheaterHostBridge {
     if (message.target === 'host') {
       if (message.kind === 'event' && message.name === 'stage.action.triggered') {
         void this.handleStageActionTriggered(message.payload as StageActionTriggeredPayload)
+      } else if (message.kind === 'event' && message.name === 'stage.sequence.triggered') {
+        void this.executeTheaterSequence(message.payload as StageSequenceTriggeredPayload)
       }
       return
     }
@@ -557,7 +580,10 @@ export class TheaterHostBridge {
     }
   }
 
-  private async executeParallelStageActions(payloads: readonly StageActionTriggeredPayload[]) {
+  private async executeParallelStageActions(
+    payloads: readonly StageActionTriggeredPayload[],
+    execute: (payload: StageActionTriggeredPayload) => Promise<void | typeof STAGE_ACTION_CANCELLED> = (payload) => this.executeStageActionTriggered(payload),
+  ) {
     const ordered = [...payloads].sort((left, right) => (left.execution?.index || 0) - (right.execution?.index || 0))
     if (
       ordered.length > 1
@@ -571,7 +597,8 @@ export class TheaterHostBridge {
       }
       return
     }
-    await Promise.all(ordered.map((payload) => this.executeStageActionTriggered(payload)))
+    const results = await Promise.all(ordered.map(execute))
+    if (results.some((result) => result === STAGE_ACTION_CANCELLED)) return STAGE_ACTION_CANCELLED
   }
 
   private async executeSequentialStageAction(
@@ -600,13 +627,26 @@ export class TheaterHostBridge {
   }
 
   private async executeStageActionTriggered(payload: StageActionTriggeredPayload) {
+    return this.executeValidatedSavedObjectAction(payload)
+  }
+
+  private async executeValidatedSavedObjectAction(
+    payload: StageActionTriggeredPayload,
+    objectTriggerChain: ReadonlySet<string> = new Set(),
+  ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
     if (!this.options.permissions.includes('stage.action.trigger')) {
       this.debug('stage action permission denied', payload.actionId)
       return
     }
     const object = this.options.stageStore.activeObjects.value[payload.objectId]
-    if (!object || !object.interactive || !isStageActionTarget(object.type)) {
+    // Click targets run any saved action; an iframe only runs actions bound to
+    // its embed events. object.trigger below keeps the click-target rule.
+    if (!object || !object.interactive || !canStageObjectRunSavedAction(object, payload.actionId)) {
       this.debug('stage action object rejected', payload.objectId)
+      return
+    }
+    if (object.type === 'iframe' && (!payload.embedEvent || !resolveStageEmbedEventActions(object, payload.embedEvent.topic).some(action => action.id === payload.actionId))) {
+      this.debug('stage embed event context rejected', payload.actionId)
       return
     }
     const action = object.actions.find((item) => item.id === payload.actionId)
@@ -615,59 +655,164 @@ export class TheaterHostBridge {
       return
     }
     try {
-      if (action.type === 'action.sequence') {
-        await this.executeStageActionSequence(payload.objectId, action)
-        return
-      }
-      if (this.options.triggerStageAction) {
-        const handled = await this.options.triggerStageAction(payload)
-        if (handled === STAGE_ACTION_CANCELLED) return
-        if (handled === true) return
-        if (handled) {
-          await this.executeStageAction(handled)
-          return
-        }
-      }
-      await this.executeStageAction(action)
+      return await this.executeSavedObjectAction({ ...payload, action }, objectTriggerChain)
     } catch (error) {
       this.debug('stage action failed', error)
     }
   }
 
-  private async executeStageActionSequence(objectId: string, action: Extract<StageAction, { type: 'action.sequence' }>) {
+  private async executeSavedObjectAction(
+    payload: StageActionTriggeredPayload,
+    objectTriggerChain: ReadonlySet<string> = new Set(),
+  ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
+    const action = payload.action
+    if (action.type === 'action.sequence') {
+      return this.executeStageActionSequence(payload.objectId, action, objectTriggerChain, payload.embedEvent)
+    }
+    // object.trigger stays host-local; only the target's saved actions use the callback.
+    if ((action.type !== 'object.trigger' || payload.embedEvent) && this.options.triggerStageAction) {
+      const handled = await this.options.triggerStageAction(payload)
+      if (handled === STAGE_ACTION_CANCELLED) return STAGE_ACTION_CANCELLED
+      if (handled === true) return
+      if (handled) return this.executeStageAction(handled, objectTriggerChain)
+    }
+    // Embed event actions must complete the server receipt check before any
+    // host-local execution, including object.trigger and local descriptors.
+    if (payload.embedEvent) return
+    return this.executeStageAction(action, objectTriggerChain)
+  }
+
+  private async executeObjectTriggerAction(
+    objectId: string,
+    objectTriggerChain: ReadonlySet<string>,
+  ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
+    if (!this.options.permissions.includes('stage.action.trigger')) {
+      throw new TheaterBridgeRequestError('PERMISSION_DENIED', 'Missing permission: stage.action.trigger')
+    }
+    if (objectTriggerChain.has(objectId) || objectTriggerChain.size >= TheaterHostBridge.OBJECT_TRIGGER_MAX_DEPTH) {
+      this.debug('object trigger recursion cancelled', objectId)
+      return STAGE_ACTION_CANCELLED
+    }
+    const object = this.options.stageStore.activeObjects.value[objectId]
+    if (!object) throw new TheaterBridgeRequestError('OBJECT_NOT_FOUND', `Object not found: ${objectId}`)
+    if (!object.visible || !object.interactive || !isStageActionTarget(object.type)) {
+      this.debug('object trigger target rejected', objectId)
+      return STAGE_ACTION_CANCELLED
+    }
+    // Copy the ancestry per invocation so parallel siblings never lock one another.
+    const chain = new Set(objectTriggerChain).add(objectId)
+    const actions = object.actions.flatMap((action) => {
+      const parsed = stageActionSchema.safeParse(action)
+      return parsed.success ? [parsed.data] : []
+    })
+    const payloads = actions.map((action) => ({ objectId, actionId: action.id, action }))
+    if (object.metadata.actionExecutionMode !== 'sequential') {
+      return this.executeParallelStageActions(payloads, (payload) => this.executeValidatedSavedObjectAction(payload, chain))
+    }
+    const generation = this.sequenceGeneration
+    for (const [index, payload] of payloads.entries()) {
+      if (!this.started || generation !== this.sequenceGeneration) return STAGE_ACTION_CANCELLED
+      const result = await this.executeValidatedSavedObjectAction(payload, chain)
+      if (result === STAGE_ACTION_CANCELLED) return result
+      if (index < payloads.length - 1) {
+        await this.waitForActionSchedule(normalizeStageActionSchedule(payload.action.schedule).delayMs, generation)
+      }
+    }
+  }
+
+  private async executeStageActionSequence(
+    objectId: string,
+    action: Extract<StageAction, { type: 'action.sequence' }>,
+    objectTriggerChain: ReadonlySet<string> = new Set(),
+    embedEvent?: StageActionTriggeredPayload['embedEvent'],
+  ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
     const key = `${objectId}:${action.id}`
     if (this.runningSequenceActions.has(key)) return
     const generation = this.sequenceGeneration
     this.runningSequenceActions.add(key)
     try {
-      await runStageActionSequence(action.payload.steps, async (step) => {
+      return await runStageActionSequence(action.payload.steps, async (step) => {
         if (!this.started || generation !== this.sequenceGeneration) {
           throw new TheaterBridgeRequestError('CANCELLED', 'Stage action sequence cancelled')
         }
-        const atomicAction = sequenceStepAction(step)
-        if (this.options.triggerStageAction) {
-          const handled = await this.options.triggerStageAction({
-            objectId,
-            actionId: action.id,
-            stepId: step.id,
-            action: atomicAction,
-          })
-          if (handled === STAGE_ACTION_CANCELLED) return STAGE_ACTION_CANCELLED
-          if (handled === true) return
-          if (handled) {
-            await this.executeStageAction(handled)
-            return
-          }
-        }
-        await this.executeStageAction(atomicAction)
+        return this.executeSavedObjectAction({
+          objectId,
+          actionId: action.id,
+          stepId: step.id,
+          ...(embedEvent ? { embedEvent } : {}),
+          action: sequenceStepAction(step),
+        }, objectTriggerChain)
       })
     } finally {
       this.runningSequenceActions.delete(key)
     }
   }
 
-  private async executeStageAction(action: StageAction) {
+  private async executeTheaterSequence(payload: StageSequenceTriggeredPayload) {
+    if (!this.options.permissions.includes('stage.action.trigger')) {
+      this.debug('stage sequence permission denied', payload.sequenceId)
+      return
+    }
+    // Execute only the saved active-scene configuration, never client-provided steps.
+    const sequence = theaterSequencesFromServerState(this.options.stageStore.state.liveState.serverState)
+      .find((item) => item.id === payload.sequenceId)
+    if (!sequence || !sequence.enabled || !sequence.steps.length) {
+      this.debug('stage sequence rejected', payload.sequenceId)
+      return
+    }
+    const key = `theater-sequence:${sequence.id}`
+    if (this.runningSequenceActions.has(key)) return
+    const generation = this.sequenceGeneration
+    let expectedSceneId = this.options.stageStore.state.activeSceneId
+    this.runningSequenceActions.add(key)
+    try {
+      for (let loopIndex = 0; loopIndex < sequence.loopCount; loopIndex += 1) {
+        if (
+          !this.started || generation !== this.sequenceGeneration
+          || this.options.stageStore.state.activeSceneId !== expectedSceneId
+        ) return
+        const result = await runStageActionSequence(sequence.steps, async (step) => {
+          if (
+            !this.started || generation !== this.sequenceGeneration
+            || this.options.stageStore.state.activeSceneId !== expectedSceneId
+          ) return STAGE_ACTION_CANCELLED
+          if (step.action.type === 'object.trigger' && step.sceneId && step.sceneId !== expectedSceneId) {
+            return STAGE_ACTION_CANCELLED
+          }
+          // Every client evaluates triggers; clients without scene switching rely on scene sync.
+          if (step.action.type === 'scene.apply' && !this.options.permissions.includes('stage.scene.switch')) {
+            expectedSceneId = step.action.payload.sceneId
+            return
+          }
+          const execution = this.executeStageAction({
+            ...sequenceStepAction(step),
+            id: `${payload.executionId}:${loopIndex}:${step.id}`,
+          })
+          if (
+            step.action.type === 'scene.apply'
+            && this.options.stageStore.state.activeSceneId === step.action.payload.sceneId
+          ) {
+            expectedSceneId = step.action.payload.sceneId
+          }
+          return await execution
+        })
+        if (result === STAGE_ACTION_CANCELLED) return
+      }
+    } catch (error) {
+      this.debug('stage sequence failed', error)
+    } finally {
+      this.runningSequenceActions.delete(key)
+    }
+  }
+
+  private async executeStageAction(
+    action: StageAction,
+    objectTriggerChain: ReadonlySet<string> = new Set(),
+  ): Promise<void | typeof STAGE_ACTION_CANCELLED> {
     if (action.type === 'action.sequence') return
+    if (action.type === 'object.trigger') {
+      return this.executeObjectTriggerAction(action.payload.objectId, objectTriggerChain)
+    }
     if (action.type === 'scene.apply') {
       if (!this.options.permissions.includes('stage.scene.switch')) {
         throw new TheaterBridgeRequestError('PERMISSION_DENIED', 'Missing permission: stage.scene.switch')

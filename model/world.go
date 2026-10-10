@@ -65,6 +65,8 @@ type WorldModel struct {
 	DefaultChannelID                      string     `json:"defaultChannelId" gorm:"size:100"`
 	InviteSlug                            string     `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
 	Status                                string     `json:"status" gorm:"size:24;default:active;index"`
+
+	MessageSortBasis utils.MessageSortBasis `json:"messageSortBasis" gorm:"column:message_sort_basis;size:24"`
 }
 
 func (*WorldModel) TableName() string {
@@ -176,6 +178,11 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 	if strings.TrimSpace(m.Status) == "" {
 		m.Status = "active"
 	}
+	if strings.TrimSpace(string(m.MessageSortBasis)) == "" {
+		m.MessageSortBasis = DefaultWorldMessageSortBasis()
+	} else {
+		m.MessageSortBasis = utils.NormalizeMessageSortBasis(m.MessageSortBasis)
+	}
 	if strings.TrimSpace(m.ChannelDefaultDiceMode) == "" {
 		m.ChannelDefaultDiceMode = WorldChannelDefaultDiceModeBuiltin
 	}
@@ -186,6 +193,14 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 		m.AudioLibrarySelectorDepth = 2
 	}
 	return nil
+}
+
+// DefaultWorldMessageSortBasis 保留旧平台配置作为新世界和旧数据的兼容默认值。
+func DefaultWorldMessageSortBasis() utils.MessageSortBasis {
+	if cfg := utils.GetConfig(); cfg != nil {
+		return utils.NormalizeMessageSortBasis(cfg.MessageSortBasis)
+	}
+	return utils.MessageSortBasisTypingStart
 }
 
 // WorldMemberModel 记录用户与世界的关系与角色。
@@ -245,6 +260,12 @@ func BackfillWorldData() error {
 	}
 	if !db.Migrator().HasTable(&WorldModel{}) {
 		return nil
+	}
+	// 只在首次升级时继承平台设置，后续启动不得覆盖世界已保存的值。
+	if err := db.Model(&WorldModel{}).
+		Where("message_sort_basis = '' OR message_sort_basis IS NULL").
+		Update("message_sort_basis", DefaultWorldMessageSortBasis()).Error; err != nil {
+		return err
 	}
 
 	var world WorldModel

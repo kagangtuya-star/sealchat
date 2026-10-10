@@ -1,5 +1,5 @@
 import { toRaw } from 'vue'
-import type { StageAction, StageObject, StageObjectScope } from '../shared/stage-types'
+import { setStageObjectEmbedEventBindings, stageObjectEmbedEventBindings, type StageAction, type StageObject, type StageObjectScope } from '../shared/stage-types'
 
 export interface StageClipboardBundle {
   version: 2
@@ -87,7 +87,7 @@ export const cloneStageActionsForCopy = (
   if (copiedAction.type === 'scene.apply' && sceneIdMap.has(copiedAction.payload.sceneId)) {
     copiedAction.payload.sceneId = sceneIdMap.get(copiedAction.payload.sceneId)!
   }
-  if (copiedAction.type === 'object.toggle' && objectIdMap.has(copiedAction.payload.objectId)) {
+  if ((copiedAction.type === 'object.toggle' || copiedAction.type === 'object.trigger') && objectIdMap.has(copiedAction.payload.objectId)) {
     copiedAction.payload.objectId = objectIdMap.get(copiedAction.payload.objectId)!
   }
   if (copiedAction.type === 'effect.play' && objectIdMap.has(copiedAction.payload.effectId)) {
@@ -99,7 +99,7 @@ export const cloneStageActionsForCopy = (
       if (step.action.type === 'scene.apply' && sceneIdMap.has(step.action.payload.sceneId)) {
         step.action.payload.sceneId = sceneIdMap.get(step.action.payload.sceneId)!
       }
-      if (step.action.type === 'object.toggle' && objectIdMap.has(step.action.payload.objectId)) {
+      if ((step.action.type === 'object.toggle' || step.action.type === 'object.trigger') && objectIdMap.has(step.action.payload.objectId)) {
         step.action.payload.objectId = objectIdMap.get(step.action.payload.objectId)!
       }
       if (step.action.type === 'effect.play' && objectIdMap.has(step.action.payload.effectId)) {
@@ -109,6 +109,25 @@ export const cloneStageActionsForCopy = (
   }
   return copiedAction
 })
+
+// Copies keep embed event bindings attached to the copied actions' new IDs.
+export const copyStageObjectActions = (
+  object: StageObject,
+  makeId: (prefix: string) => string,
+  objectIdMap: ReadonlyMap<string, string>,
+  sceneIdMap: ReadonlyMap<string, string> = new Map(),
+) => {
+  const bindings = stageObjectEmbedEventBindings(object)
+  const copied = cloneStageActionsForCopy(object.actions, makeId, objectIdMap, sceneIdMap)
+  const actionIdMap = new Map(object.actions.map((action, index) => [action.id, copied[index].id]))
+  object.actions = copied
+  if (object.metadata?.embedEventBindings !== undefined) {
+    setStageObjectEmbedEventBindings(object, bindings.map(binding => ({
+      topic: binding.topic,
+      actionIds: binding.actionIds.map(id => actionIdMap.get(id) || id),
+    })))
+  }
+}
 
 const diffRecord = (
   target: StageObjectPatch['target'],
@@ -245,7 +264,7 @@ export const instantiateClipboardBundle = (
     object.parentId = rootIds.has(source.id)
       ? rootParentIds.get(source.id) || null
       : source.parentId ? idMap.get(source.parentId) || null : null
-    object.actions = cloneStageActionsForCopy(object.actions, makeId, idMap)
+    copyStageObjectActions(object, makeId, idMap)
     if (rootIds.has(source.id)) {
       object.name = `${object.name} 副本`
       object.transform.x += offset

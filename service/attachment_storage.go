@@ -104,11 +104,25 @@ func persistAttachmentFileForceNew(upload func(context.Context, storage.UploadIn
 }
 
 func ResolveLocalAttachmentPath(objectKey string) (string, error) {
+	if strings.HasPrefix(objectKey, "tts-private/") {
+		return "", errors.New("受保护的语音资源")
+	}
 	manager := GetStorageManager()
 	if manager == nil {
 		return "", errors.New("存储服务未初始化")
 	}
 	return manager.ResolveLocalPath(objectKey)
+}
+
+// OpenAttachmentRead returns stored bytes; callers must enforce attachment access.
+func OpenAttachmentRead(ctx context.Context, att *model.AttachmentModel) (io.ReadCloser, error) {
+	if att == nil || strings.TrimSpace(att.ObjectKey) == "" {
+		return nil, errors.New("附件文件不存在")
+	}
+	if att.IsTTSManaged() {
+		return nil, errors.New("受保护的语音资源")
+	}
+	return GetStorageManager().OpenRead(ctx, convertModelToBackend(att.StorageType), att.ObjectKey)
 }
 
 func attachmentHistoricalUploadRoots() []string {
@@ -220,6 +234,9 @@ func tryReuseAttachment(hash []byte, size int64, targetBackend storage.BackendTy
 }
 
 func MaterializeAttachmentToTempFile(att *model.AttachmentModel) (string, error) {
+	if att.IsTTSManaged() {
+		return "", errors.New("受保护的语音资源")
+	}
 	if att == nil {
 		return "", errors.New("附件不存在")
 	}
@@ -335,6 +352,9 @@ func convertModelToBackend(storageType model.StorageType) storage.BackendType {
 }
 
 func AttachmentPublicURL(att *model.AttachmentModel) string {
+	if att.IsTTSManaged() {
+		return ""
+	}
 	if att == nil {
 		return ""
 	}
@@ -354,6 +374,9 @@ func AttachmentPublicURL(att *model.AttachmentModel) string {
 
 // AttachmentReadURL returns a browser-readable CDN or signed URL.
 func AttachmentReadURL(ctx context.Context, att *model.AttachmentModel) string {
+	if att.IsTTSManaged() {
+		return ""
+	}
 	if att == nil {
 		return ""
 	}
@@ -368,6 +391,9 @@ func AttachmentReadURL(ctx context.Context, att *model.AttachmentModel) string {
 }
 
 func AttachmentExportURL(att *model.AttachmentModel) string {
+	if att.IsTTSManaged() {
+		return ""
+	}
 	if att == nil {
 		return ""
 	}

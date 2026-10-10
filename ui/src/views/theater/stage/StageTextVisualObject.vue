@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
-import { WORLD_UNIT_PX, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
+import { WORLD_UNIT_PX, type StageEmbedEventPublished, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop } from './stage-layer-order'
 import StageIframeVisualObject from './StageIframeVisualObject.vue'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
@@ -14,7 +14,11 @@ const props = defineProps<{
   entrancePlaybacks: Record<string, StageEntrancePlayback>
   hiddenObjectIds: Set<string>
   characterSnapshot: ChatCharactersSnapshotPayload
+  worldId?: string
+  channelId?: string
+  scopeType?: 'world' | 'channel'
 }>()
+const emit = defineEmits<{ embedEventPublished: [event: StageEmbedEventPublished] }>()
 
 const contentRef = ref<HTMLElement | null>(null)
 const plainTextFontSize = ref(28)
@@ -133,16 +137,24 @@ onBeforeUnmount(() => {
     <StageIframeVisualObject
       v-else-if="props.object.type === 'iframe'"
       :object="props.object"
+      :world-id="props.worldId"
+      :channel-id="props.channelId"
+      :scope-type="props.scopeType"
       :character-snapshot="props.characterSnapshot"
+      @embed-event-published="emit('embedEventPublished', $event)"
     />
     <StageTextVisualObject
       v-for="child in children"
       :key="`${child.id}:${props.entrancePlaybacks[child.id]?.token || 0}`"
       :object="child"
+      :world-id="props.worldId"
+      :channel-id="props.channelId"
+      :scope-type="props.scopeType"
       :objects="props.objects"
       :entrance-playbacks="props.entrancePlaybacks"
       :hidden-object-ids="props.hiddenObjectIds"
       :character-snapshot="props.characterSnapshot"
+      @embed-event-published="emit('embedEventPublished', $event)"
     />
   </div>
 </template>

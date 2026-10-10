@@ -798,6 +798,21 @@ func loadUpdateJobInfo() *UpdateJobInfo {
 	if err != nil || state == nil {
 		return nil
 	}
+	if updateJobProtectsStage(state.Status) && !updateRunIsActive() {
+		current := strings.TrimSpace(utils.BuildVersion)
+		if state.Status == "restarting" && current != "" && current == strings.TrimSpace(state.TargetVersion) {
+			state.Status = "succeeded"
+			state.Progress = 100
+			state.Message = "更新完成"
+			state.Error = ""
+		} else {
+			state.Status = "failed"
+			state.Message = "更新任务已因服务重启中断，请重新检查更新状态后重试"
+			state.Error = "更新任务已中断"
+		}
+		state.FinishedAt = time.Now().UnixMilli()
+		_ = model.UpdateJobStateUpsert(state)
+	}
 	return jobInfoFromModel(state)
 }
 

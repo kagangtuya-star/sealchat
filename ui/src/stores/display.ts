@@ -39,6 +39,7 @@ export interface SystemThemeBinding {
 export type BotBadgeStyle = 'solidBlue' | 'solidTone' | 'outline' | 'dice'
 export type EditingSelfActionsPlacement = 'left' | 'right'
 export type InterjectSwitchRule = 'invert' | 'preserve' | 'forceOoc' | 'forceIc'
+export type ComposerHintsPosition = 'left' | 'center' | 'right'
 export type { CustomTheme, CustomThemeColors, PlatformTheme, ThemeSelectionMode } from '@/services/theme/themeTypes'
 
 export interface FavoriteHotkey {
@@ -67,6 +68,7 @@ export type ToolbarHotkeyKey =
   | 'wideInput'
   | 'history'
   | 'diceTray'
+  | 'identityWheel'
 
 export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSeconds'
 
@@ -81,6 +83,7 @@ export interface DisplaySettings {
   showAvatar: boolean
   avatarVisibilityScope: AvatarVisibilityScope
   preferStaticAvatarDecoration: boolean
+  backgroundMessageToneEnabled: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
@@ -111,6 +114,7 @@ export interface DisplaySettings {
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
   autoCorrectPunctuation: boolean
+  inputToolbarImageEditorEnabled: boolean
   mobileMinimalInputEnabled: boolean
   mobileTheaterHideWhileTyping: boolean
   mobileTheaterPipEnabled: boolean
@@ -130,6 +134,12 @@ export interface DisplaySettings {
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
   identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
+  identityQuickBarEnabled: boolean        // 输入框旁快速角色栏，默认关闭
+  identityQuickBarLimit: number           // 快速角色栏最多显示角色数
+  emojiInputHintEnabled: boolean          // 输入内容命中表情备注时在输入框上方提示，默认开启
+  identityVariantInputHintEnabled: boolean // 输入内容命中当前角色差分关键词时提示，默认开启
+  composerHintsPosition: ComposerHintsPosition // 快捷候选横向位置，默认居中
+  composerHintsScalePercent: number       // 快捷候选尺寸百分比
   interjectSwitchRule: InterjectSwitchRule // 插话后第二条消息的模式切换规则
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
@@ -186,6 +196,14 @@ export const MESSAGE_IMAGE_SNAPSHOT_WIDTH_LIMITS = {
   DEFAULT: MESSAGE_IMAGE_SNAPSHOT_WIDTH_DEFAULT,
   MIN: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MIN,
   MAX: MESSAGE_IMAGE_SNAPSHOT_WIDTH_MAX,
+}
+const IDENTITY_QUICK_BAR_LIMIT_DEFAULT = 5
+const IDENTITY_QUICK_BAR_LIMIT_MIN = 2
+const IDENTITY_QUICK_BAR_LIMIT_MAX = 10
+export const IDENTITY_QUICK_BAR_LIMITS = {
+  DEFAULT: IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+  MIN: IDENTITY_QUICK_BAR_LIMIT_MIN,
+  MAX: IDENTITY_QUICK_BAR_LIMIT_MAX,
 }
 const HISTORY_NAVIGATION_OPACITY_DEFAULT = 65
 const HISTORY_NAVIGATION_OPACITY_MIN = 20
@@ -289,6 +307,18 @@ const coerceQuickInputTrigger = (value?: string): string => {
   if (typeof value === 'string' && value.length === 1) return value
   return QUICK_INPUT_TRIGGER_DEFAULT
 }
+const COMPOSER_HINTS_POSITION_DEFAULT: ComposerHintsPosition = 'center'
+const COMPOSER_HINTS_SCALE_DEFAULT = 115
+const COMPOSER_HINTS_SCALE_MIN = 85
+const COMPOSER_HINTS_SCALE_MAX = 150
+export const COMPOSER_HINTS_SCALE_LIMITS = {
+  DEFAULT: COMPOSER_HINTS_SCALE_DEFAULT,
+  MIN: COMPOSER_HINTS_SCALE_MIN,
+  MAX: COMPOSER_HINTS_SCALE_MAX,
+}
+const coerceComposerHintsPosition = (value: unknown): ComposerHintsPosition => (
+  value === 'left' || value === 'right' ? value : COMPOSER_HINTS_POSITION_DEFAULT
+)
 const coerceInterjectSwitchRule = (value: unknown): InterjectSwitchRule => {
   if (value === 'preserve' || value === 'forceOoc' || value === 'forceIc') {
     return value
@@ -408,11 +438,21 @@ const isPlainObject = (value: unknown): value is Record<string, any> =>
 
 const composeHotkeyComboLabel = (key: string, flags: { ctrl?: boolean; meta?: boolean; alt?: boolean; shift?: boolean }) => {
   const parts: string[] = []
-  if (flags.ctrl) parts.push('Ctrl')
-  if (flags.meta) parts.push('Cmd')
-  if (flags.alt) parts.push('Alt')
-  if (flags.shift) parts.push('Shift')
-  parts.push(key.length === 1 ? key.toUpperCase() : key)
+  const modifierOnly = key === 'Control' || key === 'Meta' || key === 'Alt' || key === 'Shift'
+  if (modifierOnly) {
+    if (flags.ctrl) parts.push('Ctrl')
+    if (flags.meta) parts.push('Cmd')
+    if (flags.alt) parts.push('Alt')
+    if (flags.shift) parts.push('Shift')
+    if (!parts.length) parts.push(key === 'Control' ? 'Ctrl' : key === 'Meta' ? 'Cmd' : key)
+    return parts.join('+')
+  }
+  if (flags.ctrl && key !== 'Control') parts.push('Ctrl')
+  if (flags.meta && key !== 'Meta') parts.push('Cmd')
+  if (flags.alt && key !== 'Alt') parts.push('Alt')
+  if (flags.shift && key !== 'Shift') parts.push('Shift')
+  const keyLabel = key === 'Control' ? 'Ctrl' : key === 'Meta' ? 'Cmd' : key
+  parts.push(keyLabel.length === 1 ? keyLabel.toUpperCase() : keyLabel)
   return parts.join('+')
 }
 
@@ -516,6 +556,10 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
     enabled: true,
     hotkey: { combo: 'Ctrl+D', key: 'D', ctrl: true },
   },
+  identityWheel: {
+    enabled: true,
+    hotkey: { combo: 'Shift', key: 'Shift', shift: true },
+  },
 })
 
 
@@ -530,6 +574,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showAvatar: true,
   avatarVisibilityScope: 'all',
   preferStaticAvatarDecoration: false,
+  backgroundMessageToneEnabled: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
@@ -560,6 +605,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
   autoCorrectPunctuation: true,
+  inputToolbarImageEditorEnabled: true,
   mobileMinimalInputEnabled: isMobileBrowserRuntime(),
   mobileTheaterHideWhileTyping: false,
   mobileTheaterPipEnabled: false,
@@ -579,6 +625,12 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordQuickInputTrigger: '/',
   identityQuickSwitchTrigger: '/',
   identityVariantQuickSwitchTrigger: '=',
+  identityQuickBarEnabled: false,
+  identityQuickBarLimit: IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+  emojiInputHintEnabled: true,
+  identityVariantInputHintEnabled: true,
+  composerHintsPosition: COMPOSER_HINTS_POSITION_DEFAULT,
+  composerHintsScalePercent: COMPOSER_HINTS_SCALE_DEFAULT,
   interjectSwitchRule: 'invert',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
@@ -636,9 +688,15 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
     'wideInput',
     'history',
     'diceTray',
+    'identityWheel',
   ]
   keys.forEach((key) => {
-    result[key] = value[key] ? normalizeToolbarHotkeyConfig(value[key]) : defaults[key]
+    const normalized = value[key] ? normalizeToolbarHotkeyConfig(value[key]) : defaults[key]
+    if (key === 'identityWheel' && normalized.hotkey?.key === 'Wheel') {
+      result[key] = defaults[key]
+      return
+    }
+    result[key] = normalized
   })
   return result as Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
 }
@@ -776,6 +834,7 @@ const parseStoredSettingsInternal = (
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarVisibilityScope: normalizeAvatarVisibilityScope((parsed as any)?.avatarVisibilityScope),
       preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
+      backgroundMessageToneEnabled: coerceBoolean((parsed as any)?.backgroundMessageToneEnabled ?? true),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
         AVATAR_SIZE_DEFAULT,
@@ -871,6 +930,7 @@ const parseStoredSettingsInternal = (
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
       autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
+      inputToolbarImageEditorEnabled: coerceBoolean(parsed.inputToolbarImageEditorEnabled ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       mobileTheaterHideWhileTyping: coerceBoolean((parsed as any)?.mobileTheaterHideWhileTyping ?? false),
       mobileTheaterPipEnabled: coerceBoolean((parsed as any)?.mobileTheaterPipEnabled ?? false),
@@ -901,6 +961,22 @@ const parseStoredSettingsInternal = (
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
       identityVariantQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityVariantQuickSwitchTrigger || '='),
+      identityQuickBarEnabled: coerceBoolean((parsed as any)?.identityQuickBarEnabled ?? false),
+      identityQuickBarLimit: coerceNumberInRange(
+        (parsed as any)?.identityQuickBarLimit,
+        IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+        IDENTITY_QUICK_BAR_LIMIT_MIN,
+        IDENTITY_QUICK_BAR_LIMIT_MAX,
+      ),
+      emojiInputHintEnabled: coerceBoolean((parsed as any)?.emojiInputHintEnabled ?? true),
+      identityVariantInputHintEnabled: coerceBoolean((parsed as any)?.identityVariantInputHintEnabled ?? true),
+      composerHintsPosition: coerceComposerHintsPosition((parsed as any)?.composerHintsPosition),
+      composerHintsScalePercent: coerceNumberInRange(
+        (parsed as any)?.composerHintsScalePercent,
+        COMPOSER_HINTS_SCALE_DEFAULT,
+        COMPOSER_HINTS_SCALE_MIN,
+        COMPOSER_HINTS_SCALE_MAX,
+      ),
       interjectSwitchRule: coerceInterjectSwitchRule((parsed as any)?.interjectSwitchRule),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
@@ -1059,6 +1135,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
       ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
       : base.preferStaticAvatarDecoration,
+  backgroundMessageToneEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'backgroundMessageToneEnabled')
+      ? coerceBoolean((patch as any).backgroundMessageToneEnabled)
+      : base.backgroundMessageToneEnabled,
   avatarSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
       ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)
@@ -1224,6 +1304,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'autoCorrectPunctuation')
       ? coerceBoolean((patch as any).autoCorrectPunctuation)
       : base.autoCorrectPunctuation,
+  inputToolbarImageEditorEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'inputToolbarImageEditorEnabled')
+      ? coerceBoolean(patch.inputToolbarImageEditorEnabled ?? true)
+      : base.inputToolbarImageEditorEnabled,
   mobileMinimalInputEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)
@@ -1305,6 +1389,40 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantQuickSwitchTrigger')
       ? coerceQuickInputTrigger((patch as any).identityVariantQuickSwitchTrigger || '=')
       : base.identityVariantQuickSwitchTrigger,
+  identityQuickBarEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickBarEnabled')
+      ? coerceBoolean((patch as any).identityQuickBarEnabled)
+      : base.identityQuickBarEnabled,
+  identityQuickBarLimit:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickBarLimit')
+      ? coerceNumberInRange(
+        (patch as any).identityQuickBarLimit,
+        IDENTITY_QUICK_BAR_LIMIT_DEFAULT,
+        IDENTITY_QUICK_BAR_LIMIT_MIN,
+        IDENTITY_QUICK_BAR_LIMIT_MAX,
+      )
+      : base.identityQuickBarLimit,
+  emojiInputHintEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'emojiInputHintEnabled')
+      ? coerceBoolean((patch as any).emojiInputHintEnabled)
+      : base.emojiInputHintEnabled,
+  identityVariantInputHintEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantInputHintEnabled')
+      ? coerceBoolean((patch as any).identityVariantInputHintEnabled)
+      : base.identityVariantInputHintEnabled,
+  composerHintsPosition:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'composerHintsPosition')
+      ? coerceComposerHintsPosition((patch as any).composerHintsPosition)
+      : base.composerHintsPosition,
+  composerHintsScalePercent:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'composerHintsScalePercent')
+      ? coerceNumberInRange(
+        (patch as any).composerHintsScalePercent,
+        COMPOSER_HINTS_SCALE_DEFAULT,
+        COMPOSER_HINTS_SCALE_MIN,
+        COMPOSER_HINTS_SCALE_MAX,
+      )
+      : base.composerHintsScalePercent,
   interjectSwitchRule:
     patch && Object.prototype.hasOwnProperty.call(patch, 'interjectSwitchRule')
       ? coerceInterjectSwitchRule((patch as any).interjectSwitchRule)

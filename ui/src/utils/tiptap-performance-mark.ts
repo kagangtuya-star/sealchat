@@ -1,8 +1,36 @@
 type TiptapCoreModule = typeof import('@tiptap/core');
 
-export type PerformanceEffect = 'shake' | 'wave' | 'rainbow' | 'glitch' | 'blink';
-export type PerformanceEnterMode = 'normal' | 'blur' | 'typewriter';
-export type PerformanceScale = 'shout' | 'whisper';
+export const PERFORMANCE_EFFECTS = [
+  'shake',
+  'wave',
+  'rainbow',
+  'glitch',
+  'blink',
+  'glow',
+  'pulse',
+  'float',
+  'sway',
+  'heartbeat',
+  'wobble',
+] as const;
+export const PERFORMANCE_ENTER_MODES = [
+  'normal',
+  'blur',
+  'typewriter',
+  'fade',
+  'rise',
+  'drop',
+  'zoom',
+  'tracking',
+  'flash',
+  'glitch',
+  'slam',
+] as const;
+const PERFORMANCE_SCALES = ['shout', 'whisper'] as const;
+
+export type PerformanceEffect = typeof PERFORMANCE_EFFECTS[number];
+export type PerformanceEnterMode = typeof PERFORMANCE_ENTER_MODES[number];
+export type PerformanceScale = typeof PERFORMANCE_SCALES[number];
 
 export interface PerformanceMarkAttrs {
   effect?: PerformanceEffect | null;
@@ -12,15 +40,36 @@ export interface PerformanceMarkAttrs {
   scale?: PerformanceScale | null;
 }
 
-export const normalizePerformanceEffect = (value: unknown): PerformanceEffect | null => {
+const pickAllowed = <T extends string>(allowed: readonly T[], value: unknown): T | null => {
   const raw = String(value || '').trim();
-  if (raw === 'blur-in') {
+  return (allowed as readonly string[]).includes(raw) ? raw as T : null;
+};
+
+export const normalizePerformanceEffect = (value: unknown): PerformanceEffect | null => {
+  if (String(value || '').trim() === 'blur-in') {
     return 'blink';
   }
-  if (raw === 'shake' || raw === 'wave' || raw === 'rainbow' || raw === 'glitch' || raw === 'blink') {
-    return raw;
+  return pickAllowed(PERFORMANCE_EFFECTS, value);
+};
+
+export const normalizePerformanceEnterMode = (value: unknown): PerformanceEnterMode | null => (
+  pickAllowed(PERFORMANCE_ENTER_MODES, value)
+);
+
+export const normalizePerformanceScale = (value: unknown): PerformanceScale | null => (
+  pickAllowed(PERFORMANCE_SCALES, value)
+);
+
+// 除 normal 外的出现效果都走逐字播放节奏；CSS 只负责单个字符怎么动。
+export const isAnimatedPerformanceEnterMode = (mode?: PerformanceEnterMode | null) => !!mode && mode !== 'normal';
+
+// 进入动画元素统一带 performance-enter，供 reduced-motion 等场景整体关闭进入动作。
+export const resolvePerformanceEnterClassNames = (value: unknown): string[] => {
+  const mode = normalizePerformanceEnterMode(value);
+  if (!mode) {
+    return [];
   }
-  return null;
+  return isAnimatedPerformanceEnterMode(mode) ? ['performance-enter', `enter-${mode}`] : [`enter-${mode}`];
 };
 
 declare module '@tiptap/core' {
@@ -50,9 +99,9 @@ export const createPerformanceExtension = ({
       },
       enterMode: {
         default: null,
-        parseHTML: (element: HTMLElement) => element.getAttribute('data-performance-enter-mode') || null,
+        parseHTML: (element: HTMLElement) => normalizePerformanceEnterMode(element.getAttribute('data-performance-enter-mode')),
         renderHTML: (attributes: PerformanceMarkAttrs) => {
-          const mode = String(attributes.enterMode || '').trim();
+          const mode = normalizePerformanceEnterMode(attributes.enterMode);
           return mode ? { 'data-performance-enter-mode': mode } : {};
         },
       },
@@ -82,9 +131,9 @@ export const createPerformanceExtension = ({
       },
       scale: {
         default: null,
-        parseHTML: (element: HTMLElement) => element.getAttribute('data-performance-scale') || null,
+        parseHTML: (element: HTMLElement) => normalizePerformanceScale(element.getAttribute('data-performance-scale')),
         renderHTML: (attributes: PerformanceMarkAttrs) => {
-          const scale = String(attributes.scale || '').trim();
+          const scale = normalizePerformanceScale(attributes.scale);
           return scale ? { 'data-performance-scale': scale } : {};
         },
       },
@@ -103,18 +152,15 @@ export const createPerformanceExtension = ({
 
   renderHTML({ HTMLAttributes }) {
     const effect = normalizePerformanceEffect(HTMLAttributes.effect);
-    const enterMode = String(HTMLAttributes.enterMode || '').trim();
     const enterSpeed = Number(HTMLAttributes.enterSpeed);
     const toneIntensity = Number(HTMLAttributes.toneIntensity);
-    const scale = String(HTMLAttributes.scale || '').trim();
+    const scale = normalizePerformanceScale(HTMLAttributes.scale);
     const classNames = ['tiptap-performance'];
     const styleVars: Record<string, string> = {};
     if (effect) {
       classNames.push(`fx-${effect}`);
     }
-    if (enterMode) {
-      classNames.push(`enter-${enterMode}`);
-    }
+    classNames.push(...resolvePerformanceEnterClassNames(HTMLAttributes.enterMode));
     if (Number.isFinite(enterSpeed)) {
       styleVars['--performance-enter-speed'] = String(enterSpeed);
     }
@@ -141,10 +187,10 @@ export const createPerformanceExtension = ({
         ({ commands }) => {
           const nextAttrs = {
             effect: normalizePerformanceEffect(attrs.effect),
-            enterMode: attrs.enterMode || null,
+            enterMode: normalizePerformanceEnterMode(attrs.enterMode),
             enterSpeed: Number.isFinite(Number(attrs.enterSpeed)) ? Number(attrs.enterSpeed) : null,
             toneIntensity: Number.isFinite(Number(attrs.toneIntensity)) ? Number(attrs.toneIntensity) : null,
-            scale: attrs.scale || null,
+            scale: normalizePerformanceScale(attrs.scale),
           };
           return commands.setMark(this.name, nextAttrs);
         },

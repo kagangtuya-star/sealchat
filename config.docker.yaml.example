@@ -2,7 +2,7 @@
 # 复制此文件为 config.yaml 并根据需要修改
 
 # 服务器配置
-domain: localhost:3212                       # 对外访问域名（影响图片等资源链接）
+domain: localhost:3212                       # 对外域名；多个入口用 ; 分隔，例如 https://chat.example;https://chat-tunnel.example
 serveAt: :3212                               # 监听端口
 webUrl: /                                    # 前端路径
 websocket:
@@ -187,6 +187,13 @@ backup:
 authSession:
   maxAgeDays: 15                               # token 最大有效期（天）
   refreshThresholdDays: 7                      # 剩余有效期小于等于该值时自动续签（天）
+
+# 反向代理配置。容器间代理通常不是回环地址，需按实际 Docker 网络追加可信代理地址或网段。
+proxy:
+  proxyHeader: X-Forwarded-For
+  trustedProxies:
+    - 127.0.0.1
+    - "::1"
 
 version: 1
 

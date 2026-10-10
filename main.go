@@ -164,7 +164,8 @@ func main() {
 	utils.EnsureDataDirs(config)
 
 	if err := utils.VerifyBundledWebPToolsWithLog(log.Printf); err != nil {
-		fatalWithStartupLock("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）：%v", err)
+		fatalWithStartupLock("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）"+
+			"：%v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -259,6 +260,8 @@ func main() {
 		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
 	service.StartTheaterPackageWorker(ctx, config.Export.StorageDir)
+	service.StartTTSWorker(ctx)
+	go service.TTSPrimeMPSCatalogs()
 
 	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
 	service.StartDigestPushWorker()

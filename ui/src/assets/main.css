@@ -1,6 +1,47 @@
 @import './base.css';
 @import './vendor/typo-content.css';
 
+/* Solid theme semantics stay intact; only opted-in surfaces consume these tokens. */
+:root[data-sc-glass-background='true'] {
+  --sc-glass-page: var(--sc-bg-page);
+  --sc-glass-surface: var(--sc-bg-surface);
+  --sc-glass-header: var(--sc-bg-header);
+  --sc-glass-sidebar: var(--sc-bg-sidebar);
+  --sc-glass-input: var(--sc-bg-input);
+  --sc-glass-elevated: var(--sc-bg-elevated);
+  --sc-glass-border: var(--sc-border-mute);
+  --sc-glass-shadow: 0 8px 24px #00000012;
+  --sc-glass-effective-blur: var(--sc-glass-blur);
+}
+
+@supports (color: color-mix(in srgb, white, transparent)) {
+  :root[data-sc-glass-background='true'] {
+    --sc-glass-page: color-mix(in srgb, var(--sc-bg-page) var(--sc-glass-page-opacity), transparent);
+    --sc-glass-surface: color-mix(in srgb, var(--sc-bg-surface) var(--sc-glass-surface-opacity), transparent);
+    --sc-glass-header: color-mix(in srgb, var(--sc-bg-header) var(--sc-glass-surface-opacity), transparent);
+    --sc-glass-sidebar: color-mix(in srgb, var(--sc-bg-sidebar) var(--sc-glass-surface-opacity), transparent);
+    --sc-glass-input: color-mix(in srgb, var(--sc-bg-input) var(--sc-glass-input-opacity), transparent);
+    --sc-glass-elevated: color-mix(in srgb, var(--sc-bg-elevated) var(--sc-glass-elevated-opacity), transparent);
+    --sc-glass-border: color-mix(in srgb, var(--sc-text-primary) 10%, transparent);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-sc-glass-background='true'] {
+    --sc-glass-surface: var(--sc-bg-surface);
+    --sc-glass-header: var(--sc-bg-header);
+    --sc-glass-sidebar: var(--sc-bg-sidebar);
+    --sc-glass-input: var(--sc-bg-input);
+    --sc-glass-elevated: var(--sc-bg-elevated);
+  }
+}
+
+@media (max-width: 640px) {
+  :root[data-sc-glass-background='true'] {
+    --sc-glass-effective-blur: min(var(--sc-glass-blur), 12px);
+  }
+}
+
 :root {
   --chat-stage-bg: #fbfdf7;
   --chat-ic-bg: #fbfdf7;

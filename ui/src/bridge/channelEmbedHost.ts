@@ -28,6 +28,25 @@ export interface ChannelEmbedTheaterCharacterSource {
   subscribe(listener: (snapshot: ChatCharactersSnapshotPayload) => void): () => void
 }
 
+// Only metadata of an events.publish that this host sent and the server accepted.
+// The payload is deliberately absent: it never selects Theater actions.
+export interface ChannelEmbedPublishedEvent {
+  eventId: string
+  formId: string
+  channelId: string
+  topic: string
+  at: number
+}
+
+export type ChannelEmbedTheaterEventSink = (event: ChannelEmbedPublishedEvent) => void
+
+export interface ChannelEmbedTheaterContext {
+  worldId: string
+  scopeType: 'world' | 'channel'
+  channelId: string
+  objectId: string
+}
+
 type HostDeps = {
   chat: any
   user: any
@@ -45,6 +64,9 @@ type HostDeps = {
   worldId: string
   channelId: string
   theaterCharacterSource?: ChannelEmbedTheaterCharacterSource
+  // Set only by a plain Theater iframe object; other embed hosts never report.
+  theaterEventSink?: ChannelEmbedTheaterEventSink
+  theaterContext?: ChannelEmbedTheaterContext
 }
 
 const safeString = (value: unknown, max = 512) => typeof value === 'string' ? value.slice(0, max) : ''
@@ -141,6 +163,7 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
   const sessions = new Map<string, EmbedSession>()
   const listeners: Array<() => void> = []
   const seenGatewayEvents = new Set<string>()
+  const reportedPublishedEvents = new Set<string>()
   const authenticatedUserId = safeString(deps.user?.info?.id, 100)
   let contextVersion = 1
   let lastContextKey = ''
@@ -378,6 +401,28 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
     void deps.chat.worldDetail(deps.worldId, { force: true }).then(() => publishContextChanges()).catch(() => undefined)
   }
 
+  // Runs once per server-accepted publish from this host instance. Gateway
+  // channel-iform-embed broadcasts never reach here, so other clients and other
+  // instances of the same form cannot start this object's Theater actions.
+  const reportPublishedEvent = (topic: string, result: unknown) => {
+    const sink = deps.theaterEventSink
+    if (!sink || closed) return
+    const eventId = safeString((result as { eventId?: unknown } | null)?.eventId, 128)
+    if (!eventId || reportedPublishedEvents.has(eventId)) return
+    try {
+      ensureSessionContext()
+    } catch {
+      return
+    }
+    reportedPublishedEvents.add(eventId)
+    if (reportedPublishedEvents.size > 256) {
+      const oldest = reportedPublishedEvents.values().next().value
+      if (oldest) reportedPublishedEvents.delete(oldest)
+    }
+    try {
+      sink({ eventId, formId: deps.form.id, channelId: deps.channelId, topic, at: Date.now() })
+    } catch { /* Theater handling never changes the embed's publish result */ }
+  }
   const requestParams = (request: EmbedRequest) => {
     if (request.params === undefined) return {}
     if (!request.params || typeof request.params !== 'object' || Array.isArray(request.params)) throw new Error('INVALID_PARAMS')
@@ -520,7 +565,17 @@ export const createChannelEmbedHost = (deps: HostDeps) => {
       case 'storage.delete': { const key = boundedString(params.key, 128, true); if (params.ifRevision !== undefined && (!Number.isInteger(params.ifRevision) || params.ifRevision < 0)) throw new Error('INVALID_PARAMS'); const result = (await deps.chat.sendAPI('iform.storage.delete', { channel_id: deps.channelId, form_id: deps.form.id, key, if_revision: params.ifRevision }))?.data; if (Number.isFinite(result?.seq)) storageSeq = Math.max(storageSeq, Number(result.seq)); return result }
       case 'storage.list': { const limit = params.limit === undefined ? 256 : params.limit; if (!Number.isInteger(limit) || limit < 1 || limit > 256) throw new Error('INVALID_PARAMS'); const prefix = params.prefix === undefined ? '' : boundedString(params.prefix, 128); const cursor = params.cursor === undefined ? '' : boundedString(params.cursor, 128); return (await deps.chat.sendAPI('iform.storage.list', { channel_id: deps.channelId, form_id: deps.form.id, prefix, cursor, limit }))?.data }
       case 'storage.snapshot': { const result = (await deps.chat.sendAPI('iform.storage.snapshot', { channel_id: deps.channelId, form_id: deps.form.id }))?.data; if (Number.isFinite(result?.seq)) storageSeq = Number(result.seq); return result }
-      case 'events.publish': { const topic = boundedString(params.topic, 64, true); if (params.payload === undefined) throw new Error('INVALID_PARAMS'); if (jsonSize(params.payload) > 16 * 1024) throw new Error('PAYLOAD_TOO_LARGE'); return (await deps.chat.sendAPI('iform.event.publish', { channel_id: deps.channelId, form_id: deps.form.id, topic, payload: params.payload }))?.data }
+      case 'events.publish': {
+        const topic = boundedString(params.topic, 64, true)
+        if (params.payload === undefined) throw new Error('INVALID_PARAMS')
+        if (jsonSize(params.payload) > 16 * 1024) throw new Error('PAYLOAD_TOO_LARGE')
+        const result = (await deps.chat.sendAPI('iform.event.publish', {
+          channel_id: deps.channelId, form_id: deps.form.id, topic, payload: params.payload,
+          ...(deps.theaterContext ? { theaterContext: deps.theaterContext } : {}),
+        }))?.data
+        reportPublishedEvent(topic, result)
+        return result
+      }
       case 'events.subscribe': { const topic = boundedString(params.topic, 64, true); return (await deps.chat.sendAPI('iform.event.subscribe', { channel_id: deps.channelId, form_id: deps.form.id, topic }))?.data }
       case 'messages.send': {
         const text = boundedString(params.text, 64 * 1024, true)

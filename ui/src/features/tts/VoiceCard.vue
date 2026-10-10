@@ -1,0 +1,230 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { speechAPI } from './api'
+import { speechPlayer } from './player'
+import type { SpeechPresetSource, SpeechProviderMeta, SystemPreviewJob } from './types'
+import { isDisplayVoiceTag, voiceKindLabel, voiceLanguageLabel, voiceSourceLabel, type VoiceCatalogItem } from './voice-catalog'
+
+const props = defineProps<{ item: VoiceCatalogItem; providers: SpeechProviderMeta[]; presetSources?: SpeechPresetSource[]; selected: boolean }>()
+const emit = defineEmits<{ select: [item: VoiceCatalogItem] }>()
+const systemPreviewResourceId = ref('')
+const previewPending = ref(false)
+const previewError = ref('')
+let generation = 0
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+const previewResourceId = computed(() => props.item.source === 'system' ? systemPreviewResourceId.value || props.item.previewResourceId : props.item.previewResourceId)
+const canPreview = computed(() => props.item.source === 'system' || !!props.item.previewResourceId)
+const previewing = computed(() => !!previewResourceId.value && speechPlayer.state.key === `resources:${previewResourceId.value}`)
+
+function resetPreview() {
+  generation++
+  clearTimeout(pollTimer)
+  pollTimer = undefined
+  systemPreviewResourceId.value = ''
+  previewPending.value = false
+  previewError.value = ''
+}
+watch(() => props.item.key, resetPreview, { flush: 'sync' })
+onBeforeUnmount(resetPreview)
+// Keep one compact language summary so multi-language support cannot hide
+// voice traits and use-case tags. Provider age metadata remains excluded.
+const chips = computed(() => {
+  const language = props.item.languages.length > 1
+    ? `多语 · ${props.item.languages.length}`
+    : props.item.languages.length === 1 ? voiceLanguageLabel(props.item.languages[0]) : ''
+  const details = props.item.tags.filter(isDisplayVoiceTag).slice(0, language ? 3 : 4)
+  return [
+    ...(language ? [{ text: language, language: true }] : []),
+    ...details.map(text => ({ text, language: false })),
+  ]
+})
+function previewFailed(token: number, unknownUsage = false) {
+  if (token !== generation) return
+  clearTimeout(pollTimer)
+  pollTimer = undefined
+  previewPending.value = false
+  previewError.value = unknownUsage ? '试听暂不可用，请联系管理员处理' : '试听暂不可用，请重试'
+}
+
+function playPreview(resourceId: string, token = generation) {
+  void speechPlayer.play('resources', resourceId, false, result => {
+    if (token !== generation || result !== 'failed') return
+    if (systemPreviewResourceId.value === resourceId) systemPreviewResourceId.value = ''
+    previewError.value = '试听资源已失效，请重试'
+  })
+}
+
+function acceptPreview(job: SystemPreviewJob, token: number) {
+  if (token !== generation) return
+  if (job.status === 'succeeded' && job.audioResourceId) {
+    clearTimeout(pollTimer)
+    pollTimer = undefined
+    systemPreviewResourceId.value = job.audioResourceId
+    previewPending.value = false
+    playPreview(job.audioResourceId, token)
+  } else if (['queued', 'running', 'storage_pending', 'archiving'].includes(job.status)) {
+    // Schedule only after the previous response, keeping polls serial.
+    pollTimer = setTimeout(async () => {
+      pollTimer = undefined
+      if (token !== generation) return
+      try {
+        acceptPreview(await speechAPI.systemPreview(job.id), token)
+      } catch {
+        previewFailed(token)
+      }
+    }, 500)
+  } else {
+    previewFailed(token, job.status === 'usage_unknown')
+  }
+}
+
+async function preview() {
+  if (previewPending.value) return
+  if (previewResourceId.value) {
+    previewError.value = ''
+    playPreview(previewResourceId.value)
+    return
+  }
+  if (props.item.source !== 'system') return
+  const token = ++generation
+  const item = props.item
+  previewPending.value = true
+  previewError.value = ''
+  try {
+    await speechPlayer.unlock()
+    if (token !== generation) return
+    acceptPreview(await speechAPI.ensureSystemPreview({
+      systemVoice: item.id, providerKind: item.providerKind ?? '',
+      providerId: item.providerId ?? '', modelId: item.modelId,
+    }), token)
+  } catch {
+    previewFailed(token)
+  }
+}
+</script>
+
+<template>
+  <article class="voice-card" :class="{ 'is-selected': selected, 'is-unavailable': !item.available }">
+    <button
+      type="button"
+      class="voice-card__select"
+      :disabled="!item.available"
+      :aria-pressed="selected"
+      :aria-label="`选择音色 ${item.name}（${voiceSourceLabel(item, providers, presetSources)}）`"
+      @click="emit('select', item)"
+    />
+    <div class="voice-card__head">
+      <strong class="voice-card__name">{{ item.name }}</strong>
+      <span class="voice-card__source">{{ voiceSourceLabel(item, providers, presetSources) }}</span>
+    </div>
+    <p v-if="item.description" class="voice-card__desc">{{ item.description }}</p>
+    <div v-if="chips.length" class="voice-card__tags">
+      <span
+        v-for="chip in chips"
+        :key="`${chip.language ? 'language' : 'tag'}:${chip.text}`"
+        class="voice-card__tag"
+        :class="{ 'is-language': chip.language }"
+      >{{ chip.text }}</span>
+    </div>
+    <div class="voice-card__foot">
+      <span class="voice-card__meta">
+        {{ voiceKindLabel(item.kind) }}<template v-if="!item.available"> · 当前不可用</template>
+      </span>
+      <button
+        v-if="canPreview"
+        type="button"
+        class="voice-card__preview"
+        :disabled="previewPending"
+        :title="previewError || undefined"
+        :aria-label="previewing ? `停止试听 ${item.name}` : `试听 ${item.name}`"
+        @click="preview"
+      >{{ previewPending ? '生成中…' : previewing ? (speechPlayer.state.loading ? '加载中…' : '停止') : previewError ? '重试' : '试听' }}</button>
+    </div>
+  </article>
+</template>
+
+<style scoped>
+.voice-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 8px;
+  background: var(--vp-soft);
+  color: var(--sc-text-primary);
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.voice-card:hover:not(.is-unavailable) { border-color: var(--sc-border-strong); }
+.voice-card.is-selected {
+  border-color: var(--vp-accent);
+  background: color-mix(in srgb, var(--vp-accent) 12%, transparent);
+}
+.voice-card.is-unavailable { opacity: .55; }
+/* The select button covers the card; content ignores pointer events so a
+   click anywhere selects, while the preview button sits above it. */
+.voice-card__select {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.voice-card__select:disabled { cursor: not-allowed; }
+.voice-card__select:focus-visible { outline: 2px solid var(--vp-accent); outline-offset: 2px; }
+.voice-card > :not(.voice-card__select) { position: relative; pointer-events: none; }
+.voice-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.voice-card__name { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.voice-card__source { flex: none; font-size: 12px; color: var(--sc-text-secondary); }
+.is-selected .voice-card__source { color: var(--vp-accent); }
+.voice-card__desc {
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sc-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px 6px;
+  min-width: 0;
+  max-height: 40px;
+  overflow: hidden;
+}
+.voice-card__tag {
+  flex: none;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--vp-soft);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--sc-text-secondary);
+  white-space: nowrap;
+}
+.voice-card__tag.is-language { color: var(--sc-text-primary); }
+.voice-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; margin-top: auto; }
+.voice-card__meta { overflow: hidden; font-size: 12px; color: var(--sc-text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.voice-card .voice-card__preview {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sc-text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.voice-card__preview:hover { border-color: var(--vp-accent); color: var(--vp-accent); }
+.voice-card__preview:focus-visible { outline: 2px solid var(--vp-accent); outline-offset: 1px; }
+</style>

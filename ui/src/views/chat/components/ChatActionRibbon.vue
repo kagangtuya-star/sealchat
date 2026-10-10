@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance, watch } from 'vue'
-import { NIcon } from 'naive-ui'
+import { NIcon, useMessage } from 'naive-ui'
 import { calculateVisibleActionCount } from './chatActionRibbonLayout'
 import {
   Archive as ArchiveIcon,
@@ -16,6 +16,7 @@ import {
   Star as StarIcon,
   Upload as UploadIcon,
   Users as UsersIcon,
+  Volume as SpeechIcon,
   Id as CharacterCardIcon,
   Message2 as CharacterRemarkIcon,
 	Dice as Dice3DIcon,
@@ -25,6 +26,8 @@ import {
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
 import ObserverFilterModal from '../../components/ObserverFilterModal.vue'
+import { useSpeechStore } from '@/features/tts/store'
+import TTSWorldActivationDialog from '@/features/tts/TTSWorldActivationDialog.vue'
 
 interface FilterState {
   icFilter: 'all' | 'ic' | 'ooc'
@@ -42,6 +45,7 @@ interface RoleOption {
 }
 
 interface Props {
+  speechActive?: boolean
   filters: FilterState
   roles: RoleOption[]
   archiveActive?: boolean
@@ -49,6 +53,7 @@ interface Props {
   identityActive?: boolean
   galleryActive?: boolean
   displayActive?: boolean
+  glassBackgroundActive?: boolean
   favoriteActive?: boolean
   channelImagesActive?: boolean
   battleSummaryEnabled?: boolean
@@ -81,6 +86,7 @@ interface Props {
 }
 
 interface Emits {
+  (e: 'open-speech'): void
   (e: 'update:filters', filters: FilterState): void
   (e: 'open-archive'): void
   (e: 'open-export'): void
@@ -88,6 +94,7 @@ interface Emits {
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
+  (e: 'open-glass-background'): void
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
@@ -109,6 +116,8 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const speech = useSpeechStore()
+const message = useMessage()
 
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
@@ -208,6 +217,8 @@ const allActionButtons = computed<ActionButton[]>(() => {
     })
   }
 
+  buttons.push({ key: 'speech', label: '语音朗读', icon: SpeechIcon, emitEvent: 'open-speech', activeKey: 'speechActive' })
+
   // 便签入口（置于“分屏”之后）
   if (props.stickyNoteEnabled !== false) {
     buttons.push({ key: 'sticky-note', label: '便签', icon: DocumentTextOutline, emitEvent: 'toggle-sticky-note', activeKey: 'stickyNoteActive' })
@@ -229,6 +240,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     buttons.push({ key: 'email-notification', label: '未读提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
   }
   
+  buttons.push({ key: 'glass-background', label: '玻璃背景', icon: Palette, emitEvent: 'open-glass-background', activeKey: 'glassBackgroundActive' })
   return buttons
 })
 
@@ -290,6 +302,15 @@ const moreMenuOptions = computed(() => {
   })
 })
 
+const emitAction = (button: ActionButton) => {
+  if (button.disabled?.() === true) return
+  if (button.key === 'speech' && !speech.quota?.enabled) {
+    message.warning('功能未开启，请平台管理员前往“平台设置 → AI语音配置”开启语音朗读。')
+    return
+  }
+  emit(button.emitEvent as any)
+}
+
 const handleMoreMenuSelect = (key: string) => {
   if (key === THEATER_MORE_STANDARD_KEY) {
     emit('open-theater', 'standard')
@@ -312,17 +333,12 @@ const handleMoreMenuSelect = (key: string) => {
     return
   }
   const button = allActionButtons.value.find(btn => btn.key === key)
-  if (!button || button.disabled?.() === true) {
-    return
-  }
-  emit(button.emitEvent as any)
+  if (!button) return
+  emitAction(button)
 }
 
 const handleButtonClick = (button: ActionButton) => {
-  if (button.disabled?.() === true) {
-    return
-  }
-  emit(button.emitEvent as any)
+  emitAction(button)
 }
 
 const handleSplitChooserPointerEnter = (button: ActionButton) => {
@@ -576,6 +592,7 @@ const cycleIcFilter = () => {
 
 <template>
   <div class="action-ribbon">
+    <TTSWorldActivationDialog v-if="!speech.quota?.enabled && speech.quota?.worldAccess?.canActivate" />
     <!-- 筛选区域 -->
     <div class="ribbon-section ribbon-section--filters">
       <div class="filter-group">

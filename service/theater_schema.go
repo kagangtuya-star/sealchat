@@ -8,11 +8,26 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"strings"
+
+	"sealchat/protocol"
 )
 
 var theaterImageAnnotationColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+var TheaterObjectKinds = []string{"group", "drawing", "text", "image", "button", "character", "video", "effect", "iframe"}
+var TheaterEffectThemes = []string{"brush", "cyber", "cinematic", "impact", "glitch", "neon", "cleave", "eclipse"}
+
+func theaterContains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
 
 func defaultTheaterImageAnnotation(text string) map[string]any {
 	runes := []rune(text)
@@ -171,10 +186,12 @@ type theaterEffectPlayPayload struct {
 }
 
 type theaterCharacterBindPayload struct {
-	SceneID     *string            `json:"sceneId"`
-	Object      theaterObjectInput `json:"object"`
-	IdentityID  string             `json:"identityId"`
-	OwnerUserID string             `json:"ownerUserId"`
+	InputChannelID  string             `json:"inputChannelId,omitempty"`
+	SceneID         *string            `json:"sceneId"`
+	Object          theaterObjectInput `json:"object"`
+	IdentityID      string             `json:"identityId"`
+	OwnerUserID     string             `json:"ownerUserId"`
+	ownerAuthorized bool
 }
 
 type theaterResourceReferencePayload struct {
@@ -191,6 +208,12 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 	}
 	var target any
 	switch mutationType {
+	case TheaterMutationDesignApply:
+		target = &TheaterDesignPlan{}
+	case TheaterMutationSceneDuplicate:
+		target = &theaterSceneDuplicatePayload{}
+	case TheaterMutationObjectDuplicate:
+		target = &theaterObjectDuplicatePayload{}
 	case TheaterMutationRoomDialoguePatch:
 		target = &theaterDialoguePatch{}
 	case TheaterMutationRoomDialoguePositionSet:
@@ -254,6 +277,18 @@ func decodeStrictJSON(raw []byte, target any) error {
 
 func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 	switch payload := decoded.(type) {
+	case *TheaterDesignPlan:
+		return normalizeTheaterDesignPlan(payload)
+	case *theaterSceneDuplicatePayload:
+		return validateTheaterID(payload.SceneID, "sceneId")
+	case *theaterObjectDuplicatePayload:
+		if err := validateTheaterID(payload.ObjectID, "objectId"); err != nil {
+			return err
+		}
+		if !theaterFinite(payload.OffsetX) || !theaterFinite(payload.OffsetY) {
+			return theaterPayloadError("duplicate offset 无效")
+		}
+		return nil
 	case *theaterDialoguePatch:
 		return validateDialoguePatch(payload)
 	case *theaterDialoguePositionSet:
@@ -382,6 +417,11 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 	case *theaterObjectTogglePayload:
 		return validateTheaterID(payload.ObjectID, "objectId")
 	case *theaterCharacterBindPayload:
+		if payload.InputChannelID != "" {
+			if err := validateTheaterID(payload.InputChannelID, "inputChannelId"); err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(payload.IdentityID) == "" || strings.TrimSpace(payload.OwnerUserID) == "" {
 			return theaterPayloadError("identityId 和 ownerUserId 必填")
 		}
@@ -453,8 +493,16 @@ func validateSceneState(state map[string]any) error {
 			return err
 		}
 	}
+	if err := validateTheaterFieldState(state); err != nil {
+		return err
+	}
 	if styles, ok := state["surfaceStyles"]; ok {
 		if err := validateTheaterSurfaceStyles(styles); err != nil {
+			return err
+		}
+	}
+	if embeds, ok := state["surfaceEmbeds"]; ok {
+		if err := validateTheaterSurfaceEmbeds(embeds); err != nil {
 			return err
 		}
 	}
@@ -471,6 +519,48 @@ func validateSceneState(state map[string]any) error {
 	raw, _ := json.Marshal(state)
 	if len(raw) > 64<<10 {
 		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterSurfaceEmbeds(input any) error {
+	embeds, ok := input.(map[string]any)
+	if !ok || len(embeds) != 2 {
+		return theaterPayloadError("surfaceEmbeds 图层无效")
+	}
+	for _, target := range []string{"background", "foreground"} {
+		raw, exists := embeds[target]
+		if !exists {
+			return theaterPayloadError("surfaceEmbeds." + target + " 缺失")
+		}
+		if raw == nil {
+			continue
+		}
+		embed, ok := raw.(map[string]any)
+		if !ok || len(embed) != 3 || embed["type"] != "iframe" {
+			return theaterPayloadError("surfaceEmbeds." + target + " 无效")
+		}
+		if _, ok := embed["interactive"].(bool); !ok {
+			return theaterPayloadError("surfaceEmbeds." + target + ".interactive 无效")
+		}
+		frame, ok := embed["iframe"].(map[string]any)
+		if !ok || len(frame) != 2 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe 无效")
+		}
+		source, ok := frame["url"].(string)
+		if !ok || len(source) > 8192 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe.url 无效")
+		}
+		if source = strings.TrimSpace(source); source != "" {
+			parsed, err := url.Parse(source)
+			if err != nil || parsed.Host == "" || (!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+				return theaterPayloadError("surfaceEmbeds." + target + ".iframe.url 仅支持 HTTP/HTTPS")
+			}
+		}
+		scale, valid := theaterNumericValue(frame["scale"])
+		if !valid || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0.25 || scale > 5 {
+			return theaterPayloadError("surfaceEmbeds." + target + ".iframe.scale 无效")
+		}
 	}
 	return nil
 }
@@ -606,7 +696,7 @@ func validateTheaterSurfaceStyles(value any) error {
 		if !ok {
 			return theaterPayloadError("surfaceStyles." + target + " 无效")
 		}
-		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true}
+		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true, "mediaFx": true}
 		for key := range style {
 			if !allowed[key] {
 				return theaterPayloadError("surfaceStyles." + target + " 包含禁止字段: " + key)
@@ -643,6 +733,29 @@ func validateTheaterSurfaceStyles(value any) error {
 		if !valid || math.IsNaN(opacity) || math.IsInf(opacity, 0) || opacity < 0 || opacity > 1 {
 			return theaterPayloadError("surfaceStyles." + target + ".overlay.opacity 无效")
 		}
+		if err := validateTheaterSurfaceMediaFx(style["mediaFx"], "surfaceStyles."+target+".mediaFx"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTheaterSurfaceMediaFx strictly decodes an optional MediaFxSpec and reuses the
+// protocol validator, so presets and ranges are defined in one place.
+func validateTheaterSurfaceMediaFx(input any, path string) error {
+	if input == nil {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return theaterPayloadError(path + " 无效")
+	}
+	var spec protocol.MediaFxSpec
+	if err := decodeStrictJSON(raw, &spec); err != nil {
+		return theaterPayloadError(path + " 无效: " + err.Error())
+	}
+	if err := protocol.ValidateMediaFx(&spec); err != nil {
+		return theaterPayloadError(path + " 无效: " + err.Error())
 	}
 	return nil
 }
@@ -697,8 +810,7 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if err := validateTheaterID(object.ID, "object.id"); err != nil {
 		return err
 	}
-	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true, "effect": true, "iframe": true}
-	if !allowedKinds[object.Kind] {
+	if !theaterContains(TheaterObjectKinds, object.Kind) {
 		return theaterPayloadError("object.kind 无效")
 	}
 	for _, value := range []float64{object.X, object.Y, object.Width, object.Height, object.Rotation, object.Z} {
@@ -735,6 +847,9 @@ func validateObjectInput(object *theaterObjectInput) error {
 		if err := validateTheaterActions(object.Actions); err != nil {
 			return err
 		}
+	}
+	if err := validateTheaterEmbedEventBindings(object.Kind, object.Metadata, object.Actions); err != nil {
+		return err
 	}
 	if object.Kind == "effect" {
 		if object.ParentID != nil && strings.TrimSpace(*object.ParentID) != "" {
@@ -894,8 +1009,7 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		return theaterPayloadError("effect.builtin 无效")
 	}
 	theme, ok := builtin["theme"].(string)
-	allowedThemes := map[string]bool{"brush": true, "cyber": true, "cinematic": true, "impact": true, "glitch": true, "neon": true, "cleave": true, "eclipse": true}
-	if !ok || !allowedThemes[theme] {
+	if !ok || !theaterContains(TheaterEffectThemes, theme) {
 		return theaterPayloadError("effect.builtin.theme 无效")
 	}
 	format, ok := builtin["format"].(string)

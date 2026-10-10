@@ -115,16 +115,15 @@ func newOneBotSession(botUser *model.UserModel, role oneBotSessionRole, source o
 		Source:  source,
 		Conn:    conn,
 		ConnInfo: &ConnInfo{
-			User:                   botUser,
-			LastPingTime:           nowMs,
-			LastAliveTime:          nowMs,
-			TypingState:            protocol.TypingStateSilent,
-			TypingIcMode:           "ic",
-			Focused:                true,
-			BotLastMessageContext:  &utils.SyncMap[string, *protocol.MessageContext]{},
-			BotLastWhisperTargets:  &utils.SyncMap[string, []string]{},
-			BotHiddenDicePending:   &utils.SyncMap[string, *BotHiddenDicePending]{},
-			BotNicknameSyncPending: &utils.SyncMap[string, *BotNicknameSyncPending]{},
+			User:                  botUser,
+			LastPingTime:          nowMs,
+			LastAliveTime:         nowMs,
+			TypingState:           protocol.TypingStateSilent,
+			TypingIcMode:          "ic",
+			Focused:               true,
+			BotLastMessageContext: &utils.SyncMap[string, *protocol.MessageContext]{},
+			BotLastWhisperTargets: &utils.SyncMap[string, []string]{},
+			BotHiddenDicePending:  &utils.SyncMap[string, *BotHiddenDicePending]{},
 		},
 		closeCh: make(chan struct{}),
 	}
@@ -270,12 +269,15 @@ func (rt *oneBotRuntime) sessionsByBot(botUserID string) []*oneBotSession {
 	return result
 }
 
-func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.Event, originSessionID string) {
+func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.Event, originSessionID string) bool {
 	if rt == nil || botUserID == "" || event == nil {
-		return
+		return false
 	}
+	delivered := false
 	if !strings.HasPrefix(originSessionID, oneBotHTTPQuickOperationSessionPrefix) {
-		rt.publishHTTPPostEvent(botUserID, event)
+		if rt.publishHTTPPostEvent(botUserID, event) {
+			delivered = true
+		}
 	}
 	for _, session := range rt.sessionsByBot(botUserID) {
 		if session == nil {
@@ -297,45 +299,48 @@ func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.
 		if err := session.sendJSON(payload); err != nil {
 			log.Printf("[onebot] 推送事件失败 session=%s bot=%s err=%v", session.ID, botUserID, err)
 			rt.unregisterSession(session.ID)
+			continue
 		}
+		delivered = true
 	}
+	return delivered
 }
 
-func (rt *oneBotRuntime) publishHTTPPostEvent(botUserID string, event *protocol.Event) {
+func (rt *oneBotRuntime) publishHTTPPostEvent(botUserID string, event *protocol.Event) bool {
 	if rt == nil || botUserID == "" || event == nil {
-		return
+		return false
 	}
 	cfg, err := model.BotOneBotConfigGet(botUserID)
 	if err != nil {
 		log.Printf("[onebot] 读取 HTTP POST 配置失败 bot=%s err=%v", botUserID, err)
-		return
+		return false
 	}
 	if cfg == nil || !cfg.Enabled || cfg.TransportType != model.OneBotTransportHTTP {
-		return
+		return false
 	}
 	targetURL := strings.TrimSpace(cfg.HTTPPostPathSuffix)
 	if targetURL == "" {
-		return
+		return false
 	}
 	selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUserID)
 	if err != nil {
 		log.Printf("[onebot] 生成 HTTP POST self_id 失败 bot=%s err=%v", botUserID, err)
-		return
+		return false
 	}
 	payload, ok := projectProtocolEventToOneBot(&oneBotSession{SelfID: selfID}, event)
 	if !ok {
-		return
+		return false
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[onebot] 编码 HTTP POST 事件失败 bot=%s err=%v", botUserID, err)
-		return
+		return false
 	}
 
 	req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[onebot] 创建 HTTP POST 请求失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Self-ID", strconv.FormatInt(selfID, 10))
@@ -343,21 +348,22 @@ func (rt *oneBotRuntime) publishHTTPPostEvent(botUserID string, event *protocol.
 	resp, err := oneBotHTTPPostClient.Do(req)
 	if err != nil {
 		log.Printf("[onebot] HTTP POST 上报失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("[onebot] 读取 HTTP POST 响应失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
-		return
+		return false
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		log.Printf("[onebot] HTTP POST 上报返回异常状态 bot=%s url=%s status=%d", botUserID, targetURL, resp.StatusCode)
-		return
+		return false
 	}
 	if err := rt.applyHTTPPostQuickOperation(botUserID, event, respBody); err != nil {
 		log.Printf("[onebot] HTTP POST 快速操作执行失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
 	}
+	return true
 }
 
 func parseOneBotHTTPQuickOperation(body []byte) (*oneBotHTTPQuickOperation, error) {

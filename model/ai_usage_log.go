@@ -1,10 +1,17 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type AIUsageLogModel struct {
 	StringPKBaseModel
+	QuotaKind            string    `json:"quotaKind" gorm:"size:16;not null;default:text;index"`
+	BillingUnits         int64     `json:"billingUnits"`
+	UnitPrice            float64   `json:"unitPrice"`
 	UserID               string    `json:"userId" gorm:"size:100;index"`
+	WorldID              string    `json:"worldId" gorm:"size:100;not null;default:'';index"`
 	UsernameSnapshot     string    `json:"usernameSnapshot" gorm:"size:128;index"`
 	NicknameSnapshot     string    `json:"nicknameSnapshot" gorm:"size:128"`
 	FeatureKey           string    `json:"featureKey" gorm:"size:64;index"`
@@ -33,9 +40,16 @@ func (*AIUsageLogModel) TableName() string {
 }
 
 func AIUsageLogCleanupBefore(cutoff time.Time) (int64, error) {
+	return AIUsageLogCleanupBeforeForKind(QuotaKindText, cutoff)
+}
+
+func AIUsageLogCleanupBeforeForKind(kind string, cutoff time.Time) (int64, error) {
+	if kind != QuotaKindText && kind != QuotaKindSpeech {
+		return 0, fmt.Errorf("invalid quota kind")
+	}
 	if cutoff.IsZero() {
 		return 0, nil
 	}
-	tx := db.Where("finished_at < ?", cutoff).Delete(&AIUsageLogModel{})
+	tx := db.Where("quota_kind = ? AND finished_at < ?", kind, cutoff).Delete(&AIUsageLogModel{})
 	return tx.RowsAffected, tx.Error
 }

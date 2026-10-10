@@ -1,3 +1,5 @@
+import { compactMediaFxSpec, normalizeMediaFxSpec, type MediaFxSpec } from '../../../features/media-fx/media-fx'
+
 export const WORLD_UNIT_PX = 24
 
 export type StageObjectFit = 'fill' | 'cover' | 'contain'
@@ -16,6 +18,30 @@ export interface StageAudioRef {
 export interface StageIframeContent {
   url: string
   scale: number
+}
+
+export interface StageSurfaceEmbed {
+  type: 'iframe'
+  iframe: StageIframeContent
+  interactive: boolean
+}
+
+export type StageSurfaceEmbedPatch = {
+  iframe?: Partial<StageIframeContent>
+  interactive?: boolean
+}
+
+export const normalizeStageSurfaceEmbed = (input: unknown): StageSurfaceEmbed | null => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const value = input as Partial<StageSurfaceEmbed>
+  if (value.type !== 'iframe') return null
+  return { type: 'iframe', iframe: normalizeStageIframeContent(value.iframe), interactive: value.interactive === true }
+}
+
+export const normalizeStageSurfaceEmbeds = (input: unknown): Record<StageSurfaceTarget, StageSurfaceEmbed | null> => {
+  const value = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Partial<Record<StageSurfaceTarget, unknown>> : {}
+  return { background: normalizeStageSurfaceEmbed(value.background), foreground: normalizeStageSurfaceEmbed(value.foreground) }
 }
 
 export const STAGE_IFRAME_MIN_SCALE = 0.25
@@ -137,9 +163,95 @@ export const normalizeStageAudioRef = (input: unknown): StageAudioRef | null => 
   }
 }
 
+// Stage pointer-click semantics (canvas click, object.trigger, sequence click
+// triggers). Keep this unchanged; it is not the same as "can own actions".
 export const isStageActionTarget = (type: StageObjectType) => (
   type === 'drawing' || type === 'text' || type === 'image' || type === 'button'
 )
+
+// An iframe owns saved StageActions only to run them from its Channel Embed
+// events.publish bindings; it never becomes a pointer-click target.
+export const isStageActionOwner = (type: StageObjectType) => (
+  isStageActionTarget(type) || type === 'iframe'
+)
+
+export const STAGE_EMBED_EVENT_BINDINGS_MAX = 16
+export const STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX = 16
+// Same grammar as Channel Embed events.publish topics (service.ChannelEmbedTopicPattern).
+export const STAGE_EMBED_EVENT_TOPIC_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/
+
+export interface StageEmbedEventBinding {
+  topic: string
+  actionIds: string[]
+}
+
+// A server-accepted events.publish reported by the iframe object's own embed host.
+export interface StageEmbedEventPublished {
+  objectId: string
+  eventId: string
+  formId: string
+  channelId: string
+  topic: string
+}
+
+// Bindings live in metadata.embedEventBindings. Read paths drop invalid or
+// dangling entries so a removed action can never run from a stale binding.
+export const stageObjectEmbedEventBindings = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+): StageEmbedEventBinding[] => {
+  if (object.type !== 'iframe') return []
+  const raw = object.metadata?.embedEventBindings
+  if (!Array.isArray(raw)) return []
+  const actionIds = new Set(object.actions.map(action => action.id))
+  const topics = new Set<string>()
+  const result: StageEmbedEventBinding[] = []
+  for (const value of raw) {
+    if (result.length >= STAGE_EMBED_EVENT_BINDINGS_MAX) break
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const binding = value as Partial<StageEmbedEventBinding>
+    const topic = typeof binding.topic === 'string' ? binding.topic : ''
+    if (!STAGE_EMBED_EVENT_TOPIC_PATTERN.test(topic) || topics.has(topic) || !Array.isArray(binding.actionIds)) continue
+    const ids = [...new Set(binding.actionIds.filter((id): id is string => typeof id === 'string' && actionIds.has(id)))]
+      .slice(0, STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX)
+    if (!ids.length) continue
+    topics.add(topic)
+    result.push({ topic, actionIds: ids })
+  }
+  return result
+}
+
+export const setStageObjectEmbedEventBindings = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  bindings: readonly StageEmbedEventBinding[],
+) => {
+  const metadata = { ...(object.metadata || {}) }
+  delete metadata.embedEventBindings
+  const normalized = stageObjectEmbedEventBindings({ ...object, metadata: { embedEventBindings: bindings } })
+  object.metadata = normalized.length ? { ...metadata, embedEventBindings: normalized } : metadata
+}
+
+export const isStageEmbedEventBoundAction = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  actionId: string,
+) => stageObjectEmbedEventBindings(object).some(binding => binding.actionIds.includes(actionId))
+
+// The bound subset keeps the object's saved action order; the binding is a set.
+export const resolveStageEmbedEventActions = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  topic: string,
+): StageAction[] => {
+  const binding = stageObjectEmbedEventBindings(object).find(item => item.topic === topic)
+  if (!binding) return []
+  const bound = new Set(binding.actionIds)
+  return object.actions.filter(action => bound.has(action.id))
+}
+
+// Owning saved actions for execution: click targets always; iframe only for
+// actions referenced by its embed event bindings.
+export const canStageObjectRunSavedAction = (
+  object: Pick<StageObject, 'type' | 'actions' | 'metadata'>,
+  actionId: string,
+) => isStageActionTarget(object.type) || isStageEmbedEventBoundAction(object, actionId)
 
 export interface StageDrawingStyle {
   stroke: string
@@ -240,6 +352,13 @@ type StageAtomicActionData =
       objectId: string
     }
   }
+  | {
+    id: string
+    type: 'object.trigger'
+    payload: {
+      objectId: string
+    }
+  }
 
 export type StageAtomicAction = StageAtomicActionData & {
   schedule: StageActionSchedule
@@ -271,6 +390,7 @@ export type StageSequenceTiming =
 
 export interface StageSequenceStep {
   id: string
+  // scene.apply uses the destination scene; object/effect actions use the target owning scene; null means scene-independent/cross-scene.
   sceneId: string | null
   timing: StageSequenceTiming
   action: StageAtomicActionDescriptor
@@ -294,6 +414,7 @@ export interface StageActionTriggeredPayload {
   actionId: string
   stepId?: string
   direct?: true
+  embedEvent?: Pick<StageEmbedEventPublished, 'eventId' | 'formId' | 'topic'>
   action: StageAction
   execution?: {
     id: string
@@ -617,6 +738,19 @@ export const normalizeStageEntranceConfig = (input: unknown): StageEntranceConfi
   }
 }
 
+// Media FX lives in StageObject.metadata.mediaFx (stored transparently by the server).
+// Read paths normalize; existing metadata is not rewritten on load.
+export const stageObjectMediaFx = (object: Pick<StageObject, 'metadata'>): MediaFxSpec => (
+  normalizeMediaFxSpec(object.metadata?.mediaFx)
+)
+
+export const setStageObjectMediaFx = (object: Pick<StageObject, 'metadata'>, spec: unknown) => {
+  const compact = compactMediaFxSpec(spec)
+  const metadata = { ...(object.metadata || {}) }
+  delete metadata.mediaFx
+  object.metadata = compact ? { ...metadata, mediaFx: compact } : metadata
+}
+
 export interface StageSurfaceStyle {
   brightness: number
   blurPx: number
@@ -628,10 +762,15 @@ export interface StageSurfaceStyle {
     color: string
     opacity: number
   }
+  // Media FX layered on top of the base display parameters above. Omitted when it
+  // carries no effect; the legacy brightness / blurPx keep their own wider ranges.
+  mediaFx?: MediaFxSpec
 }
 
-export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay'>> & {
+// mediaFx: undefined keeps the current spec, null (or an all-default spec) removes it.
+export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay' | 'mediaFx'>> & {
   overlay?: Partial<StageSurfaceStyle['overlay']>
+  mediaFx?: MediaFxSpec | null
 }
 
 export const createDefaultStageSurfaceStyle = (fit: StageSurfaceFit = 'cover', overrides: Partial<StageSurfaceStyle> = {}): StageSurfaceStyle => ({
@@ -663,6 +802,7 @@ export const normalizeStageSurfaceStyle = (
     ? value.overlay
     : {}
   const fits: StageSurfaceFit[] = ['fill', 'cover', 'contain', 'tile', 'center']
+  const mediaFx = compactMediaFxSpec(value.mediaFx)
   return {
     brightness: finiteRange(value.brightness, base.brightness, 0, 2),
     blurPx: finiteRange(value.blurPx, base.blurPx, 0, 40),
@@ -676,6 +816,7 @@ export const normalizeStageSurfaceStyle = (
         : '#000000',
       opacity: finiteRange(overlay.opacity, base.overlay.opacity, 0, 1),
     },
+    ...(mediaFx ? { mediaFx } : {}),
   }
 }
 
@@ -717,6 +858,7 @@ export interface StageObject {
 export interface StageLiveState {
   background: StageImageRef | null
   foreground: StageImageRef | null
+  surfaceEmbeds: Record<StageSurfaceTarget, StageSurfaceEmbed | null>
   surfaceStyles: Record<StageSurfaceTarget, StageSurfaceStyle>
   backgroundColor: string
   fieldWidth: number

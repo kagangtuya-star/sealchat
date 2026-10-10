@@ -2,9 +2,14 @@ import { computed, reactive, watch, type ComputedRef } from 'vue'
 import {
   createDefaultStageSurfaceStyle,
   createDefaultStageSceneTransition,
-  isStageActionTarget,
+  isStageActionOwner,
   isSafeStageImageUrl,
+  setStageObjectEmbedEventBindings,
+  stageObjectEmbedEventBindings,
   normalizeStageIframeContent,
+  normalizeStageSurfaceEmbed,
+  normalizeStageSurfaceEmbeds,
+  resolveSafeStageIframeUrl,
   normalizeStageImageAnnotation,
   normalizeStageEntranceConfig,
   normalizeStageAudioRef,
@@ -30,14 +35,16 @@ import {
   type StageSceneTransition,
   type StageSurfaceStylePatch,
   type StageSurfaceTarget,
+  type StageSurfaceEmbed,
+  type StageSurfaceEmbedPatch,
   type StageWorkspaceState,
 } from '../shared/stage-types'
 import { normalizeStageClueExecutePayload, normalizeStageRandomTablePayload, normalizeStageSequenceAction } from '../shared/stage-actions'
 import {
   applyObjectHistoryEntry,
-  cloneStageActionsForCopy,
   cloneStageData,
   collectObjectSubtree,
+  copyStageObjectActions,
   createObjectHistoryEntry,
   instantiateClipboardBundle,
   type StageClipboardBundle,
@@ -238,6 +245,7 @@ const makeObject = (
 const createLiveState = (color: string, sceneObjects: Record<string, StageObject> = {}): StageLiveState => ({
   background: null,
   foreground: null,
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(null),
   surfaceStyles: {
     background: createDefaultStageSurfaceStyle('cover', { opacity: 0.9, blurPx: 10, brightness: 1, overlay: { enabled: false, color: '#000000', opacity: 0.4 } }),
     foreground: createDefaultStageSurfaceStyle(),
@@ -345,7 +353,7 @@ const normalizeActions = (input: unknown): StageAction[] => {
     } else if (action.type === 'clue.execute') {
       const payload = normalizeStageClueExecutePayload(action.payload)
       if (payload) result.push({ id, type: action.type, schedule, payload })
-    } else if (action.type === 'object.toggle') {
+    } else if (action.type === 'object.toggle' || action.type === 'object.trigger') {
       const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
       if (objectId) result.push({ id, type: action.type, schedule, payload: { objectId } })
     } else if (action.type === 'action.sequence') {
@@ -452,6 +460,7 @@ const normalizeObjects = (input: unknown) => {
 const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallbackColor = '#111827'): StageLiveState => ({
   background: normalizeImageRef(input?.background),
   foreground: normalizeImageRef(input?.foreground),
+  surfaceEmbeds: normalizeStageSurfaceEmbeds(input?.surfaceEmbeds),
   surfaceStyles: {
     background: normalizeStageSurfaceStyle(input?.surfaceStyles?.background, input?.fieldObjectFit || 'cover', { opacity: 0.9, blurPx: 10 }),
     foreground: normalizeStageSurfaceStyle(input?.surfaceStyles?.foreground, input?.fieldObjectFit || 'cover'),
@@ -501,6 +510,7 @@ export interface TheaterStageStore {
   updateSceneSwitchAudio: (sceneId: string, audio: StageAudioRef | null) => boolean
   updateSceneMusicSnapshot: (sceneId: string, snapshot: StageMusicSnapshot | null) => boolean
   updateSceneOverlays: (sceneId: string, overlays: StageSceneOverlayBinding[]) => boolean
+  updateSceneServerStateExtension: (sceneId: string, key: string, value: unknown) => boolean
   createSceneFolder: (name: string) => SceneFolder | null
   renameSceneFolder: (folderId: string, name: string) => boolean
   deleteSceneFolder: (folderId: string) => boolean
@@ -547,6 +557,9 @@ export interface TheaterStageStore {
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean, loopCount?: number) => boolean
   patchSceneSurfaceStyle: (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => void
   resetSceneSurfaceStyle: (target: StageSurfaceTarget) => void
+  setSceneSurfaceEmbed: (target: StageSurfaceTarget, embed: StageSurfaceEmbed | null) => boolean
+  patchSceneSurfaceEmbed: (target: StageSurfaceTarget, patch: StageSurfaceEmbedPatch) => boolean
+  removeSceneSurfaceEmbed: (target: StageSurfaceTarget) => boolean
   setObjectImage: (
     objectId: string,
     url: string,
@@ -594,7 +607,12 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   ))
   const selectedObjects = computed(() => selectionGroup.value.members)
   const editingState = reactive({ historyDepth: 0, clipboardReady: false })
-  const history: NonNullable<ReturnType<typeof createObjectHistoryEntry>>[] = []
+  const history: (NonNullable<ReturnType<typeof createObjectHistoryEntry>> | {
+    kind: 'surface-embed'
+    sceneId: string
+    target: StageSurfaceTarget
+    before: StageSurfaceEmbed | null
+  })[] = []
   let clipboard: StageClipboardBundle | null = null
   let pasteCount = 0
   let transaction: {
@@ -814,6 +832,18 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
+  // Callers normalize extension values; unknown serverState keys are preserved.
+  const updateSceneServerStateExtension = (sceneId: string, key: string, value: unknown) => {
+    const scene = state.scenes[sceneId]
+    if (!scene || !key) return false
+    if (JSON.stringify(scene.state.serverState?.[key]) === JSON.stringify(value)) return false
+    scene.state.serverState = { ...scene.state.serverState, [key]: clone(value) }
+    if (sceneId === state.activeSceneId) {
+      state.liveState.serverState = { ...state.liveState.serverState, [key]: clone(value) }
+    }
+    return true
+  }
+
   const createSceneFolder = (name: string): SceneFolder | null => {
     const normalized = name.trim()
     if (!normalized || [...normalized].length > 128) return null
@@ -919,7 +949,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes[scene.id] = scene
     const sceneIdMap = new Map([[source.id, scene.id]])
     Object.values(scene.state.sceneObjects).forEach((object) => {
-      object.actions = cloneStageActionsForCopy(object.actions, uid, idMap, sceneIdMap)
+      copyStageObjectActions(object, uid, idMap, sceneIdMap)
     })
     if (activateDuplicate) {
       state.activeSceneId = scene.id
@@ -1253,6 +1283,11 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       editingState.historyDepth = history.length
       const scene = state.scenes[entry.sceneId]
       if (!scene) continue
+      if ('kind' in entry && entry.kind === 'surface-embed') {
+        const liveState = entry.sceneId === state.activeSceneId ? state.liveState : scene.state
+        liveState.surfaceEmbeds[entry.target] = clone(entry.before)
+        return true
+      }
       const sceneObjects = entry.sceneId === state.activeSceneId
         ? state.liveState.sceneObjects
         : scene.state.sceneObjects
@@ -1419,14 +1454,17 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const patchSceneSurfaceStyle = (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => {
     const current = state.liveState.surfaceStyles[target]
-    state.liveState.surfaceStyles[target] = normalizeStageSurfaceStyle({
+    const next: Record<string, unknown> = {
       ...current,
       ...patch,
       overlay: {
         ...current.overlay,
         ...patch.overlay,
       },
-    }, current.fit)
+    }
+    if (patch.mediaFx === null) delete next.mediaFx
+    else if (patch.mediaFx === undefined) next.mediaFx = current.mediaFx
+    state.liveState.surfaceStyles[target] = normalizeStageSurfaceStyle(next, current.fit)
   }
 
   const resetSceneSurfaceStyle = (target: StageSurfaceTarget) => {
@@ -1434,6 +1472,26 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       ? createDefaultStageSurfaceStyle('cover', { opacity: 0.9, blurPx: 10 })
       : createDefaultStageSurfaceStyle()
   }
+
+  const setSceneSurfaceEmbed = (target: StageSurfaceTarget, embed: StageSurfaceEmbed | null) => {
+    const next = normalizeStageSurfaceEmbed(embed)
+    if (embed && (!next || next.iframe.url.length > 8192 || (next.iframe.url && !resolveSafeStageIframeUrl(next.iframe.url)))) return false
+    const before = state.liveState.surfaceEmbeds[target]
+    if (JSON.stringify(before) === JSON.stringify(next)) return false
+    commitObjectEdit()
+    history.push({ kind: 'surface-embed', sceneId: state.activeSceneId, target, before: clone(before) })
+    if (history.length > 100) history.shift()
+    editingState.historyDepth = history.length
+    state.liveState.surfaceEmbeds[target] = next
+    return true
+  }
+
+  const patchSceneSurfaceEmbed = (target: StageSurfaceTarget, patch: StageSurfaceEmbedPatch) => {
+    const current = state.liveState.surfaceEmbeds[target]
+    if (!current) return false
+    return setSceneSurfaceEmbed(target, { ...current, ...patch, iframe: { ...current.iframe, ...patch.iframe } })
+  }
+  const removeSceneSurfaceEmbed = (target: StageSurfaceTarget) => setSceneSurfaceEmbed(target, null)
 
   const setObjectImage = (
     objectId: string,
@@ -1534,7 +1592,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
-    if (!object || !isStageActionTarget(object.type)) return false
+    if (!object || !isStageActionOwner(object.type)) return false
     const normalizedAction = normalizeActions([action])[0]
     if (!normalizedAction) return false
     const enableDrawingInteraction = object.type === 'drawing' && object.actions.length === 0
@@ -1549,6 +1607,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const index = object.actions.findIndex((action) => action.id === actionId)
     if (index < 0) return false
     object.actions.splice(index, 1)
+    // Prune in the same edit: the server rejects bindings to missing actions.
+    if (object.metadata?.embedEventBindings !== undefined) {
+      setStageObjectEmbedEventBindings(object, stageObjectEmbedEventBindings(object))
+    }
     return true
   })
 
@@ -1599,6 +1661,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const replaceState = (next: StageWorkspaceState) => {
     transaction = null
     const value = clone(next)
+    value.liveState.surfaceEmbeds = normalizeStageSurfaceEmbeds(value.liveState.surfaceEmbeds)
+    Object.values(value.scenes).forEach(scene => {
+      scene.state.surfaceEmbeds = normalizeStageSurfaceEmbeds(scene.state.surfaceEmbeds)
+    })
     value.sceneFolders = Array.isArray(value.sceneFolders)
       ? value.sceneFolders.filter((folder) => folder && typeof folder.id === 'string' && typeof folder.name === 'string' && folder.id.trim() && folder.name.trim())
         .map((folder) => ({ id: folder.id.trim(), name: folder.name.trim() }))
@@ -1643,6 +1709,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     updateSceneSwitchAudio,
     updateSceneMusicSnapshot,
     updateSceneOverlays,
+    updateSceneServerStateExtension,
     createSceneFolder,
     renameSceneFolder,
     deleteSceneFolder,
@@ -1679,6 +1746,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setSceneImage,
     patchSceneSurfaceStyle,
     resetSceneSurfaceStyle,
+    setSceneSurfaceEmbed,
+    patchSceneSurfaceEmbed,
+    removeSceneSurfaceEmbed,
     setObjectImage,
     addObjectAction,
     removeObjectAction,

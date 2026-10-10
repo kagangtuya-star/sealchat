@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
 	"sealchat/model"
 )
 
@@ -18,6 +19,10 @@ type EffectiveWorldKeywordListOptions struct {
 	Category          string
 	IncludeDisabled   bool
 	IncludeAllMatches bool
+	// SearchLimit bounds each origin's candidates; ordinary lists are unchanged.
+	SearchLimit int
+	From        *time.Time
+	To          *time.Time
 }
 
 type EffectiveWorldKeywordItem struct {
@@ -219,7 +224,7 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 		worldQuery = worldQuery.Where("is_enabled = ?", true)
 	}
 	var worldItems []*model.WorldKeywordModel
-	if err := worldQuery.Order("sort_order DESC, updated_at DESC").Find(&worldItems).Error; err != nil {
+	if err := effectiveWorldKeywordSearchQuery(worldQuery, opts).Order("sort_order DESC, updated_at DESC").Find(&worldItems).Error; err != nil {
 		return nil, err
 	}
 	for _, item := range worldItems {
@@ -272,7 +277,7 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 				termQuery = termQuery.Where("is_enabled = ?", true)
 			}
 			var externalItems []*model.ExternalGlossaryTermModel
-			if err := termQuery.Order("sort_order DESC, updated_at DESC").Find(&externalItems).Error; err != nil {
+			if err := effectiveWorldKeywordSearchQuery(termQuery, opts).Order("sort_order DESC, updated_at DESC").Find(&externalItems).Error; err != nil {
 				return nil, err
 			}
 			for _, item := range externalItems {
@@ -310,4 +315,30 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 		deduped = append(deduped, item)
 	}
 	return filterEffectiveWorldKeywordItems(deduped, opts), nil
+}
+
+func effectiveWorldKeywordSearchQuery(q *gorm.DB, opts EffectiveWorldKeywordListOptions) *gorm.DB {
+	if opts.SearchLimit <= 0 {
+		return q
+	}
+	limit := opts.SearchLimit
+	if limit > 1001 {
+		limit = 1001
+	}
+	pattern := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
+	aliases := "aliases"
+	switch q.Dialector.Name() {
+	case "postgres":
+		aliases = "CAST(aliases AS TEXT)"
+	case "mysql":
+		aliases = "CAST(aliases AS CHAR)"
+	}
+	q = q.Where("LOWER(keyword) LIKE ? OR LOWER(description) LIKE ? OR LOWER("+aliases+") LIKE ?", pattern, pattern, pattern)
+	if opts.From != nil {
+		q = q.Where("updated_at >= ?", *opts.From)
+	}
+	if opts.To != nil {
+		q = q.Where("updated_at <= ?", *opts.To)
+	}
+	return q.Order("updated_at DESC, id DESC").Limit(limit)
 }

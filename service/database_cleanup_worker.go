@@ -16,12 +16,25 @@ func StartDatabaseCleanupWorker() {
 }
 
 func runDatabaseCleanupWorker() {
-	runDatabaseCleanup(time.Now())
+	run := func() {
+		now := time.Now()
+		runDatabaseCleanup(now)
+		if _, err := CleanupMCPOAuthGrants(now); err != nil {
+			log.Print("mcp-oauth-cleanup: 执行失败，后续轮次重试")
+		}
+		deleted, err := CleanupMCPTemporaryAttachments(now)
+		if err != nil {
+			log.Printf("mcp-upload-cleanup: 执行失败，后续轮次重试: %v", err)
+		} else if deleted > 0 {
+			log.Printf("mcp-upload-cleanup: 清理 %d 条", deleted)
+		}
+	}
+	run()
 
 	ticker := time.NewTicker(DatabaseCleanupInterval)
 	defer ticker.Stop()
 	for range ticker.C {
-		runDatabaseCleanup(time.Now())
+		run()
 	}
 }
 

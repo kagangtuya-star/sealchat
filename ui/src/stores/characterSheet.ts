@@ -799,6 +799,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     );
     saveTemplate(win.cardId, normalized);
     schedulePersistWindows();
+    void cardStore.broadcastActiveBadge(win.channelId);
     return binding;
   };
 
@@ -819,6 +820,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     win.templateId = undefined;
     saveTemplate(win.cardId, normalized);
     schedulePersistWindows();
+    void cardStore.broadcastActiveBadge(win.channelId);
     return binding;
   };
 

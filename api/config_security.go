@@ -13,6 +13,7 @@ import (
 func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 	ret := sanitizeConfigForAdmin(cfg)
 	ret.AI.Providers = nil
+	ret.AI.Speech = nil
 	ret.Certificate = utils.CertificateConfig{}
 	return ret
 }
@@ -22,6 +23,17 @@ func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 		return utils.AppConfig{}
 	}
 	ret := *cfg
+	ret.AI.Speech = utils.NormalizeSpeechConfig(cfg.AI.Speech)
+	if ret.AI.Speech != nil {
+		for i := range ret.AI.Speech.Providers {
+			p := &ret.AI.Speech.Providers[i]
+			p.HasAPIKey = strings.TrimSpace(p.APIKey) != ""
+			p.HasSecretID = strings.TrimSpace(p.SecretID) != ""
+			p.HasSecretKey = strings.TrimSpace(p.SecretKey) != ""
+			p.APIKey = ""
+			p.SecretID, p.SecretKey = "", ""
+		}
+	}
 	if len(cfg.AI.Providers) > 0 {
 		ret.AI.Providers = append([]utils.AIProviderConfig(nil), cfg.AI.Providers...)
 	}
@@ -60,6 +72,13 @@ func normalizeAndValidateCertificateConfigForWrite(cfg *utils.AppConfig) error {
 	return utils.ValidateCertificateConfig(cfg.Certificate)
 }
 
+func validateS3CredentialsForWrite(cfg utils.S3StorageConfig) error {
+	if (strings.TrimSpace(cfg.AccessKey) == "") != (strings.TrimSpace(cfg.SecretKey) == "") {
+		return fmt.Errorf("Access Key 和 Secret Key 必须成对填写，或同时留空")
+	}
+	return nil
+}
+
 func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *utils.AppConfig {
 	if incoming == nil {
 		if current == nil {
@@ -74,6 +93,26 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 
 	out := *incoming
+	if incoming.AI.Speech == nil {
+		out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
+	} else {
+		out.AI.Speech = utils.NormalizeSpeechConfigForWrite(incoming.AI.Speech)
+		if current.AI.Speech != nil {
+			for i := range out.AI.Speech.Providers {
+				p := &out.AI.Speech.Providers[i]
+				for _, old := range current.AI.Speech.Providers {
+					if old.ID == p.ID && old.EffectiveProviderKind() == p.EffectiveProviderKind() && old.CredentialScope == p.CredentialScope {
+						if strings.TrimSpace(p.APIKey) == "" {
+							p.APIKey = old.APIKey
+						}
+						if p.EffectiveProviderKind() == "tencent" && strings.TrimSpace(p.SecretID) == "" && strings.TrimSpace(p.SecretKey) == "" {
+							p.SecretID, p.SecretKey = old.SecretID, old.SecretKey
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Always keep server-only DSN if incoming is empty.
 	if strings.TrimSpace(out.DSN) == "" {
@@ -84,14 +123,14 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	if strings.TrimSpace(out.LogUpload.Token) == "" {
 		out.LogUpload.Token = current.LogUpload.Token
 	}
-	if strings.TrimSpace(out.Storage.S3.AccessKey) == "" {
+	// A blank key pair keeps the existing keys. A supplied token replaces the old
+	// token; an empty token keeps it. A new key pair owns its token value directly.
+	if strings.TrimSpace(out.Storage.S3.AccessKey) == "" && strings.TrimSpace(out.Storage.S3.SecretKey) == "" {
 		out.Storage.S3.AccessKey = current.Storage.S3.AccessKey
-	}
-	if strings.TrimSpace(out.Storage.S3.SecretKey) == "" {
 		out.Storage.S3.SecretKey = current.Storage.S3.SecretKey
-	}
-	if strings.TrimSpace(out.Storage.S3.SessionToken) == "" {
-		out.Storage.S3.SessionToken = current.Storage.S3.SessionToken
+		if strings.TrimSpace(out.Storage.S3.SessionToken) == "" {
+			out.Storage.S3.SessionToken = current.Storage.S3.SessionToken
+		}
 	}
 
 	if strings.TrimSpace(out.Captcha.Turnstile.SecretKey) == "" {
@@ -163,8 +202,27 @@ func mergeConfigPatchForWrite(current *utils.AppConfig, raw []byte) (*utils.AppC
 	}
 
 	out := *current
+	// The recursive patch must never mutate the live pointer before validation.
+	out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
 	if err := applyJSONConfigPatch(reflect.ValueOf(&out).Elem(), payload); err != nil {
 		return nil, err
+	}
+	var incoming struct {
+		Storage struct {
+			S3 *utils.S3StorageConfig `json:"s3"`
+		} `json:"storage"`
+	}
+	if err := json.Unmarshal(raw, &incoming); err != nil {
+		return nil, err
+	}
+	if s3 := incoming.Storage.S3; s3 != nil {
+		if err := validateS3CredentialsForWrite(*s3); err != nil {
+			return nil, err
+		}
+		// Omitted credentials must not be taken from the patched current snapshot.
+		out.Storage.S3.AccessKey = s3.AccessKey
+		out.Storage.S3.SecretKey = s3.SecretKey
+		out.Storage.S3.SessionToken = s3.SessionToken
 	}
 	return mergeConfigForWrite(current, &out), nil
 }
@@ -194,6 +252,20 @@ func applyJSONConfigPatch(dst reflect.Value, payload map[string]json.RawMessage)
 			continue
 		}
 
+		if name == "speech" && field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {
+				copyValue := reflect.New(field.Type().Elem())
+				if !field.IsNil() {
+					copyValue.Elem().Set(field.Elem())
+				}
+				if err := applyJSONConfigPatch(copyValue.Elem(), nested); err != nil {
+					return err
+				}
+				field.Set(copyValue)
+				continue
+			}
+		}
 		if field.Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
 			var nested map[string]json.RawMessage
 			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {

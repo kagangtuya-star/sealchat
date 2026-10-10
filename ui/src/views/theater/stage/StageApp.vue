@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Konva from 'konva'
+import { captureTheaterViewport, waitForCaptureReady } from './theater-mcp-capture'
+import type { TheaterRendererCommand, TheaterRendererView } from '../shared/theater-renderer-protocol'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NModal, NPopover, NProgress, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTabPane, NTabs, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
@@ -31,6 +33,8 @@ import {
   Focus,
   GripVertical,
   LayoutSidebarLeftExpand,
+  LayoutSidebar,
+  LayoutNavbar,
   LetterT,
   Lock,
   LockOpen,
@@ -43,6 +47,7 @@ import {
   Search,
   Select,
   Settings,
+  Sitemap,
   Stars,
   Stack2,
   Trash,
@@ -79,13 +84,22 @@ import {
   normalizeStageEntranceConfig,
   normalizeStageSceneTransition,
   resolveSafeStageIframeUrl,
+  setStageObjectMediaFx,
+  stageObjectMediaFx,
   stageSceneTransitionTypes,
   type StageEntranceConfig,
   type StageEntrancePlayback,
   type StageEntrancePreset,
   isStageActionTarget,
+  isStageActionOwner,
+  setStageObjectEmbedEventBindings,
+  stageObjectEmbedEventBindings,
+  STAGE_EMBED_EVENT_BINDINGS_MAX,
+  STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX,
+  STAGE_EMBED_EVENT_TOPIC_PATTERN,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageEmbedEventBinding,
   type StageAudioRef,
   type StageDrawing,
   type StageDrawingStyle,
@@ -107,9 +121,9 @@ import {
   type StageSurfaceStyle,
   type StageSurfaceTarget,
 } from '../shared/stage-types'
-import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult } from '../bridge/theater-bridge-protocol'
+import { stageActionSchema, type ChatCharactersSnapshotPayload, type ChatClueAccessReadResult, type ChatClueOptionsReadResult, type StageSequenceTriggeredPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
-import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
+import { compareStageLayersBottomToTop, compareStageLayersTopToBottom, planStageObjectRenderBands } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
 import { stageSceneTransitionKeyframes, stageSceneTransitionOptions } from './stage-scene-transition'
@@ -127,6 +141,9 @@ import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import { cloneStageData, type StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
+import { createStageEmbedEventTrigger } from './stage-embed-event-trigger'
+import StageSurfaceIframe from './StageSurfaceIframe.vue'
+import StageSurfaceEmbedSettings from './StageSurfaceEmbedSettings.vue'
 import StageImageAnnotationEditor from './StageImageAnnotationEditor.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import TheaterRandomTableEditor from './TheaterRandomTableEditor.vue'
@@ -134,6 +151,31 @@ import TheaterClueActionEditor from './TheaterClueActionEditor.vue'
 import type { TheaterStageStore } from './StageStore'
 import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import {
+  compactMediaFxSpec,
+  createDefaultMediaFxSpec,
+  mediaFxAdvancedHasContent,
+  mediaFxFilterToCss,
+  mediaFxHasContent,
+  mediaFxSpecsEqual,
+  mediaFxTemporalHasContent,
+  normalizeMediaFxSpec,
+  resolveMediaFxCapabilities,
+  resolveMediaFxMotionOverscanScale,
+  type MediaFxCapabilities,
+  type MediaFxSpec,
+} from '@/features/media-fx/media-fx'
+import { canvasFilterSupported } from '@/features/media-fx/media-fx-canvas'
+import {
+  createKonvaMediaFxController,
+  createKonvaMediaFxTemporalController,
+  mediaFxAdvancedSignature,
+  type KonvaMediaFxController,
+  type KonvaMediaFxTemporalController,
+} from '@/features/media-fx/media-fx-konva'
+import { createMediaFxGpuFilter, mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
+import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor'
+import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import TheaterDialogueControllerPanel from '../dialogue/TheaterDialogueControllerPanel.vue'
 import type { DialogueController, DialogueControllerTemplate, DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
@@ -155,11 +197,13 @@ import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
-import type { TheaterPresentation, TheaterTransform } from '@/types/theaterPresentation'
+import type { TheaterPresentation, TheaterTransform, TheaterVisualStyle } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
 import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
+import { TheaterSequenceRuntime } from '../sequences/theater-sequence-runtime'
+import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
 import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
 import {
   emptyTheaterPanelOrganizer,
@@ -194,6 +238,8 @@ const props = defineProps<{
   chatVisible: boolean
   syncReady: boolean
   syncing: boolean
+  rendererAuthorized: boolean
+  rendererAuthorizing: boolean
   permissions: string[]
   constructionSceneId: string | null
   dialogueRuntime: TheaterDialogueRuntime
@@ -211,6 +257,7 @@ const props = defineProps<{
     previewName: string
     previewText: string
     controllerArea?: TheaterTransform
+    controllerPortraitStyle?: TheaterVisualStyle
     multiplayerPortraitTransform?: TheaterTransform
   } | null
   sceneDialogueEnabled: boolean
@@ -222,6 +269,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   floatingWindowAction: [action: TheaterFloatingWindowAction]
   actionTriggered: [payload: StageActionTriggeredPayload]
+  sequenceTriggered: [payload: StageSequenceTriggeredPayload]
   pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
@@ -229,6 +277,7 @@ const emit = defineEmits<{
   toggleChat: []
   disconnectChatBridge: []
   reconnectChatBridge: []
+  toggleRenderer: []
   resetLayout: []
   exitTheater: []
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
@@ -261,10 +310,12 @@ const stageActionDescriptions: Record<StageAction['type'], string> = {
   'effect.play': '触发特效',
   'clue.execute': '线索',
   'object.toggle': '显隐切换',
+  'object.trigger': '触发组件点击动作',
   'action.sequence': '组合动作',
 }
 
 const containerRef = ref<HTMLDivElement | null>(null)
+const stageAppRef = ref<HTMLElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const sceneVisualRef = ref<HTMLDivElement | null>(null)
 const sceneMorphContainerRef = ref<HTMLDivElement | null>(null)
@@ -294,13 +345,42 @@ let imageAnnotationTimer: number | null = null
 let imageAnnotationPendingObjectId = ''
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
+const sequencePanelOpen = ref(false)
 const overlayPanelOpen = ref(false)
 const floatingPanelOpen = ref(false)
 const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
+const panelSwitchesColorsVisible = ref(false)
 const componentActionsExpanded = ref(false)
 const iframeInteractionDisabled = ref(false)
+// Disposable GM preview; never enters StageStore, history, or synchronization.
+const surfaceInteractionTest = ref<StageSurfaceTarget | null>(null)
+type TheaterToolbarLayout = 'horizontal' | 'vertical'
+const theaterToolbarLayoutStorageKey = 'sealchat.theater.toolbar-layout.v1'
+const readTheaterToolbarLayout = (): TheaterToolbarLayout => {
+  try {
+    if (typeof window === 'undefined') return 'horizontal'
+    const stored = window.localStorage.getItem(theaterToolbarLayoutStorageKey)
+    if (stored === 'horizontal' || stored === 'vertical') return stored
+    if (stored === null) return 'horizontal'
+    const parsed: unknown = JSON.parse(stored)
+    return parsed === 'horizontal' || parsed === 'vertical' ? parsed : 'horizontal'
+  } catch {
+    return 'horizontal'
+  }
+}
+const theaterToolbarLayout = ref<TheaterToolbarLayout>(readTheaterToolbarLayout())
+const theaterToolbarLayoutLabel = computed(() => theaterToolbarLayout.value === 'horizontal' ? '切换为左侧工具栏' : '切换为顶部工具栏')
+const toggleTheaterToolbarLayout = () => {
+  const nextLayout: TheaterToolbarLayout = theaterToolbarLayout.value === 'horizontal' ? 'vertical' : 'horizontal'
+  theaterToolbarLayout.value = nextLayout
+  try {
+    window.localStorage.setItem(theaterToolbarLayoutStorageKey, nextLayout)
+  } catch {
+    // Browser storage may be unavailable; keep the current layout in memory.
+  }
+}
 const theaterPerformanceVisibilityStorageKey = 'sealchat.theater.performance-visibility.v1'
 const readTheaterPerformanceVisibility = () => {
   const defaults = { dialogueHidden: false, portraitHidden: false }
@@ -325,6 +405,7 @@ const portraitPerformanceHidden = ref(initialTheaterPerformanceVisibility.portra
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
 const SceneOverlayManagerPanel = defineAsyncComponent(() => import('../overlays/SceneOverlayManagerPanel.vue'))
+const TheaterSequencePanel = defineAsyncComponent(() => import('../sequences/TheaterSequencePanel.vue'))
 const TheaterAssetManager = defineAsyncComponent(() => import('../effects/TheaterAssetManager.vue'))
 const TheaterFloatingManagerPanel = defineAsyncComponent(() => import('./TheaterFloatingManagerPanel.vue'))
 const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
@@ -1025,6 +1106,20 @@ const effectRuntime = new TheaterEffectRuntime({
   },
 })
 const unsubscribeEffectRuntime = effectRuntime.subscribe((playbacks) => { effectPlaybacks.value = playbacks })
+const activeTheaterSequences = computed(() => theaterSequencesFromServerState(props.store.state.liveState.serverState))
+const sequenceClickObjectIds = computed(() => new Set(activeTheaterSequences.value
+  .filter((sequence) => sequence.enabled)
+  .flatMap((sequence) => sequence.triggers.flatMap((trigger) => (
+    trigger.type === 'component.click' ? [trigger.objectId] : []
+  )))))
+const emitSequenceTriggered = (sequenceId: string, triggerId: string) => {
+  emit('sequenceTriggered', { sequenceId, triggerId, executionId: actionId() })
+}
+const sequenceRuntime = new TheaterSequenceRuntime({
+  dialogueRuntime: props.dialogueRuntime,
+  getSequences: () => activeTheaterSequences.value,
+  onTrigger: emitSequenceTriggered,
+})
 const theaterPopoverThemeOverrides = {
   color: 'color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent)',
   boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
@@ -1062,6 +1157,13 @@ const handleToolbarFocusOut = (event: FocusEvent) => {
   if (event.relatedTarget instanceof Node && toolbar?.contains(event.relatedTarget)) return
   hideToolbarColors()
 }
+const revealPanelSwitchesColors = () => { panelSwitchesColorsVisible.value = true }
+const hidePanelSwitchesColors = () => { panelSwitchesColorsVisible.value = false }
+const handlePanelSwitchesFocusOut = (event: FocusEvent) => {
+  const controls = event.currentTarget as HTMLElement | null
+  if (event.relatedTarget instanceof Node && controls?.contains(event.relatedTarget)) return
+  hidePanelSwitchesColors()
+}
 
 type ImageTarget =
   | { kind: 'scene', target: 'background' | 'foreground' }
@@ -1088,6 +1190,20 @@ const updateSurfacePercentage = (target: StageSurfaceTarget, key: 'brightness' |
 }
 const updateSurfaceOverlay = (target: StageSurfaceTarget, patch: Partial<StageSurfaceStyle['overlay']>) => {
   props.store.patchSceneSurfaceStyle(target, { overlay: patch })
+}
+// Surface Media FX is layered over the base display parameters; an all-default spec
+// (including the panel's own reset) removes the field instead of storing it.
+const surfaceMediaFx = (target: StageSurfaceTarget) => surfaceStyle(target).mediaFx ?? createDefaultMediaFxSpec()
+// Advanced and temporal GPU effects only render on the static direct-image path (not
+// tile, video or animated media). Unsupported cases keep any stored values untouched.
+const surfaceMediaFxCapabilities = (target: StageSurfaceTarget) => {
+  const image = props.store.state.liveState[target]
+  const animatedMedia = Boolean(image && (image.animated === true || image.mimeType?.startsWith('video/')))
+  const gpuPixels = Boolean(image) && surfaceStyle(target).fit !== 'tile' && mediaFxGpuAvailable.value
+  return resolveMediaFxCapabilities('konva', animatedMedia, gpuPixels, gpuPixels)
+}
+const updateSurfaceMediaFx = (target: StageSurfaceTarget, spec: MediaFxSpec) => {
+  props.store.patchSceneSurfaceStyle(target, { mediaFx: compactMediaFxSpec(spec) })
 }
 
 interface TheaterResourceResponse {
@@ -1159,6 +1275,24 @@ const workspaceRef = ref<HTMLDivElement | null>(null)
 const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
 const canBrowseScenes = computed(() => hasPermission('stage.view'))
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
+const surfaceIframeInteractive = (target: StageSurfaceTarget) => (
+  canEditAllObjects.value
+    ? surfaceInteractionTest.value === target
+    : props.store.state.liveState.surfaceEmbeds[target]?.interactive === true
+)
+const toggleSurfaceInteractionTest = (target: StageSurfaceTarget) => {
+  if (!canEditAllObjects.value || !props.store.state.liveState.surfaceEmbeds[target]) return
+  surfaceInteractionTest.value = surfaceInteractionTest.value === target ? null : target
+}
+watch(() => [props.worldId, props.channelId, props.store.state.activeSceneId, canEditAllObjects.value], () => {
+  surfaceInteractionTest.value = null
+})
+watch(() => ([
+  surfaceInteractionTest.value,
+  surfaceInteractionTest.value ? props.store.state.liveState.surfaceEmbeds[surfaceInteractionTest.value]?.iframe.url : undefined,
+] as const), ([target, url], [previousTarget, previousUrl]) => {
+  if (target && (url === undefined || (target === previousTarget && url !== previousUrl))) surfaceInteractionTest.value = null
+})
 const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.delegated'))
 const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
 const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
@@ -1218,7 +1352,7 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && object.visible
   && object.interactive
   && !(iframeInteractionDisabled.value && object.type === 'iframe')
-  && hasConfiguredObjectAction(object)
+  && (hasConfiguredObjectAction(object) || sequenceClickObjectIds.value.has(object.id))
   && isStageActionTarget(object.type),
 )
 
@@ -1351,7 +1485,7 @@ const saveImageAnnotation = (annotation: StageImageAnnotation) => {
   closeImageAnnotationEditor()
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'overlay' | 'asset' | 'floating'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'sequence' | 'overlay' | 'asset' | 'floating'
 
 const canOpenPanel = (id: PanelId) => {
   if (id === 'floating') return true
@@ -2001,6 +2135,13 @@ const isEditableShortcutTarget = (target: EventTarget | null) => {
 const copySelectedObjects = () => props.store.copySelectedObjects(copyMode.value)
 
 const handleStageShortcut = (event: KeyboardEvent) => {
+  if (surfaceInteractionTest.value) {
+    if (event.key === 'Escape') {
+      surfaceInteractionTest.value = null
+      event.preventDefault()
+    }
+    return
+  }
   if (
     event.isComposing
     || event.altKey
@@ -2122,6 +2263,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   inspector: { width: 240, height: 240 },
   layer: { width: 280, height: 220 },
   effect: { width: 320, height: 320 },
+  sequence: { width: 300, height: 260 },
   overlay: { width: 520, height: 360 },
   floating: { width: 280, height: 220 },
   asset: { width: 320, height: 280 },
@@ -2143,7 +2285,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'floating' ? 340 : id === 'effect' || id === 'asset' ? 340 : 300
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'overlay' ? 680 : id === 'floating' ? 340 : id === 'effect' || id === 'sequence' || id === 'asset' ? 340 : 300
   const availableFloatingHeight = Math.max(1, workspaceHeight - panelTopInset - 12)
   const height = id === 'floating'
     ? Math.min(340, Math.max(240, Math.round(availableFloatingHeight * 0.5)))
@@ -2247,6 +2389,7 @@ const togglePanel = (id: PanelId) => {
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
   else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
+  else if (id === 'sequence') sequencePanelOpen.value = !sequencePanelOpen.value
   else if (id === 'overlay') overlayPanelOpen.value = !overlayPanelOpen.value
   else if (id === 'floating') floatingPanelOpen.value = !floatingPanelOpen.value
   else assetPanelOpen.value = !assetPanelOpen.value
@@ -2259,9 +2402,11 @@ const togglePanel = (id: PanelId) => {
         ? layerPanelOpen.value
         : id === 'effect'
           ? effectPanelOpen.value
-          : id === 'overlay'
-            ? overlayPanelOpen.value
-            : id === 'floating' ? floatingPanelOpen.value : assetPanelOpen.value
+          : id === 'sequence'
+            ? sequencePanelOpen.value
+            : id === 'overlay'
+              ? overlayPanelOpen.value
+              : id === 'floating' ? floatingPanelOpen.value : assetPanelOpen.value
   if (isOpen) bringPanelToFront(id)
 }
 
@@ -2275,6 +2420,7 @@ const resetWorkspaceLayout = async () => {
     ['inspector', inspectorPanelOpen.value],
     ['layer', layerPanelOpen.value],
     ['effect', effectPanelOpen.value],
+    ['sequence', sequencePanelOpen.value],
     ['overlay', overlayPanelOpen.value],
     ['asset', assetPanelOpen.value],
     ['floating', floatingPanelOpen.value],
@@ -2317,7 +2463,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'sequence', 'overlay', 'asset', 'floating']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -2381,9 +2527,7 @@ const actionId = () => {
 let stage: Konva.Stage | null = null
 let backgroundLayer: Konva.Layer | null = null
 let worldLayer: Konva.Layer | null = null
-let worldOverlayLayer: Konva.Layer | null = null
-let foregroundLayer: Konva.Layer | null = null
-let gridTopLayer: Konva.Layer | null = null
+let topVisualLayer: Konva.Layer | null = null
 let interactionLayer: Konva.Layer | null = null
 let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
@@ -2392,11 +2536,10 @@ let foregroundCameraGroup: Konva.Group | null = null
 let gridTopCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
-const objectRootLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group }>()
+// Band 0 belongs to worldLayer/worldCameraGroup/objectRoot and is never destroyed here.
+const extraObjectRenderBands: Array<{ layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }> = []
 const rootStackingOrder = ref<Record<string, number>>({})
-const OBJECT_ROOT_LAYER_Z_BASE = 100
-const WORLD_OVERLAY_LAYER_Z = 8990
-const GRID_TOP_LAYER_Z = 9990
+const TOP_VISUAL_LAYER_Z = 9990
 let sceneMorphStage: Konva.Stage | null = null
 const sceneMorphLayers = new Map<string, { layer: Konva.Layer; camera: Konva.Group; root: Konva.Group }>()
 const sceneMorphTextCameras = new Map<string, HTMLDivElement>()
@@ -2625,7 +2768,7 @@ const clearPointerTrace = (traceId: string) => {
   visual.group.destroy()
   pointerTraceVisuals.delete(traceId)
   localPointerTraceIds.delete(traceId)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const keepPointerTrace = (traceId: string) => {
@@ -2669,7 +2812,7 @@ const appendPointerTraceVisual = (trace: StagePointerTrace) => {
     visual.line.points([...visual.line.points(), ...trace.points])
   }
   keepPointerTrace(trace.traceId)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const appendPointerTrace = (trace: StagePointerTrace) => {
@@ -2742,6 +2885,8 @@ const finishPointerTrace = () => {
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 const objectEntranceTweens = new Map<string, Konva.Tween>()
+// Media FX motion/filter controllers for image objects, keyed by object id.
+const objectMediaFxControllers = new Map<string, KonvaMediaFxController>()
 const pendingObjectEntrances = new Set<string>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
 const activeAnimatedMedia = new Set<StageMediaSource>()
@@ -2761,20 +2906,30 @@ let batchTransformRootIds: string[] | null = null
 const drawWorldLayers = (immediate = false) => {
   if (immediate) {
     worldLayer?.draw()
-    objectRootLayers.forEach(({ layer }) => layer.draw())
-    worldOverlayLayer?.draw()
-    gridTopLayer?.draw()
+    extraObjectRenderBands.forEach(({ layer }) => layer.draw())
     return
   }
   worldLayer?.batchDraw()
-  objectRootLayers.forEach(({ layer }) => layer.batchDraw())
-  worldOverlayLayer?.batchDraw()
-  gridTopLayer?.batchDraw()
+  extraObjectRenderBands.forEach(({ layer }) => layer.batchDraw())
 }
 
+const drawTopVisualLayer = (immediate = false) => {
+  if (immediate) topVisualLayer?.draw()
+  else topVisualLayer?.batchDraw()
+}
+
+// group: layout / clip only. mediaFxGroup: Media FX motion only.
+// mediaContentGroup: static render-only overscan. Overlay, placeholder and label
+// stay outside mediaFxGroup so they never follow the motion.
 interface SurfaceSlot {
+  target: StageSurfaceTarget
   group: Konva.Group
   base: Konva.Rect | null
+  mediaFxGroup: Konva.Group
+  mediaContentGroup: Konva.Group
+  mediaFxController: KonvaMediaFxController
+  // Temporal live frames drawn in place of directImage's cached static look.
+  mediaFxTemporal: KonvaMediaFxTemporalController
   media: Konva.Shape
   directImage: Konva.Image
   overlay: Konva.Rect
@@ -2785,6 +2940,8 @@ interface SurfaceSlot {
   version: number
   source: StageMediaSource | null
   ready: boolean
+  // Animated image / video: Media FX filters are disabled (V1 capability rule).
+  animatedMedia: boolean
   directImageSource: StageMediaSource | null
   directImageSignature: string
   debugDrawCount: number
@@ -3456,6 +3613,62 @@ const updateSelectedEntranceDuration = (value: number | null) => {
   if (value !== null) updateSelectedEntrance({ durationMs: value })
 }
 
+// Media FX for image and iframe objects is stored in metadata.mediaFx. Member-delegated
+// edits are limited to metadata.entrance by the server, so the editor is admin-only.
+const selectedMediaFxOpen = ref(false)
+const mediaFxPreviewPaused = ref(false)
+const mediaFxGpuAvailable = ref(mediaFxGpuSupported())
+const unsubscribeMediaFxGpuAvailability = subscribeMediaFxGpuAvailability((available) => {
+  mediaFxGpuAvailable.value = available
+})
+const supportsStageObjectMediaFx = (object: StageObject | null | undefined) => (
+  object?.type === 'image' || object?.type === 'iframe'
+)
+const selectedObjectSupportsMediaFx = computed(() => (
+  supportsStageObjectMediaFx(selectedObject.value) && canEditAllObjects.value
+))
+const selectedMediaFx = computed(() => (
+  selectedObject.value ? stageObjectMediaFx(selectedObject.value) : null
+))
+const selectedMediaFxActive = computed(() => mediaFxHasContent(selectedMediaFx.value))
+// Image objects render through Konva (filters are cached, so animated media disables
+// them). Iframe objects render as DOM, where CSS filter composites the live frame.
+// Advanced and temporal GPU effects are only offered for static images.
+const selectedMediaFxCapabilities = computed(() => (
+  selectedObject.value?.type === 'iframe'
+    ? resolveMediaFxCapabilities('dom', false)
+    : resolveMediaFxCapabilities(
+      'konva',
+      selectedObject.value?.type === 'image' && Boolean(selectedObject.value.image) && !isStaticImageObject(selectedObject.value),
+      isStaticImageObject(selectedObject.value) && mediaFxGpuAvailable.value,
+      isStaticImageObject(selectedObject.value) && mediaFxGpuAvailable.value,
+    )
+))
+let selectedMediaFxEditing = false
+const beginSelectedMediaFxEdit = () => {
+  if (selectedMediaFxEditing || !supportsStageObjectMediaFx(selectedObject.value) || !canEditAllObjects.value) return
+  props.store.beginObjectEdit('修改视觉效果')
+  selectedMediaFxEditing = true
+}
+const endSelectedMediaFxEdit = () => {
+  if (!selectedMediaFxEditing) return
+  selectedMediaFxEditing = false
+  props.store.commitObjectEdit()
+}
+const updateSelectedMediaFx = (spec: MediaFxSpec) => {
+  const object = selectedObject.value
+  if (!object || !supportsStageObjectMediaFx(object) || !canEditAllObjects.value) return
+  const discreteEdit = !selectedMediaFxEditing
+  if (discreteEdit) beginSelectedMediaFxEdit()
+  setStageObjectMediaFx(object, spec)
+  if (discreteEdit) endSelectedMediaFxEdit()
+}
+watch(() => props.store.state.selectedObjectId, () => {
+  endSelectedMediaFxEdit()
+  mediaFxPreviewPaused.value = false
+})
+watch(mediaFxPreviewPaused, () => syncObjects())
+
 const previewSelectedEntrance = () => {
   const object = selectedObject.value
   if (!supportsStageEntrance(object)) return
@@ -3969,6 +4182,63 @@ const addAction = async (type: StageAction['type']) => {
   if (action.type === 'chat.random-table') randomTableEditorActionId.value = action.id
 }
 
+const embedEventTopicDraft = ref('')
+const selectedEmbedEventBindings = computed(() => (
+  selectedObject.value?.type === 'iframe' ? stageObjectEmbedEventBindings(selectedObject.value) : []
+))
+const embedEventActionOptions = computed(() => (selectedObject.value?.actions || []).map((action, index) => ({
+  label: `${index + 1}. ${stageActionDescriptions[action.type] || action.type}`,
+  value: action.id,
+})))
+const commitEmbedEventBindings = (label: string, next: StageEmbedEventBinding[]) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe' || !canEditAllObjects.value) return
+  props.store.beginObjectEdit(label)
+  setStageObjectEmbedEventBindings(object, next)
+  props.store.commitObjectEdit()
+}
+const addEmbedEventBinding = () => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'iframe') return
+  const topic = embedEventTopicDraft.value.trim()
+  if (!STAGE_EMBED_EVENT_TOPIC_PATTERN.test(topic)) {
+    stageMessage.warning('topic 须以字母或数字开头，最长 64 位，仅含字母、数字和 . _ : -')
+    return
+  }
+  const current = selectedEmbedEventBindings.value
+  if (current.some(binding => binding.topic === topic)) {
+    stageMessage.warning('该 topic 已绑定')
+    return
+  }
+  if (current.length >= STAGE_EMBED_EVENT_BINDINGS_MAX) {
+    stageMessage.warning(`最多 ${STAGE_EMBED_EVENT_BINDINGS_MAX} 个事件绑定`)
+    return
+  }
+  if (!object.actions.length) {
+    stageMessage.warning('请先为该网页组件添加动作')
+    return
+  }
+  const actionIds = object.actions.slice(0, STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX).map(action => action.id)
+  commitEmbedEventBindings('添加嵌入事件绑定', [...current, { topic, actionIds }])
+  embedEventTopicDraft.value = ''
+}
+const updateEmbedEventBindingActions = (topic: string, actionIds: string[]) => {
+  if (!actionIds.length) {
+    stageMessage.warning('至少选择一个动作；不再需要时请删除绑定')
+    return
+  }
+  if (actionIds.length > STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX) {
+    stageMessage.warning(`每个绑定最多 ${STAGE_EMBED_EVENT_BINDING_ACTIONS_MAX} 个动作`)
+    return
+  }
+  commitEmbedEventBindings('修改嵌入事件绑定', selectedEmbedEventBindings.value.map(binding => (
+    binding.topic === topic ? { topic, actionIds } : binding
+  )))
+}
+const removeEmbedEventBinding = (topic: string) => {
+  commitEmbedEventBindings('删除嵌入事件绑定', selectedEmbedEventBindings.value.filter(binding => binding.topic !== topic))
+}
+
 const actionDelaySeconds = (milliseconds: number | undefined) => (
   typeof milliseconds === 'number' && Number.isFinite(milliseconds) ? milliseconds / 1_000 : 0
 )
@@ -4058,19 +4328,23 @@ const moveActionByKeyboard = (actionId: string, offset: -1 | 1) => {
 
 const triggerObjectActions = (object: StageObject) => {
   if (!canInteractObject(object)) return
+  sequenceRuntime.notifyComponentClick(object.id)
+  const actions = object.actions.flatMap((action) => {
+    const parsed = stageActionSchema.safeParse(action)
+    return parsed.success ? [parsed.data] : []
+  })
+  if (!actions.length) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
   const execution = {
     id: actionId(),
     mode: object.metadata.actionExecutionMode === 'sequential' ? 'sequential' as const : 'parallel' as const,
-    total: object.actions.length,
+    total: actions.length,
   }
-  object.actions.forEach((action, index) => {
-    const parsed = stageActionSchema.safeParse(action)
-    if (!parsed.success) return
+  actions.forEach((action, index) => {
     emit('actionTriggered', {
       objectId: object.id,
-      actionId: parsed.data.id,
-      action: parsed.data,
+      actionId: action.id,
+      action,
       execution: { ...execution, index },
       ...(pointer ? {
         pointer: {
@@ -4119,6 +4393,13 @@ const triggerSingleObjectAction = (object: StageObject | null | undefined, actio
   })
 }
 
+const triggerEmbedEventActions = createStageEmbedEventTrigger({
+  getObject,
+  canRun: object => canTriggerActions.value && object.visible && object.interactive && !iframeInteractionDisabled.value,
+  executionId: actionId,
+  emit: payload => emit('actionTriggered', payload),
+})
+
 const objectNodeIntersectsStagePoint = (node: Konva.Group, point: Konva.Vector2d) => {
   if (!stage || !node.isVisible()) return false
   const bounds = node.getClientRect({ relativeTo: stage, skipShadow: true })
@@ -4159,13 +4440,13 @@ const applyCamera = () => {
   sceneMorphTextCameras.forEach((camera) => {
     camera.style.transform = `translate(${position.x}px, ${position.y}px) scale(${scale.x})`
   })
-  objectRootLayers.forEach(({ camera }) => {
+  extraObjectRenderBands.forEach(({ camera }) => {
     camera.position(position)
     camera.scale(scale)
   })
   // Background camera stays fixed; camera movement does not invalidate its canvas.
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   interactionLayer?.batchDraw()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
 }
@@ -4370,14 +4651,12 @@ const syncMediaAnimation = () => {
     mediaAnimation?.stop()
     return
   }
-  if (!mediaAnimation && backgroundLayer && worldLayer && worldOverlayLayer && foregroundLayer && gridTopLayer) {
+  if (!mediaAnimation && backgroundLayer && worldLayer && topVisualLayer) {
     mediaAnimation = new Konva.Animation(() => {}, [
       backgroundLayer,
       worldLayer,
-      ...[...objectRootLayers.values()].map(({ layer }) => layer),
-      worldOverlayLayer,
-      foregroundLayer,
-      gridTopLayer,
+      ...extraObjectRenderBands.map(({ layer }) => layer),
+      topVisualLayer,
     ])
   }
   mediaAnimation?.start()
@@ -4773,14 +5052,22 @@ const resetSceneVisualStyle = () => {
 const captureSceneTransitionOverlay = () => {
   if (!stage || !viewportRef.value) return null
   const interactionWasVisible = interactionLayer?.visible() !== false
-  interactionLayer?.hide()
+  // A foreground webpage sits between the foreground image and the top grid.
+  // Preserve that grid in image transition captures while hiding editor controls.
+  const gridInInteraction = gridTopCameraGroup?.getParent() === interactionLayer
+  const visibleControls = gridInInteraction
+    ? interactionLayer?.getChildren().filter(node => node !== gridTopCameraGroup && node.visible()) || []
+    : []
+  if (gridInInteraction) visibleControls.forEach(node => node.hide())
+  else interactionLayer?.hide()
   interactionLayer?.draw()
   const snapshot = stage.toCanvas({
     width: stage.width(),
     height: stage.height(),
     pixelRatio: Math.min(2, window.devicePixelRatio || 1),
   })
-  if (interactionWasVisible) interactionLayer?.show()
+  if (gridInInteraction) visibleControls.forEach(node => node.show())
+  else if (interactionWasVisible) interactionLayer?.show()
   interactionLayer?.draw()
   snapshot.style.width = '100%'
   snapshot.style.height = '100%'
@@ -5015,7 +5302,7 @@ const finishSceneMorph = () => {
   clearSceneCompositeTransition()
   backgroundLayer?.batchDraw()
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
   if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
   else if (composite?.started) playPendingSceneEntrances(composite.sceneId)
@@ -5180,7 +5467,7 @@ const primeSceneMorphTargets = () => {
   })
   backgroundLayer?.batchDraw()
   drawWorldLayers()
-  foregroundLayer?.batchDraw()
+  drawTopVisualLayer()
   sceneMorphLayers.forEach(({ layer }) => layer.batchDraw())
 }
 
@@ -5320,8 +5607,8 @@ const startSceneMorph = (sceneId: string) => {
       transition.overlay = null
       visual.style.visibility = 'visible'
       backgroundLayer?.draw()
-      foregroundLayer?.draw()
       drawWorldLayers(true)
+      drawTopVisualLayer(true)
       startSharedElementMorph(sceneId, openDurationMs, false)
       const openAnimations = curtainPanels.map((panel) => panel.animate([
         { transform: 'translateX(0)' },
@@ -5355,8 +5642,8 @@ const startSceneMorph = (sceneId: string) => {
   }
   visual.style.visibility = 'visible'
   backgroundLayer?.draw()
-  foregroundLayer?.draw()
   drawWorldLayers(true)
+  drawTopVisualLayer(true)
   if (!transition.animations.length) {
     const generation = transition.generation
     requestAnimationFrame(() => {
@@ -5464,8 +5751,8 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
     if (sceneMediaBatch !== batch) return
     batch.ready = true
     backgroundLayer?.draw()
-    foregroundLayer?.draw()
     drawWorldLayers(true)
+    drawTopVisualLayer(true)
     requestAnimationFrame(() => {
       if (sceneMediaBatch === batch) startSceneMorph(batch.sceneId)
     })
@@ -5487,7 +5774,101 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void, activat
 
 const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effectId, triggerId)
 
-defineExpose({ preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions })
+// Development-only inspection of the main Stage; excludes the temporary morph Stage.
+const getMainStageLayerCount = () => stage?.getLayers().length ?? 0
+let rendererDisplayStream: MediaStream | null = null
+const setRendererDisplayStream = (stream: MediaStream | null) => { rendererDisplayStream = stream }
+
+const getRendererView = (): TheaterRendererView => ({
+  width: viewportSize.value.width, height: viewportSize.value.height,
+  camera: { ...props.store.state.camera }, selectedObjectIds: [...props.store.selection.selectedIds],
+})
+const rendererObjectBounds = (id: string) => {
+  const root = viewportRef.value
+  if (!root) throw new Error('renderer_unavailable')
+  const dom = stageTextVisualElement(id)
+  if (dom) {
+    const a = dom.getBoundingClientRect(), b = root.getBoundingClientRect()
+    return { x: a.x - b.x, y: a.y - b.y, width: a.width, height: a.height }
+  }
+  const node = objectNodes.get(id)
+  if (!node || !node.isVisible()) throw new Error('renderer_object_not_visible')
+  return node.getClientRect()
+}
+const applyRendererView = async (command: TheaterRendererCommand) => {
+  const payload = command.payload as { camera?: { x: number, y: number, zoom: number }, objectIds?: string[] }
+  const camera = props.store.state.camera
+  if (command.operation === 'camera_set') {
+    const next = payload.camera
+    if (!next || ![next.x, next.y, next.zoom].every(Number.isFinite) || Math.abs(next.x) > 1e6 || Math.abs(next.y) > 1e6 || next.zoom < 0.01 || next.zoom > 100) throw new Error('renderer_invalid_camera')
+    Object.assign(camera, next)
+  } else if (command.operation === 'fit_scene') {
+    camera.x = camera.y = 0
+    camera.zoom = Math.max(0.01, Math.min(100, viewportSize.value.width / (props.store.state.liveState.fieldWidth * WORLD_UNIT_PX), viewportSize.value.height / (props.store.state.liveState.fieldHeight * WORLD_UNIT_PX)) * 0.9)
+  } else if (command.operation === 'focus_object') {
+    const bounds = rendererObjectBounds(payload.objectIds?.[0] || '')
+    camera.x += viewportSize.value.width / 2 - bounds.x - bounds.width / 2
+    camera.y += viewportSize.value.height / 2 - bounds.y - bounds.height / 2
+  } else if (command.operation === 'select_objects') {
+    props.store.setSelectedObjectIds(payload.objectIds || [])
+  } else if (command.operation === 'clear_selection') props.store.clearSelection()
+  await nextTick()
+  return getRendererView()
+}
+const hideRendererCaptureControls = () => {
+  const visibleControls = interactionLayer?.getChildren().filter(node => node !== gridTopCameraGroup && node.visible()) || []
+  visibleControls.forEach(node => node.hide())
+  interactionLayer?.draw()
+  return () => {
+    visibleControls.forEach(node => node.show())
+    interactionLayer?.draw()
+  }
+}
+
+const snapshotRendererCanvases = () => {
+  const snapshots = new Map<HTMLCanvasElement, string | null>()
+  if (!stage) return snapshots
+  const restoreControls = hideRendererCaptureControls()
+  try {
+    stage.draw()
+    for (const layer of stage.getLayers()) {
+      const canvas = layer.getCanvas()._canvas
+      try { snapshots.set(canvas, canvas.toDataURL('image/png')) } catch { snapshots.set(canvas, null) }
+    }
+  } finally { restoreControls() }
+  return snapshots
+}
+const captureRenderer = async (command: TheaterRendererCommand, signal: AbortSignal, revision: number) => {
+  const root = viewportRef.value
+  if (!stage || !root) throw new Error('renderer_unavailable')
+  if (multiDrag || selectionGroupDrag || batchTransformRootIds || props.appearancePreview) throw new Error('renderer_uncommitted_edits')
+  await waitForCaptureReady(root, () => !sceneCompositeTransition && !pendingObjectEntrances.size && !objectEntranceTweens.size
+    && (!sceneMediaBatch || sceneMediaBatch.settled.size >= sceneMediaBatch.expected.size), signal)
+  const payload = command.payload as { mode: string, objectId?: string }
+  const bounds = payload.mode === 'object' ? rendererObjectBounds(payload.objectId || '') : undefined
+  const crop = bounds ? { x: Math.max(0, bounds.x), y: Math.max(0, bounds.y),
+    width: Math.max(0, Math.min(root.clientWidth, bounds.x + bounds.width) - Math.max(0, bounds.x)),
+    height: Math.max(0, Math.min(root.clientHeight, bounds.y + bounds.height) - Math.max(0, bounds.y)) } : undefined
+  const camera = { ...props.store.state.camera }
+  const viewport = { width: root.clientWidth, height: root.clientHeight }
+  const restoreControls = rendererDisplayStream ? hideRendererCaptureControls() : null
+  try {
+    const result = await captureTheaterViewport({
+      command, root, signal, revision, crop, camera,
+      snapshotCanvases: snapshotRendererCanvases,
+      displayStream: rendererDisplayStream,
+    })
+    if (viewport.width !== root.clientWidth || viewport.height !== root.clientHeight || JSON.stringify(camera) !== JSON.stringify(props.store.state.camera) || multiDrag || selectionGroupDrag || batchTransformRootIds || props.appearancePreview) throw new Error('capture_view_changed')
+    return result
+  } finally {
+    restoreControls?.()
+  }
+}
+defineExpose({
+  preloadScenes, appendPointerTrace, playEffect, playSceneAudio, playVisibilityTransitions,
+  getRendererView, applyRendererView, captureRenderer, setRendererDisplayStream,
+  ...(import.meta.env.DEV ? { getMainStageLayerCount } : {}),
+})
 
 const setImageFit = (
   node: Konva.Image,
@@ -5559,6 +5940,22 @@ const surfaceDrawRect = (
   return { x, y, width: renderedWidth, height: renderedHeight }
 }
 
+// Base Surface brightness / blur keep their legacy ranges and output; Media FX filters
+// are appended after them so the two layers compose instead of overriding each other.
+// Every token comes from normalized numbers, never from persisted CSS text.
+const surfaceMediaFxFilterCss = (slot: SurfaceSlot) => {
+  const mediaFx = slot.style.mediaFx
+  if (!mediaFx || slot.animatedMedia || (slot.source && isVideoSource(slot.source))) return ''
+  return mediaFxFilterToCss(mediaFx.filter)
+}
+
+const surfaceFilterCss = (style: StageSurfaceStyle, mediaFxCss: string) => {
+  const parts: string[] = []
+  if (style.brightness !== 1 || style.blurPx > 0) parts.push(`brightness(${style.brightness}) blur(${style.blurPx}px)`)
+  if (mediaFxCss) parts.push(mediaFxCss)
+  return parts.join(' ')
+}
+
 const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   const source = slot.source
   if (!source) return
@@ -5578,9 +5975,8 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   const height = slot.placeholder.height()
   const style = slot.style
   context.save()
-  if (style.brightness !== 1 || style.blurPx > 0) {
-    context.filter = `brightness(${style.brightness}) blur(${style.blurPx}px)`
-  }
+  const filter = surfaceFilterCss(style, surfaceMediaFxFilterCss(slot))
+  if (filter) context.filter = filter
   context.imageSmoothingEnabled = true
   if (style.fit === 'tile') {
     const pattern = context.createPattern(source, 'repeat')
@@ -5600,7 +5996,7 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   context.restore()
 }
 
-const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
+const createSurfaceSlot = (cameraGroup: Konva.Group, target: StageSurfaceTarget, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
   const group = new Konva.Group()
   const base = withBase ? new Konva.Rect({ listening: false }) : null
   const directImage = new Konva.Image({ visible: false, listening: false })
@@ -5626,12 +6022,28 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
     fontSize: 18,
     listening: false,
   })
+  const mediaFxGroup = new Konva.Group({ name: 'theater-surface-media-fx', listening: false })
+  const mediaContentGroup = new Konva.Group({ name: 'theater-surface-media-content', listening: false })
+  mediaContentGroup.add(media, directImage)
+  mediaFxGroup.add(mediaContentGroup)
   cameraGroup.add(group)
   if (base) group.add(base)
-  group.add(media, directImage, overlay, placeholder, label)
+  group.add(mediaFxGroup, overlay, placeholder, label)
   slot = {
+    target,
     group,
     base,
+    mediaFxGroup,
+    mediaContentGroup,
+    // Motion only: the slot keeps its own base brightness / blur filter chain.
+    mediaFxController: createKonvaMediaFxController({
+      motionNode: mediaFxGroup,
+      onMotionComplete: () => {
+        mediaContentGroup.scale({ x: 1, y: 1 })
+        mediaContentGroup.getLayer()?.batchDraw()
+      },
+    }),
+    mediaFxTemporal: createKonvaMediaFxTemporalController(directImage),
     media,
     directImage,
     overlay,
@@ -5642,6 +6054,7 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
     version: 0,
     source: null,
     ready: false,
+    animatedMedia: false,
     directImageSource: null,
     directImageSignature: '',
     debugDrawCount: 0,
@@ -5649,12 +6062,90 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   return slot
 }
 
+const surfaceMediaFxOverscanScale = (slot: SurfaceSlot, style: StageSurfaceStyle, reducedMotion: boolean) => {
+  if (slot.target !== 'background' || (style.fit !== 'cover' && style.fit !== 'fill') || !style.mediaFx || reducedMotion) return 1
+  return resolveMediaFxMotionOverscanScale(style.mediaFx.motion)
+}
+
+const syncSurfaceMediaFx = (slot: SurfaceSlot, box: { width: number, height: number }) => {
+  const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
+  const hasFx = Boolean(slot.source && mediaFxHasContent(slot.style.mediaFx))
+  if (!hasFx) slot.mediaFxController.clear()
+  else {
+    slot.mediaFxController.update(slot.style.mediaFx, {
+      width: box.width,
+      height: box.height,
+      motion: true,
+      filters: false,
+      reducedMotion,
+    })
+  }
+  // Temporal runs after legacy brightness / blur -> Media FX basic -> advanced, over the
+  // directImage cache; it never changes the motion overscan below.
+  slot.mediaFxTemporal.update(
+    slot.style.mediaFx?.temporal,
+    Boolean(hasFx && slot.source && slot.directImage.visible() && surfaceMediaFxTemporal(slot, slot.source)),
+  )
+  const overscan = hasFx && slot.mediaFxController.isMotionActive()
+    ? surfaceMediaFxOverscanScale(slot, slot.style, reducedMotion)
+    : 1
+  slot.mediaContentGroup.setAttrs({
+    offsetX: box.width / 2,
+    offsetY: box.height / 2,
+    x: box.width / 2,
+    y: box.height / 2,
+    scaleX: overscan,
+    scaleY: overscan,
+  })
+}
+
 const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
   style.fit !== 'tile'
 )
 
+// Advanced Media FX for the direct-image path only: static image, non-tile, GPU usable.
+// Returns null (no GPU step at all) otherwise; the stored spec is never modified.
+const surfaceMediaFxAdvanced = (slot: SurfaceSlot, source: StageMediaSource) => {
+  const advanced = slot.style.mediaFx?.advanced
+  if (!advanced || slot.animatedMedia || isVideoSource(source) || !useDirectSurfaceImage(slot.style)) return null
+  return mediaFxAdvancedHasContent(advanced) && mediaFxGpuSupported() ? advanced : null
+}
+
+// Temporal follows the advanced rule (static image, non-tile direct image, GPU usable)
+// and only counts while it would actually play (reduced motion keeps the static look).
+const surfaceMediaFxTemporal = (slot: SurfaceSlot, source: StageMediaSource) => {
+  const temporal = slot.style.mediaFx?.temporal
+  if (!temporal || slot.animatedMedia || isVideoSource(source) || !useDirectSurfaceImage(slot.style)) return null
+  return mediaFxTemporalHasContent(temporal)
+    && mediaFxGpuSupported()
+    && !resolveTheaterReducedMotion().effectiveReducedMotion
+    ? temporal
+    : null
+}
+
+// Konva 10.3 parses mixed CSS/function filters through an incomplete fallback.
+// Apply the full native CSS chain to the pixels AFTER the legacy function filters.
+// These temporary canvases are not node caches and never mutate filter attributes.
+const surfaceMediaFxCanvasFilter = (css: string): Konva.Filter => (imageData: ImageData) => {
+  const source = document.createElement('canvas')
+  const output = document.createElement('canvas')
+  source.width = output.width = imageData.width
+  source.height = output.height = imageData.height
+  const sourceContext = source.getContext('2d')
+  const outputContext = output.getContext('2d')
+  if (!sourceContext || !outputContext) return
+  sourceContext.putImageData(imageData, 0, 0)
+  outputContext.filter = css
+  outputContext.drawImage(source, 0, 0)
+  imageData.data.set(outputContext.getImageData(0, 0, output.width, output.height).data)
+}
+
 const clearDirectSurfaceImage = (slot: SurfaceSlot) => {
   if (slot.directImageSource || slot.directImage.image()) slot.directImage.clearCache()
+  slot.mediaFxTemporal.invalidateBaseline()
+  slot.directImage.brightness(0)
+  slot.directImage.blurRadius(0)
+  slot.directImage.filters([])
   slot.directImage.image(undefined)
   slot.directImage.visible(false)
   slot.directImageSource = null
@@ -5680,6 +6171,16 @@ const updateDirectSurfaceImage = (
   }
   const dimensions = stageMediaDimensions(source)
   const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
+  // Without Canvas filter support only the legacy Konva base filters are kept.
+  const mediaFxCss = canvasFilterSupported() ? surfaceMediaFxFilterCss(slot) : ''
+  const mediaFxAdvanced = surfaceMediaFxAdvanced(slot, source)
+  // Temporal needs a cache as its static baseline; it only adds one when no static
+  // filter already builds it, so toggling temporal never rebuilds an existing cache.
+  const temporalCacheOnly = Boolean(surfaceMediaFxTemporal(slot, source))
+    && slot.style.brightness === 1
+    && !(slot.style.blurPx > 0)
+    && !mediaFxCss
+    && !mediaFxAdvanced
   const signature = [
     stageMediaObjectUrls.get(source) || '',
     dimensions.width,
@@ -5694,6 +6195,9 @@ const updateDirectSurfaceImage = (
     slot.style.zoom,
     slot.style.brightness,
     slot.style.blurPx,
+    mediaFxCss,
+    mediaFxAdvanced ? mediaFxAdvancedSignature(mediaFxAdvanced) : '',
+    temporalCacheOnly ? 'temporal-baseline' : '',
   ].join(':')
   if (
     slot.directImageSource === source
@@ -5722,9 +6226,17 @@ const updateDirectSurfaceImage = (
   } else {
     slot.directImage.blurRadius(0)
   }
+  // Order: legacy Brighten -> legacy Blur -> Media FX basic -> Media FX advanced GPU.
+  // A failing GPU step leaves the pixels of the previous steps untouched.
+  const gpuFilter = mediaFxAdvanced ? createMediaFxGpuFilter(mediaFxAdvanced, { pixelRatio: Konva.pixelRatio || 1 }) : null
+  if (mediaFxCss) {
+    filters.push(filters.length || gpuFilter ? surfaceMediaFxCanvasFilter(mediaFxCss) : mediaFxCss)
+  }
+  if (gpuFilter) filters.push(gpuFilter)
   slot.directImage.clearCache()
   slot.directImage.filters(filters)
-  if (filters.length) slot.directImage.cache()
+  if (filters.length || temporalCacheOnly) slot.directImage.cache()
+  slot.mediaFxTemporal.invalidateBaseline()
   slot.directImageSource = source
   slot.directImageSignature = signature
   slot.directImage.visible(true)
@@ -5756,6 +6268,7 @@ const updateSurfaceSlot = (
     })
   }
   applyStyle(style)
+  slot.animatedMedia = Boolean(imageRef && (imageRef.animated === true || imageRef.mimeType?.startsWith('video/')))
 
   const location = imageRef ? resolveTheaterStageMedia(imageRef) : null
   const resolved = location?.url || null
@@ -5778,6 +6291,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
+    syncSurfaceMediaFx(slot, box)
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -5790,6 +6304,7 @@ const updateSurfaceSlot = (
     slot.ready = false
     slot.media.visible(false)
     clearDirectSurfaceImage(slot)
+    syncSurfaceMediaFx(slot, box)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
@@ -5800,12 +6315,14 @@ const updateSurfaceSlot = (
     updateDirectSurfaceImage(slot, slot.source, box)
     slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
+    syncSurfaceMediaFx(slot, box)
     slot.group.getLayer()?.batchDraw()
     settleSceneMedia(mediaKey, resolved, undefined, () => activateStageMedia(slot.source!, imageRef))
     return
   }
   if (slot.url === resolved && !slot.ready) {
     applyStyle(renderedStyle)
+    syncSurfaceMediaFx(slot, box)
     return
   }
   const previousUrl = slot.url
@@ -5818,6 +6335,7 @@ const updateSurfaceSlot = (
   slot.placeholder.visible(false)
   slot.label.visible(false)
   if (previousSource) applyStyle(renderedStyle)
+  syncSurfaceMediaFx(slot, box)
   let source: StageMediaSource | null = null
   source = loadStageMedia(imageRef, location!, (loadedSource) => {
     if (slot.version !== version || slot.url !== resolved) {
@@ -5845,6 +6363,7 @@ const updateSurfaceSlot = (
       slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
       slot.placeholder.visible(false)
       slot.label.visible(false)
+      syncSurfaceMediaFx(slot, box)
       theaterMediaDebug('surface visible', {
         resourceId: imageRef.resourceId,
         visible: slot.media.visible(),
@@ -5906,6 +6425,7 @@ const updateSurfaceSlot = (
       slot.placeholder.visible(true)
       slot.label.text(`${loadingLabel}加载失败：${errorMessage}`).visible(true)
     }
+    syncSurfaceMediaFx(slot, box)
     theaterMediaDebug('surface error', { resourceId: imageRef.resourceId, errorMessage, box })
     slot.group.getLayer()?.batchDraw()
   })
@@ -5917,6 +6437,8 @@ const syncGridLayer = () => {
   if (!target || gridGroup.getParent() === target) return false
   const previousLayer = gridGroup.getLayer()
   gridGroup.moveTo(target)
+  // Band 0 now also contains objects; returning the grid must keep it below them.
+  if (target === worldCameraGroup) gridGroup.moveToBottom()
   previousLayer?.batchDraw()
   target.getLayer()?.batchDraw()
   return true
@@ -6006,7 +6528,8 @@ const syncGrid = () => {
   const box = { x: -width / 2, y: -height / 2, width, height }
   if (rebuildGrid(box.x, box.y, width, height) || moved) {
     worldLayer?.batchDraw()
-    gridTopLayer?.batchDraw()
+    topVisualLayer?.batchDraw()
+    if (gridTopCameraGroup?.getParent() === interactionLayer) interactionLayer?.batchDraw()
   }
 }
 
@@ -6025,6 +6548,15 @@ const scheduleGridSync = () => {
 const syncSurfaceSlots = () => {
   if (!backgroundSlot || !foregroundSlot) return
   const liveState = props.store.state.liveState
+  // Reuse the existing interaction Canvas above the webpage for the top grid;
+  // it remains non-listening and below selection controls. No extra Layer needed.
+  const gridLayer = liveState.surfaceEmbeds.foreground ? interactionLayer : topVisualLayer
+  if (gridLayer && gridTopCameraGroup && gridTopCameraGroup.getParent() !== gridLayer) {
+    gridTopCameraGroup.moveTo(gridLayer)
+    if (gridLayer === interactionLayer) gridTopCameraGroup.moveToBottom()
+    else gridTopCameraGroup.moveToTop()
+    interactionLayer?.batchDraw()
+  }
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
@@ -6032,7 +6564,7 @@ const syncSurfaceSlots = () => {
   updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景', 'surface:background')
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
   backgroundLayer?.batchDraw()
-  foregroundLayer?.batchDraw()
+  topVisualLayer?.batchDraw()
 }
 
 const syncField = () => {
@@ -6228,7 +6760,7 @@ const renderDrawingDraft = () => {
   const group = new Konva.Group({ x: result.preview.x, y: result.preview.y, listening: false })
   group.add(createDrawingNode(result.drawing, result.preview.width, result.preview.height))
   drawingDraftRoot.add(group)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const cancelDrawingSession = () => {
@@ -6236,7 +6768,7 @@ const cancelDrawingSession = () => {
   drawingSession = null
   drawingDraftRoot?.destroyChildren()
   if (hadSession) setGridSnapPreview(false)
-  drawWorldLayers()
+  drawTopVisualLayer()
 }
 
 const releaseObjectMedia = (wrapper: Konva.Group) => {
@@ -6252,6 +6784,7 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     wrapper.setAttr('stageImageUrl', '')
   }
   releaseObjectMedia(wrapper)
+  disposeObjectMediaFx(object.id)
   wrapper.destroyChildren()
   wrapper.setAttr('stageObjectType', object.type)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
@@ -6274,7 +6807,11 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     return
   }
   if (object.type === 'image') {
-    wrapper.add(
+    // Inner Media FX group: continuous motion stays off the root group, which owns
+    // layout, drag, transformer and entrance tweens.
+    const mediaFxGroup = new Konva.Group({ name: 'theater-object-media-fx' })
+    wrapper.add(mediaFxGroup)
+    mediaFxGroup.add(
       new Konva.Rect({
         name: 'theater-object-image-frame',
         width,
@@ -6573,6 +7110,53 @@ const createObjectNode = (object: StageObject) => {
   return wrapper
 }
 
+const disposeObjectMediaFx = (objectId: string) => {
+  objectMediaFxControllers.get(objectId)?.dispose()
+  objectMediaFxControllers.delete(objectId)
+}
+
+// Temporal is allowed to subscribe only while the image is actually visible in the
+// Stage object hierarchy. Use store state rather than Konva update order so a hidden
+// parent stops descendants in the same sync pass; entrance/exit tweens remain visible.
+const stageObjectMediaFxVisible = (object: StageObject) => {
+  if (!props.syncReady) return false
+  let current: StageObject | undefined = object
+  while (current) {
+    if (hasPendingSceneEntrance(current.id) || (!current.visible && !objectEntranceTweens.has(current.id))) return false
+    current = current.parentId ? props.store.activeObjects.value[current.parentId] : undefined
+  }
+  return true
+}
+
+const syncObjectMediaFx = (wrapper: Konva.Group, object: StageObject, width: number, height: number) => {
+  const spec = stageObjectMediaFx(object)
+  let controller = objectMediaFxControllers.get(object.id)
+  if (!mediaFxHasContent(spec)) {
+    // No effect: release the controller so no tween/cache survives for this object.
+    if (controller) disposeObjectMediaFx(object.id)
+    return
+  }
+  const motionNode = wrapper.findOne<Konva.Group>('.theater-object-media-fx')
+  if (!motionNode) return
+  if (!controller) {
+    controller = createKonvaMediaFxController({
+      motionNode,
+      imageNode: motionNode.findOne<Konva.Image>('.theater-object-image'),
+    })
+    objectMediaFxControllers.set(object.id, controller)
+  }
+  controller.update(spec, {
+    width,
+    height,
+    // Static cache filters would freeze animated images / video on one frame.
+    filters: isStaticImageObject(object),
+    advanced: isStaticImageObject(object) && mediaFxGpuAvailable.value,
+    temporal: isStaticImageObject(object) && mediaFxGpuAvailable.value && stageObjectMediaFxVisible(object),
+    paused: mediaFxPreviewPaused.value && props.store.state.selectedObjectId === object.id,
+    reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+  })
+}
+
 const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: number, height: number) => {
   const frame = wrapper.findOne<Konva.Rect>('.theater-object-image-frame')
   const image = wrapper.findOne<Konva.Image>('.theater-object-image')
@@ -6643,6 +7227,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
         objectImageFit(object),
       )
       image.visible(true)
+      objectMediaFxControllers.get(object.id)?.refreshFilter()
       if (!isVideoSource(loadedSource)) {
         const previewUrl = stageMediaObjectUrls.get(loadedSource) || location!.url
         if (previewUrl) setLayerPreviewUrl(object.id, previewUrl)
@@ -6719,6 +7304,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     })
   } else if (object.type === 'image') {
     syncObjectImage(wrapper, object, width, height)
+    syncObjectMediaFx(wrapper, object, width, height)
   } else if (object.type === 'button') {
     wrapper.findOne<Konva.Rect>('.theater-object-content')?.setAttrs({ width, height, fill: object.fill })
     wrapper.findOne<Konva.Text>('.theater-object-button-label')?.setAttrs({
@@ -6734,55 +7320,49 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
 const canvasStageObjects = () => Object.fromEntries(Object.entries(stageObjects.value)
   .filter(([, object]) => !isTheaterEffectObject(object)))
 
-const syncObjectRootLayers = (objects: Record<string, StageObject>) => {
-  if (!stage || !worldCameraGroup) return
-  const roots = Object.values(objects)
-    .filter((object) => !object.parentId || !objects[object.parentId])
-    .sort(compareStageLayersBottomToTop)
-  const rootIds = new Set(roots.map((object) => object.id))
-  let changed = false
-
-  objectRootLayers.forEach((entry, objectId) => {
-    if (rootIds.has(objectId)) return
-    entry.layer.destroy()
-    objectRootLayers.delete(objectId)
-    changed = true
-  })
-
-  const stackingOrder: Record<string, number> = {}
-  roots.forEach((object, index) => {
-    const canvasZIndex = OBJECT_ROOT_LAYER_Z_BASE + index * 2
-    stackingOrder[object.id] = canvasZIndex + 1
-    let entry = objectRootLayers.get(object.id)
-    if (!entry) {
-      const layer = new Konva.Layer()
-      layer.getNativeCanvasElement().style.pointerEvents = 'none'
-      const camera = new Konva.Group()
-      layer.add(camera)
-      stage!.add(layer)
-      entry = { layer, camera }
-      objectRootLayers.set(object.id, entry)
-      changed = true
-    }
-    entry.camera.position(worldCameraGroup.position())
-    entry.camera.scale(worldCameraGroup.scale())
-    entry.layer.getNativeCanvasElement().style.zIndex = String(canvasZIndex)
-    const node = objectNodes.get(object.id)
-    if (node && node.getParent() !== entry.camera) node.moveTo(entry.camera)
-  })
-  backgroundLayer?.moveToTop()
-  worldLayer?.moveToTop()
-  roots.forEach((object) => objectRootLayers.get(object.id)?.layer.moveToTop())
-  worldOverlayLayer?.moveToTop()
-  foregroundLayer?.moveToTop()
-  gridTopLayer?.moveToTop()
-  interactionLayer?.moveToTop()
-  rootStackingOrder.value = stackingOrder
-  if (changed) {
+const syncObjectRenderBands = (objects: Record<string, StageObject>) => {
+  if (!stage || !worldLayer || !worldCameraGroup || !objectRoot) return
+  const firstBand = { layer: worldLayer, camera: worldCameraGroup, root: objectRoot }
+  const plan = planStageObjectRenderBands(objects)
+  const extraBandCount = plan.bands.length - 1
+  const layersChanged = extraObjectRenderBands.length !== extraBandCount
+  if (layersChanged) {
+    // Stop before any old layer is destroyed. A root reorder alone keeps the Animation.
     mediaAnimation?.stop()
     mediaAnimation = null
-    syncMediaAnimation()
   }
+  while (extraObjectRenderBands.length < extraBandCount) {
+    const layer = new Konva.Layer()
+    layer.getNativeCanvasElement().style.pointerEvents = 'none'
+    const camera = new Konva.Group()
+    const root = new Konva.Group()
+    camera.add(root)
+    layer.add(camera)
+    stage.add(layer)
+    extraObjectRenderBands.push({ layer, camera, root })
+  }
+  plan.bands.forEach((band, index) => {
+    const entry = index === 0 ? firstBand : extraObjectRenderBands[index - 1]
+    entry.camera.position(firstBand.camera.position())
+    entry.camera.scale(firstBand.camera.scale())
+    entry.layer.getNativeCanvasElement().style.zIndex = String(band.canvasZIndex)
+    band.roots.forEach((object) => {
+      const node = objectNodes.get(object.id)
+      if (!node) return
+      if (node.getParent() !== entry.root) node.moveTo(entry.root)
+      // Explicit order, independent of Map insertion and previous band assignment.
+      node.moveToTop()
+    })
+  })
+  // All surviving subtrees have been moved out before destroying surplus bands.
+  extraObjectRenderBands.splice(extraBandCount).forEach(({ layer }) => layer.destroy())
+  backgroundLayer?.moveToTop()
+  worldLayer.moveToTop()
+  extraObjectRenderBands.forEach(({ layer }) => layer.moveToTop())
+  topVisualLayer?.moveToTop()
+  interactionLayer?.moveToTop()
+  rootStackingOrder.value = plan.rootStackingOrder
+  if (layersChanged) syncMediaAnimation()
 }
 
 const syncGroupControls = (objects: Record<string, StageObject>) => {
@@ -6845,7 +7425,7 @@ const syncLayerHierarchy = () => {
     if (object && node) updateObjectNode(node, object)
   })
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
-  syncObjectRootLayers(objects)
+  syncObjectRenderBands(objects)
   syncGroupControls(objects)
   drawWorldLayers()
   nextTick(updateTransformer)
@@ -6864,6 +7444,7 @@ const syncObjects = () => {
     textEntranceTimers.delete(objectId)
     delete textEntrancePlaybacks[objectId]
     imageLoadVersions.delete(objectId)
+    disposeObjectMediaFx(objectId)
     releaseObjectMedia(node)
     node.destroy()
     objectNodes.delete(objectId)
@@ -6873,7 +7454,7 @@ const syncObjects = () => {
     updateObjectNode(node, object)
   }
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
-  syncObjectRootLayers(objects)
+  syncObjectRenderBands(objects)
   syncGroupControls(objects)
   drawWorldLayers()
   primeSceneMorphTargets()
@@ -7435,16 +8016,64 @@ const closeImageEditor = () => {
   imageEditorTarget.value = null
 }
 
-const saveEditedImage = async (file: File) => {
+// The stage image editor runs in preserve mode: drawing edits go into the uploaded
+// file, Media FX (including motion) is returned separately and written only after the
+// upload succeeded. Media FX stays admin-only, like the inspector panels.
+const canEditImageEditorMediaFx = (target: ImageTarget | null) => {
+  if (!target || !canEditAllObjects.value) return false
+  return target.kind === 'scene' || supportsStageObjectMediaFx(props.store.activeObjects.value[target.objectId])
+}
+
+const imageEditorInitialMediaFx = computed<MediaFxSpec>(() => {
+  const target = imageEditorTarget.value
+  if (!target) return createDefaultMediaFxSpec()
+  if (target.kind === 'scene') return normalizeMediaFxSpec(surfaceStyle(target.target).mediaFx ?? createDefaultMediaFxSpec())
+  const object = props.store.activeObjects.value[target.objectId]
+  return object ? stageObjectMediaFx(object) : createDefaultMediaFxSpec()
+})
+
+const imageEditorMediaFxCapabilities = computed<Partial<MediaFxCapabilities>>(() => {
+  const target = imageEditorTarget.value
+  if (!target || !canEditImageEditorMediaFx(target)) return { motion: false, filters: false, advanced: false }
+  if (target.kind === 'scene') return surfaceMediaFxCapabilities(target.target)
+  const object = props.store.activeObjects.value[target.objectId]
+  return resolveMediaFxCapabilities(
+    'konva',
+    object?.type === 'image' && Boolean(object.image) && !isStaticImageObject(object),
+    isStaticImageObject(object) && mediaFxGpuAvailable.value,
+    isStaticImageObject(object) && mediaFxGpuAvailable.value,
+  )
+})
+
+const commitImageEditorMediaFx = (target: ImageTarget, mediaFx: MediaFxSpec | null) => {
+  if (!canEditImageEditorMediaFx(target)) return
+  const next = normalizeMediaFxSpec(mediaFx)
+  if (target.kind === 'scene') {
+    if (mediaFxSpecsEqual(normalizeMediaFxSpec(surfaceStyle(target.target).mediaFx), next)) return
+    props.store.patchSceneSurfaceStyle(target.target, { mediaFx: compactMediaFxSpec(next) })
+    return
+  }
+  const object = props.store.activeObjects.value[target.objectId]
+  if (!object || mediaFxSpecsEqual(stageObjectMediaFx(object), next)) return
+  endSelectedMediaFxEdit()
+  props.store.beginObjectEdit('修改视觉效果')
+  setStageObjectMediaFx(object, next)
+  props.store.commitObjectEdit()
+}
+
+const saveEditedImage = async (result: MessageImageEditorResult) => {
   const target = imageEditorTarget.value
   if (!target) return
   imageEditorVisible.value = false
   try {
-    await uploadImage(file, target)
-    closeImageEditor()
+    await uploadImage(result.file, target)
   } catch {
+    // Upload failed: Media FX was not touched; reopen the editor on the same target.
     imageEditorVisible.value = true
+    return
   }
+  commitImageEditorMediaFx(target, result.mediaFx)
+  closeImageEditor()
 }
 
 const placeCanvasDropObject = (object: StageObject, event: DragEvent, offsetIndex = 0) => {
@@ -7826,9 +8455,7 @@ onMounted(() => {
   sceneMorphStage = new Konva.Stage({ container: sceneMorphContainerRef.value, width: 1, height: 1, listening: false })
   backgroundLayer = new Konva.Layer({ listening: false })
   worldLayer = new Konva.Layer()
-  worldOverlayLayer = new Konva.Layer({ listening: false })
-  foregroundLayer = new Konva.Layer({ listening: false })
-  gridTopLayer = new Konva.Layer({ listening: false })
+  topVisualLayer = new Konva.Layer({ listening: false })
   interactionLayer = new Konva.Layer()
   backgroundCameraGroup = new Konva.Group()
   worldCameraGroup = new Konva.Group()
@@ -7998,27 +8625,24 @@ onMounted(() => {
     strokeWidth: 2,
     dash: [6, 4],
   })
-  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
-  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
+  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, 'background', true, props.store.state.liveState.surfaceStyles.background)
+  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, 'foreground', false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot)
   worldOverlayCameraGroup.add(drawingDraftRoot, pointerTraceRoot)
-  gridTopLayer.add(gridTopCameraGroup)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
-  worldOverlayLayer.add(worldOverlayCameraGroup)
-  foregroundLayer.add(foregroundCameraGroup)
+  topVisualLayer.add(worldOverlayCameraGroup, foregroundCameraGroup, gridTopCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
-  stage.add(backgroundLayer, worldLayer, worldOverlayLayer, foregroundLayer, gridTopLayer, interactionLayer)
+  stage.add(backgroundLayer, worldLayer, topVisualLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
   worldLayer.getCanvas()._canvas.style.zIndex = '10'
-  worldOverlayLayer.getCanvas()._canvas.style.zIndex = String(WORLD_OVERLAY_LAYER_Z)
-  foregroundLayer.getCanvas()._canvas.style.zIndex = '9000'
-  gridTopLayer.getCanvas()._canvas.style.zIndex = String(GRID_TOP_LAYER_Z)
+  topVisualLayer.getNativeCanvasElement().style.zIndex = String(TOP_VISUAL_LAYER_Z)
   interactionLayer.getCanvas()._canvas.style.zIndex = '10000'
-  worldOverlayLayer.getCanvas()._canvas.style.pointerEvents = 'none'
-  foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
-  gridTopLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  topVisualLayer.getNativeCanvasElement().style.pointerEvents = 'none'
   interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  // An interactive background owns native pointer input across the viewport.
+  // Canvas visuals remain visible; ordinary DOM iframe objects above it keep their own native interaction.
+  worldLayer.getNativeCanvasElement().style.pointerEvents = surfaceIframeInteractive('background') ? 'none' : ''
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
   stage.on('pointermove', movePan)
@@ -8046,6 +8670,9 @@ watch(() => props.store.state.activeSceneId, (sceneId, previousSceneId) => {
   effectRuntime.invalidateCurrentMessage()
   beginSceneMediaBatch(sceneId, true, previousSceneId)
 }, { flush: 'sync' })
+watch(() => surfaceIframeInteractive('background'), (interactive) => {
+  if (worldLayer) worldLayer.getNativeCanvasElement().style.pointerEvents = interactive ? 'none' : ''
+}, { flush: 'post' })
 watch(
   () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
   (next, previous) => {
@@ -8092,6 +8719,7 @@ watch(() => ({
   background: props.store.state.liveState.background,
   foreground: props.store.state.liveState.foreground,
   surfaceStyles: props.store.state.liveState.surfaceStyles,
+  foregroundEmbed: Boolean(props.store.state.liveState.surfaceEmbeds.foreground),
   backgroundColor: props.store.state.liveState.backgroundColor,
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
@@ -8110,6 +8738,11 @@ watch(() => props.store.state.persistentObjects, () => {
   else syncObjects()
   effectRuntime.reconcile()
 }, { deep: true })
+watch(() => [props.store.state.activeSceneId, activeTheaterSequences.value] as const, ([sceneId]) => {
+  sequenceRuntime.reconcile(sceneId)
+}, { immediate: true })
+// Click-triggered sequences make otherwise action-less components hit-testable.
+watch(sequenceClickObjectIds, () => syncObjects())
 watch(() => props.store.state.camera, () => {
   applyCamera()
   scheduleGridSync()
@@ -8142,6 +8775,7 @@ watch(() => [props.syncReady, ...props.permissions], () => {
   if (!canOpenPanel('inspector')) inspectorPanelOpen.value = false
   if (!canOpenPanel('layer')) layerPanelOpen.value = false
   if (!canOpenPanel('effect')) effectPanelOpen.value = false
+  if (!canOpenPanel('sequence')) sequencePanelOpen.value = false
   if (!canOpenPanel('overlay')) overlayPanelOpen.value = false
   if (!canOpenPanel('asset')) {
     assetPanelOpen.value = false
@@ -8174,9 +8808,9 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   else syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, overlayPanelOpen, assetPanelOpen, floatingPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, sequencePanelOpen, overlayPanelOpen, assetPanelOpen, floatingPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'overlay', 'asset', 'floating']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'sequence', 'overlay', 'asset', 'floating']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
@@ -8206,6 +8840,8 @@ watch([dialoguePerformanceHidden, portraitPerformanceHidden], ([dialogueHidden, 
 }, { flush: 'sync' })
 
 onBeforeUnmount(() => {
+  endSelectedMediaFxEdit()
+  unsubscribeMediaFxGpuAvailability()
   quickToolPickerEpoch += 1
   quickToolPickerOpen.value = false
   hideImageAnnotation()
@@ -8223,6 +8859,7 @@ onBeforeUnmount(() => {
   stopPackagePolling()
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
+  sequenceRuntime.dispose()
   theaterAudioSequences.clear()
   scenePreloadPulseTimers.forEach((timer) => window.clearTimeout(timer))
   scenePreloadPulseTimers.clear()
@@ -8259,6 +8896,12 @@ onBeforeUnmount(() => {
   mediaAnimation = null
   objectEntranceTweens.forEach((tween) => tween.destroy())
   objectEntranceTweens.clear()
+  objectMediaFxControllers.forEach((controller) => controller.dispose())
+  objectMediaFxControllers.clear()
+  backgroundSlot?.mediaFxController.dispose()
+  foregroundSlot?.mediaFxController.dispose()
+  backgroundSlot?.mediaFxTemporal.dispose()
+  foregroundSlot?.mediaFxTemporal.dispose()
   pendingObjectEntrances.clear()
   textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
   textEntranceTimers.clear()
@@ -8279,12 +8922,11 @@ onBeforeUnmount(() => {
   sceneMorphStage = null
   stage?.destroy()
   stage = null
-  objectRootLayers.clear()
+  extraObjectRenderBands.length = 0
   rootStackingOrder.value = {}
-  gridTopLayer = null
+  topVisualLayer = null
   gridTopCameraGroup = null
   gridGroup = null
-  worldOverlayLayer = null
   worldOverlayCameraGroup = null
   drawingDraftRoot = null
   pointerTraceRoot = null
@@ -8292,7 +8934,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="theater-stage-app">
+  <section ref="stageAppRef" class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/apng,image/jpeg,image/webp,image/gif,video/webm,.apng,.webm" @change="handleImageInput">
     <input ref="sceneAudioInputRef" class="theater-image-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleSceneAudioInput">
     <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
@@ -8319,7 +8961,35 @@ onBeforeUnmount(() => {
         </button>
       </n-dropdown>
       <div v-else class="theater-stage-title" :title="store.activeScene.value.name">{{ store.activeScene.value.name }}</div>
-      <n-button-group class="theater-panel-switches" size="small">
+      <Teleport
+        :to="stageAppRef || '.theater-stage-app'"
+        :disabled="theaterToolbarLayout === 'horizontal' || !stageAppRef"
+      >
+        <div
+          class="theater-panel-switches-wrap"
+          :class="{ 'is-vertical': theaterToolbarLayout === 'vertical', 'is-controls-visible': panelSwitchesColorsVisible }"
+          @pointerenter="revealPanelSwitchesColors"
+          @pointerleave="hidePanelSwitchesColors"
+          @focusin="revealPanelSwitchesColors"
+          @focusout="handlePanelSwitchesFocusOut"
+        >
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  class="theater-panel-layout-toggle"
+                  quaternary
+                  size="small"
+                  :aria-label="theaterToolbarLayoutLabel"
+                  @click="toggleTheaterToolbarLayout"
+                >
+                  <template #icon>
+                    <n-icon><component :is="theaterToolbarLayout === 'horizontal' ? LayoutSidebar : LayoutNavbar" /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ theaterToolbarLayoutLabel }}
+            </n-tooltip>
+            <n-button-group class="theater-panel-switches" :class="{ 'is-vertical': theaterToolbarLayout === 'vertical' }" size="small">
         <n-tooltip v-if="canBrowseScenes" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': scenePanelOpen }" aria-label="切换场景面板" @click="togglePanel('scene')">
@@ -8355,6 +9025,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           特效层
+        </n-tooltip>
+        <n-tooltip v-if="canEditAllObjects" trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': sequencePanelOpen }" aria-label="切换序列器面板" @click="togglePanel('sequence')">
+              <template #icon><n-icon><Sitemap /></n-icon></template>
+            </n-button>
+          </template>
+          序列器
         </n-tooltip>
         <n-tooltip v-if="canEditAllObjects" trigger="hover">
           <template #trigger>
@@ -8401,7 +9079,9 @@ onBeforeUnmount(() => {
           </n-dropdown>
         </span>
         <TheaterDialogueControllerPanel v-if="dialogueController && saveDialogueController" :world-id="worldId" :controller="dialogueController" :can-manage="canManageDialogue === true" :save="saveDialogueController" />
-      </n-button-group>
+            </n-button-group>
+        </div>
+      </Teleport>
       <n-popover
         trigger="click"
         placement="bottom-start"
@@ -8460,6 +9140,17 @@ onBeforeUnmount(() => {
           </div>
           <div class="theater-bridge-popover__sync">
             舞台同步：{{ syncing ? '同步中' : syncReady ? '已连接' : '未连接' }}
+          </div>
+          <div class="theater-bridge-popover__renderer">
+            <span>AI 协作</span>
+            <n-switch
+              :value="rendererAuthorized"
+              size="small"
+              :loading="rendererAuthorizing"
+              :disabled="!syncReady || rendererAuthorizing"
+              :aria-label="rendererAuthorized ? '撤销 AI 协作' : '允许 AI 协作'"
+              @update:value="emit('toggleRenderer')"
+            />
           </div>
         </div>
       </n-popover>
@@ -8624,6 +9315,24 @@ onBeforeUnmount(() => {
       >
         <div ref="sceneVisualRef" class="theater-scene-visual">
           <div ref="containerRef" class="theater-stage-canvas" />
+          <template v-for="target in (['background', 'foreground'] as const)" :key="target">
+            <StageSurfaceIframe
+              v-if="store.state.liveState.surfaceEmbeds[target]"
+              :key="`${worldId}:${channelId}:${store.state.activeSceneId}:${target}`"
+              :target="target"
+              :embed="store.state.liveState.surfaceEmbeds[target]!"
+              :interactive="surfaceIframeInteractive(target)"
+              :camera="store.state.camera"
+              :viewport-width="viewportSize.width"
+              :viewport-height="viewportSize.height"
+              :field-width="store.state.liveState.fieldWidth"
+              :field-height="store.state.liveState.fieldHeight"
+              :world-id="worldId"
+              :channel-id="channelId"
+              :character-snapshot="characterSnapshot"
+              :style="{ zIndex: target === 'background' ? 5 : TOP_VISUAL_LAYER_Z + 1 }"
+            />
+          </template>
           <SceneOverlayStageHost
             :scene-id="store.state.activeSceneId"
             :overlays="store.state.liveState.sceneOverlays"
@@ -8636,8 +9345,12 @@ onBeforeUnmount(() => {
             :viewport-height="viewportSize.height"
             :entrance-playbacks="textEntrancePlaybacks"
             :hidden-object-ids="[...pendingTextEntranceIds, ...dialogueSuppressedObjectIds]"
+            :world-id="worldId"
+            :channel-id="channelId"
+            :scope-type="props.scopeType || 'channel'"
             :stacking-order="rootStackingOrder"
             :character-snapshot="characterSnapshot"
+            @embed-event-published="triggerEmbedEventActions"
           />
           <div
             v-if="imageAnnotationOverlay.visible"
@@ -8647,6 +9360,10 @@ onBeforeUnmount(() => {
             :style="imageAnnotationOverlayStyle"
           >{{ imageAnnotationOverlay.annotation.text }}</div>
           <div ref="sceneMorphContainerRef" class="theater-scene-morph-overlay" />
+        </div>
+        <div v-if="surfaceInteractionTest" class="theater-surface-test-exit">
+          <span>正在测试{{ surfaceInteractionTest === 'background' ? '背景' : '前景' }}网页</span>
+          <n-button size="small" type="warning" @click="surfaceInteractionTest = null">退出网页测试</n-button>
         </div>
         <div
           v-if="isBatchSelection && selectionQuickBar.visible"
@@ -8699,6 +9416,7 @@ onBeforeUnmount(() => {
             :preview-name="appearancePreview.previewName"
             :preview-text="appearancePreview.previewText"
             :controller-area="appearancePreview.controllerArea"
+            :controller-portrait-style="appearancePreview.controllerPortraitStyle"
             :multiplayer-portrait-transform="appearancePreview.multiplayerPortraitTransform"
             @dispatch="(command, options) => emit('appearancePreviewCommand', command, options?.transient)"
             @gesture-start="emit('appearancePreviewPhase', 'start')"
@@ -9216,6 +9934,35 @@ onBeforeUnmount(() => {
                 <template #suffix>ms</template>
               </n-input-number>
             </template>
+            <template v-if="selectedObjectSupportsMediaFx && selectedMediaFx">
+              <label>视觉效果</label>
+              <n-button
+                class="theater-media-fx-toggle"
+                size="small"
+                :type="selectedMediaFxActive ? 'primary' : 'default'"
+                secondary
+                :aria-expanded="selectedMediaFxOpen"
+                @click="selectedMediaFxOpen = !selectedMediaFxOpen"
+              >
+                <template #icon><n-icon><component :is="selectedMediaFxOpen ? ChevronDown : ChevronRight" /></n-icon></template>
+                {{ selectedMediaFxActive ? '已启用视觉效果' : '设置视觉效果' }}
+              </n-button>
+              <MediaFxPanel
+                v-if="selectedMediaFxOpen"
+                class="theater-media-fx-panel"
+                :model-value="selectedMediaFx"
+                mode="live"
+                :capabilities="selectedMediaFxCapabilities"
+                :preview-control="selectedObject.type === 'image'"
+                :preview-paused="mediaFxPreviewPaused"
+                @focusin.stop
+                @focusout.stop
+                @edit-start="beginSelectedMediaFxEdit"
+                @edit-end="endSelectedMediaFxEdit"
+                @update:model-value="updateSelectedMediaFx"
+                @update:preview-paused="mediaFxPreviewPaused = $event"
+              />
+            </template>
             <template v-if="selectedObject.type === 'drawing' && selectedObject.drawing">
               <label>描边</label>
               <n-color-picker v-model:value="selectedObject.drawing.style.stroke" :show-alpha="false" :modes="['hex']" size="small" />
@@ -9296,8 +10043,8 @@ onBeforeUnmount(() => {
                 @update:checked="updateSelectedAspectRatioLocked"
               >锁定比例</n-checkbox>
             </div>
-            <template v-if="canEditAllObjects && isStageActionTarget(selectedObject.type)">
-              <label>点击动作</label>
+            <template v-if="canEditAllObjects && isStageActionOwner(selectedObject.type)">
+              <label>{{ selectedObject.type === 'iframe' ? '嵌入事件动作' : '点击动作' }}</label>
               <label class="theater-action-execution-mode">
                 <span>执行方式</span>
                 <n-switch
@@ -9353,7 +10100,7 @@ onBeforeUnmount(() => {
                     <n-button size="tiny" secondary @click="openRandomTableEditor(action.id)">
                       编辑 · {{ action.payload.name }} · {{ action.payload.formula }} · {{ action.payload.entries.length }} 项
                     </n-button>
-                    <n-tooltip>
+                    <n-tooltip v-if="isStageActionTarget(selectedObject.type)">
                       <template #trigger>
                         <n-button
                           size="tiny"
@@ -9368,7 +10115,7 @@ onBeforeUnmount(() => {
                   </div>
                   <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" class="theater-action-row__target" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" class="theater-action-row__target" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                  <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                  <n-select v-else-if="action.type === 'object.toggle' || action.type === 'object.trigger'" v-model:value="action.payload.objectId" class="theater-action-row__target" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                   <n-button v-else-if="action.type === 'clue.execute'" class="theater-action-row__target" size="tiny" secondary @click="openClueEditor(action.id)">编辑线索 · {{ action.payload.entries.length }} 条</n-button>
                   <n-button v-else class="theater-action-row__target" size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
                   <n-input-number
@@ -9389,6 +10136,29 @@ onBeforeUnmount(() => {
                   <n-button text type="error" size="tiny" aria-label="删除动作" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)"><n-icon><Trash /></n-icon></n-button>
                 </div>
               </div>
+              <template v-if="selectedObject.type === 'iframe'">
+                <label>嵌入事件绑定</label>
+                <small class="theater-embed-event-hint">频道嵌入成功调用 events.publish 时，按精确 topic 执行下方勾选的本组件动作；事件内容不参与动作选择。网页组件需开启“可交互”，不支持舞台点击触发。</small>
+                <div v-for="binding in selectedEmbedEventBindings" :key="binding.topic" class="theater-embed-event-row">
+                  <code class="theater-embed-event-row__topic" :title="binding.topic">{{ binding.topic }}</code>
+                  <n-select
+                    :value="binding.actionIds"
+                    class="theater-embed-event-row__actions"
+                    :options="embedEventActionOptions"
+                    size="tiny"
+                    multiple
+                    :max-tag-count="2"
+                    :menu-props="theaterSecondaryMenuProps"
+                    :aria-label="`${binding.topic} 绑定的动作`"
+                    @update:value="updateEmbedEventBindingActions(binding.topic, $event)"
+                  />
+                  <n-button text type="error" size="tiny" :aria-label="`删除 ${binding.topic} 事件绑定`" @click="removeEmbedEventBinding(binding.topic)"><n-icon><Trash /></n-icon></n-button>
+                </div>
+                <div class="theater-embed-event-add">
+                  <n-input v-model:value="embedEventTopicDraft" size="tiny" maxlength="64" placeholder="topic，例如 door.open" @keydown.enter.prevent="addEmbedEventBinding" />
+                  <n-button size="tiny" :disabled="!selectedObject.actions.length || !embedEventTopicDraft.trim()" @click="addEmbedEventBinding">绑定</n-button>
+                </div>
+              </template>
             </template>
             <template v-if="canEditAllObjects">
               <label>父级</label>
@@ -9442,6 +10212,7 @@ onBeforeUnmount(() => {
                 </template>
                 <div class="theater-surface-settings">
                   <div class="theater-surface-settings__heading">{{ surface.label }}设置</div>
+                  <div class="theater-surface-settings__section">基础显示</div>
                   <div class="theater-surface-settings__fit">
                     <span>填充方式</span>
                     <n-radio-group :value="surfaceStyle(surface.target).fit" size="small" @update:value="updateSurfaceFit(surface.target, $event)">
@@ -9481,7 +10252,24 @@ onBeforeUnmount(() => {
                     <n-slider :value="Math.round(surfaceStyle(surface.target).overlay.opacity * 100)" :disabled="!surfaceStyle(surface.target).overlay.enabled" :min="0" :max="100" :step="1" @update:value="updateSurfaceOverlay(surface.target, { opacity: $event / 100 })" />
                     <output>{{ Math.round(surfaceStyle(surface.target).overlay.opacity * 100) }}%</output>
                   </div>
+                  <div class="theater-surface-settings__section">视觉效果</div>
+                  <p class="theater-surface-settings__hint">视觉效果叠加在基础显示参数之上。</p>
+                  <MediaFxPanel
+                    :model-value="surfaceMediaFx(surface.target)"
+                    mode="live"
+                    :capabilities="surfaceMediaFxCapabilities(surface.target)"
+                    @update:model-value="updateSurfaceMediaFx(surface.target, $event)"
+                  />
                   <n-button class="theater-surface-settings__reset" text size="small" @click="store.resetSceneSurfaceStyle(surface.target)">重置为默认</n-button>
+                  <StageSurfaceEmbedSettings
+                    :key="`${worldId}:${channelId}:${store.state.activeSceneId}:${surface.target}`"
+                    :embed="store.state.liveState.surfaceEmbeds[surface.target]"
+                    :testing="surfaceInteractionTest === surface.target"
+                    @set="store.setSceneSurfaceEmbed(surface.target, $event)"
+                    @patch="store.patchSceneSurfaceEmbed(surface.target, $event)"
+                    @remove="store.removeSceneSurfaceEmbed(surface.target)"
+                    @test="toggleSurfaceInteractionTest(surface.target)"
+                  />
                 </div>
               </n-popover>
               <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState[surface.target]" @click="clearImage({ kind: 'scene', target: surface.target })">清除</n-button>
@@ -9715,6 +10503,22 @@ onBeforeUnmount(() => {
         />
       </aside>
 
+      <aside v-if="sequencePanelOpen && canOpenPanel('sequence')" class="theater-floating-panel" data-panel-id="sequence" :style="panelStyle('sequence')" @pointerdown.capture="bringPanelToFront('sequence')" @focusin="bringPanelToFront('sequence')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('sequence', $event)">
+          <span>序列器</span>
+          <div class="theater-panel-heading__actions">
+            <small>{{ activeTheaterSequences.length }}</small>
+            <n-button class="theater-panel-close" text size="tiny" aria-label="关闭序列器面板" @click="sequencePanelOpen = false"><n-icon><X /></n-icon></n-button>
+          </div>
+        </div>
+        <TheaterSequencePanel
+          :store="store"
+          :can-edit="canEditAllObjects"
+          :can-test="canTriggerActions"
+          @test="emitSequenceTriggered($event, 'manual')"
+        />
+      </aside>
+
       <aside v-if="overlayPanelOpen && canOpenPanel('overlay')" class="theater-floating-panel theater-overlay-panel" data-panel-id="overlay" :style="panelStyle('overlay')" @pointerdown.capture="bringPanelToFront('overlay')" @focusin="bringPanelToFront('overlay')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('overlay', $event)">
           <span>场景叠加管理</span>
@@ -9806,6 +10610,9 @@ onBeforeUnmount(() => {
       v-if="imageEditorVisible"
       :show="imageEditorVisible"
       :file="imageEditorFile"
+      effect-mode="preserve"
+      :initial-media-fx="imageEditorInitialMediaFx"
+      :media-fx-capabilities="imageEditorMediaFxCapabilities"
       @update:show="value => { imageEditorVisible = value }"
       @cancel="closeImageEditor"
       @confirm="saveEditedImage"
@@ -9990,7 +10797,25 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
 .theater-stage-toolbar::-webkit-scrollbar { display: none; }
-.theater-stage-toolbar :deep(.n-button) {
+.theater-panel-switches-wrap {
+  position: relative; display: inline-flex; align-items: center; flex: 0 0 auto;
+}
+.theater-panel-switches-wrap.is-vertical {
+  position: absolute; z-index: 9998; top: 46px; left: 0; box-sizing: border-box;
+  width: 52px; max-height: calc(100% - 46px); display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 4px 2px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none;
+  border: 1px solid transparent; border-radius: 0 5px 5px 0;
+  background: transparent; box-shadow: none;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.theater-panel-switches-wrap.is-vertical::-webkit-scrollbar { display: none; }
+.theater-panel-switches-wrap.is-vertical.is-controls-visible {
+  border-color: var(--sc-border-mute, rgba(255, 255, 255, .08));
+  background: color-mix(in srgb, var(--sc-bg-header, #262626) 92%, transparent);
+  box-shadow: 4px 8px 18px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.theater-stage-toolbar :deep(.n-button), .theater-panel-switches-wrap :deep(.n-button) {
   transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 .theater-component-actions-toolbar {
@@ -10015,6 +10840,7 @@ onBeforeUnmount(() => {
   .theater-component-actions-toolbar { right: 8px; max-width: calc(100% - 16px); }
 }
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)),
+.theater-panel-switches-wrap.is-vertical:not(.is-controls-visible) :deep(.n-button:not(:disabled)),
 .theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)) {
   --n-color: transparent !important;
   --n-color-hover: transparent !important;
@@ -10034,10 +10860,21 @@ onBeforeUnmount(() => {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72));
 }
 .theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)),
+.theater-panel-switches-wrap.is-vertical:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)),
 .theater-component-actions-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
   box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
 }
-.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-panel-switches-wrap.is-vertical :deep(.n-button.is-active:not(:disabled)) {
+  box-shadow: inset 2px 0 rgba(255, 255, 255, .82) !important;
+}
+.theater-toolbar-exit, .theater-grid-snap-tool, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches-wrap, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-panel-layout-toggle {
+  position: absolute; z-index: 1; left: -34px; width: 30px; min-width: 30px; height: 34px; padding: 0;
+}
+.theater-panel-switches-wrap.is-vertical .theater-panel-layout-toggle { position: static; order: -1; flex: 0 0 auto; }
+.theater-panel-switches.is-vertical {
+  width: 48px; display: flex; flex-direction: column; align-items: center; flex: 0 0 auto;
+}
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
@@ -10113,6 +10950,7 @@ onBeforeUnmount(() => {
 .theater-bridge-popover__dot.is-error { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .12); }
 .theater-bridge-popover__actions { display: flex; justify-content: flex-end; }
 .theater-bridge-popover__sync { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-muted, rgba(255, 255, 255, .52)); }
+.theater-bridge-popover__renderer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; padding-top: 6px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-secondary, rgba(255, 255, 255, .72)); }
 .theater-stage-character-bridge {
   width: 218px; flex: 0 0 218px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px;
   padding: 3px 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px;
@@ -10129,6 +10967,8 @@ onBeforeUnmount(() => {
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object),
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object__frame) { pointer-events: none !important; }
+.theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object *) { pointer-events: none !important; }
+.theater-surface-test-exit { position: absolute; z-index: 10002; top: 8px; right: 8px; max-width: calc(100% - 16px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--theater-panel); color: var(--sc-text-primary, #f4f4f5); font-size: 12px; pointer-events: auto; }
 .theater-scene-visual { position: absolute; z-index: 0; inset: 0; overflow: hidden; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay) { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; transform-origin: center; will-change: opacity, transform, filter, clip-path; }
 .theater-stage-viewport :global(.theater-scene-transition-overlay > canvas) { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -10299,9 +11139,13 @@ onBeforeUnmount(() => {
 .theater-scene-overlay-settings-row .theater-image-actions { min-width: 0; }
 .theater-scene-overlay-settings-row small { overflow: hidden; color: var(--sc-text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .theater-entrance-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
-.theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
+.theater-media-fx-toggle { justify-content: flex-start; }
+.theater-media-fx-panel { padding: 8px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
+.theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; max-height: min(72vh, 680px); box-sizing: border-box; display: grid; gap: 11px; overflow-x: hidden; overflow-y: auto; }
 .theater-surface-settings > * { min-width: 0; }
 .theater-surface-settings__heading { color: var(--sc-text-primary, #f4f4f5); font-size: 13px; font-weight: 700; }
+.theater-surface-settings__section { padding-top: 2px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; font-weight: 600; }
+.theater-surface-settings__hint { margin: -6px 0 0; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-surface-settings__fit { display: grid; gap: 7px; }
 .theater-surface-settings__fit > span, .theater-surface-settings__slider > span, .theater-surface-settings__toggle > span, .theater-surface-settings__overlay > span {
   color: var(--sc-text-secondary, #b5b5c5); font-size: 11px;
@@ -10391,6 +11235,10 @@ onBeforeUnmount(() => {
 .theater-drawing-inspector-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
 .theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
 .theater-inspector-actions, .theater-action-add { display: flex; flex-wrap: wrap; gap: 4px; }
+.theater-embed-event-hint { color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; line-height: 1.4; }
+.theater-embed-event-row { display: grid; grid-template-columns: minmax(0, 88px) minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.theater-embed-event-row__topic { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.theater-embed-event-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
 .theater-action-execution-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-action-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
 .theater-action-row.is-dragging { opacity: .42; }
@@ -10409,6 +11257,7 @@ onBeforeUnmount(() => {
 .theater-action-row__timing :deep(.n-input__input-el) { padding-right: 0; }
 @media (max-width: 1100px) {
   .theater-stage-toolbar { gap: 5px; padding: 0 6px; }
+  .theater-toolbar-controls { gap: 5px; }
   .theater-stage-character-bridge { width: 176px; flex-basis: 176px; }
 }
 @media (max-width: 720px) {
@@ -10416,7 +11265,7 @@ onBeforeUnmount(() => {
   .theater-stage-reset-camera { width: 34px; padding: 0; font-size: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .theater-stage-toolbar, .theater-stage-toolbar :deep(.n-button), .theater-floating-panel { transition: none; }
+  .theater-stage-toolbar, .theater-toolbar-controls, .theater-stage-toolbar :deep(.n-button), .theater-toolbar-controls :deep(.n-button), .theater-floating-panel { transition: none; }
   .theater-floating-panel { animation: none; }
 }
 </style>

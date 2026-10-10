@@ -2,6 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { resolveStageImageUrl, type StageObjectTransform } from '../shared/stage-types'
+import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
+import { resolveMediaFxCapabilities } from '@/features/media-fx/media-fx'
+import { vMediaFx, type MediaFxDirectiveValue } from '@/features/media-fx/media-fx-dom'
 import { cloneStageData } from '../stage/stage-editing'
 import type { TheaterEffectPlayback } from './theater-effect-runtime'
 import {
@@ -74,6 +77,18 @@ const mediaIsVideo = (playback: TheaterEffectPlayback) => (
 )
 
 const mediaLoopCount = (playback: TheaterEffectPlayback) => playback.config.mediaLoopCount ?? null
+
+// Media FX wraps the asset in its own element, so WAAPI motion never touches the
+// asset's mediaTransform or the effect frame transform.
+const mediaFxBinding = (playback: TheaterEffectPlayback): MediaFxDirectiveValue => {
+  const media = playback.config.media || playback.object.image
+  const capabilities = resolveMediaFxCapabilities('dom', media?.animated === true || mediaIsVideo(playback))
+  return {
+    spec: playback.object.metadata?.mediaFx,
+    filters: capabilities.filters,
+    reducedMotion: resolveTheaterReducedMotion().effectiveReducedMotion,
+  }
+}
 
 const completedVideoLoops = new WeakMap<HTMLVideoElement, number>()
 
@@ -208,8 +223,10 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
           @pointerup="endGesture"
           @pointercancel="endGesture"
         >
-          <video v-if="mediaUrl(playback) && mediaIsVideo(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" autoplay :loop="mediaLoopCount(playback) === null" muted playsinline @ended="handleVideoEnded($event, playback)" />
-          <img v-else-if="mediaUrl(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" alt="" draggable="false">
+          <div v-if="mediaUrl(playback)" v-media-fx="mediaFxBinding(playback)" class="theater-effect-media-fx">
+            <video v-if="mediaIsVideo(playback)" class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" autoplay :loop="mediaLoopCount(playback) === null" muted playsinline @ended="handleVideoEnded($event, playback)" />
+            <img v-else class="theater-effect-media-only__asset" :style="mediaStyle(playback)" :src="mediaUrl(playback)!" alt="" draggable="false">
+          </div>
           <span v-else-if="editing && playback.effectId === selectedObject?.id">未设置媒体</span>
         </div>
         <div
@@ -280,6 +297,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 .theater-effect-media-only { width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; color: #fbbf24; background: transparent; }
 .theater-effect-overlay.is-editing .theater-effect-object.is-selected:not(.has-media) .theater-effect-media-only { background: rgba(15, 23, 42, .28); }
 .theater-effect-media-only img, .theater-effect-media-only video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.theater-effect-media-fx { width: 100%; height: 100%; }
 .theater-effect-media-only__asset { transform: translate(var(--effect-media-x, 0), var(--effect-media-y, 0)) rotate(var(--effect-media-rotation, 0deg)) scale(var(--effect-media-scale-x, 1), var(--effect-media-scale-y, 1)); }
 .theater-effect-selection-label { position: absolute; top: -28px; left: 0; padding: 3px 7px; color: #111827; background: #f59e0b; font: 600 14px/1.2 sans-serif; }
 .theater-effect-resize-handle { position: absolute; right: -9px; bottom: -9px; width: 18px; height: 18px; padding: 0; border: 2px solid #111827; border-radius: 50%; background: #f59e0b; cursor: nwse-resize; }

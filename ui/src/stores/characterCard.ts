@@ -23,11 +23,20 @@ import {
   resolveBotNicknameSyncName,
   shouldEnableBotNicknameSyncForChannel,
 } from '@/utils/botNicknameSync';
-import {
-  CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
-  CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
-  getCharacterSnapshotTemplatePreset,
-} from '@/utils/characterSnapshotTemplatePresets';
+import { patchCharacterCardValuePath, resolveCharacterStatInverseValue, resolveCharacterStatMutationTarget } from '@/utils/characterStatMutation';
+import { resolveCharacterNumericSource } from '@/utils/characterStatDisplay';
+
+const extractBotInteractionErrorCode = (error: unknown) => {
+  if (!error || typeof error !== 'object') {
+    return '';
+  }
+  const response = (error as { response?: unknown }).response;
+  if (!response || typeof response !== 'object') {
+    return '';
+  }
+  const code = (response as { err?: unknown }).err;
+  return typeof code === 'string' ? code.trim() : '';
+};
 
 // Character card type for UI (matching old API format)
 export interface CharacterCard {
@@ -53,6 +62,7 @@ interface CharacterCardFromAPI {
 
 // Active card data (from character.get)
 export interface CharacterCardData {
+  id?: string;
   name: string;
   type: string;
   attrs: Record<string, any>;
@@ -156,6 +166,16 @@ export const resolveCardIdByNameAndType = (
   return cards.find(card => card.name === normalizedName)?.id || '';
 };
 
+export const resolveCardIdByNameAndTypeStrict = (
+  cards: readonly Pick<CharacterCard, 'id' | 'name' | 'sheetType'>[],
+  name?: string, sheetType?: string, stableID?: string,
+) => {
+  if (stableID) return stableID;
+  if (!name) return '';
+  const matches = cards.filter(card => card.name === name && (!sheetType || card.sheetType === sheetType));
+  return matches.length === 1 ? matches[0].id : '';
+};
+
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 export const characterApiUnsupportedText = '当前BOT不支持人物卡API、未开启或未启用。';
 
@@ -169,6 +189,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Local identity bindings. Shared identities use one binding key across copies.
   const identityBindings = ref<Record<string, string>>({});
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
+  const botNicknameSyncRunningByChannel = new Set<string>();
+  const pendingBotNicknameSyncByChannel = new Map<string, {
+    command: string;
+    reason: string;
+  }>();
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
   const onlineCardsByChannel = ref<Record<string, Record<string, OnlineCharacterCardItem>>>({});
   const onlineCardsLoadingByChannel = ref<Record<string, boolean>>({});
@@ -941,7 +966,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
         group_id: channelId,
         user_id: userId,
       });
@@ -965,6 +990,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           (resp.data as any)?.avatar,
         ].find(value => typeof value === 'string' && value.trim());
         const cardData: CharacterCardData = {
+          id: String(resp.data.id || '').trim() || undefined,
           name: resp.data.name || '',
           type: resp.data.type || '',
           attrs: resp.data.data || {},
@@ -1255,7 +1281,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
-        await applySnapshotTemplatePresetForCard(channelId, getActiveCardId(channelId));
         return resp.data;
       }
     } catch (e) {
@@ -1397,50 +1422,53 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return cardList.value.find(c => c.id === cardId);
   };
 
-  const applySnapshotTemplatePresetForCard = async (channelId: string, cardId: string) => {
-    const card = getCardById(cardId);
-    const preset = getCharacterSnapshotTemplatePreset(
-      card?.sheetType || activeCards.value[channelId]?.type || '',
-    );
-    if (!channelId || !preset) return;
-    try {
-      const badgeTemplate = CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS[preset];
-      const theaterOverlayTemplateJson = JSON.stringify(
-        CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS[preset],
-        null,
-        2,
-      );
-      const current = snapshotStore.preferenceByChannel[channelId];
-      if (
-        current?.badgeTemplateMode === 'custom'
-        && current.badgeTemplate === badgeTemplate
-        && current.theaterOverlayTemplateMode === 'custom'
-        && current.theaterOverlayTemplateJson === theaterOverlayTemplateJson
-      ) {
-        return;
-      }
-      await snapshotStore.updatePreference(channelId, {
-        badgeTemplateMode: 'custom',
-        badgeTemplate,
-        theaterOverlayTemplateMode: 'custom',
-        theaterOverlayTemplateJson,
-      });
-      await snapshotStore.syncLocalSnapshot(channelId, true);
-    } catch (error) {
-      console.warn('[CharacterCard] Failed to apply snapshot template preset', { channelId, cardId, error });
-    }
-  };
-
   // Get card by name from list
   const getCardByName = (name: string) => {
     return cardList.value.find(c => c.name === name);
   };
 
-  // Resolve active card ID for a channel by matching name/type with list
+  // Prefer the stable ID returned by character.get; older BOTs need the list match.
   const getActiveCardId = (channelId: string) => {
     const active = activeCards.value[channelId];
     if (!active) return '';
+    if (active.id) return active.id;
     return resolveCardIdByNameAndType(cardList.value, active.name, active.type);
+  };
+
+  const getActiveCardStrict = async (channelId: string, expectedCardId?: string) => {
+    if (!getCharacterApiStatus(channelId).available) throw new Error('NOT_EDITABLE');
+    let card = await getActiveCard(channelId, { throwOnError: true });
+    if (!card?.id) {
+      await loadCardList(channelId, { throwOnError: true });
+      card = await getActiveCard(channelId, { throwOnError: true });
+    }
+    const id = card && resolveCardIdByNameAndTypeStrict(cardList.value, card.name, card.type, card.id);
+    if (!id || (expectedCardId && id !== expectedCardId)) throw new Error('CARD_CHANGED');
+    return { card, id } as { card: CharacterCardData; id: string };
+  };
+
+  const patchActiveCardValuePath = async (
+    channelId: string, expectedCardId: string, sourcePath: string, expectedPath: string[],
+    op: 'set' | 'add', value: number, directOnly: boolean,
+  ) => {
+    const { card } = await getActiveCardStrict(channelId, expectedCardId);
+    const target = resolveCharacterStatMutationTarget(sourcePath, card.attrs || {}, { allowRootInit: true, directOnly });
+    const latest = resolveCharacterNumericSource({ path: sourcePath }, card.attrs);
+    if (!target || target.path.length !== expectedPath.length
+      || target.path.some((part, index) => part !== expectedPath[index])
+      || (op === 'add' && latest === null)) throw new Error('NOT_EDITABLE');
+    const expectedDisplay = op === 'add' ? latest! + value : value;
+    const rawValue = resolveCharacterStatInverseValue(target, card.attrs, expectedDisplay);
+    if (rawValue === null) throw new Error('NOT_EDITABLE');
+    const attrs = patchCharacterCardValuePath(card.attrs || {}, target.path, rawValue);
+    if (!attrs) throw new Error('NOT_EDITABLE');
+    if (!await updateCardStrict(channelId, card.name, attrs)) throw new Error('NOT_EDITABLE');
+    const fresh = await getActiveCardStrict(channelId, expectedCardId);
+    const actual = resolveCharacterNumericSource({ path: sourcePath }, fresh.card.attrs);
+    if (actual === null || Math.abs(actual - expectedDisplay) > 1e-8 * Math.max(1, Math.abs(expectedDisplay))) {
+      throw new Error('AVATAR_CARD_BOT_MUTATION_FAILED');
+    }
+    return fresh.card;
   };
 
   // Backwards compatibility: getCardsByChannel returns all cards (SealDice doesn't filter by channel)
@@ -1472,6 +1500,44 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return shouldEnableBotNicknameSyncForChannel(channel);
   };
 
+  const executeBotNicknameSync = async (channelId: string, command: string, reason: string) => {
+    const rememberSyncedCommand = () => {
+      lastBotNicknameSyncByChannel.value = {
+        ...lastBotNicknameSyncByChannel.value,
+        [channelId]: command,
+      };
+    };
+    try {
+      await chatStore.botInteract(channelId, command, { timeoutMs: 5_000, legacyQuiet: true });
+      rememberSyncedCommand();
+      return true;
+    } catch (error) {
+      const errorCode = extractBotInteractionErrorCode(error);
+      if (errorCode === 'BOT_INTERACTION_TIMEOUT') {
+        rememberSyncedCommand();
+        console.warn('[CharacterCard] BOT nickname sync timed out', { channelId, reason, command, error });
+        return false;
+      }
+      if (errorCode === 'BOT_INTERACTION_BOT_UNAVAILABLE') {
+        try {
+          await chatStore.botNicknameSyncDispatch(channelId, command);
+          rememberSyncedCommand();
+          return true;
+        } catch (fallbackError) {
+          console.warn('[CharacterCard] Failed to sync bot nickname via fallback', {
+            channelId,
+            reason,
+            command,
+            error: fallbackError,
+          });
+          return false;
+        }
+      }
+      console.warn('[CharacterCard] Failed to sync bot nickname', { channelId, reason, command, error });
+      return false;
+    }
+  };
+
   const dispatchBotNicknameSync = async (channelId: string, targetName: string, reason: string, force = false) => {
     if (!canSyncBotNickname(channelId)) {
       return false;
@@ -1484,19 +1550,27 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (!force && lastBotNicknameSyncByChannel.value[channelId] === command) {
       return false;
     }
-    try {
-      await chatStore.botCommandDispatch(channelId, command, {
-        silent: true,
-        reason,
-      });
-      lastBotNicknameSyncByChannel.value = {
-        ...lastBotNicknameSyncByChannel.value,
-        [channelId]: command,
-      };
-      return true;
-    } catch (e) {
-      console.warn('[CharacterCard] Failed to sync bot nickname', { channelId, reason, command, error: e });
+    if (botNicknameSyncRunningByChannel.has(channelId)) {
+      pendingBotNicknameSyncByChannel.set(channelId, { command, reason });
       return false;
+    }
+
+    botNicknameSyncRunningByChannel.add(channelId);
+    let nextSync: { command: string; reason: string } | undefined = { command, reason };
+    let synced = false;
+    try {
+      while (nextSync) {
+        synced = await executeBotNicknameSync(channelId, nextSync.command, nextSync.reason);
+        nextSync = pendingBotNicknameSyncByChannel.get(channelId);
+        pendingBotNicknameSyncByChannel.delete(channelId);
+        if (nextSync?.command === lastBotNicknameSyncByChannel.value[channelId]) {
+          nextSync = undefined;
+        }
+      }
+      return synced;
+    } finally {
+      pendingBotNicknameSyncByChannel.delete(channelId);
+      botNicknameSyncRunningByChannel.delete(channelId);
     }
   };
 
@@ -1550,12 +1624,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const reloadAfterSwitch = options.reloadAfterSwitch !== false;
     const nicknameSyncReason = boundCardId ? 'identity-switch-bound' : 'identity-switch-unbound';
 
-    void syncBotNicknameForIdentity(channelId, identityId, {
-      reason: nicknameSyncReason,
-    });
-
     if (!boundCardId) {
       if (preserveWhenUnbound) {
+        void syncBotNicknameForIdentity(channelId, identityId, {
+          reason: nicknameSyncReason,
+        });
         return {
           ok: true,
           switched: false,
@@ -1570,6 +1643,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           preserved: false,
         };
       }
+      void syncBotNicknameForIdentity(channelId, identityId, {
+        reason: nicknameSyncReason,
+      });
       if (reloadAfterSwitch) {
         await loadCards(channelId);
       }
@@ -1588,6 +1664,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         preserved: false,
       };
     }
+    void syncBotNicknameForIdentity(channelId, identityId, {
+      reason: nicknameSyncReason,
+    });
     if (reloadAfterSwitch) {
       await loadCards(channelId);
     }
@@ -1729,9 +1808,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       console.warn('[CharacterCard] Failed to load card avatar bindings for snapshot', error);
     }
     try {
+      await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
       await templateStore.ensureBindingsLoaded(channelId);
     } catch (error) {
-      console.warn('[CharacterCard] Failed to load character template bindings for snapshot', error);
+      console.warn('[CharacterCard] Failed to load character templates for snapshot', error);
     }
     const identity = chatStore.getActiveIdentity(channelId);
     if (!identity?.id) return null;
@@ -1749,6 +1829,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const variant = chatStore.getActiveIdentityVariant(channelId, identity.id);
     const cardId = getActiveCardId(channelId);
     const templateBinding = cardId ? templateStore.getBinding(channelId, cardId) : null;
+    const templateText = cardId && active
+      ? templateStore.resolveCardTemplate(channelId, cardId, active.type, active.templateText || '')
+      : active?.templateText || '';
     const platformTemplateRef = templateBinding?.mode === 'managed' && isPlatformCharacterCardTemplateRef(templateBinding.templateId)
       ? templateBinding.templateId
       : '';
@@ -1792,7 +1875,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
             sheetType: active.type,
             avatarAttachmentId: cardAvatarAttachmentId,
             attrs: active.attrs || {},
-            ...(active.templateText ? { templateText: active.templateText } : {}),
+            ...(templateText ? { templateText } : {}),
             ...(platformTemplateRef ? { platformTemplateRef } : {}),
           },
         } : {}),
@@ -1827,6 +1910,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getCardById,
     getCardByName,
     getActiveCardId,
+    getActiveCardStrict,
+    patchActiveCardValuePath,
     getCardsByChannel,
     getBadgeByIdentity,
     getNarratorIdentityIds,

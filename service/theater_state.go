@@ -18,6 +18,7 @@ var theaterSceneStateAllowedKeys = map[string]struct{}{
 	"background":    {},
 	"foreground":    {},
 	"surfaceStyles": {},
+	"surfaceEmbeds": {},
 	"fieldWidth":    {},
 	"fieldHeight":   {},
 	// Grid options, including the newer onTop flag, stay nested here.
@@ -29,6 +30,8 @@ var theaterSceneStateAllowedKeys = map[string]struct{}{
 	"sceneFolders":  {},
 	"resources":     {},
 	"ccfolia":       {},
+	// Scene-level theater sequencer configuration (frontend-normalized).
+	"theaterSequences": {},
 }
 
 func isTheaterSceneStateKeyAllowed(key string) bool {

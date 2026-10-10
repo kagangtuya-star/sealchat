@@ -602,6 +602,11 @@ func ListTheaterCheckpoints(actorID, worldID, channelID string, limit int) ([]mo
 }
 
 func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeResources bool) (TheaterSharedSnapshot, string, error) {
+	return readTheaterSnapshot(conn, room, includeResources, true)
+}
+
+// Planning reads the same document without computing an intermediate checksum.
+func readTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeResources, hash bool) (TheaterSharedSnapshot, string, error) {
 	result := TheaterSharedSnapshot{
 		LiveState:         normalizedTheaterSceneStateJSON(room.StateJSON),
 		SceneFolders:      sceneFoldersFromStateJSON(room.StateJSON),
@@ -659,6 +664,9 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 			}
 			result.Resources[resource.ID] = public
 		}
+	}
+	if !hash {
+		return result, "", nil
 	}
 	raw, checksum, err := canonicalTheaterJSON(result)
 	if err != nil {
@@ -813,7 +821,7 @@ func listTheaterEvents(actorID, worldID, channelID string, afterRevision int64, 
 			return nil, newTheaterError(TheaterErrorHistoryExpired, "Theater event history 不连续", 410, nil)
 		}
 		eventType := item.Type
-		payload := normalizedRawJSON(item.PayloadJSON, `{}`)
+		payload := TheaterMutationEventPayload(item)
 		if !allowDetails {
 			eventType = "stage.changed"
 			payload = json.RawMessage(`{}`)

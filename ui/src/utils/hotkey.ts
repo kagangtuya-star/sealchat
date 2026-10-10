@@ -10,6 +10,10 @@ const MODIFIER_LABELS: Record<'ctrl' | 'meta' | 'alt' | 'shift', string> = {
 const SPECIAL_KEY_LABELS: Record<string, string> = {
   ' ': 'Space',
   Space: 'Space',
+  Shift: 'Shift',
+  Control: 'Ctrl',
+  Alt: 'Alt',
+  Meta: 'Cmd',
   Enter: 'Enter',
   Escape: 'Esc',
   ArrowUp: 'ArrowUp',
@@ -54,10 +58,18 @@ const formatKeyLabel = (key: string): string => {
 export const formatHotkeyCombo = (descriptor?: FavoriteHotkey | null): string => {
   if (!descriptor) return ''
   const parts: string[] = []
-  if (descriptor.ctrl) parts.push(MODIFIER_LABELS.ctrl)
-  if (descriptor.meta) parts.push(MODIFIER_LABELS.meta)
-  if (descriptor.alt) parts.push(MODIFIER_LABELS.alt)
-  if (descriptor.shift) parts.push(MODIFIER_LABELS.shift)
+  if (isModifierKey(descriptor.key)) {
+    if (descriptor.ctrl) parts.push(MODIFIER_LABELS.ctrl)
+    if (descriptor.meta) parts.push(MODIFIER_LABELS.meta)
+    if (descriptor.alt) parts.push(MODIFIER_LABELS.alt)
+    if (descriptor.shift) parts.push(MODIFIER_LABELS.shift)
+    if (!parts.length) parts.push(formatKeyLabel(descriptor.key))
+    return parts.join('+')
+  }
+  if (descriptor.ctrl && descriptor.key !== 'Control') parts.push(MODIFIER_LABELS.ctrl)
+  if (descriptor.meta && descriptor.key !== 'Meta') parts.push(MODIFIER_LABELS.meta)
+  if (descriptor.alt && descriptor.key !== 'Alt') parts.push(MODIFIER_LABELS.alt)
+  if (descriptor.shift && descriptor.key !== 'Shift') parts.push(MODIFIER_LABELS.shift)
   parts.push(formatKeyLabel(descriptor.key))
   return parts.join('+')
 }
@@ -108,4 +120,31 @@ export const buildHotkeyDescriptor = (event: KeyboardEvent): FavoriteHotkey | nu
   const captured = captureHotkeyFromEvent(event)
   if (!captured) return null
   return enrichHotkeyCombo({ ...captured })
+}
+
+export const buildHoldHotkeyDescriptor = (event: KeyboardEvent): FavoriteHotkey | null => {
+  if (!event) return null
+  const key = normalizeBaseKey(event.key)
+  if (!key) return null
+  const hasModifier = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || isModifierKey(key)
+  if (!hasModifier) return null
+  return enrichHotkeyCombo({
+    key,
+    ctrl: event.ctrlKey || undefined,
+    meta: event.metaKey || undefined,
+    alt: event.altKey || undefined,
+    shift: event.shiftKey || undefined,
+    combo: '',
+  })
+}
+
+export const isHotkeyReleaseEvent = (event: KeyboardEvent, hotkey?: FavoriteHotkey | null): boolean => {
+  if (!event || !hotkey) return false
+  const key = normalizeBaseKey(event.key)
+  if (key === hotkey.key) return true
+  if (key === 'Control' && hotkey.ctrl) return true
+  if (key === 'Meta' && hotkey.meta) return true
+  if (key === 'Alt' && hotkey.alt) return true
+  if (key === 'Shift' && hotkey.shift) return true
+  return false
 }

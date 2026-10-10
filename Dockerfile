@@ -7,7 +7,7 @@ COPY doc/template/ /src/doc/template/
 RUN --mount=type=cache,target=/root/.cache/yarn \
   if [ -f dist/index.html ]; then echo "Using prebuilt ui/dist from build context"; else corepack enable && yarn install --network-timeout 600000 && yarn build-only; fi
 
-FROM --platform=$BUILDPLATFORM golang:1.24-bookworm AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS go-builder
 WORKDIR /src
 
 ENV GOMODCACHE=/go/pkg/mod \

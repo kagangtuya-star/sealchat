@@ -13,6 +13,43 @@ export const compareStageLayersTopToBottom = (left: StageObject, right: StageObj
   -compareStageLayersBottomToTop(left, right)
 )
 
+const OBJECT_ROOT_LAYER_Z_BASE = 100
+
+export const stageObjectHasDomVisualDescendant = (
+  object: StageObject,
+  objects: Record<string, StageObject>,
+  visited = new Set<string>(),
+): boolean => {
+  if (object.type === 'text' || object.type === 'iframe') return true
+  if (visited.has(object.id)) return false
+  visited.add(object.id)
+  return Object.values(objects).some((child) => (
+    child.parentId === object.id && stageObjectHasDomVisualDescendant(child, objects, visited)
+  ))
+}
+
+export interface StageObjectRenderBandPlan {
+  roots: StageObject[]
+  canvasZIndex: number
+}
+
+export const planStageObjectRenderBands = (objects: Record<string, StageObject>) => {
+  const roots = Object.values(objects)
+    .filter((object) => !object.parentId || !objects[object.parentId])
+    .sort(compareStageLayersBottomToTop)
+  const bands: StageObjectRenderBandPlan[] = [{ roots: [], canvasZIndex: OBJECT_ROOT_LAYER_Z_BASE }]
+  const rootStackingOrder: Record<string, number> = {}
+  roots.forEach((object, index) => {
+    bands[bands.length - 1].roots.push(object)
+    rootStackingOrder[object.id] = OBJECT_ROOT_LAYER_Z_BASE + index * 2 + 1
+    // The root's canvas stays below its DOM visual. Only the next root starts a band.
+    if (index < roots.length - 1 && stageObjectHasDomVisualDescendant(object, objects)) {
+      bands.push({ roots: [], canvasZIndex: OBJECT_ROOT_LAYER_Z_BASE + (index + 1) * 2 })
+    }
+  })
+  return { bands, rootStackingOrder }
+}
+
 export interface StageLayerRank {
   z: number
   order: number

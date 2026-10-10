@@ -235,6 +235,8 @@ Before introducing custom controls, check whether the project already has:
 
 Do not replace working Naive UI components with custom implementations without a concrete requirement.
 
+For modal and overlay interactions, treat focus ownership as part of the component contract. A Teleport-rendered child overlay must not compete with an ancestor `Modal`, `Drawer`, or other overlay focus trap; either keep the child inside the ancestor focus scope or explicitly relax the relevant `trap-focus` behavior. Do not patch individual inputs with `mousedown`/`pointerdown` prevention or manual `.focus()` calls to hide an overlay focus-conflict bug.
+
 ## Styling
 
 The project uses SCSS together with scoped and global Vue styles.

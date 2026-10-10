@@ -41,7 +41,10 @@ const defaultScheduler: TheaterEffectScheduler = {
 const normalizedKeywordText = (value: string) => value.normalize('NFKC').toLocaleLowerCase()
 const normalizedActorName = (value: string) => value.normalize('NFKC').trim()
 
-export const theaterEffectMatchesMessage = (config: TheaterEffectConfig, message: TheaterDialogueMessage) => {
+export const theaterEffectMatchesMessage = (
+  config: Pick<TheaterEffectConfig, 'keywords' | 'targetActorName'>,
+  message: TheaterDialogueMessage,
+) => {
   if (!config.keywords.length) return false
   if (config.targetActorName) {
     const targetActorNames = config.targetActorName.split(';').map(normalizedActorName).filter(Boolean)

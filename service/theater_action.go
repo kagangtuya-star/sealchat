@@ -53,7 +53,7 @@ func isTheaterActionTargetKind(kind string) bool {
 	return kind == "drawing" || kind == "text" || kind == "image" || kind == "button"
 }
 
-func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterActionCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
+func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterActionCommand, meta TheaterRequestMeta) (result *TheaterActionResult, resultErr error) {
 	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
 		return nil, err
 	}
@@ -68,8 +68,20 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	// Visibility controls hit testing in the client. Do not use it as an
 	// execution precondition: an action may hide its own source before later
 	// actions from the same click (for example, chat-driven effects) run.
-	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+	if !object.Interactive || !theaterObjectCanRunSavedAction(object, command.ActionID) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
+	if object.Kind == "iframe" && command.actionSource != theaterActionSourceMCPControl {
+		use, err := BeginTheaterEmbedEventUse(actorID, command.WorldID, command.ChannelID, command.InputChannelID, object, []string{command.ActionID}, command.StepID, command.EntryID, command.EmbedEvent)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr == nil && result != nil {
+				CommitTheaterEmbedEventUse(use)
+			}
+			ReleaseTheaterEmbedEventUse(use)
+		}()
 	}
 	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
 		return nil, err
@@ -80,6 +92,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	}
 	var selected *theaterStoredAction
 	var selectedSceneID *string
+	selectedFromSequence := false
 	for index := range actions {
 		if actions[index].ID == command.ActionID {
 			selected = &actions[index]
@@ -90,6 +103,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		return nil, newTheaterError(TheaterErrorNotFound, "StageAction 不存在", 404, nil)
 	}
 	if selected.Type == "action.sequence" {
+		selectedFromSequence = true
 		stepID := strings.TrimSpace(command.StepID)
 		if stepID == "" {
 			return nil, theaterPayloadError("action.sequence 缺少 stepId")
@@ -143,8 +157,14 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		if target.Kind != "effect" || (target.SceneID != "" && target.SceneID != room.ActiveSceneID) {
 			return nil, newTheaterError(TheaterErrorNotFound, "可播放特效不存在", 404, nil)
 		}
-		if selectedSceneID != nil && strings.TrimSpace(*selectedSceneID) != "" && target.SceneID != "" && target.SceneID != strings.TrimSpace(*selectedSceneID) {
-			return nil, newTheaterError(TheaterErrorNotFound, "特效不属于动作声明场景", 404, nil)
+		if selectedFromSequence {
+			declaredSceneID := ""
+			if selectedSceneID != nil {
+				declaredSceneID = strings.TrimSpace(*selectedSceneID)
+			}
+			if target.SceneID != declaredSceneID {
+				return nil, newTheaterError(TheaterErrorNotFound, "特效不属于动作声明场景", 404, nil)
+			}
 		}
 		if !target.Visible {
 			return nil, newTheaterError(TheaterErrorNotFound, "特效未启用", 404, nil)
@@ -161,6 +181,19 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 		}
 		if strings.TrimSpace(payload.ObjectID) == "" {
 			return nil, theaterPayloadError("object.toggle action 缺少 objectId")
+		}
+		target, err := loadTheaterObject(model.GetDB(), room.ID, strings.TrimSpace(payload.ObjectID))
+		if err != nil {
+			return nil, err
+		}
+		if selectedFromSequence {
+			declaredSceneID := ""
+			if selectedSceneID != nil {
+				declaredSceneID = strings.TrimSpace(*selectedSceneID)
+			}
+			if target.SceneID != declaredSceneID {
+				return nil, newTheaterError(TheaterErrorNotFound, "组件不属于动作声明场景", 404, nil)
+			}
 		}
 		raw, _ := json.Marshal(payload)
 		result, err := applyTheaterActionMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectToggle, Payload: raw}, meta)
@@ -226,7 +259,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 // TriggerTheaterActionBatch applies independent visibility toggles from one
 // click as one theater mutation. This gives every client one final snapshot
 // instead of visibly replaying each toggle after the previous revision.
-func TriggerTheaterActionBatch(ctx context.Context, actorID string, command TheaterActionBatchCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
+func TriggerTheaterActionBatch(ctx context.Context, actorID string, command TheaterActionBatchCommand, meta TheaterRequestMeta) (result *TheaterActionResult, resultErr error) {
 	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
 		return nil, err
 	}
@@ -245,8 +278,25 @@ func TriggerTheaterActionBatch(ctx context.Context, actorID string, command Thea
 	if err != nil {
 		return nil, err
 	}
-	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+	if !object.Interactive || (!isTheaterActionTargetKind(object.Kind) && object.Kind != "iframe") {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
+	for _, actionID := range command.ActionIDs {
+		if !theaterObjectCanRunSavedAction(object, actionID) {
+			return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+		}
+	}
+	if object.Kind == "iframe" {
+		use, err := BeginTheaterEmbedEventUse(actorID, command.WorldID, command.ChannelID, "", object, command.ActionIDs, "", "", command.EmbedEvent)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr == nil && result != nil {
+				CommitTheaterEmbedEventUse(use)
+			}
+			ReleaseTheaterEmbedEventUse(use)
+		}()
 	}
 	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
 		return nil, err
