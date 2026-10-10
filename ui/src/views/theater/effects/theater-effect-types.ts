@@ -15,7 +15,10 @@ export const theaterBuiltinEffectThemes = [
 ] as const
 
 export type TheaterBuiltinEffectTheme = typeof theaterBuiltinEffectThemes[number]
-export type TheaterEffectKind = 'media' | 'builtin'
+export type TheaterEffectKind = 'media' | 'builtin' | 'web'
+
+// Raw UTF-8 bytes of the authored HTML document.
+export const THEATER_EFFECT_WEB_HTML_MAX_BYTES = 128 * 1024
 
 export interface TheaterEffectMediaTransform {
   x: number
@@ -38,6 +41,12 @@ export interface TheaterEffectBuiltinConfig {
   mediaTransform: TheaterEffectMediaTransform
 }
 
+// A complete HTML document authored by the user. It is untrusted active content and
+// only ever runs inside the sandboxed TheaterEffectWebFrame host.
+export interface TheaterEffectWebConfig {
+  html: string
+}
+
 export type TheaterEffectAudioRef = StageAudioRef
 
 export interface TheaterEffectConfig {
@@ -52,6 +61,7 @@ export interface TheaterEffectConfig {
   mediaLoopCount?: number
   audio: TheaterEffectAudioRef | null
   builtin: TheaterEffectBuiltinConfig
+  web?: TheaterEffectWebConfig
 }
 
 const finiteRange = (value: unknown, fallback: number, minimum: number, maximum: number) => (
@@ -63,6 +73,38 @@ const finiteRange = (value: unknown, fallback: number, minimum: number, maximum:
 const text = (value: unknown, fallback = '', maximum = 512) => (
   typeof value === 'string' ? value.slice(0, maximum) : fallback
 )
+
+const theaterEffectWebTextEncoder = new TextEncoder()
+
+export const theaterEffectWebHtmlBytes = (html: string) => theaterEffectWebTextEncoder.encode(html).length
+
+const truncateTheaterEffectWebHtml = (html: string) => {
+  if (theaterEffectWebHtmlBytes(html) <= THEATER_EFFECT_WEB_HTML_MAX_BYTES) return html
+  const chunks: string[] = []
+  let bytes = 0
+  for (const character of html) {
+    const size = theaterEffectWebTextEncoder.encode(character).length
+    if (bytes + size > THEATER_EFFECT_WEB_HTML_MAX_BYTES) break
+    chunks.push(character)
+    bytes += size
+  }
+  return chunks.join('')
+}
+
+const DEFAULT_THEATER_EFFECT_WEB_HTML = `<!doctype html>
+<html>
+<head>
+<style>
+  body { display: grid; place-items: center; }
+  h1 { margin: 0; color: #fff; font: 900 160px/1 sans-serif; text-shadow: 0 0 24px #38bdf8, 0 0 64px #6366f1; animation: pop 1.2s ease-out both; }
+  @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+  <h1>EFFECT</h1>
+</body>
+</html>
+`
 
 const color = (value: unknown, fallback: string) => {
   const normalized = text(value, '', 64).trim()
@@ -97,6 +139,7 @@ export const createDefaultTheaterEffectConfig = (kind: TheaterEffectKind = 'buil
       mirror: false,
     },
   },
+  ...(kind === 'web' ? { web: { html: DEFAULT_THEATER_EFFECT_WEB_HTML } } : {}),
 })
 
 export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfig => {
@@ -124,10 +167,15 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
     ? Math.min(65_535, value.mediaLoopCount)
     : undefined
   const audio = normalizeStageAudioRef(value.audio)
+  const kind: TheaterEffectKind = value.kind === 'media' || value.kind === 'web' ? value.kind : 'builtin'
+  const webInput = value.web && typeof value.web === 'object' ? value.web as Partial<TheaterEffectWebConfig> : null
+  // Keep web code when switching kinds so switching back does not lose it.
+  const webHtml = typeof webInput?.html === 'string' ? webInput.html : ''
+  const web = kind === 'web' || webInput ? { html: truncateTheaterEffectWebHtml(webHtml) } : null
 
   return {
     version: 1,
-    kind: value.kind === 'media' ? 'media' : 'builtin',
+    kind,
     keywords,
     targetActorName: typeof value.targetActorName === 'string' && value.targetActorName.trim()
       ? value.targetActorName.trim().slice(0, 512)
@@ -156,6 +204,7 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
         mirror: mediaTransform.mirror === true,
       },
     },
+    ...(web ? { web } : {}),
   }
 }
 

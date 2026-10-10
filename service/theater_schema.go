@@ -42,20 +42,23 @@ func defaultTheaterImageAnnotation(text string) map[string]any {
 }
 
 const (
-	theaterMaxSnapshotBytes   = 4 << 20
-	theaterMaxPayloadBytes    = 128 << 10
-	theaterMaxScenes          = 200
-	theaterMaxObjects         = 5000
-	theaterMaxSceneObjects    = 2000
-	theaterMaxBatchUpdates    = 200
-	theaterMaxActions         = 32
-	theaterMaxActionDelayMS   = 10_000
-	theaterActionDelayStepMS  = 100
-	theaterMaxSwitchText      = 10_000
-	theaterMaxSceneFolders    = 200
-	theaterMaxSceneFolderName = 128
-	theaterMaxClueEntries     = 32
-	theaterMaxClueTargets     = 256
+	theaterMaxSnapshotBytes            = 4 << 20
+	theaterMaxPayloadBytes             = 128 << 10
+	theaterMaxWebEffectPayloadBytes    = 1 << 20
+	theaterMaxObjectJSONBytes          = 64 << 10
+	theaterMaxWebEffectObjectJSONBytes = 1 << 20
+	theaterMaxScenes                   = 200
+	theaterMaxObjects                  = 5000
+	theaterMaxSceneObjects             = 2000
+	theaterMaxBatchUpdates             = 200
+	theaterMaxActions                  = 32
+	theaterMaxActionDelayMS            = 10_000
+	theaterActionDelayStepMS           = 100
+	theaterMaxSwitchText               = 10_000
+	theaterMaxSceneFolders             = 200
+	theaterMaxSceneFolderName          = 128
+	theaterMaxClueEntries              = 32
+	theaterMaxClueTargets              = 256
 )
 
 type theaterSceneCreatePayload struct {
@@ -203,7 +206,7 @@ type theaterResourceReferencePayload struct {
 }
 
 func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.RawMessage, error) {
-	if len(raw) == 0 || len(raw) > theaterMaxPayloadBytes {
+	if len(raw) == 0 || len(raw) > theaterMaxWebEffectPayloadBytes {
 		return nil, nil, newTheaterError(TheaterErrorPayloadInvalid, "mutation payload 大小无效", 400, nil)
 	}
 	var target any
@@ -252,6 +255,9 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 	if err := decodeStrictJSON(raw, target); err != nil {
 		return nil, nil, newTheaterError(TheaterErrorPayloadInvalid, err.Error(), 400, nil)
 	}
+	if len(raw) > theaterMaxPayloadBytes && !decodedTheaterPayloadContainsWebEffect(mutationType, target) {
+		return nil, nil, newTheaterError(TheaterErrorPayloadInvalid, "mutation payload 大小无效", 400, nil)
+	}
 	if err := validateDecodedTheaterPayload(mutationType, target); err != nil {
 		return nil, nil, err
 	}
@@ -273,6 +279,57 @@ func decodeStrictJSON(raw []byte, target any) error {
 		return fmt.Errorf("JSON 只能包含一个值")
 	}
 	return nil
+}
+
+func decodedTheaterPayloadContainsWebEffect(mutationType string, decoded any) bool {
+	switch payload := decoded.(type) {
+	case *theaterObjectCreatePayload:
+		return mutationType == TheaterMutationObjectCreate && payload.Object.Kind == "effect" && theaterEffectContentHasWebConfig(payload.Object.Content)
+	case *theaterObjectUpdatePayload:
+		if mutationType != TheaterMutationObjectUpdate || len(payload.Fields) != 1 {
+			return false
+		}
+		content, ok := payload.Fields["content"]
+		if !ok {
+			return false
+		}
+		raw, err := json.Marshal(content)
+		return err == nil && theaterEffectContentHasWebConfig(raw)
+	default:
+		return false
+	}
+}
+
+func theaterEffectContentKind(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var content struct {
+		Effect struct {
+			Kind string `json:"kind"`
+		} `json:"effect"`
+	}
+	if json.Unmarshal(raw, &content) != nil {
+		return ""
+	}
+	return content.Effect.Kind
+}
+
+func theaterEffectContentHasWebConfig(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var content struct {
+		Effect struct {
+			Web *struct {
+				HTML string `json:"html"`
+			} `json:"web"`
+		} `json:"effect"`
+	}
+	if json.Unmarshal(raw, &content) != nil {
+		return false
+	}
+	return content.Effect.Web != nil
 }
 
 func validateDecodedTheaterPayload(mutationType string, decoded any) error {
@@ -829,8 +886,12 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if len([]rune(object.Name)) > 512 || len(object.OrderKey) > 128 {
 		return theaterPayloadError("object 字符串超限")
 	}
-	if len(object.Content)+len(object.Actions)+len(object.Metadata) > 64<<10 {
-		return theaterPayloadError("object JSON 超过 64 KiB")
+	objectJSONLimit := theaterMaxObjectJSONBytes
+	if object.Kind == "effect" && theaterEffectContentHasWebConfig(object.Content) {
+		objectJSONLimit = theaterMaxWebEffectObjectJSONBytes
+	}
+	if len(object.Content)+len(object.Actions)+len(object.Metadata) > objectJSONLimit {
+		return theaterPayloadError(fmt.Sprintf("object JSON 超过 %d KiB", objectJSONLimit>>10))
 	}
 	for _, raw := range []json.RawMessage{object.Content, object.Metadata} {
 		if len(raw) > 0 {
@@ -946,7 +1007,7 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 	if !ok {
 		return theaterPayloadError("effect 配置缺失")
 	}
-	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "fadeOut": true, "cooldownMs": true, "media": true, "mediaLoopCount": true, "audio": true, "builtin": true}
+	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "fadeOut": true, "cooldownMs": true, "media": true, "mediaLoopCount": true, "audio": true, "builtin": true, "web": true}
 	for key := range effect {
 		if !allowed[key] {
 			return theaterPayloadError("effect 包含禁止字段: " + key)
@@ -957,8 +1018,11 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		return theaterPayloadError("effect.version 无效")
 	}
 	kind, ok := effect["kind"].(string)
-	if !ok || (kind != "media" && kind != "builtin") {
+	if !ok || (kind != "media" && kind != "builtin" && kind != "web") {
 		return theaterPayloadError("effect.kind 无效")
+	}
+	if err := validateTheaterEffectWebConfig(effect["web"], kind == "web"); err != nil {
+		return err
 	}
 	keywords, ok := effect["keywords"].([]any)
 	if !ok || len(keywords) > 32 {
@@ -1046,6 +1110,29 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 	}
 	if _, ok := mediaTransform["mirror"].(bool); !ok {
 		return theaterPayloadError("effect.builtin.mediaTransform.mirror 无效")
+	}
+	return nil
+}
+
+// Mirrors THEATER_EFFECT_WEB_HTML_MAX_BYTES and measures raw UTF-8 HTML bytes.
+const theaterEffectWebHTMLMaxBytes = 128 << 10
+
+// validateTheaterEffectWebConfig only bounds the stored document. The HTML is untrusted
+// active content that clients must run inside an isolated sandbox, never inline.
+func validateTheaterEffectWebConfig(value any, required bool) error {
+	if value == nil {
+		if required {
+			return theaterPayloadError("effect.web 缺失")
+		}
+		return nil
+	}
+	web, ok := value.(map[string]any)
+	if !ok || len(web) != 1 {
+		return theaterPayloadError("effect.web 无效")
+	}
+	html, ok := web["html"].(string)
+	if !ok || len(html) > theaterEffectWebHTMLMaxBytes {
+		return theaterPayloadError("effect.web.html 无效")
 	}
 	return nil
 }

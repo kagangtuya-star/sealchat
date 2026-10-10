@@ -102,6 +102,94 @@ func TestSceneOverlayMediaResourceCollectionAndPackageRemap(t *testing.T) {
 	}
 }
 
+func TestRemapTheaterPackageJSONPreservesWebEffectHTML(t *testing.T) {
+	html := `<script>const refs = "resource-old audio-old world-old channel-old"</script>`
+	raw, err := json.Marshal(map[string]any{
+		"effect": map[string]any{
+			"kind":  "web",
+			"web":   map[string]any{"html": html},
+			"media": map[string]any{"resourceId": "resource-old"},
+			"audio": map[string]any{"assetId": "audio-old"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remapped, changed, err := remapTheaterPackageJSON(raw, theaterPackageRemap{
+		resources: map[string]string{"resource-old": "resource-new"},
+		audio:     map[string]string{"audio-old": "audio-new"}, appearance: map[string]string{}, attachments: map[string]string{},
+		sourceWorldID: "world-old", worldID: "world-new", sourceChannelID: "channel-old", channelID: "channel-new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected non-HTML effect references to be remapped")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(remapped, &result); err != nil {
+		t.Fatal(err)
+	}
+	effect := result["effect"].(map[string]any)
+	if got := effect["web"].(map[string]any)["html"]; got != html {
+		t.Fatalf("web effect HTML changed during package remap: %q", got)
+	}
+	if got := effect["media"].(map[string]any)["resourceId"]; got != "resource-new" {
+		t.Fatalf("media resourceId = %#v, want resource-new", got)
+	}
+	if got := effect["audio"].(map[string]any)["assetId"]; got != "audio-new" {
+		t.Fatalf("audio assetId = %#v, want audio-new", got)
+	}
+}
+
+func TestLoadTheaterEffectPackageDocumentBypassesFullSnapshotLimit(t *testing.T) {
+	ownerID, worldID, _ := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, "", ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := model.TheaterSceneModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "scene-export"}, RoomID: room.ID, Name: "Export Scene",
+		StateJSON: "{}", SchemaVersion: model.TheaterSchemaVersion, CreatedBy: ownerID, UpdatedBy: ownerID,
+	}
+	if err := model.GetDB().Create(&scene).Error; err != nil {
+		t.Fatal(err)
+	}
+	largeContent := `{"text":"` + strings.Repeat("x", theaterMaxSnapshotBytes) + `"}`
+	effectContent := worldTheaterPayload(t, map[string]any{"effect": map[string]any{
+		"version": 1, "kind": "web", "keywords": []string{}, "targetActorName": "", "durationMs": 3000, "cooldownMs": 0,
+		"media": nil, "audio": nil, "builtin": nil, "web": map[string]any{"html": "<p>portable</p>"},
+	}})
+	objects := []model.TheaterObjectModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "large-non-effect"}, RoomID: room.ID, SceneID: scene.ID, Kind: "text", Name: "Large",
+			Width: 10, Height: 10, Scale: 1, ScaleX: 1, ScaleY: 1, OrderKey: "a", Visible: true, AspectRatioLocked: true,
+			ContentJSON: largeContent, ActionsJSON: "[]", MetadataJSON: "{}", SchemaVersion: model.TheaterSchemaVersion, CreatedBy: ownerID, UpdatedBy: ownerID,
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "portable-effect"}, RoomID: room.ID, SceneID: scene.ID, Kind: "effect", Name: "Portable Effect",
+			Width: 1600, Height: 900, Scale: 1, ScaleX: 1, ScaleY: 1, OrderKey: "b", Visible: true, AspectRatioLocked: true,
+			ContentJSON: string(effectContent), ActionsJSON: "[]", MetadataJSON: "{}", SchemaVersion: model.TheaterSchemaVersion, CreatedBy: ownerID, UpdatedBy: ownerID,
+		},
+	}
+	if err := model.GetDB().Create(&objects).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := buildTheaterSnapshot(model.GetDB(), room, true); err == nil {
+		t.Fatal("expected full theater snapshot to exceed its size limit")
+	}
+	document, err := loadTheaterEffectPackageDocument(room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Effects) != 1 || document.Effects[0].Object.ID != "portable-effect" {
+		t.Fatalf("unexpected exported effects: %#v", document.Effects)
+	}
+	if document.Effects[0].SourceSceneID != scene.ID || document.Effects[0].SourceSceneName != scene.Name {
+		t.Fatalf("scene metadata lost: %#v", document.Effects[0])
+	}
+}
+
 func TestExtractTheaterPackageZIPRejectsTraversalAndSymlink(t *testing.T) {
 	tests := []struct {
 		name string

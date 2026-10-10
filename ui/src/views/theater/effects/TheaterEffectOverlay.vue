@@ -7,6 +7,7 @@ import { resolveMediaFxCapabilities } from '@/features/media-fx/media-fx'
 import { vMediaFx, type MediaFxDirectiveValue } from '@/features/media-fx/media-fx-dom'
 import { cloneStageData } from '../stage/stage-editing'
 import type { TheaterEffectPlayback } from './theater-effect-runtime'
+import TheaterEffectWebFrame from './TheaterEffectWebFrame.vue'
 import {
   THEATER_EFFECT_DESIGN_HEIGHT,
   THEATER_EFFECT_DESIGN_WIDTH,
@@ -229,6 +230,10 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
           </div>
           <span v-else-if="editing && playback.effectId === selectedObject?.id">未设置媒体</span>
         </div>
+        <div v-else-if="playback.config.kind === 'web'" class="theater-effect-web">
+          <TheaterEffectWebFrame v-if="playback.config.web?.html.trim()" :html="playback.config.web.html" />
+          <span v-else-if="editing && playback.effectId === selectedObject?.id">未设置网页代码</span>
+        </div>
         <div
           v-else
           class="theater-effect-cutin"
@@ -298,6 +303,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 .theater-effect-overlay.is-editing .theater-effect-object.is-selected:not(.has-media) .theater-effect-media-only { background: rgba(15, 23, 42, .28); }
 .theater-effect-media-only img, .theater-effect-media-only video { width: 100%; height: 100%; display: block; object-fit: contain; }
 .theater-effect-media-fx { width: 100%; height: 100%; }
+.theater-effect-web { width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; color: #fbbf24; background: transparent; pointer-events: none; }
 .theater-effect-media-only__asset { transform: translate(var(--effect-media-x, 0), var(--effect-media-y, 0)) rotate(var(--effect-media-rotation, 0deg)) scale(var(--effect-media-scale-x, 1), var(--effect-media-scale-y, 1)); }
 .theater-effect-selection-label { position: absolute; top: -28px; left: 0; padding: 3px 7px; color: #111827; background: #f59e0b; font: 600 14px/1.2 sans-serif; }
 .theater-effect-resize-handle { position: absolute; right: -9px; bottom: -9px; width: 18px; height: 18px; padding: 0; border: 2px solid #111827; border-radius: 50%; background: #f59e0b; cursor: nwse-resize; }

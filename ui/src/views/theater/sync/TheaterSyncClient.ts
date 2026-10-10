@@ -629,34 +629,51 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     payload: { sceneId: object.sceneId || null, object: objectInput(object) },
   }))
 
-  const objectUpdates: { objectId: string, fields: JsonObject }[] = []
+  const objectUpdates: { objectId: string, fields: JsonObject, isolated?: boolean }[] = []
   sortObjectsByParent(Object.values(afterObjects)).forEach((object) => {
     const previous = beforeObjects[object.id]
     if (!previous) return
     const fields = objectFields(object, previous)
     if (!Object.keys(fields).length) return
+    const effect = asObject(asObject(fields.content).effect)
+    const web = asObject(effect.web)
+    if (object.kind === 'effect' && typeof web.html === 'string') {
+      const { content, ...remainingFields } = fields
+      objectUpdates.push({ objectId: object.id, fields: { content }, isolated: true })
+      if (Object.keys(remainingFields).length) objectUpdates.push({ objectId: object.id, fields: remainingFields })
+      return
+    }
     objectUpdates.push({ objectId: object.id, fields })
   })
-  if (objectUpdates.length === 1) {
-    mutations.push({
+  let batch: typeof objectUpdates = []
+  const flushObjectUpdates = () => {
+    if (!batch.length) return
+    const updates = batch.map(({ objectId, fields }) => ({ objectId, fields }))
+    mutations.push(updates.length === 1 ? {
       type: 'object.update',
       permission: 'stage.object.edit',
-      payload: objectUpdates[0],
+      payload: updates[0],
+    } : {
+      type: 'object.batchUpdate',
+      permission: 'stage.object.edit',
+      payload: { updates },
     })
-  } else if (objectUpdates.length > 1) {
-    for (let index = 0; index < objectUpdates.length; index += objectBatchUpdateLimit) {
-      const updates = objectUpdates.slice(index, index + objectBatchUpdateLimit)
-      mutations.push(updates.length === 1 ? {
+    batch = []
+  }
+  objectUpdates.forEach((update) => {
+    if (update.isolated) {
+      flushObjectUpdates()
+      mutations.push({
         type: 'object.update',
         permission: 'stage.object.edit',
-        payload: updates[0],
-      } : {
-        type: 'object.batchUpdate',
-        permission: 'stage.object.edit',
-        payload: { updates },
+        payload: { objectId: update.objectId, fields: update.fields },
       })
+      return
     }
-  }
+    batch.push(update)
+    if (batch.length >= objectBatchUpdateLimit) flushObjectUpdates()
+  })
+  flushObjectUpdates()
 
   const removedObjectIds = new Set(Object.keys(beforeObjects).filter((id) => !afterObjects[id]))
   Object.values(beforeObjects)

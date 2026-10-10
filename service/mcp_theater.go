@@ -256,7 +256,7 @@ func mergeTheaterMCPState(state, patch map[string]any) {
 }
 
 func TheaterMCPLimits() map[string]any {
-	return map[string]any{"snapshotBytes": theaterMaxSnapshotBytes, "payloadBytes": theaterMaxPayloadBytes, "sceneStateBytes": 64 << 10, "objectJSONBytes": 64 << 10, "scenes": theaterMaxScenes, "objects": theaterMaxObjects, "sceneObjects": theaterMaxSceneObjects, "batchUpdates": theaterMaxBatchUpdates, "actions": theaterMaxActions,
+	return map[string]any{"snapshotBytes": theaterMaxSnapshotBytes, "payloadBytes": theaterMaxPayloadBytes, "sceneStateBytes": 64 << 10, "objectJSONBytes": theaterMaxObjectJSONBytes, "effectWebHTMLBytes": theaterEffectWebHTMLMaxBytes, "effectWebPayloadBytes": theaterMaxWebEffectPayloadBytes, "scenes": theaterMaxScenes, "objects": theaterMaxObjects, "sceneObjects": theaterMaxSceneObjects, "batchUpdates": theaterMaxBatchUpdates, "actions": theaterMaxActions,
 		"designPlanSteps": theaterMaxDesignSteps, "designPayloadBytes": theaterMaxPayloadBytes,
 		"layoutModes":     map[string]any{"align": []string{"left", "center_x", "right", "top", "center_y", "bottom"}, "distribute": []string{"horizontal", "vertical"}, "grid": "objectIds order; same scope and parent; rotated AABB"},
 		"duplicateLimits": map[string]int{"scenesPerRequest": 1, "rootsPerRequest": 1, "subtreeObjects": theaterMaxSceneObjects},

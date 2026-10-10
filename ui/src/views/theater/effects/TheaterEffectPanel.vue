@@ -15,7 +15,7 @@ import {
   NDropdown,
   useDialog,
 } from 'naive-ui'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Code, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
 
 import { setStageObjectMediaFx, stageObjectMediaFx, type StageObject } from '../shared/stage-types'
 import { mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
@@ -26,6 +26,7 @@ import { compareStageLayersTopToBottom } from '../stage/stage-layer-order'
 import type { TheaterEffectRuntime } from './theater-effect-runtime'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { useTheaterPointerSort, type TheaterPointerDrag, type TheaterPointerTarget } from './useTheaterPointerSort'
+import TheaterEffectWebCodeEditor from './TheaterEffectWebCodeEditor.vue'
 import {
   createDefaultTheaterEffectConfig,
   isTheaterEffectObject,
@@ -133,7 +134,13 @@ const themeOptions = theaterBuiltinEffectThemes.map((theme) => ({ label: theme, 
 const kindOptions = [
   { label: '内置特效', value: 'builtin' },
   { label: '媒体', value: 'media' },
+  { label: '网页代码', value: 'web' },
 ]
+const effectKindLabels: Record<TheaterEffectKind, string> = { builtin: '内置特效', media: '媒体特效', web: '网页代码特效' }
+const effectKindIcon = (object: StageObject) => {
+  const kind = theaterEffectConfigFromObject(object).kind
+  return kind === 'builtin' ? Stars : kind === 'web' ? Code : Photo
+}
 const audioOptions = computed(() => {
   const options = props.audioAssets
   .filter((asset) => !asset.transcodeStatus || asset.transcodeStatus === 'ready')
@@ -169,7 +176,9 @@ const cycleEffectKindFilter = () => {
     ? 'builtin'
     : effectKindFilter.value === 'builtin'
       ? 'media'
-      : 'all'
+      : effectKindFilter.value === 'media'
+        ? 'web'
+        : 'all'
 }
 const cycleEffectVisibilityFilter = () => {
   effectVisibilityFilter.value = effectVisibilityFilter.value === 'all'
@@ -234,9 +243,22 @@ const updateMediaFx = (spec: MediaFxSpec) => {
   if (discreteEdit) endMediaFxEdit()
 }
 
+const webCodeEditorVisible = ref(false)
+
 watch(() => selectedEffect.value?.id, () => {
   endMediaFxEdit()
+  webCodeEditorVisible.value = false
 })
+
+// Web effects have no media layer to drag, so keep the canvas on the frame target.
+watch(() => config.value?.kind, (kind) => {
+  if (kind === 'web' && props.editingTarget === 'media') emit('update:editingTarget', 'frame')
+}, { immediate: true })
+
+const saveWebCode = (html: string) => {
+  editConfig('修改网页特效代码', (next) => { next.web = { html } })
+  webCodeEditorVisible.value = false
+}
 
 onBeforeUnmount(() => {
   endMediaFxEdit()
@@ -245,7 +267,7 @@ onBeforeUnmount(() => {
 const addEffect = (kind: TheaterEffectKind) => {
   if (!props.canEdit) return
   const object = props.store.addObject('effect')
-  object.name = kind === 'media' ? '新建媒体特效' : '新建内置特效'
+  object.name = kind === 'media' ? '新建媒体特效' : kind === 'web' ? '新建网页特效' : '新建内置特效'
   setTheaterEffectConfig(object, createDefaultTheaterEffectConfig(kind))
 }
 
@@ -395,11 +417,11 @@ const handleAudioInput = (event: Event) => {
         quaternary
         size="small"
         :type="effectKindFilter !== 'all' ? 'primary' : 'default'"
-        :aria-label="effectKindFilter === 'all' ? '筛选全部类型' : effectKindFilter === 'builtin' ? '筛选内置特效' : '筛选媒体特效'"
-        :title="effectKindFilter === 'all' ? '类型：全部' : effectKindFilter === 'builtin' ? '类型：内置特效' : '类型：媒体特效'"
+        :aria-label="effectKindFilter === 'all' ? '筛选全部类型' : `筛选${effectKindLabels[effectKindFilter]}`"
+        :title="effectKindFilter === 'all' ? '类型：全部' : `类型：${effectKindLabels[effectKindFilter]}`"
         @click="cycleEffectKindFilter"
       >
-        <template #icon><n-icon :component="effectKindFilter === 'all' ? Filter : effectKindFilter === 'builtin' ? Stars : Photo" /></template>
+        <template #icon><n-icon :component="effectKindFilter === 'all' ? Filter : effectKindFilter === 'builtin' ? Stars : effectKindFilter === 'web' ? Code : Photo" /></template>
       </n-button>
       <n-button
         quaternary
@@ -418,6 +440,7 @@ const handleAudioInput = (event: Event) => {
     <div v-if="canEdit" class="theater-effect-add-row">
       <n-button size="tiny" secondary @click="addEffect('builtin')"><template #icon><n-icon><Stars /></n-icon></template>内置</n-button>
       <n-button size="tiny" secondary @click="addEffect('media')"><template #icon><n-icon><Photo /></n-icon></template>媒体</n-button>
+      <n-button size="tiny" secondary @click="addEffect('web')"><template #icon><n-icon><Code /></n-icon></template>网页代码</n-button>
       <n-button size="tiny" secondary @click="createFolder"><template #icon><n-icon><Folder /></n-icon></template>文件夹</n-button>
     </div>
 
@@ -472,7 +495,7 @@ const handleAudioInput = (event: Event) => {
           >
             <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
             <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
-            <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="theaterEffectConfigFromObject(object).kind === 'builtin' ? Stars : Photo" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
+            <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="effectKindIcon(object)" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
             <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
             <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
           </div>
@@ -495,7 +518,7 @@ const handleAudioInput = (event: Event) => {
         >
           <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
           <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
-          <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="theaterEffectConfigFromObject(object).kind === 'builtin' ? Stars : Photo" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
+          <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="effectKindIcon(object)" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
           <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
           <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
         </div>
@@ -548,15 +571,25 @@ const handleAudioInput = (event: Event) => {
       <label>冷却时间</label>
       <n-input-number :value="config.cooldownMs" :min="0" :max="300000" :step="500" @update:value="value => value !== null && editConfig('修改特效冷却', next => { next.cooldownMs = value })" />
 
-      <label>媒体</label>
-      <div class="theater-effect-media-row">
+      <template v-if="config.kind === 'web'">
+        <label>网页代码</label>
+        <div class="theater-effect-media-row">
+          <n-button size="small" :type="config.web?.html.trim() ? 'primary' : 'default'" secondary @click="webCodeEditorVisible = true">
+            <template #icon><n-icon><Code /></n-icon></template>
+            {{ canEdit ? '编辑网页代码' : '查看网页代码' }}
+          </n-button>
+        </div>
+      </template>
+
+      <label v-if="config.kind !== 'web'">媒体</label>
+      <div v-if="config.kind !== 'web'" class="theater-effect-media-row">
         <n-button size="small" :type="hasMedia ? 'primary' : 'default'" secondary :disabled="!canUpload" @click="emit('upload', selectedEffect.id)">
           <template #icon><n-icon><Photo /></n-icon></template>
           {{ hasMedia ? '图片' : '上传' }}
         </n-button>
       </div>
 
-      <template v-if="hasAnimatedMedia">
+      <template v-if="hasAnimatedMedia && config.kind !== 'web'">
         <label>触发时循环次数</label>
         <n-input-number
           :value="config.mediaLoopCount ?? null"
@@ -654,11 +687,13 @@ const handleAudioInput = (event: Event) => {
       <label>生效范围</label>
       <n-checkbox :checked="store.isSceneFixedObject(selectedEffect.id)" :disabled="!canEdit" @update:checked="value => setEffectCrossScene(selectedEffect!, value)">跨场景</n-checkbox>
 
-      <label>画布控制</label>
-      <n-button-group size="small">
-        <n-button :type="editingTarget === 'frame' ? 'primary' : 'default'" @click="emit('update:editingTarget', 'frame')">特效框</n-button>
-        <n-button :type="editingTarget === 'media' ? 'primary' : 'default'" @click="emit('update:editingTarget', 'media')">媒体</n-button>
-      </n-button-group>
+      <template v-if="config.kind !== 'web'">
+        <label>画布控制</label>
+        <n-button-group size="small">
+          <n-button :type="editingTarget === 'frame' ? 'primary' : 'default'" @click="emit('update:editingTarget', 'frame')">特效框</n-button>
+          <n-button :type="editingTarget === 'media' ? 'primary' : 'default'" @click="emit('update:editingTarget', 'media')">媒体</n-button>
+        </n-button-group>
+      </template>
 
       <div class="theater-effect-actions">
         <n-button size="small" secondary @click="runtime.preview(selectedEffect)"><template #icon><n-icon><PlayerPlay /></n-icon></template>测试</n-button>
@@ -667,6 +702,15 @@ const handleAudioInput = (event: Event) => {
         <n-button v-if="canEdit" size="small" type="error" secondary @click="removeSelectedEffect"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
       </div>
     </div>
+    <TheaterEffectWebCodeEditor
+      v-if="selectedEffect && config?.kind === 'web'"
+      :show="webCodeEditorVisible"
+      :value="config.web?.html || ''"
+      :object-name="selectedEffect.name"
+      :readonly="!canEdit"
+      @close="webCodeEditorVisible = false"
+      @save="saveWebCode"
+    />
   </div>
 </template>
 

@@ -304,7 +304,9 @@ func TheaterMutationPost(c *fiber.Ctx) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
 	var command service.TheaterMutationCommand
-	if err := decodeTheaterBody(c, &command, 256<<10); err != nil {
+	// Ordinary mutation payloads remain capped at 128 KiB in the service layer.
+	// Extra body headroom is reserved for isolated web-effect code updates.
+	if err := decodeTheaterBody(c, &command, 1<<20); err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
 	if command.WorldID != c.Params("worldId") || command.ChannelID != c.Params("channelId") {

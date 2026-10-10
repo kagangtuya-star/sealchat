@@ -1008,6 +1008,9 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 		switch key {
 		case "content":
 			raw, _ := json.Marshal(value)
+			if object.Kind != "effect" && theaterEffectContentHasWebConfig(raw) {
+				return theaterPayloadError("web effect content 只能用于特效对象")
+			}
 			if object.Kind == "effect" {
 				if err := validateTheaterEffectContent(raw); err != nil {
 					return err

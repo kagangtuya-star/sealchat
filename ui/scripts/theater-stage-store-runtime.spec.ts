@@ -66,6 +66,38 @@ const iframeRoundTripObject = iframeRoundTripDocument.scenes[iframeStore.state.a
 assert.equal(iframeRoundTripObject.kind, 'iframe')
 assert.deepEqual(iframeRoundTripObject.content.iframe, { url: iframeUrl, scale: 0.75 })
 
+const webEffectSyncStore = createTheaterStageStore()
+const webEffectSyncObject = webEffectSyncStore.addObject('effect')
+const webEffectPeer = webEffectSyncStore.addObject('text')
+const webEffectSyncReactive = webEffectSyncStore.activeObjects.value[webEffectSyncObject.id]
+const webEffectPeerReactive = webEffectSyncStore.activeObjects.value[webEffectPeer.id]
+const initialWebConfig = theaterEffectConfigFromObject(webEffectSyncReactive)
+initialWebConfig.kind = 'web'
+initialWebConfig.web = { html: '<p>before</p>' }
+setTheaterEffectConfig(webEffectSyncReactive, initialWebConfig)
+const webEffectSyncBefore = structuredClone(theaterSyncTesting.documentFromWorkspace(webEffectSyncStore.getSnapshot()))
+const changedWebConfig = theaterEffectConfigFromObject(webEffectSyncReactive)
+changedWebConfig.kind = 'builtin'
+changedWebConfig.web = { html: '<p>after</p>' }
+setTheaterEffectConfig(webEffectSyncReactive, changedWebConfig)
+webEffectSyncReactive.name = '网页特效已修改'
+webEffectPeerReactive.transform.x += 1
+const webEffectSyncMutations = theaterSyncTesting.diffDocuments(
+  webEffectSyncBefore,
+  theaterSyncTesting.documentFromWorkspace(webEffectSyncStore.getSnapshot()),
+)
+const webContentMutation = webEffectSyncMutations.find((mutation) => (
+  mutation.type === 'object.update'
+  && mutation.payload.objectId === webEffectSyncReactive.id
+  && (mutation.payload.fields as any)?.content
+))
+assert.ok(webContentMutation, `missing isolated web content mutation: ${JSON.stringify(webEffectSyncMutations)}`)
+assert.deepEqual(Object.keys(webContentMutation.payload.fields as any), ['content'])
+assert.equal(webEffectSyncMutations.some((mutation) => (
+  mutation.type === 'object.batchUpdate'
+  && (mutation.payload.updates as any[])?.some((update) => update.objectId === webEffectSyncReactive.id && update.fields?.content)
+)), false)
+
 const activeScene = store.activeScene.value
 assert.equal(activeScene.switchText, '')
 assert.equal(store.updateSceneDetails(activeScene.id, '新场景名', '切换台词'), true)

@@ -229,33 +229,10 @@ func exportTheaterEffectPackage(ctx context.Context, job *model.TheaterPackageJo
 	if err != nil {
 		return summary, err
 	}
-	snapshot, _, err := buildTheaterSnapshot(model.GetDB(), room, true)
+	document, err := loadTheaterEffectPackageDocument(room.ID)
 	if err != nil {
 		return summary, err
 	}
-	document := TheaterPackageEffectsDocument{Version: 1, Effects: []TheaterPackageEffectEntry{}}
-	for _, scene := range snapshot.Scenes {
-		for _, object := range scene.Objects {
-			if object.Kind == "effect" {
-				document.Effects = append(document.Effects, TheaterPackageEffectEntry{Scope: "scene", SourceSceneID: scene.ID, SourceSceneName: scene.Name, Object: object})
-			}
-		}
-	}
-	for _, object := range snapshot.PersistentObjects {
-		if object.Kind == "effect" {
-			document.Effects = append(document.Effects, TheaterPackageEffectEntry{Scope: "persistent", Object: object})
-		}
-	}
-	sort.Slice(document.Effects, func(i, j int) bool {
-		left, right := document.Effects[i], document.Effects[j]
-		if left.Scope != right.Scope {
-			return left.Scope < right.Scope
-		}
-		if left.SourceSceneID != right.SourceSceneID {
-			return left.SourceSceneID < right.SourceSceneID
-		}
-		return left.Object.ID < right.Object.ID
-	})
 	if len(document.Effects) == 0 {
 		return summary, theaterPayloadError("当前小剧场没有可导出的特效")
 	}
@@ -366,6 +343,47 @@ func exportTheaterEffectPackage(ctx context.Context, job *model.TheaterPackageJo
 	}
 	summary = TheaterPackageSummary{PackageKind: TheaterPackageKindEffects, Effects: len(document.Effects), Objects: len(document.Effects), Resources: len(manifest.Resources), AudioAssets: len(manifest.Audio)}
 	return summary, nil
+}
+
+func loadTheaterEffectPackageDocument(roomID string) (TheaterPackageEffectsDocument, error) {
+	document := TheaterPackageEffectsDocument{Version: 1, Effects: []TheaterPackageEffectEntry{}}
+	var scenes []model.TheaterSceneModel
+	if err := model.GetDB().Where("room_id = ?", roomID).Find(&scenes).Error; err != nil {
+		return document, err
+	}
+	sceneNames := make(map[string]string, len(scenes))
+	for _, scene := range scenes {
+		sceneNames[scene.ID] = scene.Name
+	}
+	var objects []model.TheaterObjectModel
+	if err := model.GetDB().Where("room_id = ? AND kind = ?", roomID, "effect").Order("scene_id ASC, order_key ASC, id ASC").Find(&objects).Error; err != nil {
+		return document, err
+	}
+	for _, object := range objects {
+		snapshot := theaterObjectSnapshotFromModel(object)
+		if object.SceneID == "" {
+			document.Effects = append(document.Effects, TheaterPackageEffectEntry{Scope: "persistent", Object: snapshot})
+			continue
+		}
+		sceneName, exists := sceneNames[object.SceneID]
+		if !exists {
+			continue
+		}
+		document.Effects = append(document.Effects, TheaterPackageEffectEntry{
+			Scope: "scene", SourceSceneID: object.SceneID, SourceSceneName: sceneName, Object: snapshot,
+		})
+	}
+	sort.Slice(document.Effects, func(i, j int) bool {
+		left, right := document.Effects[i], document.Effects[j]
+		if left.Scope != right.Scope {
+			return left.Scope < right.Scope
+		}
+		if left.SourceSceneID != right.SourceSceneID {
+			return left.SourceSceneID < right.SourceSceneID
+		}
+		return left.Object.ID < right.Object.ID
+	})
+	return document, nil
 }
 
 func theaterSnapshotEffectIDs(snapshot TheaterSharedSnapshot) map[string]struct{} {

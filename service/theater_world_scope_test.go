@@ -179,6 +179,105 @@ func TestValidateTheaterEffectContent(t *testing.T) {
 	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
 		t.Fatal("invalid effect audio volume accepted")
 	}
+	effect["audio"].(map[string]any)["volume"] = 0.8
+	effect["kind"] = "web"
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
+		t.Fatal("web effect without web config accepted")
+	}
+	effect["web"] = map[string]any{"html": "<!doctype html><canvas></canvas><script>requestAnimationFrame(() => {})</script>"}
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err != nil {
+		t.Fatalf("valid web effect rejected: %v", err)
+	}
+	effect["web"] = map[string]any{"html": strings.Repeat("a", theaterEffectWebHTMLMaxBytes)}
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err != nil {
+		t.Fatalf("web effect at size limit rejected: %v", err)
+	}
+	effect["web"] = map[string]any{"html": strings.Repeat("a", theaterEffectWebHTMLMaxBytes+1)}
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
+		t.Fatal("oversized web effect accepted")
+	}
+	effect["web"] = map[string]any{"html": "", "url": "https://example.com"}
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
+		t.Fatal("web effect with extra fields accepted")
+	}
+	effect["kind"] = "builtin"
+	effect["web"] = map[string]any{"html": "<p>kept while switching kinds</p>"}
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err != nil {
+		t.Fatalf("builtin effect with retained web code rejected: %v", err)
+	}
+}
+
+func TestDecodeTheaterWebEffectPayloadAllowsLargeCodeUpdate(t *testing.T) {
+	var content map[string]any
+	if err := json.Unmarshal(validTheaterEffectContent(t), &content); err != nil {
+		t.Fatal(err)
+	}
+	effect := content["effect"].(map[string]any)
+	effect["kind"] = "web"
+	// Control characters exercise the worst JSON escaping overhead while keeping authored content at exactly 128 KiB.
+	effect["web"] = map[string]any{"html": strings.Repeat("\x01", theaterEffectWebHTMLMaxBytes)}
+
+	raw := worldTheaterPayload(t, map[string]any{
+		"objectId": "effect-web",
+		"fields":   map[string]any{"content": content},
+	})
+	if len(raw) <= theaterMaxPayloadBytes || len(raw) > theaterMaxWebEffectPayloadBytes {
+		t.Fatalf("unexpected web effect payload size: %d", len(raw))
+	}
+	if _, _, err := decodeTheaterPayload(TheaterMutationObjectUpdate, raw); err != nil {
+		t.Fatalf("large web effect update rejected: %v", err)
+	}
+
+	// Switching away from web keeps web.html by design; that retained code must keep the same capacity allowance.
+	effect["kind"] = "builtin"
+	raw = worldTheaterPayload(t, map[string]any{
+		"objectId": "effect-web",
+		"fields":   map[string]any{"content": content},
+	})
+	if _, _, err := decodeTheaterPayload(TheaterMutationObjectUpdate, raw); err != nil {
+		t.Fatalf("builtin effect with retained large web code rejected: %v", err)
+	}
+
+	raw = worldTheaterPayload(t, map[string]any{
+		"objectId": "effect-web",
+		"fields":   map[string]any{"content": content, "name": "combined update"},
+	})
+	if _, _, err := decodeTheaterPayload(TheaterMutationObjectUpdate, raw); !IsTheaterErrorCode(err, TheaterErrorPayloadInvalid) {
+		t.Fatalf("oversized mixed object update error = %v", err)
+	}
+}
+
+func TestTheaterWebEffectContentRejectedForNonEffectObject(t *testing.T) {
+	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID := "text-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.TheaterObjectModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: objectID},
+		RoomID:            room.ID, Kind: "text", Name: "Text", Scale: 1, ScaleX: 1, ScaleY: 1, Visible: true,
+		ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`, SchemaVersion: model.TheaterSchemaVersion,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err = applyTheaterObjectUpdate(model.GetDB(), room, actorID, &theaterObjectUpdatePayload{
+		ObjectID: objectID,
+		Fields: map[string]any{"content": map[string]any{
+			"effect": map[string]any{"kind": "builtin", "web": map[string]any{"html": strings.Repeat("a", theaterMaxPayloadBytes)}},
+		}},
+	})
+	if !IsTheaterErrorCode(err, TheaterErrorPayloadInvalid) {
+		t.Fatalf("web effect content on non-effect object error = %v", err)
+	}
+	var object model.TheaterObjectModel
+	if err := model.GetDB().Where("id = ?", objectID).First(&object).Error; err != nil {
+		t.Fatal(err)
+	}
+	if object.ContentJSON != `{}` {
+		t.Fatalf("non-effect content changed: %s", object.ContentJSON)
+	}
 }
 
 func TestTheaterAudioAssetName(t *testing.T) {
