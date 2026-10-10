@@ -208,6 +208,12 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 	}
 	var target any
 	switch mutationType {
+	case TheaterMutationDesignApply:
+		target = &TheaterDesignPlan{}
+	case TheaterMutationSceneDuplicate:
+		target = &theaterSceneDuplicatePayload{}
+	case TheaterMutationObjectDuplicate:
+		target = &theaterObjectDuplicatePayload{}
 	case TheaterMutationRoomDialoguePatch:
 		target = &theaterDialoguePatch{}
 	case TheaterMutationRoomDialoguePositionSet:
@@ -271,6 +277,18 @@ func decodeStrictJSON(raw []byte, target any) error {
 
 func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 	switch payload := decoded.(type) {
+	case *TheaterDesignPlan:
+		return normalizeTheaterDesignPlan(payload)
+	case *theaterSceneDuplicatePayload:
+		return validateTheaterID(payload.SceneID, "sceneId")
+	case *theaterObjectDuplicatePayload:
+		if err := validateTheaterID(payload.ObjectID, "objectId"); err != nil {
+			return err
+		}
+		if !theaterFinite(payload.OffsetX) || !theaterFinite(payload.OffsetY) {
+			return theaterPayloadError("duplicate offset 无效")
+		}
+		return nil
 	case *theaterDialoguePatch:
 		return validateDialoguePatch(payload)
 	case *theaterDialoguePositionSet:
@@ -474,6 +492,9 @@ func validateSceneState(state map[string]any) error {
 		if err := rejectUnsafeTheaterJSON(value); err != nil {
 			return err
 		}
+	}
+	if err := validateTheaterFieldState(state); err != nil {
+		return err
 	}
 	if styles, ok := state["surfaceStyles"]; ok {
 		if err := validateTheaterSurfaceStyles(styles); err != nil {

@@ -25,7 +25,7 @@ type mcpTheaterRuntimeInput struct {
 type mcpTheaterViewInput struct {
 	service.TheaterScope
 	Operation        string                         `json:"operation"`
-	RendererID       string                         `json:"rendererId"`
+	RendererID       string                         `json:"rendererId,omitempty"`
 	SceneID          string                         `json:"sceneId"`
 	ExpectedRevision int64                          `json:"expectedRevision"`
 	Camera           *service.TheaterRendererCamera `json:"camera,omitempty"`

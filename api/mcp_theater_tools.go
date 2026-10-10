@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/google/jsonschema-go/jsonschema"
-	"math"
-	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -26,128 +25,28 @@ type mcpTheaterWriteInput struct {
 	MutationID       string `json:"mutationId"`
 	ExpectedRevision int64  `json:"expectedRevision"`
 }
-type mcpTheaterSceneFields struct {
-	Name       *string `json:"name,omitempty"`
-	SwitchText *string `json:"switchText,omitempty"`
-	Order      *int64  `json:"order,omitempty"`
-	FolderID   *string `json:"folderId,omitempty"`
-	Locked     *bool   `json:"locked,omitempty"`
-	Published  *bool   `json:"published,omitempty"`
-}
-type mcpTheaterImage struct {
-	ResourceID string `json:"resourceId"`
-	URL        string `json:"url"`
-	Alt        string `json:"alt,omitempty"`
-	MimeType   string `json:"mimeType,omitempty"`
-	Animated   bool   `json:"animated,omitempty"`
-	LoopCount  int    `json:"loopCount,omitempty"`
-}
-type mcpTheaterIframe struct {
-	URL   string  `json:"url"`
-	Scale float64 `json:"scale"`
-}
-type mcpTheaterTransitionPhase struct {
-	Type       string `json:"type"`
-	DurationMS int64  `json:"durationMs"`
-}
-type mcpTheaterTransition struct {
-	Curtain    *bool                      `json:"curtain,omitempty"`
-	Enter      *mcpTheaterTransitionPhase `json:"enter,omitempty"`
-	Exit       *mcpTheaterTransitionPhase `json:"exit,omitempty"`
-	Type       string                     `json:"type,omitempty"`
-	DurationMS *int64                     `json:"durationMs,omitempty"`
-}
-type mcpTheaterAudio struct {
-	AssetID string  `json:"assetId"`
-	Name    string  `json:"name"`
-	Volume  float64 `json:"volume"`
-}
-type mcpTheaterMusicTrack struct {
-	Type          string                 `json:"type"`
-	Asset         *mcpTheaterMusicAsset  `json:"asset"`
-	Volume        float64                `json:"volume"`
-	FadeIn        int                    `json:"fadeIn"`
-	FadeOut       int                    `json:"fadeOut"`
-	LoopEnabled   bool                   `json:"loopEnabled"`
-	PlaybackRate  float64                `json:"playbackRate"`
-	PlaylistMode  *string                `json:"playlistMode"`
-	Playlist      []mcpTheaterMusicAsset `json:"playlist"`
-	PlaylistIndex int                    `json:"playlistIndex"`
-}
-type mcpTheaterMusicAsset struct {
-	AssetID string `json:"assetId"`
-	Name    string `json:"name"`
-}
-type mcpTheaterMusic struct {
-	Version int                    `json:"version"`
-	Tracks  []mcpTheaterMusicTrack `json:"tracks"`
-}
-type mcpTheaterOverlay struct {
-	Version   int            `json:"version"`
-	ID        string         `json:"id"`
-	EffectID  string         `json:"effectId"`
-	Name      string         `json:"name"`
-	Enabled   bool           `json:"enabled"`
-	Opacity   float64        `json:"opacity"`
-	BlendMode string         `json:"blendMode"`
-	Layer     string         `json:"layer"`
-	Media     map[string]any `json:"media,omitempty"`
-	Params    map[string]any `json:"params"`
-}
-type mcpTheaterAction struct {
-	ID       string              `json:"id"`
-	Type     string              `json:"type"`
-	Schedule *mcpTheaterSchedule `json:"schedule,omitempty"`
-	Payload  map[string]any      `json:"payload"`
-}
-type mcpTheaterSchedule struct {
-	DelayMS int `json:"delayMs"`
-}
-type mcpTheaterSequence struct {
-	Version   int                         `json:"version"`
-	ID        string                      `json:"id"`
-	Name      string                      `json:"name"`
-	Enabled   bool                        `json:"enabled"`
-	Triggers  []mcpTheaterSequenceTrigger `json:"triggers"`
-	LoopCount int                         `json:"loopCount"`
-	Steps     []mcpTheaterSequenceStep    `json:"steps"`
-}
-type mcpTheaterSequenceStep struct {
-	ID      string                   `json:"id"`
-	SceneID *string                  `json:"sceneId"`
-	Timing  mcpTheaterSequenceTiming `json:"timing"`
-	Action  mcpTheaterAction         `json:"action"`
-}
-type mcpTheaterSequenceTiming struct {
-	Mode    string `json:"mode"`
-	DelayMS *int   `json:"delayMs,omitempty"`
-}
-type mcpTheaterSequenceTrigger struct {
-	ID              string   `json:"id"`
-	Type            string   `json:"type"`
-	Threshold       int      `json:"threshold"`
-	Every           int      `json:"every"`
-	CooldownMS      int      `json:"cooldownMs"`
-	Keywords        []string `json:"keywords,omitempty"`
-	TargetActorName *string  `json:"targetActorName,omitempty"`
-	ObjectID        string   `json:"objectId,omitempty"`
-}
-type mcpTheaterSurfaceStyle struct {
-	Brightness float64                  `json:"brightness"`
-	BlurPx     float64                  `json:"blurPx"`
-	Opacity    float64                  `json:"opacity"`
-	Zoom       float64                  `json:"zoom"`
-	Fit        string                   `json:"fit"`
-	Overlay    mcpTheaterSurfaceOverlay `json:"overlay"`
-	MediaFx    map[string]any           `json:"mediaFx,omitempty"`
-}
-type mcpTheaterSurfaceOverlay struct {
-	Enabled bool    `json:"enabled"`
-	Color   string  `json:"color"`
-	Opacity float64 `json:"opacity"`
-}
+type mcpTheaterSceneFields = service.TheaterMCPSceneFields
+type mcpTheaterImage = service.TheaterMCPImage
+type mcpTheaterIframe = service.TheaterMCPIframe
+type mcpTheaterTransitionPhase = service.TheaterMCPTransitionPhase
+type mcpTheaterTransition = service.TheaterMCPTransition
+type mcpTheaterAudio = service.TheaterMCPAudio
+type mcpTheaterMusicTrack = service.TheaterMCPMusicTrack
+type mcpTheaterMusicAsset = service.TheaterMCPMusicAsset
+type mcpTheaterMusic = service.TheaterMCPMusic
+type mcpTheaterOverlay = service.TheaterMCPOverlay
+type mcpTheaterAction = service.TheaterMCPAction
+type mcpTheaterSchedule = service.TheaterMCPSchedule
+type mcpTheaterSequence = service.TheaterMCPSequence
+type mcpTheaterSequenceStep = service.TheaterMCPSequenceStep
+type mcpTheaterSequenceTiming = service.TheaterMCPSequenceTiming
+type mcpTheaterSequenceTrigger = service.TheaterMCPSequenceTrigger
+type mcpTheaterSurfaceStyle = service.TheaterMCPSurfaceStyle
+type mcpTheaterSurfaceOverlay = service.TheaterMCPSurfaceOverlay
+
 type mcpTheaterSceneInput struct {
 	mcpTheaterWriteInput
+	service.TheaterMCPFieldFields
 	SceneID         string                       `json:"sceneId,omitempty"`
 	Fields          *mcpTheaterSceneFields       `json:"fields,omitempty"`
 	SceneIDs        []string                     `json:"sceneIds,omitempty"`
@@ -160,8 +59,6 @@ type mcpTheaterSceneInput struct {
 	Image           *mcpTheaterImage             `json:"image,omitempty"`
 	Clear           bool                         `json:"clear,omitempty"`
 	Style           *mcpTheaterSurfaceStyle      `json:"style,omitempty"`
-	FieldWidth      *float64                     `json:"fieldWidth,omitempty"`
-	FieldHeight     *float64                     `json:"fieldHeight,omitempty"`
 	Overlays        *[]mcpTheaterOverlay         `json:"overlays,omitempty"`
 	Music           *mcpTheaterMusic             `json:"music,omitempty"`
 	SwitchAudio     *mcpTheaterAudio             `json:"switchAudio,omitempty"`
@@ -169,52 +66,11 @@ type mcpTheaterSceneInput struct {
 	Sequences       *[]mcpTheaterSequence        `json:"sequences,omitempty"`
 }
 
-// Explicit transform fields; content/actions are existing domain data, validated
-// by the native schema. There is no arbitrary mutation type or top-level payload.
-type mcpTheaterObjectFields struct {
-	SceneID           *string             `json:"sceneId,omitempty"`
-	ParentID          *string             `json:"parentId,omitempty"`
-	Name              *string             `json:"name,omitempty"`
-	X                 *float64            `json:"x,omitempty"`
-	Y                 *float64            `json:"y,omitempty"`
-	Width             *float64            `json:"width,omitempty"`
-	Height            *float64            `json:"height,omitempty"`
-	Rotation          *float64            `json:"rotation,omitempty"`
-	Scale             *float64            `json:"scale,omitempty"`
-	ScaleX            *float64            `json:"scaleX,omitempty"`
-	ScaleY            *float64            `json:"scaleY,omitempty"`
-	Z                 *float64            `json:"z,omitempty"`
-	OrderKey          *string             `json:"orderKey,omitempty"`
-	Visible           *bool               `json:"visible,omitempty"`
-	Locked            *bool               `json:"locked,omitempty"`
-	AspectRatioLocked *bool               `json:"aspectRatioLocked,omitempty"`
-	Interactive       *bool               `json:"interactive,omitempty"`
-	Editable          *bool               `json:"editable,omitempty"`
-	Content           *mcpTheaterContent  `json:"content,omitempty"`
-	Actions           *[]mcpTheaterAction `json:"actions,omitempty"`
-	// Stored as metadata.embedEventBindings and merged at expectedRevision, so
-	// other metadata keys are preserved. Only iframe objects accept it.
-	EmbedEventBindings *[]mcpTheaterEmbedEventBinding `json:"embedEventBindings,omitempty"`
-}
-type mcpTheaterEmbedEventBinding struct {
-	Topic     string   `json:"topic"`
-	ActionIDs []string `json:"actionIds"`
-}
-type mcpTheaterContent struct {
-	Fill       *string           `json:"fill,omitempty"`
-	Text       *string           `json:"text,omitempty"`
-	Image      *mcpTheaterImage  `json:"image,omitempty"`
-	Iframe     *mcpTheaterIframe `json:"iframe,omitempty"`
-	Drawing    map[string]any    `json:"drawing,omitempty"`
-	Effect     map[string]any    `json:"effect,omitempty"`
-	Video      map[string]any    `json:"video,omitempty"`
-	Annotation map[string]any    `json:"annotation,omitempty"`
-	Style      map[string]any    `json:"style,omitempty"`
-}
-type mcpTheaterObjectUpdate struct {
-	ObjectID string                 `json:"objectId"`
-	Fields   mcpTheaterObjectFields `json:"fields"`
-}
+type mcpTheaterObjectFields = service.TheaterMCPObjectFields
+type mcpTheaterEmbedEventBinding = service.TheaterMCPEmbedEventBinding
+type mcpTheaterContent = service.TheaterMCPContent
+type mcpTheaterObjectUpdate = service.TheaterMCPObjectUpdate
+
 type mcpTheaterObjectInput struct {
 	mcpTheaterWriteInput
 	ObjectID    string                   `json:"objectId,omitempty"`
@@ -226,6 +82,8 @@ type mcpTheaterObjectInput struct {
 	Visible     *bool                    `json:"visible,omitempty"`
 	IdentityID  string                   `json:"identityId,omitempty"`
 	OwnerUserID string                   `json:"ownerUserId,omitempty"`
+	OffsetX     *float64                 `json:"offsetX,omitempty"`
+	OffsetY     *float64                 `json:"offsetY,omitempty"`
 }
 
 func mcpTheaterMap(v any) map[string]any {
@@ -372,11 +230,22 @@ func mcpTheaterMutation(ctx context.Context, a *service.MCPActor, in mcpTheaterW
 		return nil, err
 	}
 	// Write results do not expose a hidden source object's content.
-	return map[string]any{"scope": scope, "mutationId": r.MutationID, "revisionBefore": r.RevisionBefore, "revision": r.Revision, "checksum": r.Checksum, "idempotent": r.Idempotent}, nil
+	out := map[string]any{"scope": scope, "mutationId": r.MutationID, "revisionBefore": r.RevisionBefore, "revision": r.Revision, "checksum": r.Checksum, "idempotent": r.Idempotent}
+	if typ == service.TheaterMutationSceneDuplicate || typ == service.TheaterMutationObjectDuplicate {
+		var duplicate service.TheaterDuplicateResult
+		if err := json.Unmarshal(r.Payload, &duplicate); err != nil {
+			return nil, err
+		}
+		for key, value := range mcpTheaterMap(duplicate) {
+			out[key] = value
+		}
+	}
+	return out, nil
 }
 
 func mcpTheaterScene(ctx context.Context, a *service.MCPActor, in mcpTheaterSceneInput) (any, error) {
 	allowed := map[string]string{
+		"duplicate": "sceneId", "field_update": "sceneId backgroundColor fieldWidth fieldHeight fieldObjectFit displayGrid gridOnTop gridSize alignWithGrid",
 		"create": "sceneId fields", "update": "sceneId fields", "reorder": "sceneIds", "delete": "sceneId fallbackSceneId", "apply": "sceneId", "folders_update": "folders",
 		"surface_update": "sceneId target image clear style fieldWidth fieldHeight", "surface_embed_set": "sceneId target url scale interactive", "surface_embed_clear": "sceneId target",
 		"overlay_update": "sceneId overlays", "music_update": "sceneId music switchAudio clear", "transition_update": "sceneId transition", "sequence_update": "sceneId sequences",
@@ -390,6 +259,10 @@ func mcpTheaterScene(ctx context.Context, a *service.MCPActor, in mcpTheaterScen
 	}
 	patch := map[string]any{}
 	switch in.Operation {
+	case "duplicate":
+		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationSceneDuplicate, map[string]any{"sceneId": in.SceneID}, nil)
+	case "field_update":
+		patch = service.TheaterMCPFieldPatch(in.TheaterMCPFieldFields)
 	case "create":
 		if in.Fields == nil || in.Fields.Name == nil {
 			return nil, mcpFailure("invalid_argument", "create 需要 fields.name")
@@ -506,7 +379,7 @@ func mcpTheaterScene(ctx context.Context, a *service.MCPActor, in mcpTheaterScen
 }
 
 func mcpTheaterObject(ctx context.Context, a *service.MCPActor, in mcpTheaterObjectInput) (any, error) {
-	allowed := map[string]string{"create": "objectId sceneId kind fields", "bind_character": "objectId sceneId kind fields identityId ownerUserId", "update": "objectId fields", "batch_update": "updates", "delete": "objectId cascade", "toggle": "objectId visible"}
+	allowed := map[string]string{"duplicate": "objectId offsetX offsetY", "create": "objectId sceneId kind fields", "bind_character": "objectId sceneId kind fields identityId ownerUserId", "update": "objectId fields", "batch_update": "updates", "delete": "objectId cascade", "toggle": "objectId visible"}
 	if err := mcpTheaterOperationFields(in, in.Operation, allowed); err != nil {
 		return nil, err
 	}
@@ -530,6 +403,8 @@ func mcpTheaterObject(ctx context.Context, a *service.MCPActor, in mcpTheaterObj
 		fields = mcpTheaterMap(in.Fields)
 	}
 	switch in.Operation {
+	case "duplicate":
+		return mcpTheaterMutation(ctx, a, in.mcpTheaterWriteInput, service.TheaterMutationObjectDuplicate, map[string]any{"objectId": in.ObjectID, "offsetX": in.OffsetX, "offsetY": in.OffsetY}, nil)
 	case "create", "bind_character":
 		if in.Fields != nil && in.Fields.SceneID != nil {
 			return nil, mcpFailure("invalid_argument", "create/bind_character 使用顶层 sceneId")
@@ -604,48 +479,11 @@ func mcpTheaterObjectMetadataPatch(objectID string, fields map[string]any, patch
 }
 
 func mcpTheaterValidateIframe(a *service.MCPActor, s service.TheaterScope, source string) error {
-	var err error
-	s, err = service.NormalizeTheaterMCPScope(a.User.ID, s)
+	scope, err := service.NormalizeTheaterMCPScope(a.User.ID, s)
 	if err != nil {
 		return err
 	}
-	u, err := url.Parse(strings.TrimSpace(source))
-	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") || len(source) > 8192 {
-		return mcpFailure("invalid_argument", "iframe URL 必须为 HTTP/HTTPS")
-	}
-	// Only configured internal origins are interpreted as channel iForm links.
-	cfg := mcpConfigSnapshot()
-	if !strings.HasPrefix(u.Fragment, "/internal/iform/") {
-		return nil
-	}
-	if !service.IsTheaterInternalIFormURL(cfg, u) {
-		return mcpFailure("invalid_argument", "内部 iForm URL 必须使用已配置可信域名和 webUrl 路径")
-	}
-	fragment, e := url.Parse(u.Fragment)
-	if e != nil {
-		return mcpFailure("invalid_argument", "iForm URL 无效")
-	}
-	id, e := url.PathUnescape(strings.TrimPrefix(fragment.Path, "/internal/iform/"))
-	if e != nil || id == "" || strings.Contains(id, "/") {
-		return mcpFailure("invalid_argument", "iForm ID 无效")
-	}
-	world, channel := fragment.Query().Get("world"), fragment.Query().Get("channel")
-	if world != s.WorldID || channel == "" || channel != s.InputChannelID || (s.ScopeType == "channel" && channel != s.ChannelID) {
-		return mcpFailure("invalid_argument", "iForm 必须匹配 worldId 和 inputChannelId；频道 Theater 还须匹配 channelId")
-	}
-	if _, e := mcpChannel(a, world, channel); e != nil {
-		return e
-	}
-	forms, e := service.ListEffectiveChannelIForms(channel)
-	if e != nil {
-		return e
-	}
-	for _, f := range forms {
-		if f.ID == id {
-			return nil
-		}
-	}
-	return mcpFailure("not_found", "iForm 不存在或不可见")
+	return service.ValidateTheaterMCPIframeURL(a.User.ID, scope, source, mcpConfigSnapshot())
 }
 
 func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterReadInput) (any, error) {
@@ -696,8 +534,25 @@ func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterRe
 			return nil, e
 		}
 		out["resources"] = page
+	case "audio_resources":
+		audioChannelID := scope.ChannelID
+		if scope.ScopeType == "world" {
+			audioChannelID = scope.InputChannelID
+			if audioChannelID == "" {
+				return nil, mcpFailure("invalid_argument", "World Theater 查询 audio_resources 必须提供可用的 inputChannelId")
+			}
+		}
+		items, e := service.ListTheaterMCPAudioResources(a.User.ID, scope.WorldID, scope.ChannelID, audioChannelID)
+		if e != nil {
+			return nil, e
+		}
+		page, e := mcpSlicePage(items, in.mcpPageInput)
+		if e != nil {
+			return nil, e
+		}
+		out["audioResources"] = page
 	default:
-		return nil, mcpFailure("invalid_argument", "operation 必须为 object_types/effects/overlays/resources/limits")
+		return nil, mcpFailure("invalid_argument", "operation 必须为 object_types/effects/overlays/resources/audio_resources/limits")
 	}
 	return out, nil
 }
@@ -728,13 +583,13 @@ func mcpTheaterValidateObjectFields(a *service.MCPActor, scope service.TheaterSc
 	if fields.Content == nil || fields.Content.Iframe == nil {
 		return nil
 	}
-	frame := fields.Content.Iframe
-	if math.IsNaN(frame.Scale) || math.IsInf(frame.Scale, 0) || frame.Scale < 0.25 || frame.Scale > 5 {
-		return mcpFailure("invalid_argument", "iframe.scale 范围 0.25..5")
+	normalized, err := service.NormalizeTheaterMCPScope(a.User.ID, scope)
+	if err != nil {
+		return err
 	}
-	return mcpTheaterValidateIframe(a, scope, frame.URL)
+	return service.ValidateTheaterMCPObjectFields(a.User.ID, normalized, fields, mcpConfigSnapshot())
 }
-func mcpTheaterSpec[T any](name, description string, operations []string, scopes []string, write, destructive, idempotent bool, handler func(context.Context, *service.MCPActor, T) (any, error)) mcpToolSpec {
+func mcpTheaterSpec[T any](name, description string, operations []string, scopes []string, write, destructive, idempotent bool, handler func(context.Context, *service.MCPActor, T) (any, error), adjust ...func(*jsonschema.Schema)) mcpToolSpec {
 	return mcpSpec(name, description, scopes, write, destructive, idempotent, handler, func(s *jsonschema.Schema) {
 		required := s.Required[:0]
 		for _, field := range s.Required {
@@ -752,16 +607,53 @@ func mcpTheaterSpec[T any](name, description string, operations []string, scopes
 				s.Properties[field].Enum = append(s.Properties[field].Enum, value)
 			}
 		}
+		for _, apply := range adjust {
+			apply(s)
+		}
 	})
+}
+
+type mcpTheaterDesignInput struct {
+	service.TheaterScope
+	Operation        string            `json:"operation"`
+	ExpectedRevision int64             `json:"expectedRevision"`
+	MutationID       string            `json:"mutationId,omitempty"`
+	Steps            []json.RawMessage `json:"steps"`
+}
+
+func mcpTheaterDesign(ctx context.Context, a *service.MCPActor, in mcpTheaterDesignInput) (any, error) {
+	return service.RunTheaterMCPDesign(ctx, a, in.TheaterScope, in.Operation, in.MutationID, in.ExpectedRevision, in.Steps, mcpConfigSnapshot())
+}
+func mcpTheaterDesignSchema(s *jsonschema.Schema) {
+	variants := service.TheaterDesignStepVariants()
+	names := make([]string, 0, len(variants))
+	for name := range variants {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	union := &jsonschema.Schema{}
+	for _, kind := range names {
+		branch, err := jsonschema.ForType(reflect.TypeOf(variants[kind]).Elem(), nil)
+		if err != nil {
+			panic(err)
+		}
+		branch.AdditionalProperties = &jsonschema.Schema{Not: &jsonschema.Schema{}}
+		branch.Properties["kind"].Enum = []any{kind}
+		union.OneOf = append(union.OneOf, branch)
+	}
+	s.Properties["steps"] = &jsonschema.Schema{Type: "array", Items: union, MinItems: jsonschema.Ptr(1), MaxItems: jsonschema.Ptr(64)}
+	s.If = &jsonschema.Schema{Properties: map[string]*jsonschema.Schema{"operation": {Const: jsonschema.Ptr(any("apply"))}}}
+	s.Then = &jsonschema.Schema{Required: []string{"mutationId"}}
 }
 func mcpTheaterTools() []mcpToolSpec {
 	return []mcpToolSpec{
-		mcpTheaterSpec("theater_read", "读取权限投影后的小剧场，按场景/对象分页。summary 对象页为指定或当前场景加常驻对象。普通对象采用中心锚点、WORLD_UNIT_PX=24；特效使用独立 1920x1080 设计坐标。world scope 的 channelId 必须为空，聊天使用 inputChannelId。", []string{"summary", "scene", "object", "events", "renderers"}, []string{"theater:read"}, false, false, true, mcpTheaterRead),
-		mcpTheaterSpec("theater_catalog", "小剧场原生类型、动作、特效、环境叠层、素材和限制；浏览器注册表仅在 renderer 在线时可用。", []string{"object_types", "effects", "overlays", "resources", "limits"}, []string{"theater:read"}, false, false, true, mcpTheaterCatalog),
-		mcpTheaterSpec("theater_scene", "结构化场景控制。state 局部更新在 expectedRevision 合并，保留其他字段；冲突后重读并使用新 mutationId。apply 另需 theater:control 与场景切换权限。", []string{"create", "update", "reorder", "delete", "apply", "folders_update", "surface_update", "surface_embed_set", "surface_embed_clear", "overlay_update", "music_update", "transition_update", "sequence_update"}, []string{"theater:write"}, true, true, true, mcpTheaterScene),
-		mcpTheaterSpec("theater_object", "普通对象 CRUD、原生 object.batchUpdate、显隐和角色绑定。支持 content.iframe={url,scale} 与 interactive；仅引用已有频道 iForm，不管理代码（频道嵌入代码用 embed_save）。iframe 可保存 actions 并用 embedEventBindings=[{topic,actionIds}] 把嵌入 events.publish 的精确 topic 绑定到这些动作。batch_update 仅原子更新已有对象。content/actions/embedEventBindings 的更新遵循整体替换语义。", []string{"create", "update", "batch_update", "delete", "toggle", "bind_character"}, []string{"theater:write"}, true, true, true, mcpTheaterObject),
-		mcpTheaterSpec("theater_control", "执行保存的动作/序列，查询或取消 execution。浏览器动作返回明确任务状态；所有业务步骤以 MCP Actor 服务端鉴权，不借用浏览器账户权限。", []string{"apply_scene", "trigger_action", "trigger_sequence", "execution_status", "cancel_execution"}, []string{"theater:control"}, true, false, false, mcpTheaterControl),
-		mcpTheaterSpec("theater_view", "指定同账号、同 scope 授权 renderer 的本地相机和选择；不写共享状态。", []string{"get", "camera_set", "fit_scene", "focus_object", "select_objects", "clear_selection"}, []string{"theater:read"}, true, false, false, mcpTheaterView),
-		mcpTheaterSpec("theater_capture", "浏览器协作截图 capture/status/cancel；返回 MCP ImageContent 和版本、坐标映射、缺失图层。无法完整捕获 iframe 等内容时返回 partial。", []string{"capture", "status", "cancel"}, []string{"theater:capture"}, true, false, false, mcpTheaterCapture),
+		mcpTheaterSpec("theater_read", "读取、查看、检查、查询小剧场舞台/场景/对象/状态与 revision。按权限投影分页；summary 为指定或当前场景加常驻对象。普通对象中心锚点、WORLD_UNIT_PX=24；effect 独立 1920×1080 坐标。world channelId 必须为空，频道上下文用 inputChannelId。", []string{"summary", "scene", "object", "events", "renderers"}, []string{"theater:read"}, false, false, true, mcpTheaterRead),
+		mcpTheaterSpec("theater_catalog", "查找、发现小剧场可用对象类型、素材、特效、叠层、音频和限制。resources 查图片/video，audio_resources 查 Theater 专用音频。浏览器注册表需要在线授权 renderer。", []string{"object_types", "effects", "overlays", "resources", "audio_resources", "limits"}, []string{"theater:read"}, false, false, true, mcpTheaterCatalog),
+		mcpTheaterSpec("theater_design", "设计、创建、搭建、布置、重构完整小剧场或完整场景的首选入口。一次创建/修改多个场景和对象，批量 align/distribute/grid 布局，配置背景、叠层、音乐、转场、序列。typed steps 先 validate 再原子 apply；一个 Plan 只增加一个 revision，仍受 expectedRevision CAS 和 128 KiB 限制。create 显式提供稳定 sceneId/objectId。单个场景的小改优先 theater_scene，单个/小批对象修改优先 theater_object。网页组件代码先用 embed_save，设计只引用已有资源；截图另用 theater_capture。", []string{"validate", "apply"}, []string{"theater:write"}, true, true, true, mcpTheaterDesign, mcpTheaterDesignSchema),
+		mcpTheaterSpec("theater_scene", "创建或修改单个场景，配置背景/前景/网格/音乐/转场/序列，duplicate 复制完整场景。field_update 类型化更新基础布景字段。局部 state 在 expectedRevision 合并；冲突后重读并使用新 mutationId。apply 另需 theater:control 与场景切换权限。", []string{"create", "update", "duplicate", "reorder", "delete", "apply", "folders_update", "field_update", "surface_update", "surface_embed_set", "surface_embed_clear", "overlay_update", "music_update", "transition_update", "sequence_update"}, []string{"theater:write"}, true, true, true, mcpTheaterScene),
+		mcpTheaterSpec("theater_object", "创建/修改/删除单个或小批对象、角色、iframe；duplicate 复制一个对象子树并可设置 offsetX/offsetY。batch_update 原子更新已有对象。iframe 仅引用已有频道 iForm，代码用 embed_save；embedEventBindings=[{topic,actionIds}] 将精确 events.publish topic 绑定到已保存动作。content/actions/embedEventBindings 更新遵循整体替换。", []string{"create", "update", "duplicate", "batch_update", "delete", "toggle", "bind_character"}, []string{"theater:write"}, true, true, true, mcpTheaterObject),
+		mcpTheaterSpec("theater_control", "播放、执行、触发小剧场保存的动作或序列，切换场景，查询/取消 execution，验证互动。浏览器动作返回任务状态；业务步骤以 MCP Actor 服务端鉴权。", []string{"apply_scene", "trigger_action", "trigger_sequence", "execution_status", "cancel_execution"}, []string{"theater:control"}, true, false, false, mcpTheaterControl),
+		mcpTheaterSpec("theater_view", "聚焦、缩放、移动相机、选择对象；fit_scene 查看完整舞台。使用同账号、同 Theater room 的授权 renderer，本地视觉操作不要求相同 inputChannelId；rendererId 可省略，单候选自动选择，多候选返回 renderer_ambiguous。不写共享状态；非 get 另需 theater:control。", []string{"get", "camera_set", "fit_scene", "focus_object", "select_objects", "clear_selection"}, []string{"theater:read"}, true, false, false, mcpTheaterView),
+		mcpTheaterSpec("theater_capture", "截图、视觉检查、查看最终舞台效果。使用同账号、同 Theater room 的授权 renderer，不要求相同 inputChannelId；rendererId 可省略，单候选自动选择，多候选返回 renderer_ambiguous。capture/status/cancel 返回 MCP ImageContent、版本、坐标映射和缺失图层；无法完整捕获 iframe 等内容时返回 partial。", []string{"capture", "status", "cancel"}, []string{"theater:capture"}, true, false, false, mcpTheaterCapture),
 	}
 }

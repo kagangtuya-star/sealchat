@@ -1030,16 +1030,13 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 					mapped := ""
 					knownReference := false
 					switch key {
-					case "sceneId":
+					case "sceneId", "objectId", "parentId":
 						knownReference = true
-						mapped = remap.scenes[text]
-					case "objectId", "parentId":
-						knownReference = true
-						mapped = remap.objects[text]
+						mapped = remapTheaterLocalEntityReference(key, text, remap)
 					case "effectId":
 						if !sceneOverlayBinding {
 							knownReference = true
-							mapped = remap.objects[text]
+							mapped = remapTheaterLocalEntityReference(key, text, remap)
 						}
 					case "resourceId", "posterResourceId":
 						knownReference = true

@@ -44,6 +44,13 @@ func NormalizeTheaterMCPScope(actorID string, s TheaterScope) (TheaterScope, err
 // SessionID records an intent fingerprint so retries reuse the original merged
 // payload even if the scene has changed since the successful first call.
 func ApplyTheaterMCPMutation(ctx context.Context, actorID, credentialID string, command TheaterMutationCommand, statePatch map[string]any) (*TheaterMutationResult, error) {
+	if command.Type == TheaterMutationDesignApply {
+		_, normalized, err := decodeTheaterPayload(command.Type, command.Payload)
+		if err != nil {
+			return nil, err
+		}
+		command.Payload = normalized
+	}
 	intent, err := json.Marshal(struct {
 		Command TheaterMutationCommand
 		Patch   map[string]any
@@ -209,7 +216,7 @@ func mergeTheaterMCPObjectMetadata(ctx context.Context, actorID string, command 
 
 func mergeTheaterMCPState(state, patch map[string]any) {
 	for k, v := range patch {
-		if k == "surfaceEmbeds" || k == "surfaceStyles" {
+		if k == "surfaceEmbeds" || k == "surfaceStyles" || k == "grid" {
 			target, _ := state[k].(map[string]any)
 			if target == nil {
 				target = map[string]any{}
@@ -220,7 +227,7 @@ func mergeTheaterMCPState(state, patch map[string]any) {
 						target[name] = nil
 					}
 				}
-			} else {
+			} else if k == "surfaceStyles" {
 				// Match StageStore's normalization for a scene with no styles yet.
 				for _, name := range []string{"background", "foreground"} {
 					if _, ok := target[name]; !ok {
@@ -250,7 +257,10 @@ func mergeTheaterMCPState(state, patch map[string]any) {
 
 func TheaterMCPLimits() map[string]any {
 	return map[string]any{"snapshotBytes": theaterMaxSnapshotBytes, "payloadBytes": theaterMaxPayloadBytes, "sceneStateBytes": 64 << 10, "objectJSONBytes": 64 << 10, "scenes": theaterMaxScenes, "objects": theaterMaxObjects, "sceneObjects": theaterMaxSceneObjects, "batchUpdates": theaterMaxBatchUpdates, "actions": theaterMaxActions,
-		"sceneSequences": 64, "sequenceSteps": 32, "sequenceTriggers": 32, "sequenceLoopCount": [2]int{1, 100}, "sequenceDelayMs": [2]int{0, 60000},
+		"designPlanSteps": theaterMaxDesignSteps, "designPayloadBytes": theaterMaxPayloadBytes,
+		"layoutModes":     map[string]any{"align": []string{"left", "center_x", "right", "top", "center_y", "bottom"}, "distribute": []string{"horizontal", "vertical"}, "grid": "objectIds order; same scope and parent; rotated AABB"},
+		"duplicateLimits": map[string]int{"scenesPerRequest": 1, "rootsPerRequest": 1, "subtreeObjects": theaterMaxSceneObjects},
+		"sceneSequences":  64, "sequenceSteps": 32, "sequenceTriggers": 32, "sequenceLoopCount": [2]int{1, 100}, "sequenceDelayMs": [2]int{0, 60000},
 		"objectPositionRotationZ": "finite JSON numbers; no additional native range", "objectNameCharacters": 512, "objectOrderKeyBytes": 128, "cameraXY": [2]int{-1_000_000, 1_000_000}, "cameraZoom": [2]float64{0.01, 100},
 		"worldUnitPx": 24, "anchor": "center", "objectSize": [2]float64{0, 1_000_000}, "objectScale": [2]float64{0.01, 100}, "iframeScale": [2]float64{0.25, 5}, "effectDesignSize": [2]int{1920, 1080}, "effectX": [2]int{-1920, 1920}, "effectY": [2]int{-1080, 1080}, "captureMaxEdge": 1600, "captureMaxBytes": 2 << 20}
 }

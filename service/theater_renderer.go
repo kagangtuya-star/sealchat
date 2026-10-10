@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -93,6 +94,7 @@ type TheaterRendererTask struct {
 	InFlightStepID                          string                `json:"inFlightStepId,omitempty"`
 	PartialSideEffectsPossible              bool                  `json:"partialSideEffectsPossible,omitempty"`
 	actorID, keyID, connectionID, operation string
+	rendererScope                           TheaterScope
 	createdAt, deadline                     time.Time
 	done                                    chan struct{}
 	timer                                   *time.Timer
@@ -129,6 +131,12 @@ func theaterSameRoom(a, b TheaterScope) bool {
 }
 func theaterSameRendererContext(a, b TheaterScope) bool {
 	return theaterSameRoom(a, b) && a.InputChannelID == b.InputChannelID
+}
+func theaterSameRendererOperationScope(operation string, a, b TheaterScope) bool {
+	if operation == "execute" {
+		return theaterSameRendererContext(a, b)
+	}
+	return theaterSameRoom(a, b)
 }
 func rendererError(code, message string) error { return newTheaterError(code, message, 400, nil) }
 func (b *TheaterRendererBroker) pruneLocked() {
@@ -268,11 +276,6 @@ func (b *TheaterRendererBroker) Catalog(actorID string, s TheaterScope) []map[st
 func (b *TheaterRendererBroker) Start(actorID, keyID string, s TheaterScope, rendererID, sceneID string, revision int64, operation string, payload any, stepIDs []string, step func(context.Context, string, string, int64) (any, error)) (*TheaterRendererTask, error) {
 	b.mu.Lock()
 	b.pruneLocked()
-	r := b.renderers[rendererID]
-	if r == nil || r.registration.UserID != actorID || !theaterSameRendererContext(r.registration.TheaterScope, s) {
-		b.mu.Unlock()
-		return nil, rendererError("renderer_unavailable", "没有同账号、同作用域的授权 renderer")
-	}
 	cap := "view"
 	timeout := 8 * time.Second
 	if operation == "capture" {
@@ -282,6 +285,12 @@ func (b *TheaterRendererBroker) Start(actorID, keyID string, s TheaterScope, ren
 		cap = "execute"
 		timeout = 60 * time.Second
 	}
+	r, err := b.resolveRendererLocked(actorID, s, rendererID, sceneID, operation, cap)
+	if err != nil {
+		b.mu.Unlock()
+		return nil, err
+	}
+	rendererID = r.registration.RendererID
 	if !theaterContains(r.registration.Capabilities, cap) {
 		b.mu.Unlock()
 		return nil, rendererError("renderer_unsupported", "renderer 未授权此能力")
@@ -310,6 +319,7 @@ func (b *TheaterRendererBroker) Start(actorID, keyID string, s TheaterScope, ren
 	id := utils.NewID()
 	now := time.Now()
 	t := &TheaterRendererTask{RequestID: id, RendererID: rendererID, Scope: s, SceneID: sceneID, Revision: revision, Status: "pending", actorID: actorID, keyID: keyID, connectionID: r.connectionID, operation: operation, createdAt: now, deadline: now.Add(timeout), done: make(chan struct{}), step: step, steps: map[string]bool{}}
+	t.rendererScope = r.registration.TheaterScope
 	t.maxEdge, t.maxBytes = 1600, 2<<20
 	if operation == "capture" {
 		if values, ok := payload.(map[string]any); ok {
@@ -325,7 +335,7 @@ func (b *TheaterRendererBroker) Start(actorID, keyID string, s TheaterScope, ren
 	for _, stepID := range stepIDs {
 		t.steps[stepID] = false
 	}
-	command := TheaterRendererCommand{TheaterRendererVersion, id, rendererID, s, sceneID, revision, t.deadline.UnixMilli(), operation, payload}
+	command := TheaterRendererCommand{TheaterRendererVersion, id, rendererID, t.rendererScope, sceneID, revision, t.deadline.UnixMilli(), operation, payload}
 	t.timer = time.AfterFunc(timeout, func() {
 		b.mu.Lock()
 		timedOut := !theaterTaskTerminal(t.Status)
@@ -349,6 +359,33 @@ func (b *TheaterRendererBroker) Start(actorID, keyID string, s TheaterScope, ren
 	}
 	return b.Status(actorID, keyID, s, id)
 }
+
+// Auto-resolution is visual-only; explicit IDs never fall back to another renderer.
+func (b *TheaterRendererBroker) resolveRendererLocked(actorID string, s TheaterScope, rendererID, sceneID, operation, capability string) (*theaterRendererEntry, error) {
+	if rendererID != "" {
+		r := b.renderers[rendererID]
+		if r != nil && r.registration.UserID == actorID && theaterSameRendererOperationScope(operation, r.registration.TheaterScope, s) {
+			return r, nil
+		}
+	} else if operation != "execute" {
+		var selected *theaterRendererEntry
+		ids := []string{}
+		for id, r := range b.renderers {
+			if r.registration.UserID == actorID && theaterSameRoom(r.registration.TheaterScope, s) && r.registration.ActiveSceneID == sceneID && theaterContains(r.registration.Capabilities, capability) {
+				selected = r
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) == 1 {
+			return selected, nil
+		}
+		if len(ids) > 1 {
+			sort.Strings(ids)
+			return nil, newTheaterError("renderer_ambiguous", "存在多个授权 renderer，请指定 rendererId", 400, map[string]any{"rendererIds": ids})
+		}
+	}
+	return nil, rendererError("renderer_unavailable", "没有同账号、同作用域的授权 renderer")
+}
 func cloneRendererTask(t *TheaterRendererTask) *TheaterRendererTask {
 	c := *t
 	c.Result = append(json.RawMessage{}, t.Result...)
@@ -364,7 +401,7 @@ func (b *TheaterRendererBroker) Status(actorID, keyID string, s TheaterScope, id
 	defer b.mu.Unlock()
 	b.pruneLocked()
 	t := b.tasks[id]
-	if t == nil || t.actorID != actorID || t.keyID != keyID || !theaterSameRendererContext(t.Scope, s) {
+	if t == nil || t.actorID != actorID || t.keyID != keyID || !theaterSameRendererOperationScope(t.operation, t.Scope, s) {
 		return nil, rendererError("task_not_found", "任务不存在或无权访问")
 	}
 	return cloneRendererTask(t), nil
@@ -385,13 +422,13 @@ func (b *TheaterRendererBroker) Cancel(actorID, keyID string, s TheaterScope, id
 	b.mu.Lock()
 	b.pruneLocked()
 	t := b.tasks[id]
-	if t == nil || t.actorID != actorID || t.keyID != keyID || !theaterSameRendererContext(t.Scope, s) {
+	if t == nil || t.actorID != actorID || t.keyID != keyID || !theaterSameRendererOperationScope(t.operation, t.Scope, s) {
 		b.mu.Unlock()
 		return nil, rendererError("task_not_found", "任务不存在或无权访问")
 	}
 	r := b.renderers[t.RendererID]
 	wasTerminal := theaterTaskTerminal(t.Status) || t.Status == "stopping"
-	command := TheaterRendererCommand{Version: TheaterRendererVersion, RequestID: id, RendererID: t.RendererID, Scope: s, SceneID: t.SceneID, ExpectedRevision: t.Revision, Operation: "cancel", ExpiresAt: time.Now().Add(time.Second).UnixMilli()}
+	command := TheaterRendererCommand{Version: TheaterRendererVersion, RequestID: id, RendererID: t.RendererID, Scope: t.rendererScope, SceneID: t.SceneID, ExpectedRevision: t.Revision, Operation: "cancel", ExpiresAt: time.Now().Add(time.Second).UnixMilli()}
 	b.finishLocked(t, "cancelled", "")
 	b.mu.Unlock()
 	if r != nil && !wasTerminal {
@@ -402,7 +439,8 @@ func (b *TheaterRendererBroker) Cancel(actorID, keyID string, s TheaterScope, id
 func (b *TheaterRendererBroker) taskForReplyLocked(actorID, connectionID string, r TheaterRendererReply) (*TheaterRendererTask, error) {
 	b.pruneLocked()
 	t := b.tasks[r.RequestID]
-	if r.Version != TheaterRendererVersion || t == nil || t.actorID != actorID || t.connectionID != connectionID || t.RendererID != r.RendererID || !theaterSameRendererContext(t.Scope, r.Scope) || theaterTaskTerminal(t.Status) || t.Status == "stopping" || time.Now().After(t.deadline) {
+	renderer := b.renderers[r.RendererID]
+	if r.Version != TheaterRendererVersion || t == nil || renderer == nil || renderer.registration.UserID != actorID || renderer.connectionID != connectionID || t.actorID != actorID || t.connectionID != connectionID || t.RendererID != r.RendererID || !theaterSameRendererContext(t.rendererScope, r.Scope) || !theaterSameRendererContext(renderer.registration.TheaterScope, r.Scope) || theaterTaskTerminal(t.Status) || t.Status == "stopping" || time.Now().After(t.deadline) {
 		return nil, rendererError("stale_command", "命令已过期、取消或作用域不匹配")
 	}
 	return t, nil

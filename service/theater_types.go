@@ -6,6 +6,9 @@ import (
 )
 
 const (
+	TheaterMutationDesignApply             = "design.apply"
+	TheaterMutationSceneDuplicate          = "scene.duplicate"
+	TheaterMutationObjectDuplicate         = "object.duplicate"
 	TheaterMutationRoomDialoguePatch       = "room.dialogue.patch"
 	TheaterMutationRoomDialoguePositionSet = "room.dialogue.position.set"
 	TheaterMutationSceneCreate             = "scene.create"

@@ -307,11 +307,12 @@ const toggleRenderer = async () => {
   rendererAuthorizing.value = true
   const sync = theaterSync
   const targetWorld = worldId.value, targetChannel = channelId.value
+  const targetUserId = String(user.info.id)
   try {
-    const allowed = await dialogAskConfirm(dialog, '允许 AI 协作当前小剧场', '同账号、已授权的 MCP Key 可操作当前视图、执行有业务权限的动作及截图。为完整捕获网页嵌入、视频与跨域 iframe，浏览器会继续请求共享当前标签页；请选择当前 SealChat 标签页。关闭页面、停止共享、断线或切换世界/聊天频道后自动撤销。')
-    if (!allowed || theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel) return
+    const allowed = await dialogAskConfirm(dialog, '允许 AI 协作当前小剧场', '同账号、已授权的 MCP Key 可操作当前视图、执行有业务权限的动作及截图。为完整捕获网页嵌入、视频与跨域 iframe，浏览器会继续请求共享当前标签页；请选择当前 SealChat 标签页。关闭页面、停止共享、断线或切换世界后自动撤销。')
+    if (!allowed || theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel || user.info?.id !== targetUserId) return
     const displayStream = await requestTheaterDisplayCapture()
-    if (theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel) {
+    if (theaterSync !== sync || worldId.value !== targetWorld || channelId.value !== targetChannel || user.info?.id !== targetUserId) {
       displayStream.getTracks().forEach(track => track.stop())
       return
     }
@@ -321,7 +322,7 @@ const toggleRenderer = async () => {
     if (!captureTrack || captureTrack.readyState !== 'live') throw new Error('浏览器画面共享已结束')
     const client = new TheaterRendererClient({
       scope: { worldId: targetWorld, scopeType: 'world', channelId: '', inputChannelId: targetChannel },
-      userId: String(user.info.id), sync, getStage: () => stageAppRef.value,
+      userId: targetUserId, sync, getStage: () => stageAppRef.value,
       send: (name, data) => chat.sendAPI(name, data),
       insert: async payload => {
         if (!theaterBridge) throw new Error('chat_bridge_unavailable')
@@ -346,7 +347,8 @@ const toggleRenderer = async () => {
     message.warning(error instanceof Error ? error.message : 'renderer 授权失败')
   } finally { rendererAuthorizing.value = false }
 }
-watch([worldId, channelId], revokeRenderer)
+watch(worldId, revokeRenderer)
+watch(() => user.info?.id, revokeRenderer)
 let theaterSyncGeneration = 0
 const dialogueSurfaceTargets = new Map<Window, TheaterDialogueSurfaceContext>()
 interface DialogueSurfaceRuntimeEntry {
@@ -1496,6 +1498,7 @@ const handleTheaterContext = (event: MessageEvent) => {
     })
   } else {
     theaterSync?.setInputChannelId(nextChannelId)
+    theaterRenderer?.setInputChannelId(nextChannelId)
     if (chat.curChannel?.id !== nextChannelId) {
       void chat.channelSwitchTo(nextChannelId)
     }

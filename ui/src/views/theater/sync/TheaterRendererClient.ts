@@ -31,10 +31,18 @@ export class TheaterRendererClient {
   private active = false
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private registering = false
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null
+  private refreshing = false
+  private refreshPending = false
+  private refreshFailures = 0
+  private connectionRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private connectionRecovering = false
+  private currentScope: TheaterRendererScope
   private stopWatch: WatchStopHandle | null = null
   private readonly seen = new Set<string>()
   private readonly controllers = new Map<string, AbortController>()
-  constructor(private readonly options: RendererOptions) {}
+  private readonly commandTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  constructor(private readonly options: RendererOptions) { this.currentScope = { ...options.scope } }
 
   async start() {
     this.active = true
@@ -42,8 +50,12 @@ export class TheaterRendererClient {
     chatEvent.on('connection.changed' as never, this.onConnection as never)
     try { await this.register() } catch (error) { this.stop(); throw error }
     if (this.active) {
-      this.heartbeat = setInterval(() => { void this.register().catch(() => this.invalidate()) }, 15000)
-      this.stopWatch = watch(() => this.options.sync.getRendererState().sceneId, () => { void this.register().catch(() => this.invalidate()) })
+      this.heartbeat = setInterval(() => this.scheduleRegisterRefresh(), 15000)
+      this.stopWatch = watch(() => {
+        const state = this.options.sync.getRendererState()
+        return [state.sceneId, state.revision, state.dirty] as const
+      }, () => this.scheduleRegisterRefresh(), { flush: 'post' })
+      this.scheduleRegisterRefresh()
     }
   }
   stop() {
@@ -51,16 +63,58 @@ export class TheaterRendererClient {
     this.active = false
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
+    if (this.refreshTimer) clearTimeout(this.refreshTimer)
+    this.refreshTimer = null
+    if (this.connectionRecoveryTimer) clearTimeout(this.connectionRecoveryTimer)
+    this.connectionRecoveryTimer = null
+    this.connectionRecovering = false
+    this.refreshPending = false
     this.stopWatch?.(); this.stopWatch = null
     this.controllers.forEach(controller => controller.abort())
     this.controllers.clear()
+    this.commandTimers.forEach(timer => clearTimeout(timer))
+    this.commandTimers.clear()
     chatEvent.off('theater.renderer.command' as never, this.onCommand as never)
     chatEvent.off('connection.changed' as never, this.onConnection as never)
     void this.options.send('theater.renderer.unregister', {}).catch(() => undefined)
   }
-  private invalidate() { this.stop(); this.options.onInvalidated() }
+  setInputChannelId(channelId: string) {
+    const inputChannelId = channelId.trim()
+    if (inputChannelId === (this.currentScope.inputChannelId || '')) return
+    this.currentScope = { ...this.currentScope, inputChannelId }
+    this.controllers.forEach(controller => controller.abort())
+    this.scheduleRegisterRefresh()
+  }
+  private invalidate() { if (!this.active) return; this.stop(); this.options.onInvalidated() }
+  private beginConnectionRecovery() {
+    if (!this.active) return
+    this.connectionRecovering = true
+    if (this.connectionRecoveryTimer) return
+    this.connectionRecoveryTimer = setTimeout(() => {
+      this.connectionRecoveryTimer = null
+      this.connectionRecovering = false
+      this.invalidate()
+    }, 10000)
+  }
+  private finishConnectionRecovery() {
+    if (this.connectionRecoveryTimer) clearTimeout(this.connectionRecoveryTimer)
+    this.connectionRecoveryTimer = null
+    this.connectionRecovering = false
+  }
   private readonly onConnection = (event: unknown) => {
-    if (record(event).state !== 'connected') this.invalidate()
+    const state = record(event).state
+    if (state === 'connected') {
+      if (this.connectionRecovering) {
+        this.refreshFailures = 0
+        this.scheduleRegisterRefresh()
+      }
+      return
+    }
+    if (state === 'connecting' || state === 'reconnecting') {
+      this.beginConnectionRecovery()
+      return
+    }
+    if (state === 'disconnected') this.invalidate()
   }
   private async rpc(api: string, data: Record<string, unknown>) {
     const response = record(await this.options.send(api, data))
@@ -68,10 +122,11 @@ export class TheaterRendererClient {
     return record(response.data)
   }
   private async register() {
-    if (!this.active || this.registering) return
+    if (!this.active) return
     const stage = this.options.getStage()
     if (!stage) throw new Error('renderer_unavailable')
     const state = this.options.sync.getRendererState()
+    if (state.dirty) throw new Error('renderer_uncommitted_edits')
     const viewport = stage.getRendererView()
     const registrationViewport = {
       ...viewport,
@@ -81,7 +136,7 @@ export class TheaterRendererClient {
     this.registering = true
     try {
       await this.rpc('theater.renderer.register', {
-        ...this.options.scope, version: 1, rendererId: this.rendererId, userId: this.options.userId,
+        ...this.currentScope, version: 1, rendererId: this.rendererId, userId: this.options.userId,
         activeSceneId: state.sceneId || '', revision: state.revision, viewport: registrationViewport,
         capabilities: ['view', 'capture', 'execute'],
         catalog: { overlays: listSceneOverlayEffects().map(({ buildRenderDescriptor: _build, ...definition }) => definition),
@@ -89,12 +144,56 @@ export class TheaterRendererClient {
       })
     } finally { this.registering = false }
   }
+  private scheduleRegisterRefresh(delay = 0, dirtyChecks = 0) {
+    if (!this.active) return
+    if (this.refreshing || this.registering) { this.refreshPending = true; return }
+    if (this.refreshTimer) return
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null
+      void this.refreshRegistration(dirtyChecks)
+    }, delay)
+  }
+  private async refreshRegistration(dirtyChecks: number) {
+    if (!this.active) return
+    const state = this.options.sync.getRendererState()
+    if (state.dirty) {
+      // A draft may stay dirty indefinitely. Leave later checks to the watcher
+      // and heartbeat after this bounded settling window; never flush it here.
+      if (dirtyChecks < 2) this.scheduleRegisterRefresh(dirtyChecks === 0 ? 300 : 1000, dirtyChecks + 1)
+      return
+    }
+    const scope = this.currentScope
+    this.refreshing = true
+    this.refreshPending = false
+    let retryDelay: number | null = null
+    try {
+      await this.register()
+      if (!this.active) return
+      this.refreshFailures = 0
+      this.finishConnectionRecovery()
+    } catch {
+      if (!this.active) return
+      const current = this.options.sync.getRendererState()
+      if (scope !== this.currentScope || state.sceneId !== current.sceneId || state.revision !== current.revision || current.dirty) {
+        this.refreshPending = true
+      } else if (this.connectionRecovering) {
+        retryDelay = 1000
+      } else if (++this.refreshFailures < 3) {
+        retryDelay = this.refreshFailures === 1 ? 300 : 1000
+      } else {
+        this.invalidate()
+      }
+    } finally {
+      this.refreshing = false
+      if (this.active && (retryDelay !== null || this.refreshPending)) this.scheduleRegisterRefresh(retryDelay ?? 0)
+    }
+  }
   private readonly onCommand = (event: unknown) => {
     const parsed = theaterRendererCommandSchema.safeParse(record(record(event).theater).payload)
     if (!parsed.success) return
     const command = parsed.data
-    if (!this.active || command.rendererId !== this.rendererId || !sameRendererScope(command.scope, this.options.scope)
-      || (command.scope.inputChannelId || '') !== (this.options.scope.inputChannelId || '')) return
+    if (!this.active || command.rendererId !== this.rendererId || !sameRendererScope(command.scope, this.currentScope)
+      || (command.scope.inputChannelId || '') !== (this.currentScope.inputChannelId || '')) return
     if (command.operation === 'cancel') { this.controllers.get(command.requestId)?.abort(); return }
     if (this.seen.has(command.requestId)) return
     if (this.seen.size >= 512) this.seen.delete(this.seen.values().next().value || '')
@@ -108,12 +207,19 @@ export class TheaterRendererClient {
     let revision = command.expectedRevision
     let sceneId = command.sceneId
     const timer = setTimeout(() => controller.abort(), Math.max(1, command.expiresAt - Date.now()))
+    this.commandTimers.set(command.requestId, timer)
+    const checkContext = () => {
+      if (!this.active || signal.aborted || Date.now() >= command.expiresAt
+        || !sameRendererScope(command.scope, this.currentScope)
+        || (command.scope.inputChannelId || '') !== (this.currentScope.inputChannelId || '')) throw new Error('stale_command')
+    }
     const guard = async () => {
-      if (!this.active || signal.aborted || Date.now() >= command.expiresAt) throw new Error('stale_command')
+      checkContext()
       await this.options.sync.ensureRendererRevision(revision, sceneId)
+      checkContext()
     }
     const reply = (status: string, result?: unknown, error?: string) => this.rpc('theater.renderer.reply', {
-      version: 1, requestId: command.requestId, rendererId: this.rendererId, scope: this.options.scope,
+      version: 1, requestId: command.requestId, rendererId: this.rendererId, scope: this.currentScope,
       sceneId, revision, status, result, error,
     })
     try {
@@ -141,7 +247,7 @@ export class TheaterRendererClient {
             if (node.confirm && !await this.options.confirm()) { controller.abort(); throw new Error('action_cancelled') }
             await guard()
             const action = await this.rpc('theater.renderer.step', {
-              version: 1, requestId: command.requestId, rendererId: this.rendererId, scope: this.options.scope,
+              version: 1, requestId: command.requestId, rendererId: this.rendererId, scope: this.currentScope,
               sceneId, revision, status: 'running', stepId: node.stepId,
             })
             const mutation = record(action.mutation)
@@ -170,8 +276,8 @@ export class TheaterRendererClient {
     } catch (error) {
       await reply(signal.aborted ? 'cancelled' : 'failed', undefined, error instanceof Error ? error.message : 'renderer_failed').catch(() => undefined)
     } finally {
-      clearTimeout(timer); this.controllers.delete(command.requestId)
-      if (this.active) void this.register().catch(() => this.invalidate())
+      clearTimeout(timer); this.commandTimers.delete(command.requestId); this.controllers.delete(command.requestId)
+      this.scheduleRegisterRefresh()
     }
   }
 }
