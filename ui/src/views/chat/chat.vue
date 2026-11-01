@@ -14970,7 +14970,11 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   chatEvent.on('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
   chatEvent.on('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
 
-  await fetchLatestMessages();
+  try {
+    await fetchLatestMessages();
+  } catch (error) {
+    console.warn('[channel-load] initial messages fetch failed', error);
+  }
   await fetchPinnedMessages();
   initCharacterRemark(chat.curChannel?.id);
   initialMessageJumpReady.value = true;

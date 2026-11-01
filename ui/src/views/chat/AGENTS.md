@@ -49,6 +49,11 @@ Do not casually replace existing ordering/cursor logic with timestamp-only assum
 
 ### Pagination and History
 
+A failed initial `message.list` must not abort mounted initialization and leave
+`firstLoad=false`, disabling later channel switches. Handle that request's error
+while preserving existing readiness timing and stale-response guards. Regression:
+`node --test scripts/chat-message-load-recovery.test.mjs` from `ui/`.
+
 Preserve:
 
 - older-message loading;
