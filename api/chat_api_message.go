@@ -4829,7 +4829,13 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			m.WhisperTo = ctx.User.ID
 			m.WhisperTarget = ctx.User
 		}
-		model.GetDB().Create(&m)
+		if err := model.GetDB().Create(&m).Error; err != nil {
+			log.Printf("保存内置小海豹消息失败: %v", err)
+			return
+		}
+		if collector := metrics.Get(); collector != nil {
+			collector.RecordMessage()
+		}
 		if botRollDetail != "" && channelData != nil && channelData.WorldID != "" {
 			payload, payloadErr := service.BuildDiceVisualPayload(
 				m.ID,
@@ -4947,7 +4953,13 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		VisibleCharCount: contentstats.CountVisibleTextChars(content),
 		ICMode:           msgICMode,
 	}
-	model.GetDB().Create(&m)
+	if err := model.GetDB().Create(&m).Error; err != nil {
+		log.Printf("保存暗骰私聊副本失败: %v", err)
+		return
+	}
+	if collector := metrics.Get(); collector != nil {
+		collector.RecordMessage()
+	}
 	botNick := strings.TrimSpace(botUser.Nickname)
 	if botNick == "" {
 		botNick = "小海豹"
@@ -5104,6 +5116,9 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 
 	if err := model.GetDB().Create(&m).Error; err != nil {
 		return
+	}
+	if collector := metrics.Get(); collector != nil {
+		collector.RecordMessage()
 	}
 	if cfg.AsWhisper && len(whisperRecipientIDs) > 0 {
 		if err := model.CreateWhisperRecipients(m.ID, whisperRecipientIDs); err != nil {

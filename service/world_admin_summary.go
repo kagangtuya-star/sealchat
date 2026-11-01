@@ -20,7 +20,7 @@ type AdminWorldSummary struct {
 	CreatedAt       time.Time `json:"createdAt"`
 	MemberCount     int64     `json:"memberCount"`
 	ChannelCount    int64     `json:"channelCount"`
-	LastActiveAt    int64     `json:"lastActiveAt"` // 毫秒；0 表示尚无消息
+	LastActiveAt    int64     `json:"lastActiveAt"` // 最新未删除消息的发送时间（含归档频道），毫秒；0 表示尚无消息
 	MessageChars    int64     `json:"messageChars"`
 	MessageCharsIC  int64     `json:"messageCharsIc"`
 	MessageCharsOOC int64     `json:"messageCharsOoc"`
@@ -134,13 +134,12 @@ func AdminListWorldSummaries(query AdminWorldSummaryQuery) (*AdminWorldSummaryPa
 	}
 
 	type channelRow struct {
-		WorldID      string
-		Total        int64
-		LastActiveAt int64
+		WorldID string
+		Total   int64
 	}
 	var channelRows []channelRow
 	if err := db.Model(&model.ChannelModel{}).
-		Select("world_id, COUNT(*) AS total, COALESCE(MAX(recent_sent_at), 0) AS last_active_at").
+		Select("world_id, COUNT(*) AS total").
 		Where("world_id IN ? AND is_private = ? AND status NOT IN ?", worldIDs, false, []string{model.ChannelStatusDeleted, model.ChannelStatusArchived}).
 		Group("world_id").
 		Scan(&channelRows).Error; err != nil {
@@ -173,7 +172,7 @@ func AdminListWorldSummaries(query AdminWorldSummaryQuery) (*AdminWorldSummaryPa
 			CreatedAt:       w.CreatedAt,
 			MemberCount:     memberCounts[w.ID],
 			ChannelCount:    channels.Total,
-			LastActiveAt:    channels.LastActiveAt,
+			LastActiveAt:    chars.LastActiveAt,
 			MessageChars:    chars.Chars,
 			MessageCharsIC:  chars.CharsIC,
 			MessageCharsOOC: chars.CharsOOC,

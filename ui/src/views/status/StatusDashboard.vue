@@ -139,7 +139,7 @@ const summaryGroups = computed<StatusCardGroup[]>(() => {
     },
     { label: '并发连接', value: formatStatusNumber(data.concurrentConnections), hint: '采样值：已鉴权 WebSocket 连接数' },
     { label: '在线用户', value: formatStatusNumber(data.onlineUsers), hint: '120 秒内仍活跃的用户' },
-    { label: '消息 / 分钟', value: formatStatusNumber(data.messagesPerMinute), hint: '最近一分钟的消息吞吐' },
+    { label: '消息 / 分钟', value: formatStatusNumber(data.messagesPerMinute), hint: `按 ${data.intervalSeconds || 120} 秒采样窗口折算的每分钟消息数` },
   ];
   const scaleCards: StatusCard[] = [
     { label: '注册用户', value: formatStatusNumber(data.registeredUsers), hint: '未被禁用的账户数量' },
@@ -311,8 +311,11 @@ watch(expandedMetricKey, (value) => {
 });
 
 onMounted(() => {
-  void refreshAll();
-  refreshTimer.value = window.setInterval(fetchSummary, 60_000);
+  void fetchSummary();
+  void loadHistory();
+  refreshTimer.value = window.setInterval(() => {
+    void Promise.allSettled([fetchSummary(), worldTable.value?.refresh()]);
+  }, 60_000);
   window.addEventListener('keydown', handleExpandedPanelKeydown);
 });
 

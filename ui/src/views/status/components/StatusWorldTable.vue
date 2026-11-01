@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import dayjs from 'dayjs';
 import { useDebounceFn } from '@vueuse/core';
 import { NTag, useMessage, type DataTableColumns, type DataTableSortState } from 'naive-ui';
@@ -41,6 +41,7 @@ const loading = ref(false);
 const keyword = ref('');
 const sortState = ref<DataTableSortState | null>(null);
 let requestSeq = 0;
+let disposed = false;
 
 const formatTime = (value: number | string) => {
   if (!value) {
@@ -145,6 +146,9 @@ const pagination = computed(() => ({
 }));
 
 const refresh = async () => {
+  if (disposed) {
+    return;
+  }
   const requestId = ++requestSeq;
   loading.value = true;
   try {
@@ -198,7 +202,12 @@ watch(keyword, () => {
   void searchByKeyword();
 });
 
+onMounted(() => {
+  void refresh();
+});
+
 onBeforeUnmount(() => {
+  disposed = true;
   requestSeq += 1;
 });
 
@@ -210,7 +219,8 @@ defineExpose({ refresh });
     <div class="status-world__header">
       <div>
         <h2>世界列表</h2>
-        <p>全部状态正常的世界（含私有世界），共 {{ total }} 个；在线人数为实时值，列排序仅作用于当前页。</p>
+        <p>全部状态正常的世界（含私有世界），共 {{ total }} 个；在线人数统计当前停留该世界的用户（不含访客和观察者），每分钟刷新。</p>
+        <p>频道数不含归档频道；消息字数和最近活跃统计未删除消息（含归档频道），最近活跃取消息发送时间；列排序仅作用于当前页。</p>
       </div>
       <n-input
         v-model:value="keyword"

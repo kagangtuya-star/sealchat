@@ -14,6 +14,7 @@ import (
 	"sealchat/pkg/contentstats"
 	"sealchat/protocol"
 	"sealchat/service"
+	"sealchat/service/metrics"
 	"sealchat/utils"
 )
 
@@ -489,6 +490,9 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	db := model.GetDB()
 	if err := db.Create(msg).Error; err != nil {
 		return wrapError(c, err, "创建消息失败")
+	}
+	if collector := metrics.Get(); collector != nil {
+		collector.RecordMessage()
 	}
 
 	if source != "" && externalID != "" {
