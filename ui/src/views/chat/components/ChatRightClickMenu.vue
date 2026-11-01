@@ -51,6 +51,7 @@ const contextMenuOptions = computed<MenuOptions>(() => ({
   ...(chat.messageMenu.optionsComponent as MenuOptions),
   zIndex: contextMenuZIndex.value,
   theme: contextMenuTheme.value,
+  mouseScroll: true,
   customClass: `sc-overlay sc-context-menu sc-message-context-menu ${contextMenuClass.value}`,
 }))
 

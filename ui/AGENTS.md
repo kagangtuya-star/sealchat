@@ -225,6 +225,12 @@ When route-dependent async work is performed, guard against the route changing b
 
 ## UI Library
 
+Keep context menus pinned to the verified 1.3.6 patch: 1.3.3 clips lower submenu
+items, while 1.3.4 embeds a second Vue runtime. Update both lockfiles together.
+`node --test scripts/context-menu-viewport.test.mjs` uses the real menu template
+and library in an isolated headless Chrome/Chromium (`CHROME_BIN` may override).
+It covers edge placement, long-menu scrolling, theme hooks and item callbacks.
+
 Prefer existing Naive UI patterns.
 
 Before introducing custom controls, check whether the project already has:

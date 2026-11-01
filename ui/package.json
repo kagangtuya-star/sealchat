@@ -21,7 +21,7 @@
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@icon-park/vue-next": "^1.4.2",
-    "@imengyu/vue3-context-menu": "^1.3.3",
+    "@imengyu/vue3-context-menu": "1.3.6",
     "@quickdrawjs/core": "0.2.0",
     "@satorijs/element": "^2.5.1",
     "@satorijs/protocol": "^1.1.1",
