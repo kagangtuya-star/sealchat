@@ -8,15 +8,16 @@ SealChat 目前有两套外观机制。传统“颜色主题”只负责一组�
 
 如果你只想修改主色、聊天气泡颜色和输入框颜色，优先使用传统颜色主题。如果你需要修改登录页、聊天主界面、世界控制台、LOG、OB、Embed 或小剧场的整体视觉，应使用 UI 自定义包。
 
-本文以 V1 运行时为准。运行时能力、Surface、CSS/JavaScript 约束和包格式均以本文及当前源码为准。
+本文以 V2 脚本运行时为准，继续兼容 V1 包及旧导入文件。运行时能力、Surface、CSS/JavaScript 约束和包格式均以本文及当前源码为准。
 
 ## 2. 快速开始
 
-仓库提供三套完整的主题参考包：
+仓库提供三套完整视觉主题，以及一套频道能力 API 测试主题：
 
 - NEON//RUNNER 霓虹夜行：可直接导入 `doc/ui-customization-package/sealchat-ui-package-neon-runner.json`，源码为 `theme-neon-runner.css` / `theme-neon-runner.js`。
 - R'LYEH ARCHIVE 拉莱耶档案馆：可直接导入 `doc/ui-customization-package/sealchat-ui-package-rlyeh-archive.json`，源码为 `theme-rlyeh-archive.css` / `theme-rlyeh-archive.js`。
 - TRIANGLE AGENCY 三角机构：可直接导入 `doc/ui-customization-package/sealchat-ui-package-triangle-agency.json`，源码为 `theme-triangle-agency.css` / `theme-triangle-agency.js`。
+- CHANNEL API LAB · Windows 97：可直接导入 `doc/ui-customization-package/sealchat-ui-package-channel-api-lab-win97.json`，源码为 `theme-channel-api-lab-win97.css` / `theme-channel-api-lab-win97.js`。它只用于聊天 Surface，并申请全部频道能力来测试 effective capabilities 和 API 行为。
 
 导入后，SealChat 会创建一个新的停用包。先检查 CSS 和 JavaScript，再手动启用。
 
@@ -39,12 +40,13 @@ SealChat 目前有两套外观机制。传统“颜色主题”只负责一组�
 {
   "format": "sealchat.ui-package",
   "formatVersion": 1,
-  "runtimeApiVersion": 1,
+  "runtimeApiVersion": 2,
   "manifest": {
     "name": "示例主题",
     "description": "主题说明"
   },
   "targets": ["chat"],
+  "channelCapabilities": [],
   "css": "...",
   "js": ""
 }
@@ -56,16 +58,47 @@ SealChat 目前有两套外观机制。传统“颜色主题”只负责一组�
 | --- | --- |
 | `format` | 固定为 `sealchat.ui-package`。 |
 | `formatVersion` | 当前为 `1`。 |
-| `runtimeApiVersion` | 当前为 `1`。纯 CSS 包也保留这个字段。 |
+| `runtimeApiVersion` | 当前为 `2`，继续接受 `1` 和旧文件中省略该字段的格式。纯 CSS 包也保留这个字段。 |
 | `manifest.name` | 导入后的包名称。最长 100 字符。 |
 | `manifest.description` | 包说明。最长 500 字符。 |
 | `targets` | 包生效的 Surface。至少 1 项。 |
 | `css` | CSS 源码。单包上限 256 KiB。 |
 | `js` | JavaScript 源码。纯主题包应留空。 |
+| `channelCapabilities` | 可选频道能力数组，默认 `[]`；旧包不会自动获得频道能力。能力名复用 [频道嵌入 API](../channel-embed-api-developer-guide.md)。 |
 
 CSS 和 JavaScript 合计最多 384 KiB。一个平台或世界最多保存 50 个自定义包；内置引用不计入该配额。
 
 导入文件不携带数据库 ID、worldId、scope、审计字段、脚本 hash 和用户信任状态。导入目标由当前管理入口决定。平台管理中导入会创建平台包，世界管理中导入会创建当前世界的包。
+
+### 世界脚本访问当前频道
+
+`sc.apiVersion` 为 `2`，V1 的 `context`、`cleanup`、`on`、`navigate`、`notify`、监听和定时器 API 继续可用。`sc.channel()` 在无有效登录频道时返回 `null`，有频道时返回 Channel Extension Context 的 client。它与真实 iForm 共用 dispatcher、权限过滤、storage 同步及 SDK 方法；不会创建隐藏 iframe 或 iForm。
+
+client 提供 `context`、`user/member/members`、`characters`、`characterCard`、`permissions`、`channel`、`connection`、`storage`、`events`、`attachments`、`messages`，方法参数与频道嵌入 API 相同。只有注入相应 Theater provider 的 Context 才提供 Theater 能力；普通世界脚本不隐式获得 provider。
+
+包声明、Context 实际提供的能力及当前用户真实权限共同决定 effective capabilities。`messages.send`、`characterCard.write`、`storage.write`、`events.publish` 和 `attachments.upload` 都属于写能力，observer/read-only 不可用。只有 `messages.send`、`storage.write` 和 `events.publish` 额外要求频道文本发送权限；`characterCard.write` 与 `attachments.upload` 不依赖频道发言权限，但仍要求有效频道成员身份和对应业务条件。管理编辑器和信任提示会标明写能力。`allowWorldJs` 继续作为世界脚本总闸门；服务端每次 storage、events 及扩展消息操作都读取实际包，校验启用、JS、世界归属、策略和能力声明。
+
+浏览器信任绑定 package ID 与稳定的 `runtimeFingerprint`（规范化 JS hash + 排序后的能力列表）。新增、删除或更改能力都需要重新确认；仅调整能力顺序不改变指纹。空能力旧包沿用 `jsHash` 身份，兼容已有浏览器信任。信任并非权限授予，且同源脚本仍不是安全沙箱。
+
+最小世界脚本包声明 `channelCapabilities: ["context.read", "storage.read"]`，JavaScript 可写为：
+
+```js
+const channel = sc.channel()
+if (channel) {
+  const context = await channel.context.get()
+  const board = await channel.storage.get('board')
+  sc.notify('info', context.channel.name + ': ' + JSON.stringify(board?.value ?? null))
+  channel.storage.onChanged(change => console.log(change))
+}
+```
+
+Context 会在频道、世界、用户/登录状态切换、安全模式和脚本卸载时立即 dispose；旧 client 不可继续使用。切换期间运行时尚未确认新频道时返回 `null`；确认后，保留运行的脚本可重新调用 `sc.channel()` 获取新 client。额外 DOM 资源仍用 `sc.cleanup(fn)` 清理。
+
+Storage 按 `channel + scopeType + scopeId` 隔离。界面包使用稳定的 `uic_ + SHA-256(packageId)` 内部 namespace key，同一包在不同频道间隔离，不同包与 iForm 互相隔离。数据继续存放原有 `channel_iform_storage_namespaces/documents`，无需迁移 iForm 数据。更新、停用包保留数据；删除包在同一数据库事务中清理其所有频道的 extension storage。revision、seq、TTL、2 MiB namespace 配额、256 文档及 64 KiB 单值上限沿用原实现。
+
+Events 按 `channel + scopeType + scopeId + topic` 隔离，同一包可在不同用户之间通信；不能借 topic 访问另一包或 iForm。storage gateway 事件只包含元数据，值由共享 Context 授权读取，seq 缺口自动获取快照并产生 `resynced`。
+
+频道能力可以按权限要求分成几组。`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`permissions.read`、`storage.read` 和 `events.subscribe` 是读取或订阅能力。`characterCard.write` 与 `attachments.upload` 是写能力，但不要求频道文本发送权限。`storage.write`、`events.publish` 和 `messages.send` 同时要求频道文本发送权限。`theater.dialogue.subscribe` 与 `theater.character.read` 还要求宿主注入对应 Theater provider；普通世界脚本不会注入，所以即使包声明这两项，它们通常也不会出现在 effective capabilities 中。
 
 ## 4. Surface
 
@@ -591,15 +624,16 @@ SealChat 同时运行在桌面浏览器、移动浏览器和嵌入容器中。
 
 ## 21. 主题示例包（CSS + JavaScript）
 
-本目录保留三个完整主题包。它们演示了在稳定 hook 之上做整体换肤，并用脚本添加装饰层和交互效果；消息正文保持默认字号与高对比。
+本目录保留三个完整视觉主题，并额外提供一个频道能力 API 测试主题。视觉主题演示在稳定 hook 之上做整体换肤，并用脚本添加装饰层和交互效果；消息正文保持默认字号与高对比。
 
 | 主题 | 可导入文件 | 源码 | 夜间 / 日间 |
 | --- | --- | --- | --- |
 | 赛博朋克 · NEON//RUNNER 霓虹夜行 | `sealchat-ui-package-neon-runner.json` | `theme-neon-runner.css` / `.js` | 霓虹夜行 / 镀铬白昼 |
 | 克苏鲁的呼唤 · R'LYEH ARCHIVE 拉莱耶档案馆 | `sealchat-ui-package-rlyeh-archive.json` | `theme-rlyeh-archive.css` / `.js` | 深渊 / 档案 |
 | TRIANGLE AGENCY 三角机构 | `sealchat-ui-package-triangle-agency.json` | `theme-triangle-agency.css` / `.js` | 加班时间 / 办公时间 |
+| CHANNEL API LAB · Windows 97 | `sealchat-ui-package-channel-api-lab-win97.json` | `theme-channel-api-lab-win97.css` / `.js` | Windows 97 API 测试界面 |
 
-所有包都使用 `"targets": ["global", "observer", "embed", "log-public"]`，并同时支持紧凑布局、气泡布局和 640 px 以下窄屏。
+三个视觉主题使用 `"targets": ["global", "observer", "embed", "log-public"]`，并同时支持紧凑布局、气泡布局和 640 px 以下窄屏。CHANNEL API LAB 只使用 `"targets": ["chat"]`，因为 `sc.channel()` 需要有效登录频道上下文。
 
 脚本效果：
 
@@ -617,6 +651,18 @@ SealChat 同时运行在桌面浏览器、移动浏览器和嵌入容器中。
 CSS 不依赖脚本，可以单独使用。导入为平台包时脚本直接运行。导入为世界包时，脚本还需要平台开启 `allowWorldJs`，并由每个浏览器单独信任；未信任时只生效 CSS。
 
 字体只使用本机字体栈，不加载远程字体。
+
+## 22. CHANNEL API LAB · Windows 97 测试包
+
+`theme-channel-api-lab-win97.css` / `theme-channel-api-lab-win97.js` 与 `sealchat-ui-package-channel-api-lab-win97.json` 用于人工验证 `sc.channel()`。这个包声明当前全部频道能力，并在聊天页右下角创建 Windows 97 风格测试窗。测试窗会显示当前 effective capabilities，并记录 API 返回值和事件。
+
+推荐把它导入到测试世界。平台需要开启世界 JavaScript。启用包后，浏览器会按完整 capability 列表要求重新确认信任。进入普通频道后，先点“检测全部只读 API”。这个操作只读取 Context、账号、成员、角色、人物卡、权限、连接、Storage 和 Event 订阅，不发送消息，也不修改人物卡。
+
+Storage 写入、事件发布、消息发送、人物卡写入和图片上传都放在独立按钮后。消息测试会真实发送一条 OOC 消息；人物卡写入只在输入非空 JSON 对象后执行；图片上传要求手动选择文件。Storage 使用固定测试 key `channel-api-lab.win97`，可以在同一面板删除。
+
+权限测试时可以撤销当前用户的频道文本发送权限。此时 `messages.send`、`storage.write` 和 `events.publish` 应变为不可用；`characterCard.write` 与 `attachments.upload` 不应因为缺少文本发送权限而消失。切换 observer/read-only 后，所有写能力都应不可用。
+
+普通世界脚本没有 Theater provider。`theater.dialogue.subscribe` 与 `theater.character.read` 在测试窗中显示 `NO PROVIDER` 属于预期结果，不代表 capability 声明失效。
 
 修改 `theme-*.css` 或 `theme-*.js` 后，运行下面的命令重新生成 JSON：
 

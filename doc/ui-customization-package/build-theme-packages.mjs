@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const dir = dirname(fileURLToPath(import.meta.url))
 const TARGETS = ['global', 'observer', 'embed', 'log-public']
+const CHANNEL_CAPABILITIES = ['context.read', 'user.read', 'members.read', 'world.admins.read', 'characters.read', 'characterCard.read', 'characterCard.write', 'permissions.read', 'storage.read', 'storage.write', 'events.subscribe', 'events.publish', 'messages.send', 'attachments.upload', 'theater.dialogue.subscribe', 'theater.character.read']
 
 const THEMES = [
   {
@@ -23,6 +24,14 @@ const THEMES = [
     name: 'TRIANGLE AGENCY 三角机构',
     description: '《三角机构》办公室新怪谈主题：员工手册式白纸、黑色细线与机构红三角，等宽编号，剧透显示为涂黑。脚本提供顶栏工牌 HUD（时钟、按频道累计的混沌计数）、6d4 判定解析（出 3 的成功数、混沌、三重升华不增加混沌）与极低频率的内部备忘。日间「办公时间」，夜间「加班时间」。',
   },
+  {
+    slug: 'channel-api-lab-win97',
+    name: 'CHANNEL API LAB · Windows 97',
+    description: '频道能力 API 测试主题。只在聊天 Surface 生效，使用 Windows 97 风格浮窗直观显示 effective capabilities，并提供只读 API 批量检测、Storage、Events、消息发送、人物卡写入和图片上传测试。写操作必须由用户手动触发。普通世界脚本没有 Theater provider，因此对应两项能力预期显示为不可用。',
+    runtimeApiVersion: 2,
+    targets: ['chat'],
+    channelCapabilities: CHANNEL_CAPABILITIES,
+  },
 ]
 
 for (const theme of THEMES) {
@@ -31,9 +40,10 @@ for (const theme of THEMES) {
   const doc = {
     format: 'sealchat.ui-package',
     formatVersion: 1,
-    runtimeApiVersion: 1,
+    runtimeApiVersion: theme.runtimeApiVersion ?? 1,
     manifest: { name: theme.name, description: theme.description },
-    targets: TARGETS,
+    targets: theme.targets ?? TARGETS,
+    ...(theme.channelCapabilities ? { channelCapabilities: theme.channelCapabilities } : {}),
     css: readFileSync(cssPath, 'utf8'),
     js: existsSync(jsPath) ? readFileSync(jsPath, 'utf8') : '',
   }
