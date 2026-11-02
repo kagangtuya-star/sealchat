@@ -1,6 +1,7 @@
 import type { ScriptPackage } from './jsRuntime'
 import type { TrustStore, TrustSubject } from './trust'
 import type { RuntimePackage } from './types'
+import { runtimeFingerprint } from './fingerprint'
 
 export type PendingWorldScript = TrustSubject
 
@@ -11,11 +12,12 @@ interface ScriptRuntimeLike {
 
 const toScript = (p: RuntimePackage): ScriptPackage => ({
   id: p.id, scopeType: p.scopeType, name: p.name, js: p.js || '', jsHash: p.jsHash || '',
+  runtimeFingerprint: runtimeFingerprint(p), channelCapabilities: p.channelCapabilities || [],
 })
 
 // Decides which server-approved scripts may run in this browser. Platform
 // scripts run directly; world scripts additionally need a trust decision for
-// their exact packageId + jsHash. Untrusted, undecided ones become pending.
+// their exact packageId + runtime fingerprint. Undecided ones become pending.
 export function createScriptController({
   runtime,
   trust,
@@ -31,7 +33,7 @@ export function createScriptController({
   let worldId = ''
   // "Later" only hides a prompt until this page is reloaded.
   const postponed = new Set<string>()
-  const key = (p: { id: string; jsHash?: string }) => `${p.id}:${p.jsHash || ''}`
+  const key = (p: { id: string; jsHash?: string; runtimeFingerprint?: string }) => `${p.id}:${runtimeFingerprint(p)}`
 
   const evaluate = () => {
     const runnable: ScriptPackage[] = []
@@ -40,9 +42,9 @@ export function createScriptController({
       if (!p.js || !p.jsHash) continue
       if (p.scopeType === 'platform') { runnable.push(toScript(p)); continue }
       if (!p.requiresTrust) continue
-      const decision = trust.decisionOf(p.id, p.jsHash)
+      const decision = trust.decisionOf(p.id, runtimeFingerprint(p))
       if (decision === 'trusted') runnable.push(toScript(p))
-      else if (!decision && !postponed.has(key(p))) pending.push({ id: p.id, jsHash: p.jsHash, name: p.name, worldId })
+      else if (!decision && !postponed.has(key(p))) pending.push({ id: p.id, jsHash: p.jsHash, runtimeFingerprint: runtimeFingerprint(p), channelCapabilities: p.channelCapabilities || [], name: p.name, worldId })
     }
     onPending(pending)
     return runtime.reconcile(runnable)
@@ -50,7 +52,7 @@ export function createScriptController({
 
   const subjects = (ids: string[]) => last
     .filter(p => p.scopeType === 'world' && p.js && p.jsHash && ids.includes(p.id))
-    .map(p => ({ id: p.id, jsHash: p.jsHash!, name: p.name, worldId }))
+    .map(p => ({ id: p.id, jsHash: p.jsHash!, runtimeFingerprint: runtimeFingerprint(p), channelCapabilities: p.channelCapabilities || [], name: p.name, worldId }))
 
   return {
     apply(packages: RuntimePackage[], interim = false) {

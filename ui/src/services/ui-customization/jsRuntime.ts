@@ -1,10 +1,12 @@
 import type { UIRuntimeSurface } from './surfaces'
 import type { UICustomizationScopeType } from './types'
+import type { ChannelEmbedClient } from '@/bridge/channelEmbedSdk'
+import { runtimeFingerprint } from './fingerprint'
 
 // Custom scripts run in the same origin as SealChat. Blob modules only give
 // each package its own module scope and lifecycle; they are NOT a sandbox.
 
-export const UI_CUSTOMIZATION_API_VERSION = 1 as const
+export const UI_CUSTOMIZATION_API_VERSION = 2 as const
 
 export const UI_CUSTOMIZATION_EVENTS = [
   'surface-change', 'world-change', 'channel-change', 'theme-change',
@@ -28,6 +30,7 @@ export interface SealChatCustomizationAPI {
   readonly apiVersion: typeof UI_CUSTOMIZATION_API_VERSION
   readonly packageId: string
   context(): UICustomizationScriptContext
+  channel(): ChannelEmbedClient | null
   cleanup(fn: Cleanup): void
   on(event: UICustomizationEvent, handler: (payload: unknown) => void): () => void
   navigate(target: string): Promise<void>
@@ -45,10 +48,13 @@ export interface ScriptPackage {
   name: string
   js: string
   jsHash: string
+  runtimeFingerprint?: string
+  channelCapabilities?: string[]
 }
 
 export interface ScriptHost {
   context(): UICustomizationScriptContext
+  channel?(pkg: ScriptPackage): ChannelEmbedClient | null
   subscribe(event: UICustomizationEvent, handler: (payload: unknown) => void): () => void
   navigate(target: string): Promise<void>
   notify(type: NotifyType, message: string): void
@@ -61,6 +67,8 @@ interface ActiveScript {
   pkg: ScriptPackage
   cleanups: Cleanup[]
   disposed: boolean
+  superseded?: boolean
+  channel?: ChannelEmbedClient | null
 }
 
 // A body that already uses module syntax is loaded as-is; otherwise it is
@@ -86,10 +94,13 @@ export function createScriptRuntime(host: ScriptHost) {
   let queue: Promise<void> = Promise.resolve()
   let latest: ScriptPackage[] | null = null
   let disposed = false
+  let invalidatingChannels = false
   const timers = host.window || globalThis
 
   const runCleanups = async (entry: ActiveScript) => {
     entry.disposed = true
+    entry.channel?.close()
+    entry.channel = null
     // LIFO, and one failing cleanup never blocks the rest.
     while (entry.cleanups.length) {
       const fn = entry.cleanups.pop()!
@@ -120,6 +131,15 @@ export function createScriptRuntime(host: ScriptHost) {
       apiVersion: UI_CUSTOMIZATION_API_VERSION,
       packageId: entry.pkg.id,
       context: () => ({ ...host.context() }),
+      channel: () => {
+        if (entry.disposed || invalidatingChannels) return null
+        if (!entry.channel) {
+          entry.channel = host.channel?.(entry.pkg) || null
+          const client = entry.channel
+          client?.onClosed(() => { if (entry.channel === client) entry.channel = null })
+        }
+        return entry.channel
+      },
       cleanup(fn: Cleanup) {
         if (typeof fn !== 'function') throw new TypeError('sc.cleanup expects a function')
         register(fn)
@@ -181,7 +201,7 @@ export function createScriptRuntime(host: ScriptHost) {
     // Unload in reverse installation order (world before platform).
     for (const [id, entry] of [...active].reverse()) {
       const next = wanted.get(id)
-      if (!next || next.jsHash !== entry.pkg.jsHash || next.js !== entry.pkg.js) {
+      if (entry.superseded || !next || runtimeFingerprint(next) !== runtimeFingerprint(entry.pkg) || next.js !== entry.pkg.js) {
         active.delete(id)
         await runCleanups(entry)
       }
@@ -197,14 +217,35 @@ export function createScriptRuntime(host: ScriptHost) {
     reconcile(packages: ScriptPackage[]): Promise<void> {
       if (disposed) return queue
       const desired = packages.filter(p => p.js)
+      const wanted = new Map(desired.map(p => [p.id, p]))
+      for (const [id, entry] of active) {
+        const next = wanted.get(id)
+        if (!next || runtimeFingerprint(next) !== runtimeFingerprint(entry.pkg) || next.js !== entry.pkg.js) {
+          entry.superseded = true
+          entry.disposed = true
+          entry.channel?.close()
+          entry.channel = null
+        }
+      }
       latest = desired
       // Serialized: each run disposes before activating; superseded runs stop early.
       queue = queue.then(() => (latest === desired && !disposed ? sync(desired) : undefined))
       return queue
     },
     activeIds: () => [...active].filter(([, e]) => !e.disposed).map(([id]) => id),
+    invalidateChannelContexts() {
+      invalidatingChannels = true
+      try {
+        for (const entry of active.values()) {
+          const client = entry.channel
+          entry.channel = null
+          client?.close()
+        }
+      } finally { invalidatingChannels = false }
+    },
     dispose(): Promise<void> {
       if (disposed) return queue
+      for (const entry of active.values()) { entry.disposed = true; entry.channel?.close(); entry.channel = null }
       latest = []
       const done = queue.then(() => sync([]))
       disposed = true

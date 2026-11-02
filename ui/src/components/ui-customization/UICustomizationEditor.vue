@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useDialog } from 'naive-ui'
+import { CHANNEL_EXTENSION_CAPABILITIES, isChannelExtensionWriteCapability } from '@/bridge/channelExtensionCapabilities'
 import { UI_PUBLIC_SURFACES, UI_SURFACE_LABELS, surfaceCoveredByGlobal, UI_SURFACES, type UISurface } from '@/services/ui-customization/surfaces'
 import type { UICustomizationPackage, UICustomizationPackageInput, UICustomizationScopeType } from '@/services/ui-customization/types'
 
@@ -24,14 +25,14 @@ const emit = defineEmits<{
 
 const dialog = useDialog()
 
-interface Draft { name: string; description: string; enabled: boolean; surfaces: UISurface[]; css: string; js: string }
-const emptyDraft = (): Draft => ({ name: '', description: '', enabled: true, surfaces: ['chat'], css: '', js: '' })
+interface Draft { name: string; description: string; enabled: boolean; surfaces: UISurface[]; css: string; js: string; channelCapabilities: string[] }
+const emptyDraft = (): Draft => ({ name: '', description: '', enabled: true, surfaces: ['chat'], css: '', js: '', channelCapabilities: [] })
 const draft = ref<Draft>(emptyDraft())
 const baseline = ref('')
 const codeTab = ref<'css' | 'js'>('css')
 
 const fromPackage = (pkg: UICustomizationPackage | null): Draft => pkg
-  ? { name: pkg.name, description: pkg.description, enabled: pkg.enabled, surfaces: [...pkg.surfaces], css: pkg.css, js: pkg.js }
+  ? { name: pkg.name, description: pkg.description, enabled: pkg.enabled, surfaces: [...pkg.surfaces], css: pkg.css, js: pkg.js, channelCapabilities: [...(pkg.channelCapabilities || [])] }
   : emptyDraft()
 
 watch(() => [props.show, props.pkg] as const, ([show]) => {
@@ -93,7 +94,7 @@ const submit = () => {
   const surfaces = d.surfaces.includes('global')
     ? d.surfaces.filter(s => s === 'global' || !surfaceCoveredByGlobal(s))
     : d.surfaces
-  const input: UICustomizationPackageInput = { name: d.name.trim(), description: d.description.trim(), enabled: d.enabled, surfaces, css: d.css }
+  const input: UICustomizationPackageInput = { name: d.name.trim(), description: d.description.trim(), enabled: d.enabled, surfaces, css: d.css, channelCapabilities: [...d.channelCapabilities] }
   // Only send JS when it changed, so a closed world policy never sees a write.
   if (!props.pkg || d.js !== savedJS.value) input.js = d.js
   emit('save', input)
@@ -102,7 +103,7 @@ const submit = () => {
 const jsRiskText = computed(() => props.scopeType === 'world'
   ? '世界脚本会在成员浏览器中执行。平台必须允许世界脚本，成员也需要信任当前脚本版本。'
   : '平台脚本会在匹配页面执行。请只保存你信任的代码。')
-const jsPlaceholder = `// 直接书写脚本正文，sc 为 SealChat 提供的脚本 API（版本 1）
+const jsPlaceholder = `// 直接书写脚本正文，sc 为 SealChat 提供的脚本 API（版本 2，兼容版本 1）
 const banner = document.createElement('div')
 banner.textContent = '欢迎来到 ' + sc.context().surface
 document.body.append(banner)
@@ -222,9 +223,17 @@ sc.on('message-created', (msg) => console.log(msg.contentText))`
                 :placeholder="jsLocked ? '' : jsPlaceholder"
               />
               <n-collapse class="sc-uic-editor__api">
-                <n-collapse-item title="脚本 API 速查（sc.apiVersion = 1）" name="api">
+                <n-collapse-item title="频道能力" name="capabilities">
+                  <div class="sc-uic-editor__capability-actions">
+                    <n-button size="tiny" secondary :disabled="draft.channelCapabilities.length === CHANNEL_EXTENSION_CAPABILITIES.length" @click="draft.channelCapabilities = [...CHANNEL_EXTENSION_CAPABILITIES]">全部授予</n-button>
+                  </div>
+                  <n-select v-model:value="draft.channelCapabilities" multiple clearable :options="CHANNEL_EXTENSION_CAPABILITIES.map(value => ({ value, label: value + (isChannelExtensionWriteCapability(value) ? ' · 写能力' : '') }))" placeholder="选择脚本需要的频道能力" />
+                  <div class="sc-uic-editor__hint">声明能力与当前频道权限共同决定实际可用 API。修改能力后，成员需要重新确认信任。</div>
+                </n-collapse-item>
+                <n-collapse-item title="脚本 API 速查（sc.apiVersion = 2）" name="api">
                   <ul class="sc-uic-editor__api-list">
                     <li><code>sc.context()</code> 当前 surface、worldId、channelId、observer、palette</li>
+                    <li><code>sc.channel()</code> 当前频道扩展 client；无有效频道时返回 null，切换或卸载时自动销毁</li>
                     <li><code>sc.cleanup(fn)</code> 注册卸载回调；也可以在模块中 <code>export default function activate(sc) { return () =&gt; {} }</code></li>
                     <li><code>sc.on(event, handler)</code> 事件：surface-change、world-change、channel-change、theme-change、message-created、message-updated、message-deleted</li>
                     <li><code>sc.navigate('/path')</code> 站内跳转；<code>sc.notify('info', '文本')</code> 提示</li>
@@ -295,6 +304,7 @@ sc.on('message-created', (msg) => console.log(msg.contentText))`
 }
 .sc-uic-editor__risk { margin-bottom: 8px; }
 .sc-uic-editor__api { margin-top: 8px; }
+.sc-uic-editor__capability-actions { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 .sc-uic-editor__api-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--sc-text-secondary, #475569); }
 .sc-uic-editor__footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; width: 100%; }
 .sc-uic-editor__footer > :first-child { margin-right: auto; }

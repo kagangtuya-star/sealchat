@@ -6,6 +6,9 @@ import { chatEvent, useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
+import { useCharacterCardStore } from '@/stores/characterCard'
+import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot'
+import { createChannelExtensionClient } from '@/bridge/channelExtensionClient'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { buildBridgeMessagePayload } from '@/bridge/sealchatBridgeSerializer'
 import { loadUICustomizations } from './api'
@@ -101,6 +104,19 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
     notice[method](text)
   }
   const scriptRuntime = createScriptRuntime({
+    channel(pkg) {
+      const ctx = effectiveContext()
+      const userId = user.info.id
+      const token = user.token
+      const key = runtimeContextKey(ctx)
+      if (!resolvedRuntimeContext || !ctx.channelId || !ctx.worldId || !userId || String(chat.curChannel?.id || '') !== ctx.channelId || chat.currentWorldId !== ctx.worldId || document.documentElement.dataset.scSafeUi === 'true') return null
+      return createChannelExtensionClient({
+        chat, user, characterCard: useCharacterCardStore(pinia), characterSnapshot: useChannelCharacterSnapshotStore(pinia),
+        scope: { type: 'ui-customization', id: pkg.id }, capabilities: pkg.channelCapabilities || [],
+        worldId: ctx.worldId, channelId: ctx.channelId, readOnly: () => effectiveContext().observer,
+        isCurrent: () => user.info.id === userId && user.token === token && runtimeContextKey(effectiveContext()) === key && document.documentElement.dataset.scSafeUi !== 'true',
+      })
+    },
     context: () => {
       const ctx = effectiveContext()
       return { surface: ctx.surface, worldId: ctx.worldId, channelId: ctx.channelId, observer: ctx.observer, palette: display.palette }
@@ -175,6 +191,7 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
     document.documentElement.dataset.scSurface = context.surface
     document.documentElement.dataset.scObserver = String(context.observer)
     document.documentElement.dataset.scSafeUi = String(safe)
+    if (safe) { resolvedRuntimeContext = null; scriptRuntime.invalidateChannelContexts() }
     return runtime.reconcile(context, safe, `${user.info.id || ''}:${user.token || ''}`)
   }
   const scheduleRefresh = () => {
@@ -184,7 +201,7 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
   }
   const stopContext = watch(() => JSON.stringify({
     context: resolve(), user: user.info.id, token: user.token, policy: utils.config?.uiCustomization,
-  }), scheduleRefresh, { flush: 'sync' })
+  }), () => { resolvedRuntimeContext = null; scriptRuntime.invalidateChannelContexts(); scheduleRefresh() }, { flush: 'sync' })
   const stopTheme = watch(() => [display.palette, display.layout], () => {
     document.documentElement.dataset.scPalette = display.palette
     document.documentElement.dataset.scLayout = display.layout

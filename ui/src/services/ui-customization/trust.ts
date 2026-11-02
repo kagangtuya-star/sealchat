@@ -7,6 +7,7 @@ export const UI_CUSTOMIZATION_TRUST_KEY = 'sealchat.uiCustomization.trust.v1'
 export type TrustDecision = 'trusted' | 'denied'
 
 export interface TrustEntry {
+  runtimeFingerprint?: string
   jsHash: string
   decision?: TrustDecision
   trustedAt?: number
@@ -16,6 +17,8 @@ export interface TrustEntry {
 }
 
 export interface TrustSubject {
+  runtimeFingerprint?: string
+  channelCapabilities?: string[]
   id: string
   jsHash: string
   worldId: string
@@ -38,7 +41,7 @@ export function createTrustStore(storage: StorageLike | null, now: () => number 
   }
   const decisionOf = (id: string, jsHash: string): TrustDecision | null => {
     const entry = read()[id]
-    if (!entry || typeof entry !== 'object' || !jsHash || entry.jsHash !== jsHash) return null
+    if (!entry || typeof entry !== 'object' || !jsHash || (entry.runtimeFingerprint || entry.jsHash) !== jsHash) return null
     return entry.decision === 'denied' ? 'denied' : 'trusted'
   }
   const decide = (subjects: TrustSubject[], decision: TrustDecision) => {
@@ -46,9 +49,10 @@ export function createTrustStore(storage: StorageLike | null, now: () => number 
     const at = now()
     for (const s of subjects) {
       if (!s.id || !s.jsHash) continue
+      const fingerprint = s.runtimeFingerprint && s.runtimeFingerprint !== s.jsHash ? { runtimeFingerprint: s.runtimeFingerprint } : {}
       data[s.id] = decision === 'trusted'
-        ? { jsHash: s.jsHash, decision, trustedAt: at, worldId: s.worldId, name: s.name }
-        : { jsHash: s.jsHash, decision, deniedAt: at, worldId: s.worldId, name: s.name }
+        ? { jsHash: s.jsHash, ...fingerprint, decision, trustedAt: at, worldId: s.worldId, name: s.name }
+        : { jsHash: s.jsHash, ...fingerprint, decision, deniedAt: at, worldId: s.worldId, name: s.name }
     }
     write(data)
   }

@@ -309,6 +309,8 @@ type ChannelIFormBridgePolicy struct {
 }
 
 type ChannelIFormEmbedEventPayload struct {
+	ScopeType string `json:"scopeType,omitempty"`
+	ScopeID   string `json:"scopeId,omitempty"`
 	EventID   string `json:"eventId"`
 	ChannelID string `json:"channelId"`
 	FormID    string `json:"formId"`

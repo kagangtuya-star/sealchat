@@ -16,6 +16,7 @@ export interface UIPackageDocument {
   targets: UISurface[]
   css: string
   js: string
+  channelCapabilities?: string[]
 }
 
 export interface UIBundleDocument {
@@ -25,7 +26,7 @@ export interface UIBundleDocument {
   packages: UIPackageDocument[]
 }
 
-type ExportSource = Pick<UICustomizationPackage, 'name' | 'description' | 'surfaces' | 'css' | 'js'>
+type ExportSource = Pick<UICustomizationPackage, 'name' | 'description' | 'surfaces' | 'css' | 'js' | 'channelCapabilities'>
 
 export function buildPackageDocument(pkg: ExportSource): UIPackageDocument {
   return {
@@ -36,6 +37,7 @@ export function buildPackageDocument(pkg: ExportSource): UIPackageDocument {
     targets: [...pkg.surfaces],
     css: pkg.css || '',
     js: pkg.js || '',
+    channelCapabilities: [...(pkg.channelCapabilities || [])],
   }
 }
 

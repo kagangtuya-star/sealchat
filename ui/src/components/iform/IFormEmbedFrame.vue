@@ -38,11 +38,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import type { ChannelIForm } from '@/types/iform';
-import { useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
 import { urlBase } from '@/stores/_config';
+import { createChannelEmbedTheaterDialogue } from '@/bridge/channelEmbedTheaterDialogue';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { createChannelEmbedHost, type ChannelEmbedTheaterCharacterSource, type ChannelEmbedTheaterEventSink, type ChannelEmbedTheaterContext } from '@/bridge/channelEmbedHost';
 
 const props = defineProps<{ form?: ChannelIForm | null; enableChannelEmbed?: boolean; channelId?: string | null; theaterCharacterSource?: ChannelEmbedTheaterCharacterSource; theaterEventSink?: ChannelEmbedTheaterEventSink; theaterContext?: ChannelEmbedTheaterContext }>();
@@ -175,6 +177,7 @@ const setupChannelEmbed = async () => {
     worldId: String(chat.currentWorldId || ''),
     channelId: props.channelId,
     theaterCharacterSource: props.theaterCharacterSource,
+    theaterDialogueSource: createChannelEmbedTheaterDialogue(chatEvent, resolveAttachmentUrl),
     theaterEventSink: props.theaterEventSink,
     theaterContext: props.theaterContext,
   });

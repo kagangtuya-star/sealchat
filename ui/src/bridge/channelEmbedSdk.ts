@@ -25,6 +25,14 @@ export class SealChatEmbedError extends Error {
 type EventHandler = (payload: any, event?: EmbedEvent) => void
 type ClosedHandler = (event?: EmbedEvent) => void
 
+// The local customization adapter implements this without a DOM or MessageChannel.
+export interface ChannelClientTransport {
+  onmessage: ((message: MessageEvent) => void) | null
+  postMessage(value: unknown): void
+  start?(): void
+  close(): void
+}
+
 export type EmbedMemberListScope = 'online' | 'guild' | 'world-admins'
 export type EmbedWorldRole = 'owner' | 'admin' | 'member' | 'spectator'
 export interface EmbedSafeMember {
@@ -102,7 +110,7 @@ export interface EmbedTheaterCharacterSnapshot {
 }
 
 export class ChannelEmbedClient {
-  private readonly port: MessagePort
+  private readonly port: ChannelClientTransport
   private readonly sessionId: string
   private contextVersion: number
   private requestCounter = 0
@@ -112,13 +120,14 @@ export class ChannelEmbedClient {
   private storageSeq = 0
   private storageResyncing = false
   private closed = false
-  readonly capabilities: readonly string[]
+  private currentCapabilities: string[]
+  get capabilities(): readonly string[] { return this.currentCapabilities }
 
-  constructor(port: MessagePort, sessionId: string, contextVersion: number, capabilities: string[] = []) {
+  constructor(port: ChannelClientTransport, sessionId: string, contextVersion: number, capabilities: string[] = []) {
     this.port = port
     this.sessionId = sessionId
     this.contextVersion = contextVersion
-    this.capabilities = [...capabilities]
+    this.currentCapabilities = [...capabilities]
     port.onmessage = (message) => this.handleMessage(message.data)
     port.start?.()
   }
@@ -137,6 +146,8 @@ export class ChannelEmbedClient {
       return
     }
     if (data.type === CHANNEL_EMBED_EVENT && data.sessionId === this.sessionId && typeof data.topic === 'string') {
+      if (data.topic === 'context.changed' && Array.isArray(data.payload?.capabilities)) this.currentCapabilities = [...data.payload.capabilities]
+      if (data.topic === 'capabilities.changed' && Array.isArray(data.payload)) this.currentCapabilities = [...data.payload]
       if (typeof (data as any).contextVersion === 'number') this.contextVersion = (data as any).contextVersion
       if (data.topic === 'session.closed') {
         this.close(data as EmbedEvent)

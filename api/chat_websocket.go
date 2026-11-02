@@ -1642,6 +1642,27 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "channel.member.list": // 自设API: 获取频道成员
 						apiWrap(ctx, msg, apiChannelMemberList)
 						solved = true
+					case "channel.extension.storage.get":
+						apiWrap(ctx, msg, apiChannelExtensionStorageGet)
+						solved = true
+					case "channel.extension.storage.set":
+						apiWrap(ctx, msg, apiChannelExtensionStorageSet)
+						solved = true
+					case "channel.extension.storage.delete":
+						apiWrap(ctx, msg, apiChannelExtensionStorageDelete)
+						solved = true
+					case "channel.extension.storage.list":
+						apiWrap(ctx, msg, apiChannelExtensionStorageList)
+						solved = true
+					case "channel.extension.storage.snapshot":
+						apiWrap(ctx, msg, apiChannelExtensionStorageSnapshot)
+						solved = true
+					case "channel.extension.events.publish":
+						apiWrap(ctx, msg, apiChannelExtensionEventPublish)
+						solved = true
+					case "channel.extension.events.subscribe":
+						apiWrap(ctx, msg, apiChannelExtensionEventSubscribe)
+						solved = true
 					case "iform.storage.get":
 						apiWrap(ctx, msg, apiIFormStorageGet)
 						solved = true

@@ -27,10 +27,12 @@ type UICustomizationRuntimePackage struct {
 	CreatedAt int64  `json:"createdAt"`
 	CSS       string `json:"css"`
 	// JS is empty whenever the script may not run in this context. World
-	// scripts additionally require per-browser trust of packageId + jsHash.
-	JS            string `json:"js"`
-	JSHash        string `json:"jsHash"`
-	RequiresTrust bool   `json:"requiresTrust"`
+	// scripts additionally require per-browser trust of packageId + runtime fingerprint.
+	JS                  string   `json:"js"`
+	JSHash              string   `json:"jsHash"`
+	RequiresTrust       bool     `json:"requiresTrust"`
+	ChannelCapabilities []string `json:"channelCapabilities"`
+	RuntimeFingerprint  string   `json:"runtimeFingerprint"`
 }
 
 // uiSurfaceCoveredByGlobal lists the ordinary surfaces a global target
@@ -209,6 +211,7 @@ func ResolveUICustomizations(ctx UICustomizationContext, actorID string, policy 
 			item := UICustomizationRuntimePackage{
 				ID: m.ID, Ref: m.ID, Origin: "user", ScopeType: m.ScopeType, Name: m.Name,
 				SortOrder: m.SortOrder, CreatedAt: m.CreatedAt.UnixMilli(), CSS: css,
+				ChannelCapabilities: uiCustomizationChannelCapabilities(&m),
 			}
 			if m.BuiltinKey != "" {
 				item.Ref = BuiltinUICustomizationRefPrefix + m.BuiltinKey
@@ -218,6 +221,7 @@ func ResolveUICustomizations(ctx UICustomizationContext, actorID string, policy 
 			if scope.Type == "platform" || worldJS {
 				item.JS = js
 				item.JSHash = UICustomizationJSHash(js)
+				item.RuntimeFingerprint = UICustomizationRuntimeFingerprint(js, item.ChannelCapabilities)
 				item.RequiresTrust = scope.Type == "world" && js != ""
 			}
 			result.Packages = append(result.Packages, item)
@@ -258,6 +262,7 @@ func ResolveUICustomizations(ctx UICustomizationContext, actorID string, policy 
 						ID: m.ID, Ref: m.ID, Origin: "user", ScopeType: "platform", Name: m.Name,
 						SortOrder: m.SortOrder, CreatedAt: m.CreatedAt.UnixMilli(), CSS: m.CSS,
 						JS: m.JS, JSHash: UICustomizationJSHash(m.JS),
+						ChannelCapabilities: uiCustomizationChannelCapabilities(&m), RuntimeFingerprint: UICustomizationRuntimeFingerprint(m.JS, uiCustomizationChannelCapabilities(&m)),
 					})
 					seenPlatformPackages[m.ID] = true
 				}

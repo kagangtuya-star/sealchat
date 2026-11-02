@@ -187,6 +187,9 @@ async function testInstaller() {
     '@/stores/user': { useUserStore: () => user },
     '@/stores/display': { useDisplayStore: () => display },
     '@/stores/utils': { useUtilsStore: () => utils },
+    '@/stores/characterCard': { useCharacterCardStore: () => ({}) },
+    '@/stores/channelCharacterSnapshot': { useChannelCharacterSnapshotStore: () => ({}) },
+    '@/bridge/channelExtensionClient': { createChannelExtensionClient: () => { throw new Error('CSS-only fixture must not open a channel client') } },
     './api': { loadUICustomizations: async ctx => {
       requests.push(ctx)
       const worldId = ctx.surface === 'log-layout' ? 'LOG-WORLD' : ctx.worldId

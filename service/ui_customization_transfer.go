@@ -16,7 +16,7 @@ const (
 	UICustomizationPackageFormat     = "sealchat.ui-package"
 	UICustomizationBundleFormat      = "sealchat.ui-bundle"
 	UICustomizationFormatVersion     = 1
-	UICustomizationRuntimeAPIVersion = 1
+	UICustomizationRuntimeAPIVersion = 2
 )
 
 type uiCustomizationTransferHeader struct {
@@ -31,9 +31,10 @@ type uiCustomizationTransferPackage struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	} `json:"manifest"`
-	Targets []UISurface `json:"targets"`
-	CSS     string      `json:"css"`
-	JS      string      `json:"js"`
+	Targets             []UISurface `json:"targets"`
+	CSS                 string      `json:"css"`
+	JS                  string      `json:"js"`
+	ChannelCapabilities []string    `json:"channelCapabilities"`
 }
 
 type uiCustomizationTransferBundle struct {
@@ -52,7 +53,7 @@ func checkUICustomizationVersions(h uiCustomizationTransferHeader, inheritedForm
 	if *version != UICustomizationFormatVersion {
 		return uiCustomizationInvalid(fmt.Sprintf("不支持的 formatVersion %d，当前仅支持 %d", *version, UICustomizationFormatVersion))
 	}
-	if h.RuntimeAPIVersion != nil && *h.RuntimeAPIVersion != UICustomizationRuntimeAPIVersion {
+	if h.RuntimeAPIVersion != nil && (*h.RuntimeAPIVersion < 1 || *h.RuntimeAPIVersion > UICustomizationRuntimeAPIVersion) {
 		return uiCustomizationInvalid(fmt.Sprintf("包需要脚本 API 版本 %d，当前 SealChat 仅支持 %d", *h.RuntimeAPIVersion, UICustomizationRuntimeAPIVersion))
 	}
 	return nil
@@ -140,7 +141,7 @@ func ReplacePlatformUICustomizationFromImport(actorID, id string, raw []byte, po
 	item := &items[0]
 	return UpdateUICustomization(UICustomizationScope{Type: "platform"}, actorID, id, UICustomizationPatch{
 		Name: &item.Manifest.Name, Description: &item.Manifest.Description,
-		Surfaces: &item.Targets, CSS: &item.CSS, JS: &item.JS,
+		Surfaces: &item.Targets, CSS: &item.CSS, JS: &item.JS, ChannelCapabilities: &item.ChannelCapabilities,
 	}, policy)
 }
 
@@ -162,7 +163,7 @@ func ImportUICustomizations(scope UICustomizationScope, actorID string, raw []by
 		m := &model.UICustomizationPackageModel{ScopeType: scope.Type, ScopeID: scope.ID, CreatedBy: actorID, UpdatedBy: actorID}
 		patch := UICustomizationPatch{
 			Name: &item.Manifest.Name, Description: &item.Manifest.Description, Enabled: &disabled,
-			Surfaces: &item.Targets, CSS: &item.CSS, JS: &item.JS,
+			Surfaces: &item.Targets, CSS: &item.CSS, JS: &item.JS, ChannelCapabilities: &item.ChannelCapabilities,
 		}
 		if err := applyUICustomizationPatch(m, patch, policy); err != nil {
 			if len(items) > 1 {

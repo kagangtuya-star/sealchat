@@ -13,9 +13,10 @@ type UICustomizationPackageModel struct {
 	SortOrder   int    `gorm:"not null;default:0;index:idx_ui_customization_scope,priority:3"`
 	// BuiltinKey is a stable builtin:<key> reference. Builtin package source
 	// stays in the shipped resource directory; only enablement/order is mutable.
-	BuiltinKey     string `gorm:"size:100;index"`
-	BuiltinVersion string `gorm:"size:80"`
-	SurfacesJSON   string `gorm:"type:text;not null"`
+	BuiltinKey              string `gorm:"size:100;index"`
+	BuiltinVersion          string `gorm:"size:80"`
+	SurfacesJSON            string `gorm:"type:text;not null"`
+	ChannelCapabilitiesJSON string `gorm:"type:text"`
 	// Size lets GORM choose mediumtext on MySQL (TEXT only holds 64 KiB),
 	// while retaining portable string columns on PostgreSQL and SQLite.
 	CSS       string `gorm:"size:262144"`

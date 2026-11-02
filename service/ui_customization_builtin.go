@@ -105,7 +105,7 @@ func loadBuiltinUICustomizationPackage(registration BuiltinUICustomizationRegist
 	if err := json.Unmarshal(data, &document); err != nil {
 		return nil, fmt.Errorf("解析内置界面主题 %s: %w", registration.Key, err)
 	}
-	if document.Format != UICustomizationPackageFormat || document.FormatVersion != UICustomizationFormatVersion || document.RuntimeAPIVersion != UICustomizationRuntimeAPIVersion {
+	if document.Format != UICustomizationPackageFormat || document.FormatVersion != UICustomizationFormatVersion || document.RuntimeAPIVersion < 1 || document.RuntimeAPIVersion > UICustomizationRuntimeAPIVersion {
 		return nil, fmt.Errorf("内置界面主题 %s 的包格式不受支持", registration.Key)
 	}
 	name := strings.TrimSpace(document.Manifest.Name)

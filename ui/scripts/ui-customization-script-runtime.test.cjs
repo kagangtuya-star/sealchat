@@ -220,7 +220,7 @@ async function testTrustAndController() {
 function domFixture() {
   const head = { children: [], appendChild(node) { node.remove(); this.children.push(node); node.parent = this; return node } }
   return {
-    head, defaultView: {},
+    head, defaultView: {}, documentElement: { dataset: {} },
     createElement: tagName => ({
       tagName, dataset: {}, textContent: '', parent: null,
       remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null } },
@@ -296,7 +296,7 @@ async function testRuntimeWiring() {
 async function testTransfer() {
   const full = { id: 'db-id', scopeType: 'world', scopeId: 'W', name: 'Skin', description: 'd', enabled: true, sortOrder: 3, surfaces: ['chat', 'theater'], css: 'a{}', js: 'x()', jsHash: 'h', createdBy: 'u', updatedBy: 'u', createdAt: 1, updatedAt: 2 }
   const doc = buildPackageDocument(full)
-  assert.deepEqual(doc, { format: 'sealchat.ui-package', formatVersion: 1, runtimeApiVersion: 1, manifest: { name: 'Skin', description: 'd' }, targets: ['chat', 'theater'], css: 'a{}', js: 'x()' })
+  assert.deepEqual(doc, { format: 'sealchat.ui-package', formatVersion: 1, runtimeApiVersion: 2, manifest: { name: 'Skin', description: 'd' }, targets: ['chat', 'theater'], css: 'a{}', js: 'x()', channelCapabilities: [] })
   const text = JSON.stringify(buildBundleDocument([full, full]))
   for (const banned of ['db-id', '"W"', 'scopeId', 'worldId', 'createdBy', 'updatedBy', 'jsHash', 'createdAt', 'updatedAt', 'trust']) {
     assert.ok(!text.includes(banned), `export leaked ${banned}`)

@@ -321,7 +321,7 @@ func ChannelIFormDeleteTx(tx *gorm.DB, channelID, formID string) error {
 	if err := tx.Unscoped().Where("channel_id = ? AND id = ?", channelID, formID).Delete(&ChannelIFormModel{}).Error; err != nil {
 		return err
 	}
-	return ChannelIFormStorageDeleteByFormIDTx(tx, formID)
+	return ChannelExtensionStorageCleanupTx(tx, "", ChannelExtensionScope{Type: "iform", ID: formID})
 }
 
 func ChannelIFormCloneToChannel(source *ChannelIFormModel, targetChannelID, actor string) (*ChannelIFormModel, error) {

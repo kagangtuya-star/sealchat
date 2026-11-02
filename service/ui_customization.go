@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,36 +69,39 @@ type UICustomizationScope struct {
 }
 
 type UICustomizationPatch struct {
-	Name        *string      `json:"name"`
-	Description *string      `json:"description"`
-	Enabled     *bool        `json:"enabled"`
-	Surfaces    *[]UISurface `json:"surfaces"`
-	CSS         *string      `json:"css"`
-	JS          *string      `json:"js"`
+	Name                *string      `json:"name"`
+	Description         *string      `json:"description"`
+	Enabled             *bool        `json:"enabled"`
+	Surfaces            *[]UISurface `json:"surfaces"`
+	CSS                 *string      `json:"css"`
+	JS                  *string      `json:"js"`
+	ChannelCapabilities *[]string    `json:"channelCapabilities"`
 }
 
 type UICustomizationPackage struct {
-	ID           string      `json:"id"`
-	Ref          string      `json:"ref"`
-	Origin       string      `json:"origin"`
-	BuiltinKey   string      `json:"builtinKey,omitempty"`
-	Version      string      `json:"version,omitempty"`
-	Readonly     bool        `json:"readonly"`
-	ScopeType    string      `json:"scopeType"`
-	ScopeID      string      `json:"scopeId"`
-	Name         string      `json:"name"`
-	Description  string      `json:"description"`
-	Enabled      bool        `json:"enabled"`
-	SortOrder    int         `json:"sortOrder"`
-	Surfaces     []UISurface `json:"surfaces"`
-	CSS          string      `json:"css"`
-	JS           string      `json:"js"`
-	JSHash       string      `json:"jsHash"`
-	CreatedBy    string      `json:"createdBy"`
-	UpdatedBy    string      `json:"updatedBy"`
-	CreatedAt    int64       `json:"createdAt"`
-	UpdatedAt    int64       `json:"updatedAt"`
-	WorldEnabled bool        `json:"worldEnabled,omitempty"`
+	ID                  string      `json:"id"`
+	Ref                 string      `json:"ref"`
+	Origin              string      `json:"origin"`
+	BuiltinKey          string      `json:"builtinKey,omitempty"`
+	Version             string      `json:"version,omitempty"`
+	Readonly            bool        `json:"readonly"`
+	ScopeType           string      `json:"scopeType"`
+	ScopeID             string      `json:"scopeId"`
+	Name                string      `json:"name"`
+	Description         string      `json:"description"`
+	Enabled             bool        `json:"enabled"`
+	SortOrder           int         `json:"sortOrder"`
+	Surfaces            []UISurface `json:"surfaces"`
+	CSS                 string      `json:"css"`
+	JS                  string      `json:"js"`
+	JSHash              string      `json:"jsHash"`
+	ChannelCapabilities []string    `json:"channelCapabilities"`
+	RuntimeFingerprint  string      `json:"runtimeFingerprint"`
+	CreatedBy           string      `json:"createdBy"`
+	UpdatedBy           string      `json:"updatedBy"`
+	CreatedAt           int64       `json:"createdAt"`
+	UpdatedAt           int64       `json:"updatedAt"`
+	WorldEnabled        bool        `json:"worldEnabled,omitempty"`
 }
 
 func uiCustomizationView(m *model.UICustomizationPackageModel) (*UICustomizationPackage, error) {
@@ -120,7 +124,7 @@ func uiCustomizationView(m *model.UICustomizationPackageModel) (*UICustomization
 	return &UICustomizationPackage{ID: m.ID, Ref: ref, Origin: origin, BuiltinKey: m.BuiltinKey,
 		Version: version, Readonly: m.BuiltinKey != "", ScopeType: m.ScopeType, ScopeID: m.ScopeID,
 		Name: name, Description: description, Enabled: m.Enabled, SortOrder: m.SortOrder,
-		Surfaces: surfaces, CSS: css, JS: js, JSHash: UICustomizationJSHash(js), CreatedBy: m.CreatedBy, UpdatedBy: m.UpdatedBy,
+		Surfaces: surfaces, CSS: css, JS: js, JSHash: UICustomizationJSHash(js), ChannelCapabilities: uiCustomizationChannelCapabilities(m), RuntimeFingerprint: UICustomizationRuntimeFingerprint(js, uiCustomizationChannelCapabilities(m)), CreatedBy: m.CreatedBy, UpdatedBy: m.UpdatedBy,
 		CreatedAt: m.CreatedAt.UnixMilli(), UpdatedAt: m.UpdatedAt.UnixMilli()}, nil
 }
 
@@ -133,6 +137,18 @@ func UICustomizationJSHash(js string) string {
 	}
 	normalized := strings.ReplaceAll(strings.ReplaceAll(js, "\r\n", "\n"), "\r", "\n")
 	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+// Empty declarations retain the legacy JS identity. Capability order is immaterial.
+func UICustomizationRuntimeFingerprint(js string, capabilities []string) string {
+	if len(capabilities) == 0 {
+		return UICustomizationJSHash(js)
+	}
+	canonical := append([]string(nil), capabilities...)
+	sort.Strings(canonical)
+	data, _ := json.Marshal(canonical)
+	sum := sha256.Sum256([]byte("sealchat.ui-runtime.v2\x00" + UICustomizationJSHash(js) + "\x00" + string(data)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -281,6 +297,21 @@ func uiCustomizationInvalid(detail string) error {
 // (so re-enabling restores it), may be cleared, but cannot be replaced.
 func applyUICustomizationPatch(m *model.UICustomizationPackageModel, p UICustomizationPatch, policy *utils.UICustomizationPolicyConfig) error {
 	invalid := uiCustomizationInvalid
+	if p.ChannelCapabilities != nil {
+		capabilities := []string{}
+		for _, raw := range *p.ChannelCapabilities {
+			capability := strings.TrimSpace(raw)
+			if !HasChannelExtensionCapability(ChannelExtensionCapabilities, capability) {
+				return invalid("频道能力无效: " + capability)
+			}
+			if !HasChannelExtensionCapability(capabilities, capability) {
+				capabilities = append(capabilities, capability)
+			}
+		}
+		sort.Strings(capabilities)
+		data, _ := json.Marshal(capabilities)
+		m.ChannelCapabilitiesJSON = string(data)
+	}
 	if p.JS != nil {
 		if m.ScopeType == "world" && *p.JS != "" && *p.JS != m.JS && !utils.NormalizeUICustomizationPolicy(policy).AllowWorldJS {
 			return invalid("平台未开放世界脚本，不能写入新的 JavaScript")
@@ -410,7 +441,7 @@ func UpdateUICustomization(scope UICustomizationScope, actorID, id string, patch
 	if err != nil {
 		return nil, err
 	}
-	if m.BuiltinKey != "" && (patch.Name != nil || patch.Description != nil || patch.Surfaces != nil || patch.CSS != nil || patch.JS != nil) {
+	if m.BuiltinKey != "" && (patch.Name != nil || patch.Description != nil || patch.Surfaces != nil || patch.CSS != nil || patch.JS != nil || patch.ChannelCapabilities != nil) {
 		return nil, ErrUICustomizationBuiltin
 	}
 	if err := applyUICustomizationPatch(&m, patch, policy); err != nil {
@@ -420,7 +451,7 @@ func UpdateUICustomization(scope UICustomizationScope, actorID, id string, patch
 	m.UpdatedAt = time.Now()
 	result := uiCustomizationQuery(model.GetDB(), scope).Where("id = ?", id).Updates(map[string]any{
 		"name": m.Name, "description": m.Description, "enabled": m.Enabled, "surfaces_json": m.SurfacesJSON,
-		"css": m.CSS, "js": m.JS, "updated_by": m.UpdatedBy, "updated_at": m.UpdatedAt,
+		"css": m.CSS, "js": m.JS, "channel_capabilities_json": m.ChannelCapabilitiesJSON, "updated_by": m.UpdatedBy, "updated_at": m.UpdatedAt,
 	})
 	if result.Error != nil {
 		return nil, result.Error
@@ -450,6 +481,9 @@ func DeleteUICustomization(scope UICustomizationScope, actorID, id string) error
 		}
 		if result.RowsAffected == 0 {
 			return ErrUICustomizationNotFound
+		}
+		if err := model.ChannelExtensionStorageCleanupTx(tx, "", ChannelExtensionScope{Type: "ui-customization", ID: id}); err != nil {
+			return err
 		}
 		if scope.Type == "platform" {
 			if err := tx.Where("platform_package_id = ?", id).Delete(&model.WorldUICustomizationPlatformRefModel{}).Error; err != nil {
