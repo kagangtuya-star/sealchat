@@ -3,6 +3,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -349,6 +350,127 @@ func logExportFixture(t *testing.T, sections []LogSection) *model.LogProjectMode
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestLogDisplayRulesDraftValidation(t *testing.T) {
+	d, err := parseLogDraft([]byte(defaultLogDraft("legacy")))
+	if err != nil || d.DisplayRules != nil || d.MessageTemplateOverrides != nil {
+		t.Fatalf("legacy draft: %v", err)
+	}
+	rule := LogDisplayRule{ID: "00000000-0000-4000-8000-000000000001", Match: LogDisplayMatch{MessageType: "ic", IdentityID: "role", UserID: "user", VariantID: "variant"}, TemplateID: "missing-template"}
+	d.DisplayRules, d.MessageTemplateOverrides = []LogDisplayRule{rule}, map[string]string{"message": "missing-template"}
+	raw, _ := json.Marshal(d)
+	parsed, err := parseLogDraft(raw)
+	if err != nil || len(parsed.DisplayRules) != 1 || parsed.DisplayRules[0] != rule || parsed.MessageTemplateOverrides["message"] != "missing-template" {
+		t.Fatalf("optional fields round trip: %+v %v", parsed, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*LogDraft)
+	}{
+		{"empty match", func(d *LogDraft) { d.DisplayRules[0].Match = LogDisplayMatch{} }},
+		{"bad type", func(d *LogDraft) { d.DisplayRules[0].Match.MessageType = "ic|ooc" }},
+		{"bad rule ID", func(d *LogDraft) { d.DisplayRules[0].ID = "bad" }},
+		{"duplicate ID", func(d *LogDraft) { d.DisplayRules = append(d.DisplayRules, d.DisplayRules[0]) }},
+		{"bad template", func(d *LogDraft) { d.DisplayRules[0].TemplateID = "<script>" }},
+		{"bad user ID", func(d *LogDraft) { d.DisplayRules[0].Match.UserID = strings.Repeat("x", 101) }},
+		{"empty override", func(d *LogDraft) { d.MessageTemplateOverrides["message"] = "" }},
+		{"empty message ID", func(d *LogDraft) { d.MessageTemplateOverrides[""] = "message" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var next LogDraft
+			if err := json.Unmarshal(raw, &next); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&next)
+			encoded, _ := json.Marshal(next)
+			if _, err := parseLogDraft(encoded); err == nil {
+				t.Fatal("accepted invalid display configuration")
+			}
+		})
+	}
+	projected := logPublicDisplayRules("r1", d.DisplayRules)
+	if d.DisplayRules[0] != rule || projected[0].Match.UserID == rule.Match.UserID || projected[0].Match.UserID == logPublicKey("r1", "identity", "user") || projected[0].Match.UserID == logPublicDisplayRules("r2", d.DisplayRules)[0].Match.UserID {
+		t.Fatal("public rule mapping violates domain/release privacy or mutated the draft")
+	}
+}
+
+func TestLogDisplayRulesReleasePrivacy(t *testing.T) {
+	section := logExportSection("00000000-0000-4000-8000-000000000001", "export-a", 0)
+	p := logExportFixture(t, []LogSection{section})
+	if err := RegisterBuiltinLogStyles(); err != nil {
+		t.Fatal(err)
+	}
+	var d LogDraft
+	if err := json.Unmarshal([]byte(p.DraftJSON), &d); err != nil {
+		t.Fatal(err)
+	}
+	d.DisplayRules = []LogDisplayRule{
+		{ID: "00000000-0000-4000-8000-000000000011", Match: LogDisplayMatch{MessageType: "ic", UserID: "export-owner"}, TemplateID: "message"},
+		{ID: "00000000-0000-4000-8000-000000000012", Match: LogDisplayMatch{IdentityID: "private-role", VariantID: "private-variant"}, TemplateID: "missing-template"},
+	}
+	d.MessageTemplateOverrides = map[string]string{"private-message-a": "message", "private-message-b": "missing-template"}
+	b, _ := json.Marshal(d)
+	saved, err := SaveLogDraft(p.ID, "export-owner", LogDraftUpdate{ExpectedVersion: p.DraftVersion, Draft: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Draft.DisplayRules) != 2 || saved.Draft.MessageTemplateOverrides["private-message-b"] != "missing-template" {
+		t.Fatal("save lost display configuration")
+	}
+	for i, id := range []string{"private-message-a", "private-message-b"} {
+		logExportMessage(t, id, "export-a", time.Now().Add(time.Duration(i)*time.Second), float64(i+1), func(m *model.MessageModel) {
+			m.Content = "public body"
+			m.SenderIdentityID, m.SenderIdentityVariantID = "private-role", "private-variant"
+		})
+	}
+	job, err := QueueLogRelease(p.ID, "export-owner", LogReleaseInput{ExpectedVersion: saved.DraftVersion, ClientOpID: "display-rules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runLogReleaseJob(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state, err := GetLogJob(p.ID, job["jobId"].(string), "export-owner")
+	if err != nil || state["status"] != "done" {
+		t.Fatalf("release: %v %v", state, err)
+	}
+	releaseID := state["releaseId"].(string)
+	const slug = "displayrules123"
+	if err := model.GetDB().Create(&model.LogRouteAliasModel{ProjectID: p.ID, Kind: "view", Slug: slug, Active: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := GetPublicLog(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := QueryPublicLog(slug, section.ID, "", "", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := page["items"].([]map[string]any)
+	if len(items) != 2 || items[0]["identityKey"] != logPublicKey(releaseID, "identity", "private-role") || items[0]["userKey"] != logPublicKey(releaseID, "user", "export-owner") || items[0]["templateOverride"] != "message" || items[1]["templateOverride"] != "missing-template" {
+		t.Fatalf("public node projection lost independent keys/overrides: %v", items)
+	}
+	publicJSON, _ := json.Marshal(metadata)
+	var projection struct {
+		DisplayRules []LogDisplayRule `json:"displayRules"`
+	}
+	if err := json.Unmarshal(publicJSON, &projection); err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.DisplayRules) != 2 || projection.DisplayRules[0].Match.UserID != items[0]["userKey"] || projection.DisplayRules[1].Match.IdentityID != items[0]["identityKey"] || projection.DisplayRules[1].Match.VariantID != items[0]["speaker"].(map[string]any)["variantKey"] {
+		t.Fatalf("rule/node mapping differs: %s", publicJSON)
+	}
+	nodeJSON, _ := json.Marshal(items)
+	for _, private := range []string{"export-owner", "private-role", "private-variant", "private-message", "messageTemplateOverrides", "00000000-0000-4000-8000-000000000011"} {
+		if strings.Contains(string(nodeJSON), private) || strings.Contains(string(publicJSON), private) {
+			t.Fatalf("public payload leaked %q", private)
+		}
+	}
+	if strings.Contains(string(nodeJSON), "userId") {
+		t.Fatal("public message contains raw userId field")
+	}
 }
 
 func logExportSection(id, channel string, order int) LogSection {

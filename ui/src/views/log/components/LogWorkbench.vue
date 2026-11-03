@@ -49,6 +49,7 @@ import {
 } from '@/services/log/logRenderer';
 import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange } from '@/services/log/pagination/logFrameHost';
 import { updateDraftImageWidth } from '@/services/log/logImageLayout';
+import { buildTemplateLibrary, messageTemplateIds } from '@/services/log/logTemplateCompiler';
 import type { LogAnchor, LogDesignMessage, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
 import { LOG_ELEMENT_TYPES } from '@/types/log';
 import { useLogDraft } from '../composables/useLogDraft';
@@ -56,7 +57,7 @@ import { useLogMessageWindow } from '../composables/useLogMessageWindow';
 import { useLogAssets } from '../composables/useLogAssets';
 import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
-import { createElement, downloadJson, elementAvailability } from '../logDraftOps';
+import { createElement, downloadJson, elementAvailability, setMessageTemplateOverrides } from '../logDraftOps';
 import { planBatchRelocate, planBatchStep, type LogBatchMovePlan } from '../logBatchOps';
 import type { LogImageRef } from '../logAssetRefs';
 import { chapterTitle, chapterViews, sectionLabel } from '../logChapterOps';
@@ -157,6 +158,8 @@ const stylePkg = shallowRef<LogStylePackage | null>(null);
 const styleOverride = shallowRef<LogStylePackage | null>(null);
 const styleError = ref('');
 const activePkg = computed(() => styleOverride.value || stylePkg.value);
+const messageTemplates = computed(() => activePkg.value
+  ? messageTemplateIds(buildTemplateLibrary(activePkg.value.templates, activePkg.value.settingsSchema)) : []);
 const assets = useLogAssets({
   projectId: () => projectId.value,
   stylePackage: () => (activePkg.value ? { id: activePkg.value.id, version: activePkg.value.version } : null),
@@ -226,13 +229,14 @@ const rebuild = (force = false) => {
     toc: comp.toc,
     backgroundToken: designBackgroundToken(d.page),
     imageWidths: d.imageWidths,
+    templateSelection: d,
   });
   const json = JSON.stringify(result.doc);
   if (!force && json === lastDocJson && frame.value) return;
   lastDocJson = json;
   frame.value = { doc: result.doc, assetTokens: result.assetTokens, issues: result.issues, revision: ++frameRevision };
 };
-watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths], () => {
+watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths, () => draft.value.displayRules, () => draft.value.messageTemplateOverrides], () => {
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = setTimeout(() => {
     buildTimer = null;
@@ -274,6 +278,11 @@ const selectedElement = computed(() => {
   return id ? draft.value.elements.find((e) => e.id === id) || null : null;
 });
 const selectedIndex = computed(() => (selectedMessages.value.length === 1 ? win.indexOf(selectedMessages.value[0].message.id) : -1));
+const applyMessageTemplate = (templateId: string) => {
+  const ids = selectedMessages.value.map((m) => m.message.id);
+  if (!caps.value.editDraft || selectedElement.value || !ids.length || ids.length > 200 || (templateId && !messageTemplates.value.includes(templateId))) return;
+  draftCtl.update((next) => setMessageTemplateOverrides(next, ids, templateId));
+};
 
 // ---- 面板 ----
 type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'publish';
@@ -1228,6 +1237,9 @@ onBeforeUnmount(() => {
               :at-top="multiAtTop"
               :at-bottom="multiAtBottom"
               :can-manage-sources="caps.manageSources"
+              :can-edit-draft="caps.editDraft"
+              :template-ids="messageTemplates"
+              :template-overrides="draft.messageTemplateOverrides || {}"
               :busy="busy"
               :range-mode="selection.rangeMode.value"
               :range-anchored="!!selection.rangeAnchor.value"
@@ -1240,6 +1252,7 @@ onBeforeUnmount(() => {
               @exclude="excludeMulti"
               @remove="removeMulti"
               @exit="exitMulti"
+              @template="applyMessageTemplate"
             />
             <LogSelectionBar
               v-else-if="relocation.active || selection.selected.value.length"
@@ -1252,6 +1265,9 @@ onBeforeUnmount(() => {
               :is-first="selectedIndex <= 0"
               :is-last="selectedIndex < 0 || selectedIndex >= win.items.value.length - 1"
               :relocating-count="relocation.active ? relocation.sourceMessageIds.length : 0"
+              :template-ids="messageTemplates"
+              :template-overrides="draft.messageTemplateOverrides || {}"
+              @template="applyMessageTemplate"
               @edit="(tab) => selectedMessages[0] && openEditor(selectedMessages[0].message.id, tab)"
               @move="moveSelected"
               @relocate="startRelocate(selection.messageIds.value)"
@@ -1321,8 +1337,11 @@ onBeforeUnmount(() => {
               :section="querySection"
               :messages="win.items.value"
               :can-bulk="caps.bulkAppearance"
+              :draft="draft"
+              :update="draftCtl.update"
+              :can-edit-draft="caps.editDraft"
+              :template-ids="messageTemplates"
               @applied="win.load()"
-              @open-style="panelTab = 'style'"
             />
             <LogElementsPanel
               v-else-if="panelTab === 'elements'"

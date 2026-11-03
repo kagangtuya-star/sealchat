@@ -35,6 +35,7 @@ function template() {
 globalThis.document = { createElement: () => template() };
 const compiler = {
   buildTemplateLibrary: () => ({ templates: new Map([['imagePlate', true], ['cover', true], ['message', true]]), issues: [] }),
+  messageTemplateIds: () => ['message'],
   instantiateTemplate: (_lib, id, data) => id === 'message'
     ? `<img data-log-asset="att:avatar"><div class="log-body">${layout.markLogImages(data.bodyHtml, { kind: 'message', id: data.bodyImageLayout.messageId, widths: data.bodyImageLayout.widths })}</div>`
     : `<figure><img data-log-asset="${data.assets.assetUrl}"></figure>`,

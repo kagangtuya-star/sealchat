@@ -22,6 +22,7 @@ function loadModule(file, modules = {}) {
 }
 
 const ops = loadModule('views/log/logBatchOps.ts');
+const draftOps = loadModule('views/log/logDraftOps.ts', { '@/services/log/logRenderer': {}, './logAssetRefs': {} });
 const { useLogSelection } = loadModule('views/log/composables/useLogSelection.ts', { vue });
 const ids = text => text.split('');
 
@@ -111,7 +112,7 @@ const names = new Set(['selection', 'windowOrder', 'selectedMessages', 'placeAt'
   'relocateScrollId', 'cancelRelocate', 'startRelocate', 'relocateDestination', 'confirmRelocate', 'relocateSummary', 'pickRelocateTarget',
   'multiMode', 'selectedSet', 'multiAtTop', 'multiAtBottom', 'batchDialog', 'closeBatchDialog', 'openBatchDialog', 'enterMulti', 'exitMulti',
   'batchTarget', 'afterBatchMove', 'canBatch', 'moveMulti', 'excludeMulti', 'removeMulti', 'selectAllMulti', 'ctxMenu', 'ctxOptions',
-  'openContextMenu', 'onContextSelect', 'sessionExclusions', 'setExcluded', 'excludeSelected', 'onFrameEvent', 'onEscape', 'onGlobalKey', 'locate']);
+  'openContextMenu', 'onContextSelect', 'sessionExclusions', 'setExcluded', 'excludeSelected', 'onFrameEvent', 'onEscape', 'onGlobalKey', 'locate', 'applyMessageTemplate']);
 
 function setup(t, caps = {}) {
   const statements = ast.statements.filter(node => {
@@ -119,7 +120,7 @@ function setup(t, caps = {}) {
     const text = node.getText(ast);
     return ts.isExpressionStatement(node) && /^(watch|onBeforeUnmount)\(/.test(text) && /cancelRelocate|selection\.prune/.test(text);
   });
-  const calls = { relocate: [], remove: [], reorder: [], exclusions: [], dialogs: [], notices: [], opened: [], scrolls: [], cleanup: [] };
+  const calls = { relocate: [], remove: [], reorder: [], exclusions: [], dialogs: [], notices: [], opened: [], scrolls: [], cleanup: [], mutations: 0 };
   const make = id => ({ message: { id }, version: 3, capabilities: { reorder: true, remove: true, edit: true, ...(caps[id] || {}) } });
   const items = vue.shallowRef(ids('abcdefg').map(make));
   const win = {
@@ -145,6 +146,7 @@ function setup(t, caps = {}) {
     querySection: vue.ref({ id: 's1' }), sourceChannelId: vue.ref('ch1'),
     previewPublish: vue.ref(false), busy: vue.ref(false), win, caps: vue.ref({ editDraft: true, manageSources: true }),
     nodeCache: new Map(), draft: vue.ref({ elements: [] }), editorShow: vue.ref(false), insertShow: vue.ref(false), focusElementId: vue.ref(null),
+    selectedElement: vue.ref(null), messageTemplates: vue.ref(['normal', 'gm']), setMessageTemplateOverrides: draftOps.setMessageTemplateOverrides,
     toast: { info: text => calls.notices.push(text), success: text => calls.notices.push(text), error: text => calls.notices.push(text), warning() {} },
     dialog: { warning: dialogFactory('warning'), error: dialogFactory('error') },
     target: item => ({ messageId: item.message.id }),
@@ -153,7 +155,7 @@ function setup(t, caps = {}) {
     removeMessagesBatch: async (...args) => calls.remove.push(plain(args)),
     removeMessage: async () => { throw new Error('single remove must not be used'); },
     updateLogExclusions: async (...args) => { calls.exclusions.push(plain(args)); return { draftVersion: 2 }; },
-    draftCtl: { runVersioned: fn => fn(1), update() {} },
+    draftCtl: { runVersioned: fn => fn(1), update(fn) { calls.mutations++; fn(context.draft.value); } },
     runCommand: async (_label, command, after) => { context.busy.value = true; try { await command(); after(); } finally { context.busy.value = false; } },
     describeLogError: () => 'error', isLogError: () => false,
     openEditor: (...args) => calls.opened.push(args), openPanel() {}, insertAtMessage() {},
@@ -162,7 +164,7 @@ function setup(t, caps = {}) {
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')
     + '\nglobalThis.hooks = { selection, relocation, multiMode, multiAtTop, multiAtBottom, ctxMenu, ctxOptions, enterMulti, exitMulti, moveMulti,'
-    + ' excludeMulti, removeMulti, startRelocate, pickRelocateTarget, onFrameEvent, onGlobalKey, onContextSelect, selectAllMulti, locate };', {
+    + ' excludeMulti, removeMulti, startRelocate, pickRelocateTarget, onFrameEvent, onGlobalKey, onContextSelect, selectAllMulti, locate, applyMessageTemplate };', {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context));
   t.after(() => scope.stop());
@@ -170,6 +172,82 @@ function setup(t, caps = {}) {
 }
 
 const pick = (h, id, extra = {}) => h.onFrameEvent({ type: 'select', nodeId: id, kind: 'message', ...extra });
+
+test('精确模板：整个 selected set 一次 mutation，自动删除，权限/元素/200条限制不可绕过', t => {
+  const h = setup(t);
+  h.enterMulti();
+  for (const id of ['a', 'c', 'e']) pick(h, id);
+  h.applyMessageTemplate('gm');
+  assert.equal(h.calls.mutations, 1);
+  assert.deepEqual(plain(h.draft.value.messageTemplateOverrides), { a: 'gm', c: 'gm', e: 'gm' });
+  h.applyMessageTemplate('');
+  assert.equal(h.calls.mutations, 2);
+  assert.deepEqual(plain(h.draft.value.messageTemplateOverrides), {});
+  h.applyMessageTemplate('missing');
+  h.caps.value.editDraft = false;
+  h.applyMessageTemplate('gm');
+  h.caps.value.editDraft = true;
+  h.selectedElement.value = { id: 'element' };
+  h.applyMessageTemplate('gm');
+  assert.equal(h.calls.mutations, 2);
+  h.selectedElement.value = null;
+  h.win.items.value = Array.from({ length: 201 }, (_, i) => ({ message: { id: `m${i}` }, capabilities: {} }));
+  h.selection.selectAll();
+  h.applyMessageTemplate('gm');
+  assert.equal(h.calls.mutations, 2);
+});
+
+test('工程规则表单：拒绝空条件，增删/编辑/优先级只写草稿，用户与角色条件独立', () => {
+  const source = read('views/log/components/LogBulkPanel.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
+  const ast = ts.createSourceFile('rules.ts', source, ts.ScriptTarget.Latest, true);
+  const names = new Set(['ruleEdit', 'ruleCanSave', 'editRule', 'setRuleMatch', 'saveRule', 'deleteRule', 'moveRule']);
+  const declarations = ast.statements.filter(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => names.has(d.name.getText(ast))));
+  let mutations = 0;
+  const props = { draft: {}, canEditDraft: true, templateIds: ['normal', 'gm'], update(fn) { mutations++; fn(props.draft); return true; } };
+  let id = 0;
+  const ctx = { props, ref: vue.ref, computed: vue.computed, cloneJson: plain, uuid: () => `rule-${++id}` };
+  vm.runInNewContext(ts.transpileModule(declarations.map(n => n.getText(ast)).join('\n') + '\nglobalThis.hooks = {ruleEdit, editRule, setRuleMatch, saveRule, deleteRule, moveRule};', {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, ctx);
+  const h = ctx.hooks;
+  h.editRule(); h.saveRule();
+  assert.equal(mutations, 0);
+  h.setRuleMatch('identityId', 'role'); h.setRuleMatch('userId', 'user'); h.setRuleMatch('variantId', 'variant'); h.saveRule();
+  assert.deepEqual(plain(props.draft.displayRules[0].match), { identityId: 'role', userId: 'user', variantId: 'variant' });
+  h.editRule(); h.setRuleMatch('messageType', 'ic'); h.saveRule();
+  h.moveRule('rule-2', -1);
+  assert.deepEqual(plain(props.draft.displayRules.map(r => r.id)), ['rule-2', 'rule-1']);
+  h.editRule(props.draft.displayRules[1]); h.setRuleMatch('identityId', 'new-role'); h.saveRule();
+  assert.deepEqual(plain(props.draft.displayRules[1].match), { identityId: 'new-role', userId: 'user' });
+  h.deleteRule('rule-2');
+  assert.equal(props.draft.displayRules.length, 1);
+  props.canEditDraft = false;
+  const before = mutations;
+  h.deleteRule('rule-1'); h.moveRule('rule-1', 1); h.editRule(); h.saveRule();
+  assert.equal(mutations, before);
+});
+
+test('模板选择状态：自动、指定、混合和失效引用均可识别', () => {
+  const source = read('views/log/components/LogMessageTemplateSelect.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
+  const ast = ts.createSourceFile('template-select.ts', source, ts.ScriptTarget.Latest, true);
+  const declarations = ast.statements.filter(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => ['value', 'options'].includes(d.name.getText(ast))));
+  const props = { values: [undefined], templateIds: ['gm', 'normal'] };
+  const get = () => {
+    const ctx = { props, computed: vue.computed };
+    vm.runInNewContext(ts.transpileModule(declarations.map(n => n.getText(ast)).join('\n') + '\nglobalThis.state = {value: value.value, options: options.value};', {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    }).outputText, ctx);
+    return plain(ctx.state);
+  };
+  assert.equal(get().value, '');
+  props.values = ['gm', 'gm'];
+  assert.equal(get().value, 'gm');
+  props.values = ['gm', undefined];
+  assert.equal(get().value, null);
+  props.values = ['removed', 'gm'];
+  assert.equal(get().options.find(o => o.value === 'removed').disabled, true);
+  assert.match(get().options.find(o => o.value === 'removed').label, /模板已不存在/);
+});
 
 test('右键原消息进入多选并直接选中该消息；多选期间单条交互被拦截', t => {
   const h = setup(t);
@@ -331,11 +409,12 @@ test('多选工具条：混合权限时禁用对应操作并说明原因', async
     if (id === 'vue') return vue;
     if (id === 'vue/server-renderer') return require('@vue/server-renderer');
     if (id === '@vicons/tabler') return icons;
+    if (id === './LogMessageTemplateSelect.vue') return { default: { render: () => null } };
     throw new Error(`unexpected import ${id}`);
   });
   const message = (id, caps) => ({ message: { id }, version: 1, capabilities: { reorder: true, remove: true, ...caps } });
   const render = props => renderToString(vue.createSSRApp(module.exports.default, {
-    total: 5, complete: true, atTop: false, atBottom: false, canManageSources: true, busy: false, rangeMode: false, rangeAnchored: false, relocating: false, ...props,
+    total: 5, complete: true, atTop: false, atBottom: false, canManageSources: true, canEditDraft: true, templateIds: [], templateOverrides: {}, busy: false, rangeMode: false, rangeAnchored: false, relocating: false, ...props,
   }).component('n-icon', { props: ['component', 'size'], render: () => null }));
   const mixed = await render({ messages: [message('a'), message('b', { reorder: false, remove: false })] });
   assert.match(mixed, /整体上移一位：所选消息中有 1 条无权调整顺序/);

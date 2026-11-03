@@ -2,7 +2,7 @@
 // 批量编辑。三个模式语义不同：
 // 1) 历史消息外观：写回原消息快照（preview → 确认 → apply → 轮询持久任务）；
 // 2) 角色资料：在聊天的角色管理中修改，只影响角色本身；
-// 3) LOG 显示规则：只改样式规则，不写原消息。
+// 3) LOG 显示规则：只改工程草稿，不写样式包或原消息。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useRouter } from 'vue-router';
@@ -16,7 +16,9 @@ import {
 } from '@/services/log/logApi';
 import { applyAppearanceBatch, newClientOpId, previewAppearanceBatch } from '@/services/log/logMessageCommands';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import type { LogAppearancePatch, LogAppearancePreview, LogDesignMessage, LogMutationJob, LogMutationJobItem, LogSection } from '@/types/log';
+import type { LogAppearancePatch, LogAppearancePreview, LogDesignMessage, LogDisplayRule, LogDraft, LogMutationJob, LogMutationJobItem, LogSection } from '@/types/log';
+import { LOG_MESSAGE_TYPES } from '@/services/log/logTemplateCompiler';
+import { cloneJson, uuid } from '../logDraftOps';
 
 const props = defineProps<{
   projectId: string;
@@ -24,10 +26,13 @@ const props = defineProps<{
   section: LogSection | null;
   messages: LogDesignMessage[];
   canBulk: boolean;
+  draft: LogDraft;
+  update: (mutate: (next: LogDraft) => void) => boolean;
+  canEditDraft: boolean;
+  templateIds: string[];
 }>();
 const emit = defineEmits<{
   (e: 'applied'): void;
-  (e: 'open-style'): void;
 }>();
 
 const toast = useMessage();
@@ -78,6 +83,84 @@ const variantFilterOptions = computed(() => [
   ...variants.value.map((v) => ({ label: v.label, value: v.id })),
 ]);
 const variantTargetOptions = computed(() => [{ label: '默认外观（取消差分）', value: '' }, ...variants.value.map((v) => ({ label: v.label, value: v.id }))]);
+
+// ---- 当前 LOG 工程显示规则（独立的角色 ID / 用户 ID，全部条件为 AND） ----
+const displayRules = computed(() => props.draft.displayRules || []);
+const ruleEdit = ref<LogDisplayRule | null>(null);
+const ruleTypes = LOG_MESSAGE_TYPES.map((type) => ({ label: type, value: type }));
+const ruleIdentities = computed(() => speakers.value.filter((s) => s.kind === 'identity').map((s) => ({ label: s.label, value: s.id })));
+const ruleUsers = computed(() => {
+  const users = new Map<string, string>();
+  for (const { message: m } of props.messages) {
+    if (m.user?.id && !users.has(m.user.id)) users.set(m.user.id, m.user.nick || m.user.name || m.user.username || m.member?.nick || m.member?.name || m.sender_member_name || '未命名用户');
+  }
+  return Array.from(users, ([value, label]) => ({ value, label }));
+});
+const ruleVariants = ref<LogIdentityVariantOption[]>([]);
+let ruleVariantSeq = 0;
+watch([() => ruleEdit.value?.match.identityId, () => props.section?.source.channelId], async ([identityId, channelId]) => {
+  const seq = ++ruleVariantSeq;
+  ruleVariants.value = [];
+  if (!identityId || !channelId) return;
+  const owner = speakers.value.find((s) => s.kind === 'identity' && s.id === identityId);
+  try {
+    const result = await fetchChannelIdentitiesForLog(channelId, owner?.userId || undefined);
+    if (seq === ruleVariantSeq) ruleVariants.value = result.variants.filter((v) => v.identityId === identityId);
+  } catch {
+    // 历史消息里的差分仍可选；无权限读取资料时不影响规则编辑。
+  }
+});
+const ruleVariantOptions = computed(() => {
+  const found = new Map(ruleVariants.value.map((v) => [v.id, v.label]));
+  for (const { message: m } of props.messages) {
+    if ((!ruleEdit.value?.match.identityId || m.identity?.id === ruleEdit.value.match.identityId) && m.identity?.variantId && !found.has(m.identity.variantId)) {
+      found.set(m.identity.variantId, `${m.identity.displayName || '角色'}（历史差分 ${found.size + 1}）`);
+    }
+  }
+  return Array.from(found, ([value, label]) => ({ value, label }));
+});
+const withCurrent = (options: Array<{ value: string; label: string }>, value: string | undefined, missing: string) =>
+  value && !options.some((o) => o.value === value) ? [...options, { value, label: missing }] : options;
+const templateOptions = computed(() => withCurrent(props.templateIds.map((value) => ({ value, label: value })), ruleEdit.value?.templateId, '模板已不存在或不可用于消息'));
+const ruleLabel = (rule: LogDisplayRule) => {
+  const m = rule.match;
+  const name = (options: Array<{ value: string; label: string }>, id: string) => options.find((o) => o.value === id)?.label;
+  return [m.messageType && `类型：${m.messageType}`, m.identityId && `角色：${name(ruleIdentities.value, m.identityId) || '未加载角色'}`,
+    m.userId && `用户：${name(ruleUsers.value, m.userId) || '未加载用户'}`, m.variantId && `差分：${name(ruleVariantOptions.value, m.variantId) || '指定历史差分'}`].filter(Boolean).join(' · ');
+};
+const ruleCanSave = computed(() => !!ruleEdit.value && Object.values(ruleEdit.value.match).some(Boolean) && props.templateIds.includes(ruleEdit.value.templateId));
+const editRule = (rule?: LogDisplayRule) => {
+  if (!props.canEditDraft) return;
+  ruleEdit.value = rule ? cloneJson(rule) : { id: uuid(), match: {}, templateId: props.templateIds[0] || '' };
+};
+const setRuleMatch = (key: keyof LogDisplayRule['match'], value: string | null) => {
+  if (!ruleEdit.value || !props.canEditDraft) return;
+  if (value) ruleEdit.value.match[key] = value;
+  else delete ruleEdit.value.match[key];
+  if (key === 'identityId') delete ruleEdit.value.match.variantId;
+};
+const saveRule = () => {
+  if (!props.canEditDraft || !ruleCanSave.value || !ruleEdit.value) return;
+  const rule = cloneJson(ruleEdit.value);
+  if (props.update((next) => {
+    const rules = next.displayRules ||= [];
+    const index = rules.findIndex((r) => r.id === rule.id);
+    if (index < 0) rules.push(rule); else rules[index] = rule;
+  })) ruleEdit.value = null;
+};
+const deleteRule = (id: string) => {
+  if (!props.canEditDraft) return;
+  if (props.update((next) => { next.displayRules = (next.displayRules || []).filter((r) => r.id !== id); }) && ruleEdit.value?.id === id) ruleEdit.value = null;
+};
+const moveRule = (id: string, direction: -1 | 1) => {
+  if (!props.canEditDraft) return;
+  props.update((next) => {
+    const rules = next.displayRules || [];
+    const index = rules.findIndex((r) => r.id === id);
+    const target = index + direction;
+    if (index >= 0 && target >= 0 && target < rules.length) [rules[index], rules[target]] = [rules[target], rules[index]];
+  });
+};
 
 // ---- patch ----
 const edit = ref({ name: false, color: false, avatar: false });
@@ -287,6 +370,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   disposed = true;
+  ruleVariantSeq++;
   if (pollTimer) clearTimeout(pollTimer);
   clearInterval(ticker);
 });
@@ -393,8 +477,43 @@ const openChannel = () => {
     </template>
 
     <template v-else>
-      <p class="log-bulk__hint">LOG 显示规则只保存在样式包中（按消息类型、角色、差分选择模板），不会写入聊天原消息。</p>
-      <n-button size="small" @click="emit('open-style')">前往样式与模板</n-button>
+      <p class="log-bulk__hint">仅保存到当前 LOG 工程。全部已填条件须同时满足，第一条有效匹配优先；单条消息的精确指定优先于这里的规则。</p>
+      <p v-if="!canEditDraft" class="log-bulk__hint">当前没有编辑草稿权限，显示规则只读。</p>
+      <div v-for="(rule, index) in displayRules" :key="rule.id" class="log-bulk__preview">
+        <div>{{ index + 1 }}. {{ ruleLabel(rule) }}</div>
+        <div :class="{ 'is-error': !templateIds.includes(rule.templateId) }" class="log-bulk__hint">→ {{ rule.templateId }}{{ templateIds.includes(rule.templateId) ? '' : '（模板已不存在或不可用于消息，将继续自动匹配）' }}</div>
+        <n-space size="small">
+          <n-button size="tiny" :disabled="!canEditDraft || index === 0" @click="moveRule(rule.id, -1)">上移</n-button>
+          <n-button size="tiny" :disabled="!canEditDraft || index === displayRules.length - 1" @click="moveRule(rule.id, 1)">下移</n-button>
+          <n-button size="tiny" :disabled="!canEditDraft" @click="editRule(rule)">编辑</n-button>
+          <n-button size="tiny" :disabled="!canEditDraft" @click="deleteRule(rule.id)">删除</n-button>
+        </n-space>
+      </div>
+      <p v-if="!displayRules.length" class="log-bulk__hint">暂无工程规则，使用样式包默认规则。</p>
+      <n-button size="small" :disabled="!canEditDraft || displayRules.length >= 1000" @click="editRule()">新建规则</n-button>
+      <n-form v-if="ruleEdit" size="small" label-placement="top" class="log-bulk__preview" :disabled="!canEditDraft">
+        <n-form-item label="消息类型（留空不限）">
+          <n-select :value="ruleEdit.match.messageType || null" :options="ruleTypes" clearable placeholder="不限类型" @update:value="(v: string | null) => setRuleMatch('messageType', v)" />
+        </n-form-item>
+        <n-form-item label="角色（留空不限）">
+          <n-select :value="ruleEdit.match.identityId || null" :options="withCurrent(ruleIdentities, ruleEdit.match.identityId, '未加载角色')" filterable clearable placeholder="从本片段已加载消息中选择" @update:value="(v: string | null) => setRuleMatch('identityId', v)" />
+        </n-form-item>
+        <n-form-item label="发送用户（使用任何角色或无角色时均匹配）">
+          <n-select :value="ruleEdit.match.userId || null" :options="withCurrent(ruleUsers, ruleEdit.match.userId, '未加载用户')" filterable clearable placeholder="不限用户" @update:value="(v: string | null) => setRuleMatch('userId', v)" />
+        </n-form-item>
+        <n-form-item label="角色差分（留空不限）">
+          <n-select :value="ruleEdit.match.variantId || null" :options="withCurrent(ruleVariantOptions, ruleEdit.match.variantId, '指定历史差分')" filterable clearable placeholder="选择角色后可补全差分" @update:value="(v: string | null) => setRuleMatch('variantId', v)" />
+        </n-form-item>
+        <n-form-item label="对话框模板">
+          <n-select v-model:value="ruleEdit.templateId" :options="templateOptions" filterable placeholder="当前样式包的消息模板" />
+        </n-form-item>
+        <p v-if="!Object.values(ruleEdit.match).some(Boolean)" class="log-bulk__hint is-error">至少选择一个匹配条件。</p>
+        <p v-if="!templateIds.includes(ruleEdit.templateId)" class="log-bulk__hint is-error">请重新选择当前样式包中的合法消息模板。</p>
+        <n-space size="small">
+          <n-button size="small" type="primary" :disabled="!canEditDraft || !ruleCanSave" @click="saveRule">保存规则</n-button>
+          <n-button size="small" @click="ruleEdit = null">取消</n-button>
+        </n-space>
+      </n-form>
     </template>
   </div>
 </template>

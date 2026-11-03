@@ -346,7 +346,7 @@ func buildLogRelease(ctx context.Context, j *model.LogJobModel) (resultErr error
 					return logError("TOO_LARGE", "发布节点超过上限")
 				}
 				display = display.forChannel(m.ChannelID)
-				if err := logBuildMessage(ctx, &release, display, section.ID, m, ordinal, imageWidths[m.ID], section.Source.ShowQuoteContent); err != nil {
+				if err := logBuildMessage(ctx, &release, display, section.ID, m, ordinal, imageWidths[m.ID], section.Source.ShowQuoteContent, d.MessageTemplateOverrides[m.ID]); err != nil {
 					return err
 				}
 				if err := addElements("message", m.ID, "after"); err != nil {

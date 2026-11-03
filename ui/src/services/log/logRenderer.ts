@@ -2,6 +2,8 @@
 import dayjs from 'dayjs';
 import type {
   LogDesignMessage,
+  LogDisplayRule,
+  LogDraft,
   LogElement,
   LogElementType,
   LogPageSettings,
@@ -21,6 +23,7 @@ import {
   fragmentToHtml,
   instantiateTemplate,
   isSafeTokenValue,
+  messageTemplateIds,
   sanitizeBodyHtml,
   templateUsesField,
   type TemplateData,
@@ -36,7 +39,10 @@ export interface RenderMessageNode {
   sourceId: string;
   messageType: string;
   speakerKey: string;
+  identityKey: string;
+  userKey: string;
   variantKey: string;
+  templateOverride?: string;
   speakerName: string;
   speakerColor: string | null;
   avatarToken: string | null;
@@ -215,6 +221,8 @@ export const designMessageToNode = (item: LogDesignMessage): RenderMessageNode =
     sourceId: m.id,
     messageType: resolveDesignMessageType(m),
     speakerKey: m.identity?.id || m.user?.id || '',
+    identityKey: m.identity?.id || '',
+    userKey: m.user?.id || '',
     variantKey: m.identity?.variantId || '',
     speakerName: resolveDesignSpeakerName(m),
     speakerColor: color,
@@ -319,7 +327,10 @@ export const publicNodeToRender = (node: LogPublicNode): RenderNode => {
       sourceId: node.id,
       messageType: node.messageType,
       speakerKey: node.speaker.key,
+      identityKey: node.identityKey || '',
+      userKey: node.userKey || '',
       variantKey: node.speaker.variantKey || '',
+      templateOverride: node.templateOverride,
       speakerName: node.speaker.name,
       speakerColor: node.speaker.color && HEX.test(node.speaker.color) ? node.speaker.color : null,
       avatarToken: avatar,
@@ -370,6 +381,7 @@ export interface BuildOptions {
   backgroundToken: string | null;
   pageNumberStart?: number;
   imageWidths?: Record<string, number>;
+  templateSelection?: Pick<LogDraft, 'displayRules' | 'messageTemplateOverrides'>;
 }
 
 export interface BuildResult {
@@ -379,12 +391,30 @@ export interface BuildResult {
   issues: string[];
 }
 
-const pickTemplate = (rules: LogStyleRule[], lib: TemplateLibrary, n: RenderMessageNode) => {
+const matchesDisplayRule = (match: LogDisplayRule['match'], n: RenderMessageNode): boolean =>
+  !!(match.messageType || match.identityId || match.userId || match.variantId) &&
+  (!match.messageType || match.messageType === n.messageType) &&
+  (!match.identityId || match.identityId === n.identityKey) &&
+  (!match.userId || match.userId === n.userKey) &&
+  (!match.variantId || match.variantId === n.variantKey);
+
+/** 唯一的最终模板选择流程。公开态以 release 哈希匹配同一流程，不需要真实用户 ID。 */
+export const resolveMessageTemplate = (
+  n: RenderMessageNode,
+  templates: ReadonlySet<string>,
+  rules: LogStyleRule[],
+  selection?: BuildOptions['templateSelection'],
+): string | null => {
+  const override = n.templateOverride || selection?.messageTemplateOverrides?.[n.sourceId];
+  if (override && templates.has(override)) return override;
+  for (const rule of selection?.displayRules || []) {
+    if (templates.has(rule.templateId) && matchesDisplayRule(rule.match, n)) return rule.templateId;
+  }
   for (const rule of rules) {
     if (rule.messageType && rule.messageType !== n.messageType) continue;
     if (rule.identityKey && rule.identityKey !== n.speakerKey) continue;
     if (rule.variantKey && rule.variantKey !== n.variantKey) continue;
-    if (lib.templates.has(rule.templateId)) return rule.templateId;
+    if (templates.has(rule.templateId)) return rule.templateId;
   }
   return null;
 };
@@ -450,12 +480,14 @@ export const buildFrameDocument = (opts: BuildOptions): BuildResult => {
   const blocks: FrameBlock[] = [];
   const merge = opts.page.mergeNeighbors;
   let prev: RenderMessageNode | null = null;
+  let prevTemplateId: string | null = null;
+  const messageTemplates = new Set(library ? messageTemplateIds(library) : []);
 
   for (const node of opts.nodes) {
     if (node.kind === 'message') {
       node.assets.forEach((a) => assets.add(a));
-      const merged = merge && canMergeMessageNodes(prev, node);
-      const templateId = library ? pickTemplate(opts.style!.rules, library, node) : null;
+      const templateId = resolveMessageTemplate(node, messageTemplates, opts.style?.rules || [], opts.templateSelection);
+      const merged = merge && prevTemplateId === templateId && canMergeMessageNodes(prev, node);
       let html = '';
       if (templateId && library) {
         const data: TemplateData = {
@@ -503,6 +535,7 @@ export const buildFrameDocument = (opts: BuildOptions): BuildResult => {
         breakAfter: false,
       });
       prev = node;
+      prevTemplateId = templateId;
       continue;
     }
     prev = null;

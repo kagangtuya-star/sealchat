@@ -22,6 +22,16 @@ export const uuid = (): string => {
  */
 export const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+/** 在一次 draft mutation 中设置整个消息集合；空模板即恢复自动匹配。 */
+export const setMessageTemplateOverrides = (draft: LogDraft, messageIds: string[], templateId: string) => {
+  const overrides = { ...draft.messageTemplateOverrides };
+  for (const id of messageIds) {
+    if (templateId) overrides[id] = templateId;
+    else delete overrides[id];
+  }
+  draft.messageTemplateOverrides = overrides;
+};
+
 export const packageImageAssets = (pkg: LogStylePackage | null) => (pkg?.assets || []).filter((a) => IMAGE_MIME.has(a.mime));
 export const packageFontAssets = (pkg: LogStylePackage | null) => (pkg?.assets || []).filter((a) => FONT_MIME.has(a.mime));
 

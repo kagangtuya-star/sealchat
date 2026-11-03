@@ -176,6 +176,10 @@ export const countBodySlots = (lib: TemplateLibrary, id: string, depth = 0): num
   return t.bodySlots + t.parts.reduce((sum, part) => sum + countBodySlots(lib, part, depth + 1), 0);
 };
 
+/** 与消息规则校验共用：展开后恰好含一个 body slot 才能用于消息。 */
+export const messageTemplateIds = (lib: TemplateLibrary): string[] =>
+  Array.from(lib.templates.keys()).filter((id) => countBodySlots(lib, id) === 1);
+
 const BODY_PURIFY = {
   ALLOWED_TAGS: ['p', 'br', 'span', 'strong', 'em', 'b', 'i', 'u', 's', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'img', 'ruby', 'rt', 'rp', 'sub', 'sup', 'mark', 'div', 'table', 'thead', 'tbody', 'tr', 'td', 'th'],

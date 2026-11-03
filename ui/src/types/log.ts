@@ -107,6 +107,13 @@ export interface LogProjectAsset {
   name: string;
 }
 
+/** 当前 LOG 工程的显示覆盖；所有已填写条件同时满足，按数组顺序 first-match。 */
+export interface LogDisplayRule {
+  id: string;
+  match: { messageType?: string; identityId?: string; userId?: string; variantId?: string };
+  templateId: string;
+}
+
 export interface LogDraft {
   schemaVersion: 1;
   title: string;
@@ -122,6 +129,8 @@ export interface LogDraft {
   assets?: LogProjectAsset[];
   /** 正文图片宽度 / 当前内容栏宽度，key 为 message:<id>:image:<index>。 */
   imageWidths?: Record<string, number>;
+  displayRules?: LogDisplayRule[];
+  messageTemplateOverrides?: Record<string, string>;
 }
 
 export interface LogProjectContext {
@@ -280,6 +289,11 @@ export interface LogPublicMessageNode {
   kind: 'message';
   sectionId: string;
   messageType: LogPublicMessageType;
+  /** release 内独立域哈希；绝不是真实角色/用户 ID。旧发布节点缺省。 */
+  identityKey?: string;
+  userKey?: string;
+  /** 仅本条消息的模板覆盖，不含源消息 ID。 */
+  templateOverride?: string;
   speaker: { key: string; name: string; color: string | null; avatarAssetKey: string | null; variantKey: string | null };
   bodyHtml: string;
   /** 发布时按正文图片序号投影，不公开源消息 ID。 */
@@ -320,6 +334,8 @@ export interface LogPublicDocument {
   chapters?: Array<{ id: string; title: string; sectionIds: string[] }>;
   page: LogPageSettings;
   style: LogPublicStylePackage | null;
+  /** match 中的身份/用户/差分值均已按 release 哈希，规则 ID 也是公开投影。 */
+  displayRules?: LogDisplayRule[];
 }
 
 export interface LogPublicItems {

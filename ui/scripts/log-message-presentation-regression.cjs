@@ -42,6 +42,10 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 }).outputText, filename)
 
 const r = require(path.join(src, 'services/log/logRenderer.ts'))
+const compiler = Module._cache[compilerStub].exports
+const actualCompiler = require(path.join(src, 'services/log/logTemplateCompiler.ts'))
+const draftOps = require(path.join(src, 'views/log/logDraftOps.ts'))
+const surface = require(path.join(src, 'log-pdf/surface.ts'))
 
 const design = (id, presentation, extra = {}) => r.designMessageToNode({
   message: { id, content: extra.content || `正文 ${id}`, createdAt: '2026-10-18T12:00:00Z', icMode: extra.icMode || 'ic', identity: { id: 'alice', displayName: '艾丽丝' }, user: { id: 'u-alice' } },
@@ -160,6 +164,87 @@ const whisper = (...targets) => ({ whisper: { targets: targets.map(([key, name])
   assert.equal(second.attrs['data-log-merged'], '1')
   assert.ok(second.html.includes('log-clue--iframe'), '合并只隐藏发言者，线索标题/类型/来源仍在正文中')
   assert.equal(r.buildFrameDocument({ style: null, page, title: 'T', sectionTitle: 'S', nodes: [design('plain-2')], toc: [], backgroundToken: null }).doc.blocks[0].attrs['data-log-clue-kind'], undefined)
+}
+
+// 工程规则与精确覆盖：执行唯一 selector，保留旧样式的混合 speakerKey 协议。
+{
+  const n = { ...design('template-message'), variantKey: 'v1' }
+  assert.equal(n.identityKey, 'alice')
+  assert.equal(n.userKey, 'u-alice')
+  const templates = new Set(['normal', 'gm', 'special'])
+  const defaults = [{ identityKey: 'alice', templateId: 'normal' }]
+  const rule = (match, templateId = 'gm', id = 'rule') => ({ id, match, templateId })
+  const pick = (displayRules = [], messageTemplateOverrides = {}, node = n) => r.resolveMessageTemplate(node, templates, defaults, { displayRules, messageTemplateOverrides })
+  assert.equal(pick(), 'normal', '旧样式默认 rule')
+  assert.equal(pick([rule({ identityId: 'alice' })]), 'gm')
+  assert.equal(pick([rule({ userId: 'u-alice' })]), 'gm', '使用角色身份仍按 userId 匹配')
+  assert.equal(pick([rule({ userId: 'u-alice' })], {}, { ...n, identityKey: 'other-role', speakerKey: 'other-role' }), 'gm', '同用户换角色')
+  assert.equal(pick([rule({ userId: 'u-alice' })], {}, { ...n, identityKey: '', speakerKey: 'u-alice' }), 'gm', '无角色时按用户匹配')
+  assert.equal(pick([rule({ identityId: 'alice', variantId: 'v1' })]), 'gm')
+  assert.equal(pick([rule({ identityId: 'alice', variantId: 'wrong' })]), 'normal')
+  assert.equal(pick([rule({ messageType: 'ooc', userId: 'u-alice' })]), 'normal')
+  assert.equal(pick([rule({ messageType: 'ic', identityId: 'alice', userId: 'u-alice', variantId: 'v1' })]), 'gm')
+  assert.equal(pick([rule({})]), 'normal', '空 match 不可成为全局覆盖')
+  assert.equal(pick([rule({ userId: 'u-alice' })], { [n.id]: 'special' }), 'special')
+  const draft = { displayRules: [rule({ userId: 'u-alice' })] }
+  draftOps.setMessageTemplateOverrides(draft, [n.id, 'second'], 'special')
+  assert.equal(pick(draft.displayRules, draft.messageTemplateOverrides), 'special')
+  draftOps.setMessageTemplateOverrides(draft, [n.id, 'second'], '')
+  assert.deepEqual(draft.messageTemplateOverrides, {})
+  assert.equal(pick(draft.displayRules, draft.messageTemplateOverrides), 'gm', '自动恢复工程规则')
+  assert.equal(pick([], draft.messageTemplateOverrides), 'normal', '无工程规则则恢复样式规则')
+  assert.equal(pick([rule({ identityId: 'alice' }, 'removed'), rule({ userId: 'u-alice' })], { [n.id]: 'removed' }), 'gm', '失效 override 和 rule 逐层跳过')
+  assert.equal(pick([], { [n.id]: 'removed' }), 'normal')
+  assert.equal(pick([rule({ userId: 'u-alice' }), rule({ identityId: 'alice' }, 'special')]), 'gm', 'first match')
+  assert.equal(r.resolveMessageTemplate(n, new Set(), defaults, draft), null, '没有合法模板进入 fallback')
+  assert.equal(r.resolveMessageTemplate(n, templates, [{ templateId: 'removed' }, ...defaults]), 'normal')
+
+  // 模板分类直接执行 compiler 的片段展开计数，不按名字猜模板用途。
+  const library = { templates: new Map([
+    ['normal', { bodySlots: 1, parts: [] }], ['gm', { bodySlots: 0, parts: ['normal'] }],
+    ['special', { bodySlots: 1, parts: [] }], ['cover', { bodySlots: 0, parts: [] }],
+    ['double', { bodySlots: 1, parts: ['normal'] }],
+  ]), issues: [] }
+  assert.deepEqual(actualCompiler.messageTemplateIds(library), ['normal', 'gm', 'special'])
+  Object.assign(compiler, {
+    buildTemplateLibrary: () => library,
+    messageTemplateIds: actualCompiler.messageTemplateIds,
+    instantiateTemplate: (_lib, id) => `<article class="${id}">body</article>`,
+    fragmentToHtml: html => html,
+  })
+  const page = { mergeNeighbors: true, backgroundColor: '#ffffff', fontFamily: 'sans-serif', fontSizePt: 12, lineHeight: 1.5, headerTemplateId: null, footerTemplateId: null }
+  const style = { name: 'test', templates: {}, rules: defaults, tokens: {}, settingsSchema: {}, assets: [] }
+  const build = (nodes, templateSelection = {}) => r.buildFrameDocument({ style, page, title: 'T', sectionTitle: 'S', nodes, toc: [], backgroundToken: null, templateSelection }).doc
+  const second = { ...n, id: 'second', sourceId: 'second' }
+  const selection = { displayRules: [rule({ userId: 'u-alice' })], messageTemplateOverrides: { [n.id]: 'special', second: 'normal' } }
+  const different = build([n, second], selection)
+  assert.match(different.blocks[0].html, /class="special"/)
+  assert.match(different.blocks[1].html, /class="normal"/)
+  assert.equal(different.blocks[1].attrs['data-log-merged'], undefined, '不同最终模板不能合并')
+  assert.equal(build([n, second], { displayRules: selection.displayRules }).blocks[1].attrs['data-log-merged'], '1', '同模板按原条件合并')
+  assert.equal(build([n, { ...second, quote: { speakerName: 'B', text: 'quote' } }]).blocks[1].attrs['data-log-merged'], undefined)
+  assert.match(build([n], { messageTemplateOverrides: { [n.id]: 'cover' } }).blocks[0].html, /class="normal"/, '非消息模板引用跳过')
+
+  // 与服务端 logPublicKey 相同的 release/domain 映射：公开节点不需要真实 ID。
+  const hash = (domain, id) => require('node:crypto').createHash('sha256').update(`release\0${domain}\0${id}`).digest('hex').slice(0, 32)
+  const pubRule = source => ({ ...source, match: Object.fromEntries(Object.entries(source.match).map(([key, value]) => [key,
+    ({ identityId: 'identity', userId: 'user', variantId: 'variant' })[key] ? hash(({ identityId: 'identity', userId: 'user', variantId: 'variant' })[key], value) : value])) })
+  const publicMessage = r.publicNodeToRender({ id: 'public-node', kind: 'message', messageType: n.messageType,
+    speaker: { key: hash('speaker', n.speakerKey), variantKey: hash('variant', n.variantKey), name: n.speakerName },
+    identityKey: hash('identity', n.identityKey), userKey: hash('user', n.userKey), bodyHtml: '', plainText: '', templateOverride: 'special' })
+  assert.equal(build([publicMessage], { displayRules: selection.displayRules.map(pubRule) }).blocks[0].html, different.blocks[0].html)
+  publicMessage.templateOverride = undefined
+  assert.equal(build([publicMessage], { displayRules: selection.displayRules.map(pubRule) }).blocks[0].html, build([n], { displayRules: selection.displayRules }).blocks[0].html)
+
+  const messages = [{ message: { id: n.id, content: '', identity: { id: 'alice', displayName: n.speakerName, variantId: 'v1' }, user: { id: 'u-alice' } }, capabilities: {} }]
+  const pdfDraft = { ...selection, title: 'T', themeTokens: {}, page, sections: [{ id: 's', title: 'S', order: 0 }], elements: [] }
+  const pdf = surface.buildPartDocuments({ draft: pdfDraft, style, parts: [{ sectionId: 's', slice: 0, sliceCount: 1, messages }] })
+  assert.equal(pdf[0].doc.blocks[0].html, different.blocks[0].html, 'PDF 与预览使用同一选择流程')
+  delete pdfDraft.messageTemplateOverrides
+  assert.match(surface.buildPartDocuments({ draft: pdfDraft, style, parts: [{ sectionId: 's', slice: 0, sliceCount: 1, messages }] })[0].doc.blocks[0].html, /class="gm"/)
+  const rebound = draftOps.rebindStyle({ ...pdfDraft, messageTemplateOverrides: { [n.id]: 'special' } }, { ...style, id: 'new', version: '1', templates: {} }).next
+  assert.deepEqual(rebound.displayRules, pdfDraft.displayRules)
+  assert.equal(rebound.messageTemplateOverrides[n.id], 'special', '切换样式不丢用户设置')
 }
 
 console.log('log message presentation regression: ok')

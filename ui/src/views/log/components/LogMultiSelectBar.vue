@@ -4,6 +4,7 @@
 import { computed } from 'vue';
 import { ArrowDown, ArrowUp, ArrowsVertical, Ban, Checks, Focus2, ListCheck, Trash, X } from '@vicons/tabler';
 import type { LogDesignMessage } from '@/types/log';
+import LogMessageTemplateSelect from './LogMessageTemplateSelect.vue';
 
 const BATCH_LIMIT = 200;
 
@@ -20,6 +21,9 @@ const props = defineProps<{
   rangeMode: boolean;
   rangeAnchored: boolean;
   relocating: boolean;
+  canEditDraft: boolean;
+  templateIds: string[];
+  templateOverrides: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +35,7 @@ const emit = defineEmits<{
   exclude: [];
   remove: [];
   exit: [];
+  template: [templateId: string];
 }>();
 
 const count = computed(() => props.messages.length);
@@ -88,6 +93,7 @@ const hint = computed(() => {
         </button>
       </template>
       <template v-else>
+        <LogMessageTemplateSelect class="log-multi__format" :template-ids="templateIds" :values="messages.map((m) => templateOverrides[m.message.id])" :disabled="!!common() || !canEditDraft" @change="(id) => emit('template', id)" />
         <button
           type="button"
           class="log-multi__btn"
@@ -288,7 +294,14 @@ const hint = computed(() => {
 
   .log-multi__actions {
     flex: 1 1 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
+  }
+
+  .log-multi__actions .log-multi__format {
+    flex: 1 1 100%;
+    width: 100%;
+    margin-bottom: 4px;
   }
 
   .log-multi__sep {

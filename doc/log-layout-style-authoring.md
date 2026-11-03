@@ -26,11 +26,32 @@
 | `tokens` | `Record<string, string\|number\|boolean>` | 是 | 可为 `{}`；键 `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`；字符串≤200 且不得含 `; { } \ < > @ ( )`；数字须有限 |
 | `templates` | `Record<string, string>` | 是 | 模板 ID → 受限 HTML 片段，≤64 个 |
 | `css` | string | 是 | 可为空串；≤512KB；见第 6 节 |
-| `rules` | `Array<{messageType?, identityKey?, variantKey?, templateId}>` | 是 | 自上而下首个匹配生效；最后一条应为无条件兜底；`templateId` 必须存在 |
+| `rules` | `Array<{messageType?, identityKey?, variantKey?, templateId}>` | 是 | 样式默认规则，自上而下首个匹配生效；最后一条应为无条件兜底；`templateId` 必须存在 |
 | `settingsSchema` | `Record<templateId, JSONSchema>` | 是 | 可为 `{}`；见第 4 节 |
 | `assets` | `Array<{id, path, mime, sha256}>` | 是 | 可为 `[]`；`path` 以 `assets/` 开头；PNG/JPEG/WebP 及经 sfnt 验证的 TTF/OTF |
 
-`messageType` 取值：`ic`、`ooc`、`narration`、`dice`、`bot`、`image`、`unknown`。`identityKey`/`variantKey` 是工程内角色/差分的匹配键；发布投影会改写成公开 speaker key，不暴露内部 ID。没有任何规则匹配或模板不可用时，渲染器回退到内置的通用消息结构（`.log-fallback-message`），不会丢正文。
+`messageType` 取值：`ic`、`ooc`、`narration`、`dice`、`bot`、`image`、`unknown`。样式包原有 `identityKey` 匹配 `speakerKey = identity.id || user.id || ''`，`variantKey` 匹配角色差分；此兼容协议保持不变。发布投影会改写成公开 speaker / variant key，不暴露内部 ID。没有任何规则匹配或模板不可用时，渲染器回退到内置的通用消息结构（`.log-fallback-message`），不会丢正文。
+
+### 工程规则与消息精确覆盖
+
+以下可选字段属于 `LogDraft`，通过现有草稿版本保存，只需要 `editDraft` 权限；不修改样式包、角色资料或聊天原消息。旧草稿缺失字段等价于空规则/空覆盖，不需要数据库迁移：
+
+```ts
+displayRules?: Array<{
+  id: string // UUID
+  match: { messageType?: string; identityId?: string; userId?: string; variantId?: string }
+  templateId: string
+}>
+messageTemplateOverrides?: Record<string, string> // 原消息 ID → 模板 ID
+```
+
+- `displayRules` 是当前工程覆盖规则，按数组顺序取第一条有效匹配；一个规则里所有已填条件必须同时满足，禁止保存空 match。`messageType` 精确匹配解析后的 LOG 消息类型，其他三项分别精确匹配 `message.identity.id`、`message.user.id`、`message.identity.variantId`，不按显示名匹配。
+- `userId` 表示发送用户，与 `identityId`（角色身份）独立。用户切换角色或未使用角色时，同一条用户规则仍可命中；角色改名不影响 ID 规则。
+- `messageTemplateOverrides` 是 messageId 精确覆盖。“自动”会删除对应 key；多选最多 200 条，通过一次 `draftCtl.update()` 整批修改。
+- 优先级固定为 **消息精确覆盖 → 工程覆盖规则 → 样式默认 rules → 通用消息 fallback**。每层遇到失效模板都会继续尝试后续规则/层。可用于消息的模板必须通过现有模板校验，片段展开后恰好包含一个 body slot。
+- 工作台“批量 → LOG 显示规则”提供新建、编辑、删除、上移/下移；角色与用户从当前来源片段已加载消息中选择，差分可从现有身份接口补全。单选/多选工具栏“对话框格式”可强制指定或恢复自动，混合状态显示“多种格式”。元素不参与消息覆盖。
+- 切换样式包或模板删除后，保留规则和精确覆盖；UI 标记失效引用并允许重新选择/清除，渲染继续降级。相邻消息只有最终选中的模板相同且满足原有合并条件时才合并，引用消息等限制保持不变。
+- 预览、PDF surface、公开 LOG 都调用 `logRenderer.resolveMessageTemplate`，不维护第二套选择/渲染逻辑。发布沿用已有 release 域哈希投影：节点的 `identityKey`、`userKey` 与工程规则中的 `identityId`、`userId` 分别用独立 identity/user 域哈希，差分沿用 variant 域；规则 ID 也被投影。精确覆盖仅作为公开消息节点的 `templateOverride` 保存，原 messageId 覆盖表不会公开。**公开 payload 不包含真实 userId、identityId、variantId 或源消息 ID**；不同 release 的匹配键也不同。旧 release 缺失这些字段时继续使用样式默认规则。
 
 ## 3. 模板语法与绑定字段
 
