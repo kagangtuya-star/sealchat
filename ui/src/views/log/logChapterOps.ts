@@ -189,9 +189,9 @@ export const formatSourceRange = (source: LogSourceSpec, now = new Date()) => {
 };
 
 export interface LogSourceFlag {
-  key: 'identity' | 'ooc' | 'archived';
+  key: 'identity' | 'ooc' | 'archived' | 'quote';
   text: string;
-  /** 偏离默认（全部角色、含 OOC、不含归档）时高亮。 */
+  /** 偏离默认（全部角色、含 OOC、不含归档、隐藏引用）时高亮。 */
   notable: boolean;
 }
 
@@ -199,6 +199,7 @@ export const sourceFlags = (source: LogSourceSpec): LogSourceFlag[] => [
   { key: 'identity', text: source.identityIds.length ? `${source.identityIds.length} 个角色` : '全部角色', notable: source.identityIds.length > 0 },
   { key: 'ooc', text: source.includeOoc ? '含 OOC' : '不含 OOC', notable: !source.includeOoc },
   { key: 'archived', text: source.includeArchived ? '含归档' : '不含归档', notable: source.includeArchived },
+  { key: 'quote', text: source.showQuoteContent ? '显示引用' : '隐藏引用', notable: !!source.showQuoteContent },
 ];
 
 /** 频道的稳定色相，用于区分同一章节中来自不同频道的片段。 */

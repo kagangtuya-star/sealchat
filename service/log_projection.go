@@ -94,7 +94,7 @@ func logSnapshotAttachment(ctx context.Context, r *model.LogReleaseModel, a *mod
 	return key, nil
 }
 
-func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64) error {
+func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64, showQuoteContent bool) error {
 	id := utils.NewID()
 	body := logMessageBodyOf(display, m)
 	sourceImageIndex, publicImageIndex := 0, 0
@@ -156,7 +156,11 @@ func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *mes
 	if err != nil {
 		return err
 	}
-	row := model.LogReleaseNodeModel{ID: id, ReleaseID: r.ID, SectionID: section, Ordinal: ordinal, MessageID: m.ID, ChannelID: m.ChannelID, SourceVersion: m.Version, NodeJSON: string(b), SearchText: plain, QuoteMessageID: m.QuoteID}
+	quoteMessageID := ""
+	if showQuoteContent {
+		quoteMessageID = m.QuoteID
+	}
+	row := model.LogReleaseNodeModel{ID: id, ReleaseID: r.ID, SectionID: section, Ordinal: ordinal, MessageID: m.ID, ChannelID: m.ChannelID, SourceVersion: m.Version, NodeJSON: string(b), SearchText: plain, QuoteMessageID: quoteMessageID}
 	return model.GetDB().Create(&row).Error
 }
 func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, projectKeys map[string]string) error {

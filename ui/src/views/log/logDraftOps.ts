@@ -70,6 +70,7 @@ export const newSection = (channelId: string, title: string, order: number): Log
     toTime: new Date().toISOString(),
     includeOoc: true,
     includeArchived: false,
+    showQuoteContent: false,
     identityIds: [],
   },
 });

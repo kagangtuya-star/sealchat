@@ -197,25 +197,27 @@ func QueryLogMessages(projectID, sectionID, userID, cursor, targetID string, lim
 			window.NextCursor = &next
 		}
 	}
-	// Quotes are independently filtered; never expand an inaccessible source.
-	quoteIDs := []string{}
-	for _, m := range window.Messages {
-		if m.QuoteID != "" {
-			quoteIDs = append(quoteIDs, m.QuoteID)
+	if s.Source.ShowQuoteContent {
+		// Quotes are independently filtered; never expand an inaccessible source.
+		quoteIDs := []string{}
+		for _, m := range window.Messages {
+			if m.QuoteID != "" {
+				quoteIDs = append(quoteIDs, m.QuoteID)
+			}
 		}
-	}
-	quotes := map[string]*model.MessageModel{}
-	if len(quoteIDs) > 0 {
-		var rows []*model.MessageModel
-		if err := base().Where("id IN ? AND is_revoked = ?", quoteIDs, false).Find(&rows).Error; err != nil {
-			return nil, err
+		quotes := map[string]*model.MessageModel{}
+		if len(quoteIDs) > 0 {
+			var rows []*model.MessageModel
+			if err := base().Where("id IN ? AND is_revoked = ?", quoteIDs, false).Find(&rows).Error; err != nil {
+				return nil, err
+			}
+			for _, m := range rows {
+				quotes[m.ID] = m
+			}
 		}
-		for _, m := range rows {
-			quotes[m.ID] = m
+		for _, m := range window.Messages {
+			m.Quote = quotes[m.QuoteID]
 		}
-	}
-	for _, m := range window.Messages {
-		m.Quote = quotes[m.QuoteID]
 	}
 	if window.Presentations, err = logDesignPresentations(userID, sectionID, window.Messages); err != nil {
 		return nil, err

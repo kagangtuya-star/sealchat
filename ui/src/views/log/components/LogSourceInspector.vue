@@ -187,6 +187,7 @@ const addChannel = (v: string | null) => v && emit('add-source', props.chapter.k
             <div class="log-insp__toggles">
               <n-checkbox :checked="section.source.includeOoc" @update:checked="(v: boolean) => patch({ includeOoc: v })">包含场外 (OOC)</n-checkbox>
               <n-checkbox :checked="section.source.includeArchived" @update:checked="(v: boolean) => patch({ includeArchived: v })">包含已归档</n-checkbox>
+              <n-checkbox :checked="!!section.source.showQuoteContent" @update:checked="(v: boolean) => patch({ showQuoteContent: v })">显示引用内容</n-checkbox>
             </div>
             <label class="log-insp__field">
               <span class="log-insp__label">只看角色</span>

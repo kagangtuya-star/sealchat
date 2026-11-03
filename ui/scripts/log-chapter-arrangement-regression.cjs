@@ -20,7 +20,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 }).outputText, filename)
 
 const ops = require(path.join(src, 'views/log/logChapterOps.ts'))
-const { cloneJson } = require(path.join(src, 'views/log/logDraftOps.ts'))
+const { cloneJson, newSection } = require(path.join(src, 'views/log/logDraftOps.ts'))
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const source = (channelId, fromTime = null) => ({ channelId, fromTime, toTime: '2026-10-12T14:00:00.000Z', includeOoc: true, includeArchived: false, identityIds: [] })
@@ -55,6 +55,14 @@ const assertValid = (d) => {
   assert.equal(seen.length, d.chapters.length, 'no empty chapters')
 }
 const flat = (d) => ops.chapterViews(d).map((v) => `${v.title}[${v.sections.map((s) => s.id).join(',')}]`).join(' ')
+
+// 新来源默认隐藏回复引用；旧草稿缺字段时也按隐藏处理，显式开启后才显示。
+{
+  assert.equal(newSection('hall').source.showQuoteContent, false)
+  const legacyFlags = ops.sourceFlags(source('hall'))
+  assert.deepEqual(legacyFlags.find((f) => f.key === 'quote'), { key: 'quote', text: '隐藏引用', notable: false })
+  assert.deepEqual(ops.sourceFlags({ ...source('hall'), showQuoteContent: true }).find((f) => f.key === 'quote'), { key: 'quote', text: '显示引用', notable: true })
+}
 
 // 旧草稿：每个 section 是一个隐式单来源章节；只改顺序/标题时保持旧格式。
 {

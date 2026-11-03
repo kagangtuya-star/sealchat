@@ -19,13 +19,14 @@ import (
 )
 
 type LogSourceSpec struct {
-	ChannelID       string     `json:"channelId"`
-	FromTime        *time.Time `json:"fromTime"`
-	FromExclusive   bool       `json:"fromExclusive,omitempty"`
-	ToTime          time.Time  `json:"toTime"`
-	IncludeOOC      bool       `json:"includeOoc"`
-	IncludeArchived bool       `json:"includeArchived"`
-	IdentityIDs     []string   `json:"identityIds"`
+	ChannelID        string     `json:"channelId"`
+	FromTime         *time.Time `json:"fromTime"`
+	FromExclusive    bool       `json:"fromExclusive,omitempty"`
+	ToTime           time.Time  `json:"toTime"`
+	IncludeOOC       bool       `json:"includeOoc"`
+	IncludeArchived  bool       `json:"includeArchived"`
+	ShowQuoteContent bool       `json:"showQuoteContent"`
+	IdentityIDs      []string   `json:"identityIds"`
 }
 
 // LogSection is the smallest source unit: one channel and one linear message range.

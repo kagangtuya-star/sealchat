@@ -28,6 +28,8 @@ export interface LogSourceSpec {
   toTime: string;
   includeOoc: boolean;
   includeArchived: boolean;
+  /** 是否在 LOG 中展示回复消息附带的引用块；旧草稿缺失时等价于 false。 */
+  showQuoteContent?: boolean;
   identityIds: string[];
 }
 
