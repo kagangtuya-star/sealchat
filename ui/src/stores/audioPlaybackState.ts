@@ -7,6 +7,7 @@ type PlayableHowl = {
 type PlayableTrack = {
   status?: PlaybackStatus;
   howl?: PlayableHowl;
+  playRequested?: boolean;
 } | null | undefined;
 
 function safeHowlPlaying(howl?: PlayableHowl) {
@@ -24,6 +25,9 @@ export function isTrackPlaybackActive(track?: PlayableTrack) {
   if (!track) {
     return false;
   }
+  if (typeof track.playRequested === 'boolean') {
+    return track.playRequested;
+  }
   return safeHowlPlaying(track.howl) || track.status === 'playing';
 }
 
@@ -34,6 +38,12 @@ export function hasAnyActivePlayback(tracks: Array<PlayableTrack>) {
 export function normalizeTrackStatus(track?: PlayableTrack): PlaybackStatus {
   if (!track) {
     return 'idle';
+  }
+  if (track.playRequested === false && track.status === 'playing') {
+    return 'paused';
+  }
+  if (track.playRequested === false) {
+    return track.status || 'idle';
   }
   if (safeHowlPlaying(track.howl)) {
     return 'playing';

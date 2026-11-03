@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { Howl, Howler } from 'howler';
 import { nanoid } from 'nanoid';
+import { markRaw } from 'vue';
 import { api, buildAuthorizedJsonRequestInit, urlBase } from './_config';
 import { useUserStore } from './user';
 import { useUtilsStore } from './utils';
@@ -56,6 +57,13 @@ export interface TrackRuntime extends AudioSceneTrack {
   solo: boolean;
   error?: string;
   pendingSeek?: number | null;
+  loadRequestId: number;
+  playRequested: boolean;
+  playPending: boolean;
+  autoplayBlocked: boolean;
+  soundId: number | null;
+  endedRevision: number | null;
+  endSyncPending: boolean;
   playlistFolderId: string | null;
   playlistMode: PlaylistMode | null;
   playlistAssets: AudioAsset[];
@@ -244,6 +252,7 @@ const SYNC_RETRY_MAX_MS = 10_000;
 const DEFAULT_WORLD_PLAYBACK_ENABLED = true;
 const PLAYABLE_STREAM_REFRESH_SKEW_MS = 15_000;
 const remotePlaybackApplyQueue = new AudioPlaybackApplyQueue();
+const playbackSyncQueue = new AudioPlaybackApplyQueue();
 const initialEmbeddedRuntime = detectEmbeddedRuntime();
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 const useRawProtectedStreamMode = () =>
@@ -273,6 +282,13 @@ function createEmptyTrack(type: AudioTrackType): TrackRuntime {
     muted: false,
     solo: false,
     pendingSeek: null,
+    loadRequestId: 0,
+    playRequested: false,
+    playPending: false,
+    autoplayBlocked: false,
+    soundId: null,
+    endedRevision: null,
+    endSyncPending: false,
     playlistFolderId: null,
     playlistMode: null,
     playlistAssets: [],
@@ -363,6 +379,27 @@ interface TrackMutationOptions {
   force?: boolean;
   initialSeek?: number;
   deferLoad?: boolean;
+  autoPlay?: boolean;
+  autoAdvance?: boolean;
+}
+
+// 单曲循环只由 Howler 驱动；列表切歌只由 end 回调驱动。
+function shouldLoopTrack(track: TrackRuntime) {
+  if (track.playlistMode && track.playlistAssetIds.length) {
+    return track.playlistMode === 'single';
+  }
+  return track.loopEnabled ?? true;
+}
+
+function releaseTrackPlayer(track: TrackRuntime) {
+  track.loadRequestId += 1;
+  track.playRequested = false;
+  track.playPending = false;
+  track.autoplayBlocked = false;
+  track.soundId = null;
+  const howl = track.howl;
+  track.howl = null;
+  howl?.unload();
 }
 
 interface PaginationState {
@@ -927,6 +964,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async flushPendingPlaybackSync(source: 'commit' | 'retry' = 'commit') {
+      const generation = this.playbackContextGeneration;
+      await playbackSyncQueue.enqueue(`runtime:${generation}`, () => {
+        if (generation !== this.playbackContextGeneration) return;
+        return this.flushPendingPlaybackSyncInternal(source);
+      });
+    },
+
+    async flushPendingPlaybackSyncInternal(source: 'commit' | 'retry' = 'commit') {
       const payload = this.pendingCommitPayload;
       if (!payload) {
         return;
@@ -940,20 +985,43 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.syncRetryAttempt = 0;
         return;
       }
+      const generation = this.playbackContextGeneration;
       try {
         const resp = await api.post('/api/v1/audio/state', payload);
-        this.pendingCommitPayload = null;
+        if (generation !== this.playbackContextGeneration) return;
+        if (this.pendingCommitPayload === payload) this.pendingCommitPayload = null;
         this.clearRetrySyncTimer();
         this.syncRetryAttempt = 0;
         const state = resp?.data?.state as AudioPlaybackStatePayload | undefined;
         if (state) {
           const scopeKey = this.getScopeKeyFromPayload(state);
-          this.markAppliedState(scopeKey, this.getRevisionFromPayload(state), this.getCapturedAtFromPayload(state));
+          const revision = this.getRevisionFromPayload(state);
+          this.markAppliedState(scopeKey, revision, this.getCapturedAtFromPayload(state));
+          // 较早的“开始播放”应答可能晚于本地 end；该应答不能让同版本快照复活已结束的音轨。
+          DEFAULT_TRACK_TYPES.forEach((type) => {
+            const track = this.tracks[type];
+            const sent = payload.tracks.find((item) => item.type === type);
+            if (track.endedRevision !== null && sent?.assetId === track.assetId && sent.isPlaying) {
+              track.endedRevision = Math.max(track.endedRevision, revision);
+            }
+          });
+          const pending = this.pendingCommitPayload;
+          if (pending && this.getScopeKeyFromPayload(pending) === scopeKey && pending.baseRevision === payload.baseRevision) {
+            pending.baseRevision = this.getRevisionFromPayload(state);
+          }
         }
       } catch (err: any) {
+        if (generation !== this.playbackContextGeneration) return;
         const status = Number(err?.response?.status || 0);
         if (status === 409) {
           const latest = err?.response?.data?.state as AudioPlaybackStatePayload | undefined;
+          if (this.pendingCommitPayload !== payload) {
+            if (latest && this.pendingCommitPayload && this.getScopeKeyFromPayload(latest) === this.getScopeKeyFromPayload(this.pendingCommitPayload)) {
+              this.pendingCommitPayload.baseRevision = this.getRevisionFromPayload(latest);
+            }
+            this.scheduleRetrySync();
+            return;
+          }
           this.pendingCommitPayload = null;
           this.clearRetrySyncTimer();
           this.syncRetryAttempt = 0;
@@ -1058,15 +1126,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     resetLocalPlaybackRuntime() {
+      this.playbackContextGeneration += 1;
+      sceneApplySeq += 1;
       stopProgressWatcher();
       this.pendingRemotePlay = false;
+      this.isApplyingRemoteState = false;
       this.remoteState = null;
       DEFAULT_TRACK_TYPES.forEach((type) => {
         const track = this.tracks[type];
         if (track?.howl) {
           try {
-            track.howl.stop();
-            track.howl.unload();
+            releaseTrackPlayer(track);
           } catch (err) {
             console.warn(`cleanup track ${type} failed`, err);
           }
@@ -1125,6 +1195,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!normalizedChannelId) {
         return;
       }
+      this.syncNaturalEnds();
       void this.fetchPlaybackState(normalizedChannelId, { force: true, reason: 'channel-changed' });
     },
 
@@ -1167,6 +1238,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         [scopeKey]: now,
       };
       try {
+        // 断线期间的自然结束必须先补交，不能先用旧的播放快照重新启动。
+        if (this.pendingCommitPayload && this.canManage) {
+          await this.flushPendingPlaybackSync();
+          if (this.pendingCommitPayload) return;
+        }
         const resp = await api.get('/api/v1/audio/state', { params: { channelId: normalizedChannelId } });
         if (
           contextGeneration !== this.playbackContextGeneration
@@ -1196,7 +1272,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
       const scopeKey = this.getScopeKeyFromPayload(payload);
-      await remotePlaybackApplyQueue.enqueue(scopeKey, () => this.applyRemotePlaybackInternal(payload, options, scopeKey));
+      const generation = this.playbackContextGeneration;
+      // 所有 scope 共用同一组播放器，不能按 scope 并发修改同一音轨。
+      await remotePlaybackApplyQueue.enqueue(`runtime:${generation}`, () => {
+        if (generation !== this.playbackContextGeneration) return;
+        return this.applyRemotePlaybackInternal(payload, options, scopeKey);
+      });
     },
 
     async applyRemotePlaybackInternal(
@@ -1242,7 +1323,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           reason === 'connected' ||
           reason === 'visible') &&
         this.allTracksIdle();
-      if (!allowReplayOnSnapshotPull && incomingRevision > 0 && incomingRevision < lastAppliedRevision) {
+      if (incomingRevision > 0 && incomingRevision < lastAppliedRevision) {
         return;
       }
       if (
@@ -1266,6 +1347,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.pendingRemotePlay = false;
       }
       this.isApplyingRemoteState = true;
+      const generation = this.playbackContextGeneration;
 
       if (!payload) {
         if (source === 'pull') {
@@ -1278,8 +1360,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           const track = this.tracks[type];
           if (track?.howl) {
             try {
-              track.howl.stop();
-              track.howl.unload();
+              releaseTrackPlayer(track);
             } catch (e) {
               console.warn('cleanup howl failed', e);
             }
@@ -1306,17 +1387,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             // 无远程状态 -> 清空轨道
             if (!incoming || !incoming.assetId) {
               if (current?.howl) {
-                current.howl.stop();
-                current.howl.unload();
+                releaseTrackPlayer(current);
               }
               this.tracks[type] = createEmptyTrack(type);
               return;
             }
 
             const targetPosition = typeof incoming.position === 'number' ? incoming.position : (payload.position ?? 0);
-            // 后端尚未支持轨道级 isPlaying，回退到全局 isPlaying
+            // 兼容未提供轨道级 isPlaying 的旧快照。
             const trackIsPlaying = typeof incoming.isPlaying === 'boolean' ? incoming.isPlaying : payload.isPlaying;
-            const shouldPlay = trackIsPlaying && !incoming.muted;
+            const shouldPlay = trackIsPlaying && !incoming.muted && !(
+              current?.assetId === incoming.assetId && current.endedRevision !== null && incomingRevision <= current.endedRevision
+            );
 
             // 资源相同 -> 仅更新状态
             if (current?.assetId === incoming.assetId && current.howl) {
@@ -1335,32 +1417,23 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               // 应用音量、倍速、循环（使用轨道级设置）
               current.howl.volume(current.muted ? 0 : current.volume);
               current.howl.rate(current.playbackRate);
-              current.howl.loop(current.loopEnabled);
+              current.howl.loop(shouldLoopTrack(current));
 
               // 同步播放状态（防止重复播放）
-              const isCurrentlyPlaying = current.howl.playing();
+              const isCurrentlyPlaying = isTrackPlaybackActive(current);
               if (shouldPlay && !isCurrentlyPlaying) {
-                if (targetPosition > 0) {
-                  current.howl.seek(targetPosition);
-                }
-                // 尝试恢复 AudioContext
-                if (Howler.ctx?.state === 'suspended') {
-                  await Howler.ctx.resume();
-                }
-                try {
-                  current.howl.play();
-                } catch (e) {
-                  warnAudioSync(`[AudioSync] Autoplay blocked for track ${type}. Click anywhere to start.`, e);
-                  current.status = 'paused';
-                  this.pendingRemotePlay = true;
-                }
-              } else if (!shouldPlay && isCurrentlyPlaying) {
-                current.howl.pause();
+                current.pendingSeek = targetPosition;
+                if (current.howl.state() === 'loaded') current.howl.seek(targetPosition);
+                this.startTrackPlayback(current);
+              } else if (!shouldPlay) {
+                this.pauseTrack(type, { force: true });
               } else if (shouldPlay && isCurrentlyPlaying) {
                 // 已在播放，仅同步位置（如果差距较大）
-                const currentPos = current.howl.seek() as number;
-                if (Math.abs(currentPos - targetPosition) > 2) {
-                  current.howl.seek(targetPosition);
+                if (current.howl.state() !== 'loaded') {
+                  current.pendingSeek = targetPosition;
+                } else {
+                  const currentPos = current.howl.seek() as number;
+                  if (Math.abs(currentPos - targetPosition) > 2) current.howl.seek(targetPosition);
                 }
               }
               return;
@@ -1369,8 +1442,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             // 资源不同 -> 重建轨道
             if (current?.howl) {
               try {
-                current.howl.stop();
-                current.howl.unload();
+                releaseTrackPlayer(current);
               } catch (e) {
                 console.warn(`Failed to unload track ${type}`, e);
               }
@@ -1392,68 +1464,24 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             track.status = 'loading';
 
             this.tracks[type] = track;
-            const activeTrack = this.tracks[type];
-
-            let asset = this.assets.find((item) => item.id === incoming.assetId) || null;
-            if (!asset) {
-              try {
-                asset = await this.fetchSingleAsset(incoming.assetId);
-              } catch (err) {
-                console.warn('fetch asset failed', err);
-                track.status = 'error';
-                track.error = '资源加载失败';
-                return;
-              }
-            }
-            track.asset = asset;
-            const howl = await this.createHowlInstance(track, asset, { initialSeek: targetPosition });
-            if (this.tracks[type] !== activeTrack) {
-              // 轨道在异步加载期间可能因频道/权限切换而被重置；
-              // 旧播放器不能再挂回当前状态，否则会成为无法清理的孤儿实例。
-              howl.unload();
-              return;
-            }
-            track.howl = howl;
-            track.status = 'ready';
-
-            if (shouldPlay && track.howl) {
-              // 使用轨道级设置
-              track.howl.loop(track.loopEnabled);
-              track.howl.rate(track.playbackRate);
-              // 尝试恢复 AudioContext
-              if (Howler.ctx?.state === 'suspended') {
-                await Howler.ctx.resume();
-              }
-              if (this.tracks[type] !== activeTrack) {
-                try {
-                  track.howl.stop();
-                  track.howl.unload();
-                } catch (e) {
-                  console.warn(`Failed to unload stale track ${type}`, e);
-                }
-                return;
-              }
-              try {
-                track.howl.play();
-              } catch (e) {
-                warnAudioSync(`[AudioSync] Autoplay blocked for new track ${type}. Click anywhere to start.`, e);
-                track.status = 'paused';
-                this.pendingRemotePlay = true;
-              }
-            }
+            await this.loadTrackAsset(type, incoming.assetId, { force: true, initialSeek: targetPosition, autoPlay: shouldPlay });
           }),
         );
 
         // 更新全局播放状态（基于是否有任何轨道在播放）
-        this.isPlaying = payload.isPlaying;
+        if (generation !== this.playbackContextGeneration) return;
+        this.isPlaying = this.anyTrackPlaying();
         if (this.anyTrackPlaying()) {
           startProgressWatcher(this);
         } else {
           stopProgressWatcher();
         }
       } finally {
-        this.isApplyingRemoteState = false;
-        this.markAppliedState(scopeKey, incomingRevision, incomingCapturedAt);
+        if (generation === this.playbackContextGeneration) {
+          this.isApplyingRemoteState = false;
+          this.markAppliedState(scopeKey, incomingRevision, incomingCapturedAt);
+          this.syncNaturalEnds();
+        }
       }
 
       if (hasRevisionGap && payload?.channelId) {
@@ -1481,39 +1509,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.pendingRemotePlay) {
         return;
       }
-      if (!this.remoteState?.isPlaying) {
-        this.pendingRemotePlay = false;
-        return;
-      }
-      const trackStates = this.remoteState.tracks || [];
       DEFAULT_TRACK_TYPES.forEach((type) => {
-        const incoming = trackStates.find((t) => t.type === type);
         const track = this.tracks[type];
-        if (!incoming || !incoming.assetId || !track?.howl) {
-          return;
-        }
-        const trackIsPlaying =
-          typeof incoming.isPlaying === 'boolean' ? incoming.isPlaying : this.remoteState?.isPlaying;
-        const shouldPlay = trackIsPlaying && !incoming.muted;
-        if (!shouldPlay) {
-          return;
-        }
-        if (!track.howl.playing()) {
-          const targetPosition =
-            typeof incoming.position === 'number' ? incoming.position : (this.remoteState?.position ?? 0);
-          if (targetPosition > 0) {
-            track.howl.seek(targetPosition);
-          }
-          if (Howler.ctx?.state === 'suspended') {
-            Howler.ctx.resume().catch(() => {});
-          }
-          try {
-            track.howl.play();
-          } catch (err) {
-            warnAudioSync(`[AudioSync] Autoplay retry failed for track ${type}`, err);
-          }
-        }
+        if (track?.autoplayBlocked && track.howl && track.endedRevision === null) this.startTrackPlayback(track);
       });
+      this.pendingRemotePlay = DEFAULT_TRACK_TYPES.some((type) => this.tracks[type].autoplayBlocked);
     },
 
     queuePlaybackSync(options?: { persist?: boolean; syncReason?: string }) {
@@ -2373,6 +2373,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.canManage) throw new Error('无权限控制音乐工作台');
       const normalized = normalizeStageMusicSnapshot(snapshot);
       if (!normalized) return;
+      const generation = this.playbackContextGeneration;
+      const applySeq = ++sceneApplySeq;
       const referencedAssetIds = [...new Set(normalized.tracks.flatMap((track) => [
         track.asset?.assetId,
         ...track.playlist.map((asset) => asset.assetId),
@@ -2382,6 +2384,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           ? Promise.resolve()
           : this.fetchSingleAsset(assetId)
       )));
+      if (generation !== this.playbackContextGeneration || applySeq !== sceneApplySeq) return;
       this.currentSceneId = null;
       this.isPlaying = true;
       normalized.tracks.forEach((track) => {
@@ -2402,6 +2405,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await Promise.all(normalized.tracks.map((track) => (
         track.asset ? this.loadTrackAsset(track.type, track.asset.assetId, { force: true }) : Promise.resolve()
       )));
+      if (generation !== this.playbackContextGeneration || applySeq !== sceneApplySeq) return;
       await this.playAll();
       await this.commitPlaybackSync({ persist: true, syncReason: 'theater-scene-music' });
     },
@@ -2411,9 +2415,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
       const prev = this.tracks[type];
-      if (prev?.howl) {
-        prev.howl.unload();
-      }
+      if (prev) releaseTrackPlayer(prev);
       this.tracks[type] = {
         ...createEmptyTrack(type),
         ...payload,
@@ -2447,29 +2449,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!options?.force && !this.canManage) {
         return;
       }
-      if (!track) return;
-      if (track.howl) {
-        track.howl.unload();
-      }
-      track.assetId = asset.id;
       track.asset = asset;
-      syncTrackPlaylistIndex(track, asset.id);
-      track.status = 'loading';
-      track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
-      try {
-        track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
-        track.status = 'ready';
-        if (this.isPlaying && track.howl && !track.muted) {
-          track.howl.play();
-        }
-      } catch (err) {
-        console.error('assignAssetToTrack error', err);
-        track.status = 'error';
-        track.error = '资源加载失败';
-      }
-      if (!options?.force) {
-        this.queuePlaybackSync();
-      }
+      await this.loadTrackAsset(type, asset.id, options);
     },
 
     async loadTrackAsset(type: AudioTrackType, assetId: string, options?: TrackMutationOptions) {
@@ -2479,28 +2460,37 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         // 非管理端仅在远端同步时传 force
         return;
       }
+      const autoPlay = options?.autoPlay ?? shouldAutoplayLoadedTrack(this.isPlaying, !!track.muted);
+      releaseTrackPlayer(track);
+      const requestId = track.loadRequestId;
+      const isCurrent = () => this.tracks[type] === track && track.loadRequestId === requestId && track.assetId === assetId;
+      track.assetId = assetId;
+      syncTrackPlaylistIndex(track, assetId);
+      track.playRequested = autoPlay;
+      track.endedRevision = null;
+      track.endSyncPending = false;
+      track.pendingSeek = options?.initialSeek ?? 0;
+      track.status = 'loading';
+      track.error = undefined;
       try {
-        track.status = 'loading';
-        const asset = this.assets.find((item) => item.id === assetId) || (await this.fetchSingleAsset(assetId));
-        if (this.tracks[type] !== track) return;
+        const asset = (track.asset?.id === assetId ? track.asset : null)
+          || this.assets.find((item) => item.id === assetId) || (await this.fetchSingleAsset(assetId));
+        if (!isCurrent()) return;
         track.asset = asset;
-        track.assetId = asset.id;
-        syncTrackPlaylistIndex(track, asset.id);
-        track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
-        const howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
-        if (this.tracks[type] !== track) {
-          howl.unload();
+        const howl = await this.createHowlInstance(track, asset, { requestId, autoAdvance: !!options?.autoAdvance });
+        if (!isCurrent()) {
+          howl?.unload();
           return;
         }
-        track.howl = howl;
-        track.status = 'ready';
-        if (shouldAutoplayLoadedTrack(this.isPlaying, !!track.muted) && track.howl && !track.howl.playing()) {
-          track.howl.play();
-        }
       } catch (err) {
+        if (!isCurrent()) return;
         console.error('loadTrackAsset error', err);
+        const failedAutoAdvance = !!options?.autoAdvance && track.playRequested;
+        releaseTrackPlayer(track);
         track.status = 'error';
         track.error = '资源加载失败';
+        this.refreshPlaybackFlags();
+        if (failedAutoAdvance) this.markTrackEnded(track);
       }
       if (!options?.force) {
         this.queuePlaybackSync();
@@ -2575,35 +2565,69 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return streamUrl;
     },
 
-    async createHowlInstance(track: TrackRuntime, asset: AudioAsset, options?: { initialSeek?: number }) {
+    async createHowlInstance(track: TrackRuntime, asset: AudioAsset, options: { requestId: number; autoAdvance: boolean }) {
       applyMasterVolume(this.masterVolume);
       const src = await this.fetchPlayableStreamUrl(asset.id);
-      const howl = new Howl({
+      const ownsRequest = () => this.tracks[track.type] === track
+        && track.loadRequestId === options.requestId && track.assetId === asset.id;
+      if (!ownsRequest()) return null;
+      let discarded = false;
+      const isCurrent = (id?: number) => {
+        if (ownsRequest() && track.howl === howl) {
+          return id === undefined || track.soundId === null || id === track.soundId;
+        }
+        if (!discarded) {
+          discarded = true;
+          howl.unload();
+        }
+        return false;
+      };
+      const howl = markRaw(new Howl({
         src: [src],
         html5: true,
         preload: false,
-        volume: track.volume,
-        onplay: () => {
+        volume: track.muted ? 0 : track.volume,
+        loop: shouldLoopTrack(track),
+        rate: track.playbackRate ?? 1,
+        onplay: (id) => {
+          if (!isCurrent(id)) return;
+          if (!track.playRequested) {
+            howl.pause(id);
+            return;
+          }
+          track.playPending = false;
           track.status = 'playing';
           this.isPlaying = true;
           if (!this.isApplyingRemoteState) {
             startProgressWatcher(this);
           }
-          this.pendingRemotePlay = false;
+          this.pendingRemotePlay = DEFAULT_TRACK_TYPES.some((type) => this.tracks[type].autoplayBlocked);
         },
-        onpause: () => {
+        onpause: (id) => {
+          if (!isCurrent(id)) return;
+          track.playPending = false;
+          if (track.playRequested) {
+            this.startTrackPlayback(track);
+            return;
+          }
           track.status = 'paused';
           this.refreshPlaybackFlags();
         },
-        onstop: () => {
+        onstop: (id) => {
+          if (!isCurrent(id) || track.playRequested) return;
+          track.playPending = false;
           track.status = 'ready';
           this.refreshPlaybackFlags();
         },
-        onend: () => {
+        onend: (id) => {
+          if (!isCurrent(id) || !track.playRequested || shouldLoopTrack(track) || howl.playing()) return;
+          track.playRequested = false;
+          track.playPending = false;
+          track.soundId = null;
           track.status = 'ready';
           // 播放列表模式下自动播放下一曲
-          if (track.playlistMode && track.playlistAssetIds?.length && !this.isApplyingRemoteState) {
-            this.playNextInPlaylist(track.type);
+          if (track.playlistMode && track.playlistAssetIds?.length) {
+            void this.advancePlaylist(track.type, 1, { force: true, autoPlay: true, autoAdvance: true });
             return;
           }
           // 仅当所有轨道都空闲时停止进度监控
@@ -2611,18 +2635,24 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           if (!this.isApplyingRemoteState && this.allTracksIdle()) {
             stopProgressWatcher();
           }
+          this.markTrackEnded(track);
         },
         onload: () => {
+          if (!isCurrent()) return;
           track.duration = howl.duration();
-          const targetSeek =
-            typeof options?.initialSeek === 'number' ? options.initialSeek : track.pendingSeek ?? 0;
+          const targetSeek = track.pendingSeek ?? 0;
           if (targetSeek && targetSeek > 0 && !Number.isNaN(targetSeek)) {
             const maxDuration = howl.duration() || targetSeek;
             howl.seek(Math.min(targetSeek, maxDuration));
           }
           track.pendingSeek = null;
+          if (track.status !== 'paused') track.status = 'ready';
+          if (track.playRequested) this.startTrackPlayback(track);
         },
         onloaderror: (_, err) => {
+          if (!isCurrent()) return;
+          const failedAutoAdvance = options.autoAdvance && track.playRequested;
+          releaseTrackPlayer(track);
           track.status = 'error';
           track.error = String(err);
           warnAudioSync('[AudioPlayback] stream load failed', {
@@ -2634,8 +2664,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             error: String(err),
           });
           this.refreshPlaybackFlags();
+          if (failedAutoAdvance) this.markTrackEnded(track);
         },
-        onplayerror: (_, err) => {
+        onplayerror: (id, err) => {
+          if (!isCurrent(id)) return;
+          const wasRequested = track.playRequested;
+          track.playRequested = false;
+          track.playPending = false;
+          track.autoplayBlocked = wasRequested;
           // 自动播放被阻止时，设置为暂停状态而非错误状态
           // 用户可以通过点击播放按钮手动触发
           console.warn('Play error (likely autoplay blocked):', err);
@@ -2649,7 +2685,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           });
           track.status = 'paused';
           this.refreshPlaybackFlags();
-          if (!this.canManage && this.remoteState?.isPlaying) {
+          if (wasRequested) {
             this.pendingRemotePlay = true;
           }
           // 尝试解锁音频上下文
@@ -2657,8 +2693,63 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             Howler.ctx.resume().catch(() => {});
           }
         },
-      });
+      }));
+      track.howl = howl;
+      howl.load();
       return howl;
+    },
+
+    // 唯一的播放启动入口。先记录意图和 pending，再调用 Howler，避免加载及解锁期间重复排队。
+    startTrackPlayback(track: TrackRuntime) {
+      const howl = track.howl;
+      if (this.tracks[track.type] !== track || !howl || !track.assetId || !this.hasPlaybackAuthority) return;
+      track.playRequested = true;
+      track.endedRevision = null;
+      if (track.playPending || howl.playing() || howl.state() !== 'loaded') return;
+      howl.loop(shouldLoopTrack(track));
+      howl.rate(track.playbackRate ?? 1);
+      track.playPending = true;
+      track.autoplayBlocked = false;
+      track.status = 'playing';
+      this.isPlaying = true;
+      if (Howler.ctx?.state === 'suspended') Howler.ctx.resume().catch(() => {});
+      try {
+        const id = howl.play(track.soundId ?? undefined);
+        if (typeof id === 'number') {
+          track.soundId = id;
+        } else if (id !== undefined) {
+          track.playRequested = false;
+          track.playPending = false;
+          track.status = 'paused';
+          this.refreshPlaybackFlags();
+        }
+        // seek 已到结尾时 Howler 返回 undefined，随后异步派发 end；保留意图供 end 完成同步。
+      } catch (err) {
+        track.playRequested = false;
+        track.playPending = false;
+        track.autoplayBlocked = true;
+        track.status = 'paused';
+        this.pendingRemotePlay = true;
+        this.refreshPlaybackFlags();
+        warnAudioSync('[AudioPlayback] start failed', err);
+      }
+    },
+
+    markTrackEnded(track: TrackRuntime) {
+      const scopeKey = this.getScopeKey(this.currentChannelId, this.worldPlaybackEnabled);
+      const applyingRevision = this.getScopeKeyFromPayload(this.remoteState) === scopeKey
+        ? this.getRevisionFromPayload(this.remoteState) : 0;
+      track.endedRevision = Math.max(this.lastAppliedRevisionByScope[scopeKey] || 0, applyingRevision);
+      track.endSyncPending = true;
+      this.syncNaturalEnds();
+    },
+
+    syncNaturalEnds() {
+      if (this.isApplyingRemoteState || !this.canManage || !this.hasPlaybackAuthority || !this.currentChannelId) return;
+      const ended = DEFAULT_TRACK_TYPES.map((type) => this.tracks[type]).filter((track) => track.endSyncPending);
+      if (!ended.length) return;
+      ended.forEach((track) => { track.endSyncPending = false; });
+      void this.commitPlaybackSync({ persist: true, syncReason: 'track-ended' });
     },
 
     async playAll(options?: { force?: boolean }) {
@@ -2669,14 +2760,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       DEFAULT_TRACK_TYPES.forEach((type) => {
         const track = this.tracks[type];
         if (track?.howl && track.assetId && !track.muted) {
-          // 使用轨道级别的循环和倍速设置
-          track.howl.loop(track.loopEnabled ?? true);
-          track.howl.rate(track.playbackRate ?? 1);
-          track.status = 'playing';
-          // 防止重复播放
-          if (!track.howl.playing()) {
-            track.howl.play();
-          }
+          this.startTrackPlayback(track);
+        } else if (track?.assetId && !track.muted && track.status === 'loading') {
+          track.playRequested = true;
         }
       });
       startProgressWatcher(this);
@@ -2690,13 +2776,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
       DEFAULT_TRACK_TYPES.forEach((type) => {
-        const track = this.tracks[type];
-        if (track?.howl && track.howl.playing()) {
-          track.howl.pause();
-        }
-        if (track?.assetId && isTrackPlaybackActive(track)) {
-          track.status = 'paused';
-        }
+        this.pauseTrack(type, { force: true });
       });
       this.isPlaying = false;
       stopProgressWatcher();
@@ -2765,15 +2845,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     playTrack(type: AudioTrackType) {
       const track = this.tracks[type];
-      if (!track?.howl || !track.assetId) return;
-      // 防止重复播放：如果已经在播放，直接返回
-      if (isTrackPlaybackActive(track)) return;
-      // 使用轨道级别的循环和倍速设置
-      track.howl.loop(track.loopEnabled ?? true);
-      track.howl.rate(track.playbackRate ?? 1);
-      track.status = 'playing';
-      this.isPlaying = true;
-      track.howl.play();
+      if (!track?.assetId) return;
+      if (!track.howl && track.status === 'loading') {
+        track.playRequested = true;
+        this.isPlaying = true;
+      } else {
+        this.startTrackPlayback(track);
+      }
       // 启动进度监控（如果未启动）
       startProgressWatcher(this);
       if (this.canManage) {
@@ -2781,11 +2859,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    pauseTrack(type: AudioTrackType) {
+    pauseTrack(type: AudioTrackType, options?: { force?: boolean }) {
       const track = this.tracks[type];
-      if (!track?.howl) return;
-      if (track.howl.playing()) {
-        track.howl.pause();
+      if (!track) return;
+      track.playRequested = false;
+      track.autoplayBlocked = false;
+      // 保留 pending 锁直到 Howler 的 pause/playerror 回调，避免尚未兑现的 play 被再次启动。
+      if (track.howl && (track.playPending || track.howl.playing())) {
+        track.howl.pause(track.soundId ?? undefined);
       }
       track.status = 'paused';
       this.refreshPlaybackFlags();
@@ -2793,7 +2874,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (this.allTracksIdle()) {
         stopProgressWatcher();
       }
-      if (this.canManage) {
+      if (!options?.force && this.canManage) {
         this.queuePlaybackSync();
       }
     },
@@ -2831,7 +2912,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!track) return;
       track.loopEnabled = enabled;
       if (track.howl) {
-        track.howl.loop(enabled);
+        track.howl.loop(shouldLoopTrack(track));
       }
       if (this.canManage) {
         this.queuePlaybackSync();
@@ -2864,9 +2945,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     clearTrack(type: AudioTrackType) {
       const track = this.tracks[type];
       if (!track) return;
-      if (track.howl) {
-        track.howl.unload();
-      }
+      releaseTrackPlayer(track);
       this.tracks[type] = createEmptyTrack(type);
       this.refreshPlaybackFlags();
       if (this.allTracksIdle()) {
@@ -2939,8 +3018,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.loopEnabled = !this.loopEnabled;
       DEFAULT_TRACK_TYPES.forEach((type) => {
         const track = this.tracks[type];
+        if (track) track.loopEnabled = this.loopEnabled;
         if (track?.howl) {
-          track.howl.loop(this.loopEnabled);
+          track.howl.loop(shouldLoopTrack(track));
         }
       });
       if (!options?.force) {
@@ -3624,6 +3704,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       track.playlistAssets = [];
       track.playlistAssetIds = [];
       track.playlistIndex = 0;
+      track.howl?.loop(shouldLoopTrack(track));
       if (!normalizedFolderId) {
         if (!this.trackSelectableAssets.length) {
           await this.fetchTrackSelectableAssets();
@@ -3635,11 +3716,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       try {
         const items = await this.fetchAllAssetsByFolder(normalizedFolderId, 200);
-        if (track.playlistFolderId !== normalizedFolderId) {
+        if (this.tracks[type] !== track || track.playlistFolderId !== normalizedFolderId) {
           return;
         }
         track.playlistAssets = items;
         track.playlistAssetIds = items.map((a) => a.id);
+        track.howl?.loop(shouldLoopTrack(track));
         const currentIndex = track.assetId ? items.findIndex((item) => item.id === track.assetId) : -1;
         track.playlistIndex = currentIndex >= 0 ? currentIndex : 0;
         if (items.length && currentIndex < 0) {
@@ -3657,81 +3739,50 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const track = this.tracks[type];
       if (!track) return;
       track.playlistMode = mode;
+      track.howl?.loop(shouldLoopTrack(track));
       if (this.canManage) {
         this.queuePlaybackSync();
       }
     },
 
     async playNextInPlaylist(type: AudioTrackType) {
-      const track = this.tracks[type];
-      if (!track || !track.playlistAssetIds?.length) return;
-      const mode = track.playlistMode;
-      if (mode === 'single') {
-        if (track.howl) {
-          track.howl.seek(0);
-          track.howl.play();
-        }
-        return;
-      }
-      let nextIndex = track.playlistIndex;
-      if (mode === 'shuffle') {
-        nextIndex = Math.floor(Math.random() * track.playlistAssetIds.length);
-      } else {
-        nextIndex = (track.playlistIndex + 1) % track.playlistAssetIds.length;
-      }
-      track.playlistIndex = nextIndex;
-      const nextAssetId = track.playlistAssetIds[nextIndex];
-      if (!nextAssetId) return;
-      let asset = this.assets.find((a) => a.id === nextAssetId);
-      if (!asset) {
-        try {
-          asset = await this.fetchSingleAsset(nextAssetId);
-        } catch {
-          return;
-        }
-      }
-      await this.assignAssetToTrack(type, asset);
-      if (this.isPlaying && track.howl && !track.muted) {
-        track.howl.play();
-      }
-      if (this.canManage) {
-        this.queuePlaybackSync();
-      }
+      await this.advancePlaylist(type, 1);
     },
 
     async playPrevInPlaylist(type: AudioTrackType) {
+      await this.advancePlaylist(type, -1);
+    },
+
+    async advancePlaylist(type: AudioTrackType, direction: 1 | -1, options?: TrackMutationOptions) {
       const track = this.tracks[type];
       if (!track || !track.playlistAssetIds?.length) return;
+      if (!options?.force && !this.canManage) return;
+      const autoPlay = options?.autoPlay ?? isTrackPlaybackActive(track);
       const mode = track.playlistMode;
       if (mode === 'single') {
-        if (track.howl) {
-          track.howl.seek(0);
-        }
+        track.pendingSeek = 0;
+        if (track.howl?.state() === 'loaded') track.howl.seek(0);
+        if (autoPlay) this.startTrackPlayback(track);
+        if (this.canManage) this.queuePlaybackSync();
         return;
       }
-      let prevIndex = track.playlistIndex;
-      if (mode === 'shuffle') {
-        prevIndex = Math.floor(Math.random() * track.playlistAssetIds.length);
-      } else {
-        prevIndex = (track.playlistIndex - 1 + track.playlistAssetIds.length) % track.playlistAssetIds.length;
-      }
-      track.playlistIndex = prevIndex;
-      const prevAssetId = track.playlistAssetIds[prevIndex];
-      if (!prevAssetId) return;
-      let asset = this.assets.find((a) => a.id === prevAssetId);
-      if (!asset) {
-        try {
-          asset = await this.fetchSingleAsset(prevAssetId);
-        } catch {
-          return;
+      const count = track.playlistAssetIds.length;
+      track.playlistIndex = mode === 'shuffle'
+        ? Math.floor(Math.random() * count)
+        : (track.playlistIndex + direction + count) % count;
+      const assetId = track.playlistAssetIds[track.playlistIndex];
+      if (!assetId) return;
+      // 在第一次 await 前占用新请求；素材查询和签名 URL 都服从同一代次。
+      const loading = this.loadTrackAsset(type, assetId, { force: true, autoPlay: autoPlay && !track.muted, initialSeek: 0, autoAdvance: !!options?.autoAdvance });
+      const requestId = track.loadRequestId;
+      await loading;
+      if (this.canManage && this.tracks[type] === track && track.assetId === assetId && track.loadRequestId === requestId) {
+        if (options?.force) {
+          track.endSyncPending = true;
+          this.syncNaturalEnds();
+        } else {
+          this.queuePlaybackSync();
         }
-      }
-      await this.assignAssetToTrack(type, asset);
-      if (this.isPlaying && track.howl && !track.muted) {
-        track.howl.play();
-      }
-      if (this.canManage) {
-        this.queuePlaybackSync();
       }
     },
 
