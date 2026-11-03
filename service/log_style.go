@@ -181,27 +181,8 @@ func SaveLogStyle(id, userID, base string, p LogStylePackage) (*LogStylePackage,
 	if err != nil {
 		return nil, err
 	}
-	for _, asset := range p.Assets {
-		if _, ok := assets[asset.ID]; ok {
-			continue
-		}
-		a, err := ResolveAttachmentOwnership(userID, asset.ID)
-		if err != nil || a == nil || a.IsTTSManaged() || a.Size > 20<<20 {
-			return nil, logTemplateError()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		reader, err := OpenAttachmentRead(ctx, a)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		b, readErr := io.ReadAll(io.LimitReader(reader, (20<<20)+1))
-		reader.Close()
-		cancel()
-		if readErr != nil || len(b) > 20<<20 {
-			return nil, logTemplateError()
-		}
-		assets[asset.ID] = b
+	if err := logStyleUploadedAssets(userID, p.Assets, assets); err != nil {
+		return nil, err
 	}
 	if err := ValidateLogStyle(&p, assets); err != nil {
 		return nil, err
@@ -218,6 +199,66 @@ func SaveLogStyle(id, userID, base string, p LogStylePackage) (*LogStylePackage,
 	})
 	return &p, err
 }
+
+// logStyleUploadedAssets reads package assets that are not yet stored bytes from the
+// caller's own attachments; the attachment ID doubles as the new asset ID.
+func logStyleUploadedAssets(userID string, declared []LogStyleAsset, assets map[string][]byte) error {
+	for _, asset := range declared {
+		if _, ok := assets[asset.ID]; ok {
+			continue
+		}
+		a, err := ResolveAttachmentOwnership(userID, asset.ID)
+		if err != nil || a == nil || a.IsTTSManaged() || a.Size > 20<<20 {
+			return logTemplateError()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		reader, err := OpenAttachmentRead(ctx, a)
+		if err != nil {
+			cancel()
+			return err
+		}
+		b, readErr := io.ReadAll(io.LimitReader(reader, (20<<20)+1))
+		reader.Close()
+		cancel()
+		if readErr != nil || len(b) > 20<<20 {
+			return logTemplateError()
+		}
+		assets[asset.ID] = b
+	}
+	return nil
+}
+
+// CreateLogStyle stores a brand-new private package as its first version. The server
+// assigns the package ID and version 1.0.0; assets can only come from the caller's
+// own attachments because a new package has no stored bytes to inherit.
+func CreateLogStyle(userID string, p LogStylePackage) (*LogStylePackage, error) {
+	if userID == "" {
+		return nil, logError("UNAUTHENTICATED", "请先登录")
+	}
+	row := model.LogStylePackageModel{OwnerID: userID, Name: p.Name, LatestVersion: "1.0.0"}
+	row.Init()
+	row.ID = "style-" + row.ID
+	p.ID = row.ID
+	p.Version = "1.0.0"
+	assets := map[string][]byte{}
+	if err := logStyleUploadedAssets(userID, p.Assets, assets); err != nil {
+		return nil, err
+	}
+	if err := ValidateLogStyle(&p, assets); err != nil {
+		return nil, err
+	}
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		return logStoreStyle(tx, &p, assets)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func ForkLogStyle(id, version, userID, name string) (*LogStylePackage, error) {
 	owner, err := logStyleAccess(id, version, userID)
 	if err != nil {

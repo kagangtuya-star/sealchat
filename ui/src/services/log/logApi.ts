@@ -191,6 +191,10 @@ export const fetchLogStylePackage = (id: string, version: string) =>
 export const forkLogStyle = (id: string, version: string, name: string) =>
   unwrap<LogStylePackage>(api.post(`api/v1/log/styles/${seg(id)}/fork`, { version, name }));
 
+/** 新建私有样式的首个版本：服务端分配包 ID 与 1.0.0，新资源只能是自己上传的附件。 */
+export const createLogStyle = (pkg: LogStylePackage) =>
+  unwrap<LogStylePackage>(api.post('api/v1/log/styles', { package: pkg }));
+
 export const saveLogStyleVersion = (id: string, baseVersion: string, pkg: LogStylePackage) =>
   unwrap<LogStylePackage>(api.post(`api/v1/log/styles/${seg(id)}/versions`, { baseVersion, package: pkg }));
 
