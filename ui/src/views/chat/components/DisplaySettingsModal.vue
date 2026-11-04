@@ -910,6 +910,19 @@ const themeManagerMetaLabel = computed(() => `平台主题 ${display.platformThe
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">左滑引用消息</p>
+            <p class="section-desc">移动端向左拉动消息，右侧圆环填满即引用，无需长按或松手，保留已有草稿</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileSwipeToReplyEnabled">
+          <template #checked>已开启</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">上传图片时打开编辑器</p>
             <p class="section-desc">通过输入工具区选择图片后打开编辑器；关闭后直接插入输入框，与拖入或粘贴图片一致</p>
           </div>

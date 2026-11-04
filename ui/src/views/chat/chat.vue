@@ -8221,7 +8221,7 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   } else {
     messageRowRefs.delete(id);
   }
-  if (id === imageLayoutEditingMessageId) {
+  if (id === imageLayoutEditingMessageId.value) {
     if (el) {
       void ensureImageLayoutRowObserver();
     } else {
@@ -8230,7 +8230,7 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   }
 };
 
-let imageLayoutEditingMessageId = "";
+const imageLayoutEditingMessageId = ref("");
 let imageLayoutRowResizeObserver: ResizeObserver | null = null;
 let imageLayoutObservedRowEl: HTMLElement | null = null;
 let imageLayoutObservedRowHeight = 0;
@@ -8252,12 +8252,12 @@ const disposeImageLayoutRowObserver = () => {
 };
 
 const ensureImageLayoutRowObserver = async () => {
-  if (!imageLayoutEditingMessageId || typeof ResizeObserver === "undefined") {
+  if (!imageLayoutEditingMessageId.value || typeof ResizeObserver === "undefined") {
     disconnectImageLayoutRowObserver();
     return;
   }
   await nextTick();
-  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId);
+  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId.value);
   if (!rowEl) {
     disconnectImageLayoutRowObserver();
     return;
@@ -8289,8 +8289,8 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
   const messageId = String(payload?.messageId || "").trim();
   const active = Boolean(payload?.active);
   if (!active) {
-    if (!messageId || messageId === imageLayoutEditingMessageId) {
-      imageLayoutEditingMessageId = "";
+    if (!messageId || messageId === imageLayoutEditingMessageId.value) {
+      imageLayoutEditingMessageId.value = "";
       disconnectImageLayoutRowObserver();
     }
     return;
@@ -8298,9 +8298,14 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
   if (!messageId) {
     return;
   }
-  imageLayoutEditingMessageId = messageId;
+  imageLayoutEditingMessageId.value = messageId;
   void ensureImageLayoutRowObserver();
 };
+
+watch(() => chat.curChannel?.id, () => {
+  imageLayoutEditingMessageId.value = "";
+  disconnectImageLayoutRowObserver();
+}, { flush: 'sync' });
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
 
@@ -8949,6 +8954,10 @@ const pendingDragHoldState = reactive({
   timerId: null as number | null,
 });
 
+const messageSwipeReplyDisabled = computed(() => (
+  spectatorInputDisabled.value || !!dragState.activeId || !!pendingDragHoldState.item
+  || !!imageLayoutEditingMessageId.value
+));
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
 const AUTO_SCROLL_MIN_SPEED = 2;
 const AUTO_SCROLL_MAX_SPEED = 18;
@@ -17091,6 +17100,7 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(pinItem)"
                 :content="pinItem.content"
                 :item="pinItem"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[pinItem.id || '']"
                 :edit-saving="isSavingEdit"
@@ -17190,6 +17200,7 @@ onBeforeUnmount(() => {
                     :identity-color="getMessageIdentityColor(entry.message)"
                     :content="entry.message.content"
                     :item="entry.message"
+                    :swipe-reply-disabled="messageSwipeReplyDisabled"
                     :all-message-ids="allMessageIds"
                     :editing-preview="editingPreviewMap[entry.message.id || '']"
                     :edit-saving="isSavingEdit"
@@ -17230,6 +17241,7 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id || '']"
                 :edit-saving="isSavingEdit"
@@ -17267,6 +17279,7 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id || '']"
                 :edit-saving="isSavingEdit"

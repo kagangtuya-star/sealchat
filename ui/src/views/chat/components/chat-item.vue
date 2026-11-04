@@ -72,6 +72,7 @@ import {
   resolveIdentityMetaStyle,
 } from '@/utils/identityMetaContrast'
 import { shouldAutoplayPerformanceMessage } from '@/components/chat/performanceAutoplay';
+import { useMessageSwipeReply } from '../composables/useMessageSwipeReply';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -1373,6 +1374,7 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  swipeReplyDisabled: Boolean,
   worldKeywordEditable: {
     type: Boolean,
     default: false,
@@ -3198,6 +3200,10 @@ const openContextMenu = (point: { x: number, y: number }, item: any) => {
 };
 
 const onContextMenu = (e: MouseEvent, item: any) => {
+  if (isMobileUa && swipeReply.blocksLongPress()) {
+    e.preventDefault();
+    return;
+  }
   if (props.readonly) {
     return;
   }
@@ -3469,6 +3475,9 @@ onMounted(() => {
       if (!isMobileUa) {
         return;
       }
+      if (props.readonly || !swipeReply.claimLongPress()) {
+        return;
+      }
       const isTouchEvent =
         ('touches' in event) ||
         ('pointerType' in event && event.pointerType === 'touch');
@@ -3606,6 +3615,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  if (imageResizeMode.value) emitImageResizeState(false);
   if (stopMessageLongPress) {
     stopMessageLongPress();
     stopMessageLongPress = null;
@@ -3855,6 +3865,28 @@ const handleRetrySend = () => {
   emit('retry-send', props.item);
 };
 
+const swipeReplyEnabled = computed(() => Boolean(
+  displayStore.settings.mobileSwipeToReplyEnabled
+  && !props.readonly && !props.swipeReplyDisabled
+  && !chat.observerMode && !chat.isObserver && !chat.observerWorldId
+  && !effectiveMultiSelectMode.value && !relocateModeActive.value
+  && !chat.editing && !props.editingPreview && !props.editSaving
+  && !imageResizeMode.value && !chat.messageMenu.show && !chat.avatarMenu.show
+  && chat.curChannel?.id && props.item?.id && messageSendStatus.value === 'sent'
+  && !props.item?.is_deleted && !props.item?.isDeleted
+  && !props.item?.is_revoked && !props.item?.isRevoked
+  && currentMessageChannelId.value === chat.curChannel.id
+));
+const swipeReplyContext = computed(() => [
+  chat.currentWorldId, chat.curChannel?.id, currentMessageChannelId.value, props.item, props.item?.id,
+  props.content, props.item?.content, props.item?.updatedAt, props.item?.editCount,
+]);
+const swipeReply = useMessageSwipeReply(messageContentRef, {
+  enabled: () => swipeReplyEnabled.value,
+  context: () => swipeReplyContext.value,
+  reply: () => { void chat.setReplayTo(props.item); },
+});
+const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
 
 </script>
 
@@ -4048,6 +4080,19 @@ const handleRetrySend = () => {
       </span>
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
+        <span
+          class="message-swipe-reply-indicator"
+          :class="{ 'message-swipe-reply-indicator--ready': swipeReplyReady }"
+          :style="{ opacity: swipeReplyProgress > 0 ? 1 : 0 }"
+          aria-hidden="true"
+        >
+          <svg class="message-swipe-reply-indicator__ring" viewBox="0 0 36 36" aria-hidden="true">
+            <circle class="message-swipe-reply-indicator__track" cx="18" cy="18" r="15" />
+            <circle class="message-swipe-reply-indicator__fill" cx="18" cy="18" r="15" pathLength="100"
+              :style="{ strokeDashoffset: 100 * (1 - swipeReplyProgress) }" />
+          </svg>
+          <n-icon :component="ArrowBackUp" size="19" />
+        </span>
         <div v-if="hasEditAction || item?.tts" class="message-action-bar"
           :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible, 'message-action-bar--speech': !!item?.tts, 'message-action-bar--playing': speechPlayer.state.key === `messages:${item?.id}` }">
           <MessageSpeechButton v-if="item?.id"
@@ -4167,6 +4212,65 @@ const handleRetrySend = () => {
     </div>
   </div>
 </template>
+
+<style scoped lang="scss">
+.message-swipe-reply-indicator {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  pointer-events: none;
+  color: var(--chat-text-secondary, currentColor);
+  background: var(--sc-bg-elevated, var(--sc-bg-surface, transparent));
+  transition: opacity 100ms ease, color 100ms ease;
+}
+.message-swipe-reply-indicator__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-width: 3;
+  transform: rotate(-90deg);
+}
+.message-swipe-reply-indicator__track {
+  stroke: var(--chat-text-secondary, #94a3b8);
+  opacity: 0.3;
+}
+.message-swipe-reply-indicator__fill {
+  stroke: var(--chat-accent, var(--primary-color, #3b82f6));
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  transition: stroke-dashoffset 40ms linear;
+}
+.message-swipe-reply-indicator--ready {
+  color: var(--chat-accent, var(--primary-color, currentColor));
+}
+@media (pointer: coarse) {
+  /* Ordinary message surfaces prefer vertical browser scrolling while leaving horizontal drags to reply. */
+  .content {
+    touch-action: pan-y;
+  }
+
+  /* Embedded interactive surfaces keep ownership of their own gestures. */
+  .content :deep(.message-iform-embed),
+  .content :deep(.message-sticky-note-embed),
+  .content :deep(.battle-report-embed-card),
+  .content :deep(.clue-message-card) {
+    touch-action: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-swipe-reply-indicator,
+  .message-swipe-reply-indicator__fill { transition: none; }
+}
+</style>
 
 <style lang="scss">
 .chat-item {

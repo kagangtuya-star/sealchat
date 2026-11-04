@@ -132,6 +132,7 @@ export interface DisplaySettings {
   autoOocRoleOnParenStart: boolean
   inputToolbarImageEditorEnabled: boolean
   mobileMinimalInputEnabled: boolean
+  mobileSwipeToReplyEnabled: boolean
   mobileTheaterHideWhileTyping: boolean
   mobileTheaterPipEnabled: boolean
   channelAggregateBadgeEnabled: boolean
@@ -628,6 +629,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   autoOocRoleOnParenStart: false,
   inputToolbarImageEditorEnabled: true,
   mobileMinimalInputEnabled: isMobileBrowserRuntime(),
+  mobileSwipeToReplyEnabled: true,
   mobileTheaterHideWhileTyping: false,
   mobileTheaterPipEnabled: false,
   channelAggregateBadgeEnabled: true,
@@ -967,6 +969,7 @@ const parseStoredSettingsInternal = (
       autoOocRoleOnParenStart: coerceBoolean((parsed as any)?.autoOocRoleOnParenStart ?? false),
       inputToolbarImageEditorEnabled: coerceBoolean(parsed.inputToolbarImageEditorEnabled ?? true),
       mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
+      mobileSwipeToReplyEnabled: coerceBoolean(parsed.mobileSwipeToReplyEnabled),
       mobileTheaterHideWhileTyping: coerceBoolean((parsed as any)?.mobileTheaterHideWhileTyping ?? false),
       mobileTheaterPipEnabled: coerceBoolean((parsed as any)?.mobileTheaterPipEnabled ?? false),
       channelAggregateBadgeEnabled: coerceBoolean((parsed as any)?.channelAggregateBadgeEnabled ?? true),
@@ -1371,6 +1374,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
       ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)
       : base.mobileMinimalInputEnabled,
+  mobileSwipeToReplyEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileSwipeToReplyEnabled')
+      ? coerceBoolean(patch.mobileSwipeToReplyEnabled)
+      : base.mobileSwipeToReplyEnabled,
   mobileTheaterHideWhileTyping:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mobileTheaterHideWhileTyping')
       ? coerceBoolean((patch as any).mobileTheaterHideWhileTyping ?? false)
