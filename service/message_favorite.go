@@ -338,6 +338,9 @@ func MessageFavoriteBatchDelete(actor string, input MessageFavoriteBatchDeleteIn
 		if err := tx.Where("favorite_id IN ?", result.Deleted).Delete(&model.MessageFavoriteTagLinkModel{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("favorite_id IN ?", result.Deleted).Delete(&model.MessageFavoriteNoteModel{}).Error; err != nil {
+			return err
+		}
 		return b.query(tx).Where("id IN ?", result.Deleted).Delete(&model.MessageFavoriteModel{}).Error
 	})
 	if err != nil {
@@ -358,6 +361,9 @@ func MessageFavoriteDelete(actor, id string) error {
 			return err
 		}
 		if err := tx.Where("favorite_id = ?", item.ID).Delete(&model.MessageFavoriteTagLinkModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("favorite_id = ?", item.ID).Delete(&model.MessageFavoriteNoteModel{}).Error; err != nil {
 			return err
 		}
 		return b.query(tx).Where("id = ?", item.ID).Delete(&model.MessageFavoriteModel{}).Error

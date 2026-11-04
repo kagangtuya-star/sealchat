@@ -145,6 +145,14 @@ export const useFavoriteWindowLayout = (userId: Ref<string>, options: { embedded
     layout.height = clamped.height
   }
 
+  // 展开到至少 width（例如为收藏详情分栏腾出空间），右缘保持不动，左移超出视口时由约束回收。
+  const widenTo = (width: number) => {
+    const current = rect.value
+    if (current.width >= width || gesture.value) return
+    commitRect({ ...current, x: current.x - (width - current.width), width })
+    persist()
+  }
+
   const accepts = (event: PointerEvent) => !(event.pointerType === 'mouse' && event.button !== 0)
 
   const capture = (event: PointerEvent) => {
@@ -288,11 +296,13 @@ export const useFavoriteWindowLayout = (userId: Ref<string>, options: { embedded
 
   return {
     layout,
+    viewport,
     rect,
     badge,
     compact,
     gesture,
     setMode,
+    widenTo,
     startMove,
     startResize,
     startBadge,

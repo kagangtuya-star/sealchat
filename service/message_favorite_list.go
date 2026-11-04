@@ -25,9 +25,11 @@ type MessageFavoriteListOptions struct {
 
 type MessageFavoriteView struct {
 	model.MessageFavoriteModel
-	Tags    []model.MessageFavoriteTagModel `json:"tags"`
-	Message *protocol.Message               `json:"message,omitempty"`
-	Status  string                          `json:"status"` // available, deleted, unavailable
+	Tags       []model.MessageFavoriteTagModel `json:"tags"`
+	Message    *protocol.Message               `json:"message,omitempty"`
+	Status     string                          `json:"status"` // available, deleted, unavailable
+	NoteCount  int64                           `json:"noteCount"`
+	LatestNote *MessageFavoriteNoteView        `json:"latestNote,omitempty"`
 }
 
 type MessageFavoriteListResult struct {
@@ -202,7 +204,7 @@ func favoriteView(item model.MessageFavoriteModel, resolved favoriteResolvedMess
 	return view, true
 }
 
-func favoriteViewTags(db *gorm.DB, b messageFavoriteBucket, items []MessageFavoriteView) error {
+func favoriteViewDetails(db *gorm.DB, b messageFavoriteBucket, items []MessageFavoriteView) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -227,7 +229,51 @@ func favoriteViewTags(db *gorm.DB, b messageFavoriteBucket, items []MessageFavor
 		i := positions[tag.FavoriteID]
 		items[i].Tags = append(items[i].Tags, tag.MessageFavoriteTagModel)
 	}
+	// Fetch only counts and the most recent post for the returned page. The
+	// correlated subquery uses favorite_id's index, without one query per card.
+	var counts []struct {
+		FavoriteID string
+		Count      int64
+	}
+	if err := db.Model(&model.MessageFavoriteNoteModel{}).Select("favorite_id, COUNT(*) AS count").Where("favorite_id IN ?", ids).Group("favorite_id").Scan(&counts).Error; err != nil {
+		return err
+	}
+	for _, row := range counts {
+		items[positions[row.FavoriteID]].NoteCount = row.Count
+	}
+	var latest []model.MessageFavoriteNoteModel
+	err = db.Table("message_favorite_notes AS n").Select("n.*").Where("n.favorite_id IN ?", ids).
+		Where("NOT EXISTS (SELECT 1 FROM message_favorite_notes newer WHERE newer.favorite_id = n.favorite_id AND (newer.created_at > n.created_at OR (newer.created_at = n.created_at AND newer.id > n.id)))").Find(&latest).Error
+	if err != nil {
+		return err
+	}
+	views, err := favoriteNoteViews(db, latest)
+	if err != nil {
+		return err
+	}
+	for i := range views {
+		items[positions[views[i].FavoriteID]].LatestNote = &views[i]
+	}
 	return nil
+}
+
+// Preserve Unicode substring semantics and scan notes once per candidate batch,
+// not once per favorite. Visibility is still checked before including a result.
+func favoriteNoteKeywordMatches(db *gorm.DB, ids []string, keyword string) (map[string]bool, error) {
+	matches := map[string]bool{}
+	if keyword == "" {
+		return matches, nil
+	}
+	var notes []struct{ FavoriteID, Content string }
+	if err := db.Model(&model.MessageFavoriteNoteModel{}).Select("favorite_id, content").Where("favorite_id IN ?", ids).Find(&notes).Error; err != nil {
+		return nil, err
+	}
+	for _, note := range notes {
+		if strings.Contains(strings.ToLower(note.Content), keyword) {
+			matches[note.FavoriteID] = true
+		}
+	}
+	return matches, nil
 }
 
 func MessageFavoriteList(actor string, opts MessageFavoriteListOptions) (*MessageFavoriteListResult, error) {
@@ -289,10 +335,11 @@ func MessageFavoriteList(actor string, opts MessageFavoriteListOptions) (*Messag
 		if len(batch) == 0 {
 			break
 		}
-		messageIDs, channelIDs := []string{}, []string{}
+		messageIDs, channelIDs, favoriteIDs := []string{}, []string{}, []string{}
 		for _, item := range batch {
 			messageIDs = append(messageIDs, item.MessageID)
 			channelIDs = append(channelIDs, item.ChannelID)
+			favoriteIDs = append(favoriteIDs, item.ID)
 		}
 		messages, err := resolver.load(db, messageIDs)
 		if err != nil {
@@ -301,12 +348,17 @@ func MessageFavoriteList(actor string, opts MessageFavoriteListOptions) (*Messag
 		if err := resolver.ensureChannels(db, channelIDs); err != nil {
 			return nil, err
 		}
+		noteMatches, err := favoriteNoteKeywordMatches(db, favoriteIDs, keyword)
+		if err != nil {
+			return nil, err
+		}
 		for i := range batch {
 			item := batch[i]
 			cursor = &item // Advance over rejected candidates as well as matches.
 			resolved, exists := messages[item.MessageID]
 			view, include := favoriteView(item, resolved, exists, resolver)
-			if !include || (keyword != "" && (view.Message == nil || !strings.Contains(strings.ToLower(NormalizeMessageContentToPlainText(view.Message.Content)), keyword))) {
+			messageMatches := keyword != "" && view.Message != nil && strings.Contains(strings.ToLower(NormalizeMessageContentToPlainText(view.Message.Content)), keyword)
+			if !include || (keyword != "" && !noteMatches[item.ID] && !messageMatches) {
 				continue
 			}
 			result.Items = append(result.Items, view)
@@ -315,7 +367,7 @@ func MessageFavoriteList(actor string, opts MessageFavoriteListOptions) (*Messag
 				result.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 				// A full page always has a cursor, including at EOF. Do not probe
 				// raw row counts: hidden world rows must not influence this field.
-				if err := favoriteViewTags(db, b, result.Items); err != nil {
+				if err := favoriteViewDetails(db, b, result.Items); err != nil {
 					return nil, err
 				}
 				return result, nil
@@ -325,7 +377,7 @@ func MessageFavoriteList(actor string, opts MessageFavoriteListOptions) (*Messag
 			break
 		}
 	}
-	if err := favoriteViewTags(db, b, result.Items); err != nil {
+	if err := favoriteViewDetails(db, b, result.Items); err != nil {
 		return nil, err
 	}
 	return result, nil

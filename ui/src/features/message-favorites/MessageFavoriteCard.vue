@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NCheckbox, NDropdown, NIcon, NTag, type DropdownOption } from 'naive-ui'
-import { ArrowUpRight, DotsVertical, Lock, MessageOff } from '@vicons/tabler'
-import type { MessageFavoriteItem, MessageFavoriteTag } from './api'
+import { ArrowUpRight, DotsVertical, Lock, MessageOff, Notes } from '@vicons/tabler'
+import { favoriteNoteAuthorName, type MessageFavoriteItem, type MessageFavoriteTag } from './api'
 import { buildFavoriteCardView, canJumpToFavorite } from './presentation'
 import MessageFavoriteTagPicker from './MessageFavoriteTagPicker.vue'
 
@@ -23,6 +23,8 @@ const props = defineProps<{
   // 批量选择模式：用复选框替换排序把手，隐藏单项维护入口，点击卡片切换选择。
   selecting?: boolean
   selected?: boolean
+  // 当前在详情栏中打开。
+  inspected?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +33,7 @@ const emit = defineEmits<{
   (e: 'move', action: 'up' | 'down' | 'top'): void
   (e: 'filter-tag', tagId: string): void
   (e: 'toggle-select'): void
+  (e: 'inspect'): void
 }>()
 
 const view = computed(() => (props.item.message ? buildFavoriteCardView(props.item.message, props.currentUserId) : null))
@@ -80,13 +83,14 @@ const handleContentClick = (event: MouseEvent) => {
   if (/^https?:/i.test(href)) window.open(href, '_blank', 'noopener,noreferrer')
 }
 
-// 选择模式下点击卡片空白处切换选择；链接、按钮、复选框和正在进行的文字选择保持原行为。
+// 点击卡片空白处：选择模式下切换选择，否则打开详情与备注。
+// 链接、按钮、复选框、标签和正在进行的文字选择保持原行为。
 const handleCardClick = (event: MouseEvent) => {
-  if (!props.selecting) return
   const target = event.target as HTMLElement | null
-  if (target?.closest('a, button, input, label, .n-checkbox')) return
+  if (target?.closest('a, button, input, textarea, label, .n-checkbox, .n-tag')) return
   if (window.getSelection()?.toString()) return
-  emit('toggle-select')
+  if (props.selecting) emit('toggle-select')
+  else emit('inspect')
 }
 
 const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消息已删除' : '当前无权查看原消息'))
@@ -101,6 +105,8 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
       'is-drop-before': dropBefore,
       'is-selectable': selecting,
       'is-selected': selecting && selected,
+      'is-inspected': inspected && !selecting,
+      'has-note': item.noteCount > 0,
     }"
     :data-favorite-sort-id="item.id"
     @click="handleCardClick"
@@ -124,6 +130,18 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
           </NTag>
           <NTag v-else-if="view.isOoc" size="tiny" :bordered="false" round>场外</NTag>
           <span class="mf-card__spacer" />
+          <button
+            v-if="!selecting"
+            type="button"
+            class="mf-icon-btn"
+            :class="{ 'is-active': inspected }"
+            :aria-pressed="!!inspected"
+            aria-label="查看详情与备注"
+            title="详情与备注"
+            @click="emit('inspect')"
+          >
+            <NIcon :size="16"><Notes /></NIcon>
+          </button>
           <button
             v-if="jumpable"
             type="button"
@@ -163,6 +181,18 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
           <NIcon :size="16" class="mf-card__tomb-icon"><MessageOff /></NIcon>
           <span class="mf-card__tomb-text">{{ tombstoneText }}</span>
           <span class="mf-card__spacer" />
+          <button
+            v-if="!selecting"
+            type="button"
+            class="mf-icon-btn"
+            :class="{ 'is-active': inspected }"
+            :aria-pressed="!!inspected"
+            aria-label="查看详情与备注"
+            title="详情与备注"
+            @click="emit('inspect')"
+          >
+            <NIcon :size="16"><Notes /></NIcon>
+          </button>
           <NDropdown v-if="menuOptions.length" trigger="click" placement="bottom-end" :options="menuOptions" @select="handleMenu">
             <button type="button" class="mf-icon-btn" aria-label="更多操作" title="更多操作">
               <NIcon :size="16"><DotsVertical /></NIcon>
@@ -171,6 +201,10 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
         </header>
         <div v-if="sourceLabel" class="mf-card__source">{{ sourceLabel }}</div>
       </template>
+      <div v-if="item.noteCount && item.latestNote" class="mf-card__note" data-sc-favorite-note="summary" :title="item.latestNote.content">
+        <NIcon :size="13" class="mf-card__note-icon" aria-hidden="true"><Notes /></NIcon>
+        <span class="mf-card__note-text">备注 {{ item.noteCount }}<br>{{ favoriteNoteAuthorName(item.latestNote) }}：{{ item.latestNote.content }}</span>
+      </div>
       <footer v-if="item.tags.length || (canMaintain && !selecting)" class="mf-card__tags">
         <NTag
           v-for="tag in item.tags"
@@ -222,6 +256,10 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
   .mf-card.is-selected {
     background: color-mix(in srgb, var(--mf-accent) 8%, var(--sc-bg-layer));
   }
+}
+
+.mf-card.is-inspected {
+  border-color: var(--mf-accent);
 }
 
 .mf-card__select {
@@ -349,6 +387,41 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
   cursor: pointer;
 }
 
+.mf-card__note {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  min-width: 0;
+  margin-top: 2px;
+  padding: 4px 8px;
+  border-inline-start: 2px solid var(--sc-border-strong, var(--sc-border-mute));
+  border-radius: 0 6px 6px 0;
+  background: var(--sc-bg-hover);
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.mf-card__note-icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+.mf-card__note-text {
+  display: -webkit-box;
+  overflow: hidden;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.mf-card.is-selectable .mf-card__note {
+  cursor: inherit;
+}
+
 .mf-card__tags {
   display: flex;
   flex-wrap: wrap;
@@ -375,6 +448,10 @@ const tombstoneText = computed(() => (props.item.status === 'deleted' ? '原消�
 .mf-icon-btn:hover:not(:disabled) {
   background: var(--sc-bg-hover);
   color: var(--sc-text-primary);
+}
+
+.mf-icon-btn.is-active {
+  color: var(--mf-accent);
 }
 
 .mf-icon-btn:disabled {

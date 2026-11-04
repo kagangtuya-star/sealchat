@@ -161,7 +161,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&MessageArchiveLogModel{})
 	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
-	if err := db.AutoMigrate(&MessageFavoriteModel{}, &MessageFavoriteTagModel{}, &MessageFavoriteTagLinkModel{}); err != nil {
+	if err := db.AutoMigrate(&MessageFavoriteModel{}, &MessageFavoriteNoteModel{}, &MessageFavoriteTagModel{}, &MessageFavoriteTagLinkModel{}); err != nil {
 		panic(fmt.Sprintf("初始化消息收藏数据表失败: %v", err))
 	}
 	db.AutoMigrate(&UserModel{})

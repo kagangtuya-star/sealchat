@@ -38,6 +38,13 @@ func BindMessageFavoriteRoutes(group fiber.Router) {
 	favorites.Delete("/:id", messageFavoriteDeleteHandler)
 	favorites.Post("/:id/move", messageFavoriteMoveHandler)
 	favorites.Put("/:id/tags", messageFavoriteTagsHandler)
+	favorites.Get("/:id/notes", messageFavoriteNoteListHandler)
+	favorites.Post("/:id/notes", messageFavoriteNoteCreateHandler)
+	notes := group.Group("/message-favorite-notes", auth)
+	notes.Post("/:id/lock", messageFavoriteNoteLockHandler)
+	notes.Put("/:id", messageFavoriteNoteSaveHandler)
+	notes.Post("/:id/release", messageFavoriteNoteReleaseHandler)
+	notes.Delete("/:id", messageFavoriteNoteDeleteHandler)
 	tags := group.Group("/message-favorite-tags", auth)
 	tags.Get("", messageFavoriteTagListHandler)
 	tags.Post("", messageFavoriteTagCreateHandler)
@@ -47,13 +54,18 @@ func BindMessageFavoriteRoutes(group fiber.Router) {
 
 func messageFavoriteError(c *fiber.Ctx, err error) error {
 	status, message := fiber.StatusInternalServerError, "消息收藏操作失败"
+	var locked *service.MessageFavoriteNoteLockedError
 	switch {
+	case errors.As(err, &locked):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "该备注正在其他窗口编辑", "code": "note_locked", "lock": locked.Lock})
+	case errors.Is(err, service.ErrMessageFavoriteNoteLockLost):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "备注编辑权已失效", "code": "note_lock_lost"})
 	case errors.Is(err, service.ErrMessageFavoriteInvalid):
 		status, message = fiber.StatusBadRequest, "收藏参数无效"
 	case errors.Is(err, service.ErrMessageFavoriteDenied):
 		status, message = fiber.StatusForbidden, "无权操作该收藏空间"
 	case errors.Is(err, service.ErrMessageFavoriteNotFound):
-		status, message = fiber.StatusNotFound, "收藏、标签或世界不存在"
+		status, message = fiber.StatusNotFound, "收藏、备注、标签或世界不存在"
 	case errors.Is(err, service.ErrMessageFavoriteConflict):
 		status, message = fiber.StatusConflict, "标签重名或排序邻居已变更"
 	}
@@ -178,6 +190,86 @@ func messageFavoriteTagRenameHandler(c *fiber.Ctx) error {
 
 func messageFavoriteTagDeleteHandler(c *fiber.Ctx) error {
 	if err := service.MessageFavoriteTagDelete(getCurUser(c).ID, c.Params("id")); err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.JSON(fiber.Map{"success": true})
+}
+
+type messageFavoriteNoteInput struct {
+	Token   string  `json:"token"`
+	Content *string `json:"content"`
+}
+
+func messageFavoriteNoteListHandler(c *fiber.Ctx) error {
+	items, err := service.MessageFavoriteNoteList(getCurUser(c).ID, c.Params("id"))
+	if err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
+func messageFavoriteNoteCreateHandler(c *fiber.Ctx) error {
+	input, err := parseMessageFavoriteNoteInput(c)
+	if err != nil || input.Content == nil {
+		return messageFavoriteError(c, service.ErrMessageFavoriteInvalid)
+	}
+	item, err := service.MessageFavoriteNoteCreate(getCurUser(c).ID, c.Params("id"), *input.Content)
+	if err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"item": item})
+}
+
+func messageFavoriteNoteDeleteHandler(c *fiber.Ctx) error {
+	if err := service.MessageFavoriteNoteDelete(getCurUser(c).ID, c.Params("id")); err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.JSON(fiber.Map{"success": true})
+}
+
+func parseMessageFavoriteNoteInput(c *fiber.Ctx) (messageFavoriteNoteInput, error) {
+	var input messageFavoriteNoteInput
+	if len(c.Body()) == 0 {
+		return input, nil
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return input, service.ErrMessageFavoriteInvalid
+	}
+	return input, nil
+}
+
+// Without a token this acquires the note edit lease; with the caller's token it
+// renews it. The token is returned only to the acquiring client.
+func messageFavoriteNoteLockHandler(c *fiber.Ctx) error {
+	input, err := parseMessageFavoriteNoteInput(c)
+	if err != nil {
+		return messageFavoriteError(c, err)
+	}
+	lease, err := service.MessageFavoriteNoteLockAcquire(getCurUser(c).ID, c.Params("id"), input.Token)
+	if err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.JSON(lease)
+}
+
+func messageFavoriteNoteSaveHandler(c *fiber.Ctx) error {
+	input, err := parseMessageFavoriteNoteInput(c)
+	if err != nil || input.Token == "" || input.Content == nil {
+		return messageFavoriteError(c, service.ErrMessageFavoriteInvalid)
+	}
+	result, err := service.MessageFavoriteNoteSave(getCurUser(c).ID, c.Params("id"), input.Token, *input.Content)
+	if err != nil {
+		return messageFavoriteError(c, err)
+	}
+	return c.JSON(result)
+}
+
+func messageFavoriteNoteReleaseHandler(c *fiber.Ctx) error {
+	input, err := parseMessageFavoriteNoteInput(c)
+	if err != nil || input.Token == "" {
+		return messageFavoriteError(c, service.ErrMessageFavoriteInvalid)
+	}
+	if err := service.MessageFavoriteNoteRelease(getCurUser(c).ID, c.Params("id"), input.Token); err != nil {
 		return messageFavoriteError(c, err)
 	}
 	return c.JSON(fiber.Map{"success": true})

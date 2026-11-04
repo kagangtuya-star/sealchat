@@ -230,6 +230,9 @@ SealChat 仍保留 `data-display-palette`、`data-display-layout` 和 `data-cust
 | `font-popup` | 富文本字体选择菜单。 |
 | `color-popup` | 富文本颜色候选内容。 |
 | `floating-panel` | 聊天搜索等独立工具面板。 |
+| `message-favorite-inspector` | 消息收藏窗口内的收藏详情栏；`data-sc-layout` 为 `split`（并排）或 `overlay`（覆盖列表）。 |
+
+消息收藏备注帖沿用细分 hook：备注区 `[data-sc-favorite-note='panel']`（也带 `data-sc-favorite-part='notes'`）、帖子列表 `list`、单帖 `item`、底部新增输入区 `composer`、帖内编辑器 `editor`、编辑锁提示 `lock`、收藏卡片中的备注数量与最新帖子摘要 `summary`、发布入口 `add`。单帖 `item` 带 `data-sc-state`（`idle`、`acquiring`、`editing`、`saving`、`locked`、`lost`），编辑态与锁只作用于该帖，新增输入区独立。它们位于收藏窗口的 `.sc-overlay` surface 内，默认颜色沿用 `--sc-bg-*`、`--sc-text-*`、`--sc-border-*` 和 `--mf-accent`；错误提示允许通过 `--sc-color-error` 覆盖。
 
 推荐写法：
 

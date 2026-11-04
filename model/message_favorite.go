@@ -19,6 +19,18 @@ type MessageFavoriteModel struct {
 
 func (*MessageFavoriteModel) TableName() string { return "message_favorites" }
 
+// Each post has its own author and edit lease. An author may post more than once.
+type MessageFavoriteNoteModel struct {
+	StringPKBaseModel
+	FavoriteID        string `json:"favoriteId" gorm:"size:100;not null;index:idx_mfn_favorite"`
+	AuthorUserID      string `json:"authorUserId" gorm:"size:100;not null"`
+	Content           string `json:"content" gorm:"size:2000;not null"`
+	EditLockTokenHash string `json:"-" gorm:"size:64;not null;default:''"`
+	EditLockExpiresAt int64  `json:"-" gorm:"not null;default:0"`
+}
+
+func (*MessageFavoriteNoteModel) TableName() string { return "message_favorite_notes" }
+
 type MessageFavoriteTagModel struct {
 	StringPKBaseModel
 	Scope           string `json:"scope" gorm:"size:16;not null;uniqueIndex:idx_message_favorite_tag_unique,priority:1"`

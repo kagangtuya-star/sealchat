@@ -11,8 +11,10 @@ import { messageFavoriteBucketKey, useMessageFavoriteStore } from './store'
 import { useFavoriteWindowLayout, type FavoriteResizeDirection } from './useFavoriteWindowLayout'
 import { useFavoritePointerSort } from './useFavoritePointerSort'
 import { useFavoriteSelection } from './useFavoriteSelection'
+import { useFavoriteNotes } from './useFavoriteNotes'
 import MessageFavoriteCard from './MessageFavoriteCard.vue'
 import MessageFavoriteTagManager from './MessageFavoriteTagManager.vue'
+import MessageFavoriteInspector from './MessageFavoriteInspector.vue'
 
 // 唯一的消息收藏悬浮窗。由聊天壳层挂载一次；入口只调用 open()。
 // 领域数据来自 store；位置、尺寸、最小化和筛选输入是本窗口的 UI 状态。
@@ -21,6 +23,8 @@ const props = withDefaults(defineProps<{ available?: boolean, embedded?: boolean
 
 const WORLD_CHANGED_EVENT = 'message.favorite.world.changed'
 const RESIZE_DIRECTIONS: FavoriteResizeDirection[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
+// 窗口达到该宽度时详情栏与列表并排，否则覆盖在列表上。
+const SPLIT_MIN_WIDTH = 680
 
 const chat = useChatStore()
 const user = useUserStore()
@@ -116,6 +120,29 @@ const readOnly = computed(() => scope.value === 'world' && store.canManageWorld(
 const filtersActive = computed(() => !!active.value.q || active.value.tagIds.length > 0 || (scope.value === 'personal' && !!filters.personal.worldId))
 const selection = useFavoriteSelection(() => items.value)
 const batchDeleting = ref(false)
+
+// 收藏详情与备注。详情栏打开的收藏和备注编辑会话都属于本窗口；
+// 各帖编辑会话独立；仅在操作会销毁详情或草稿时保护未保存内容。
+const noteEditor = useFavoriteNotes()
+const noteBusy = computed(() => noteEditor.busy.value)
+const inspectedId = ref('')
+const inspectedSnapshot = ref<MessageFavoriteItem | null>(null)
+const deferredInspectorClose = ref(false)
+const inspectedInList = computed(() => (inspectedId.value ? items.value.find((item) => item.id === inspectedId.value) || null : null))
+// 正在编辑的收藏暂时离开当前列表（例如刷新后不再匹配筛选）时，仍按快照展示，保存结果由后端判定。
+const inspected = computed(() => inspectedInList.value || (inspectedSnapshot.value?.id === inspectedId.value ? inspectedSnapshot.value : null))
+const splitLayout = computed(() => !win.compact.value && win.rect.value.width >= SPLIT_MIN_WIDTH)
+const inspectorLayout = computed(() => (splitLayout.value ? 'split' : 'overlay'))
+const canWiden = computed(() => !win.compact.value && !splitLayout.value && win.viewport.width - 16 >= SPLIT_MIN_WIDTH)
+// 世界旁观者只读；其他世界成员可编辑世界收藏备注。最终授权由后端判断。
+const canEditNote = computed(() => {
+  const target = inspected.value
+  if (!target || target.scope === 'personal') return true
+  return ['owner', 'admin', 'member'].includes(String((chat.worldDetailMap as Record<string, any>)?.[target.worldId]?.memberRole || ''))
+})
+const inspectedCanMaintain = computed(() => inspected.value?.scope === 'personal' || store.canManageWorld(inspected.value?.worldId || '') === true)
+const inspectedTags = computed(() => inspected.value ? store.tagItems(inspected.value.scope, inspected.value.worldId) : [])
+
 const sortable = computed(() => canMaintain.value && !selection.active.value && !filtersActive.value && !list.value?.nextCursor && !list.value?.loading && !list.value?.moving && items.value.length > 1)
 const sortHint = computed(() => {
   if (filtersActive.value) return '清除筛选后可调整排序'
@@ -224,9 +251,76 @@ const clearFilters = () => {
   Object.assign(active.value, { keyword: '', q: '', tagIds: [], worldId: '' })
 }
 
+// 有未保存的备注草稿时先确认；确认后放弃编辑（释放编辑权）再执行。
+const guardNoteDraft = (action: () => void) => {
+  if (noteEditor.pending.value) {
+    notice.info('备注正在保存，请在保存结束后操作')
+    return
+  }
+  if (!noteEditor.dirty.value) {
+    noteEditor.cancel()
+    action()
+    return
+  }
+  dialog.warning({
+    title: '放弃未保存的备注？',
+    content: '当前备注草稿尚未保存，继续操作将丢弃这些修改。',
+    positiveText: '放弃修改',
+    negativeText: '继续编辑',
+    onPositiveClick: () => {
+      noteEditor.cancel()
+      action()
+    },
+  })
+}
+
+const closeInspectorNow = () => {
+  deferredInspectorClose.value = false
+  noteEditor.cancel()
+  inspectedId.value = ''
+  inspectedSnapshot.value = null
+}
+
+const inspectorOutsideWorld = (worldId = currentWorldId.value) => {
+  const item = inspected.value
+  return !!item && item.scope === 'world' && item.worldId !== worldId
+}
+
+const handleInspectorWorldChange = (worldId: string) => {
+  if (!inspectorOutsideWorld(worldId)) {
+    deferredInspectorClose.value = false
+    return
+  }
+  deferredInspectorClose.value = true
+  if (!noteEditor.pending.value) guardNoteDraft(closeInspectorNow)
+}
+
+const flushDeferredInspectorClose = () => {
+  if (!deferredInspectorClose.value || noteEditor.pending.value || noteEditor.dirty.value) return
+  if (!inspectorOutsideWorld()) {
+    deferredInspectorClose.value = false
+    return
+  }
+  closeInspectorNow()
+}
+
+const inspect = (item: MessageFavoriteItem) => {
+  if (selection.active.value || inspectedId.value === item.id) return
+  guardNoteDraft(() => {
+    inspectedId.value = item.id
+    inspectedSnapshot.value = item
+  })
+}
+
+const closeInspector = () => guardNoteDraft(closeInspectorNow)
+
 const selectScope = (next: MessageFavoriteScope) => {
   if (next === 'world' && !currentWorldId.value) return
-  scope.value = next
+  if (next === scope.value) return
+  guardNoteDraft(() => {
+    closeInspectorNow()
+    scope.value = next
+  })
 }
 
 const jump = async (item: MessageFavoriteItem) => {
@@ -249,13 +343,19 @@ const jump = async (item: MessageFavoriteItem) => {
   }
 }
 
-const remove = async (item: MessageFavoriteItem) => {
+const removeNow = async (item: MessageFavoriteItem) => {
   try {
     await store.removeFavorite(item.id)
+    if (inspectedId.value === item.id) closeInspectorNow()
     notice.success('已取消收藏')
   } catch (error) {
     notice.error(describeMessageFavoriteError(error, '取消收藏失败'))
   }
+}
+
+const remove = (item: MessageFavoriteItem) => {
+  if (inspectedId.value === item.id) guardNoteDraft(() => { void removeNow(item) })
+  else void removeNow(item)
 }
 
 const toggleSelectionMode = () => {
@@ -264,8 +364,11 @@ const toggleSelectionMode = () => {
     return
   }
   if (!canMaintain.value) return
-  sort.cancel()
-  selection.enter()
+  guardNoteDraft(() => {
+    sort.cancel()
+    closeInspectorNow()
+    selection.enter()
+  })
 }
 
 const setAllSelected = (checked: boolean) => {
@@ -330,6 +433,7 @@ const handleWorldChanged = (event: any) => {
   const worldId = String(payload.worldId || '')
   if (!expanded.value || scope.value !== 'world' || worldId !== currentWorldId.value) return
   store.handleWorldChanged(worldId)
+  if (inspected.value?.scope === 'world' && inspected.value.worldId === worldId) void noteEditor.refresh()
 }
 
 const handleBadgeEnd = (event: PointerEvent) => {
@@ -340,18 +444,19 @@ const restore = () => win.setMode('expanded')
 
 const open = () => {
   if (!props.available) return
-  scope.value = currentWorldId.value ? 'world' : 'personal'
+  if (!visible.value) scope.value = currentWorldId.value ? 'world' : 'personal'
   win.setMode('expanded')
   attention.value = true
   if (attentionTimer !== undefined) clearTimeout(attentionTimer)
   attentionTimer = setTimeout(() => { attention.value = false }, 700)
 }
 
-const close = () => {
+const close = () => guardNoteDraft(() => {
   sort.cancel()
   selection.exit()
+  closeInspectorNow()
   win.setMode('hidden')
-}
+})
 
 // 重新展开、切换作用域/世界或筛选变化时按当前上下文重读；store 用请求序号丢弃过期响应。
 watch([expanded, querySignature], ([isExpanded]) => {
@@ -360,6 +465,7 @@ watch([expanded, querySignature], ([isExpanded]) => {
 
 watch(userId, () => {
   selection.exit()
+  closeInspectorNow()
   loadFilterMemory()
   scope.value = currentWorldId.value ? 'world' : 'personal'
 }, { immediate: true })
@@ -373,7 +479,10 @@ watch(currentWorldId, (worldId, previous) => {
   Object.assign(filters.world, normalizeStoredFilter(worldId ? saved?.worlds?.[worldId] : null))
   filters.world.worldId = ''
   if (!worldId && scope.value === 'world') scope.value = 'personal'
+  handleInspectorWorldChange(worldId)
 })
+
+watch([() => noteEditor.pending.value, () => noteEditor.dirty.value], flushDeferredInspectorClose)
 
 // 标签真正加载完成后再清理已不存在的筛选项，避免恢复筛选时被初始空列表误清除。
 watch([tags, () => store.tagsLoaded(scope.value, bucketWorldId.value)], ([next, loaded]) => {
@@ -388,10 +497,30 @@ watch(() => props.available, (available) => {
 })
 
 // 批量选择不跨越收藏空间、筛选条件或维护权限；窗口关闭时一并结束。
-watch(bucketKey, () => selection.exit())
+// 详情与备注编辑同样不跨越收藏空间（例如切换世界）。
+watch(bucketKey, () => {
+  selection.exit()
+  // 外部世界切换已经发生时无法回滚导航；保留未保存草稿，交给
+  // currentWorldId 的确认流程处理。无草稿的会话照常立即释放。
+  if (!noteEditor.dirty.value && !noteEditor.pending.value) closeInspectorNow()
+})
+watch(inspectedInList, (item) => {
+  if (item) inspectedSnapshot.value = item
+})
+watch(inspected, (item) => { if (item) void noteEditor.load(item) })
+// 收藏被其他客户端取消后关闭详情。只有完整、未筛选的列表才能说明收藏已不存在；
+// 筛选中或正在编辑时保留快照，由后续保存结果提示。
+const listSettledComplete = computed(() => !!list.value?.loaded && !list.value.loading && !list.value.nextCursor && !filtersActive.value)
+watch([inspectedInList, listSettledComplete, noteBusy], ([item, complete, busy]) => {
+  if (inspectedId.value && !item && complete && !busy) closeInspectorNow()
+})
 watch(querySignature, () => selection.clear())
 watch(canMaintain, (allowed) => { if (!allowed) selection.exit() })
-watch(visible, (shown) => { if (!shown) selection.exit() })
+watch(visible, (shown) => {
+  if (shown) return
+  selection.exit()
+  if (!noteBusy.value) closeInspectorNow()
+})
 
 onMounted(() => chatEvent.on(WORLD_CHANGED_EVENT as any, handleWorldChanged as any))
 onBeforeUnmount(() => {
@@ -445,6 +574,8 @@ defineExpose({ open })
           </button>
         </header>
 
+        <div class="mf-window__body">
+        <div class="mf-window__main" :inert="inspected && inspectorLayout === 'overlay' ? true : undefined">
         <nav class="mf-window__scopes" role="tablist" aria-label="收藏作用域">
           <button
             type="button"
@@ -476,7 +607,7 @@ defineExpose({ open })
             size="small"
             round
             clearable
-            placeholder="搜索收藏内容"
+            placeholder="搜索收藏内容或备注"
             class="mf-window__search"
             @update:value="updateKeyword"
             @keydown.enter.prevent="applyKeyword"
@@ -526,7 +657,7 @@ defineExpose({ open })
         </div>
 
         <div v-if="readOnly || filtersActive" class="mf-window__status" role="status">
-          <span v-if="readOnly">只读 · 世界收藏由世界管理员维护</span>
+          <span v-if="readOnly">收藏管理只读 · 世界收藏由世界管理员维护</span>
           <span v-else-if="filtersActive && canMaintain && items.length > 1">筛选中 · 清除筛选后可调整排序</span>
           <span v-else-if="filtersActive">筛选中</span>
           <button v-if="filtersActive" type="button" class="mf-window__link" @click="clearFilters">清除筛选</button>
@@ -560,11 +691,13 @@ defineExpose({ open })
               :jumping="jumpingId === item.id"
               :selecting="selection.active.value"
               :selected="selection.isSelected(item.id)"
+              :inspected="inspectedId === item.id"
               @jump="jump(item)"
               @remove="remove(item)"
               @move="handleMove(item, index, $event)"
               @filter-tag="toggleTagFilter"
               @toggle-select="toggleSelected(item.id)"
+              @inspect="inspect(item)"
             >
               <template v-if="canMaintain" #handle>
                 <button
@@ -630,6 +763,29 @@ defineExpose({ open })
             </NButton>
             <NButton size="small" quaternary :disabled="batchDeleting" @click="selection.exit">完成</NButton>
           </div>
+        </div>
+        </div>
+
+        <MessageFavoriteInspector
+          v-if="inspected"
+          :key="inspected.id"
+          :item="inspected"
+          :editor="noteEditor"
+          :tags="inspectedTags"
+          :current-user-id="userId"
+          :source-label="sourceLabel(inspected)"
+          :can-maintain="inspectedCanMaintain"
+          :can-edit-note="canEditNote"
+          :layout="inspectorLayout"
+          :can-widen="canWiden"
+          :jumping="jumpingId === inspected.id"
+          :active-tag-ids="active.tagIds"
+          @close="closeInspector"
+          @jump="jump(inspected)"
+          @remove="remove(inspected)"
+          @widen="win.widenTo(SPLIT_MIN_WIDTH + 40)"
+          @filter-tag="toggleTagFilter"
+        />
         </div>
 
         <div
@@ -734,6 +890,21 @@ defineExpose({ open })
 .mf-window__icon-btn:hover {
   background: var(--sc-bg-hover);
   color: var(--sc-text-primary);
+}
+
+.mf-window__body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.mf-window__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .mf-window__scopes {
