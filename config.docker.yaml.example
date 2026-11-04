@@ -41,6 +41,13 @@ registerInviteCode: ""                       # 注册邀请码，留空则不需
 builtInSealBotEnable: true                   # 启用内置小海豹
 chatHistoryPersistentDays: -1                # 聊天记录保留天数 (-1 永久)
 
+# 界面自定义策略
+uiCustomization:
+  allowWorldCss: true                         # 是否允许世界级界面自定义 CSS
+  allowWorldJs: false                         # 是否允许世界级界面自定义 JavaScript
+  allowPublicWorldCss: true                   # 是否允许世界 CSS 应用于 OB、嵌入、公开 LOG 等公共页面
+  maxCodeSizeKB: 1024                         # 单个界面自定义包 CSS + JavaScript 总上限（KiB），有效范围 64-16384
+
 # 图片配置
 imageBaseUrl: localhost:3212                 # 图片访问基础URL
 imageCompress: true                          # 是否压缩图片

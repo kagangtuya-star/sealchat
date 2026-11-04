@@ -5,10 +5,6 @@ import { CHANNEL_EXTENSION_CAPABILITIES, isChannelExtensionWriteCapability } fro
 import { UI_PUBLIC_SURFACES, UI_SURFACE_LABELS, surfaceCoveredByGlobal, UI_SURFACES, type UISurface } from '@/services/ui-customization/surfaces'
 import type { UICustomizationPackage, UICustomizationPackageInput, UICustomizationScopeType } from '@/services/ui-customization/types'
 
-const CSS_LIMIT = 256 * 1024
-const JS_LIMIT = 256 * 1024
-const TOTAL_LIMIT = 384 * 1024
-
 const props = defineProps<{
   show: boolean
   scopeType: UICustomizationScopeType
@@ -16,6 +12,7 @@ const props = defineProps<{
   pkg: UICustomizationPackage | null
   /** False when the platform has not opened world scripts. */
   jsAllowed: boolean
+  maxCodeSizeKb: number
   saving?: boolean
 }>()
 const emit = defineEmits<{
@@ -58,6 +55,8 @@ const encoder = new TextEncoder()
 const bytes = (text: string) => encoder.encode(text).length
 const cssBytes = computed(() => bytes(draft.value.css))
 const jsBytes = computed(() => bytes(draft.value.js))
+const maxBytes = computed(() => props.maxCodeSizeKb * 1024)
+const codeOver = computed(() => cssBytes.value + jsBytes.value > maxBytes.value)
 const formatSize = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KiB`
 
 // World JS while closed: existing code stays (read-only) and may only be cleared.
@@ -68,9 +67,7 @@ const problems = computed(() => {
   const list: string[] = []
   if (!draft.value.name.trim()) list.push('请填写名称')
   if (!draft.value.surfaces.length) list.push('至少选择一个目标页面')
-  if (cssBytes.value > CSS_LIMIT) list.push('CSS 超过 256 KiB')
-  if (jsBytes.value > JS_LIMIT) list.push('JavaScript 超过 256 KiB')
-  if (cssBytes.value + jsBytes.value > TOTAL_LIMIT) list.push('CSS 与 JavaScript 合计超过 384 KiB')
+  if (codeOver.value) list.push(`CSS 与 JavaScript 合计超过 ${props.maxCodeSizeKb} KiB`)
   if (jsLocked.value && draft.value.js && draft.value.js !== savedJS.value) list.push('平台未开放世界脚本')
   return list
 })
@@ -184,10 +181,11 @@ sc.on('message-created', (msg) => console.log(msg.contentText))`
         </section>
 
         <section class="sc-uic-editor__section sc-uic-editor__code">
+          <div class="sc-uic-editor__hint">CSS 与 JavaScript 合计最多 {{ maxCodeSizeKb }} KiB。</div>
           <n-tabs v-model:value="codeTab" type="segment" size="small" animated>
             <n-tab-pane name="css">
               <template #tab>
-                CSS <span class="sc-uic-editor__size" :class="{ 'is-over': cssBytes > CSS_LIMIT }">{{ formatSize(cssBytes) }}</span>
+                CSS <span class="sc-uic-editor__size" :class="{ 'is-over': codeOver }">{{ formatSize(cssBytes) }}</span>
               </template>
               <n-input
                 v-model:value="draft.css"
@@ -203,7 +201,7 @@ sc.on('message-created', (msg) => console.log(msg.contentText))`
             </n-tab-pane>
             <n-tab-pane name="js">
               <template #tab>
-                JavaScript <span class="sc-uic-editor__size" :class="{ 'is-over': jsBytes > JS_LIMIT }">{{ formatSize(jsBytes) }}</span>
+                JavaScript <span class="sc-uic-editor__size" :class="{ 'is-over': codeOver }">{{ formatSize(jsBytes) }}</span>
               </template>
               <n-alert type="warning" :show-icon="true" class="sc-uic-editor__risk">
                 {{ jsRiskText }}脚本与 SealChat 页面同源运行，可以访问页面与当前登录状态，不是安全沙箱。

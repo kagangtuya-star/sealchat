@@ -95,6 +95,7 @@ func uiCustomizationList(c *fiber.Ctx) error {
 	policy := uiCustomizationPolicy()
 	return c.JSON(fiber.Map{"packages": items, "policy": fiber.Map{
 		"allowWorldCss": policy.AllowWorldCSS, "allowWorldJs": policy.AllowWorldJS, "allowPublicWorldCss": policy.AllowPublicWorldCSS,
+		"maxCodeSizeKB": policy.MaxCodeSizeKB,
 	}})
 }
 

@@ -36,9 +36,6 @@ const (
 	UISurfaceInternal          UISurface = "internal"
 	UISurfaceGlobal            UISurface = "global"
 	UICustomizationMaxPackages           = 50
-	UICustomizationMaxCSSBytes           = 256 * 1024
-	UICustomizationMaxJSBytes            = 256 * 1024
-	UICustomizationMaxCodeSize           = 384 * 1024
 )
 
 func (s UISurface) Valid() bool {
@@ -292,6 +289,21 @@ func uiCustomizationInvalid(detail string) error {
 	return fmt.Errorf("%w: %s", ErrUICustomizationInvalid, detail)
 }
 
+func uiCustomizationMaxCodeSizeBytes(policy *utils.UICustomizationPolicyConfig) int {
+	return utils.NormalizeUICustomizationPolicy(policy).MaxCodeSizeKB * 1024
+}
+
+func uiCustomizationCodeSizeLimitMessage(policy *utils.UICustomizationPolicyConfig) string {
+	return fmt.Sprintf("CSS 与 JavaScript 合计最多 %d KiB", utils.NormalizeUICustomizationPolicy(policy).MaxCodeSizeKB)
+}
+
+func validateUICustomizationCodeSize(css, js string, policy *utils.UICustomizationPolicyConfig) error {
+	if len(css)+len(js) > uiCustomizationMaxCodeSizeBytes(policy) {
+		return uiCustomizationInvalid(uiCustomizationCodeSizeLimitMessage(policy))
+	}
+	return nil
+}
+
 // applyUICustomizationPatch validates a create/update/import payload. When the
 // platform disables world scripts, existing world JS is preserved untouched
 // (so re-enabling restores it), may be cleared, but cannot be replaced.
@@ -336,14 +348,8 @@ func applyUICustomizationPatch(m *model.UICustomizationPackageModel, p UICustomi
 	if utf8.RuneCountInString(m.Description) > 500 {
 		return invalid("描述最多 500 个字符")
 	}
-	if len(m.CSS) > UICustomizationMaxCSSBytes {
-		return invalid("CSS 最多 256 KiB")
-	}
-	if len(m.JS) > UICustomizationMaxJSBytes {
-		return invalid("JavaScript 最多 256 KiB")
-	}
-	if len(m.CSS)+len(m.JS) > UICustomizationMaxCodeSize {
-		return invalid("CSS 与 JavaScript 合计最多 384 KiB")
+	if err := validateUICustomizationCodeSize(m.CSS, m.JS, policy); err != nil {
+		return err
 	}
 	if p.Surfaces != nil {
 		if len(*p.Surfaces) == 0 || len(*p.Surfaces) > 32 {

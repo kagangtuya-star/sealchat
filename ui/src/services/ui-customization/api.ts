@@ -1,4 +1,5 @@
 import { api } from '@/stores/_config'
+import { normalizeUICustomizationPolicy } from './types'
 import type {
   UICustomizationContext, UICustomizationPackage, UICustomizationPackageInput,
   UICustomizationPolicy, UICustomizationRuntimeResult,
@@ -20,8 +21,8 @@ const base = (scope: UICustomizationManageScope) => scope.type === 'platform'
   : `/api/v1/worlds/${encodeURIComponent(scope.worldId)}/ui-customizations`
 
 export async function listManagedUICustomizations(scope: UICustomizationManageScope) {
-  const { data } = await api.get<{ packages: UICustomizationPackage[]; policy?: UICustomizationPolicy }>(base(scope))
-  return { packages: data.packages || [], policy: data.policy }
+  const { data } = await api.get<{ packages: UICustomizationPackage[]; policy?: Partial<UICustomizationPolicy> }>(base(scope))
+  return { packages: data.packages || [], policy: normalizeUICustomizationPolicy(data.policy) }
 }
 
 export async function createManagedUICustomization(scope: UICustomizationManageScope, input: UICustomizationPackageInput) {

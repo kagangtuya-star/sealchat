@@ -62,11 +62,11 @@ SealChat 目前有两套外观机制。传统“颜色主题”只负责一组�
 | `manifest.name` | 导入后的包名称。最长 100 字符。 |
 | `manifest.description` | 包说明。最长 500 字符。 |
 | `targets` | 包生效的 Surface。至少 1 项。 |
-| `css` | CSS 源码。单包上限 256 KiB。 |
+| `css` | CSS 源码。与 `js` 共享单包代码容量上限。 |
 | `js` | JavaScript 源码。纯主题包应留空。 |
 | `channelCapabilities` | 可选频道能力数组，默认 `[]`；旧包不会自动获得频道能力。能力名复用 [频道嵌入 API](../channel-embed-api-developer-guide.md)。 |
 
-CSS 和 JavaScript 合计最多 384 KiB。一个平台或世界最多保存 50 个自定义包；内置引用不计入该配额。
+CSS 和 JavaScript 合计默认最多 1024 KiB；服务器管理员可以在 `config.yaml` 的 `uiCustomization.maxCodeSizeKB` 中调整（有效范围 64～16384 KiB）。一个平台或世界最多保存 50 个自定义包；内置引用不计入该配额。
 
 导入文件不携带数据库 ID、worldId、scope、审计字段、脚本 hash 和用户信任状态。导入目标由当前管理入口决定。平台管理中导入会创建平台包，世界管理中导入会创建当前世界的包。
 

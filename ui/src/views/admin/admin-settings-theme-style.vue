@@ -20,6 +20,7 @@ import DicePlatformStyleEditor from '@/features/dice3d/components/DicePlatformSt
 import { downloadDiceSkinTemplate, importDiceSkinPackage } from '@/features/dice3d/diceSkinTransfer'
 import { createDefaultDice3DWorldConfig } from '@/features/dice3d/defaults'
 import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue'
+import { normalizeUICustomizationPolicy } from '@/services/ui-customization/types'
 import { api } from '@/stores/_config'
 
 type AdminThemeStyleExpose = {
@@ -68,11 +69,7 @@ const cursorThemeVisible = ref(false)
 // toggling it never mixes with this page's unsaved theme edits.
 type UICustomizationPolicyKey = 'allowWorldCss' | 'allowWorldJs' | 'allowPublicWorldCss'
 const uiCustomizationPolicySaving = ref<UICustomizationPolicyKey | ''>('')
-const uiCustomizationPolicy = computed(() => ({
-  allowWorldCss: utils.config?.uiCustomization?.allowWorldCss ?? true,
-  allowWorldJs: utils.config?.uiCustomization?.allowWorldJs ?? false,
-  allowPublicWorldCss: utils.config?.uiCustomization?.allowPublicWorldCss ?? true,
-}))
+const uiCustomizationPolicy = computed(() => normalizeUICustomizationPolicy(utils.config?.uiCustomization))
 const updateUICustomizationPolicy = async (key: UICustomizationPolicyKey, value: boolean) => {
   const next = { ...uiCustomizationPolicy.value, [key]: value }
   uiCustomizationPolicySaving.value = key

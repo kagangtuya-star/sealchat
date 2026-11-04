@@ -11,6 +11,9 @@ export interface UICustomizationContext {
 
 export type UICustomizationScopeType = 'platform' | 'world'
 
+// Compatibility fallback for servers predating uiCustomization.maxCodeSizeKB.
+export const DEFAULT_UI_CUSTOMIZATION_MAX_CODE_SIZE_KB = 1024
+
 export interface UICustomizationPackage {
   id: string
   ref: string
@@ -41,6 +44,19 @@ export interface UICustomizationPolicy {
   allowWorldCss: boolean
   allowWorldJs: boolean
   allowPublicWorldCss: boolean
+  maxCodeSizeKB: number
+}
+
+export function normalizeUICustomizationPolicy(policy?: Partial<UICustomizationPolicy> | null): UICustomizationPolicy {
+  const maxCodeSizeKB = policy?.maxCodeSizeKB
+  return {
+    allowWorldCss: policy?.allowWorldCss ?? true,
+    allowWorldJs: policy?.allowWorldJs ?? false,
+    allowPublicWorldCss: policy?.allowPublicWorldCss ?? true,
+    maxCodeSizeKB: typeof maxCodeSizeKB === 'number' && Number.isFinite(maxCodeSizeKB) && maxCodeSizeKB > 0
+      ? Math.trunc(maxCodeSizeKB)
+      : DEFAULT_UI_CUSTOMIZATION_MAX_CODE_SIZE_KB,
+  }
 }
 
 export type UICustomizationPackageInput = Partial<Pick<UICustomizationPackage, 'name' | 'description' | 'enabled' | 'surfaces' | 'css' | 'js' | 'channelCapabilities'>>

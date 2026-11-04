@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 	uicustomizationpackage "sealchat/doc/ui-customization-package"
 	"sealchat/model"
+	"sealchat/utils"
 )
 
 // Builtin UI packages are referenced like channel embeds: the durable value is
@@ -96,6 +97,20 @@ func readBuiltinUICustomizationDocument(fileName string) ([]byte, error) {
 	return uicustomizationpackage.ReadFile(fileName)
 }
 
+func currentUICustomizationPolicy() *utils.UICustomizationPolicyConfig {
+	if cfg := utils.GetConfig(); cfg != nil {
+		return cfg.UICustomization
+	}
+	return nil
+}
+
+func validateBuiltinUICustomizationCodeSize(key, css, js string) error {
+	if err := validateUICustomizationCodeSize(css, js, currentUICustomizationPolicy()); err != nil {
+		return fmt.Errorf("内置界面主题 %s 超出代码大小限制：%s", key, strings.TrimPrefix(err.Error(), ErrUICustomizationInvalid.Error()+": "))
+	}
+	return nil
+}
+
 func loadBuiltinUICustomizationPackage(registration BuiltinUICustomizationRegistration) (*builtinUICustomizationPackage, error) {
 	data, err := readBuiltinUICustomizationDocument(registration.FileName)
 	if err != nil {
@@ -126,8 +141,8 @@ func loadBuiltinUICustomizationPackage(registration BuiltinUICustomizationRegist
 			seen[surface] = true
 		}
 	}
-	if len(document.CSS) > UICustomizationMaxCSSBytes || len(document.JS) > UICustomizationMaxJSBytes || len(document.CSS)+len(document.JS) > UICustomizationMaxCodeSize {
-		return nil, fmt.Errorf("内置界面主题 %s 超出代码大小限制", registration.Key)
+	if err := validateBuiltinUICustomizationCodeSize(registration.Key, document.CSS, document.JS); err != nil {
+		return nil, err
 	}
 	version := strings.TrimSpace(document.Manifest.Version)
 	if version == "" {
@@ -147,6 +162,9 @@ func builtinUICustomizationForKey(key string) (*builtinUICustomizationPackage, e
 	item := builtinUICustomizationCache[key]
 	builtinUICustomizationCacheMu.RUnlock()
 	if item != nil {
+		if err := validateBuiltinUICustomizationCodeSize(item.Key, item.CSS, item.JS); err != nil {
+			return nil, err
+		}
 		return item, nil
 	}
 	for _, registration := range builtinUICustomizationRegistrations {

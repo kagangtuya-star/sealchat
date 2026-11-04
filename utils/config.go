@@ -879,6 +879,9 @@ func ReadConfig() *AppConfig {
 	config.Proxy = NormalizeProxyConfig(config.Proxy)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 	config.UICustomization = NormalizeUICustomizationPolicy(config.UICustomization)
+	if err := ValidateUICustomizationPolicy(config.UICustomization); err != nil {
+		panic(err)
+	}
 	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
@@ -1973,6 +1976,7 @@ func WriteConfigChecked(config *AppConfig) error {
 		_ = candidateK.Set("uiCustomization.allowWorldCss", config.UICustomization.AllowWorldCSS)
 		_ = candidateK.Set("uiCustomization.allowWorldJs", config.UICustomization.AllowWorldJS)
 		_ = candidateK.Set("uiCustomization.allowPublicWorldCss", config.UICustomization.AllowPublicWorldCSS)
+		_ = candidateK.Set("uiCustomization.maxCodeSizeKB", config.UICustomization.MaxCodeSizeKB)
 		config.MCP = NormalizeMCPConfig(config.MCP)
 		if err := ValidateMCPConfig(config.MCP); err != nil {
 			return err

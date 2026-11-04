@@ -14,6 +14,7 @@ import {
 } from '@/services/ui-customization/runtime'
 import { UI_PUBLIC_SURFACES, UI_SURFACE_LABELS } from '@/services/ui-customization/surfaces'
 import { buildBundleDocument, buildPackageDocument, downloadJSON, readTransferFile, transferFileName } from '@/services/ui-customization/transfer'
+import { DEFAULT_UI_CUSTOMIZATION_MAX_CODE_SIZE_KB } from '@/services/ui-customization/types'
 import type { UICustomizationPackage, UICustomizationPackageInput, UICustomizationPolicy } from '@/services/ui-customization/types'
 
 const MAX_PACKAGES = 50
@@ -46,6 +47,7 @@ const isWorld = computed(() => props.scope.type === 'world')
 const scopeKey = computed(() => props.scope.type === 'world' ? `world:${props.scope.worldId}` : 'platform')
 const worldJSAllowed = computed(() => !isWorld.value || !!policy.value?.allowWorldJs)
 const worldCSSAllowed = computed(() => !isWorld.value || policy.value?.allowWorldCss !== false)
+const maxCodeSizeKB = computed(() => policy.value?.maxCodeSizeKB || DEFAULT_UI_CUSTOMIZATION_MAX_CODE_SIZE_KB)
 const isPlatformCatalog = (pkg: UICustomizationPackage) => isWorld.value && pkg.scopeType === 'platform'
 const isPackageEnabled = (pkg: UICustomizationPackage) => isPlatformCatalog(pkg) ? (pkg.enabled || !!pkg.worldEnabled) : pkg.enabled
 const isPackageJSAllowed = (pkg: UICustomizationPackage) => !isWorld.value || isPlatformCatalog(pkg) || worldJSAllowed.value
@@ -331,6 +333,7 @@ const sizeLabel = (text: string) => {
           世界脚本：{{ worldJSAllowed ? '平台已开放，成员需逐个信任' : '平台未开放世界脚本' }}
         </n-tag>
       </template>
+      <span>代码总大小上限：{{ maxCodeSizeKB }} KiB（CSS + JavaScript）</span>
       <span>导入支持单包与 Bundle（sealchat.ui-package / sealchat.ui-bundle）。页面异常时在地址中加入 <code>safe-ui=1</code> 可跳过全部自定义。</span>
       <label class="sc-uic-manager__session-safe">
         <span>本次会话禁用全部自定义</span>
@@ -413,6 +416,7 @@ const sizeLabel = (text: string) => {
       :scope-type="scope.type"
       :pkg="editing"
       :js-allowed="worldJSAllowed"
+      :max-code-size-kb="maxCodeSizeKB"
       :saving="editorSaving"
       @save="handleSave"
     />
