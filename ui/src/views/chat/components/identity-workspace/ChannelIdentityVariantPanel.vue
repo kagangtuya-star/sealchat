@@ -484,7 +484,7 @@ const panelHint = computed(() => {
                 {{ isCreating ? '取消新增' : '撤销修改' }}
               </n-button>
               <n-button size="small" type="primary" :loading="submitting" @click="emit('save')">
-                {{ isCreating ? '创建差分' : '保存差分' }}
+                保存差分
               </n-button>
             </div>
           </footer>
