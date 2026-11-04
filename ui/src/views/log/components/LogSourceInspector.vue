@@ -181,7 +181,7 @@ const addChannel = (v: string | null) => v && emit('add-source', props.chapter.k
               </label>
             </div>
             <div class="log-insp__quick">
-              <n-button size="tiny" quaternary @click="patch({ toTime: new Date().toISOString() })">结束 = 现在</n-button>
+              <n-button size="tiny" quaternary title="将本片段的来源结束时间推进到当前时刻，以包含之后新增的消息" @click="patch({ toTime: new Date().toISOString() })">更新到现在</n-button>
               <n-button v-if="section.source.fromTime" size="tiny" quaternary @click="patch({ fromTime: null, fromExclusive: false })">从最早开始</n-button>
             </div>
             <div class="log-insp__toggles">

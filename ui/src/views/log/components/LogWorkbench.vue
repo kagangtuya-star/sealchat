@@ -1536,7 +1536,7 @@ onBeforeUnmount(() => {
     <footer class="log-wb__status" role="status" aria-live="polite">
       <span class="log-wb__stat is-strong">{{ currentChapter ? chapterTitle(currentChapter, currentChapterIndex) : '—' }}</span>
       <span v-if="fragmentHint" class="log-wb__stat">片段：{{ fragmentHint }}</span>
-      <span class="log-wb__stat">已加载 {{ win.items.value.length }} 条{{ win.loading.value ? '（加载中…）' : win.complete.value ? (fragmentHint ? '（本片段完整）' : '（本章完整）') : '' }}</span>
+      <span class="log-wb__stat">已加载 {{ win.items.value.length }} 条{{ win.loading.value ? '（加载中…）' : win.complete.value ? '（当前范围完整）' : '' }}</span>
       <button v-if="win.nextCursor.value && !win.loading.value" type="button" class="log-wb__link-btn" @click="win.loadMore()">加载更多</button>
       <span v-if="layoutInfo" class="log-wb__stat">{{ viewMode === 'flow' ? '流式' : `共 ${layoutInfo.pageCount} 页${win.complete.value ? '' : '（未完整，页数暂不确定）'}` }}</span>
       <span v-if="layoutBusy" class="log-wb__stat is-busy">排版中…</span>
