@@ -202,6 +202,22 @@ test('one start entry deduplicates loading, play promises, remote snapshots and 
   h.assertSingle();
 });
 
+test('signed streams without file extensions use the asset codec metadata', async (t) => {
+  const h = harness(t);
+  const cases = [
+    [{ id: 'mp3', objectKey: 'original/track.mp3' }, 'mp3'],
+    [{ id: 'opus', objectKey: 'opus/track_128k.ogg' }, 'opus'],
+    [{ id: 's3', objectKey: 'music/track.FLAC' }, 'flac'],
+    [{ id: 's3-mime', objectKey: 'music/track', contentType: 'audio/mp4; charset=binary' }, 'mp4'],
+    [{ id: 'unknown', objectKey: 'music/track.bin' }, undefined],
+  ];
+  for (const [asset, expected] of cases) {
+    await h.store.assignAssetToTrack('music', asset, { force: true });
+    const howl = h.instances.at(-1);
+    assert.equal(howl.config.format?.[0], expected, `format for ${asset.id}`);
+  }
+});
+
 test('next/previous and rapid cached changes each create only one current sound', async (t) => {
   const h = harness(t);
   const old = await h.assign();

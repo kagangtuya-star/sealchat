@@ -426,6 +426,24 @@ function normalizeAudioAssets(assets: AudioAsset[]): AudioAsset[] {
   return assets.map((asset) => normalizeAudioAsset(asset));
 }
 
+function getHowlerAudioFormat(asset: AudioAsset): string | undefined {
+  const metadata = asset as AudioAsset & { extension?: string; contentType?: string };
+  const key = (asset.objectKey || '').split(/[?#]/, 1)[0];
+  const extension = key.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase()
+    || metadata.extension?.replace(/^\./, '').toLowerCase();
+  // 数据库转码目录中的 .ogg 实际使用 Opus 编码。
+  if (extension === 'ogg' && key.startsWith('opus/')) return 'opus';
+  if (extension && /^(mp3|mpeg|ogg|oga|opus|wav|aac|flac|webm|weba|mp4|m4a|m4b)$/.test(extension)) {
+    return extension;
+  }
+  const contentType = metadata.contentType?.split(';', 1)[0].trim().toLowerCase();
+  return ({
+    'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'audio/opus': 'opus',
+    'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/aac': 'aac',
+    'audio/flac': 'flac', 'audio/webm': 'webm', 'audio/mp4': 'mp4',
+  } as Record<string, string>)[contentType || ''];
+}
+
 export type AudioSceneLibraryMode = AudioLibraryMode | 'mixed' | null;
 
 export function isS3AudioRef(value: string | null | undefined): boolean {
@@ -2568,6 +2586,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async createHowlInstance(track: TrackRuntime, asset: AudioAsset, options: { requestId: number; autoAdvance: boolean }) {
       applyMasterVolume(this.masterVolume);
       const src = await this.fetchPlayableStreamUrl(asset.id);
+      const format = getHowlerAudioFormat(asset);
       const ownsRequest = () => this.tracks[track.type] === track
         && track.loadRequestId === options.requestId && track.assetId === asset.id;
       if (!ownsRequest()) return null;
@@ -2584,6 +2603,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       };
       const howl = markRaw(new Howl({
         src: [src],
+        format: format ? [format] : undefined,
         html5: true,
         preload: false,
         volume: track.muted ? 0 : track.volume,
