@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NButton, NDropdown, NInput } from 'naive-ui'
+import { uuid } from '@/utils/uuid'
 import type { StageImageRef, StageSurfaceVariants } from '../shared/stage-types'
 import type { SurfaceVariantOperation } from '../shared/stage-surface-variants'
 import type { TheaterStageMediaLocation } from './stage-media'
@@ -37,7 +38,7 @@ const selectMenu = (key: string | number, id: string) => {
     editingId.value = id
     name.value = props.group.slots.find(slot => slot.id === id)?.name ?? ''
   } else if (key === 'replace') emit('upload', id)
-  else if (key === 'copy') emit('operate', { type: 'copy', id, newId: crypto.randomUUID() })
+  else if (key === 'copy') emit('operate', { type: 'copy', id, newId: uuid() })
   else if (key === 'delete') emit('operate', { type: 'delete', id })
 }
 const rename = () => {

@@ -73,6 +73,7 @@ import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnaps
 import { useUtilsStore } from '@/stores/utils'
 import { generateInternalSurfaceLink, parseInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
+import { uuid } from '@/utils/uuid'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
@@ -8554,7 +8555,7 @@ const applyImageUrl = (
     if (target.sceneId && (target.sceneId !== props.store.state.activeSceneId || target.epoch !== surfaceImageEpoch)) return false
     if (!target.sceneId) return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated, loopCount)
     const image: StageImageRef | null = url ? { url, resourceId: resourceId || '', mimeType, animated, loopCount } : null
-    if (target.add) return props.store.operateSurfaceVariant(target.target, { type: 'add', id: crypto.randomUUID(), name: `图片 ${surfaceVariants(target.target).slots.length + 1}`, image })
+    if (target.add) return props.store.operateSurfaceVariant(target.target, { type: 'add', id: uuid(), name: `图片 ${surfaceVariants(target.target).slots.length + 1}`, image })
     return target.slotId ? props.store.operateSurfaceVariant(target.target, { type: 'replace', id: target.slotId, image }) : false
   }
   return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, loopCount, dimensions)

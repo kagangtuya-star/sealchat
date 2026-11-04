@@ -1,5 +1,6 @@
 import { shallowRef } from 'vue'
 import { api } from '@/stores/_config'
+import { uuid } from '@/utils/uuid'
 import type { TheaterPresentation, TheaterVisualStyle } from '@/types/theaterPresentation'
 import type { DialogueInactiveStyle } from './theater-dialogue-residency'
 import type { DialoguePosition } from './theater-dialogue-layout'
@@ -48,7 +49,7 @@ export const writeDialogueController = async (worldId: string, patch: DialogueCo
   const writer = writers.get(worldId)
   if (writer) return writer(patch)
   if (window.parent !== window && new URLSearchParams(window.location.hash.split('?')[1] || '').get('mode') === 'theater') {
-    const requestId = crypto.randomUUID()
+    const requestId = uuid()
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { cleanup(); reject(new Error('公共模板保存确认超时')) }, 20_000)
       const cleanup = () => { clearTimeout(timer); window.removeEventListener('message', receive) }
@@ -68,7 +69,7 @@ export const writeDialogueController = async (worldId: string, patch: DialogueCo
     const state = await readDialogueController(worldId)
     try {
       await api.post(`api/v1/worlds/${encodeURIComponent(worldId)}/theater/mutations`, {
-        mutationId: crypto.randomUUID(), worldId, channelId: '', expectedRevision: state.revision, type: 'room.dialogue.patch', payload: patch,
+        mutationId: uuid(), worldId, channelId: '', expectedRevision: state.revision, type: 'room.dialogue.patch', payload: patch,
       })
       await readDialogueController(worldId)
       return

@@ -22,7 +22,7 @@ function loadModule(file, modules = {}) {
 }
 
 const ops = loadModule('views/log/logBatchOps.ts');
-const draftOps = loadModule('views/log/logDraftOps.ts', { '@/services/log/logRenderer': {}, './logAssetRefs': {} });
+const draftOps = loadModule('views/log/logDraftOps.ts', { '@/services/log/logRenderer': {}, './logAssetRefs': {}, '@/utils/uuid': loadModule('utils/uuid.ts') });
 const { useLogSelection } = loadModule('views/log/composables/useLogSelection.ts', { vue });
 const ids = text => text.split('');
 
