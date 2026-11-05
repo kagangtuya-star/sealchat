@@ -1102,11 +1102,11 @@
 
 /* Indicator line at the edge of slot - only shown when setting enabled */
 .chat--show-drag-indicator .message-row--drop-before:not(.message-row--drag-source)::before {
-  border-top: 3px solid var(--sc-primary, #3b82f6);
+  border-top: 3px solid var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
 }
 
 .chat--show-drag-indicator .message-row--drop-after:not(.message-row--drag-source)::after {
-  border-bottom: 3px solid var(--sc-primary, #3b82f6);
+  border-bottom: 3px solid var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
 }
 
 /* Drag handle should prevent scroll interference */
@@ -1161,8 +1161,8 @@
   inset: 0;
   border-radius: 0.9rem;
   z-index: 0;
-  background: rgba(14, 165, 233, 0.18);
-  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.25);
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 28%, transparent);
   animation: search-hit-pulse 2s ease forwards;
 }
 
@@ -1172,8 +1172,8 @@
   inset: 0;
   border-radius: 0.9rem;
   z-index: 0;
-  background: rgba(59, 130, 246, 0.09);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12);
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 9%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 14%, transparent);
   animation: sent-confirm-pulse 1.6s ease forwards;
 }
 
@@ -1828,7 +1828,7 @@
 }
 
 .typing-preview-bubble--content .typing-dots span {
-  background-color: rgba(37, 99, 235, 0.85);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 85%, transparent);
 }
 
 .typing-dots span:first-child {
@@ -1868,31 +1868,31 @@
   background-color: rgba(156, 163, 175, 0.18);
 }
 
-/* Content mode (active blue state) */
+/* Content mode (active accent state) */
 .typing-toggle--content {
-  color: #2563eb;
-  background-color: rgba(37, 99, 235, 0.12);
-  border-color: rgba(37, 99, 235, 0.35);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 35%, var(--sc-border-mute));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 10%, transparent);
 }
 
 .typing-toggle--content:hover {
-  color: #1d4ed8;
-  background-color: rgba(37, 99, 235, 0.18);
-  border-color: rgba(37, 99, 235, 0.5);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 18%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 50%, var(--sc-border-mute));
 }
 
 :root[data-display-palette='night'] .typing-toggle--content {
-  color: rgba(147, 197, 253, 0.95);
-  background-color: rgba(59, 130, 246, 0.22);
-  border-color: rgba(147, 197, 253, 0.4);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 42%, var(--sc-border-mute));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 15%, transparent);
 }
 
 :root[data-display-palette='night'] .typing-toggle--content:hover {
-  color: #93c5fd;
-  background-color: rgba(59, 130, 246, 0.3);
-  border-color: rgba(147, 197, 253, 0.55);
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 82%, white 18%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 30%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 55%, var(--sc-border-mute));
 }
 
 /* Silent mode (amber/warning state) */
@@ -1933,14 +1933,14 @@
 }
 
 :root[data-custom-theme='true'] .typing-toggle--content {
-  color: var(--sc-primary-color, #2563eb) !important;
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.4) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 40%, var(--sc-border-mute)) !important;
 }
 
 :root[data-custom-theme='true'] .typing-toggle--content:hover {
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.22) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.55) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 22%, transparent) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 55%, var(--sc-border-mute)) !important;
 }
 
 :root[data-custom-theme='true'] .typing-toggle--silent {
@@ -2021,7 +2021,7 @@
   background-color: var(--sc-bg-layer-strong, rgba(248, 250, 252, 0.85));
   color: var(--sc-text-primary);
   border: 1px solid var(--sc-border-mute);
-  border-left: 3px solid var(--sc-primary, #3b82f6);
+  border-left: 3px solid var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
 }
 
@@ -2036,9 +2036,9 @@
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--sc-primary-color, #2563eb);
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
-  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 35%, var(--sc-border-mute));
 }
 
 .reply-banner__target {
@@ -2512,9 +2512,9 @@
 }
 
 .send-action-btn:hover:not(:disabled) {
-  background-color: rgba(59, 130, 246, 0.15) !important;
-  border-color: rgba(59, 130, 246, 0.4) !important;
-  color: #2563eb !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 15%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 40%, var(--sc-border-mute)) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
 }
 
 .send-action-btn:disabled {
@@ -2525,36 +2525,36 @@
   width: 36px !important;
   height: 36px !important;
   border-radius: 999px !important;
-  background-color: color-mix(in srgb, var(--sc-primary-color, #2563eb) 13%, var(--sc-bg-elevated, #ffffff)) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.26) !important;
-  color: var(--sc-primary-color, #2563eb) !important;
-  box-shadow: 0 8px 18px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.18);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 13%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 26%, var(--sc-border-mute)) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 18%, transparent);
 }
 
 .send-action-btn--compact:hover:not(:disabled) {
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.4) !important;
-  color: var(--sc-primary-color, #2563eb) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 20%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 40%, var(--sc-border-mute)) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
   transform: translateY(-1px);
 }
 
 :root[data-display-palette='night'] .send-action-btn:hover:not(:disabled) {
-  background-color: rgba(96, 165, 250, 0.2) !important;
-  border-color: rgba(96, 165, 250, 0.45) !important;
-  color: #60a5fa !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 20%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 45%, var(--sc-border-mute)) !important;
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 78%, white 22%) !important;
 }
 
 :root[data-display-palette='night'] .send-action-btn--compact {
-  background-color: color-mix(in srgb, var(--sc-primary-color, #60a5fa) 18%, var(--sc-bg-elevated, #26262c)) !important;
-  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35) !important;
-  color: color-mix(in srgb, white 82%, var(--sc-primary-color, #93c5fd)) !important;
-  box-shadow: 0 10px 24px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 35%, var(--sc-border-mute)) !important;
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%) !important;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 24%, transparent);
 }
 
 :root[data-display-palette='night'] .send-action-btn--compact:hover:not(:disabled) {
-  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24) !important;
-  border-color: rgba(var(--sc-primary-rgb, 96, 165, 250), 0.45) !important;
-  color: color-mix(in srgb, white 88%, var(--sc-primary-color, #bfdbfe)) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 24%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 45%, var(--sc-border-mute)) !important;
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 82%, white 18%) !important;
 }
 
 .edit-action-btn {
@@ -2641,18 +2641,18 @@
 
 .chat-input-minimal-toggle:hover:not(:disabled),
 .chat-input-minimal-tool-btn:hover:not(:disabled) {
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.14) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.28) !important;
-  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 14%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 28%, var(--sc-border-mute)) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
   transform: translateY(-1px);
 }
 
 .chat-input-minimal-toggle--active,
 .chat-input-minimal-tool-btn--active {
-  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #2563eb)) 15%, var(--sc-bg-elevated, #ffffff)) !important;
-  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.34) !important;
-  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
-  box-shadow: 0 0 0 1px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 15%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 34%, var(--sc-border-mute)) !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 20%, transparent);
 }
 
 :root[data-display-palette='night'] .chat-input-minimal-toggle,
@@ -2664,16 +2664,16 @@
 
 :root[data-display-palette='night'] .chat-input-minimal-toggle:hover:not(:disabled),
 :root[data-display-palette='night'] .chat-input-minimal-tool-btn:hover:not(:disabled) {
-  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.2) !important;
-  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.34) !important;
-  color: color-mix(in srgb, white 86%, var(--primary-color, var(--sc-primary-color, #93c5fd))) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 20%, var(--sc-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 34%, var(--sc-border-mute)) !important;
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%) !important;
 }
 
 :root[data-display-palette='night'] .chat-input-minimal-toggle--active,
 :root[data-display-palette='night'] .chat-input-minimal-tool-btn--active {
-  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #60a5fa)) 18%, var(--sc-bg-elevated, #26262c)) !important;
-  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.4) !important;
-  color: color-mix(in srgb, white 90%, var(--primary-color, var(--sc-primary-color, #bfdbfe))) !important;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 40%, var(--sc-border-mute)) !important;
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 78%, white 22%) !important;
 }
 
 @media (max-width: 520px) {
@@ -3147,9 +3147,9 @@
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--sc-primary-color, #2563eb);
-  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
-  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 35%, var(--sc-border-mute));
   white-space: nowrap;
 }
 
@@ -3538,8 +3538,8 @@
 }
 
 .identity-folder-item.is-active {
-  background-color: rgba(59, 130, 246, 0.12);
-  color: #2563eb;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 12%, transparent);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
 }
 
 .identity-folder-item.is-disabled {
@@ -3611,8 +3611,8 @@
 }
 
 .identity-manage-candidate.is-active {
-  border-color: var(--sc-primary-color, #2563eb);
-  background: color-mix(in srgb, var(--sc-primary-color, #2563eb) 8%, transparent);
+  border-color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 8%, transparent);
 }
 
 .identity-manage-candidate__meta {
@@ -3672,8 +3672,8 @@
 }
 
 .identity-list__item.is-selected {
-  border-color: rgba(59, 130, 246, 0.45);
-  background-color: rgba(59, 130, 246, 0.08);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 45%, var(--sc-border-mute));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 8%, transparent);
 }
 
 .identity-list__meta {
@@ -3790,8 +3790,8 @@
 
 .identity-variant-picker__item:hover,
 .identity-variant-picker__item.is-active {
-  border-color: rgba(59, 130, 246, 0.45);
-  background: rgba(59, 130, 246, 0.08);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 45%, var(--sc-border-mute));
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 8%, transparent);
 }
 
 .identity-variant-picker__item.is-active {
@@ -3856,8 +3856,8 @@
 }
 
 .identity-manage-drawer--night .identity-folder-item.is-active {
-  background-color: rgba(59, 130, 246, 0.25);
-  color: #bfdbfe;
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, transparent);
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
 }
 
 .identity-manage-drawer--night .identity-list__item {
@@ -3868,6 +3868,13 @@
 .identity-manage-drawer--night .identity-variant-picker__item {
   border-color: rgba(59, 130, 246, 0.25);
   background-color: rgba(15, 23, 42, 0.35);
+}
+
+.identity-manage-drawer--night .identity-list__item.is-selected,
+.identity-manage-drawer--night .identity-variant-picker__item:hover,
+.identity-manage-drawer--night .identity-variant-picker__item.is-active {
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 45%, var(--sc-border-mute));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 16%, transparent);
 }
 
 .identity-manage-drawer--night .identity-list__actions :deep(.n-button) {

@@ -1318,9 +1318,9 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-more-item.is-active {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(37, 99, 235, 0.26);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 12%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 32%, var(--sc-border-strong));
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
 }
 
 .ribbon-more-item:disabled {
@@ -1352,8 +1352,8 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-more-mode-card.is-active {
-  border-color: rgba(37, 99, 235, 0.3);
-  background: rgba(59, 130, 246, 0.1);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 34%, var(--sc-border-strong));
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 10%, var(--sc-bg-elevated));
 }
 
 .ribbon-more-mode-card.is-disabled {
@@ -1473,9 +1473,9 @@ const cycleIcFilter = () => {
 }
 
 :root[data-display-palette='night'] .ribbon-more-item.is-active {
-  background: rgba(96, 165, 250, 0.18);
-  border-color: rgba(147, 197, 253, 0.3);
-  color: #cfe0ff;
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 18%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 38%, var(--sc-border-strong));
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
 }
 
 :root[data-display-palette='night'] .ribbon-action-button:hover {
@@ -1499,47 +1499,41 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-action-button.is-active {
-  --n-text-color: #1d4ed8;
-  --n-text-color-hover: #1d4ed8;
-  background-color: rgba(59, 130, 246, 0.18);
-  color: #1d4ed8;
-  border-color: rgba(37, 99, 235, 0.35);
+  --n-text-color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  --n-text-color-hover: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 16%, var(--sc-bg-elevated));
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 38%, var(--sc-border-strong));
 }
 
-.ribbon-action-button.is-active :deep(.n-icon) {
-  color: #2563eb;
-}
-
+.ribbon-action-button.is-active :deep(.n-icon),
 .ribbon-action-button.is-active :deep(.n-button__content) {
-  color: #1d4ed8 !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
 }
 
 :root[data-display-palette='night'] .ribbon-action-button.is-active {
-  --n-text-color: #cfe0ff;
-  --n-text-color-hover: #cfe0ff;
-  background-color: rgba(96, 165, 250, 0.25);
-  color: #cfe0ff;
-  border-color: rgba(147, 197, 253, 0.45);
+  --n-text-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  --n-text-color-hover: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, var(--sc-bg-elevated));
+  color: var(--n-text-color);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 46%, var(--sc-border-strong));
 }
 
-:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon) {
-  color: #e0edff;
-}
-
+:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon),
 :root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-button__content) {
-  color: #cfe0ff !important;
+  color: var(--n-text-color) !important;
 }
 
 .ribbon-dual-split.is-active .ribbon-dual-split__trigger {
-  color: #1d4ed8;
-  background-color: rgba(59, 130, 246, 0.18);
-  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 16%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 38%, var(--sc-border-strong));
 }
 
 :root[data-display-palette='night'] .ribbon-dual-split.is-active .ribbon-dual-split__trigger {
-  color: #cfe0ff;
-  background-color: rgba(96, 165, 250, 0.25);
-  border-color: rgba(147, 197, 253, 0.45);
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 46%, var(--sc-border-strong));
 }
 
 .ribbon-dual-split.is-disabled .ribbon-dual-split__trigger {
