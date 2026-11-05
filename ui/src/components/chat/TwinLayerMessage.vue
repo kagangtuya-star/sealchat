@@ -31,6 +31,7 @@ const emit = defineEmits<{
 }>();
 
 const hostRef = ref<HTMLElement | null>(null);
+const baseRef = ref<HTMLElement | null>(null);
 // Playback callbacks compare the original engine by identity; deep refs proxy it and drop every state update.
 const playback = shallowRef<ReturnType<typeof createTwinLayerPlayback> | null>(null);
 const visibleText = ref('');
@@ -105,6 +106,43 @@ const clearOverlayDom = () => {
   if (overlayTextRef.value) {
     overlayTextRef.value.textContent = '';
   }
+};
+
+const prepareBasePerformanceDom = () => {
+  const root = baseRef.value;
+  if (!root) return;
+  root.querySelectorAll<HTMLElement>('.tiptap-performance').forEach((performance) => {
+    if (performance.dataset.performanceCharsPrepared === 'true') return;
+    performance.dataset.performanceCharsPrepared = 'true';
+    const walker = document.createTreeWalker(performance, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let current = walker.nextNode();
+    while (current) {
+      const parent = current.parentElement;
+      if (parent && !parent.closest('rt') && parent.closest('.tiptap-performance') === performance) {
+        textNodes.push(current as Text);
+      }
+      current = walker.nextNode();
+    }
+    let charIndex = 0;
+    textNodes.forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      const segments = node.data.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*|\s+|./gu) || [];
+      segments.forEach((segment) => {
+        if (/^\s+$/u.test(segment)) {
+          fragment.append(segment);
+          return;
+        }
+        const span = document.createElement('span');
+        span.className = 'twin-layer-message__base-char';
+        span.style.setProperty('--performance-char-index', String(charIndex));
+        span.textContent = segment;
+        charIndex += 1;
+        fragment.appendChild(span);
+      });
+      node.replaceWith(fragment);
+    });
+  });
 };
 
 const appendTextDecoration = (span: HTMLElement, value: string) => {
@@ -355,6 +393,7 @@ const handleOverlayClick = () => {
 };
 
 const renderCurrentContent = () => {
+  prepareBasePerformanceDom();
   if (!props.autoplay) {
     disposePlayback();
     renderFinalOverlay();
@@ -386,7 +425,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="hostRef" class="twin-layer-message">
-    <div class="twin-layer-message__base" v-html="baseHtml"></div>
+    <div ref="baseRef" class="twin-layer-message__base" v-html="baseHtml"></div>
     <div class="twin-layer-message__overlay" aria-hidden="true" @click.stop="handleOverlayClick">
       <span ref="overlayTextRef" class="twin-layer-message__overlay-text"></span>
     </div>
@@ -480,6 +519,11 @@ onBeforeUnmount(() => {
   transform-origin: center !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .twin-layer-message__base-char {
+  display: inline-block !important;
+  transform-origin: center !important;
+}
+
 .twin-layer-message__char--code {
   border-radius: 0.25em;
   padding: 0.02em 0.22em;
@@ -488,42 +532,50 @@ onBeforeUnmount(() => {
   font-family: var(--sc-code-font, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wave .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-wave,
 :root[data-sc-surface] .twin-layer-message .fx-wave {
   animation: sc-performance-wave 2.6s cubic-bezier(.45,.05,.2,1) infinite !important;
   animation-delay: calc(var(--performance-char-index) * -150ms) !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-shake .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-shake,
 :root[data-sc-surface] .twin-layer-message .fx-shake {
   animation: sc-performance-shake 0.24s linear infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-rainbow .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-rainbow,
 :root[data-sc-surface] .twin-layer-message .fx-rainbow {
   animation: sc-performance-rainbow 1.8s linear infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-glitch .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-glitch,
 :root[data-sc-surface] .twin-layer-message .fx-glitch {
   animation: sc-performance-glitch 0.65s steps(2, end) infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-blink .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-blink,
 :root[data-sc-surface] .twin-layer-message .fx-blink {
   animation: sc-performance-blink 1.6s ease-in-out infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-glow .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-glow,
 :root[data-sc-surface] .twin-layer-message .fx-glow {
   animation: sc-performance-glow 2.8s ease-in-out infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-pulse .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-pulse,
 :root[data-sc-surface] .twin-layer-message .fx-pulse {
   animation: sc-performance-pulse 1.8s ease-in-out infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-float .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-float,
 :root[data-sc-surface] .twin-layer-message .fx-float {
   animation: sc-performance-float 3.2s ease-in-out infinite !important;
@@ -532,10 +584,12 @@ onBeforeUnmount(() => {
 
 /* 摇摆以字符底部为支点；选择器需压过 base 层 .tiptap-performance 的 transform-origin，且只作用于 sway。 */
 :root[data-sc-surface] .twin-layer-message__char-glyph.fx-sway,
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-sway .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-sway {
   transform-origin: center bottom !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-sway .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-sway,
 :root[data-sc-surface] .twin-layer-message .fx-sway {
   animation: sc-performance-sway 2.6s ease-in-out infinite !important;
@@ -543,11 +597,13 @@ onBeforeUnmount(() => {
 }
 
 /* 心跳整段同步，不做逐字错相，避免变成波浪式缩放。 */
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-heartbeat .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-heartbeat,
 :root[data-sc-surface] .twin-layer-message .fx-heartbeat {
   animation: sc-performance-heartbeat 1.8s ease-out infinite !important;
 }
 
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wobble .twin-layer-message__base-char,
 :root[data-sc-surface] .tiptap-performance.fx-wobble,
 :root[data-sc-surface] .twin-layer-message .fx-wobble {
   animation: sc-performance-wobble 1.8s ease-in-out infinite !important;
@@ -603,6 +659,12 @@ onBeforeUnmount(() => {
 :root[data-sc-surface] .tiptap-performance.enter-slam,
 :root[data-sc-surface] .twin-layer-message .enter-slam {
   animation: sc-performance-enter-slam calc(180ms + (10 - var(--performance-enter-speed, 5)) * 22ms) both !important;
+}
+
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance {
+  display: inline !important;
+  animation: none !important;
+  transform: none !important;
 }
 
 @keyframes sc-performance-wave {
