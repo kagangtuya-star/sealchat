@@ -309,6 +309,14 @@ func logSectionArrangement(d *LogDraft) map[string][2]string {
 }
 
 func loadLogProjectForDesign(id, userID string) (*model.LogProjectModel, bool, error) {
+	return loadLogProjectForDesignAccess(id, userID, false)
+}
+
+func loadLogProjectForDraftSave(id, userID string) (*model.LogProjectModel, bool, error) {
+	return loadLogProjectForDesignAccess(id, userID, true)
+}
+
+func loadLogProjectForDesignAccess(id, userID string, allowInvalidAdminSources bool) (*model.LogProjectModel, bool, error) {
 	var p model.LogProjectModel
 	if err := model.GetDB().Where("id = ? AND enabled = ?", id, true).Take(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -320,14 +328,16 @@ func loadLogProjectForDesign(id, userID string) (*model.LogProjectModel, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	if err := logCheckSources(&p, userID); err != nil {
-		return nil, false, err
+	if !allowInvalidAdminSources || !admin {
+		if err := logCheckSources(&p, userID); err != nil {
+			return nil, false, err
+		}
 	}
 	return &p, admin, nil
 }
 
 func SaveLogDraft(id, userID string, input LogDraftUpdate) (*LogDraftResult, error) {
-	p, admin, err := loadLogProjectForDesign(id, userID)
+	p, admin, err := loadLogProjectForDraftSave(id, userID)
 	if err != nil {
 		return nil, err
 	}
