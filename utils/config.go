@@ -520,6 +520,7 @@ type AppConfig struct {
 	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
 	CursorTheme               CursorThemeConfig         `json:"cursorTheme" yaml:"cursorTheme"`
+	ActionRibbonLayout        ActionRibbonLayoutConfig  `json:"actionRibbonLayout" yaml:"actionRibbonLayout"`
 	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
@@ -883,6 +884,7 @@ func ReadConfig() *AppConfig {
 		panic(err)
 	}
 	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
+	config.ActionRibbonLayout = NormalizeActionRibbonLayoutConfig(config.ActionRibbonLayout)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 	config.MCP = NormalizeMCPConfig(config.MCP)
@@ -2231,6 +2233,10 @@ func WriteConfigChecked(config *AppConfig) error {
 		config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 		_ = candidateK.Set("cursorTheme.version", config.CursorTheme.Version)
 		_ = candidateK.Set("cursorTheme.slots", config.CursorTheme.Slots)
+		config.ActionRibbonLayout = NormalizeActionRibbonLayoutConfig(config.ActionRibbonLayout)
+		_ = candidateK.Set("actionRibbonLayout.version", config.ActionRibbonLayout.Version)
+		_ = candidateK.Set("actionRibbonLayout.defaultPresetId", config.ActionRibbonLayout.DefaultPresetID)
+		_ = candidateK.Set("actionRibbonLayout.presets", config.ActionRibbonLayout.Presets)
 		_ = candidateK.Set("uiTextReplace.enabled", config.UITextReplace.Enabled)
 		_ = candidateK.Set("uiTextReplace.rules", config.UITextReplace.Rules)
 		_ = candidateK.Set("channelEmbedTools.maxCodeSizeKB", config.ChannelEmbedTools.MaxCodeSizeKB)

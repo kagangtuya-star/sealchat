@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog, useMessage } from 'naive-ui';
-import { Bell, Book, Code, DoorExit, Eye, History, Robot, Settings, Share, ShieldCheck, Users } from '@vicons/tabler';
+import { Bell, Book, Code, DoorExit, Eye, History, LayoutGrid, Robot, Settings, Share, ShieldCheck, Users } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 import WorldManager from '../WorldManager.vue';
 import WorldMemberManager from '../WorldMemberManager.vue';
@@ -11,6 +11,7 @@ import { getInviteStatusInfo, pickLatestInviteByRole } from '../worldInviteStatu
 import WorldDetailHero from './WorldDetailHero.vue';
 import WorldDetailAccessPanel from './WorldDetailAccessPanel.vue';
 import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue';
+import WorldActionRibbonLayoutPanel from '@/features/action-ribbon-layout/components/WorldActionRibbonLayoutPanel.vue';
 import { getUICustomizationTrustStore, useUICustomizationTrustPrompt } from '@/services/ui-customization/runtime';
 
 const props = defineProps<{ worldId: string }>();
@@ -22,7 +23,7 @@ const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
 
-type SectionKey = 'overview' | 'access' | 'notify' | 'manage' | 'ui' | 'more';
+type SectionKey = 'overview' | 'access' | 'notify' | 'manage' | 'ui' | 'ribbon' | 'more';
 type AccessDrawerKind = 'observer' | 'agent' | 'log';
 
 const detail = ref<any>(null);
@@ -74,6 +75,7 @@ const sections = computed(() => {
       { key: 'notify', label: '通知' },
       { key: 'manage', label: '管理' },
       { key: 'ui', label: '界面与扩展' },
+      { key: 'ribbon', label: '更多跑团功能' },
     );
   }
   items.push({ key: 'more', label: '更多' });
@@ -183,8 +185,8 @@ const applyRouteManagementTarget = () => {
   const target = typeof route.query.open === 'string' ? route.query.open : '';
   if (target === 'log' || target === 'observer') {
     openAccessDrawer(target);
-  } else if (target === 'ui') {
-    selectSection('ui');
+  } else if (target === 'ui' || target === 'ribbon') {
+    selectSection(target);
   }
 };
 
@@ -413,6 +415,17 @@ const handleLeaveWorld = () => {
 
           <section v-if="canManageWorld" class="world-console-panel world-console-card">
             <header class="world-console-card__head">
+              <n-icon size="18"><LayoutGrid /></n-icon>
+              <h2 class="world-console-section-title">更多跑团功能</h2>
+            </header>
+            <p class="world-console-section-desc">调整本世界聊天中跑团功能入口的顺序与显隐，可跟随平台、引用平台方案或自定义。</p>
+            <footer class="world-console-card__foot">
+              <n-button size="small" secondary @click="selectSection('ribbon')">调整入口布局</n-button>
+            </footer>
+          </section>
+
+          <section v-if="canManageWorld" class="world-console-panel world-console-card">
+            <header class="world-console-card__head">
               <n-icon size="18"><Bell /></n-icon>
               <h2 class="world-console-section-title">世界未读提醒</h2>
             </header>
@@ -468,6 +481,18 @@ const handleLeaveWorld = () => {
           </header>
           <div class="world-console-embed">
             <UICustomizationManager :key="worldId" :scope="{ type: 'world', worldId }" :export-name="world.name || worldId" />
+          </div>
+        </section>
+
+        <section v-else-if="activeSection === 'ribbon' && canManageWorld" class="world-console-panel">
+          <header class="world-console-section-head">
+            <h2 class="world-console-section-title">更多跑团功能</h2>
+            <p class="world-console-section-desc">
+              决定本世界聊天顶部“更多跑团功能”中入口的显示与顺序，只影响展示，不改变成员可用的功能与权限。
+            </p>
+          </header>
+          <div class="world-console-embed world-console-embed--padded">
+            <WorldActionRibbonLayoutPanel :key="worldId" :world-id="worldId" :world-name="world.name" />
           </div>
         </section>
 
@@ -576,6 +601,10 @@ const handleLeaveWorld = () => {
   padding: 2px 20px 4px;
 }
 
+.world-console-embed--padded {
+  padding: 8px 20px 16px;
+}
+
 .world-console-state {
   display: flex;
   align-items: center;
@@ -596,6 +625,10 @@ const handleLeaveWorld = () => {
 
   .world-console-embed {
     padding: 0 14px 2px;
+  }
+
+  .world-console-embed--padded {
+    padding: 6px 14px 12px;
   }
 
   .world-console-grid {

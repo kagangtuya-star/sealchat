@@ -33,6 +33,9 @@ import ObserverFilterModal from '../../components/ObserverFilterModal.vue'
 import { useSpeechStore } from '@/features/tts/store'
 import TTSWorldActivationDialog from '@/features/tts/TTSWorldActivationDialog.vue'
 import { useDisplayStore } from '@/stores/display'
+import { useChatStore } from '@/stores/chat'
+import { useUtilsStore } from '@/stores/utils'
+import { applyActionRibbonLayout, resolveActionRibbonLayout } from '@/features/action-ribbon-layout/actionRibbonLayout'
 
 interface FilterState {
   icFilter: 'all' | 'ic' | 'ooc'
@@ -93,6 +96,8 @@ interface Props {
   characterRemarkActive?: boolean
   worldManagementActive?: boolean
   accountUtilityActive?: boolean
+  /** 解析世界级入口布局所用的世界；缺省时使用当前聊天世界。 */
+  worldId?: string
 }
 
 interface Emits {
@@ -135,6 +140,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 const speech = useSpeechStore()
 const display = useDisplayStore()
+const chat = useChatStore()
+const utils = useUtilsStore()
 const message = useMessage()
 
 // Ref for measuring container width
@@ -180,7 +187,7 @@ const setTheaterActionRef = (element: Element | ComponentPublicInstance | null) 
   theaterActionRef.value = element instanceof HTMLElement ? element : null
 }
 
-const allActionButtons = computed<ActionButton[]>(() => {
+const defaultActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
     { key: 'display', label: '常规设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
     { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
@@ -278,6 +285,28 @@ const allActionButtons = computed<ActionButton[]>(() => {
   }
   return buttons
 })
+
+// 平台/世界入口布局只在这里对业务条件已决定的按钮做隐藏与重排，不会新增按钮；
+// 未配置时 applyActionRibbonLayout 原样返回默认数组。
+const layoutWorldId = computed(() => {
+  if (props.worldId !== undefined) return props.worldId.trim()
+  return String((chat.observerMode ? chat.observerWorldId || chat.currentWorldId : chat.currentWorldId) || '').trim()
+})
+const layoutWorld = computed(() => {
+  const id = layoutWorldId.value
+  return id ? chat.worldDetailMap[id]?.world || chat.worldMap[id] || null : null
+})
+// 分屏等宿主显式指定世界时，该世界详情可能尚未缓存。
+watch(() => props.worldId?.trim() || '', (id) => {
+  if (id && !layoutWorld.value) {
+    void chat.worldDetail(id).catch(() => undefined)
+  }
+}, { immediate: true })
+const actionRibbonLayout = computed(() => resolveActionRibbonLayout(
+  utils.config?.actionRibbonLayout,
+  layoutWorld.value?.actionRibbonLayout,
+))
+const allActionButtons = computed<ActionButton[]>(() => applyActionRibbonLayout(defaultActionButtons.value, actionRibbonLayout.value))
 
 // Visible buttons (shown directly)
 const visibleButtons = computed(() => {

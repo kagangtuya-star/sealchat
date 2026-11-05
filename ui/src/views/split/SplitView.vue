@@ -1202,6 +1202,7 @@ watch(
         <div class="sc-split-content">
           <div v-if="actionRibbonVisible" class="px-4 pt-4">
             <ChatActionRibbon
+              :world-id="activePane.worldId || ''"
               :filters="activePane.filterState"
               :roles="activePane.roleOptions"
               :archive-active="false"

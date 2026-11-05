@@ -1128,6 +1128,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		if validateErr := service.ValidateCursorThemeAttachments(newConfig.CursorTheme, "", ""); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
+		newConfig.ActionRibbonLayout = utils.NormalizeActionRibbonLayoutConfig(newConfig.ActionRibbonLayout)
 		newConfig.UITextReplace = utils.NormalizeUITextReplaceConfig(newConfig.UITextReplace)
 		if validateErr := utils.ValidateUITextReplaceConfig(newConfig.UITextReplace); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})

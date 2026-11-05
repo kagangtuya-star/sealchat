@@ -793,6 +793,7 @@ export interface ServerConfig {
   themeManagement?: ThemeManagementConfig;
   uiCustomization?: { allowWorldCss: boolean; allowWorldJs?: boolean; allowPublicWorldCss: boolean; maxCodeSizeKB?: number };
   cursorTheme?: CursorThemeConfig;
+  actionRibbonLayout?: import('@/features/action-ribbon-layout/actionRibbonLayout').ActionRibbonLayoutConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
   ai?: AIConfig;

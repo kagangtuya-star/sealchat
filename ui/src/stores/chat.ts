@@ -2310,6 +2310,7 @@ export const useChatStore = defineStore({
       channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
       cursorTheme?: import('@/services/cursor/cursorTypes').CursorThemeConfig;
+      actionRibbonLayout?: import('@/features/action-ribbon-layout/actionRibbonLayout').WorldActionRibbonLayout;
       stickyNoteDefaultAppearance?: unknown;
       coverAttachmentId?: string;
     }) {

@@ -20,6 +20,8 @@ import DicePlatformStyleEditor from '@/features/dice3d/components/DicePlatformSt
 import { downloadDiceSkinTemplate, importDiceSkinPackage } from '@/features/dice3d/diceSkinTransfer'
 import { createDefaultDice3DWorldConfig } from '@/features/dice3d/defaults'
 import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue'
+import ActionRibbonPlatformLayoutModal from '@/features/action-ribbon-layout/components/ActionRibbonPlatformLayoutModal.vue'
+import { normalizeActionRibbonLayoutConfig, type ActionRibbonLayoutConfig } from '@/features/action-ribbon-layout/actionRibbonLayout'
 import { normalizeUICustomizationPolicy } from '@/services/ui-customization/types'
 import { api } from '@/stores/_config'
 
@@ -64,6 +66,11 @@ const loginBackground = ref<LoginBackgroundConfig>({})
 const uiTextReplace = ref<UITextReplaceConfig>(normalizeUITextReplaceConfig())
 const cursorTheme = ref<CursorThemeConfig>(normalizeCursorTheme(null, 'platform'))
 const cursorThemeVisible = ref(false)
+const actionRibbonLayout = ref<ActionRibbonLayoutConfig>(normalizeActionRibbonLayoutConfig(null))
+const actionRibbonLayoutVisible = ref(false)
+const actionRibbonDefaultName = computed(() =>
+  actionRibbonLayout.value.presets.find((item) => item.id === actionRibbonLayout.value.defaultPresetId)?.name || '系统默认',
+)
 
 // Platform UI customization policy is saved on its own (like packages), so
 // toggling it never mixes with this page's unsaved theme edits.
@@ -114,6 +121,7 @@ const isModified = computed(() =>
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
     cursorTheme: cursorTheme.value,
+    actionRibbonLayout: actionRibbonLayout.value,
   }) !== originalSnapshot.value,
 )
 
@@ -589,11 +597,13 @@ const resetFromConfig = async () => {
   loginBackground.value = cloneDeep(utils.config?.loginBackground || {})
   uiTextReplace.value = normalizeUITextReplaceConfig(utils.config?.uiTextReplace)
   cursorTheme.value = normalizeCursorTheme(utils.config?.cursorTheme, 'platform')
+  actionRibbonLayout.value = normalizeActionRibbonLayoutConfig(utils.config?.actionRibbonLayout)
   originalSnapshot.value = JSON.stringify({
     themeManagement: model.value,
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
     cursorTheme: cursorTheme.value,
+    actionRibbonLayout: actionRibbonLayout.value,
   })
 }
 
@@ -608,16 +618,19 @@ const save = async () => {
     payload.loginBackground = cloneDeep(loginBackground.value)
     payload.uiTextReplace = cloneDeep(uiTextReplace.value)
     payload.cursorTheme = cloneDeep(cursorTheme.value)
+    payload.actionRibbonLayout = cloneDeep(actionRibbonLayout.value)
     await utils.configSet(payload)
     model.value = normalizeThemeManagement(payload.themeManagement)
     loginBackground.value = cloneDeep(payload.loginBackground || {})
     uiTextReplace.value = normalizeUITextReplaceConfig(payload.uiTextReplace)
     cursorTheme.value = normalizeCursorTheme(payload.cursorTheme, 'platform')
+    actionRibbonLayout.value = normalizeActionRibbonLayoutConfig(payload.actionRibbonLayout)
     originalSnapshot.value = JSON.stringify({
       themeManagement: model.value,
       loginBackground: loginBackground.value,
       uiTextReplace: uiTextReplace.value,
       cursorTheme: cursorTheme.value,
+      actionRibbonLayout: actionRibbonLayout.value,
     })
     message.success('主题与样式管理已保存')
   } catch (error: any) {
@@ -743,6 +756,22 @@ defineExpose<AdminThemeStyleExpose>({
               <n-button secondary @click="cursorThemeVisible = true">管理鼠标样式</n-button>
               <span class="text-sm text-gray-600 dark:text-gray-400">最多六种；未配置时使用浏览器默认样式</span>
             </div>
+          </n-form-item>
+        </n-collapse-item>
+
+        <n-collapse-item title="更多跑团功能显示排序" name="action-ribbon-layout">
+          <n-form-item label="布局方案">
+            <div class="flex flex-wrap items-center gap-2 w-full">
+              <n-button secondary @click="actionRibbonLayoutVisible = true">管理布局方案</n-button>
+              <span class="text-sm text-gray-600 dark:text-gray-400">
+                共 {{ actionRibbonLayout.presets.length }} 个方案，平台默认：{{ actionRibbonDefaultName }}
+              </span>
+            </div>
+          </n-form-item>
+          <n-form-item label=" ">
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              调整聊天顶部“更多跑团功能”中入口的顺序与显隐；世界管理员可跟随平台默认、引用某个方案或在其基础上自定义。仅影响入口展示，不改变功能权限。
+            </span>
           </n-form-item>
         </n-collapse-item>
 
@@ -977,6 +1006,7 @@ defineExpose<AdminThemeStyleExpose>({
     </n-form>
   </div>
   <CursorThemeEditorModal v-model:show="cursorThemeVisible" v-model="cursorTheme" scope="platform" />
+  <ActionRibbonPlatformLayoutModal v-model:show="actionRibbonLayoutVisible" v-model="actionRibbonLayout" />
 </template>
 
 <style scoped>

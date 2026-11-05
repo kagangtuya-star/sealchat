@@ -308,6 +308,7 @@ func WorldPublicObserverResolveHandler(c *fiber.Ctx) error {
 			"id":                world.ID,
 			"name":              world.Name,
 			"coverAttachmentId": world.CoverAttachmentID,
+			"actionRibbonLayout": world.GetActionRibbonLayout(),
 		},
 	})
 }

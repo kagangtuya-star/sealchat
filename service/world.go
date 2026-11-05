@@ -91,6 +91,7 @@ type WorldUpdateParams struct {
 	ChannelDefaultEventBotIDs             *[]string
 	CharacterCardBadgeTemplate            *string
 	CursorTheme                           *utils.CursorThemeConfig
+	ActionRibbonLayout                    *utils.WorldActionRibbonLayout `json:"actionRibbonLayout"`
 	StickyNoteDefaultAppearance           *protocol.StickyNoteAppearance
 	CoverAttachmentID                     *string `json:"coverAttachmentId"`
 }
@@ -817,6 +818,13 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 			return nil, err
 		}
 		updates["cursor_theme_json"] = string(raw)
+	}
+	if params.ActionRibbonLayout != nil {
+		raw, err := json.Marshal(utils.NormalizeWorldActionRibbonLayout(*params.ActionRibbonLayout))
+		if err != nil {
+			return nil, err
+		}
+		updates["action_ribbon_layout_json"] = string(raw)
 	}
 	if params.StickyNoteDefaultAppearance != nil {
 		if err := ValidateStickyNoteAppearanceForWorld(worldID, actorID, params.StickyNoteDefaultAppearance); err != nil {

@@ -65,6 +65,7 @@ type WorldModel struct {
 	TheaterActivated                      bool       `json:"-" gorm:"default:false"`
 	StickyNoteDefaultAppearanceJSON       string     `json:"-" gorm:"type:text"`
 	Dice3DConfigJSON                      string     `json:"-" gorm:"column:dice_3d_config_json;type:text"`
+	ActionRibbonLayoutJSON                string     `json:"-" gorm:"type:text"`                         // “更多跑团功能”世界布局（引用平台方案 + 差异覆写）
 	IsSystemDefault                       bool       `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                               string     `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID                      string     `json:"defaultChannelId" gorm:"size:100"`
@@ -149,6 +150,14 @@ func (m *WorldModel) GetCursorTheme() utils.CursorThemeConfig {
 	return utils.NormalizeCursorThemeConfig(value, true)
 }
 
+func (m *WorldModel) GetActionRibbonLayout() utils.WorldActionRibbonLayout {
+	var value utils.WorldActionRibbonLayout
+	if strings.TrimSpace(m.ActionRibbonLayoutJSON) != "" {
+		_ = json.Unmarshal([]byte(m.ActionRibbonLayoutJSON), &value)
+	}
+	return utils.NormalizeWorldActionRibbonLayout(value)
+}
+
 func (m *WorldModel) MarshalJSON() ([]byte, error) {
 	type worldModelAlias WorldModel
 	return json.Marshal(&struct {
@@ -159,6 +168,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		StickyNoteDefaultAppearance *protocol.StickyNoteAppearance            `json:"stickyNoteDefaultAppearance,omitempty"`
 		CursorTheme                 utils.CursorThemeConfig                   `json:"cursorTheme"`
 		Dice3DConfig                protocol.Dice3DWorldConfig                `json:"dice3dConfig"`
+		ActionRibbonLayout          utils.WorldActionRibbonLayout             `json:"actionRibbonLayout"`
 	}{
 		worldModelAlias:             (*worldModelAlias)(m),
 		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
@@ -167,6 +177,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		StickyNoteDefaultAppearance: m.GetStickyNoteDefaultAppearance(),
 		CursorTheme:                 m.GetCursorTheme(),
 		Dice3DConfig:                m.GetDice3DConfig(),
+		ActionRibbonLayout:          m.GetActionRibbonLayout(),
 	})
 }
 
