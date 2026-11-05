@@ -14,16 +14,14 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 *_test.go
-!api/channel_images_test.go
-!model/message_attachment_test.go
-!service/theater_world_scope_test.go
-!service/theater_package_test.go
-!service/theater_image_asset_preset_test.go
 *.test.ts
 *.test.tsx
 *.test.js
 *.test.jsx
 *.test.mjs
+*.test.cjs
+*.test.cts
+ui/scripts/chat-import-log-range-regression.cjs
 info.db
 record.log
 go.sum
@@ -34,7 +32,6 @@ configs/
 data/
 pegtest/
 temp/
-*_test.go
 dist/
 config.yaml
 version.yaml

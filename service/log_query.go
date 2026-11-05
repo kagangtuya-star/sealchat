@@ -44,7 +44,12 @@ func logSourceVersion(channelID string) (int64, error) {
 	return v.Version, err
 }
 func logSourceQuery(p *model.LogProjectModel, s LogSection, userID string) *gorm.DB {
-	q := model.GetDB().Model(&model.MessageModel{}).Where("channel_id = ? AND is_deleted = ? AND (is_revoked = ? OR is_revoked IS NULL)", s.Source.ChannelID, false, false).Where("created_at <= ?", s.Source.ToTime)
+	return logSourceVisibilityQuery(p, s, userID).Where("created_at <= ?", s.Source.ToTime)
+}
+
+// 范围检查和来源读取共享全部可见性及下界条件，只分别应用结束时间。
+func logSourceVisibilityQuery(p *model.LogProjectModel, s LogSection, userID string) *gorm.DB {
+	q := model.GetDB().Model(&model.MessageModel{}).Where("channel_id = ? AND is_deleted = ? AND (is_revoked = ? OR is_revoked IS NULL)", s.Source.ChannelID, false, false)
 	if s.Source.FromTime != nil {
 		op := ">="
 		if s.Source.FromExclusive {
@@ -63,6 +68,53 @@ func logSourceQuery(p *model.LogProjectModel, s LogSection, userID string) *gorm
 	}
 	q = q.Where("NOT EXISTS (SELECT 1 FROM log_message_exclusions e WHERE e.project_id = ? AND e.section_id = ? AND e.message_id = messages.id)", p.ID, s.ID)
 	return ApplyWhisperVisibilityFilter(q, userID, s.Source.ChannelID)
+}
+
+type LogSourceRangeCheck struct {
+	Count         int64      `json:"count"`
+	LatestTime    *time.Time `json:"latestTime"`
+	DraftVersion  int64      `json:"draftVersion"`
+	SourceVersion int64      `json:"sourceVersion"`
+}
+
+// CheckLogSourceRange 按需统计固定截止时间之后的可见消息，不影响普通分页。
+func CheckLogSourceRange(projectID, sectionID, userID string, expectedVersion int64) (*LogSourceRangeCheck, error) {
+	p, _, err := loadLogProjectForDesign(projectID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if expectedVersion < 1 || expectedVersion > LogMaxVersion {
+		return nil, logError("INVALID_INPUT", "版本无效")
+	}
+	if expectedVersion != p.DraftVersion {
+		return nil, logError("SOURCE_CHANGED", "来源或排版范围已变化，请重新加载")
+	}
+	s, _, err := logSection(p, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	version, err := logSourceVersion(s.Source.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	result := &LogSourceRangeCheck{DraftVersion: p.DraftVersion, SourceVersion: version}
+	query := func() *gorm.DB {
+		return logSourceVisibilityQuery(p, s, userID).Where("created_at > ?", s.Source.ToTime)
+	}
+	if err := query().Count(&result.Count).Error; err != nil {
+		return nil, err
+	}
+	if result.Count > 0 {
+		var latest model.MessageModel
+		if err := query().Select("created_at").Order("created_at DESC").Take(&latest).Error; err != nil {
+			return nil, err
+		}
+		result.LatestTime = &latest.CreatedAt
+	}
+	if err := logVerifyWindow(p, s.Source.ChannelID, version); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 func logWindowPreloads(q *gorm.DB) *gorm.DB {
 	return q.Preload("User", func(db *gorm.DB) *gorm.DB { return db.Select("id, username, nickname, avatar, is_bot") }).Preload("Member", func(db *gorm.DB) *gorm.DB { return db.Select("id, nickname, channel_id, user_id") })

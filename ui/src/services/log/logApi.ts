@@ -156,6 +156,18 @@ export const fetchLogSectionMessages = (projectId: string, sectionId: string, cu
     signal,
   }));
 
+export interface LogSourceRangeCheck {
+  count: number;
+  latestTime: string | null;
+  draftVersion: number;
+  sourceVersion: number;
+}
+
+export const checkLogSourceRange = (projectId: string, sectionId: string, expectedVersion: number) =>
+  unwrap<LogSourceRangeCheck>(api.get(`api/v1/log/projects/${seg(projectId)}/sections/${seg(sectionId)}/range-check`, {
+    params: { expectedVersion },
+  }));
+
 export const fetchLogMessageContext = (projectId: string, sectionId: string, messageId: string, signal?: AbortSignal) =>
   unwrap<{ items: LogDesignMessage[]; sourceVersion: number }>(
     api.get(`api/v1/log/projects/${seg(projectId)}/sections/${seg(sectionId)}/message-context/${seg(messageId)}`, { signal }),

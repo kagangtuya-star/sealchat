@@ -24,6 +24,7 @@ func bindLogProjectRoutes(auth fiber.Router) {
 	auth.Post("/log/projects/:id/export", logAuthentication, logExportCreate)
 	auth.Get("/log/pdf-capability", logAuthentication, logPDFCapabilityGet)
 	auth.Get("/log/projects/:id/sections/:sectionId/messages", logAuthentication, logMessagesGet)
+	auth.Get("/log/projects/:id/sections/:sectionId/range-check", logAuthentication, logSourceRangeCheckGet)
 	auth.Get("/log/projects/:id/sections/:sectionId/messages/:messageId/assets/:assetKey", logAuthentication, logBodyAssetGet)
 	auth.Get("/log/projects/:id/assets/:assetId", logAuthentication, logProjectAssetGet)
 	auth.Get("/log/projects/:id/sections/:sectionId/message-context/:messageId", logAuthentication, logMessagesGet)
@@ -206,4 +207,17 @@ func logMessagesGet(c *fiber.Ctx) error {
 		data["nextCursor"] = window.NextCursor
 	}
 	return logResponse(c, data, nil)
+}
+
+func logSourceRangeCheckGet(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	version, err := strconv.ParseInt(c.Query("expectedVersion"), 10, 64)
+	if err != nil {
+		return logResponse(c, nil, &service.LogError{Code: "INVALID_INPUT", Message: "版本无效"})
+	}
+	data, err := service.CheckLogSourceRange(c.Params("id"), c.Params("sectionId"), u.ID, version)
+	return logResponse(c, data, err)
 }

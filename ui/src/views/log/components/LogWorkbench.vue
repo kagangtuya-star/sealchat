@@ -28,6 +28,7 @@ import {
   X,
 } from '@vicons/tabler';
 import {
+  checkLogSourceRange,
   describeLogError,
   fetchLogStylePackage,
   isLogError,
@@ -92,6 +93,14 @@ const projectId = computed(() => props.context.projectId);
 const caps = computed(() => props.context.capabilities);
 const draftCtl = useLogDraft(projectId, { draftVersion: props.context.draftVersion, draft: props.context.draft });
 const draft = draftCtl.draft;
+
+const checkSourceRange = (id: string) => {
+  const pid = projectId.value;
+  return draftCtl.runVersioned(async (version) => ({
+    value: await checkLogSourceRange(pid, id, version),
+    draftVersion: null,
+  }));
+};
 
 // ---- 章节：查询用的章节只采用已保存版本（服务端按已保存草稿解析来源） ----
 const sections = computed(() => draft.value.sections.slice().sort((a, b) => a.order - b.order));
@@ -1592,6 +1601,7 @@ onBeforeUnmount(() => {
       v-model:show="sectionsShow"
       :draft="draft"
       :update="draftCtl.update"
+      :check-source-range="checkSourceRange"
       :world-id="context.worldId"
       :can-manage="caps.manageSources"
       :current-section-id="sectionId || null"
