@@ -14,7 +14,7 @@ Key 只用于 `/mcp` 和专用上传端点，不能认证账号或平台管理 A
 
 关闭平台后可以在个人信息查看和撤销已有 Key，但不能新建、编辑或轮换。停用模块只使对应授权暂时无效，保留 Key 保存的 scopes；编辑时允许保留或删除已有授权，但不能新增当前平台未开放的 scope。撤销、降权或关闭平台阻止后续调用，不能回滚已提交写入或取消已接受的原生 AI 任务。轮换使旧 secret 立即失效，不延长到期时间。
 
-SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorization Code + PKCE**。PAT 适合 Claude、Codex 和支持自定义 Bearer 的普通 MCP Client；OAuth 主要用于 ChatGPT 等标准 OAuth MCP Client。两种凭证最终解析成同一个 `MCPActor`，完整复用 39 个工具、24 个 scopes、实时业务 ACL、限流和审计日志。OAuth access/refresh token 不能认证普通 SealChat REST API，也不会转换成网页登录 token。
+SealChat MCP 同时支持 **Personal API Key / PAT** 和 **OAuth 2.1 Authorization Code + PKCE**。PAT 适合 Claude、Codex 和支持自定义 Bearer 的普通 MCP Client；OAuth 主要用于 ChatGPT 等标准 OAuth MCP Client。两种凭证最终解析成同一个 `MCPActor`，复用相同工具、24 个 scopes、实时业务 ACL、限流和审计日志。OAuth access/refresh token 不能认证普通 SealChat REST API，也不会转换成网页登录 token。
 
 ## ChatGPT OAuth
 
@@ -96,12 +96,12 @@ ChatGPT 仍填写原公开 `/mcp` 地址并选择 OAuth/CIMD，无需新建 clie
 | `identity:read` | `identity_read` |
 | `identity:write` | `identity_save`、`identity_delete` |
 | `audio:read` | `audio_assets`、`audio_state` |
-| `audio:write` | `audio_update` |
+| `audio:write` | `audio_update`、`audio_asset_import` |
 | `note:read` | `note_read` |
 | `note:write` | `note_save`、`note_delete` |
-| `file:write` | `file_upload_info` 及专用 HTTP 上传 |
+| `file:write` | `file_upload_info`、`file_discard` 及专用 HTTP 上传；高成本 profile 额外要求对应写 scope |
 | `theater:read` | `theater_read`、`theater_catalog`、`theater_view(get)` |
-| `theater:write` | `theater_scene`、`theater_object`；scene apply 另需 control |
+| `theater:write` | `theater_asset`、`theater_design`、`theater_scene`、`theater_object`；scene apply 另需 control |
 | `theater:control` | `theater_control`；view 写操作另需 read |
 | `theater:capture` | `theater_capture` |
 | `theater:chat` | control 执行保存的 `chat.send/insert/random-table` 时的额外权限，不是通用发送接口 |
@@ -174,14 +174,87 @@ HTTP 层区分 401（MCP 凭证无效）、403（Origin/HTTPS/上传 scope）、
 
 ## 文件上传
 
-先调用 `file_upload_info` 获取同站点相对路径和实际 `maxBytes`。客户端必须另外具备 HTTP multipart 文件上传能力；任意 MCP 客户端不一定能直接上传本地文件。不要把大文件 Base64 放进 MCP JSON。
+先调用 `file_upload_info({"profile":"theater_media"})` 获取实际 `path`、`method`、`field`、`maxBytes`、`usage`（仍返回 `contentType: multipart/form-data`）。无参数调用保留原 attachment 行为及无 query 的路径。客户端必须另外具备 **multipart HTTP 文件上传能力**；只有 MCP JSON-RPC 能力的客户端无法主动传文件。所有文件均通过 multipart 传输，不接受 Base64 文件、服务器任意路径或 URL 代下载。
+
+| profile | 传输限制 | 上传所需 scope | 消费入口 |
+| --- | --- | --- | --- |
+| `attachment`（默认） | 保留原 64 MiB、`storage.maxSizeMB`、`imageSizeLimit` 取较小值；保留原图片压缩行为 | `file:write` | `clue_save.imageAttachmentId`、`identity_save.avatarAttachmentId` |
+| `audio` | 复用实际 Audio 服务的 `maxUploadSizeMB`、MIME allowlist 和可选未知格式解码规则；消费时再次检测和解码 | `file:write` + `audio:write` | `audio_asset_import` 或 `theater_asset.audio_import` |
+| `theater_media` | 图片/视频分别采用 TheaterMedia `imageMaxSizeMB`/`videoMaxSizeMB`，`maxBytes` 是二者较大值；不受全局图片限制截断 | `file:write` + `theater:write` | `theater_asset.media_import/appearance_import` |
+| `text` | 最大 1 MiB，小型文本/HTML MIME；embed 消费另受平台源码上限（默认 128 KiB）限制 | `file:write` | `embed_save.sourceUploadId` |
+
+未知 profile 返回 `invalid_argument`。显式 profile 通过返回路径中的 query 传递，例如 `?profile=theater_media`，不放入 multipart 字段。profile 只控制传输约束，不代表业务归属；Audio/Theater 在实际消费时仍执行自身格式、范围、配额及实时权限检查。使用 `audio` 上传 Theater BGM 时上传需要 `audio:write`，导入另需 `theater:write`。已有 attachment 上传仍可交给原生业务检测并转换为 Audio/Theater 资源。
 
 ```bash
-curl 'https://chat.example/sealchat/api/v1/mcp/uploads' \
+curl 'https://chat.example/sealchat/api/v1/mcp/uploads?profile=theater_media' \
   -H 'Authorization: Bearer sc_mcp_<publicId>.<secret>' \
-  -F 'file=@./clue.png'
+  -F 'file=@./background.png'
 ```
 
-只接受一个 `file` 字段，不接受 owner/rootId/parentId、服务器路径或 URL 代下载。服务端检测真实 MIME、限制大小，沿用本地/S3 保存路径；没有全局哈希秒传，MCP 附件也不参加旧上传链路的哈希复用。响应仅返回附件 ID、文件名、大小、MIME 和临时标记，不暴露存储内部字段。
+只接受一个 `file` 字段；归属参数（包括 query 中的 worldId/channelId/rootId/parentId）、额外字段、多个文件均拒绝。返回 HTTP 201：`{"id":"UPLOAD_ID","filename":"background.png","size":12345,"mimeType":"image/png","isTemp":true}`。**此普通 Attachment `id` 就是后续工具的 `uploadId`**。响应不含 StorageType、ObjectKey、ExternalURL 或服务器路径。上传不全局哈希复用，文件始终保存为上传者所有、未绑定、`IsTemp=true`、`Extra=mcp-upload`。
 
-上传本身不授予资源写入权。将返回 ID 用于 `clue_save.imageAttachmentId` 或 `identity_save.avatarAttachmentId` 时，目标业务检查当前权限和附件归属后才绑定转正。没有通用 attachment-confirm 工具；未绑定的 MCP 临时附件超过 24 小时后，由既有每小时清理 worker 分批清理。已绑定附件不参与此清理；存储清理失败会在后续轮次重试。Key 不出现在上传地址或工具结果中。
+`mcp.uploadPendingMaxMB` 默认 512 MiB，限制每用户所有仍未绑定、未删除的 MCP 临时上传总容量，超限返回 HTTP 413 `pending_upload_limit`。只统计该用户的暂存记录，与 Audio 用户配额和 Theater 房间配额分别计算。同一进程的并行上传串行检查总量；多实例间不提供严格的分布式容量预留。
+
+普通 Attachment 绑定与业务写入在同一事务中提交，失败不会转正；线索/头像绑定时仍执行普通附件大小限制，较大 profile 不绕过目标限制。转换型导入先独占认领上传，调用原生业务链路；失败解除认领以便更正后重试，成功后删除原临时副本，导入资源保留自己的存储和状态机。成功消费的 ID 不能再次导入。转换请求中断时该 ID 不可重放，应先查询业务目录确认结果；既有清理 worker 会清理过期临时副本。清理不会抢占最近一小时内的转换认领。
+
+未绑定上传超过 24 小时后，由既有每小时 worker 分批清理，已绑定资源不参与。`file_discard({"uploadId":"UPLOAD_ID"})`（`file:write`，destructive）可提前删除本人仍未绑定的上传及存储对象；已绑定/正在消费的 ID 拒绝删除。不存在或他人的 ID 均无可见效果；已不存在 ID 的重试成功。存储删除失败时保留不可再绑定的记录，调用者可重试，worker 也会继续清理。Key 只放 Authorization，不放上传 URL。
+
+### 业务消费示例
+
+以下均为工具 arguments，仍需对应业务写 scope 与实时目标权限：
+
+```json
+{"worldId":"WORLD","title":"线索","kind":"image","imageAttachmentId":"UPLOAD_ID"}
+```
+
+上例交给 `clue_save`（保留旧公开字段）。`identity_save` 使用 `{"worldId":"WORLD","channelId":"CHAT","displayName":"角色","avatarAttachmentId":"id:UPLOAD_ID"}`；头像仍兼容纯 ID 与 `id:`。
+
+`audio_asset_import` 使用 `{"worldId":"WORLD","uploadId":"UPLOAD_ID","name":"BGM","folderId":"FOLDER"}`；还可选 tags、description、visibility（public/restricted），必须有世界素材管理权限。只创建世界音频，不开放通用库管理；文件夹必须匹配世界。返回 assetId、status、transcodeStatus，随后 `audio_assets` 可查到，等待 ready 再使用。
+
+`theater_asset` 使用严格 operation schema，拒绝混入其他 operation 字段：
+
+```json
+{"worldId":"WORLD","scopeType":"world","operation":"media_import","uploadId":"BACKGROUND_UPLOAD","clientResourceId":"background-1"}
+```
+
+media_import 还可选 mediaKind、targetObjectId（原生委托上传）；返回 resourceId、status、公开 resource 和 deduplicated。保留原生 room 配额、媒体探测、hash 去重、专用存储和异步 worker。
+
+```json
+{"worldId":"WORLD","scopeType":"world","inputChannelId":"CHAT","operation":"audio_import","uploadId":"BGM_UPLOAD","name":"夜雨"}
+```
+
+audio_import 经 Audio 配额、MIME、转码状态机，写入 Theater feature tag 与当前有效频道 tag；`theater_catalog.audio_resources` 使用同一频道上下文查询。
+
+```json
+{"worldId":"WORLD","scopeType":"world","inputChannelId":"CHAT","operation":"appearance_import","uploadId":"PORTRAIT_UPLOAD","purpose":"portrait","identityId":"IDENTITY"}
+```
+
+appearance_import 的 purpose 还支持 portrait-decoration、dialogue-frame，可选 variantId、targetUserId，沿用原生角色、变体和委托权限。World Theater 音频及演出资源必须提供具体有效 inputChannelId；频道 Theater 使用 channelId，不猜测频道。演出资源可通过只读 `theater_catalog.appearance_resources` 查询状态和 ready 后的 media 引用。
+
+`embed_save` 使用 `{"worldId":"WORLD","channelId":"CHAT","name":"面板","sourceUploadId":"TEXT_UPLOAD"}`。只消费本人 text profile 上传，验证真实文本/HTML MIME、UTF-8、无 NUL 字节及 embedCode 大小；与直接 embedCode 互斥。继续执行 URL 校验、模板约束、iForm 管理权限、BridgePolicy、世界共享源修改与原生广播。上传来源写入返回最小 item.id/worldId/channelId，再用 embed_read 读取详情；原 url/embedCode/templateRef 接口不变。
+
+### 从背景/BGM 到切换场景
+
+1. 分别调用 `file_upload_info` 的 theater_media 和 audio profile，按返回路径执行 multipart HTTP 上传背景与 BGM，保存两个响应 id。
+2. 用上面的 `theater_asset.media_import`、`audio_import` 导入，保存 resourceId、assetId。上传不会直接修改场景。
+3. 用 `theater_catalog` 的 resources、audio_resources 查询同一 Theater scope；World Theater 音频需 inputChannelId。等待图片 status=ready、音频 transcodeStatus=ready；若 failed，停止并修正文件。取 ready resource.variants 中适合背景的公开 URL，配合其 resourceId 引用，不猜测存储地址。
+4. `theater_read(summary)` 读取当前 revision。向 `theater_design` 提交下面的 validate，再用相同 steps、当前 revision 和新 mutationId 提交 apply，一次创建两个场景并配置背景/BGM（示例 REV 为读取到的整数）：
+
+```json
+{
+  "worldId":"WORLD","scopeType":"world","inputChannelId":"CHAT",
+  "operation":"validate","expectedRevision":0,
+  "steps":[
+    {"kind":"scene.create","sceneId":"rain-1","fields":{"name":"夜雨"}},
+    {"kind":"scene.create","sceneId":"rain-2","fields":{"name":"雨后"}},
+    {"kind":"scene.surface","sceneId":"rain-1","target":"background","image":{"resourceId":"RESOURCE_ID","url":"READY_VARIANT_URL"}},
+    {"kind":"scene.music","sceneId":"rain-1","music":{"version":1,"tracks":[{"type":"bgm","asset":{"assetId":"ASSET_ID","name":"夜雨"},"volume":0.6,"fadeIn":0,"fadeOut":0,"loopEnabled":true,"playbackRate":1,"playlistMode":"single","playlist":[],"playlistIndex":0}]}}
+  ]
+}
+```
+
+将 expectedRevision 替换为真实 REV；apply 增加 `"mutationId":"rain-design-1"`。冲突后重读 revision 并使用新 mutationId。`theater_design/theater_scene/theater_control` 只引用已导入资源 ID，不传二进制。
+
+5. 用 apply 返回的新 revision 调用 `theater_control({"worldId":"WORLD","scopeType":"world","inputChannelId":"CHAT","operation":"apply_scene","sceneId":"rain-1","expectedRevision":1,"mutationId":"rain-switch-1"})`，其中 expectedRevision 同样替换成真实值，并具有 theater:control 及场景切换权限。原生切场景与浏览器渲染、音乐播放继续遵守 Theater 的既有行为；服务端切换本身不额外触发共享 Audio 播放副作用。
+
+已检查工具注册表中的文件语义：线索媒体和角色头像保留 Attachment 绑定；Audio、Theater 媒体/音频/演出资源及 embed 源码提供上述薄适配。Theater 包导入、平台模板管理等原生能力未作为通用 MCP 能力开放。战报、术语、便签仍为纯文本工具，不新增附件字段，也没有通用 attachment_confirm。

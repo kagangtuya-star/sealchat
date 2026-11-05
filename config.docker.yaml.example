@@ -54,6 +54,9 @@ imageCompress: true                          # 是否压缩图片
 imageCompressQuality: 85                     # 压缩质量 (1-100)
 imageSizeLimit: 8192                         # 上传大小限制 (KB)
 galleryQuotaMB: 100                          # 图库配额 (MB)
+mcp:
+  enabled: false
+  uploadPendingMaxMB: 512                    # 每用户未绑定 MCP 临时附件总容量（MiB）
 logUpload:
   enabled: true
   endpoint: https://dice.weizaima.com/dice/api/log # 主海豹染色器后端地址

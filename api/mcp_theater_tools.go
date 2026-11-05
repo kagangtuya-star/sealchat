@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/google/jsonschema-go/jsonschema"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
 
+	"sealchat/model"
 	"sealchat/service"
 )
 
@@ -526,7 +528,7 @@ func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterRe
 	case "resources":
 		items := []service.TheaterResourcePublic{}
 		for _, r := range s.Snapshot.Resources {
-			items = append(items, r)
+			items = append(items, mcpTheaterResourceURLs(scope, r))
 		}
 		sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 		page, e := mcpSlicePage(items, in.mcpPageInput)
@@ -551,8 +553,18 @@ func mcpTheaterCatalog(ctx context.Context, a *service.MCPActor, in mcpTheaterRe
 			return nil, e
 		}
 		out["audioResources"] = page
+	case "appearance_resources":
+		items, e := service.ListMCPTheaterAppearanceAssets(a.User.ID, scope)
+		if e != nil {
+			return nil, e
+		}
+		page, e := mcpSlicePage(items, in.mcpPageInput)
+		if e != nil {
+			return nil, e
+		}
+		out["appearanceResources"] = page
 	default:
-		return nil, mcpFailure("invalid_argument", "operation 必须为 object_types/effects/overlays/resources/audio_resources/limits")
+		return nil, mcpFailure("invalid_argument", "operation 必须为 object_types/effects/overlays/resources/audio_resources/appearance_resources/limits")
 	}
 	return out, nil
 }
@@ -645,10 +657,67 @@ func mcpTheaterDesignSchema(s *jsonschema.Schema) {
 	s.If = &jsonschema.Schema{Properties: map[string]*jsonschema.Schema{"operation": {Const: jsonschema.Ptr(any("apply"))}}}
 	s.Then = &jsonschema.Schema{Required: []string{"mutationId"}}
 }
+
+func mcpTheaterAssetSchema(s *jsonschema.Schema) {
+	fields := map[string]string{
+		"media_import":      "clientResourceId mediaKind targetObjectId",
+		"audio_import":      "name",
+		"appearance_import": "purpose identityId variantId targetUserId",
+	}
+	for _, operation := range []string{"media_import", "audio_import", "appearance_import"} {
+		branch := &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{}, Required: []string{"worldId", "scopeType", "operation", "uploadId"}, AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}}}
+		for _, name := range strings.Fields("worldId scopeType channelId inputChannelId operation uploadId " + fields[operation]) {
+			// jsonschema.Resolve requires a tree; branches cannot share pointers.
+			raw, _ := json.Marshal(s.Properties[name])
+			var property jsonschema.Schema
+			_ = json.Unmarshal(raw, &property)
+			branch.Properties[name] = &property
+		}
+		branch.Properties["operation"] = &jsonschema.Schema{Const: jsonschema.Ptr(any(operation))}
+		if operation == "appearance_import" {
+			branch.Required = append(branch.Required, "purpose", "identityId")
+			branch.Properties["purpose"] = &jsonschema.Schema{Type: "string", Enum: []any{"portrait", "portrait-decoration", "dialogue-frame"}}
+		}
+		s.OneOf = append(s.OneOf, branch)
+	}
+}
+
+func mcpTheaterAsset(ctx context.Context, a *service.MCPActor, in service.MCPTheaterAssetInput) (any, error) {
+	result, err := service.ImportMCPTheaterAsset(ctx, a.User.ID, in)
+	if err != nil {
+		return nil, err
+	}
+	switch v := result.(type) {
+	case *model.AudioAsset:
+		return mcpAudioImportResult(v), nil
+	case *service.TheaterResourceUploadResult:
+		return map[string]any{"resourceId": v.Resource.ID, "status": v.Resource.Status, "resource": mcpTheaterResourceURLs(in.TheaterScope, v.Resource), "deduplicated": v.Deduplicated}, nil
+	case *service.TheaterAppearanceAssetPublic:
+		return map[string]any{"assetId": v.ID, "status": v.Status, "asset": v}, nil
+	default:
+		return nil, mcpFailure("operation_failed", "导入结果无效")
+	}
+}
+
+// Stable native content routes are public references, never storage keys or
+// presigned object URLs. The browser still authenticates each content read.
+func mcpTheaterResourceURLs(scope service.TheaterScope, resource service.TheaterResourcePublic) service.TheaterResourcePublic {
+	path := "api/v1/worlds/" + url.PathEscape(strings.TrimSpace(scope.WorldID))
+	if scope.ScopeType == "channel" {
+		path += "/channels/" + url.PathEscape(strings.TrimSpace(scope.ChannelID))
+	}
+	path += "/theater/resources/" + url.PathEscape(resource.ID)
+	for i := range resource.Variants {
+		value := joinWebPath(mcpConfigSnapshot().WebUrl, path+"/variants/"+url.PathEscape(resource.Variants[i].Name)+"/content")
+		resource.Variants[i].URL = &value
+	}
+	return resource
+}
 func mcpTheaterTools() []mcpToolSpec {
 	return []mcpToolSpec{
+		mcpTheaterSpec("theater_asset", "从本人未绑定 uploadId 导入 Theater 素材。media_import 走房间媒体配额/探测/去重/异步 worker；audio_import 创建专用音频并写入有效频道 tag；appearance_import 支持 portrait/portrait-decoration/dialogue-frame 并校验目标角色权限。World Theater 的音频及演出资源必须提供 inputChannelId。用 theater_catalog 查询状态，ready 后交给设计/控制工具引用 ID。", []string{"media_import", "audio_import", "appearance_import"}, []string{"theater:write"}, true, false, false, mcpTheaterAsset, mcpTheaterAssetSchema),
 		mcpTheaterSpec("theater_read", "读取、查看、检查、查询小剧场舞台/场景/对象/状态与 revision。按权限投影分页；summary 为指定或当前场景加常驻对象。普通对象中心锚点、WORLD_UNIT_PX=24；effect 独立 1920×1080 坐标。world channelId 必须为空，频道上下文用 inputChannelId。", []string{"summary", "scene", "object", "events", "renderers"}, []string{"theater:read"}, false, false, true, mcpTheaterRead),
-		mcpTheaterSpec("theater_catalog", "查找、发现小剧场可用对象类型、素材、特效、叠层、音频和限制。resources 查图片/video，audio_resources 查 Theater 专用音频。浏览器注册表需要在线授权 renderer。", []string{"object_types", "effects", "overlays", "resources", "audio_resources", "limits"}, []string{"theater:read"}, false, false, true, mcpTheaterCatalog),
+		mcpTheaterSpec("theater_catalog", "只读查询小剧场对象类型、素材、特效、叠层、音频和限制。resources 查图片/video，audio_resources 查 Theater 专用音频，appearance_resources 查有权访问的演出资源；World Theater 音频/演出资源使用 inputChannelId。", []string{"object_types", "effects", "overlays", "resources", "audio_resources", "appearance_resources", "limits"}, []string{"theater:read"}, false, false, true, mcpTheaterCatalog),
 		mcpTheaterSpec("theater_design", "设计、创建、搭建、布置、重构完整小剧场或完整场景的首选入口。一次创建/修改多个场景和对象，批量 align/distribute/grid 布局，配置背景、叠层、音乐、转场、序列。typed steps 先 validate 再原子 apply；一个 Plan 只增加一个 revision，仍受 expectedRevision CAS 和 128 KiB 限制。create 显式提供稳定 sceneId/objectId。单个场景的小改优先 theater_scene，单个/小批对象修改优先 theater_object。网页组件代码先用 embed_save，设计只引用已有资源；截图另用 theater_capture。", []string{"validate", "apply"}, []string{"theater:write"}, true, true, true, mcpTheaterDesign, mcpTheaterDesignSchema),
 		mcpTheaterSpec("theater_scene", "创建或修改单个场景，配置背景/前景/网格/音乐/转场/序列，duplicate 复制完整场景。field_update 类型化更新基础布景字段。局部 state 在 expectedRevision 合并；冲突后重读并使用新 mutationId。apply 另需 theater:control 与场景切换权限。", []string{"create", "update", "duplicate", "reorder", "delete", "apply", "folders_update", "field_update", "surface_update", "surface_embed_set", "surface_embed_clear", "overlay_update", "music_update", "transition_update", "sequence_update"}, []string{"theater:write"}, true, true, true, mcpTheaterScene),
 		mcpTheaterSpec("theater_object", "创建/修改/删除单个或小批对象、角色、iframe；duplicate 复制一个对象子树并可设置 offsetX/offsetY。batch_update 原子更新已有对象。iframe 仅引用已有频道 iForm，代码用 embed_save；embedEventBindings=[{topic,actionIds}] 将精确 events.publish topic 绑定到已保存动作。content/actions/embedEventBindings 更新遵循整体替换。", []string{"create", "update", "duplicate", "batch_update", "delete", "toggle", "bind_character"}, []string{"theater:write"}, true, true, true, mcpTheaterObject),

@@ -21,20 +21,19 @@ func persistMCPIdentityAvatar(input *ChannelIdentityInput, ownerID, operatorID, 
 	if att == nil || att.Extra != "mcp-upload" || !att.IsTemp {
 		return write(model.GetDB())
 	}
-	if !strings.HasPrefix(att.MimeType, "image/") || !isUnboundMCPAttachment(att, att.UserID) {
+	if !strings.HasPrefix(att.MimeType, "image/") {
 		return ErrWorldClueInvalid
+	}
+	if err := validateMCPAttachmentBinding(att, operatorID); err != nil {
+		return err
 	}
 	ch, err := model.ChannelGet(input.ChannelID)
 	if err != nil {
 		return err
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
-		r := tx.Model(&model.AttachmentModel{}).Where("id = ? AND user_id = ? AND is_temp = ? AND extra = ? AND deleted_at IS NULL AND root_id = '' AND root_id_type = '' AND channel_id = ''", att.ID, att.UserID, true, "mcp-upload").Updates(map[string]any{"is_temp": false, "channel_id": ch.ID, "root_id": ch.WorldID, "root_id_type": "world", "parent_id": identityID, "parent_id_type": "channel_identity"})
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return ErrWorldClueConflict
+		if err := claimMCPAttachment(tx, operatorID, att.ID, map[string]any{"is_temp": false, "channel_id": ch.ID, "root_id": ch.WorldID, "root_id_type": "world", "parent_id": identityID, "parent_id_type": "channel_identity"}); err != nil {
+			return err
 		}
 		return write(tx)
 	})

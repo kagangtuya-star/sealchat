@@ -189,6 +189,20 @@ type mcpAudioAssetInput struct {
 	mcpPageInput
 	Query string `json:"query,omitempty"`
 }
+type mcpAudioImportInput struct {
+	mcpWorldInput
+	UploadID    string                     `json:"uploadId"`
+	Name        string                     `json:"name,omitempty"`
+	FolderID    *string                    `json:"folderId,omitempty"`
+	Tags        []string                   `json:"tags,omitempty"`
+	Description string                     `json:"description,omitempty"`
+	Visibility  model.AudioAssetVisibility `json:"visibility,omitempty"`
+}
+
+func mcpAudioImportResult(asset *model.AudioAsset) any {
+	return map[string]any{"assetId": asset.ID, "name": asset.Name, "status": string(asset.TranscodeStatus), "transcodeStatus": string(asset.TranscodeStatus), "scope": string(asset.Scope), "worldId": asset.WorldID}
+}
+
 type mcpAudioAssetDTO struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
@@ -275,6 +289,16 @@ func mcpAudioAccess(a *service.MCPActor, worldID, channelID string) error {
 }
 func mcpAudioTools() []mcpToolSpec {
 	return []mcpToolSpec{
+		mcpSpec("audio_asset_import", "从本人未绑定的 MCP uploadId 导入世界音频；实时校验世界管理权限、文件格式、文件夹范围与音频配额，复用原生转码状态机。随后用 audio_assets 查询。", []string{"audio:write"}, true, false, false, func(ctx context.Context, a *service.MCPActor, in mcpAudioImportInput) (any, error) {
+			if err := mcpAudioAccess(a, in.WorldID, ""); err != nil {
+				return nil, err
+			}
+			asset, err := service.ImportMCPAudioAsset(ctx, a.User.ID, in.WorldID, in.UploadID, service.AudioUploadOptions{Name: in.Name, FolderID: in.FolderID, Tags: in.Tags, Description: in.Description, Visibility: in.Visibility})
+			if err != nil {
+				return nil, err
+			}
+			return mcpAudioImportResult(asset), nil
+		}),
 		mcpSpec("audio_assets", "读取当前世界及通用音频资产的公开资料，不返回存储内部字段。", []string{"audio:read"}, false, false, true, func(_ context.Context, a *service.MCPActor, in mcpAudioAssetInput) (any, error) {
 			if err := mcpAudioAccess(a, in.WorldID, ""); err != nil {
 				return nil, err

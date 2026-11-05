@@ -451,6 +451,16 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	})
 	app.Server().HeaderReceived = func(header *fasthttp.RequestHeader) fasthttp.RequestConfig {
 		requestURI := string(header.RequestURI())
+		if strings.SplitN(requestURI, "?", 2)[0] == joinWebPath(config.WebUrl, "api/v1/mcp/uploads") {
+			limit := int64(bodyLimit)
+			for _, profile := range []string{"attachment", "audio", "theater_media", "text"} {
+				maxBytes, _, _ := service.MCPUploadLimits(*config, profile)
+				if maxBytes+(1<<20) > limit {
+					limit = maxBytes + (1 << 20)
+				}
+			}
+			return fasthttp.RequestConfig{MaxRequestBodySize: int(limit)}
+		}
 		if strings.Contains(requestURI, "/api/v1/worlds/") && strings.Contains(requestURI, "/theater/packages/import") {
 			return fasthttp.RequestConfig{MaxRequestBodySize: service.TheaterPackageRequestBodyLimit()}
 		}

@@ -8,6 +8,9 @@
   imageCompressQuality: 85
   imageSizeLimit: 8192
   galleryQuotaMB: 100
+  mcp:
+    enabled: false
+    uploadPendingMaxMB: 512 # 每用户未绑定 MCP 临时附件总容量（MiB），独立于各业务配额
   logUpload:
     enabled: true
     endpoint: https://dice.weizaima.com/dice/api/log # 主海豹染色器后端地址

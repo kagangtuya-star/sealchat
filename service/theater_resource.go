@@ -227,15 +227,16 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 		return nil, err
 	}
 	attachment := &model.AttachmentModel{Hash: hashBytes, Filename: sanitizeTheaterFilename(input.Filename), Size: written, MimeType: mimeType, IsAnimated: kind == "animated_image", UserID: actorID, ChannelID: channelID, StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL, RootID: room.ID, RootIDType: theaterAttachmentRootResource, IsTemp: false}
-	if tx, _ := model.AttachmentCreate(attachment); tx.Error != nil {
-		return nil, tx.Error
-	}
+	attachment.ID = utils.NewID()
 	resource := model.TheaterResourceModel{
 		RoomID: room.ID, ClientResourceID: clientID, AttachmentID: attachment.ID, Kind: kind, ContentHash: hashHex, SizeBytes: written, MimeType: mimeType,
 		OriginalFilename: attachment.Filename, Status: "pending", VariantsJSON: "[]", CreatedBy: actorID,
 	}
 	job := model.TheaterResourceJobModel{RequestID: "initial", Type: "process", Status: "pending"}
 	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(attachment).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(&resource).Error; err != nil {
 			return err
 		}
@@ -245,12 +246,31 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 		}
 		return tx.Model(&resource).Update("processing_job_id", job.ID).Error
 	}); err != nil {
+		cleanupFailedTheaterUpload(attachment)
 		return nil, err
 	}
 	theaterMedia.enqueue(resource.ID)
 	auditTheaterResourceState(resource.ID, "pending", "")
 	public, err := theaterResourcePublicFromModel(model.GetDB(), resource)
+	if err != nil {
+		// Preserve the durable identity for callers that can distinguish a
+		// committed write from a projection failure, while retaining the native
+		// service error contract.
+		public = TheaterResourcePublic{ID: resource.ID, Kind: resource.Kind, Status: resource.Status, MimeType: resource.MimeType, SizeBytes: resource.SizeBytes}
+	}
 	return &TheaterResourceUploadResult{Resource: public}, err
+}
+
+// Persist may reuse an existing object. Only remove an unreferenced object
+// after the attachment/resource transaction has rolled back.
+func cleanupFailedTheaterUpload(attachment *model.AttachmentModel) {
+	if attachment == nil || GetStorageManager() == nil {
+		return
+	}
+	var count int64
+	if err := model.GetDB().Unscoped().Model(&model.AttachmentModel{}).Where("object_key = ? AND storage_type = ?", attachment.ObjectKey, attachment.StorageType).Count(&count).Error; err == nil && count == 0 {
+		_ = GetStorageManager().Delete(context.Background(), convertModelToBackend(attachment.StorageType), attachment.ObjectKey)
+	}
 }
 
 func requireDelegatedTheaterImageUpload(actorID, worldID, channelID, objectID string) error {
