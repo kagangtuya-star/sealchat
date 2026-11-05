@@ -96,6 +96,9 @@ type ChatImportJobProgress struct {
 
 // ChatImportExecute 执行聊天日志导入
 func ChatImportExecute(channelID string, userID string, req *model.ChatImportExecuteRequest) (*model.ChatImportJobModel, error) {
+	if req.Config == nil {
+		req.Config = &model.ChatImportConfig{MergeUnmatched: true}
+	}
 	// 验证频道和权限
 	channel, err := model.ChannelGet(channelID)
 	if err != nil {
@@ -112,6 +115,10 @@ func ChatImportExecute(channelID string, userID string, req *model.ChatImportExe
 	}
 	if !IsWorldAdmin(worldID, userID) {
 		return nil, errors.New("仅世界管理员可导入聊天记录")
+	}
+	// 在创建任务之前校验解析配置，避免无效时区进入异步任务。
+	if _, err := NewChatLogParser(req.Config); err != nil {
+		return nil, err
 	}
 
 	// 序列化配置
@@ -150,7 +157,7 @@ func ChatImportExecute(channelID string, userID string, req *model.ChatImportExe
 
 // executeImportJob 异步执行导入任务
 func executeImportJob(job *model.ChatImportJobModel, content string, config *model.ChatImportConfig) {
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	job.StartedAt = &startTime
 	job.Status = model.ChatImportStatusRunning
 	updateJobStatus(job)
@@ -166,7 +173,7 @@ func executeImportJob(job *model.ChatImportJobModel, content string, config *mod
 	}()
 
 	// 解析日志
-	parser, err := NewChatLogParser(config)
+	parser, err := newChatLogParserAt(config, startTime)
 	if err != nil {
 		job.Status = model.ChatImportStatusFailed
 		job.ErrorMessage = "解析配置错误: " + err.Error()
@@ -385,16 +392,11 @@ func batchInsertImportedMessages(importJobID string, channelID string, entries [
 			continue
 		}
 
-		var createdAt time.Time
-		var displayOrder float64
-
-		if entry.Timestamp != nil {
-			createdAt = *entry.Timestamp
-			displayOrder = float64(entry.Timestamp.UnixMilli())
-		} else {
-			createdAt = time.Now()
-			displayOrder = float64(createdAt.UnixMilli())
+		if entry.Timestamp == nil {
+			return 0, errors.New("导入消息缺少解析时间")
 		}
+		createdAt := entry.Timestamp.UTC()
+		displayOrder := float64(entry.Timestamp.UnixMilli())
 
 		icMode := "ic"
 		if entry.IsOOC {

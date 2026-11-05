@@ -41,23 +41,28 @@ type ChatImportRoleMappingConfig struct {
 
 // ChatImportConfig 导入配置
 type ChatImportConfig struct {
-	Version        string                                 `json:"version"`
-	RegexPattern   string                                 `json:"regexPattern"`   // 自定义正则
-	TemplateID     string                                 `json:"templateId"`     // 内置模板ID
-	BaseTime       *time.Time                             `json:"baseTime"`       // 基准时间
-	TimeIncrement  int64                                  `json:"timeIncrement"`  // 时间增量 (毫秒)
-	MergeUnmatched bool                                   `json:"mergeUnmatched"` // 是否合并不匹配行
-	StrictOOC      bool                                   `json:"strictOoc"`      // 严格OOC模式（只看首字符）
-	RoleMapping    map[string]*ChatImportRoleMappingConfig `json:"roleMapping"`    // 角色映射配置
+	Version        string                                  `json:"version"`
+	RegexPattern   string                                  `json:"regexPattern"`       // 自定义正则
+	TemplateID     string                                  `json:"templateId"`         // 内置模板ID
+	BaseTime       *time.Time                              `json:"baseTime"`           // 基准时间
+	TimeZone       string                                  `json:"timeZone,omitempty"` // 无时区日志使用的 IANA 时区；空值保留旧客户端语义
+	TimeIncrement  int64                                   `json:"timeIncrement"`      // 时间增量 (毫秒)
+	MergeUnmatched bool                                    `json:"mergeUnmatched"`     // 是否合并不匹配行
+	StrictOOC      bool                                    `json:"strictOoc"`          // 严格OOC模式（只看首字符）
+	RoleMapping    map[string]*ChatImportRoleMappingConfig `json:"roleMapping"`        // 角色映射配置
 }
 
 // ChatImportPreviewRequest 预览请求
 type ChatImportPreviewRequest struct {
-	Content        string `json:"content"`
-	RegexPattern   string `json:"regexPattern"`
-	TemplateID     string `json:"templateId"`
-	PreviewLimit   int    `json:"previewLimit"`
-	MergeUnmatched bool   `json:"mergeUnmatched"`
+	Content        string     `json:"content"`
+	RegexPattern   string     `json:"regexPattern"`
+	TemplateID     string     `json:"templateId"`
+	PreviewLimit   int        `json:"previewLimit"`
+	MergeUnmatched bool       `json:"mergeUnmatched"`
+	BaseTime       *time.Time `json:"baseTime"`
+	TimeZone       string     `json:"timeZone,omitempty"`
+	TimeIncrement  int64      `json:"timeIncrement"`
+	StrictOOC      bool       `json:"strictOoc"`
 }
 
 // ChatImportExecuteRequest 执行导入请求

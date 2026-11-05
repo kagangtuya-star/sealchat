@@ -1,9 +1,11 @@
 package service
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"sealchat/model"
 )
@@ -14,7 +16,7 @@ var chatImportTemplates = []*model.ChatImportTemplate{
 		ID:          "timestamp_angle",
 		Name:        "带时间戳尖括号格式",
 		Description: "[时间戳]<角色名>内容 或 [时间戳]<角色名>：内容",
-		Pattern:     `\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]\s*<([^>]+)>\s*[:：]?\s*(.*)`,
+		Pattern:     `\[(\d{4}-\d{2}-\d{2}[T\s]+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}|[ \t]+[+-]\d{2}:?\d{2})?)\]\s*<([^>]+)>\s*[:：]?\s*(.*)`,
 		Example:     "[2025-12-07 21:02:49] <星尘> 你好世界",
 	},
 	{
@@ -71,18 +73,38 @@ func GetChatImportTemplateByID(id string) *model.ChatImportTemplate {
 
 // ChatLogParser 日志解析器
 type ChatLogParser struct {
-	pattern        *regexp.Regexp
-	templateID     string
-	baseTime       time.Time
-	timeIncrement  int64 // 毫秒
-	mergeUnmatched bool
-	strictOOC      bool
-	hasTimeGroup   bool // 正则是否包含时间捕获组
-	hasDateGroup   bool // 正则是否包含日期捕获组
+	pattern          *regexp.Regexp
+	templateID       string
+	baseTime         time.Time
+	location         *time.Location
+	explicitBaseTime bool
+	timeIncrement    int64 // 毫秒
+	mergeUnmatched   bool
+	strictOOC        bool
+	hasTimeGroup     bool // 正则是否包含时间捕获组
 }
 
 // NewChatLogParser 创建解析器
 func NewChatLogParser(config *model.ChatImportConfig) (*ChatLogParser, error) {
+	return newChatLogParserAt(config, time.Now().UTC())
+}
+
+// 同一次任务只捕获一次时间，所有自动时间戳在分批写入之前确定。
+func newChatLogParserAt(config *model.ChatImportConfig, now time.Time) (*ChatLogParser, error) {
+	if config == nil {
+		config = &model.ChatImportConfig{}
+	}
+	location := time.UTC
+	if config.TimeZone != "" {
+		var err error
+		if config.TimeZone == "Local" {
+			return nil, fmt.Errorf("无效的 IANA 时区: %s", config.TimeZone)
+		}
+		location, err = time.LoadLocation(config.TimeZone)
+		if err != nil {
+			return nil, fmt.Errorf("无效的 IANA 时区: %s", config.TimeZone)
+		}
+	}
 	var pattern string
 	var templateID string
 
@@ -107,9 +129,16 @@ func NewChatLogParser(config *model.ChatImportConfig) (*ChatLogParser, error) {
 		return nil, err
 	}
 
-	baseTime := time.Now()
+	baseTime := now.UTC()
 	if config.BaseTime != nil {
 		baseTime = *config.BaseTime
+	}
+	if config.TimeZone != "" {
+		baseTime = baseTime.In(location)
+	} else if config.BaseTime != nil {
+		// RFC3339 解码可能复用 time.Local；旧客户端只沿用输入的固定偏移，不能取服务器的夏令时规则。
+		_, offset := baseTime.Zone()
+		baseTime = baseTime.In(time.FixedZone("", offset))
 	}
 
 	timeIncrement := config.TimeIncrement
@@ -117,19 +146,19 @@ func NewChatLogParser(config *model.ChatImportConfig) (*ChatLogParser, error) {
 		timeIncrement = 1000 // 默认1秒
 	}
 
-	// 检测正则是否包含时间/日期组
+	// 检测可选时间捕获组，缺少原始时间时仍使用后面的角色、内容组。
 	hasTimeGroup := strings.Contains(pattern, `\d{2}:\d{2}:\d{2}`)
-	hasDateGroup := strings.Contains(pattern, `\d{4}-\d{2}-\d{2}`)
 
 	return &ChatLogParser{
-		pattern:        re,
-		templateID:     templateID,
-		baseTime:       baseTime,
-		timeIncrement:  timeIncrement,
-		mergeUnmatched: config.MergeUnmatched,
-		strictOOC:      config.StrictOOC,
-		hasTimeGroup:   hasTimeGroup,
-		hasDateGroup:   hasDateGroup,
+		pattern:          re,
+		templateID:       templateID,
+		baseTime:         baseTime,
+		location:         location,
+		explicitBaseTime: config.BaseTime != nil,
+		timeIncrement:    timeIncrement,
+		mergeUnmatched:   config.MergeUnmatched,
+		strictOOC:        config.StrictOOC,
+		hasTimeGroup:     hasTimeGroup,
 	}, nil
 }
 
@@ -139,7 +168,6 @@ func (p *ChatLogParser) ParseLogContent(content string) ([]*model.ParsedLogEntry
 	var entries []*model.ParsedLogEntry
 	var currentEntry *model.ParsedLogEntry
 	skippedCount := 0
-	currentTime := p.baseTime
 
 	for lineNum, line := range lines {
 		line = strings.TrimRight(line, "\r")
@@ -152,10 +180,14 @@ func (p *ChatLogParser) ParseLogContent(content string) ([]*model.ParsedLogEntry
 		matches := p.pattern.FindStringSubmatch(line)
 		if matches != nil {
 			// 匹配成功，创建新条目
-			entry := p.parseMatchedLine(matches, line, lineNum+1, &currentTime)
-			if entry != nil {
+			entry := p.parseMatchedLine(matches, line, lineNum+1)
+			if entry != nil && entry.RoleName != "" {
 				entries = append(entries, entry)
 				currentEntry = entry
+			} else {
+				// 空角色不会被创建身份或入库，也不应占用自动时间序列。
+				skippedCount++
+				currentEntry = nil
 			}
 		} else if p.mergeUnmatched && currentEntry != nil {
 			// 不匹配行追加到上一条消息（只在没遇到空行时）
@@ -166,6 +198,26 @@ func (p *ChatLogParser) ParseLogContent(content string) ([]*model.ParsedLogEntry
 		}
 	}
 
+	// 只为缺少可解析原始时间的消息生成序列，合并行、空行及原始时间均不占用增量。
+	count := 0
+	for _, entry := range entries {
+		if entry.Timestamp == nil {
+			count++
+		}
+	}
+	currentTime := p.baseTime
+	increment := time.Duration(p.timeIncrement) * time.Millisecond
+	if !p.explicitBaseTime && count > 0 {
+		currentTime = currentTime.Add(-time.Duration(count-1) * increment)
+	}
+	for _, entry := range entries {
+		if entry.Timestamp == nil {
+			t := currentTime
+			entry.Timestamp = &t
+			currentTime = currentTime.Add(increment)
+		}
+	}
+
 	// 处理OOC标记
 	p.processOOCMarking(entries)
 
@@ -173,7 +225,7 @@ func (p *ChatLogParser) ParseLogContent(content string) ([]*model.ParsedLogEntry
 }
 
 // parseMatchedLine 解析匹配的行
-func (p *ChatLogParser) parseMatchedLine(matches []string, rawLine string, lineNum int, currentTime *time.Time) *model.ParsedLogEntry {
+func (p *ChatLogParser) parseMatchedLine(matches []string, rawLine string, lineNum int) *model.ParsedLogEntry {
 	entry := &model.ParsedLogEntry{
 		RawLine:    rawLine,
 		LineNumber: lineNum,
@@ -185,41 +237,32 @@ func (p *ChatLogParser) parseMatchedLine(matches []string, rawLine string, lineN
 	case "timestamp_angle":
 		// 组1=时间戳, 组2=角色名, 组3=内容
 		if numGroups >= 3 {
-			entry.Timestamp = p.parseTimestamp(matches[1], true)
+			entry.Timestamp = p.parseTimestamp(matches[1])
 			entry.RoleName = strings.TrimSpace(matches[2])
 			entry.Content = strings.TrimSpace(matches[3])
 		}
 	case "time_angle":
 		// 组1=时间, 组2=角色名, 组3=内容
 		if numGroups >= 3 {
-			entry.Timestamp = p.parseTimestamp(matches[1], false)
+			entry.Timestamp = p.parseTimestamp(matches[1])
 			entry.RoleName = strings.TrimSpace(matches[2])
 			entry.Content = strings.TrimSpace(matches[3])
 		}
 	case "angle_only":
 		// 组1=角色名, 组2=内容
 		if numGroups >= 2 {
-			t := *currentTime
-			entry.Timestamp = &t
-			*currentTime = currentTime.Add(time.Duration(p.timeIncrement) * time.Millisecond)
 			entry.RoleName = strings.TrimSpace(matches[1])
 			entry.Content = strings.TrimSpace(matches[2])
 		}
 	case "bracket_name":
 		// 组1=角色名, 组2=内容
 		if numGroups >= 2 {
-			t := *currentTime
-			entry.Timestamp = &t
-			*currentTime = currentTime.Add(time.Duration(p.timeIncrement) * time.Millisecond)
 			entry.RoleName = strings.TrimSpace(matches[1])
 			entry.Content = strings.TrimSpace(matches[2])
 		}
 	case "colon_name":
 		// 组1=角色名, 组2=内容
 		if numGroups >= 2 {
-			t := *currentTime
-			entry.Timestamp = &t
-			*currentTime = currentTime.Add(time.Duration(p.timeIncrement) * time.Millisecond)
 			entry.RoleName = strings.TrimSpace(matches[1])
 			entry.Content = strings.TrimSpace(matches[2])
 		}
@@ -227,14 +270,11 @@ func (p *ChatLogParser) parseMatchedLine(matches []string, rawLine string, lineN
 		// 自定义正则：尝试智能解析
 		// 假设：如果有3+组且第一组像时间戳，则 组1=时间, 组2=角色, 组3=内容
 		// 否则：组1=角色, 组2=内容
-		if numGroups >= 3 && p.looksLikeTimestamp(matches[1]) {
-			entry.Timestamp = p.parseTimestamp(matches[1], p.hasDateGroup)
+		if numGroups >= 3 && (p.looksLikeTimestamp(matches[1]) || (p.hasTimeGroup && strings.TrimSpace(matches[1]) == "")) {
+			entry.Timestamp = p.parseTimestamp(matches[1])
 			entry.RoleName = strings.TrimSpace(matches[2])
 			entry.Content = strings.TrimSpace(matches[3])
 		} else if numGroups >= 2 {
-			t := *currentTime
-			entry.Timestamp = &t
-			*currentTime = currentTime.Add(time.Duration(p.timeIncrement) * time.Millisecond)
 			entry.RoleName = strings.TrimSpace(matches[1])
 			entry.Content = strings.TrimSpace(matches[2])
 		}
@@ -260,11 +300,15 @@ func (p *ChatLogParser) looksLikeTimestamp(s string) bool {
 }
 
 // parseTimestamp 解析时间戳
-func (p *ChatLogParser) parseTimestamp(s string, hasDate bool) *time.Time {
+func (p *ChatLogParser) parseTimestamp(s string) *time.Time {
 	var t time.Time
 	var err error
 
 	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05 -07:00",
+		"2006-01-02 15:04:05 -0700",
 		"2006-01-02 15:04:05",
 		"2006/01/02 15:04:05",
 		"2006-01-02T15:04:05",
@@ -273,10 +317,10 @@ func (p *ChatLogParser) parseTimestamp(s string, hasDate bool) *time.Time {
 	}
 
 	for _, layout := range layouts {
-		t, err = time.Parse(layout, strings.TrimSpace(s))
+		t, err = time.ParseInLocation(layout, strings.TrimSpace(s), p.location)
 		if err == nil {
 			// 如果只解析到时间没有日期，使用baseTime的日期
-			if !hasDate && t.Year() == 0 {
+			if t.Year() == 0 {
 				t = time.Date(
 					p.baseTime.Year(), p.baseTime.Month(), p.baseTime.Day(),
 					t.Hour(), t.Minute(), t.Second(), t.Nanosecond(),
@@ -343,6 +387,10 @@ func ParsePreview(req *model.ChatImportPreviewRequest) (*model.ChatImportPreview
 		RegexPattern:   req.RegexPattern,
 		TemplateID:     req.TemplateID,
 		MergeUnmatched: req.MergeUnmatched,
+		BaseTime:       req.BaseTime,
+		TimeZone:       req.TimeZone,
+		TimeIncrement:  req.TimeIncrement,
+		StrictOOC:      req.StrictOOC,
 	}
 
 	parser, err := NewChatLogParser(config)

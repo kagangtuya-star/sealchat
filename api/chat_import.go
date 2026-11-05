@@ -41,18 +41,13 @@ func ChatImportPreview(c *fiber.Ctx) error {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "仅世界管理员可导入聊天记录"})
 	}
 
-	var req model.ChatImportPreviewRequest
+	req := model.ChatImportPreviewRequest{MergeUnmatched: true}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
 	}
 
 	if req.Content == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "日志内容不能为空"})
-	}
-
-	// 默认合并不匹配行
-	if !req.MergeUnmatched {
-		req.MergeUnmatched = true
 	}
 
 	result, err := service.ParsePreview(&req)
@@ -75,7 +70,8 @@ func ChatImportExecute(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
 
-	var req model.ChatImportExecuteRequest
+	// 与预览一致：旧客户端省略 mergeUnmatched 时默认开启，显式 false 仍可关闭。
+	req := model.ChatImportExecuteRequest{Config: &model.ChatImportConfig{MergeUnmatched: true}}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
 	}
