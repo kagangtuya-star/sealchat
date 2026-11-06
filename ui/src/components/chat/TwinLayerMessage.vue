@@ -38,6 +38,9 @@ const visibleText = ref('');
 const waiting = ref(false);
 const playing = ref(false);
 const completed = ref(false);
+// 逻辑完成仍按引擎通知父级；仅切层样式等待实际进入动画收尾。
+let visualCompleted = false;
+let skipEnterAnimations = false;
 const overlayTextRef = ref<HTMLElement | null>(null);
 const mounted = ref(false);
 let trackingSegmentIndex = 0;
@@ -95,7 +98,7 @@ const syncDom = () => {
   if (!root) return;
   root.classList.toggle('is-waiting', waiting.value);
   root.classList.toggle('is-playing', playing.value);
-  root.classList.toggle('is-completed', completed.value);
+  root.classList.toggle('is-completed', visualCompleted);
   root.classList.toggle('has-blur-backdrop', hasBlurBackdrop.value);
   root.classList.toggle('has-hidden-backdrop', hasHiddenBackdrop.value);
 };
@@ -319,6 +322,24 @@ const renderFinalOverlay = () => {
   waiting.value = false;
   playing.value = false;
   completed.value = true;
+  visualCompleted = true;
+  syncDom();
+};
+
+const finishOverlay = async (engine: ReturnType<typeof createTwinLayerPlayback>) => {
+  if (!skipEnterAnimations) {
+    const animations = overlayTextRef.value?.getAnimations?.({ subtree: true }).filter((animation) => (
+      typeof CSSAnimation !== 'undefined'
+      && animation instanceof CSSAnimation
+      && animation.animationName.startsWith('sc-performance-enter-')
+      && animation.playState === 'running'
+      && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+    )) || [];
+    // 只等待实际运行中的进入动画；暂停、取消或不支持 CSSAnimation 的环境直接回退切层。
+    await Promise.allSettled(animations.map((animation) => animation.finished));
+  }
+  if (engine !== playback.value) return;
+  visualCompleted = true;
   syncDom();
 };
 
@@ -362,6 +383,7 @@ const startPlayback = async () => {
   debug('start', { instructionCount: instructions.value.length });
   await engine.play();
   if (engine === playback.value && engine.getState() === 'completed') {
+    void finishOverlay(engine);
     debug('completed');
     emit('completed');
   }
@@ -377,12 +399,20 @@ const disposePlayback = () => {
 const replay = async () => {
   disposePlayback();
   clearOverlayDom();
+  visualCompleted = false;
+  skipEnterAnimations = false;
   syncDom();
   await startPlayback();
 };
 
 const skip = () => {
   debug('skip');
+  skipEnterAnimations = true;
+  if (playback.value?.getState() === 'completed') {
+    visualCompleted = true;
+    syncDom();
+    return;
+  }
   playback.value?.skip();
   refreshState();
 };
@@ -405,8 +435,12 @@ const renderCurrentContent = () => {
   void replay();
 };
 
-watch(() => [props.content, props.autoplay], () => {
+watch(() => [props.content, props.autoplay] as const, ([content, autoplay], [previousContent]) => {
   if (!mounted.value) {
+    return;
+  }
+  // 剧场模式收到逻辑完成后会关闭 autoplay，保留本轮 overlay 的视觉收尾。
+  if (content === previousContent && !autoplay && playback.value?.getState() === 'completed') {
     return;
   }
   void nextTick(renderCurrentContent);
