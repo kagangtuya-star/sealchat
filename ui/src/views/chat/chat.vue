@@ -5152,6 +5152,7 @@ const importIdentityMigrationSnapshot = async (
               avatarTextStyle: normalizeAvatarTextStyle(snapshot.avatarTextStyle),
               avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations, snapshot.avatarDecoration),
               theaterPresentation: snapshot.theaterPresentation,
+              skipTheaterAssetValidation: true,
               isDefault: !!snapshot.isDefault,
               isTemporary: !!snapshot.isTemporary,
               icOocOnActivate: snapshot.icOocOnActivate || '',
@@ -5735,7 +5736,7 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
     if (theaterPresentationEditorMode.value === 'variant') {
       identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
       if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
-        saved = await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+        saved = await submitIdentityVariantForm({ closeDialog: false, successMessage: false, includeTheaterPresentation: true });
       } else {
         saved = true;
       }
@@ -5774,7 +5775,7 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
           message.error(error?.response?.data?.error || error?.message || '保存共享演出外观失败');
         }
       } else {
-        saved = await submitIdentityForm({ closeDialog: false, successMessage: false });
+        saved = await submitIdentityForm({ closeDialog: false, successMessage: false, includeTheaterPresentation: true });
       }
     }
     if (saved) {
@@ -6303,8 +6304,12 @@ const handleIdentityVariantSelectorEmoji = (emoji: string) => {
   identityVariantEmojiPickerVisible.value = false;
 };
 
-const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
-  const { closeDialog = true, successMessage = true } = options;
+const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean; includeTheaterPresentation?: boolean } = {}) => {
+  const {
+    closeDialog = true,
+    successMessage = true,
+    includeTheaterPresentation = identityVariantDialogMode.value === 'create',
+  } = options;
   if (identityVariantSubmitting.value) {
     return false;
   }
@@ -6377,7 +6382,9 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
       displayName: String(identityVariantForm.displayName || '').trim(),
       color: normalizedColor,
       appearance: {},
-      theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
+      theaterPresentation: includeTheaterPresentation
+        ? cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation)
+        : undefined,
       expectedRevision: editingIdentityVariant.value?.sharedVariantId
         ? editingIdentityVariant.value.sharedRevision
         : undefined,
@@ -6446,8 +6453,12 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
   }
 };
 
-const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
-  const { closeDialog = true, successMessage = true } = options;
+const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean; includeTheaterPresentation?: boolean } = {}) => {
+  const {
+    closeDialog = true,
+    successMessage = true,
+    includeTheaterPresentation = identityDialogMode.value === 'create',
+  } = options;
   if (identitySubmitting.value) {
     return false;
   }
@@ -6475,9 +6486,11 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       .filter(item => item.resourceAttachmentId),
     theaterPresentation: editingIdentity.value?.sharedIdentityId && !isManagingBotIdentity.value
       ? undefined
-      : identityForm.theaterPresentation
-        ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
-        : null,
+      : includeTheaterPresentation
+        ? identityForm.theaterPresentation
+          ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+          : null
+        : undefined,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
