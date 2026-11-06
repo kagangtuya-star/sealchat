@@ -2,6 +2,19 @@ import { UI_CUSTOMIZATION_API_VERSION } from './jsRuntime'
 import type { UISurface } from './surfaces'
 import type { UICustomizationPackage } from './types'
 
+let fflatePromise: Promise<typeof import('fflate')> | null = null
+const loadFflate = () => {
+  fflatePromise ??= import('fflate')
+  return fflatePromise
+}
+
+const UI_TRANSFER_ZIP_LIMITS = {
+  zipBytes: 20 * 1024 * 1024,
+  jsonFiles: 100,
+  jsonBytes: 8 * 1024 * 1024,
+  totalBytes: 20 * 1024 * 1024,
+}
+
 // Versioned transfer documents. Exports never carry database IDs, scope,
 // world, author/audit fields, trust state or server timestamps.
 export const UI_PACKAGE_FORMAT = 'sealchat.ui-package'
@@ -50,16 +63,74 @@ export function buildBundleDocument(packages: ExportSource[]): UIBundleDocument 
   }
 }
 
-/** Parses an import file. Format and content are validated by the server. */
-export async function readTransferFile(file: Pick<File, 'text'>): Promise<unknown> {
+type TransferImportFile = Pick<File, 'text'> & Partial<Pick<File, 'name' | 'size' | 'arrayBuffer'>>
+
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+
+const parseTransferJSON = (text: string) => {
   let parsed: unknown
   try {
-    parsed = JSON.parse(await file.text())
+    parsed = JSON.parse(text)
   } catch {
     throw new Error('文件不是有效的 JSON')
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('文件内容不是界面自定义包对象')
+  if (!isObject(parsed)) throw new Error('文件内容不是界面自定义包对象')
   return parsed
+}
+
+const readTransferZip = async (file: TransferImportFile): Promise<unknown> => {
+  if (!file.arrayBuffer) throw new Error('当前环境无法读取 ZIP 文件')
+  if (file.size && file.size > UI_TRANSFER_ZIP_LIMITS.zipBytes) throw new Error('ZIP 超过 20MB')
+
+  const { unzipSync } = await loadFflate()
+  let jsonCount = 0
+  let declaredTotal = 0
+  let raw: Record<string, Uint8Array>
+  try {
+    raw = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+      filter: (entry) => {
+        if (entry.name.endsWith('/') || !entry.name.toLowerCase().endsWith('.json')) return false
+        jsonCount += 1
+        declaredTotal += entry.originalSize
+        if (jsonCount > UI_TRANSFER_ZIP_LIMITS.jsonFiles) throw new Error(`ZIP 中 JSON 文件超过 ${UI_TRANSFER_ZIP_LIMITS.jsonFiles} 个`)
+        if (entry.originalSize > UI_TRANSFER_ZIP_LIMITS.jsonBytes || declaredTotal > UI_TRANSFER_ZIP_LIMITS.totalBytes) throw new Error(`${entry.name} 超过解压配额`)
+        return true
+      },
+    })
+  } catch (error) {
+    throw new Error(error instanceof Error && error.message ? error.message : '不是有效的 ZIP 文件')
+  }
+
+  const packages: unknown[] = []
+  for (const name of Object.keys(raw).sort()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(raw[name]))
+    } catch {
+      continue
+    }
+    if (!isObject(parsed)) continue
+    if (parsed.format === UI_PACKAGE_FORMAT) {
+      packages.push(parsed)
+    } else if (parsed.format === UI_BUNDLE_FORMAT && Array.isArray(parsed.packages)) {
+      packages.push(...parsed.packages)
+    }
+  }
+
+  if (!packages.length) throw new Error('ZIP 中未找到 sealchat.ui-package / sealchat.ui-bundle JSON')
+  if (packages.length === 1) return packages[0]
+  return {
+    format: UI_BUNDLE_FORMAT,
+    formatVersion: UI_TRANSFER_FORMAT_VERSION,
+    runtimeApiVersion: UI_CUSTOMIZATION_API_VERSION,
+    packages,
+  }
+}
+
+/** Parses a JSON or ZIP import. Format and content are still validated by the server. */
+export async function readTransferFile(file: TransferImportFile): Promise<unknown> {
+  if ((file.name || '').toLowerCase().endsWith('.zip')) return readTransferZip(file)
+  return parseTransferJSON(await file.text())
 }
 
 export function transferFileName(name: string, kind: 'package' | 'bundle') {

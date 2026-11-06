@@ -308,8 +308,8 @@ const sizeLabel = (text: string) => {
 
 <template>
   <div class="sc-uic-manager">
-    <input ref="fileInput" type="file" accept=".json,application/json" class="sc-uic-manager__file" @change="handleImport">
-    <input ref="replaceFileInput" type="file" accept=".json,application/json" class="sc-uic-manager__file" @change="handleReplaceImport">
+    <input ref="fileInput" type="file" accept=".json,.zip,application/json,application/zip" class="sc-uic-manager__file" @change="handleImport">
+    <input ref="replaceFileInput" type="file" accept=".json,.zip,application/json,application/zip" class="sc-uic-manager__file" @change="handleReplaceImport">
 
     <div class="sc-uic-manager__toolbar">
       <n-button type="primary" size="small" :disabled="full" @click="openCreate">
@@ -334,7 +334,7 @@ const sizeLabel = (text: string) => {
         </n-tag>
       </template>
       <span>代码总大小上限：{{ maxCodeSizeKB }} KiB（CSS + JavaScript）</span>
-      <span>导入支持单包与 Bundle（sealchat.ui-package / sealchat.ui-bundle）。页面异常时在地址中加入 <code>safe-ui=1</code> 可跳过全部自定义。</span>
+      <span>导入支持 JSON 或 ZIP；ZIP 会自动识别其中的单包与 Bundle（sealchat.ui-package / sealchat.ui-bundle）。页面异常时在地址中加入 <code>safe-ui=1</code> 可跳过全部自定义。</span>
       <label class="sc-uic-manager__session-safe">
         <span>本次会话禁用全部自定义</span>
         <n-switch size="small" :value="safeSession" @update:value="toggleSafeSession" />

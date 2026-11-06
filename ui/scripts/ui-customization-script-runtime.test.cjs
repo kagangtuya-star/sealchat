@@ -305,6 +305,25 @@ async function testTransfer() {
   await assert.rejects(readTransferFile({ text: async () => 'nope' }), /有效的 JSON/)
   await assert.rejects(readTransferFile({ text: async () => '[1]' }), /对象/)
   assert.deepEqual(await readTransferFile({ text: async () => '{"format":"x"}' }), { format: 'x' })
+  const { zipSync, strToU8 } = require('fflate')
+  const zip = zipSync({
+    'a.ui-package.json': strToU8(JSON.stringify(doc)),
+    'nested/b.ui-package.json': strToU8(JSON.stringify(doc)),
+    'notes.json': strToU8(JSON.stringify({ note: true })),
+  })
+  const zipped = await readTransferFile({
+    name: 'themes.zip',
+    text: async () => '',
+    arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength),
+    size: zip.byteLength,
+  })
+  assert.equal(zipped.format, 'sealchat.ui-bundle')
+  assert.equal(zipped.packages.length, 2)
+  await assert.rejects(readTransferFile({
+    name: 'empty.zip',
+    text: async () => '',
+    arrayBuffer: async () => zipSync({ 'notes.json': strToU8('{"note":true}') }).buffer,
+  }), /未找到/)
 }
 
 async function run() {
