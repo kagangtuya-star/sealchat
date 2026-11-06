@@ -125,6 +125,7 @@ const prepareBasePerformanceDom = () => {
       current = walker.nextNode();
     }
     let charIndex = 0;
+    const renderedChars: HTMLElement[] = [];
     textNodes.forEach((node) => {
       const fragment = document.createDocumentFragment();
       const segments = node.data.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*|\s+|./gu) || [];
@@ -137,11 +138,13 @@ const prepareBasePerformanceDom = () => {
         span.className = 'twin-layer-message__base-char';
         span.style.setProperty('--performance-char-index', String(charIndex));
         span.textContent = segment;
+        renderedChars.push(span);
         charIndex += 1;
         fragment.appendChild(span);
       });
       node.replaceWith(fragment);
     });
+    renderedChars[renderedChars.length - 1]?.classList.add('twin-layer-message__base-char--tail');
   });
 };
 
@@ -610,6 +613,11 @@ onBeforeUnmount(() => {
   animation-delay: calc(var(--performance-char-index) * -70ms) !important;
 }
 
+/* 段尾字形只保留轻微位移/旋转，避免非等比缩放让标点或复杂汉字显得变形。 */
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wobble .twin-layer-message__base-char--tail {
+  animation-name: sc-performance-wobble-tail !important;
+}
+
 :root[data-sc-surface] .tiptap-performance.enter-blur,
 :root[data-sc-surface] .twin-layer-message .enter-blur {
   animation: sc-performance-enter-blur 0.42s ease-out both !important;
@@ -800,6 +808,14 @@ onBeforeUnmount(() => {
   40% { transform: var(--performance-scale) translateY(-0.01em) rotate(1deg) scale(0.97, 1.05); }
   60% { transform: var(--performance-scale) rotate(0deg) scale(1, 1); }
   80% { transform: var(--performance-scale) translateX(-0.01em) rotate(1.5deg) scale(0.96, 1.04); }
+}
+
+@keyframes sc-performance-wobble-tail {
+  0%, 100% { transform: var(--performance-scale) rotate(0deg); }
+  20% { transform: var(--performance-scale) translateX(0.005em) rotate(-0.45deg); }
+  40% { transform: var(--performance-scale) translateY(-0.005em) rotate(0.35deg); }
+  60% { transform: var(--performance-scale) rotate(0deg); }
+  80% { transform: var(--performance-scale) translateX(-0.005em) rotate(0.45deg); }
 }
 
 @keyframes sc-performance-enter-fade {
