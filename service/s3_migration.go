@@ -54,6 +54,9 @@ type S3MigrationItemResult struct {
 }
 
 func GetS3MigrationPreview(kind S3MigrationKind) (*S3MigrationStats, error) {
+	if kind == S3MigrationKindAudio {
+		return GetStorageMigrationPreview(kind, StorageMigrationTargetS3)
+	}
 	db := model.GetDB()
 	if db == nil {
 		return nil, errors.New("数据库未初始化")
@@ -74,14 +77,6 @@ func GetS3MigrationPreview(kind S3MigrationKind) (*S3MigrationStats, error) {
 		}
 		stats.Pending = pending
 		stats.Total = pending
-	case S3MigrationKindAudio:
-		if err := db.Model(&model.AudioAsset{}).
-			Where("storage_type = ? OR storage_type = ?", "local", "").
-			Count(&pending).Error; err != nil {
-			return nil, err
-		}
-		stats.Pending = pending
-		stats.Total = pending
 	default:
 		return nil, fmt.Errorf("%w: unsupported type %q", ErrS3MigrationBadRequest, kind)
 	}
@@ -90,6 +85,13 @@ func GetS3MigrationPreview(kind S3MigrationKind) (*S3MigrationStats, error) {
 }
 
 func ExecuteS3Migration(kind S3MigrationKind, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
+	if kind != S3MigrationKindImages && kind != S3MigrationKindAudio {
+		return nil, nil, fmt.Errorf("%w: unsupported type %q", ErrS3MigrationBadRequest, kind)
+	}
+	return ExecuteStorageMigration(kind, StorageMigrationTargetS3, batchSize, dryRun, deleteSource)
+}
+
+func executeS3Migration(kind S3MigrationKind, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
 	db := model.GetDB()
 	if db == nil {
 		return nil, nil, errors.New("数据库未初始化")
@@ -114,8 +116,6 @@ func ExecuteS3Migration(kind S3MigrationKind, batchSize int, dryRun bool, delete
 	switch kind {
 	case S3MigrationKindImages:
 		return executeS3ImageMigration(db, manager, batchSize, dryRun, deleteSource)
-	case S3MigrationKindAudio:
-		return executeS3AudioMigration(db, manager, batchSize, dryRun, deleteSource)
 	default:
 		return nil, nil, fmt.Errorf("%w: unsupported type %q", ErrS3MigrationBadRequest, kind)
 	}
@@ -380,157 +380,6 @@ func isImageFilename(lower string) bool {
 		strings.HasSuffix(lower, ".jpeg") ||
 		strings.HasSuffix(lower, ".png") ||
 		strings.HasSuffix(lower, ".webp")
-}
-
-func executeS3AudioMigration(db *gorm.DB, manager *storage.Manager, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
-	var assets []*model.AudioAsset
-	if err := db.
-		Where("storage_type = ? OR storage_type = ?", "local", "").
-		Order("created_at ASC").
-		Limit(batchSize).
-		Find(&assets).Error; err != nil {
-		return nil, nil, err
-	}
-	stats := &S3MigrationStats{
-		Total:   int64(len(assets)),
-		Pending: int64(len(assets)),
-	}
-	results := make([]S3MigrationItemResult, 0, len(assets))
-	cfg := utils.GetConfig()
-	ctx := context.Background()
-
-	for _, asset := range assets {
-		r := migrateOneAudioAssetToS3(ctx, db, manager, asset, cfg, dryRun, deleteSource)
-		results = append(results, r)
-		switch {
-		case r.Skipped:
-			stats.Skipped++
-		case r.Success:
-			stats.Completed++
-		default:
-			stats.Failed++
-		}
-	}
-	return stats, results, nil
-}
-
-func migrateOneAudioAssetToS3(ctx context.Context, db *gorm.DB, manager *storage.Manager, asset *model.AudioAsset, cfg *utils.AppConfig, dryRun bool, deleteSource bool) S3MigrationItemResult {
-	if asset == nil {
-		return S3MigrationItemResult{Kind: S3MigrationKindAudio, Skipped: true, SkipReason: "nil asset"}
-	}
-	result := S3MigrationItemResult{
-		Kind:        S3MigrationKindAudio,
-		PrimaryID:   asset.ID,
-		RecordCount: 1,
-	}
-	if asset.StorageType == model.StorageS3 {
-		result.Skipped = true
-		result.SkipReason = "already s3"
-		return result
-	}
-	localPath, err := resolveLocalAudioPath(cfg, asset.ObjectKey)
-	if err != nil {
-		result.Error = err.Error()
-		return result
-	}
-	destKey := buildAudioDestObjectKey(asset.ID, asset.ObjectKey)
-	if destKey == "" {
-		result.Error = "cannot determine objectKey"
-		return result
-	}
-	result.ObjectKey = destKey
-
-	if dryRun {
-		result.Success = true
-		return result
-	}
-
-	uploadResult, err := manager.UploadToS3(ctx, storage.UploadInput{
-		ObjectKey:   destKey,
-		LocalPath:   localPath,
-		ContentType: guessContentTypeFromFilename(asset.ObjectKey),
-	})
-	if err != nil {
-		result.Error = fmt.Sprintf("upload failed: %v", err)
-		return result
-	}
-	ok, err := manager.Exists(ctx, storage.BackendS3, destKey)
-	if err != nil || !ok {
-		if err == nil {
-			err = errors.New("stat object failed")
-		}
-		result.Error = fmt.Sprintf("verify failed: %v", err)
-		return result
-	}
-	if err := verifyHTTPAccessible(uploadResult.PublicURL); err != nil {
-		result.Error = fmt.Sprintf("not accessible: %v", err)
-		return result
-	}
-
-	updates := map[string]interface{}{
-		"storage_type": model.StorageS3,
-		"object_key":   destKey,
-		"variants":     model.JSONList[model.AudioAssetVariant]([]model.AudioAssetVariant{}),
-	}
-	if err := db.Model(&model.AudioAsset{}).Where("id = ?", asset.ID).Updates(updates).Error; err != nil {
-		result.Error = fmt.Sprintf("db update failed: %v", err)
-		return result
-	}
-
-	if deleteSource {
-		deleteLocalAudioFiles(cfg, asset)
-	}
-	result.Success = true
-	return result
-}
-
-func resolveLocalAudioPath(cfg *utils.AppConfig, objectKey string) (string, error) {
-	root := "./static/audio"
-	if cfg != nil && strings.TrimSpace(cfg.Audio.StorageDir) != "" {
-		root = cfg.Audio.StorageDir
-	}
-	clean := filepath.Clean(strings.TrimSpace(objectKey))
-	if clean == "" || strings.HasPrefix(clean, "..") {
-		return "", errors.New("invalid objectKey")
-	}
-	full := filepath.Join(filepath.Clean(root), clean)
-	if _, err := os.Stat(full); err != nil {
-		return "", err
-	}
-	return full, nil
-}
-
-func deleteLocalAudioFiles(cfg *utils.AppConfig, asset *model.AudioAsset) {
-	if asset == nil {
-		return
-	}
-	paths := []string{asset.ObjectKey}
-	for _, v := range asset.Variants {
-		if v.StorageType == model.StorageLocal && strings.TrimSpace(v.ObjectKey) != "" {
-			paths = append(paths, v.ObjectKey)
-		}
-	}
-	for _, p := range paths {
-		if full, err := resolveLocalAudioPath(cfg, p); err == nil {
-			_ = os.Remove(full)
-		}
-	}
-}
-
-func buildAudioDestObjectKey(assetID string, existingObjectKey string) string {
-	id := strings.TrimSpace(assetID)
-	if id == "" {
-		return ""
-	}
-	name := filepath.Base(strings.TrimSpace(existingObjectKey))
-	if name == "." || name == "/" || name == "" {
-		name = "audio.ogg"
-	}
-	name = strings.TrimSpace(name)
-	if ext := filepath.Ext(name); ext == "" {
-		name = name + ".ogg"
-	}
-	return storage.BuildAudioObjectKey(id, name)
 }
 
 func guessContentTypeFromFilename(name string) string {

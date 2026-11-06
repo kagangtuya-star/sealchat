@@ -446,6 +446,7 @@ export interface S3StorageConfig {
 }
 
 export interface AdminStorageStatus {
+  pendingRestart?: boolean;
   configured: boolean;
   initialized: boolean;
   enabled: boolean;

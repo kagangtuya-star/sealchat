@@ -25,18 +25,19 @@ type Manager struct {
 	remoteBaseURL string
 }
 
-// Status contains only non-secret settings captured when the manager started.
+// Status contains only non-secret storage settings and runtime state.
 type Status struct {
-	Configured    bool                   `json:"configured"`
-	Initialized   bool                   `json:"initialized"`
-	Enabled       bool                   `json:"enabled"`
-	RemoteReady   bool                   `json:"remoteReady"`
-	ActiveBackend BackendType            `json:"activeBackend"`
-	Endpoint      string                 `json:"endpoint"`
-	Region        string                 `json:"region"`
-	Bucket        string                 `json:"bucket"`
-	Modules       map[string]BackendType `json:"modules"`
-	LastError     string                 `json:"lastError"`
+	PendingRestart bool                   `json:"pendingRestart"`
+	Configured     bool                   `json:"configured"`
+	Initialized    bool                   `json:"initialized"`
+	Enabled        bool                   `json:"enabled"`
+	RemoteReady    bool                   `json:"remoteReady"`
+	ActiveBackend  BackendType            `json:"activeBackend"`
+	Endpoint       string                 `json:"endpoint"`
+	Region         string                 `json:"region"`
+	Bucket         string                 `json:"bucket"`
+	Modules        map[string]BackendType `json:"modules"`
+	LastError      string                 `json:"lastError"`
 }
 
 func (m *Manager) Status() Status {

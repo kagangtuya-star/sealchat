@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -23,7 +24,24 @@ const (
 	StorageMigrationTargetS3    StorageMigrationTarget = "s3"
 )
 
+var storageMigrationMu sync.Mutex
+var ErrStorageMigrationRunning = errors.New("已有存储迁移正在执行，请稍后重试")
+
+func beginStorageMigration() (func(), error) {
+	if !storageMigrationMu.TryLock() {
+		return nil, ErrStorageMigrationRunning
+	}
+	if err := storageMigrationConfigCheck(); err != nil {
+		storageMigrationMu.Unlock()
+		return nil, err
+	}
+	return storageMigrationMu.Unlock, nil
+}
+
 func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTarget) (*S3MigrationStats, error) {
+	if err := storageMigrationConfigCheck(); err != nil {
+		return nil, err
+	}
 	if target == "" {
 		target = StorageMigrationTargetS3
 	}
@@ -31,17 +49,11 @@ func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTar
 		return getPlatformFontStorageMigrationPreview(target)
 	}
 	if kind == S3MigrationKindAudio {
-		source, err := storageMigrationSource(target)
+		backend, err := storageMigrationBackend(target)
 		if err != nil {
 			return nil, err
 		}
-		stats := &S3MigrationStats{}
-		query := applyStorageSourceFilter(model.GetDB().Model(&model.AudioAsset{}), source)
-		if err := query.Count(&stats.Pending).Error; err != nil {
-			return nil, err
-		}
-		stats.Total = stats.Pending
-		return stats, nil
+		return audioStorageMigrationPreview(model.GetDB(), backend)
 	}
 	if kind != S3MigrationKindTheater && kind != S3MigrationKindTTS {
 		if target != StorageMigrationTargetS3 {
@@ -66,6 +78,15 @@ func GetStorageMigrationPreview(kind S3MigrationKind, target StorageMigrationTar
 }
 
 func ExecuteStorageMigration(kind S3MigrationKind, target StorageMigrationTarget, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
+	unlock, err := beginStorageMigration()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer unlock()
+	return executeStorageMigration(kind, target, batchSize, dryRun, deleteSource)
+}
+
+func executeStorageMigration(kind S3MigrationKind, target StorageMigrationTarget, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
 	if target == "" {
 		target = StorageMigrationTargetS3
 	}
@@ -79,7 +100,7 @@ func ExecuteStorageMigration(kind S3MigrationKind, target StorageMigrationTarget
 		if target != StorageMigrationTargetS3 {
 			return nil, nil, fmt.Errorf("%w: %s 暂不支持迁移到本地存储", ErrS3MigrationBadRequest, kind)
 		}
-		return ExecuteS3Migration(kind, batchSize, dryRun, deleteSource)
+		return executeS3Migration(kind, batchSize, dryRun, deleteSource)
 	}
 	if batchSize <= 0 {
 		batchSize = 100
@@ -345,195 +366,6 @@ func verifyMigratedAttachment(ctx context.Context, manager *storage.Manager, bac
 		if !strings.EqualFold(hex.EncodeToString(sum[:]), hex.EncodeToString(attachment.Hash)) {
 			return errors.New("SHA-256 不一致")
 		}
-	}
-	return nil
-}
-
-func executeAudioStorageMigration(target StorageMigrationTarget, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
-	if batchSize <= 0 {
-		batchSize = 100
-	}
-	if batchSize > 1000 {
-		batchSize = 1000
-	}
-	targetBackend, err := storageMigrationBackend(target)
-	if err != nil {
-		return nil, nil, err
-	}
-	sourceType, err := storageMigrationSource(target)
-	if err != nil {
-		return nil, nil, err
-	}
-	manager := GetStorageManager()
-	if manager == nil {
-		return nil, nil, errors.New("存储服务未初始化")
-	}
-	if !manager.HasRemote() {
-		return nil, nil, fmt.Errorf("%w: S3 未启用或初始化失败", ErrS3MigrationS3NotReady)
-	}
-	var assets []*model.AudioAsset
-	query := applyStorageSourceFilter(model.GetDB(), sourceType)
-	if err := query.Order("created_at ASC").Limit(batchSize).Find(&assets).Error; err != nil {
-		return nil, nil, err
-	}
-	stats := &S3MigrationStats{Total: int64(len(assets)), Pending: int64(len(assets))}
-	results := make([]S3MigrationItemResult, 0, len(assets))
-	for _, asset := range assets {
-		result := migrateAudioAssetToBackend(context.Background(), model.GetDB(), manager, asset, targetBackend, dryRun, deleteSource)
-		results = append(results, result)
-		switch {
-		case result.Skipped:
-			stats.Skipped++
-		case result.Success:
-			stats.Completed++
-		default:
-			stats.Failed++
-		}
-	}
-	return stats, results, nil
-}
-
-type audioMigrationObject struct {
-	label       string
-	storageType model.StorageType
-	objectKey   string
-	size        int64
-	contentType string
-}
-
-func migrateAudioAssetToBackend(ctx context.Context, db *gorm.DB, manager *storage.Manager, asset *model.AudioAsset, target storage.BackendType, dryRun bool, deleteSource bool) S3MigrationItemResult {
-	result := S3MigrationItemResult{Kind: S3MigrationKindAudio}
-	if asset == nil {
-		result.Skipped = true
-		result.SkipReason = "nil asset"
-		return result
-	}
-	result.PrimaryID = asset.ID
-	result.RecordCount = 1 + len(asset.Variants)
-	if convertModelToBackend(asset.StorageType) == target {
-		result.Skipped = true
-		result.SkipReason = "already on target storage"
-		return result
-	}
-	if dryRun {
-		result.Success = true
-		return result
-	}
-	objects := []audioMigrationObject{{storageType: asset.StorageType, objectKey: asset.ObjectKey, size: asset.Size, contentType: guessContentTypeFromFilename(asset.ObjectKey)}}
-	for _, variant := range asset.Variants {
-		objects = append(objects, audioMigrationObject{label: variant.Label, storageType: variant.StorageType, objectKey: variant.ObjectKey, size: variant.Size, contentType: guessContentTypeFromFilename(variant.ObjectKey)})
-	}
-	targetObjects := make([]audioMigrationObject, 0, len(objects))
-	createdKeys := make([]string, 0, len(objects))
-	rollback := func() {
-		for _, key := range createdKeys {
-			_ = manager.Delete(ctx, target, key)
-		}
-	}
-	for _, object := range objects {
-		sourceBackend := convertModelToBackend(object.storageType)
-		if sourceBackend == target {
-			targetObjects = append(targetObjects, object)
-			continue
-		}
-		if strings.TrimSpace(object.objectKey) == "" {
-			rollback()
-			result.Error = "音频对象缺少 objectKey"
-			return result
-		}
-		temp, err := os.CreateTemp("", "sealchat-audio-migration-*")
-		if err != nil {
-			rollback()
-			result.Error = err.Error()
-			return result
-		}
-		tempPath := temp.Name()
-		_ = temp.Close()
-		if err := manager.DownloadToPath(ctx, sourceBackend, object.objectKey, tempPath); err != nil {
-			_ = os.Remove(tempPath)
-			rollback()
-			result.Error = fmt.Sprintf("读取音频源文件失败: %v", err)
-			return result
-		}
-		targetKey := audioMigrationObjectKey(asset.ID, object.label, object.objectKey)
-		existed, _ := manager.Exists(ctx, target, targetKey)
-		uploaded, err := manager.UploadWithBackend(ctx, target, storage.UploadInput{ObjectKey: targetKey, LocalPath: tempPath, ContentType: object.contentType})
-		_ = os.Remove(tempPath)
-		if err != nil {
-			rollback()
-			result.Error = fmt.Sprintf("写入音频目标存储失败: %v", err)
-			return result
-		}
-		if !existed {
-			createdKeys = append(createdKeys, targetKey)
-		}
-		if err := verifyStorageObjectSize(ctx, manager, target, targetKey, object.size); err != nil {
-			rollback()
-			result.Error = fmt.Sprintf("校验音频目标文件失败: %v", err)
-			return result
-		}
-		object.storageType = convertBackendToModel(target)
-		object.objectKey = uploaded.ObjectKey
-		targetObjects = append(targetObjects, object)
-	}
-	variants := make(model.JSONList[model.AudioAssetVariant], 0, len(asset.Variants))
-	for index, variant := range asset.Variants {
-		migrated := targetObjects[index+1]
-		variant.StorageType = migrated.storageType
-		variant.ObjectKey = migrated.objectKey
-		variants = append(variants, variant)
-	}
-	primary := targetObjects[0]
-	if err := db.Model(&model.AudioAsset{}).Where("id = ?", asset.ID).Updates(map[string]any{
-		"storage_type": primary.storageType, "object_key": primary.objectKey, "variants": variants,
-	}).Error; err != nil {
-		rollback()
-		result.Error = fmt.Sprintf("更新音频数据库失败: %v", err)
-		return result
-	}
-	if deleteSource {
-		for _, object := range objects {
-			if convertModelToBackend(object.storageType) != target {
-				_ = manager.Delete(ctx, convertModelToBackend(object.storageType), object.objectKey)
-			}
-		}
-	}
-	result.ObjectKey = primary.objectKey
-	result.Success = true
-	return result
-}
-
-func audioMigrationObjectKey(assetID, label, existing string) string {
-	name := strings.TrimSpace(existing)
-	if index := strings.LastIndexAny(name, "/\\"); index >= 0 {
-		name = name[index+1:]
-	}
-	if name == "" {
-		name = "audio.ogg"
-	}
-	if label != "" {
-		name = label + "-" + name
-	}
-	return storage.BuildAudioObjectKey(assetID, name)
-}
-
-func verifyStorageObjectSize(ctx context.Context, manager *storage.Manager, backend storage.BackendType, objectKey string, expected int64) error {
-	temp, err := os.CreateTemp("", "sealchat-storage-verify-*")
-	if err != nil {
-		return err
-	}
-	path := temp.Name()
-	_ = temp.Close()
-	defer os.Remove(path)
-	if err := manager.DownloadToPath(ctx, backend, objectKey, path); err != nil {
-		return err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if expected > 0 && info.Size() != expected {
-		return fmt.Errorf("大小不一致: got=%d want=%d", info.Size(), expected)
 	}
 	return nil
 }

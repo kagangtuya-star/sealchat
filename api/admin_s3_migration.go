@@ -19,6 +19,9 @@ func S3MigrationPreview(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrS3MigrationBadRequest) {
 			status = http.StatusBadRequest
 		}
+		if errors.Is(err, service.ErrStorageMigrationRestartRequired) {
+			return c.Status(http.StatusConflict).JSON(fiber.Map{"message": err.Error()})
+		}
 		return wrapErrorStatus(c, status, err, "获取迁移预览失败")
 	}
 	return c.JSON(fiber.Map{"stats": stats})
@@ -45,6 +48,9 @@ func S3MigrationExecute(c *fiber.Ctx) error {
 		status := http.StatusInternalServerError
 		if errors.Is(err, service.ErrS3MigrationBadRequest) || errors.Is(err, service.ErrS3MigrationS3NotReady) {
 			status = http.StatusBadRequest
+		}
+		if errors.Is(err, service.ErrStorageMigrationRestartRequired) || errors.Is(err, service.ErrStorageMigrationRunning) {
+			return c.Status(http.StatusConflict).JSON(fiber.Map{"message": err.Error()})
 		}
 		return wrapErrorStatus(c, status, err, "执行迁移失败")
 	}
