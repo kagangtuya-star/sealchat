@@ -104,7 +104,7 @@ const handlePasswordInput = () => {
 const userStore = useUserStore();
 
 const utils = useUtilsStore();
-const config = ref<ServerConfig | null>(null)
+const config = ref<ServerConfig | null>(utils.config)
 
 const back = async () => {
   router.back();

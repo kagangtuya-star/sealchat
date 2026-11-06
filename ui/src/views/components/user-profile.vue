@@ -64,7 +64,7 @@ const inputFileRef = ref<HTMLInputElement>()
 
 // Email binding state
 const CAPTCHA_SCENE = 'signup';
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
 const showEmailBind = ref(false);

@@ -58,7 +58,7 @@ const {
 const userStore = useUserStore();
 const quickLoginStore = useQuickLoginStore();
 const utils = useUtilsStore();
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 const quickLoginVisible = ref(false);
 const quickLoginChecking = ref(false);
 const quickLoginSubmitting = ref(false);
