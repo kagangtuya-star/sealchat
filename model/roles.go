@@ -1,12 +1,19 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"sealchat/utils"
+)
+
+const (
+	RoleGrantManual = "manual"
+	RoleGrantWorld  = "world"
+	RoleGrantBoth   = "manual+world"
 )
 
 // SystemRoleModel 系统角色表
@@ -95,6 +102,8 @@ type UserRoleMappingModel struct {
 	RoleType string `json:"roleType" gorm:"index"` // 可以是 "channel" 或 "system"
 	UserID   string `json:"userId" gorm:"index:idx_user_id;index:idx_user_role,unique"`
 	RoleID   string `json:"roleId" gorm:"index:idx_user_role,unique"`
+	// 一条有效角色关联可同时拥有手动和世界继承两种授权。
+	GrantSource string `json:"grantSource" gorm:"size:16;not null;default:manual"`
 
 	User *UserModel `json:"user" gorm:"-"`
 }
@@ -232,14 +241,13 @@ func UserRoleUpdate(userRole *UserRoleMappingModel) error {
 
 // UserRoleUnlink 删除用户角色关系
 func UserRoleUnlink(roleIds []string, userIds []string) (int64, error) {
-	// 直接删除用户角色
-	result := db.Unscoped().Where("user_id in ? AND role_id in ?", userIds, roleIds).Delete(&UserRoleMappingModel{})
-	if err := result.Error; err != nil {
-		return 0, err
-	}
-
-	// 返回受影响的行数
-	return result.RowsAffected, nil
+	var count int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		count, err = UserRoleUnlinkSourceTx(tx, roleIds, userIds, RoleGrantManual)
+		return err
+	})
+	return count, err
 }
 
 // UserRoleLink
@@ -254,6 +262,16 @@ func UserRoleLink(roleIds []string, userIds []string) (int64, error) {
 }
 
 func UserRoleLinkTx(tx *gorm.DB, roleIds []string, userIds []string) (int64, error) {
+	return UserRoleLinkSourceTx(tx, roleIds, userIds, RoleGrantManual)
+}
+
+// UserRoleLinkSourceTx 合并授权来源，不覆盖另一种来源。调用方负责事务。
+func UserRoleLinkSourceTx(tx *gorm.DB, roleIds []string, userIds []string, source string) (int64, error) {
+	other, err := otherRoleGrantSource(source)
+	if err != nil {
+		return 0, err
+	}
+	sourceColumn := clause.Column{Table: clause.CurrentTable, Name: "grant_source"}
 	for _, roleId := range roleIds {
 		roleType := "channel"
 		if !strings.HasPrefix(roleId, "ch-") {
@@ -261,18 +279,52 @@ func UserRoleLinkTx(tx *gorm.DB, roleIds []string, userIds []string) (int64, err
 		}
 		for _, uid := range userIds {
 			item := &UserRoleMappingModel{
-				UserID:   uid,
-				RoleID:   roleId,
-				RoleType: roleType,
+				UserID:      uid,
+				RoleID:      roleId,
+				RoleType:    roleType,
+				GrantSource: source,
 			}
 			item.Init()
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "user_id"}, {Name: "role_id"}},
+				DoUpdates: clause.Assignments(map[string]any{
+					"grant_source": gorm.Expr("CASE WHEN ? = ? THEN ? ELSE ? END", sourceColumn, other, RoleGrantBoth, sourceColumn),
+				}),
+			}).Create(&item).Error; err != nil {
 				return 0, err
 			}
 		}
 	}
 
 	return int64(len(userIds)), nil
+}
+
+// UserRoleUnlinkSourceTx 仅撤销指定来源；仍有其他来源时保留有效关联。
+func UserRoleUnlinkSourceTx(tx *gorm.DB, roleIds []string, userIds []string, source string) (int64, error) {
+	other, err := otherRoleGrantSource(source)
+	if err != nil {
+		return 0, err
+	}
+	removed := tx.Unscoped().Where("user_id IN ? AND role_id IN ? AND grant_source = ?", userIds, roleIds, source).
+		Delete(&UserRoleMappingModel{})
+	if removed.Error != nil {
+		return 0, removed.Error
+	}
+	retained := tx.Model(&UserRoleMappingModel{}).
+		Where("user_id IN ? AND role_id IN ? AND grant_source = ?", userIds, roleIds, RoleGrantBoth).
+		Update("grant_source", other)
+	return removed.RowsAffected + retained.RowsAffected, retained.Error
+}
+
+func otherRoleGrantSource(source string) (string, error) {
+	switch source {
+	case RoleGrantManual:
+		return RoleGrantWorld, nil
+	case RoleGrantWorld:
+		return RoleGrantManual, nil
+	default:
+		return "", fmt.Errorf("invalid role grant source: %s", source)
+	}
 }
 
 // UserRoleMappingListByUserID 获取用户所属的角色列表

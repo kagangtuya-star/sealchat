@@ -12,6 +12,7 @@ import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 import { preloadPlatformFontsFromDom } from './services/font/platformFontRegistry'
 import { installRichTextMessageActionRuntime } from './utils/richTextMessageAction'
 import { installShortcutCommandRuntime } from './features/shortcut-command/runtime'
+import { installUICustomizationRuntime } from './services/ui-customization/runtime'
 
 const installMobileViewportGuards = () => {
   if (typeof document === 'undefined') {
@@ -45,6 +46,7 @@ app.use(router)
 installSealChatBridgeRuntime({ pinia, router })
 installRichTextMessageActionRuntime({ pinia })
 installShortcutCommandRuntime({ pinia })
+installUICustomizationRuntime({ pinia, router })
 
 import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
 import ContextMenu from '@imengyu/vue3-context-menu'

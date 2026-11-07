@@ -658,7 +658,7 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 }
 
 func TestTheaterStoragePreviewFindsAllReferencedMediaAndImageMigrationExcludesIt(t *testing.T) {
-	actorID, worldID, channelID := initTheaterServiceTest(t)
+	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
 	room, err := model.TheaterRoomCreateIfMissing(worldID, "", actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -708,7 +708,7 @@ func TestTheaterStoragePreviewFindsAllReferencedMediaAndImageMigrationExcludesIt
 }
 
 func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
-	actorID, sourceWorldID, sourceChannelID := initTheaterServiceTest(t)
+	actorID, sourceWorldID, sourceChannelID := initWorldTheaterServiceTest(t)
 	storageDir := t.TempDir()
 	theaterPackageWorkerState.Lock()
 	theaterPackageWorkerState.config.StorageDir = storageDir
@@ -1472,9 +1472,19 @@ func TestCCFOLIAAssetExtensionAllowsSafeJSONFileNames(t *testing.T) {
 }
 
 func TestConvertCCFOLIADemoAutoCanvasAndCharacters(t *testing.T) {
-	backup, err := loadCCFOLIABackup(filepath.Join("..", "docs", "ccf-demo2"))
-	if err != nil {
-		t.Fatal(err)
+	iconURL := "character.png"
+	backup := ccfoliaBackup{
+		Meta:      ccfoliaMeta{Version: ccfoliaBackupVersion},
+		Resources: map[string]ccfoliaResourceDescriptor{"character.png": {Type: "image/png"}},
+		Entities: ccfoliaEntities{
+			Room: ccfoliaRoom{FieldWidth: 0, FieldHeight: 0, GridSize: 10},
+			Scenes: map[string]ccfoliaScene{
+				"scene": {Name: "Auto canvas", FieldWidth: 0, FieldHeight: 0, GridSize: 10},
+			},
+			Characters: map[string]ccfoliaCharacter{
+				"zuEOpg8nnxygzlVEXe6k": {Name: "调查员棋子", X: -615, Y: -59, Width: 13, Height: 13, Active: true, IconURL: &iconURL},
+			},
+		},
 	}
 	targets := make(map[string]ccfoliaAssetTarget, len(backup.Resources))
 	for ref := range backup.Resources {

@@ -6,6 +6,7 @@ import type { AdminUserDetailStats, ServerConfig, UserInfo } from '@/types';
 import { Refresh, Search, UserPlus } from '@vicons/tabler';
 import { cloneDeep } from 'lodash-es';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
+import type { DataTableColumns } from 'naive-ui';
 import { computed, nextTick } from 'vue';
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -258,7 +259,7 @@ const formatTime = (timeStr: string) => {
   });
 };
 
-const columns = ref([
+const columns = ref<DataTableColumns<UserInfo>>([
   {
     title: '用户名',
     key: 'username',
@@ -342,6 +343,7 @@ const columns = ref([
   },
   {
     title: '操作',
+    key: 'actions',
     width: 220,
     render: (row: UserInfo) => {
       const isDisabled = row.disabled;

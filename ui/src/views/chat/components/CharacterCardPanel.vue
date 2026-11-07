@@ -2,7 +2,7 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, NColorPicker, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Eye, Upload, Download, X, Refresh, ChevronDown, ChevronRight, Settings, GripVertical } from '@vicons/tabler';
-import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard, type OnlineCharacterCardItem } from '@/stores/characterCard';
+import { CHARACTER_CARD_NAME_MAX_LENGTH, validateCharacterCardName, characterApiUnsupportedText, useCharacterCardStore, type CharacterCard, type OnlineCharacterCardItem } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
 import { useCharacterCardAvatarStore } from '@/stores/characterCardAvatar';
@@ -20,6 +20,7 @@ import {
   AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_BADGE_TEMPLATE_PRESETS,
   CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS,
+  CHARACTER_SNAPSHOT_TEMPLATE_PRESET_LABELS,
   getCharacterSnapshotTemplatePreset,
 } from '@/utils/characterSnapshotTemplatePresets';
 import {
@@ -35,6 +36,12 @@ import AvatarEditor from '@/components/AvatarEditor.vue';
 import type { ChannelIdentity } from '@/types';
 import type { MessageVisibilityScope } from '@/stores/displayAvatarVisibility';
 import { openCharacterSheetRuntime } from './character-sheet/openCharacterSheetRuntime';
+import CharacterSheetIntegrationNotice from './CharacterSheetIntegrationNotice.vue';
+import {
+  CHARACTER_SHEET_TYPES,
+  getCharacterSheetTypeMeta,
+  parseCharacterSheetTemplateManifest,
+} from '@/utils/characterSheetType';
 
 const props = defineProps<{
   visible: boolean;
@@ -947,7 +954,7 @@ const applyAvatarTemplatePreset = async (preset: keyof typeof overlayTemplatePre
       ? CHARACTER_SNAPSHOT_OVERLAY_TEMPLATE_PRESETS
       : AVATAR_WORLD_STATE_OVERLAY_TEMPLATE_PRESETS;
     await avatarState.updateSettings(channelId, { template: { source, json: JSON.stringify(presets[preset]) } });
-    message.success(`头像点击卡片已应用 ${preset === 'coc' ? 'COC' : '忍神'} 模板`);
+    message.success(`头像点击卡片已应用 ${CHARACTER_SNAPSHOT_TEMPLATE_PRESET_LABELS[preset]} 模板`);
   } catch (error: any) {
     message.error(error?.response?.err || error?.message || '应用模板失败');
   } finally {
@@ -994,7 +1001,7 @@ const applySnapshotTemplatePreset = async (target: 'channel' | 'personal', prese
 const applyDefaultSnapshotTemplatePreset = async (preset: keyof typeof overlayTemplatePresets) => {
   try {
     await applySnapshotTemplatePreset(canSyncBadgeTemplate.value ? 'channel' : 'personal', preset);
-    message.success(`已启用 ${preset === 'coc' ? 'COC' : '忍神'} 默认人物卡模板`);
+    message.success(`已启用 ${CHARACTER_SNAPSHOT_TEMPLATE_PRESET_LABELS[preset]} 默认人物卡模板`);
   } catch (e: any) {
     message.error(e?.response?.err || e?.message || '默认模板启用失败');
   }
@@ -1394,7 +1401,7 @@ const effectiveBadgeTemplateInfo = computed(() => {
     personalTemplate: preference?.badgeTemplateMode === 'custom' ? preference.badgeTemplate : '',
     channelTemplate: settings?.badgeTemplate,
     rulePresetTemplate: preset ? badgeTemplatePresets[preset] : '',
-    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+    rulePresetName: preset ? CHARACTER_SNAPSHOT_TEMPLATE_PRESET_LABELS[preset] : '',
   });
 });
 
@@ -1417,7 +1424,7 @@ const effectiveOverlayTemplateInfo = computed(() => {
       : '',
     channelOff: settings?.theaterOverlayTemplateMode === 'off',
     rulePresetTemplate: preset ? JSON.stringify(overlayTemplatePresets[preset], null, 2) : '',
-    rulePresetName: preset === 'coc' ? 'COC' : preset === 'shinobigami' ? '忍神' : '',
+    rulePresetName: preset ? CHARACTER_SNAPSHOT_TEMPLATE_PRESET_LABELS[preset] : '',
     systemTemplate: JSON.stringify({ version: 1, preferredColumns: 2, items: [] }, null, 2),
   });
 });
@@ -1488,19 +1495,9 @@ const cardSwitchingId = ref('');
 
 const setTemplateSheetType = (value: string) => {
   const normalized = (value || '').trim();
-  const lower = normalized.toLowerCase();
-  if (lower === 'coc7' || lower === 'coc') {
-    templateSheetTypePreset.value = 'coc7';
-    templateSheetTypeCustom.value = '';
-    return;
-  }
-  if (lower === 'dnd5e' || lower === 'dnd5' || lower === 'dnd') {
-    templateSheetTypePreset.value = 'dnd5e';
-    templateSheetTypeCustom.value = '';
-    return;
-  }
-  if (lower === 'shinobigami' || normalized === '忍神') {
-    templateSheetTypePreset.value = 'shinobigami';
+  const meta = getCharacterSheetTypeMeta(normalized);
+  if (meta) {
+    templateSheetTypePreset.value = meta.key;
     templateSheetTypeCustom.value = '';
     return;
   }
@@ -1545,7 +1542,10 @@ const handleTemplateHtmlUpload = async (event: Event) => {
   input.value = '';
   if (!file) return;
   try {
-    templateContent.value = await readHtmlFile(file);
+    const content = await readHtmlFile(file);
+    templateContent.value = content;
+    const manifest = parseCharacterSheetTemplateManifest(content);
+    if (manifest?.sheetType) setTemplateSheetType(manifest.sheetType);
     message.success('HTML 文件已读取');
   } catch (error: any) {
     message.error(error?.message || '读取 HTML 文件失败');
@@ -1715,21 +1715,9 @@ const creating = ref(false);
 const DETACHED_TEMPLATE_VALUE = '__detached__';
 
 const sheetTypeOptions = [
-  { label: 'COC7', value: 'coc7' },
-  { label: 'DND5', value: 'dnd5e' },
-  { label: '忍神', value: 'shinobigami' },
+  ...CHARACTER_SHEET_TYPES.map(meta => ({ label: meta.label, value: meta.key })),
   { label: '自定义', value: 'custom' },
 ];
-
-const builtinSheetTypeAliases = new Set([
-  'coc7',
-  'coc',
-  'dnd5e',
-  'dnd5',
-  'dnd',
-  'shinobigami',
-  '忍神',
-]);
 
 const newCardCustomSheetTypeOptions = computed(() => {
   const seen = new Set<string>();
@@ -1738,7 +1726,7 @@ const newCardCustomSheetTypeOptions = computed(() => {
     .map(item => String(item.sheetType || '').trim())
     .filter(sheetType => {
       const key = sheetType.toLowerCase();
-      if (!sheetType || builtinSheetTypeAliases.has(key) || seen.has(key)) return false;
+      if (!sheetType || getCharacterSheetTypeMeta(sheetType) || seen.has(key)) return false;
       seen.add(key);
       return true;
     })
@@ -1761,18 +1749,9 @@ const resolveSheetType = (preset: string, custom: string) => {
 const setNewCardSheetType = (value: string) => {
   const normalized = (value || '').trim();
   const lower = normalized.toLowerCase();
-  if (lower === 'coc7' || lower === 'coc') {
-    newCardSheetTypePreset.value = 'coc7';
-    newCardSheetTypeCustom.value = '';
-    return;
-  }
-  if (lower === 'dnd5e' || lower === 'dnd5' || lower === 'dnd') {
-    newCardSheetTypePreset.value = 'dnd5e';
-    newCardSheetTypeCustom.value = '';
-    return;
-  }
-  if (lower === 'shinobigami' || normalized === '忍神') {
-    newCardSheetTypePreset.value = 'shinobigami';
+  const meta = getCharacterSheetTypeMeta(normalized);
+  if (meta) {
+    newCardSheetTypePreset.value = meta.key;
     newCardSheetTypeCustom.value = '';
     return;
   }
@@ -1791,6 +1770,18 @@ const setNewCardSheetType = (value: string) => {
 const newCardSheetType = computed(() => resolveSheetType(
   newCardSheetTypePreset.value,
   newCardSheetTypeCustom.value,
+));
+
+const selectedNewCardTemplate = computed(() => (
+  newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE
+    ? templateStore.getTemplateById(newCardTemplateId.value)
+    : null
+));
+const newCardTemplateHtml = computed(() => (
+  selectedNewCardTemplate.value?.content || sheetStore.getDefaultTemplate(newCardSheetType.value)
+));
+const newCardTemplateAutoCheck = computed(() => (
+  templateStore.isBuiltinTemplateContent(newCardTemplateHtml.value)
 ));
 
 const newCardTemplateOptions = computed(() => [
@@ -1840,7 +1831,8 @@ const syncNewCardTemplateForSheetType = () => {
 
 const handleNewCardTemplateChange = (templateId: string | number | null) => {
   const selectedTemplate = templateStore.getTemplateById(String(templateId || '').trim());
-  const sheetType = selectedTemplate?.sheetType?.trim();
+  const sheetType = selectedTemplate?.sheetType?.trim()
+    || parseCharacterSheetTemplateManifest(selectedTemplate?.content)?.sheetType;
   if (!sheetType) return;
   setNewCardSheetType(sheetType);
 };
@@ -1864,15 +1856,18 @@ watch(newCardSheetType, () => {
 
 const handleCreateCard = async () => {
   if (!ensureCharacterApiEnabled()) return;
-  if (!newCardName.value.trim()) {
-    message.warning('请输入角色名称');
+  const nameError = validateCharacterCardName(newCardName.value);
+  if (nameError) {
+    message.warning(nameError);
     return;
   }
   const selectedTemplate = newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE
     ? templateStore.getTemplateById(newCardTemplateId.value)
     : null;
-  if (selectedTemplate?.sheetType?.trim()) {
-    setNewCardSheetType(selectedTemplate.sheetType);
+  const selectedTemplateSheetType = selectedTemplate?.sheetType?.trim()
+    || parseCharacterSheetTemplateManifest(selectedTemplate?.content)?.sheetType;
+  if (selectedTemplateSheetType) {
+    setNewCardSheetType(selectedTemplateSheetType);
   }
   const sheetType = newCardSheetType.value;
   if (!sheetType) {
@@ -1890,6 +1885,7 @@ const handleCreateCard = async () => {
     if (!created?.id) {
       throw new Error('人物卡创建失败');
     }
+    const createdCardId = created.id;
     const setupTasks: Array<{ label: string; task: Promise<unknown> }> = [];
     if (newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE) {
       setupTasks.push({
@@ -1925,7 +1921,7 @@ const handleCreateCard = async () => {
           });
           return avatarStore.upsertBinding({
             channelId: resolvedChannelId.value,
-            externalCardId: created.id,
+            externalCardId: createdCardId,
             cardName: created.name || newCardName.value.trim(),
             sheetType: created.sheetType || sheetType,
             avatarAttachmentId: uploadResult.attachmentId,
@@ -1948,6 +1944,45 @@ const handleCreateCard = async () => {
     message.error(e?.response?.data?.error || e?.message || '创建失败');
   } finally {
     creating.value = false;
+  }
+};
+
+const renameTarget = ref<{ channelId: string; cardId: string } | null>(null);
+const renameCardName = ref('');
+const renaming = ref(false);
+const renameModalVisible = ref(false);
+
+const canRenameCard = (card: CharacterCard) => cardStore.canRenameActiveCard(resolvedChannelId.value, card.id);
+
+const openRenameModal = (card: CharacterCard) => {
+  if (!canRenameCard(card)) return;
+  renameTarget.value = { channelId: resolvedChannelId.value, cardId: card.id };
+  renameCardName.value = card.name;
+  renameModalVisible.value = true;
+};
+
+const handleRenameCard = async () => {
+  if (renaming.value) return false;
+  const target = renameTarget.value;
+  if (!target || target.channelId !== resolvedChannelId.value) {
+    message.warning('当前频道已变化，请重新选择人物卡');
+    return false;
+  }
+  const nameError = validateCharacterCardName(renameCardName.value);
+  if (nameError) {
+    message.warning(nameError);
+    return false;
+  }
+  renaming.value = true;
+  try {
+    await cardStore.renameActiveCard(target.channelId, target.cardId, renameCardName.value);
+    renameModalVisible.value = false;
+    message.success('重命名成功');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.response?.err || e?.message || '重命名失败');
+    return false;
+  } finally {
+    renaming.value = false;
   }
 };
 
@@ -2327,6 +2362,7 @@ defineExpose({ openCardById });
     :show="visible"
     placement="right"
     :width="drawerWidth"
+    :trap-focus="!renameModalVisible"
     @update:show="handleClose"
   >
     <n-drawer-content closable>
@@ -2539,6 +2575,8 @@ defineExpose({ openCardById });
               <p class="settings-title">应用预设徽章模板</p>
               <div class="overlay-template-presets">
                 <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('daggerheart')">匕首之心</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('ta')">三角机构</n-button>
                 <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('coc')">COC</n-button>
               </div>
             </div>
@@ -2666,6 +2704,8 @@ defineExpose({ openCardById });
               <p class="settings-title">启用默认模板</p>
               <div class="overlay-template-presets">
                 <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('daggerheart')">匕首之心</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('ta')">三角机构</n-button>
                 <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultSnapshotTemplatePreset('coc')">COC</n-button>
               </div>
             </div>
@@ -2731,6 +2771,8 @@ defineExpose({ openCardById });
               <p class="settings-title">应用到当前来源</p>
               <div class="overlay-template-presets">
                 <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('daggerheart')">匕首之心</n-button>
+                <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('ta')">三角机构</n-button>
                 <n-button size="tiny" :disabled="!canSyncBadgeTemplate || avatarSettingsSaving" @click="applyAvatarTemplatePreset('coc')">COC</n-button>
               </div>
             </div>
@@ -2930,6 +2972,16 @@ defineExpose({ openCardById });
                 <template #icon><n-icon :component="Link" /></template>
                 绑定
               </n-button>
+              <n-button
+                v-if="canRenameCard(card)"
+                secondary
+                size="tiny"
+                title="重命名"
+                @click="openRenameModal(card)"
+              >
+                <template #icon><n-icon :component="Edit" /></template>
+                重命名
+              </n-button>
               <n-popconfirm @positive-click="handleDeleteCard(card)">
                 <template #trigger>
                   <n-button
@@ -2971,6 +3023,19 @@ defineExpose({ openCardById });
     @change="handleAvatarFileChange"
   />
 
+  <n-modal
+    v-model:show="renameModalVisible"
+    preset="dialog"
+    :show-icon="false"
+    title="重命名人物卡"
+    positive-text="重命名"
+    :positive-button-props="{ loading: renaming, disabled: renaming }"
+    negative-text="取消"
+    @positive-click="handleRenameCard"
+  >
+    <n-input v-model:value="renameCardName" :maxlength="CHARACTER_CARD_NAME_MAX_LENGTH" placeholder="请输入角色名称" :disabled="renaming" />
+  </n-modal>
+
   <!-- Create Modal -->
   <n-modal
     v-model:show="createModalVisible"
@@ -2984,7 +3049,7 @@ defineExpose({ openCardById });
   >
     <n-form label-width="80">
       <n-form-item label="角色名称">
-        <n-input v-model:value="newCardName" maxlength="32" placeholder="请输入角色名称" />
+        <n-input v-model:value="newCardName" :maxlength="CHARACTER_CARD_NAME_MAX_LENGTH" placeholder="请输入角色名称" />
       </n-form-item>
       <n-form-item label="卡片类型">
         <n-select v-model:value="newCardSheetTypePreset" :options="newCardSheetTypeOptions" :disabled="characterApiDisabled" />
@@ -3005,6 +3070,13 @@ defineExpose({ openCardById });
           @update:value="handleNewCardTemplateChange"
         />
       </n-form-item>
+      <CharacterSheetIntegrationNotice
+        v-if="createModalVisible"
+        :sheet-type="newCardSheetType"
+        :template-html="newCardTemplateHtml"
+        :channel-id="resolvedChannelId"
+        :auto-check="newCardTemplateAutoCheck"
+      />
       <n-form-item label="人物卡头像">
         <div class="new-card-avatar-picker">
           <n-button secondary :disabled="characterApiDisabled || creating" @click="handleNewCardAvatarTrigger">

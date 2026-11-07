@@ -216,8 +216,9 @@ const startEffectListResize = (event: PointerEvent) => {
 }
 
 const resizeEffectList = (event: PointerEvent) => {
-  if (!event.currentTarget || !event.currentTarget.hasPointerCapture(event.pointerId)) return
-  const panel = (event.currentTarget as HTMLElement).closest<HTMLElement>('.theater-effect-panel-content')
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement) || !target.hasPointerCapture(event.pointerId)) return
+  const panel = target.closest<HTMLElement>('.theater-effect-panel-content')
   const maxHeight = Math.max(120, (panel?.clientHeight || 420) - 180)
   effectListHeight.value = Math.min(maxHeight, Math.max(120, effectListResizeStartHeight + event.clientY - effectListResizeStartY))
 }

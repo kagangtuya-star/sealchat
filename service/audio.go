@@ -604,18 +604,27 @@ func (svc *audioService) scheduleTranscode(assetID, sourceKey string) {
 }
 
 func (svc *audioService) transcodeAsset(assetID, sourceKey string) error {
+	var snapshot model.AudioAsset
+	db := model.GetDB()
+	if err := db.Where("id = ? AND deleted_at IS NULL", assetID).First(&snapshot).Error; err != nil {
+		return err
+	}
+	if snapshot.TranscodeStatus != model.AudioTranscodePending ||
+		convertModelToBackend(snapshot.StorageType) != storage.BackendLocal || snapshot.ObjectKey != sourceKey {
+		return errors.New("音频状态已变化，取消转码")
+	}
 	full, err := svc.storage.fullPath(sourceKey)
 	if err != nil {
 		return err
 	}
 	result, err := svc.generateVariants(full, assetID, "")
 	if err != nil {
-		return model.GetDB().Model(&model.AudioAsset{}).
-			Where("id = ?", assetID).
-			Updates(map[string]interface{}{
-				"transcode_status": model.AudioTranscodeFailed,
-				"updated_at":       time.Now(),
-			}).Error
+		if updateErr := commitAudioStorageMigration(db, &snapshot, map[string]any{
+			"transcode_status": model.AudioTranscodeFailed, "updated_at": time.Now(),
+		}); updateErr != nil {
+			return updateErr
+		}
+		return err
 	}
 	updates := map[string]interface{}{
 		"object_key":       result.Primary.ObjectKey,
@@ -626,10 +635,10 @@ func (svc *audioService) transcodeAsset(assetID, sourceKey string) error {
 		"transcode_status": result.TranscodeStatus,
 		"updated_at":       time.Now(),
 	}
-	if err := model.GetDB().Model(&model.AudioAsset{}).Where("id = ?", assetID).Updates(updates).Error; err != nil {
+	if err := commitAudioStorageMigration(db, &snapshot, updates); err != nil {
 		return err
 	}
-	if result.TranscodeStatus == model.AudioTranscodeReady {
+	if result.TranscodeStatus == model.AudioTranscodeReady && result.Primary.ObjectKey != sourceKey {
 		svc.removeAssetObject(model.StorageLocal, sourceKey)
 	}
 	return nil

@@ -161,6 +161,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&MessageArchiveLogModel{})
 	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
+	if err := db.AutoMigrate(&MessageFavoriteModel{}, &MessageFavoriteNoteModel{}, &MessageFavoriteTagModel{}, &MessageFavoriteTagLinkModel{}); err != nil {
+		panic(fmt.Sprintf("初始化消息收藏数据表失败: %v", err))
+	}
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
 	if err := db.AutoMigrate(&PersonalAPIKeyModel{}); err != nil {
@@ -240,6 +243,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&WorldClueModel{}, &WorldClueAccessModel{}, &WorldClueRosterMemberModel{}, &WorldClueFolderModel{}, &WorldClueUserStateModel{}, &WorldClueEditLockModel{})
 	db.AutoMigrate(&WorldClueBoardModel{})
 	db.AutoMigrate(&ShortcutRuleModel{})
+	if err := db.AutoMigrate(&UICustomizationPackageModel{}, &WorldUICustomizationPlatformRefModel{}); err != nil {
+		panic(fmt.Sprintf("migrate UI customization packages: %v", err))
+	}
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&CaptchaCapChallengeModel{}, &CaptchaCapTokenModel{})
@@ -276,6 +282,13 @@ func DBInit(cfg *utils.AppConfig) {
 
 	if err := RunSchemaMigration(db, "world_data_backfill_v1", BackfillWorldData); err != nil {
 		log.Printf("初始化世界数据失败: %v", err)
+	}
+	if err := migrateRoleGrantSources(db); err != nil {
+		// 未完成来源迁移时不能接受权限写入，否则可能把继承权限误当成手动授权。
+		panic(fmt.Errorf("迁移角色授权来源失败: %w", err))
+	}
+	if err := migratePublicChannelMemberExplicitCompatibility(db); err != nil {
+		panic(fmt.Errorf("迁移公开频道历史成员语义失败: %w", err))
 	}
 	if err := RunSchemaMigration(db, "bot_kind_backfill_v1", BackfillBotKinds); err != nil {
 		log.Printf("回填 bot_kind 失败: %v", err)

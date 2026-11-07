@@ -27,6 +27,8 @@ type PlatformThemeConfig struct {
 type ThemeManagementConfig struct {
 	PlatformThemes               []PlatformThemeConfig       `json:"platformThemes" yaml:"platformThemes"`
 	DefaultPlatformThemeID       string                      `json:"defaultPlatformThemeId" yaml:"defaultPlatformThemeId"`
+	DefaultPlatformDayThemeID    string                      `json:"defaultPlatformDayThemeId" yaml:"defaultPlatformDayThemeId"`     // 为空时回退到 DefaultPlatformThemeID
+	DefaultPlatformNightThemeID  string                      `json:"defaultPlatformNightThemeId" yaml:"defaultPlatformNightThemeId"` // 为空时回退到 DefaultPlatformThemeID
 	PlatformDice3DStyles         []PlatformDice3DStyleConfig `json:"platformDice3DStyles" yaml:"platformDice3DStyles"`
 	DefaultPlatformDice3DStyleID string                      `json:"defaultPlatformDice3DStyleId" yaml:"defaultPlatformDice3DStyleId"`
 }
@@ -103,21 +105,28 @@ func NormalizeThemeManagementConfig(cfg ThemeManagementConfig) ThemeManagementCo
 		result.PlatformThemes = append(result.PlatformThemes, next)
 	}
 
-	defaultID := strings.TrimSpace(cfg.DefaultPlatformThemeID)
-	if defaultID != "" {
-		for _, item := range result.PlatformThemes {
-			if item.ID == defaultID {
-				result.DefaultPlatformThemeID = defaultID
-				break
-			}
-		}
-	}
+	result.DefaultPlatformThemeID = pickExistingPlatformThemeID(result.PlatformThemes, cfg.DefaultPlatformThemeID)
+	result.DefaultPlatformDayThemeID = pickExistingPlatformThemeID(result.PlatformThemes, cfg.DefaultPlatformDayThemeID)
+	result.DefaultPlatformNightThemeID = pickExistingPlatformThemeID(result.PlatformThemes, cfg.DefaultPlatformNightThemeID)
 	diceStyleDefaultID := strings.TrimSpace(cfg.DefaultPlatformDice3DStyleID)
 	if _, exists := seenDiceStyleIDs[diceStyleDefaultID]; exists {
 		result.DefaultPlatformDice3DStyleID = diceStyleDefaultID
 	}
 
 	return result
+}
+
+func pickExistingPlatformThemeID(themes []PlatformThemeConfig, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	for _, item := range themes {
+		if item.ID == id {
+			return id
+		}
+	}
+	return ""
 }
 
 func ValidateThemeManagementConfig(cfg ThemeManagementConfig) error {
@@ -184,8 +193,11 @@ func ValidateThemeManagementConfig(cfg ThemeManagementConfig) error {
 		}
 	}
 
-	defaultID := strings.TrimSpace(cfg.DefaultPlatformThemeID)
-	if defaultID != "" {
+	for _, defaultID := range []string{cfg.DefaultPlatformThemeID, cfg.DefaultPlatformDayThemeID, cfg.DefaultPlatformNightThemeID} {
+		defaultID = strings.TrimSpace(defaultID)
+		if defaultID == "" {
+			continue
+		}
 		if _, exists := seenIDs[defaultID]; !exists {
 			return fmt.Errorf("平台默认主题不存在: %s", defaultID)
 		}

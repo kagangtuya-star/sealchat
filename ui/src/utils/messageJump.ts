@@ -6,7 +6,7 @@ interface MessageJumpChat {
   currentWorldId?: string | null
   curChannel?: { id?: string | null } | null
   switchWorld: (worldId: string, options?: { force?: boolean }) => Promise<unknown>
-  channelSwitchTo: (channelId: string) => Promise<boolean>
+  channelSwitchTo: (channelId: string) => Promise<boolean | void>
 }
 
 export async function navigateToMessageTarget(
@@ -30,7 +30,7 @@ export async function navigateToMessageTarget(
 
   if (String(chat.curChannel?.id || '').trim() !== channelId) {
     const switched = await chat.channelSwitchTo(channelId)
-    if (!switched) {
+    if (switched === false || String(chat.curChannel?.id || '').trim() !== channelId) {
       throw new Error('无法访问该频道')
     }
   }

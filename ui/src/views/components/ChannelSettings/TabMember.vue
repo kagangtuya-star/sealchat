@@ -47,14 +47,13 @@ const dataLoad = async () => {
   return resp.data;
 };
 
-const dataLoadMember = async () => {
-  if (!props.channel?.id) return undefined;
+const loadManagedMembers = async (channelId: string) => {
   const pageSize = 100;
   let page = 1;
   let total = 0;
   const aggregated: UserRoleModel[] = [];
   while (true) {
-    const resp = await chat.channelMemberList(props.channel.id, { page, pageSize });
+    const resp = await chat.channelMemberList(channelId, { page, pageSize });
     const items = resp.data?.items || [];
     aggregated.push(...items);
     total = resp.data?.total ?? aggregated.length;
@@ -63,16 +62,23 @@ const dataLoadMember = async () => {
     }
     page += 1;
   }
+  // world-only member 只提供公开频道继承权限，不代表显式参团；其他继承角色仍正常展示。
+  const items = aggregated.filter(item => !(item.grantSource === 'world' && item.roleId.endsWith('-member')));
   return {
-    items: aggregated,
-    total,
+    items,
+    total: items.length,
     page: 1,
     pageSize: aggregated.length || pageSize,
   };
 };
 
+const dataLoadMember = async () => {
+  if (!props.channel?.id) return undefined;
+  return loadManagedMembers(props.channel.id);
+};
+
 const { data: roleList } = useRequest(dataLoad, {});
-const { data: memberList, run: doMemberReload } = useRequest(dataLoadMember, {});
+const { data: memberList, runAsync: doMemberReload } = useRequest(dataLoadMember, {});
 
 const filterMembersByChannelId = (roleId: string) => {
   if (!memberList.value || !memberList.value.items) {
@@ -283,9 +289,13 @@ const removeUserRole = async (userId: string | undefined, roleId: string) => {
 
   if (await dialogAskConfirm(dialog, '确认移除', '您确定要移除此项角色关联吗？')) {
     try {
-      await chat.userRoleUnlink(roleId, [userId]);
-      await doMemberReload();
+      const result = await chat.userRoleUnlink(roleId, [userId]);
+      const reloaded = await doMemberReload();
       await refreshRoleCandidatesIfNeeded(roleId);
+      if (!result?.removedCount || !reloaded || reloaded.items.some(item => item.roleId === roleId && item.userId === userId)) {
+        message.warning('成员未被移除，请刷新后重试');
+        return;
+      }
       message.success('成员已成功移除');
     } catch (error) {
       console.error('移除成员失败:', error);
@@ -298,6 +308,11 @@ const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst:
   const toRemove = oldLst.filter(id => !lst.includes(id));
   const toAdd = lst.filter(id => !oldLst.includes(id));
 
+  if (!toAdd.length && !toRemove.length) {
+    message.info('成员未变化，无需更新');
+    return true;
+  }
+
   if (role.id.endsWith('-owner')) {
     const selfId = currentUserId.value;
     if (selfId && toRemove.includes(selfId)) {
@@ -308,9 +323,15 @@ const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst:
 
   try {
     if (toAdd.length) await chat.userRoleLink(role.id, toAdd);
-    if (toRemove.length) await chat.userRoleUnlink(role.id, toRemove);
-    await doMemberReload();
+    const removed = toRemove.length ? await chat.userRoleUnlink(role.id, toRemove) : null;
+    const reloaded = await doMemberReload();
     await refreshRoleCandidatesIfNeeded(role.id);
+    const actualIds = new Set(reloaded?.items.filter(item => item.roleId === role.id).map(item => item.userId));
+    if (!reloaded || (toRemove.length && removed?.removedCount !== toRemove.length)
+      || toAdd.some(id => !actualIds.has(id)) || toRemove.some(id => actualIds.has(id))) {
+      message.warning('成员未按预期更新，请刷新后重试');
+      return false;
+    }
     message.success('成员已成功更新');
     return true;
   } catch (error) {
@@ -384,18 +405,13 @@ const buildRoleSuffixMap = (roles: ChannelRoleModel[]) => {
   return roleMap;
 };
 
-const buildRoleMemberMap = (memberMap: Record<string, string[]>) => {
+const buildRoleMemberMap = (items: UserRoleModel[]) => {
   const roleMemberMap: Record<string, string[]> = {};
-  for (const [userId, roleIds] of Object.entries(memberMap)) {
-    for (const roleId of roleIds || []) {
-      if (!roleId) {
-        continue;
-      }
-      if (!roleMemberMap[roleId]) {
-        roleMemberMap[roleId] = [];
-      }
-      roleMemberMap[roleId].push(userId);
+  for (const { roleId, userId } of items) {
+    if (!roleId) {
+      continue;
     }
+    (roleMemberMap[roleId] ??= []).push(userId);
   }
   return roleMemberMap;
 };
@@ -463,12 +479,12 @@ const handleSyncMembers = async () => {
     const sourceRoleMap = buildRoleSuffixMap(sourceRoles);
     const targetRoleMap = buildRoleSuffixMap(targetRoles);
 
-    const [sourceMemberMap, targetMemberMap] = await Promise.all([
-      chat.loadChannelMemberRoles(syncSourceChannelId.value, true),
-      chat.loadChannelMemberRoles(props.channel.id, true),
+    const [sourceMembers, targetMembers] = await Promise.all([
+      loadManagedMembers(syncSourceChannelId.value),
+      loadManagedMembers(props.channel.id),
     ]);
-    const sourceRoleMembers = buildRoleMemberMap(sourceMemberMap);
-    const targetRoleMembers = buildRoleMemberMap(targetMemberMap);
+    const sourceRoleMembers = buildRoleMemberMap(sourceMembers.items);
+    const targetRoleMembers = buildRoleMemberMap(targetMembers.items);
 
     const operations: Array<{ roleId: string; add: string[]; remove: string[] }> = [];
     let totalAdd = 0;
@@ -515,10 +531,19 @@ const handleSyncMembers = async () => {
         await chat.userRoleLink(op.roleId, op.add);
       }
       if (op.remove.length) {
-        await chat.userRoleUnlink(op.roleId, op.remove);
+        const result = await chat.userRoleUnlink(op.roleId, op.remove);
+        if (result?.removedCount !== op.remove.length) {
+          throw new Error('同步移除数量不符合预期');
+        }
       }
     }
-    await doMemberReload();
+    const reloaded = await doMemberReload();
+    if (!reloaded || operations.some(op => {
+      const ids = new Set(reloaded.items.filter(item => item.roleId === op.roleId).map(item => item.userId));
+      return op.add.some(id => !ids.has(id)) || op.remove.some(id => ids.has(id));
+    })) {
+      throw new Error('同步后的成员状态不符合预期');
+    }
     message.success('同步完成');
     if (missingSuffixes.length) {
       message.info(`部分默认角色未找到，已跳过：${missingSuffixes.join('、')}`);

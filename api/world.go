@@ -163,6 +163,7 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 		Description               string   `json:"description"`
 		Visibility                string   `json:"visibility"`
 		Avatar                    string   `json:"avatar"`
+		CoverAttachmentID         string   `json:"coverAttachmentId"`
 		ChannelDefaultDiceMode    string   `json:"channelDefaultDiceMode"`
 		ChannelDefaultBotID       string   `json:"channelDefaultBotId"`
 		ChannelDefaultBotIDs      []string `json:"channelDefaultBotIds"`
@@ -176,6 +177,7 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 		Description:               body.Description,
 		Visibility:                body.Visibility,
 		Avatar:                    body.Avatar,
+		CoverAttachmentID:         body.CoverAttachmentID,
 		ChannelDefaultDiceMode:    body.ChannelDefaultDiceMode,
 		ChannelDefaultBotID:       body.ChannelDefaultBotID,
 		ChannelDefaultBotIDs:      body.ChannelDefaultBotIDs,
@@ -257,6 +259,8 @@ func WorldDetail(c *fiber.Ctx) error {
 		"allowManageOtherUserChannelIdentities": world.AllowManageOtherUserChannelIdentities,
 		"allowMemberEditKeywords":               world.AllowMemberEditKeywords,
 		"allowMemberAccessLogLayout":            world.AllowMemberAccessLogLayout,
+		"exportRespectMessageVisibility":        world.ExportRespectMessageVisibility,
+		"allowMemberExportMessages":             world.AllowMemberExportMessages,
 		"strictWhisperPrivacy":                  world.StrictWhisperPrivacy,
 		"ownerNickname":                         ownerNickname,
 		"editNoticeAcked":                       editNoticeAcked,
@@ -304,6 +308,7 @@ func WorldPublicObserverResolveHandler(c *fiber.Ctx) error {
 			"id":                world.ID,
 			"name":              world.Name,
 			"coverAttachmentId": world.CoverAttachmentID,
+			"actionRibbonLayout": world.GetActionRibbonLayout(),
 		},
 	})
 }
@@ -679,6 +684,7 @@ func WorldMemberRoleHandler(c *fiber.Ctx) error {
 		}
 	}
 	invalidateWorldNoticeVisibilityForUser(targetUserID, worldID)
+	broadcastChannelTreeInvalidatedByWorldID(user, worldID, "world-member-role")
 	return c.JSON(fiber.Map{"message": "已更新"})
 }
 

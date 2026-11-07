@@ -6,14 +6,15 @@ import { createMessageActionExtension } from './tiptap-message-action';
 
 type TiptapCoreModule = typeof import('@tiptap/core');
 type TiptapVueModule = typeof import('@tiptap/vue-3');
+type TiptapMenusModule = typeof import('@tiptap/vue-3/menus');
 
 export interface TipTapBundle {
-  Editor: TiptapCoreModule['Editor'];
+  Editor: TiptapVueModule['Editor'];
   Node: TiptapCoreModule['Node'];
   Extension: TiptapCoreModule['Extension'];
   mergeAttributes: TiptapCoreModule['mergeAttributes'];
   EditorContent: TiptapVueModule['EditorContent'];
-  BubbleMenu: TiptapVueModule['BubbleMenu'];
+  BubbleMenu: TiptapMenusModule['BubbleMenu'];
   StarterKit: any;
   TextStyle: any;
   Color: any;
@@ -34,19 +35,20 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
     tiptapBundlePromise = Promise.all([
       import('@tiptap/core'),
       import('@tiptap/vue-3'),
+      import('@tiptap/vue-3/menus'),
       import('@tiptap/starter-kit'),
       import('@tiptap/extension-text-style').then((module) => ({ default: module.TextStyle })),
       import('@tiptap/extension-color').then((module) => ({ default: module.Color })),
       import('@tiptap/extension-image'),
       import('@tiptap/extension-highlight'),
       import('@tiptap/extension-text-align'),
-    ]).then(([tiptapCore, tiptapVue, starterKit, textStyle, color, image, highlight, textAlign]) => ({
-      Editor: tiptapCore.Editor,
+    ]).then(([tiptapCore, tiptapVue, tiptapMenus, starterKit, textStyle, color, image, highlight, textAlign]) => ({
+      Editor: tiptapVue.Editor,
       Node: tiptapCore.Node,
       Extension: tiptapCore.Extension,
       mergeAttributes: tiptapCore.mergeAttributes,
       EditorContent: tiptapVue.EditorContent,
-      BubbleMenu: tiptapVue.BubbleMenu,
+      BubbleMenu: tiptapMenus.BubbleMenu,
       StarterKit: starterKit.default,
       TextStyle: textStyle.default,
       Color: color.default,

@@ -1462,7 +1462,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       editingState.historyDepth = history.length
       const scene = state.scenes[entry.sceneId]
       if (!scene) continue
-      if ('kind' in entry && entry.kind === 'surface-embed') {
+      if ('kind' in entry) {
         const liveState = entry.sceneId === state.activeSceneId ? state.liveState : scene.state
         liveState.surfaceEmbeds[entry.target] = clone(entry.before)
         return true
@@ -1717,7 +1717,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!url.trim()) {
       object.image = undefined
       if (object.type === 'image') {
-        const { image: _image, ...content } = object.content
+        const { image: _image, ...content } = object.content || {}
         object.content = content
       } else {
         const config = normalizeTheaterEffectConfig(object.content?.effect)

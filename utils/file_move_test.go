@@ -48,6 +48,10 @@ func TestMoveFileCrossDeviceFallback(t *testing.T) {
 	if err := os.WriteFile(src, []byte("world"), 0o640); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
+	sourceInfo, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("stat src: %v", err)
+	}
 
 	if err := MoveFile(src, dst); err != nil {
 		t.Fatalf("move file with EXDEV fallback: %v", err)
@@ -67,7 +71,7 @@ func TestMoveFileCrossDeviceFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat dst: %v", err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if info.Mode().Perm() != sourceInfo.Mode().Perm() {
 		t.Fatalf("unexpected dst perm: %#o", info.Mode().Perm())
 	}
 }

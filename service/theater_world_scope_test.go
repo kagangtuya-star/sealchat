@@ -433,7 +433,7 @@ func TestTheaterGroupSceneScopeAdaptsWithoutChangingMembers(t *testing.T) {
 	}
 	if err := applyDecodedTheaterMutation(model.GetDB(), room, actorID, TheaterMutationObjectBatchUpdate, &theaterObjectBatchUpdatePayload{
 		Updates: []theaterObjectUpdatePayload{
-			{ObjectID: memberID, Fields: map[string]any{"parentId": ""}},
+			{ObjectID: memberID, Fields: map[string]any{"parentId": "", "x": 0, "y": 0, "rotation": 0, "scale": 1}},
 			{ObjectID: groupID, Fields: map[string]any{"sceneId": sceneID}},
 		},
 	}); err != nil {

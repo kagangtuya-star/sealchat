@@ -4,6 +4,7 @@ import { useMessage } from 'naive-ui'
 import { useWindowSize } from '@vueuse/core'
 import type { Message } from '@satorijs/protocol'
 import ChatItem from '../chat-item.vue'
+import { ReloadOutline } from '@vicons/ionicons5'
 
 interface ArchivedMessage {
   id: string
@@ -152,7 +153,7 @@ const handleClose = () => {
           </div>
           <n-button text @click="emit('refresh')">
             <template #icon>
-              <n-icon component="ReloadOutlined" />
+              <n-icon :component="ReloadOutline" />
             </template>
           </n-button>
         </div>

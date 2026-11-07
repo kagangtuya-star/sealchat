@@ -6,7 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useDialog } from 'naive-ui';
 import { useMediaQuery } from '@vueuse/core';
 import { GripVertical, Plus, Stack2, X } from '@vicons/tabler';
-import { describeLogError, fetchChannelIdentitiesForLog, type LogIdentityOption } from '@/services/log/logApi';
+import { describeLogError, fetchChannelIdentitiesForLog, type LogIdentityOption, type LogSourceRangeCheck } from '@/services/log/logApi';
 import { listWorldChannels, type LogWorldChannel } from '@/services/log/logMessageCommands';
 import type { LogDraft, LogSection, LogSourceSpec } from '@/types/log';
 import { newSection, uuid } from '../logDraftOps';
@@ -36,6 +36,7 @@ const props = defineProps<{
   show: boolean;
   draft: LogDraft;
   update: (mutate: (d: LogDraft) => void) => boolean;
+  checkSourceRange: (sectionId: string) => Promise<LogSourceRangeCheck>;
   worldId: string;
   canManage: boolean;
   currentSectionId?: string | null;
@@ -489,6 +490,7 @@ const dropHint = computed(() => drag.dragging.value?.kind === 'section');
             :channel-known="channelKnown"
             :identity-options="identityOptions"
             :element-count="elementCount"
+            :check-source-range="checkSourceRange"
             @back="selection = null"
             @select-section="selectSection"
             @select-chapter="(key: string) => (selection = { kind: 'chapter', key })"

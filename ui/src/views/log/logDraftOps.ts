@@ -2,25 +2,27 @@
 import type { LogAnchor, LogDraft, LogElement, LogElementType, LogSection, LogStylePackage } from '@/types/log';
 import { defaultElementContent, templatesForElementType } from '@/services/log/logRenderer';
 import { elementImageRef, elementNeedsImage, setElementImageRef, type LogImageRef } from './logAssetRefs';
+import { uuid } from '@/utils/uuid';
+
+export { uuid } from '@/utils/uuid';
 
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const FONT_MIME = new Set(['font/ttf', 'font/otf']);
-
-export const uuid = (): string => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  // 回退：按 RFC 4122 v4 生成。
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-};
 
 /**
  * 草稿是纯 JSON 数据：用 JSON 往返深拷贝，可同时剥离 Vue 响应式代理（structuredClone 无法克隆 Proxy）。
  */
 export const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/** 在一次 draft mutation 中设置整个消息集合；空模板即恢复自动匹配。 */
+export const setMessageTemplateOverrides = (draft: LogDraft, messageIds: string[], templateId: string) => {
+  const overrides = { ...draft.messageTemplateOverrides };
+  for (const id of messageIds) {
+    if (templateId) overrides[id] = templateId;
+    else delete overrides[id];
+  }
+  draft.messageTemplateOverrides = overrides;
+};
 
 export const packageImageAssets = (pkg: LogStylePackage | null) => (pkg?.assets || []).filter((a) => IMAGE_MIME.has(a.mime));
 export const packageFontAssets = (pkg: LogStylePackage | null) => (pkg?.assets || []).filter((a) => FONT_MIME.has(a.mime));
@@ -70,6 +72,7 @@ export const newSection = (channelId: string, title: string, order: number): Log
     toTime: new Date().toISOString(),
     includeOoc: true,
     includeArchived: false,
+    showQuoteContent: false,
     identityIds: [],
   },
 });

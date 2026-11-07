@@ -45,7 +45,14 @@ Unless the task explicitly requires otherwise, preserve the following behavior.
 
 Do not casually replace existing ordering/cursor logic with timestamp-only assumptions.
 
+`message-reordered` can invalidate all cached orders via `reorder.reset=true`. Refresh only loaded message IDs, apply the complete result before sorting, rebuild window cursors, and retain the reading anchor. Failed refreshes remain dirty until a complete retry; realtime inserts/edits update content but defer sorting and cursors until that retry completes. Initial/latest loads reject responses from an older order revision, even when no rows were loaded at reset time. Channel changes invalidate pending reads and reorder acknowledgements. Keep message keys independent of list index/merge state. `node --test scripts/chat-message-reorder-regression.test.mjs` (from `ui/`) exercises the actual drag and synchronization declarations. New `*.test.mjs` files are ignored by the repository; explicitly include intended regression tests in the commit.
+
 ### Pagination and History
+
+A failed initial `message.list` must not abort mounted initialization and leave
+`firstLoad=false`, disabling later channel switches. Handle that request's error
+while preserving existing readiness timing and stale-response guards. Regression:
+`node --test scripts/chat-message-load-recovery.test.mjs` from `ui/`.
 
 Preserve:
 

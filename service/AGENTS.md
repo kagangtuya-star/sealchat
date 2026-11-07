@@ -290,6 +290,8 @@ Large service files are not automatically wrong; split only when responsibilitie
 
 ## Tests
 
+Reuse `initWorldTheaterServiceTest` and `worldTheaterPayload` for theater fixtures. Export clue fixtures live in `export_world_clue_test.go`; intended new test files must be explicitly tracked despite the repository's blanket `*_test.go` ignore rule.
+
 Prefer service tests for business semantics independent of HTTP transport.
 
 Test:

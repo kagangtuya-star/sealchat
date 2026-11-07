@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 章节编排的检查器：编辑选中的章节或来源片段。单来源章节以“章节”的口吻呈现（标题 + 来源），
 // 多来源章节才出现片段名称、拆分与跨章移动。成员看到的是只读的来源摘要而不是禁用的表单。
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { describeLogError, type LogSourceRangeCheck } from '@/services/log/logApi';
 import {
   ArrowsSplit,
   ChevronLeft,
@@ -30,6 +31,7 @@ const props = defineProps<{
   channelKnown: (id: string) => boolean;
   identityOptions: (s: LogSection) => Array<{ label: string; value: string }>;
   elementCount: (sectionId: string) => number;
+  checkSourceRange: (sectionId: string) => Promise<LogSourceRangeCheck>;
 }>();
 const emit = defineEmits<{
   (e: 'back'): void;
@@ -65,6 +67,36 @@ const identityNames = (s: LogSection) => {
   return s.source.identityIds.map((id) => opts.find((o) => o.value === id)?.label || id);
 };
 const addChannel = (v: string | null) => v && emit('add-source', props.chapter.key, v);
+
+const rangeCheck = ref<LogSourceRangeCheck | null>(null);
+const rangeLoading = ref(false);
+const rangeError = ref('');
+let rangeSeq = 0;
+const rangeKey = computed(() => JSON.stringify([props.section?.id, props.section?.source]));
+watch(rangeKey, () => {
+  rangeSeq += 1;
+  rangeCheck.value = null;
+  rangeError.value = '';
+  rangeLoading.value = false;
+}, { flush: 'sync' });
+const checkRange = async () => {
+  if (!props.section || rangeLoading.value) return;
+  const seq = ++rangeSeq;
+  const key = rangeKey.value;
+  const active = () => seq === rangeSeq && key === rangeKey.value;
+  rangeLoading.value = true;
+  rangeCheck.value = null;
+  rangeError.value = '';
+  try {
+    const result = await props.checkSourceRange(props.section.id);
+    if (active()) rangeCheck.value = result;
+  } catch (error) {
+    if (active()) rangeError.value = describeLogError(error, '检查来源范围失败');
+  } finally {
+    if (active()) rangeLoading.value = false;
+  }
+};
+onBeforeUnmount(() => { rangeSeq += 1; });
 </script>
 
 <template>
@@ -181,12 +213,19 @@ const addChannel = (v: string | null) => v && emit('add-source', props.chapter.k
               </label>
             </div>
             <div class="log-insp__quick">
-              <n-button size="tiny" quaternary @click="patch({ toTime: new Date().toISOString() })">结束 = 现在</n-button>
+              <n-button size="tiny" quaternary title="将本片段的来源结束时间推进到当前时刻，以包含之后新增的消息" @click="patch({ toTime: new Date().toISOString() })">更新到现在</n-button>
+              <n-button size="tiny" quaternary :loading="rangeLoading" title="检查结束时间之后是否还有符合当前筛选的消息" @click="checkRange">检查范围</n-button>
               <n-button v-if="section.source.fromTime" size="tiny" quaternary @click="patch({ fromTime: null, fromExclusive: false })">从最早开始</n-button>
+            </div>
+            <p v-if="rangeError" class="log-insp__help" role="alert">{{ rangeError }}</p>
+            <div v-if="rangeCheck && rangeCheck.count > 0 && rangeCheck.latestTime" class="log-insp__help" role="status">
+              结束时间之后还有 {{ rangeCheck.count }} 条符合当前筛选的消息，最新时间：{{ longTime(rangeCheck.latestTime) }}。
+              <n-button size="tiny" text type="primary" @click="patch({ toTime: rangeCheck!.latestTime! })">延长至最新消息</n-button>
             </div>
             <div class="log-insp__toggles">
               <n-checkbox :checked="section.source.includeOoc" @update:checked="(v: boolean) => patch({ includeOoc: v })">包含场外 (OOC)</n-checkbox>
               <n-checkbox :checked="section.source.includeArchived" @update:checked="(v: boolean) => patch({ includeArchived: v })">包含已归档</n-checkbox>
+              <n-checkbox :checked="!!section.source.showQuoteContent" @update:checked="(v: boolean) => patch({ showQuoteContent: v })">显示引用内容</n-checkbox>
             </div>
             <label class="log-insp__field">
               <span class="log-insp__label">只看角色</span>
@@ -405,6 +444,7 @@ const addChannel = (v: string | null) => v && emit('add-source', props.chapter.k
 
 .log-insp__quick {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: -6px;
 }

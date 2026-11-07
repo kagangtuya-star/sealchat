@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,15 @@ import (
 	"sealchat/utils"
 )
 
+type visualMediaTestRunner struct{ fail error }
+
+func (r visualMediaTestRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if r.fail != nil {
+		return nil, r.fail
+	}
+	return nil, os.WriteFile(args[len(args)-1], []byte("test-webm"), 0o600)
+}
+
 func ccfoliaEffectFixture(t *testing.T, shared bool) (string, string) {
 	t.Helper()
 	data := makeTestAPNG(t, 2, 1, 2, 0)
@@ -24,7 +34,7 @@ func ccfoliaEffectFixture(t *testing.T, shared bool) (string, string) {
 	if shared {
 		items["shared"] = map[string]any{"imageUrl": ref, "width": 4, "height": 3, "visible": true}
 	}
-	raw := mustPayload(t, map[string]any{
+	raw := worldTheaterPayload(t, map[string]any{
 		"meta": map[string]any{"version": ccfoliaBackupVersion},
 		"entities": map[string]any{
 			"room":  map[string]any{"fieldWidth": 30, "fieldHeight": 18, "fieldObjectFit": "cover", "gridSize": 1},
@@ -124,11 +134,19 @@ func TestCCFOLIAEffectSharedImageUsesOriginalAnimatedMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	effects := 0
 	for _, object := range conversion.Snapshot.PersistentObjects {
+		if object.Kind != "effect" {
+			continue
+		}
+		effects++
 		content := string(object.Content)
 		if strings.Contains(content, "video/webm") || strings.Contains(content, "/variants/display/content") || !strings.Contains(content, "image/apng") {
 			t.Fatalf("shared animated media must use original image: kind=%s content=%s", object.Kind, object.Content)
 		}
+	}
+	if effects != 2 {
+		t.Fatalf("effect count = %d, want 2", effects)
 	}
 }
 
@@ -184,7 +202,7 @@ func TestCCFOLIAGoldenRecordImportCompatibility(t *testing.T) {
 	}
 	for name, toolchain := range cases {
 		t.Run(name, func(t *testing.T) {
-			actorID, worldID, _ := initTheaterServiceTest(t)
+			actorID, worldID, _ := initWorldTheaterServiceTest(t)
 			previousMedia := theaterMedia
 			theaterMedia = &theaterMediaService{toolchain: toolchain}
 			t.Cleanup(func() { theaterMedia = previousMedia })

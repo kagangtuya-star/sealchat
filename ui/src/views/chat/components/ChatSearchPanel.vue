@@ -383,7 +383,10 @@ const includeOutsideFilter = computed({
 })
 
 const timeRangeFilter = computed({
-  get: () => filters.value.timeRange,
+  get: (): [number, number] | null => {
+    const range = filters.value.timeRange
+    return range && range[0] !== null && range[1] !== null ? [range[0], range[1]] : null
+  },
   set: (val: [number, number] | null) => channelSearch.updateFilters({ timeRange: val }),
 })
 
@@ -505,7 +508,8 @@ const shortContent = (text: string) => {
       <div
         v-if="panelVisible"
         ref="panelRef"
-        class="chat-search-panel"
+        class="chat-search-panel sc-overlay"
+        data-sc-ui="floating-panel"
         data-sc-font-surface="true"
         :class="{ 'chat-search-panel--mobile': isMobileUa, 'chat-search-panel--resizing': isResizing }"
         :style="panelStyle"
@@ -777,10 +781,10 @@ const shortContent = (text: string) => {
   right: 40px;
   --n-font-family: var(--sc-font-family);
   font-family: var(--sc-font-family);
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--sc-bg-elevated);
   border-radius: 1rem;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  box-shadow: var(--chat-message-shadow);
+  border: 1px solid var(--sc-border-mute);
   padding: 1rem 1.25rem 1.5rem;
   backdrop-filter: blur(12px);
   display: flex;
@@ -823,12 +827,12 @@ const shortContent = (text: string) => {
 .chat-search-panel__title {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--sc-text-primary);
 }
 
 .chat-search-panel__subtitle {
   font-size: 0.85rem;
-  color: #64748b;
+  color: var(--sc-text-secondary);
   margin-top: 0.15rem;
 }
 
@@ -843,18 +847,18 @@ const shortContent = (text: string) => {
   height: 2rem;
   border-radius: 999px;
   border: none;
-  background: rgba(15, 23, 42, 0.05);
+  background: var(--sc-bg-hover);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #475569;
+  color: var(--sc-text-secondary);
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
 .chat-search-panel__close:hover {
-  background: rgba(15, 23, 42, 0.12);
-  color: #0f172a;
+  background: var(--sc-bg-active);
+  color: var(--sc-text-primary);
 }
 
 .chat-search-panel__body {
@@ -915,10 +919,10 @@ const shortContent = (text: string) => {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  border: 1px dashed rgba(148, 163, 184, 0.6);
+  border: 1px dashed var(--sc-border-mute);
   border-radius: 0.75rem;
   padding: 0.75rem;
-  background: rgba(248, 250, 252, 0.8);
+  background: var(--sc-bg-layer);
 }
 
 .filter-group {
@@ -934,7 +938,7 @@ const shortContent = (text: string) => {
 
 .filter-label {
   font-size: 0.8rem;
-  color: #475569;
+  color: var(--sc-text-secondary);
   min-width: 60px;
 }
 
@@ -942,9 +946,9 @@ const shortContent = (text: string) => {
   flex: 1;
   min-height: 360px;
   min-width: 0;
-  border: 1px solid rgba(226, 232, 240, 0.7);
+  border: 1px solid var(--sc-border-mute);
   border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--sc-bg-surface);
   display: flex;
   overflow: hidden;
 }
@@ -958,7 +962,7 @@ const shortContent = (text: string) => {
   padding: 0.75rem 0.85rem 0.5rem 0.75rem;
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
 }
 
 .chat-search-panel__results-scroll::-webkit-scrollbar {
@@ -971,14 +975,14 @@ const shortContent = (text: string) => {
 }
 
 .chat-search-panel__results-scroll::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.5);
+  background: var(--sc-scrollbar-thumb);
   border-radius: 999px;
   border: 1px solid transparent;
   background-clip: content-box;
 }
 
 .chat-search-panel__results-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.65);
+  background: var(--sc-scrollbar-thumb-hover);
 }
 
 .chat-search-panel__results-scroll::-webkit-scrollbar-corner {
@@ -1043,13 +1047,13 @@ const shortContent = (text: string) => {
   gap: 0.45rem;
   padding: 0.2rem 0.5rem;
   border-radius: 999px;
-  border: 1px solid rgba(59, 130, 246, 0.22);
-  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-hover);
 }
 
 .chat-search-panel__within-results-label {
   font-size: 0.78rem;
-  color: #334155;
+  color: var(--sc-text-secondary);
   white-space: nowrap;
 }
 
@@ -1072,7 +1076,7 @@ const shortContent = (text: string) => {
 .speaker-selector__list {
   max-height: 320px;
   overflow-y: auto;
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  border: 1px solid var(--sc-border-mute);
   border-radius: 0.5rem;
   padding: 0.75rem;
 }
@@ -1099,7 +1103,7 @@ const shortContent = (text: string) => {
 
 .search-result {
   padding: 0.38rem 0;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .search-result:last-child {
@@ -1122,7 +1126,7 @@ const shortContent = (text: string) => {
 .search-result__row--content {
   margin-top: 0.12rem;
   line-height: 1.4;
-  color: #1f2937;
+  color: var(--sc-text-primary);
   font-size: 0.8rem;
   padding-left: 0.15rem;
   display: block;
@@ -1132,8 +1136,8 @@ const shortContent = (text: string) => {
 }
 
 .search-result__row--content mark {
-  background: rgba(14, 165, 233, 0.18);
-  color: #0f172a;
+  background: var(--sc-bg-active);
+  color: var(--sc-text-primary);
   border-radius: 0.15rem;
   padding: 0 0.08rem;
 }
@@ -1145,7 +1149,7 @@ const shortContent = (text: string) => {
   flex: 1;
   min-width: 0;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--sc-text-primary);
 }
 
 .search-result__author {
@@ -1171,7 +1175,7 @@ const shortContent = (text: string) => {
 }
 
 .search-result__time {
-  color: #94a3b8;
+  color: var(--sc-text-secondary);
   font-size: 0.78rem;
 }
 
@@ -1180,7 +1184,7 @@ const shortContent = (text: string) => {
   justify-content: center;
   margin-top: 0.2rem;
   padding-top: 0.25rem;
-  border-top: 1px solid rgba(226, 232, 240, 0.6);
+  border-top: 1px solid var(--sc-border-mute);
   flex-shrink: 0;
 }
 
@@ -1211,75 +1215,4 @@ const shortContent = (text: string) => {
   transform: translateY(-8px);
 }
 
-:global(:root[data-display-palette='night'] .chat-search-panel) {
-  background: #3f3f46;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.65);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__title) {
-  color: rgba(248, 250, 252, 0.98);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__subtitle) {
-  color: rgba(148, 163, 184, 0.85);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__close) {
-  background: rgba(148, 163, 184, 0.12);
-  color: rgba(226, 232, 240, 0.9);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__close:hover) {
-  background: rgba(148, 163, 184, 0.25);
-  color: rgba(248, 250, 252, 0.98);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__filter-bar) {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: rgba(148, 163, 184, 0.45);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__within-results) {
-  background: rgba(59, 130, 246, 0.14);
-  border-color: rgba(96, 165, 250, 0.28);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__within-results-label) {
-  color: rgba(226, 232, 240, 0.9);
-}
-
-:global(:root[data-display-palette='night'] .filter-label) {
-  color: rgba(226, 232, 240, 0.85);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__results) {
-  background: rgba(15, 23, 42, 0.9);
-  border-color: rgba(51, 65, 85, 0.8);
-}
-
-:global(:root[data-display-palette='night'] .search-result) {
-  border-color: rgba(51, 65, 85, 0.85);
-}
-
-:global(:root[data-display-palette='night'] .search-result__title) {
-  color: rgba(248, 250, 252, 0.95);
-}
-
-:global(:root[data-display-palette='night'] .search-result__row--content) {
-  color: rgba(226, 232, 240, 0.95);
-}
-
-:global(:root[data-display-palette='night'] .search-result__row--content mark) {
-  background: rgba(99, 102, 241, 0.28);
-  color: rgba(248, 250, 252, 0.98);
-}
-
-:global(:root[data-display-palette='night'] .search-result__time) {
-  color: rgba(148, 163, 184, 0.9);
-}
-
-:global(:root[data-display-palette='night'] .chat-search-panel__footer) {
-  border-top-color: rgba(51, 65, 85, 0.8);
-}
 </style>

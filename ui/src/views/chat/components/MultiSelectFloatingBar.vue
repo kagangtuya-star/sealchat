@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { NIcon, NTooltip } from 'naive-ui';
-import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical, Focus2, ArrowForwardUp } from '@vicons/tabler';
+import { NDropdown, NIcon, NTooltip, type DropdownOption } from 'naive-ui';
+import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical, Focus2, ArrowForwardUp, Bookmark } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
+import type { MessageFavoriteScope } from '@/features/message-favorites/api';
+import { useMessageFavoriteStore } from '@/features/message-favorites/store';
 
 const chat = useChatStore();
 
 const emit = defineEmits<{
   (e: 'copy'): void;
   (e: 'forward'): void;
+  (e: 'favorite', scope: MessageFavoriteScope): void;
   (e: 'archive'): void;
   (e: 'delete'): void;
   (e: 'copy-image'): void;
@@ -178,6 +181,27 @@ onBeforeUnmount(() => {
   }
 });
 
+// 收藏只占一个按钮，点击后再选择作用域。
+const favoriteStore = useMessageFavoriteStore();
+const favoriteMenuOptions = computed<DropdownOption[]>(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const canManage = favoriteStore.worldManageHint(worldId, chat.worldDetailMap[worldId]?.memberRole);
+  return [
+    { key: 'personal', label: '收藏到个人' },
+    {
+      key: 'world',
+      label: !worldId ? '收藏到世界（未进入世界）' : canManage ? '收藏到世界' : '收藏到世界（仅世界管理员）',
+      disabled: !worldId || !canManage,
+    },
+  ];
+});
+const handleFavoriteMenuShow = (show: boolean) => {
+  if (show) favoriteStore.probeWorldPermission(String(chat.currentWorldId || '').trim());
+};
+const handleFavoriteSelect = (key: string) => {
+  emit('favorite', key === 'world' ? 'world' : 'personal');
+};
+
 const handleCancel = () => {
   chat.exitMultiSelectMode();
   emit('cancel');
@@ -193,7 +217,8 @@ const handleToggleRangeMode = () => {
     <div
       v-if="isActive"
       ref="barRef"
-      class="multi-select-bar"
+      class="multi-select-bar sc-overlay"
+      data-sc-ui="selection-toolbar"
       :class="{ 'is-dragging': dragging, 'is-floating': !!draggedPosition }"
       :style="barStyle"
     >
@@ -254,6 +279,26 @@ const handleToggleRangeMode = () => {
           </template>
           转发选中消息
         </n-tooltip>
+
+        <n-dropdown
+          trigger="click"
+          placement="top"
+          :z-index="tooltipZIndex"
+          :options="favoriteMenuOptions"
+          :disabled="!hasSelection"
+          @update:show="handleFavoriteMenuShow"
+          @select="handleFavoriteSelect"
+        >
+          <button
+            class="multi-select-bar__button"
+            :class="{ 'is-disabled': !hasSelection }"
+            :disabled="!hasSelection"
+            title="收藏选中消息到个人或世界"
+          >
+            <n-icon :size="16"><Bookmark /></n-icon>
+            <span>收藏</span>
+          </button>
+        </n-dropdown>
 
         <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
@@ -385,22 +430,16 @@ const handleToggleRangeMode = () => {
   gap: 16px;
   padding: 10px 16px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.66);
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  background: var(--sc-bg-elevated);
+  border: 1px solid var(--sc-border-mute);
+  box-shadow: var(--chat-message-shadow);
   backdrop-filter: blur(12px);
-  color: #111827;
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   box-sizing: border-box;
   max-width: calc(100vw - 24px);
   user-select: none;
   overflow: visible;
-}
-
-:root[data-display-palette='night'] .multi-select-bar {
-  background: rgba(20, 24, 36, 0.66);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: rgba(248, 250, 252, 0.95);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 .multi-select-bar.is-dragging {
@@ -423,22 +462,12 @@ const handleToggleRangeMode = () => {
   flex-shrink: 0;
 
   &:hover {
-    background: rgba(15, 23, 42, 0.08);
+    background: var(--sc-bg-hover);
   }
 
   &.is-dragging {
     cursor: grabbing;
-    background: rgba(15, 23, 42, 0.12);
-  }
-}
-
-:root[data-display-palette='night'] .multi-select-bar__drag-handle {
-  &:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  &.is-dragging {
-    background: rgba(255, 255, 255, 0.16);
+    background: var(--sc-bg-active);
   }
 }
 
@@ -468,12 +497,8 @@ const handleToggleRangeMode = () => {
 .multi-select-bar__divider {
   width: 1px;
   height: 24px;
-  background: rgba(15, 23, 42, 0.1);
+  background: var(--sc-border-mute);
   margin: 0 8px;
-}
-
-:root[data-display-palette='night'] .multi-select-bar__divider {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 .multi-select-bar__button {
@@ -491,7 +516,7 @@ const handleToggleRangeMode = () => {
   transition: all 0.15s ease;
 
   &:hover:not(.is-disabled) {
-    background: rgba(15, 23, 42, 0.08);
+    background: var(--sc-bg-hover);
   }
 
   &.is-disabled {
@@ -504,8 +529,8 @@ const handleToggleRangeMode = () => {
   }
 
   &.is-active {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
+    background: var(--sc-bg-active);
+    color: var(--sc-text-primary);
   }
 
   &--cancel {
@@ -513,12 +538,6 @@ const handleToggleRangeMode = () => {
     &:hover {
       opacity: 1;
     }
-  }
-}
-
-:root[data-display-palette='night'] .multi-select-bar__button {
-  &:hover:not(.is-disabled) {
-    background: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -564,19 +583,13 @@ const handleToggleRangeMode = () => {
     height: 22px;
     min-height: 22px;
     padding: 0;
-    border: 1px solid rgba(15, 23, 42, 0.14);
+    border: 1px solid var(--sc-border-mute);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.96);
+    background: var(--sc-bg-elevated);
     transform: translateY(-42%);
     align-self: auto;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
+    box-shadow: var(--chat-message-shadow);
     z-index: 1;
-  }
-
-  :root[data-display-palette='night'] .multi-select-bar__drag-handle {
-    background: rgba(20, 24, 36, 0.98);
-    border-color: rgba(255, 255, 255, 0.12);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
   }
 
   .multi-select-bar__drag-handle :deep(svg) {
@@ -590,7 +603,7 @@ const handleToggleRangeMode = () => {
 
   .multi-select-bar__actions {
     display: grid;
-    grid-template-columns: repeat(10, minmax(28px, 1fr));
+    grid-template-columns: repeat(11, minmax(28px, 1fr));
     width: 100%;
     min-width: 0;
     gap: 4px;
@@ -620,7 +633,7 @@ const handleToggleRangeMode = () => {
 
 @media (max-width: 480px) {
   .multi-select-bar__actions {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 </style>

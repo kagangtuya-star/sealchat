@@ -162,8 +162,9 @@ interface ChatState {
   channelTreePrivateReady: boolean,
   favoriteChannelCandidatesByWorld: Record<string, SChannel[]>,
   favoriteChannelCandidatesReady: Record<string, boolean>,
-  curChannel: Channel | null,
+  curChannel: SChannel | null,
   currentWorldId: string,
+  lastConsumedWorldInvite: { slug: string; worldId: string } | null,
   observerMode: boolean,
   observerWorldId: string,
   observerChannelId: string,
@@ -998,8 +999,8 @@ const ensureChannelIdentityGateway = () => {
   channelIdentityGatewayBound = true;
 };
 
-let pingTimer: ReturnType<typeof setInterval> | null = null;
-let latencyTimer: ReturnType<typeof setInterval> | null = null;
+let pingTimer: number | null = null;
+let latencyTimer: number | null = null;
 let channelMembersCountRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let channelListRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
@@ -1047,10 +1048,10 @@ const LATENCY_PROBE_TIMEOUT = 8000;
 const WS_FOREGROUND_PROBE_TIMEOUT_MS = 7000;
 const WS_FOREGROUND_RECOVERY_DEBOUNCE_MS = 1500;
 const WS_DEFAULT_API_TIMEOUT_MS = 15_000;
-let wsForegroundProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let wsForegroundProbeTimer: number | null = null;
 let wsLastForegroundRecoverAt = 0;
 
-let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
+let wsReconnectTimer: number | null = null;
 let wsConnectionEpoch = 0;
 let wsConnectInFlight = false;
 let wsReconnectSuppressedEpoch = 0;
@@ -1166,6 +1167,7 @@ export const useChatStore = defineStore({
     favoriteChannelCandidatesReady: {},
     curChannel: null,
     currentWorldId: readScopedLocalStorage('currentWorldId') || '',
+    lastConsumedWorldInvite: null,
     observerMode: false,
     observerWorldId: '',
     observerChannelId: '',
@@ -1927,7 +1929,7 @@ export const useChatStore = defineStore({
         && this.messageInsertTarget.messageId === String(messageId || '').trim();
     },
 
-    async sendAPI<T = any>(api: string, data: APIMessage, options?: { timeoutMs?: number }): Promise<T> {
+    async sendAPI<T = any>(api: string, data: object, options?: { timeoutMs?: number }): Promise<T> {
       const doSend = () => {
         const echo = nanoid();
         return new Promise((resolve, reject) => {
@@ -2157,6 +2159,7 @@ export const useChatStore = defineStore({
       description?: string;
       visibility?: string;
       avatar?: string;
+      coverAttachmentId?: string;
       channelDefaultDiceMode?: 'builtin' | 'bot' | 'disabled';
       channelDefaultBotIds?: string[];
       channelDefaultBotId?: string;
@@ -2296,6 +2299,8 @@ export const useChatStore = defineStore({
       messageSortBasis?: 'typing_start' | 'send_time';
       allowAdminEditMessages?: boolean;
       allowMemberAccessLogLayout?: boolean;
+      exportRespectMessageVisibility?: boolean;
+      allowMemberExportMessages?: boolean;
       allowManageOtherUserChannelIdentities?: boolean;
       allowMemberEditKeywords?: boolean;
       strictWhisperPrivacy?: boolean;
@@ -2305,6 +2310,7 @@ export const useChatStore = defineStore({
       channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
       cursorTheme?: import('@/services/cursor/cursorTypes').CursorThemeConfig;
+      actionRibbonLayout?: import('@/features/action-ribbon-layout/actionRibbonLayout').WorldActionRibbonLayout;
       stickyNoteDefaultAppearance?: unknown;
       coverAttachmentId?: string;
     }) {
@@ -2414,6 +2420,7 @@ export const useChatStore = defineStore({
           this.joinedWorldIds.push(worldId);
         }
         this.setCurrentWorld(worldId);
+        this.lastConsumedWorldInvite = { slug, worldId };
       }
       return resp.data;
     },
@@ -3869,14 +3876,14 @@ export const useChatStore = defineStore({
             nextCache[roleId] = [];
           }
           this.channelRoleCache = nextCache;
-        } finally {
-          for (const roleId of toFetch) {
-            if (inFlightRolePermLoads.get(roleId) === task) {
-              inFlightRolePermLoads.delete(roleId);
-            }
+        }
+      })().finally(() => {
+        for (const roleId of toFetch) {
+          if (inFlightRolePermLoads.get(roleId) === task) {
+            inFlightRolePermLoads.delete(roleId);
           }
         }
-      })();
+      });
       for (const roleId of toFetch) {
         inFlightRolePermLoads.set(roleId, task);
       }
@@ -4925,6 +4932,20 @@ export const useChatStore = defineStore({
       this.messageReactionLoaded[event.messageId] = true;
     },
 
+    async messageDisplayOrders(channelId: string, messageIds: string[]): Promise<Array<{ id: string; display_order: number }>> {
+      const ids = Array.from(new Set(messageIds.filter(Boolean)));
+      const orders: Array<{ id: string; display_order: number }> = [];
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        const resp = await this.sendAPI<{ data: Array<{ id: string; display_order: number }> }>('message.order.get', {
+          channel_id: channelId,
+          message_ids: ids.slice(offset, offset + 200),
+        } as APIMessage);
+        if (!Array.isArray(resp.data)) throw new Error('Failed to refresh message display orders');
+        orders.push(...resp.data);
+      }
+      return orders;
+    },
+
     async messageReorder(channel_id: string, payload: { messageId: string; beforeId?: string; afterId?: string; clientOpId?: string }) {
       const resp = await this.sendAPI('message.reorder', {
         channel_id,
@@ -5561,7 +5582,7 @@ export const useChatStore = defineStore({
 
     // 移除用户角色
     async userRoleUnlink(roleId: string, userIds: string[]) {
-      const resp = await api.post<{ data: boolean }>('api/v1/user-role-unlink', { roleId, userIds });
+      const resp = await api.post<{ message: string; removedCount: number }>('api/v1/user-role-unlink', { roleId, userIds });
       return resp?.data;
     },
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue'
+import type { HTMLAttributes } from 'vue'
 import type { CameraState, StageEmbedEventPublished, StageEntrancePlayback, StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop, stageObjectHasDomVisualDescendant } from './stage-layer-order'
 import StageTextVisualObject from './StageTextVisualObject.vue'
@@ -25,7 +26,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ embedEventPublished: [event: StageEmbedEventPublished] }>()
 
-const attrs = useAttrs()
+const attrs = useAttrs() as HTMLAttributes
 const hiddenObjectIds = computed(() => new Set(props.hiddenObjectIds))
 const roots = computed(() => Object.values(props.objects)
   .filter((object) => (

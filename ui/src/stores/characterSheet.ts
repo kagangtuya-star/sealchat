@@ -2,11 +2,14 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import cocTemplateHtml from '../../../doc/template/sealchat-default-template-v3-coc7th.html?raw';
 import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
+import daggerheartTemplateHtml from '../../../doc/template/sealchat-daggerheart-template-v1.html?raw';
+import triangleAgencyTemplateHtml from '../../../doc/template/sealchat-triangle-agency-template-v1.html?raw';
 import { useCharacterCardStore } from './characterCard';
 import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from './characterCardTemplate';
 import { useChatStore } from './chat';
 import { useDisplayStore } from './display';
 import type { CharacterCard, CharacterCardData } from './characterCard';
+import { normalizeCharacterSheetType } from '@/utils/characterSheetType';
 
 export interface CharacterSheetWindow {
   id: string;
@@ -465,11 +468,12 @@ const getGenericDefaultTemplate = () => `<!DOCTYPE html>
 
 const getShinobigamiDefaultTemplate = () => shinobigamiTemplateHtml.trim();
 
-const getDefaultTemplate = (sheetType?: string) => (
-  isShinobigamiSheetType(sheetType)
-    ? getShinobigamiDefaultTemplate()
-    : (isCocSheetType(sheetType) ? cocTemplateHtml.trim() : getGenericDefaultTemplate())
-);
+const getDefaultTemplate = (sheetType?: string) => {
+  if (isShinobigamiSheetType(sheetType)) return getShinobigamiDefaultTemplate();
+  if (normalizeCharacterSheetType(sheetType) === 'daggerheart') return daggerheartTemplateHtml.trim();
+  if (normalizeCharacterSheetType(sheetType) === 'ta') return triangleAgencyTemplateHtml.trim();
+  return isCocSheetType(sheetType) ? cocTemplateHtml.trim() : getGenericDefaultTemplate();
+};
 
 export const resolveInitialSheetTemplate = (
   cardId: string,
@@ -859,6 +863,13 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   };
 
   let attrsSyncTimer: Record<string, ReturnType<typeof setTimeout> | null> = {};
+  // Separate pending writes from the focus-based edit lock. Keep the revision
+  // after saving so a refresh started before a local write cannot apply later.
+  const attrsSync = new Map<string, {
+    revision: number;
+    savedRevision: number;
+    inFlight?: Promise<void>;
+  }>();
 
   const beginEditLock = (windowId: string) => {
     const win = windows.value[windowId];
@@ -895,35 +906,67 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     schedulePersistWindows();
   };
 
-  const scheduleAttrsSync = (windowId: string) => {
+  const flushAttrsSync = async (windowId: string): Promise<void> => {
     const win = windows.value[windowId];
-    if (!win || !win.channelId || !win.cardName) return;
+    if (!win) throw new Error('人物卡窗口已关闭');
+    const sync = attrsSync.get(windowId);
+    if (!sync) return;
     normalizeSyncState(win);
+    while (sync.savedRevision < sync.revision || sync.inFlight) {
+      if (windows.value[windowId] !== win || attrsSync.get(windowId) !== sync) {
+        throw new Error('人物卡窗口已关闭');
+      }
+      if (win.readOnly) throw new Error('只读人物卡不能保存属性');
+      if (attrsSyncTimer[windowId]) {
+        clearTimeout(attrsSyncTimer[windowId] as ReturnType<typeof setTimeout>);
+        delete attrsSyncTimer[windowId];
+      }
+      if (!sync.inFlight) {
+        const revision = sync.revision;
+        const attrs = win.attrs;
+        sync.inFlight = (async () => {
+          try {
+            const ok = await cardStore.updateCardStrict(win.channelId, win.cardName, attrs);
+            if (!ok) throw new Error('人物卡属性更新失败');
+            if (windows.value[windowId] !== win || attrsSync.get(windowId) !== sync) {
+              throw new Error('人物卡窗口已关闭');
+            }
+            sync.savedRevision = revision;
+            // An older save must not release protection for newer local edits.
+            if (sync.revision === revision) {
+              win.syncError = '';
+              win.hasSavedAfterEditEnd = true;
+              if (win.syncState === 'resume_pending') {
+                win.hasLocalEditsInLock = false;
+                win.pendingRemoteAttrs = undefined;
+                win.syncState = 'normal';
+              }
+              schedulePersistWindows();
+            }
+          } catch (e) {
+            if (windows.value[windowId] === win && attrsSync.get(windowId) === sync) {
+              win.syncError = `保存失败：${e instanceof Error && e.message ? e.message : '人物卡属性更新失败'}`;
+            }
+            throw e;
+          }
+        })();
+      }
+      const request = sync.inFlight;
+      try {
+        await request;
+      } finally {
+        if (sync.inFlight === request) sync.inFlight = undefined;
+      }
+    }
+  };
+
+  const scheduleAttrsSync = (windowId: string) => {
     if (attrsSyncTimer[windowId]) {
       clearTimeout(attrsSyncTimer[windowId] as ReturnType<typeof setTimeout>);
     }
-    attrsSyncTimer[windowId] = setTimeout(async () => {
-      try {
-        const latest = windows.value[windowId];
-        if (!latest) return;
-        const ok = await cardStore.updateCardStrict(latest.channelId, latest.cardName, latest.attrs);
-        if (ok) {
-          latest.syncError = '';
-          latest.hasSavedAfterEditEnd = true;
-          if (latest.syncState === 'resume_pending') {
-            latest.hasLocalEditsInLock = false;
-            latest.pendingRemoteAttrs = undefined;
-            latest.syncState = 'normal';
-          }
-          schedulePersistWindows();
-        }
-      } catch (e) {
-        const latest = windows.value[windowId];
-        if (latest) {
-          latest.syncError = `保存失败：${e instanceof Error && e.message ? e.message : '人物卡属性更新失败'}`;
-        }
-        console.warn('Failed to sync character sheet attrs', e);
-      }
+    attrsSyncTimer[windowId] = setTimeout(() => {
+      delete attrsSyncTimer[windowId];
+      void flushAttrsSync(windowId).catch(e => console.warn('Failed to sync character sheet attrs', e));
     }, ATTRS_SYNC_THROTTLE);
   };
 
@@ -932,8 +975,15 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     if (!win || !win.channelId) return;
     if (win.readOnly) return;
     normalizeSyncState(win);
+    const sync = attrsSync.get(windowId);
+    const revision = sync?.revision;
+    const hadPendingWrite = !!sync && sync.savedRevision < sync.revision;
     try {
       const active = await cardStore.getActiveCard(win.channelId);
+      const latestSync = attrsSync.get(windowId);
+      if (windows.value[windowId] !== win || win.readOnly) return;
+      if (hadPendingWrite || latestSync !== sync || latestSync?.revision !== revision
+        || (latestSync && latestSync.savedRevision < latestSync.revision)) return;
       if (!active || !active.attrs) return;
       if (active.name && active.name !== win.cardName) return;
       if (win.syncState !== 'normal') {
@@ -1127,6 +1177,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       clearTimeout(attrsSyncTimer[windowId] as ReturnType<typeof setTimeout>);
       delete attrsSyncTimer[windowId];
     }
+    attrsSync.delete(windowId);
     delete windows.value[windowId];
     schedulePersistWindows();
   };
@@ -1179,6 +1230,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     if (win) {
       if (win.readOnly) return;
       normalizeSyncState(win);
+      const sync = attrsSync.get(windowId) || { revision: 0, savedRevision: 0 };
+      sync.revision += 1;
+      attrsSync.set(windowId, sync);
       win.attrs = attrs;
       win.syncError = '';
       if (win.syncState !== 'normal') {
@@ -1243,6 +1297,18 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   };
 
+  const updateCardName = (cardId: string, cardName: string) => {
+    if (!cardId) return;
+    let changed = false;
+    activeWindowIds.value.forEach((windowId) => {
+      const win = windows.value[windowId];
+      if (!win || win.readOnly || win.cardId !== cardId || win.cardName === cardName) return;
+      win.cardName = cardName;
+      changed = true;
+    });
+    if (changed) schedulePersistWindows();
+  };
+
   const updateCardAvatar = (cardId: string, avatarUrl?: string) => {
     if (!cardId) return;
     let changed = false;
@@ -1274,6 +1340,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       if (timer) clearTimeout(timer as ReturnType<typeof setTimeout>);
     }
     attrsSyncTimer = {};
+    attrsSync.clear();
     clearWindowStates();
   };
 
@@ -1330,6 +1397,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     updatePosition,
     updateSize,
     updateAttrs,
+    flushAttrsSync,
     beginEditLock,
     endEditLock,
     updateTemplate,
@@ -1341,6 +1409,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     syncWindowTemplateFromCloud,
     normalizeTemplate,
     setMode,
+    updateCardName,
     updateCardAvatar,
     toggleMode,
     getTemplate,

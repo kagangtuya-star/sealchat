@@ -42,7 +42,7 @@ const innerValue = computed<DateRangeValue>({
 })
 
 const shortcuts = {
-  今天: () => {
+  今天: (): [number, number] => {
     const now = new Date()
     const start = new Date(now)
     start.setHours(0, 0, 0, 0)
@@ -50,7 +50,7 @@ const shortcuts = {
     end.setHours(23, 59, 59, 999)
     return [start.getTime(), end.getTime()]
   },
-  昨天: () => {
+  昨天: (): [number, number] => {
     const now = new Date()
     const start = new Date(now)
     start.setDate(start.getDate() - 1)
@@ -59,7 +59,7 @@ const shortcuts = {
     end.setHours(23, 59, 59, 999)
     return [start.getTime(), end.getTime()]
   },
-  最近七天: () => {
+  最近七天: (): [number, number] => {
     const end = Date.now()
     return [end - 7 * 24 * 60 * 60 * 1000, end]
   },

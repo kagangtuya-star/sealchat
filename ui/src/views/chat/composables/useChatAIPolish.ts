@@ -99,7 +99,8 @@ export const useChatAIPolish = ({
         source: effectiveSource,
       });
       finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''));
-      const warning = String(resp.data?.warning || '').trim();
+      const warning = resp.data && typeof resp.data === 'object' && 'warning' in resp.data
+        ? String(resp.data.warning || '').trim() : '';
       if (warning) {
         message.warning(warning);
       }

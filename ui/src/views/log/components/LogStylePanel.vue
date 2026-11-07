@@ -1,24 +1,14 @@
 <script setup lang="ts">
-// 样式与模板：内置/私有样式选择、设计变量、规则查看、源码编辑（fork → 校验 → 本地预览 → 保存新版本 → 绑定）、ZIP 导入导出。
-// 保存版本与绑定工程是两步：版本保存成功不等于工程已切换。
-import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+// 当前 LOG 的样式：浏览、预览、使用 / 更新样式，调整本 LOG 的设计变量覆盖，并进入 Style Studio。
+// 样式本身的设计（模板、CSS、资源、版本）在 Style Studio 中完成；使用某个版本是单独的绑定动作。
+import { computed, shallowRef } from 'vue';
 import { useMessage } from 'naive-ui';
-import {
-  describeLogError,
-  exportLogStyleZip,
-  fetchLogStylePackage,
-  fetchLogStyles,
-  forkLogStyle,
-  importLogStyleZip,
-  isLogError,
-  saveLogStyleVersion,
-} from '@/services/log/logApi';
-import { checkStyleSource } from '@/services/log/logTemplateCompiler';
-import { inspectStyleZip, type StyleZipSummary } from '@/services/log/logStyleZip';
-import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import type { LogDraft, LogStyleAsset, LogStylePackage, LogStyleRule, LogStyleSummary, LogTokenValue } from '@/types/log';
-import { rebindStyle, type StyleBindProblem } from '../logDraftOps';
-import { builtinStyleInfo, builtinStyleOrder } from '../logStyleCatalog';
+import { Palette } from '@vicons/tabler';
+import { describeLogError, exportLogStyleZip, fetchLogStylePackage } from '@/services/log/logApi';
+import type { LogDraft, LogStylePackage, LogStyleRule, LogStyleSummary, LogTokenValue } from '@/types/log';
+import { builtinStyleInfo } from '../logStyleCatalog';
+import type { StyleStudioRequest } from '../logStyleWorkingCopy';
+import type { LogStyleLibrary } from '../composables/useLogStyleLibrary';
 import LogStyleSketch from './LogStyleSketch.vue';
 
 const props = defineProps<{
@@ -26,38 +16,22 @@ const props = defineProps<{
   update: (mutate: (d: LogDraft) => void) => boolean;
   stylePackage: LogStylePackage | null;
   canEdit: boolean;
+  library: LogStyleLibrary;
+  /** 让当前 LOG 使用某个样式版本（工作台负责兼容检查与草稿写入）。 */
+  bind: (pkg: LogStylePackage) => Promise<boolean>;
 }>();
-const emit = defineEmits<{ (e: 'preview', pkg: LogStylePackage | null): void }>();
+const emit = defineEmits<{
+  (e: 'preview', pkg: LogStylePackage | null): void;
+  (e: 'open-studio', request: StyleStudioRequest): void;
+}>();
 
 const toast = useMessage();
 const HEX = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 
-// ---- 样式列表 ----
-const styles = ref<LogStyleSummary[]>([]);
-const stylesCursor = ref<string | null>(null);
-const stylesLoading = ref(false);
-const stylesError = ref('');
-const loadStyles = async (more = false) => {
-  stylesLoading.value = true;
-  stylesError.value = '';
-  try {
-    const r = await fetchLogStyles(more ? stylesCursor.value : null, 50);
-    styles.value = more ? [...styles.value, ...r.items] : r.items;
-    stylesCursor.value = r.nextCursor || null;
-  } catch (error) {
-    stylesError.value = describeLogError(error, '读取样式列表失败');
-  } finally {
-    stylesLoading.value = false;
-  }
-};
-onMounted(() => void loadStyles());
-
-const owned = computed(() => !!props.stylePackage && styles.value.some((s) => s.id === props.stylePackage!.id && !s.builtin));
-const latestOf = (id: string) => styles.value.find((s) => s.id === id)?.version || '';
-
-// 内置样式按目录顺序展示为卡片；私有样式单独成列表。
-const builtinStyles = computed(() => styles.value.filter((s) => s.builtin).slice().sort((a, b) => builtinStyleOrder(a.id) - builtinStyleOrder(b.id)));
-const ownStyles = computed(() => styles.value.filter((s) => !s.builtin));
+const styles = computed(() => props.library.items.value);
+const ownership = computed(() => (props.stylePackage ? props.library.ownership(props.stylePackage.id) : 'unknown'));
+const builtinStyles = computed(() => props.library.builtin.value);
+const ownStyles = computed(() => props.library.mine.value);
 const currentInfo = computed(() => (props.stylePackage ? builtinStyleInfo(props.stylePackage.id) : null));
 const currentLatest = computed(() => {
   const pkg = props.stylePackage;
@@ -68,15 +42,14 @@ const currentLatest = computed(() => {
 // 已从样式库下线的旧内置样式：仍可读取、复制与导出，但不再出现在列表里。
 const currentRetired = computed(() => {
   const pkg = props.stylePackage;
-  return !!pkg && !stylesLoading.value && !stylesError.value && !stylesCursor.value && pkg.id.startsWith('sealchat-') && !styles.value.some((s) => s.id === pkg.id);
+  return !!pkg && props.library.loaded.value && !props.library.loading.value && !props.library.error.value && !props.library.truncated.value
+    && pkg.id.startsWith('sealchat-') && !styles.value.some((s) => s.id === pkg.id);
 });
 const isCurrent = (s: LogStyleSummary) => props.stylePackage?.id === s.id && props.stylePackage?.version === s.version;
 const useLabel = (s: LogStyleSummary) => (isCurrent(s) ? '使用中' : props.stylePackage?.id === s.id ? `更新到 ${s.version}` : '使用');
 
 // ---- 预览与绑定 ----
 const previewing = shallowRef<LogStylePackage | null>(null);
-const bindProblems = ref<StyleBindProblem[]>([]);
-const bindTarget = shallowRef<LogStylePackage | null>(null);
 
 const previewStyle = async (s: LogStyleSummary) => {
   try {
@@ -91,38 +64,19 @@ const cancelPreview = () => {
   previewing.value = null;
   emit('preview', null);
 };
-
-const prepareBind = (pkg: LogStylePackage) => {
-  const { problems } = rebindStyle(props.draft, pkg);
-  bindTarget.value = pkg;
-  bindProblems.value = problems;
-  if (!problems.length) confirmBind();
-};
-const confirmBind = () => {
-  const pkg = bindTarget.value;
-  if (!pkg) return;
-  const { next, problems } = rebindStyle(props.draft, pkg);
-  if (problems.some((p) => !p.fixable)) return;
-  props.update((d) => {
-    Object.assign(d, next);
-  });
-  bindTarget.value = null;
-  bindProblems.value = [];
-  previewing.value = null;
-  emit('preview', null);
-  if (savedUnbound.value && savedUnbound.value.id === pkg.id && savedUnbound.value.version === pkg.version) savedUnbound.value = null;
-  toast.success(`已切换到 ${pkg.name} ${pkg.version}（草稿保存后生效）`);
+const applyPackage = async (pkg: LogStylePackage) => {
+  if (!(await props.bind(pkg))) return;
+  if (previewing.value) cancelPreview();
 };
 const useStyle = async (s: LogStyleSummary) => {
   try {
-    const pkg = await fetchLogStylePackage(s.id, s.version);
-    prepareBind(pkg);
+    await applyPackage(await fetchLogStylePackage(s.id, s.version));
   } catch (error) {
     toast.error(describeLogError(error, '读取样式失败'));
   }
 };
 
-// ---- 设计变量 ----
+// ---- 设计变量（本 LOG 的覆盖值，不修改样式包） ----
 const tokenEntries = computed(() => Object.entries(props.stylePackage?.tokens || {}));
 const tokenValue = (k: string, base: LogTokenValue) => (k in props.draft.themeTokens ? props.draft.themeTokens[k] : base);
 const setToken = (k: string, v: LogTokenValue | null) => props.update((d) => {
@@ -137,244 +91,14 @@ const resetToken = (k: string) => props.update((d) => {
 
 const ruleText = (r: LogStyleRule) => [r.messageType && `类型=${r.messageType}`, r.identityKey && `角色=${r.identityKey}`, r.variantKey && `差分=${r.variantKey}`].filter(Boolean).join('，') || '任意消息';
 
-// ---- 源码编辑 ----
-interface SourceState {
-  base: LogStylePackage;
-  name: string;
-  license: string;
-  templates: Record<string, string>;
-  css: string;
-  tokensJson: string;
-  rulesJson: string;
-  schemaJson: string;
-  assets: LogStyleAsset[];
-}
-const source = ref<SourceState | null>(null);
-const activeTemplate = ref('');
-const sourceIssues = ref<string[]>([]);
-const sourceBusy = ref(false);
-const savedUnbound = shallowRef<LogStylePackage | null>(null);
-const newTemplateId = ref('');
-
-const openSource = (pkg: LogStylePackage) => {
-  source.value = {
-    base: pkg,
-    name: pkg.name,
-    license: pkg.license,
-    templates: { ...pkg.templates },
-    css: pkg.css,
-    tokensJson: JSON.stringify(pkg.tokens, null, 2),
-    rulesJson: JSON.stringify(pkg.rules, null, 2),
-    schemaJson: JSON.stringify(pkg.settingsSchema, null, 2),
-    assets: pkg.assets.slice(),
-  };
-  activeTemplate.value = Object.keys(pkg.templates)[0] || '';
-  sourceIssues.value = [];
-};
-
-const forkCurrent = async () => {
+// ---- Style Studio 入口 ----
+const editCurrent = () => {
   const pkg = props.stylePackage;
   if (!pkg) return;
-  sourceBusy.value = true;
-  try {
-    const forked = await forkLogStyle(pkg.id, pkg.version, `${pkg.name}（我的副本）`.slice(0, 200));
-    await loadStyles();
-    openSource(forked);
-    prepareBind(forked);
-    toast.success('已复制为私有样式');
-  } catch (error) {
-    toast.error(describeLogError(error, '复制失败'));
-  } finally {
-    sourceBusy.value = false;
-  }
+  if (ownership.value === 'foreign') emit('open-studio', { kind: 'fork', id: pkg.id, version: pkg.version, name: pkg.name });
+  else emit('open-studio', { kind: 'open', id: pkg.id, version: pkg.version });
 };
 
-const bumpPatch = (v: string) => {
-  const [a, b, c] = v.split('.').map((x) => Number.parseInt(x, 10) || 0);
-  return `${a}.${b}.${c + 1}`;
-};
-
-/** 从源码状态组装包；JSON 语法错误返回 null 并记录问题。 */
-const assemble = (): LogStylePackage | null => {
-  const s = source.value;
-  if (!s) return null;
-  const issues: string[] = [];
-  const parse = <T>(label: string, text: string, check: (v: unknown) => boolean): T | null => {
-    try {
-      const v = JSON.parse(text);
-      if (!check(v)) {
-        issues.push(`${label} 结构不正确`);
-        return null;
-      }
-      return v as T;
-    } catch (error) {
-      issues.push(`${label} JSON 语法错误：${error instanceof Error ? error.message : ''}`);
-      return null;
-    }
-  };
-  const isObj = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
-  const tokens = parse<Record<string, LogTokenValue>>('设计变量', s.tokensJson, isObj);
-  const rules = parse<LogStyleRule[]>('规则', s.rulesJson, Array.isArray);
-  const schema = parse<Record<string, unknown>>('参数 Schema', s.schemaJson, isObj);
-  if (!s.name.trim()) issues.push('名称不能为空');
-  if (!Object.keys(s.templates).length) issues.push('至少需要一个模板');
-  if (!tokens || !rules || !schema || issues.length) {
-    sourceIssues.value = issues;
-    return null;
-  }
-  const pkg: LogStylePackage = {
-    schemaVersion: 1,
-    id: s.base.id,
-    version: s.base.version,
-    name: s.name.trim(),
-    license: s.license,
-    minRendererVersion: s.base.minRendererVersion,
-    tokens,
-    templates: { ...s.templates },
-    css: s.css,
-    rules,
-    settingsSchema: schema,
-    assets: s.assets.slice(),
-  };
-  const checked = checkStyleSource(pkg);
-  sourceIssues.value = checked.issues.map((i) => `${i.templateId ? `[${i.templateId}] ` : ''}${i.message}`);
-  return pkg;
-};
-
-/** 校验通过才更新本地预览；有错误时保留源码并继续显示上次成功的预览。 */
-const checkAndPreview = () => {
-  const pkg = assemble();
-  if (!pkg) return;
-  if (sourceIssues.value.length) {
-    toast.warning('存在问题，预览保持上次成功的结果');
-    return;
-  }
-  emit('preview', pkg);
-  toast.success('本地预览已更新（尚未保存）');
-};
-
-const saveVersion = async () => {
-  const s = source.value;
-  const pkg = assemble();
-  if (!s || !pkg || sourceIssues.value.length) {
-    toast.error('请先修正问题再保存');
-    return;
-  }
-  const baseVersion = latestOf(s.base.id) || s.base.version;
-  pkg.version = bumpPatch(baseVersion);
-  sourceBusy.value = true;
-  try {
-    const saved = await saveLogStyleVersion(s.base.id, baseVersion, pkg);
-    savedUnbound.value = saved;
-    openSource(saved);
-    await loadStyles();
-    emit('preview', saved);
-    toast.success(`已保存版本 ${saved.version}，尚未绑定到本工程`);
-  } catch (error) {
-    if (isLogError(error, 'VERSION_CONFLICT')) toast.error('该样式已有更新版本，请重新打开源码后合并修改');
-    else if (isLogError(error, 'PERMISSION_DENIED')) toast.error('只能保存自己的样式；请先复制为私有样式');
-    else toast.error(describeLogError(error, '保存失败（服务端校验未通过）'));
-  } finally {
-    sourceBusy.value = false;
-  }
-};
-
-const addTemplate = () => {
-  const id = newTemplateId.value.trim();
-  if (!source.value || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(id) || id in source.value.templates) {
-    toast.warning('模板 ID 须为字母开头的字母数字/下划线/连字符，且不能重复');
-    return;
-  }
-  source.value.templates = { ...source.value.templates, [id]: '<div class="log-' + id + '"></div>' };
-  activeTemplate.value = id;
-  newTemplateId.value = '';
-};
-const removeTemplate = () => {
-  if (!source.value || !activeTemplate.value) return;
-  const next = { ...source.value.templates };
-  delete next[activeTemplate.value];
-  source.value.templates = next;
-  activeTemplate.value = Object.keys(next)[0] || '';
-};
-const templateModel = computed({
-  get: () => (source.value && activeTemplate.value ? source.value.templates[activeTemplate.value] || '' : ''),
-  set: (v: string) => {
-    if (source.value && activeTemplate.value) source.value.templates = { ...source.value.templates, [activeTemplate.value]: v };
-  },
-});
-
-// 资源：上传为自己的附件后登记到包，服务端按字节校验 MIME 与哈希。
-const assetInput = ref<HTMLInputElement | null>(null);
-const assetUploading = ref(false);
-const MIME_BY_EXT: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', ttf: 'font/ttf', otf: 'font/otf' };
-const onAssetFile = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file || !source.value) return;
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const mime = MIME_BY_EXT[ext];
-  if (!mime) {
-    toast.error('只支持 PNG/JPEG/WebP 图片和 TTF/OTF 字体');
-    return;
-  }
-  const base = file.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'asset';
-  let path = `assets/${base}.${ext}`;
-  let n = 1;
-  while (source.value.assets.some((a) => a.path === path)) path = `assets/${base}-${n++}.${ext}`;
-  assetUploading.value = true;
-  try {
-    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), (b) => b.toString(16).padStart(2, '0')).join('');
-    const { attachmentId } = await uploadImageAttachment(file, { channelId: null, skipCompression: true });
-    const id = attachmentId.replace(/^id:/, '');
-    source.value.assets = [...source.value.assets, { id, path, mime, sha256: hash }];
-    toast.success(`已添加 ${path}，CSS 中用 url(${path}) 引用`);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '上传失败');
-  } finally {
-    assetUploading.value = false;
-  }
-};
-const removeAsset = (id: string) => {
-  if (source.value) source.value.assets = source.value.assets.filter((a) => a.id !== id);
-};
-
-// ---- 导入导出 ----
-const importInput = ref<HTMLInputElement | null>(null);
-const importFile = shallowRef<File | null>(null);
-const importSummary = ref<StyleZipSummary | null>(null);
-const importError = ref('');
-const importBusy = ref(false);
-const onImportFile = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  importFile.value = file;
-  importSummary.value = null;
-  importError.value = '';
-  try {
-    importSummary.value = await inspectStyleZip(file);
-  } catch (error) {
-    importError.value = error instanceof Error ? error.message : '无法读取 ZIP';
-  }
-};
-const confirmImport = async () => {
-  if (!importFile.value) return;
-  importBusy.value = true;
-  try {
-    const r = await importLogStyleZip(importFile.value);
-    await loadStyles();
-    toast.success(`已导入 ${r.stylePackageId}@${r.version}${r.warnings?.length ? `（${r.warnings.length} 条警告）` : ''}`);
-    if (r.warnings?.length) importError.value = r.warnings.join('；');
-    importFile.value = null;
-    importSummary.value = null;
-  } catch (error) {
-    importError.value = describeLogError(error, '导入失败（服务端校验未通过）');
-  } finally {
-    importBusy.value = false;
-  }
-};
 const exportCurrent = async () => {
   const pkg = props.stylePackage;
   if (!pkg) return;
@@ -393,10 +117,6 @@ const exportCurrent = async () => {
     toast.error(describeLogError(error, '导出失败'));
   }
 };
-
-watch(() => props.stylePackage?.id, () => {
-  if (source.value && source.value.base.id !== props.stylePackage?.id && !savedUnbound.value) source.value = null;
-});
 </script>
 
 <template>
@@ -421,9 +141,8 @@ watch(() => props.stylePackage?.id, () => {
           这是已从样式库下线的旧版内置样式，可以继续使用、复制或导出，也可以从下方挑选新的排版。
         </div>
         <n-space size="small">
+          <n-button size="tiny" type="primary" secondary @click="editCurrent">{{ ownership === 'foreign' ? '复制后编辑' : '在样式设计器中编辑' }}</n-button>
           <n-button size="tiny" @click="exportCurrent">导出 ZIP</n-button>
-          <n-button v-if="owned" size="tiny" :disabled="!canEdit" @click="openSource(stylePackage)">编辑源码</n-button>
-          <n-button v-else size="tiny" :loading="sourceBusy" :disabled="!canEdit" @click="forkCurrent">复制为我的样式并编辑</n-button>
         </n-space>
       </div>
       <n-spin v-else size="small" />
@@ -432,25 +151,18 @@ watch(() => props.stylePackage?.id, () => {
     <n-alert v-if="previewing" type="info" :show-icon="false">
       正在预览：{{ previewing.name }} {{ previewing.version }}（未应用）
       <n-space size="small" style="margin-top: 6px">
-        <n-button size="tiny" type="primary" :disabled="!canEdit" @click="prepareBind(previewing)">应用到本工程</n-button>
+        <n-button size="tiny" type="primary" :disabled="!canEdit" @click="applyPackage(previewing)">应用到本工程</n-button>
         <n-button size="tiny" @click="cancelPreview">取消预览</n-button>
       </n-space>
     </n-alert>
 
-    <n-alert v-if="savedUnbound" type="warning" :show-icon="false">
-      已保存 {{ savedUnbound.name }} {{ savedUnbound.version }}，但尚未绑定到本工程。
-      <n-button size="tiny" type="primary" style="margin-left: 6px" :disabled="!canEdit" @click="prepareBind(savedUnbound)">绑定到本工程</n-button>
-    </n-alert>
-
-    <n-alert v-if="bindTarget && bindProblems.length" :type="bindProblems.some((p) => !p.fixable) ? 'error' : 'warning'" title="切换样式需要调整草稿">
-      <ul class="log-style__list">
-        <li v-for="(p, i) in bindProblems" :key="i">{{ p.message }}</li>
-      </ul>
-      <n-space size="small">
-        <n-button size="tiny" type="primary" :disabled="bindProblems.some((p) => !p.fixable)" @click="confirmBind">按上述调整并切换</n-button>
-        <n-button size="tiny" @click="bindTarget = null; bindProblems = []">取消</n-button>
-      </n-space>
-    </n-alert>
+    <button type="button" class="log-style__studio" @click="emit('open-studio', { kind: 'library' })">
+      <n-icon :component="Palette" size="20" />
+      <span>
+        <strong>样式设计器</strong>
+        <span>管理样式库：新建、复制、导入 ZIP，编辑模板、CSS、变量、规则与资源，保存为新版本</span>
+      </span>
+    </button>
 
     <section v-if="tokenEntries.length">
       <div class="log-style__title">设计变量</div>
@@ -469,13 +181,13 @@ watch(() => props.stylePackage?.id, () => {
       <ol class="log-style__rules">
         <li v-for="(r, i) in stylePackage?.rules || []" :key="i">{{ ruleText(r) }} → <code>{{ r.templateId }}</code></li>
       </ol>
-      <p class="log-style__hint">“LOG 显示规则”只影响排版，不写原消息；要修改规则请编辑样式源码。</p>
+      <p class="log-style__hint">“LOG 显示规则”只影响排版，不写原消息；要修改样式自带的规则请在样式设计器中编辑。</p>
     </section>
 
     <section>
       <div class="log-style__title">样式库 · 内置排版</div>
       <p class="log-style__hint log-style__hint--lead">每套内置样式是一种不同的版面结构；配色、字体、间距等细节在上方“设计变量”里调整。</p>
-      <n-alert v-if="stylesError" type="error" :show-icon="false">{{ stylesError }}</n-alert>
+      <n-alert v-if="library.error.value" type="error" :show-icon="false">{{ library.error.value }}</n-alert>
       <div class="log-style__lib">
         <article
           v-for="s in builtinStyles"
@@ -509,78 +221,13 @@ watch(() => props.stylePackage?.id, () => {
             <span class="log-style__meta">{{ s.version }}</span>
           </div>
           <n-space size="small">
+            <n-button size="tiny" quaternary @click="emit('open-studio', { kind: 'open', id: s.id, version: s.version })">编辑</n-button>
             <n-button size="tiny" @click="previewStyle(s)">预览</n-button>
             <n-button size="tiny" :disabled="!canEdit || isCurrent(s)" @click="useStyle(s)">{{ useLabel(s) }}</n-button>
           </n-space>
         </div>
       </template>
-      <n-button v-if="stylesCursor" size="tiny" :loading="stylesLoading" @click="loadStyles(true)">更多</n-button>
-    </section>
-
-    <section>
-      <div class="log-style__title">导入 ZIP</div>
-      <n-button size="small" @click="importInput?.click()">选择 ZIP…</n-button>
-      <input ref="importInput" type="file" accept=".zip,application/zip" hidden @change="onImportFile">
-      <div v-if="importFile" class="log-style__import">
-        <div>{{ importFile.name }}（{{ Math.ceil(importFile.size / 1024) }} KB）</div>
-        <template v-if="importSummary">
-          <div v-if="importSummary.manifest" class="log-style__meta">
-            {{ String(importSummary.manifest.name || '') }} · {{ String(importSummary.manifest.id || '') }} @ {{ String(importSummary.manifest.version || '') }}
-            · 许可 {{ String(importSummary.manifest.license || '未声明') }} · 渲染器 ≥ {{ String(importSummary.manifest.minRendererVersion || '?') }}
-          </div>
-          <div class="log-style__meta">模板 {{ importSummary.templates.length }} 个，文件 {{ importSummary.entries.length }} 个</div>
-          <ul v-if="importSummary.warnings.length" class="log-style__list is-warn">
-            <li v-for="w in importSummary.warnings" :key="w">{{ w }}</li>
-          </ul>
-        </template>
-        <n-space size="small">
-          <n-button size="tiny" type="primary" :loading="importBusy" @click="confirmImport">提交服务器校验并导入</n-button>
-          <n-button size="tiny" @click="importFile = null; importSummary = null">取消</n-button>
-        </n-space>
-      </div>
-      <n-alert v-if="importError" type="warning" :show-icon="false" style="margin-top: 6px">{{ importError }}</n-alert>
-    </section>
-
-    <section v-if="source" class="log-style__source">
-      <div class="log-style__title">源码：{{ source.base.id }}（基于 {{ source.base.version }}）</div>
-      <n-form size="small" label-placement="left" label-width="56">
-        <n-form-item label="名称"><n-input v-model:value="source.name" maxlength="200" /></n-form-item>
-        <n-form-item label="许可"><n-input v-model:value="source.license" maxlength="200" placeholder="如 MIT、CC-BY-4.0" /></n-form-item>
-      </n-form>
-      <div class="log-style__subtitle">模板</div>
-      <n-space size="small" align="center">
-        <n-select v-model:value="activeTemplate" size="small" style="width: 160px" :options="Object.keys(source.templates).map((id) => ({ label: id, value: id }))" />
-        <n-input v-model:value="newTemplateId" size="small" style="width: 110px" placeholder="新模板 ID" />
-        <n-button size="tiny" @click="addTemplate">添加</n-button>
-        <n-popconfirm @positive-click="removeTemplate">
-          <template #trigger><n-button size="tiny" quaternary type="error" :disabled="!activeTemplate">删除</n-button></template>
-          删除模板 {{ activeTemplate }}？
-        </n-popconfirm>
-      </n-space>
-      <n-input v-model:value="templateModel" type="textarea" class="log-style__code" :autosize="{ minRows: 6, maxRows: 16 }" spellcheck="false" aria-label="模板 HTML" />
-      <div class="log-style__subtitle">CSS</div>
-      <n-input v-model:value="source.css" type="textarea" class="log-style__code" :autosize="{ minRows: 8, maxRows: 24 }" spellcheck="false" aria-label="样式 CSS" />
-      <div class="log-style__subtitle">设计变量（JSON）</div>
-      <n-input v-model:value="source.tokensJson" type="textarea" class="log-style__code" :autosize="{ minRows: 3, maxRows: 12 }" spellcheck="false" />
-      <div class="log-style__subtitle">消息规则（JSON 数组）</div>
-      <n-input v-model:value="source.rulesJson" type="textarea" class="log-style__code" :autosize="{ minRows: 3, maxRows: 12 }" spellcheck="false" />
-      <div class="log-style__subtitle">参数 Schema（JSON，按模板 ID）</div>
-      <n-input v-model:value="source.schemaJson" type="textarea" class="log-style__code" :autosize="{ minRows: 3, maxRows: 12 }" spellcheck="false" />
-      <div class="log-style__subtitle">资源</div>
-      <div v-for="a in source.assets" :key="a.id" class="log-style__asset">
-        <code>{{ a.path }}</code><span class="log-style__meta">{{ a.mime }}</span>
-        <n-button size="tiny" quaternary type="error" @click="removeAsset(a.id)">移除</n-button>
-      </div>
-      <n-button size="tiny" :loading="assetUploading" @click="assetInput?.click()">添加图片/字体…</n-button>
-      <input ref="assetInput" type="file" accept=".png,.jpg,.jpeg,.webp,.ttf,.otf" hidden @change="onAssetFile">
-      <ul v-if="sourceIssues.length" class="log-style__list is-error">
-        <li v-for="(m, i) in sourceIssues" :key="i">{{ m }}</li>
-      </ul>
-      <n-space size="small" style="margin-top: 8px">
-        <n-button size="small" @click="checkAndPreview">校验并预览</n-button>
-        <n-button size="small" type="primary" :loading="sourceBusy" :disabled="!canEdit" @click="saveVersion">保存为新版本</n-button>
-        <n-button size="small" quaternary @click="source = null; emit('preview', null)">关闭</n-button>
-      </n-space>
+      <n-spin v-if="library.loading.value && !library.loaded.value" size="small" />
     </section>
   </div>
 </template>
@@ -777,34 +424,49 @@ watch(() => props.stylePackage?.id, () => {
   font-size: 13px;
 }
 
-.log-style__list {
-  margin: 4px 0 8px;
-  padding-left: 18px;
-  font-size: 12px;
-}
-
-.log-style__list.is-error,
-.log-style__list.is-warn {
-  color: #b7791f;
-}
-
-.log-style__import {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.log-style__code :deep(textarea) {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-}
-
-.log-style__asset {
+.log-style__studio {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--primary-color, #2f6fde) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary-color, #2f6fde) 6%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.log-style__studio:hover {
+  border-style: solid;
+}
+
+.log-style__studio:focus-visible {
+  outline: 2px solid var(--primary-color, #2f6fde);
+  outline-offset: 2px;
+}
+
+.log-style__studio > .n-icon {
+  flex: none;
+  color: var(--primary-color, #2f6fde);
+}
+
+.log-style__studio > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.log-style__studio strong {
+  font-size: 13px;
+}
+
+.log-style__studio > span > span {
   font-size: 12px;
+  line-height: 1.5;
+  color: var(--sc-text-secondary, #666);
 }
 </style>

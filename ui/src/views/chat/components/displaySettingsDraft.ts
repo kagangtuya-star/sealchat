@@ -4,6 +4,10 @@ type DisplaySettingsDraftManagedElsewhereKeys =
   | 'customThemeEnabled'
   | 'customThemes'
   | 'activeCustomThemeId'
+  | 'systemDayTheme'
+  | 'systemNightTheme'
+  | 'dayThemeBinding'
+  | 'nightThemeBinding'
 
 type DisplaySettingsLike = object
 
@@ -25,5 +29,9 @@ export const buildDisplaySettingsDraftSavePayload = <T extends DisplaySettingsLi
   delete snapshot.customThemeEnabled
   delete snapshot.customThemes
   delete snapshot.activeCustomThemeId
+  delete snapshot.systemDayTheme
+  delete snapshot.systemNightTheme
+  delete snapshot.dayThemeBinding
+  delete snapshot.nightThemeBinding
   return snapshot as DisplaySettingsDraftSavePayload<T>
 }

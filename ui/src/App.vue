@@ -15,6 +15,7 @@ import GlobalGlassBackground from '@/components/appearance/GlobalGlassBackground
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
 import WorldCluePresentationHost from '@/components/world-clue/WorldCluePresentationHost.vue'
 import SpeechHost from '@/features/tts/SpeechHost.vue'
+import UICustomizationTrustHost from '@/components/ui-customization/UICustomizationTrustHost.vue'
 import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
 import { installMessageSoundNotifier } from '@/services/messageSoundNotifier'
 
@@ -109,6 +110,7 @@ onUnmounted(() => {
         <GlobalLobbyAnnouncementHost v-if="!hideGlobalHosts" />
         <QuickLoginApprovalHost v-if="!hideGlobalHosts" />
         <WorldCluePresentationHost v-if="!hideGlobalHosts" :world-id="worldClueHostWorldId" />
+        <UICustomizationTrustHost v-if="!hideGlobalHosts" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>
@@ -233,16 +235,6 @@ nav a:first-of-type {
    NAIVE UI COMPONENTS - Comprehensive Coverage
    -------------------------------------------------------------------------- */
 
-/* Dropdown menus */
-:root[data-custom-theme='true'] .n-dropdown-menu,
-:root[data-custom-theme='true'] .n-dropdown,
-:root[data-custom-theme='true'] .n-dropdown-option,
-:root[data-custom-theme='true'] .n-base-select-menu,
-:root[data-custom-theme='true'] .n-base-select-option {
-  --n-color: var(--sc-bg-elevated) !important;
-  background-color: var(--sc-bg-elevated) !important;
-}
-
 /* Tabs */
 :root[data-custom-theme='true'] .n-tabs,
 :root[data-custom-theme='true'] .n-tabs-nav,
@@ -287,14 +279,6 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] .n-tree-node,
 :root[data-custom-theme='true'] .n-tree-node-content {
   background-color: transparent !important;
-}
-
-/* Tooltip and popover content */
-:root[data-custom-theme='true'] .n-tooltip .n-tooltip__content,
-:root[data-custom-theme='true'] .n-popover .n-popover__content,
-:root[data-custom-theme='true'] .n-popover__content {
-  background-color: var(--sc-bg-elevated) !important;
-  color: var(--sc-text-primary) !important;
 }
 
 /* --------------------------------------------------------------------------
@@ -417,14 +401,6 @@ nav a:first-of-type {
   color: var(--sc-text-primary) !important;
 }
 
-/* Popover deep overrides */
-:root[data-custom-theme='true'] .n-popover-shared,
-:root[data-custom-theme='true'] .n-popover-shared .n-popover-arrow-wrapper,
-:root[data-custom-theme='true'] [class*="n-popover"] {
-  --n-color: var(--sc-bg-elevated) !important;
-  background-color: var(--sc-bg-elevated) !important;
-}
-
 /* Button comprehensive overrides */
 :root[data-custom-theme='true'] .n-button {
   --n-border: 1px solid var(--sc-border-mute) !important;
@@ -465,24 +441,6 @@ nav a:first-of-type {
   --n-color: var(--sc-bg-input) !important;
   --n-text-color: var(--sc-text-primary) !important;
   background-color: var(--sc-bg-input) !important;
-}
-
-:root[data-custom-theme='true'] .n-base-select-menu {
-  --n-color: var(--sc-bg-elevated) !important;
-  --n-option-text-color: var(--sc-text-primary) !important;
-  background-color: var(--sc-bg-elevated) !important;
-}
-
-/* Dropdown comprehensive overrides */
-:root[data-custom-theme='true'] .n-dropdown-menu {
-  --n-color: var(--sc-bg-elevated) !important;
-  --n-option-color-hover: rgba(0, 0, 0, 0.05) !important;
-  --n-option-text-color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .n-dropdown-option-body {
-  --n-option-text-color: var(--sc-text-primary) !important;
-  color: var(--sc-text-primary) !important;
 }
 
 /* Tag overrides */
@@ -1068,29 +1026,6 @@ nav a:first-of-type {
   border-color: var(--sc-border-mute) !important;
 }
 
-/* Keyword tooltip */
-:root[data-custom-theme='true'] .keyword-tooltip,
-:root[data-custom-theme='true'] .keyword-tooltip--hover {
-  background-color: var(--sc-bg-elevated) !important;
-  color: var(--sc-text-primary) !important;
-  border-color: var(--sc-border-mute) !important;
-}
-
-:root[data-custom-theme='true'] .keyword-tooltip.keyword-tooltip--embedded-wide {
-  box-shadow: 0 18px 42px color-mix(in srgb, var(--sc-shadow-color, rgba(15, 23, 42, 0.24)) 100%, transparent) !important;
-}
-
-/* Keyword tooltip scrollbar - minimal/invisible design for custom theme */
-/* Firefox */
-:root[data-custom-theme='true'] .keyword-tooltip:hover {
-  scrollbar-color: rgba(128, 128, 128, 0.25) transparent !important;
-}
-
-/* WebKit */
-:root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.25) !important;
-}
-
 /* Dice tray macro key buttons */
 :root[data-custom-theme='true'] .dice-tray__macro-key {
   background-color: var(--sc-bg-surface) !important;
@@ -1158,13 +1093,6 @@ nav a:first-of-type {
   background-color: var(--keyword-underline-bg-hover) !important;
 }
 
-/* Keyword tooltip body in custom theme */
-:root[data-custom-theme='true'] .keyword-tooltip__body {
-  background-color: var(--sc-bg-elevated) !important;
-  color: var(--sc-text-primary) !important;
-  border-color: var(--sc-border-mute) !important;
-}
-
 :root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight:not(.keyword-highlight--underline) {
   background-color: var(--keyword-bg) !important;
   border-bottom-color: var(--keyword-border-color) !important;
@@ -1173,21 +1101,6 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight.keyword-highlight--underline {
   background-color: transparent !important;
   border-bottom-color: var(--keyword-border-color) !important;
-}
-
-:root[data-custom-theme='true'] .keyword-tooltip__nav-btn {
-  background-color: color-mix(in srgb, var(--sc-bg-surface) 88%, transparent) !important;
-  color: var(--sc-text-primary) !important;
-  border-color: var(--sc-border-mute) !important;
-}
-
-:root[data-custom-theme='true'] .keyword-tooltip__nav-btn:not(:disabled):hover {
-  background-color: var(--sc-bg-elevated) !important;
-  border-color: var(--sc-border-strong) !important;
-}
-
-:root[data-custom-theme='true'] .keyword-tooltip__nav-count {
-  color: var(--sc-text-secondary, var(--sc-text-primary)) !important;
 }
 
 /* 术语气泡多段首行缩进样式 - 全局 */
@@ -1259,82 +1172,6 @@ nav a:first-of-type {
   background-color: var(--sc-bg-input) !important;
 }
 
-/* All dropdown/select menus - comprehensive */
-:root[data-custom-theme='true'] .n-base-select-menu,
-:root[data-custom-theme='true'] .n-base-select-option,
-:root[data-custom-theme='true'] .n-base-select-group-header,
-:root[data-custom-theme='true'] .v-binder-follower-content,
-:root[data-custom-theme='true'] .n-select-menu {
-  --n-color: var(--sc-bg-elevated) !important;
-  --n-option-color-pending: rgba(0, 0, 0, 0.05) !important;
-  --n-option-text-color: var(--sc-text-primary) !important;
-  background-color: var(--sc-bg-elevated) !important;
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .n-base-select-option--selected,
-:root[data-custom-theme='true'] .n-base-select-option--pending {
-  background-color: rgba(0, 0, 0, 0.08) !important;
-}
-
-/* Context menus (vue3-context-menu) */
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night,
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day,
-:root[data-custom-theme='true'] .context-menu.chat-menu--night,
-:root[data-custom-theme='true'] .context-menu.chat-menu--day,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--night,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--day {
-  --mx-menu-backgroud: var(--sc-bg-elevated);
-  --mx-menu-divider: var(--sc-border-mute);
-  background: var(--sc-bg-elevated) !important;
-  border-color: var(--sc-border-mute) !important;
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item,
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item,
-:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item,
-:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item {
-  color: inherit !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item:hover,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item:hover,
-:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item:hover,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item:hover {
-  background: var(--sc-bg-hover, rgba(255, 255, 255, 0.08)) !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item:hover,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item:hover,
-:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item:hover,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item:hover {
-  background: var(--sc-bg-hover, rgba(15, 23, 42, 0.06)) !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator,
-:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator {
-  background-color: var(--sc-bg-elevated) !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator::after,
-:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator::after {
-  background-color: var(--sc-border-mute, rgba(148, 163, 184, 0.35)) !important;
-}
-
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item-sperator::after,
-:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item-sperator::after,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item-sperator::after,
-:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item-sperator::after {
-  background-color: transparent !important;
-}
-
 /* Auto-complete dropdown */
 :root[data-custom-theme='true'] .n-auto-complete-menu {
   background-color: var(--sc-bg-elevated) !important;
@@ -1392,34 +1229,6 @@ nav a:first-of-type {
 /* The segment tab capsule/background */
 :root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-capsule {
   background-color: var(--sc-bg-elevated) !important;
-}
-
-/* --------------------------------------------------------------------------
-   NAIVEUI SELECT OPTIONS - INLINE STYLE OVERRIDE
-   -------------------------------------------------------------------------- */
-
-/* Target select option backgrounds */
-:root[data-custom-theme='true'] .n-base-select-option {
-  --n-option-color-active: var(--sc-bg-elevated) !important;
-  --n-option-color-pending: rgba(128, 128, 128, 0.15) !important;
-  --n-option-text-color: var(--sc-text-primary) !important;
-  --n-option-text-color-active: var(--sc-text-primary) !important;
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .n-base-select-option--selected {
-  --n-option-color-active: var(--sc-bg-elevated) !important;
-  background-color: var(--sc-bg-elevated) !important;
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .n-base-select-option--pending {
-  background-color: rgba(128, 128, 128, 0.12) !important;
-}
-
-/* The check icon in selected options */
-:root[data-custom-theme='true'] .n-base-select-option__check {
-  color: var(--primary-color, #3388de) !important;
 }
 
 /* Force all inline backgrounds in Naive components */
@@ -1537,24 +1346,6 @@ nav a:first-of-type {
 
 :root[data-custom-theme='true'] .chat--layout-bubble .typing-preview-bubble[data-tone='ooc'] {
   background-color: var(--chat-live-preview-ooc-bg, var(--custom-chat-ooc-bg, var(--sc-bg-elevated))) !important;
-}
-
-/* ==========================================================================
-   SELECTION FLOATING BAR - 选择浮动栏
-   ========================================================================== */
-
-:root[data-custom-theme='true'] .selection-floating-bar {
-  background-color: var(--sc-bg-elevated) !important;
-  border-color: var(--sc-border-strong) !important;
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .selection-floating-bar__button {
-  color: var(--sc-text-primary) !important;
-}
-
-:root[data-custom-theme='true'] .selection-floating-bar__button:hover {
-  background-color: var(--sc-bg-surface) !important;
 }
 
 /* ==========================================================================
@@ -2717,6 +2508,7 @@ nav a:first-of-type {
 
 <style lang="scss">
 @use 'sass:string';
+@use './assets/overlays';
 
 /* Keep the opt-in material overrides after the existing custom-theme rules.
    Exclusions apply only to the enumerated surface candidates, never all nodes. */
@@ -2739,7 +2531,7 @@ nav a:first-of-type {
   }
   .sc-app-shell { background: var(--sc-glass-page) !important; }
 
-  @include ordinary-glass-surface('.sc-header, .sc-sidebar, .chat-root-container > .chat:not(.chat--has-background), .chat-root-container > .edit-area, .action-ribbon, .world-lobby-root, .world-console-panel, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu') {
+  @include ordinary-glass-surface('.sc-header, .sc-sidebar, .chat-root-container > .chat:not(.chat--has-background), .chat-root-container > .edit-area, .action-ribbon, .world-lobby-root, .world-console-panel, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel, .sc-overlay, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu') {
     background: var(--sc-glass-surface) !important;
     border-color: var(--sc-glass-border) !important;
     box-shadow: var(--sc-glass-shadow);

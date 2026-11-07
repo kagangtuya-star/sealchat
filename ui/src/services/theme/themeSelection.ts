@@ -1,5 +1,5 @@
-import type { CustomTheme, PlatformTheme, ThemeSelectionMode } from './themeTypes'
-export type { PlatformTheme, ThemeSelectionMode } from './themeTypes'
+import type { CustomTheme, PaletteThemeBinding, PlatformTheme, ThemeSelectionMode } from './themeTypes'
+export type { PaletteThemeBinding, PaletteThemeSource, PlatformTheme, ThemeSelectionMode } from './themeTypes'
 
 export interface LegacyThemeSelectionSnapshot {
   customThemeEnabled?: boolean
@@ -26,17 +26,6 @@ export interface ResolveEffectiveThemeSelectionInput {
   personalThemes: CustomTheme[]
 }
 
-export interface CustomThemeEnabledUpdateInput {
-  themeSelectionMode: ThemeSelectionMode
-  activePlatformThemeId?: string | null
-}
-
-export interface CustomThemeEnabledUpdateResult {
-  customThemeEnabled: boolean
-  themeSelectionMode: ThemeSelectionMode
-  activePlatformThemeId: string | null
-}
-
 const normalizeId = (value: string | null | undefined): string => {
   if (typeof value !== 'string') return ''
   return value.trim()
@@ -54,24 +43,6 @@ export const migrateLegacyThemeSelection = (
   return {
     themeSelectionMode: 'inherit',
     activePlatformThemeId: null,
-  }
-}
-
-export const resolveCustomThemeEnabledUpdate = (
-  enabled: boolean,
-  snapshot: CustomThemeEnabledUpdateInput,
-): CustomThemeEnabledUpdateResult => {
-  if (!enabled) {
-    return {
-      customThemeEnabled: false,
-      themeSelectionMode: 'none',
-      activePlatformThemeId: null,
-    }
-  }
-  return {
-    customThemeEnabled: true,
-    themeSelectionMode: snapshot.themeSelectionMode,
-    activePlatformThemeId: snapshot.activePlatformThemeId ?? null,
   }
 }
 
@@ -131,4 +102,111 @@ export const resolveEffectiveThemeSelection = (
     resolvedMode: input.selectionMode === 'personal' ? 'inherit' : input.selectionMode === 'platform' ? 'inherit' : input.selectionMode,
     theme: null,
   }
+}
+
+export type ThemePalette = 'day' | 'night'
+
+export interface LegacyPaletteThemeSnapshot {
+  followSystemTheme?: boolean
+  systemDayTheme?: unknown
+  systemNightTheme?: unknown
+  themeSelectionMode?: ThemeSelectionMode
+  activePlatformThemeId?: string | null
+  activeCustomThemeId?: string | null
+}
+
+export interface PaletteThemeBindings {
+  dayThemeBinding: PaletteThemeBinding
+  nightThemeBinding: PaletteThemeBinding
+}
+
+export interface PaletteDefaultPlatformThemeInput {
+  palette: ThemePalette
+  platformThemes: PlatformTheme[]
+  defaultPlatformThemeId?: string | null
+  defaultPlatformDayThemeId?: string | null
+  defaultPlatformNightThemeId?: string | null
+}
+
+export interface ResolvePaletteThemeSelectionInput extends PaletteDefaultPlatformThemeInput {
+  binding: PaletteThemeBinding
+  personalThemes: CustomTheme[]
+}
+
+export const normalizePaletteThemeBinding = (value: unknown): PaletteThemeBinding => {
+  if (!value || typeof value !== 'object') return { source: 'inherit', themeId: null }
+  const source = (value as any).source
+  const themeId = normalizeId((value as any).themeId) || null
+  if ((source === 'platform' || source === 'personal') && themeId) {
+    return { source, themeId }
+  }
+  if (source === 'none') {
+    return { source: 'none', themeId: null }
+  }
+  return { source: 'inherit', themeId: null }
+}
+
+// 从旧版设置推导日间/夜间主题绑定：
+// - 旧版“跟随系统”时使用 systemDayTheme/systemNightTheme（旧的“系统基础配色”视为跟随平台默认）；
+// - 否则旧版单一主题选择同时作用于日间与夜间，保持原有观感。
+export const migrateLegacyPaletteThemeBindings = (
+  snapshot: LegacyPaletteThemeSnapshot,
+): PaletteThemeBindings => {
+  if (snapshot.followSystemTheme) {
+    return {
+      dayThemeBinding: normalizePaletteThemeBinding(snapshot.systemDayTheme),
+      nightThemeBinding: normalizePaletteThemeBinding(snapshot.systemNightTheme),
+    }
+  }
+  let binding: PaletteThemeBinding = { source: 'inherit', themeId: null }
+  if (snapshot.themeSelectionMode === 'none') {
+    binding = { source: 'none', themeId: null }
+  } else if (snapshot.themeSelectionMode === 'platform') {
+    binding = normalizePaletteThemeBinding({ source: 'platform', themeId: snapshot.activePlatformThemeId })
+  } else if (snapshot.themeSelectionMode === 'personal') {
+    binding = normalizePaletteThemeBinding({ source: 'personal', themeId: snapshot.activeCustomThemeId })
+  }
+  return {
+    dayThemeBinding: { ...binding },
+    nightThemeBinding: { ...binding },
+  }
+}
+
+// 时段默认主题优先，未设置时回退到平台通用默认主题
+export const resolvePaletteDefaultPlatformThemeId = (input: PaletteDefaultPlatformThemeInput): string => {
+  const platformThemes = Array.isArray(input.platformThemes) ? input.platformThemes : []
+  const candidates = [
+    input.palette === 'day' ? input.defaultPlatformDayThemeId : input.defaultPlatformNightThemeId,
+    input.defaultPlatformThemeId,
+  ]
+  for (const candidate of candidates) {
+    const id = normalizeId(candidate)
+    if (id && platformThemes.some((item) => item.id === id)) return id
+  }
+  return ''
+}
+
+export const resolvePaletteThemeSelection = (
+  input: ResolvePaletteThemeSelectionInput,
+): ResolvedThemeSelection => {
+  const binding = normalizePaletteThemeBinding(input.binding)
+  return resolveEffectiveThemeSelection({
+    selectionMode: binding.source,
+    activePlatformThemeId: binding.source === 'platform' ? binding.themeId : null,
+    activePersonalThemeId: binding.source === 'personal' ? binding.themeId : null,
+    platformThemes: input.platformThemes,
+    defaultPlatformThemeId: resolvePaletteDefaultPlatformThemeId(input),
+    personalThemes: input.personalThemes,
+  })
+}
+
+export const describePaletteThemeSelection = (
+  binding: PaletteThemeBinding,
+  resolved: ResolvedThemeSelection,
+): string => {
+  if (binding.source === 'none' || resolved.resolvedMode === 'none') return '基础配色'
+  const themeName = resolved.theme?.name
+  if (!themeName) return '平台默认（未设置，使用基础配色）'
+  if (resolved.resolvedMode === 'inherit') return `平台默认 · ${themeName}`
+  return resolved.source === 'personal' ? `个人 · ${themeName}` : `平台 · ${themeName}`
 }

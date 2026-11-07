@@ -216,15 +216,15 @@ const initEditor = async () => {
       },
       onCreate: ({ editor: ed }) => {
         if (!props.modelValue) {
-          ed.commands.setContent(cloneEmptyDoc(), false);
+          ed.commands.setContent(cloneEmptyDoc(), { emitUpdate: false });
           return;
         }
         try {
           const json = JSON.parse(props.modelValue);
-          ed.commands.setContent(json, false);
+          ed.commands.setContent(json, { emitUpdate: false });
         } catch {
           // 纯文本兼容
-          ed.commands.setContent(props.modelValue, false);
+          ed.commands.setContent(props.modelValue, { emitUpdate: false });
         }
       },
     });
@@ -244,7 +244,7 @@ watch(() => props.modelValue, (newValue) => {
   if (isSyncingFromProps.value) return;
 
   if (!newValue || newValue.trim() === '') {
-    editor.value.commands.setContent(cloneEmptyDoc(), false);
+    editor.value.commands.setContent(cloneEmptyDoc(), { emitUpdate: false });
     return;
   }
 
@@ -252,7 +252,7 @@ watch(() => props.modelValue, (newValue) => {
     const currentJson = JSON.stringify(editor.value.getJSON());
     if (currentJson !== newValue) {
       const json = JSON.parse(newValue);
-      editor.value.commands.setContent(json, false);
+      editor.value.commands.setContent(json, { emitUpdate: false });
     }
   } catch {
     // 非 JSON 格式，跳过
@@ -363,9 +363,9 @@ const setContent = (content: string) => {
   if (!editor.value) return;
   try {
     const json = JSON.parse(content);
-    editor.value.commands.setContent(json, false);
+    editor.value.commands.setContent(json, { emitUpdate: false });
   } catch {
-    editor.value.commands.setContent(content, false);
+    editor.value.commands.setContent(content, { emitUpdate: false });
   }
 };
 
@@ -515,7 +515,7 @@ defineExpose({
           :disabled="isUploading"
         >
           <template v-if="isUploading">
-            <n-spin size="tiny" />
+            <n-spin size="small" />
           </template>
           <template v-else>🖼</template>
         </button>

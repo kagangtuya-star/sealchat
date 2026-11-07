@@ -1,0 +1,1668 @@
+<!DOCTYPE html>
+<!-- sealchat-triangle-agency-template:v1 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>三角机构角色卡</title>
+<script type="application/json" data-sealchat-template-manifest>
+{
+  "version": 1,
+  "sheetType": "ta",
+  "label": "三角机构",
+  "integration": {
+    "provider": "sealdice",
+    "probe": {
+      "command": ".ta help",
+      "matchMode": "contains",
+      "expected": "插件按未使用质保的情况结算",
+      "timeoutMs": 5000
+    },
+    "plugin": {
+      "name": "三角机构游戏规则（triangle-agency）",
+      "acquireText": "请从 GitHub 仓库获取三角机构游戏规则插件，并在 SealDice 中安装启用。",
+      "acquireUrl": "https://github.com/oissevalt/sealdice-plugins/blob/main/src/triangle-agency/triangle-agency.ts"
+    }
+  }
+}
+</script>
+<style>
+:root {
+  --ink: #2a1d5c;
+  --ink-soft: #4d4470;
+  --muted: #807a96;
+  --paper: #fff;
+  --paper-deep: #e9e9ef;
+  --panel: #f3f3f7;
+  --line: #d6d4e0;
+  --soft: #efeef4;
+  --red: #d4203c;
+  --red-soft: #fbe8eb;
+  --blue: #2350b8;
+  --blue-soft: #e6ecf9;
+  --yellow: #efb21c;
+  --yellow-ink: #b98200;
+  --yellow-soft: #fdf3d6;
+  --radius: 3px;
+  --font: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--paper-deep); }
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 10px 84px;
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(42,29,92,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42,29,92,.035) 1px, transparent 1px),
+    var(--paper-deep);
+  background-size: 22px 22px;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+input, textarea, select { font: inherit; color: inherit; }
+code { font-family: Consolas, "Courier New", monospace; font-size: 12px; background: var(--soft); border-radius: 2px; padding: 0 4px; }
+.empty { text-align: center; color: var(--muted); padding: 48px 0; }
+
+.sheet {
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 12px 32px rgba(42,29,92,.12);
+  overflow: hidden;
+}
+
+/* 色调：C 职能为红、R 现实为黄、A 异常为蓝，与规则书 ARC 配色一致 */
+.tone-red { --tc: var(--red); --tc-text: var(--red); --tc-on: #fff; }
+.tone-yellow { --tc: var(--yellow); --tc-text: var(--yellow-ink); --tc-on: var(--ink); }
+.tone-blue { --tc: var(--blue); --tc-text: var(--blue); --tc-on: #fff; }
+.tone-ink { --tc: var(--ink); --tc-text: var(--ink); --tc-on: #fff; }
+
+/* ---------- 卡头 ---------- */
+.masthead {
+  position: relative;
+  min-height: 128px;
+  padding: 16px 20px 18px;
+  color: #fff;
+  background: var(--ink);
+  border-bottom: 4px solid var(--red);
+  overflow: hidden;
+}
+.masthead::before, .masthead::after {
+  content: ""; position: absolute; width: 0; height: 0;
+  border-left: 110px solid transparent;
+  border-right: 110px solid transparent;
+  border-bottom: 190px solid rgba(212,32,60,.92);
+  right: -60px; top: -70px;
+  transform: rotate(16deg);
+}
+.masthead::after {
+  border-left-width: 46px; border-right-width: 46px; border-bottom-width: 80px;
+  border-bottom-color: rgba(255,255,255,.13);
+  right: 120px; top: 62px;
+  transform: rotate(44deg);
+}
+.masthead > * { position: relative; z-index: 1; }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; }
+.brand-mark { flex: 0 0 auto; width: 20px; height: 18px; padding: 0; border: 0; background: transparent; cursor: default; outline: none; transition: transform .25s, filter .25s; }
+.brand-mark span { display: block; width: 100%; height: 100%; background: var(--red); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+/* 隐藏入口：只在指针悬停时轻微发光闪烁，不做显式标注 */
+.brand-mark:hover { cursor: pointer; transform: scale(1.2) rotate(-10deg); filter: drop-shadow(0 0 4px rgba(255,92,112,.95)); animation: mark-flicker 1.6s steps(1) infinite; }
+@keyframes mark-flicker { 0%, 44%, 50%, 80%, 86%, 100% { opacity: 1; } 46% { opacity: .35; } 82% { opacity: .6; } }
+.brand-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-dot { flex: 0 0 auto; margin-left: auto; font-size: 11px; letter-spacing: 0; font-weight: 600; color: #cfc8dc; text-transform: none; white-space: nowrap; }
+.save-dot[data-state="pending"] { color: var(--yellow); }
+.agent-name {
+  margin: 14px 0 10px;
+  font-size: clamp(26px, 7vw, 38px);
+  font-weight: 900;
+  letter-spacing: .04em;
+  line-height: 1.15;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-meta { display: flex; flex-wrap: wrap; align-items: center; color: #d8d3e6; font-size: 12px; }
+.agent-meta > span + span::before { content: "·"; margin: 0 7px; opacity: .6; }
+.meta-arc b { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 4px; border-radius: 2px; font-size: 10px; color: #fff; vertical-align: 1px; }
+.meta-arc.a b { background: var(--blue); }
+.meta-arc.r b { background: var(--yellow); color: var(--ink); }
+.meta-arc.c b { background: var(--red); }
+
+/* ---------- 页签 ---------- */
+.tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 2px; padding: 6px 8px; overflow-x: auto; background: rgba(255,255,255,.97); border-bottom: 1px solid var(--line); }
+.tab { flex: 0 0 auto; border: 0; border-radius: 2px; padding: 4px 10px; background: transparent; font-size: 12px; font-weight: 800; color: var(--ink-soft); }
+.tab:first-child { margin-left: auto; }
+.tab:last-child { margin-right: auto; }
+.tab:hover { background: var(--soft); }
+.tab.active { background: var(--ink); color: #fff; box-shadow: inset 0 -3px 0 var(--red); }
+
+/* ---------- 页面 ---------- */
+.page { padding: 16px 18px 20px; }
+.page-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 14px; padding-bottom: 6px; border-bottom: 3px solid var(--tc); }
+.page-title h1 { font-size: 24px; font-weight: 900; line-height: 1.2; letter-spacing: .06em; color: var(--tc-text); }
+.page-title .en { font-size: 10px; font-weight: 800; letter-spacing: .18em; color: var(--muted); text-transform: uppercase; }
+.page-title .aside { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.page-title .aside b { font-size: 15px; color: var(--ink); }
+
+/* ---------- 通用 ---------- */
+.section-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: 14px; font-weight: 900; }
+.section-title:first-child { margin-top: 2px; }
+.section-title::before { content: ""; width: 10px; height: 11px; background: var(--red); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.section-title .en { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+.section-title .aside { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.hint { color: var(--muted); font-size: 12px; }
+.note { position: relative; margin-top: 12px; padding: 8px 12px 8px 38px; border: 1.5px solid var(--red); border-radius: var(--radius); background: #fff; font-size: 12px; }
+.note::before { content: "!"; position: absolute; left: 10px; top: 8px; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: var(--red); color: #fff; font-size: 12px; font-weight: 900; line-height: 1; }
+.label { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 900; color: var(--ink); letter-spacing: .06em; }
+.field {
+  width: 100%; border: 0; border-bottom: 1.5px solid #bdb9cc; border-radius: 0; background: var(--panel);
+  padding: 5px 8px; outline: none; transition: border-color .15s, background .15s;
+}
+.field:focus { border-bottom-color: var(--red); background: #fff; box-shadow: inset 0 0 0 1px var(--line); }
+.field::placeholder { color: #a7a2b8; }
+textarea.field { resize: vertical; min-height: 52px; }
+.grid { display: grid; gap: 8px; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.full { grid-column: 1 / -1; }
+.btn { border: 1.5px solid var(--ink); border-radius: var(--radius); padding: 4px 10px; background: #fff; color: var(--ink); font-size: 12px; font-weight: 800; }
+.btn:hover:not(:disabled) { background: var(--ink); color: #fff; }
+.btn.primary { background: var(--red); border-color: var(--red); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: #b3172f; border-color: #b3172f; }
+.btn.dark { background: var(--ink); border-color: var(--ink); color: #fff; }
+.btn.confirm, .btn.confirm:hover:not(:disabled) { background: var(--yellow); border-color: var(--yellow); color: var(--ink); }
+.btn.ghost { border-style: dashed; color: var(--ink-soft); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.stepper { display: inline-flex; align-items: center; gap: 2px; }
+.stepper button { width: 22px; height: 22px; border: 1.5px solid var(--ink); border-radius: 2px; background: #fff; font-weight: 900; line-height: 1; }
+.stepper button:hover { background: var(--ink); color: #fff; }
+.stepper b { min-width: 22px; text-align: center; }
+.card { border: 1.5px solid var(--tc, var(--ink)); border-radius: var(--radius); background: #fff; overflow: hidden; }
+.card + .card { margin-top: 10px; }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--tc, var(--ink)); color: var(--tc-on, #fff); font-weight: 900; }
+.card-head .title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-head .btn { padding: 1px 8px; border-color: currentColor; background: transparent; color: inherit; }
+.card-head .btn:hover:not(:disabled) { background: #fff; color: var(--ink); border-color: #fff; }
+.card-body { padding: 10px; }
+.remove { border: 0; background: transparent; color: inherit; opacity: .75; font-size: 12px; font-weight: 700; }
+.remove:hover { opacity: 1; }
+.remove.confirm { opacity: 1; color: #fff; background: var(--ink); border-radius: 2px; padding: 0 6px; }
+details.fold { margin-top: 10px; border: 1px dashed var(--line); border-radius: var(--radius); padding: 6px 10px; }
+details.fold > summary { cursor: pointer; font-size: 12px; font-weight: 800; color: var(--ink-soft); }
+details.fold[open] > summary { margin-bottom: 6px; }
+.panel { margin-top: 14px; border: 1.5px solid var(--tc); border-radius: var(--radius); background: #fff; }
+.panel-head { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px; background: var(--tc); color: var(--tc-on); font-size: 13px; font-weight: 900; letter-spacing: .04em; }
+.panel-head .en { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; opacity: .8; }
+.panel-head .aside { margin-left: auto; font-size: 11px; font-weight: 700; opacity: .9; }
+.panel-body { padding: 10px; }
+
+/* ---------- 员工档案 ---------- */
+.identity { display: grid; grid-template-columns: 156px minmax(0, 1fr); gap: 16px; align-items: start; }
+.portrait {
+  position: relative; padding: 7px;
+  background:
+    linear-gradient(135deg, var(--red) 0 15px, transparent 15px),
+    linear-gradient(315deg, var(--blue) 0 15px, transparent 15px),
+    var(--ink);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+.portrait::before, .portrait::after { content: ""; position: absolute; z-index: 2; width: 23px; height: 5px; background: #fff; opacity: .9; }
+.portrait::before { top: 12px; right: 9px; }
+.portrait::after { bottom: 12px; left: 9px; }
+.portrait-media { aspect-ratio: 3 / 4; display: grid; place-items: center; background: var(--soft); overflow: hidden; }
+.portrait-media img { width: 100%; height: 100%; object-fit: cover; }
+.portrait-empty { color: var(--red); font-size: 46px; line-height: 1; }
+.id-kicker { font-size: 10px; font-weight: 900; letter-spacing: .22em; color: var(--ink); }
+.id-name { margin-top: 2px; font-size: 22px; font-weight: 900; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.id-rank { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; }
+.id-rank .label { margin: 0; }
+.arc-bands { display: grid; gap: 6px; margin-top: 10px; }
+.arc-band { display: grid; grid-template-columns: 26px 40px minmax(0, 1fr); align-items: center; min-height: 42px; padding: 3px 10px; border-radius: var(--radius); color: #fff; }
+.arc-band .letter { font-size: 24px; font-weight: 900; line-height: 1; }
+.arc-band .kind { font-size: 12px; font-weight: 900; letter-spacing: .04em; }
+.arc-band input { width: 100%; min-width: 0; border: 0; border-left: 1px solid currentColor; background: transparent; color: inherit; font-size: 15px; font-weight: 900; padding: 4px 0 4px 10px; outline: none; }
+.arc-band input::placeholder { color: inherit; opacity: .55; font-weight: 700; }
+.arc-band input:focus { background: rgba(255,255,255,.16); }
+.arc-band.a { background: var(--blue); }
+.arc-band.r { background: var(--yellow); color: var(--ink); }
+.arc-band.c { background: var(--red); }
+.record { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 14px; border: 1.5px solid var(--ink); border-radius: var(--radius); }
+.record-cell { display: grid; justify-items: center; gap: 4px; padding: 8px 4px; border-left: 1px solid var(--line); }
+.record-cell:first-child { border-left: 0; }
+.record-cell .num { font-size: 28px; font-weight: 900; line-height: 1; }
+.record-cell .num.red { color: var(--red); }
+.record-cell .lbl { font-size: 11px; font-weight: 800; color: var(--ink-soft); }
+.record-cell .stepper b { display: none; }
+.numbered { display: grid; gap: 6px; }
+.numbered-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 8px; }
+.num-dot { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--tc); color: var(--tc-on); font-size: 12px; font-weight: 900; }
+.sub-label { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 4px; font-size: 13px; font-weight: 900; color: var(--tc-text); }
+.sub-label:first-child { margin-top: 0; }
+.sub-label small { font-size: 11px; font-weight: 700; color: var(--muted); }
+
+/* ---------- 资质 ---------- */
+.quality-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quality { border: 1.5px solid var(--ink); border-radius: var(--radius); background: #fff; overflow: hidden; }
+.quality.burnout { border-color: var(--red); box-shadow: inset 0 0 0 1px var(--red); }
+.q-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--red); color: #fff; }
+.q-name { flex: 1 1 auto; min-width: 0; font-weight: 900; font-size: 14px; }
+.q-name small { display: block; font-size: 9px; font-weight: 700; letter-spacing: .08em; opacity: .8; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-roll { border: 1px solid rgba(255,255,255,.7); border-radius: 2px; background: transparent; color: #fff; padding: 0 8px; font-size: 11px; font-weight: 800; }
+.q-roll:hover { background: #fff; color: var(--red); }
+.q-pips { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; padding: 8px 8px 4px; }
+.pip { aspect-ratio: 1; padding: 0; border: 0; background: #ebe9f1; clip-path: polygon(50% 4%, 100% 96%, 0 96%); }
+.pip.cap { background: #bcd2f7; }
+.pip.on { background: var(--yellow); }
+.pip:disabled { opacity: 1; cursor: default; }
+.q-foot { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 8px 6px; font-size: 11px; color: var(--ink-soft); }
+.q-foot .cur b { font-size: 15px; color: var(--ink); }
+.burn-tag { color: var(--red); font-weight: 900; }
+
+/* ---------- 工作/生活 ---------- */
+.track { border: 1.5px solid var(--tk); border-radius: var(--radius); overflow: hidden; background: #fff; --tk: var(--red); }
+.track + .track { margin-top: 10px; }
+.track.reality { --tk: var(--yellow); }
+.track.anomaly { --tk: var(--blue); }
+.track-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--tk); color: #fff; font-weight: 900; }
+.track.reality .track-head { color: var(--ink); }
+.track-head .aside { margin-left: auto; font-size: 11px; font-weight: 700; }
+.track-scroll { overflow-x: auto; padding: 8px; }
+.track-board { min-width: 540px; }
+.track-ranks { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
+.track-ranks span { padding: 2px 4px; background: var(--soft); text-align: center; font-size: 10px; font-weight: 800; }
+.track-row { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 2px; margin: 2px 0; }
+.cell { height: 28px; border: 1.5px solid var(--tk); border-radius: 2px; background: #fff; color: var(--ink-soft); font-size: 11px; font-weight: 900; padding: 0; }
+.cell.marked { background: var(--tk); color: #fff; }
+.track.reality .cell.marked { color: var(--ink); }
+.cell.crossed { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* ---------- 人际关系 ---------- */
+.conn { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.conn-pips { display: inline-flex; gap: 2px; }
+.conn-pip { width: 18px; height: 18px; padding: 0; border: 1.5px solid var(--yellow-ink); border-radius: 2px; background: #fff; }
+.conn-pip.on { background: var(--yellow); }
+.tag { display: inline-block; padding: 0 6px; border-radius: 2px; font-size: 11px; font-weight: 800; }
+.tag.net { background: var(--yellow); color: var(--ink); }
+.tag.lost { background: var(--red-soft); color: var(--red); }
+
+/* ---------- 速查 ---------- */
+.ref p { margin: 4px 0; }
+.ref table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12px; border: 1.5px solid var(--ink); }
+.ref td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
+.ref td:first-child { white-space: nowrap; background: var(--panel); border-right: 1px solid var(--line); }
+
+/* ---------- 悬浮按钮与弹窗 ---------- */
+.fab { position: fixed; right: 16px; bottom: 16px; z-index: 20; width: 66px; height: 58px; padding: 0; border: 0; background: transparent; filter: drop-shadow(0 6px 10px rgba(212,32,60,.35)); }
+.fab span { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; padding-bottom: 8px; background: var(--red); color: #fff; font-size: 13px; font-weight: 900; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.fab:hover { transform: translateY(-2px); }
+.modal-overlay { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 14px; background: rgba(23,13,40,.6); }
+.modal-overlay.open { display: grid; }
+.modal { width: min(440px, 100%); max-height: calc(100vh - 28px); overflow-y: auto; border: 2px solid var(--ink); border-radius: 4px; background: #fff; box-shadow: 0 14px 38px rgba(42,29,92,.25); }
+.modal-head { padding: 10px 14px; background: var(--ink); color: #fff; border-bottom: 4px solid var(--red); }
+.modal-head .kicker { font-size: 11px; color: #cfc8dc; }
+.modal-head strong { display: block; font-size: 18px; }
+.modal-body { padding: 12px 16px 16px; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button { border: 1.5px solid var(--line); border-radius: 2px; padding: 2px 9px; background: #fff; font-size: 12px; font-weight: 800; }
+.seg button.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
+.preview { margin-top: 10px; padding: 6px 8px; border-left: 3px solid var(--red); background: var(--panel); font-size: 12px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+.modal-error { margin-top: 10px; color: var(--red); font-size: 12px; font-weight: 800; }
+.settle-block { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.settle-block:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.refill-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0; font-size: 12px; }
+.toast { position: fixed; left: 50%; bottom: 20px; z-index: 80; transform: translate(-50%, 16px); opacity: 0; pointer-events: none; max-width: calc(100% - 32px); padding: 6px 14px; border-radius: 2px; background: var(--ink); color: #fff; font-size: 12px; transition: .2s; }
+.toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+/* ---------- 受限文档 ---------- */
+.vault-overlay { position: fixed; inset: 0; z-index: 60; display: none; place-items: center; padding: 14px; overflow-y: auto; background: rgba(23,13,40,.72); }
+.vault-overlay.open { display: grid; }
+.vault-overlay.doc {
+  place-items: start center;
+  background:
+    linear-gradient(rgba(42,29,92,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42,29,92,.04) 1px, transparent 1px),
+    #e6e5ec;
+  background-size: 22px 22px;
+}
+.vd { width: min(380px, 100%); border: 2px solid var(--ink); border-radius: 4px; background: #fff; box-shadow: 0 16px 40px rgba(0,0,0,.3); }
+.vd-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .16em; }
+.vd-bar::before { content: ""; width: 12px; height: 11px; background: var(--red); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.vd-body { padding: 16px; }
+.vd-top { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; align-items: center; }
+.vd-lock { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 10px; background: var(--red); }
+.vd-top strong { display: block; font-size: 18px; font-weight: 900; color: var(--red); letter-spacing: .06em; }
+.vd-top p { font-size: 12px; color: var(--ink-soft); }
+.vd-fields { display: grid; gap: 8px; margin-top: 14px; }
+.vd-error { min-height: 18px; margin-top: 6px; color: var(--red); font-size: 12px; font-weight: 800; }
+.vd-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.vdoc { position: relative; width: min(640px, 100%); margin: 4px 0 20px; border: 1px solid #bab7c4; border-radius: 4px; background: #fff; box-shadow: 0 18px 50px rgba(42,29,92,.2); overflow: hidden; }
+.vdoc::before { content: ""; position: absolute; right: -70px; top: -112px; width: 250px; height: 250px; background: var(--red); clip-path: polygon(50% 0, 100% 100%, 0 100%); transform: rotate(15deg); }
+.vdoc > * { position: relative; }
+.vdoc-head { padding: 24px 22px 16px; border-bottom: 5px solid var(--red); }
+.vdoc-kicker { color: var(--red); font-size: 11px; font-weight: 900; letter-spacing: .22em; }
+.vdoc-title { margin-top: 4px; font-size: clamp(30px, 8vw, 42px); font-weight: 900; line-height: 1.15; letter-spacing: .14em; }
+.vdoc-meta { margin-top: 8px; font-family: Consolas, "Courier New", monospace; font-size: 11px; letter-spacing: .06em; color: var(--ink-soft); }
+.vdoc-stamp { position: absolute; right: 24px; bottom: 16px; padding: 0 10px; border: 3px solid var(--red); background: rgba(255,255,255,.9); color: var(--red); font-size: 18px; font-weight: 900; letter-spacing: .3em; transform: rotate(-9deg); }
+.vdoc-redact { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 22px 0; font-size: 11px; color: var(--muted); }
+.vdoc-redact i { display: inline-block; height: 10px; background: var(--ink); }
+.vdoc-paper { margin: 12px 22px 0; border: 1px solid #d0ced8; }
+.vdoc-text {
+  display: block; width: 100%; min-height: 336px; resize: vertical; border: 0; outline: none;
+  padding: 0 12px 28px 52px; font-size: 14px; line-height: 28px; color: var(--ink);
+  background:
+    linear-gradient(90deg, transparent 0 38px, rgba(212,32,60,.35) 38px 40px, transparent 40px),
+    repeating-linear-gradient(180deg, transparent 0 27px, rgba(42,29,92,.10) 27px 28px),
+    #fff;
+  background-attachment: local;
+}
+.vdoc .note { margin: 12px 22px 0; }
+.vdoc-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 12px 22px 18px; }
+
+@media (max-width: 560px) {
+  body { padding: 0 0 84px; }
+  .sheet { border: 0; border-radius: 0; box-shadow: none; }
+  .masthead { padding: 14px 14px 16px; }
+  .brand { letter-spacing: .12em; }
+  .page { padding: 14px 12px 18px; }
+  .vdoc-head { padding: 20px 14px 14px; }
+  .vdoc-stamp { right: 14px; font-size: 15px; }
+  .vdoc-redact, .vdoc-actions { padding-left: 14px; padding-right: 14px; }
+  .vdoc-paper, .vdoc .note { margin-left: 14px; margin-right: 14px; }
+  .identity { grid-template-columns: 112px minmax(0, 1fr); gap: 12px; }
+  .arc-band { grid-template-columns: 22px 34px minmax(0, 1fr); padding: 3px 8px; }
+  .arc-band input { font-size: 14px; padding-left: 8px; }
+  .record { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .record-cell:nth-child(3) { border-left: 0; }
+  .record-cell:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.two, .grid.three { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">等待 SealChat 下发角色数据…</div></div>
+<div id="modal" class="modal-overlay"><div class="modal" id="modalBox"></div></div>
+<div id="vault" class="vault-overlay"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+var _windowId = null;
+var _rollDispatchMode = 'default';
+function postEvent(action, payload) {
+  if (!_windowId) return;
+  window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
+}
+window.sealchat = {
+  onUpdate: function(cb) {
+    window.addEventListener('message', function(e) {
+      if (e.source !== window.parent) return;
+      if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
+    });
+  },
+  setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+  setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+  roll: function(template, label, args) {
+    postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
+  },
+  updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); }
+};
+// 检定与资源变动由人物卡组装好完整的 .ta/.tr/.tra/.st 等指令后直接发送，交给 SealDice 社区插件 triangle-agency 处理。
+window.sealchat.setRollDispatchMode('template');
+</script>
+
+<script>
+// ============================================================
+// 数据层
+// ============================================================
+var DATA_KEY = '$三角机构';
+var MODEL_VERSION = 1;
+var QA_MAX = 9;
+var CONNECTION_MAX = 9;
+var RECENT_GUARD_MS = 2500;
+var CONFIRM_MS = 3000;
+var QA_PENDING_MS = 120000;
+var QA_PENDING_LIMIT = 32;
+
+// 九项资质与社区插件 triangle-agency 的规则模板 ta 同名：根级数值即当前资质保证（QA），插件检定时直接读取。
+var QUALITIES = [
+  { key: '专注', en: 'Attentiveness' },
+  { key: '共情', en: 'Empathy' },
+  { key: '气场', en: 'Presence' },
+  { key: '欺瞒', en: 'Duplicity' },
+  { key: '主动', en: 'Initiative' },
+  { key: '专业', en: 'Professionalism' },
+  { key: '活力', en: 'Dynamism' },
+  { key: '坚毅', en: 'Persistence' },
+  { key: '诡秘', en: 'Subtlety' }
+];
+var QUALITY_KEYS = QUALITIES.map(function(q) { return q.key; });
+function maxKey(q) { return q + '上限'; }
+
+// 根级属性：资质当前 QA 与上限、嘉奖、申诫。其余内容保存在 $三角机构 中，不进入 .st 的属性列表。
+var ROOT_DEFAULTS = { '嘉奖': 0, '申诫': 0 };
+QUALITY_KEYS.forEach(function(q) { ROOT_DEFAULTS[q] = 0; ROOT_DEFAULTS[maxKey(q)] = 0; });
+
+// 旧版自制三角机构人物卡（$TriangleAgency，配合自制插件）使用的根级键名 → 当前键名。
+var LEGACY_DATA_KEY = '$TriangleAgency';
+var LEGACY_QUALITY_KEYS = { '缜密': '专注', '坚持': '坚毅', '气质': '气场', '低调': '诡秘' };
+var LEGACY_ROOT_KEYS = { '处分': '申诫' };
+for (var lk in LEGACY_QUALITY_KEYS) {
+  LEGACY_ROOT_KEYS[lk] = LEGACY_QUALITY_KEYS[lk];
+  LEGACY_ROOT_KEYS[maxKey(lk)] = maxKey(LEGACY_QUALITY_KEYS[lk]);
+}
+
+// 工作/生活平衡表：每条两行各 15 格，上行从左向右、下行从右向左；格内代码为游戏高墙文件编号。
+var TRACK_LEN = 15;
+var TRACKS = {
+  competency: {
+    name: '职能', en: 'Competency',
+    topRanks: ['培训生', '助理', '高级助理', '副主任', '主任'],
+    bottomRanks: ['董事长', '执行副总裁', '高级经理', '副总裁', '区域总监'],
+    top: ['', '', 'A3', '', '', 'D4', '', '', 'G3', '', '', 'J3', '', '', 'N3'],
+    bottom: ['', '', '', 'Y2', '', '', 'W8', '', '', 'T3', '', '', 'Q3', '', '']
+  },
+  reality: {
+    name: '现实', en: 'Reality',
+    top: ['C4', '', '', 'L11', '', '', '', 'E2', '', 'O4', '', '', '', 'T6', ''],
+    bottom: ['', '', '', '', 'E3', '', '', '', 'H5', '', 'X3', '', '', '', 'V2']
+  },
+  anomaly: {
+    name: '异常', en: 'Anomaly',
+    top: ['H4', 'H3', '', '', 'U2', '', 'X2', '', '', '', 'N1', '', 'Q2', '', ''],
+    bottom: ['', '', '', '', '', '', '', 'A7', '', '', '', 'G8', '', 'L10', '']
+  }
+};
+var TRACK_KEYS = ['competency', 'reality', 'anomaly'];
+
+var QUESTIONS = [
+  '你最初是如何接触到你的异常体的？',
+  '机构是如何找到你的？',
+  '你的年薪是多少？',
+  '你的外貌如何？',
+  '你的能力有独特的外在视觉表现吗？',
+  '你喝什么咖啡？',
+  '在你的人际关系中，谁是你的主要联系人？为什么？',
+  '在协作的工作环境中，你能带来什么？',
+  '请列出你之前的工作经历。'
+];
+var CUSTOM_QUESTION_COUNT = 3;
+var QUESTION_COUNT = QUESTIONS.length + CUSTOM_QUESTION_COUNT;
+
+function blankAnomaly() { return { name: '', quality: '', trigger: '', success: '', extra: '', failure: '', practice: '' }; }
+function blankRelation() { return { name: '', player: '', connection: 1, bonus: '', note: '' }; }
+function blankLane() { var out = []; for (var i = 0; i < TRACK_LEN; i++) out.push(0); return out; }
+function blankStrings(n) { var out = []; for (var i = 0; i < n; i++) out.push(''); return out; }
+function blankModel() {
+  var tracks = {};
+  TRACK_KEYS.forEach(function(k) { tracks[k] = { top: blankLane(), bottom: blankLane() }; });
+  return {
+    version: MODEL_VERSION,
+    arc: { anomaly: '', reality: '', competency: '' },
+    profile: { rank: '', realityTrigger: '', burnoutRelease: '', primeDirective: '', sanctioned: blankStrings(3), requisitions: '', notes: '' },
+    record: { mvp: 0, probation: 0 },
+    anomalies: [blankAnomaly(), blankAnomaly(), blankAnomaly()],
+    relationships: [blankRelation(), blankRelation(), blankRelation()],
+    tracks: tracks,
+    questionnaire: blankStrings(QUESTION_COUNT),
+    customQuestions: blankStrings(CUSTOM_QUESTION_COUNT),
+    // 受限文档：密钥只存摘要，内容仍以明文存在人物卡数据里。
+    restricted: { keyHash: '', docNo: '', body: '' }
+  };
+}
+
+function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }
+function str(v) { return v == null ? '' : String(v); }
+function toInt(v, fallback) {
+  if (typeof v === 'number' && isFinite(v)) return Math.trunc(v);
+  var m = String(v == null ? '' : v).trim().replace(/＋/g, '+').replace(/[－—]/g, '-').match(/^[+-]?\d+/);
+  return m ? Number(m[0]) : (fallback == null ? 0 : fallback);
+}
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+function fixedStrings(list, n) {
+  var out = (Array.isArray(list) ? list : []).slice(0, n).map(str);
+  while (out.length < n) out.push('');
+  return out;
+}
+function fixedLane(list) {
+  var out = (Array.isArray(list) ? list : []).slice(0, TRACK_LEN).map(function(v) { return clamp(toInt(v, 0), 0, 2); });
+  while (out.length < TRACK_LEN) out.push(0);
+  return out;
+}
+
+// 按模板默认结构补齐字段，并丢弃类型不符的值，保证渲染时不必逐处判空。
+function merge(target, source) {
+  for (var k in target) {
+    if (!(k in source)) continue;
+    var tv = target[k], sv = source[k];
+    if (Array.isArray(tv)) { if (Array.isArray(sv)) target[k] = sv; }
+    else if (isObj(tv)) { if (isObj(sv)) merge(tv, sv); }
+    else if (typeof tv === 'number') target[k] = toInt(sv, tv);
+    else target[k] = str(sv);
+  }
+}
+function normalize(raw) {
+  var out = blankModel();
+  if (!isObj(raw)) return out;
+  merge(out, raw);
+  out.version = MODEL_VERSION;
+  out.profile.sanctioned = fixedStrings(out.profile.sanctioned, 3);
+  out.anomalies = out.anomalies.filter(isObj).map(function(a) {
+    var b = blankAnomaly(); merge(b, a);
+    if (QUALITY_KEYS.indexOf(b.quality) < 0) b.quality = '';
+    return b;
+  });
+  out.relationships = out.relationships.filter(isObj).map(function(r) {
+    var b = blankRelation(); merge(b, r);
+    b.connection = clamp(b.connection, 0, CONNECTION_MAX);
+    return b;
+  });
+  TRACK_KEYS.forEach(function(k) {
+    var t = out.tracks[k];
+    out.tracks[k] = { top: fixedLane(isObj(t) && t.top), bottom: fixedLane(isObj(t) && t.bottom) };
+  });
+  out.questionnaire = fixedStrings(out.questionnaire, QUESTION_COUNT);
+  out.customQuestions = fixedStrings(out.customQuestions, CUSTOM_QUESTION_COUNT);
+  return out;
+}
+
+function parseModel(value) {
+  if (isObj(value)) return value;
+  if (typeof value === 'string' && value.charAt(0) === '{') {
+    try { return JSON.parse(value); } catch (e) { return null; }
+  }
+  return null;
+}
+
+// ---------- 旧版自制人物卡迁移 ----------
+function legacyQuality(text) {
+  var q = str(text).trim();
+  if (LEGACY_QUALITY_KEYS[q]) return LEGACY_QUALITY_KEYS[q];
+  return QUALITY_KEYS.indexOf(q) >= 0 ? q : '';
+}
+function migrateLegacy(old, attrs) {
+  var m = blankModel();
+  var p = isObj(old.profile) ? old.profile : {};
+  m.arc.anomaly = str(p.anomaly);
+  m.arc.reality = str(p.reality);
+  m.arc.competency = str(p.competency);
+  m.profile.rank = str(attrs['职级'] != null ? attrs['职级'] : p.rank);
+  m.profile.realityTrigger = str(p.realityTrigger);
+  m.profile.burnoutRelease = str(p.burnRelease);
+  m.profile.primeDirective = str(p.highestDirective);
+  m.profile.sanctioned = fixedStrings(p.authorizedActions, 3);
+  m.profile.requisitions = str(p.supplies) || [p.initialSupplies, p.extraSupplies].map(str).filter(Boolean).join('\n');
+  // 代号与机构信誉等级没有对应栏位，保留到备注。
+  var reputation = attrs['机构信誉等级'] != null ? attrs['机构信誉等级'] : p.reputation;
+  m.profile.notes = [p.code && '代号：' + p.code, reputation && '机构信誉等级：' + reputation].filter(Boolean).join('\n');
+  var c = isObj(old.counters) ? old.counters : {};
+  m.record.mvp = Math.max(0, toInt(c.mvp, 0));
+  m.record.probation = Math.max(0, toInt(c.probation, 0));
+
+  var anomalies = (Array.isArray(old.anomalies) ? old.anomalies : []).filter(isObj).map(function(a) {
+    var b = blankAnomaly();
+    b.name = str(a.ability) || str(a.name);
+    b.quality = legacyQuality(a.quality);
+    b.trigger = str(a.trigger);
+    if (!b.quality && str(a.quality).trim()) b.trigger = '使用资质：' + str(a.quality).trim() + (b.trigger ? '\n' + b.trigger : '');
+    b.success = str(a.success);
+    b.failure = str(a.failure);
+    b.practice = str(a.practiced);
+    return b;
+  });
+  if (anomalies.length) m.anomalies = anomalies;
+
+  var relations = (Array.isArray(old.relationships) ? old.relationships : []).filter(function(r) {
+    return isObj(r) && (str(r.name) || str(r.player) || str(r.reward) || str(r.summary));
+  }).map(function(r) {
+    return { name: str(r.name), player: str(r.player), connection: clamp(toInt(r.connection, 0), 0, CONNECTION_MAX), bonus: str(r.reward), note: str(r.summary) };
+  });
+  if (relations.length) m.relationships = relations;
+
+  var tracks = isObj(old.tracks) ? old.tracks : {};
+  TRACK_KEYS.forEach(function(k) {
+    var t = tracks[k];
+    if (Array.isArray(t)) t = { top: t };
+    if (isObj(t)) m.tracks[k] = { top: fixedLane(t.top), bottom: fixedLane(t.bottom) };
+  });
+  m.questionnaire = fixedStrings(old.questionnaire, QUESTION_COUNT);
+  // 旧版自定义问题带有占位文字，迁移时清空。
+  m.customQuestions = fixedStrings(old.customQuestions, CUSTOM_QUESTION_COUNT).map(function(q) {
+    return /^基于您的现实身份的额外问题 \d$/.test(q) ? '' : q;
+  });
+
+  // 只补写卡上尚不存在的属性：插件或 .st 已维护的新格式数值优先。
+  var root = {};
+  for (var oldKey in LEGACY_ROOT_KEYS) {
+    var newKey = LEGACY_ROOT_KEYS[oldKey];
+    if (attrs[oldKey] != null && attrs[newKey] == null) root[newKey] = toInt(attrs[oldKey], 0);
+  }
+  var qualities = isObj(old.qualities) ? old.qualities : {};
+  for (var name in qualities) {
+    var key = legacyQuality(name);
+    if (!key || !isObj(qualities[name])) continue;
+    if (attrs[key] == null && root[key] == null) root[key] = toInt(qualities[name].current, 0);
+    if (attrs[maxKey(key)] == null && root[maxKey(key)] == null) root[maxKey(key)] = toInt(qualities[name].max, 0);
+  }
+  return { root: root, model: m };
+}
+
+// ============================================================
+// 状态与保存
+// ============================================================
+var S = {
+  name: '',
+  avatarUrl: '',
+  attrs: {},
+  model: null,
+  ready: false,
+  tab: 'profile',
+  pendingRoot: {},
+  modelDirty: false,
+  // 卡上还没有三角机构数据：先以默认值显示，首次编辑时再写入，避免打开即覆盖宿主尚未加载的属性。
+  needsInit: false,
+  saveTimer: null,
+  composing: false,
+  deferredRender: false,
+  saveState: 'idle',
+  recent: null,
+  qaPending: {},
+  ui: { confirm: null, confirmUntil: 0 },
+  modal: null,
+  // 受限文档：null 或 { stage: 'setup' | 'access' | 'open', rekey, error }
+  vault: null
+};
+
+function rootNum(key) {
+  var v = S.attrs[key];
+  var d = ROOT_DEFAULTS[key] || 0;
+  return v == null || v === '' ? d : toInt(v, d);
+}
+function qaState(q) {
+  return { current: rootNum(q), max: clamp(rootNum(maxKey(q)), 0, QA_MAX) };
+}
+
+function setRoots(patch, immediate) {
+  // 绝对值编辑与在途相对指令不能仅凭数值归因，须核对后再继续结算。
+  for (var q in patch) {
+    var p = S.qaPending[q];
+    if (!p) continue;
+    if (p.steps.length || p.blocked) { blockPending(p); p.host = null; }
+    else { clearTimeout(p.timer); delete S.qaPending[q]; }
+  }
+  for (var k in patch) { S.attrs[k] = patch[k]; S.pendingRoot[k] = patch[k]; }
+  scheduleSave(immediate);
+}
+function setRoot(key, value, immediate) {
+  var patch = {};
+  patch[key] = value;
+  setRoots(patch, immediate);
+}
+function touchModel(immediate) {
+  S.modelDirty = true;
+  scheduleSave(immediate);
+}
+
+function getPath(obj, path) {
+  var parts = path.split('.');
+  for (var i = 0; i < parts.length; i++) { if (obj == null) return undefined; obj = obj[parts[i]]; }
+  return obj;
+}
+function setPath(obj, path, value) {
+  var parts = path.split('.');
+  for (var i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+  var last = parts[parts.length - 1];
+  obj[last] = typeof obj[last] === 'number' ? toInt(value, 0) : value;
+}
+
+function scheduleSave(immediate) {
+  setSaveState('pending');
+  if (S.saveTimer) clearTimeout(S.saveTimer);
+  if (immediate) { flushSave(); return; }
+  S.saveTimer = setTimeout(flushSave, 1200);
+}
+function flushSave() {
+  if (S.saveTimer) { clearTimeout(S.saveTimer); S.saveTimer = null; }
+  if (S.composing) { S.saveTimer = setTimeout(flushSave, 600); return; }
+  // 没有真实待保存的修改时直接返回：切页、隐藏页面等补交不应写入空白卡。
+  if (!S.modelDirty && !Object.keys(S.pendingRoot).length) { setSaveState('saved'); return; }
+  var patch = {};
+  if (S.needsInit && S.model) {
+    for (var d in ROOT_DEFAULTS) if (S.attrs[d] == null) { patch[d] = ROOT_DEFAULTS[d]; S.attrs[d] = ROOT_DEFAULTS[d]; }
+    S.modelDirty = true;
+    S.needsInit = false;
+  }
+  for (var k in S.pendingRoot) patch[k] = S.pendingRoot[k];
+  if (S.modelDirty && S.model) {
+    patch[DATA_KEY] = clone(S.model);
+    S.attrs[DATA_KEY] = patch[DATA_KEY];
+  }
+  S.pendingRoot = {};
+  S.modelDirty = false;
+  var guard = S.recent && Date.now() < S.recent.until ? S.recent.patch : {};
+  for (var g in patch) guard[g] = patch[g];
+  S.recent = { patch: guard, until: Date.now() + RECENT_GUARD_MS };
+  window.sealchat.updateAttrs(patch);
+  setSaveState('saved');
+}
+function setSaveState(state) {
+  S.saveState = state;
+  var dot = document.getElementById('saveDot');
+  if (dot) { dot.dataset.state = state; dot.textContent = state === 'pending' ? '待保存' : (state === 'saved' ? '已保存' : ''); }
+}
+
+function isEditing() {
+  var el = document.activeElement;
+  if (!el) return false;
+  var inSheet = document.getElementById('app').contains(el) || document.getElementById('modal').contains(el) || document.getElementById('vault').contains(el);
+  return inSheet && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && el.type !== 'checkbox'));
+}
+
+function sameValue(a, b) {
+  if (a == null || b == null) return a == b;
+  if (typeof a === 'object' || typeof b === 'object') return JSON.stringify(a) === JSON.stringify(b);
+  return String(a) === String(b);
+}
+
+function onHostUpdate(data) {
+  S.name = data && data.name || '';
+  S.avatarUrl = data && data.avatarUrl || '';
+  var incoming = data && data.attrs || {};
+  var attrs = {};
+  for (var k in incoming) attrs[k] = incoming[k];
+  // 尚未提交或刚提交的本地编辑优先于宿主回显，避免旧快照覆盖刚输入的内容。
+  // 宿主回显与已保存值一致即视为确认，之后该键不再拦截（SealDice 随后的写入可正常显示）。
+  if (S.recent && Date.now() < S.recent.until) {
+    for (var r in S.recent.patch) {
+      if (sameValue(incoming[r], S.recent.patch[r])) delete S.recent.patch[r];
+      else attrs[r] = S.recent.patch[r];
+    }
+  }
+  for (var p in S.pendingRoot) attrs[p] = S.pendingRoot[p];
+  S.attrs = attrs;
+  // 使用原始宿主快照核销；即使正在编辑、暂缓重绘，也不能漏掉中间回写。
+  for (var q in S.qaPending) reconcilePending(q, incoming[q]);
+
+  // 尚未写入的空白卡也继续检查：宿主稍后才送达的已有数据优先于默认值。
+  if (!S.modelDirty) {
+    var raw = parseModel(attrs[DATA_KEY]);
+    var legacy = raw ? null : parseModel(attrs[LEGACY_DATA_KEY]);
+    S.needsInit = false;
+    if (raw) {
+      S.model = normalize(raw);
+    } else if (legacy) {
+      var migrated = migrateLegacy(legacy, attrs);
+      S.model = migrated.model;
+      setRoots(migrated.root);
+      touchModel(true);
+    } else {
+      S.model = blankModel();
+      S.needsInit = true;
+    }
+  }
+  S.ready = true;
+  if (isEditing()) { S.deferredRender = true; return; }
+  render();
+  if (S.modal) renderModal();
+  if (S.vault && S.vault.stage === 'open') renderVault();
+}
+
+// ============================================================
+// 渲染层
+// ============================================================
+function esc(text) {
+  return str(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function pathInput(path, placeholder) {
+  return '<input class="field" data-path="' + esc(path) + '" value="' + esc(getPath(S.model, path)) + '" placeholder="' + esc(placeholder || '') + '">';
+}
+function pathArea(path, placeholder, rows) {
+  return '<textarea class="field" data-path="' + esc(path) + '" rows="' + (rows || 2) + '" placeholder="' + esc(placeholder || '') + '">' + esc(getPath(S.model, path)) + '</textarea>';
+}
+function labeled(label, html, cls) {
+  return '<div class="' + (cls || '') + '"><span class="label">' + esc(label) + '</span>' + html + '</div>';
+}
+function qualitySelect(path) {
+  var cur = getPath(S.model, path);
+  var html = '<select class="field" data-path="' + esc(path) + '"><option value="">—</option>';
+  QUALITY_KEYS.forEach(function(q) { html += '<option value="' + q + '"' + (cur === q ? ' selected' : '') + '>' + q + '</option>'; });
+  return html + '</select>';
+}
+function pageTitle(cn, en, aside) {
+  return '<div class="page-title"><h1>' + esc(cn) + '</h1>' + (en ? '<span class="en">' + esc(en) + '</span>' : '') + (aside ? '<span class="aside">' + aside + '</span>' : '') + '</div>';
+}
+// tone 对应规则书的 ARC 配色：red = 职能，yellow = 现实，blue = 异常。
+function panel(tone, cn, en, body, aside) {
+  return '<section class="panel tone-' + tone + '"><div class="panel-head"><span>' + esc(cn) + '</span>' + (en ? '<span class="en">' + esc(en) + '</span>' : '') + (aside ? '<span class="aside">' + aside + '</span>' : '') + '</div>'
+    + '<div class="panel-body">' + body + '</div></section>';
+}
+function subLabel(text, small) {
+  return '<div class="sub-label">' + esc(text) + (small ? '<small>' + esc(small) + '</small>' : '') + '</div>';
+}
+function sectionTitle(cn, en, aside) {
+  return '<div class="section-title">' + esc(cn) + (en ? ' <span class="en">' + esc(en) + '</span>' : '') + (aside ? '<span class="aside">' + aside + '</span>' : '') + '</div>';
+}
+function stepper(act, attrs, value) {
+  return '<span class="stepper"><button data-act="' + act + '" ' + attrs + ' data-delta="-1">−</button><b>' + value + '</b><button data-act="' + act + '" ' + attrs + ' data-delta="1">+</button></span>';
+}
+function isConfirming(key) { return S.ui.confirm === key && Date.now() < S.ui.confirmUntil; }
+// 需要二次确认的按钮：第一次点击进入确认，时限内再点一次才执行。
+function confirmClick(key) {
+  if (isConfirming(key)) { S.ui.confirm = null; return true; }
+  S.ui.confirm = key;
+  S.ui.confirmUntil = Date.now() + CONFIRM_MS;
+  setTimeout(function() { if (S.ui.confirm === key && Date.now() >= S.ui.confirmUntil) { S.ui.confirm = null; render(); } }, CONFIRM_MS + 50);
+  return false;
+}
+// 角色名以 SealChat 人物卡名称为准，保证卡内与平台显示一致。
+function displayName() { return S.name || '未命名特工'; }
+
+// [键, 页签名, 页面配色]
+var TAB_LIST = [
+  ['profile', '员工档案', 'ink'],
+  ['qa', '资质保证', 'red'],
+  ['anomaly', '异常能力', 'blue'],
+  ['relations', '人际关系', 'yellow'],
+  ['worklife', '工作生活', 'ink'],
+  ['onboarding', '入职问卷', 'ink'],
+  ['ref', '规则速查', 'ink']
+];
+
+function render() {
+  S.deferredRender = false;
+  var app = document.getElementById('app');
+  if (!S.ready || !S.model) return;
+  var tab = TAB_LIST.filter(function(t) { return t[0] === S.tab; })[0] || TAB_LIST[0];
+  var html = '<div class="sheet">' + renderHeader();
+  html += '<nav class="tabs">' + TAB_LIST.map(function(t) {
+    return '<button class="tab' + (S.tab === t[0] ? ' active' : '') + '" data-act="tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  }).join('') + '</nav>';
+  html += '<main class="page tone-' + tab[2] + '">';
+  if (S.tab === 'qa') html += renderQualities();
+  else if (S.tab === 'profile') html += renderProfile();
+  else if (S.tab === 'anomaly') html += renderAnomalies();
+  else if (S.tab === 'relations') html += renderRelations();
+  else if (S.tab === 'worklife') html += renderWorklife();
+  else if (S.tab === 'onboarding') html += renderOnboarding();
+  else html += renderRef();
+  html += '</main></div><button class="fab" data-act="roll" title="请求机构：投掷 6d4"><span>6d4</span></button>';
+  app.innerHTML = html;
+  setSaveState(S.saveState);
+}
+
+function renderHeader() {
+  var arc = S.model.arc;
+  function seg(cls, letter, value) {
+    return value ? '<span class="meta-arc ' + cls + '"><b>' + letter + '</b>' + esc(value) + '</span>' : '';
+  }
+  var arcs = seg('a', 'A', arc.anomaly) + seg('r', 'R', arc.reality) + seg('c', 'C', arc.competency);
+  var rank = S.model.profile.rank;
+  return '<header class="masthead">'
+    + '<div class="brand"><button class="brand-mark" data-act="vault" tabindex="-1" aria-label="受限文档"><span></span></button><span class="brand-text">Triangle Agency / Personnel Record</span><span class="save-dot" id="saveDot"></span></div>'
+    + '<div class="agent-name" title="与 SealChat 人物卡名称同步">' + esc(displayName()) + '</div>'
+    + '<div class="agent-meta">' + (arcs || '<span>人力资源档案 · 授权员工访问</span>')
+    + (rank ? '<span>' + esc(rank) + '</span>' : '') + '</div>'
+    + '</header>';
+}
+
+function renderQualities() {
+  var cur = 0, max = 0;
+  var cards = QUALITIES.map(function(q) {
+    var st = qaState(q.key);
+    cur += Math.max(0, st.current);
+    max += st.max;
+    var pips = '';
+    for (var i = 1; i <= QA_MAX; i++) {
+      var cls = 'pip' + (i <= st.max ? ' cap' : '') + (i <= st.current ? ' on' : '');
+      pips += '<button class="' + cls + '" data-act="qa-pip" data-quality="' + q.key + '" data-index="' + i + '"' + (i > st.max ? ' disabled' : '') + ' title="' + (i > st.max ? '超出上限' : '设置当前 QA 为 ' + i) + '"></button>';
+    }
+    var burnout = st.current <= 0;
+    return '<div class="quality' + (burnout ? ' burnout' : '') + '">'
+      + '<div class="q-head"><span class="q-name">' + q.key + '<small>' + q.en + '</small></span><button class="q-roll" data-act="roll" data-quality="' + q.key + '">检定</button></div>'
+      + '<div class="q-pips">' + pips + '</div>'
+      + '<div class="q-foot"><span class="cur"><b>' + st.current + '</b>/' + st.max + (burnout ? ' <span class="burn-tag">过载</span>' : '') + '</span>'
+      + '<span title="QA 上限">上限 ' + stepper('qa-max', 'data-quality="' + q.key + '"', st.max) + '</span></div>'
+      + '</div>';
+  }).join('');
+  var restKey = 'rest';
+  var html = pageTitle('资质保证', 'Quality Assurance', 'QA 合计 <b>' + cur + '</b> / ' + max);
+  html += '<div class="quality-grid">' + cards + '</div>';
+  html += '<div class="btn-row">'
+    + '<button class="btn" data-act="cmd" data-cmd=".tcs">查询混沌点数</button>'
+    + '<button class="btn" data-act="cmd" data-cmd=".tfs">查询改写失败次数</button>'
+    + '<button class="btn' + (isConfirming(restKey) ? ' confirm' : '') + '" data-act="rest">' + (isConfirming(restKey) ? '再点确认恢复' : '恢复资质到上限') + '</button>'
+    + '</div>';
+  return html;
+}
+
+function arcBand(cls, letter, kind, path, placeholder) {
+  return '<label class="arc-band ' + cls + '"><span class="letter">' + letter + '</span><span class="kind">' + kind + '</span>'
+    + '<input data-path="' + path + '" value="' + esc(getPath(S.model, path)) + '" placeholder="' + esc(placeholder) + '"></label>';
+}
+function recordCell(label, value, act, attrs, red) {
+  return '<div class="record-cell"><span class="num' + (red ? ' red' : '') + '">' + value + '</span><span class="lbl">' + label + '</span>' + stepper(act, attrs, value) + '</div>';
+}
+function renderProfile() {
+  var portrait = S.avatarUrl
+    ? '<img src="' + esc(S.avatarUrl) + '" alt="员工照片">'
+    : '<span class="portrait-empty">▲</span>';
+  var html = pageTitle('员工档案', 'Personnel File');
+  html += '<div class="identity">'
+    + '<div class="portrait"><div class="portrait-media">' + portrait + '</div></div>'
+    + '<div><div class="id-kicker">员工识别信息</div>'
+    + '<div class="id-name" title="与 SealChat 人物卡名称同步">' + esc(displayName()) + '</div>'
+    + '<div class="id-rank"><span class="label">职级</span>' + pathInput('profile.rank', '如：助理') + '</div>'
+    + '<div class="arc-bands">'
+    + arcBand('a', 'A', '异常', 'arc.anomaly', '如：低语')
+    + arcBand('r', 'R', '现实', 'arc.reality', '如：看护者')
+    + arcBand('c', 'C', '职能', 'arc.competency', '如：公关')
+    + '</div></div></div>';
+  html += '<div class="record">'
+    + recordCell('嘉奖', rootNum('嘉奖'), 'root-step', 'data-key="嘉奖" data-min="0"')
+    + recordCell('申诫', rootNum('申诫'), 'root-step', 'data-key="申诫" data-min="0"', true)
+    + recordCell('任务 MVP', S.model.record.mvp, 'record-step', 'data-key="mvp"')
+    + recordCell('察看期', S.model.record.probation, 'record-step', 'data-key="probation"')
+    + '</div>';
+  html += panel('red', '职能', 'Competency',
+    subLabel('首要指令', '违反时记申诫')
+    + pathArea('profile.primeDirective', '你的职能要求你始终遵守的指令')
+    + subLabel('许可行为', '完成时获得嘉奖')
+    + '<div class="numbered">' + [0, 1, 2].map(function(i) {
+      return '<div class="numbered-row"><span class="num-dot">' + (i + 1) + '</span>' + pathInput('profile.sanctioned.' + i) + '</div>';
+    }).join('') + '</div>'
+    + subLabel('申领物与福利')
+    + pathArea('profile.requisitions', '初始申领物、已购申领物与工作/生活福利', 3));
+  html += panel('yellow', '现实', 'Reality',
+    '<div class="grid two">'
+    + '<div>' + subLabel('现实触发器') + pathArea('profile.realityTrigger', '异常体可借此操纵你的弱点', 3) + '</div>'
+    + '<div>' + subLabel('过载解除') + pathArea('profile.burnoutRelease', '在此情境下无视所有过载', 3) + '</div>'
+    + '</div>');
+  html += panel('ink', '备注', 'Notes', pathArea('profile.notes', '', 3));
+  return html;
+}
+
+function renderAnomalies() {
+  var list = S.model.anomalies;
+  var html = pageTitle('异常能力', 'Anomaly Abilities', list.length + ' 项');
+  html += list.map(function(a, i) {
+    var p = 'anomalies.' + i + '.';
+    var removeKey = 'anomaly-' + i;
+    return '<div class="card"><div class="card-head"><span class="title">A' + (i + 1) + ' · ' + esc(a.name || '未登记能力') + '</span>'
+      + '<button class="btn primary" data-act="roll" data-quality="' + esc(a.quality) + '"' + (a.quality ? '' : ' disabled title="先选择使用的资质"') + '>检定' + (a.quality ? ' ' + esc(a.quality) : '') + '</button>'
+      + '<button class="remove' + (isConfirming(removeKey) ? ' confirm' : '') + '" data-act="list-remove" data-list="anomalies" data-index="' + i + '">' + (isConfirming(removeKey) ? '确认删除' : '删除') + '</button></div>'
+      + '<div class="card-body"><div class="grid two">'
+      + labeled('能力名', pathInput(p + 'name'))
+      + labeled('使用资质', qualitySelect(p + 'quality'))
+      + labeled('发动方式', pathArea(p + 'trigger', '如何发动这项能力'), 'full')
+      + labeled('成功时', pathArea(p + 'success'))
+      + labeled('失败时', pathArea(p + 'failure'))
+      + labeled('额外的 3', pathArea(p + 'extra', '每额外一个 3 / 掷出更多 3 时的效果'), 'full')
+      + labeled('练习问答', pathArea(p + 'practice', '能力下方的问题和你的回答'), 'full')
+      + '</div></div></div>';
+  }).join('');
+  html += '<div class="btn-row"><button class="btn ghost" data-act="list-add" data-list="anomalies">＋ 添加异常能力</button></div>';
+  return html;
+}
+
+function renderRelations() {
+  var list = S.model.relationships;
+  var network = list.filter(function(r) { return r.connection >= CONNECTION_MAX; }).length;
+  var html = pageTitle('人际关系', 'Relationships', '关系网 <b>' + network + '</b> 人');
+  html += list.map(function(r, i) {
+    var p = 'relationships.' + i + '.';
+    var removeKey = 'relation-' + i;
+    var pips = '';
+    for (var n = 1; n <= CONNECTION_MAX; n++) pips += '<button class="conn-pip' + (n <= r.connection ? ' on' : '') + '" data-act="conn-pip" data-index="' + i + '" data-value="' + n + '" title="连结 ' + n + '"></button>';
+    var tag = r.connection >= CONNECTION_MAX ? '<span class="tag net">已入关系网</span>' : (r.connection <= 0 ? '<span class="tag lost">已失去</span>' : '');
+    return '<div class="card"><div class="card-head"><span class="title">' + esc(r.name || '未命名关系') + '</span>'
+      + '<button class="remove' + (isConfirming(removeKey) ? ' confirm' : '') + '" data-act="list-remove" data-list="relationships" data-index="' + i + '">' + (isConfirming(removeKey) ? '确认删除' : '删除') + '</button></div>'
+      + '<div class="card-body"><div class="conn"><span class="label" style="margin:0">连结 ' + r.connection + '</span><span class="conn-pips">' + pips + '</span>' + tag + '</div>'
+      + '<div class="grid two" style="margin-top:8px">'
+      + labeled('名字', pathInput(p + 'name'))
+      + labeled('扮演者', pathInput(p + 'player', '队友或 GM'))
+      + labeled('连结加成', pathArea(p + 'bonus'))
+      + labeled('简介', pathArea(p + 'note'))
+      + '</div></div></div>';
+  }).join('');
+  html += '<div class="btn-row"><button class="btn ghost" data-act="list-add" data-list="relationships">＋ 添加人际关系</button></div>';
+  html += '<div class="note">连结达到 9 时加入关系网；降至 0 时失去这段关系。</div>';
+  return html;
+}
+
+function trackRow(key, lane, codes, arrow) {
+  var states = S.model.tracks[key][lane];
+  return '<div class="track-row">' + codes.map(function(code, i) {
+    var st = states[i];
+    var text = st === 2 ? '×' : (st === 1 ? (code || '●') : arrow);
+    return '<button class="cell' + (st === 1 ? ' marked' : (st === 2 ? ' crossed' : '')) + '" data-act="cell" data-track="' + key + '" data-lane="' + lane + '" data-index="' + i + '" title="点击切换：空白 → 已标记 → 已划掉">' + esc(text) + '</button>';
+  }).join('') + '</div>';
+}
+function rankRow(labels) {
+  return labels ? '<div class="track-ranks">' + labels.map(function(l) { return '<span>' + esc(l) + '</span>'; }).join('') + '</div>' : '';
+}
+function renderWorklife() {
+  var used = 0;
+  var html = '';
+  TRACK_KEYS.forEach(function(key) {
+    var conf = TRACKS[key];
+    var lanes = S.model.tracks[key].top.concat(S.model.tracks[key].bottom);
+    var marked = lanes.filter(function(v) { return v === 1; }).length;
+    var crossed = lanes.filter(function(v) { return v === 2; }).length;
+    used += marked;
+    html += '<section class="track ' + key + '"><div class="track-head">' + conf.name + ' <span class="en" style="font-size:10px;letter-spacing:.1em">' + conf.en.toUpperCase() + '</span><span class="aside">已标记 ' + marked + ' · 已划掉 ' + crossed + '</span></div>'
+      + '<div class="track-scroll"><div class="track-board">'
+      + rankRow(conf.topRanks) + trackRow(key, 'top', conf.top, '▷') + trackRow(key, 'bottom', conf.bottom, '◁') + rankRow(conf.bottomRanks)
+      + '</div></div></section>';
+  });
+  return pageTitle('工作/生活平衡', 'Work / Life Balance', '已消耗时间 <b>' + used + '</b> / 30')
+    + html
+    + '<div class="note">消耗时间时，在所选条上标记最靠前的空白格，再在另一条上划掉最后一个空白格。格子标记后显示其游戏高墙文件代码。</div>';
+}
+
+function renderOnboarding() {
+  var html = pageTitle('入职问卷', 'Onboarding');
+  for (var i = 0; i < QUESTION_COUNT; i++) {
+    var custom = i >= QUESTIONS.length;
+    html += '<div class="card"><div class="card-head"><span class="title">' + (i + 1) + '. ' + esc(custom ? (S.model.customQuestions[i - QUESTIONS.length] || '自定义问题') : QUESTIONS[i]) + '</span></div><div class="card-body">'
+      + (custom ? labeled('问题', pathInput('customQuestions.' + (i - QUESTIONS.length), '如：现实章节末尾的人际关系问题')) + '<div style="height:6px"></div>' : '')
+      + pathArea('questionnaire.' + i, '回答', 2)
+      + '</div></div>';
+  }
+  return html;
+}
+
+function renderRef() {
+  return pageTitle('规则速查', 'Quick Reference') + '<div class="ref">'
+    + sectionTitle('检定', 'Roll')
+    + '<p>投掷 6d4，每个 3 计一次。至少一个 3 即成功；每颗不是 3 的骰子产生 1 点混沌。</p>'
+    + '<p><b>资质保证（QA）</b>：掷骰后可从相关资质花费 QA，每点把一颗骰子改为 3 或把 3 改为其他点数。QA 在任务间隙恢复至上限。</p>'
+    + '<p><b>过载</b>：资质没有剩余 QA 时检定受到 1 点过载；每点过载移除一个 3 并产生 1 点混沌，没有 3 可移除时仍产生混沌。现实改写失败后，本地点之后的改写请求各受 1 点过载。处于过载解除情境时无视过载。</p>'
+    + '<p><b>三重升华</b>：调整前恰好掷出三个 3 时成功、不产生混沌，并从“全员协力、稍后重议、此刻之星”中选一。用 QA 或过载凑成三个 3 不算三重升华，但同样不产生混沌。</p>'
+    + sectionTitle('SealDice 指令', 'triangle-agency')
+    + '<p class="hint">需要在 SealDice 安装社区插件 triangle-agency，并把人物卡规则设为 <code>ta</code>。插件按“未花费 QA”报告结果，QA 变动由人物卡发送 <code>.st</code> 调整。</p>'
+    + '<table>'
+    + '<tr><td><code>.ta 专注</code></td><td>资质检定（6d4）。<code>--c</code> 不计入混沌</td></tr>'
+    + '<tr><td><code>.tr 专注</code></td><td>现实改写请求，自动计入本地点改写失败的过载。<code>--f</code> 失败时不记录</td></tr>'
+    + '<tr><td><code>.ta 专注 --g</code></td><td>扩展：附加一颗 D6（3 计一个 3，6 计两个 3，其他点数 +1 混沌）</td></tr>'
+    + '<tr><td><code>.ta 专注 --s</code></td><td>扩展：改用 D10 检定</td></tr>'
+    + '<tr><td><code>.tr 专注 --g</code></td><td>扩展：附加赞助骰 D8，同时报告采用与不采用的结果，混沌需手动记录</td></tr>'
+    + '<tr><td><code>.tra 专注</code></td><td>扩展：D20 特殊技能检定，需支付 1 点 QA</td></tr>'
+    + '<tr><td><code>.tcs</code></td><td>查询群混沌</td></tr>'
+    + '<tr><td><code>.tfs</code></td><td>查询本地点现实改写失败次数</td></tr>'
+    + '<tr><td><code>.tcs 3</code> / <code>.tcs -3</code></td><td>主持人：消除 / 增加 3 点混沌（正数为消除，负数为增加）</td></tr>'
+    + '<tr><td><code>.tfs -1</code></td><td>主持人：增加 1 次现实改写失败（正数为减少）</td></tr>'
+    + '<tr><td><code>.tcst 0</code> / <code>.tfst 0</code></td><td>主持人：直接设置混沌 / 现实改写失败次数，如换地点时清零改写失败</td></tr>'
+    + '<tr><td><code>.st 专注-1</code></td><td>调整资质 QA；<code>.st 嘉奖+3</code> 调整嘉奖</td></tr>'
+    + '</table></div>';
+}
+
+// ---------- 检定弹窗 ----------
+var ROLL_KINDS = [
+  ['ta', '资质检定'],
+  ['tr', '现实改写'],
+  ['tra', 'D20 特殊技能']
+];
+var ROLL_DICE = {
+  ta: [['', '标准 6d4'], ['d6', '附加 D6'], ['d10', '改用 D10']],
+  tr: [['', '标准 6d4'], ['d8', '赞助骰 D8']],
+  tra: []
+};
+function openRoll(quality) {
+  flushSave();
+  S.modal = {
+    stage: 'roll',
+    quality: QUALITY_KEYS.indexOf(quality) >= 0 ? quality : QUALITY_KEYS[0],
+    kind: 'ta', die: '', noChaos: false, noFailure: false,
+    spend: 0, spent: 0, refill: {}, sent: '', submitting: false, error: '',
+    // 在弹窗关闭、再次检定期间仍保留在途指令，不能重新释放额度。
+    pending: S.qaPending
+  };
+  renderModal();
+}
+function rollCommand() {
+  var m = S.modal;
+  var parts = ['.' + m.kind, m.quality];
+  if (m.kind === 'ta' && m.die === 'd6') parts.push('--g');
+  if (m.kind === 'ta' && m.die === 'd10') parts.push('--s');
+  if (m.kind === 'tr' && m.die === 'd8') parts.push('--g');
+  if (m.noChaos) parts.push('--c');
+  if (m.kind === 'tr' && m.noFailure) parts.push('--f');
+  return parts.join(' ');
+}
+// D20 特殊技能检定需支付 1 点 QA，当前 QA 不足时不能发起。
+function canRoll() {
+  var m = S.modal;
+  return !qaBlocked(m.quality) && (m.kind !== 'tra' || settleCurrent(m.quality) >= 1);
+}
+function sendCommand(cmd, label) {
+  window.sealchat.roll(cmd, label || cmd, {});
+}
+// 检定与 .st 调整依赖服务端人物卡的当前 QA：先提交模板内的修改并等待宿主保存完成，再发送指令。
+// 保存失败时保留弹窗并提示，本次不发送，可重试。
+function modalSend(cmds, label, done, prepare) {
+  var m = S.modal;
+  if (!m || m.submitting) return;
+  if (S.composing) { m.error = '请先完成输入后再发送'; renderModal(); return; }
+  m.submitting = true;
+  m.error = '';
+  renderModal();
+  flushSave();
+  var wait;
+  try { wait = window.sealchat.flushAttrs(); } catch (e) { wait = Promise.reject(e); }
+  Promise.resolve(wait).then(function() {
+    if (S.modal !== m) return;
+    // 保存等待期间额度可能变化；重新校验并在发送前登记，覆盖极快回写。
+    if (prepare && !prepare()) { m.error = 'QA 状态已变化，请核对后重新选择'; return; }
+    cmds.forEach(function(cmd) { sendCommand(cmd, label); });
+    done();
+  }, function() {
+    if (S.modal === m) m.error = '人物卡保存失败，本次未发送，请重试';
+  }).catch(function() {
+    // 桥接异常时可能已有部分指令送达，不能重试整批或释放登记的额度。
+    for (var q in m.pending) blockPending(m.pending[q]);
+    if (S.modal === m) m.error = '指令发送状态无法确认，请核对聊天后再操作';
+  }).then(function() {
+    m.submitting = false;
+    if (S.modal === m) renderModal();
+  });
+}
+// .st 没有指令级确认标识。只按有序数值前缀核销；多个前缀同值时取最短者，
+// 与基准同值的快照无法区分重复推送与净零合并回写，因此不核销。
+// 不匹配、绝对值编辑或超时均停止乐观结算，核对聊天后才能采用宿主值，不自动重发。
+function blockPending(p) {
+  clearTimeout(p.timer);
+  p.steps = [];
+  p.blocked = true;
+}
+function qaBlocked(q) { return !!(S.qaPending[q] && S.qaPending[q].blocked); }
+function qaSavePending(q) {
+  return q in S.pendingRoot || !!(S.recent && Date.now() < S.recent.until && q in S.recent.patch);
+}
+function reconcilePending(q, value) {
+  var p = S.qaPending[q];
+  if (!p) return;
+  // 未确认的绝对值编辑优先；不能把被 S.recent 拦截的旧值提供给核对按钮。
+  if (qaSavePending(q)) { p.host = null; return; }
+  var valid = (typeof value === 'number' || typeof value === 'string') && /^[+-]?\d+$/.test(String(value).trim()) && Number.isSafeInteger(Number(value));
+  p.host = valid ? Number(value) : null;
+  if (p.blocked) return;
+  if (!valid) { blockPending(p); return; }
+  var host = p.host;
+  if (host === p.base) return;
+  var expected = p.base;
+  for (var i = 0; i < p.steps.length; i++) {
+    expected += p.steps[i];
+    if (host === expected) {
+      p.base = host;
+      p.steps.splice(0, i + 1);
+      return;
+    }
+  }
+  blockPending(p);
+}
+function settleCurrent(q) {
+  var host = qaState(q).current;
+  var p = S.qaPending[q];
+  if (!p || p.blocked) return host;
+  return p.steps.reduce(function(v, delta) { return v + delta; }, p.base);
+}
+function notePending(m, q, delta) {
+  var p = m.pending[q];
+  if (!p || !p.steps.length) {
+    if (p) clearTimeout(p.timer);
+    p = m.pending[q] = { base: qaState(q).current, host: qaState(q).current, steps: [], blocked: false };
+    p.timer = setTimeout(function() {
+      if (S.qaPending[q] !== p) return;
+      if (p.steps.length) blockPending(p);
+      else delete S.qaPending[q];
+      if (S.modal) renderModal();
+    }, QA_PENDING_MS);
+  }
+  p.steps.push(delta);
+  // FLUSH_ATTRS 已确认本地保存；旧编辑保护不能再遮住随后 SealDice 的 QA 回写。
+  if (S.recent) delete S.recent.patch[q];
+}
+function canAdjust(q, delta) {
+  var p = S.qaPending[q];
+  if (qaBlocked(q) || (p && p.steps.length >= QA_PENDING_LIMIT)) return false;
+  var cur = settleCurrent(q);
+  return delta < 0 ? -delta <= Math.max(0, cur) : delta <= Math.max(0, qaState(q).max - cur);
+}
+
+function renderModal() {
+  var overlay = document.getElementById('modal');
+  var box = document.getElementById('modalBox');
+  if (!S.modal) { overlay.classList.remove('open'); box.innerHTML = ''; return; }
+  var m = S.modal;
+  var html;
+  if (m.stage === 'roll') {
+    var dice = ROLL_DICE[m.kind];
+    html = '<div class="modal-head"><span class="kicker">请求机构</span><strong>' + esc(m.quality) + ' · ' + esc(ROLL_KINDS.filter(function(k) { return k[0] === m.kind; })[0][1]) + '</strong></div><div class="modal-body">'
+      + '<span class="label">资质</span><div class="seg">' + QUALITY_KEYS.map(function(q) {
+        return '<button class="' + (m.quality === q ? 'on' : '') + '" data-act="m-set" data-key="quality" data-value="' + q + '">' + q + ' ' + settleCurrent(q) + '</button>';
+      }).join('') + '</div>'
+      + '<span class="label" style="margin-top:8px">检定类型</span><div class="seg">' + ROLL_KINDS.map(function(k) {
+        return '<button class="' + (m.kind === k[0] ? 'on' : '') + '" data-act="m-set" data-key="kind" data-value="' + k[0] + '">' + k[1] + '</button>';
+      }).join('') + '</div>'
+      + (dice.length ? '<details class="fold"' + (m.die ? ' open' : '') + '><summary>扩展规则骰</summary><div class="seg">' + dice.map(function(d) {
+        return '<button class="' + (m.die === d[0] ? 'on' : '') + '" data-act="m-set" data-key="die" data-value="' + d[0] + '">' + d[1] + '</button>';
+      }).join('') + '</div></details>' : '')
+      + '<label class="check"><input type="checkbox" data-mcheck="noChaos"' + (m.noChaos ? ' checked' : '') + '>本次不计入群混沌</label>'
+      + (m.kind === 'tr' ? '<label class="check"><input type="checkbox" data-mcheck="noFailure"' + (m.noFailure ? ' checked' : '') + '>失败时不记录现实改写失败</label>' : '')
+      + (m.kind === 'tra' ? '<p class="hint" style="margin-top:6px">' + (canRoll() ? 'D20 特殊技能检定需支付 1 点 QA，发送后在结算中扣除。' : '当前 ' + esc(m.quality) + ' QA 不足 1 点，无法支付 D20 特殊技能检定的费用。') + '</p>' : '')
+      + '<div class="preview">将发送 <code>' + esc(rollCommand()) + '</code></div>'
+      + '<div class="modal-actions"><button class="btn" data-act="m-close">取消</button><button class="btn primary" data-act="m-roll"' + (canRoll() ? '' : ' disabled') + '>发送检定</button></div>'
+      + '</div>';
+  } else {
+    var q = m.quality;
+    var cur = settleCurrent(q);
+    var canSpend = Math.max(0, cur);
+    var refillTotal = 0;
+    for (var rk in m.refill) refillTotal += m.refill[rk];
+    html = '<div class="modal-head"><span class="kicker">已发送 ' + esc(m.sent) + '</span><strong>查看骰面后结算</strong></div><div class="modal-body">'
+      + '<div class="settle-block"><span class="label">花费 ' + esc(q) + ' QA（当前约 ' + cur + ' 点' + (m.spent ? '，本次已花费 ' + m.spent : '') + '）</span>'
+      + '<p class="hint">每点 QA 可把一颗骰子改为 3，或把 3 改为其他点数。插件按未花费 QA 报告结果，花费后请据此调整结论与混沌。</p>'
+      + '<div class="btn-row">' + stepper('m-spend', '', m.spend)
+      + '<button class="btn dark" data-act="m-spend-send"' + (m.spend > 0 && canAdjust(q, -m.spend) ? '' : ' disabled') + '>发送 .st ' + esc(q) + '-' + m.spend + '</button>'
+      + (m.kind === 'tra' ? '<button class="btn" data-act="m-clear"' + (canSpend > 0 && canAdjust(q, -canSpend) ? '' : ' disabled') + ' title="大失败时清空该资质剩余 QA">清空 ' + esc(q) + ' QA</button>' : '')
+      + '</div></div>';
+    if (m.kind !== 'tra') {
+      html += '<div class="settle-block"><span class="label">三重升华（调整前恰好三个 3）</span>'
+        + '<p class="hint">全员协力：为本次掷骰增加任意数量的 3，在聊天中说明即可。</p>'
+        + '<details class="fold"' + (refillTotal ? ' open' : '') + '><summary>稍后重议：补回至多 3 点已花费的 QA（已选 ' + refillTotal + '）</summary>'
+        + QUALITY_KEYS.map(function(rq) {
+          var st = qaState(rq);
+          var room = qaBlocked(rq) ? 0 : Math.max(0, st.max - settleCurrent(rq));
+          if (!room && !m.refill[rq]) return '';
+          return '<div class="refill-row"><span>' + rq + ' <span class="hint">可补 ' + room + '</span></span>' + stepper('m-refill', 'data-quality="' + rq + '"', m.refill[rq] || 0) + '</div>';
+        }).join('')
+        + '<div class="btn-row"><button class="btn dark" data-act="m-refill-send"' + (refillTotal ? '' : ' disabled') + '>发送补回</button></div></details>'
+        + '<div class="btn-row"><button class="btn" data-act="m-star">此刻之星：发送 .st 嘉奖+3</button></div>'
+        + '</div>';
+    }
+    html += '<div class="modal-actions"><button class="btn" data-act="m-again">再次检定</button><button class="btn primary" data-act="m-close">完成</button></div></div>';
+  }
+  var unresolved = QUALITY_KEYS.filter(qaBlocked).map(function(q) {
+    var p = S.qaPending[q];
+    return '<p class="modal-error">' + esc(q) + ' QA 回写无法确认或已超时，请先核对聊天中全部 .st 的执行结果。</p>'
+      + '<button class="btn" data-act="m-reconcile" data-quality="' + q + '"' + (p.host == null || m.submitting ? ' disabled' : '') + '>已核对，采用宿主 ' + esc(q) + ' QA ' + esc(p.host) + '（不重发）</button>';
+  }).join('');
+  if (unresolved || m.error) html = html.replace('<div class="modal-actions">', unresolved + (m.error ? '<p class="modal-error">' + esc(m.error) + '</p>' : '') + '<div class="modal-actions">');
+  box.innerHTML = html;
+  overlay.classList.add('open');
+  // 等待保存期间禁用会发送指令的按钮，避免重复提交。
+  if (m.submitting) [].forEach.call(box.querySelectorAll('[data-act="m-roll"],[data-act="m-set"],[data-mcheck],[data-act="m-spend-send"],[data-act="m-clear"],[data-act="m-refill-send"],[data-act="m-star"]'), function(b) { b.disabled = true; });
+}
+function closeModal() {
+  S.modal = null;
+  renderModal();
+}
+
+// ---------- 受限文档 ----------
+// 密钥只用于扮演中的访问门槛：模板源码与人物卡数据都可被查看，不能当作加密。
+function hashKey(text) {
+  var h = 2166136261;
+  for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ('0000000' + (h >>> 0).toString(16)).slice(-8);
+}
+var LOCK_ICON = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="1.5" fill="#fff" stroke="none"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+
+function openVault() {
+  flushSave();
+  S.vault = { stage: S.model.restricted.keyHash ? 'access' : 'setup', rekey: false, error: '' };
+  renderVault();
+}
+function closeVault() {
+  flushSave();
+  S.vault = null;
+  renderVault();
+}
+function vaultDialog(title, text, fields, confirmLabel) {
+  return '<div class="vd" role="dialog" aria-modal="true"><div class="vd-bar">内部安全验证</div><div class="vd-body">'
+    + '<div class="vd-top"><span class="vd-lock">' + LOCK_ICON + '</span><div><strong>' + title + '</strong><p>' + text + '</p></div></div>'
+    + '<div class="vd-fields">' + fields + '</div>'
+    + '<div class="vd-error">' + esc(S.vault.error) + '</div>'
+    + '<div class="vd-actions"><button class="btn" data-act="v-cancel">取消</button><button class="btn primary" data-act="v-confirm">' + confirmLabel + '</button></div>'
+    + '</div></div>';
+}
+function keyInput(name, label) {
+  return labeled(label, '<input class="field" type="password" autocomplete="off" data-vkey="' + name + '">');
+}
+function renderVault() {
+  var overlay = document.getElementById('vault');
+  var v = S.vault;
+  if (!v) { overlay.className = 'vault-overlay'; overlay.innerHTML = ''; return; }
+  var html;
+  if (v.stage === 'setup') {
+    html = vaultDialog(v.rekey ? '更改访问密钥' : '设置访问密钥',
+      v.rekey ? '输入新密钥。更改后需使用新密钥打开受限文档。' : '受限文档尚未设置密钥。设置后，输入正确的密钥才能打开。',
+      keyInput('key', '密钥') + keyInput('repeat', '再次输入'), '确认设置');
+  } else if (v.stage === 'access') {
+    html = vaultDialog('访问受限', '此文档受机构内部权限保护，请出示访问凭证。', keyInput('key', '访问密钥'), '验证');
+  } else {
+    html = '<article class="vdoc">'
+      + '<header class="vdoc-head"><div class="vdoc-kicker">TRIANGLE AGENCY / INTERNAL</div><div class="vdoc-title">受限文档</div>'
+      + '<div class="vdoc-meta">档案编号 TA-' + esc(S.model.restricted.docNo) + ' · 持有人 ' + esc(displayName()) + ' · 访问级别 ▲▲▲</div>'
+      + '<span class="vdoc-stamp">机密</span></header>'
+      + '<div class="vdoc-redact">分发范围 <i style="width:64px"></i><i style="width:30px"></i> · 销毁期限 <i style="width:48px"></i></div>'
+      + '<div class="vdoc-paper"><textarea class="vdoc-text" data-path="restricted.body" placeholder="在此记录受限内容……">' + esc(S.model.restricted.body) + '</textarea></div>'
+      + '<div class="note">密钥只提供基本的访问门槛。私密信息请仍使用便签、线索箱等功能。</div>'
+      + '<div class="vdoc-actions"><button class="btn" data-act="v-rekey">更改密钥</button><button class="btn primary" data-act="v-cancel">退出受限区</button></div>'
+      + '</article>';
+  }
+  overlay.className = 'vault-overlay open' + (v.stage === 'open' ? ' doc' : '');
+  overlay.innerHTML = html;
+  var first = overlay.querySelector('[data-vkey]');
+  if (first) first.focus();
+}
+function vaultKey(name) {
+  var el = document.querySelector('#vault [data-vkey="' + name + '"]');
+  return el ? el.value : '';
+}
+function confirmVault() {
+  var v = S.vault;
+  var key = vaultKey('key');
+  if (v.stage === 'setup') {
+    if (!key) { v.error = '请输入密钥。'; renderVault(); return; }
+    if (key !== vaultKey('repeat')) { v.error = '两次输入的密钥不一致。'; renderVault(); return; }
+    S.model.restricted.keyHash = hashKey(key);
+    touchModel(true);
+    toast(v.rekey ? '密钥已更改' : '密钥已设置');
+  } else if (hashKey(key) !== S.model.restricted.keyHash) {
+    v.error = '凭证无效。该次访问已被记录。';
+    renderVault();
+    return;
+  }
+  // 档案编号在首次打开时随机生成，之后固定保存在人物卡数据中。
+  if (!/^\d{4}$/.test(S.model.restricted.docNo)) {
+    S.model.restricted.docNo = ('000' + Math.floor(Math.random() * 10000)).slice(-4);
+    touchModel(true);
+  }
+  S.vault = { stage: 'open', rekey: false, error: '' };
+  renderVault();
+}
+function onVaultAct(act) {
+  var v = S.vault;
+  if (act === 'v-confirm') { confirmVault(); return; }
+  if (act === 'v-rekey') { flushSave(); S.vault = { stage: 'setup', rekey: true, error: '' }; renderVault(); return; }
+  // 更改密钥时取消回到文档，其余情况关闭受限区。
+  if (act === 'v-cancel') {
+    if (v.stage === 'setup' && v.rekey) { S.vault = { stage: 'open', rekey: false, error: '' }; renderVault(); }
+    else closeVault();
+  }
+}
+
+function toast(text) {
+  var el = document.getElementById('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(function() { el.classList.remove('show'); }, 1800);
+}
+
+// ============================================================
+// 交互层
+// ============================================================
+function onFieldInput(el) {
+  if (!el.dataset.path) return;
+  setPath(S.model, el.dataset.path, el.value);
+  touchModel();
+}
+
+function clickQaPip(q, index) {
+  var st = qaState(q);
+  if (index > st.max) return;
+  // 点击最后一个已点亮的格子会取消它，其余位置直接设为该格。
+  setRoot(q, index === st.current ? index - 1 : index, true);
+  render();
+}
+function stepQaMax(q, delta) {
+  var st = qaState(q);
+  var next = clamp(st.max + delta, 0, QA_MAX);
+  var patch = {};
+  patch[maxKey(q)] = next;
+  if (st.current > next) patch[q] = next;
+  setRoots(patch, true);
+  render();
+}
+function restAll() {
+  var patch = {};
+  QUALITY_KEYS.forEach(function(q) { patch[q] = qaState(q).max; });
+  setRoots(patch, true);
+  toast('九项资质 QA 已恢复至上限');
+  render();
+}
+
+function onModalAct(act, d) {
+  var m = S.modal;
+  if (act === 'm-close') { closeModal(); return; }
+  if (act === 'm-set') {
+    if (m.submitting) return;
+    m[d.key] = d.value;
+    if (d.key === 'kind') m.die = '';
+    renderModal();
+    return;
+  }
+  if (act === 'm-roll') {
+    if (!canRoll()) return;
+    // 记下发送时的配置，等待保存期间的切换不影响随后的结算。
+    var cmd = rollCommand(), quality = m.quality, kind = m.kind;
+    modalSend([cmd], quality + '检定', function() {
+      m.quality = quality;
+      m.kind = kind;
+      m.sent = cmd;
+      m.stage = 'settle';
+      m.spend = kind === 'tra' ? 1 : 0;
+    }, function() {
+      return canRoll();
+    });
+    return;
+  }
+  if (act === 'm-again') {
+    openRoll(m.quality);
+    return;
+  }
+  if (act === 'm-reconcile') {
+    var p = S.qaPending[d.quality];
+    if (m.submitting || !p || !p.blocked || p.host == null || qaSavePending(d.quality)) return;
+    S.attrs[d.quality] = p.host;
+    if (S.recent) delete S.recent.patch[d.quality];
+    delete S.qaPending[d.quality];
+    m.spend = 0;
+    m.refill = {};
+    renderModal();
+    return;
+  }
+  if (act === 'm-spend') {
+    m.spend = clamp(m.spend + Number(d.delta), 0, Math.max(0, settleCurrent(m.quality)));
+    renderModal();
+    return;
+  }
+  if (act === 'm-spend-send') {
+    var spend = m.spend, quality = m.quality;
+    if (spend <= 0 || !canAdjust(quality, -spend)) return;
+    modalSend(['.st ' + quality + '-' + spend], '花费 QA', function() {
+      m.spent += spend;
+      m.spend = 0;
+      toast('已发送花费 ' + spend + ' 点' + m.quality + ' QA，等待 SealDice 回写');
+    }, function() {
+      if (!canAdjust(quality, -spend)) return false;
+      notePending(m, quality, -spend);
+      return true;
+    });
+    return;
+  }
+  if (act === 'm-clear') {
+    var left = Math.max(0, settleCurrent(m.quality));
+    var quality = m.quality;
+    if (!left || !canAdjust(quality, -left)) return;
+    modalSend(['.st ' + quality + '-' + left], '清空 QA', function() {
+      m.spent += left;
+      m.spend = 0;
+      toast('已发送清空' + m.quality + ' QA');
+    }, function() {
+      if (!canAdjust(quality, -left)) return false;
+      notePending(m, quality, -left);
+      return true;
+    });
+    return;
+  }
+  if (act === 'm-refill') {
+    var rq = d.quality;
+    if (qaBlocked(rq)) return;
+    var st = qaState(rq);
+    var room = Math.max(0, st.max - settleCurrent(rq));
+    var total = 0;
+    for (var k in m.refill) total += m.refill[k];
+    var next = (m.refill[rq] || 0) + Number(d.delta);
+    if (next < 0 || next > room || (Number(d.delta) > 0 && total >= 3)) return;
+    if (next) m.refill[rq] = next; else delete m.refill[rq];
+    renderModal();
+    return;
+  }
+  if (act === 'm-refill-send') {
+    // 逐项发送相对调整，避免与尚未回写的花费互相覆盖。
+    var refill = clone(m.refill);
+    var cmds = [];
+    for (var fq in refill) cmds.push('.st ' + fq + '+' + refill[fq]);
+    if (!cmds.length) return;
+    modalSend(cmds, '稍后重议', function() {
+      if (refill[m.quality]) m.spent = Math.max(0, m.spent - refill[m.quality]);
+      m.refill = {};
+      toast('已发送补回 QA');
+    }, function() {
+      var total = 0;
+      for (var rq in refill) {
+        if (!canAdjust(rq, refill[rq])) return false;
+        total += refill[rq];
+      }
+      if (total > 3) return false;
+      for (var rq in refill) notePending(m, rq, refill[rq]);
+      return true;
+    });
+    return;
+  }
+  if (act === 'm-star') { modalSend(['.st 嘉奖+3'], '此刻之星', function() { toast('已发送嘉奖 +3'); }); return; }
+}
+
+document.addEventListener('input', function(e) {
+  var el = e.target;
+  if (el.dataset.mcheck && S.modal) { S.modal[el.dataset.mcheck] = el.checked; renderModal(); return; }
+  if (el.dataset.path && !S.composing) onFieldInput(el);
+});
+
+document.addEventListener('change', function(e) {
+  var el = e.target;
+  if (el.tagName === 'SELECT' && el.dataset.path) {
+    setPath(S.model, el.dataset.path, el.value);
+    touchModel(true);
+    render();
+  }
+});
+
+document.addEventListener('toggle', function(e) {
+  var el = e.target;
+  if (el.dataset && el.dataset.fold) S.ui[el.dataset.fold] = el.open;
+}, true);
+
+document.addEventListener('compositionstart', function() { S.composing = true; });
+document.addEventListener('compositionend', function(e) {
+  S.composing = false;
+  if (e.target.dataset && e.target.dataset.path) onFieldInput(e.target);
+});
+
+document.addEventListener('keydown', function(e) {
+  var el = e.target;
+  if (el.dataset && el.dataset.vkey && e.key === 'Enter' && !e.isComposing) { confirmVault(); return; }
+  if (e.key === 'Escape' && S.vault) { onVaultAct('v-cancel'); return; }
+  if (e.key === 'Escape' && S.modal) { closeModal(); return; }
+  if (e.key === 'Enter' && el.tagName === 'INPUT' && el.dataset.path && !e.isComposing) el.blur();
+});
+
+// 失焦时补交未保存内容；若宿主在编辑期间推送过数据，等焦点离开卡片后再重绘。
+document.addEventListener('focusout', function(e) {
+  var el = e.target;
+  if (!(el.dataset && el.dataset.path)) return;
+  flushSave();
+  // 稍作延迟，避免重绘替换掉用户正要点击的按钮。
+  setTimeout(function() {
+    if (S.deferredRender && !isEditing()) {
+      render();
+      if (S.modal) renderModal();
+      if (S.vault && S.vault.stage === 'open') renderVault();
+    }
+  }, 250);
+});
+
+document.addEventListener('click', function(e) {
+  var target = e.target;
+  if (target.id === 'modal') { closeModal(); return; }
+  if (target.id === 'vault' && S.vault && S.vault.stage !== 'open') { onVaultAct('v-cancel'); return; }
+  var actEl = target.closest('[data-act]');
+  if (!actEl || actEl.disabled) return;
+  var act = actEl.dataset.act;
+  var d = actEl.dataset;
+  if (act.indexOf('m-') === 0) { if (S.modal) onModalAct(act, d); return; }
+  if (act.indexOf('v-') === 0) { if (S.vault) onVaultAct(act); return; }
+  if (act === 'vault') { openVault(); return; }
+  if (act === 'tab') { flushSave(); S.tab = d.tab; render(); return; }
+  if (act === 'roll') { openRoll(d.quality); return; }
+  if (act === 'qa-pip') { clickQaPip(d.quality, Number(d.index)); return; }
+  if (act === 'qa-max') { stepQaMax(d.quality, Number(d.delta)); return; }
+  if (act === 'rest') { if (confirmClick('rest')) restAll(); else render(); return; }
+  if (act === 'cmd') { sendCommand(d.cmd); toast('已发送 ' + d.cmd); return; }
+  if (act === 'root-step') { setRoot(d.key, Math.max(toInt(d.min, 0), rootNum(d.key) + Number(d.delta)), true); render(); return; }
+  if (act === 'record-step') {
+    S.model.record[d.key] = Math.max(0, S.model.record[d.key] + Number(d.delta));
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'conn-pip') {
+    var rel = S.model.relationships[Number(d.index)];
+    var v = Number(d.value);
+    rel.connection = v === rel.connection ? v - 1 : v;
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'cell') {
+    var lane = S.model.tracks[d.track][d.lane];
+    var i = Number(d.index);
+    lane[i] = (lane[i] + 1) % 3;
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'list-add') {
+    S.model[d.list].push(d.list === 'anomalies' ? blankAnomaly() : blankRelation());
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'list-remove') {
+    var key = (d.list === 'anomalies' ? 'anomaly-' : 'relation-') + d.index;
+    if (confirmClick(key)) {
+      S.model[d.list].splice(Number(d.index), 1);
+      touchModel(true);
+    }
+    render();
+    return;
+  }
+});
+
+document.addEventListener('visibilitychange', function() { if (document.hidden) flushSave(); });
+window.addEventListener('pagehide', flushSave);
+
+window.sealchat.onUpdate(onHostUpdate);
+</script>
+</body>
+</html>

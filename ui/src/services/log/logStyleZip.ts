@@ -1,20 +1,47 @@
-// 导入前的本地预检：只读取 ZIP 中央目录与 manifest.json，向用户展示包信息与明显问题。
-// 权威校验仍由服务端完成；这里不解析模板/CSS，不执行任何内容。
+// 样式 ZIP 的本地读写：沿用服务端 ImportLogStyle / ExportLogStyle 的既有文件布局，不定义新格式。
+// - readStyleZip：导入前在浏览器里完整解析，列出服务端会拒绝的问题，并给出可在设计器中继续修改的工作包；
+// - buildStyleZip：把（修改后的）工作包重新打成同样布局的 ZIP，仍提交既有导入接口，由服务端 ValidateLogStyle 权威校验。
+// 这里不执行任何模板或 CSS 内容。
+import type { LogStyleAsset, LogStylePackage, LogStyleRule, LogTokenValue } from '@/types/log';
 import { LOG_RENDERER_VERSION } from './logTemplateCompiler';
-import { inflateRaw } from '@/services/zip/zipCompression';
 
-export interface StyleZipSummary {
-  manifest: Record<string, unknown> | null;
-  entries: string[];
-  templates: string[];
-  hasTokens: boolean;
-  hasSchema: boolean;
-  hasCss: boolean;
+let fflatePromise: Promise<typeof import('fflate')> | null = null;
+const loadFflate = () => {
+  fflatePromise ??= import('fflate');
+  return fflatePromise;
+};
+
+export const STYLE_ZIP_LIMITS = {
+  zipBytes: 20 * 1024 * 1024,
+  files: 200,
+  textBytes: 512 * 1024,
+  assetBytes: 50 * 1024 * 1024,
+  totalBytes: 50 * 1024 * 1024,
+};
+
+const REQUIRED = ['manifest.json', 'tokens.json', 'settings.schema.json', 'styles/main.css'];
+const MANIFEST_KEYS = new Set(['schemaVersion', 'id', 'version', 'name', 'license', 'minRendererVersion', 'tokens', 'templates', 'css', 'rules', 'settingsSchema', 'assets']);
+const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+
+export interface StyleZipContent {
+  /** 按 ZIP 内容组装的工作包；缺失或无效的部分已用安全默认值补齐，并记录在 issues。 */
+  pkg: LogStylePackage;
+  /** 资源字节，按资源 id。 */
+  assets: Record<string, Uint8Array>;
+  /** 原样保留的 previews/* 图片。 */
+  extras: Record<string, Uint8Array>;
+  files: string[];
+  /** 原始 ZIP 直接导入会被服务端拒绝的问题。 */
+  issues: string[];
+  /** 不影响导入的提示。 */
   warnings: string[];
 }
 
-const MAX_ZIP = 20 * 1024 * 1024;
-const MAX_MANIFEST = 1024 * 1024;
+/** 与服务端相同的路径规则：规范化、无绝对路径、无 .. / 反斜杠 / 冒号 / NUL。 */
+export const isSafeStyleZipPath = (name: string) => {
+  if (!name || name.startsWith('/') || /[\\\0:]/.test(name)) return false;
+  return name.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+};
 
 const semverGt = (a: string, b: string) => {
   const pa = a.split('.').map(Number);
@@ -25,72 +52,172 @@ const semverGt = (a: string, b: string) => {
   return false;
 };
 
-export const inspectStyleZip = async (file: File): Promise<StyleZipSummary> => {
-  const warnings: string[] = [];
-  if (file.size > MAX_ZIP) throw new Error('ZIP 超过 20MB');
+const sniffImage = (b: Uint8Array) =>
+  (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47)
+  || (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff)
+  || (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50);
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+export const readStyleZip = async (file: Blob): Promise<StyleZipContent> => {
+  if (file.size > STYLE_ZIP_LIMITS.zipBytes) throw new Error('ZIP 超过 20MB');
+  const { unzipSync } = await loadFflate();
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // 查找 End of Central Directory（最多回溯 64KB 注释）。
-  let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i -= 1) {
-    if (view.getUint32(i, true) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
+  const issues: string[] = [];
+  const warnings: string[] = [];
+  let count = 0;
+  let declaredTotal = 0;
+  let raw: Record<string, Uint8Array>;
+  try {
+    raw = unzipSync(bytes, {
+      // 解压前按中央目录声明的大小拒绝超限条目，避免解压炸弹。
+      filter: (f) => {
+        if (f.name.endsWith('/')) return false;
+        count += 1;
+        if (count > STYLE_ZIP_LIMITS.files) throw new Error(`ZIP 文件数超过 ${STYLE_ZIP_LIMITS.files}`);
+        const limit = /^(assets|previews)\//.test(f.name) ? STYLE_ZIP_LIMITS.assetBytes : STYLE_ZIP_LIMITS.textBytes;
+        declaredTotal += f.originalSize;
+        if (f.originalSize > limit || declaredTotal > STYLE_ZIP_LIMITS.totalBytes) throw new Error(`${f.name} 超过解压配额`);
+        return true;
+      },
+    });
+  } catch (error) {
+    throw new Error(error instanceof Error && error.message ? error.message : '不是有效的 ZIP 文件');
   }
-  if (eocd < 0) throw new Error('不是有效的 ZIP 文件');
-  const count = view.getUint16(eocd + 10, true);
-  let ptr = view.getUint32(eocd + 16, true);
-  const decoder = new TextDecoder();
-  const entries: string[] = [];
-  let manifestEntry: { method: number; size: number; uncompressedSize: number; offset: number } | null = null;
-  for (let n = 0; n < count && n < 1000; n += 1) {
-    if (ptr + 46 > bytes.length || view.getUint32(ptr, true) !== 0x02014b50) throw new Error('ZIP 目录损坏');
-    const method = view.getUint16(ptr + 10, true);
-    const compSize = view.getUint32(ptr + 20, true);
-    const uncompressedSize = view.getUint32(ptr + 24, true);
-    const nameLen = view.getUint16(ptr + 28, true);
-    const extraLen = view.getUint16(ptr + 30, true);
-    const commentLen = view.getUint16(ptr + 32, true);
-    const localOffset = view.getUint32(ptr + 42, true);
-    const name = decoder.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
-    entries.push(name);
-    if (name === 'manifest.json') manifestEntry = { method, size: compSize, uncompressedSize, offset: localOffset };
-    ptr += 46 + nameLen + extraLen + commentLen;
-  }
-  let manifest: Record<string, unknown> | null = null;
-  if (!manifestEntry) {
-    warnings.push('缺少 manifest.json');
-  } else if (manifestEntry.uncompressedSize > MAX_MANIFEST) {
-    warnings.push('manifest.json 过大');
-  } else {
-    const lo = manifestEntry.offset;
-    if (view.getUint32(lo, true) !== 0x04034b50) throw new Error('manifest.json 头损坏');
-    const start = lo + 30 + view.getUint16(lo + 26, true) + view.getUint16(lo + 28, true);
-    const raw = bytes.subarray(start, start + manifestEntry.size);
+  const files = Object.keys(raw).sort();
+  const text = (name: string) => new TextDecoder().decode(raw[name]);
+  const known = new Set<string>();
+  for (const name of files) if (!isSafeStyleZipPath(name)) issues.push(`可疑路径 ${name}，服务端会拒绝整个 ZIP`);
+  for (const name of REQUIRED) if (!(name in raw)) issues.push(`缺少 ${name}`);
+
+  let manifest: Record<string, unknown> = {};
+  if ('manifest.json' in raw) {
+    known.add('manifest.json');
     try {
-      const data = manifestEntry.method === 0
-        ? raw
-        : manifestEntry.method === 8
-          ? await inflateRaw(raw, manifestEntry.uncompressedSize)
-          : null;
-      if (!data) warnings.push('manifest.json 使用了不支持的压缩方式，跳过本地预检');
-      else if (data.byteLength > MAX_MANIFEST) warnings.push('manifest.json 过大');
-      else manifest = JSON.parse(decoder.decode(data));
-    } catch (error) {
-      warnings.push(error instanceof Error ? error.message : 'manifest.json 无法解析');
+      const parsed = JSON.parse(text('manifest.json'));
+      if (isObject(parsed)) manifest = parsed;
+      else issues.push('manifest.json 不是 JSON 对象');
+    } catch {
+      issues.push('manifest.json 无法解析');
     }
   }
-  const templates = entries.filter((e) => /^templates\/[^/]+\.html$/.test(e)).map((e) => e.slice(10, -5));
-  const hasTokens = entries.includes('tokens.json');
-  const hasSchema = entries.includes('settings.schema.json');
-  const hasCss = entries.includes('styles/main.css');
-  if (!templates.length) warnings.push('没有 templates/*.html');
-  if (!hasCss) warnings.push('缺少 styles/main.css');
-  if (!hasTokens) warnings.push('缺少 tokens.json');
-  if (!hasSchema) warnings.push('缺少 settings.schema.json');
-  if (entries.some((e) => e.includes('..') || e.startsWith('/') || e.includes('\\'))) warnings.push('包含可疑路径，服务端将拒绝');
-  const minVer = typeof manifest?.minRendererVersion === 'string' ? manifest.minRendererVersion : '';
-  if (minVer && semverGt(minVer, LOG_RENDERER_VERSION)) warnings.push(`需要渲染器 ${minVer}，当前为 ${LOG_RENDERER_VERSION}`);
-  return { manifest, entries, templates, hasTokens, hasSchema, hasCss, warnings };
+  for (const key of Object.keys(manifest)) if (!MANIFEST_KEYS.has(key)) issues.push(`manifest.json 含未知字段 ${key}`);
+  for (const key of ['tokens', 'templates', 'settingsSchema'] as const) {
+    if (manifest[key] !== undefined && manifest[key] !== null) issues.push(`manifest.json 不能内嵌 ${key}，应放在独立文件中`);
+  }
+  if (manifest.css !== undefined && manifest.css !== '' && manifest.css !== null) issues.push('manifest.json 不能内嵌 css，应放在 styles/main.css');
+  const str = (key: string, fallback: string) => {
+    const v = manifest[key];
+    if (typeof v === 'string') return v;
+    if (v !== undefined) issues.push(`manifest.json 的 ${key} 应为字符串`);
+    return fallback;
+  };
+
+  const readJson = <T>(name: string, fallback: T, check: (v: unknown) => boolean): T => {
+    if (!(name in raw)) return fallback;
+    known.add(name);
+    try {
+      const v = JSON.parse(text(name));
+      if (check(v)) return v as T;
+      issues.push(`${name} 结构不正确，已以空对象代替`);
+    } catch {
+      issues.push(`${name} 无法解析，已以空对象代替`);
+    }
+    return fallback;
+  };
+  const tokens = readJson<Record<string, LogTokenValue>>('tokens.json', {}, isObject);
+  const settingsSchema = readJson<Record<string, unknown>>('settings.schema.json', {}, isObject);
+  let css = '';
+  if ('styles/main.css' in raw) {
+    known.add('styles/main.css');
+    css = text('styles/main.css');
+  }
+  const templates: Record<string, string> = {};
+  for (const name of files) {
+    const m = /^templates\/([^/]+)\.html$/.exec(name);
+    if (!m) continue;
+    known.add(name);
+    templates[m[1]] = text(name);
+  }
+  if (!Object.keys(templates).length) issues.push('没有 templates/*.html 模板');
+
+  let rules: LogStyleRule[] = [];
+  if (Array.isArray(manifest.rules)) rules = manifest.rules.filter(isObject) as unknown as LogStyleRule[];
+  else issues.push('manifest.json 缺少 rules 数组');
+
+  const assets: LogStyleAsset[] = [];
+  const assetBytes: Record<string, Uint8Array> = {};
+  if (!Array.isArray(manifest.assets)) issues.push('manifest.json 缺少 assets 数组');
+  for (const a of Array.isArray(manifest.assets) ? manifest.assets : []) {
+    if (!isObject(a) || typeof a.id !== 'string' || typeof a.path !== 'string') {
+      issues.push('manifest.json 中有无效的资源条目，已忽略');
+      continue;
+    }
+    const data = raw[a.path];
+    if (!data) {
+      issues.push(`资源 ${a.path} 不在 ZIP 中，已从工作副本移除`);
+      continue;
+    }
+    known.add(a.path);
+    assets.push({ id: a.id, path: a.path, mime: typeof a.mime === 'string' ? a.mime : '', sha256: '' });
+    assetBytes[a.id] = data;
+  }
+
+  const extras: Record<string, Uint8Array> = {};
+  for (const name of files) {
+    if (known.has(name)) continue;
+    if (isSafeStyleZipPath(name) && name.startsWith('previews/') && sniffImage(raw[name])) {
+      extras[name] = raw[name];
+      continue;
+    }
+    issues.push(`无法识别的文件 ${name}，服务端会拒绝；已从工作副本移除`);
+  }
+
+  const minRendererVersion = str('minRendererVersion', LOG_RENDERER_VERSION);
+  if (SEMVER.test(minRendererVersion) && semverGt(minRendererVersion, LOG_RENDERER_VERSION)) {
+    warnings.push(`需要渲染器 ${minRendererVersion}，当前为 ${LOG_RENDERER_VERSION}`);
+  }
+  if (manifest.schemaVersion !== undefined && manifest.schemaVersion !== 1) issues.push('schemaVersion 必须为 1');
+
+  return {
+    pkg: {
+      schemaVersion: 1,
+      id: str('id', ''),
+      version: str('version', '1.0.0'),
+      name: str('name', ''),
+      license: str('license', ''),
+      minRendererVersion,
+      tokens,
+      templates,
+      css,
+      rules,
+      settingsSchema,
+      assets,
+    },
+    assets: assetBytes,
+    extras,
+    files,
+    issues,
+    warnings,
+  };
+};
+
+/** 按服务端导出的布局打包：manifest 只含元信息、rules、assets；其余字段放独立文件。 */
+export const buildStyleZip = async (pkg: LogStylePackage, assets: Record<string, Uint8Array>, extras: Record<string, Uint8Array> = {}): Promise<Uint8Array> => {
+  const { zipSync, strToU8 } = await loadFflate();
+  const { tokens, templates, css, settingsSchema, ...meta } = pkg;
+  const files: Record<string, Uint8Array> = {
+    'manifest.json': strToU8(JSON.stringify(meta)),
+    'tokens.json': strToU8(JSON.stringify(tokens)),
+    'settings.schema.json': strToU8(JSON.stringify(settingsSchema)),
+    'styles/main.css': strToU8(css),
+  };
+  for (const [id, src] of Object.entries(templates)) files[`templates/${id}.html`] = strToU8(src);
+  for (const a of pkg.assets) {
+    const data = assets[a.id];
+    if (!data) throw new Error(`资源 ${a.path} 缺少文件内容`);
+    files[a.path] = data;
+  }
+  for (const [name, data] of Object.entries(extras)) if (isSafeStyleZipPath(name) && name.startsWith('previews/') && !(name in files)) files[name] = data;
+  return zipSync(files, { level: 6 });
 };

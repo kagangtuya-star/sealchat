@@ -2,9 +2,17 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
-import { useDisplayStore, type CustomTheme, type CustomThemeColors, type ThemeSelectionMode } from '@/stores/display'
+import {
+  useDisplayStore,
+  type CustomTheme,
+  type CustomThemeColors,
+  type DisplayPalette,
+  type PaletteThemeBinding,
+  type PaletteThemeSource,
+} from '@/stores/display'
 import { presetThemes, dayBaseTheme, nightBaseTheme } from '@/config/presetThemes'
 import { themeColorFields } from '@/services/theme/themeColorFields'
+import { describePaletteThemeSelection } from '@/services/theme/themeSelection'
 import ThemeLivePreviewFloating from './ThemeLivePreviewFloating.vue'
 
 interface Props {
@@ -22,12 +30,14 @@ const livePreviewFloatingVisible = ref(false)
 const livePreviewBaseColors = ref<CustomThemeColors | null>(null)
 const selectedImportSource = ref<string | null>(null)
 const selectedThemeId = ref<string | null>(null)
-const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
-  { label: '平台预设主题', value: 'inherit' },
-  { label: '选择平台主题', value: 'platform' },
-  { label: '选择个人主题', value: 'personal' },
-  { label: '关闭额外主题', value: 'none' },
+const paletteSourceOptions: Array<{ label: string; value: PaletteThemeSource }> = [
+  { label: '平台默认', value: 'inherit' },
+  { label: '平台主题', value: 'platform' },
+  { label: '个人主题', value: 'personal' },
+  { label: '基础配色', value: 'none' },
 ]
+const paletteLabels: Record<DisplayPalette, string> = { day: '日间', night: '夜间' }
+const palettes: DisplayPalette[] = ['day', 'night']
 
 // 响应式 drawer 宽度
 const { width: windowWidth } = useWindowSize()
@@ -61,58 +71,57 @@ const colorGroups = computed(() => {
 
 // 主题列表
 const themes = computed(() => display.settings.customThemes)
-const activeThemeId = computed(() => display.settings.activeCustomThemeId)
+// 当前时段正在使用的个人主题
+const activeThemeId = computed(() => {
+  const binding = display.getPaletteThemeBinding(display.palette)
+  return binding.source === 'personal' ? binding.themeId : null
+})
 const selectedSavedTheme = computed(() => {
   if (!selectedThemeId.value) return null
   return themes.value.find(t => t.id === selectedThemeId.value) || null
 })
+const formatPersonalThemeUsage = (themeId: string) => {
+  const usages = palettes.filter((palette) => {
+    const binding = display.getPaletteThemeBinding(palette)
+    return binding.source === 'personal' && binding.themeId === themeId
+  })
+  return usages.length ? `（${usages.map(palette => paletteLabels[palette]).join('/')}使用中）` : ''
+}
 const savedThemeOptions = computed(() =>
   themes.value.map((theme) => ({
-    label: activeThemeId.value === theme.id ? `${theme.name}（当前）` : theme.name,
+    label: `${theme.name}${formatPersonalThemeUsage(theme.id)}`,
     value: theme.id,
   })),
+)
+const personalThemeOptions = computed(() =>
+  themes.value.map((theme) => ({ label: theme.name, value: theme.id })),
 )
 const platformThemeOptions = computed(() =>
-  display.platformThemes.map((theme) => ({
-    label: display.defaultPlatformThemeId === theme.id ? `${theme.name}（默认）` : theme.name,
-    value: theme.id,
-  })),
+  display.platformThemes.map((theme) => {
+    const tags = [
+      display.defaultPlatformThemeId === theme.id ? '默认' : '',
+      display.defaultPlatformDayThemeId === theme.id ? '日间默认' : '',
+      display.defaultPlatformNightThemeId === theme.id ? '夜间默认' : '',
+    ].filter(Boolean)
+    return {
+      label: tags.length ? `${theme.name}（${tags.join('、')}）` : theme.name,
+      value: theme.id,
+    }
+  }),
 )
-const resolvedThemeSelection = computed(() => display.getResolvedThemeSelection())
-const resolvedThemeLabel = computed(() => {
-  const resolvedTheme = resolvedThemeSelection.value.theme
-  if (!resolvedTheme) {
-    if (display.settings.themeSelectionMode === 'inherit') {
-      return '当前未设置平台默认主题，将回退到日间/夜间基础配色'
+const paletteSlots = computed(() =>
+  palettes.map((palette) => {
+    const binding = display.getPaletteThemeBinding(palette)
+    return {
+      palette,
+      label: `${paletteLabels[palette]}主题`,
+      otherLabel: paletteLabels[palette === 'day' ? 'night' : 'day'],
+      active: display.palette === palette,
+      binding,
+      summary: describePaletteThemeSelection(binding, display.getResolvedThemeSelection(undefined, palette)),
     }
-    if (display.settings.themeSelectionMode === 'none') {
-      return '当前仅使用日间/夜间基础配色'
-    }
-    return '当前无可用主题，已回退到安全模式'
-  }
-  if (resolvedThemeSelection.value.source === 'platform') {
-    return resolvedThemeSelection.value.resolvedMode === 'inherit'
-      ? `当前继承平台默认主题：${resolvedTheme.name}`
-      : `当前使用平台主题：${resolvedTheme.name}`
-  }
-  return `当前使用个人主题：${resolvedTheme.name}`
-})
-const platformThemeSectionDisabled = computed(() => display.settings.themeSelectionMode !== 'platform')
-const platformThemeSectionHint = computed(() => {
-  if (display.platformThemes.length === 0) {
-    return '平台暂无可选共享主题'
-  }
-  if (display.settings.themeSelectionMode === 'inherit') {
-    return '当前将自动跟随平台默认主题；如需指定某个共享主题，请先切换到“指定平台主题”。'
-  }
-  if (display.settings.themeSelectionMode === 'personal') {
-    return '当前正在使用个人主题；若要改用平台共享主题，请先切换上方来源。'
-  }
-  if (display.settings.themeSelectionMode === 'none') {
-    return '当前已关闭主题覆盖；若要启用平台共享主题，请先切换上方来源。'
-  }
-  return '选择一个平台共享主题后会立即生效。'
-})
+  }),
+)
 
 // 初始化表单
 const resetForm = () => {
@@ -140,7 +149,7 @@ const importThemeOptions = computed(() => {
     value: `preset:${preset.id}`,
   }))
   const savedChildren = themes.value.map(theme => ({
-    label: activeThemeId.value === theme.id ? `${theme.name}（当前）` : theme.name,
+    label: `${theme.name}${formatPersonalThemeUsage(theme.id)}`,
     value: `saved:${theme.id}`,
   }))
 
@@ -223,9 +232,14 @@ const handleThemeSelect = (themeId: string | null) => {
   selectedThemeId.value = themeId
 }
 
-const handleApplySelectedTheme = () => {
+const handleApplySelectedTheme = (palette: DisplayPalette) => {
   if (!selectedSavedTheme.value) return
-  handleActivate(selectedSavedTheme.value.id)
+  display.setPaletteThemeBinding(palette, { source: 'personal', themeId: selectedSavedTheme.value.id })
+}
+
+const isSelectedThemeUsedBy = (palette: DisplayPalette) => {
+  const binding = display.getPaletteThemeBinding(palette)
+  return binding.source === 'personal' && binding.themeId === selectedSavedTheme.value?.id
 }
 
 const handleEditSelectedTheme = () => {
@@ -243,25 +257,48 @@ const handleDeleteSelectedTheme = () => {
   handleDelete(selectedSavedTheme.value.id)
 }
 
-const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
-  if (mode === 'platform' && display.platformThemes.length === 0) {
-    message.warning('平台暂无可选主题')
+const handlePaletteSourceChange = (palette: DisplayPalette, source: PaletteThemeSource) => {
+  const current = display.getPaletteThemeBinding(palette)
+  if (current.source === source) return
+  if (source === 'platform') {
+    if (display.platformThemes.length === 0) {
+      message.warning('平台暂无可选主题')
+      return
+    }
+    const themeId = display.getPaletteDefaultPlatformTheme(palette)?.id || display.platformThemes[0].id
+    display.setPaletteThemeBinding(palette, { source, themeId })
     return
   }
-  if (mode === 'personal' && themes.value.length === 0) {
-    startCreate()
-    message.info('先创建一个个人主题')
+  if (source === 'personal') {
+    if (themes.value.length === 0) {
+      startCreate()
+      message.info('先创建一个个人主题')
+      return
+    }
+    const themeId = selectedSavedTheme.value?.id || themes.value[0].id
+    display.setPaletteThemeBinding(palette, { source, themeId })
     return
   }
-  display.setThemeSelectionMode(mode)
+  display.setPaletteThemeBinding(palette, { source, themeId: null })
 }
 
-const handlePlatformThemeChange = (themeId: string | null) => {
-  if (!themeId) {
-    display.setThemeSelectionMode('inherit')
-    return
-  }
-  display.setActivePlatformTheme(themeId)
+const handlePaletteThemeChange = (palette: DisplayPalette, source: 'platform' | 'personal', themeId: string | null) => {
+  if (!themeId) return
+  display.setPaletteThemeBinding(palette, { source, themeId })
+}
+
+const copyPaletteBinding = (from: DisplayPalette) => {
+  const to: DisplayPalette = from === 'day' ? 'night' : 'day'
+  const binding: PaletteThemeBinding = { ...display.getPaletteThemeBinding(from) }
+  display.setPaletteThemeBinding(to, binding)
+  message.success(`${paletteLabels[to]}主题已与${paletteLabels[from]}保持一致`)
+}
+
+// 新建/导入的个人主题直接应用到当前时段
+const applyNewThemeToCurrentPalette = (themeId: string) => {
+  const palette = display.palette
+  display.setPaletteThemeBinding(palette, { source: 'personal', themeId })
+  return paletteLabels[palette]
 }
 
 const saveCurrentTheme = (options?: { keepEditing?: boolean }) => {
@@ -286,13 +323,13 @@ const saveCurrentTheme = (options?: { keepEditing?: boolean }) => {
     updatedAt: now,
   }
 
-  if (!display.settings.customThemeEnabled) {
-    display.setCustomThemeEnabled(true)
-  }
-
   display.saveCustomTheme(theme)
-  display.activateCustomTheme(id)
-  message.success(existingTheme ? `主题已更新：${name}` : `主题已保存：${name}`)
+  if (existingTheme) {
+    message.success(`主题已更新：${name}`)
+  } else {
+    const paletteLabel = applyNewThemeToCurrentPalette(id)
+    message.success(`主题已保存并应用到${paletteLabel}：${name}`)
+  }
 
   if (keepEditing) {
     editMode.value = 'edit'
@@ -313,10 +350,6 @@ const handleSaveFromLivePreviewFloating = () => {
 
 const handleDelete = (id: string) => {
   display.deleteCustomTheme(id)
-}
-
-const handleActivate = (id: string) => {
-  display.activateCustomTheme(id)
 }
 
 const handleClose = () => {
@@ -388,9 +421,7 @@ const buildLivePreviewColors = (): CustomThemeColors => {
 const handleOpenLivePreview = () => {
   try {
     const currentCssColors = readCurrentThemeColorsFromCss()
-    const activeTheme = typeof display.getActiveCustomTheme === 'function'
-      ? display.getActiveCustomTheme()
-      : null
+    const activeTheme = display.getResolvedThemeSelection().theme
     livePreviewBaseColors.value = {
       ...getPaletteBaseColors(),
       ...(activeTheme?.colors || {}),
@@ -546,13 +577,9 @@ const handleImportFile = (event: Event) => {
         updatedAt: Date.now(),
       }
       
-      // 确保自定义主题功能已启用
-      if (!display.settings.customThemeEnabled) {
-        display.setCustomThemeEnabled(true)
-      }
-      
       display.saveCustomTheme(theme)
-      display.activateCustomTheme(theme.id)
+      const paletteLabel = applyNewThemeToCurrentPalette(theme.id)
+      message.success(`已导入并应用到${paletteLabel}：${uniqueName}`)
       
       // 重置文件输入
       target.value = ''
@@ -570,46 +597,57 @@ const handleImportFile = (event: Event) => {
     <n-drawer-content closable title="主题管理">
       <div class="custom-theme-panel">
         <section class="theme-section">
-          <p class="section-title">主题来源</p>
-          <p class="section-desc">先确认当前使用哪一种主题来源，再在下方调整具体细节。</p>
-          <div class="theme-source-mode-grid">
-            <n-button
-              v-for="option in themeSelectionModeOptions"
-              :key="option.value"
-              size="small"
-              block
-              class="theme-mode-button"
-              :type="display.settings.themeSelectionMode === option.value ? 'primary' : 'default'"
-              :secondary="display.settings.themeSelectionMode !== option.value"
-              :aria-pressed="display.settings.themeSelectionMode === option.value"
-              @click="handleThemeSelectionModeUpdate(option.value)"
+          <p class="section-title">日间 / 夜间主题</p>
+          <div class="palette-slot-list">
+            <div
+              v-for="paletteSlot in paletteSlots"
+              :key="paletteSlot.palette"
+              class="palette-slot"
+              :class="{ 'palette-slot--active': paletteSlot.active }"
             >
-              <span class="theme-mode-button__label">{{ option.label }}</span>
-            </n-button>
+              <div class="section-header">
+                <p class="palette-slot__title">
+                  {{ paletteSlot.label }}
+                  <span v-if="paletteSlot.active" class="section-chip">当前</span>
+                </p>
+                <n-button text size="small" @click="copyPaletteBinding(paletteSlot.palette)">同步到{{ paletteSlot.otherLabel }}</n-button>
+              </div>
+              <div class="theme-source-mode-grid">
+                <n-button
+                  v-for="option in paletteSourceOptions"
+                  :key="option.value"
+                  size="small"
+                  block
+                  class="theme-mode-button"
+                  :type="paletteSlot.binding.source === option.value ? 'primary' : 'default'"
+                  :secondary="paletteSlot.binding.source !== option.value"
+                  :aria-pressed="paletteSlot.binding.source === option.value"
+                  @click="handlePaletteSourceChange(paletteSlot.palette, option.value)"
+                >
+                  <span class="theme-mode-button__label">{{ option.label }}</span>
+                </n-button>
+              </div>
+              <n-select
+                v-if="paletteSlot.binding.source === 'platform'"
+                :value="paletteSlot.binding.themeId"
+                :options="platformThemeOptions"
+                placeholder="选择平台主题"
+                size="small"
+                @update:value="(value: string | null) => handlePaletteThemeChange(paletteSlot.palette, 'platform', value)"
+              />
+              <n-select
+                v-else-if="paletteSlot.binding.source === 'personal'"
+                :value="paletteSlot.binding.themeId"
+                :options="personalThemeOptions"
+                placeholder="选择个人主题"
+                filterable
+                size="small"
+                @update:value="(value: string | null) => handlePaletteThemeChange(paletteSlot.palette, 'personal', value)"
+              />
+              <p class="section-hint">生效：{{ paletteSlot.summary }}</p>
+            </div>
           </div>
-          <div class="theme-status-card">
-            <span class="theme-status-badge">{{ resolvedThemeLabel }}</span>
-            <span class="theme-status-meta">平台主题 {{ display.platformThemes.length }} · 个人主题 {{ themes.length }}</span>
-          </div>
-        </section>
-
-        <n-divider />
-
-        <section class="theme-section">
-          <div class="section-header">
-            <p class="section-title">平台共享主题</p>
-            <span class="section-chip">平台</span>
-          </div>
-          <p class="section-desc">当主题来源切换为“指定平台主题”时，在这里选择具体的共享主题。</p>
-          <n-select
-            :value="display.settings.activePlatformThemeId"
-            :options="platformThemeOptions"
-            placeholder="选择平台主题"
-            clearable
-            :disabled="platformThemeSectionDisabled || platformThemeOptions.length === 0"
-            @update:value="handlePlatformThemeChange"
-          />
-          <p class="section-hint">{{ platformThemeSectionHint }}</p>
+          <span class="theme-status-meta">平台主题 {{ display.platformThemes.length }} · 个人主题 {{ themes.length }}</span>
         </section>
 
         <n-divider />
@@ -620,7 +658,6 @@ const handleImportFile = (event: Event) => {
             <p class="section-title">个人主题库</p>
             <span class="section-chip">个人</span>
           </div>
-          <p class="section-desc">本地保存、编辑和分享你的主题模板；需要应用时请显式设为当前主题。</p>
           <div class="theme-selector-row">
             <n-select
               v-model:value="selectedThemeId"
@@ -636,10 +673,18 @@ const handleImportFile = (event: Event) => {
               <n-button
                 text
                 size="small"
-                :disabled="!selectedSavedTheme || activeThemeId === selectedSavedTheme?.id && display.settings.themeSelectionMode === 'personal'"
-                @click="handleApplySelectedTheme"
+                :disabled="!selectedSavedTheme || isSelectedThemeUsedBy('day')"
+                @click="handleApplySelectedTheme('day')"
               >
-                设为当前
+                用于日间
+              </n-button>
+              <n-button
+                text
+                size="small"
+                :disabled="!selectedSavedTheme || isSelectedThemeUsedBy('night')"
+                @click="handleApplySelectedTheme('night')"
+              >
+                用于夜间
               </n-button>
               <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleExportSelectedTheme">导出</n-button>
               <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleEditSelectedTheme">编辑</n-button>
@@ -653,7 +698,6 @@ const handleImportFile = (event: Event) => {
         <!-- 导入/导出 JSON -->
         <section class="theme-section">
           <p class="section-title">导入/导出</p>
-          <p class="section-desc">导入 JSON 主题文件，或在个人主题列表中导出当前选中项。</p>
           <div class="import-export-section">
             <input
               ref="importFileInput"
@@ -672,7 +716,6 @@ const handleImportFile = (event: Event) => {
         <!-- 导入主题模板 -->
         <section class="theme-section">
           <p class="section-title">导入主题模板</p>
-          <p class="section-desc">将预设主题或已保存主题填充到编辑器，确认保存后才会写入个人主题库。</p>
           <div class="preset-import">
             <n-select
               v-model:value="selectedImportSource"
@@ -684,7 +727,6 @@ const handleImportFile = (event: Event) => {
               @update:value="importThemeFromSource"
               class="preset-select"
             />
-            <p class="preset-hint">支持预设主题和已保存主题，选择后仅填充编辑器，确认保存后才写入主题列表</p>
           </div>
         </section>
 
@@ -696,7 +738,6 @@ const handleImportFile = (event: Event) => {
             <p class="section-title">{{ editMode === 'edit' ? '编辑个人主题' : '新建个人主题' }}</p>
             <n-button v-if="editMode === 'edit'" text size="small" @click="startCreate">取消编辑</n-button>
           </div>
-          <p class="section-desc">保存后会写入个人主题库；新建或保存时会自动应用为当前个人主题。</p>
 
           <div class="theme-live-preview-row">
             <n-button
@@ -804,13 +845,6 @@ const handleImportFile = (event: Event) => {
   color: var(--sc-text-primary);
 }
 
-.section-desc {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--sc-text-secondary);
-}
-
 .section-chip {
   display: inline-flex;
   align-items: center;
@@ -823,14 +857,13 @@ const handleImportFile = (event: Event) => {
 }
 
 .theme-source-mode-grid {
-  margin-top: 0.25rem;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
 }
 
 .theme-mode-button {
-  min-height: 40px;
+  min-height: 32px;
 }
 
 .theme-mode-button__label {
@@ -843,25 +876,34 @@ const handleImportFile = (event: Event) => {
   white-space: normal;
 }
 
-.theme-status-card {
+.palette-slot-list {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.8rem;
+  gap: 0.75rem;
+}
+
+.palette-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
   border-radius: 0.8rem;
   border: 1px solid var(--sc-border-mute);
   background: linear-gradient(135deg, var(--sc-bg-surface), var(--sc-bg-elevated));
 }
 
-.theme-status-badge {
+.palette-slot--active {
+  border-color: var(--primary-color, #3388de);
+}
+
+.palette-slot__title {
   display: inline-flex;
   align-items: center;
-  align-self: flex-start;
-  padding: 0.25rem 0.55rem;
-  border-radius: 999px;
-  background: rgba(51, 136, 222, 0.12);
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
   color: var(--sc-text-primary);
-  font-size: 0.78rem;
 }
 
 .theme-status-meta {
@@ -907,12 +949,6 @@ const handleImportFile = (event: Event) => {
 
 .preset-select {
   max-width: 100%;
-}
-
-.preset-hint {
-  font-size: 0.75rem;
-  color: var(--sc-text-secondary);
-  margin: 0;
 }
 
 .section-hint {
@@ -1052,6 +1088,10 @@ const handleImportFile = (event: Event) => {
 
   .section-title {
     font-size: 0.85rem;
+  }
+
+  .theme-source-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .theme-selector-actions {

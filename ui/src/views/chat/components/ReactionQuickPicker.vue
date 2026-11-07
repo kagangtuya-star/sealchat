@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
   background: var(--sc-bg-elevated, #fff);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  border-bottom: 1px solid var(--chat-border-mute);
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .reaction-quick-picker__item {
@@ -194,33 +194,13 @@ onBeforeUnmount(() => {
   background: transparent;
   cursor: pointer;
   border-radius: 6px;
-  color: var(--chat-text-secondary);
+  color: var(--sc-text-secondary);
   transition: background 0.15s, color 0.15s;
 }
 
 .reaction-quick-picker__expand:hover {
   background: var(--sc-bg-hover, rgba(0, 0, 0, 0.05));
   color: var(--primary-color, #3b82f6);
-}
-
-:root[data-display-palette='night'] .reaction-quick-picker {
-  background: rgba(30, 30, 40, 0.95);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-:root[data-display-palette='night'] .reaction-quick-picker__item:hover,
-:root[data-display-palette='night'] .reaction-quick-picker__expand:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-:root[data-custom-theme='true'] .reaction-quick-picker {
-  background: var(--sc-bg-elevated);
-  border-color: var(--sc-border-strong);
-}
-
-:root[data-custom-theme='true'] .reaction-quick-picker__item:hover,
-:root[data-custom-theme='true'] .reaction-quick-picker__expand:hover {
-  background: var(--sc-bg-layer);
 }
 
 @media (max-width: 768px) {

@@ -24,6 +24,6 @@ declare module 'vue-cropperjs' {
         getCroppedCanvas(options?: Cropper.GetCroppedCanvasOptions): HTMLCanvasElement;
     }
 
-    const VueCropper: DefineComponent<VueCropperProps> & VueCropperInstance;
+    const VueCropper: DefineComponent<VueCropperProps, VueCropperInstance>;
     export default VueCropper;
 }

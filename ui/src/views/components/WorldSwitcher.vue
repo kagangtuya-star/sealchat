@@ -3,6 +3,7 @@ import { computed, watch, ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
 import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
+import WorldCreateCoverField from '@/views/world/WorldCreateCoverField.vue';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -18,11 +19,15 @@ const drawerVisible = defineModel<boolean>('visible', { default: false });
 const botOptionsLoading = ref(false);
 const botList = ref<any[]>([]);
 const showCreate = ref(false);
+const creating = ref(false);
+const coverUploading = ref(false);
+const coverEditing = ref(false);
 const worldJumpId = ref('');
 
 const createInitialWorldForm = () => ({
   name: '',
   description: '',
+  coverAttachmentId: '',
   visibility: 'public' as string,
   channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot' | 'disabled',
   channelDefaultBotIds: [] as string[],
@@ -85,6 +90,7 @@ const handleSwitch = async (worldId: string) => {
 };
 
 const handleWorldCreate = async () => {
+  if (creating.value || coverUploading.value || coverEditing.value) return;
   if (!worldForm.value.name.trim()) {
     message.error('请输入世界名称');
     return;
@@ -97,6 +103,7 @@ const handleWorldCreate = async () => {
     message.error('请至少绑定一个 BOT');
     return;
   }
+  creating.value = true;
   try {
     await chat.createWorld({ ...worldForm.value });
     showCreate.value = false;
@@ -105,6 +112,8 @@ const handleWorldCreate = async () => {
     message.success('创建世界成功');
   } catch (e: any) {
     message.error(e?.response?.data?.message || '创建失败');
+  } finally {
+    creating.value = false;
   }
 };
 
@@ -131,7 +140,7 @@ const getDescriptionCountLabel = (value?: string) => {
 </script>
 
 <template>
-  <n-drawer v-model:show="drawerVisible" width="60%">
+  <n-drawer v-model:show="drawerVisible" width="60%" :trap-focus="false" :close-on-esc="!coverEditing">
     <n-drawer-content title="世界大厅" closable>
       <div class="space-y-3">
         <div class="flex gap-2">
@@ -161,7 +170,8 @@ const getDescriptionCountLabel = (value?: string) => {
     </n-drawer-content>
   </n-drawer>
 
-  <n-modal v-model:show="showCreate" preset="dialog" title="新建世界" style="max-width:420px">
+  <!-- Keep the focus wrapper stable while the teleported image editor is open. -->
+  <n-modal v-model:show="showCreate" preset="dialog" title="新建世界" style="max-width:420px" :trap-focus="false" :close-on-esc="!coverEditing">
     <n-form label-width="72">
       <n-form-item label="名称">
         <n-input v-model:value="worldForm.name" placeholder="输入世界名称" />
@@ -187,6 +197,15 @@ const getDescriptionCountLabel = (value?: string) => {
           ]"
         />
       </n-form-item>
+      <n-form-item label="封面">
+        <WorldCreateCoverField
+          v-if="showCreate"
+          v-model="worldForm.coverAttachmentId"
+          v-model:uploading="coverUploading"
+          v-model:editing="coverEditing"
+          :disabled="creating"
+        />
+      </n-form-item>
       <n-form-item label="掷骰默认">
         <WorldDiceDefaultsFields
           v-model:mode="worldForm.channelDefaultDiceMode"
@@ -209,7 +228,7 @@ const getDescriptionCountLabel = (value?: string) => {
         >
           取消
         </n-button>
-        <n-button type="primary" @click="handleWorldCreate">创建</n-button>
+        <n-button type="primary" :loading="creating" :disabled="coverUploading || coverEditing" @click="handleWorldCreate">创建</n-button>
       </n-space>
     </template>
   </n-modal>

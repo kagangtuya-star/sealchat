@@ -3,6 +3,8 @@ package service
 import (
 	"errors"
 	"log"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"sealchat/service/storage"
@@ -12,6 +14,27 @@ import (
 var objectStorage atomic.Pointer[storage.Manager]
 
 var ErrStorageRuntimeReload = errors.New("对象存储运行配置应用失败")
+var ErrStorageMigrationRestartRequired = errors.New("存储配置已修改，需要重启后再执行迁移")
+
+func storageMigrationConfigCheck() error {
+	cfg := utils.GetConfig()
+	if cfg != nil && (StorageReloadRequiresRestart(cfg.Storage) || audioStorageReloadRequiresRestart(cfg.Audio)) {
+		return ErrStorageMigrationRestartRequired
+	}
+	return nil
+}
+
+func audioStorageReloadRequiresRestart(cfg utils.AudioConfig) bool {
+	svc := GetAudioService()
+	if svc == nil || svc.storage == nil {
+		return false
+	}
+	desired := cfg.StorageDir
+	if strings.TrimSpace(desired) == "" {
+		desired = "./static/audio"
+	}
+	return filepath.Clean(svc.storage.rootDir) != filepath.Clean(desired)
+}
 
 func InitStorageManager(cfg utils.StorageConfig) (*storage.Manager, error) {
 	mgr, err := storage.NewManager(cfg)
@@ -63,7 +86,9 @@ func ReloadStorageManager(cfg utils.StorageConfig) (*storage.Manager, error) {
 }
 
 func GetStorageStatus() storage.Status {
-	return GetStorageManager().Status()
+	status := GetStorageManager().Status()
+	status.PendingRestart = storageMigrationConfigCheck() != nil
+	return status
 }
 
 func TestStorageS3(cfg utils.StorageConfig) error {

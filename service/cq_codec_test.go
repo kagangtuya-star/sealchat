@@ -1,8 +1,11 @@
 package service
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"sealchat/protocol"
 )
 
 func TestParseCQCode(t *testing.T) {
@@ -180,7 +183,7 @@ func TestConvertSealChatAtToSatori(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ConvertCQToSatori(tt.input)
-			if got != tt.expected {
+			if !reflect.DeepEqual(protocol.ElementParse(got), protocol.ElementParse(tt.expected)) {
 				t.Fatalf("ConvertCQToSatori(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})

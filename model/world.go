@@ -49,10 +49,12 @@ type WorldModel struct {
 	AllowManageOtherUserChannelIdentities bool       `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
 	AllowMemberEditKeywords               bool       `json:"allowMemberEditKeywords" gorm:"default:false"`               // 允许成员编辑世界术语
 	AllowMemberAccessLogLayout            bool       `json:"allowMemberAccessLogLayout" gorm:"not null;default:false"`   // 允许普通成员进入 LOG 排版
-	StrictWhisperPrivacy                  bool       `json:"strictWhisperPrivacy" gorm:"default:true"`                   // 悄悄话严格保密：开启后管理员不可旁路查看
-	AudioLibraryMode                      string     `json:"audioLibraryMode" gorm:"size:16;default:database"`           // database/s3，按世界配置
-	AudioLibraryPrefix                    string     `json:"audioLibraryPrefix" gorm:"size:512"`                         // 世界音频 S3 prefix
-	AudioLibrarySelectorDepth             int        `json:"audioLibrarySelectorDepth" gorm:"not null;default:2"`        // S3 音乐控制台选择器递归深度
+	ExportRespectMessageVisibility        bool       `json:"exportRespectMessageVisibility" gorm:"not null;default:true"`
+	AllowMemberExportMessages             bool       `json:"allowMemberExportMessages" gorm:"not null;default:true"`
+	StrictWhisperPrivacy                  bool       `json:"strictWhisperPrivacy" gorm:"default:true"`            // 悄悄话严格保密：开启后管理员不可旁路查看
+	AudioLibraryMode                      string     `json:"audioLibraryMode" gorm:"size:16;default:database"`    // database/s3，按世界配置
+	AudioLibraryPrefix                    string     `json:"audioLibraryPrefix" gorm:"size:512"`                  // 世界音频 S3 prefix
+	AudioLibrarySelectorDepth             int        `json:"audioLibrarySelectorDepth" gorm:"not null;default:2"` // S3 音乐控制台选择器递归深度
 	ChannelDefaultDiceMode                string     `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
 	ChannelDefaultBotID                   string     `json:"channelDefaultBotId" gorm:"size:100"`
 	ChannelDefaultBotIDsJSON              string     `json:"-" gorm:"type:text"`
@@ -63,6 +65,7 @@ type WorldModel struct {
 	TheaterActivated                      bool       `json:"-" gorm:"default:false"`
 	StickyNoteDefaultAppearanceJSON       string     `json:"-" gorm:"type:text"`
 	Dice3DConfigJSON                      string     `json:"-" gorm:"column:dice_3d_config_json;type:text"`
+	ActionRibbonLayoutJSON                string     `json:"-" gorm:"type:text"`                         // “更多跑团功能”世界布局（引用平台方案 + 差异覆写）
 	IsSystemDefault                       bool       `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                               string     `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID                      string     `json:"defaultChannelId" gorm:"size:100"`
@@ -147,6 +150,14 @@ func (m *WorldModel) GetCursorTheme() utils.CursorThemeConfig {
 	return utils.NormalizeCursorThemeConfig(value, true)
 }
 
+func (m *WorldModel) GetActionRibbonLayout() utils.WorldActionRibbonLayout {
+	var value utils.WorldActionRibbonLayout
+	if strings.TrimSpace(m.ActionRibbonLayoutJSON) != "" {
+		_ = json.Unmarshal([]byte(m.ActionRibbonLayoutJSON), &value)
+	}
+	return utils.NormalizeWorldActionRibbonLayout(value)
+}
+
 func (m *WorldModel) MarshalJSON() ([]byte, error) {
 	type worldModelAlias WorldModel
 	return json.Marshal(&struct {
@@ -157,6 +168,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		StickyNoteDefaultAppearance *protocol.StickyNoteAppearance            `json:"stickyNoteDefaultAppearance,omitempty"`
 		CursorTheme                 utils.CursorThemeConfig                   `json:"cursorTheme"`
 		Dice3DConfig                protocol.Dice3DWorldConfig                `json:"dice3dConfig"`
+		ActionRibbonLayout          utils.WorldActionRibbonLayout             `json:"actionRibbonLayout"`
 	}{
 		worldModelAlias:             (*worldModelAlias)(m),
 		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
@@ -165,6 +177,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		StickyNoteDefaultAppearance: m.GetStickyNoteDefaultAppearance(),
 		CursorTheme:                 m.GetCursorTheme(),
 		Dice3DConfig:                m.GetDice3DConfig(),
+		ActionRibbonLayout:          m.GetActionRibbonLayout(),
 	})
 }
 

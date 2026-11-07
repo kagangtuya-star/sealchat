@@ -1,14 +1,13 @@
 // Uses the existing TypeScript compiler and node:assert; no test framework needed.
 const path = require('node:path')
 const scripts = [
-  'theater-dialogue-residency-layout.spec.ts',
-  'theater-dialogue-controller-runtime.spec.ts',
+  'theater-dialogue-runtime.spec.ts',
+  'theater-dialogue-bridge-runtime.spec.ts',
   'theater-presentation-multiplayer-regression.ts',
   'theater-dialogue-queue-runtime.spec.ts',
   'theater-dialogue-playback-runtime.spec.ts',
-  'theater-dialogue-sync.spec.cjs',
-  'theater-dialogue-drag.spec.cjs',
-  'theater-dialogue-panel.spec.cjs',
+  'theater-presentation-runtime.spec.ts',
+  'theater-presentation-editor-runtime.spec.ts',
 ]
 const selected = process.argv[2]
 if (!selected) {

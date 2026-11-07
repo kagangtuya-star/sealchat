@@ -671,7 +671,7 @@ const handleAckWorldAnnouncement = async () => {
 </script>
 
 <template>
-  <div class="w-full h-full sc-sidebar sc-sidebar-fill">
+  <div class="w-full h-full sc-sidebar sc-sidebar-fill" data-sc-ui="sidebar">
     <div class="px-2 py-2 flex flex-wrap gap-2 items-center">
       <div class="flex-1 min-w-[180px]">
         <n-select
@@ -749,7 +749,7 @@ const handleAckWorldAnnouncement = async () => {
         </template>
 
         <!-- 频道列表内容将在这里显示 -->
-        <div class="space-y-1 flex flex-col px-2" :class="{ 'channel-wrap-enabled': channelNameWrapEnabled }">
+        <div class="space-y-1 flex flex-col px-2" data-sc-ui="channel-list" :class="{ 'channel-wrap-enabled': channelNameWrapEnabled }">
           <template v-if="shouldRenderPublicChannelList">
             <!-- 临时显示的归档频道 -->
             <div

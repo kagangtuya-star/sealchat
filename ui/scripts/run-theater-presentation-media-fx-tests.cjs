@@ -18,7 +18,8 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText, filename)
 require(path.join(__dirname, 'theater-media-fx-host-regression.ts')).runAdvancedHostTests().then(() => {
-  require(path.join(__dirname, 'theater-presentation-media-fx.spec.ts'))
+  require(path.join(__dirname, 'media-fx-v2-regression.cjs'))
+  require(path.join(__dirname, 'media-fx-live-regression.cjs'))
 }, (error) => {
   console.error(error)
   process.exitCode = 1

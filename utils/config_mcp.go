@@ -24,6 +24,7 @@ type MCPConfig struct {
 	CluePublish          bool   `json:"cluePublish" yaml:"cluePublish"`
 	CallsPerMinute       int    `json:"callsPerMinute" yaml:"callsPerMinute"`
 	WritesPerMinute      int    `json:"writesPerMinute" yaml:"writesPerMinute"`
+	UploadPendingMaxMB   int64  `json:"uploadPendingMaxMB" yaml:"uploadPendingMaxMB"`
 }
 
 type MCPScope struct {
@@ -38,10 +39,10 @@ var MCPScopeCatalog = []MCPScope{
 	{"clue:read", "读取线索", false}, {"clue:write", "编辑线索内容", false},
 	{"glossary:read", "读取世界术语", false}, {"glossary:write", "编辑世界术语", false},
 	{"identity:read", "读取频道角色", false}, {"identity:write", "管理可委托的频道角色资料", false},
-	{"audio:read", "读取音频工作台", false}, {"audio:write", "改变共享播放状态", false},
+	{"audio:read", "读取音频工作台", false}, {"audio:write", "导入世界音频、改变共享播放状态", false},
 	{"note:read", "读取频道便签", false}, {"note:write", "编辑频道便签", false},
-	{"file:write", "上传临时附件", false},
-	{"theater:read", "读取小剧场可见场景和对象", false}, {"theater:write", "编辑小剧场场景和对象（不含频道嵌入代码）", false},
+	{"file:write", "上传、丢弃临时附件", false},
+	{"theater:read", "读取小剧场可见场景和对象", false}, {"theater:write", "导入小剧场素材、编辑场景和对象（不含频道嵌入代码）", false},
 	{"theater:control", "执行小剧场动作和浏览器视图控制", true}, {"theater:capture", "截取明确授权的小剧场浏览器画面", true},
 	{"theater:chat", "允许小剧场动作产生聊天副作用", true},
 	{"embed:read", "读取频道嵌入、模板目录和嵌入能力", false}, {"embed:write", "创建、修改、删除频道嵌入代码（独立于小剧场写入）", false},
@@ -61,6 +62,9 @@ func NormalizeMCPConfig(c MCPConfig) MCPConfig {
 	if c.WritesPerMinute == 0 {
 		c.WritesPerMinute = 30
 	}
+	if c.UploadPendingMaxMB == 0 {
+		c.UploadPendingMaxMB = 512
+	}
 	return c
 }
 
@@ -76,6 +80,9 @@ func ValidateMCPConfig(c MCPConfig) error {
 	}
 	if c.CallsPerMinute < 1 || c.CallsPerMinute > 10000 || c.WritesPerMinute < 1 || c.WritesPerMinute > c.CallsPerMinute {
 		return fmt.Errorf("MCP 限流数值无效")
+	}
+	if c.UploadPendingMaxMB < 1 || c.UploadPendingMaxMB > 1048576 {
+		return fmt.Errorf("MCP 临时上传容量必须为 1 至 1048576 MB")
 	}
 	return nil
 }

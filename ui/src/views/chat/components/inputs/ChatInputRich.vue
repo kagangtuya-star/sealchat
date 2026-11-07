@@ -148,6 +148,7 @@ const platformFontSelectMenuClass = computed(() => (
 ));
 const platformFontSelectMenuProps = computed(() => ({
   class: platformFontSelectMenuClass.value,
+  'data-sc-ui': 'font-popup',
 }));
 const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
 const performanceTriggerRef = ref<HTMLElement | null>(null);
@@ -3697,7 +3698,7 @@ defineExpose({
                 <span class="tiptap-highlight-icon">H</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
+            <div class="tiptap-color-picker" data-sc-ui="color-popup" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in highlightColors"
                 :key="color"
@@ -3740,7 +3741,7 @@ defineExpose({
                 <span class="tiptap-textcolor-icon">A</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
+            <div class="tiptap-color-picker" data-sc-ui="color-popup" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in textColors"
                 :key="color"
@@ -4855,11 +4856,12 @@ defineExpose({
 
 .tiptap-toolbar-picker__item:hover,
 .tiptap-toolbar-picker__item.is-active {
-  background: rgba(59, 130, 246, 0.1);
+  background: var(--sc-bg-hover);
 }
 
 .tiptap-toolbar-picker__item.is-active {
-  color: #2563eb;
+  background: var(--sc-bg-active);
+  color: var(--sc-text-primary);
 }
 
 .tiptap-toolbar-picker__item-label {
@@ -5161,7 +5163,7 @@ defineExpose({
   width: 1.5rem;
   height: 1.5rem;
   border-radius: 0.25rem;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--sc-border-mute);
   cursor: pointer;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
 
@@ -5179,9 +5181,9 @@ defineExpose({
   padding: 0.375rem 0.25rem;
   text-align: center;
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary);
   cursor: pointer;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--sc-border-mute);
   margin-top: 0.25rem;
 
   &:hover {
@@ -5332,24 +5334,6 @@ defineExpose({
 }
 
 /* 夜间模式颜色选择器 */
-:root[data-display-palette='night'] .tiptap-color-picker {
-  background-color: #2D2D31;
-  border-radius: 0.375rem;
-}
-
-:root[data-display-palette='night'] .tiptap-color-swatch {
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-:root[data-display-palette='night'] .tiptap-color-picker__clear {
-  border-top-color: #52525b;
-  color: #a1a1aa;
-
-  &:hover {
-    color: #f87171;
-  }
-}
-
 :root[data-display-palette='night'] .tiptap-highlight-icon {
   background-color: rgba(254, 240, 138, 0.3);
   color: #e5e7eb;
@@ -5358,23 +5342,6 @@ defineExpose({
 :root[data-display-palette='night'] .tiptap-textcolor-icon {
   color: #e5e7eb;
   border-bottom-color: #60a5fa;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker__item {
-  color: #e5e7eb;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker__item:hover,
-:root[data-display-palette='night'] .tiptap-toolbar-picker__item.is-active {
-  background: rgba(96, 165, 250, 0.18);
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker__item.is-active {
-  color: #93c5fd;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker__custom {
-  border-top-color: #3f3f5a;
 }
 
 :root[data-display-palette='night'] .mention-dropdown {
@@ -5394,123 +5361,6 @@ defineExpose({
 .tiptap-platform-font-select__menu {
   box-sizing: border-box;
   max-width: min(30rem, calc(100vw - 1rem));
-}
-
-.tiptap-platform-font-select__menu--sticky-note {
-  --n-color: #ffffff !important;
-  --n-option-text-color: #0f172a !important;
-  --n-option-color-pending: rgba(37, 99, 235, 0.08) !important;
-  --n-option-color-active: rgba(37, 99, 235, 0.12) !important;
-  --n-option-color-active-pending: rgba(37, 99, 235, 0.16) !important;
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16), 0 6px 16px rgba(15, 23, 42, 0.08);
-}
-
-.tiptap-platform-font-select__menu--sticky-note .n-base-select-option,
-.tiptap-platform-font-select__menu--sticky-note .n-base-select-option__content {
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note),
-:root[data-display-palette='night'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow,
-:root[data-display-palette='night'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow-wrapper,
-:root[data-custom-theme='true'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note),
-:root[data-custom-theme='true'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow,
-:root[data-custom-theme='true'] .n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow-wrapper,
-.n-popover-shared:has(.tiptap-toolbar-popover--sticky-note),
-.n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow,
-.n-popover-shared:has(.tiptap-toolbar-popover--sticky-note) .n-popover-arrow-wrapper,
-:root[data-display-palette='night'] .n-popover.tiptap-toolbar-popover--sticky-note,
-:root[data-display-palette='night'] .n-popover-shared.tiptap-toolbar-popover--sticky-note,
-:root[data-display-palette='night'] .n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow,
-:root[data-display-palette='night'] .n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow-wrapper,
-:root[data-custom-theme='true'] .n-popover.tiptap-toolbar-popover--sticky-note,
-:root[data-custom-theme='true'] .n-popover-shared.tiptap-toolbar-popover--sticky-note,
-:root[data-custom-theme='true'] .n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow,
-:root[data-custom-theme='true'] .n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow-wrapper,
-.n-popover.tiptap-toolbar-popover--sticky-note,
-.n-popover-shared.tiptap-toolbar-popover--sticky-note,
-.n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow,
-.n-popover-shared.tiptap-toolbar-popover--sticky-note .n-popover-arrow-wrapper {
-  --n-color: #ffffff !important;
-  --n-text-color: #0f172a !important;
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-popover--sticky-note,
-:root[data-custom-theme='true'] .tiptap-toolbar-popover--sticky-note,
-.tiptap-toolbar-popover--sticky-note {
-  --n-color: #ffffff !important;
-  --n-text-color: #0f172a !important;
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note,
-.tiptap-toolbar-picker--sticky-note {
-  background: #ffffff !important;
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item,
-.tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item {
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item:hover,
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item:hover,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active,
-.tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item:hover,
-.tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active {
-  background: rgba(37, 99, 235, 0.1) !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active,
-.tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__item.is-active {
-  color: #2563eb !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__custom,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__custom,
-.tiptap-toolbar-picker--sticky-note .tiptap-toolbar-picker__custom {
-  border-top-color: #e5e7eb !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .n-input,
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .n-input-wrapper,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .n-input,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .n-input-wrapper,
-.tiptap-toolbar-picker--sticky-note .n-input,
-.tiptap-toolbar-picker--sticky-note .n-input-wrapper {
-  --n-color: #ffffff !important;
-  --n-text-color: #0f172a !important;
-  --n-placeholder-color: #94a3b8 !important;
-  --n-border: 1px solid #d1d5db !important;
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
-
-:root[data-display-palette='night'] .tiptap-toolbar-picker--sticky-note .n-button,
-:root[data-custom-theme='true'] .tiptap-toolbar-picker--sticky-note .n-button,
-.tiptap-toolbar-picker--sticky-note .n-button {
-  --n-text-color: #0f172a !important;
-  --n-color: #f8fafc !important;
-  --n-color-hover: #eef2ff !important;
-  --n-border: 1px solid #d1d5db !important;
-}
-
-:root[data-display-palette='night'] .tiptap-platform-font-select__menu--sticky-note,
-:root[data-custom-theme='true'] .tiptap-platform-font-select__menu--sticky-note {
-  --n-color: #ffffff !important;
-  --n-option-text-color: #0f172a !important;
-  background-color: #ffffff !important;
-  color: #0f172a !important;
 }
 
 .tiptap-platform-font-option {

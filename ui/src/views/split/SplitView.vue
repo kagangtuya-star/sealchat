@@ -1202,6 +1202,7 @@ watch(
         <div class="sc-split-content">
           <div v-if="actionRibbonVisible" class="px-4 pt-4">
             <ChatActionRibbon
+              :world-id="activePane.worldId || ''"
               :filters="activePane.filterState"
               :roles="activePane.roleOptions"
               :archive-active="false"
@@ -1219,6 +1220,7 @@ watch(
               :sticky-note-enabled="activePaneHasChannel"
               :sticky-note-active="activePaneStickyNoteActive"
               :clue-box-enabled="activePaneHasChannel"
+              :message-favorites-enabled="activePaneHasChannel"
               :clue-box-active="activePaneClueBoxActive"
               :clue-board-enabled="activePaneHasChannel && activePane.clueBoardEnabled"
               :battle-summary-enabled="activePaneHasChannel && activePane.battleSummaryEnabled"
@@ -1239,6 +1241,7 @@ watch(
               @open-glass-background="glassBackgroundPanelVisible = true"
               @open-shortcut-command="openPanel('shortcut-command')"
               @open-favorites="openPanel('favorites')"
+              @open-message-favorites="openPanel('message-favorites')"
               @open-channel-images="openPanel('channel-images')"
               @open-character-remark="openPanel('character-remark')"
               @toggle-sticky-note="toggleStickyNoteForActivePane"

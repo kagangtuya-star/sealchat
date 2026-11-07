@@ -39,7 +39,7 @@ export const resolveWindowFocusState = (): WindowFocusState => {
       const topDocument = window.top?.document;
       if (topDocument) {
         return {
-          hasFocus: typeof topDocument.hasFocus === 'function' ? window.top?.document.hasFocus() : true,
+          hasFocus: typeof topDocument.hasFocus === 'function' ? topDocument.hasFocus() : true,
           isVisible: window.top?.document.visibilityState !== 'hidden',
         };
       }

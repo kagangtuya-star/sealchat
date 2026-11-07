@@ -13,6 +13,7 @@ import AnnouncementManagerModal from '@/components/announcement/AnnouncementMana
 import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
 import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
 import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
+import WorldCreateCoverField from '@/views/world/WorldCreateCoverField.vue';
 import type { AnnouncementItem } from '@/models/announcement';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import {
@@ -86,6 +87,8 @@ const joining = ref(false);
 const searchKeyword = ref('');
 const createVisible = ref(false);
 const creating = ref(false);
+const coverUploading = ref(false);
+const coverEditing = ref(false);
 const archivePickerVisible = ref(false);
 const archivePickerLoading = ref(false);
 const archiveCandidateItems = ref<any[]>([]);
@@ -132,6 +135,7 @@ const botList = ref<any[]>([]);
 const createInitialWorldForm = () => ({
   name: '',
   description: '',
+  coverAttachmentId: '',
   visibility: 'public',
   channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot' | 'disabled',
   channelDefaultBotIds: [] as string[],
@@ -912,6 +916,7 @@ const resetCreateForm = () => {
 };
 
 const handleCreateWorld = async () => {
+  if (creating.value || coverUploading.value || coverEditing.value) return;
   if (!createForm.value.name.trim()) {
     message.error('请输入世界名称');
     return;
@@ -929,6 +934,7 @@ const handleCreateWorld = async () => {
     await chat.createWorld({
       name: createForm.value.name,
       description: createForm.value.description,
+      coverAttachmentId: createForm.value.coverAttachmentId,
       visibility: createForm.value.visibility,
       channelDefaultDiceMode: createForm.value.channelDefaultDiceMode,
       channelDefaultBotIds: createForm.value.channelDefaultBotIds,
@@ -1009,7 +1015,7 @@ const headerMenuOptions = computed(() => [
     label: t('headerMenu.logout'),
     key: 'logout',
   },
-].filter(Boolean));
+].filter((item) => item !== null));
 
 const handleHeaderMenuSelect = async (key: string | number) => {
   switch (key) {
@@ -1514,7 +1520,8 @@ const handleArchivePageSizeChange = (pageSize: number) => {
       </template>
     </n-modal>
 
-    <n-modal v-model:show="createVisible" preset="dialog" title="创建世界" style="max-width: 420px">
+    <!-- Keep the focus wrapper stable while the teleported image editor is open. -->
+    <n-modal v-model:show="createVisible" preset="dialog" title="创建世界" style="max-width: 420px" :trap-focus="false" :close-on-esc="!coverEditing">
       <n-form label-width="72">
         <n-form-item label="名称">
           <n-input v-model:value="createForm.name" placeholder="输入世界名称" />
@@ -1540,6 +1547,15 @@ const handleArchivePageSizeChange = (pageSize: number) => {
             ]"
           />
         </n-form-item>
+        <n-form-item label="封面">
+          <WorldCreateCoverField
+            v-if="createVisible"
+            v-model="createForm.coverAttachmentId"
+            v-model:uploading="coverUploading"
+            v-model:editing="coverEditing"
+            :disabled="creating"
+          />
+        </n-form-item>
         <n-form-item label="掷骰默认">
           <WorldDiceDefaultsFields
             v-model:mode="createForm.channelDefaultDiceMode"
@@ -1562,7 +1578,7 @@ const handleArchivePageSizeChange = (pageSize: number) => {
           >
             取消
           </n-button>
-          <n-button type="primary" :loading="creating" @click="handleCreateWorld">创建</n-button>
+          <n-button type="primary" :loading="creating" :disabled="coverUploading || coverEditing" @click="handleCreateWorld">创建</n-button>
         </n-space>
       </template>
     </n-modal>

@@ -765,6 +765,30 @@ func getWsConnectionSnapshot() wsConnectionSnapshot {
 	return snapshot
 }
 
+// countOnlineUsersByWorld 统计各世界当前有 WebSocket 连接停留的唯一用户数（不含访客与观察者）。
+func countOnlineUsersByWorld() map[string]int {
+	result := map[string]int{}
+	connMap := getUserConnInfoMap()
+	if connMap == nil {
+		return result
+	}
+	connMap.Range(func(_ string, userConnMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		worlds := map[string]struct{}{}
+		userConnMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info == nil || info.IsGuest || info.IsObserver || info.WorldId == "" {
+				return true
+			}
+			worlds[info.WorldId] = struct{}{}
+			return true
+		})
+		for worldID := range worlds {
+			result[worldID]++
+		}
+		return true
+	})
+	return result
+}
+
 func shouldBroadcastChannelPresence(channelID string, nowMs int64) bool {
 	if channelID == "" {
 		return false
@@ -943,11 +967,12 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 		"channel.member.list.online": {},
 		"message.list":               {},
 		"message.get":                {},
+		"message.order.get":          {},
 		"message.first":              {},
 		"message.context":            {},
-		"avatar.card.settings.get":    {},
-		"world.character_state.list":  {},
-		"character.snapshot.list":     {},
+		"avatar.card.settings.get":   {},
+		"world.character_state.list": {},
+		"character.snapshot.list":    {},
 		"theater.subscribe":          {},
 		"theater.unsubscribe":        {},
 	}
@@ -1617,6 +1642,27 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "channel.member.list": // 自设API: 获取频道成员
 						apiWrap(ctx, msg, apiChannelMemberList)
 						solved = true
+					case "channel.extension.storage.get":
+						apiWrap(ctx, msg, apiChannelExtensionStorageGet)
+						solved = true
+					case "channel.extension.storage.set":
+						apiWrap(ctx, msg, apiChannelExtensionStorageSet)
+						solved = true
+					case "channel.extension.storage.delete":
+						apiWrap(ctx, msg, apiChannelExtensionStorageDelete)
+						solved = true
+					case "channel.extension.storage.list":
+						apiWrap(ctx, msg, apiChannelExtensionStorageList)
+						solved = true
+					case "channel.extension.storage.snapshot":
+						apiWrap(ctx, msg, apiChannelExtensionStorageSnapshot)
+						solved = true
+					case "channel.extension.events.publish":
+						apiWrap(ctx, msg, apiChannelExtensionEventPublish)
+						solved = true
+					case "channel.extension.events.subscribe":
+						apiWrap(ctx, msg, apiChannelExtensionEventSubscribe)
+						solved = true
 					case "iform.storage.get":
 						apiWrap(ctx, msg, apiIFormStorageGet)
 						solved = true
@@ -1712,6 +1758,9 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 						solved = true
 					case "message.get":
 						apiWrap(ctx, msg, apiMessageGet)
+						solved = true
+					case "message.order.get":
+						apiWrap(ctx, msg, apiMessageOrderGet)
 						solved = true
 					case "message.first":
 						apiWrap(ctx, msg, apiMessageFirst)

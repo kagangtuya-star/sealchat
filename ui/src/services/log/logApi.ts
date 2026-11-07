@@ -156,6 +156,18 @@ export const fetchLogSectionMessages = (projectId: string, sectionId: string, cu
     signal,
   }));
 
+export interface LogSourceRangeCheck {
+  count: number;
+  latestTime: string | null;
+  draftVersion: number;
+  sourceVersion: number;
+}
+
+export const checkLogSourceRange = (projectId: string, sectionId: string, expectedVersion: number) =>
+  unwrap<LogSourceRangeCheck>(api.get(`api/v1/log/projects/${seg(projectId)}/sections/${seg(sectionId)}/range-check`, {
+    params: { expectedVersion },
+  }));
+
 export const fetchLogMessageContext = (projectId: string, sectionId: string, messageId: string, signal?: AbortSignal) =>
   unwrap<{ items: LogDesignMessage[]; sourceVersion: number }>(
     api.get(`api/v1/log/projects/${seg(projectId)}/sections/${seg(sectionId)}/message-context/${seg(messageId)}`, { signal }),
@@ -190,6 +202,13 @@ export const fetchLogStylePackage = (id: string, version: string) =>
 
 export const forkLogStyle = (id: string, version: string, name: string) =>
   unwrap<LogStylePackage>(api.post(`api/v1/log/styles/${seg(id)}/fork`, { version, name }));
+
+/** 新建私有样式的首个版本：服务端分配包 ID 与 1.0.0，新资源只能是自己上传的附件。 */
+export const createLogStyle = (pkg: LogStylePackage) =>
+  unwrap<LogStylePackage>(api.post('api/v1/log/styles', { package: pkg }));
+
+export const deleteLogStyle = (id: string) =>
+  unwrap<{ deleted: boolean }>(api.delete(`api/v1/log/styles/${seg(id)}`));
 
 export const saveLogStyleVersion = (id: string, baseVersion: string, pkg: LogStylePackage) =>
   unwrap<LogStylePackage>(api.post(`api/v1/log/styles/${seg(id)}/versions`, { baseVersion, package: pkg }));

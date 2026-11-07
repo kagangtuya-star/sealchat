@@ -493,7 +493,7 @@ function openEdit(item: KeywordManagerListItem) {
   formModel.descriptionFormat = descriptionFormat
   formModel.display = item.display || 'inherit'
   formModel.isEnabled = item.isEnabled
-  glossary.openEditor(worldId, item)
+  glossary.openEditor(worldId, { ...item, worldId })
 }
 
 async function submitEditor() {

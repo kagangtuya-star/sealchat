@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { CSSProperties } from 'vue'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import { WORLD_UNIT_PX, type StageEmbedEventPublished, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
 import { compareStageLayersBottomToTop } from './stage-layer-order'
@@ -46,7 +47,7 @@ const entranceClass = computed(() => {
   return [`entrance-${playback.preset}`, playback.direction === 'enter' ? 'is-entering' : 'is-exiting']
 })
 
-const style = computed(() => {
+const style = computed<CSSProperties>(() => {
   const { width, height } = props.object.transform
   const transform = resolveStageDomVisualTransform(props.object, props.objects, props.viewport, props.visualTransforms)
   return {

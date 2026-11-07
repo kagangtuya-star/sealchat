@@ -10,7 +10,10 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/pm"
+	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/utils"
 )
 
 type statusSummary struct {
@@ -60,6 +63,9 @@ type statusPoint struct {
 	ChannelCount          int64 `json:"channelCount"`
 	PrivateChannelCount   int64 `json:"privateChannelCount"`
 	MessageCount          int64 `json:"messageCount"`
+	MessageCharCount      int64 `json:"messageCharCount"`
+	MessageCharCountIC    int64 `json:"messageCharCountIc"`
+	MessageCharCountOOC   int64 `json:"messageCharCountOoc"`
 	AttachmentCount       int64 `json:"attachmentCount"`
 	AttachmentBytes       int64 `json:"attachmentBytes"`
 	AttachmentImageCount  int64 `json:"attachmentImageCount"`
@@ -250,6 +256,9 @@ func sampleToPoint(sample *model.ServiceMetricSample) statusPoint {
 		ChannelCount:          sample.ChannelCount,
 		PrivateChannelCount:   sample.PrivateChannelCount,
 		MessageCount:          sample.MessageCount,
+		MessageCharCount:      sample.MessageCharCount,
+		MessageCharCountIC:    sample.MessageCharCountIC,
+		MessageCharCountOOC:   sample.MessageCharCountOOC,
 		AttachmentCount:       sample.AttachmentCount,
 		AttachmentBytes:       sample.AttachmentBytes,
 		AttachmentImageCount:  sample.AttachmentImageCount,
@@ -271,4 +280,44 @@ func parseStatusRange(v string) (time.Duration, bool) {
 		return 7 * 24 * time.Hour, true
 	}
 	return 0, false
+}
+
+// StatusAccessMiddleware 按平台设置限制平台状态监测的访问；默认对登录用户公开。
+func StatusAccessMiddleware(c *fiber.Ctx) error {
+	cfg := utils.GetConfig()
+	if cfg != nil && cfg.StatusPage.AdminOnly && !pm.CanWithSystemRole(getCurUser(c).ID, pm.PermModAdmin) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "平台状态监测仅对平台管理员开放"})
+	}
+	return c.Next()
+}
+
+type adminWorldStatusItem struct {
+	service.AdminWorldSummary
+	OnlineCount int `json:"onlineCount"`
+}
+
+// AdminWorldStatusList 分页返回正常状态世界（含私有世界）的概要信息，仅平台管理员可用。
+func AdminWorldStatusList(c *fiber.Ctx) error {
+	page, err := service.AdminListWorldSummaries(service.AdminWorldSummaryQuery{
+		Page:     c.QueryInt("page", 1),
+		PageSize: c.QueryInt("pageSize", 20),
+		Keyword:  c.Query("keyword"),
+	})
+	if err != nil {
+		return fiber.NewError(http.StatusInternalServerError, err.Error())
+	}
+	online := countOnlineUsersByWorld()
+	items := make([]adminWorldStatusItem, 0, len(page.Items))
+	for _, summary := range page.Items {
+		items = append(items, adminWorldStatusItem{
+			AdminWorldSummary: summary,
+			OnlineCount:       online[summary.ID],
+		})
+	}
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"items":    items,
+		"total":    page.Total,
+		"page":     page.Page,
+		"pageSize": page.PageSize,
+	})
 }

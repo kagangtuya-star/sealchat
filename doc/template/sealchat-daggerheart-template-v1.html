@@ -1,0 +1,1878 @@
+<!DOCTYPE html>
+<!-- sealchat-daggerheart-template:v1 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>匕首之心角色卡</title>
+<script type="application/json" data-sealchat-template-manifest>
+{
+  "version": 1,
+  "sheetType": "daggerheart",
+  "label": "匕首之心",
+  "integration": {
+    "provider": "sealdice",
+    "probe": {
+      "command": ".dd help",
+      "matchMode": "contains",
+      "expected": ".dd：动作掷骰；.ddr：反应掷骰。",
+      "timeoutMs": 5000
+    },
+    "plugin": {
+      "name": "Daggerheart",
+      "acquireText": "请从 GitHub 仓库获取 Daggerheart 插件，并在 SealDice 中安装启用。",
+      "acquireUrl": "https://github.com/ZZZZzzzzac/Daggerheart_sealdice"
+    }
+  }
+}
+</script>
+<style>
+:root {
+  --paper: #f6efdf;
+  --paper-deep: #ece1c8;
+  --paper-edge: #d9c9a6;
+  --ink: #2b2418;
+  --ink-soft: #5a4c37;
+  --muted: #8a7a5f;
+  --rule: #c9b48a;
+  --gold: #b8862b;
+  --gold-light: #ecd59a;
+  --gold-ink: #7a5714;
+  --fear: #4b2a5e;
+  --fear-light: #d9c8e4;
+  --teal: #1f5a5c;
+  --teal-light: #cfe1df;
+  --blood: #962f2a;
+  --blood-light: #f0d3cd;
+  --stress: #3d3a44;
+  --field: #fffaf0;
+  --field-focus: #fffdf7;
+  --shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(60,40,10,.12);
+  --radius: 6px;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--paper-deep); }
+body {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 10px 84px;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(255,255,255,.55), transparent 60%),
+    radial-gradient(ellipse at 100% 100%, rgba(185,150,90,.18), transparent 55%),
+    var(--paper-deep);
+  min-height: 100vh;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+
+.sheet {
+  position: relative;
+  max-width: 580px;
+  margin: 0 auto;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255,255,255,.7), transparent 70%),
+    var(--paper);
+  border: 1px solid var(--paper-edge);
+  border-radius: 4px;
+  box-shadow: 0 0 0 4px var(--paper), 0 0 0 5px var(--rule), 0 6px 18px rgba(70,50,20,.18);
+  padding: 14px 14px 18px;
+}
+.sheet::before, .sheet::after {
+  content: "";
+  position: absolute;
+  width: 22px; height: 22px;
+  border-color: var(--gold);
+  border-style: solid;
+  pointer-events: none;
+}
+.sheet::before { top: 5px; left: 5px; border-width: 2px 0 0 2px; }
+.sheet::after { right: 5px; bottom: 5px; border-width: 0 2px 2px 0; }
+
+/* ---------- 头部 ---------- */
+.header { display: flex; gap: 12px; align-items: center; padding: 14px 0 12px; border-bottom: 1px solid var(--rule); position: relative; }
+.header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -4px; border-bottom: 1px solid var(--rule); opacity: .5; }
+.avatar {
+  width: 64px; height: 64px; flex: 0 0 64px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px var(--rule);
+  background: var(--paper-deep);
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-serif); font-size: 26px; color: var(--gold-ink);
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.gm .avatar { border-color: var(--fear); }
+.header-info { flex: 1 1 auto; min-width: 0; }
+.name-display {
+  display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-serif);
+  font-size: 21px; font-weight: 700; letter-spacing: 1px; color: var(--ink);
+  padding: 0 2px; cursor: default;
+}
+.name-input {
+  width: 100%;
+  font-family: var(--font-serif);
+  font-size: 21px; font-weight: 700; letter-spacing: 1px;
+  background: transparent; border: none; border-bottom: 1px dashed transparent;
+  padding: 0 2px; color: var(--ink);
+}
+.name-input:hover { border-bottom-color: var(--rule); }
+.name-input:focus { outline: none; border-bottom-color: var(--gold); background: var(--field-focus); }
+.sub-line { color: var(--ink-soft); font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 2px; }
+.sub-line > span + span::before { content: "·"; color: var(--rule); margin-right: 8px; }
+.sub-line + .sub-line { margin-top: 0; }
+.level-chip { display: inline-flex; align-items: center; gap: 2px; font-family: var(--font-serif); color: var(--gold-ink); font-weight: 700; }
+.level-chip .field.num { width: 30px; padding: 0 2px; }
+.evasion {
+  flex: 0 0 auto;
+  width: 62px; height: 70px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, var(--teal), #163f41);
+  color: #f3ead4;
+  clip-path: polygon(50% 0, 100% 14%, 100% 62%, 50% 100%, 0 62%, 0 14%);
+  position: relative;
+}
+.fear-skull { flex: 0 0 auto; width: 62px; display: flex; flex-direction: column; align-items: center; color: var(--fear); }
+.fear-skull svg { width: 38px; height: 38px; display: block; }
+.fear-skull .count { font-family: var(--font-serif); font-size: 20px; font-weight: 700; line-height: 1.1; }
+.evasion .label { font-size: 10px; letter-spacing: 2px; opacity: .9; }
+.evasion input { width: 40px; text-align: center; font-family: var(--font-serif); font-size: 22px; font-weight: 700; color: #fff; background: transparent; border: none; }
+.evasion input:focus { outline: 1px solid var(--gold-light); border-radius: 3px; }
+.header-tools { position: absolute; top: -2px; right: 72px; display: flex; align-items: center; gap: 10px; }
+.mode-switch { border: none; background: transparent; padding: 0; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.mode-switch:hover { color: var(--gold-ink); }
+.mode-switch.confirm { color: var(--gold-ink); font-weight: 700; }
+.save-dot { font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.save-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--rule); }
+.save-dot[data-state="pending"]::before { background: var(--gold); }
+.save-dot[data-state="saved"]::before { background: var(--teal); }
+
+/* ---------- 标签页 ---------- */
+.tabs { display: flex; gap: 2px; margin: 12px 0 10px; border-bottom: 1px solid var(--rule); overflow-x: auto; overflow-y: hidden; }
+.tab {
+  flex: 1 0 auto;
+  background: transparent; border: 1px solid transparent; border-bottom: none;
+  padding: 5px 10px 4px;
+  font-family: var(--font-serif); font-size: 13px; color: var(--muted); letter-spacing: 1px;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: -1px;
+}
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink); background: var(--paper); border-color: var(--rule); font-weight: 700; }
+
+/* ---------- 区块 ---------- */
+.section { margin-top: 12px; }
+.section-title {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-serif); font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--gold-ink);
+  margin-bottom: 6px;
+}
+.section-title::before, .section-title::after { content: ""; height: 1px; background: linear-gradient(90deg, transparent, var(--rule)); flex: 1 1 auto; }
+.section-title::after { background: linear-gradient(90deg, var(--rule), transparent); }
+.section-title .en { font-family: var(--font-serif); font-weight: 400; font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.box { background: var(--field); border: 1px solid var(--paper-edge); border-radius: var(--radius); padding: 8px 10px; box-shadow: var(--shadow); }
+.hint { color: var(--muted); font-size: 11px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.grow { flex: 1 1 auto; min-width: 0; }
+
+.field {
+  background: var(--field); border: 1px solid var(--paper-edge); border-radius: 4px;
+  padding: 3px 6px; min-width: 0;
+}
+.field:focus { outline: none; border-color: var(--gold); background: var(--field-focus); box-shadow: 0 0 0 2px rgba(184,134,43,.15); }
+.field.bare { background: transparent; border-color: transparent; }
+.field.bare:hover { border-color: var(--paper-edge); }
+.field.bare:focus { background: var(--field-focus); border-color: var(--gold); }
+.field.num { width: 44px; text-align: center; font-family: var(--font-serif); font-weight: 700; }
+textarea.field { width: 100%; resize: vertical; min-height: 54px; line-height: 1.6; }
+select.field { padding: 2px 4px; }
+label.lbl { font-size: 11px; color: var(--muted); display: block; margin-bottom: 2px; letter-spacing: 1px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+
+.btn {
+  border: 1px solid var(--rule); background: linear-gradient(180deg, #fffaf0, #f1e6cc);
+  border-radius: 4px; padding: 3px 10px; font-size: 12px; color: var(--ink-soft);
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--gold); color: var(--ink); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: linear-gradient(180deg, #c99a3e, var(--gold)); border-color: var(--gold-ink); color: #fffaf0; font-weight: 700; }
+.btn.primary:hover { color: #fff; }
+.btn.fear { background: linear-gradient(180deg, #65407a, var(--fear)); border-color: #2f1a3c; color: #f3e9f7; }
+.btn.teal { background: linear-gradient(180deg, #2b7275, var(--teal)); border-color: #123738; color: #eef6f5; }
+.btn.small { padding: 1px 7px; font-size: 11px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--blood); border-color: transparent; }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+/* ---------- 属性 ---------- */
+.traits { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.trait {
+  position: relative;
+  background: var(--field); border: 1px solid var(--paper-edge); border-radius: 6px 6px 18px 18px;
+  padding: 6px 2px 8px; text-align: center; box-shadow: var(--shadow);
+}
+.trait-roll {
+  display: block; width: 100%;
+  background: transparent; border: none;
+  font-family: var(--font-serif); font-weight: 700; font-size: 13px; color: var(--teal); letter-spacing: 1px;
+}
+.trait-roll:hover { color: var(--gold-ink); text-decoration: underline; }
+.trait-en { font-size: 9px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.trait input {
+  width: 46px; margin: 2px auto 0; display: block; text-align: center;
+  font-family: var(--font-serif); font-size: 20px; font-weight: 700;
+  background: transparent; border: none; border-bottom: 1px solid var(--rule); color: var(--ink);
+}
+.trait input:focus { outline: none; border-bottom-color: var(--gold); background: var(--field-focus); }
+.trait.spell::after {
+  content: "施法"; position: absolute; top: -7px; right: 4px;
+  font-size: 9px; padding: 0 4px; border-radius: 6px; background: var(--fear); color: #f3e9f7;
+}
+.quick-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.quick-row .row { gap: 6px; }
+
+/* ---------- 伤害与阈值 ---------- */
+.threshold-bar { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; border: 1px solid var(--paper-edge); border-radius: var(--radius); overflow: hidden; background: var(--field); box-shadow: var(--shadow); }
+.tb-cell { padding: 5px 6px; text-align: center; }
+.tb-cell .t { font-family: var(--font-serif); font-size: 12px; font-weight: 700; }
+.tb-cell .m { font-size: 10px; color: var(--muted); }
+.tb-cell.minor { background: rgba(31,90,92,.06); }
+.tb-cell.major { background: rgba(184,134,43,.10); }
+.tb-cell.severe { background: rgba(150,47,42,.10); }
+.tb-num { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 3px 4px; background: var(--paper-deep); border-left: 1px solid var(--paper-edge); border-right: 1px solid var(--paper-edge); }
+.tb-num input { width: 38px; text-align: center; font-family: var(--font-serif); font-weight: 700; font-size: 16px; background: transparent; border: none; border-bottom: 1px solid var(--rule); }
+.tb-num input:focus { outline: none; border-bottom-color: var(--gold); }
+.tb-num .m { font-size: 9px; color: var(--muted); }
+.check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+.check input { accent-color: var(--teal); }
+
+/* ---------- 槽位轨道 ---------- */
+.tracks { display: grid; gap: 8px; }
+.track { display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 8px; }
+.track-name { font-family: var(--font-serif); font-weight: 700; font-size: 13px; }
+.track-name .m { display: block; font-family: var(--font-sans); font-weight: 400; font-size: 10px; color: var(--muted); }
+.pips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pip {
+  width: 18px; height: 18px; border: 1.5px solid var(--ink-soft); background: var(--field); border-radius: 3px; padding: 0;
+  transition: background .12s, transform .08s;
+}
+.pip:hover { transform: scale(1.1); }
+.pip.on { background: var(--ink-soft); }
+.track.hp .pip.on { background: var(--blood); border-color: var(--blood); }
+.track.stress .pip.on { background: var(--stress); border-color: var(--stress); }
+.track.armor .pip { border-radius: 4px 4px 9px 9px; border-color: var(--teal); }
+.track.armor .pip.on { background: var(--teal); }
+.track.hope .pip { transform: rotate(45deg) scale(.82); border-color: var(--gold); margin: 0 1px; }
+.track.hope .pip:hover { transform: rotate(45deg) scale(.95); }
+.track.hope .pip.on { background: radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold)); }
+.slot-adjust { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.slot-adjust .btn { padding: 0 5px; line-height: 16px; }
+.track-count { min-width: 34px; text-align: right; font-family: var(--font-serif); font-weight: 700; color: var(--ink-soft); }
+.vuln-note { font-size: 11px; color: var(--blood); margin-left: 84px; }
+
+/* ---------- 状态与经历 ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip {
+  border: 1px solid var(--rule); background: var(--field); border-radius: 999px; padding: 1px 10px; font-size: 12px; color: var(--muted);
+}
+.chip.on { background: var(--fear); border-color: var(--fear); color: #f3e9f7; }
+.chip .x { margin-left: 4px; opacity: .7; }
+.chip-add { min-width: 34px; font-weight: 700; color: var(--gold-ink); border-style: dashed; }
+.chip-add:hover { border-color: var(--gold); background: var(--paper-deep); }
+.chip-input { padding: 0 8px; border-color: var(--gold); background: var(--field-focus); }
+.chip-input input { width: 76px; border: none; background: transparent; font-size: 12px; line-height: 20px; color: var(--ink); }
+.chip-input input:focus { outline: none; }
+.exp-list { display: grid; gap: 4px; }
+.exp-row { display: grid; grid-template-columns: 1fr 52px 22px; gap: 6px; align-items: center; }
+.exp-row .field.num { width: 100%; }
+
+/* ---------- 装备 ---------- */
+.item-card { background: var(--field); border: 1px solid var(--paper-edge); border-radius: var(--radius); padding: 8px 10px; box-shadow: var(--shadow); margin-bottom: 8px; }
+.item-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.item-kind { font-family: var(--font-serif); font-size: 11px; color: #fffaf0; background: var(--teal); padding: 0 6px; border-radius: 3px; white-space: nowrap; }
+.item-kind.armor { background: var(--gold-ink); }
+.item-name { flex: 1 1 auto; min-width: 0; font-family: var(--font-serif); font-weight: 700; font-size: 14px; }
+.item-name .field { width: 100%; }
+.item-grid { display: grid; grid-template-columns: 80px minmax(0, 1fr) minmax(0, 1fr) 64px; gap: 6px; }
+.item-grid > div { min-width: 0; }
+.item-grid .field { width: 100%; }
+.item-card { min-width: 0; overflow: hidden; }
+.item-grid .wide { grid-column: 1 / -1; }
+.item-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.gold-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.gold-cell { text-align: center; background: var(--field); border: 1px solid var(--paper-edge); border-radius: var(--radius); padding: 6px; box-shadow: var(--shadow); }
+.gold-cell .t { font-family: var(--font-serif); font-weight: 700; color: var(--gold-ink); }
+.gold-cell .v { font-family: var(--font-serif); font-size: 20px; font-weight: 700; }
+.gold-cell .row { justify-content: center; }
+
+/* ---------- 领域卡 ---------- */
+.dgroup { border-radius: var(--radius); padding: 8px; margin-bottom: 10px; }
+.dgroup.loadout { background: rgba(31,90,92,.07); border: 1px solid rgba(31,90,92,.35); }
+.dgroup.vault { background: rgba(138,122,95,.08); border: 1px dashed var(--rule); }
+.dgroup-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dgroup-title { font-family: var(--font-serif); font-weight: 700; font-size: 13px; letter-spacing: 2px; }
+.dgroup.loadout .dgroup-title { color: var(--teal); }
+.dgroup.vault .dgroup-title { color: var(--muted); }
+.dgroup-head .grow { flex: 1 1 auto; }
+.dgroup .empty-hint, .gm .empty-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 6px 0; }
+.dcard { background: var(--field); border: 1px solid var(--paper-edge); border-radius: var(--radius); padding: 6px 8px 8px; margin-bottom: 6px; box-shadow: var(--shadow); }
+.dcard:last-child { margin-bottom: 0; }
+.dgroup.loadout .dcard { border-left: 4px solid var(--teal); }
+.dgroup.vault .dcard { border-left: 4px solid var(--rule); background: #f7f1e3; box-shadow: none; }
+.dcard-head { display: flex; align-items: center; gap: 6px; }
+.dcard-head .name { flex: 1 1 auto; min-width: 0; }
+.dcard-head .name .field { width: 100%; font-family: var(--font-serif); font-weight: 700; font-size: 14px; }
+.dcard-meta { display: grid; grid-template-columns: 64px 64px 64px minmax(0, 1fr); gap: 6px; margin-top: 4px; }
+.dcard-meta .field.short { text-align: center; }
+.dcard-meta > div { min-width: 0; }
+.dcard-meta .field { width: 100%; }
+.dcard-meta .field.num { font-weight: 700; }
+.dcard-meta .field.num::placeholder { font-weight: 400; color: var(--rule); }
+.dcard textarea.field { min-height: 40px; margin-top: 6px; }
+.count-badge { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--teal-light); color: var(--teal); }
+.count-badge.over { background: var(--blood-light); color: var(--blood); }
+.count-badge.muted { background: var(--paper-deep); color: var(--muted); }
+
+/* ---------- 主持人界面 ---------- */
+.track.fear { grid-template-columns: 1fr; }
+.track.fear .pips { justify-content: center; }
+.track.fear .pip { border-radius: 50%; border-color: var(--fear); }
+.track.fear .pip.on { background: var(--fear); }
+.spot-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.spot { display: inline-flex; align-items: center; border: 1px solid var(--rule); border-radius: 999px; background: var(--field); overflow: hidden; }
+.spot-name { border: none; background: transparent; padding: 2px 10px; font-size: 12px; color: var(--ink); }
+.spot.acted { background: var(--paper-deep); border-style: dashed; }
+.spot.acted .spot-name { color: var(--muted); text-decoration: line-through; }
+.spot .x { border: none; background: transparent; color: var(--muted); padding: 0 8px 0 0; font-size: 12px; }
+.spot .x:hover { color: var(--blood); }
+.spot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.clock { background: var(--field); border: 1px solid var(--paper-edge); border-left: 4px solid var(--fear); border-radius: var(--radius); padding: 6px 8px 8px; margin-bottom: 6px; box-shadow: var(--shadow); }
+.clock.full { border-left-color: var(--blood); background: var(--blood-light); }
+.clock.archived { border-left-color: var(--rule); box-shadow: none; opacity: .75; }
+.clock-head { display: flex; align-items: center; gap: 6px; }
+.clock-head .name { flex: 1 1 auto; min-width: 0; }
+.clock-head .name .field { width: 100%; font-family: var(--font-serif); font-weight: 700; font-size: 14px; }
+.clock-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.clock .pips { margin-top: 6px; }
+.clock .pip { border-color: var(--fear); }
+.clock .pip.on { background: var(--fear); }
+.clock.full .pip.on { background: var(--blood); border-color: var(--blood); }
+.clock-count { font-family: var(--font-serif); font-weight: 700; color: var(--ink-soft); }
+.full-tag { font-size: 11px; color: var(--blood); font-weight: 700; }
+
+/* ---------- 速查 ---------- */
+.ref h4 { font-family: var(--font-serif); font-size: 13px; color: var(--teal); margin: 10px 0 4px; }
+.ref p, .ref li { font-size: 12px; color: var(--ink-soft); line-height: 1.7; }
+.ref ul { padding-left: 18px; }
+.ref table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.ref th, .ref td { border: 1px solid var(--paper-edge); padding: 3px 6px; text-align: left; vertical-align: top; }
+.ref th { background: var(--paper-deep); font-family: var(--font-serif); white-space: nowrap; }
+.ref code, .modal code { font-family: Consolas, "Cascadia Code", monospace; font-size: 11px; background: var(--paper-deep); padding: 0 3px; border-radius: 3px; }
+.hope-t { color: var(--gold-ink); font-weight: 700; }
+.fear-t { color: var(--fear); font-weight: 700; }
+
+/* ---------- 等待数据 ---------- */
+.empty { padding: 40px 10px; text-align: center; color: var(--muted); font-family: var(--font-serif); }
+
+/* ---------- 弹窗 ---------- */
+/* ---------- 悬浮掷骰球 ---------- */
+.fab {
+  position: fixed; bottom: 14px; z-index: 50;
+  width: 58px; height: 58px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  border: 2px solid var(--gold-light);
+  box-shadow: 0 0 0 2px var(--gold-ink), 0 6px 14px rgba(40,25,5,.35);
+  font-family: var(--font-serif); line-height: 1.15;
+  transition: transform .12s, box-shadow .12s;
+}
+.fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 0 0 2px var(--gold-ink), 0 9px 18px rgba(40,25,5,.4); }
+.fab:active { transform: scale(.96); }
+.fab-icon { font-size: 13px; font-weight: 700; }
+.fab-text { font-size: 10px; letter-spacing: 1px; opacity: .9; }
+.fab-right { right: 14px; background: radial-gradient(circle at 35% 30%, #e2b862, var(--gold) 60%, var(--gold-ink)); color: #fffaf0; }
+.fab-left { left: 14px; background: radial-gradient(circle at 35% 30%, #7d5893, var(--fear) 60%, #2f1a3c); color: #f3e9f7; border-color: var(--fear-light); box-shadow: 0 0 0 2px #2f1a3c, 0 6px 14px rgba(30,10,40,.35); }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(43,36,24,.55); display: none; align-items: center; justify-content: center; z-index: 100; padding: 12px; }
+.modal-overlay.active { display: flex; }
+.modal {
+  width: 100%; max-width: 360px; max-height: 92vh; overflow-y: auto;
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
+  box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px var(--gold), 0 12px 30px rgba(30,20,5,.45);
+  padding: 14px;
+}
+.modal h3 { font-family: var(--font-serif); text-align: center; letter-spacing: 2px; color: var(--ink); margin-bottom: 2px; }
+.modal .sub { text-align: center; color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+.mrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--rule); }
+.mrow:last-of-type { border-bottom: none; }
+.mrow > span:first-child { color: var(--ink-soft); font-size: 12px; white-space: nowrap; }
+.stepper { display: flex; align-items: center; gap: 4px; }
+.stepper .val { min-width: 60px; text-align: center; font-family: var(--font-serif); font-weight: 700; }
+.stepper .val.adv { color: var(--teal); }
+.stepper .val.dis { color: var(--blood); }
+.edge-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.edge-row .stepper .val { min-width: 34px; }
+.edge-net { text-align: right; font-size: 11px; color: var(--muted); padding-bottom: 4px; }
+.edge-net .adv { color: var(--teal); font-weight: 700; }
+.edge-net .dis { color: var(--blood); font-weight: 700; }
+.mrow .field.wide { width: 150px; }
+.mod-error { color: var(--blood); }
+.exp-pick { display: grid; gap: 3px; padding: 4px 0; }
+.exp-pick .check { justify-content: space-between; width: 100%; padding: 2px 4px; border-radius: 3px; }
+.exp-pick .check:hover { background: var(--paper-deep); }
+.cmd-preview { margin-top: 8px; font-family: Consolas, "Cascadia Code", monospace; font-size: 11px; background: var(--paper-deep); border: 1px dashed var(--rule); border-radius: 4px; padding: 4px 6px; color: var(--ink-soft); word-break: break-all; }
+.modal-actions { display: flex; gap: 8px; margin-top: 10px; }
+.modal-actions .btn { flex: 1 1 0; padding: 6px; font-size: 13px; }
+
+@media (max-width: 460px) {
+  body { padding: 6px 4px 84px; }
+  .sheet { padding: 12px 10px 14px; }
+  .traits { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 10px; }
+  .evasion { width: 54px; height: 62px; }
+  .avatar { width: 52px; height: 52px; flex-basis: 52px; }
+  .name-input, .name-display { font-size: 18px; }
+  .track { grid-template-columns: 54px 1fr auto; gap: 6px; }
+  .slot-adjust .lbl-text { display: none; }
+  .vuln-note { margin-left: 68px; }
+  .item-grid { grid-template-columns: 1fr 1fr; }
+  .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dcard-meta { grid-template-columns: repeat(3, 64px); }
+  .dcard-meta .tracker { grid-column: 1 / -1; }
+  .tab { padding: 5px 7px 4px; font-size: 12px; letter-spacing: 0; }
+}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">等待 SealChat 下发角色数据…</div></div>
+<div id="modal" class="modal-overlay"><div class="modal" id="modalBox"></div></div>
+
+<script>
+var _windowId = null;
+var _rollDispatchMode = 'default';
+function postEvent(action, payload) {
+  if (!_windowId) return;
+  window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
+}
+window.sealchat = {
+  onUpdate: function(cb) {
+    window.addEventListener('message', function(e) {
+      if (e.source !== window.parent) return;
+      if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
+    });
+  },
+  setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+  setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+  roll: function(template, label, args) {
+    postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
+  },
+  updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); }
+};
+// 掷骰由人物卡弹窗组装好完整的 .dd/.ddr 指令后直接发送，交给 SealDice 插件掷骰与结算。
+window.sealchat.setRollDispatchMode('template');
+</script>
+
+<script>
+// ============================================================
+// 数据层
+// ============================================================
+var DATA_KEY = '$匕首之心';
+var BADGE_KEY = '$匕首之心状态徽章';
+var MODEL_VERSION = 2;
+var LOADOUT_MAX = 5;
+var HOPE_COST_MAX = 5;
+// 插件限制：优势、劣势来源各 1–20，合计不超过 40。
+var EDGE_MAX = 20;
+var EDGE_TOTAL_MAX = 40;
+var RECENT_GUARD_MS = 2500;
+
+var TRAITS = [
+  { key: '敏捷', en: 'Agility', legacy: 'AgilityTextbox' },
+  { key: '力量', en: 'Strength', legacy: 'StrengthTextbox' },
+  { key: '灵巧', en: 'Finesse', legacy: 'FinesseTextbox' },
+  { key: '本能', en: 'Instinct', legacy: 'InstinctTextbox' },
+  { key: '风度', en: 'Presence', legacy: 'PresenceTextbox' },
+  { key: '知识', en: 'Knowledge', legacy: 'KnowledgeTextbox' }
+];
+var TRAIT_KEYS = TRAITS.map(function(t) { return t.key; });
+// 以正负号显示的根级数值：六项属性与熟练值。
+var SIGNED_ROOT_KEYS = TRAIT_KEYS.concat(['熟练值']);
+
+// 根级属性与社区插件 zac/daggerheart 的规则模板同名，插件与 .st 直接读写，徽章模板也直接引用。
+// 生命、压力、护甲按“已标记”计数，希望按持有数计。等级与熟练值只供人物卡使用。
+var ROOT_DEFAULTS = {
+  '敏捷': 0, '力量': 0, '灵巧': 0, '本能': 0, '风度': 0, '知识': 0,
+  '等级': 1, '熟练值': 1, '闪避': 10, '重伤阈值': 0, '严重阈值': 0,
+  '希望': 2, '希望上限': 6,
+  '生命上限': 6, '生命': 0,
+  '压力上限': 6, '压力': 0,
+  '护甲上限': 0, '护甲': 0,
+  '金币把': 0, '金币袋': 0, '金币箱': 0
+};
+var TRACKS = {
+  hp: { cur: '生命', max: '生命上限', name: '生命', en: 'HP', maxRange: [1, 12] },
+  stress: { cur: '压力', max: '压力上限', name: '压力', en: 'Stress', maxRange: [1, 12] },
+  hope: { cur: '希望', max: '希望上限', name: '希望', en: 'Hope', maxRange: [1, 9] },
+  armor: { cur: '护甲', max: '护甲上限', name: '护甲槽', en: 'Armor', maxRange: [0, 12] }
+};
+var GOLD = [
+  { key: '金币把', label: '把', max: 9, value: 1 },
+  { key: '金币袋', label: '袋', max: 9, value: 10 },
+  { key: '金币箱', label: '箱', max: 1, value: 100 }
+];
+// 模型 v1（配合旧版自制插件）使用的根级键名 → 当前键名。
+var V1_ROOT_KEYS = {
+  '直觉': '本能', '学识': '知识', '闪避值': '闪避', '重度阈值': '重伤阈值',
+  '生命槽': '生命上限', '已标记生命': '生命',
+  '压力槽': '压力上限', '已标记压力': '压力',
+  '护甲槽': '护甲上限', '已标记护甲': '护甲'
+};
+var BASE_CONDITIONS = ['隐藏', '束缚', '脆弱'];
+
+// 主持人界面。恐惧保存在根级 恐惧（社区插件在恐惧结果时为 GM 当前人物卡 +1）。
+var FEAR_KEY = '恐惧';
+var FEAR_MAX = 12;
+var CLOCK_SIZES = [4, 6, 8, 12];
+var CLOCK_KINDS = ['倒计时', '长期任务', '危机', '其他'];
+var MODE_CONFIRM_MS = 3000;
+
+function blankWeapon() { return { name: '', trait: '', range: '', damage: '', damageType: '物理', feature: '' }; }
+function blankModel() {
+  return {
+    version: MODEL_VERSION,
+    identity: { name: '', pronouns: '', ancestry: '', community: '', class: '', subclass: '', domains: '', spellcastTrait: '' },
+    experiences: [{ name: '', mod: 2 }, { name: '', mod: 2 }],
+    weapons: { primary: blankWeapon(), secondary: blankWeapon(), backups: [] },
+    armor: { name: '', baseThresholds: '', feature: '' },
+    inventory: '',
+    features: { class: '', hope: '', subclass: '', ancestry: '', community: '' },
+    domainCards: [],
+    conditions: [],
+    background: '',
+    connections: '',
+    notes: '',
+    // 界面模式：player 为玩家人物卡，gm 为主持人记录界面。两套数据互不影响，切换不删除任何内容。
+    mode: 'player',
+    gm: { spotlight: [], clocks: [] }
+  };
+}
+
+function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }
+function str(v) { return v == null ? '' : String(v); }
+function toInt(v, fallback) {
+  if (typeof v === 'number' && isFinite(v)) return Math.trunc(v);
+  var m = String(v == null ? '' : v).trim().replace(/＋/g, '+').replace(/[－—]/g, '-').match(/^[+-]?\d+/);
+  return m ? Number(m[0]) : (fallback == null ? 0 : fallback);
+}
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function signed(v) { return (v >= 0 ? '+' : '') + v; }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+// 按模板默认结构补齐字段，并丢弃类型不符的值，保证渲染时不必逐处判空。
+function normalize(raw) {
+  var out = blankModel();
+  if (!isObj(raw)) return out;
+  function merge(target, source) {
+    for (var k in target) {
+      if (!(k in source)) continue;
+      var tv = target[k], sv = source[k];
+      if (Array.isArray(tv)) { if (Array.isArray(sv)) target[k] = sv; }
+      else if (isObj(tv)) { if (isObj(sv)) merge(tv, sv); }
+      else if (typeof tv === 'number') target[k] = toInt(sv, tv);
+      else target[k] = str(sv);
+    }
+  }
+  merge(out, raw);
+  out.version = MODEL_VERSION;
+  out.experiences = out.experiences.filter(isObj).map(function(e) { return { name: str(e.name), mod: toInt(e.mod, 0) }; });
+  out.weapons.backups = out.weapons.backups.filter(isObj).map(function(w) { var b = blankWeapon(); merge(b, w); return b; });
+  out.domainCards = out.domainCards.filter(isObj).map(function(c) {
+    return { name: str(c.name), domain: str(c.domain), level: optNum(c.level), recall: optNum(c.recall), tracker: str(c.tracker), location: c.location === 'vault' ? 'vault' : 'loadout', text: str(c.text) };
+  });
+  out.conditions = out.conditions.map(str).filter(function(c) { return c; });
+  out.mode = out.mode === 'gm' ? 'gm' : 'player';
+  out.gm.spotlight = out.gm.spotlight.filter(isObj).map(function(p) { return { name: str(p.name), acted: !!p.acted }; });
+  out.gm.clocks = out.gm.clocks.filter(isObj).map(function(c) {
+    var size = CLOCK_SIZES.indexOf(toInt(c.size, 6)) >= 0 ? toInt(c.size, 6) : 6;
+    return { name: str(c.name), size: size, kind: str(c.kind) || CLOCK_KINDS[0], progress: clamp(toInt(c.progress, 0), 0, size), archived: !!c.archived };
+  });
+  return out;
+}
+
+// 领域卡的等级与回想消耗允许留空，保存为数字字符串或空串。
+function optNum(v) {
+  var t = str(v).trim();
+  return t === '' ? '' : String(toInt(t, 0));
+}
+
+function parseModel(value) {
+  if (isObj(value)) return value;
+  if (typeof value === 'string' && value.charAt(0) === '{') {
+    try { return JSON.parse(value); } catch (e) { return null; }
+  }
+  return null;
+}
+
+// ---------- 旧版 daggerheart.cn 导出字段迁移 ----------
+function hasLegacy(attrs) {
+  return ['NameTextbox', 'AgilityTextbox', 'ClassTextbox', 'HpSlotCheckbox1', 'HpCurrent'].some(function(k) { return attrs[k] != null; });
+}
+
+function countSlots(attrs, prefix, total) {
+  var slots = 0, marked = 0;
+  for (var i = 1; i <= total; i++) {
+    if (attrs[prefix + i] == null) continue;
+    var v = toInt(attrs[prefix + i], 0);
+    if (v !== 2) { slots++; if (v === 1) marked++; }
+  }
+  return { slots: slots, marked: marked };
+}
+
+function splitWeaponStat(text) {
+  var raw = str(text).trim();
+  for (var i = 0; i < TRAIT_KEYS.length; i++) {
+    if (raw.indexOf(TRAIT_KEYS[i]) >= 0) {
+      return { trait: TRAIT_KEYS[i], range: raw.replace(TRAIT_KEYS[i], '').replace(/^[\s/·,，]+|[\s/·,，]+$/g, '') };
+    }
+  }
+  return { trait: '', range: raw };
+}
+
+function legacyWeapon(attrs, prefix) {
+  var w = blankWeapon();
+  w.name = str(attrs[prefix + 'WeaponNameTextbox']);
+  var stat = splitWeaponStat(attrs[prefix + 'WeaponStatTextbox']);
+  w.trait = stat.trait;
+  w.range = stat.range;
+  var dmg = str(attrs[prefix + 'WeaponDamageTextbox']);
+  var type = dmg.match(/物理|魔法/);
+  if (type) { w.damageType = type[0]; dmg = dmg.replace(type[0], '').trim(); }
+  w.damage = dmg;
+  w.feature = str(attrs[prefix + 'WeaponTraitTextbox']);
+  return w;
+}
+
+function migrateLegacy(attrs) {
+  var model = blankModel();
+  var root = {};
+  TRAITS.forEach(function(t) { root[t.key] = toInt(attrs[t.legacy], 0); });
+  model.identity.name = str(attrs.NameTextbox);
+  model.identity.ancestry = str(attrs.RaceTextbox);
+  model.identity.community = str(attrs.CommunityTextbox);
+  model.identity.class = str(attrs.ClassTextbox);
+  model.identity.subclass = str(attrs.ClassDomainTextbox);
+  root['等级'] = toInt(attrs.LevelTextbox, 1) || 1;
+  root['熟练值'] = toInt(attrs.ProficiencyTextbox, 1) || 1;
+  root['闪避'] = toInt(attrs.EvasionTextbox, 10);
+  root['重伤阈值'] = toInt(attrs.MajorTextbox, 0);
+  root['严重阈值'] = toInt(attrs.SevereTextbox, 0);
+
+  var hpSlots = countSlots(attrs, 'HpSlotCheckbox', 12);
+  root['生命上限'] = attrs.HpMax != null ? toInt(attrs.HpMax, 6) : (hpSlots.slots || 6);
+  root['生命'] = attrs.HpCurrent != null ? toInt(attrs.HpCurrent, 0) : hpSlots.marked;
+  var stSlots = countSlots(attrs, 'StressSlotCheckbox', 12);
+  root['压力上限'] = attrs.StressMax != null ? toInt(attrs.StressMax, 6) : (stSlots.slots || 6);
+  root['压力'] = attrs.StressCurrent != null ? toInt(attrs.StressCurrent, 0) : stSlots.marked;
+  var hopeSlots = countSlots(attrs, 'HopeSlotCheckbox', 6);
+  root['希望上限'] = attrs.HopeMax != null ? toInt(attrs.HopeMax, 6) : (hopeSlots.slots || 6);
+  root['希望'] = attrs.HopeCurrent != null ? toInt(attrs.HopeCurrent, 2) : (hopeSlots.slots ? hopeSlots.marked : 2);
+  // 旧模板的 ArmorCurrent 记录“剩余”护甲槽，新模型改为“已标记”。
+  var armorMax = toInt(attrs.ArmorTextbox, 0) || toInt(attrs.ArmorScoreTextbox, 0);
+  root['护甲上限'] = armorMax;
+  root['护甲'] = attrs.ArmorCurrent != null ? clamp(armorMax - toInt(attrs.ArmorCurrent, armorMax), 0, armorMax) : 0;
+
+  for (var i = 1; i <= 5; i++) {
+    var name = str(attrs['Experience' + i + 'Textbox']);
+    var mod = attrs['Experience' + i + 'ModifierTextbox'];
+    if (i === 1) model.experiences = [];
+    if (name || mod != null && str(mod) !== '') model.experiences.push({ name: name, mod: toInt(mod, 2) });
+  }
+  if (!model.experiences.length) model.experiences = blankModel().experiences;
+
+  model.weapons.primary = legacyWeapon(attrs, 'Primary');
+  model.weapons.secondary = legacyWeapon(attrs, 'Secondary');
+  ['Backup1', 'Backup2'].forEach(function(p) { if (attrs[p + 'WeaponNameTextbox']) model.weapons.backups.push(legacyWeapon(attrs, p)); });
+  model.armor.name = str(attrs.ArmorNameTextbox);
+  model.armor.baseThresholds = str(attrs.ArmorThresholdTextbox);
+  model.armor.feature = str(attrs.ArmorTraitTextbox);
+  model.features.class = str(attrs.ClassFeatureTextbox);
+  model.inventory = str(attrs.ItemSlot1Textbox);
+
+  function countChecks(prefix, n) { var c = 0; for (var j = 1; j <= n; j++) if (toInt(attrs[prefix + j], 0) === 1) c++; return c; }
+  root['金币把'] = attrs.GoldHandful != null ? toInt(attrs.GoldHandful, 0) : countChecks('HandfulGoldCheckbox', 9);
+  root['金币袋'] = attrs.GoldBag != null ? toInt(attrs.GoldBag, 0) : countChecks('BagGoldCheckbox', 9);
+  root['金币箱'] = attrs.GoldChest != null ? toInt(attrs.GoldChest, 0) : countChecks('ChestGoldCheckbox', 1);
+  return { root: root, model: model };
+}
+
+// ---------- 模型 v1 迁移 ----------
+// v1 的根级键名与社区插件不同，金币存在 $匕首之心.gold 中。只补写新键尚不存在的值，旧键原样保留。
+function migrateV1Roots(raw, attrs) {
+  var root = {};
+  for (var oldKey in V1_ROOT_KEYS) {
+    var newKey = V1_ROOT_KEYS[oldKey];
+    if (attrs[oldKey] != null && attrs[newKey] == null) root[newKey] = toInt(attrs[oldKey], ROOT_DEFAULTS[newKey]);
+  }
+  var gold = isObj(raw.gold) ? raw.gold : {};
+  [['handful', '金币把'], ['bag', '金币袋'], ['chest', '金币箱']].forEach(function(pair) {
+    if (gold[pair[0]] != null && attrs[pair[1]] == null) root[pair[1]] = toInt(gold[pair[0]], 0);
+  });
+  return root;
+}
+
+// ============================================================
+// 状态与保存
+// ============================================================
+var S = {
+  name: '',
+  avatarUrl: '',
+  attrs: {},
+  hostAttrs: {},
+  model: null,
+  ready: false,
+  tab: 'overview',
+  pendingRoot: {},
+  modelDirty: false,
+  // 卡上还没有匕首之心数据：先以默认值显示，首次编辑时再写入，避免打开即覆盖宿主尚未加载的属性。
+  needsInit: false,
+  saveTimer: null,
+  composing: false,
+  deferredRender: false,
+  saveState: 'idle',
+  ui: {},
+  modal: null
+};
+
+function rootNum(key) {
+  var v = S.attrs[key];
+  return v == null || v === '' ? ROOT_DEFAULTS[key] || 0 : toInt(v, ROOT_DEFAULTS[key] || 0);
+}
+function trackState(id) {
+  var t = TRACKS[id];
+  var max = clamp(rootNum(t.max), 0, 99);
+  return { current: clamp(rootNum(t.cur), 0, max), max: max };
+}
+
+function setRoot(key, value, immediate) {
+  S.attrs[key] = value;
+  S.pendingRoot[key] = value;
+  scheduleSave(immediate);
+}
+function setRoots(patch, immediate) {
+  for (var k in patch) { S.attrs[k] = patch[k]; S.pendingRoot[k] = patch[k]; }
+  scheduleSave(immediate);
+}
+function touchModel(immediate) {
+  S.modelDirty = true;
+  scheduleSave(immediate);
+}
+
+function getPath(obj, path) {
+  var parts = path.split('.');
+  for (var i = 0; i < parts.length; i++) { if (obj == null) return undefined; obj = obj[parts[i]]; }
+  return obj;
+}
+function setPath(obj, path, value) {
+  var parts = path.split('.');
+  for (var i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+  var last = parts[parts.length - 1];
+  obj[last] = typeof obj[last] === 'number' ? toInt(value, 0) : value;
+}
+
+function badgeText() {
+  var text = S.model.conditions.join(' ');
+  return text.length > 20 ? text.slice(0, 19) + '…' : text;
+}
+
+function scheduleSave(immediate) {
+  setSaveState('pending');
+  if (S.saveTimer) clearTimeout(S.saveTimer);
+  if (immediate) { flushSave(); return; }
+  S.saveTimer = setTimeout(flushSave, 1200);
+}
+function flushSave() {
+  if (S.saveTimer) { clearTimeout(S.saveTimer); S.saveTimer = null; }
+  if (S.composing) { S.saveTimer = setTimeout(flushSave, 600); return; }
+  // 没有真实待保存的修改时直接返回：切页、隐藏页面等补交不应写入空白卡。
+  if (!S.modelDirty && !Object.keys(S.pendingRoot).length) { setSaveState('saved'); return; }
+  var patch = {};
+  var any = false;
+  if (S.needsInit && S.model) {
+    for (var d in ROOT_DEFAULTS) if (S.attrs[d] == null) { patch[d] = ROOT_DEFAULTS[d]; S.attrs[d] = ROOT_DEFAULTS[d]; }
+    S.modelDirty = true;
+    S.needsInit = false;
+  }
+  for (var k in S.pendingRoot) { patch[k] = S.pendingRoot[k]; any = true; }
+  if (S.modelDirty && S.model) {
+    patch[DATA_KEY] = clone(S.model);
+    var badge = badgeText();
+    if (str(S.attrs[BADGE_KEY]) !== badge) { patch[BADGE_KEY] = badge; S.attrs[BADGE_KEY] = badge; }
+    S.attrs[DATA_KEY] = patch[DATA_KEY];
+    any = true;
+  }
+  S.pendingRoot = {};
+  S.modelDirty = false;
+  if (!any) { setSaveState('saved'); return; }
+  var guard = S.recent && Date.now() < S.recent.until ? S.recent.patch : {};
+  for (var g in patch) guard[g] = patch[g];
+  S.recent = { patch: guard, until: Date.now() + RECENT_GUARD_MS };
+  window.sealchat.updateAttrs(patch);
+  setSaveState('saved');
+}
+function setSaveState(state) {
+  S.saveState = state;
+  var dot = document.getElementById('saveDot');
+  if (dot) { dot.dataset.state = state; dot.textContent = state === 'pending' ? '待保存' : (state === 'saved' ? '已保存' : ''); }
+}
+
+function isEditing() {
+  var el = document.activeElement;
+  if (!el || !document.getElementById('app').contains(el)) return false;
+  return el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && el.type !== 'checkbox');
+}
+
+function sameValue(a, b) {
+  if (a == null || b == null) return a == b;
+  if (typeof a === 'object' || typeof b === 'object') return JSON.stringify(a) === JSON.stringify(b);
+  return String(a) === String(b);
+}
+
+function onHostUpdate(data) {
+  S.name = data && data.name || '';
+  S.avatarUrl = data && data.avatarUrl || '';
+  var incoming = data && data.attrs || {};
+  S.hostAttrs = incoming;
+  var attrs = {};
+  for (var k in incoming) attrs[k] = incoming[k];
+  // 尚未提交或刚提交的本地编辑优先于宿主回显，避免旧快照覆盖刚输入的内容。
+  // 宿主回显与已保存值一致即视为确认，之后该键不再拦截（SealDice 随后的写入可正常显示）。
+  if (S.recent && Date.now() < S.recent.until) {
+    for (var r in S.recent.patch) {
+      if (sameValue(incoming[r], S.recent.patch[r])) delete S.recent.patch[r];
+      else attrs[r] = S.recent.patch[r];
+    }
+  }
+  for (var p in S.pendingRoot) attrs[p] = S.pendingRoot[p];
+  S.attrs = attrs;
+
+  // 尚未写入的空白卡也继续检查：宿主稍后才送达的已有数据优先于默认值。
+  if (!S.modelDirty) {
+    var raw = parseModel(attrs[DATA_KEY]);
+    S.needsInit = false;
+    if (raw) {
+      S.model = normalize(raw);
+      if (toInt(raw.version, 1) < MODEL_VERSION) {
+        setRoots(migrateV1Roots(raw, attrs));
+        touchModel(true);
+      }
+    } else if (hasLegacy(attrs)) {
+      var migrated = migrateLegacy(attrs);
+      S.model = migrated.model;
+      // 只补写卡上尚不存在的属性：插件或 .st 已维护的新格式数值优先于旧字段迁移值。
+      var missing = {};
+      for (var mk in migrated.root) if (attrs[mk] == null) missing[mk] = migrated.root[mk];
+      setRoots(missing);
+      touchModel(true);
+    } else {
+      S.model = blankModel();
+      S.needsInit = true;
+    }
+  }
+  S.ready = true;
+  maybePromptFear();
+  if (isEditing()) { S.deferredRender = true; return; }
+  render();
+}
+
+// ============================================================
+// 渲染层
+// ============================================================
+function esc(text) {
+  return str(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function rootInput(key, cls, opts) {
+  opts = opts || {};
+  var v = rootNum(key);
+  return '<input class="' + (cls || 'field num') + '" data-root="' + esc(key) + '" inputmode="numeric" value="' + esc(opts.signed ? signed(v) : v) + '"' + (opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>';
+}
+function pathInput(path, placeholder, cls) {
+  return '<input class="' + (cls || 'field') + '" data-path="' + esc(path) + '" value="' + esc(getPath(S.model, path)) + '" placeholder="' + esc(placeholder || '') + '">';
+}
+function pathArea(path, placeholder, rows) {
+  return '<textarea class="field" data-path="' + esc(path) + '" rows="' + (rows || 3) + '" placeholder="' + esc(placeholder || '') + '">' + esc(getPath(S.model, path)) + '</textarea>';
+}
+function traitSelect(path, withBlank) {
+  var cur = getPath(S.model, path);
+  var html = '<select class="field" data-path="' + esc(path) + '">';
+  if (withBlank) html += '<option value="">—</option>';
+  TRAIT_KEYS.forEach(function(k) { html += '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + k + '</option>'; });
+  return html + '</select>';
+}
+function sectionTitle(cn, en) {
+  return '<div class="section-title">' + esc(cn) + (en ? ' <span class="en">' + esc(en) + '</span>' : '') + '</div>';
+}
+// 角色名以 SealChat 人物卡名称为准，保证卡内与平台显示一致。
+function displayName() {
+  return S.name || S.model && S.model.identity.name || '';
+}
+
+function render() {
+  S.deferredRender = false;
+  var app = document.getElementById('app');
+  if (!S.ready || !S.model) return;
+  var gm = isGmMode();
+  var tabs = gm ? GM_TAB_LIST : TAB_LIST;
+  if (!tabs.some(function(t) { return t[0] === S.tab; })) S.tab = tabs[0][0];
+  var html = '<div class="sheet' + (gm ? ' gm' : '') + '">';
+  html += renderHeader();
+  html += renderTabs(tabs);
+  html += '<div class="tab-body">';
+  if (S.tab === 'overview') html += renderOverview();
+  else if (S.tab === 'gear') html += renderGear();
+  else if (S.tab === 'features') html += renderFeatures();
+  else if (S.tab === 'domains') html += renderDomains();
+  else if (S.tab === 'story') html += renderStory();
+  else if (S.tab === 'ref') html += renderRef();
+  else if (S.tab === 'gm') html += renderGmBoard();
+  else if (S.tab === 'gmref') html += renderGmRef();
+  html += '</div></div>';
+  if (!gm) html += renderFabs();
+  app.innerHTML = html;
+  setSaveState(S.saveState);
+}
+
+function isGmMode() { return S.model.mode === 'gm'; }
+function fearCount() { return clamp(toInt(S.attrs[FEAR_KEY], 0), 0, FEAR_MAX); }
+
+function renderAvatar(name) {
+  return '<div class="avatar">' + (S.avatarUrl ? '<img src="' + esc(S.avatarUrl) + '" alt="">' : esc((name || '?').charAt(0))) + '</div>';
+}
+// 卡头右上：界面切换开关与保存状态。切换开关第一次点击进入确认，确认时限内再点一次才切换，避免误触。
+function renderHeaderTools() {
+  var gm = isGmMode();
+  var confirming = S.ui.modeConfirmUntil && Date.now() < S.ui.modeConfirmUntil;
+  var label = confirming ? '再点确认' : (gm ? '⇄ 玩家界面' : '⇄ 主持人界面');
+  return '<div class="header-tools">'
+    + '<button class="mode-switch' + (confirming ? ' confirm' : '') + '" data-act="mode-toggle" title="切换到' + (gm ? '玩家人物卡' : '主持人记录') + '界面">' + label + '</button>'
+    + '<span class="save-dot" id="saveDot"></span></div>';
+}
+var SKULL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C7 2 3.5 5.6 3.5 10.2c0 2.7 1.2 4.6 3 5.8V19a1 1 0 0 0 1 1H9v-2h1.5v2h3v-2H15v2h1.5a1 1 0 0 0 1-1v-3c1.8-1.2 3-3.1 3-5.8C20.5 5.6 17 2 12 2z"/>'
+  + '<circle cx="8.7" cy="11" r="2.1" fill="var(--paper)"/><circle cx="15.3" cy="11" r="2.1" fill="var(--paper)"/><path d="M12 13.3l-1.2 2.3h2.4z" fill="var(--paper)"/></svg>';
+
+function renderHeader() {
+  var name = displayName();
+  if (isGmMode()) {
+    var running = S.model.gm.clocks.filter(function(c) { return !c.archived; }).length;
+    return '<div class="header">'
+      + renderHeaderTools()
+      + renderAvatar(name)
+      + '<div class="header-info">'
+      + '<div class="name-display" title="与 SealChat 人物卡名称同步">' + esc(name || '未命名') + '</div>'
+      + '<div class="sub-line"><span>主持人</span><span>进行中的进度钟 ' + running + ' 个</span></div>'
+      + '</div>'
+      + '<div class="fear-skull" title="恐惧">' + SKULL_SVG + '<span class="count">' + fearCount() + '</span></div>'
+      + '</div>';
+  }
+  var id = S.model.identity;
+  var classLine = [id.class, id.subclass].filter(Boolean).join(' · ') || '未填写职业';
+  var originLine = [id.ancestry, id.community].filter(Boolean).join(' · ') || '未填写种族与社群';
+  return '<div class="header">'
+    + renderHeaderTools()
+    + renderAvatar(name)
+    + '<div class="header-info">'
+    + '<div class="name-display" title="与 SealChat 人物卡名称同步">' + esc(name || '未命名') + '</div>'
+    + '<div class="sub-line"><span class="level-chip">Lv' + rootInput('等级', 'field bare num') + '</span>'
+    + '<span>' + esc(classLine) + '</span></div>'
+    + '<div class="sub-line">' + esc(originLine) + '</div>'
+    + '</div>'
+    + '<div class="evasion" title="闪避"><span class="label">闪避</span>' + rootInput('闪避', ' ') + '</div>'
+    + '</div>';
+}
+
+var TAB_LIST = [
+  ['overview', '概览'], ['features', '特性'], ['gear', '装备'], ['domains', '领域'], ['story', '背景'], ['ref', '速查']
+];
+var GM_TAB_LIST = [['gm', 'GM 记录'], ['gmref', '战斗速查']];
+
+// 悬浮掷骰球：右下角自由二元骰，左下角施法掷骰（设置了施法属性时才显示）。
+function renderFabs() {
+  var spell = S.model.identity.spellcastTrait;
+  var html = '<button class="fab fab-right" data-act="roll-free" title="自由二元骰"><span class="fab-icon">2d12</span><span class="fab-text">二元骰</span></button>';
+  if (spell) {
+    html += '<button class="fab fab-left" data-act="roll-trait" data-trait="' + esc(spell) + '" data-label="施法" title="施法掷骰（' + esc(spell) + '）">'
+      + '<span class="fab-icon">' + esc(spell) + '</span><span class="fab-text">施法</span></button>';
+  }
+  return html;
+}
+function renderTabs(tabs) {
+  return '<div class="tabs">' + tabs.map(function(t) {
+    return '<button class="tab' + (S.tab === t[0] ? ' active' : '') + '" data-act="tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  }).join('') + '</div>';
+}
+
+function renderOverview() {
+  var html = '';
+  var spell = S.model.identity.spellcastTrait;
+  html += sectionTitle('属性', 'Traits');
+  html += '<div class="traits">';
+  TRAITS.forEach(function(t) {
+    html += '<div class="trait' + (spell === t.key ? ' spell' : '') + '">'
+      + '<button class="trait-roll" data-act="roll-trait" data-trait="' + t.key + '" title="' + t.key + '检定">' + t.key + '</button>'
+      + '<div class="trait-en">' + t.en + '</div>'
+      + rootInput(t.key, ' ', { signed: true })
+      + '</div>';
+  });
+  html += '</div>';
+  html += '<div class="quick-row">'
+    + '<div class="row"><span class="hint">熟练值</span>' + rootInput('熟练值', 'field num', { signed: true }) + '</div>'
+    + '<div class="row"><span class="hint">施法属性</span>' + traitSelect('identity.spellcastTrait', true) + '</div>'
+    + '</div>';
+
+  html += '<div class="section">' + sectionTitle('伤害与阈值', 'Damage') + renderThresholds() + '</div>';
+  html += '<div class="section">' + sectionTitle('资源', 'Resources') + renderTracks() + '</div>';
+  html += '<div class="section">' + sectionTitle('状态', 'Conditions') + renderConditions() + '</div>';
+  html += '<div class="section">' + sectionTitle('经历', 'Experiences') + renderExperiences() + '</div>';
+  return html;
+}
+
+function renderThresholds() {
+  function cell(cls, title, m) {
+    return '<div class="tb-cell ' + cls + '"><div class="t">' + title + '</div><div class="m">' + m + '</div></div>';
+  }
+  return '<div class="threshold-bar">'
+    + cell('minor', '轻度伤害', '标记 1 生命')
+    + '<div class="tb-num">' + rootInput('重伤阈值', ' ', { title: '重伤阈值' }) + '<span class="m">重伤</span></div>'
+    + cell('major', '重度伤害', '标记 2 生命')
+    + '<div class="tb-num">' + rootInput('严重阈值', ' ', { title: '严重阈值' }) + '<span class="m">严重</span></div>'
+    + cell('severe', '严重伤害', '标记 3 生命')
+    + '</div>';
+}
+
+function renderTracks() {
+  var html = '<div class="box tracks">';
+  ['hp', 'stress', 'hope', 'armor'].forEach(function(id) { html += trackRow(id); });
+  var stress = trackState('stress');
+  if (stress.max > 0 && stress.current >= stress.max) html += '<div class="vuln-note">压力已满：陷入脆弱；再需标记压力时改为标记 1 点生命。</div>';
+  var hp = trackState('hp');
+  if (hp.max > 0 && hp.current >= hp.max) html += '<div class="vuln-note">生命已全部标记：进行死亡行动。</div>';
+  html += '</div>';
+  return html;
+}
+function trackRow(id) {
+  var t = TRACKS[id];
+  var st = trackState(id);
+  var pips = '';
+  for (var i = 0; i < st.max; i++) {
+    pips += '<button class="pip' + (i < st.current ? ' on' : '') + '" data-act="pip" data-track="' + id + '" data-index="' + i + '" title="' + (i + 1) + '"></button>';
+  }
+  if (!st.max) pips = '<span class="hint">未设置' + t.name + '</span>';
+  var unit = id === 'hope' ? '持有' : '已标记';
+  return '<div class="track ' + id + '">'
+    + '<div class="track-name" title="' + t.en + '">' + t.name + '<span class="m">' + unit + ' ' + st.current + '/' + st.max + '</span></div>'
+    + '<div class="pips">' + pips + '</div>'
+    + '<div class="slot-adjust"><span class="lbl-text">上限</span><button class="btn small" data-act="slots" data-track="' + id + '" data-delta="-1">−</button>'
+    + '<button class="btn small" data-act="slots" data-track="' + id + '" data-delta="1">+</button></div>'
+    + '</div>';
+}
+
+function renderConditions() {
+  var conds = S.model.conditions;
+  var html = '<div class="chips">';
+  BASE_CONDITIONS.forEach(function(c) {
+    html += '<button class="chip' + (conds.indexOf(c) >= 0 ? ' on' : '') + '" data-act="cond-toggle" data-cond="' + c + '">' + c + '</button>';
+  });
+  conds.forEach(function(c, i) {
+    if (BASE_CONDITIONS.indexOf(c) >= 0) return;
+    html += '<button class="chip on" data-act="cond-remove" data-index="' + i + '" title="移除">' + esc(c) + '<span class="x">×</span></button>';
+  });
+  if (S.ui.addingCond) {
+    html += '<span class="chip chip-input"><input id="condInput" placeholder="状态名" maxlength="12"></span>';
+  } else {
+    html += '<button class="chip chip-add" data-act="cond-add" title="添加其他状态">+</button>';
+  }
+  return html + '</div>';
+}
+
+function renderExperiences() {
+  var html = '<div class="box exp-list">';
+  S.model.experiences.forEach(function(e, i) {
+    html += '<div class="exp-row">' + pathInput('experiences.' + i + '.name', '经历名称')
+      + '<input class="field num" data-path="experiences.' + i + '.mod" data-signed="1" value="' + esc(signed(e.mod)) + '">'
+      + '<button class="btn ghost small" data-act="list-remove" data-list="experiences" data-index="' + i + '" title="删除">×</button></div>';
+  });
+  html += '<div class="row" style="justify-content:flex-end"><button class="btn small" data-act="exp-add">添加经历</button></div>';
+  return html + '</div>';
+}
+
+function weaponCard(path, kind, removable) {
+  var w = getPath(S.model, path);
+  var html = '<div class="item-card"><div class="item-head"><span class="item-kind">' + kind + '</span>'
+    + '<span class="item-name">' + pathInput(path + '.name', '武器名称', 'field bare') + '</span>'
+    + (removable ? '<button class="btn ghost small" data-act="list-remove" data-list="weapons.backups" data-index="' + removable.index + '">×</button>' : '')
+    + '</div><div class="item-grid">'
+    + '<div><label class="lbl">属性</label>' + traitSelect(path + '.trait', true) + '</div>'
+    + '<div><label class="lbl">射程</label>' + pathInput(path + '.range', '近战/近距离…') + '</div>'
+    + '<div><label class="lbl">伤害骰</label>' + pathInput(path + '.damage', 'd8+1') + '</div>'
+    + '<div><label class="lbl">类型</label>' + pathInput(path + '.damageType', '物理') + '</div>'
+    + '<div class="wide"><label class="lbl">特性</label>' + pathArea(path + '.feature', '武器特性', 2) + '</div>'
+    + '</div><div class="item-actions">'
+    + '<button class="btn" data-act="weapon-attack" data-path="' + path + '"' + (w.trait ? '' : ' title="未选择属性，将进行自由二元骰"') + '>攻击</button>'
+    + '<button class="btn primary" data-act="weapon-damage" data-path="' + path + '">伤害</button>'
+    + '</div></div>';
+  return html;
+}
+
+function renderGear() {
+  var m = S.model;
+  var html = sectionTitle('激活武器', 'Active Weapons');
+  html += weaponCard('weapons.primary', '主手');
+  html += weaponCard('weapons.secondary', '副手');
+  html += '<div class="section">' + sectionTitle('备用武器', 'Inventory Weapons');
+  m.weapons.backups.forEach(function(w, i) { html += weaponCard('weapons.backups.' + i, '备用', { index: i }); });
+  html += '<div class="row" style="justify-content:flex-end"><button class="btn small" data-act="backup-add">添加备用武器</button></div></div>';
+
+  html += '<div class="section">' + sectionTitle('护甲', 'Armor')
+    + '<div class="item-card"><div class="item-head"><span class="item-kind armor">护甲</span>'
+    + '<span class="item-name">' + pathInput('armor.name', '护甲名称', 'field bare') + '</span></div>'
+    + '<div class="item-grid">'
+    + '<div><label class="lbl">护甲值</label>' + rootInput('护甲上限', 'field num', { title: '护甲值即护甲槽数量' }) + '</div>'
+    + '<div><label class="lbl">基础阈值</label>' + pathInput('armor.baseThresholds', '如 5/11') + '</div>'
+    + '<div class="wide"><label class="lbl">特性</label>' + pathArea('armor.feature', '护甲特性', 2) + '</div>'
+    + '</div><div class="item-actions"><span class="hint grow">实际阈值 = 基础阈值 + 等级</span>'
+    + '<button class="btn small" data-act="apply-thresholds">按等级填入阈值</button></div></div></div>';
+
+  html += '<div class="section">' + sectionTitle('金币', 'Gold') + '<div class="gold-row">'
+    + GOLD.map(goldCell).join('')
+    + '</div><div class="hint" style="margin-top:4px">10 把 = 1 袋，10 袋 = 1 箱；增减时自动进位/借位。</div></div>';
+
+  html += '<div class="section">' + sectionTitle('物品', 'Inventory') + pathArea('inventory', '随身物品、消耗品…', 4) + '</div>';
+  return html;
+}
+function goldCell(g, i) {
+  return '<div class="gold-cell"><div class="t">' + g.label + '</div><div class="v">' + rootNum(g.key) + '<span class="hint"> / ' + g.max + '</span></div>'
+    + '<div class="row"><button class="btn small" data-act="gold" data-gold="' + i + '" data-delta="-1">−</button>'
+    + '<button class="btn small" data-act="gold" data-gold="' + i + '" data-delta="1">+</button></div></div>';
+}
+
+function renderFeatures() {
+  var html = sectionTitle('身份', 'Identity') + '<div class="grid3">'
+    + '<div><label class="lbl">职业</label>' + pathInput('identity.class', '吟游诗人') + '</div>'
+    + '<div><label class="lbl">子职</label>' + pathInput('identity.subclass', '') + '</div>'
+    + '<div><label class="lbl">领域</label>' + pathInput('identity.domains', '优雅 + 典籍') + '</div>'
+    + '<div><label class="lbl">种族</label>' + pathInput('identity.ancestry', '') + '</div>'
+    + '<div><label class="lbl">社群</label>' + pathInput('identity.community', '') + '</div>'
+    + '<div><label class="lbl">代词</label>' + pathInput('identity.pronouns', '') + '</div>'
+    + '</div>';
+  html += '<div class="section">' + sectionTitle('特性', 'Features')
+    + '<label class="lbl">希望特性（花费 3 希望）</label>' + pathArea('features.hope', '', 4)
+    + '<label class="lbl" style="margin-top:6px">职业特性</label>' + pathArea('features.class', '', 7)
+    + '<label class="lbl" style="margin-top:6px">子职特性</label>' + pathArea('features.subclass', '', 7)
+    + '<div class="grid2" style="margin-top:6px"><div><label class="lbl">种族特性</label>' + pathArea('features.ancestry', '', 6) + '</div>'
+    + '<div><label class="lbl">社群特性</label>' + pathArea('features.community', '', 6) + '</div></div>'
+    + '</div>';
+  return html;
+}
+
+function renderDomains() {
+  return sectionTitle('领域卡', 'Domain Cards')
+    + domainGroup('loadout', '配置', 'Loadout')
+    + domainGroup('vault', '宝库', 'Vault');
+}
+
+function domainCard(c, i) {
+  var p = 'domainCards.' + i;
+  var vault = c.location === 'vault';
+  return '<div class="dcard">'
+    + '<div class="dcard-head"><span class="name">' + pathInput(p + '.name', '卡名', 'field bare') + '</span>'
+    + '<button class="btn small" data-act="card-move" data-index="' + i + '">' + (vault ? '移入配置' : '移入宝库') + '</button>'
+    + '<button class="btn ghost small" data-act="list-remove" data-list="domainCards" data-index="' + i + '" title="删除">×</button></div>'
+    + '<div class="dcard-meta">'
+    + '<div><label class="lbl">领域</label>' + pathInput(p + '.domain', '—', 'field short') + '</div>'
+    + '<div><label class="lbl">等级</label><input class="field num" data-path="' + p + '.level" inputmode="numeric" placeholder="—" value="' + esc(c.level) + '"></div>'
+    + '<div><label class="lbl">回想费用</label><input class="field num" data-path="' + p + '.recall" inputmode="numeric" placeholder="—" value="' + esc(c.recall) + '"></div>'
+    + '<div class="tracker"><label class="lbl">资源追踪</label>' + pathInput(p + '.tracker', '') + '</div>'
+    + '</div>' + pathArea(p + '.text', '卡面效果', 3)
+    + '</div>';
+}
+function domainGroup(location, title, en) {
+  var cards = S.model.domainCards;
+  var count = cards.filter(function(c) { return c.location === location; }).length;
+  var badge = location === 'loadout'
+    ? '<span class="count-badge' + (count > LOADOUT_MAX ? ' over' : '') + '">' + count + '/' + LOADOUT_MAX + '</span>'
+    : '<span class="count-badge muted">' + count + ' 张</span>';
+  var html = '<div class="dgroup ' + location + '"><div class="dgroup-head">'
+    + '<span class="dgroup-title">' + title + ' <span class="en" style="font-weight:400;font-size:10px;letter-spacing:1px">' + en + '</span></span>'
+    + badge + '<span class="grow"></span>'
+    + '<button class="btn small" data-act="card-add" data-location="' + location + '">添加</button></div>';
+  var body = '';
+  cards.forEach(function(c, i) { if (c.location === location) body += domainCard(c, i); });
+  html += body || '<div class="empty-hint">' + (location === 'loadout' ? '暂无配置中的领域卡' : '宝库为空') + '</div>';
+  return html + '</div>';
+}
+
+function renderStory() {
+  return sectionTitle('背景', 'Background') + pathArea('background', '角色的来历、外貌与动机…', 16)
+    + '<div class="section">' + sectionTitle('人际关系', 'Connections') + pathArea('connections', '与其他角色的羁绊…', 4) + '</div>'
+    + '<div class="section">' + sectionTitle('笔记', 'Notes') + pathArea('notes', '冒险笔记、线索…', 6) + '</div>';
+}
+
+function renderRef() {
+  return '<div class="ref">'
+    + '<h4>二元骰</h4>'
+    + '<p>掷 <span class="hope-t">希望骰</span> 与 <span class="fear-t">恐惧骰</span> 各 1d12，相加后再加属性与修正，与难度比较。</p>'
+    + '<table><tr><th>结果</th><th>效果</th></tr>'
+    + '<tr><td><span class="hope-t">希望骰更高</span></td><td>“伴随希望”，你获得 1 点希望。</td></tr>'
+    + '<tr><td><span class="fear-t">恐惧骰更高</span></td><td>“伴随恐惧”，GM 获得 1 点恐惧。</td></tr>'
+    + '<tr><td>两骰相同</td><td>关键成功：无论总值都成功，获得 1 希望并清除 1 压力。</td></tr>'
+    + '<tr><td>反应掷骰</td><td>不产生希望或恐惧，关键成功也不清除压力。</td></tr></table>'
+    + '<h4>优势、经历与帮助</h4><ul>'
+    + '<li>优势加 1d6，劣势减 1d6，二者逐个抵消；多颗时只取最高的一颗。</li>'
+    + '<li>每使用一项相关经历，花费 1 希望，加上它的加值。</li>'
+    + '<li>帮助队友：花费 1 希望，为对方提供一颗优势骰。</li>'
+    + '<li>希望特性花费 3 希望；协同掷骰同样花费 3 希望。</li></ul>'
+    + '<h4>伤害与护甲</h4><ul>'
+    + '<li>伤害低于重伤阈值：标记 1 生命；达到重伤：2；达到严重：3。</li>'
+    + '<li>受伤时可标记 1 个护甲槽，使伤害降低一档。</li>'
+    + '<li>伤害骰数量等于熟练值；关键成功的攻击额外加上伤害骰最大值。</li>'
+    + '<li>需要标记压力而压力槽已满时，改为标记 1 点生命；标记最后一点压力会陷入脆弱。</li>'
+    + '<li>标记最后一点生命时，选择死亡行动：荣光就义、避死或孤注一掷。</li></ul>'
+    + '<h4>状态</h4><table>'
+    + '<tr><th>隐藏</th><td>针对你的掷骰处于劣势；被发现或你暴露位置时解除。</td></tr>'
+    + '<tr><th>束缚</th><td>无法移动，但仍可在原地行动。</td></tr>'
+    + '<tr><th>脆弱</th><td>针对你的掷骰处于优势。</td></tr></table>'
+    + '<h4>海豹指令</h4><table>'
+    + '<tr><td><code>.dd 敏捷+2 优势 dc15 hope -- 翻越城墙</code></td><td>动作掷骰；<code>hope</code> 花费 1 希望（<code>hope2</code> 花费 2），原因写在 <code>--</code> 之后</td></tr>'
+    + '<tr><td><code>.ddr 本能 dc14 -- 躲避落石</code></td><td>反应掷骰</td></tr>'
+    + '<tr><td><code>.r 2d8+3 长弓伤害</code></td><td>伤害掷骰（SealDice 原生）</td></tr>'
+    + '<tr><td><code>.st 生命+1 护甲+1</code></td><td>调整资源</td></tr>'
+    + '<tr><td><code>.dh recover</code></td><td>掷骰后提示保存失败时补完写入，勿重投</td></tr></table>'
+    + '<p>动作掷骰的希望结果与关键成功会自动为你 +1 希望，关键成功另清除 1 压力；恐惧结果由插件为 GM 记录 1 点恐惧。经历花费的希望在掷骰前自动扣除。生命、护甲与金币不自动结算。</p>'
+    + '<h4>徽章模板</h4><p>在模板管理器的“默认角色徽章模板”中填写：</p>'
+    + '<div class="cmd-preview">生命{生命}/{生命上限} 压力{压力}/{压力上限} 希望{希望}/{希望上限} 护甲{护甲}/{护甲上限}</div>'
+    + '<p>状态可用 <code>{' + BADGE_KEY + '}</code>。</p>'
+    + '</div>';
+}
+
+// ---------- 主持人界面 ----------
+function renderGmBoard() {
+  return '<div class="section">' + sectionTitle('恐惧', 'Fear') + renderFear() + '</div>'
+    + '<div class="section">' + sectionTitle('聚光灯', 'Spotlight') + renderSpotlight() + '</div>'
+    + '<div class="section">' + sectionTitle('进度钟', 'Countdowns') + renderClocks() + '</div>';
+}
+
+function renderFear() {
+  var fear = fearCount();
+  var pips = '';
+  for (var i = 0; i < FEAR_MAX; i++) pips += '<button class="pip' + (i < fear ? ' on' : '') + '" data-act="fear-pip" data-index="' + i + '" title="' + (i + 1) + '"></button>';
+  return '<div class="box">'
+    + '<div class="track fear"><div class="pips">' + pips + '</div></div>'
+    + '</div>';
+}
+
+function renderSpotlight() {
+  var list = S.model.gm.spotlight;
+  var acted = list.filter(function(p) { return p.acted; }).length;
+  var html = '<div class="box"><div class="spot-head"><span class="hint grow">点击名字标记本轮已有高光</span>'
+    + '<span class="count-badge muted">' + acted + '/' + list.length + '</span>'
+    + '<button class="btn small" data-act="spot-reset"' + (acted ? '' : ' disabled') + '>新一轮</button></div>'
+    + '<div class="spot-list">';
+  list.forEach(function(p, i) {
+    html += '<span class="spot' + (p.acted ? ' acted' : '') + '">'
+      + '<button class="spot-name" data-act="spot-toggle" data-index="' + i + '">' + esc(p.name || '未命名') + '</button>'
+      + '<button class="x" data-act="list-remove" data-list="gm.spotlight" data-index="' + i + '" title="移除">×</button></span>';
+  });
+  html += S.ui.addingSpot
+    ? '<span class="chip chip-input"><input id="spotInput" placeholder="角色名" maxlength="16"></span>'
+    : '<button class="chip chip-add" data-act="spot-add" title="添加角色">+</button>';
+  return html + '</div></div>';
+}
+
+function clockSelect(path, options, cur) {
+  return '<select class="field" data-path="' + esc(path) + '">' + options.map(function(o) {
+    return '<option value="' + esc(o) + '"' + (String(o) === String(cur) ? ' selected' : '') + '>' + esc(o) + (typeof o === 'number' ? ' 格' : '') + '</option>';
+  }).join('') + '</select>';
+}
+function clockCard(c, i) {
+  var p = 'gm.clocks.' + i;
+  var full = c.progress >= c.size;
+  var pips = '';
+  for (var k = 0; k < c.size; k++) pips += '<button class="pip' + (k < c.progress ? ' on' : '') + '" data-act="clock-pip" data-index="' + i + '" data-seg="' + k + '"></button>';
+  return '<div class="clock' + (full ? ' full' : '') + (c.archived ? ' archived' : '') + '">'
+    + '<div class="clock-head"><span class="name">' + pathInput(p + '.name', '进度钟名称', 'field bare') + '</span>'
+    + '<span class="clock-count">' + c.progress + '/' + c.size + '</span>'
+    + (full ? '<span class="full-tag">已满</span>' : '')
+    + '</div><div class="pips">' + pips + '</div>'
+    + '<div class="clock-meta">' + clockSelect(p + '.kind', CLOCK_KINDS, c.kind) + clockSelect(p + '.size', CLOCK_SIZES, c.size)
+    + '<span class="grow"></span>'
+    + '<button class="btn small" data-act="clock-archive" data-index="' + i + '">' + (c.archived ? '恢复' : '归档') + '</button>'
+    + '<button class="btn ghost small" data-act="list-remove" data-list="gm.clocks" data-index="' + i + '" title="删除">×</button>'
+    + '</div></div>';
+}
+function renderClocks() {
+  var clocks = S.model.gm.clocks;
+  var active = '', archived = '', archivedCount = 0;
+  clocks.forEach(function(c, i) {
+    if (c.archived) { archivedCount++; archived += clockCard(c, i); }
+    else active += clockCard(c, i);
+  });
+  var html = active || '<div class="empty-hint">暂无进行中的进度钟</div>';
+  html += '<div class="row" style="justify-content:space-between;margin-top:4px">'
+    + (archivedCount ? '<button class="btn small ghost" data-act="clock-show-archived">' + (S.ui.showArchived ? '收起' : '查看') + '已归档（' + archivedCount + '）</button>' : '<span></span>')
+    + '<button class="btn small" data-act="clock-add">添加进度钟</button></div>';
+  if (archivedCount && S.ui.showArchived) html += '<div style="margin-top:6px">' + archived + '</div>';
+  return html;
+}
+
+// 人物卡以快照向频道公开，玩家也能打开，因此只写核心规则中的公开机制，不放敌人数据与剧情。
+function renderGmRef() {
+  return '<div class="ref">'
+    + '<h4>恐惧的获得</h4><ul>'
+    + '<li>玩家的动作掷骰得到恐惧结果：GM 获得 1 点恐惧（插件自动记录）。</li>'
+    + '<li>队伍短休：GM 获得 1d4 点恐惧；长休：获得 1d4 + 角色数点恐惧。</li>'
+    + '<li>恐惧上限为 12。</li></ul>'
+    + '<h4>恐惧的用途</h4><ul>'
+    + '<li>在玩家行动之间插入一次 GM 行动，夺取聚光灯。</li>'
+    + '<li>聚光灯在 GM 手中时，让额外的敌人在本次行动。</li>'
+    + '<li>启用敌人或环境的恐惧特性。</li>'
+    + '<li>为敌人的掷骰加上它的一项经历。</li></ul>'
+    + '<h4>聚光灯与 GM 行动</h4><ul>'
+    + '<li>没有先攻顺序。玩家掷出恐惧结果、检定失败，或玩家停下来看向你时，聚光灯转到 GM。</li>'
+    + '<li>GM 行动可温和（预示危险、施压）或强硬（造成伤害、改变局势），随后把聚光灯交还玩家。</li>'
+    + '<li>聚光灯名单用来确认每位角色都有表现机会，一轮结束后点“新一轮”。</li></ul>'
+    + '<h4>敌人攻击与伤害</h4><ul>'
+    + '<li>敌人攻击：d20 + 攻击加值，达到目标闪避即命中。</li>'
+    + '<li>伤害与目标阈值比较：低于重伤标记 1 生命，达到重伤 2，达到严重 3；目标可标记护甲槽降低一档。</li>'
+    + '<li>敌人标记全部生命即被击败。</li></ul>'
+    + '<h4>进度钟</h4><ul>'
+    + '<li>为事件设定格数与推进条件，例如每当聚光灯回到 GM、每次恐惧结果或每段时间。</li>'
+    + '<li>满格时事件发生；完成后可归档保留记录。</li></ul>'
+    + '</div>';
+}
+
+// ============================================================
+// 掷骰弹窗
+// ============================================================
+// 原因写在独立的 -- 之后；SealDice 会把 --词 解析成参数，插件因此拒绝，故原因内的连续横线替换掉。
+// 花括号会被宿主当作模板参数替换，一并去掉。
+function cleanReason(text) {
+  return str(text).replace(/[{}#＃]/g, '').replace(/-{2,}/g, '—').replace(/\s+/g, ' ').trim();
+}
+function cleanToken(text) {
+  return str(text).replace(/[\s,，、#＃{}]/g, '');
+}
+function openRoll(opts) {
+  S.modal = {
+    type: 'roll',
+    trait: opts.trait || '',
+    reason: opts.reason || '',
+    advCount: 0,
+    disCount: 0,
+    exps: {},
+    mod: '',
+    dc: '',
+    reaction: false
+  };
+  renderModal();
+}
+function selectedExps() {
+  var m = S.modal;
+  return S.model.experiences.filter(function(e, i) { return m.exps[i] && cleanToken(e.name); });
+}
+// 算式交给插件用 SealDice 原生引擎求值：属性写名称，便于回复中显示属性；
+// 宿主尚未回显该属性的当前值时（未写入或刚修改），SealDice 可能还没有这个值，直接写数值。
+// 经历加值并入算式，每项经历以 hope 费用计 1 希望，经历名附在原因后。
+function rollExpression() {
+  var m = S.modal;
+  var expr = '';
+  if (m.trait) expr += sameValue(S.hostAttrs[m.trait], rootNum(m.trait)) ? '+' + m.trait : signed(rootNum(m.trait));
+  expr += normalizeModExpr(m.mod) || '';
+  selectedExps().forEach(function(e) { expr += signed(e.mod); });
+  return expr.charAt(0) === '+' ? expr.slice(1) : expr;
+}
+function rollDc() {
+  var t = str(S.modal.dc).trim();
+  return /^\d+$/.test(t) ? Number(t) : null;
+}
+function rollCommand() {
+  var m = S.modal;
+  var parts = [m.reaction ? '.ddr' : '.dd'];
+  var expr = rollExpression();
+  if (expr) parts.push(expr);
+  // 优势、劣势按来源数分别写出，由插件相互抵消后至多掷一枚 d6。
+  if (m.advCount) parts.push('优势' + (m.advCount > 1 ? m.advCount : ''));
+  if (m.disCount) parts.push('劣势' + (m.disCount > 1 ? m.disCount : ''));
+  if (rollDc() != null) parts.push('dc' + rollDc());
+  var exps = selectedExps();
+  if (exps.length) parts.push(exps.length === 1 ? 'hope' : 'hope' + exps.length);
+  var reason = [cleanReason(m.reason)].concat(exps.map(function(e) { return cleanReason(e.name); })).filter(Boolean).join(' · ');
+  if (reason) parts.push('-- ' + reason);
+  return parts.join(' ');
+}
+// 返回阻止掷骰的原因；可以掷骰时返回空串。
+function rollBlocker() {
+  var m = S.modal;
+  if (normalizeModExpr(m.mod) === null) return '修正格式无效，示例：+1、+d4、-2d6';
+  if (str(m.dc).trim() && rollDc() == null) return '难度须为正整数';
+  if (selectedExps().length > HOPE_COST_MAX) return '一次至多使用 ' + HOPE_COST_MAX + ' 项经历';
+  return '';
+}
+// 额外修正可写数字或骰式：+1、-2、+d4、-2d6、+d4+1。返回规范化文本；空值返回 ''，格式错误返回 null。
+function normalizeModExpr(text) {
+  var t = str(text).replace(/\s+/g, '').replace(/＋/g, '+').replace(/[－—]/g, '-').toLowerCase();
+  if (!t || /^[+-]?0+$/.test(t)) return '';
+  if (!/^[+-]/.test(t)) t = '+' + t;
+  return /^([+-](\d*d\d+|\d+))+$/.test(t) ? t : null;
+}
+function modParts(text) {
+  var expr = normalizeModExpr(text) || '';
+  var flat = 0, dice = [];
+  var re = /([+-])(\d*d\d+|\d+)/g, m;
+  while ((m = re.exec(expr))) {
+    if (m[2].indexOf('d') >= 0) dice.push(m[1] + m[2]);
+    else flat += (m[1] === '-' ? -1 : 1) * Number(m[2]);
+  }
+  return { flat: flat, dice: dice };
+}
+function renderRollModal() {
+  var m = S.modal;
+  var html = '<h3>' + esc(m.reason || (m.trait ? m.trait + '检定' : '二元骰')) + '</h3>'
+    + '<div class="sub">希望骰 + 恐惧骰 + 属性 + 修正</div>';
+  html += '<div class="mrow"><span>属性</span><select class="field" data-modal="trait"><option value="">无（' + '+0）</option>';
+  TRAIT_KEYS.forEach(function(k) { html += '<option value="' + k + '"' + (m.trait === k ? ' selected' : '') + '>' + k + ' ' + signed(rootNum(k)) + '</option>'; });
+  html += '</select></div>';
+  html += '<div class="mrow"><span>优势 / 劣势</span><div class="edge-row">'
+    + edgeStepper('advCount', '优势', 'adv') + edgeStepper('disCount', '劣势', 'dis')
+    + '</div></div><div class="edge-net">' + edgeNetText() + '</div>';
+  var exps = S.model.experiences.filter(function(e) { return cleanToken(e.name); });
+  if (exps.length) {
+    html += '<div class="mrow" style="display:block"><span>经历（每项 1 希望）</span><div class="exp-pick">';
+    S.model.experiences.forEach(function(e, i) {
+      if (!cleanToken(e.name)) return;
+      var on = !!m.exps[i];
+      html += '<label class="check"><span><input type="checkbox" data-modal-exp="' + i + '"' + (on ? ' checked' : '') + '> ' + esc(e.name) + '</span><b>' + signed(e.mod) + '</b></label>';
+    });
+    html += '</div></div>';
+  }
+  html += '<div class="mrow"><span>额外修正</span><input class="field wide" data-modal="mod" placeholder="+1、+d4、-2d6" value="' + esc(m.mod) + '"></div>';
+  html += '<div class="mrow"><span>难度</span><input class="field wide" data-modal="dc" inputmode="numeric" placeholder="可选，如 15" value="' + esc(m.dc) + '"></div>';
+  html += '<div class="mrow"><span>反应掷骰</span><label class="check"><input type="checkbox" data-modal="reaction"' + (m.reaction ? ' checked' : '') + '>启用</label></div>';
+  html += '<div class="mrow"><span>原因</span><input class="field wide" data-modal="reason" placeholder="可选" value="' + esc(m.reason) + '"></div>';
+  html += '<div class="cmd-preview" id="cmdPreview">' + esc(rollCommand()) + '</div>';
+  html += '<div class="sub" id="rollSum" style="margin:6px 0 0">' + rollSumText() + '</div>';
+  if (m.error) html += '<div class="mod-error" role="alert">' + esc(m.error) + '</div>';
+  html += '<div class="modal-actions"><button class="btn" data-act="m-close">取消</button><button class="btn primary" id="rollBtn" data-act="m-roll"' + (m.submitting || rollBlocker() ? ' disabled' : '') + '>' + (m.submitting ? '保存中…' : '掷骰') + '</button></div>';
+  return html;
+}
+function edgeStepper(key, label, cls) {
+  var n = S.modal[key];
+  return '<span class="stepper"><span class="hint">' + label + '</span>'
+    + '<button class="btn small" data-act="m-edge" data-key="' + key + '" data-delta="-1"' + (n ? '' : ' disabled') + '>−</button>'
+    + '<span class="val' + (n ? ' ' + cls : '') + '">' + n + '</span>'
+    + '<button class="btn small" data-act="m-edge" data-key="' + key + '" data-delta="1">+</button></span>';
+}
+function edgeNetText() {
+  var m = S.modal;
+  var net = m.advCount - m.disCount;
+  if (!m.advCount && !m.disCount) return '无优劣势';
+  if (!net) return '相互抵消，不掷优劣势骰';
+  return '抵消后' + (net > 0 ? '<span class="adv">优势</span>：加 1d6' : '<span class="dis">劣势</span>：减 1d6');
+}
+function rollSumText() {
+  var m = S.modal;
+  var blocker = rollBlocker();
+  if (blocker) return '<span class="mod-error">' + esc(blocker) + '</span>';
+  var exps = selectedExps();
+  var mod = modParts(m.mod);
+  var expSum = exps.reduce(function(sum, e) { return sum + e.mod; }, 0);
+  var text = '固定加值 ' + signed((m.trait ? rootNum(m.trait) : 0) + mod.flat + expSum)
+    + (mod.dice.length ? ' ' + esc(mod.dice.join(' ')) : '');
+  if (!exps.length) return text;
+  text += '，掷骰前自动花费 ' + exps.length + ' 希望';
+  return rootNum('希望') < exps.length ? text + '<br><span class="mod-error">当前希望 ' + rootNum('希望') + ' 点，不足以支付</span>' : text;
+}
+
+function weaponDamageExpr(w) {
+  var raw = str(w.damage).replace(/\s+/g, '').replace(/[^0-9dD+\-]/g, '').toLowerCase().replace(/[+\-]+$/, '');
+  if (!raw) return '';
+  if (raw.charAt(0) === 'd') raw = Math.max(1, rootNum('熟练值')) + raw;
+  return raw;
+}
+function openDamage(path) {
+  var w = getPath(S.model, path);
+  S.modal = { type: 'damage', expr: weaponDamageExpr(w), crit: false, reason: (w.name || '武器') + '伤害' };
+  renderModal();
+}
+// 关键成功的伤害 = 掷骰结果 + 伤害骰最大值，直接并入 .r 骰式。
+function critBonus(expr) {
+  var bonus = 0;
+  var re = /([+-]?)(\d*)d(\d+)/g, m;
+  while ((m = re.exec(str(expr).toLowerCase()))) {
+    if (m[1] !== '-') bonus += (m[2] ? Number(m[2]) : 1) * Number(m[3]);
+  }
+  return bonus;
+}
+function damageCommand() {
+  var m = S.modal;
+  var expr = str(m.expr).replace(/\s+/g, '');
+  var bonus = m.crit ? critBonus(expr) : 0;
+  var reason = cleanReason(m.reason) + (m.crit ? '（关键）' : '');
+  return '.r ' + expr + (bonus ? '+' + bonus : '') + (reason ? ' ' + reason : '');
+}
+function renderDamageModal() {
+  var m = S.modal;
+  return '<h3>' + esc(m.reason) + '</h3><div class="sub">骰数 = 熟练值（当前 ' + rootNum('熟练值') + '），使用 SealDice 的 .r 掷骰</div>'
+    + '<div class="mrow"><span>骰式</span><input class="field" data-modal="expr" value="' + esc(m.expr) + '" placeholder="2d8+2" style="width:140px"></div>'
+    + '<div class="mrow"><span>关键成功</span><label class="check"><input type="checkbox" data-modal="crit"' + (m.crit ? ' checked' : '') + '>额外加骰面最大值</label></div>'
+    + '<div class="cmd-preview" id="cmdPreview">' + esc(damageCommand()) + '</div>'
+    + '<div class="modal-actions"><button class="btn" data-act="m-close">取消</button><button class="btn primary" data-act="m-damage">掷伤害</button></div>';
+}
+
+function renderFearPrompt() {
+  var fear = fearCount();
+  return '<h3>可能是 GM 的人物卡</h3>'
+    + '<p style="margin:10px 0;line-height:1.7">这张卡记录了恐惧点，可能是 GM 所有，请点击右上角“⇄ 主持人界面”切换到 GM 界面或减去恐惧点。</p>'
+    + '<div class="sub">当前恐惧 ' + fear + ' 点；玩家卡可用 <code>.st 恐惧-' + fear + '</code> 清除。</div>'
+    + '<div class="modal-actions"><button class="btn primary" data-act="fear-prompt-close">知道了</button></div>';
+}
+// 玩家界面下卡上有恐惧点时提示一次；每次打开人物卡都会重新检查，只提示不切换。
+function maybePromptFear() {
+  if (S.ui.fearPromptShown || S.modal || isGmMode() || fearCount() <= 0) return;
+  S.ui.fearPromptShown = true;
+  S.modal = { type: 'fear-prompt' };
+  renderModal();
+}
+
+function renderModal() {
+  var overlay = document.getElementById('modal');
+  if (!S.modal) { overlay.classList.remove('active'); return; }
+  var type = S.modal.type;
+  document.getElementById('modalBox').innerHTML = type === 'roll' ? renderRollModal() : type === 'damage' ? renderDamageModal() : renderFearPrompt();
+  overlay.classList.add('active');
+}
+function closeModal() {
+  S.modal = null;
+  renderModal();
+}
+function updatePreview() {
+  var el = document.getElementById('cmdPreview');
+  if (el && S.modal) el.textContent = S.modal.type === 'roll' ? rollCommand() : damageCommand();
+  var sum = document.getElementById('rollSum');
+  if (sum && S.modal && S.modal.type === 'roll') sum.innerHTML = rollSumText();
+  var rollBtn = document.getElementById('rollBtn');
+  if (rollBtn && S.modal) rollBtn.disabled = !!S.modal.submitting || !!rollBlocker();
+}
+
+// ============================================================
+// 交互层
+// ============================================================
+function onFieldInput(el) {
+  if (el.dataset.root) {
+    var v = el.value.trim();
+    if (v === '' || !/^[+\-＋－]?\d+$/.test(v)) return;
+    setRoot(el.dataset.root, toInt(v, 0));
+    return;
+  }
+  if (el.dataset.path) {
+    setPath(S.model, el.dataset.path, el.value);
+    touchModel();
+  }
+}
+
+function onModalInput(el) {
+  var m = S.modal;
+  if (!m) return;
+  var key = el.dataset.modal;
+  if (key === 'mod') m.mod = el.value;
+  else if (key === 'reason') m.reason = el.value;
+  else if (key === 'dc') m.dc = el.value;
+  else if (key === 'expr') m.expr = el.value;
+  else if (key === 'reaction') m.reaction = el.checked;
+  else if (key === 'crit') m.crit = el.checked;
+  else if (key === 'trait') { m.trait = el.value; renderModal(); return; }
+  updatePreview();
+}
+
+document.addEventListener('input', function(e) {
+  var el = e.target;
+  if (el.dataset.modal) { onModalInput(el); return; }
+  if (el.dataset.modalExp != null) {
+    S.modal.exps[el.dataset.modalExp] = el.checked;
+    renderModal();
+    return;
+  }
+  if (el.dataset.root || el.dataset.path) onFieldInput(el);
+});
+
+document.addEventListener('change', function(e) {
+  var el = e.target;
+  if (el.tagName === 'SELECT' && el.dataset.path) {
+    setPath(S.model, el.dataset.path, el.value);
+    var clockSize = el.dataset.path.match(/^gm\.clocks\.(\d+)\.size$/);
+    if (clockSize) {
+      var clock = S.model.gm.clocks[Number(clockSize[1])];
+      clock.progress = Math.min(clock.progress, clock.size);
+    }
+    touchModel(true);
+    if (el.dataset.path === 'identity.spellcastTrait' || clockSize) render();
+  }
+});
+
+// 行内添加框（状态、聚光灯角色）：回车或失焦时有内容则添加，Esc 或空内容收起回“+”。
+var CHIP_INPUTS = {
+  condInput: { flag: 'addingCond', list: function() { return S.model.conditions; }, add: function(v) { return v; } },
+  spotInput: { flag: 'addingSpot', list: function() { return S.model.gm.spotlight; }, add: function(v) { return { name: v, acted: false }; } }
+};
+function commitChipInput(el) {
+  var cfg = CHIP_INPUTS[el.id];
+  var v = el.value.trim();
+  var list = cfg.list();
+  var exists = list.some(function(item) { return (isObj(item) ? item.name : item) === v; });
+  if (v && !exists) { list.push(cfg.add(v)); touchModel(true); }
+  S.ui[cfg.flag] = false;
+  el.value = '';
+}
+
+document.addEventListener('compositionstart', function() { S.composing = true; });
+document.addEventListener('compositionend', function(e) {
+  S.composing = false;
+  if (e.target.dataset && (e.target.dataset.path || e.target.dataset.root)) onFieldInput(e.target);
+});
+
+document.addEventListener('keydown', function(e) {
+  var el = e.target;
+  if (e.key === 'Escape' && S.modal) { closeModal(); return; }
+  if (e.key === 'Enter' && CHIP_INPUTS[el.id] && !e.isComposing) { commitChipInput(el); render(); return; }
+  if (e.key === 'Escape' && CHIP_INPUTS[el.id]) { el.value = ''; commitChipInput(el); render(); return; }
+  if (e.key === 'Enter' && S.modal && el.tagName === 'INPUT' && el.type !== 'checkbox' && !e.isComposing) {
+    e.preventDefault();
+    submitModal();
+    return;
+  }
+  if (e.key === 'Enter' && el.tagName === 'INPUT' && (el.dataset.root || el.dataset.path) && !e.isComposing) el.blur();
+});
+
+// 失焦时补交未保存内容；若宿主在编辑期间推送过数据，等焦点离开卡片后再重绘。
+document.addEventListener('focusout', function(e) {
+  var el = e.target;
+  if (CHIP_INPUTS[el.id]) {
+    if (!S.ui[CHIP_INPUTS[el.id].flag]) return;
+    commitChipInput(el);
+    setTimeout(function() { if (!isEditing()) render(); }, 250);
+    return;
+  }
+  if (!(el.dataset && (el.dataset.root || el.dataset.path))) return;
+  if (el.dataset.root) {
+    // 非法输入回退为当前值；属性统一显示正负号。
+    var v = rootNum(el.dataset.root);
+    el.value = SIGNED_ROOT_KEYS.indexOf(el.dataset.root) >= 0 ? signed(v) : v;
+  }
+  if (el.dataset.signed) el.value = signed(toInt(el.value, 0));
+  flushSave();
+  // 稍作延迟，避免重绘替换掉用户正要点击的按钮。
+  setTimeout(function() {
+    if (S.deferredRender && !isEditing()) render();
+  }, 250);
+});
+
+async function submitModal() {
+  if (!S.modal) return;
+  if (S.modal.type === 'roll') {
+    var modal = S.modal;
+    if (modal.submitting || rollBlocker()) return;
+    if (S.composing) {
+      modal.error = '请先完成输入后再掷骰';
+      renderModal();
+      return;
+    }
+    var label = modal.reason || (modal.trait ? modal.trait + '检定' : '二元骰');
+    var command = rollCommand();
+    modal.submitting = true;
+    modal.error = '';
+    renderModal();
+    try {
+      // 先将模板内的修改交给宿主，再等待服务端人物卡保存完成。
+      flushSave();
+      await window.sealchat.flushAttrs();
+      if (S.modal !== modal) return;
+      window.sealchat.roll(command, label, {});
+      closeModal();
+    } catch (error) {
+      modal.error = '人物卡保存失败，本次未掷骰，请重试';
+    } finally {
+      modal.submitting = false;
+      if (S.modal === modal) renderModal();
+    }
+    return;
+  } else {
+    if (!str(S.modal.expr).trim()) return;
+    window.sealchat.roll(damageCommand(), S.modal.reason, {});
+  }
+  closeModal();
+}
+
+function adjustSlots(id, delta) {
+  var t = TRACKS[id];
+  var st = trackState(id);
+  var nextMax = clamp(st.max + delta, t.maxRange[0], t.maxRange[1]);
+  var patch = {};
+  patch[t.max] = nextMax;
+  if (st.current > nextMax) patch[t.cur] = nextMax;
+  setRoots(patch, true);
+  render();
+}
+
+function clickPip(id, index) {
+  var t = TRACKS[id];
+  var st = trackState(id);
+  // 点击最后一个已标记的格子会取消它，其余位置直接设为该格。
+  var next = index + 1 === st.current ? index : index + 1;
+  setRoot(t.cur, next, true);
+  render();
+}
+
+// ---------- 主持人界面操作 ----------
+function toggleMode() {
+  if (!(S.ui.modeConfirmUntil && Date.now() < S.ui.modeConfirmUntil)) {
+    S.ui.modeConfirmUntil = Date.now() + MODE_CONFIRM_MS;
+    render();
+    setTimeout(function() {
+      if (S.ui.modeConfirmUntil && Date.now() >= S.ui.modeConfirmUntil) { S.ui.modeConfirmUntil = 0; if (!isEditing()) render(); }
+    }, MODE_CONFIRM_MS + 50);
+    return;
+  }
+  S.ui.modeConfirmUntil = 0;
+  S.model.mode = isGmMode() ? 'player' : 'gm';
+  // 卡上还没有恐惧时写入 0，插件之后在此基础上累加。
+  if (S.model.mode === 'gm' && S.attrs[FEAR_KEY] == null) setRoot(FEAR_KEY, 0);
+  touchModel(true);
+  S.tab = '';
+  S.ui.fearPromptShown = true;
+  render();
+}
+
+function setFear(value) {
+  setRoot(FEAR_KEY, clamp(value, 0, FEAR_MAX), true);
+  render();
+}
+
+function stepGold(index, delta) {
+  var total = GOLD.reduce(function(sum, g) { return sum + clamp(rootNum(g.key), 0, g.max) * g.value; }, 0) + delta * GOLD[index].value;
+  if (total < 0) return;
+  total = Math.min(total, 199);
+  var patch = {};
+  patch['金币箱'] = Math.floor(total / 100);
+  patch['金币袋'] = Math.floor((total % 100) / 10);
+  patch['金币把'] = total % 10;
+  setRoots(patch, true);
+  render();
+}
+
+function applyThresholds() {
+  var m = str(S.model.armor.baseThresholds).match(/(\d+)\D+(\d+)/);
+  if (!m) return;
+  var level = Math.max(1, rootNum('等级'));
+  setRoots({ '重伤阈值': Number(m[1]) + level, '严重阈值': Number(m[2]) + level }, true);
+  render();
+}
+
+document.addEventListener('click', function(e) {
+  var target = e.target;
+  if (target.id === 'modal') { closeModal(); return; }
+  var actEl = target.closest('[data-act]');
+  if (!actEl) return;
+  var act = actEl.dataset.act;
+  var d = actEl.dataset;
+  if (act === 'tab') { flushSave(); S.tab = d.tab; render(); return; }
+  if (act === 'cond-add') {
+    S.ui.addingCond = true;
+    render();
+    var ci = document.getElementById('condInput');
+    if (ci) ci.focus();
+    return;
+  }
+  if (act === 'roll-trait') { openRoll({ trait: d.trait, reason: d.label || '' }); return; }
+  if (act === 'roll-free') { openRoll({}); return; }
+  if (act === 'weapon-attack') {
+    var w = getPath(S.model, d.path);
+    openRoll({ trait: w.trait, reason: (w.name || '武器') + '攻击' });
+    return;
+  }
+  if (act === 'weapon-damage') { openDamage(d.path); return; }
+  if (act === 'pip') { clickPip(d.track, Number(d.index)); return; }
+  if (act === 'mode-toggle') { flushSave(); toggleMode(); return; }
+  if (act === 'fear-pip') { var idx = Number(d.index); setFear(idx + 1 === fearCount() ? idx : idx + 1); return; }
+  if (act === 'spot-toggle') { var sp = S.model.gm.spotlight[Number(d.index)]; sp.acted = !sp.acted; touchModel(true); render(); return; }
+  if (act === 'spot-reset') { S.model.gm.spotlight.forEach(function(p) { p.acted = false; }); touchModel(true); render(); return; }
+  if (act === 'spot-add') {
+    S.ui.addingSpot = true;
+    render();
+    var si = document.getElementById('spotInput');
+    if (si) si.focus();
+    return;
+  }
+  if (act === 'clock-add') { S.model.gm.clocks.push({ name: '', size: 6, kind: CLOCK_KINDS[0], progress: 0, archived: false }); touchModel(true); render(); return; }
+  if (act === 'clock-pip') {
+    var ck = S.model.gm.clocks[Number(d.index)];
+    var seg = Number(d.seg);
+    ck.progress = seg + 1 === ck.progress ? seg : seg + 1;
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'clock-archive') { var ca = S.model.gm.clocks[Number(d.index)]; ca.archived = !ca.archived; touchModel(true); render(); return; }
+  if (act === 'clock-show-archived') { S.ui.showArchived = !S.ui.showArchived; render(); return; }
+  if (act === 'fear-prompt-close') { closeModal(); return; }
+  if (act === 'slots') { adjustSlots(d.track, Number(d.delta)); return; }
+  if (act === 'cond-toggle') {
+    var conds = S.model.conditions;
+    var at = conds.indexOf(d.cond);
+    if (at >= 0) conds.splice(at, 1); else conds.push(d.cond);
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'cond-remove') { S.model.conditions.splice(Number(d.index), 1); touchModel(true); render(); return; }
+  if (act === 'exp-add') { S.model.experiences.push({ name: '', mod: 2 }); touchModel(true); render(); return; }
+  if (act === 'backup-add') { S.model.weapons.backups.push(blankWeapon()); touchModel(true); render(); return; }
+  if (act === 'card-add') { S.model.domainCards.push({ name: '', domain: '', level: '', recall: '', tracker: '', location: d.location === 'vault' ? 'vault' : 'loadout', text: '' }); touchModel(true); render(); return; }
+  if (act === 'card-move') {
+    var card = S.model.domainCards[Number(d.index)];
+    card.location = card.location === 'vault' ? 'loadout' : 'vault';
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'list-remove') {
+    var list = getPath(S.model, d.list);
+    list.splice(Number(d.index), 1);
+    touchModel(true);
+    render();
+    return;
+  }
+  if (act === 'gold') { stepGold(Number(d.gold), Number(d.delta)); return; }
+  if (act === 'apply-thresholds') { applyThresholds(); return; }
+  if (act === 'm-edge') {
+    var count = S.modal[d.key] + Number(d.delta);
+    if (count < 0 || count > EDGE_MAX || (Number(d.delta) > 0 && S.modal.advCount + S.modal.disCount >= EDGE_TOTAL_MAX)) return;
+    S.modal[d.key] = count;
+    renderModal();
+    return;
+  }
+  if (act === 'm-close') { closeModal(); return; }
+  if (act === 'm-roll' || act === 'm-damage') { submitModal(); return; }
+});
+
+document.addEventListener('visibilitychange', function() { if (document.hidden) flushSave(); });
+window.addEventListener('pagehide', flushSave);
+
+window.sealchat.onUpdate(onHostUpdate);
+</script>
+</body>
+</html>

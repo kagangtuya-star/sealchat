@@ -39,3 +39,11 @@ export interface PlatformTheme {
 }
 
 export type ThemeSelectionMode = 'inherit' | 'platform' | 'personal' | 'none'
+
+// 日间/夜间各自绑定的主题来源；inherit 表示跟随平台对应时段的默认主题
+export type PaletteThemeSource = 'inherit' | 'platform' | 'personal' | 'none'
+
+export interface PaletteThemeBinding {
+  source: PaletteThemeSource
+  themeId: string | null
+}

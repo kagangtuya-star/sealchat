@@ -31,12 +31,16 @@ const emit = defineEmits<{
 }>();
 
 const hostRef = ref<HTMLElement | null>(null);
+const baseRef = ref<HTMLElement | null>(null);
 // Playback callbacks compare the original engine by identity; deep refs proxy it and drop every state update.
 const playback = shallowRef<ReturnType<typeof createTwinLayerPlayback> | null>(null);
 const visibleText = ref('');
 const waiting = ref(false);
 const playing = ref(false);
 const completed = ref(false);
+// 逻辑完成仍按引擎通知父级；仅切层样式等待实际进入动画收尾。
+let visualCompleted = false;
+let skipEnterAnimations = false;
 const overlayTextRef = ref<HTMLElement | null>(null);
 const mounted = ref(false);
 let trackingSegmentIndex = 0;
@@ -94,7 +98,7 @@ const syncDom = () => {
   if (!root) return;
   root.classList.toggle('is-waiting', waiting.value);
   root.classList.toggle('is-playing', playing.value);
-  root.classList.toggle('is-completed', completed.value);
+  root.classList.toggle('is-completed', visualCompleted);
   root.classList.toggle('has-blur-backdrop', hasBlurBackdrop.value);
   root.classList.toggle('has-hidden-backdrop', hasHiddenBackdrop.value);
 };
@@ -105,6 +109,46 @@ const clearOverlayDom = () => {
   if (overlayTextRef.value) {
     overlayTextRef.value.textContent = '';
   }
+};
+
+const prepareBasePerformanceDom = () => {
+  const root = baseRef.value;
+  if (!root) return;
+  root.querySelectorAll<HTMLElement>('.tiptap-performance').forEach((performance) => {
+    if (performance.dataset.performanceCharsPrepared === 'true') return;
+    performance.dataset.performanceCharsPrepared = 'true';
+    const walker = document.createTreeWalker(performance, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let current = walker.nextNode();
+    while (current) {
+      const parent = current.parentElement;
+      if (parent && !parent.closest('rt') && parent.closest('.tiptap-performance') === performance) {
+        textNodes.push(current as Text);
+      }
+      current = walker.nextNode();
+    }
+    let charIndex = 0;
+    const renderedChars: HTMLElement[] = [];
+    textNodes.forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      const segments = node.data.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*|\s+|./gu) || [];
+      segments.forEach((segment) => {
+        if (/^\s+$/u.test(segment)) {
+          fragment.append(segment);
+          return;
+        }
+        const span = document.createElement('span');
+        span.className = 'twin-layer-message__base-char';
+        span.style.setProperty('--performance-char-index', String(charIndex));
+        span.textContent = segment;
+        renderedChars.push(span);
+        charIndex += 1;
+        fragment.appendChild(span);
+      });
+      node.replaceWith(fragment);
+    });
+    renderedChars[renderedChars.length - 1]?.classList.add('twin-layer-message__base-char--tail');
+  });
 };
 
 const appendTextDecoration = (span: HTMLElement, value: string) => {
@@ -278,6 +322,24 @@ const renderFinalOverlay = () => {
   waiting.value = false;
   playing.value = false;
   completed.value = true;
+  visualCompleted = true;
+  syncDom();
+};
+
+const finishOverlay = async (engine: ReturnType<typeof createTwinLayerPlayback>) => {
+  if (!skipEnterAnimations) {
+    const animations = overlayTextRef.value?.getAnimations?.({ subtree: true }).filter((animation) => (
+      typeof CSSAnimation !== 'undefined'
+      && animation instanceof CSSAnimation
+      && animation.animationName.startsWith('sc-performance-enter-')
+      && animation.playState === 'running'
+      && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+    )) || [];
+    // 只等待实际运行中的进入动画；暂停、取消或不支持 CSSAnimation 的环境直接回退切层。
+    await Promise.allSettled(animations.map((animation) => animation.finished));
+  }
+  if (engine !== playback.value) return;
+  visualCompleted = true;
   syncDom();
 };
 
@@ -321,6 +383,7 @@ const startPlayback = async () => {
   debug('start', { instructionCount: instructions.value.length });
   await engine.play();
   if (engine === playback.value && engine.getState() === 'completed') {
+    void finishOverlay(engine);
     debug('completed');
     emit('completed');
   }
@@ -336,12 +399,20 @@ const disposePlayback = () => {
 const replay = async () => {
   disposePlayback();
   clearOverlayDom();
+  visualCompleted = false;
+  skipEnterAnimations = false;
   syncDom();
   await startPlayback();
 };
 
 const skip = () => {
   debug('skip');
+  skipEnterAnimations = true;
+  if (playback.value?.getState() === 'completed') {
+    visualCompleted = true;
+    syncDom();
+    return;
+  }
   playback.value?.skip();
   refreshState();
 };
@@ -355,6 +426,7 @@ const handleOverlayClick = () => {
 };
 
 const renderCurrentContent = () => {
+  prepareBasePerformanceDom();
   if (!props.autoplay) {
     disposePlayback();
     renderFinalOverlay();
@@ -363,8 +435,12 @@ const renderCurrentContent = () => {
   void replay();
 };
 
-watch(() => [props.content, props.autoplay], () => {
+watch(() => [props.content, props.autoplay] as const, ([content, autoplay], [previousContent]) => {
   if (!mounted.value) {
+    return;
+  }
+  // 剧场模式收到逻辑完成后会关闭 autoplay，保留本轮 overlay 的视觉收尾。
+  if (content === previousContent && !autoplay && playback.value?.getState() === 'completed') {
     return;
   }
   void nextTick(renderCurrentContent);
@@ -386,7 +462,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="hostRef" class="twin-layer-message">
-    <div class="twin-layer-message__base" v-html="baseHtml"></div>
+    <div ref="baseRef" class="twin-layer-message__base" v-html="baseHtml"></div>
     <div class="twin-layer-message__overlay" aria-hidden="true" @click.stop="handleOverlayClick">
       <span ref="overlayTextRef" class="twin-layer-message__overlay-text"></span>
     </div>
@@ -452,10 +528,12 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
+/* 演出结构属于功能样式：主题可以改字体/颜色，但不应破坏逐字动画节点。 */
+:root[data-sc-surface] .tiptap-performance,
 .twin-layer-message__overlay-text .tiptap-performance,
 .twin-layer-message__base .tiptap-performance {
-  display: inline-block;
-  transform-origin: center;
+  display: inline-block !important;
+  transform-origin: center !important;
   --performance-scale: scale(1);
   --performance-tone-intensity: 0;
   --performance-char-index: 0;
@@ -468,14 +546,19 @@ onBeforeUnmount(() => {
   filter: brightness(var(--performance-tone-brightness));
 }
 
-.twin-layer-message__char {
-  display: inline-block;
-  transform-origin: center;
+:root[data-sc-surface] .twin-layer-message__char {
+  display: inline-block !important;
+  transform-origin: center !important;
 }
 
-.twin-layer-message__char-glyph {
-  display: inline-block;
-  transform-origin: center;
+:root[data-sc-surface] .twin-layer-message__char-glyph {
+  display: inline-block !important;
+  transform-origin: center !important;
+}
+
+:root[data-sc-surface] .twin-layer-message__base .twin-layer-message__base-char {
+  display: inline-block !important;
+  transform-origin: center !important;
 }
 
 .twin-layer-message__char--code {
@@ -486,103 +569,147 @@ onBeforeUnmount(() => {
   font-family: var(--sc-code-font, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
 
-.fx-wave {
-  animation: performance-wave 2.6s cubic-bezier(.45,.05,.2,1) infinite;
-  animation-delay: calc(var(--performance-char-index) * -150ms);
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wave .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-wave,
+:root[data-sc-surface] .twin-layer-message .fx-wave {
+  animation: sc-performance-wave 2.6s cubic-bezier(.45,.05,.2,1) infinite !important;
+  animation-delay: calc(var(--performance-char-index) * -150ms) !important;
 }
 
-.fx-shake {
-  animation: performance-shake 0.24s linear infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-shake .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-shake,
+:root[data-sc-surface] .twin-layer-message .fx-shake {
+  animation: sc-performance-shake 0.24s linear infinite !important;
 }
 
-.fx-rainbow {
-  animation: performance-rainbow 1.8s linear infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-rainbow .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-rainbow,
+:root[data-sc-surface] .twin-layer-message .fx-rainbow {
+  animation: sc-performance-rainbow 1.8s linear infinite !important;
 }
 
-.fx-glitch {
-  animation: performance-glitch 0.65s steps(2, end) infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-glitch .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-glitch,
+:root[data-sc-surface] .twin-layer-message .fx-glitch {
+  animation: sc-performance-glitch 0.65s steps(2, end) infinite !important;
 }
 
-.fx-blink {
-  animation: performance-blink 1.6s ease-in-out infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-blink .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-blink,
+:root[data-sc-surface] .twin-layer-message .fx-blink {
+  animation: sc-performance-blink 1.6s ease-in-out infinite !important;
 }
 
-.fx-glow {
-  animation: performance-glow 2.8s ease-in-out infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-glow .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-glow,
+:root[data-sc-surface] .twin-layer-message .fx-glow {
+  animation: sc-performance-glow 2.8s ease-in-out infinite !important;
 }
 
-.fx-pulse {
-  animation: performance-pulse 1.8s ease-in-out infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-pulse .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-pulse,
+:root[data-sc-surface] .twin-layer-message .fx-pulse {
+  animation: sc-performance-pulse 1.8s ease-in-out infinite !important;
 }
 
-.fx-float {
-  animation: performance-float 3.2s ease-in-out infinite;
-  animation-delay: calc(var(--performance-char-index) * -110ms);
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-float .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-float,
+:root[data-sc-surface] .twin-layer-message .fx-float {
+  animation: sc-performance-float 3.2s ease-in-out infinite !important;
+  animation-delay: calc(var(--performance-char-index) * -110ms) !important;
 }
 
 /* 摇摆以字符底部为支点；选择器需压过 base 层 .tiptap-performance 的 transform-origin，且只作用于 sway。 */
-.twin-layer-message__char-glyph.fx-sway,
-.tiptap-performance.fx-sway {
-  transform-origin: center bottom;
+:root[data-sc-surface] .twin-layer-message__char-glyph.fx-sway,
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-sway .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-sway {
+  transform-origin: center bottom !important;
 }
 
-.fx-sway {
-  animation: performance-sway 2.6s ease-in-out infinite;
-  animation-delay: calc(var(--performance-char-index) * -90ms);
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-sway .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-sway,
+:root[data-sc-surface] .twin-layer-message .fx-sway {
+  animation: sc-performance-sway 2.6s ease-in-out infinite !important;
+  animation-delay: calc(var(--performance-char-index) * -90ms) !important;
 }
 
 /* 心跳整段同步，不做逐字错相，避免变成波浪式缩放。 */
-.fx-heartbeat {
-  animation: performance-heartbeat 1.8s ease-out infinite;
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-heartbeat .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-heartbeat,
+:root[data-sc-surface] .twin-layer-message .fx-heartbeat {
+  animation: sc-performance-heartbeat 1.8s ease-out infinite !important;
 }
 
-.fx-wobble {
-  animation: performance-wobble 1.8s ease-in-out infinite;
-  animation-delay: calc(var(--performance-char-index) * -70ms);
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wobble .twin-layer-message__base-char,
+:root[data-sc-surface] .tiptap-performance.fx-wobble,
+:root[data-sc-surface] .twin-layer-message .fx-wobble {
+  animation: sc-performance-wobble 1.8s ease-in-out infinite !important;
+  animation-delay: calc(var(--performance-char-index) * -70ms) !important;
 }
 
-.enter-blur {
-  animation: performance-enter-blur 0.42s ease-out both;
+/* 段尾字形只保留轻微位移/旋转，避免非等比缩放让标点或复杂汉字显得变形。 */
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance.fx-wobble .twin-layer-message__base-char--tail {
+  animation-name: sc-performance-wobble-tail !important;
 }
 
-.enter-typewriter {
-  animation: performance-enter-typewriter calc(140ms + (10 - var(--performance-enter-speed, 5)) * 26ms) cubic-bezier(.17,.84,.44,1) both;
+:root[data-sc-surface] .tiptap-performance.enter-blur,
+:root[data-sc-surface] .twin-layer-message .enter-blur {
+  animation: sc-performance-enter-blur 0.42s ease-out both !important;
+}
+
+:root[data-sc-surface] .tiptap-performance.enter-typewriter,
+:root[data-sc-surface] .twin-layer-message .enter-typewriter {
+  animation: sc-performance-enter-typewriter calc(140ms + (10 - var(--performance-enter-speed, 5)) * 26ms) cubic-bezier(.17,.84,.44,1) both !important;
 }
 
 /* 进入动画挂在字符外层 span，持续效果挂在内层 glyph，两者 transform 逐层叠加。 */
-.enter-fade {
-  animation: performance-enter-fade calc(220ms + (10 - var(--performance-enter-speed, 5)) * 34ms) ease-out both;
+:root[data-sc-surface] .tiptap-performance.enter-fade,
+:root[data-sc-surface] .twin-layer-message .enter-fade {
+  animation: sc-performance-enter-fade calc(220ms + (10 - var(--performance-enter-speed, 5)) * 34ms) ease-out both !important;
 }
 
-.enter-rise {
-  animation: performance-enter-rise calc(240ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.17,.84,.44,1) both;
+:root[data-sc-surface] .tiptap-performance.enter-rise,
+:root[data-sc-surface] .twin-layer-message .enter-rise {
+  animation: sc-performance-enter-rise calc(240ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.17,.84,.44,1) both !important;
 }
 
-.enter-drop {
-  animation: performance-enter-drop calc(260ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.3,.7,.4,1) both;
+:root[data-sc-surface] .tiptap-performance.enter-drop,
+:root[data-sc-surface] .twin-layer-message .enter-drop {
+  animation: sc-performance-enter-drop calc(260ms + (10 - var(--performance-enter-speed, 5)) * 34ms) cubic-bezier(.3,.7,.4,1) both !important;
 }
 
-.enter-zoom {
-  animation: performance-enter-zoom calc(240ms + (10 - var(--performance-enter-speed, 5)) * 30ms) cubic-bezier(.2,.8,.3,1) both;
+:root[data-sc-surface] .tiptap-performance.enter-zoom,
+:root[data-sc-surface] .twin-layer-message .enter-zoom {
+  animation: sc-performance-enter-zoom calc(240ms + (10 - var(--performance-enter-speed, 5)) * 30ms) cubic-bezier(.2,.8,.3,1) both !important;
 }
 
-.enter-tracking {
-  animation: performance-enter-tracking calc(280ms + (10 - var(--performance-enter-speed, 5)) * 36ms) cubic-bezier(.17,.84,.44,1) both;
+:root[data-sc-surface] .tiptap-performance.enter-tracking,
+:root[data-sc-surface] .twin-layer-message .enter-tracking {
+  animation: sc-performance-enter-tracking calc(280ms + (10 - var(--performance-enter-speed, 5)) * 36ms) cubic-bezier(.17,.84,.44,1) both !important;
 }
 
-.enter-flash {
-  animation: performance-enter-flash calc(260ms + (10 - var(--performance-enter-speed, 5)) * 30ms) linear both;
+:root[data-sc-surface] .tiptap-performance.enter-flash,
+:root[data-sc-surface] .twin-layer-message .enter-flash {
+  animation: sc-performance-enter-flash calc(260ms + (10 - var(--performance-enter-speed, 5)) * 30ms) linear both !important;
 }
 
-.enter-glitch {
-  animation: performance-enter-glitch calc(280ms + (10 - var(--performance-enter-speed, 5)) * 30ms) steps(1, end) both;
+:root[data-sc-surface] .tiptap-performance.enter-glitch,
+:root[data-sc-surface] .twin-layer-message .enter-glitch {
+  animation: sc-performance-enter-glitch calc(280ms + (10 - var(--performance-enter-speed, 5)) * 30ms) steps(1, end) both !important;
 }
 
-.enter-slam {
-  animation: performance-enter-slam calc(180ms + (10 - var(--performance-enter-speed, 5)) * 22ms) both;
+:root[data-sc-surface] .tiptap-performance.enter-slam,
+:root[data-sc-surface] .twin-layer-message .enter-slam {
+  animation: sc-performance-enter-slam calc(180ms + (10 - var(--performance-enter-speed, 5)) * 22ms) both !important;
 }
 
-@keyframes performance-wave {
+:root[data-sc-surface] .twin-layer-message__base .tiptap-performance {
+  display: inline !important;
+  animation: none !important;
+  transform: none !important;
+}
+
+@keyframes sc-performance-wave {
   0%, 100% { transform: var(--performance-scale) translateY(0.04em) skewX(0deg) scaleY(1); }
   18% { transform: var(--performance-scale) translateY(-0.06em) skewX(calc(var(--performance-tone-skew) * 0.04)) scaleY(1.01); }
   38% { transform: var(--performance-scale) translateY(-0.22em) skewX(calc(var(--performance-tone-skew) * 0.1)) scaleY(1.04); }
@@ -590,13 +717,13 @@ onBeforeUnmount(() => {
   78% { transform: var(--performance-scale) translateY(0.12em) skewX(calc(var(--performance-tone-skew) * -0.09)) scaleY(0.97); }
 }
 
-@keyframes performance-shake {
+@keyframes sc-performance-shake {
   0%, 100% { transform: var(--performance-scale) translateX(0); }
   25% { transform: var(--performance-scale) translateX(-0.04em); }
   75% { transform: var(--performance-scale) translateX(0.04em); }
 }
 
-@keyframes performance-rainbow {
+@keyframes sc-performance-rainbow {
   0% { color: #ef4444; }
   25% { color: #f59e0b; }
   50% { color: #10b981; }
@@ -604,7 +731,7 @@ onBeforeUnmount(() => {
   100% { color: #ef4444; }
 }
 
-@keyframes performance-glitch {
+@keyframes sc-performance-glitch {
   0%, 100% {
     transform: var(--performance-scale) translate(0) skewX(0deg);
     text-shadow: none;
@@ -645,7 +772,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes performance-blink {
+@keyframes sc-performance-blink {
   0%, 14%, 32%, 100% { opacity: 1; filter: brightness(var(--performance-tone-brightness)); }
   18% { opacity: 0.62; filter: brightness(calc(var(--performance-tone-brightness) * 0.9)); }
   24% { opacity: 0.96; filter: brightness(calc(var(--performance-tone-brightness) * 1.04)); }
@@ -653,12 +780,12 @@ onBeforeUnmount(() => {
   82% { opacity: 0.88; filter: brightness(calc(var(--performance-tone-brightness) * 1.06)); }
 }
 
-@keyframes performance-enter-blur {
+@keyframes sc-performance-enter-blur {
   from { opacity: 0; filter: blur(8px); }
   to { opacity: 1; filter: blur(0); }
 }
 
-@keyframes performance-enter-typewriter {
+@keyframes sc-performance-enter-typewriter {
   0% {
     opacity: 0;
     transform: var(--performance-scale);
@@ -671,7 +798,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes performance-glow {
+@keyframes sc-performance-glow {
   0%, 100% {
     text-shadow: 0 0 0.1em color-mix(in srgb, currentColor 30%, transparent);
   }
@@ -682,26 +809,26 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes performance-pulse {
+@keyframes sc-performance-pulse {
   0%, 100% { opacity: 1; transform: var(--performance-scale) scale(1); }
   50% { opacity: 0.8; transform: var(--performance-scale) scale(1.06); }
 }
 
-@keyframes performance-float {
+@keyframes sc-performance-float {
   0%, 100% { transform: var(--performance-scale) translate(0, 0); }
   25% { transform: var(--performance-scale) translate(0.02em, -0.06em); }
   50% { transform: var(--performance-scale) translate(0, -0.12em); }
   75% { transform: var(--performance-scale) translate(-0.02em, -0.06em); }
 }
 
-@keyframes performance-sway {
+@keyframes sc-performance-sway {
   0%, 100% { transform: var(--performance-scale) translateX(0) rotate(0deg); }
   25% { transform: var(--performance-scale) translate(0.015em, -0.02em) rotate(2deg); }
   50% { transform: var(--performance-scale) translateX(0) rotate(0deg); }
   75% { transform: var(--performance-scale) translate(-0.015em, -0.02em) rotate(-2deg); }
 }
 
-@keyframes performance-heartbeat {
+@keyframes sc-performance-heartbeat {
   0%, 55%, 100% { transform: var(--performance-scale) scale(1); }
   8% { transform: var(--performance-scale) scale(1.12); }
   14% { transform: var(--performance-scale) scale(1); }
@@ -709,7 +836,7 @@ onBeforeUnmount(() => {
   30% { transform: var(--performance-scale) scale(1); }
 }
 
-@keyframes performance-wobble {
+@keyframes sc-performance-wobble {
   0%, 100% { transform: var(--performance-scale) rotate(0deg) scale(1, 1); }
   20% { transform: var(--performance-scale) translateX(0.01em) rotate(-1.5deg) scale(1.04, 0.96); }
   40% { transform: var(--performance-scale) translateY(-0.01em) rotate(1deg) scale(0.97, 1.05); }
@@ -717,30 +844,38 @@ onBeforeUnmount(() => {
   80% { transform: var(--performance-scale) translateX(-0.01em) rotate(1.5deg) scale(0.96, 1.04); }
 }
 
-@keyframes performance-enter-fade {
+@keyframes sc-performance-wobble-tail {
+  0%, 100% { transform: var(--performance-scale) rotate(0deg); }
+  20% { transform: var(--performance-scale) translateX(0.005em) rotate(-0.45deg); }
+  40% { transform: var(--performance-scale) translateY(-0.005em) rotate(0.35deg); }
+  60% { transform: var(--performance-scale) rotate(0deg); }
+  80% { transform: var(--performance-scale) translateX(-0.005em) rotate(0.45deg); }
+}
+
+@keyframes sc-performance-enter-fade {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-@keyframes performance-enter-rise {
+@keyframes sc-performance-enter-rise {
   from { opacity: 0; transform: var(--performance-scale) translateY(0.5em); }
   to { opacity: 1; transform: var(--performance-scale); }
 }
 
-@keyframes performance-enter-drop {
+@keyframes sc-performance-enter-drop {
   0% { opacity: 0; transform: var(--performance-scale) translateY(-0.7em); }
   65% { opacity: 1; transform: var(--performance-scale) translateY(0.06em); }
   100% { opacity: 1; transform: var(--performance-scale); }
 }
 
-@keyframes performance-enter-zoom {
+@keyframes sc-performance-enter-zoom {
   0% { opacity: 0; transform: var(--performance-scale) scale(0.35); }
   70% { opacity: 1; transform: var(--performance-scale) scale(1.08); }
   100% { opacity: 1; transform: var(--performance-scale); }
 }
 
 /* 只位移字符本身，不改真实 letter-spacing，避免播放中整行重排。 */
-@keyframes performance-enter-tracking {
+@keyframes sc-performance-enter-tracking {
   from {
     opacity: 0;
     transform: var(--performance-scale) translateX(var(--performance-tracking-offset, 0.2em));
@@ -748,7 +883,7 @@ onBeforeUnmount(() => {
   to { opacity: 1; transform: var(--performance-scale); }
 }
 
-@keyframes performance-enter-flash {
+@keyframes sc-performance-enter-flash {
   0% { opacity: 0; }
   18% { opacity: 1; text-shadow: 0 0 0.32em currentColor; }
   36% { opacity: 0.25; }
@@ -757,7 +892,7 @@ onBeforeUnmount(() => {
   100% { opacity: 1; }
 }
 
-@keyframes performance-enter-glitch {
+@keyframes sc-performance-enter-glitch {
   0% {
     opacity: 0;
     transform: var(--performance-scale) translateX(-0.14em) skewX(-14deg);
@@ -791,7 +926,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes performance-enter-slam {
+@keyframes sc-performance-enter-slam {
   0% {
     opacity: 0;
     transform: var(--performance-scale) scale(2.4);

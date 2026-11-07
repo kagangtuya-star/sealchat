@@ -36,6 +36,7 @@ type AudioAssetFilters struct {
 	Scope             model.AudioAssetScope
 	WorldID           *string
 	IncludeCommon     bool
+	ViewerID          string     // 非空时隐藏他人上传的受限素材
 	SearchOrder       bool       // Internal: timestamp/ID order for bounded search candidates.
 	UpdatedFrom       *time.Time // Internal: inclusive query bounds; not persisted.
 	UpdatedTo         *time.Time
@@ -585,6 +586,9 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			} else {
 				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 			}
+		}
+		if filters.ViewerID != "" {
+			q = q.Where("(visibility IS NULL OR visibility <> ? OR created_by = ?)", model.AudioVisibilityRestricted, filters.ViewerID)
 		}
 		if filters.SearchOrder {
 			return q.Order("updated_at DESC, id DESC")

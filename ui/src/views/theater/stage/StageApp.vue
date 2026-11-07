@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Konva from 'konva'
+import type { Filter as KonvaFilter } from 'konva/lib/Node'
 import StageSurfaceVariants from './StageSurfaceVariants.vue'
 import { surfaceVariantsFor, type SurfaceVariantOperation } from '../shared/stage-surface-variants'
 import { stageSurfaceTransitionTypes, type StageSurfaceVariants as SurfaceVariants } from '../shared/stage-types'
@@ -72,6 +73,7 @@ import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnaps
 import { useUtilsStore } from '@/stores/utils'
 import { generateInternalSurfaceLink, parseInternalSurfaceLink, resolveInternalSurfaceLinkBase } from '@/utils/internalSurfaceLink'
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
+import { uuid } from '@/utils/uuid'
 import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
@@ -5103,7 +5105,7 @@ const handleTheaterWindowBlur = () => {
   const objectId = activeElement.dataset.stageObjectId
   const object = objectId ? getObject(objectId) : null
   if (!object || object.type !== 'iframe' || !object.interactive) return
-  props.store.selectObject(objectId)
+  props.store.selectObject(object.id)
   nextTick(updateTransformer)
 }
 
@@ -6533,7 +6535,7 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, target: StageSurfaceTarget,
   const group = new Konva.Group()
   const transitionGroup = new Konva.Group({ listening: false })
   const base = withBase ? new Konva.Rect({ listening: false }) : null
-  const directImage = new Konva.Image({ visible: false, listening: false })
+  const directImage = new Konva.Image({ image: undefined, visible: false, listening: false })
   let slot: SurfaceSlot
   const media = new Konva.Shape({
     visible: false,
@@ -6609,7 +6611,7 @@ const surfaceMediaFxOverscanScale = (slot: SurfaceSlot, style: StageSurfaceStyle
 // Media FX basic filter, fit / zoom rect), drawn into the live staging raster. The filter
 // string is the one the media shape uses on its own canvas, so the live frame matches the
 // original look before advanced / temporal are applied on top.
-const drawSurfaceLiveFrame = (slot: SurfaceSlot, context: CanvasRenderingContext2D, video: HTMLVideoElement, raster: { width: number, height: number }) => {
+const drawSurfaceLiveFrame = (slot: SurfaceSlot, context: CanvasRenderingContext2D, video: HTMLVideoElement, raster: { width: number, height: number, pixelRatio: number }) => {
   const width = slot.placeholder.width()
   const height = slot.placeholder.height()
   const style = slot.style
@@ -6732,7 +6734,7 @@ const surfaceMediaFxTemporal = (slot: SurfaceSlot, source: StageMediaSource) => 
 // Konva 10.3 parses mixed CSS/function filters through an incomplete fallback.
 // Apply the full native CSS chain to the pixels AFTER the legacy function filters.
 // These temporary canvases are not node caches and never mutate filter attributes.
-const surfaceMediaFxCanvasFilter = (css: string): Konva.Filter => (imageData: ImageData) => {
+const surfaceMediaFxCanvasFilter = (css: string): KonvaFilter => (imageData: ImageData) => {
   const source = document.createElement('canvas')
   const output = document.createElement('canvas')
   source.width = output.width = imageData.width
@@ -6819,7 +6821,7 @@ const updateDirectSurfaceImage = (
   slot.directImage.size({ width: rect.width, height: rect.height })
   slot.directImage.crop({ x: 0, y: 0, width: Math.max(1, dimensions.width), height: Math.max(1, dimensions.height) })
   slot.directImage.opacity(slot.style.opacity)
-  const filters: Konva.Filter[] = []
+  const filters: KonvaFilter[] = []
   if (slot.style.brightness !== 1) {
     slot.directImage.brightness(slot.style.brightness - 1)
     filters.push(Konva.Filters.Brighten)
@@ -6866,7 +6868,7 @@ const updateSurfaceSlot = (
     slot.placeholder.setAttrs({ width: box.width, height: box.height })
     slot.label.setAttrs({ width: box.width, height: box.height })
     slot.media.setAttrs({ width: box.width, height: box.height, opacity: nextStyle.opacity })
-    slot.directImage.setAttrs({ width: box.width, height: box.height, opacity: nextStyle.opacity })
+    slot.directImage.width(box.width).height(box.height).opacity(nextStyle.opacity)
     slot.overlay.setAttrs({
       width: box.width,
       height: box.height,
@@ -8553,7 +8555,7 @@ const applyImageUrl = (
     if (target.sceneId && (target.sceneId !== props.store.state.activeSceneId || target.epoch !== surfaceImageEpoch)) return false
     if (!target.sceneId) return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated, loopCount)
     const image: StageImageRef | null = url ? { url, resourceId: resourceId || '', mimeType, animated, loopCount } : null
-    if (target.add) return props.store.operateSurfaceVariant(target.target, { type: 'add', id: crypto.randomUUID(), name: `图片 ${surfaceVariants(target.target).slots.length + 1}`, image })
+    if (target.add) return props.store.operateSurfaceVariant(target.target, { type: 'add', id: uuid(), name: `图片 ${surfaceVariants(target.target).slots.length + 1}`, image })
     return target.slotId ? props.store.operateSurfaceVariant(target.target, { type: 'replace', id: target.slotId, image }) : false
   }
   return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, loopCount, dimensions)

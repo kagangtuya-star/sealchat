@@ -37,6 +37,7 @@ type mcpEmbedSaveInput struct {
 	Name             *string                         `json:"name,omitempty"`
 	URL              *string                         `json:"url,omitempty"`
 	EmbedCode        *string                         `json:"embedCode,omitempty"`
+	SourceUploadID   *string                         `json:"sourceUploadId,omitempty"`
 	DefaultWidth     *int                            `json:"defaultWidth,omitempty"`
 	DefaultHeight    *int                            `json:"defaultHeight,omitempty"`
 	DefaultCollapsed *bool                           `json:"defaultCollapsed,omitempty"`
@@ -267,6 +268,14 @@ func mcpEmbedMutationError(err error) error {
 	}
 }
 
+func mcpEmbedWriteRefResult(ctx context.Context, ch *model.ChannelModel, formID string, changed bool) any {
+	primary, alternates, internalPath := mcpEmbedTheaterURLs(ctx, ch.WorldID, ch.ID, formID)
+	return mcpDetail(mcpEmbedWriteRefDTO{
+		ID: formID, WorldID: ch.WorldID, ChannelID: ch.ID, Changed: changed,
+		Theater: mcpEmbedTheaterRef{WorldID: ch.WorldID, ChannelID: ch.ID, FormID: formID, URL: primary, AlternateURLs: alternates, InternalPath: internalPath},
+	})
+}
+
 func mcpEmbedWriteResult(ctx context.Context, a *service.MCPActor, ch *model.ChannelModel, formID string, changed bool) (any, error) {
 	item, err := mcpEmbedFind(ch.ID, formID)
 	if err != nil {
@@ -278,8 +287,81 @@ func mcpEmbedWriteResult(ctx context.Context, a *service.MCPActor, ch *model.Cha
 			Changed bool `json:"changed"`
 		}{mcpDetail(mcpEmbedDetail(ctx, ch.WorldID, ch.ID, item)), changed}, nil
 	}
-	summary := mcpEmbedSummary(ctx, ch.WorldID, ch.ID, item)
-	return mcpDetail(mcpEmbedWriteRefDTO{ID: formID, WorldID: ch.WorldID, ChannelID: ch.ID, Changed: changed, Theater: summary.Theater}), nil
+	return mcpEmbedWriteRefResult(ctx, ch, formID, changed), nil
+}
+
+func mcpEmbedSaveMutation(a *service.MCPActor, ch *model.ChannelModel, in mcpEmbedSaveInput) (string, bool, error) {
+	body, err := mcpEmbedRequestBody(in)
+	if err != nil {
+		return "", false, err
+	}
+	if in.ResourceID == "" {
+		var payload channelIFormCreateRequest
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return "", false, mcpFailure("invalid_argument", "请求体解析失败")
+		}
+		form, err := createChannelIForm(a.User, ch.ID, &payload, body)
+		if err != nil {
+			return "", false, mcpEmbedMutationError(err)
+		}
+		return form.ID, true, nil
+	}
+	form, sourceChannelID, err := resolveEffectiveIFormForMutation(ch.ID, in.ResourceID)
+	if err != nil {
+		return "", false, err
+	}
+	if form == nil {
+		return "", false, mcpFailure("not_found", "控件不存在")
+	}
+	var payload channelIFormUpdateRequest
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", false, mcpFailure("invalid_argument", "请求体解析失败")
+	}
+	_, changed, err := updateChannelIForm(a.User, form, sourceChannelID, &payload, body)
+	if err != nil {
+		return "", false, mcpEmbedMutationError(err)
+	}
+	return in.ResourceID, changed, nil
+}
+
+func mcpEmbedSave(ctx context.Context, a *service.MCPActor, in mcpEmbedSaveInput) (any, error) {
+	ch, err := mcpEmbedChannel(a, in.WorldID, in.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if !canManageIForm(a.User.ID, ch.ID) {
+		return nil, mcpFailure("forbidden", "没有权限管理 iForm 控件")
+	}
+	if in.SourceUploadID != nil {
+		if in.EmbedCode != nil {
+			return nil, mcpFailure("invalid_argument", "sourceUploadId 与 embedCode 互斥")
+		}
+		var formID string
+		var changed bool
+		err = service.ConsumeMCPTextUpload(ctx, a.User.ID, *in.SourceUploadID, int64(channelEmbedMaxCodeSizeKB())*1024, func(code string) error {
+			mutation := in
+			mutation.SourceUploadID = nil
+			mutation.EmbedCode = &code
+			var mutationErr error
+			formID, changed, mutationErr = mcpEmbedSaveMutation(a, ch, mutation)
+			return mutationErr
+		})
+		if err != nil {
+			return nil, err
+		}
+		result, projectionErr := mcpEmbedWriteResult(ctx, a, ch, formID, changed)
+		if projectionErr != nil {
+			// The embed mutation and upload consumption are already durable.
+			// Return the stable write reference instead of encouraging a replay.
+			return mcpEmbedWriteRefResult(ctx, ch, formID, changed), nil
+		}
+		return result, nil
+	}
+	formID, changed, err := mcpEmbedSaveMutation(a, ch, in)
+	if err != nil {
+		return nil, err
+	}
+	return mcpEmbedWriteResult(ctx, a, ch, formID, changed)
 }
 
 func mcpEmbedTools() []mcpToolSpec {
@@ -349,46 +431,7 @@ func mcpEmbedTools() []mcpToolSpec {
 				"contentTrust": "untrusted_user_generated",
 			}, nil
 		}),
-		mcpSpec("embed_save", "无 resourceId 创建频道嵌入（url 或 embedCode 二选一，或 templateRef 引用模板）；有 resourceId 仅更新提交字段。沿用原生 iForm 规则：频道 iForm 管理权限、URL 仅 http/https、embedCode 平台大小限制、模板引用不能改 url/embedCode/templateRef（用 templateOverrides，键为 null 恢复模板默认）、BridgePolicy 归一化、世界共享源更新与实时广播。theater:write 不包含此能力。", []string{"embed:write"}, true, true, false, func(ctx context.Context, a *service.MCPActor, in mcpEmbedSaveInput) (any, error) {
-			ch, err := mcpEmbedChannel(a, in.WorldID, in.ChannelID)
-			if err != nil {
-				return nil, err
-			}
-			if !canManageIForm(a.User.ID, ch.ID) {
-				return nil, mcpFailure("forbidden", "没有权限管理 iForm 控件")
-			}
-			body, err := mcpEmbedRequestBody(in)
-			if err != nil {
-				return nil, err
-			}
-			if in.ResourceID == "" {
-				var payload channelIFormCreateRequest
-				if err := json.Unmarshal(body, &payload); err != nil {
-					return nil, mcpFailure("invalid_argument", "请求体解析失败")
-				}
-				form, err := createChannelIForm(a.User, ch.ID, &payload, body)
-				if err != nil {
-					return nil, mcpEmbedMutationError(err)
-				}
-				return mcpEmbedWriteResult(ctx, a, ch, form.ID, true)
-			}
-			form, sourceChannelID, err := resolveEffectiveIFormForMutation(ch.ID, in.ResourceID)
-			if err != nil {
-				return nil, err
-			}
-			if form == nil {
-				return nil, mcpFailure("not_found", "控件不存在")
-			}
-			var payload channelIFormUpdateRequest
-			if err := json.Unmarshal(body, &payload); err != nil {
-				return nil, mcpFailure("invalid_argument", "请求体解析失败")
-			}
-			_, changed, err := updateChannelIForm(a.User, form, sourceChannelID, &payload, body)
-			if err != nil {
-				return nil, mcpEmbedMutationError(err)
-			}
-			return mcpEmbedWriteResult(ctx, a, ch, in.ResourceID, changed)
-		}),
+		mcpSpec("embed_save", "无 resourceId 创建频道嵌入（url/embedCode，或 templateRef 引用模板）；sourceUploadId 可用本人 text profile 上传替代 embedCode，两者互斥，继续校验 UTF-8、文本 MIME 和平台源码大小。有 resourceId 仅更新提交字段。沿用原生 iForm 管理权限、URL、模板、BridgePolicy、世界共享更新与广播规则。theater:write 不包含此能力。", []string{"embed:write"}, true, true, false, mcpEmbedSave),
 		mcpSpec("embed_delete", "永久删除当前频道拥有的频道嵌入及其 Storage，并移除世界共享绑定；世界共享引用需在源频道删除。引用它的 Theater iframe 将显示不可用。", []string{"embed:write"}, true, true, false, func(_ context.Context, a *service.MCPActor, in mcpResourceInput) (any, error) {
 			ch, err := mcpEmbedChannel(a, in.WorldID, in.ChannelID)
 			if err != nil {

@@ -244,7 +244,7 @@ const rebuild = () => {
     if (n.kind === 'element' && n.type === 'heading') toc.push({ targetId: n.id, text: n.fields.text || '', level: n.level || 1 });
   }
   const bg = typeof d.page.backgroundAssetId === 'string' && /^[a-f0-9]{32}$/.test(d.page.backgroundAssetId) ? `pub:${d.page.backgroundAssetId}` : null;
-  const r = buildFrameDocument({ style: publicDocumentStyle(d), page: d.page, title: d.title, sectionTitle: sectionTitle.value, nodes, toc, backgroundToken: bg });
+  const r = buildFrameDocument({ style: publicDocumentStyle(d), page: d.page, title: d.title, sectionTitle: sectionTitle.value, nodes, toc, backgroundToken: bg, templateSelection: { displayRules: d.displayRules } });
   frame.value = { doc: r.doc, assetTokens: r.assetTokens };
 };
 watch([items, doc, sectionTitle], () => {

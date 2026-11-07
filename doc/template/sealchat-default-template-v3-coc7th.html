@@ -2668,7 +2668,8 @@
             displayName: skill.name,
             baseSkill: skill.name,
             subSkill: null,
-            description: skill.description || ''
+            description: skill.description || '',
+            _custom: true
           };
 
           SKILLS.byKey[skill.name] = skillObj;
@@ -3175,9 +3176,9 @@
       const totalInterest = Object.values(skillInterestMap).reduce((s, v) => s + (v || 0), 0);
 
       // 选项卡列表
-      const categories = ['收藏夹', ...Object.keys(SKILL_CATEGORIES)];
+      const categories = ['收藏夹', '已加点', ...Object.keys(SKILL_CATEGORIES)];
       if (!state.activeSkillCategory || !categories.includes(state.activeSkillCategory)) {
-        state.activeSkillCategory = categories[1];
+        state.activeSkillCategory = Object.keys(SKILL_CATEGORIES)[0];
       }
 
       // 技能项辅助函数
@@ -3275,18 +3276,30 @@
           ${categories.map((cat, index) => {
             const active = cat === state.activeSkillCategory ? 'active' : '';
             const isFavoriteCat = cat === '收藏夹';
+            const isRaisedCat = cat === '已加点';
             const favArr = state.charInfo['收藏夹'];
-            const skillObjs = isFavoriteCat ? (Array.isArray(favArr) ? favArr.map(key => SKILLS.byKey[key]).filter(Boolean) : []) : (SKILLS.byCategory[cat] || []);
-            if (isFavoriteCat && skillObjs.length === 0) {
+            const skillObjs = isFavoriteCat
+              ? (Array.isArray(favArr) ? favArr.map(key => SKILLS.byKey[key]).filter(Boolean) : [])
+              : isRaisedCat
+                ? Object.values(SKILLS.byKey).filter(skillObj => {
+                    const baseValue = getSkillBaseValue(skillObj.baseSkill, skillObj.subSkill, foundChar);
+                    const growthVal = skillGrowthMap[skillObj.key] || 0;
+                    const occupationVal = skillOccupationMap[skillObj.key] || 0;
+                    const interestVal = skillInterestMap[skillObj.key] || 0;
+                    const totalVal = foundSkills[skillObj.key] ?? (baseValue + growthVal + occupationVal + interestVal);
+                    return totalVal > baseValue || skillObj._custom === true;
+                  })
+                : (SKILLS.byCategory[cat] || []);
+            if ((isFavoriteCat || isRaisedCat) && skillObjs.length === 0) {
               return `
-                <div class="sheet__skill-panel ${active}" data-category="${cat}" scroll-memory-id="${renderId * 1000 + 999}">
-                  <div class="loading-empty-msg" >暂无收藏技能</div>
+                <div class="sheet__skill-panel ${active}" data-category="${cat}" scroll-memory-id="${renderId * 1000 + (isFavoriteCat ? 999 : 998)}">
+                  <div class="loading-empty-msg">${isFavoriteCat ? '暂无收藏技能' : '暂无已加点技能'}</div>
                 </div>
               `;
             }
 
             return `
-              <div class="sheet__skill-panel ${active}" data-category="${cat}" scroll-memory-id="${renderId * 1000 + (isFavoriteCat ? 999 : index)}">
+              <div class="sheet__skill-panel ${active}" data-category="${cat}" scroll-memory-id="${renderId * 1000 + (isFavoriteCat ? 999 : isRaisedCat ? 998 : index)}">
                  ${skillObjs.map(skillObj => generateSkillItem(skillObj, isFavoriteCat)).join('')}
               </div>
             `;

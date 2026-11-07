@@ -64,7 +64,7 @@ const inputFileRef = ref<HTMLInputElement>()
 
 // Email binding state
 const CAPTCHA_SCENE = 'signup';
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
 const showEmailBind = ref(false);
@@ -766,7 +766,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="pointer-events-auto relative border px-4 py-2 rounded-md sc-form-scroll" style="min-width: 20rem; max-height: 80vh;">
+  <div class="pointer-events-auto relative border px-4 py-2 rounded-md sc-form-scroll" data-sc-ui="user-profile" style="min-width: 20rem; max-height: 80vh;">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
       <div class="text-lg">{{ $t('userProfile.title') }}</div>
       <div class="flex shrink-0 gap-2">
@@ -824,7 +824,7 @@ onBeforeUnmount(() => {
       <!-- 邮箱绑定表单 -->
       <template v-if="showEmailBind">
         <n-form-item label="邮箱地址">
-          <n-input v-model:value="emailBindForm.email" placeholder="请输入邮箱地址" type="email" />
+          <n-input v-model:value="emailBindForm.email" placeholder="请输入邮箱地址" :input-props="{ type: 'email' }" />
         </n-form-item>
         <n-form-item v-if="captchaMode === 'local' && !captchaVerified" label="图形验证码">
           <div class="flex w-full items-center gap-3">

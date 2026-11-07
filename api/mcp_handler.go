@@ -51,6 +51,7 @@ func mcpToolError(err error) *mcp.CallToolResult {
 	e := mcpError{"operation_failed", "操作失败，请检查参数、业务权限和当前资源状态"}
 	var explicit *mcpError
 	var audioConflict *service.AudioPlaybackRevisionConflictError
+	var audioQuota *service.AudioQuotaExceededError
 	var theaterErr *service.TheaterError
 	if errors.As(err, &theaterErr) {
 		return mcpResult(map[string]any{"code": theaterErr.Code, "message": theaterErr.Message, "details": theaterErr.Details}, true)
@@ -58,6 +59,10 @@ func mcpToolError(err error) *mcp.CallToolResult {
 		e = *explicit
 	} else if errors.Is(err, service.ErrWorldClueConflict) || errors.As(err, &audioConflict) {
 		e = mcpError{"conflict", "资源修订、播放范围或编辑锁已改变，请重新读取"}
+	} else if errors.Is(err, service.ErrAudioTooLarge) || errors.As(err, &audioQuota) {
+		e = mcpError{"quota_exceeded", "音频文件大小或用户音频配额超限"}
+	} else if errors.Is(err, service.ErrAudioUnsupportedMime) {
+		e = mcpError{"invalid_argument", "不支持的音频格式或音频服务不可用"}
 	} else if errors.Is(err, service.ErrWorldClueInvalid) || errors.Is(err, service.ErrAgentFeedBadRequest) {
 		e = mcpError{"invalid_argument", "参数不符合业务要求"}
 	} else if errors.Is(err, service.ErrMCPScopeDenied) || errors.Is(err, service.ErrWorldPermission) || errors.Is(err, service.ErrWorldClueDenied) || errors.Is(err, service.ErrChannelIdentityDelegationDisabled) || errors.Is(err, service.ErrChannelIdentityDelegationForbidden) || errors.Is(err, service.ErrChannelPermissionDenied) {

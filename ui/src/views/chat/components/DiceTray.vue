@@ -524,7 +524,7 @@ const baseMacroResults = computed(() => {
 const macroResults = computed<MacroResultEntry[]>(() => {
   const seq = digitSequence.value.trim();
   if (!seq) return [];
-  const matched = baseMacroResults.value.slice(0, MACRO_RESULTS_LIMIT).map((macro) => ({
+  const matched: MacroResultEntry[] = baseMacroResults.value.slice(0, MACRO_RESULTS_LIMIT).map((macro) => ({
     id: macro.id,
     kind: 'macro' as const,
     macro,

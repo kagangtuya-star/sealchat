@@ -11,12 +11,14 @@ import (
 
 func bindLogStyleRoutes(r fiber.Router) {
 	r.Get("/log/styles", logAuthentication, logStylesList)
+	r.Post("/log/styles", logAuthentication, logStyleCreate)
 	r.Post("/log/styles/import", logAuthentication, logStylesImport)
 	r.Get("/log/styles/:id/versions/:version", logAuthentication, logStyleGet)
 	r.Get("/log/styles/:id/versions/:version/assets/:assetId", logAuthentication, logStyleAssetGet)
 	r.Get("/log/styles/:id/versions/:version/export", logAuthentication, logStyleExport)
 	r.Post("/log/styles/:id/fork", logAuthentication, logStyleFork)
 	r.Post("/log/styles/:id/versions", logAuthentication, logStyleSave)
+	r.Delete("/log/styles/:id", logAuthentication, logStyleDelete)
 }
 
 func logStyleAssetGet(c *fiber.Ctx) error {
@@ -68,6 +70,28 @@ func logStyleSave(c *fiber.Ctx) error {
 	}
 	data, err := service.SaveLogStyle(c.Params("id"), u.ID, input.BaseVersion, input.Package)
 	return logResponse(c, data, err)
+}
+func logStyleCreate(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	var input struct {
+		Package service.LogStylePackage `json:"package"`
+	}
+	if err := logDecodeBody(c, &input); err != nil {
+		return logResponse(c, nil, err)
+	}
+	data, err := service.CreateLogStyle(u.ID, input.Package)
+	return logResponse(c, data, err)
+}
+func logStyleDelete(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	err := service.DeleteLogStyle(c.Params("id"), u.ID)
+	return logResponse(c, map[string]bool{"deleted": err == nil}, err)
 }
 func logStyleFork(c *fiber.Ctx) error {
 	u := getCurUser(c)

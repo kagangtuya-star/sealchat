@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useDialog, useMessage } from 'naive-ui';
-import { Bell, Book, DoorExit, Eye, History, Robot, Settings, Share, Users } from '@vicons/tabler';
+import { Bell, Book, Code, DoorExit, Eye, History, LayoutGrid, Robot, Settings, Share, ShieldCheck, Users } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 import WorldManager from '../WorldManager.vue';
 import WorldMemberManager from '../WorldMemberManager.vue';
@@ -10,16 +10,20 @@ import EmailNotificationManager from '@/views/split/components/EmailNotification
 import { getInviteStatusInfo, pickLatestInviteByRole } from '../worldInviteStatus';
 import WorldDetailHero from './WorldDetailHero.vue';
 import WorldDetailAccessPanel from './WorldDetailAccessPanel.vue';
+import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue';
+import WorldActionRibbonLayoutPanel from '@/features/action-ribbon-layout/components/WorldActionRibbonLayoutPanel.vue';
+import { getUICustomizationTrustStore, useUICustomizationTrustPrompt } from '@/services/ui-customization/runtime';
 
 const props = defineProps<{ worldId: string }>();
 const emit = defineEmits<{ (e: 'switch-variant'): void }>();
 
 const chat = useChatStore();
+const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
 
-type SectionKey = 'overview' | 'access' | 'notify' | 'manage' | 'more';
+type SectionKey = 'overview' | 'access' | 'notify' | 'manage' | 'ui' | 'ribbon' | 'more';
 type AccessDrawerKind = 'observer' | 'agent' | 'log';
 
 const detail = ref<any>(null);
@@ -70,6 +74,8 @@ const sections = computed(() => {
       { key: 'access', label: '访问与共享' },
       { key: 'notify', label: '通知' },
       { key: 'manage', label: '管理' },
+      { key: 'ui', label: '界面与扩展' },
+      { key: 'ribbon', label: '更多跑团功能' },
     );
   }
   items.push({ key: 'more', label: '更多' });
@@ -143,12 +149,29 @@ watch(() => props.worldId, () => {
   void loadDetail();
 }, { immediate: true });
 
+// World script decisions are per browser; members can reset them here.
+const scriptDecisionVersion = ref(0);
+const scriptDecisions = computed(() => {
+  void scriptDecisionVersion.value;
+  return props.worldId ? getUICustomizationTrustStore().entriesForWorld(props.worldId) : [];
+});
+const trustedScriptCount = computed(() => scriptDecisions.value.filter((e) => e.decision === 'trusted').length);
+const deniedScriptCount = computed(() => scriptDecisions.value.length - trustedScriptCount.value);
+const resetScriptDecisions = () => {
+  getUICustomizationTrustStore().forget(scriptDecisions.value.map((e) => e.id));
+  scriptDecisionVersion.value++;
+  void useUICustomizationTrustPrompt().reevaluate();
+  message.success('已清除本浏览器对该世界脚本的信任与拒绝记录');
+};
+
 const selectSection = (key: SectionKey) => {
   accessDrawerKind.value = null;
   activeSection.value = key;
   if (key === 'overview') {
     // Invites may have been created in the access section.
     void loadInviteSummary();
+  } else if (key === 'more') {
+    scriptDecisionVersion.value++;
   }
 };
 
@@ -156,6 +179,18 @@ const openAccessDrawer = (kind: AccessDrawerKind) => {
   accessDrawerKind.value = kind;
   activeSection.value = 'access';
 };
+
+const applyRouteManagementTarget = () => {
+  if (!canManageWorld.value) return;
+  const target = typeof route.query.open === 'string' ? route.query.open : '';
+  if (target === 'log' || target === 'observer') {
+    openAccessDrawer(target);
+  } else if (target === 'ui' || target === 'ribbon') {
+    selectSection(target);
+  }
+};
+
+watch([() => route.query.open, canManageWorld], applyRouteManagementTarget, { immediate: true });
 
 // Settings may rename the world or change its cover; refresh on close unless it was deleted.
 let deletedWorldId = '';
@@ -239,7 +274,7 @@ const handleLeaveWorld = () => {
 </script>
 
 <template>
-  <div class="world-console">
+  <div class="world-console" data-sc-ui="world-console">
     <div class="world-console__inner">
       <template v-if="world">
         <WorldDetailHero
@@ -369,6 +404,28 @@ const handleLeaveWorld = () => {
 
           <section v-if="canManageWorld" class="world-console-panel world-console-card">
             <header class="world-console-card__head">
+              <n-icon size="18"><Code /></n-icon>
+              <h2 class="world-console-section-title">界面与扩展</h2>
+            </header>
+            <p class="world-console-section-desc">用自定义 CSS 与脚本包装本世界的聊天、小剧场等页面，支持导入导出。</p>
+            <footer class="world-console-card__foot">
+              <n-button size="small" secondary @click="selectSection('ui')">管理界面包</n-button>
+            </footer>
+          </section>
+
+          <section v-if="canManageWorld" class="world-console-panel world-console-card">
+            <header class="world-console-card__head">
+              <n-icon size="18"><LayoutGrid /></n-icon>
+              <h2 class="world-console-section-title">更多跑团功能</h2>
+            </header>
+            <p class="world-console-section-desc">调整本世界聊天中跑团功能入口的顺序与显隐，可跟随平台、引用平台方案或自定义。</p>
+            <footer class="world-console-card__foot">
+              <n-button size="small" secondary @click="selectSection('ribbon')">调整入口布局</n-button>
+            </footer>
+          </section>
+
+          <section v-if="canManageWorld" class="world-console-panel world-console-card">
+            <header class="world-console-card__head">
               <n-icon size="18"><Bell /></n-icon>
               <h2 class="world-console-section-title">世界未读提醒</h2>
             </header>
@@ -415,6 +472,30 @@ const handleLeaveWorld = () => {
           </div>
         </section>
 
+        <section v-else-if="activeSection === 'ui' && canManageWorld" class="world-console-panel">
+          <header class="world-console-section-head">
+            <h2 class="world-console-section-title">界面与扩展</h2>
+            <p class="world-console-section-desc">
+              为本世界添加自定义 CSS 与脚本，加载在平台主题和平台包之上。保存、启停、排序后立即应用到当前页面，其他成员在切换页面或刷新后生效。
+            </p>
+          </header>
+          <div class="world-console-embed">
+            <UICustomizationManager :key="worldId" :scope="{ type: 'world', worldId }" :export-name="world.name || worldId" />
+          </div>
+        </section>
+
+        <section v-else-if="activeSection === 'ribbon' && canManageWorld" class="world-console-panel">
+          <header class="world-console-section-head">
+            <h2 class="world-console-section-title">更多跑团功能</h2>
+            <p class="world-console-section-desc">
+              决定本世界聊天顶部“更多跑团功能”中入口的显示与顺序，只影响展示，不改变成员可用的功能与权限。
+            </p>
+          </header>
+          <div class="world-console-embed world-console-embed--padded">
+            <WorldActionRibbonLayoutPanel :key="worldId" :world-id="worldId" :world-name="world.name" />
+          </div>
+        </section>
+
         <section v-else-if="activeSection === 'more'" class="world-console-panel">
           <header class="world-console-section-head">
             <h2 class="world-console-section-title">更多</h2>
@@ -427,6 +508,16 @@ const handleLeaveWorld = () => {
                 <div class="world-console-row__desc">当前为新版界面。切换偏好只保存在本浏览器，可随时返回。</div>
               </div>
               <n-button size="small" secondary @click="emit('switch-variant')">回到旧版</n-button>
+            </div>
+            <div v-if="scriptDecisions.length" class="world-console-row">
+              <n-icon class="world-console-row__icon" size="20"><ShieldCheck /></n-icon>
+              <div class="world-console-row__text">
+                <div class="world-console-row__title">世界脚本信任</div>
+                <div class="world-console-row__desc">
+                  本浏览器已信任 {{ trustedScriptCount }} 个、拒绝 {{ deniedScriptCount }} 个本世界脚本。清除后，再次进入时会重新询问。
+                </div>
+              </div>
+              <n-button size="small" secondary @click="resetScriptDecisions">清除记录</n-button>
             </div>
             <div v-if="isMember" class="world-console-row world-console-row--danger">
               <n-icon class="world-console-row__icon" size="20"><DoorExit /></n-icon>
@@ -474,21 +565,12 @@ const handleLeaveWorld = () => {
   height: 100%;
   overflow-y: auto;
   color: var(--sc-text-primary);
-  scrollbar-width: thin;
-  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .world-console::-webkit-scrollbar {
-  width: var(--sc-scrollbar-size, 6px);
-}
-
-.world-console::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.world-console::-webkit-scrollbar-thumb {
-  background-color: var(--sc-scrollbar-thumb);
-  border-radius: 3px;
+  display: none;
 }
 
 .world-console__inner {
@@ -519,6 +601,10 @@ const handleLeaveWorld = () => {
   padding: 2px 20px 4px;
 }
 
+.world-console-embed--padded {
+  padding: 8px 20px 16px;
+}
+
 .world-console-state {
   display: flex;
   align-items: center;
@@ -539,6 +625,10 @@ const handleLeaveWorld = () => {
 
   .world-console-embed {
     padding: 0 14px 2px;
+  }
+
+  .world-console-embed--padded {
+    padding: 6px 14px 12px;
   }
 
   .world-console-grid {

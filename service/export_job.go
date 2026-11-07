@@ -63,6 +63,7 @@ type ExportJobOptions struct {
 	TextColorizeBBCode        bool
 	TextColorizeBBCodeMap     map[string]string
 	TextColorizeBBCodeNameMap map[string]string
+	visibilityByChannel       map[string]bool
 }
 
 type exportExtraOptions struct {
@@ -81,6 +82,7 @@ type exportExtraOptions struct {
 	WithoutOOCParentheses     bool              `json:"without_ooc_parentheses,omitempty"`
 	BatchChannelIDs           []string          `json:"batch_channel_ids,omitempty"`
 	BatchFormat               string            `json:"batch_format,omitempty"`
+	VisibilityByChannel       map[string]bool   `json:"visibility_by_channel,omitempty"`
 }
 
 // exportFormatPDF is only valid for LOG sources (background Chromium render);
@@ -110,6 +112,9 @@ func CreateMessageExportJob(opts *ExportJobOptions) (*model.MessageExportJobMode
 		return nil, fmt.Errorf("不支持的导出格式: %s", opts.Format)
 	}
 
+	if err := snapshotExportVisibility(opts, []string{opts.ChannelID}); err != nil {
+		return nil, err
+	}
 	opts.SliceLimit = NormalizeExportSliceLimit(opts.SliceLimit)
 	opts.MaxConcurrency = NormalizeExportConcurrency(opts.MaxConcurrency)
 	extraOptions, err := buildExportExtraOptions(opts)
@@ -162,6 +167,9 @@ func CreateBatchMessageExportJob(opts *ExportJobOptions, channelIDs []string) (*
 	}
 	if len(normalizedIDs) == 0 {
 		return nil, fmt.Errorf("至少选择一个频道")
+	}
+	if err := snapshotExportVisibility(opts, append([]string{opts.ChannelID}, normalizedIDs...)); err != nil {
+		return nil, err
 	}
 
 	opts.SliceLimit = NormalizeExportSliceLimit(opts.SliceLimit)
@@ -223,6 +231,12 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 		Where("is_deleted = ?", false).
 		Preload("Member").
 		Preload("User")
+	extra := parseExportExtraOptions(job.ExtraOptions)
+	filter, hasSnapshot := extra.VisibilityByChannel[job.ChannelID]
+	if !hasSnapshot {
+		filter = len(job.ChannelID) < 30
+	}
+	query = ApplyWhisperVisibilityFilterWithReadAll(query, job.UserID, !filter)
 
 	if job.StartTime != nil {
 		query = query.Where("created_at >= ?", *job.StartTime)
@@ -246,7 +260,6 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 	if err := hydrateWhisperTargetsForExport(messages); err != nil {
 		return nil, err
 	}
-	extra := parseExportExtraOptions(job.ExtraOptions)
 	return prepareMessagesForExport(messages, job, extra), nil
 }
 
@@ -678,11 +691,12 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		IncludeImages:             opts.IncludeImages,
 		IncludeDiceCommand:        opts.IncludeDiceCommand,
 		WithoutOOCParentheses:     opts.WithoutOOCParentheses,
+		VisibilityByChannel:       opts.visibilityByChannel,
 	}
 	if len(opts.DisplaySettings) > 0 {
 		extra.DisplaySettings = opts.DisplaySettings
 	}
-	if extra.SourceKind == "" && extra.DisplaySettings == nil &&
+	if len(extra.VisibilityByChannel) == 0 && extra.SourceKind == "" && extra.DisplaySettings == nil &&
 		extra.SliceLimit == 0 &&
 		extra.MaxConcurrency == 0 &&
 		!extra.TextColorizeBBCode &&
@@ -828,7 +842,7 @@ func NormalizeExportConcurrency(value int) int {
 }
 
 // ListMessageExportJobs 返回指定频道的导出任务及统计信息。
-func ListMessageExportJobs(channelID string, statuses []string, limit, offset int, keyword string) ([]*model.MessageExportJobModel, int64, int64, error) {
+func ListMessageExportJobs(channelID string, statuses []string, limit, offset int, keyword, userID string) ([]*model.MessageExportJobModel, int64, int64, error) {
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
 		return nil, 0, 0, fmt.Errorf("channel_id 不能为空")
@@ -851,7 +865,27 @@ func ListMessageExportJobs(channelID string, statuses []string, limit, offset in
 		pattern := fmt.Sprintf("%%%s%%", trimmed)
 		base = base.Where("(display_name LIKE ? OR file_name LIKE ?)", pattern, pattern)
 	}
-
+	// Restrict before counting/pagination: upload URLs are also sensitive.
+	probe := &model.MessageExportJobModel{ChannelID: channelID}
+	if !CanManageMessageExportJob(userID, probe, true) {
+		base = base.Where("user_id = ?", userID)
+	} else {
+		// Batch tasks can span worlds. Check all their sources, not just the anchor.
+		var candidates []*model.MessageExportJobModel
+		if err := base.Session(&gorm.Session{}).Select("id, user_id, channel_id, extra_options").
+			Where("user_id <> ? AND format = ?", userID, "zip").Find(&candidates).Error; err != nil {
+			return nil, 0, 0, err
+		}
+		denied := make([]string, 0)
+		for _, candidate := range candidates {
+			if !CanManageMessageExportJob(userID, candidate, true) {
+				denied = append(denied, candidate.ID)
+			}
+		}
+		if len(denied) > 0 {
+			base = base.Where("id NOT IN ?", denied)
+		}
+	}
 	var total int64
 	if err := base.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		return nil, 0, 0, err
@@ -943,6 +977,10 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 		AutoCorrectPunctuation: extra.AutoCorrectPunctuation,
 		StartTime:              job.StartTime,
 		EndTime:                job.EndTime,
+		visibilityByChannel:    extra.VisibilityByChannel,
+	}
+	if extra.SourceKind != "log" && opts.visibilityByChannel == nil {
+		opts.visibilityByChannel = map[string]bool{}
 	}
 	opts.DisplaySettings = extra.DisplaySettings
 	opts.SliceLimit = extra.SliceLimit

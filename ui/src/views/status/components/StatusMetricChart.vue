@@ -103,7 +103,7 @@ const chartOption = computed(() => {
     grid: {
       left: '3%',
       right: '3%',
-      top: seriesDefs.length > 1 ? 34 : 18,
+      top: props.metric.relativeToStart ? 58 : seriesDefs.length > 1 ? 34 : 18,
       bottom: props.points.length > 24 ? 72 : 28,
       containLabel: true,
     },
@@ -128,9 +128,14 @@ const chartOption = computed(() => {
     },
     yAxis: {
       type: 'value',
+      name: props.metric.relativeToStart ? '相对变化（%）' : undefined,
+      nameTextStyle: { color: chartColors.value.textColor },
+      scale: Boolean(props.metric.scale),
       axisLabel: {
         color: chartColors.value.textColor,
-        formatter: (value: number) => props.metric.format(value),
+        formatter: (value: number) => props.metric.relativeToStart
+          ? `${value.toLocaleString('zh-CN', { maximumSignificantDigits: 3 })}%`
+          : props.metric.format(value),
       },
       splitLine: {
         lineStyle: {
@@ -138,26 +143,47 @@ const chartOption = computed(() => {
         },
       },
     },
-    series: seriesDefs.map((item) => ({
-      name: item.label,
-      type: 'line',
-      smooth: true,
-      showSymbol: false,
-      data: props.points.map((point) => point[item.key] || 0),
-      lineStyle: {
-        color: item.color,
-        width: 2,
-      },
-      itemStyle: {
-        color: item.color,
-      },
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: `${item.color}44` },
-          { offset: 1, color: chartColors.value.areaEndColor },
-        ]),
-      },
-    })),
+    series: seriesDefs.map((item) => {
+      const baselineIndex = props.metric.relativeToStart
+        ? props.points.findIndex((point) => Number.isFinite(point[item.key]) && Number(point[item.key]) > 0)
+        : -1;
+      const baseline = props.points[baselineIndex]?.[item.key] ?? 0;
+      return {
+        name: item.label,
+        type: 'line',
+        smooth: !props.metric.relativeToStart,
+        showSymbol: false,
+        data: props.points.map((point, index) => {
+          if (!props.metric.relativeToStart) {
+            return point[item.key] || 0;
+          }
+          const value = point[item.key];
+          if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return null;
+          }
+          if (baseline === 0) {
+            return value === 0 ? 0 : null;
+          }
+          return index < baselineIndex ? null : (value - baseline) / baseline * 100;
+        }),
+        tooltip: props.metric.relativeToStart ? {
+          valueFormatter: (_value: unknown, dataIndex: number) => props.metric.format(Number(props.points[dataIndex]?.[item.key] || 0)),
+        } : undefined,
+        lineStyle: {
+          color: item.color,
+          width: 2,
+        },
+        itemStyle: {
+          color: item.color,
+        },
+        areaStyle: props.metric.relativeToStart ? undefined : {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: `${item.color}44` },
+            { offset: 1, color: chartColors.value.areaEndColor },
+          ]),
+        },
+      };
+    }),
   };
 });
 

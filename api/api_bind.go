@@ -451,6 +451,16 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	})
 	app.Server().HeaderReceived = func(header *fasthttp.RequestHeader) fasthttp.RequestConfig {
 		requestURI := string(header.RequestURI())
+		if strings.SplitN(requestURI, "?", 2)[0] == joinWebPath(config.WebUrl, "api/v1/mcp/uploads") {
+			limit := int64(bodyLimit)
+			for _, profile := range []string{"attachment", "audio", "theater_media", "text"} {
+				maxBytes, _, _ := service.MCPUploadLimits(*config, profile)
+				if maxBytes+(1<<20) > limit {
+					limit = maxBytes + (1 << 20)
+				}
+			}
+			return fasthttp.RequestConfig{MaxRequestBodySize: int(limit)}
+		}
 		if strings.Contains(requestURI, "/api/v1/worlds/") && strings.Contains(requestURI, "/theater/packages/import") {
 			return fasthttp.RequestConfig{MaxRequestBodySize: service.TheaterPackageRequestBodyLimit()}
 		}
@@ -485,6 +495,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
 
 	v1.Get("/config", OptionalSignCheckMiddleware, ConfigGetHandler)
+	v1.Get("/ui-customizations/runtime", OptionalSignCheckMiddleware, uiCustomizationRuntime)
 	BindTTSPublicRoutes(v1)
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
@@ -545,6 +556,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	bindLogProjectRoutes(v1)
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
+	bindUICustomizationRoutes(v1Auth)
 	bindPersonalAPIKeyRoutes(v1Auth)
 	bindMCPOAuthConsentRoutes(v1Auth)
 	v1Auth.Post("/user-password-change", UserChangePassword)
@@ -728,8 +740,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Static("/attachments", uploadRoot)
 	v1Auth.Get("/gallery/thumbs/:filename", GalleryThumbServe)
 
-	v1Auth.Get("/status", StatusLatest)
-	v1Auth.Get("/status/history", StatusHistory)
+	v1Auth.Get("/status", StatusAccessMiddleware, StatusLatest)
+	v1Auth.Get("/status/history", StatusAccessMiddleware, StatusHistory)
 
 	audio := v1Auth.Group("/audio")
 	audio.Get("/library/settings", AudioLibrarySettingsGet)
@@ -796,6 +808,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/role-perms-apply", RolePermApply)
 
 	BindShortcutRuleRoutes(v1Auth)
+	BindMessageFavoriteRoutes(v1Auth)
 
 	worldGroup := v1Auth.Group("/worlds")
 	BindWorldClueRoutes(worldGroup)
@@ -980,6 +993,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
 	v1AuthAdmin.Post("/admin/message-visible-char-count/rebuild", AdminMessageVisibleCharCountRebuild)
 	v1AuthAdmin.Get("/admin/perf/status", AdminPerfStatus)
+	v1AuthAdmin.Get("/admin/worlds/status", AdminWorldStatusList)
 	v1AuthAdmin.Get("/admin/perf/history", AdminPerfHistory)
 	v1AuthAdmin.Get("/admin/perf/artifacts", AdminPerfArtifacts)
 	v1AuthAdmin.Get("/admin/perf/top-functions", AdminPerfTopFunctions)
@@ -1095,6 +1109,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.AllowWorldAudioWorkbench
 		}
 		newConfig.ThemeManagement = utils.NormalizeThemeManagementConfig(newConfig.ThemeManagement)
+		newConfig.UICustomization = utils.NormalizeUICustomizationPolicy(newConfig.UICustomization)
+		if err := utils.ValidateUICustomizationPolicy(newConfig.UICustomization); err != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
 		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
@@ -1110,6 +1128,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		if validateErr := service.ValidateCursorThemeAttachments(newConfig.CursorTheme, "", ""); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
+		newConfig.ActionRibbonLayout = utils.NormalizeActionRibbonLayoutConfig(newConfig.ActionRibbonLayout)
 		newConfig.UITextReplace = utils.NormalizeUITextReplaceConfig(newConfig.UITextReplace)
 		if validateErr := utils.ValidateUITextReplaceConfig(newConfig.UITextReplace); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})

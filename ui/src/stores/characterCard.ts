@@ -178,6 +178,13 @@ export const resolveCardIdByNameAndTypeStrict = (
 
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 export const characterApiUnsupportedText = '当前BOT不支持人物卡API、未开启或未启用。';
+export const CHARACTER_CARD_NAME_MAX_LENGTH = 32;
+export const validateCharacterCardName = (value: string) => {
+  const name = value.trim();
+  if (!name) return '请输入角色名称';
+  if (name.length > CHARACTER_CARD_NAME_MAX_LENGTH) return `角色名称不能超过${CHARACTER_CARD_NAME_MAX_LENGTH}个字符`;
+  return '';
+};
 
 export const useCharacterCardStore = defineStore('characterCard', () => {
   // List of user's character cards
@@ -974,11 +981,22 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (resp?.data?.ok) {
         await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
         await templateStore.ensureBindingsLoaded(channelId);
-        const activeCardId = resolveCardIdByNameAndType(
+        const matchedActiveCardId = resolveCardIdByNameAndType(
           cardList.value,
           resp.data.name,
           resp.data.type,
         );
+        const previousActive = activeCards.value[channelId];
+        const previousActiveCardId = previousActive?.id
+          && previousActive.name === (resp.data.name || '')
+          && cardList.value.some(card => card.id === previousActive.id)
+          ? previousActive.id
+          : '';
+        const activeCardId = String(resp.data.id || '').trim() || matchedActiveCardId || previousActiveCardId;
+        if (activeCardId && resp.data.name) {
+          const listCard = cardList.value.find(card => card.id === activeCardId);
+          if (listCard && listCard.name !== resp.data.name) listCard.name = resp.data.name;
+        }
         const resolvedTemplate = activeCardId
           ? templateStore.resolveCardTemplate(channelId, activeCardId, resp.data.type || '', '')
           : '';
@@ -990,7 +1008,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           (resp.data as any)?.avatar,
         ].find(value => typeof value === 'string' && value.trim());
         const cardData: CharacterCardData = {
-          id: String(resp.data.id || '').trim() || undefined,
+          id: activeCardId || undefined,
           name: resp.data.name || '',
           type: resp.data.type || '',
           attrs: resp.data.data || {},
@@ -1198,24 +1216,38 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return false;
   };
 
-  const updateCardStrict = async (channelId: string, name: string, attrs: Record<string, any>) => {
+  const updateCardStrict = async (channelId: string, name: string, attrs?: Record<string, any>) => {
     const userId = getUserId();
     if (!userId || !channelId) return false;
     if (shouldSkipCharacterApi(channelId, 'updateCardStrict')) {
       return false;
     }
 
+    const renameCardId = attrs === undefined ? activeCards.value[channelId]?.id : '';
     await chatStore.ensureConnectionReady();
+    if (attrs === undefined && (!renameCardId || !canRenameActiveCard(channelId, renameCardId))) {
+      throw new Error('当前频道绑定的人物卡已变化，请刷新后重试');
+    }
     const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string } }>('character.set', {
       group_id: channelId,
       user_id: userId,
       name,
-      attrs,
+      // Omit attrs for a name-only update; never replace existing attributes.
+      ...(attrs === undefined ? {} : { attrs }),
     });
     maybeDisableFromResponse(channelId, resp);
     if (resp?.data?.ok) {
-      await getActiveCard(channelId, { throwOnError: true });
+      if (attrs === undefined && renameCardId) {
+        const card = cardList.value.find(item => item.id === renameCardId);
+        if (card) card.name = name;
+        const active = activeCards.value[channelId];
+        if (active?.id === renameCardId) {
+          activeCards.value[channelId] = { ...active, name };
+        }
+        sheetStore.updateCardName(renameCardId, name);
+      }
       await loadCardList(channelId, { throwOnError: true });
+      await getActiveCard(channelId, { throwOnError: true });
       return true;
     }
     if (resp?.data?.ok === false && isBotCharacterDisabled(channelId)) {
@@ -1433,6 +1465,30 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (!active) return '';
     if (active.id) return active.id;
     return resolveCardIdByNameAndType(cardList.value, active.name, active.type);
+  };
+
+  const canRenameActiveCard = (channelId: string, cardId: string) => (
+    !!cardId && channelId === chatStore.curChannel?.id
+    && !chatStore.isObserver && !chatStore.observerMode && !chatStore.observerWorldId
+    && isCharacterApiReady(channelId)
+    // Only a stable API ID proves this is a bound card, rather than an independent snapshot.
+    && activeCards.value[channelId]?.id === cardId
+    && cardList.value.some(card => card.id === cardId)
+  );
+
+  const renameActiveCard = async (channelId: string, cardId: string, value: string) => {
+    const error = validateCharacterCardName(value);
+    if (error) throw new Error(error);
+    if (!canRenameActiveCard(channelId, cardId)) throw new Error('只能重命名当前频道正在绑定的人物卡');
+    await getActiveCard(channelId, { throwOnError: true });
+    if (!canRenameActiveCard(channelId, cardId)) throw new Error('当前频道绑定的人物卡已变化，请刷新后重试');
+    const name = value.trim();
+    if (!await updateCardStrict(channelId, name)) {
+      throw new Error(getCharacterApiDisabledReason(channelId));
+    }
+    if (canRenameActiveCard(channelId, cardId)) {
+      await syncBotNicknameForCard(channelId, name, { reason: 'card-rename' });
+    }
   };
 
   const getActiveCardStrict = async (channelId: string, expectedCardId?: string) => {
@@ -1904,6 +1960,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     saveCard,
     updateCard,
     updateCardStrict,
+    canRenameActiveCard,
+    renameActiveCard,
     tagCard,
     untagAllCard,
     loadCard,

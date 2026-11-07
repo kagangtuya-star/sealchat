@@ -520,12 +520,21 @@ type AppConfig struct {
 	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
 	CursorTheme               CursorThemeConfig         `json:"cursorTheme" yaml:"cursorTheme"`
+	ActionRibbonLayout        ActionRibbonLayoutConfig  `json:"actionRibbonLayout" yaml:"actionRibbonLayout"`
 	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
 	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
 	WebSocket                 WebSocketConfig           `json:"websocket" yaml:"websocket"`
 	ChannelEmbedTools         ChannelEmbedToolsConfig   `json:"channelEmbedTools" yaml:"channelEmbedTools"`
+	StatusPage                StatusPageConfig          `json:"statusPage" yaml:"statusPage"`
+
+	UICustomization *UICustomizationPolicyConfig `json:"uiCustomization" yaml:"uiCustomization"`
+}
+
+// StatusPageConfig 平台状态监测的访问设置；零值即允许所有登录用户查看。
+type StatusPageConfig struct {
+	AdminOnly bool `json:"adminOnly" yaml:"adminOnly"` // 仅平台管理员可查看平台状态监测
 }
 
 type ExportConfig struct {
@@ -759,9 +768,12 @@ func ReadConfig() *AppConfig {
 			PanelBorderOpacity:  18,
 			PanelShadowStrength: 22,
 		},
+		UICustomization: NormalizeUICustomizationPolicy(nil),
 		ThemeManagement: ThemeManagementConfig{
 			PlatformThemes:               []PlatformThemeConfig{},
 			DefaultPlatformThemeID:       "",
+			DefaultPlatformDayThemeID:    "",
+			DefaultPlatformNightThemeID:  "",
 			PlatformDice3DStyles:         []PlatformDice3DStyleConfig{},
 			DefaultPlatformDice3DStyleID: "",
 		},
@@ -867,7 +879,12 @@ func ReadConfig() *AppConfig {
 	applyAuthSessionDefaults(&config.AuthSession)
 	config.Proxy = NormalizeProxyConfig(config.Proxy)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+	config.UICustomization = NormalizeUICustomizationPolicy(config.UICustomization)
+	if err := ValidateUICustomizationPolicy(config.UICustomization); err != nil {
+		panic(err)
+	}
 	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
+	config.ActionRibbonLayout = NormalizeActionRibbonLayoutConfig(config.ActionRibbonLayout)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 	config.MCP = NormalizeMCPConfig(config.MCP)
@@ -1954,6 +1971,14 @@ func WriteConfigChecked(config *AppConfig) error {
 		return fmt.Errorf("配置复制失败: %w", err)
 	}
 	if config != nil {
+		config.UICustomization = NormalizeUICustomizationPolicy(config.UICustomization)
+		if err := ValidateUICustomizationPolicy(config.UICustomization); err != nil {
+			return err
+		}
+		_ = candidateK.Set("uiCustomization.allowWorldCss", config.UICustomization.AllowWorldCSS)
+		_ = candidateK.Set("uiCustomization.allowWorldJs", config.UICustomization.AllowWorldJS)
+		_ = candidateK.Set("uiCustomization.allowPublicWorldCss", config.UICustomization.AllowPublicWorldCSS)
+		_ = candidateK.Set("uiCustomization.maxCodeSizeKB", config.UICustomization.MaxCodeSizeKB)
 		config.MCP = NormalizeMCPConfig(config.MCP)
 		if err := ValidateMCPConfig(config.MCP); err != nil {
 			return err
@@ -2160,6 +2185,9 @@ func WriteConfigChecked(config *AppConfig) error {
 		_ = candidateK.Set("emailNotification.minDelayMinutes", config.EmailNotification.MinDelayMinutes)
 		_ = candidateK.Set("emailNotification.maxDelayMinutes", config.EmailNotification.MaxDelayMinutes)
 
+		// 平台状态监测配置
+		_ = candidateK.Set("statusPage.adminOnly", config.StatusPage.AdminOnly)
+
 		// 备份配置
 		_ = candidateK.Set("backup.enabled", config.Backup.Enabled)
 		_ = candidateK.Set("backup.intervalHours", config.Backup.IntervalHours)
@@ -2198,11 +2226,17 @@ func WriteConfigChecked(config *AppConfig) error {
 		config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 		_ = candidateK.Set("themeManagement.platformThemes", config.ThemeManagement.PlatformThemes)
 		_ = candidateK.Set("themeManagement.defaultPlatformThemeId", config.ThemeManagement.DefaultPlatformThemeID)
+		_ = candidateK.Set("themeManagement.defaultPlatformDayThemeId", config.ThemeManagement.DefaultPlatformDayThemeID)
+		_ = candidateK.Set("themeManagement.defaultPlatformNightThemeId", config.ThemeManagement.DefaultPlatformNightThemeID)
 		_ = candidateK.Set("themeManagement.platformDice3DStyles", config.ThemeManagement.PlatformDice3DStyles)
 		_ = candidateK.Set("themeManagement.defaultPlatformDice3DStyleId", config.ThemeManagement.DefaultPlatformDice3DStyleID)
 		config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 		_ = candidateK.Set("cursorTheme.version", config.CursorTheme.Version)
 		_ = candidateK.Set("cursorTheme.slots", config.CursorTheme.Slots)
+		config.ActionRibbonLayout = NormalizeActionRibbonLayoutConfig(config.ActionRibbonLayout)
+		_ = candidateK.Set("actionRibbonLayout.version", config.ActionRibbonLayout.Version)
+		_ = candidateK.Set("actionRibbonLayout.defaultPresetId", config.ActionRibbonLayout.DefaultPresetID)
+		_ = candidateK.Set("actionRibbonLayout.presets", config.ActionRibbonLayout.Presets)
 		_ = candidateK.Set("uiTextReplace.enabled", config.UITextReplace.Enabled)
 		_ = candidateK.Set("uiTextReplace.rules", config.UITextReplace.Rules)
 		_ = candidateK.Set("channelEmbedTools.maxCodeSizeKB", config.ChannelEmbedTools.MaxCodeSizeKB)

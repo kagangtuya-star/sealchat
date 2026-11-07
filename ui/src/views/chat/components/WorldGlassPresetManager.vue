@@ -26,7 +26,7 @@ const glassSelectMenuProps = {
 };
 const glassDropdownMenuProps = () => ({
   class: 'sc-glass-popup-menu',
-  style: { zIndex: GLASS_POPUP_Z_INDEX },
+  style: `z-index: ${GLASS_POPUP_Z_INDEX}`,
 });
 const worldId = computed(() => {
   if (props.worldId !== undefined) {

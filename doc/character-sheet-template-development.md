@@ -1,6 +1,6 @@
 # 角色卡模板开发文档
 
-本文档面向需要编写和维护人物卡 HTML 模板的开发者，覆盖模板运行机制、可用 API、事件约定、调试建议，一个实现基础功能的COC人物卡模板示例。
+本文档面向需要编写和维护人物卡 HTML 模板的开发者，覆盖模板运行机制、规则类型、外部插件依赖、可用 API、事件约定和调试方式，并提供一个基础 COC 人物卡模板示例。
 
 ---
 
@@ -29,6 +29,8 @@
 - action 仅支持：
   - ROLL_DICE（掷骰请求）
   - UPDATE_ATTRS（属性更新）
+  - EDIT_START / EDIT_END（现有输入编辑锁，由宿主注入检测）
+  - FLUSH_ATTRS（等待当前窗口的待保存属性持久化）
 
 宿主在窗口层接收后分发：
 
@@ -116,6 +118,51 @@
 - `HP{生命值} SAN{理智}`
 - `STR{力量} DEX{敏捷} CON{体质}`
 
+#### 2.0.4 规则类型与 SealDice 插件依赖
+
+人物卡和模板使用 `sheetType` 标识规则类型。`sheetType` 仍是运行时唯一的规则类型键。`ui/src/utils/characterSheetType.ts` 只维护内置类型名称和别名，不维护具体插件依赖。
+
+模板需要 SealDice 插件时，在 HTML 中加入静态 manifest。SealChat 只解析这段 JSON，不执行其中的脚本。第三方模板和内置模板使用同一格式。
+
+~~~html
+<script type="application/json" data-sealchat-template-manifest>
+{
+  "version": 1,
+  "sheetType": "shinobigami",
+  "label": "忍神",
+  "integration": {
+    "provider": "sealdice",
+    "probe": {
+      "command": "。sbg h",
+      "matchMode": "contains",
+      "expected": "忍神掷骰插件",
+      "timeoutMs": 5000
+    },
+    "plugin": {
+      "name": "忍神掷骰插件",
+      "acquireText": "可在 SealChat 用户群获取"
+    }
+  }
+}
+</script>
+~~~
+
+`version` 当前只能为 `1`。`sheetType` 最长 64 个字符。`matchMode` 只支持 `equals` 和 `contains`。`command` 和 `expected` 最长 200 个字符，`command` 不能包含换行。`timeoutMs` 的范围是 1000～15000 毫秒。`plugin.name` 最长 100 个字符。`description` 和 `acquireText` 最长 300 个字符。`acquireUrl` 最长 2048 个字符，只接受 `http` 和 `https`。
+
+模板库已有的 `sheetType` 优先于 manifest。导入 HTML 文件时，SealChat 可以读取 manifest 的 `sheetType` 并自动填入模板类型。manifest 不新增数据库字段，也不会改变现有人物卡协议。
+
+宿主使用现有 `bot.interact` 发送测试命令。测试命令和捕获到的回复不会写入普通聊天消息。内置模板内容经过 SealChat 校验后可以自动探测。普通第三方模板不会自动执行 manifest 提供的命令，界面先显示依赖说明，用户点击“检测插件”后才发起探测。
+
+探测结果分为 5 种状态。`unknown` 表示尚未检测，`checking` 表示正在检测，`available` 表示回复符合预期。`missing` 表示成功收到文本回复，但回复不符合预期。`unavailable` 表示当前无法确认。超时、`BOT_INTERACTION_BUSY`、BOT 离线、权限错误、WebSocket 断开和空文本回复都属于 `unavailable`。
+
+缓存按频道、实际 BOT、`sheetType` 和插件探测声明隔离。同一个规则的两个模板如果声明不同命令或关键词，不会复用错误的检测结果。BOT 私聊没有 `primaryBotId` 时，使用私聊对端 BOT 的用户 ID。
+
+自动探测成功后不显示提示。只有明确探测为 `missing` 时才显示缺失提醒。第三方模板在首次检测前会显示普通依赖说明，这不是错误提示。普通人物卡窗口、独立窗口和只读快照复用同一套解析、缓存和提示逻辑。
+
+内置匕首之心模板使用 `sheetType: "daggerheart"`，别名 `dh` 和 `匕首之心` 由统一类型注册表归一化。它声明依赖 [Daggerheart 插件](https://github.com/ZZZZzzzzac/Daggerheart_sealdice)，以 `.dd help` 探测，使用 `contains` 匹配 `.dd：动作掷骰；.ddr：反应掷骰。`。自动检测与忍神模板共用上述提示规则。
+
+内置三角机构模板使用 `sheetType: "ta"`，与社区插件 [triangle-agency](https://github.com/oissevalt/sealdice-plugins/blob/main/src/triangle-agency/triangle-agency.ts) 的规则模板名一致，别名 `triangle-agency` 和 `三角机构` 由统一类型注册表归一化。它以 `.ta help` 探测，使用 `contains` 匹配 `插件按未使用质保的情况结算`。
+
 ### 2.1 sealchat.onUpdate(callback)
 
 注册数据更新回调。
@@ -146,6 +193,30 @@ sealchat.roll('.ra {skill}', '侦查检定', { skill: '侦查' });
 ~~~js
 sealchat.updateAttrs({ 力量: 65, 敏捷: 70 });
 ~~~
+
+#### 等待属性持久化：sealchat.flushAttrs()
+
+宿主向人物卡 iframe 注入此方法，返回 Promise。它立即执行当前窗口延迟中的属性保存，复用正在执行的保存，并等待期间合并的新属性也保存成功。没有待保存属性时直接成功；保存失败或超时则 reject。只读人物卡不会因此获得写权限。
+
+依赖服务端人物卡状态的指令（例如匕首之心 `.dd/.ddr` 的希望结算）应先提交模板自己的待保存内容，再等待宿主持久化，成功后才掷骰：
+
+~~~js
+try {
+  await flushSave(); // 模板自己的保存方法，调用 sealchat.updateAttrs(...)
+  await sealchat.flushAttrs();
+  sealchat.roll('.dd 敏捷+2 hope -- 原因', '敏捷检定');
+} catch (error) {
+  // 向用户显示错误；本次不掷骰，可重试同步。
+}
+~~~
+
+普通不依赖服务端属性的 `.r` 伤害指令无需等待。`ROLL_DICE` 和 `UPDATE_ATTRS` 的原有行为不变。
+
+内置匕首之心模板的 `.dd/.ddr` 已按此顺序执行，并在保存期间阻止同一次提交重复掷骰；保存失败时保留弹窗、显示错误且不发送指令，用户可重试。取消弹窗也会取消等待后的掷骰。
+
+内置三角机构模板的 `.ta/.tr/.tra` 检定以及结算阶段的 `.st` 调整（花费 QA、稍后重议、此刻之星）同样先等待保存完成再发送，因为插件按服务端人物卡上的当前 QA 计算过载；保存失败时保留弹窗并提示，本次不发送。`.tcs/.tfs` 查询不读取人物卡，直接发送。
+
+底层请求仍为 `SEALCHAT_EVENT`，`action: 'FLUSH_ATTRS'`，`payload: { requestId: string }`。宿主仅处理发送 iframe 所属窗口，并回复 `{ type: 'SEALCHAT_ATTRS_FLUSHED', windowId, requestId, ok: boolean, error?: string }`。注入方法验证父窗口来源及窗口 ID，超时或页面关闭会清理待处理请求。
 
 ### 2.4 sealchat.setRollDispatchMode(mode) 和 sealchat.setRollMode(mode)
 
@@ -779,6 +850,9 @@ sealchat.updateAttrs({
 - 掷骰分流（默认弹窗 vs 模板直发）：ui/src/views/chat/components/character-sheet/CharacterSheetManager.vue
 - 默认掷骰弹窗：ui/src/views/chat/components/character-sheet/DiceRollPopover.vue
 - 默认模板源码（通用 + COC）：ui/src/stores/characterSheet.ts
+- 规则类型与插件依赖元数据：ui/src/utils/characterSheetType.ts
+- 插件探测状态与缓存：ui/src/stores/characterSheetIntegration.ts
+- 插件依赖提示组件：ui/src/views/chat/components/CharacterSheetIntegrationNotice.vue
 
 另外为了方便参考，提取了源码中默认人物卡模版的部分保存在：doc/template/
 

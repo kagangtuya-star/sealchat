@@ -500,8 +500,8 @@ const fetchS3MigrationPreview = async () => {
       params: { type: s3MigrationType.value, target: s3MigrationTarget.value },
     })
     s3MigrationStats.value = resp.data.stats
-  } catch {
-    message.error('获取迁移预览失败')
+  } catch (error: any) {
+    message.error('获取迁移预览失败: ' + (error?.response?.data?.message || '未知错误'))
   } finally {
     s3MigrationLoading.value = false
   }
@@ -519,7 +519,7 @@ const executeS3Migration = async (dryRun: boolean = false) => {
     })
     const stats = resp.data.stats
     if (dryRun) {
-      message.success(`模拟迁移完成：可迁移 ${stats.completed} 项，跳过 ${stats.skipped} 项`)
+      message.success(`模拟迁移完成：可迁移 ${stats.completed} 项，失败 ${stats.failed} 项，跳过 ${stats.skipped} 项`)
     } else {
       message.success(`迁移完成：成功 ${stats.completed} 项，失败 ${stats.failed} 项`)
     }
@@ -779,6 +779,9 @@ onMounted(async () => {
         </n-collapse-item>
 
         <n-collapse-item title="存储迁移" name="storage-migration">
+          <n-alert v-if="storageStatus?.pendingRestart" type="warning" class="mb-3">
+            存储配置已修改，需要重启后再执行迁移。
+          </n-alert>
           <n-form-item label="迁移类型">
             <n-select
               v-model:value="s3MigrationType"
@@ -824,7 +827,7 @@ onMounted(async () => {
                 size="small"
                 @click="executeS3Migration(true)"
                 :loading="s3MigrationExecuting"
-                :disabled="!s3MigrationStats || s3MigrationStats.pending === 0"
+                :disabled="storageStatus?.pendingRestart || !s3MigrationStats || s3MigrationStats.pending === 0"
               >
                 模拟运行
               </n-button>
@@ -834,7 +837,7 @@ onMounted(async () => {
                     size="small"
                     type="warning"
                     :loading="s3MigrationExecuting"
-                    :disabled="!s3MigrationStats || s3MigrationStats.pending === 0"
+                    :disabled="storageStatus?.pendingRestart || !s3MigrationStats || s3MigrationStats.pending === 0"
                   >
                     执行迁移
                   </n-button>

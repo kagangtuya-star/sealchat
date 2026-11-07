@@ -18,9 +18,22 @@ export interface WhisperMeta {
 
 declare module '@satorijs/protocol' {
   interface User {
-    avatarDecoration?: AvatarDecoration;
+    avatarDecoration?: AvatarDecoration | null;
+    is_bot?: boolean;
+  }
+  interface GuildMember {
+    id?: string;
   }
   interface Message {
+    isWhisper?: boolean;
+    identity?: MessageIdentity;
+    displayOrder?: number;
+    display_order?: number;
+    isArchived?: boolean;
+    is_archived?: boolean;
+    archivedAt?: number;
+    icMode?: 'ic' | 'ooc';
+    ic_mode?: 'ic' | 'ooc';
     tts?: import('@/features/tts/types').MessageSpeech | null;
     _ttsAutoRequested?: boolean;
     _ttsQuickOverride?: import('@/features/tts/types').TTSQuickOverride;
@@ -46,6 +59,9 @@ declare module '@satorijs/protocol' {
     botWhisperForwardConfig?: string;
     characterApiEnabled?: boolean;
     characterApiReason?: string;
+  }
+  interface Event {
+    presence?: Array<{ user?: User | null; latency?: number; focused?: boolean; lastSeen?: number }>;
   }
 }
 
@@ -430,6 +446,7 @@ export interface S3StorageConfig {
 }
 
 export interface AdminStorageStatus {
+  pendingRestart?: boolean;
   configured: boolean;
   initialized: boolean;
   enabled: boolean;
@@ -468,6 +485,9 @@ export interface BackupInfo {
 export interface ThemeManagementConfig {
   platformThemes?: PlatformTheme[];
   defaultPlatformThemeId?: string;
+  // 日间/夜间默认主题；为空时回退到 defaultPlatformThemeId
+  defaultPlatformDayThemeId?: string;
+  defaultPlatformNightThemeId?: string;
   platformDice3DStyles?: Dice3DStylePreset[];
   defaultPlatformDice3DStyleId?: string;
 }
@@ -772,11 +792,16 @@ export interface ServerConfig {
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
   themeManagement?: ThemeManagementConfig;
+  uiCustomization?: { allowWorldCss: boolean; allowWorldJs?: boolean; allowPublicWorldCss: boolean; maxCodeSizeKB?: number };
   cursorTheme?: CursorThemeConfig;
+  actionRibbonLayout?: import('@/features/action-ribbon-layout/actionRibbonLayout').ActionRibbonLayoutConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
   ai?: AIConfig;
   performanceProfiler?: PerformanceProfilerConfig;
+  statusPage?: {
+    adminOnly?: boolean;
+  };
 }
 
 export type UpdateChannel = 'stable' | 'test';
@@ -831,6 +856,7 @@ export interface AdminUpdateOverview {
 }
 
 export interface UserInfo {
+  name?: string;
   id: string;
   createdAt: null | string;
   updatedAt: null | string;
@@ -1000,6 +1026,7 @@ interface APIChannelList {
 
 
 export interface APIChannelCreateResp {
+  err?: string;
   id: string
   name: string
   parent_id: string
@@ -1106,6 +1133,7 @@ export interface UserRoleModel extends ModelDataBase {
   roleType: string; // 可以是 "channel" 或 "system"
   userId: string;
   roleId: string;
+  grantSource?: 'manual' | 'world' | 'manual+world';
 
   user?: UserInfo;
 }

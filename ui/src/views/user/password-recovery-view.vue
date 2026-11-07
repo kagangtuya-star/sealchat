@@ -26,7 +26,7 @@ let turnstileScriptPromise: Promise<void> | null = null;
 const message = useMessage();
 const userStore = useUserStore();
 const utils = useUtilsStore();
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 
 // 步骤状态：1=验证身份 2=重置密码 3=完成
 const currentStep = ref(1);
@@ -86,7 +86,10 @@ let emailCodeTimer: ReturnType<typeof setInterval> | null = null;
 const verifying = ref(false);
 const submitting = ref(false);
 
-const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
+const emailAuthEnabled = computed<boolean | null>(() => {
+  if (!config.value) return null;
+  return config.value.emailAuth?.enabled ?? false;
+});
 const captchaMode = computed(() => config.value?.captcha?.passwordReset?.mode ?? config.value?.captcha?.mode ?? 'off');
 
 // Login background
@@ -482,14 +485,14 @@ onBeforeUnmount(() => {
       <h2 class="font-bold text-xl mb-6">找回密码</h2>
 
       <!-- 未启用邮箱认证 -->
-      <div v-if="!emailAuthEnabled" class="text-center text-gray-500 dark:text-gray-400">
+      <div v-if="emailAuthEnabled === false" class="text-center text-gray-500 dark:text-gray-400">
         <p class="mb-4">当前未启用邮箱认证功能</p>
         <p class="mb-4 text-sm">请联系管理员重置密码</p>
         <NButton type="primary" @click="goToLogin">返回登录</NButton>
       </div>
 
       <!-- 已启用邮箱认证 -->
-      <template v-else>
+      <template v-else-if="emailAuthEnabled === true">
         <NSteps :current="currentStep" class="mb-6 w-full max-w-md">
           <NStep title="验证身份" />
           <NStep title="重置密码" />

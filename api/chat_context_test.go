@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -452,9 +453,15 @@ func TestBroadcastEventInChannelForBotSkipsDuplicateWriteForWhisperTarget(t *tes
 	nonWhisperMessage.WhisperTo = nil
 	nonWhisperEvent.Message = &nonWhisperMessage
 	m.ResetMessagePipeline()
+	// A WebSocket read timeout is terminal; use a fresh reader for the next assertion.
+	nextConn, nextClient, nextCleanup := newReadableChatTestConn(t)
+	defer nextCleanup()
+	targetMap.Delete(targetConn)
+	targetInfo.Conn = nextConn
+	targetMap.Store(nextConn, targetInfo)
 	ctx.BroadcastEventInChannelForBot(channel.ID, &nonWhisperEvent)
-	_ = targetClient.SetReadDeadline(time.Now().Add(time.Second))
-	if _, _, err := targetClient.ReadMessage(); err != nil {
+	_ = nextClient.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := nextClient.ReadMessage(); err != nil {
 		t.Fatalf("expected BOT direct fan-out payload: %v", err)
 	}
 	ws := m.MessagePipelineSummary(10 * time.Second).WS
@@ -476,5 +483,41 @@ func TestWriteConnReliableJSONAndPruneClassifiesBotEvent(t *testing.T) {
 	ws := m.MessagePipelineSummary(10 * time.Second).WS
 	if ws.ReliableEnqueuedTotal != 1 || ws.ReliableBotEvent != 1 {
 		t.Fatalf("BOT reliable classification = %#v", ws)
+	}
+}
+
+func TestDisplayOrderResetReachesEventBotWithoutMessageData(t *testing.T) {
+	initOneBotAPITestEnv(t)
+	botUser, _ := createOneBotTestBot(t, "order-reset", model.BotKindManual)
+	_, channel := createOneBotTestWorldAndChannel(t, botUser.ID)
+	ctx := &ChatContext{UserId2ConnInfo: &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}}
+	connections := make([]*WsSyncConn, 0, 2)
+	for _, info := range []*ConnInfo{
+		{User: botUser, LastAliveTime: 1}, // Event bots need not enter the channel as a user.
+		{User: &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: "viewer"}}, ChannelId: channel.ID},
+	} {
+		conn := &WsSyncConn{outbound: make(chan wsOutboundMessage, 8), done: make(chan struct{})}
+		defer conn.Close()
+		info.Conn = conn
+		conns := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+		conns.Store(conn, info)
+		ctx.UserId2ConnInfo.Store(info.User.ID, conns)
+		connections = append(connections, conn)
+	}
+	broadcastDisplayOrderReset(ctx, channel.ID)
+	for i, conn := range connections {
+		if got := len(conn.outbound); got != 1 {
+			t.Fatalf("connection %d received %d reset events, want 1", i, got)
+		}
+		var event protocol.Event
+		if err := json.Unmarshal((<-conn.outbound).payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type != protocol.EventMessageReordered || event.Reorder == nil || !event.Reorder.Reset || event.Reorder.ChannelID != channel.ID {
+			t.Fatalf("unexpected reset event: %#v", event)
+		}
+		if event.Message != nil || event.Reorder.MessageID != "" {
+			t.Fatal("reset must not include private message data")
+		}
 	}
 }

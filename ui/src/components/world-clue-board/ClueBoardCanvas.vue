@@ -137,7 +137,6 @@ onBeforeUnmount(() => {
       :style="quickBarStyle"
       @start="emit('start-connection', { id: selectedNode.id, kind: $event })"
     />
-    <div v-if="!nodes.length" class="clue-board-canvas__empty">当前世界暂无可载入的线索</div>
   </section>
 </template>
 
@@ -148,5 +147,4 @@ onBeforeUnmount(() => {
 .clue-board-canvas__node { position: absolute; pointer-events: auto; }
 .clue-board-canvas__node.is-link-target:hover { outline: 3px solid var(--primary-color, #3388de); cursor: crosshair; }
 .clue-board-canvas__quickbar { position: absolute; z-index: 4; transform: translateX(-50%); }
-.clue-board-canvas__empty { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: var(--sc-text-secondary); pointer-events: none; }
 </style>

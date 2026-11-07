@@ -5,7 +5,7 @@ import { Check, ChevronLeft, Columns, Copy, Edit, ExternalLink, EyeOff, FileText
 import { api, urlBase } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
-import { useWorldClueStore, type WorldClueDetail, type WorldClueSummary, type WorldClueUserState } from '@/stores/worldClue'
+import { useWorldClueStore, type WorldClueContentFormat, type WorldClueDetail, type WorldClueSummary, type WorldClueUserState } from '@/stores/worldClue'
 import { generateWorldClueEmbedLink } from '@/utils/worldClueEmbedLink'
 import {
   buildInternalSurfaceResourceKey,
@@ -20,6 +20,7 @@ import WorldClueBoardEmbedLayer from './WorldClueBoardEmbedLayer.vue'
 import { openWorldClueBoardLink } from '@/utils/worldClueBoardLink'
 
 const props = defineProps<{ worldId: string; channelId: string; canManage?: boolean }>()
+type WorldClueCreateDraft = { title?: string; content: string; contentFormat?: WorldClueContentFormat }
 const store = useWorldClueStore()
 const user = useUserStore()
 const message = useMessage()
@@ -29,6 +30,7 @@ const viewScope = ref<'shared' | 'personal'>('shared')
 const selectedFolderId = ref('')
 const editorVisible = ref(false)
 const editingClue = ref<WorldClueDetail | null>(null)
+const createDraft = ref<WorldClueCreateDraft | null>(null)
 const batchCreateVisible = ref(false)
 const dragging = ref<{ type: 'clue' | 'folder'; id: string } | null>(null)
 const dragOverTarget = ref('')
@@ -191,6 +193,7 @@ onBeforeUnmount(() => {
   pointerCleanup?.()
   chatEvent.off('world-clue-published' as any, handlePublished as any)
   chatEvent.off('world-clue-edit' as any, handleEdit as any)
+  chatEvent.off('world-clue-create' as any, handleCreate as any)
   editRequest += 1
   window.removeEventListener('resize', clampPanelGeometry)
 })
@@ -273,12 +276,30 @@ async function openFloating(summary: WorldClueSummary, event: MouseEvent) {
 }
 async function editClue(summary?: WorldClueSummary) {
   if (editorVisible.value) return
+  createDraft.value = null
   editingClue.value = summary ? await store.fetchDetail(props.worldId, summary.id, false) : null
+  editorVisible.value = true
+}
+function handleCreate(payload: { worldId?: string; channelId?: string; title?: string; content?: string; contentFormat?: WorldClueContentFormat }) {
+  if (payload?.worldId !== props.worldId || payload?.channelId !== props.channelId || !props.canManage) return
+  if (editorVisible.value) {
+    message.warning('请先完成当前线索编辑')
+    return
+  }
+  const content = typeof payload.content === 'string' ? payload.content : ''
+  if (!content.trim()) return
+  createDraft.value = {
+    title: typeof payload.title === 'string' ? payload.title : '',
+    content,
+    contentFormat: payload.contentFormat === 'tiptap' ? 'tiptap' : 'plain',
+  }
+  editingClue.value = null
   editorVisible.value = true
 }
 let editRequest = 0
 async function handleEdit(payload: { worldId?: string; clueId?: string }) {
   if (payload?.worldId !== props.worldId || editorVisible.value) return
+  createDraft.value = null
   const clueId = String(payload.clueId || '').trim()
   if (!clueId) return
   const worldId = props.worldId, request = ++editRequest
@@ -772,6 +793,7 @@ function startMove(event: PointerEvent) {
 onMounted(() => {
   chatEvent.on('world-clue-published' as any, handlePublished as any)
   chatEvent.on('world-clue-edit' as any, handleEdit as any)
+  chatEvent.on('world-clue-create' as any, handleCreate as any)
   window.addEventListener('resize', clampPanelGeometry)
 })
 defineExpose({ toggleVisibility, openBoard })
@@ -918,7 +940,7 @@ defineExpose({ toggleVisibility, openBoard })
       </div>
     </div>
   </aside>
-  <WorldClueEditorModal v-model:show="editorVisible" :world-id="worldId" :channel-id="channelId" :clue="editingClue" :can-manage="!!canManage" @saved="handleEditorSaved" />
+  <WorldClueEditorModal v-model:show="editorVisible" :world-id="worldId" :channel-id="channelId" :clue="editingClue" :initial-draft="createDraft" :can-manage="!!canManage" @saved="handleEditorSaved" />
   <WorldClueBatchCreateModal v-model:show="batchCreateVisible" :world-id="worldId" :channel-id="channelId" :can-manage="!!canManage" :initial-folder-id="viewScope === 'shared' ? selectedFolderId : ''" @finished="handleBatchCreated" />
   <WorldClueBoardEmbedLayer ref="boardEmbedRef" v-model:show="boardEmbedVisible" :world-id="worldId" :channel-id="channelId" />
 </template>

@@ -1,7 +1,7 @@
 <template>
   <transition name="fade">
     <div v-if="visible" class="slash-suggest" @mousedown.prevent>
-      <div class="slash-suggest__content">
+      <div class="slash-suggest__content sc-overlay" data-sc-ui="image-popup">
         <div v-if="options.length" class="slash-suggest__grid">
           <div
             v-for="(option, index) in options"
@@ -60,10 +60,12 @@ defineEmits<{
 }
 
 .slash-suggest__content {
-  background: var(--card-color);
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   border-radius: 14px;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--sc-border-mute);
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
@@ -99,7 +101,7 @@ defineEmits<{
 .slash-suggest__caption {
   font-size: 12px;
   text-align: center;
-  color: var(--text-color-2);
+  color: var(--sc-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -108,13 +110,13 @@ defineEmits<{
 
 .slash-suggest__item:hover,
 .slash-suggest__item.is-active {
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--sc-bg-hover);
 }
 
 .slash-suggest__empty {
   text-align: center;
   font-size: 13px;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
   padding: 1rem 0;
 }
 </style>

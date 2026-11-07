@@ -4,6 +4,7 @@ import { useDialog, useMessage } from 'naive-ui';
 import { useDebounceFn, useWindowSize } from '@vueuse/core';
 import type { ExportTaskItem } from '@/types';
 import { useChatStore } from '@/stores/chat';
+import { useUserStore } from '@/stores/user';
 import { triggerBlobDownload } from '@/utils/download';
 import { useDisplayStore } from '@/stores/display';
 
@@ -24,6 +25,14 @@ const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
 const chat = useChatStore();
+const user = useUserStore();
+const memberExportDisabled = computed(() => {
+  if (!props.channelId || props.channelId.length >= 30 || props.channelId !== chat.curChannel?.id) return false;
+  const worldId = chat.curChannel.worldId || chat.currentWorldId;
+  const detail = chat.worldDetailMap[worldId];
+  const world = chat.worldMap[worldId] || detail?.world;
+  return detail?.memberRole === 'member' && world?.ownerId !== user.info?.id && world?.allowMemberExportMessages === false;
+});
 const message = useMessage();
 const dialog = useDialog();
 const { width } = useWindowSize();
@@ -340,10 +349,12 @@ const handleClose = () => {
 };
 
 const handleCreateExport = () => {
+  if (memberExportDisabled.value) return;
   emit('request-export');
 };
 
 const handleCreateBatchExport = () => {
+  if (memberExportDisabled.value) return;
   emit('request-batch-export');
 };
 
@@ -446,16 +457,17 @@ watch(
           />
           <n-space class="filter-actions" align="center" justify="end">
             <n-button size="small" tertiary @click="handleRefresh" :loading="loading">刷新</n-button>
-            <n-button size="small" :disabled="!props.channelId" @click="handleCreateBatchExport">
+            <n-button size="small" :disabled="!props.channelId || memberExportDisabled" @click="handleCreateBatchExport">
               批量导出
             </n-button>
-            <n-button size="small" type="primary" :disabled="!props.channelId" @click="handleCreateExport">
+            <n-button size="small" type="primary" :disabled="!props.channelId || memberExportDisabled" @click="handleCreateExport">
               新建导出
             </n-button>
           </n-space>
         </div>
       </div>
 
+      <p v-if="memberExportDisabled">当前世界未允许成员导出聊天记录。</p>
       <n-spin :show="loading">
         <n-empty v-if="!tasks.length && !loading" description="暂无导出任务" />
         <div v-else class="export-manager__list">

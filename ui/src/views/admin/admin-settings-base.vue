@@ -29,11 +29,18 @@ const model = ref<ServerConfig>({
   theaterActivationCode: '',
   emailNotification: { enabled: false },
   audio: { allowWorldAudioWorkbench: false, allowWorldAudioS3DirectRead: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 },
+  statusPage: { adminOnly: false },
 })
 
 const utils = useUtilsStore();
 const message = useMessage()
 const modified = ref(false);
+const statusPagePublicAccess = computed({
+  get: () => !model.value.statusPage?.adminOnly,
+  set: (value: boolean) => {
+    model.value.statusPage = { ...model.value.statusPage, adminOnly: !value };
+  },
+});
 const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机；IPv6 可填 :: 或 ::1，保存时自动补全中括号。';
 const baseServeAtHostOptions = [
   { label: '仅本机 (127.0.0.1)', value: '127.0.0.1' },
@@ -235,6 +242,9 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
     ...(model.value.emailNotification || {}),
     enabled: model.value.emailNotification?.enabled ?? false,
   };
+  payload.statusPage = {
+    adminOnly: !!model.value.statusPage?.adminOnly,
+  };
   payload.audio = {
     ...(payload.audio || {}),
     ...(model.value.audio || {}),
@@ -419,7 +429,8 @@ const sendSmtpTestEmail = async () => {
           />
         </div>
       </n-form-item>
-      <n-form-item label="可访问地址" :feedback="feedbackAdminShow ? link : ''">
+      <n-form-item label="可访问地址">
+        <template #feedback><component v-if="feedbackAdminShow" :is="() => link" /></template>
         <n-input
           v-model:value="model.domain"
           placeholder="多个公开地址请使用 ; 分隔，例如 https://a.example;https://b.example"
@@ -513,6 +524,9 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item v-if="model.audio" label="允许非平台管理员创建新世界" feedback="关闭后仅平台管理员可创建世界">
         <n-switch v-model:value="model.audio.allowNonAdminCreateWorld" />
+      </n-form-item>
+      <n-form-item label="允许非平台管理员查看状态监测" feedback="关闭后仅平台管理员可查看平台状态监测">
+        <n-switch v-model:value="statusPagePublicAccess" />
       </n-form-item>
       <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
         <n-switch v-model:value="model.emailNotification.enabled" />

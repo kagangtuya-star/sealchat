@@ -46,7 +46,7 @@ const adminShow = ref(false)
 const adminInitialTab = ref<'basic' | 'update'>('basic')
 const inputStatsShow = ref(false)
 const inputStatsLoading = ref(false)
-const inputStatsComponent = shallowRef<Component | null>(null)
+const inputStatsComponent: import('vue').ShallowRef<Component | null> = shallowRef(null)
 const appNotificationSettingsShow = ref(false)
 const appNotificationSettingsLoading = ref(false)
 const appNotificationSettingsSaving = ref(false)
@@ -936,6 +936,10 @@ const handleOpenUserProfile = (payload?: { openAISettings?: boolean }) => {
   userProfileShow.value = true;
 };
 
+const handleOpenInputStats = () => {
+  void toggleInputStats();
+};
+
 const handleOpenAppNotificationSettings = () => {
   openAppNotificationSettings();
 };
@@ -943,6 +947,7 @@ const handleOpenAppNotificationSettings = () => {
 onMounted(() => {
   chatEvent.on('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.on('open-user-profile', handleOpenUserProfile);
+  chatEvent.on('open-input-stats', handleOpenInputStats);
   chatEvent.on('open-app-notification-settings', handleOpenAppNotificationSettings);
   chatEvent.emit('action-ribbon-state-request');
 });
@@ -951,6 +956,7 @@ onBeforeUnmount(() => {
   stopPresencePopoverRefreshLoop();
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.off('open-user-profile', handleOpenUserProfile);
+  chatEvent.off('open-input-stats', handleOpenInputStats);
   chatEvent.off('open-app-notification-settings', handleOpenAppNotificationSettings);
   if (notifTimer.value) {
     window.clearInterval(notifTimer.value);
@@ -977,6 +983,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 <template>
   <div
     class="sc-header flex justify-between items-center w-full px-2"
+    data-sc-ui="header"
     :class="{ 'sc-header--observer': isObserver }"
     style="height: 3.5rem;"
   >

@@ -114,79 +114,16 @@ type chatExportListItem struct {
 }
 
 func validateExportChannel(userID, channelID string) error {
-	if channelID == "" {
-		return fmt.Errorf("channel_id 不能为空")
-	}
-	if len(channelID) < 30 {
-		channel, err := model.ChannelGet(channelID)
-		if err != nil {
-			return err
-		}
-		if channel == nil || strings.TrimSpace(channel.ID) == "" {
-			return fmt.Errorf("频道不存在")
-		}
-		worldID := strings.TrimSpace(channel.WorldID)
-		if worldID == "" {
-			return fmt.Errorf("无权限导出该频道")
-		}
-		var worldMember model.WorldMemberModel
-		if err := model.GetDB().
-			Where("world_id = ? AND user_id = ?", worldID, userID).
-			Limit(1).
-			Find(&worldMember).Error; err != nil {
-			return err
-		}
-		if worldMember.ID == "" || !canExportByWorldRole(worldMember.Role) {
-			return fmt.Errorf("无权限导出该频道")
-		}
-		return nil
-	}
-
-	fr, _ := model.FriendRelationGetByID(channelID)
-	if fr.ID == "" {
-		return fmt.Errorf("频道不存在")
-	}
-	if fr.UserID1 != userID && fr.UserID2 != userID {
-		return fmt.Errorf("无权限导出该频道")
-	}
-	return nil
-}
-
-func canExportByWorldRole(role string) bool {
-	switch strings.TrimSpace(role) {
-	case model.WorldRoleOwner, model.WorldRoleAdmin, model.WorldRoleMember:
-		return true
-	default:
-		return false
-	}
+	_, err := service.ResolveExportChannelVisibility(userID, channelID)
+	return err
 }
 
 func canViewExportTask(userID string, job *model.MessageExportJobModel) bool {
-	if strings.TrimSpace(userID) == "" || job == nil {
-		return false
-	}
-	if job.UserID == userID {
-		return true
-	}
-	return validateExportChannel(userID, job.ChannelID) == nil
+	return service.CanManageMessageExportJob(userID, job, true)
 }
 
 func canDeleteExportTask(userID string, job *model.MessageExportJobModel) bool {
-	if strings.TrimSpace(userID) == "" || job == nil {
-		return false
-	}
-	if job.UserID == userID {
-		return true
-	}
-	channel, err := model.ChannelGet(strings.TrimSpace(job.ChannelID))
-	if err != nil || channel == nil || strings.TrimSpace(channel.ID) == "" {
-		return false
-	}
-	worldID := strings.TrimSpace(channel.WorldID)
-	if worldID == "" {
-		return false
-	}
-	return service.IsWorldAdmin(worldID, userID)
+	return service.CanManageMessageExportJob(userID, job, false)
 }
 
 func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportResponse, error) {
@@ -451,8 +388,9 @@ func ChatExportList(c *fiber.Ctx) error {
 		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "未认证"})
 	}
 	channelID := strings.TrimSpace(c.Query("channel_id"))
-	if err := validateExportChannel(user.ID, channelID); err != nil {
-		return c.Status(mapExportError(err)).JSON(fiber.Map{"error": err.Error()})
+	// Listing existing personal tasks remains available after creation is disabled.
+	if channelID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "channel_id 不能为空"})
 	}
 	statuses := parseExportStatuses(c.Query("status"))
 	if len(statuses) == 0 {
@@ -469,7 +407,7 @@ func ChatExportList(c *fiber.Ctx) error {
 	offset := (page - 1) * size
 	keyword := strings.TrimSpace(c.Query("keyword"))
 
-	jobs, total, totalSize, err := service.ListMessageExportJobs(channelID, statuses, size, offset, keyword)
+	jobs, total, totalSize, err := service.ListMessageExportJobs(channelID, statuses, size, offset, keyword, user.ID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -643,8 +581,10 @@ func ChatExportRetry(c *fiber.Ctx) error {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
 	}
 	if !service.IsLogMessageExportJob(job) {
-		if err := validateExportChannel(user.ID, job.ChannelID); err != nil {
-			return c.Status(mapExportError(err)).JSON(fiber.Map{"error": err.Error()})
+		for _, channelID := range service.ExportJobChannelIDs(job) {
+			if err := validateExportChannel(user.ID, channelID); err != nil {
+				return c.Status(mapExportError(err)).JSON(fiber.Map{"error": err.Error()})
+			}
 		}
 	}
 	newJob, err := service.RetryMessageExportJob(job)
@@ -652,7 +592,7 @@ func ChatExportRetry(c *fiber.Ctx) error {
 		if service.IsLogMessageExportJob(job) {
 			return logResponse(c, nil, err)
 		}
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(mapExportError(err)).JSON(fiber.Map{"error": err.Error()})
 	}
 	sliceLimit, maxConcurrency := service.ExportJobRuntimeSettings(newJob)
 	resp := chatExportResponse{
@@ -870,6 +810,10 @@ func mapExportError(err error) int {
 	}
 	msg := err.Error()
 	switch {
+	case errors.Is(err, service.ErrExportPermission), errors.Is(err, service.ErrMemberExportDisabled):
+		return http.StatusForbidden
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return http.StatusNotFound
 	case strings.Contains(msg, "未认证"):
 		return http.StatusUnauthorized
 	case strings.Contains(msg, "权限"):

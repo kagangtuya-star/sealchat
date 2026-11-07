@@ -146,20 +146,54 @@ func CanReadChannelByUserId(userId, channelId string) bool {
 	if strings.TrimSpace(channelId) == "" {
 		return false
 	}
-	if len(channelId) < 30 {
-		if ch, err := model.ChannelGet(channelId); err == nil && ch != nil {
-			if ch.ID == "" {
-				return false
-			}
-			if !ch.IsPrivate && strings.TrimSpace(ch.WorldID) != "" {
-				if !IsWorldMember(ch.WorldID, userId) {
-					return false
-				}
-			}
+	chIds, _ := readableChannelIDsByUserID(userId, []string{channelId})
+	return lo.Contains(chIds, channelId)
+}
+
+// ReadableChannelIDsByUserID applies the membership gate of message reads in
+// bulk, so cross-channel readers do not repeat ChannelIdList for every message.
+func ReadableChannelIDsByUserID(userID string) ([]string, error) {
+	return readableChannelIDsByUserID(userID, nil)
+}
+
+func readableChannelIDsByUserID(userID string, candidates []string) ([]string, error) {
+	ids, err := ChannelIdList(userID)
+	if err != nil || len(ids) == 0 {
+		return ids, err
+	}
+	if candidates != nil {
+		wanted := make(map[string]bool, len(candidates))
+		for _, id := range candidates {
+			wanted[id] = true
+		}
+		ids = lo.Filter(ids, func(id string, _ int) bool { return wanted[id] })
+		if len(ids) == 0 {
+			return ids, nil
 		}
 	}
-	chIds, _ := ChannelIdList(userId)
-	return lo.Contains(chIds, channelId)
+	var channels []model.ChannelModel
+	if err := model.GetDB().Select("id, world_id, is_private").Where("id IN ?", ids).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	var memberships []model.WorldMemberModel
+	if err := model.GetDB().Select("world_id").Where("user_id = ?", userID).Find(&memberships).Error; err != nil {
+		return nil, err
+	}
+	worlds := make(map[string]bool, len(memberships))
+	for _, m := range memberships {
+		worlds[m.WorldID] = true
+	}
+	byID := make(map[string]model.ChannelModel, len(channels))
+	for _, ch := range channels {
+		byID[ch.ID] = ch
+	}
+	return lo.Filter(ids, func(id string, _ int) bool {
+		if len(id) >= 30 {
+			return true // Existing friend-channel ID convention.
+		}
+		ch, exists := byID[id]
+		return exists && (ch.IsPrivate || strings.TrimSpace(ch.WorldID) == "" || worlds[ch.WorldID])
+	}), nil
 }
 
 // ChannelList 获取可见的频道（等待重构）

@@ -1,4 +1,5 @@
 import { chatEvent } from '@/stores/chat'
+import { uuid } from '@/utils/uuid'
 import { watch, type WatchStopHandle } from 'vue'
 import { createDefaultTheaterEffectConfig, theaterBuiltinEffectThemes } from '../effects/theater-effect-types'
 import { listSceneOverlayEffects } from '../overlays/scene-overlay-registry'
@@ -27,7 +28,7 @@ const record = (input: unknown): Record<string, unknown> => input !== null && ty
 
 // Disposable collaboration transport, not a second stage-state owner.
 export class TheaterRendererClient {
-  readonly rendererId = `renderer-${crypto.randomUUID()}`
+  readonly rendererId = `renderer-${uuid()}`
   private active = false
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private registering = false

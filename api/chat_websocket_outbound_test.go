@@ -222,6 +222,8 @@ func TestWsSyncConnMessageCreateResponseQueueWaitTiming(t *testing.T) {
 	if err := c.enqueueMessageCreateResponseJSON("response"); err != nil {
 		t.Fatal(err)
 	}
+	// DurationStats rounds sub-millisecond waits down to zero.
+	time.Sleep(2 * time.Millisecond)
 	release()
 	waitForWrites(t, socket.wrote, 2)
 	if err := c.WriteJSON("barrier"); err != nil {
@@ -243,6 +245,7 @@ func TestWsSyncConnMessageCreateResponseSocketWriteTiming(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForWrites(t, socket.entered, 1)
+	time.Sleep(2 * time.Millisecond)
 	close(block)
 	waitForWrites(t, socket.wrote, 1)
 	if err := c.WriteJSON("barrier"); err != nil {

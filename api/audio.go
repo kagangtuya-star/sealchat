@@ -77,6 +77,7 @@ func AudioAssetList(c *fiber.Ctx) error {
 	}
 	filters.IncludeCommon = c.QueryBool("includeCommon", true)
 	user := getCurUser(c)
+	filters.ViewerID = user.ID
 	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
 	if !isSystemAdmin {
 		worldID := strings.TrimSpace(c.Query("worldId"))

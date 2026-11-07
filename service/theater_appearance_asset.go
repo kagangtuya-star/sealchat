@@ -175,6 +175,13 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 	if !isAppearanceSourceTypeAllowed(mimeType) {
 		return nil, newTheaterError(TheaterMediaErrorUnsupported, "不支持演出资源格式", 415, nil)
 	}
+	limit := config.ImageMaxSizeMB << 20
+	if mimeType == "video/webm" {
+		limit = config.VideoMaxSizeMB << 20
+	}
+	if written > limit {
+		return nil, newTheaterError(TheaterMediaErrorLimitExceeded, "资源文件大小超限", 413, map[string]any{"limitBytes": limit})
+	}
 	hashBytes := hasher.Sum(nil)
 	location, err := PersistTheaterAttachmentFile(hashBytes, written, tempPath, mimeType)
 	if err != nil {
@@ -200,6 +207,7 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 		}
 		return tx.Create(&asset).Error
 	}); err != nil {
+		cleanupFailedTheaterUpload(&attachment)
 		return nil, err
 	}
 	theaterMedia.enqueueAppearance(asset.ID)

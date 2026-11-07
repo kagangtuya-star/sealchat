@@ -5,11 +5,16 @@ export type StatusMetricKey =
   | 'concurrentConnections'
   | 'onlineUsers'
   | 'messagesPerMinute'
+  | 'registeredUsers'
+  | 'messageCount'
+  | 'messageCharCount'
   | 'attachmentCount'
   | 'attachmentBytes';
 
 export type StatusMetricValueKey =
   | StatusMetricKey
+  | 'messageCharCountIc'
+  | 'messageCharCountOoc'
   | 'attachmentImageCount'
   | 'attachmentImageBytes'
   | 'attachmentFontCount'
@@ -25,6 +30,9 @@ export interface StatusHistoryPoint {
   channelCount?: number;
   privateChannelCount?: number;
   messageCount?: number;
+  messageCharCount?: number;
+  messageCharCountIc?: number;
+  messageCharCountOoc?: number;
   attachmentCount: number;
   attachmentBytes: number;
   attachmentImageCount?: number;
@@ -45,6 +53,9 @@ export interface StatusMetricDefinition {
   color: string;
   format: (value: number) => string;
   series?: StatusMetricSeriesDefinition[];
+  /** 累计型指标：Y 轴不从 0 起，便于看出增长 */
+  scale?: boolean;
+  relativeToStart?: boolean;
 }
 
 export interface StatusMetricHistoryRow {
@@ -114,6 +125,32 @@ export const statusMetricDefinitions: Record<StatusMetricKey, StatusMetricDefini
     label: '消息/分钟',
     color: '#f97316',
     format: formatStatusNumber,
+  },
+  registeredUsers: {
+    key: 'registeredUsers',
+    label: '注册用户',
+    color: '#db2777',
+    format: formatStatusNumber,
+    scale: true,
+  },
+  messageCount: {
+    key: 'messageCount',
+    label: '消息总数',
+    color: '#4f46e5',
+    format: formatStatusNumber,
+    scale: true,
+  },
+  messageCharCount: {
+    key: 'messageCharCount',
+    label: '消息总字数',
+    color: '#7c3aed',
+    format: formatStatusNumber,
+    relativeToStart: true,
+    series: [
+      { key: 'messageCharCount', label: '总字数', color: '#7c3aed' },
+      { key: 'messageCharCountOoc', label: '场外字数', color: '#f97316' },
+      { key: 'messageCharCountIc', label: '场内字数', color: '#059669' },
+    ],
   },
   attachmentCount: {
     key: 'attachmentCount',

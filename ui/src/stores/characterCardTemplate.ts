@@ -2,8 +2,11 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import cocTemplateHtml from '../../../doc/template/sealchat-default-template-v3-coc7th.html?raw';
 import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
+import daggerheartTemplateHtml from '../../../doc/template/sealchat-daggerheart-template-v1.html?raw';
+import triangleAgencyTemplateHtml from '../../../doc/template/sealchat-triangle-agency-template-v1.html?raw';
 import { api } from './_config';
 import { useUserStore } from './user';
+import { CHARACTER_SHEET_TYPES, normalizeCharacterSheetType as normalizeSheetType } from '@/utils/characterSheetType';
 
 export type CharacterCardTemplateMode = 'managed' | 'detached';
 export type CharacterCardTemplateAccess = 'owner' | 'world_shared' | 'platform';
@@ -103,7 +106,7 @@ interface BuiltinCharacterCardTemplate {
 
 const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
-const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd', 'shinobigami']);
+const BUILTIN_SHEET_TYPES = new Set(CHARACTER_SHEET_TYPES.map(meta => meta.key));
 const BUILTIN_CHARACTER_CARD_TEMPLATES: BuiltinCharacterCardTemplate[] = [
   {
     name: 'coc默认',
@@ -120,18 +123,27 @@ const BUILTIN_CHARACTER_CARD_TEMPLATES: BuiltinCharacterCardTemplate[] = [
     content: shinobigamiTemplateHtml.trim(),
     legacyMarkers: ['sealchat-shinobigami-template:v1'],
   },
+  {
+    name: '匕首之心角色卡',
+    sheetType: 'daggerheart',
+    content: daggerheartTemplateHtml.trim(),
+    legacyMarkers: [],
+  },
+  {
+    name: '三角机构角色卡',
+    sheetType: 'ta',
+    content: triangleAgencyTemplateHtml.trim(),
+    legacyMarkers: [],
+  },
 ];
 
-const normalizeSheetType = (value?: string) => {
-  const normalized = (value || '').trim().toLowerCase();
-  if (normalized === 'shinobigami' || normalized === '忍神') {
-    return 'shinobigami';
-  }
-  if (normalized === 'coc') return 'coc7';
-  if (normalized === 'dnd5' || normalized === 'dnd') return 'dnd5e';
-  return normalized;
-};
 const isBuiltInSheetType = (value?: string) => BUILTIN_SHEET_TYPES.has(normalizeSheetType(value));
+
+const isBuiltinTemplateContent = (content?: string) => {
+  const normalized = String(content || '').trim();
+  if (!normalized) return false;
+  return BUILTIN_CHARACTER_CARD_TEMPLATES.some(item => item.content === normalized);
+};
 
 const isLegacyBuiltinTemplate = (
   template: CharacterCardTemplate,
@@ -764,6 +776,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     getTemplatesBySheetType,
     getSheetDefaultTemplate,
     getBuiltinTemplateBySheetType,
+    isBuiltinTemplateContent,
     isSameSheetType,
     getPreferredTemplateBySheetType,
     getGlobalDefaultTemplate,

@@ -19,13 +19,14 @@ import (
 )
 
 type LogSourceSpec struct {
-	ChannelID       string     `json:"channelId"`
-	FromTime        *time.Time `json:"fromTime"`
-	FromExclusive   bool       `json:"fromExclusive,omitempty"`
-	ToTime          time.Time  `json:"toTime"`
-	IncludeOOC      bool       `json:"includeOoc"`
-	IncludeArchived bool       `json:"includeArchived"`
-	IdentityIDs     []string   `json:"identityIds"`
+	ChannelID        string     `json:"channelId"`
+	FromTime         *time.Time `json:"fromTime"`
+	FromExclusive    bool       `json:"fromExclusive,omitempty"`
+	ToTime           time.Time  `json:"toTime"`
+	IncludeOOC       bool       `json:"includeOoc"`
+	IncludeArchived  bool       `json:"includeArchived"`
+	ShowQuoteContent bool       `json:"showQuoteContent"`
+	IdentityIDs      []string   `json:"identityIds"`
 }
 
 // LogSection is the smallest source unit: one channel and one linear message range.
@@ -71,6 +72,17 @@ type LogPageSettings struct {
 	// BackgroundProjectAssetID references the LOG's own asset registry; backgroundAssetId stays a style asset.
 	BackgroundProjectAssetID *string `json:"backgroundProjectAssetId,omitempty"`
 }
+type LogDisplayMatch struct {
+	MessageType string `json:"messageType,omitempty"`
+	IdentityID  string `json:"identityId,omitempty"`
+	UserID      string `json:"userId,omitempty"`
+	VariantID   string `json:"variantId,omitempty"`
+}
+type LogDisplayRule struct {
+	ID         string          `json:"id"`
+	Match      LogDisplayMatch `json:"match"`
+	TemplateID string          `json:"templateId"`
+}
 type LogDraft struct {
 	SchemaVersion       int               `json:"schemaVersion"`
 	Title               string            `json:"title"`
@@ -82,8 +94,10 @@ type LogDraft struct {
 	StylePackageVersion string            `json:"stylePackageVersion"`
 	ThemeTokens         map[string]any    `json:"themeTokens"`
 	// Assets registers ordinary LOG images (attachments) independently of the style package.
-	Assets      []LogProjectAsset  `json:"assets,omitempty"`
-	ImageWidths map[string]float64 `json:"imageWidths,omitempty"`
+	Assets                   []LogProjectAsset  `json:"assets,omitempty"`
+	ImageWidths              map[string]float64 `json:"imageWidths,omitempty"`
+	DisplayRules             []LogDisplayRule   `json:"displayRules,omitempty"`
+	MessageTemplateOverrides map[string]string  `json:"messageTemplateOverrides,omitempty"`
 }
 type LogDraftUpdate struct {
 	ExpectedVersion int64           `json:"expectedVersion"`
@@ -143,6 +157,34 @@ func parseLogDraft(raw []byte) (LogDraft, error) {
 	for key, width := range draft.ImageWidths {
 		if !logMessageImagePattern.MatchString(key) || !validLogImageWidth(width) {
 			return draft, logError("INVALID_INPUT", "图片尺寸无效")
+		}
+	}
+	// Template references deliberately need not exist in the current package: switching
+	// styles preserves them and the shared renderer skips unavailable message templates.
+	if len(draft.DisplayRules) > 1000 || len(draft.MessageTemplateOverrides) > 100000 {
+		return draft, logError("INVALID_INPUT", "显示规则或消息模板覆盖数量超出上限")
+	}
+	ruleIDs := map[string]bool{}
+	for _, rule := range draft.DisplayRules {
+		m := rule.Match
+		if !logUUIDPattern.MatchString(rule.ID) || ruleIDs[rule.ID] || !logStyleKey.MatchString(rule.TemplateID) || m == (LogDisplayMatch{}) {
+			return draft, logError("INVALID_INPUT", "显示规则无效或没有匹配条件")
+		}
+		ruleIDs[rule.ID] = true
+		switch m.MessageType {
+		case "", "ic", "ooc", "narration", "dice", "bot", "image", "unknown":
+		default:
+			return draft, logError("INVALID_INPUT", "显示规则消息类型无效")
+		}
+		for _, id := range []string{m.IdentityID, m.UserID, m.VariantID} {
+			if len(id) > 100 || (id != "" && strings.TrimSpace(id) != id) {
+				return draft, logError("INVALID_INPUT", "显示规则匹配标识无效")
+			}
+		}
+	}
+	for id, template := range draft.MessageTemplateOverrides {
+		if id == "" || len(id) > 100 || strings.TrimSpace(id) != id || !logStyleKey.MatchString(template) {
+			return draft, logError("INVALID_INPUT", "消息模板覆盖无效")
 		}
 	}
 	seen := map[string]bool{}
@@ -267,6 +309,14 @@ func logSectionArrangement(d *LogDraft) map[string][2]string {
 }
 
 func loadLogProjectForDesign(id, userID string) (*model.LogProjectModel, bool, error) {
+	return loadLogProjectForDesignAccess(id, userID, false)
+}
+
+func loadLogProjectForDraftSave(id, userID string) (*model.LogProjectModel, bool, error) {
+	return loadLogProjectForDesignAccess(id, userID, true)
+}
+
+func loadLogProjectForDesignAccess(id, userID string, allowInvalidAdminSources bool) (*model.LogProjectModel, bool, error) {
 	var p model.LogProjectModel
 	if err := model.GetDB().Where("id = ? AND enabled = ?", id, true).Take(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -278,14 +328,16 @@ func loadLogProjectForDesign(id, userID string) (*model.LogProjectModel, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	if err := logCheckSources(&p, userID); err != nil {
-		return nil, false, err
+	if !allowInvalidAdminSources || !admin {
+		if err := logCheckSources(&p, userID); err != nil {
+			return nil, false, err
+		}
 	}
 	return &p, admin, nil
 }
 
 func SaveLogDraft(id, userID string, input LogDraftUpdate) (*LogDraftResult, error) {
-	p, admin, err := loadLogProjectForDesign(id, userID)
+	p, admin, err := loadLogProjectForDraftSave(id, userID)
 	if err != nil {
 		return nil, err
 	}

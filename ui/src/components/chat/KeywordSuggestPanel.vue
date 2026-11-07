@@ -1,7 +1,7 @@
 <template>
   <transition name="keyword-suggest-fade">
     <div v-if="visible" class="keyword-suggest" @mousedown.prevent>
-      <div class="keyword-suggest__content">
+      <div class="keyword-suggest__content sc-overlay" data-sc-ui="candidate-popup">
         <div v-if="title" class="keyword-suggest__title">{{ title }}</div>
         <div v-if="options.length" ref="listRef" class="keyword-suggest__list" role="listbox">
           <div
@@ -87,19 +87,21 @@ function truncateDesc(desc: string): string {
 }
 
 .keyword-suggest__content {
-  background: var(--card-color);
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--sc-border-mute);
   padding: 0.35rem;
 }
 
 .keyword-suggest__title {
   padding: 0.15rem 0.6rem 0.3rem;
   font-size: 11px;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -128,21 +130,21 @@ function truncateDesc(desc: string): string {
 
 .keyword-suggest__item:hover,
 .keyword-suggest__item.is-active {
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--sc-bg-hover);
 }
 
 .keyword-suggest__name {
   font-weight: 500;
   font-size: 13px;
-  color: var(--text-color-1);
+  color: var(--sc-text-primary);
   flex-shrink: 0;
 }
 
 .keyword-suggest__category {
   display: inline-block;
   font-size: 10px;
-  color: var(--text-color-3);
-  background: rgba(148, 163, 184, 0.12);
+  color: var(--sc-text-secondary);
+  background: var(--sc-bg-layer);
   padding: 0 5px;
   border-radius: 3px;
   line-height: 1.4;
@@ -151,7 +153,7 @@ function truncateDesc(desc: string): string {
 
 .keyword-suggest__desc {
   font-size: 11px;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -163,7 +165,7 @@ function truncateDesc(desc: string): string {
   padding: 0.5rem 0.75rem;
   text-align: center;
   font-size: 12px;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
 }
 
 /* 过渡动画 */

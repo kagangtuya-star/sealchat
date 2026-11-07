@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": ["src/services/font/platformFontSplitWorker.ts", "src/types/cn-font-split.d.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "composite": false,
+    "lib": ["ES2020", "WebWorker"]
+  }
+}

@@ -999,7 +999,7 @@ function writePushTargets(value: string[]) {
 }
 
 const pushOptions = computed(() => {
-  const currentUserId = chatStore.curUser?.id
+  const currentUserId = userStore.info?.id
   return (chatStore.curChannelUsers || [])
     .filter(user => user?.id && user.id !== currentUserId)
     .map(user => ({

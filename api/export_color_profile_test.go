@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,6 +14,155 @@ import (
 	"sealchat/service"
 	"sealchat/utils"
 )
+
+func TestChatExportPermissionsAPI(t *testing.T) {
+	model.DBInit(&utils.AppConfig{DSN: "file:export-permissions-" + utils.NewID() + "?mode=memory&cache=shared", SQLite: utils.SQLiteConfig{ReadConnections: 1}})
+	db := model.GetDB()
+	for _, row := range []any{
+		&model.WorldModel{StringPKBaseModel: model.StringPKBaseModel{ID: "export-world"}, Name: "World", OwnerID: "owner", Status: "active"},
+		&model.WorldModel{StringPKBaseModel: model.StringPKBaseModel{ID: "other-world"}, Name: "Other", InviteSlug: "other", OwnerID: "other-owner", Status: "active"},
+		&model.ChannelModel{StringPKBaseModel: model.StringPKBaseModel{ID: "export-a"}, WorldID: "export-world", Status: "active"},
+		&model.ChannelModel{StringPKBaseModel: model.StringPKBaseModel{ID: "export-b"}, WorldID: "other-world", Status: "active"},
+		&model.WorldMemberModel{WorldID: "export-world", UserID: "admin", Role: model.WorldRoleAdmin},
+		&model.WorldMemberModel{WorldID: "export-world", UserID: "member", Role: model.WorldRoleMember},
+		&model.WorldMemberModel{WorldID: "export-world", UserID: "other-member", Role: model.WorldRoleMember},
+		&model.WorldMemberModel{WorldID: "export-world", UserID: "spectator", Role: model.WorldRoleSpectator},
+		&model.WorldMemberModel{WorldID: "other-world", UserID: "member", Role: model.WorldRoleMember},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := fiber.New()
+	// Supply the authenticated user directly; authorization still reads DB roles.
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("user", &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: c.Get("X-Test-User")}})
+		return c.Next()
+	})
+	app.Post("/export", ChatExportCreate)
+	app.Post("/batch", ChatExportBatchCreate)
+	app.Get("/tasks", ChatExportList)
+	app.Get("/task/:taskId", ChatExportGet)
+	app.Post("/task/:taskId/retry", ChatExportRetry)
+	request := func(method, path, user, body string, want int) []byte {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Test-User", user)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("%s %s user=%s: status=%d want=%d body=%s", method, path, user, resp.StatusCode, want, data)
+		}
+		return data
+	}
+	for _, tc := range []struct {
+		user  string
+		allow bool
+		want  int
+	}{
+		{"member", true, 200}, {"member", false, 403}, {"owner", false, 200}, {"admin", false, 200}, {"spectator", true, 403}, {"outsider", true, 403},
+	} {
+		if err := db.Model(&model.WorldModel{}).Where("id = ?", "export-world").Update("allow_member_export_messages", tc.allow).Error; err != nil {
+			t.Fatal(err)
+		}
+		data := request("POST", "/export", tc.user, `{"channel_id":"export-a","format":"txt","adminExport":true}`, tc.want)
+		if tc.user == "member" && !tc.allow && !strings.Contains(string(data), "当前世界未允许成员导出聊天记录") {
+			t.Fatalf("missing clear denial: %s", data)
+		}
+	}
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "other-world").Update("allow_member_export_messages", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	request("POST", "/batch", "member", `{"channel_id":"export-a","channel_ids":["export-a","export-b"],"format":"txt"}`, 403)
+	// A valid anchor alone must never authorize a retry of a cross-world batch.
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "other-world").Update("allow_member_export_messages", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	batch, err := service.CreateBatchMessageExportJob(&service.ExportJobOptions{UserID: "member", ChannelID: "export-a", Format: "txt"}, []string{"export-a", "export-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "other-world").Update("allow_member_export_messages", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	request("POST", "/task/"+batch.ID+"/retry", "member", `{}`, 403)
+	job, err := service.CreateMessageExportJob(&service.ExportJobOptions{UserID: "member", ChannelID: "export-a", Format: "txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(job).Update("upload_url", "https://example.invalid/private-export").Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "?download=1"} {
+		request("GET", "/task/"+job.ID+suffix, "other-member", "", 403)
+	}
+	request("GET", "/task/"+job.ID, "member", "", 200)
+	data := request("GET", "/tasks?channel_id=export-a&status=pending", "other-member", "", 200)
+	if strings.Contains(string(data), job.ID) || strings.Contains(string(data), "private-export") {
+		t.Fatalf("list leaked other member task: %s", data)
+	}
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "export-world").Update("strict_whisper_privacy", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, manager := range []string{"owner", "admin"} {
+		request("GET", "/task/"+job.ID, manager, "", 200)
+		if !canDeleteExportTask(manager, job) {
+			t.Fatalf("%s cannot manage world task", manager)
+		}
+		request("GET", "/task/"+batch.ID, manager, "", 403)
+		if canDeleteExportTask(manager, batch) {
+			t.Fatal("anchor admin can delete cross-world task")
+		}
+	}
+	data = request("GET", "/tasks?channel_id=export-a&status=pending", "admin", "", 200)
+	if !strings.Contains(string(data), job.ID) || strings.Contains(string(data), batch.ID) {
+		t.Fatalf("wrong management list: %s", data)
+	}
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "export-world").Update("strict_whisper_privacy", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	request("GET", "/task/"+job.ID+"?download=1", "admin", "", 403)
+	if !canDeleteExportTask("admin", job) {
+		t.Fatal("strict privacy unexpectedly blocked deletion")
+	}
+	// A creator retains file access when member export creation is disabled.
+	if err := db.Model(&model.WorldModel{}).Where("id = ?", "export-world").Update("allow_member_export_messages", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	request("GET", "/task/"+job.ID, "member", "", 200)
+	request("POST", "/task/"+job.ID+"/retry", "member", `{}`, 403)
+	data = request("GET", "/tasks?channel_id=export-a&status=pending", "member", "", 200)
+	if !strings.Contains(string(data), job.ID) {
+		t.Fatal("creator lost task list")
+	}
+}
+
+func TestChatExportPrivateTaskPermissions(t *testing.T) {
+	model.DBInit(&utils.AppConfig{DSN: "file:export-private-" + utils.NewID() + "?mode=memory&cache=shared", SQLite: utils.SQLiteConfig{ReadConnections: 1}})
+	first, second := "private-first-user-12345", "private-second-user-12345"
+	channelID := first + ":" + second
+	if err := model.GetDB().Create(&model.FriendModel{UserID1: first, UserID2: second}).Error; err != nil {
+		t.Fatal(err)
+	}
+	job, err := service.CreateMessageExportJob(&service.ExportJobOptions{UserID: first, ChannelID: channelID, Format: "txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !canViewExportTask(first, job) || !canViewExportTask(second, job) || canViewExportTask("outsider", job) {
+		t.Fatal("private chat access changed")
+	}
+	if canDeleteExportTask(second, job) || !canDeleteExportTask(first, job) {
+		t.Fatal("private deletion permission changed")
+	}
+}
 
 func TestNormalizeExportColorMap(t *testing.T) {
 	t.Parallel()

@@ -82,6 +82,7 @@ const templates = ref<Template[]>([])
 const previewResult = ref<PreviewResponse | null>(null)
 const worldMembers = ref<WorldMember[]>([])
 const reusableIdentities = ref<Record<string, ReusableIdentity[]>>({}) // cacheKey => identities
+const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
 const form = reactive({
   content: '',
@@ -90,9 +91,29 @@ const form = reactive({
   mergeUnmatched: true, // 默认合并连续多行，空行分隔
   strictOoc: false,
   baseTime: null as number | null,
+  timeZone: browserTimeZone(),
   timeIncrement: 1000,
   roleMapping: {} as Record<string, RoleMappingConfig>,
 })
+
+// 预览与执行使用相同的时间和解析配置；角色映射不影响时间解析。
+const parsingConfig = computed(() => ({
+  templateId: form.regexPattern ? '' : form.templateId,
+  regexPattern: form.regexPattern,
+  baseTime: form.baseTime === null ? null : new Date(form.baseTime).toISOString(),
+  timeZone: form.timeZone.trim(),
+  timeIncrement: form.timeIncrement,
+  mergeUnmatched: form.mergeUnmatched,
+  strictOoc: form.strictOoc,
+}))
+const previewKey = computed(() => JSON.stringify([form.content, parsingConfig.value]))
+const previewedKey = ref('')
+const previewCurrent = computed(() => !!previewResult.value && previewedKey.value === previewKey.value)
+const formatTimestamp = (timestamp?: string) => timestamp
+  ? new Intl.DateTimeFormat('zh-CN', {
+    timeZone: parsingConfig.value.timeZone || 'UTC', dateStyle: 'short', timeStyle: 'long',
+  }).format(new Date(timestamp))
+  : '—'
 
 const selectedChannelFilters = ref<string[]>([])
 const currentWorldId = computed(() => props.worldId || chat.currentWorldId || '')
@@ -397,24 +418,25 @@ const getAvatarUrl = (attachmentId: string) => {
 }
 
 // 执行预览
-const doPreview = async () => {
+const doPreview = async (advance = true) => {
   if (!props.channelId || !form.content.trim()) {
     message.warning('请输入日志内容')
     return
   }
 
   loading.value = true
+  const key = previewKey.value
   try {
     const res = await api.post<PreviewResponse>(`/api/v1/channels/${props.channelId}/import/preview`, {
       content: form.content,
-      templateId: form.regexPattern ? '' : form.templateId,
-      regexPattern: form.regexPattern,
+      ...parsingConfig.value,
       previewLimit: previewLimit.value,
-      mergeUnmatched: form.mergeUnmatched,
     })
 
+    if (key !== previewKey.value) return
     const data = res.data
     previewResult.value = data
+    previewedKey.value = key
 
     // 加载世界成员
     await loadWorldMembers()
@@ -440,7 +462,7 @@ const doPreview = async () => {
     }
 
     // 进入下一步
-    step.value = 2
+    if (advance) step.value = 2
   } catch (e: any) {
     message.error(e.response?.data?.message || e.response?.data?.error || '预览请求失败')
   } finally {
@@ -450,18 +472,13 @@ const doPreview = async () => {
 
 // 执行导入
 const doImport = async () => {
-  if (!props.channelId) return
+  if (!props.channelId || !previewCurrent.value) return
 
   loading.value = true
   try {
     const config = {
       version: '1',
-      templateId: form.regexPattern ? '' : form.templateId,
-      regexPattern: form.regexPattern,
-      baseTime: form.baseTime ? new Date(form.baseTime).toISOString() : null,
-      timeIncrement: form.timeIncrement,
-      mergeUnmatched: form.mergeUnmatched,
-      strictOoc: form.strictOoc,
+      ...parsingConfig.value,
       roleMapping: form.roleMapping,
     }
 
@@ -490,6 +507,7 @@ const handleClose = () => {
   form.mergeUnmatched = true
   form.strictOoc = false
   form.baseTime = null
+  form.timeZone = browserTimeZone()
   form.timeIncrement = 1000
   form.roleMapping = {}
   previewResult.value = null
@@ -562,6 +580,9 @@ const exportConfig = () => {
     roleMapping: form.roleMapping,
     mergeUnmatched: form.mergeUnmatched,
     strictOoc: form.strictOoc,
+    timeZone: parsingConfig.value.timeZone,
+    baseTime: parsingConfig.value.baseTime,
+    timeIncrement: form.timeIncrement,
   }
   const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -586,6 +607,10 @@ const importConfig = async (e: Event) => {
       if (config.regexPattern) form.regexPattern = config.regexPattern
       if (config.mergeUnmatched !== undefined) form.mergeUnmatched = config.mergeUnmatched
       if (config.strictOoc !== undefined) form.strictOoc = config.strictOoc
+      if (typeof config.timeZone === 'string') form.timeZone = config.timeZone
+      if (config.baseTime === null) form.baseTime = null
+      else if (typeof config.baseTime === 'string' && Number.isFinite(Date.parse(config.baseTime))) form.baseTime = Date.parse(config.baseTime)
+      if (typeof config.timeIncrement === 'number' && config.timeIncrement > 0) form.timeIncrement = config.timeIncrement
 
       // 验证并导入角色映射
       if (config.roleMapping && typeof config.roleMapping === 'object') {
@@ -844,6 +869,10 @@ const importConfig = async (e: Event) => {
     <!-- 步骤3: 时间与确认 -->
     <div v-show="step === 3" class="step-content">
       <n-form label-width="120px" label-placement="left">
+        <n-form-item label="日志时区">
+          <n-input v-model:value="form.timeZone" placeholder="例如 Asia/Shanghai 或 America/Los_Angeles" />
+          <template #feedback>无时区的日志使用此 IANA 时区；带时区偏移的时间保留原始时刻。默认使用浏览器时区。</template>
+        </n-form-item>
         <n-form-item label="基准时间">
           <n-date-picker
             v-model:value="form.baseTime"
@@ -852,7 +881,7 @@ const importConfig = async (e: Event) => {
             placeholder="当日志无日期时使用"
           />
           <template #feedback>
-            日志中仅有时间无日期时，使用此日期作为基准。
+            仅有时间时使用基准时刻在日志时区中的日期。无时间戳时，填写后从此时刻递增；留空则最后一条为导入时刻，之前的消息按间隔向前排列。选择器使用浏览器本地时间。
           </template>
         </n-form-item>
 
@@ -889,12 +918,16 @@ const importConfig = async (e: Event) => {
       </div>
 
       <!-- 预览表格 -->
-      <div v-if="previewResult?.entries?.length" class="preview-table">
+      <n-button size="small" :loading="loading" @click="doPreview(false)">刷新时间预览</n-button>
+      <p v-if="!previewCurrent">解析配置已变化，请刷新预览后导入。</p>
+      <div v-if="previewCurrent && previewResult?.entries?.length" class="preview-table">
         <h4>预览（前 {{ previewResult.entries.length }} 条）</h4>
+        <p>时区：{{ parsingConfig.timeZone || 'UTC' }}。未指定基准时间时，自动时间以实际导入任务开始时刻为终点。</p>
         <n-data-table
           :columns="[
             { title: '行号', key: 'lineNumber', width: 60 },
             { title: '角色', key: 'roleName', width: 100 },
+            { title: '时间', key: 'timestamp', width: 220, render: (row: ParsedEntry) => formatTimestamp(row.timestamp) },
             { title: '内容', key: 'content', ellipsis: { tooltip: true } },
             { title: 'OOC', key: 'isOoc', width: 60, render: (row: ParsedEntry) => row.isOoc ? '是' : '否' },
           ]"
@@ -916,7 +949,7 @@ const importConfig = async (e: Event) => {
             type="primary"
             :loading="loading"
             :disabled="!form.content.trim()"
-            @click="doPreview"
+            @click="doPreview()"
           >
             预览解析结果
           </n-button>
@@ -931,6 +964,7 @@ const importConfig = async (e: Event) => {
             v-else
             type="primary"
             :loading="loading"
+            :disabled="!previewCurrent"
             @click="doImport"
           >
             确认导入

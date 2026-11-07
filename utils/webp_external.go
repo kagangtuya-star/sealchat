@@ -233,6 +233,11 @@ func bundledWebPPlatformDir() (string, error) {
 		default:
 			return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
+	case "android":
+		if runtime.GOARCH == "arm64" {
+			return "linux-arm64", nil
+		}
+		return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
 	case "windows":
 		switch runtime.GOARCH {
 		case "amd64":

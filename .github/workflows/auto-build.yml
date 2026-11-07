@@ -52,12 +52,19 @@ jobs:
           - name: linux_amd64
             goos: linux
             goarch: amd64
+            cgo: 1
           - name: linux_arm64
             goos: linux
             goarch: arm64
+            cgo: 1
+          - name: android_arm64
+            goos: android
+            goarch: arm64
+            cgo: 0
           - name: windows_amd64
             goos: windows
             goarch: amd64
+            cgo: 1
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -77,15 +84,24 @@ jobs:
           path: ./ui/dist
 
       - name: Setup Zig
+        if: matrix.goos != 'android'
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.11.0
+
+      - name: Android compile check
+        if: matrix.goos == 'android'
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: go build ./...
 
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           BUILD_DATE=$(date +%Y%m%d)
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
@@ -96,9 +112,17 @@ jobs:
             elif [ "${{ matrix.goarch }}" = "arm64" ]; then
               CC="zig cc -target aarch64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static' -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
             fi
+          elif [ "${{ matrix.goos }}" = "android" ]; then
+            go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             CC="zig cc -target x86_64-windows-gnu" go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
           fi
+
+      - name: Verify Android target metadata
+        if: matrix.goos == 'android'
+        run: |
+          go version -m output/sealchat-server | grep -F $'build\tGOOS=android'
+          go version -m output/sealchat-server | grep -F $'build\tGOARCH=arm64'
 
       - name: Prepare package
         run: |
@@ -117,6 +141,10 @@ jobs:
               echo "Unsupported arch: ${{ matrix.goarch }}"
               exit 1
             fi
+          elif [ "${{ matrix.goos }}" = "android" ]; then
+            cp output/sealchat-server package/
+            WEBP_DIR="linux-arm64"
+            CJPEG_NAME="cjpeg"
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             cp output/sealchat-server.exe package/
             WEBP_DIR="win-x64"
@@ -131,7 +159,7 @@ jobs:
           mkdir -p "package/bin/cjpeg/${WEBP_DIR}"
           cp "bin/cjpeg/${WEBP_DIR}/${CJPEG_NAME}" "package/bin/cjpeg/${WEBP_DIR}/"
           cp bin/cjpeg/LICENSE.md package/bin/cjpeg/LICENSE.md
-          if [ "${{ matrix.goos }}" = "linux" ]; then
+          if [ "${{ matrix.goos }}" = "linux" ] || [ "${{ matrix.goos }}" = "android" ]; then
             chmod +x "package/bin/${WEBP_DIR}/cwebp" "package/bin/${WEBP_DIR}/gif2webp" "package/bin/${WEBP_DIR}/dwebp" "package/bin/cjpeg/${WEBP_DIR}/cjpeg"
           fi
           cp bin/LICENSE package/LICENSE
@@ -149,7 +177,7 @@ jobs:
         run: |
           mkdir -p release
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          if [ "${{ matrix.goos }}" = "linux" ]; then
+          if [ "${{ matrix.goos }}" = "linux" ] || [ "${{ matrix.goos }}" = "android" ]; then
             tar -czvf release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz -C package .
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             cd package && zip -r ../release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.zip .

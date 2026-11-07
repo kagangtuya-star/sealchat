@@ -111,14 +111,14 @@ const resetWorldModeFromDetail = () => {
       : 'builtin';
   worldMode.value = mode;
   const configuredWorldBotIds = Array.isArray((detail?.world as any)?.channelDefaultBotIds)
-    ? Array.from(new Set(((detail?.world as any)?.channelDefaultBotIds || []).map((id: unknown) => String(id || '').trim()).filter(Boolean)))
+    ? Array.from(new Set<string>(((detail?.world as any)?.channelDefaultBotIds || []).map((id: unknown) => String(id || '').trim()).filter(Boolean)))
     : [];
   worldBotId.value = String(detail?.world?.channelDefaultBotId || '').trim();
   worldBotIds.value = configuredWorldBotIds.length > 0
     ? configuredWorldBotIds
     : (worldBotId.value ? [worldBotId.value] : []);
   const configuredWorldEventBotIds = Array.isArray((detail?.world as any)?.channelDefaultEventBotIds)
-    ? Array.from(new Set(((detail?.world as any)?.channelDefaultEventBotIds || []).map((id: unknown) => String(id || '').trim()).filter((id) => worldBotIds.value.includes(id))))
+    ? Array.from(new Set<string>(((detail?.world as any)?.channelDefaultEventBotIds || []).map((id: unknown) => String(id || '').trim()).filter((id: string) => worldBotIds.value.includes(id))))
     : [];
   worldEventBotIds.value = configuredWorldEventBotIds;
 };

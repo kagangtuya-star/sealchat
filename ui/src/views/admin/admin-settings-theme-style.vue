@@ -19,6 +19,11 @@ import type { CursorThemeConfig } from '@/services/cursor/cursorTypes'
 import DicePlatformStyleEditor from '@/features/dice3d/components/DicePlatformStyleEditor.vue'
 import { downloadDiceSkinTemplate, importDiceSkinPackage } from '@/features/dice3d/diceSkinTransfer'
 import { createDefaultDice3DWorldConfig } from '@/features/dice3d/defaults'
+import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue'
+import ActionRibbonPlatformLayoutModal from '@/features/action-ribbon-layout/components/ActionRibbonPlatformLayoutModal.vue'
+import { normalizeActionRibbonLayoutConfig, type ActionRibbonLayoutConfig } from '@/features/action-ribbon-layout/actionRibbonLayout'
+import { normalizeUICustomizationPolicy } from '@/services/ui-customization/types'
+import { api } from '@/stores/_config'
 
 type AdminThemeStyleExpose = {
   save: () => Promise<void>
@@ -34,9 +39,18 @@ const message = useMessage()
 const display = useDisplayStore()
 const utils = useUtilsStore()
 
+type PlatformThemeDefaultKey = 'defaultPlatformThemeId' | 'defaultPlatformDayThemeId' | 'defaultPlatformNightThemeId'
+const platformThemeDefaultSlots: Array<{ key: PlatformThemeDefaultKey; label: string; tag: string; placeholder: string }> = [
+  { key: 'defaultPlatformThemeId', label: '通用默认主题', tag: '默认', placeholder: '未设置（使用基础配色）' },
+  { key: 'defaultPlatformDayThemeId', label: '日间默认主题', tag: '日间默认', placeholder: '未设置（使用通用默认主题）' },
+  { key: 'defaultPlatformNightThemeId', label: '夜间默认主题', tag: '夜间默认', placeholder: '未设置（使用通用默认主题）' },
+]
+
 const model = ref<ThemeManagementConfig>({
   platformThemes: [],
   defaultPlatformThemeId: '',
+  defaultPlatformDayThemeId: '',
+  defaultPlatformNightThemeId: '',
   platformDice3DStyles: [],
   defaultPlatformDice3DStyleId: '',
 })
@@ -52,6 +66,30 @@ const loginBackground = ref<LoginBackgroundConfig>({})
 const uiTextReplace = ref<UITextReplaceConfig>(normalizeUITextReplaceConfig())
 const cursorTheme = ref<CursorThemeConfig>(normalizeCursorTheme(null, 'platform'))
 const cursorThemeVisible = ref(false)
+const actionRibbonLayout = ref<ActionRibbonLayoutConfig>(normalizeActionRibbonLayoutConfig(null))
+const actionRibbonLayoutVisible = ref(false)
+const actionRibbonDefaultName = computed(() =>
+  actionRibbonLayout.value.presets.find((item) => item.id === actionRibbonLayout.value.defaultPresetId)?.name || '系统默认',
+)
+
+// Platform UI customization policy is saved on its own (like packages), so
+// toggling it never mixes with this page's unsaved theme edits.
+type UICustomizationPolicyKey = 'allowWorldCss' | 'allowWorldJs' | 'allowPublicWorldCss'
+const uiCustomizationPolicySaving = ref<UICustomizationPolicyKey | ''>('')
+const uiCustomizationPolicy = computed(() => normalizeUICustomizationPolicy(utils.config?.uiCustomization))
+const updateUICustomizationPolicy = async (key: UICustomizationPolicyKey, value: boolean) => {
+  const next = { ...uiCustomizationPolicy.value, [key]: value }
+  uiCustomizationPolicySaving.value = key
+  try {
+    await api.put('api/v1/config', { uiCustomization: next })
+    if (utils.config) utils.config = { ...utils.config, uiCustomization: next }
+    message.success('界面自定义策略已保存')
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '保存策略失败')
+  } finally {
+    uiCustomizationPolicySaving.value = ''
+  }
+}
 
 const { compress: compressImage } = useImageCompressor()
 const loginBgUploading = ref(false)
@@ -64,16 +102,26 @@ const personalThemeOptions = computed(() =>
     value: theme.id,
   })),
 )
-const defaultPlatformThemeName = computed(() => {
-  if (!model.value.defaultPlatformThemeId) return ''
-  return platformThemes.value.find((item) => item.id === model.value.defaultPlatformThemeId)?.name || ''
-})
+const platformThemeSelectOptions = computed(() =>
+  platformThemes.value.map((theme) => ({
+    label: theme.name,
+    value: theme.id,
+  })),
+)
+const getPlatformThemeDefaultTags = (themeId: string) =>
+  platformThemeDefaultSlots.filter((slot) => model.value[slot.key] === themeId).map((slot) => slot.tag)
+const getPlatformThemeDefaultMenuOptions = (themeId: string) =>
+  platformThemeDefaultSlots.map((slot) => ({
+    label: model.value[slot.key] === themeId ? `取消${slot.label}` : `设为${slot.label}`,
+    key: slot.key,
+  }))
 const isModified = computed(() =>
   JSON.stringify({
     themeManagement: model.value,
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
     cursorTheme: cursorTheme.value,
+    actionRibbonLayout: actionRibbonLayout.value,
   }) !== originalSnapshot.value,
 )
 
@@ -94,6 +142,8 @@ const normalizeDicePresetConfig = (item: any) => {
 const normalizeThemeManagement = (value?: ThemeManagementConfig | null): ThemeManagementConfig => ({
   platformThemes: Array.isArray(value?.platformThemes) ? cloneDeep(value?.platformThemes || []) : [],
   defaultPlatformThemeId: value?.defaultPlatformThemeId || '',
+  defaultPlatformDayThemeId: value?.defaultPlatformDayThemeId || '',
+  defaultPlatformNightThemeId: value?.defaultPlatformNightThemeId || '',
   platformDice3DStyles: Array.isArray(value?.platformDice3DStyles)
     ? cloneDeep(value?.platformDice3DStyles || []).map((item: any) => {
       const { skin: _legacySkin, ...rest } = item
@@ -394,8 +444,8 @@ const appendPlatformTheme = (payload: ThemeImportPayload) => {
     updatedAt: now,
   }
   model.value = {
+    ...model.value,
     platformThemes: [...platformThemes.value, nextTheme],
-    defaultPlatformThemeId: model.value.defaultPlatformThemeId || '',
   }
   return true
 }
@@ -515,16 +565,27 @@ const handleImportPersonalTheme = () => {
 
 const handleDeleteTheme = (themeId: string) => {
   const nextThemes = platformThemes.value.filter((item) => item.id !== themeId)
-  model.value = {
+  const next: ThemeManagementConfig = {
+    ...model.value,
     platformThemes: nextThemes,
-    defaultPlatformThemeId: model.value.defaultPlatformThemeId === themeId ? '' : model.value.defaultPlatformThemeId || '',
+  }
+  platformThemeDefaultSlots.forEach((slot) => {
+    if (next[slot.key] === themeId) next[slot.key] = ''
+  })
+  model.value = next
+}
+
+const handleToggleDefault = (themeId: string, key: PlatformThemeDefaultKey) => {
+  model.value = {
+    ...model.value,
+    [key]: model.value[key] === themeId ? '' : themeId,
   }
 }
 
-const handleToggleDefault = (themeId: string) => {
+const handleDefaultThemeSelect = (key: PlatformThemeDefaultKey, themeId: string | null) => {
   model.value = {
     ...model.value,
-    defaultPlatformThemeId: model.value.defaultPlatformThemeId === themeId ? '' : themeId,
+    [key]: themeId || '',
   }
 }
 
@@ -536,11 +597,13 @@ const resetFromConfig = async () => {
   loginBackground.value = cloneDeep(utils.config?.loginBackground || {})
   uiTextReplace.value = normalizeUITextReplaceConfig(utils.config?.uiTextReplace)
   cursorTheme.value = normalizeCursorTheme(utils.config?.cursorTheme, 'platform')
+  actionRibbonLayout.value = normalizeActionRibbonLayoutConfig(utils.config?.actionRibbonLayout)
   originalSnapshot.value = JSON.stringify({
     themeManagement: model.value,
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
     cursorTheme: cursorTheme.value,
+    actionRibbonLayout: actionRibbonLayout.value,
   })
 }
 
@@ -555,16 +618,19 @@ const save = async () => {
     payload.loginBackground = cloneDeep(loginBackground.value)
     payload.uiTextReplace = cloneDeep(uiTextReplace.value)
     payload.cursorTheme = cloneDeep(cursorTheme.value)
+    payload.actionRibbonLayout = cloneDeep(actionRibbonLayout.value)
     await utils.configSet(payload)
     model.value = normalizeThemeManagement(payload.themeManagement)
     loginBackground.value = cloneDeep(payload.loginBackground || {})
     uiTextReplace.value = normalizeUITextReplaceConfig(payload.uiTextReplace)
     cursorTheme.value = normalizeCursorTheme(payload.cursorTheme, 'platform')
+    actionRibbonLayout.value = normalizeActionRibbonLayoutConfig(payload.actionRibbonLayout)
     originalSnapshot.value = JSON.stringify({
       themeManagement: model.value,
       loginBackground: loginBackground.value,
       uiTextReplace: uiTextReplace.value,
       cursorTheme: cursorTheme.value,
+      actionRibbonLayout: actionRibbonLayout.value,
     })
     message.success('主题与样式管理已保存')
   } catch (error: any) {
@@ -585,7 +651,7 @@ defineExpose<AdminThemeStyleExpose>({
 </script>
 
 <template>
-  <div class="admin-settings-scroll overflow-y-auto pr-2" style="max-height: 61vh; margin-top: 0;">
+  <div class="admin-settings-scroll overflow-y-auto pr-2">
     <input
       ref="importFileInputRef"
       type="file"
@@ -605,8 +671,20 @@ defineExpose<AdminThemeStyleExpose>({
     <n-form label-placement="left" label-width="120">
       <n-collapse v-model:expanded-names="expandedNames" class="settings-collapse">
         <n-collapse-item title="平台主题列表" name="platform-theme-list">
-          <n-form-item label="默认主题">
-            <span class="text-sm text-gray-600 dark:text-gray-400">{{ defaultPlatformThemeName || '未设置' }}</span>
+          <n-form-item v-for="defaultSlot in platformThemeDefaultSlots" :key="defaultSlot.key" :label="defaultSlot.label">
+            <n-select
+              :value="model[defaultSlot.key] || null"
+              :options="platformThemeSelectOptions"
+              :placeholder="defaultSlot.placeholder"
+              clearable
+              class="admin-theme-style__toolbar-select"
+              @update:value="(value: string | null) => handleDefaultThemeSelect(defaultSlot.key, value)"
+            />
+          </n-form-item>
+          <n-form-item label=" ">
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              用户将日间/夜间主题设为“平台默认”时，分别使用对应的日间/夜间默认主题；未单独设置时使用通用默认主题。
+            </span>
           </n-form-item>
           <n-form-item label="平台主题数">
             <span class="text-sm text-gray-600 dark:text-gray-400">{{ platformThemes.length }}/50</span>
@@ -632,26 +710,34 @@ defineExpose<AdminThemeStyleExpose>({
                   <div class="theme-list-item__main">
                     <div class="theme-list-item__title">
                       <span>{{ theme.name }}</span>
-                      <n-tag v-if="model.defaultPlatformThemeId === theme.id" size="small" type="success" round>默认</n-tag>
+                      <n-tag
+                        v-for="tag in getPlatformThemeDefaultTags(theme.id)"
+                        :key="tag"
+                        size="small"
+                        type="success"
+                        round
+                      >
+                        {{ tag }}
+                      </n-tag>
                     </div>
                     <div class="theme-list-item__meta">
                       <span>更新时间：{{ formatTimestamp(theme.updatedAt) }}</span>
                     </div>
                   </div>
                   <div class="theme-list-item__actions">
-                    <n-button
-                      size="small"
-                      secondary
-                      @click="handleToggleDefault(theme.id)"
+                    <n-dropdown
+                      trigger="click"
+                      :options="getPlatformThemeDefaultMenuOptions(theme.id)"
+                      @select="(key: PlatformThemeDefaultKey) => handleToggleDefault(theme.id, key)"
                     >
-                      {{ model.defaultPlatformThemeId === theme.id ? '取消默认' : '设为默认' }}
-                    </n-button>
+                      <n-button size="small" secondary>默认设置</n-button>
+                    </n-dropdown>
                     <n-button size="small" secondary @click="exportPlatformTheme(theme)">导出</n-button>
                     <n-popconfirm @positive-click="handleDeleteTheme(theme.id)">
                       <template #trigger>
                         <n-button size="small" secondary type="error">删除</n-button>
                       </template>
-                      删除后若当前主题为默认主题，将自动清空默认主题。
+                      删除后若该主题被设为通用/日间/夜间默认主题，将自动清空对应设置。
                     </n-popconfirm>
                   </div>
                 </div>
@@ -670,6 +756,22 @@ defineExpose<AdminThemeStyleExpose>({
               <n-button secondary @click="cursorThemeVisible = true">管理鼠标样式</n-button>
               <span class="text-sm text-gray-600 dark:text-gray-400">最多六种；未配置时使用浏览器默认样式</span>
             </div>
+          </n-form-item>
+        </n-collapse-item>
+
+        <n-collapse-item title="更多跑团功能显示排序" name="action-ribbon-layout">
+          <n-form-item label="布局方案">
+            <div class="flex flex-wrap items-center gap-2 w-full">
+              <n-button secondary @click="actionRibbonLayoutVisible = true">管理布局方案</n-button>
+              <span class="text-sm text-gray-600 dark:text-gray-400">
+                共 {{ actionRibbonLayout.presets.length }} 个方案，平台默认：{{ actionRibbonDefaultName }}
+              </span>
+            </div>
+          </n-form-item>
+          <n-form-item label=" ">
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              调整聊天顶部“更多跑团功能”中入口的顺序与显隐；世界管理员可跟随平台默认、引用某个方案或在其基础上自定义。仅影响入口展示，不改变功能权限。
+            </span>
           </n-form-item>
         </n-collapse-item>
 
@@ -817,6 +919,43 @@ defineExpose<AdminThemeStyleExpose>({
           </n-form-item>
         </n-collapse-item>
 
+        <n-collapse-item title="高级界面自定义" name="ui-customization">
+          <div class="ui-customization-section">
+            <div class="ui-customization-policy">
+              <div class="ui-customization-policy__row">
+                <n-switch
+                  :value="uiCustomizationPolicy.allowWorldCss"
+                  :loading="uiCustomizationPolicySaving === 'allowWorldCss'"
+                  @update:value="(v: boolean) => updateUICustomizationPolicy('allowWorldCss', v)"
+                />
+                <span>允许世界 CSS</span>
+              </div>
+              <div class="ui-customization-policy__row">
+                <n-switch
+                  :value="uiCustomizationPolicy.allowPublicWorldCss"
+                  :disabled="!uiCustomizationPolicy.allowWorldCss"
+                  :loading="uiCustomizationPolicySaving === 'allowPublicWorldCss'"
+                  @update:value="(v: boolean) => updateUICustomizationPolicy('allowPublicWorldCss', v)"
+                />
+                <span>世界 CSS 可进入 OB / 嵌入 / LOG 公开页</span>
+              </div>
+              <div class="ui-customization-policy__row">
+                <n-switch
+                  :value="uiCustomizationPolicy.allowWorldJs"
+                  :loading="uiCustomizationPolicySaving === 'allowWorldJs'"
+                  @update:value="(v: boolean) => updateUICustomizationPolicy('allowWorldJs', v)"
+                />
+                <span>允许世界脚本</span>
+                <span class="ui-customization-policy__hint">开启后世界管理员可保存 JavaScript，成员需逐个信任后才执行；匿名公共页面始终不执行世界脚本。关闭不会删除已保存的脚本。</span>
+              </div>
+            </div>
+            <div class="ui-text-replace-note">
+              平台包对所有用户生效，按列表顺序加载在主题之上、世界包之下。平台脚本会在匹配页面执行，请只保存你信任的代码。以下修改即时保存，不需要点击页面底部的保存按钮。
+            </div>
+            <UICustomizationManager :scope="{ type: 'platform' }" export-name="platform" />
+          </div>
+        </n-collapse-item>
+
         <n-collapse-item title="界面文本自定义" name="ui-text-replace">
           <n-form-item label="启用替换">
             <div class="ui-text-replace-toggle-row">
@@ -867,12 +1006,18 @@ defineExpose<AdminThemeStyleExpose>({
     </n-form>
   </div>
   <CursorThemeEditorModal v-model:show="cursorThemeVisible" v-model="cursorTheme" scope="platform" />
+  <ActionRibbonPlatformLayoutModal v-model:show="actionRibbonLayoutVisible" v-model="actionRibbonLayout" />
 </template>
 
 <style scoped>
 .admin-settings-scroll {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
   overflow-x: hidden;
-  overflow-y: scroll;
+  overflow-y: auto;
+  padding-bottom: 20px;
   scrollbar-gutter: stable;
 }
 
@@ -1164,6 +1309,10 @@ defineExpose<AdminThemeStyleExpose>({
 }
 
 .dice-style-list, .dice-style-collapse { width: 100%; }
+.ui-customization-section { display: flex; flex-direction: column; gap: 12px; padding: 0 4px 8px; }
+.ui-customization-policy { display: flex; flex-direction: column; gap: 8px; }
+.ui-customization-policy__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.ui-customization-policy__hint { flex-basis: 100%; padding-left: 48px; font-size: 12px; line-height: 1.6; color: var(--sc-text-secondary, #6b7280); }
 .dice-style-title { display: flex; align-items: center; gap: 8px; }
 .dice-style-item__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 

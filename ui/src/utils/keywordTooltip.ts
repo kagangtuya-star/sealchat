@@ -75,7 +75,7 @@ function ensureTooltipStyles() {
       scrollbar-color: transparent transparent;
     }
     .keyword-tooltip:hover {
-      scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+      scrollbar-color: var(--sc-scrollbar-thumb) transparent;
     }
     .keyword-tooltip::-webkit-scrollbar {
       width: 4px !important;
@@ -89,23 +89,7 @@ function ensureTooltipStyles() {
       border-radius: 2px !important;
     }
     .keyword-tooltip:hover::-webkit-scrollbar-thumb {
-      background: rgba(128, 128, 128, 0.2) !important;
-    }
-    /* Night mode */
-    [data-display-palette='night'] .keyword-tooltip:hover,
-    :root[data-display-palette='night'] .keyword-tooltip:hover {
-      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-    }
-    [data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb,
-    :root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.2) !important;
-    }
-    /* Custom theme */
-    :root[data-custom-theme='true'] .keyword-tooltip:hover {
-      scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
-    }
-    :root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
-      background: rgba(128, 128, 128, 0.25) !important;
+      background: var(--sc-scrollbar-thumb) !important;
     }
   `
   document.head.appendChild(style)
@@ -154,7 +138,8 @@ function createTooltipElement(level: number): HTMLDivElement {
   tooltipIdCounter++
   const tooltip = document.createElement('div')
   tooltip.id = `keyword-tooltip-${tooltipIdCounter}`
-  tooltip.className = 'keyword-tooltip'
+  tooltip.className = 'keyword-tooltip sc-overlay'
+  tooltip.setAttribute('data-sc-ui', 'keyword-tooltip')
   tooltip.setAttribute(FONT_SURFACE_ATTR, 'true')
   tooltip.dataset.level = String(level)
   tooltip.style.cssText = `

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -63,6 +64,7 @@ type WorldCreateParams struct {
 	Description               string
 	Visibility                string
 	Avatar                    string
+	CoverAttachmentID         string
 	ChannelDefaultDiceMode    string
 	ChannelDefaultBotID       string
 	ChannelDefaultBotIDs      []string
@@ -80,6 +82,8 @@ type WorldUpdateParams struct {
 	AllowManageOtherUserChannelIdentities *bool
 	AllowMemberEditKeywords               *bool
 	AllowMemberAccessLogLayout            *bool `json:"allowMemberAccessLogLayout"`
+	ExportRespectMessageVisibility        *bool `json:"exportRespectMessageVisibility"`
+	AllowMemberExportMessages             *bool `json:"allowMemberExportMessages"`
 	StrictWhisperPrivacy                  *bool
 	ChannelDefaultDiceMode                *string
 	ChannelDefaultBotID                   *string
@@ -87,6 +91,7 @@ type WorldUpdateParams struct {
 	ChannelDefaultEventBotIDs             *[]string
 	CharacterCardBadgeTemplate            *string
 	CursorTheme                           *utils.CursorThemeConfig
+	ActionRibbonLayout                    *utils.WorldActionRibbonLayout `json:"actionRibbonLayout"`
 	StickyNoteDefaultAppearance           *protocol.StickyNoteAppearance
 	CoverAttachmentID                     *string `json:"coverAttachmentId"`
 }
@@ -628,10 +633,15 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 	if err != nil {
 		return nil, nil, err
 	}
+	coverRef, coverID, err := normalizeWorldCoverAttachment("", ownerID, "", params.CoverAttachmentID)
+	if err != nil {
+		return nil, nil, err
+	}
 	world := &model.WorldModel{
 		Name:                    name,
 		Description:             description,
 		Avatar:                  params.Avatar,
+		CoverAttachmentID:       coverRef,
 		Visibility:              visibility,
 		OwnerID:                 ownerID,
 		EnforceMembership:       false,
@@ -647,6 +657,19 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 	err = db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(world).Error; err != nil {
 			return err
+		}
+		if coverID != "" {
+			// Claim the unbound temporary upload atomically with world creation.
+			result := tx.Model(&model.AttachmentModel{}).
+				Where("id = ? AND user_id = ? AND root_id = ? AND root_id_type = ? AND is_temp = ?",
+					coverID, ownerID, "", worldCoverAttachmentRootType, true).
+				Updates(map[string]interface{}{"root_id": world.ID, "is_temp": false})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrWorldCoverInvalid
+			}
 		}
 		member := &model.WorldMemberModel{
 			WorldID:  world.ID,
@@ -735,6 +758,12 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	if params.StrictWhisperPrivacy != nil {
 		updates["strict_whisper_privacy"] = *params.StrictWhisperPrivacy
 	}
+	if params.ExportRespectMessageVisibility != nil {
+		updates["export_respect_message_visibility"] = *params.ExportRespectMessageVisibility
+	}
+	if params.AllowMemberExportMessages != nil {
+		updates["allow_member_export_messages"] = *params.AllowMemberExportMessages
+	}
 	if params.ChannelDefaultDiceMode != nil || params.ChannelDefaultBotID != nil || params.ChannelDefaultBotIDs != nil || params.ChannelDefaultEventBotIDs != nil {
 		nextMode := world.ChannelDefaultDiceMode
 		if params.ChannelDefaultDiceMode != nil {
@@ -789,6 +818,13 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 			return nil, err
 		}
 		updates["cursor_theme_json"] = string(raw)
+	}
+	if params.ActionRibbonLayout != nil {
+		raw, err := json.Marshal(utils.NormalizeWorldActionRibbonLayout(*params.ActionRibbonLayout))
+		if err != nil {
+			return nil, err
+		}
+		updates["action_ribbon_layout_json"] = string(raw)
 	}
 	if params.StickyNoteDefaultAppearance != nil {
 		if err := ValidateStickyNoteAppearanceForWorld(worldID, actorID, params.StickyNoteDefaultAppearance); err != nil {
@@ -950,9 +986,7 @@ func WorldJoin(worldID, userID, role string) (*model.WorldMemberModel, error) {
 		return nil, err
 	}
 	if member.ID != "" {
-		if _, err := ensureWorldMemberChannelState(worldID, userID, member.Role); err != nil {
-			return member, err
-		}
+		// 重复加入（包括重复消费邀请）不重新解释已有频道授权。
 		return member, nil
 	}
 	member = &model.WorldMemberModel{
@@ -961,12 +995,19 @@ func WorldJoin(worldID, userID, role string) (*model.WorldMemberModel, error) {
 		Role:     role,
 		JoinedAt: time.Now(),
 	}
-	if err := db.Create(member).Error; err != nil {
+	prepareWorldSpectatorRoles(worldID, role)
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(member).Error; err != nil {
+			return err
+		}
+		if err := ensureWorldChannelMembershipsTx(tx, worldID, userID); err != nil {
+			return err
+		}
+		return syncWorldChannelRolesTx(tx, worldID, userID, role)
+	}); err != nil {
 		return nil, err
 	}
-	if _, err := ensureWorldMemberChannelState(worldID, userID, role); err != nil {
-		return member, err
-	}
+	finishWorldChannelIdentitySync(worldID, userID)
 	return member, nil
 }
 
@@ -1250,8 +1291,9 @@ func ListWorldMembersDetail(worldID string, page, pageSize int, keyword string) 
 	return result, total, nil
 }
 
-func ensureWorldChannelMemberships(worldID, userID string) error {
-	channels, err := ChannelListByWorld(worldID)
+func ensureWorldChannelMembershipsTx(tx *gorm.DB, worldID, userID string) error {
+	var channels []*model.ChannelModel
+	err := tx.Where("world_id = ? AND status = ? AND is_private = ?", worldID, "active", false).Find(&channels).Error
 	if err != nil {
 		return err
 	}
@@ -1259,8 +1301,14 @@ func ensureWorldChannelMemberships(worldID, userID string) error {
 		if ch == nil || strings.TrimSpace(ch.ID) == "" {
 			continue
 		}
-		if _, err := model.MemberGetByUserIDAndChannelIDBase(userID, ch.ID, "", true); err != nil {
+		var member model.MemberModel
+		if err := tx.Where("user_id = ? AND channel_id = ?", userID, ch.ID).Limit(1).Find(&member).Error; err != nil {
 			return err
+		}
+		if member.ID == "" {
+			if err := tx.Create(&model.MemberModel{UserID: userID, ChannelID: ch.ID}).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1308,19 +1356,44 @@ func WorldUpdateMemberRole(worldID, actorID, targetUserID, role string) error {
 	if IsWorldOwner(worldID, targetUserID) {
 		return ErrWorldOwnerImmutable
 	}
-	db := model.GetDB()
-	res := db.Model(&model.WorldMemberModel{}).
-		Where("world_id = ? AND user_id = ?", worldID, targetUserID).
-		Updates(map[string]any{"role": role, "updated_at": time.Now()})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrWorldMemberInvalid
-	}
-	if err := syncWorldChannelRoles(worldID, targetUserID, role); err != nil {
+	prepareWorldSpectatorRoles(worldID, role)
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		// 实际更新取得成员行写锁，后续授权同步与世界角色一起提交。
+		res := tx.Model(&model.WorldMemberModel{}).
+			Where("world_id = ? AND user_id = ? AND role <> ?", worldID, targetUserID, model.WorldRoleOwner).
+			Updates(map[string]any{"role": role, "updated_at": time.Now()})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// MySQL 在值未变化时可能返回 0；同角色更新仍应当幂等成功。
+			var member model.WorldMemberModel
+			if err := tx.Where("world_id = ? AND user_id = ? AND role <> ?", worldID, targetUserID, model.WorldRoleOwner).
+				First(&member).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrWorldMemberInvalid
+				}
+				return err
+			}
+		}
+		if role == model.WorldRoleSpectator {
+			// 显式转为旁观者仍撤销读写/管理角色，保留原有降权语义。
+			channelIDs := tx.Model(&model.ChannelModel{}).Select("id").
+				Where("world_id = ? AND is_private = ?", worldID, false)
+			roleIDs := tx.Model(&model.ChannelRoleModel{}).Select("id").
+				Where("channel_id IN (?)", channelIDs).
+				Where("id LIKE ? OR id LIKE ?", "%-admin", "%-member")
+			if err := tx.Where("user_id = ? AND role_id IN (?)", targetUserID, roleIDs).
+				Delete(&model.UserRoleMappingModel{}).Error; err != nil {
+				return err
+			}
+		}
+		return syncWorldChannelRolesTx(tx, worldID, targetUserID, role)
+	})
+	if err != nil {
 		return err
 	}
+	finishWorldChannelIdentitySync(worldID, targetUserID)
 	return nil
 }
 
@@ -1391,7 +1464,7 @@ func BackfillWorldRoleAssignments() error {
 			return err
 		}
 		for _, member := range members {
-			if _, err := ensureWorldMemberChannelState(world.ID, member.UserID, member.Role); err != nil {
+			if _, err := ensureWorldMemberChannelState(world.ID, member.UserID); err != nil {
 				return err
 			}
 		}
@@ -1399,17 +1472,30 @@ func BackfillWorldRoleAssignments() error {
 	return nil
 }
 
-func ensureWorldMemberChannelState(worldID, userID, role string) (*model.WorldMemberModel, error) {
-	if err := ensureWorldChannelMemberships(worldID, userID); err != nil {
-		return nil, err
-	}
-	if err := syncWorldChannelRoles(worldID, userID, role); err != nil {
-		return nil, err
-	}
+func ensureWorldMemberChannelState(worldID, userID string) (*model.WorldMemberModel, error) {
 	member := &model.WorldMemberModel{}
-	if err := model.GetDB().Where("world_id = ? AND user_id = ?", worldID, userID).Limit(1).Find(member).Error; err != nil {
+	if err := model.GetDB().Where("world_id = ? AND user_id = ?", worldID, userID).First(member).Error; err != nil {
 		return nil, err
 	}
+	prepareWorldSpectatorRoles(worldID, member.Role)
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		// 写锁之后重读，不能用回填开始时的旧角色覆盖并发角色变更。
+		if err := tx.Model(&model.WorldMemberModel{}).Where("id = ?", member.ID).
+			UpdateColumn("updated_at", gorm.Expr("updated_at")).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", member.ID).First(member).Error; err != nil {
+			return err
+		}
+		if err := ensureWorldChannelMembershipsTx(tx, worldID, userID); err != nil {
+			return err
+		}
+		return syncWorldChannelRolesTx(tx, worldID, userID, member.Role)
+	})
+	if err != nil {
+		return nil, err
+	}
+	finishWorldChannelIdentitySync(worldID, userID)
 	return member, nil
 }
 
@@ -1427,71 +1513,89 @@ func normalizeWorldRole(role string) string {
 }
 
 func syncWorldChannelRoles(worldID, userID, worldRole string) error {
-	channels, err := ChannelListByWorld(worldID)
+	prepareWorldSpectatorRoles(worldID, worldRole)
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		return syncWorldChannelRolesTx(tx, worldID, userID, worldRole)
+	})
+	if err == nil {
+		finishWorldChannelIdentitySync(worldID, userID)
+	}
+	return err
+}
+
+func syncWorldChannelRolesTx(tx *gorm.DB, worldID, userID, worldRole string) error {
+	var channels []*model.ChannelModel
+	err := tx.Where("world_id = ? AND is_private = ? AND status IN ?", worldID, false,
+		[]string{model.ChannelStatusActive, model.ChannelStatusArchived}).Find(&channels).Error
 	if err != nil {
 		return err
 	}
-	publicChannelIDs := map[string]struct{}{}
-	if worldRole == model.WorldRoleMember {
-		publicChannels, err := ChannelListPublicByWorld(worldID)
-		if err != nil {
-			return err
-		}
-		for _, ch := range publicChannels {
-			if ch == nil || strings.TrimSpace(ch.ID) == "" {
-				continue
-			}
-			publicChannelIDs[ch.ID] = struct{}{}
-		}
+	channelMap := make(map[string]*model.ChannelModel, len(channels))
+	for _, ch := range channels {
+		channelMap[ch.ID] = ch
 	}
 	for _, ch := range channels {
 		if ch == nil || strings.TrimSpace(ch.ID) == "" {
 			continue
 		}
+		desired := ""
 		switch worldRole {
 		case model.WorldRoleOwner, model.WorldRoleAdmin:
-			if err := ensureChannelRoleLink(userID, ch.ID, "admin"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "spectator"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "member"); err != nil {
-				return err
-			}
+			desired = "admin"
 		case model.WorldRoleSpectator:
-			if err := ensureChannelRoleLink(userID, ch.ID, "spectator"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "admin"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "member"); err != nil {
-				return err
-			}
+			desired = "spectator"
 		case model.WorldRoleMember:
-			// 成员只加入公开频道，非公开频道需要单独授权
-			if _, ok := publicChannelIDs[ch.ID]; ok {
-				if err := ensureChannelRoleLink(userID, ch.ID, "member"); err != nil {
-					return err
+			// 根频道也必须公开；非公开频道的手动授权不受同步影响。
+			root := channelMap[ch.RootId]
+			rootPublic := ch.RootId == "" || (root != nil && root.Status == model.ChannelStatusActive && strings.EqualFold(strings.TrimSpace(root.PermType), "public"))
+			if rootPublic && strings.EqualFold(strings.TrimSpace(ch.PermType), "public") {
+				desired = "member"
+			}
+		}
+		for _, key := range []string{"admin", "spectator", "member"} {
+			roleID := fmt.Sprintf("ch-%s-%s", ch.ID, key)
+			if key == desired {
+				// 不向归档频道新增权限，但保留仍然适用的历史继承权限。
+				if ch.Status == model.ChannelStatusActive {
+					if _, err := model.UserRoleLinkSourceTx(tx, []string{roleID}, []string{userID}, model.RoleGrantWorld); err != nil {
+						return err
+					}
 				}
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "admin"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "spectator"); err != nil {
-				return err
-			}
-		default:
-			if err := removeChannelRoleLink(userID, ch.ID, "admin"); err != nil {
-				return err
-			}
-			if err := removeChannelRoleLink(userID, ch.ID, "spectator"); err != nil {
+			} else if _, err := model.UserRoleUnlinkSourceTx(tx, []string{roleID}, []string{userID}, model.RoleGrantWorld); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return MaterializeSharedChannelIdentitiesForUserTx(tx, userID)
+}
+
+func prepareWorldSpectatorRoles(worldID, role string) {
+	if role != model.WorldRoleSpectator {
+		return
+	}
+	channels, err := ChannelListByWorld(worldID)
+	if err != nil {
+		return
+	}
+	for _, ch := range channels {
+		ensureChannelSpectatorRole(ch.ID)
+	}
+}
+
+func finishWorldChannelIdentitySync(worldID, userID string) {
+	user := model.UserGet(userID)
+	if user == nil || !user.IsBot {
+		return
+	}
+	channels, err := ChannelList(userID, worldID)
+	if err != nil {
+		return
+	}
+	for _, ch := range channels {
+		if err := EnsureBotChannelIdentity(userID, ch.ID); err != nil {
+			log.Printf("自动创建机器人身份失败[user=%s channel=%s]: %v", userID, ch.ID, err)
+		}
+	}
 }
 
 func revokeWorldChannelRoles(worldID, userID string) error {
@@ -1516,7 +1620,7 @@ func revokeWorldChannelRoles(worldID, userID string) error {
 func removeWorldChannelMemberships(tx *gorm.DB, worldID, userID string) error {
 	var channelIDs []string
 	if err := tx.Model(&model.ChannelModel{}).
-		Where("world_id = ? AND status = ? AND is_private = ?", worldID, "active", false).
+		Where("world_id = ? AND is_private = ?", worldID, false).
 		Pluck("id", &channelIDs).Error; err != nil {
 		return err
 	}
@@ -1554,7 +1658,39 @@ func ensureChannelRoleLink(userID, channelID, roleKey string) error {
 		ensureChannelSpectatorRole(channelID)
 	}
 	roleID := fmt.Sprintf("ch-%s-%s", channelID, roleKey)
-	_, err := UserRoleLink([]string{roleID}, []string{userID})
+	linked := false
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var channel model.ChannelModel
+		if err := tx.Where("id = ?", channelID).First(&channel).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.WorldMemberModel{}).
+			Where("world_id = ? AND user_id = ?", channel.WorldID, userID).
+			UpdateColumn("updated_at", gorm.Expr("updated_at")).Error; err != nil {
+			return err
+		}
+		var member model.WorldMemberModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("world_id = ? AND user_id = ?", channel.WorldID, userID).Limit(1).Find(&member).Error; err != nil {
+			return err
+		}
+		// 新建频道时的成员列表可能已过期，不能重新授予已被撤销的世界权限。
+		if member.ID == "" || (roleKey == "admin" && member.Role != model.WorldRoleOwner && member.Role != model.WorldRoleAdmin) ||
+			(roleKey == "spectator" && member.Role != model.WorldRoleSpectator) ||
+			(roleKey == "member" && member.Role != model.WorldRoleMember) {
+			return nil
+		}
+		if _, err := model.UserRoleLinkSourceTx(tx, []string{roleID}, []string{userID}, model.RoleGrantWorld); err != nil {
+			return err
+		}
+		linked = true
+		return MaterializeSharedChannelIdentitiesForUserTx(tx, userID)
+	})
+	if err == nil && linked {
+		if err := EnsureBotChannelIdentity(userID, channelID); err != nil {
+			log.Printf("自动创建机器人身份失败[user=%s channel=%s]: %v", userID, channelID, err)
+		}
+	}
 	return err
 }
 
@@ -1563,8 +1699,10 @@ func removeChannelRoleLink(userID, channelID, roleKey string) error {
 		return nil
 	}
 	roleID := fmt.Sprintf("ch-%s-%s", channelID, roleKey)
-	_, err := model.UserRoleUnlink([]string{roleID}, []string{userID})
-	return err
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		_, err := model.UserRoleUnlinkSourceTx(tx, []string{roleID}, []string{userID}, model.RoleGrantWorld)
+		return err
+	})
 }
 
 func WorldInviteCreate(worldID, creatorID string, ttlMinutes int, maxUse int, memo string, role string) (*model.WorldInviteModel, error) {

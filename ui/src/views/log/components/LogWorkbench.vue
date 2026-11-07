@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设计工作台：页面级编排。草稿控制器、章节消息窗口、样式包、预览与选择在此组合；
 // 具体面板各自负责一块交互。认证与写入只发生在外层，iframe 只接收安全渲染模型。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch, type Component } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch, type Component } from 'vue';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useMediaQuery } from '@vueuse/core';
 import { useRouter } from 'vue-router';
@@ -28,6 +28,7 @@ import {
   X,
 } from '@vicons/tabler';
 import {
+  checkLogSourceRange,
   describeLogError,
   fetchLogStylePackage,
   isLogError,
@@ -49,6 +50,7 @@ import {
 } from '@/services/log/logRenderer';
 import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange } from '@/services/log/pagination/logFrameHost';
 import { updateDraftImageWidth } from '@/services/log/logImageLayout';
+import { buildTemplateLibrary, messageTemplateIds } from '@/services/log/logTemplateCompiler';
 import type { LogAnchor, LogDesignMessage, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
 import { LOG_ELEMENT_TYPES } from '@/types/log';
 import { useLogDraft } from '../composables/useLogDraft';
@@ -56,7 +58,9 @@ import { useLogMessageWindow } from '../composables/useLogMessageWindow';
 import { useLogAssets } from '../composables/useLogAssets';
 import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
-import { createElement, downloadJson, elementAvailability } from '../logDraftOps';
+import { createElement, downloadJson, elementAvailability, rebindStyle, setMessageTemplateOverrides } from '../logDraftOps';
+import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
+import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
 import { planBatchRelocate, planBatchStep, type LogBatchMovePlan } from '../logBatchOps';
 import type { LogImageRef } from '../logAssetRefs';
 import { chapterTitle, chapterViews, sectionLabel } from '../logChapterOps';
@@ -69,6 +73,7 @@ import LogBulkPanel from './LogBulkPanel.vue';
 import LogElementsPanel from './LogElementsPanel.vue';
 import LogPagePanel from './LogPagePanel.vue';
 import LogStylePanel from './LogStylePanel.vue';
+import LogStyleStudio from './LogStyleStudio.vue';
 import LogPublishPanel from './LogPublishPanel.vue';
 import LogAssetsPanel from './LogAssetsPanel.vue';
 import LogInsertElementDialog from './LogInsertElementDialog.vue';
@@ -88,6 +93,14 @@ const projectId = computed(() => props.context.projectId);
 const caps = computed(() => props.context.capabilities);
 const draftCtl = useLogDraft(projectId, { draftVersion: props.context.draftVersion, draft: props.context.draft });
 const draft = draftCtl.draft;
+
+const checkSourceRange = (id: string) => {
+  const pid = projectId.value;
+  return draftCtl.runVersioned(async (version) => ({
+    value: await checkLogSourceRange(pid, id, version),
+    draftVersion: null,
+  }));
+};
 
 // ---- 章节：查询用的章节只采用已保存版本（服务端按已保存草稿解析来源） ----
 const sections = computed(() => draft.value.sections.slice().sort((a, b) => a.order - b.order));
@@ -153,10 +166,16 @@ const onNearEnd = () => {
 };
 
 // ---- 样式包 ----
+// stylePkg 是草稿正式绑定的版本；预览覆盖（样式面板的库预览、Style Studio 的工作副本）只替换 activePkg，
+// 从不修改草稿的 stylePackageId / stylePackageVersion，关闭或取消即恢复。
 const stylePkg = shallowRef<LogStylePackage | null>(null);
-const styleOverride = shallowRef<LogStylePackage | null>(null);
+const libraryPreview = shallowRef<LogStylePackage | null>(null);
+const studioPreview = shallowRef<StyleStudioPreview | null>(null);
+const styleOverride = computed(() => studioPreview.value?.pkg || libraryPreview.value);
 const styleError = ref('');
 const activePkg = computed(() => styleOverride.value || stylePkg.value);
+const messageTemplates = computed(() => activePkg.value
+  ? messageTemplateIds(buildTemplateLibrary(activePkg.value.templates, activePkg.value.settingsSchema)) : []);
 const assets = useLogAssets({
   projectId: () => projectId.value,
   stylePackage: () => (activePkg.value ? { id: activePkg.value.id, version: activePkg.value.version } : null),
@@ -182,9 +201,95 @@ watch(() => `${draft.value.stylePackageId}@${draft.value.stylePackageVersion}`, 
     styleError.value = describeLogError(error, '样式包加载失败');
   }
 }, { immediate: true });
-watch(() => (activePkg.value ? `${activePkg.value.id}@${activePkg.value.version}:${activePkg.value === styleOverride.value ? 'o' : 's'}` : ''), () => {
+/** Studio 工作副本中尚未保存的资源只有本地字节：预置到资源缓存，预览无需向服务端读取。 */
+const seedStudioAssets = () => {
+  for (const [id, a] of Object.entries(studioPreview.value?.assets || {})) assets.seed(`style:${id}`, a.data, a.mime);
+};
+const styleSourceKey = () => (studioPreview.value ? `studio${studioPreview.value.session}` : libraryPreview.value ? 'library' : 'bound');
+watch(() => (activePkg.value ? `${activePkg.value.id}@${activePkg.value.version}:${styleSourceKey()}` : ''), () => {
   assets.invalidate('style:');
+  seedStudioAssets();
 });
+watch(studioPreview, seedStudioAssets);
+
+const styleLibrary = useLogStyleLibrary();
+onMounted(() => void styleLibrary.reload());
+
+/**
+ * 让当前 LOG 使用某个样式版本：这是唯一写入草稿样式绑定的地方。
+ * 先做兼容检查；需要调整草稿时请用户确认，存在无法自动修复的问题时拒绝切换。
+ */
+const bindStyle = (pkg: LogStylePackage): Promise<boolean> => new Promise((resolve) => {
+  if (!caps.value.editDraft) {
+    toast.warning('没有编辑当前 LOG 的权限');
+    resolve(false);
+    return;
+  }
+  const commit = () => {
+    const { next, problems } = rebindStyle(draft.value, pkg);
+    if (problems.some((p) => !p.fixable)) return false;
+    const ok = draftCtl.update((d) => {
+      Object.assign(d, next);
+    });
+    if (!ok) {
+      toast.error('草稿存在冲突，未切换样式');
+      return false;
+    }
+    if (libraryPreview.value) libraryPreview.value = null;
+    toast.success(`当前 LOG 已切换到 ${pkg.name} ${pkg.version}（草稿保存后生效）`);
+    return true;
+  };
+  const { problems } = rebindStyle(draft.value, pkg);
+  if (!problems.length) {
+    resolve(commit());
+    return;
+  }
+  const blocked = problems.some((p) => !p.fixable);
+  let settled = false;
+  const done = (v: boolean) => {
+    if (!settled) resolve(v);
+    settled = true;
+  };
+  dialog[blocked ? 'error' : 'warning']({
+    title: blocked ? '暂时无法切换到这个样式' : '切换样式需要调整草稿',
+    content: () => h('ul', { style: 'margin: 0; padding-left: 18px' }, problems.map((p) => h('li', p.message))),
+    positiveText: blocked ? '知道了' : '按上述调整并切换',
+    negativeText: blocked ? undefined : '取消',
+    onPositiveClick: () => done(blocked ? false : commit()),
+    onNegativeClick: () => done(false),
+    onClose: () => done(false),
+    onMaskClick: () => done(false),
+  });
+});
+
+// ---- Style Studio ----
+// 宽屏时占据设计面板位置、与预览画布并排；窄屏时覆盖全屏，可临时切到预览查看效果。
+const studioOpen = ref(false);
+const studioPeek = ref(false);
+const studioRequest = shallowRef<(StyleStudioRequest & { nonce: number }) | null>(null);
+const studioRef = ref<InstanceType<typeof LogStyleStudio> | null>(null);
+let studioNonce = 0;
+const openStudio = (request: StyleStudioRequest) => {
+  libraryPreview.value = null;
+  studioRequest.value = { ...request, nonce: ++studioNonce };
+  studioOpen.value = true;
+  studioPeek.value = false;
+};
+const onStudioClosed = () => {
+  studioOpen.value = false;
+  studioPeek.value = false;
+  studioPreview.value = null;
+  studioRequest.value = null;
+};
+/** 从 Studio 切到其他设计面板：先经过 Studio 的未保存保护。 */
+const leaveStudio = async () => {
+  if (!studioOpen.value) return true;
+  if (!studioRef.value) {
+    onStudioClosed();
+    return true;
+  }
+  return studioRef.value.requestClose();
+};
 
 // ---- 组装与预览文档 ----
 const nodeCache = new Map<string, DesignNodeCacheEntry>();
@@ -226,13 +331,14 @@ const rebuild = (force = false) => {
     toc: comp.toc,
     backgroundToken: designBackgroundToken(d.page),
     imageWidths: d.imageWidths,
+    templateSelection: d,
   });
   const json = JSON.stringify(result.doc);
   if (!force && json === lastDocJson && frame.value) return;
   lastDocJson = json;
   frame.value = { doc: result.doc, assetTokens: result.assetTokens, issues: result.issues, revision: ++frameRevision };
 };
-watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths], () => {
+watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths, () => draft.value.displayRules, () => draft.value.messageTemplateOverrides], () => {
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = setTimeout(() => {
     buildTimer = null;
@@ -274,6 +380,11 @@ const selectedElement = computed(() => {
   return id ? draft.value.elements.find((e) => e.id === id) || null : null;
 });
 const selectedIndex = computed(() => (selectedMessages.value.length === 1 ? win.indexOf(selectedMessages.value[0].message.id) : -1));
+const applyMessageTemplate = (templateId: string) => {
+  const ids = selectedMessages.value.map((m) => m.message.id);
+  if (!caps.value.editDraft || selectedElement.value || !ids.length || ids.length > 200 || (templateId && !messageTemplates.value.includes(templateId))) return;
+  draftCtl.update((next) => setMessageTemplateOverrides(next, ids, templateId));
+};
 
 // ---- 面板 ----
 type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'publish';
@@ -308,7 +419,8 @@ watch(panelCollapsed, (v) => {
 });
 const panelVisible = computed(() => (narrow.value ? panelOpen.value : !panelCollapsed.value));
 const focusElementId = ref<string | null>(null);
-const openPanel = (tab: PanelTab) => {
+const openPanel = async (tab: PanelTab) => {
+  if (!(await leaveStudio())) return;
   panelTab.value = tab;
   panelOpen.value = true;
   panelCollapsed.value = false;
@@ -325,8 +437,8 @@ const hidePanel = () => {
 };
 /** 导航栏：点击当前项收起面板，点击其他项切换并展开。 */
 const onRailClick = (tab: PanelTab) => {
-  if (panelVisible.value && panelTab.value === tab) hidePanel();
-  else openPanel(tab);
+  if (!studioOpen.value && panelVisible.value && panelTab.value === tab) hidePanel();
+  else void openPanel(tab);
 };
 
 let resizeStart: { x: number; w: number } | null = null;
@@ -1228,6 +1340,9 @@ onBeforeUnmount(() => {
               :at-top="multiAtTop"
               :at-bottom="multiAtBottom"
               :can-manage-sources="caps.manageSources"
+              :can-edit-draft="caps.editDraft"
+              :template-ids="messageTemplates"
+              :template-overrides="draft.messageTemplateOverrides || {}"
               :busy="busy"
               :range-mode="selection.rangeMode.value"
               :range-anchored="!!selection.rangeAnchor.value"
@@ -1240,6 +1355,7 @@ onBeforeUnmount(() => {
               @exclude="excludeMulti"
               @remove="removeMulti"
               @exit="exitMulti"
+              @template="applyMessageTemplate"
             />
             <LogSelectionBar
               v-else-if="relocation.active || selection.selected.value.length"
@@ -1252,6 +1368,9 @@ onBeforeUnmount(() => {
               :is-first="selectedIndex <= 0"
               :is-last="selectedIndex < 0 || selectedIndex >= win.items.value.length - 1"
               :relocating-count="relocation.active ? relocation.sourceMessageIds.length : 0"
+              :template-ids="messageTemplates"
+              :template-overrides="draft.messageTemplateOverrides || {}"
+              @template="applyMessageTemplate"
               @edit="(tab) => selectedMessages[0] && openEditor(selectedMessages[0].message.id, tab)"
               @move="moveSelected"
               @relocate="startRelocate(selection.messageIds.value)"
@@ -1279,6 +1398,11 @@ onBeforeUnmount(() => {
           @clickoutside="ctxMenu.show = false"
         />
 
+        <div v-if="studioPreview || (studioOpen && narrow && studioPeek)" class="log-wb__float log-wb__float--studio">
+          <span v-if="studioPreview" class="log-wb__studio-badge">预览：样式设计器中的工作副本（未保存，不改变当前 LOG）</span>
+          <n-button v-if="studioOpen && narrow && studioPeek" size="small" type="primary" @click="studioPeek = false">返回样式设计器</n-button>
+        </div>
+
         <div v-if="sections.length" class="log-wb__float log-wb__float--zoom" role="group" aria-label="缩放">
           <button type="button" class="log-wb__icon-btn is-sm" :disabled="zoom <= zoomSteps[0]" title="缩小" aria-label="缩小" @click="stepZoom(-1)">
             <n-icon :component="Minus" size="15" />
@@ -1290,10 +1414,27 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <div v-if="narrow && panelOpen" class="log-wb__scrim" aria-hidden="true" @click="panelOpen = false" />
+      <LogStyleStudio
+        v-if="studioOpen"
+        v-show="!(narrow && studioPeek)"
+        ref="studioRef"
+        class="log-wb__studio"
+        :library="styleLibrary"
+        :draft="draft"
+        :bound-package="stylePkg"
+        :can-bind="caps.editDraft"
+        :bind="bindStyle"
+        :request="studioRequest"
+        :narrow="narrow"
+        @close="onStudioClosed"
+        @preview="(p: StyleStudioPreview | null) => (studioPreview = p)"
+        @peek="studioPeek = true"
+      />
 
-      <aside class="log-wb__inspector" :class="{ 'is-collapsed': !panelVisible }" aria-label="设计面板">
-        <div v-show="panelVisible" class="log-wb__dock" :style="narrow ? undefined : { width: `${panelWidth}px` }">
+      <div v-if="narrow && panelOpen && !studioOpen" class="log-wb__scrim" aria-hidden="true" @click="panelOpen = false" />
+
+      <aside class="log-wb__inspector" :class="{ 'is-collapsed': !panelVisible || (narrow && studioOpen) }" aria-label="设计面板">
+        <div v-show="panelVisible && !studioOpen" class="log-wb__dock" :style="narrow ? undefined : { width: `${panelWidth}px` }">
           <div
             v-if="!narrow"
             class="log-wb__resizer"
@@ -1321,8 +1462,11 @@ onBeforeUnmount(() => {
               :section="querySection"
               :messages="win.items.value"
               :can-bulk="caps.bulkAppearance"
+              :draft="draft"
+              :update="draftCtl.update"
+              :can-edit-draft="caps.editDraft"
+              :template-ids="messageTemplates"
               @applied="win.load()"
-              @open-style="panelTab = 'style'"
             />
             <LogElementsPanel
               v-else-if="panelTab === 'elements'"
@@ -1347,7 +1491,10 @@ onBeforeUnmount(() => {
               :update="draftCtl.update"
               :style-package="stylePkg"
               :can-edit="caps.editDraft"
-              @preview="(p: LogStylePackage | null) => (styleOverride = p)"
+              :library="styleLibrary"
+              :bind="bindStyle"
+              @preview="(p: LogStylePackage | null) => (libraryPreview = p)"
+              @open-studio="openStudio"
             />
             <LogAssetsPanel
               v-else-if="panelTab === 'assets'"
@@ -1382,8 +1529,8 @@ onBeforeUnmount(() => {
             type="button"
             role="tab"
             class="log-wb__rail-btn"
-            :class="{ 'is-on': panelVisible && panelTab === item.key, 'is-current': panelTab === item.key }"
-            :aria-selected="panelVisible && panelTab === item.key"
+            :class="{ 'is-on': panelVisible && !studioOpen && panelTab === item.key, 'is-current': panelTab === item.key }"
+            :aria-selected="panelVisible && !studioOpen && panelTab === item.key"
             :title="item.hint"
             @click="onRailClick(item.key)"
           >
@@ -1398,7 +1545,7 @@ onBeforeUnmount(() => {
     <footer class="log-wb__status" role="status" aria-live="polite">
       <span class="log-wb__stat is-strong">{{ currentChapter ? chapterTitle(currentChapter, currentChapterIndex) : '—' }}</span>
       <span v-if="fragmentHint" class="log-wb__stat">片段：{{ fragmentHint }}</span>
-      <span class="log-wb__stat">已加载 {{ win.items.value.length }} 条{{ win.loading.value ? '（加载中…）' : win.complete.value ? (fragmentHint ? '（本片段完整）' : '（本章完整）') : '' }}</span>
+      <span class="log-wb__stat">已加载 {{ win.items.value.length }} 条{{ win.loading.value ? '（加载中…）' : win.complete.value ? '（当前范围完整）' : '' }}</span>
       <button v-if="win.nextCursor.value && !win.loading.value" type="button" class="log-wb__link-btn" @click="win.loadMore()">加载更多</button>
       <span v-if="layoutInfo" class="log-wb__stat">{{ viewMode === 'flow' ? '流式' : `共 ${layoutInfo.pageCount} 页${win.complete.value ? '' : '（未完整，页数暂不确定）'}` }}</span>
       <span v-if="layoutBusy" class="log-wb__stat is-busy">排版中…</span>
@@ -1454,6 +1601,7 @@ onBeforeUnmount(() => {
       v-model:show="sectionsShow"
       :draft="draft"
       :update="draftCtl.update"
+      :check-source-range="checkSourceRange"
       :world-id="context.worldId"
       :can-manage="caps.manageSources"
       :current-section-id="sectionId || null"
@@ -1847,6 +1995,47 @@ onBeforeUnmount(() => {
 
 .log-wb__float--top > * {
   pointer-events: auto;
+}
+
+.log-wb__float--studio {
+  left: 50%;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 200px);
+  transform: translateX(-50%);
+}
+
+.log-wb__studio-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--log-wb-accent);
+  background: var(--log-wb-chrome);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.16), 0 0 0 1px color-mix(in srgb, var(--log-wb-accent) 40%, transparent);
+}
+
+/* ---- Style Studio ---- */
+.log-wb__studio {
+  flex: 0 0 auto;
+  width: clamp(520px, 60%, 1120px);
+  border-left: 1px solid var(--log-wb-line);
+}
+
+.is-narrow .log-wb__studio {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  width: auto;
+  border-left: 0;
+}
+
+.is-narrow .log-wb__float--studio {
+  max-width: calc(100% - 28px);
+  bottom: 60px;
 }
 
 .log-wb__float--zoom {

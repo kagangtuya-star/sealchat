@@ -136,6 +136,7 @@ export const buildPartDocuments = (payload: LogPdfPayload): LogPdfPartBuild[] =>
       toc,
       backgroundToken: designBackgroundToken(draft.page),
       imageWidths: draft.imageWidths,
+      templateSelection: draft,
     });
     return { ...result, tocTargets: toc.map((e) => e.targetId) };
   });

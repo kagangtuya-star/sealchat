@@ -1139,14 +1139,14 @@ const insertPlainTextAtCursor = (text: string) => {
 };
 
 // 处理输入事件
-const handleInput = (event?: InputEvent) => {
+const handleInput = (event?: Event) => {
   if (!editorRef.value) return;
   // 进入新的输入周期，取消所有已排队的旧光标恢复任务。
   latestCursorRestoreTaskId++;
 
   let text = extractContentWithLineBreaks();
   // 删除到空时，浏览器经常遗留一个占位换行；仅在非“主动插入换行”场景下归零。
-  const inputType = event?.inputType || '';
+  const inputType = event && 'inputType' in event ? String(event.inputType || '') : '';
   const isIntentionalLineBreak = inputType === 'insertLineBreak' || inputType === 'insertParagraph';
   if (/^\n+$/.test(text) && !isIntentionalLineBreak) {
     text = '';
@@ -1481,7 +1481,8 @@ const handleDragOver = (event: DragEvent) => {
   }
 };
 
-const handleBeforeInput = (event: InputEvent) => {
+const handleBeforeInput = (event: Event) => {
+  if (!(event instanceof InputEvent)) return;
   if (props.disabled) {
     return;
   }

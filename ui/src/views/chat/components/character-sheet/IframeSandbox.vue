@@ -29,13 +29,14 @@ export interface SealChatEventPayload {
     containerRect?: { top: number; left: number; width: number; height: number };
   };
   attrs?: Record<string, any>;
+  requestId?: string;
 }
 
 export interface SealChatEvent {
   type: 'SEALCHAT_EVENT';
   version: number;
   windowId: string;
-  action: 'ROLL_DICE' | 'UPDATE_ATTRS' | 'EDIT_START' | 'EDIT_END';
+  action: 'ROLL_DICE' | 'UPDATE_ATTRS' | 'EDIT_START' | 'EDIT_END' | 'FLUSH_ATTRS';
   payload: SealChatEventPayload;
 }
 
@@ -43,6 +44,7 @@ const props = defineProps<{
   html: string;
   data: { name: string; attrs: Record<string, any>; avatarUrl?: string };
   windowId: string;
+  flushAttrs?: () => Promise<void>;
 }>();
 
 const MOBILE_PAN_STYLE_MARKER = 'data-sealchat-mobile-pan="1"';
@@ -222,6 +224,52 @@ const EDIT_HOOK_SCRIPT = `<script ${EDIT_HOOK_MARKER}>
 })();
 <\/script>`;
 
+const SYNC_HOOK_MARKER = 'data-sealchat-sync-hook="1"';
+const SYNC_HOOK_SCRIPT = `<script ${SYNC_HOOK_MARKER}>
+(function () {
+  var windowId = '';
+  var sequence = 0;
+  var pending = new Map();
+  window.sealchat = window.sealchat || {};
+  window.sealchat.flushAttrs = function () {
+    if (!windowId) return Promise.reject(new Error('人物卡尚未连接宿主'));
+    return new Promise(function (resolve, reject) {
+      var requestId = String(++sequence);
+      var timer = setTimeout(function () {
+        pending.delete(requestId);
+        reject(new Error('人物卡属性同步超时，请重试'));
+      }, 30000);
+      pending.set(requestId, { resolve: resolve, reject: reject, timer: timer });
+      window.parent.postMessage({
+        type: 'SEALCHAT_EVENT', version: 1, windowId: windowId,
+        action: 'FLUSH_ATTRS', payload: { requestId: requestId }
+      }, '*');
+    });
+  };
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    var data = e.data;
+    if (data && data.type === 'SEALCHAT_UPDATE' && data.payload) {
+      windowId = data.payload.windowId;
+    }
+    if (!data || data.type !== 'SEALCHAT_ATTRS_FLUSHED' || data.windowId !== windowId) return;
+    var request = pending.get(data.requestId);
+    if (!request) return;
+    pending.delete(data.requestId);
+    clearTimeout(request.timer);
+    if (data.ok === true) request.resolve();
+    else request.reject(new Error(data.error || '人物卡属性同步失败'));
+  });
+  window.addEventListener('pagehide', function () {
+    pending.forEach(function (request) {
+      clearTimeout(request.timer);
+      request.reject(new Error('人物卡窗口已关闭'));
+    });
+    pending.clear();
+  });
+})();
+<\/script>`;
+
 const FONT_HOOK_MARKER = 'data-sealchat-font-hook="1"';
 const FONT_HOOK_SCRIPT = `<script ${FONT_HOOK_MARKER}>
 (function () {
@@ -307,6 +355,13 @@ const finalSrcDoc = computed(() => {
       html = `${html}\n${EDIT_HOOK_SCRIPT}`;
     }
   }
+  if (!html.includes(SYNC_HOOK_MARKER)) {
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `${SYNC_HOOK_SCRIPT}</body>`);
+    } else {
+      html = `${html}\n${SYNC_HOOK_SCRIPT}`;
+    }
+  }
   if (hasTemplateFonts.value && !html.includes(FONT_HOOK_MARKER)) {
     if (/<\/body>/i.test(html)) {
       html = html.replace(/<\/body>/i, `${FONT_HOOK_SCRIPT}</body>`);
@@ -331,7 +386,9 @@ const postData = () => {
   }
 };
 
+let frameGeneration = 0;
 const handleLoad = () => {
+  frameGeneration += 1;
   postData();
   scheduleFontSync(latestVisibleText.value);
 };
@@ -370,7 +427,7 @@ const scheduleFontSync = (visibleText: string) => {
   }, 80);
 };
 
-const handleMessage = (e: MessageEvent) => {
+const handleMessage = async (e: MessageEvent) => {
   if (!iframeRef.value?.contentWindow) return;
   if (e.source !== iframeRef.value.contentWindow) return;
   if (e.data?.type === 'SEALCHAT_FONT_TEXT' && e.data?.windowId === props.windowId) {
@@ -380,6 +437,24 @@ const handleMessage = (e: MessageEvent) => {
   if (e.data?.type !== 'SEALCHAT_EVENT') return;
   if (e.data?.windowId !== props.windowId) return;
   const incoming = e.data as SealChatEvent;
+  if (incoming.action === 'FLUSH_ATTRS') {
+    const requestId = incoming.payload?.requestId;
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 100) return;
+    const source = iframeRef.value.contentWindow;
+    const generation = frameGeneration;
+    const windowId = props.windowId;
+    let error = '';
+    try {
+      if (!props.flushAttrs) throw new Error('当前预览不支持人物卡属性同步');
+      await props.flushAttrs();
+    } catch (e) {
+      error = e instanceof Error && e.message ? e.message : '人物卡属性同步失败';
+    }
+    if (generation !== frameGeneration || iframeRef.value?.contentWindow !== source
+      || props.windowId !== windowId) return;
+    source.postMessage({ type: 'SEALCHAT_ATTRS_FLUSHED', windowId, requestId, ok: !error, error }, '*');
+    return;
+  }
   const roll = incoming.payload?.roll;
   if (roll) {
     const frameRect = iframeRef.value.getBoundingClientRect();
@@ -418,6 +493,7 @@ watch(
 watch(
   () => props.html,
   () => {
+    frameGeneration += 1;
     scheduleFontSync(latestVisibleText.value);
   },
 );
@@ -430,6 +506,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  frameGeneration += 1;
   window.removeEventListener('message', handleMessage);
   if (fontSyncTimer.value) {
     clearTimeout(fontSyncTimer.value);

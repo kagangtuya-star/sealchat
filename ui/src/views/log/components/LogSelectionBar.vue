@@ -20,6 +20,7 @@ import {
 } from '@vicons/tabler';
 import type { LogDesignMessage, LogElement } from '@/types/log';
 import { LOG_ELEMENT_LABELS } from '@/services/log/logRenderer';
+import LogMessageTemplateSelect from './LogMessageTemplateSelect.vue';
 
 const props = defineProps<{
   messages: LogDesignMessage[];
@@ -30,6 +31,8 @@ const props = defineProps<{
   isFirst: boolean;
   isLast: boolean;
   relocatingCount?: number;
+  templateIds: string[];
+  templateOverrides: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -45,6 +48,7 @@ const emit = defineEmits<{
   /** 进入多选模式，当前已选消息成为初始选择。 */
   multi: [];
   clear: [];
+  template: [templateId: string];
 }>();
 
 const single = computed(() => (props.messages.length === 1 ? props.messages[0] : null));
@@ -97,6 +101,7 @@ const onMore = (key: string) => {
         <span class="log-ctx__kind">原消息</span>
       </span>
       <span class="log-ctx__sep" />
+      <LogMessageTemplateSelect :template-ids="templateIds" :values="[templateOverrides[single.message.id]]" :disabled="busy || !canEditDraft" @change="(id) => emit('template', id)" />
       <button type="button" class="log-ctx__btn has-text" :disabled="busy || !caps?.edit" :title="editTip" @click="emit('edit', 'content')">
         <n-icon :component="Pencil" size="16" /><span>编辑</span>
       </button>

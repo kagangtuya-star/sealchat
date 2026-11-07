@@ -37,7 +37,7 @@
 - 小剧场通过 iframe 嵌入聊天。保留现有 URL 规范化、`postMessage` 的 origin/source 校验和卸载清理。
 - 动作确认取消属于正常控制流：通过 bridge/runtime 传递专用 cancellation sentinel，不要转换成面向用户的失败提示。
 - 接入 `dialogue/theater-dialogue-residency.ts` 时，只从现有 runtime 的 `queue.current` 驱动入场；驻场状态属于当前世界的临时运行时，不放进 `StageStore` 或持久化消息历史。
-- `dialogue/theater-dialogue-layout.ts` 使用立绘区域局部坐标，位置偏好必须经过统一布局约束；布局计算本身不写云端。相关纯逻辑用 `ui/scripts/theater-dialogue-residency-layout.spec.ts` 验证。
+- `dialogue/theater-dialogue-layout.ts` 使用立绘区域局部坐标，位置偏好必须经过统一布局约束；布局计算本身不写云端。已有对白、桥接、队列／播放和编辑器回归通过 `node scripts/run-theater-dialogue-tests.cjs` 执行。历史驻场／布局专用 spec 未包含在仓库中，不将聚合入口通过视为这些缺失用例已执行。
 - 控制器设置和单角色位置通过 `TheaterSyncClient` 的房间提交协调写入；只传字段 patch，不把驻场、拖拽预览或控制器配置放进场景及撤销历史。模式交接沿用原 runtime 的去重和 skip 语义。
 
 ## UI 回归检查

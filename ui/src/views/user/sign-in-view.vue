@@ -58,7 +58,7 @@ const {
 const userStore = useUserStore();
 const quickLoginStore = useQuickLoginStore();
 const utils = useUtilsStore();
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 const quickLoginVisible = ref(false);
 const quickLoginChecking = ref(false);
 const quickLoginSubmitting = ref(false);
@@ -68,7 +68,7 @@ const quickLoginRequestId = ref('');
 const quickLoginRequesterToken = ref('');
 const quickLoginExpiresAt = ref(0);
 const quickLoginHint = ref(quickLoginStore.hint);
-let quickLoginPollTimer: ReturnType<typeof setTimeout> | null = null;
+let quickLoginPollTimer: number | null = null;
 
 const signInTitle = computed(() => {
   const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
@@ -627,9 +627,9 @@ onBeforeUnmount(() => {
             <div class=" flex justify-between">
               <div class="flex items-center gap-2">
                 <router-link :to="{ name: 'user-signup' }">
-                  <n-button type="text" v-if="config?.registerOpen">注册</n-button>
+                  <n-button text v-if="config?.registerOpen">注册</n-button>
                 </router-link>
-                <n-button v-if="emailAuthEnabled" type="text" @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>
+                <n-button v-if="emailAuthEnabled" text @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>
               </div>
 
               <div class="sign-in-actions">

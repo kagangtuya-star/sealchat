@@ -202,6 +202,8 @@ Before modifying a WebSocket event:
 
 Do not rename events as part of cleanup.
 
+Channel display-order rebalancing broadcasts `message-reordered` with `reorder.reset=true` after commit (immediately after the existing nontransactional insertion rebalance). Reuse the public reorder event; for whispers, send a separate channel invalidation without message IDs or content to both ordinary connections and configured event bots. Clients read their loaded IDs through the read-only `message.order.get` action, limited to 200 IDs per request and the normal channel/whisper access rules.
+
 Do not reorder persistence and broadcast side effects without understanding the current delivery guarantees.
 
 Transport code should not create duplicate broadcasts for a single successful business operation.
@@ -281,6 +283,8 @@ Avoid adding verbose per-request logging in hot endpoints unless operationally j
 
 ## Tests
 
+2026-10-30: whisper message serialization resolves display names through the global reader. Resolve/cache message names after recipient/IC changes and before each write transaction that serializes the message; otherwise a single-connection SQLite database can deadlock. The current quote query selects only public messages, so it needs no whisper-name prefetch. A freshly loaded message's non-persisted name cache is already empty.
+
 When changing API behavior, prefer adding/updating API-package tests close to the affected handler or helper.
 
 Test important mappings such as:
@@ -312,6 +316,8 @@ go test ./...
 ```
 
 Do not claim an endpoint was manually verified unless an actual HTTP/WebSocket flow was exercised.
+
+New `*_test.go` files are currently ignored by the repository's `.gitignore`; explicitly include intended regression tests in the commit.
 
 ## Diff Review
 

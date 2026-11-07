@@ -33,6 +33,8 @@ func setupRelocateBatchTest(t *testing.T) (owner, member *model.UserModel, chann
 		owner, member,
 		&model.WorldModel{StringPKBaseModel: model.StringPKBaseModel{ID: "rb-world"}, Name: "World", Status: "active", OwnerID: owner.ID},
 		&model.ChannelModel{StringPKBaseModel: model.StringPKBaseModel{ID: channelID}, WorldID: "rb-world", UserID: owner.ID, Name: "Channel", PermType: "public", Status: "active"},
+		&model.WorldMemberModel{WorldID: "rb-world", UserID: owner.ID, Role: "owner"},
+		&model.WorldMemberModel{WorldID: "rb-world", UserID: member.ID, Role: "member"},
 	}
 	for _, row := range rows {
 		if err := db.Create(row).Error; err != nil {

@@ -73,7 +73,7 @@ func normalizeEmbedStorageValue(value json.RawMessage) (string, error) {
 	return string(canonical), nil
 }
 
-func ChannelIFormStorageNamespaceGetOrCreate(tx *gorm.DB, channelID, formID string) (*ChannelIFormStorageNamespaceModel, error) {
+func ChannelExtensionStorageNamespaceGetOrCreate(tx *gorm.DB, channelID, formID string) (*ChannelIFormStorageNamespaceModel, error) {
 	channelID = strings.TrimSpace(channelID)
 	formID = strings.TrimSpace(formID)
 	if channelID == "" || formID == "" {
@@ -100,7 +100,7 @@ func ChannelIFormStorageNamespaceGetOrCreate(tx *gorm.DB, channelID, formID stri
 	return &namespace, nil
 }
 
-func ChannelIFormStorageSnapshot(channelID, formID string) (*ChannelIFormStorageNamespaceModel, []ChannelIFormStorageItem, error) {
+func ChannelExtensionStorageSnapshot(channelID, formID string) (*ChannelIFormStorageNamespaceModel, []ChannelIFormStorageItem, error) {
 	db := GetDB()
 	var namespace ChannelIFormStorageNamespaceModel
 	var items []ChannelIFormStorageItem
@@ -130,12 +130,12 @@ func ChannelIFormStorageSnapshot(channelID, formID string) (*ChannelIFormStorage
 	return &namespace, items, nil
 }
 
-func ChannelIFormStorageGet(channelID, formID, key string) (*ChannelIFormStorageItem, error) {
+func ChannelExtensionStorageGet(channelID, formID, key string) (*ChannelIFormStorageItem, error) {
 	key, err := normalizeEmbedStorageKey(key)
 	if err != nil {
 		return nil, err
 	}
-	ns, items, err := ChannelIFormStorageSnapshot(channelID, formID)
+	ns, items, err := ChannelExtensionStorageSnapshot(channelID, formID)
 	if err != nil {
 		return nil, err
 	}
@@ -154,11 +154,11 @@ type ChannelIFormStorageMutation struct {
 	Deleted   bool
 }
 
-func ChannelIFormStorageSet(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string) (*ChannelIFormStorageMutation, error) {
-	return ChannelIFormStorageSetWithExpiry(channelID, formID, key, value, ifRevision, updatedBy, nil)
+func ChannelExtensionStorageSet(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string) (*ChannelIFormStorageMutation, error) {
+	return ChannelExtensionStorageSetWithExpiry(channelID, formID, key, value, ifRevision, updatedBy, nil)
 }
 
-func ChannelIFormStorageSetWithExpiry(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string, expiresAt *time.Time) (*ChannelIFormStorageMutation, error) {
+func ChannelExtensionStorageSetWithExpiry(channelID, formID, key string, value json.RawMessage, ifRevision *uint64, updatedBy string, expiresAt *time.Time) (*ChannelIFormStorageMutation, error) {
 	key, err := normalizeEmbedStorageKey(key)
 	if err != nil {
 		return nil, err
@@ -170,7 +170,7 @@ func ChannelIFormStorageSetWithExpiry(channelID, formID, key string, value json.
 	db := GetDB()
 	var mutation ChannelIFormStorageMutation
 	err = db.Transaction(func(tx *gorm.DB) error {
-		ns, err := ChannelIFormStorageNamespaceGetOrCreate(tx, channelID, formID)
+		ns, err := ChannelExtensionStorageNamespaceGetOrCreate(tx, channelID, formID)
 		if err != nil {
 			return err
 		}
@@ -233,7 +233,7 @@ func ChannelIFormStorageSetWithExpiry(channelID, formID, key string, value json.
 	return &mutation, err
 }
 
-func ChannelIFormStorageDelete(channelID, formID, key string, ifRevision *uint64, updatedBy string) (*ChannelIFormStorageMutation, error) {
+func ChannelExtensionStorageDelete(channelID, formID, key string, ifRevision *uint64, updatedBy string) (*ChannelIFormStorageMutation, error) {
 	key, err := normalizeEmbedStorageKey(key)
 	if err != nil {
 		return nil, err
@@ -241,7 +241,7 @@ func ChannelIFormStorageDelete(channelID, formID, key string, ifRevision *uint64
 	db := GetDB()
 	var mutation ChannelIFormStorageMutation
 	err = db.Transaction(func(tx *gorm.DB) error {
-		ns, err := ChannelIFormStorageNamespaceGetOrCreate(tx, channelID, formID)
+		ns, err := ChannelExtensionStorageNamespaceGetOrCreate(tx, channelID, formID)
 		if err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func ChannelIFormStorageDelete(channelID, formID, key string, ifRevision *uint64
 	return &mutation, err
 }
 
-func ChannelIFormStorageList(channelID, formID, prefix, cursor string, limit int) (*ChannelIFormStorageNamespaceModel, []ChannelIFormStorageItem, error) {
+func ChannelExtensionStorageList(channelID, formID, prefix, cursor string, limit int) (*ChannelIFormStorageNamespaceModel, []ChannelIFormStorageItem, error) {
 	if limit <= 0 || limit > 256 {
 		limit = 256
 	}
@@ -318,13 +318,13 @@ func ChannelIFormStorageList(channelID, formID, prefix, cursor string, limit int
 	return &ns, items, nil
 }
 
-func ChannelIFormStorageNamespaceDelete(channelID, formID string) error {
+func ChannelExtensionStorageNamespaceDelete(channelID, formID string) error {
 	return GetDB().Transaction(func(tx *gorm.DB) error {
-		return ChannelIFormStorageDeleteByNamespaceScopeTx(tx, channelID, formID)
+		return ChannelExtensionStorageDeleteByNamespaceScopeTx(tx, channelID, formID)
 	})
 }
 
-func ChannelIFormStorageDeleteByNamespaceScopeTx(tx *gorm.DB, channelID, formID string) error {
+func ChannelExtensionStorageDeleteByNamespaceScopeTx(tx *gorm.DB, channelID, formID string) error {
 	if !channelIFormStorageTablesReady(tx) {
 		return nil
 	}
@@ -345,7 +345,7 @@ func ChannelIFormStorageDeleteByNamespaceScopeTx(tx *gorm.DB, channelID, formID 
 	return tx.Unscoped().Where("id IN ?", ids).Delete(&ChannelIFormStorageNamespaceModel{}).Error
 }
 
-func ChannelIFormStorageDeleteByFormIDTx(tx *gorm.DB, formID string) error {
+func ChannelExtensionStorageDeleteByNamespaceKeyTx(tx *gorm.DB, formID string) error {
 	if !channelIFormStorageTablesReady(tx) {
 		return nil
 	}
@@ -370,7 +370,7 @@ func ChannelIFormStorageDeleteByFormIDTx(tx *gorm.DB, formID string) error {
 	return tx.Unscoped().Where("id IN ?", ids).Delete(&ChannelIFormStorageNamespaceModel{}).Error
 }
 
-func ChannelIFormStorageDeleteByChannelIDsTx(tx *gorm.DB, channelIDs []string) error {
+func ChannelExtensionStorageDeleteByChannelIDsTx(tx *gorm.DB, channelIDs []string) error {
 	if !channelIFormStorageTablesReady(tx) {
 		return nil
 	}
@@ -414,7 +414,7 @@ type ChannelIFormStorageExpiredMutation struct {
 	Item      ChannelIFormStorageItem
 }
 
-func ChannelIFormStorageDeleteExpired(now time.Time, batchSize int) ([]ChannelIFormStorageExpiredMutation, error) {
+func ChannelExtensionStorageDeleteExpired(now time.Time, batchSize int) ([]ChannelIFormStorageExpiredMutation, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -473,3 +473,21 @@ func channelIFormStorageTablesReady(tx *gorm.DB) bool {
 	}
 	return tx.Migrator().HasTable(&ChannelIFormStorageNamespaceModel{}) && tx.Migrator().HasTable(&ChannelIFormStorageDocumentModel{})
 }
+
+// Legacy names are aliases to the single extension storage implementation.
+var (
+	ChannelIFormStorageNamespaceGetOrCreate     = ChannelExtensionStorageNamespaceGetOrCreate
+	ChannelIFormStorageSnapshot                 = ChannelExtensionStorageSnapshot
+	ChannelIFormStorageGet                      = ChannelExtensionStorageGet
+	ChannelIFormStorageSet                      = ChannelExtensionStorageSet
+	ChannelIFormStorageSetWithExpiry            = ChannelExtensionStorageSetWithExpiry
+	ChannelIFormStorageDelete                   = ChannelExtensionStorageDelete
+	ChannelIFormStorageList                     = ChannelExtensionStorageList
+	ChannelIFormStorageNamespaceDelete          = ChannelExtensionStorageNamespaceDelete
+	ChannelIFormStorageDeleteByNamespaceScopeTx = ChannelExtensionStorageDeleteByNamespaceScopeTx
+	ChannelIFormStorageDeleteByFormIDTx         = func(tx *gorm.DB, id string) error {
+		return ChannelExtensionStorageCleanupTx(tx, "", ChannelExtensionScope{Type: "iform", ID: id})
+	}
+	ChannelIFormStorageDeleteByChannelIDsTx = ChannelExtensionStorageDeleteByChannelIDsTx
+	ChannelIFormStorageDeleteExpired        = ChannelExtensionStorageDeleteExpired
+)

@@ -1,4 +1,4 @@
-import axiosFactory, { Axios } from "axios"
+import axiosFactory, { AxiosHeaders } from "axios"
 import Cookies from "js-cookie"
 import { getStoredAccessToken, persistAccessToken } from "@/utils/authToken";
 const axios = axiosFactory.create()
@@ -71,7 +71,7 @@ export function buildAuthorizedJsonRequestInit(init: RequestInit = {}): RequestI
 
 api.interceptors.request.use(config => {
   const headers = (config.headers || {}) as Record<string, any>;
-  config.headers = buildAuthorizedHeaders(headers);
+  config.headers = AxiosHeaders.from(buildAuthorizedHeaders(headers));
   return config;
 });
 

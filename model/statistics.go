@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type MessageStatusStats struct {
 	TotalMessages int64 `json:"totalMessages"`
 	ICMessages    int64 `json:"icMessages"`
@@ -30,21 +32,21 @@ func CountActiveUsers() (int64, error) {
 // CountWorlds 返回处于激活状态的世界数量。
 func CountWorlds() (int64, error) {
 	var count int64
-	err := db.Model(&WorldModel{}).Where("status <> ?", "deleted").Count(&count).Error
+	err := db.Model(&WorldModel{}).Where("status NOT IN ?", []string{"deleted", "archived"}).Count(&count).Error
 	return count, err
 }
 
 // CountChannels 返回正常状态的公共频道数量（不含私聊）。
 func CountChannels() (int64, error) {
 	var count int64
-	err := db.Model(&ChannelModel{}).Where("status <> ? AND is_private = ?", "deleted", false).Count(&count).Error
+	err := db.Model(&ChannelModel{}).Where("status NOT IN ? AND is_private = ?", []string{ChannelStatusDeleted, ChannelStatusArchived}, false).Count(&count).Error
 	return count, err
 }
 
 // CountPrivateChannels 返回正常状态的私聊频道数量。
 func CountPrivateChannels() (int64, error) {
 	var count int64
-	err := db.Model(&ChannelModel{}).Where("status <> ? AND is_private = ?", "deleted", true).Count(&count).Error
+	err := db.Model(&ChannelModel{}).Where("status NOT IN ? AND is_private = ?", []string{ChannelStatusDeleted, ChannelStatusArchived}, true).Count(&count).Error
 	return count, err
 }
 
@@ -93,6 +95,59 @@ func CountMessageStatusStats() (*MessageStatusStats, error) {
 		ICChars:       result.ICChars,
 		OOCChars:      result.OOCChars,
 	}, nil
+}
+
+// WorldMessageCharStats 是单个世界内未删除消息的字数与最近发言统计。
+type WorldMessageCharStats struct {
+	WorldID      string `gorm:"column:world_id"`
+	Chars        int64  `gorm:"column:total_chars"`
+	CharsIC      int64  `gorm:"column:ic_chars"`
+	CharsOOC     int64  `gorm:"column:ooc_chars"`
+	LastActiveAt int64  `gorm:"column:last_active_at"`
+}
+
+// CountWorldMessageChars 汇总正常世界中未删除消息的可见字数和最近发言时间，包含归档频道。
+func CountWorldMessageChars(worldIDs []string) ([]WorldMessageCharStats, error) {
+	if len(worldIDs) == 0 {
+		return nil, nil
+	}
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
+	modeExpr := "LOWER(COALESCE(NULLIF(m.ic_mode, ''), 'ic'))"
+	lastActiveExpr := "MAX(m.created_at) AS last_message_at"
+	if IsSQLite() {
+		// 先转换再取最大值，避免历史消息的时区和日期字符串格式影响排序。
+		lastActiveExpr = "COALESCE(CAST(ROUND((MAX(julianday(m.created_at)) - 2440587.5) * 86400000) AS BIGINT), 0) AS last_active_at"
+	}
+
+	var messageRows []struct {
+		WorldMessageCharStats
+		LastMessageAt *time.Time `gorm:"column:last_message_at"`
+	}
+	err := db.Table("messages AS m").
+		Select(
+			"c.world_id AS world_id, "+
+				"COALESCE(SUM("+lenExpr+"), 0) AS total_chars, "+
+				"COALESCE(SUM(CASE WHEN "+modeExpr+" = 'ooc' THEN 0 ELSE "+lenExpr+" END), 0) AS ic_chars, "+
+				"COALESCE(SUM(CASE WHEN "+modeExpr+" = 'ooc' THEN "+lenExpr+" ELSE 0 END), 0) AS ooc_chars, "+
+				lastActiveExpr,
+		).
+		Joins("JOIN channels c ON c.id = m.channel_id").
+		Joins("JOIN worlds w ON w.id = c.world_id").
+		Where("c.world_id IN ? AND m.is_deleted = ? AND c.status <> ? AND w.status NOT IN ?", worldIDs, false, ChannelStatusDeleted, []string{"deleted", "archived"}).
+		Group("c.world_id").
+		Scan(&messageRows).Error
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]WorldMessageCharStats, 0, len(messageRows))
+	for _, row := range messageRows {
+		// 沿用驱动解析的时区，避免 MySQL 会话时区与连接 loc 不一致时发生偏移。
+		if row.LastMessageAt != nil && !row.LastMessageAt.IsZero() {
+			row.LastActiveAt = row.LastMessageAt.UnixMilli()
+		}
+		rows = append(rows, row.WorldMessageCharStats)
+	}
+	return rows, nil
 }
 
 // CountAttachments 返回正式附件数量（不含临时附件）。

@@ -4,7 +4,10 @@ import { NIcon, useMessage } from 'naive-ui'
 import { calculateVisibleActionCount } from './chatActionRibbonLayout'
 import {
   Archive as ArchiveIcon,
+  Book as LogLayoutIcon,
+  Code as CustomUiIcon,
   Download as DownloadIcon,
+  Eye as ObserverLinkIcon,
   DotsVertical as MoreIcon,
   Heartbeat as BridgeStatusIcon,
   Link as LinkIcon,
@@ -23,13 +26,16 @@ import {
   Bulb as ClueBoxIcon,
   LayoutBoard as ClueBoardIcon,
   Bolt as ShortcutCommandIcon,
+  Bookmark as MessageFavoritesIcon,
 } from '@vicons/tabler'
-import { DocumentTextOutline } from '@vicons/ionicons5'
-import { MailOutline } from '@vicons/ionicons5'
+import { DocumentTextOutline, MailOutline, NotificationsOutline } from '@vicons/ionicons5'
 import ObserverFilterModal from '../../components/ObserverFilterModal.vue'
 import { useSpeechStore } from '@/features/tts/store'
 import TTSWorldActivationDialog from '@/features/tts/TTSWorldActivationDialog.vue'
 import { useDisplayStore } from '@/stores/display'
+import { useChatStore } from '@/stores/chat'
+import { useUtilsStore } from '@/stores/utils'
+import { applyActionRibbonLayout, resolveActionRibbonLayout } from '@/features/action-ribbon-layout/actionRibbonLayout'
 
 interface FilterState {
   icFilter: 'all' | 'ic' | 'ooc'
@@ -58,6 +64,8 @@ interface Props {
   glassBackgroundActive?: boolean
   shortcutCommandActive?: boolean
   favoriteActive?: boolean
+  messageFavoritesEnabled?: boolean
+  messageFavoritesActive?: boolean
   channelImagesActive?: boolean
   battleSummaryEnabled?: boolean
   battleSummaryActive?: boolean
@@ -86,6 +94,10 @@ interface Props {
   characterCardEnabled?: boolean
   characterCardActive?: boolean
   characterRemarkActive?: boolean
+  worldManagementActive?: boolean
+  accountUtilityActive?: boolean
+  /** 解析世界级入口布局所用的世界；缺省时使用当前聊天世界。 */
+  worldId?: string
 }
 
 interface Emits {
@@ -100,6 +112,7 @@ interface Emits {
   (e: 'open-glass-background'): void
   (e: 'open-shortcut-command'): void
   (e: 'open-favorites'): void
+  (e: 'open-message-favorites'): void
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
   (e: 'open-split'): void
@@ -113,6 +126,11 @@ interface Emits {
   (e: 'open-webhook'): void
   (e: 'open-bridge-status'): void
   (e: 'open-email-notification'): void
+  (e: 'open-log-layout-management'): void
+  (e: 'open-observer-link-management'): void
+  (e: 'open-custom-ui-management'): void
+  (e: 'open-input-stats'): void
+  (e: 'open-app-notification-settings'): void
   (e: 'open-character-card'): void
   (e: 'open-character-remark'): void
   (e: 'clear-filters'): void
@@ -122,6 +140,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 const speech = useSpeechStore()
 const display = useDisplayStore()
+const chat = useChatStore()
+const utils = useUtilsStore()
 const message = useMessage()
 
 // Ref for measuring container width
@@ -167,7 +187,7 @@ const setTheaterActionRef = (element: Element | ComponentPublicInstance | null) 
   theaterActionRef.value = element instanceof HTMLElement ? element : null
 }
 
-const allActionButtons = computed<ActionButton[]>(() => {
+const defaultActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
     { key: 'display', label: '常规设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
     { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
@@ -186,6 +206,14 @@ const allActionButtons = computed<ActionButton[]>(() => {
     { key: 'clue-board', label: '线索画板', icon: ClueBoardIcon, emitEvent: 'open-clue-board', activeKey: 'clueBoardActive', disabled: () => props.clueBoardEnabled === false || props.clueBoxEnabled === false },
     { key: 'battle-summary', label: '战报总结', icon: DocumentTextOutline, emitEvent: 'open-battle-summary', activeKey: 'battleSummaryActive', disabled: () => props.battleSummaryEnabled === false },
     { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
+    {
+      key: 'message-favorites',
+      label: '消息收藏',
+      icon: MessageFavoritesIcon,
+      emitEvent: 'open-message-favorites',
+      activeKey: 'messageFavoritesActive',
+      disabled: () => props.messageFavoritesEnabled === false,
+    },
     { key: 'character-remark', label: '角色备注', icon: CharacterRemarkIcon, emitEvent: 'open-character-remark', activeKey: 'characterRemarkActive' },
   ]
   
@@ -242,17 +270,43 @@ const allActionButtons = computed<ActionButton[]>(() => {
     buttons.push({ key: 'webhook', label: 'Webhook', icon: LinkIcon, emitEvent: 'open-webhook', activeKey: 'webhookActive' })
   }
 
-  buttons.push({ key: 'bridge-status', label: '桥接状态', icon: BridgeStatusIcon, emitEvent: 'open-bridge-status', activeKey: 'bridgeStatusActive' })
+  buttons.push({ key: 'glass-background', label: '玻璃背景', icon: Palette, emitEvent: 'open-glass-background', activeKey: 'glassBackgroundActive' })
+  buttons.push({ key: 'shortcut-command', label: '快捷命令', icon: ShortcutCommandIcon, emitEvent: 'open-shortcut-command', activeKey: 'shortcutCommandActive' })
+  buttons.push({ key: 'log-layout-management', label: 'LOG 排版', icon: LogLayoutIcon, emitEvent: 'open-log-layout-management', activeKey: 'worldManagementActive' })
+  buttons.push({ key: 'observer-link-management', label: '旁观链接', icon: ObserverLinkIcon, emitEvent: 'open-observer-link-management', activeKey: 'worldManagementActive' })
+  buttons.push({ key: 'custom-ui-management', label: '定制界面', icon: CustomUiIcon, emitEvent: 'open-custom-ui-management', activeKey: 'worldManagementActive' })
+  buttons.push({ key: 'input-stats', label: '输入统计', icon: DocumentTextOutline, emitEvent: 'open-input-stats', activeKey: 'accountUtilityActive' })
+  buttons.push({ key: 'app-notification-settings', label: 'APP 推送', icon: NotificationsOutline, emitEvent: 'open-app-notification-settings', activeKey: 'accountUtilityActive' })
 
-  // 未读提醒入口（复用原邮件提醒位置）
+  // 诊断与提醒入口固定收在最后。
+  buttons.push({ key: 'bridge-status', label: '桥接状态', icon: BridgeStatusIcon, emitEvent: 'open-bridge-status', activeKey: 'bridgeStatusActive' })
   if (props.emailNotificationEnabled !== false) {
     buttons.push({ key: 'email-notification', label: '未读提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
   }
-  
-  buttons.push({ key: 'glass-background', label: '玻璃背景', icon: Palette, emitEvent: 'open-glass-background', activeKey: 'glassBackgroundActive' })
-  buttons.push({ key: 'shortcut-command', label: '快捷命令', icon: ShortcutCommandIcon, emitEvent: 'open-shortcut-command', activeKey: 'shortcutCommandActive' })
   return buttons
 })
+
+// 平台/世界入口布局只在这里对业务条件已决定的按钮做隐藏与重排，不会新增按钮；
+// 未配置时 applyActionRibbonLayout 原样返回默认数组。
+const layoutWorldId = computed(() => {
+  if (props.worldId !== undefined) return props.worldId.trim()
+  return String((chat.observerMode ? chat.observerWorldId || chat.currentWorldId : chat.currentWorldId) || '').trim()
+})
+const layoutWorld = computed(() => {
+  const id = layoutWorldId.value
+  return id ? chat.worldDetailMap[id]?.world || chat.worldMap[id] || null : null
+})
+// 分屏等宿主显式指定世界时，该世界详情可能尚未缓存。
+watch(() => props.worldId?.trim() || '', (id) => {
+  if (id && !layoutWorld.value) {
+    void chat.worldDetail(id).catch(() => undefined)
+  }
+}, { immediate: true })
+const actionRibbonLayout = computed(() => resolveActionRibbonLayout(
+  utils.config?.actionRibbonLayout,
+  layoutWorld.value?.actionRibbonLayout,
+))
+const allActionButtons = computed<ActionButton[]>(() => applyActionRibbonLayout(defaultActionButtons.value, actionRibbonLayout.value))
 
 // Visible buttons (shown directly)
 const visibleButtons = computed(() => {
@@ -1264,9 +1318,9 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-more-item.is-active {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(37, 99, 235, 0.26);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 12%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 32%, var(--sc-border-strong));
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
 }
 
 .ribbon-more-item:disabled {
@@ -1298,8 +1352,8 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-more-mode-card.is-active {
-  border-color: rgba(37, 99, 235, 0.3);
-  background: rgba(59, 130, 246, 0.1);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 34%, var(--sc-border-strong));
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 10%, var(--sc-bg-elevated));
 }
 
 .ribbon-more-mode-card.is-disabled {
@@ -1419,9 +1473,9 @@ const cycleIcFilter = () => {
 }
 
 :root[data-display-palette='night'] .ribbon-more-item.is-active {
-  background: rgba(96, 165, 250, 0.18);
-  border-color: rgba(147, 197, 253, 0.3);
-  color: #cfe0ff;
+  background: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 18%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 38%, var(--sc-border-strong));
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
 }
 
 :root[data-display-palette='night'] .ribbon-action-button:hover {
@@ -1445,47 +1499,41 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-action-button.is-active {
-  --n-text-color: #1d4ed8;
-  --n-text-color-hover: #1d4ed8;
-  background-color: rgba(59, 130, 246, 0.18);
-  color: #1d4ed8;
-  border-color: rgba(37, 99, 235, 0.35);
+  --n-text-color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  --n-text-color-hover: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 16%, var(--sc-bg-elevated));
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 38%, var(--sc-border-strong));
 }
 
-.ribbon-action-button.is-active :deep(.n-icon) {
-  color: #2563eb;
-}
-
+.ribbon-action-button.is-active :deep(.n-icon),
 .ribbon-action-button.is-active :deep(.n-button__content) {
-  color: #1d4ed8 !important;
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) !important;
 }
 
 :root[data-display-palette='night'] .ribbon-action-button.is-active {
-  --n-text-color: #cfe0ff;
-  --n-text-color-hover: #cfe0ff;
-  background-color: rgba(96, 165, 250, 0.25);
-  color: #cfe0ff;
-  border-color: rgba(147, 197, 253, 0.45);
+  --n-text-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  --n-text-color-hover: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, var(--sc-bg-elevated));
+  color: var(--n-text-color);
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 46%, var(--sc-border-strong));
 }
 
-:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon) {
-  color: #e0edff;
-}
-
+:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon),
 :root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-button__content) {
-  color: #cfe0ff !important;
+  color: var(--n-text-color) !important;
 }
 
 .ribbon-dual-split.is-active .ribbon-dual-split__trigger {
-  color: #1d4ed8;
-  background-color: rgba(59, 130, 246, 0.18);
-  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de)));
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 16%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #3388de))) 38%, var(--sc-border-strong));
 }
 
 :root[data-display-palette='night'] .ribbon-dual-split.is-active .ribbon-dual-split__trigger {
-  color: #cfe0ff;
-  background-color: rgba(96, 165, 250, 0.25);
-  border-color: rgba(147, 197, 253, 0.45);
+  color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 76%, white 24%);
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 22%, var(--sc-bg-elevated));
+  border-color: color-mix(in srgb, var(--primary-color, var(--sc-accent, var(--sc-primary-color, #60a5fa))) 46%, var(--sc-border-strong));
 }
 
 .ribbon-dual-split.is-disabled .ribbon-dual-split__trigger {

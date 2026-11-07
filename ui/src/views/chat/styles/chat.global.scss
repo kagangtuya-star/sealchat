@@ -208,17 +208,18 @@
 }
 
 /* Keyword Tooltip Styles */
-:global(.keyword-tooltip) {
+.keyword-tooltip {
   position: fixed;
   z-index: 9999;
   max-width: 360px;
   min-width: 180px;
   padding: 12px 16px;
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
-  background: #ffffff;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  color: #0f172a;
+  box-shadow: var(--chat-message-shadow);
+  background: var(--sc-bg-elevated);
+  border: 1px solid var(--sc-border-mute);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   font-size: 14px;
   line-height: 1.55;
   pointer-events: auto;
@@ -227,42 +228,42 @@
   overflow-wrap: break-word;
 }
 
-:global(.keyword-tooltip.keyword-tooltip--embedded-wide) {
+.keyword-tooltip.keyword-tooltip--embedded-wide {
   max-width: none;
   min-width: 0;
   width: auto;
   border-radius: 14px;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--chat-message-shadow);
 }
 
 /* Tooltip scrollbar styling - minimal/invisible design */
 /* Standard properties for Firefox */
-:global(.keyword-tooltip) {
+.keyword-tooltip {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 
-:global(.keyword-tooltip:hover) {
-  scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+.keyword-tooltip:hover {
+  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
 }
 
 /* WebKit properties for Chrome/Safari/Edge */
-:global(.keyword-tooltip::-webkit-scrollbar) {
+.keyword-tooltip::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
 
-:global(.keyword-tooltip::-webkit-scrollbar-track) {
+.keyword-tooltip::-webkit-scrollbar-track {
   background: transparent;
 }
 
-:global(.keyword-tooltip::-webkit-scrollbar-thumb) {
+.keyword-tooltip::-webkit-scrollbar-thumb {
   background: transparent;
   border-radius: 2px;
 }
 
-:global(.keyword-tooltip:hover::-webkit-scrollbar-thumb) {
-  background: rgba(128, 128, 128, 0.2);
+.keyword-tooltip:hover::-webkit-scrollbar-thumb {
+  background: var(--sc-scrollbar-thumb);
 }
 
 @keyframes keyword-tooltip-fade-in {
@@ -276,62 +277,62 @@
   }
 }
 
-:global(.keyword-tooltip--pinned) {
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+.keyword-tooltip--pinned {
+  box-shadow: var(--chat-message-shadow);
   transition: opacity 0.15s ease, filter 0.15s ease;
 }
 
 /* Parent tooltip dims when child tooltip exists */
-:global(.keyword-tooltip--pinned.keyword-tooltip--has-child) {
+.keyword-tooltip--pinned.keyword-tooltip--has-child {
   opacity: 0.7;
   filter: brightness(0.92);
 }
 
-/* Enhanced shadow for nested tooltips by level */
-:global(.keyword-tooltip--pinned[data-level="1"]) {
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.28);
+/* Nested tooltips retain stronger borders while sharing the theme shadow. */
+.keyword-tooltip--pinned[data-level="1"] {
+  box-shadow: var(--chat-message-shadow);
   border-width: 1.5px;
 }
 
-:global(.keyword-tooltip--pinned[data-level="2"]) {
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.32);
+.keyword-tooltip--pinned[data-level="2"] {
+  box-shadow: var(--chat-message-shadow);
   border-width: 2px;
 }
 
-:global(.keyword-tooltip--pinned[data-level="3"]) {
-  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.36);
+.keyword-tooltip--pinned[data-level="3"] {
+  box-shadow: var(--chat-message-shadow);
   border-width: 2px;
 }
 
-:global(.keyword-tooltip__header) {
+.keyword-tooltip__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   font-weight: 600;
   margin-bottom: 6px;
-  color: #1e293b;
+  color: var(--sc-text-primary);
   font-size: 15px;
 }
 
-:global(.keyword-tooltip__title) {
+.keyword-tooltip__title {
   min-width: 0;
   flex: 1 1 auto;
 }
 
-:global(.keyword-tooltip__nav) {
+.keyword-tooltip__nav {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
 }
 
-:global(.keyword-tooltip__nav-btn) {
+.keyword-tooltip__nav-btn {
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  border: 1px solid rgba(15, 23, 42, 0.14);
-  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-layer);
   color: inherit;
   display: inline-flex;
   align-items: center;
@@ -341,95 +342,42 @@
   line-height: 1;
 }
 
-:global(.keyword-tooltip__nav-btn:not(:disabled):hover) {
-  background: rgba(255, 255, 255, 0.96);
+.keyword-tooltip__nav-btn:not(:disabled):hover {
+  background: var(--sc-bg-hover);
 }
 
-:global(.keyword-tooltip__nav-btn:disabled) {
+.keyword-tooltip__nav-btn:disabled {
   opacity: 0.35;
 }
 
-:global(.keyword-tooltip__nav-count) {
+.keyword-tooltip__nav-count {
   min-width: 30px;
   text-align: center;
   font-size: 11px;
   opacity: 0.68;
 }
 
-:global(.keyword-tooltip__body) {
-  color: #475569;
+.keyword-tooltip__body {
+  color: var(--sc-text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: auto;
 }
 
 /* 多段首行缩进样式 */
-:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph) {
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph {
   text-indent: var(--keyword-tooltip-text-indent, 0);
   margin: 0;
   padding: 0;
 }
 
-:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph) {
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph {
   margin-top: 0.5em;
 }
 
-:global(.keyword-tooltip__body .keyword-highlight) {
+.keyword-tooltip__body .keyword-highlight {
   cursor: pointer;
   pointer-events: auto;
-}
-
-/* Night mode tooltip */
-:global([data-display-palette='night'] .keyword-tooltip),
-:global(:root[data-display-palette='night'] .keyword-tooltip) {
-  background: #1e1e22;
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #f4f4f5;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-
-:global([data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide),
-:global(:root[data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide) {
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.56);
-}
-
-:global([data-display-palette='night'] .keyword-tooltip--pinned),
-:global(:root[data-display-palette='night'] .keyword-tooltip--pinned) {
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
-}
-
-:global([data-display-palette='night'] .keyword-tooltip__header),
-:global(:root[data-display-palette='night'] .keyword-tooltip__header) {
-  color: #fafafa;
-}
-
-:global([data-display-palette='night'] .keyword-tooltip__nav-btn),
-:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn) {
-  background: rgba(30, 41, 59, 0.92);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-:global([data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover),
-:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover) {
-  background: rgba(51, 65, 85, 0.98);
-}
-
-:global([data-display-palette='night'] .keyword-tooltip__body),
-:global(:root[data-display-palette='night'] .keyword-tooltip__body) {
-  color: rgba(248, 250, 252, 0.8);
-}
-
-/* Night mode tooltip scrollbar - minimal/invisible design */
-/* Firefox */
-:global([data-display-palette='night'] .keyword-tooltip:hover),
-:global(:root[data-display-palette='night'] .keyword-tooltip:hover) {
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-}
-
-/* WebKit */
-:global([data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb),
-:global(:root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb) {
-  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Keyword Highlight Styles */
@@ -481,7 +429,7 @@
   background: transparent;
 }
 
-:global(.keyword-tooltip--swipeable) {
+.keyword-tooltip--swipeable {
   touch-action: pan-y;
 }
 

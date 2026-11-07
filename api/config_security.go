@@ -96,6 +96,11 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 
 	out := *incoming
+	if incoming.UICustomization == nil {
+		out.UICustomization = utils.NormalizeUICustomizationPolicy(current.UICustomization)
+	} else {
+		out.UICustomization = utils.NormalizeUICustomizationPolicy(incoming.UICustomization)
+	}
 	if incoming.AI.Speech == nil {
 		out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
 	} else {
@@ -207,6 +212,7 @@ func mergeConfigPatchForWrite(current *utils.AppConfig, raw []byte) (*utils.AppC
 	out := *current
 	// The recursive patch must never mutate the live pointer before validation.
 	out.AI.Speech = utils.NormalizeSpeechConfig(current.AI.Speech)
+	out.UICustomization = utils.NormalizeUICustomizationPolicy(current.UICustomization)
 	if err := applyJSONConfigPatch(reflect.ValueOf(&out).Elem(), payload); err != nil {
 		return nil, err
 	}
@@ -255,7 +261,7 @@ func applyJSONConfigPatch(dst reflect.Value, payload map[string]json.RawMessage)
 			continue
 		}
 
-		if name == "speech" && field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+		if (name == "speech" || name == "uiCustomization") && field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct && !bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
 			var nested map[string]json.RawMessage
 			if err := json.Unmarshal(rawValue, &nested); err == nil && nested != nil {
 				copyValue := reflect.New(field.Type().Elem())

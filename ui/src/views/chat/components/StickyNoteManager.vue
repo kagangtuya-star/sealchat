@@ -546,12 +546,12 @@ async function preloadNoteType(noteType?: StickyNoteType) {
   await noteTypePreloadCache[noteType]
 }
 
-function setColorPickerRef(el: HTMLElement | null) {
-  colorPickerRef.value = el
+function setColorPickerRef(el: unknown) {
+  colorPickerRef.value = el instanceof HTMLElement ? el : null
 }
 
-function setPushPopupRef(el: HTMLElement | null) {
-  pushPopupRef.value = el
+function setPushPopupRef(el: unknown) {
+  pushPopupRef.value = el instanceof HTMLElement ? el : null
 }
 
 // 文件夹颜色选项

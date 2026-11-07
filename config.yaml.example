@@ -8,6 +8,9 @@
   imageCompressQuality: 85
   imageSizeLimit: 8192
   galleryQuotaMB: 100
+  mcp:
+    enabled: false
+    uploadPendingMaxMB: 512 # 每用户未绑定 MCP 临时附件总容量（MiB），独立于各业务配额
   logUpload:
     enabled: true
     endpoint: https://dice.weizaima.com/dice/api/log # 主海豹染色器后端地址
@@ -22,6 +25,11 @@
     note: "默认上传到海豹染色器获取BBcode/Docx"
   registerOpen: true
   registerInviteCode: "" # 注册邀请码，留空则不需要
+  uiCustomization:
+    allowWorldCss: true            # 是否允许世界级界面自定义 CSS
+    allowWorldJs: false            # 是否允许世界级界面自定义 JavaScript
+    allowPublicWorldCss: true      # 是否允许世界 CSS 应用于 OB、嵌入、公开 LOG 等公共页面
+    maxCodeSizeKB: 1024            # 单个界面自定义包 CSS + JavaScript 总上限（KiB），有效范围 64-16384
   serveAt: :3212
   certificate:
     enabled: false                # 第一版仅支持公网 IP 证书；启用后保存配置并重启生效

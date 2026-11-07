@@ -110,7 +110,7 @@ func TestAPIMessageRemoveSupportsBatchMessageIDs(t *testing.T) {
 	if err := model.GetDB().Model(&mentionedMessage).Update("content", mentionedMessage.Content).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := (&ChatContext{}).TagCheck(&mentionedMessage); err != nil {
+	if err := (&ChatContext{}).TagCheck(&mentionedMessage, collectMentionTargetIDsFromContent(mentionedMessage.Content)); err != nil {
 		t.Fatalf("persist mention state failed: %v", err)
 	}
 

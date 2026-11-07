@@ -100,23 +100,18 @@ docker compose up -d
 
 ## 文档
 
+完整的开发、扩展协议、MCP、内部架构、TTS 与专题资料统一维护在 [完整文档索引](doc/README.md)。
+
 | 我想…… | 文档 |
 | --- | --- |
 | 部署或升级 SealChat | [部署指南](doc/deployment.md) |
-| 修改配置、存储、SMTP 、PDF或 S3 | [配置指南](doc/configuration.md) |
+| 修改配置、存储、SMTP、PDF 或 S3 | [配置指南](doc/configuration.md) |
 | 备份、恢复或执行管理员操作 | [运维指南](doc/administration.md) |
 | 从源码构建或参与开发 | [开发指南](doc/development.md) |
 | 开发频道嵌入应用 | [Channel Embed API](doc/channel-embed-api-developer-guide.md) |
-| 将 SealChat 嵌入其他页面 | [Bridge API](doc/sealchat-bridge-api.md) |
-| 与外部系统同步消息 | [Webhook API](doc/sealchat-webhook-api.md) |
-| 开发角色卡模板 | [角色卡模板开发](doc/character-sheet-template-development.md) |
-| 配置频道摘要 | [频道未读提醒](doc/channel-digest-push.md) |
-| 通过 MCP 接入 SealChat 数据与工具 | [平台 MCP 接入](doc/mcp.md) |
-| 了解 TTS、模型与音色能力 | [TTS 能力目录](doc/tts-catalog.md) |
-| 开发或排查隐式 BOT 调用 | [BOT Interaction](doc/bot-interaction.md) |
-| 了解原生模块独立运行与浮窗架构 | [Internal Surface 架构](doc/Internal_surface_architecture.md) |
-
-[查看完整文档索引](doc/README.md)
+| 开发角色卡或 UI/LOG 扩展 | [开发与扩展文档索引](doc/README.md#扩展与二次开发) |
+| 通过 MCP / Agent 接入 SealChat | [Agent、MCP 与自动化文档](doc/README.md#agentmcp-与自动化) |
+| 查阅架构设计、TTS 与其他专题资料 | [完整文档索引](doc/README.md) |
 
 ## 技术架构
 

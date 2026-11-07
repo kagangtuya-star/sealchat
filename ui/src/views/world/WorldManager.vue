@@ -5,6 +5,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { useDialog, useMessage } from 'naive-ui';
 import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
 import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
+import WorldCreateCoverField from '@/views/world/WorldCreateCoverField.vue';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -16,8 +17,6 @@ import { resolveActionErrorMessage } from '@/utils/errorMessage';
 import CursorThemeEditorModal from '@/components/cursor/CursorThemeEditorModal.vue';
 import { normalizeCursorTheme } from '@/services/cursor/cursorRuntime';
 import { resolveMessageSortBasis } from '@/utils/messageSortBasis';
-import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible', 'deleted']);
@@ -31,9 +30,7 @@ const botOptionsLoading = ref(false);
 const botList = ref<any[]>([]);
 const cursorThemeVisible = ref(false);
 const coverUploading = ref(false);
-const coverInputRef = ref<HTMLInputElement | null>(null);
-const WORLD_COVER_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
-const coverPreviewUrl = computed(() => resolveAttachmentUrl(form.value.coverAttachmentId || ''));
+const coverEditing = ref(false);
 
 const botSelectOptions = computed(() => botList.value.map((item) => ({
   label: item.nick || item.username || item.name || 'Bot',
@@ -77,6 +74,8 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
       allowManageOtherUserChannelIdentities: detail.world?.allowManageOtherUserChannelIdentities ?? false,
       allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
       strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
+      exportRespectMessageVisibility: detail.world?.exportRespectMessageVisibility ?? true,
+      allowMemberExportMessages: detail.world?.allowMemberExportMessages ?? true,
       channelDefaultDiceMode: detail.world?.channelDefaultDiceMode || 'builtin',
       channelDefaultBotIds: Array.isArray((detail.world as any)?.channelDefaultBotIds) ? (detail.world as any).channelDefaultBotIds : [],
       channelDefaultBotId: detail.world?.channelDefaultBotId || '',
@@ -91,6 +90,7 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
 }, { immediate: true });
 
 const save = async () => {
+  if (loading.value || coverUploading.value || coverEditing.value) return;
   if (form.value.channelDefaultDiceMode === 'bot' && !form.value.channelDefaultBotId) {
     message.error('选择 BOT 掷骰时必须指定默认 BOT');
     return;
@@ -140,38 +140,6 @@ const confirmRemove = () => {
   });
 };
 
-const pickCover = () => {
-  coverInputRef.value?.click();
-};
-
-// Uploaded as a temp attachment; the server validates and confirms it when the form is saved.
-const handleCoverSelected = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  if (!WORLD_COVER_MIME_TYPES.has(file.type.toLowerCase())) {
-    message.error('请选择 PNG / JPEG / WebP / GIF / AVIF 图片');
-    return;
-  }
-  const worldId = props.worldId;
-  coverUploading.value = true;
-  try {
-    const result = await uploadImageAttachment(file, {
-      channelId: null,
-      rootId: worldId,
-      rootIdType: 'world_cover',
-    });
-    if (worldId === props.worldId) {
-      form.value.coverAttachmentId = result.attachmentId;
-    }
-  } catch (e: any) {
-    message.error(e?.message || '封面上传失败');
-  } finally {
-    coverUploading.value = false;
-  }
-};
-
 const updateDescription = (value: string) => {
   form.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
 };
@@ -189,6 +157,8 @@ const getDescriptionCountLabel = (value?: string) => {
     title="世界设置"
     class="sc-fluid-modal sc-manage-modal"
     :bordered="false"
+    :trap-focus="false"
+    :close-on-esc="!coverEditing"
     @update:show="close"
   >
     <div class="sc-manage-modal__body">
@@ -222,31 +192,17 @@ const getDescriptionCountLabel = (value?: string) => {
         </div>
         <div class="sc-manage-field">
           <span class="sc-manage-field__label">封面</span>
-          <div v-if="coverPreviewUrl" class="world-manager__cover-preview">
-            <img :src="coverPreviewUrl" alt="" />
-          </div>
-          <div class="world-manager__cover-actions">
-            <n-button size="small" secondary :loading="coverUploading" @click="pickCover">
-              {{ form.coverAttachmentId ? '更换封面' : '上传封面' }}
-            </n-button>
-            <n-button
-              v-if="form.coverAttachmentId"
-              size="small"
-              quaternary
-              :disabled="coverUploading"
-              @click="form.coverAttachmentId = ''"
-            >
-              移除
-            </n-button>
-            <span class="sc-manage-hint">建议使用横向图片（约 4:1），保存后生效。</span>
-          </div>
-          <input
-            ref="coverInputRef"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
-            hidden
-            @change="handleCoverSelected"
-          />
+          <WorldCreateCoverField
+            v-if="props.visible && props.worldId"
+            :key="props.worldId"
+            v-model="form.coverAttachmentId"
+            v-model:uploading="coverUploading"
+            v-model:editing="coverEditing"
+            :world-id="props.worldId"
+            :disabled="loading"
+          >
+            <template #hint>建议使用横向图片（约 4:1），保存后生效。</template>
+          </WorldCreateCoverField>
         </div>
       </section>
 
@@ -278,6 +234,20 @@ const getDescriptionCountLabel = (value?: string) => {
             <div class="sc-manage-row__hint">成员可通过设计链接参与排版并编辑自己的消息；不会授予编辑他人消息、调整来源或发布的权限。</div>
           </div>
           <n-switch v-model:value="form.allowMemberAccessLogLayout" class="sc-manage-row__control" />
+        </div>
+        <div class="sc-manage-row">
+          <div class="sc-manage-row__text">
+            <div class="sc-manage-row__label">导出记录遵循消息可见权限</div>
+            <div class="sc-manage-row__hint">开启后，普通成员只能导出自己有权查看的聊天记录。世界管理员可执行管理级导出，但严格悄悄话隐私仍然生效。</div>
+          </div>
+          <n-switch v-model:value="form.exportRespectMessageVisibility" class="sc-manage-row__control" />
+        </div>
+        <div class="sc-manage-row">
+          <div class="sc-manage-row__text">
+            <div class="sc-manage-row__label">允许世界成员导出记录</div>
+            <div class="sc-manage-row__hint">关闭后，普通世界成员无法导出聊天记录；世界所有者和管理员不受影响。</div>
+          </div>
+          <n-switch v-model:value="form.allowMemberExportMessages" class="sc-manage-row__control" />
         </div>
         <div class="sc-manage-row">
           <div class="sc-manage-row__text">
@@ -346,7 +316,7 @@ const getDescriptionCountLabel = (value?: string) => {
           删除世界
         </n-button>
         <n-button @click="close">取消</n-button>
-        <n-button type="primary" :loading="loading" :disabled="coverUploading" @click="save">保存</n-button>
+        <n-button type="primary" :loading="loading" :disabled="coverUploading || coverEditing" @click="save">保存</n-button>
       </div>
     </template>
   </n-modal>
@@ -378,25 +348,4 @@ const getDescriptionCountLabel = (value?: string) => {
   pointer-events: none;
 }
 
-.world-manager__cover-preview {
-  width: 100%;
-  aspect-ratio: 4 / 1;
-  overflow: hidden;
-  border: 1px solid var(--sc-border-mute);
-  border-radius: 8px;
-}
-
-.world-manager__cover-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.world-manager__cover-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
 </style>

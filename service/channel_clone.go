@@ -536,6 +536,10 @@ func copyChannelMembers(tx *gorm.DB, sourceID, targetID string, roleMap map[stri
 		if mapping.UserID == "" || mapping.RoleID == "" {
 			continue
 		}
+		// 继承权限由目标世界决定，不能在复制时转成永久手动授权。
+		if mapping.GrantSource == model.RoleGrantWorld {
+			continue
+		}
 		if allowedUserIDs != nil {
 			if _, ok := allowedUserIDs[mapping.UserID]; !ok {
 				continue
@@ -557,7 +561,13 @@ func copyChannelMembers(tx *gorm.DB, sourceID, targetID string, roleMap map[stri
 		})
 	}
 	if len(clones) > 0 {
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&clones).Error; err != nil {
+		sourceColumn := clause.Column{Table: clause.CurrentTable, Name: "grant_source"}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "user_id"}, {Name: "role_id"}},
+			DoUpdates: clause.Assignments(map[string]any{
+				"grant_source": gorm.Expr("CASE WHEN ? = ? THEN ? ELSE ? END", sourceColumn, model.RoleGrantWorld, model.RoleGrantBoth, sourceColumn),
+			}),
+		}).Create(&clones).Error; err != nil {
 			return err
 		}
 	}

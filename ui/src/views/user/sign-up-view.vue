@@ -68,16 +68,20 @@ const usernameError = computed(() => {
 });
 
 const utils = useUtilsStore();
-const config = ref<ServerConfig | null>(null);
+const config = ref<ServerConfig | null>(utils.config);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
 const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
+const registerOpen = computed<boolean | null>(() => {
+  if (!config.value) return null;
+  return config.value.registerOpen ?? false;
+});
 const registerInviteRequired = computed(() => config.value?.registerInviteRequired ?? false);
 const inviteForm = reactive({ code: '' });
 const inviteVerified = ref(false);
 const inviteVerifying = ref(false);
 const inviteError = ref('');
 const verifiedInvitationCode = ref('');
-const canShowSignupForm = computed(() => !!config.value?.registerOpen && (!registerInviteRequired.value || inviteVerified.value));
+const canShowSignupForm = computed(() => registerOpen.value === true && (!registerInviteRequired.value || inviteVerified.value));
 const currentInvitationCode = computed(() => registerInviteRequired.value ? verifiedInvitationCode.value : '');
 
 const emailCodeSending = ref(false);
@@ -622,7 +626,7 @@ onBeforeUnmount(() => {
 
           <template v-if="emailAuthEnabled">
             <n-form-item label="邮箱地址">
-              <n-input v-model:value="form.email" type="email" placeholder="邮箱地址" @keydown.enter.prevent />
+              <n-input v-model:value="form.email" :input-props="{ type: 'email' }" placeholder="邮箱地址" @keydown.enter.prevent />
             </n-form-item>
             <div v-if="emailError" class="auth-error">{{ emailError }}</div>
 
@@ -732,12 +736,12 @@ onBeforeUnmount(() => {
     </div>
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
       :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
-      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="!config?.registerOpen">
+      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="registerOpen === false">
       <div class="p-6">你来晚了，门已经悄然关闭。</div>
     </div>
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
       :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
-      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="config?.registerOpen && registerInviteRequired">
+      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="registerOpen === true && registerInviteRequired">
       <div class="px-8 py-6">
         <h3 class="mb-3 text-xl font-medium text-center auth-title">输入邀请码</h3>
         <p class="invite-hint">此站点需要邀请码后才能注册。</p>

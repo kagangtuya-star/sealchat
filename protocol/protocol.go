@@ -309,6 +309,8 @@ type ChannelIFormBridgePolicy struct {
 }
 
 type ChannelIFormEmbedEventPayload struct {
+	ScopeType string `json:"scopeType,omitempty"`
+	ScopeID   string `json:"scopeId,omitempty"`
 	EventID   string `json:"eventId"`
 	ChannelID string `json:"channelId"`
 	FormID    string `json:"formId"`
@@ -383,6 +385,8 @@ type WhisperMeta struct {
 }
 
 type MessageReorder struct {
+	// Reset invalidates all cached orders after a channel-wide rebalance.
+	Reset        bool    `json:"reset,omitempty"`
 	MessageID    string  `json:"messageId"`
 	ChannelID    string  `json:"channelId"`
 	DisplayOrder float64 `json:"displayOrder"`

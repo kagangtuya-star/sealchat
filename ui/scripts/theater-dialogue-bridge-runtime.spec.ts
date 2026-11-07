@@ -40,6 +40,7 @@ assert.deepEqual(
     'chat.character.read',
     'chat.character.select',
     'chat.character.variant.select',
+    'chat.character.card.open',
   ],
 )
 assert.equal(mergeTheaterBridgePermissions(['stage.view'], true).includes('stage.control'), true)

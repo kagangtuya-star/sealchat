@@ -205,7 +205,7 @@ if (window.parent !== window && config?.hostOrigin) {
 | `context.onChanged(handler)` | `context.read` | 上下文变化；返回取消订阅函数 |
 | `user.getCurrent()` | `user.read` | 当前账号安全摘要，可能为 `null` |
 | `member.getCurrent()` | `context.read` | 当前世界 / Guild 成员摘要，可能为 `null` |
-| `channel.getState()` | `context.read` | 当前绑定的 `id`、`worldId`、`formId` |
+| `channel.getState()` | `context.read` | 当前绑定的 `id`、`worldId`；iForm 返回 `formId`，界面包返回 `scopeType` / `scopeId` |
 
 常用结构：
 
@@ -396,9 +396,15 @@ interface EmbedWorldAdmin {
 
 Capability 表示接口是否开放；Permission 摘要表示当前上下文中是否可执行。`isWorldAdmin` 只表示 World `owner/admin`，`isSystemAdmin` 表示系统 `mod_admin`，`canManageWorld` 为两者任一为真。不要用 `storage.write`、`messages.send` 反推管理员身份。权限可能运行时撤销，每次写操作仍由宿主和服务端校验；权限变化通过 `permissions.onChanged()` 或 `context.onChanged()` 更新。缺少 `world.admins.read` 时，管理员列表返回 `CAPABILITY_DENIED`。
 
+写能力并不都要求频道文本发送权限。`messages.send`、`storage.write` 和 `events.publish` 要求当前用户拥有频道文本发送权限；`characterCard.write` 与 `attachments.upload` 不依赖该权限，但仍要求有效成员身份、非 observer/read-only，并通过各自业务校验。这个区别同时适用于 iForm Host 与界面自定义包的无 UI Channel Extension Context。
+
 ### JSON Storage
 
-Storage 是频道 + iForm 隔离的轻量 JSON KV。适合计分板、轮次、投票、共享面板状态；不适合文件、日志、聊天归档或高频事件流。
+Storage 是频道 + extension scope 隔离的轻量 JSON KV。真实 iForm 的 scope 为 `{ type: 'iform', id: formId }`，原有频道 + formId 隔离及 SDK 方法保持不变。界面自定义包通过 `sc.channel()` 使用同一个无 UI 的 Channel Extension Context，scope 为 `{ type: 'ui-customization', id: packageId }`。适合计分板、轮次、投票、共享面板状态；不适合文件、日志、聊天归档或高频事件流。
+
+新版 Context 统一使用 `channel.extension.storage.get/set/delete/list/snapshot` 和 `channel.extension.events.publish/subscribe` WebSocket actions，请求带 `channel_id` 和 `scope: { type, id }`。旧 `iform.storage.*`、`iform.event.publish/subscribe` 仅将 `form_id` 规范化为 iForm scope 后调用同一 handler；旧 iframe handshake、协议版本和公开 SDK API 不变。
+
+两类 scope 共用 `channel_iform_storage_namespaces/documents` 物理表。iForm 的物理 namespace key 仍为原 formId；界面包为固定 68 字符的 `uic_ + SHA-256(packageId)`，无需迁移旧数据。删除 iForm/界面包清理各自 scope，停用和更新界面包不清数据。JSON、revision、seq、TTL、配额与文档数行为保持一致。
 
 | API | Capability | 说明 |
 | --- | --- | --- |
@@ -482,6 +488,12 @@ off()
 ```
 
 Event 不持久化，刷新后不重放。topic 最长 64 字符，payload 最大 16 KiB。需要刷新后保留的数据用 Storage。
+
+订阅隔离键为频道 + scopeType + scopeId + topic。gateway 继续使用 `channel-iform-embed` / `channelIFormEmbed`，新增可选 `scopeType`、`scopeId`；iForm 仍携带 `formId`，缺省 scope 的旧事件按 iForm 解释。storage 事件继续只广播元数据；授权取值、去重、seq 缺口重同步和重连订阅由共享 Context 负责。Context dispose 会移除监听和所有本地 session 资源。
+
+世界脚本的能力默认空数组，须在包的 `channelCapabilities` 中显式声明，并经过绑定 JS 与能力指纹的浏览器信任确认。effective capabilities 同时受实际 provider 与用户真实权限限制，observer/read-only 无写能力。详见 [UI 自定义包开发指南](ui-customization-package/ui-customization-package-development-guide.md)。
+
+仓库提供 `sealchat-ui-package-channel-api-lab-win97.json` 作为人工测试包。它使用 Windows 97 风格面板显示 effective capabilities，并提供只读批量检测以及 Storage、Events、消息、人物卡和图片上传测试。源码和使用说明位于 [UI 自定义包开发指南](ui-customization-package/ui-customization-package-development-guide.md#22-channel-api-lab--windows-97-测试包)。
 
 topic 规则：`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$`。服务端对每个用户的 publish 限流为每秒 60 次；只读/observer、无发言权限或 BridgePolicy 未授予 `events.publish` 时 publish 被拒绝。
 

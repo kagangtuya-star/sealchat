@@ -65,6 +65,7 @@ const inferManifest = (
     .filter((item) => /\.(woff2?|ttf|otf)$/i.test(item.name))
     .map((item) => ({
       name: item.name,
+      url: item.name,
       mimeType: item.contentType,
     }))
   return {

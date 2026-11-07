@@ -25,7 +25,7 @@ type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
 interface Props {
   members: Member[]
   presenceMap: Record<string, PresenceData>
-  observerCount: number
+  observerCount?: number
   connectState: ConnectState
   connectionLabel: string
   latencyMs?: number

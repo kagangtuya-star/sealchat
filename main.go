@@ -291,6 +291,9 @@ func main() {
 	if err := service.RegisterBuiltinLogStyles(); err != nil {
 		log.Fatalf("LOG builtin styles: %v", err)
 	}
+	if err := service.RegisterBuiltinUICustomizations(); err != nil {
+		log.Fatalf("UI builtin customizations: %v", err)
+	}
 	service.StartLogWorker(ctx, api.BroadcastMessageMutation)
 	go service.TTSPrimeMPSCatalogs()
 

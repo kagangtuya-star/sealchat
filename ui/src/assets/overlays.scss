@@ -1,0 +1,106 @@
+/* Public surface: add sc-overlay to an owned floating surface and data-sc-ui
+   for its business identity. Geometry and interaction remain component-owned. */
+.sc-overlay {
+  background-color: var(--sc-bg-elevated);
+  border-color: var(--sc-border-mute);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
+}
+
+.sc-overlay :where(button, input, textarea) {
+  font-family: inherit;
+}
+
+/* vue3-context-menu teleports every menu (including submenus). customClass is
+   copied to each surface by the library; never depend on a Vue scope ancestor.
+   Keep vendor variables here, outside UI Packages. Misspelled names are vendor API. */
+.mx-context-menu.sc-overlay.sc-context-menu {
+  --mx-menu-backgroud: var(--sc-bg-elevated);
+  --mx-menu-hover-backgroud: var(--sc-bg-hover);
+  --mx-menu-active-backgroud: var(--sc-bg-active);
+  --mx-menu-open-backgroud: var(--sc-bg-active);
+  --mx-menu-open-hover-backgroud: var(--sc-bg-hover);
+  --mx-menu-divider: var(--sc-border-mute);
+  --mx-menu-text: var(--sc-text-primary);
+  --mx-menu-hover-text: var(--sc-text-primary);
+  --mx-menu-active-text: var(--sc-text-primary);
+  --mx-menu-open-text: var(--sc-text-primary);
+  --mx-menu-open-hover-text: var(--sc-text-primary);
+  --mx-menu-disabled-text: var(--sc-text-secondary);
+  --mx-menu-shortcut-backgroud: var(--sc-bg-layer);
+  --mx-menu-shortcut-backgroud-hover: var(--sc-bg-hover);
+  --mx-menu-shortcut-backgroud-active: var(--sc-bg-active);
+  --mx-menu-shortcut-backgroud-open: var(--sc-bg-active);
+  --mx-menu-shortcut-backgroud-disabled: var(--sc-bg-layer);
+  --mx-menu-shortcut-text: var(--sc-text-secondary);
+  --mx-menu-shortcut-text-hover: var(--sc-text-primary);
+  --mx-menu-shortcut-text-active: var(--sc-text-primary);
+  --mx-menu-shortcut-text-open: var(--sc-text-primary);
+  --mx-menu-shortcut-text-disabled: var(--sc-text-secondary);
+  --mx-menu-focus-color: var(--sc-border-strong);
+  --n-font-family: var(--sc-font-family);
+  background: var(--sc-overlay-background, var(--sc-bg-elevated));
+  border-color: var(--sc-overlay-border-color, var(--sc-border-mute));
+  border-radius: var(--sc-overlay-radius, 5px);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
+  box-shadow: var(--sc-overlay-shadow, var(--chat-message-shadow), inset 0 0 0 1px var(--sc-border-mute));
+}
+
+/* Keep the avatar card's existing separator-free appearance. */
+.mx-context-menu.sc-overlay.sc-avatar-context-menu {
+  --mx-menu-divider: transparent;
+}
+
+/* Target only real Naive surfaces. Follower containers are positioning wrappers,
+   and theater secondary surfaces own a separate palette, including raw popovers. */
+:root:is([data-custom-theme='true'], [data-sc-ui-customized='true']) {
+  :is(.n-modal, .n-dialog, .n-drawer, .n-drawer-content, .n-popover, .n-dropdown-menu, .n-base-select-menu, .n-date-panel, .n-time-picker-panel, .n-color-picker-panel):not(:where(.theater-stage-app, .theater-stage-app *, .theater-secondary-surface, .theater-secondary-surface *, :has(.theater-secondary-surface))) {
+    /* Naive sets these surface variables inline. Keep its state selectors,
+       disabled opacity, focus handling, layout and follower machinery intact. */
+    --n-color: var(--sc-bg-elevated) !important;
+    --n-color-modal: var(--sc-bg-elevated) !important;
+    --n-action-color: var(--sc-bg-layer) !important;
+    --n-panel-color: var(--sc-bg-elevated) !important;
+    --n-panel-text-color: var(--sc-text-primary) !important;
+    --n-panel-divider-color: var(--sc-border-mute) !important;
+    --n-panel-box-shadow: var(--sc-overlay-shadow, var(--chat-message-shadow), inset 0 0 0 1px var(--sc-border-mute)) !important;
+    --n-item-text-color: var(--sc-text-primary) !important;
+    --n-item-text-color-active: var(--sc-text-primary) !important;
+    --n-item-text-color-disabled: var(--sc-text-secondary) !important;
+    --n-item-color-hover: var(--sc-bg-hover) !important;
+    --n-item-color-active: var(--sc-bg-active) !important;
+    --n-calendar-title-text-color: var(--sc-text-primary) !important;
+    --n-calendar-title-color-hover: var(--sc-bg-hover) !important;
+    --n-text-color: var(--sc-text-primary) !important;
+    --n-title-text-color: var(--sc-text-primary) !important;
+    --n-header-text-color: var(--sc-text-primary) !important;
+    --n-body-text-color: var(--sc-text-primary) !important;
+    --n-border-color: var(--sc-border-mute) !important;
+    --n-divider-color: var(--sc-border-mute) !important;
+    --n-box-shadow: var(--sc-overlay-shadow, var(--chat-message-shadow), inset 0 0 0 1px var(--sc-border-mute)) !important;
+    --n-option-text-color: var(--sc-text-primary) !important;
+    --n-option-text-color-hover: var(--sc-text-primary) !important;
+    --n-option-text-color-active: var(--sc-text-primary) !important;
+    --n-option-text-color-child-active: var(--sc-text-primary) !important;
+    --n-option-text-color-pressed: var(--sc-text-primary) !important;
+    --n-option-text-color-disabled: var(--sc-text-secondary) !important;
+    --n-group-header-text-color: var(--sc-text-secondary) !important;
+    --n-prefix-color: var(--sc-text-secondary) !important;
+    --n-suffix-color: var(--sc-text-secondary) !important;
+    --n-option-check-color: var(--sc-text-primary) !important;
+    --n-option-color-hover: var(--sc-bg-hover) !important;
+    --n-option-color-pending: var(--sc-bg-hover) !important;
+    --n-option-color-active: var(--sc-bg-active) !important;
+    --n-option-color-active-pending: var(--sc-bg-active) !important;
+    --n-action-text-color: var(--sc-text-secondary) !important;
+    --n-action-divider-color: var(--sc-border-mute) !important;
+    --n-font-family: var(--sc-font-family);
+    background: var(--sc-overlay-background, var(--sc-bg-elevated)) !important;
+    border-color: var(--sc-overlay-border-color, var(--sc-border-mute)) !important;
+    border-radius: var(--sc-overlay-radius, var(--n-border-radius, 6px)) !important;
+    box-shadow: var(--sc-overlay-shadow, var(--chat-message-shadow), inset 0 0 0 1px var(--sc-border-mute)) !important;
+    color: var(--sc-text-primary);
+    font-family: var(--sc-font-family);
+  }
+}

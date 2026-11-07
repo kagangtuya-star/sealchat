@@ -682,7 +682,7 @@ const closeWindow = (id: string) => {
   windows.value = windows.value.filter(item => item.id !== id)
 }
 
-const setChatIframeRef = (id: string, element: Element | null) => {
+const setChatIframeRef = (id: string, element: unknown) => {
   if (findWindow(id)?.source === 'chat' && element instanceof HTMLIFrameElement) {
     chatIframeRefs.set(id, element)
   } else {

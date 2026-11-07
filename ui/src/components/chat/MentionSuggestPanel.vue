@@ -1,7 +1,7 @@
 <template>
   <transition name="mention-suggest-fade">
     <div v-if="visible" class="mention-suggest" @mousedown.prevent>
-      <div class="mention-suggest__content">
+      <div class="mention-suggest__content sc-overlay" data-sc-ui="mention-popup">
         <div v-if="items.length" class="mention-suggest__list">
           <!-- @all option -->
           <div
@@ -94,12 +94,14 @@ function identityTypeLabel(type: string): string {
 }
 
 .mention-suggest__content {
-  background: var(--card-color);
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--sc-border-mute);
   padding: 0.35rem;
   max-height: 280px;
   overflow-y: auto;
@@ -123,7 +125,7 @@ function identityTypeLabel(type: string): string {
 
 .mention-suggest__item:hover,
 .mention-suggest__item.is-active {
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--sc-bg-hover);
 }
 
 .mention-suggest__avatar {
@@ -146,7 +148,7 @@ function identityTypeLabel(type: string): string {
 .mention-suggest__name {
   font-weight: 500;
   font-size: 13px;
-  color: var(--text-color-1);
+  color: var(--sc-text-primary);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -175,7 +177,7 @@ function identityTypeLabel(type: string): string {
 
 .mention-suggest__tag--user {
   background: rgba(148, 163, 184, 0.15);
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
 }
 
 .mention-suggest__tag--all {
@@ -191,7 +193,7 @@ function identityTypeLabel(type: string): string {
   padding: 0.5rem 0.75rem;
   text-align: center;
   font-size: 12px;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary);
 }
 
 /* 夜间模式 */

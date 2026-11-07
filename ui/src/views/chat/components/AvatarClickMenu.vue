@@ -35,10 +35,10 @@ const emit = defineEmits<{
 const avatarMenuClass = computed(() => (display.palette === 'night' ? 'avatar-menu--night' : 'avatar-menu--day'))
 const avatarMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
 const avatarMenuOptions = computed<MenuOptions>(() => ({
-  ...chat.avatarMenu.optionsComponent,
+  ...(chat.avatarMenu.optionsComponent as MenuOptions),
   theme: avatarMenuTheme.value,
-  customClass: avatarMenuClass.value,
-  adjustPosition: { xDirection: 'right', yDirection: 'top' },
+  customClass: `sc-overlay sc-context-menu sc-avatar-context-menu ${avatarMenuClass.value}`,
+  adjustPosition: true,
 }))
 
 const isSelf = computed(() => {
@@ -438,8 +438,8 @@ const clickCharacterCard = (event: MouseEvent) => {
 </template>
 
 <style scoped>
-.avatar-menu-card { width: 18rem; max-width: min(18rem, calc(100vw - 1rem)); padding: 0.45rem 0.7rem 0.15rem; --avatar-stat-text: #172033; --avatar-stat-muted: #667386; --avatar-stat-track: rgba(15, 23, 42, .11); --avatar-stat-fill: #608bb4; }
-.avatar-menu-card--night { --avatar-stat-text: #e2e8f0; --avatar-stat-muted: #a2aec0; --avatar-stat-track: rgba(255, 255, 255, .14); --avatar-stat-fill: #729bc2; }
+.avatar-menu-card { width: 18rem; max-width: min(18rem, calc(100vw - 1rem)); padding: 0.45rem 0.7rem 0.15rem; --avatar-stat-text: var(--sc-text-primary); --avatar-stat-muted: var(--sc-text-secondary); --avatar-stat-track: var(--sc-bg-active); --avatar-stat-fill: #608bb4; }
+.avatar-menu-card--night { --avatar-stat-fill: #729bc2; }
 .avatar-menu-card__title { overflow: hidden; color: var(--avatar-stat-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .avatar-menu-card__stats { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; max-height: min(16rem, 40vh); margin-top: 5px; overflow-y: auto; }
 .avatar-menu-card__empty { color: var(--avatar-stat-muted); font-size: 11px; }
@@ -463,40 +463,6 @@ button.avatar-menu-stat__step:hover, button.avatar-menu-stat__number:hover { bac
 .avatar-menu-stat__separator { padding: 0 1px; }
 .avatar-menu-stat__input { width: 3.1rem; height: 18px; padding: 0 2px; border: 1px solid var(--avatar-stat-muted); border-radius: 3px; background: transparent; color: var(--avatar-stat-text); font: inherit; text-align: center; appearance: textfield; }
 .avatar-menu-stat__input::-webkit-inner-spin-button, .avatar-menu-stat__input::-webkit-outer-spin-button { margin: 0; appearance: none; }
-:deep(.context-menu.avatar-menu--night),
-:deep(.mx-context-menu.avatar-menu--night) {
-  background: rgba(15, 23, 42, 0.95);
-  border-color: rgba(148, 163, 184, 0.35);
-  color: #e2e8f0;
-}
-
-:deep(.context-menu.avatar-menu--night .context-menu-item),
-:deep(.mx-context-menu.avatar-menu--night .mx-context-menu-item) {
-  color: inherit;
-}
-
-:deep(.context-menu.avatar-menu--night .context-menu-item:hover),
-:deep(.mx-context-menu.avatar-menu--night .mx-context-menu-item:hover) {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-:deep(.context-menu.avatar-menu--day),
-:deep(.mx-context-menu.avatar-menu--day) {
-  background: rgba(248, 250, 252, 0.98);
-  border-color: rgba(15, 23, 42, 0.08);
-  color: #0f172a;
-}
-
-:deep(.context-menu.avatar-menu--day .context-menu-item),
-:deep(.mx-context-menu.avatar-menu--day .mx-context-menu-item) {
-  color: inherit;
-}
-
-:deep(.context-menu.avatar-menu--day .context-menu-item:hover),
-:deep(.mx-context-menu.avatar-menu--day .mx-context-menu-item:hover) {
-  background: rgba(15, 23, 42, 0.06);
-}
-
 .avatar-menu-actions {
   display: flex;
   gap: 0.2rem;
@@ -528,23 +494,11 @@ button.avatar-menu-stat__step:hover, button.avatar-menu-stat__number:hover { bac
   flex-shrink: 0;
 }
 
-:deep(.context-menu.avatar-menu--night .avatar-menu-action:hover),
-:deep(.mx-context-menu.avatar-menu--night .avatar-menu-action:hover) {
-  background: rgba(255, 255, 255, 0.08);
+.avatar-menu-action:hover {
+  background: var(--sc-bg-hover);
 }
 
-:deep(.context-menu.avatar-menu--night .avatar-menu-action:active),
-:deep(.mx-context-menu.avatar-menu--night .avatar-menu-action:active) {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-:deep(.context-menu.avatar-menu--day .avatar-menu-action:hover),
-:deep(.mx-context-menu.avatar-menu--day .avatar-menu-action:hover) {
-  background: rgba(15, 23, 42, 0.06);
-}
-
-:deep(.context-menu.avatar-menu--day .avatar-menu-action:active),
-:deep(.mx-context-menu.avatar-menu--day .avatar-menu-action:active) {
-  background: rgba(15, 23, 42, 0.1);
+.avatar-menu-action:active {
+  background: var(--sc-bg-active);
 }
 </style>

@@ -210,7 +210,7 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
       <div class="announcement-manager__toolbar">
         <div class="announcement-manager__summary">共 {{ total }} 条公告</div>
         <n-space size="small">
-          <n-button size="small" @click="load" :loading="loading">刷新</n-button>
+          <n-button size="small" @click="() => load()" :loading="loading">刷新</n-button>
           <n-button v-if="canManage" size="small" type="primary" @click="openCreate">新建公告</n-button>
         </n-space>
       </div>

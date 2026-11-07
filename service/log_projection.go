@@ -94,7 +94,7 @@ func logSnapshotAttachment(ctx context.Context, r *model.LogReleaseModel, a *mod
 	return key, nil
 }
 
-func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64) error {
+func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64, showQuoteContent bool, templateOverride string) error {
 	id := utils.NewID()
 	body := logMessageBodyOf(display, m)
 	sourceImageIndex, publicImageIndex := 0, 0
@@ -135,6 +135,17 @@ func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *mes
 	}
 	plain := body.plainText()
 	node := map[string]any{"id": id, "kind": "message", "sectionId": section, "messageType": logMessageType(m), "speaker": map[string]any{"key": logPublicKey(r.ID, "speaker", speakerID), "name": logSpeakerName(m), "color": color, "avatarAssetKey": avatarValue, "variantKey": variant}, "bodyHtml": body.html(), "plainText": plain, "createdAt": m.CreatedAt.UTC(), "quoteNodeId": nil}
+	// Independent release-scoped domains preserve user matching across characters.
+	// Never publish the source message ID, identity ID, user ID, or draft override map.
+	if m.SenderIdentityID != "" {
+		node["identityKey"] = logPublicKey(r.ID, "identity", m.SenderIdentityID)
+	}
+	if m.UserID != "" {
+		node["userKey"] = logPublicKey(r.ID, "user", m.UserID)
+	}
+	if templateOverride != "" {
+		node["templateOverride"] = templateOverride
+	}
 	if len(resolvedWidths) > 0 {
 		node["imageWidths"] = resolvedWidths
 	}
@@ -156,7 +167,11 @@ func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *mes
 	if err != nil {
 		return err
 	}
-	row := model.LogReleaseNodeModel{ID: id, ReleaseID: r.ID, SectionID: section, Ordinal: ordinal, MessageID: m.ID, ChannelID: m.ChannelID, SourceVersion: m.Version, NodeJSON: string(b), SearchText: plain, QuoteMessageID: m.QuoteID}
+	quoteMessageID := ""
+	if showQuoteContent {
+		quoteMessageID = m.QuoteID
+	}
+	row := model.LogReleaseNodeModel{ID: id, ReleaseID: r.ID, SectionID: section, Ordinal: ordinal, MessageID: m.ID, ChannelID: m.ChannelID, SourceVersion: m.Version, NodeJSON: string(b), SearchText: plain, QuoteMessageID: quoteMessageID}
 	return model.GetDB().Create(&row).Error
 }
 func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, projectKeys map[string]string) error {
@@ -260,10 +275,33 @@ func logBuildPublicMetadata(r *model.LogReleaseModel, d *LogDraft, projectKeys m
 		style = map[string]any{"schemaVersion": 1, "version": p.Version, "name": p.Name, "license": p.License, "minRendererVersion": p.MinRendererVersion, "tokens": tokens, "templates": p.Templates, "css": cssText, "rules": rules, "settingsSchema": p.SettingsSchema, "assets": assets}
 	}
 	out := map[string]any{"schemaVersion": 1, "title": d.Title, "releaseId": r.ID, "sections": sections, "page": page, "style": style}
+	if len(d.DisplayRules) > 0 {
+		out["displayRules"] = logPublicDisplayRules(r.ID, d.DisplayRules)
+	}
 	if len(chapters) > 0 {
 		out["chapters"] = chapters
 	}
 	return out, nil
+}
+
+// Project display rules use the same safe mapping as public nodes. Selection stays
+// in the shared frontend renderer; no second template resolver is maintained here.
+func logPublicDisplayRules(release string, rules []LogDisplayRule) []LogDisplayRule {
+	out := make([]LogDisplayRule, 0, len(rules))
+	for _, rule := range rules {
+		rule.ID = logPublicKey(release, "displayRule", rule.ID)
+		if rule.Match.IdentityID != "" {
+			rule.Match.IdentityID = logPublicKey(release, "identity", rule.Match.IdentityID)
+		}
+		if rule.Match.UserID != "" {
+			rule.Match.UserID = logPublicKey(release, "user", rule.Match.UserID)
+		}
+		if rule.Match.VariantID != "" {
+			rule.Match.VariantID = logPublicKey(release, "variant", rule.Match.VariantID)
+		}
+		out = append(out, rule)
+	}
+	return out
 }
 
 func logPublicCSS(release string, p *LogStylePackage) string {

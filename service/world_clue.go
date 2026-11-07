@@ -524,7 +524,16 @@ func confirmWorldClueAttachment(tx *gorm.DB, worldID, attachmentID string, actor
 	if !current.IsTemp && current.RootID == worldID && current.RootIDType == "world_clue" {
 		return nil
 	}
-	result := tx.Model(&model.AttachmentModel{}).Where("id = ? AND deleted_at IS NULL AND ((root_id = ? AND root_id_type = ?) OR (user_id = ? AND is_temp = ? AND extra = ? AND COALESCE(root_id, '') = '' AND COALESCE(root_id_type, '') = '' AND COALESCE(channel_id, '') = ''))", attachmentID, worldID, "world_clue", actorID, true, "mcp-upload").Updates(map[string]any{
+	if current.Extra == "mcp-upload" && current.IsTemp {
+		if _, err := resolveMCPUpload(tx, actorID, attachmentID); err != nil {
+			return err
+		}
+		if err := validateMCPAttachmentBinding(&current, actorID); err != nil {
+			return err
+		}
+		return claimMCPAttachment(tx, actorID, attachmentID, map[string]any{"is_temp": false, "root_id": worldID, "root_id_type": "world_clue"})
+	}
+	result := tx.Model(&model.AttachmentModel{}).Where("id = ? AND deleted_at IS NULL AND root_id = ? AND root_id_type = ?", attachmentID, worldID, "world_clue").Updates(map[string]any{
 		"is_temp": false, "root_id": worldID, "root_id_type": "world_clue",
 	})
 	if result.Error != nil {

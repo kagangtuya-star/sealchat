@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue';
 import { api } from '@/stores/_config';
 import { useUserStore } from '@/stores/user';
+import { useUtilsStore } from '@/stores/utils';
 
 const PREF_KEY = 'email_bind_prompt_dismissed';
 const DELAY_MS = 60 * 1000;
@@ -11,11 +12,12 @@ export const EmailBindPrompt = defineAsyncComponent(
 
 export function useEmailBindReminder() {
   const user = useUserStore();
+  const utils = useUtilsStore();
   const showPrompt = ref(false);
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const shouldShow = async (): Promise<boolean> => {
-    const config = user.serverConfig;
+    const config = utils.config;
     if (!config?.emailAuth?.enabled) return false;
     const info = user.info;
     if (!info || info.email) return false;

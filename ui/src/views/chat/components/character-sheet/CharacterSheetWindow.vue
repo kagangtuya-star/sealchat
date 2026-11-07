@@ -76,6 +76,12 @@
       </div>
     </div>
 
+    <CharacterSheetIntegrationNotice
+      :sheet-type="windowData.sheetType"
+      :template-html="windowData.template"
+      :channel-id="windowData.channelId"
+      :auto-check="integrationAutoCheck"
+    />
     <div class="sheet-window__content">
       <div class="sheet-window__flipper">
         <div class="sheet-window__front">
@@ -83,6 +89,7 @@
             :html="windowData.template"
             :data="iframeData"
             :window-id="windowId"
+            :flush-attrs="flushAttrs"
             @iframe-event="handleIframeEvent"
           />
         </div>
@@ -124,6 +131,12 @@
                   </n-button>
                   <n-button size="tiny" @click="resetTemplateToShinobigami">
                     重置为忍神默认模板
+                  </n-button>
+                  <n-button size="tiny" @click="resetTemplateToDaggerheart">
+                    重置为匕首之心默认模板
+                  </n-button>
+                  <n-button size="tiny" @click="resetTemplateToTriangleAgency">
+                    重置为三角机构默认模板
                   </n-button>
                   <n-input
                     v-model:value="templateSaveName"
@@ -183,6 +196,7 @@ import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from '@/stores/characterCardTemplate';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import IframeSandbox, { type SealChatEvent } from './IframeSandbox.vue';
+import CharacterSheetIntegrationNotice from '../CharacterSheetIntegrationNotice.vue';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import {
   buildInternalSurfaceResourceKey,
@@ -248,6 +262,9 @@ let dragEventTarget: HTMLElement | null = null;
 let resizeEventTarget: HTMLElement | null = null;
 
 const windowData = computed(() => sheetStore.windows[props.windowId]);
+const integrationAutoCheck = computed(() => (
+  templateStore.isBuiltinTemplateContent(windowData.value?.template)
+));
 
 const windowStyle = computed(() => {
   const win = windowData.value;
@@ -278,6 +295,8 @@ const iframeData = computed(() => {
 const emit = defineEmits<{
   rollRequest: [payload: SealChatEvent['payload']['roll']];
 }>();
+
+const flushAttrs = () => sheetStore.flushAttrsSync(props.windowId);
 
 const handleIframeEvent = (event: SealChatEvent) => {
   if (event.action === 'ROLL_DICE' && event.payload.roll) {
@@ -651,6 +670,24 @@ const resetTemplateToCoc = () => {
 const resetTemplateToShinobigami = () => {
   if (windowData.value?.readOnly) return;
   const tpl = sheetStore.getDefaultTemplate('shinobigami');
+  templateText.value = tpl;
+  sheetStore.updateTemplate(props.windowId, tpl);
+  selectedTemplateMode.value = 'detached';
+  selectedTemplateId.value = '';
+};
+
+const resetTemplateToDaggerheart = () => {
+  if (windowData.value?.readOnly) return;
+  const tpl = sheetStore.getDefaultTemplate('daggerheart');
+  templateText.value = tpl;
+  sheetStore.updateTemplate(props.windowId, tpl);
+  selectedTemplateMode.value = 'detached';
+  selectedTemplateId.value = '';
+};
+
+const resetTemplateToTriangleAgency = () => {
+  if (windowData.value?.readOnly) return;
+  const tpl = sheetStore.getDefaultTemplate('ta');
   templateText.value = tpl;
   sheetStore.updateTemplate(props.windowId, tpl);
   selectedTemplateMode.value = 'detached';

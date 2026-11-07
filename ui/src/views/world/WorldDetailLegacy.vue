@@ -5,6 +5,7 @@ import WorldMemberManager from "./WorldMemberManager.vue"
 import WorldObserverLinkCard from "./WorldObserverLinkCard.vue"
 import WorldAgentAccessLinkCard from "./WorldAgentAccessLinkCard.vue"
 import EmailNotificationManager from "@/views/split/components/EmailNotificationManager.vue"
+import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue'
 
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -163,6 +164,9 @@ const handleLeaveWorld = () => {
       <n-collapse arrow-placement="right">
         <n-collapse-item name="digest-push" title="世界未读提醒">
           <EmailNotificationManager scope-type="world" :scope-id="worldId" />
+        </n-collapse-item>
+        <n-collapse-item name="ui-customization" title="界面与扩展">
+          <UICustomizationManager :scope="{ type: 'world', worldId }" :export-name="detail.world.name || worldId" />
         </n-collapse-item>
       </n-collapse>
     </n-card>

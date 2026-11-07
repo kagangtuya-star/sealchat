@@ -904,8 +904,8 @@ watch(passiveToken, () => {
         <div>
           <div class="text-sm mb-2">指定时间范围（可选）</div>
           <div class="grid grid-cols-1 gap-2">
-            <n-input v-model:value="testFromTime" type="datetime-local" :disabled="testing" placeholder="开始时间" />
-            <n-input v-model:value="testToTime" type="datetime-local" :disabled="testing" placeholder="结束时间" />
+            <n-input v-model:value="testFromTime" :input-props="{ type: 'datetime-local' }" :disabled="testing" placeholder="开始时间" />
+            <n-input v-model:value="testToTime" :input-props="{ type: 'datetime-local' }" :disabled="testing" placeholder="结束时间" />
           </div>
           <div class="text-xs text-gray-500 mt-2">
             若不填写，则默认测试最近一个已结束的周期窗口。

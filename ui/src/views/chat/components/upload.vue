@@ -206,7 +206,7 @@ const fileSizeLimit = computed(() => {
       <n-button autofocus v-show="!uploadRef || !uploadRef.active" @click.prevent="uploadRef.active = true" type="primary"
         :disabled="Boolean(files.length) && files[0].size > fileSizeLimit">开始上传</n-button>
       <n-button v-show="uploadRef && uploadRef.active" @click.prevent="uploadRef.active = false"
-        type="button">停止上传</n-button>
+        attr-type="button">停止上传</n-button>
       <n-button @click="dialogVisible = false">取消</n-button>
     </template>
   </n-modal>

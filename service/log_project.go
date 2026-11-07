@@ -177,9 +177,6 @@ func GetLogProject(worldID, userID string) (*LogProjectContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := logCheckSources(&p, userID); err != nil {
-		return nil, err
-	}
 	return logProjectContext(&p, w, admin)
 }
 
@@ -205,8 +202,10 @@ func ResolveLogLayout(slug, userID string) (*LogProjectContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := logCheckSources(&p, userID); err != nil {
-		return nil, err
+	if !admin {
+		if err := logCheckSources(&p, userID); err != nil {
+			return nil, err
+		}
 	}
 	return logProjectContext(&p, w, admin)
 }
@@ -276,9 +275,6 @@ func UpdateLogProject(worldID, userID string, input LogProjectUpdate) (*LogProje
 		return nil, err
 	}
 	if p.ID != "" {
-		if err := logCheckSources(&p, userID); err != nil {
-			return nil, err
-		}
 		if input.ExpectedVersion == nil || p.DraftVersion != *input.ExpectedVersion {
 			return nil, logConflict(p.DraftVersion)
 		}

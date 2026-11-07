@@ -10,6 +10,7 @@ import MessageForwardDialog from './components/MessageForwardDialog.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type InlineChatSplitOpenPayload, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, SatoriMessage, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, MessagePlus, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
@@ -75,6 +76,7 @@ import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
 import WorldClueBox from './components/clue-box/WorldClueBox.vue';
+import MessageFavoritesWindow from '@/features/message-favorites/MessageFavoritesWindow.vue';
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue';
 import DiceSettingsDrawer from '@/features/dice3d/components/DiceSettingsDrawer.vue';
 import DiceDock from '@/features/dice3d/components/DiceDock.vue';
@@ -143,6 +145,7 @@ import { COMPOSER_INSERT_TEXT_EVENT, insertTextIntoRichEditor, replaceRichEditor
 import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { normalizePunctuationForMessageSend } from '@/utils/punctuationNormalizer';
+import { resolveParenOocSendOverride } from '@/features/composer-paren-ooc/parenOoc';
 import {
   buildGeneratedAvatarDataUrl,
   buildGeneratedAvatarFile,
@@ -313,6 +316,14 @@ const speechStore = useSpeechStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
+const openWorldManagementTarget = (target: 'log' | 'observer' | 'ui') => {
+  if (!chat.currentWorldId) return;
+  router.push({
+    name: 'world-detail',
+    params: { worldId: chat.currentWorldId },
+    query: { open: target },
+  });
+};
 const pushStore = usePushNotificationStore();
 watch(
   () => [display.settings.favoriteChannelBarEnabled, display.settings.favoriteChannelIdsByWorld] as const,
@@ -580,6 +591,13 @@ const openWorldClueBoard = () => {
   worldClueBoxRef.value?.openBoard();
 };
 
+// 消息收藏窗口在本聊天壳层只挂载一次；入口只负责打开或聚焦。
+const messageFavoritesWindowRef = ref<InstanceType<typeof MessageFavoritesWindow> | null>(null);
+const messageFavoritesAvailable = computed(() => !chat.observerMode && Boolean(user.info?.id));
+const openMessageFavorites = () => {
+  messageFavoritesWindowRef.value?.open();
+};
+
 const openDice3DSettings = () => {
   dice3dSettingsVisible.value = true;
 };
@@ -687,7 +705,8 @@ type ExternalPanelKey =
   | 'clue-box'
   | 'clue-board'
   | 'battle-summary'
-  | 'shortcut-command';
+  | 'shortcut-command'
+  | 'message-favorites';
 
 const openPanelForShell = (panel: ExternalPanelKey) => {
   switch (panel) {
@@ -753,6 +772,9 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       return;
     case 'shortcut-command':
       shortcutCommandVisible.value = true;
+      return;
+    case 'message-favorites':
+      openMessageFavorites();
       return;
     default:
       return;
@@ -5130,6 +5152,7 @@ const importIdentityMigrationSnapshot = async (
               avatarTextStyle: normalizeAvatarTextStyle(snapshot.avatarTextStyle),
               avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations, snapshot.avatarDecoration),
               theaterPresentation: snapshot.theaterPresentation,
+              skipTheaterAssetValidation: true,
               isDefault: !!snapshot.isDefault,
               isTemporary: !!snapshot.isTemporary,
               icOocOnActivate: snapshot.icOocOnActivate || '',
@@ -5713,7 +5736,7 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
     if (theaterPresentationEditorMode.value === 'variant') {
       identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
       if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
-        saved = await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+        saved = await submitIdentityVariantForm({ closeDialog: false, successMessage: false, includeTheaterPresentation: true });
       } else {
         saved = true;
       }
@@ -5752,7 +5775,7 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
           message.error(error?.response?.data?.error || error?.message || '保存共享演出外观失败');
         }
       } else {
-        saved = await submitIdentityForm({ closeDialog: false, successMessage: false });
+        saved = await submitIdentityForm({ closeDialog: false, successMessage: false, includeTheaterPresentation: true });
       }
     }
     if (saved) {
@@ -5923,7 +5946,7 @@ const handleIdentityAvatarTrigger = () => {
   identityAvatarInputRef.value?.click();
 };
 
-const handleIdentityAvatarChange = async (event: Event) => {
+const handleIdentityAvatarChange = async (event: globalThis.Event) => {
   const input = event.target as HTMLInputElement | null;
   if (!input || !input.files?.length) {
     return;
@@ -6233,7 +6256,7 @@ const handleIdentityVariantAvatarTrigger = () => {
   identityVariantAvatarInputRef.value?.click();
 };
 
-const handleIdentityVariantAvatarChange = (event: Event) => {
+const handleIdentityVariantAvatarChange = (event: globalThis.Event) => {
   const input = event.target as HTMLInputElement | null;
   if (!input || !input.files?.length) {
     return;
@@ -6281,8 +6304,12 @@ const handleIdentityVariantSelectorEmoji = (emoji: string) => {
   identityVariantEmojiPickerVisible.value = false;
 };
 
-const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
-  const { closeDialog = true, successMessage = true } = options;
+const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean; includeTheaterPresentation?: boolean } = {}) => {
+  const {
+    closeDialog = true,
+    successMessage = true,
+    includeTheaterPresentation = identityVariantDialogMode.value === 'create',
+  } = options;
   if (identityVariantSubmitting.value) {
     return false;
   }
@@ -6355,7 +6382,9 @@ const submitIdentityVariantForm = async (options: { closeDialog?: boolean; succe
       displayName: String(identityVariantForm.displayName || '').trim(),
       color: normalizedColor,
       appearance: {},
-      theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
+      theaterPresentation: includeTheaterPresentation
+        ? cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation)
+        : undefined,
       expectedRevision: editingIdentityVariant.value?.sharedVariantId
         ? editingIdentityVariant.value.sharedRevision
         : undefined,
@@ -6424,8 +6453,12 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
   }
 };
 
-const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
-  const { closeDialog = true, successMessage = true } = options;
+const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean; includeTheaterPresentation?: boolean } = {}) => {
+  const {
+    closeDialog = true,
+    successMessage = true,
+    includeTheaterPresentation = identityDialogMode.value === 'create',
+  } = options;
   if (identitySubmitting.value) {
     return false;
   }
@@ -6453,9 +6486,11 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       .filter(item => item.resourceAttachmentId),
     theaterPresentation: editingIdentity.value?.sharedIdentityId && !isManagingBotIdentity.value
       ? undefined
-      : identityForm.theaterPresentation
-        ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
-        : null,
+      : includeTheaterPresentation
+        ? identityForm.theaterPresentation
+          ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+          : null
+        : undefined,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
@@ -7690,7 +7725,7 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
     return {
       message,
       mergedWithPrev: merged,
-      entryKey: `${idPart}-${index}-${merged ? 1 : 0}`,
+      entryKey: idPart,
     };
   });
 });
@@ -8199,7 +8234,7 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   } else {
     messageRowRefs.delete(id);
   }
-  if (id === imageLayoutEditingMessageId) {
+  if (id === imageLayoutEditingMessageId.value) {
     if (el) {
       void ensureImageLayoutRowObserver();
     } else {
@@ -8208,7 +8243,7 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   }
 };
 
-let imageLayoutEditingMessageId = "";
+const imageLayoutEditingMessageId = ref("");
 let imageLayoutRowResizeObserver: ResizeObserver | null = null;
 let imageLayoutObservedRowEl: HTMLElement | null = null;
 let imageLayoutObservedRowHeight = 0;
@@ -8230,12 +8265,12 @@ const disposeImageLayoutRowObserver = () => {
 };
 
 const ensureImageLayoutRowObserver = async () => {
-  if (!imageLayoutEditingMessageId || typeof ResizeObserver === "undefined") {
+  if (!imageLayoutEditingMessageId.value || typeof ResizeObserver === "undefined") {
     disconnectImageLayoutRowObserver();
     return;
   }
   await nextTick();
-  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId);
+  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId.value);
   if (!rowEl) {
     disconnectImageLayoutRowObserver();
     return;
@@ -8267,8 +8302,8 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
   const messageId = String(payload?.messageId || "").trim();
   const active = Boolean(payload?.active);
   if (!active) {
-    if (!messageId || messageId === imageLayoutEditingMessageId) {
-      imageLayoutEditingMessageId = "";
+    if (!messageId || messageId === imageLayoutEditingMessageId.value) {
+      imageLayoutEditingMessageId.value = "";
       disconnectImageLayoutRowObserver();
     }
     return;
@@ -8276,9 +8311,14 @@ const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active
   if (!messageId) {
     return;
   }
-  imageLayoutEditingMessageId = messageId;
+  imageLayoutEditingMessageId.value = messageId;
   void ensureImageLayoutRowObserver();
 };
+
+watch(() => chat.curChannel?.id, () => {
+  imageLayoutEditingMessageId.value = "";
+  disconnectImageLayoutRowObserver();
+}, { flush: 'sync' });
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
 
@@ -8582,7 +8622,8 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
   }
 };
 
-const locateMessageForJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+type LocatedMessageWindow = NonNullable<Parameters<typeof applyHistoricalWindowFromMessages>[2]> & { messages: Message[] };
+const locateMessageForJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }): Promise<LocatedMessageWindow | null> => {
   for (const span of SEARCH_JUMP_WINDOWS_MS) {
     const window = await loadMessagesWithinWindow(payload, span);
     if (window) {
@@ -8889,7 +8930,6 @@ watch(
 );
 
 const dragState = reactive({
-  snapshot: [] as Message[],
   clientOpId: null as string | null,
   overId: null as string | null,
   position: null as 'before' | 'after' | null,
@@ -8927,6 +8967,10 @@ const pendingDragHoldState = reactive({
   timerId: null as number | null,
 });
 
+const messageSwipeReplyDisabled = computed(() => (
+  spectatorInputDisabled.value || !!dragState.activeId || !!pendingDragHoldState.item
+  || !!imageLayoutEditingMessageId.value
+));
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
 const AUTO_SCROLL_MIN_SPEED = 2;
 const AUTO_SCROLL_MAX_SPEED = 18;
@@ -9056,7 +9100,6 @@ const resetDragState = () => {
     cancelAnimationFrame(dragState.dragRafId);
     dragState.dragRafId = null;
   }
-  dragState.snapshot = [];
   dragState.clientOpId = null;
   dragState.overId = null;
   dragState.position = null;
@@ -9511,15 +9554,7 @@ const detachDragListeners = () => {
   dragState.handleEl?.removeEventListener('lostpointercapture', onDragHandleLostPointerCapture);
 };
 
-const restoreMessageOrderFromSnapshot = (messageId: string, snapshot: Message[]) => {
-  if (!messageId || snapshot.length === 0) {
-    return;
-  }
-  const source = snapshot.find((item) => item.id === messageId);
-  if (!source) {
-    return;
-  }
-  const previousOrder = getMessageDisplayOrderValue(source);
+const restoreMessageDisplayOrder = (messageId: string, previousOrder: number | null) => {
   const index = rows.value.findIndex((item) => item.id === messageId);
   if (index < 0) {
     return;
@@ -9548,7 +9583,6 @@ const finalizeDrag = async () => {
   const activeId = dragState.activeId;
   const overId = dragState.overId;
   const position = dragState.position;
-  const originalRows = dragState.snapshot.slice();
 
   detachDragListeners();
 
@@ -9561,7 +9595,8 @@ const finalizeDrag = async () => {
     return;
   }
 
-  const working = originalRows.slice();
+  // History/realtime loading may have added messages since pointerdown.
+  const working = rows.value.slice();
   const fromIndex = working.findIndex((item) => item.id === activeId);
   const toReference = working.findIndex((item) => item.id === overId);
   if (fromIndex < 0 || toReference < 0) {
@@ -9570,14 +9605,10 @@ const finalizeDrag = async () => {
   }
 
   const [moving] = working.splice(fromIndex, 1);
-  let targetIndex = toReference;
-  if (position === 'after') {
-    if (fromIndex < toReference) {
-      targetIndex = toReference;
-    } else {
-      targetIndex = toReference + 1;
-    }
-  }
+  const previousOrder = getMessageDisplayOrderValue(moving);
+  const restoreReadingPosition = captureMessageReadingPosition(activeId);
+  const adjustedReferenceIndex = toReference - (fromIndex < toReference ? 1 : 0);
+  let targetIndex = adjustedReferenceIndex + (position === 'after' ? 1 : 0);
   if (targetIndex < 0) {
     targetIndex = 0;
   }
@@ -9592,12 +9623,13 @@ const finalizeDrag = async () => {
   );
   (moving as any).displayOrder = estimateOrder;
   rows.value = working;
-  listRevision.value += 1;
 
   const beforeId = working[targetIndex + 1]?.id || '';
   const afterId = working[targetIndex - 1]?.id || '';
+  const orderRevision = displayOrderRevision;
   const clientOpId = dragState.clientOpId || nanoid();
   resetDragState();
+  void nextTick(restoreReadingPosition);
   localReorderOps.add(clientOpId);
   try {
     const resp = await chat.messageReorder(channelId, {
@@ -9606,17 +9638,26 @@ const finalizeDrag = async () => {
       afterId,
       clientOpId,
     });
-    if (resp?.display_order !== undefined) {
-      (moving as any).displayOrder = Number(resp.display_order);
-      sortRowsByDisplayOrder();
+    if (chat.curChannel?.id !== channelId || !localReorderOps.has(clientOpId)) return;
+    if (resp?.reset) {
+      await refreshLoadedDisplayOrders();
+    } else if (resp?.display_order !== undefined) {
+      applyReorderPayload({ messageId: activeId, displayOrder: resp.display_order });
     }
     chatEvent.emit('battle-report-display-message-reordered' as any, { channelId });
   } catch (error) {
-    restoreMessageOrderFromSnapshot(activeId, originalRows);
-    message.error('消息排序失败，请稍后重试');
+    if (chat.curChannel?.id === channelId && localReorderOps.has(clientOpId)) {
+      if (displayOrderRevision === orderRevision) {
+        const restore = captureMessageReadingPosition(activeId);
+        restoreMessageDisplayOrder(activeId, previousOrder);
+        void nextTick(restore);
+      } else {
+        void refreshLoadedDisplayOrders();
+      }
+      message.error('消息排序失败，请稍后重试');
+    }
   } finally {
     localReorderOps.delete(clientOpId);
-    listRevision.value += 1;
   }
 };
 
@@ -9649,6 +9690,10 @@ const onDragPointerUp = (event: PointerEvent) => {
     return;
   }
   event.preventDefault();
+  // pointerup can precede the RAF scheduled by the last pointermove.
+  dragState.pendingClientY = event.clientY;
+  if (dragState.dragRafId !== null) cancelAnimationFrame(dragState.dragRafId);
+  processDragFrame();
   finalizeDrag();
 };
 
@@ -9693,7 +9738,6 @@ const startMessageDrag = ({
       // ignore capture failure
     }
   }
-  dragState.snapshot = rows.value.slice();
   dragState.clientOpId = nanoid();
   dragState.activeId = item.id;
   dragState.pointerId = pointerId;
@@ -9820,7 +9864,94 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   event.preventDefault();
 };
 
+const captureMessageReadingPosition = (excludeId?: string): (() => void) => {
+  const channelId = chat.curChannel?.id;
+  const container = messagesListRef.value;
+  if (!container) return () => {};
+  const bounds = container.getBoundingClientRect();
+  const anchor = visibleRows.value.find((item) => {
+    if (!item.id || item.id === excludeId) return false;
+    const rect = messageRowRefs.get(item.id)?.getBoundingClientRect();
+    return rect && rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  const anchorTop = anchor?.id ? messageRowRefs.get(anchor.id)?.getBoundingClientRect().top : undefined;
+  return () => {
+    if (chat.curChannel?.id !== channelId || messagesListRef.value !== container || anchorTop === undefined || !anchor?.id) return;
+    const currentTop = messageRowRefs.get(anchor.id)?.getBoundingClientRect().top;
+    if (currentTop !== undefined) container.scrollTop += currentTop - anchorTop;
+  };
+};
+
+let displayOrderRevision = 0;
+let displayOrderRefresh: { channelId: string; promise: Promise<void> } | null = null;
+let displayOrderDirty = false;
+
+const invalidateDisplayOrderRefresh = () => {
+  displayOrderRevision += 1;
+  displayOrderRefresh = null;
+  displayOrderDirty = false;
+  localReorderOps.clear();
+};
+
+const refreshLoadedDisplayOrders = (): Promise<void> => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) return Promise.resolve();
+  if (displayOrderRefresh?.channelId === channelId) return displayOrderRefresh.promise;
+  displayOrderRevision += 1;
+  displayOrderDirty = true;
+  const task = { channelId, promise: Promise.resolve() };
+  displayOrderRefresh = task;
+  task.promise = (async () => {
+    for (;;) {
+      if (chat.curChannel?.id !== channelId || displayOrderRefresh !== task) return;
+      const revision = displayOrderRevision;
+      const ids = [...rows.value, ...pinnedRows.value].map((item) => item.id).filter((id): id is string => Boolean(id));
+      if (!ids.length) {
+        displayOrderDirty = false;
+        return;
+      }
+      const orders = await chat.messageDisplayOrders(channelId, ids);
+      if (chat.curChannel?.id !== channelId || displayOrderRefresh !== task) return;
+      if (revision !== displayOrderRevision) continue;
+      const requestedIds = new Set(ids);
+      if ([...rows.value, ...pinnedRows.value].some((item) => item.id && !requestedIds.has(item.id))) continue;
+      const restore = captureMessageReadingPosition();
+      const byId = new Map(orders.map((item) => [item.id, item.display_order] as const));
+      for (const item of [...rows.value, ...pinnedRows.value]) {
+        const order = byId.get(item.id || '');
+        if (typeof order === 'number' && Number.isFinite(order)) {
+          (item as any).displayOrder = order;
+          (item as any).display_order = order;
+        }
+      }
+      sortRowsByDisplayOrder();
+      updateWindowAnchorsFromRows();
+      if (rows.value.length && !messageWindow.hasReachedStart) {
+        messageWindow.beforeCursor = buildMessageCursor(rows.value[0] as any);
+        if (isSearchBrowseActive()) searchBrowseSession.beforeCursor = messageWindow.beforeCursor;
+      }
+      await nextTick();
+      restore();
+      if (revision === displayOrderRevision) {
+        displayOrderDirty = false;
+        return;
+      }
+    }
+  })().catch((error) => {
+    console.warn('Failed to refresh message display orders', error);
+    if (displayOrderRefresh === task) message.error('消息顺序同步失败，请稍后重试');
+  }).finally(() => {
+    if (displayOrderRefresh === task) displayOrderRefresh = null;
+  });
+  return task.promise;
+};
+
 const applyReorderPayload = (payload: any) => {
+  if (payload?.reset || displayOrderDirty) {
+    displayOrderRevision += 1;
+    void refreshLoadedDisplayOrders();
+    return;
+  }
   if (!payload?.messageId) {
     return;
   }
@@ -9834,7 +9965,9 @@ const applyReorderPayload = (payload: any) => {
       (target as any).displayOrder = parsed;
     }
   }
+  const restore = captureMessageReadingPosition(payload.messageId);
   sortRowsByDisplayOrder();
+  void nextTick(restore);
 };
 
 function handleBattleReportDisplayRefresh(payload: any) {
@@ -9890,8 +10023,12 @@ const upsertMessage = (incoming?: Message) => {
   } else {
     rows.value.push(incoming);
   }
-  sortRowsByDisplayOrder();
-  updateWindowAnchorsFromRows();
+  if (displayOrderDirty) {
+    void refreshLoadedDisplayOrders();
+  } else {
+    sortRowsByDisplayOrder();
+    updateWindowAnchorsFromRows();
+  }
   upsertPinnedMessage(incoming);
 };
 
@@ -9918,7 +10055,7 @@ async function replaceUsernames(text: string) {
     console.warn('replaceUsernames 拉取成员列表失败，跳过替换', error);
     return text;
   }
-  const memberList = Array.isArray(resp?.data) ? resp.data : [];
+  const memberList: User[] = Array.isArray(resp?.data) ? resp.data : [];
   if (!memberList.length) {
     return text;
   }
@@ -10000,7 +10137,7 @@ const {
   inHistoryMode,
   historyLocked,
   editingIdentityPreviewContext,
-  resolveIdentityVariantShortcutMatch: (...args) => resolveIdentityVariantShortcutMatch(...args),
+  resolveIdentityVariantShortcutMatch: (...args: Parameters<typeof resolveIdentityVariantShortcutMatch>) => resolveIdentityVariantShortcutMatch(...args),
   resolveIdentityAppearancePreview: (...args) => resolveIdentityAppearancePreview(...args),
   replaceEmojiRemarksForPreview,
   cloneAvatarDecorations: (...args) => cloneAvatarDecorations(...args),
@@ -10315,7 +10452,7 @@ const normalizeHistoryEntries = (entries: any[]): InputHistoryEntry[] => {
         images = entry.images
           .filter((img: any) => img && typeof img.markerId === 'string' && typeof img.attachmentId === 'string')
           .map((img: any) => ({ markerId: img.markerId, attachmentId: img.attachmentId }));
-        if (images.length === 0) {
+        if (!images?.length) {
           images = undefined;
         }
       }
@@ -12745,7 +12882,7 @@ const renderPreviewContent = (value: string) => {
     if (match[1]) {
       // [[图片:markerId]] 格式
       const markerId = match[1];
-      const imageInfo = inlineImages.get(markerId);
+      const imageInfo = inlineImagePreviewMap.value[markerId];
       if (imageInfo && imageInfo.previewUrl) {
         result += `<img src="${imageInfo.previewUrl}" class="preview-inline-image" alt="图片" />`;
       } else {
@@ -12983,7 +13120,7 @@ const handleRichImageInsert = async (files: File[], options?: { skipCompression?
       const { state } = editor;
       const { doc } = state;
 
-      doc.descendants((node, pos) => {
+      doc.descendants((node: ProseMirrorNode, pos: number) => {
         if (node.type.name === 'image' && node.attrs.src === objectUrl) {
           const tr = state.tr.setNodeMarkup(pos, undefined, {
             ...node.attrs,
@@ -13004,7 +13141,7 @@ const handleRichImageInsert = async (files: File[], options?: { skipCompression?
   }
 };
 
-const handleInlineFileChange = (event: Event) => {
+const handleInlineFileChange = (event: globalThis.Event) => {
   const input = event.target as HTMLInputElement | null;
   if (!input?.files?.length) {
     pendingInlineSelection = null;
@@ -13211,7 +13348,7 @@ const performSend = async (options?: {
     return;
   }
   const sendMode = options?.mode || inputMode.value;
-  const sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
+  let sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
   let draft = textToSend.value;
   let identityIdOverride = options?.identityIdOverride;
   let identityVariantIdOverride = options?.identityVariantIdOverride;
@@ -13283,6 +13420,29 @@ const performSend = async (options?: {
         stopTypingPreviewNow();
         return;
       }
+    }
+  }
+
+  const mappedOocRoleId = identityQuickSwitchChannelId
+    ? chat.getChannelIcOocRoleConfig(identityQuickSwitchChannelId).oocRoleId
+    : null;
+  const validMappedOocRoleId = mappedOocRoleId
+    && chat.getScopedChannelIdentities(identityQuickSwitchChannelId).some(item => item.id === mappedOocRoleId)
+    ? mappedOocRoleId
+    : null;
+  const parenOocOverride = resolveParenOocSendOverride({
+    content: draft,
+    inputMode: sendMode,
+    enabled: display.settings.autoOocOnParenStart,
+    useOocRole: display.settings.autoOocRoleOnParenStart,
+    hasExplicitIdentityOverride: Boolean(identityIdOverride) || identityVariantIdOverride !== undefined,
+    oocRoleId: validMappedOocRoleId,
+    isReedit: Boolean(activeReeditSource),
+  });
+  if (parenOocOverride) {
+    sendIcMode = parenOocOverride.icMode;
+    if (parenOocOverride.identityId) {
+      identityIdOverride = parenOocOverride.identityId;
     }
   }
 
@@ -13382,7 +13542,7 @@ const performSend = async (options?: {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
-  Object.assign(tmpMsg as any, buildOptimisticMessageIcModeFields(chat.icMode === 'ooc' ? 'ooc' : 'ic'));
+  Object.assign(tmpMsg as any, buildOptimisticMessageIcModeFields(sendIcMode));
   const activeIdentity = identityIdOverride
     ? findIdentityMeta(chat.curChannel?.id, identityIdOverride)
     : chat.getActiveIdentity(chat.curChannel?.id);
@@ -14085,6 +14245,7 @@ let firstLoad = false;
 let disposeChatMessageHandlers: (() => void) | null = null;
 const handleChannelSwitchEvent = (e: any) => {
   if (!firstLoad) return;
+  invalidateDisplayOrderRefresh();
   const payload = (e as any)?.argv || {};
   const isReenter = !!payload?.reenter;
   persistOwnedSessionDraft();
@@ -14102,7 +14263,6 @@ const handleChannelSwitchEvent = (e: any) => {
   chat.clearMessageInsertTarget();
   chat.cancelMultiSelectRelocate();
   resetDragState();
-  localReorderOps.clear();
   showButton.value = false;
   // 具体不知道原因，但是必须在这个位置reset才行
   // virtualListRef.value?.reset();
@@ -14118,6 +14278,7 @@ const handleChannelSwitchEvent = (e: any) => {
 };
 
 const handleChannelContextCleared = () => {
+  invalidateDisplayOrderRefresh();
   persistOwnedSessionDraft();
   stopTypingPreviewNow();
   resetTypingPreview();
@@ -14131,7 +14292,6 @@ const handleChannelContextCleared = () => {
   chat.clearMessageInsertTarget();
   chat.cancelMultiSelectRelocate();
   resetDragState();
-  localReorderOps.clear();
   showButton.value = false;
 };
 
@@ -14832,7 +14992,11 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   chatEvent.on('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
   chatEvent.on('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
 
-  await fetchLatestMessages();
+  try {
+    await fetchLatestMessages();
+  } catch (error) {
+    console.warn('[channel-load] initial messages fetch failed', error);
+  }
   await fetchPinnedMessages();
   initCharacterRemark(chat.curChannel?.id);
   initialMessageJumpReady.value = true;
@@ -14854,6 +15018,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 })
 
 onBeforeUnmount(() => {
+  invalidateDisplayOrderRefresh();
   disposeChatMessageHandlers?.();
   disposeChatMessageHandlers = null;
   if (typeof document !== 'undefined') {
@@ -14995,10 +15160,12 @@ const fetchLatestMessages = async (
   const fetchEpoch = ++latestMessagesFetchEpoch;
   const filterSignatureAtStart = messageFilterSignature.value;
   const realtimeRevisionAtStart = detachedRealtimeRevision;
+  const orderRevisionAtStart = displayOrderRevision;
   const isStale = () => (
     fetchEpoch !== latestMessagesFetchEpoch
     || chat.curChannel?.id !== channelIdAtStart
     || messageFilterSignature.value !== filterSignatureAtStart
+    || displayOrderRevision !== orderRevisionAtStart
   );
   console.info('[channel-load] messages-fetch-start', {
     channelId: channelIdAtStart,
@@ -15098,7 +15265,11 @@ const loadOlderMessagesByWindow = async () => {
 };
 
 const loadOlderMessages = async () => {
-  if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart) {
+  if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart || displayOrderRefresh?.channelId === chat.curChannel?.id) {
+    return false;
+  }
+  if (displayOrderDirty) {
+    void refreshLoadedDisplayOrders();
     return false;
   }
   if (isSearchBrowseActive() && !searchBrowseSession.hasMoreBefore && !messageWindow.beforeCursor) {
@@ -15106,6 +15277,8 @@ const loadOlderMessages = async () => {
     messageWindow.beforeCursorExhausted = true;
     return false;
   }
+  const channelIdAtStart = chat.curChannel.id;
+  const orderRevisionAtStart = displayOrderRevision;
   messageWindow.loadingBefore = true;
   try {
     const container = messagesListRef.value;
@@ -15131,6 +15304,7 @@ const loadOlderMessages = async () => {
       nextCursor = '';
     }
 
+    if (chat.curChannel?.id !== channelIdAtStart || displayOrderRevision !== orderRevisionAtStart) return false;
     if (nextCursor !== undefined) {
       applyCursorUpdate({ before: nextCursor ?? '' });
       if (isSearchBrowseActive()) {
@@ -15171,8 +15345,13 @@ const loadNewerMessages = async (
   if (
     !chat.curChannel?.id ||
     messageWindow.loadingAfter ||
-    messageWindow.hasReachedLatest
+    messageWindow.hasReachedLatest ||
+    displayOrderRefresh?.channelId === chat.curChannel.id
   ) {
+    return false;
+  }
+  if (displayOrderDirty) {
+    void refreshLoadedDisplayOrders();
     return false;
   }
   if (!messageWindow.afterCursor) {
@@ -15184,6 +15363,7 @@ const loadNewerMessages = async (
   }
   const channelIdAtStart = chat.curChannel.id;
   const afterCursorAtStart = messageWindow.afterCursor;
+  const orderRevisionAtStart = displayOrderRevision;
   const realtimeRevisionAtStart = detachedRealtimeRevision;
   let retryAfterRealtimeRace = false;
   messageWindow.loadingAfter = true;
@@ -15195,6 +15375,7 @@ const loadNewerMessages = async (
     });
     if (
       chat.curChannel?.id !== channelIdAtStart
+      || displayOrderRevision !== orderRevisionAtStart
       || !historyLocked.value
       || messageWindow.afterCursor !== afterCursorAtStart
     ) {
@@ -15974,6 +16155,7 @@ const {
   handleCancelMultiSelectRelocate,
   handleRelocateTargetPick,
   handleMultiSelectAll,
+  handleMultiSelectFavorite,
 } = useMessageSelection({ chat, rows, pinnedRows, message, dialog });
 
 const insertGalleryInline = (attachmentId: string, selection?: SelectionRange) => {
@@ -16270,6 +16452,7 @@ onBeforeUnmount(() => {
           :shortcut-command-active="shortcutCommandVisible"
           @open-shortcut-command="shortcutCommandVisible = true"
           :favorite-active="channelFavoritesVisible"
+          :message-favorites-enabled="messageFavoritesAvailable"
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
           :battle-summary-enabled="showBattleSummary"
@@ -16307,6 +16490,7 @@ onBeforeUnmount(() => {
           @open-gallery="openGalleryPanel"
           @open-display-settings="openDisplaySettings('appearance')"
           @open-favorites="channelFavoritesVisible = true"
+          @open-message-favorites="openMessageFavorites"
           @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
           @open-battle-summary="openBattleSummary"
@@ -16321,6 +16505,11 @@ onBeforeUnmount(() => {
           @open-webhook="webhookDrawerVisible = true"
           @open-bridge-status="bridgeStatusDrawerVisible = true"
           @open-email-notification="emailNotificationDrawerVisible = true"
+          @open-log-layout-management="openWorldManagementTarget('log')"
+          @open-observer-link-management="openWorldManagementTarget('observer')"
+          @open-custom-ui-management="openWorldManagementTarget('ui')"
+          @open-input-stats="chatEvent.emit('open-input-stats')"
+          @open-app-notification-settings="chatEvent.emit('open-app-notification-settings')"
           @open-character-card="openCharacterCardPanel"
           @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [], whisperOnly: false, fromTime: null, toTime: null })"
         />
@@ -16844,7 +17033,8 @@ onBeforeUnmount(() => {
     <div
       v-if="selectionBar.visible"
       ref="selectionBarRef"
-      class="selection-floating-bar"
+      class="selection-floating-bar sc-overlay"
+      data-sc-ui="selection-toolbar"
       :style="{ top: `${selectionBar.position.y}px`, left: `${selectionBar.position.x}px` }"
     >
       <button class="selection-floating-bar__button" @click="handleSelectionCopy">
@@ -16915,7 +17105,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-show="!pinnedCollapsed" class="chat-pinned-zone__list">
         <template v-for="pinItem in pinnedRows" :key="`pinned-${pinItem.id}`">
-          <div :class="['chat-pinned-zone__row', rowClass(pinItem)]" :data-message-id="pinItem.id">
+          <div :class="['chat-pinned-zone__row', rowClass(pinItem)]" data-sc-ui="message" :data-message-id="pinItem.id">
             <div :class="rowSurfaceClass(pinItem)">
               <chat-item
                 :avatar="getMessageAvatar(pinItem)"
@@ -16923,8 +17113,9 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(pinItem)"
                 :content="pinItem.content"
                 :item="pinItem"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
-                :editing-preview="editingPreviewMap[pinItem.id]"
+                :editing-preview="editingPreviewMap[pinItem.id || '']"
                 :edit-saving="isSavingEdit"
                 :tone="getMessageTone(pinItem)"
                 :show-avatar="getMessageAvatarRenderState(pinItem).showAvatar"
@@ -16952,6 +17143,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
+      data-sc-ui="message-list"
       :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle, 'chat--background-tone-enabled': display.settings.backgroundMessageToneEnabled }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
@@ -16964,6 +17156,7 @@ onBeforeUnmount(() => {
         <div
           :class="rowClass(entry.message)"
           :data-message-id="entry.message.id"
+          data-sc-ui="message"
           :ref="el => registerMessageRow(el as HTMLElement | null, entry.message.id || '')"
         >
           <div :class="rowSurfaceClass(entry.message)">
@@ -17020,8 +17213,9 @@ onBeforeUnmount(() => {
                     :identity-color="getMessageIdentityColor(entry.message)"
                     :content="entry.message.content"
                     :item="entry.message"
+                    :swipe-reply-disabled="messageSwipeReplyDisabled"
                     :all-message-ids="allMessageIds"
-                    :editing-preview="editingPreviewMap[entry.message.id]"
+                    :editing-preview="editingPreviewMap[entry.message.id || '']"
                     :edit-saving="isSavingEdit"
                     :tone="getMessageTone(entry.message)"
                     :show-avatar="false"
@@ -17060,8 +17254,9 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
-                :editing-preview="editingPreviewMap[entry.message.id]"
+                :editing-preview="editingPreviewMap[entry.message.id || '']"
                 :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="false"
@@ -17097,8 +17292,9 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :swipe-reply-disabled="messageSwipeReplyDisabled"
                 :all-message-ids="allMessageIds"
-                :editing-preview="editingPreviewMap[entry.message.id]"
+                :editing-preview="editingPreviewMap[entry.message.id || '']"
                 :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="getMessageAvatarRenderState(entry.message, entry.mergedWithPrev).showAvatar"
@@ -17258,7 +17454,7 @@ onBeforeUnmount(() => {
     >说点什么吧</div>
 
     <!-- flex-grow -->
-    <div class="edit-area flex justify-between relative" :class="{ 'edit-area--wide-input': isMobileWideInput }">
+    <div class="edit-area flex justify-between relative" data-sc-ui="composer" :class="{ 'edit-area--wide-input': isMobileWideInput }">
       <div class="history-floating space-y-3 flex flex-col items-end">
         <!-- 跳转到第一条未读消息按钮 -->
         <n-button
@@ -18293,6 +18489,7 @@ onBeforeUnmount(() => {
     @move-to-bottom="handleMultiSelectMoveToBottom"
     @relocate="handleMultiSelectRelocate"
     @select-all="handleMultiSelectAll"
+    @favorite="handleMultiSelectFavorite"
     @cancel-relocate="handleCancelMultiSelectRelocate"
   />
   <MessageForwardDialog
@@ -18960,7 +19157,7 @@ onBeforeUnmount(() => {
     v-model:visible="importProgressVisible"
     :channel-id="chat.curChannel?.id || ''"
     :job-id="importJobId"
-    @complete="() => { chat.fetchMessages(chat.curChannel?.id); }"
+    @complete="() => { void fetchLatestMessages(); }"
   />
   <DiceTrayFloatingWindow
     ref="diceTrayWindowRef"
@@ -19064,6 +19261,7 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel.id"
     :can-manage="canManageWorldClues"
   />
+  <MessageFavoritesWindow ref="messageFavoritesWindowRef" :available="messageFavoritesAvailable" :embedded="isEmbedMode" />
 
 	<DiceOverlayLoader v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled" :surface-element="messagesListRef" />
 	<DiceDock

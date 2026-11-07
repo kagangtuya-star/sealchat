@@ -230,7 +230,7 @@ export async function runLocalAIChat(options: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${profile.apiKey.trim()}`,
+      ...(profile.apiKey?.trim() ? { 'Authorization': `Bearer ${profile.apiKey.trim()}` } : {}),
     },
     body: JSON.stringify({
       model,

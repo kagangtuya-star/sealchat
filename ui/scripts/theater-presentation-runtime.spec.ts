@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import {
   createDefaultTheaterPresentation,
   createDefaultTheaterTransform,
+  DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS,
   normalizeTheaterPresentation,
   normalizeTheaterTransform,
   resolveTheaterPresentation,
@@ -32,6 +33,7 @@ const layer = (id: string, space: TheaterLayerSpace): TheaterVisualLayer => ({
   fit: 'cover',
   playbackRate: 1,
   blendMode: 'normal',
+  fadeDurationMs: DEFAULT_THEATER_PORTRAIT_FADE_DURATION_MS,
 })
 
 const defaults = createDefaultTheaterPresentation()
@@ -44,7 +46,7 @@ assert.equal(defaults.dialogue.speaker.fontScale, 0.85)
 assert.equal(defaults.dialogue.content.fontScale, 1.2)
 assert.equal(defaults.dialogue.content.fontAssetId, undefined)
 assert.equal(defaults.dialogue.contentColor, '#F4F4F5')
-assert.equal(defaults.dialogue.charactersPerSecond, 10)
+assert.equal(defaults.dialogue.charactersPerSecond, 6)
 assert.deepEqual(defaults.narration, { enabled: false, backdropColor: '#000000', backdropOpacity: 1 })
 assert.deepEqual(normalizeTheaterPresentation({ schemaVersion: 1 }), defaults)
 
@@ -54,8 +56,11 @@ delete legacyDefaults.dialogue.content.fontScale
 delete legacyDefaults.dialogue.contentColor
 delete legacyDefaults.dialogue.charactersPerSecond
 delete legacyDefaults.narration
-assert.deepEqual(normalizeTheaterPresentation(legacyDefaults), defaults)
-assert.deepEqual(theaterPresentationSchema.parse(legacyDefaults), defaults)
+const parsedLegacyDefaults = structuredClone(defaults)
+// Missing speed in saved presentations retains the schema's legacy fallback.
+parsedLegacyDefaults.dialogue.charactersPerSecond = 10
+assert.deepEqual(normalizeTheaterPresentation(legacyDefaults), parsedLegacyDefaults)
+assert.deepEqual(theaterPresentationSchema.parse(legacyDefaults), parsedLegacyDefaults)
 
 const legacyLayout = structuredClone(defaults)
 legacyLayout.dialogue.transform.x = 0.02

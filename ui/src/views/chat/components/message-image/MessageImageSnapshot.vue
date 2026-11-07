@@ -8,6 +8,7 @@ import type {
 const props = defineProps<{
   groups: MessageImageSnapshotGroup[];
   palette: MessageImageSnapshotPalette;
+  layout: string;
 }>();
 
 const failedAvatars = ref(new Set<string>());
@@ -23,6 +24,8 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
   <div
     class="message-image-snapshot"
     data-message-image-snapshot
+    data-sc-ui="message-image-export"
+    data-sc-font-surface="true"
     :style="{
       '--snapshot-background': props.palette.background,
       '--snapshot-primary-text': props.palette.primaryText,
@@ -32,46 +35,71 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
       '--snapshot-link': props.palette.link,
     }"
   >
-    <section v-for="group in props.groups" :key="group.key" class="message-image-snapshot__group">
-      <div class="message-image-snapshot__avatar" aria-hidden="true">
-        <span v-if="!group.avatarUrl || failedAvatars.has(group.key)">
-          {{ avatarFallback(group.senderName) }}
-        </span>
-        <img
-          v-if="group.avatarUrl && !failedAvatars.has(group.key)"
-          :src="group.avatarUrl"
-          alt=""
-          @error="markAvatarFailed(group.key)"
+    <div
+      class="message-image-snapshot__list"
+      data-sc-ui="message-list"
+      :class="`chat--layout-${props.layout}`"
+    >
+      <section
+        v-for="group in props.groups"
+        :key="group.key"
+        class="message-image-snapshot__group"
+        data-sc-ui="message"
+      >
+        <div
+          :class="[
+            'chat-item',
+            `chat-item--${group.entries[0]?.tone || 'ic'}`,
+            `chat-item--layout-${props.layout}`,
+          ]"
         >
-      </div>
-      <main class="message-image-snapshot__main">
-        <header class="message-image-snapshot__header">
-          <span
-            class="message-image-snapshot__name"
-            :style="group.senderColor ? { color: group.senderColor } : undefined"
-          >
-            {{ group.senderName }}
-          </span>
-        </header>
-        <div v-if="group.whisperLabel" class="message-image-snapshot__whisper">
-          {{ group.whisperLabel }}
-        </div>
-        <div class="message-image-snapshot__entries">
-          <div
-            v-for="entry in group.entries"
-            :key="entry.id"
-            :class="[
-              'message-image-snapshot__entry',
-              `message-image-snapshot__entry--${entry.tone}`,
-            ]"
-          >
-            <span v-if="entry.tone === 'ooc'" class="message-image-snapshot__tone">OOC</span>
-            <span v-else-if="entry.tone === 'archived'" class="message-image-snapshot__tone">已归档</span>
-            <div class="message-image-snapshot__content" v-html="entry.contentHtml" />
+          <div class="chat-item__avatar message-image-snapshot__avatar" aria-hidden="true">
+            <div class="avatar-shell avatar-shell--plain">
+              <div
+                v-if="!group.avatarUrl || failedAvatars.has(group.key)"
+                class="avatar-text-fallback"
+              >
+                {{ avatarFallback(group.senderName) }}
+              </div>
+              <img
+                v-if="group.avatarUrl && !failedAvatars.has(group.key)"
+                class="avatar-img"
+                :src="group.avatarUrl"
+                alt=""
+                @error="markAvatarFailed(group.key)"
+              >
+            </div>
           </div>
+          <main class="right message-image-snapshot__main">
+            <header class="title message-image-snapshot__header">
+              <span
+                class="name message-image-snapshot__name"
+                :style="group.senderColor ? { color: group.senderColor } : undefined"
+              >
+                {{ group.senderName }}
+              </span>
+            </header>
+            <div v-if="group.whisperLabel" class="whisper-label message-image-snapshot__whisper">
+              {{ group.whisperLabel }}
+            </div>
+            <div class="content message-image-snapshot__entries">
+              <div
+                v-for="entry in group.entries"
+                :key="entry.id"
+                :class="[
+                  'message-image-snapshot__entry',
+                  `message-image-snapshot__entry--${entry.tone}`,
+                ]"
+              >
+                <span v-if="entry.tone === 'ooc'" class="message-image-snapshot__tone">OOC</span>
+                <span v-else-if="entry.tone === 'archived'" class="message-image-snapshot__tone">已归档</span>
+                <div class="message-image-snapshot__content" v-html="entry.contentHtml" />
+              </div>
+            </div>
+          </main>
         </div>
-      </main>
-    </section>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -82,10 +110,20 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
   padding: 14px 16px;
   color: var(--snapshot-primary-text);
   background: var(--snapshot-background);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif;
+  font-family: var(--sc-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif);
   font-size: 13px;
   line-height: 1.48;
   letter-spacing: 0;
+}
+
+.message-image-snapshot__list {
+  width: 100%;
+}
+
+.message-image-snapshot .chat-item {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
 }
 
 .message-image-snapshot__group {
@@ -99,31 +137,58 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
 }
 
 .message-image-snapshot__avatar {
+  flex: 0 0 30px !important;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  max-width: 30px !important;
+  max-height: 30px !important;
+  box-sizing: border-box;
+}
+
+.message-image-snapshot__avatar .avatar-shell {
   position: relative;
   display: flex;
-  flex: 0 0 30px;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  max-width: 30px !important;
+  max-height: 30px !important;
+  box-sizing: border-box;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  min-height: 30px;
   overflow: hidden;
-  border-radius: 50%;
+  border-radius: var(--chat-avatar-radius, 0.85rem);
   color: var(--snapshot-primary-text);
   background: var(--snapshot-code-background);
   font-size: 10px;
   font-weight: 600;
 }
 
-.message-image-snapshot__avatar img {
-  position: absolute;
-  inset: 0;
-  width: 30px;
-  height: 30px;
-  max-width: 30px;
-  max-height: 30px;
+.message-image-snapshot__avatar .avatar-img,
+.message-image-snapshot__avatar .avatar-text-fallback {
+  display: flex;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  box-sizing: border-box;
+}
+
+.message-image-snapshot__avatar .avatar-img {
   object-fit: cover;
+}
+
+.message-image-snapshot__avatar .avatar-text-fallback {
+  align-items: center;
+  justify-content: center;
+  color: var(--snapshot-primary-text);
+  background: var(--snapshot-code-background);
+  line-height: 1;
 }
 
 .message-image-snapshot__main {
@@ -229,7 +294,7 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
 .message-image-snapshot__content :deep(code),
 .message-image-snapshot__content :deep(pre) {
   background: var(--snapshot-code-background);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--sc-code-font, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
 }
 
 .message-image-snapshot__content :deep(code) {
@@ -254,13 +319,18 @@ const avatarFallback = (name: string) => Array.from(name.trim() || '匿').slice(
   text-decoration: underline;
 }
 
-.message-image-snapshot__content :deep(img) {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  max-height: 360px;
-  margin: 4px 0;
-  object-fit: contain;
+.message-image-snapshot [data-sc-ui='message'] .message-image-snapshot__content :deep(img) {
+  position: static !important;
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 360px !important;
+  box-sizing: border-box;
+  margin: 4px 0 !important;
+  object-fit: contain !important;
 }
 
 .message-image-snapshot__content :deep(.mention-capsule) {

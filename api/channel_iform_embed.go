@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"sealchat/model"
-	"sealchat/pm"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
@@ -71,8 +70,9 @@ func allowEmbedRate(userID, operation string, limit int) bool {
 }
 
 type embedScopeRequest struct {
-	ChannelID string `json:"channel_id"`
-	FormID    string `json:"form_id"`
+	ChannelID string                        `json:"channel_id"`
+	FormID    string                        `json:"form_id"`
+	Scope     service.ChannelExtensionScope `json:"scope"`
 }
 
 type embedStorageGetRequest struct {
@@ -128,94 +128,30 @@ type embedEventPublishRequest struct {
 	TheaterContext *service.TheaterEmbedPublishContext `json:"theaterContext,omitempty"`
 }
 
-func resolveEmbedForm(ctx *ChatContext, scope embedScopeRequest, capability string) (*model.ChannelIFormModel, string, error) {
-	channelID := strings.TrimSpace(scope.ChannelID)
-	formID := strings.TrimSpace(scope.FormID)
-	if channelID == "" || formID == "" || len(channelID) > 100 || len(formID) > 100 {
-		return nil, "", errors.New("INVALID_PARAMS: missing channel_id or form_id")
+func resolveChannelExtensionScope(ctx *ChatContext, request embedScopeRequest, capability string) (*service.ResolvedChannelExtensionScope, string, error) {
+	channelID := strings.TrimSpace(request.ChannelID)
+	if channelID == "" || len(channelID) > 100 || !request.Scope.Valid() {
+		return nil, "", errors.New("INVALID_PARAMS: missing channel_id or scope")
 	}
 	if ctx == nil || ctx.User == nil {
 		return nil, "", errors.New("PERMISSION_DENIED")
 	}
-	if strings.HasPrefix(capability, "storage.") || capability == embedEventsPublish {
-		if ctx.ConnInfo == nil || strings.TrimSpace(ctx.ConnInfo.ChannelId) == "" || strings.TrimSpace(ctx.ConnInfo.ChannelId) != channelID {
-			return nil, "", errors.New("CONTEXT_CHANGED")
-		}
+	if ctx.ConnInfo == nil || strings.TrimSpace(ctx.ConnInfo.ChannelId) != channelID || channelID == "" {
+		return nil, "", errors.New("CONTEXT_CHANGED")
 	}
-	if ctx.IsReadOnly() && (capability == embedStorageCapabilityWrite || capability == embedEventsPublish || capability == "messages.send") {
-		return nil, "", errors.New("PERMISSION_DENIED")
-	}
-	if !service.CanReadChannelByUserId(ctx.User.ID, channelID) {
-		return nil, "", errors.New("PERMISSION_DENIED")
-	}
-	if capability == embedStorageCapabilityWrite || capability == embedEventsPublish || capability == "messages.send" {
-		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelTextSend, pm.PermFuncChannelTextSendAll) {
-			return nil, "", errors.New("PERMISSION_DENIED")
-		}
-	}
-	var form *model.ChannelIFormModel
-	local, err := model.ChannelIFormGet(channelID, formID)
-	if err != nil {
-		return nil, "", embedPublicError(err)
-	}
-	form = local
-	if local != nil {
-		resolved, resolveErr := service.ResolveChannelIForm(local)
-		if resolveErr != nil {
-			return nil, "", embedPublicError(resolveErr)
-		}
-		if resolved != nil {
-			if resolved.Metadata.TemplateMissing {
-				return nil, "", errors.New("NOT_FOUND: form template")
-			}
-			form = resolved.Form
-		}
-	}
-	if form == nil {
-		forms, listErr := service.ListEffectiveChannelIForms(channelID)
-		if listErr != nil {
-			return nil, "", embedPublicError(listErr)
-		}
-		for _, item := range forms {
-			if item != nil && item.ID == formID {
-				form = item.ChannelIFormModel
-				break
-			}
-		}
-	}
-	if form == nil {
-		return nil, "", errors.New("NOT_FOUND: form")
-	}
-	policy := form.BridgePolicy
-	if !policy.Enabled {
-		return nil, "", errors.New("CAPABILITY_DENIED")
-	}
-	if !containsEmbedCapability(policy.Capabilities, capability) {
-		return nil, "", errors.New("CAPABILITY_DENIED")
-	}
-	// Channel membership/read and channel text-send authorization form the
-	// user-side boundary; form policy capability controls whether operation is enabled.
-	return form, channelID, nil
+	resolved, err := service.ResolveChannelExtensionScope(ctx.User.ID, channelID, request.Scope, capability, ctx.IsReadOnly(), uiCustomizationPolicy())
+	return resolved, channelID, embedPublicError(err)
 }
 
-func containsEmbedCapability(capabilities []string, expected string) bool {
-	for _, capability := range capabilities {
-		if strings.TrimSpace(capability) == expected {
-			return true
-		}
-	}
-	return false
-}
-
-func apiIFormStorageGet(ctx *ChatContext, data *embedStorageGetRequest) (any, error) {
+func apiChannelExtensionStorageGet(ctx *ChatContext, data *embedStorageGetRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, embedStorageCapabilityRead)
+	_, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, embedStorageCapabilityRead)
 	if err != nil {
 		return nil, err
 	}
-	item, err := model.ChannelIFormStorageGet(channelID, data.FormID, data.Key)
+	item, err := model.ChannelExtensionStorageGet(channelID, data.Scope.StorageNamespaceKey(), data.Key)
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
@@ -225,26 +161,26 @@ func apiIFormStorageGet(ctx *ChatContext, data *embedStorageGetRequest) (any, er
 	return item, nil
 }
 
-func apiIFormStorageSnapshot(ctx *ChatContext, data *embedScopeRequest) (any, error) {
+func apiChannelExtensionStorageSnapshot(ctx *ChatContext, data *embedScopeRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, *data, embedStorageCapabilityRead)
+	_, channelID, err := resolveChannelExtensionScope(ctx, *data, embedStorageCapabilityRead)
 	if err != nil {
 		return nil, err
 	}
-	ns, items, err := model.ChannelIFormStorageSnapshot(channelID, data.FormID)
+	ns, items, err := model.ChannelExtensionStorageSnapshot(channelID, data.Scope.StorageNamespaceKey())
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
 	return map[string]any{"seq": ns.Seq, "documents": items}, nil
 }
 
-func apiIFormStorageList(ctx *ChatContext, data *embedStorageListRequest) (any, error) {
+func apiChannelExtensionStorageList(ctx *ChatContext, data *embedStorageListRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, embedStorageCapabilityRead)
+	_, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, embedStorageCapabilityRead)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +189,7 @@ func apiIFormStorageList(ctx *ChatContext, data *embedStorageListRequest) (any, 
 	if len(prefix) > model.EmbedStorageKeyMax || len(cursor) > model.EmbedStorageKeyMax {
 		return nil, errors.New("INVALID_PARAMS: prefix or cursor too long")
 	}
-	ns, items, err := model.ChannelIFormStorageList(channelID, data.FormID, prefix, cursor, data.Limit)
+	ns, items, err := model.ChannelExtensionStorageList(channelID, data.Scope.StorageNamespaceKey(), prefix, cursor, data.Limit)
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
@@ -268,14 +204,14 @@ func apiIFormStorageList(ctx *ChatContext, data *embedStorageListRequest) (any, 
 	return map[string]any{"seq": ns.Seq, "items": items, "cursor": next, "next": next}, nil
 }
 
-func apiIFormStorageSet(ctx *ChatContext, data *embedStorageSetRequest) (any, error) {
+func apiChannelExtensionStorageSet(ctx *ChatContext, data *embedStorageSetRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
 	if ctx == nil || ctx.User == nil || !allowEmbedRate(ctx.User.ID, "storage.write", 30) {
 		return nil, errors.New("RATE_LIMITED")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, embedStorageCapabilityWrite)
+	_, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, embedStorageCapabilityWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -283,29 +219,29 @@ func apiIFormStorageSet(ctx *ChatContext, data *embedStorageSetRequest) (any, er
 	if err != nil {
 		return nil, err
 	}
-	mutation, err := model.ChannelIFormStorageSetWithExpiry(channelID, data.FormID, data.Key, data.Value, data.IfRevision, ctx.User.ID, expiresAt)
+	mutation, err := model.ChannelExtensionStorageSetWithExpiry(channelID, data.Scope.StorageNamespaceKey(), data.Key, data.Value, data.IfRevision, ctx.User.ID, expiresAt)
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
 	if mutation == nil || mutation.Item == nil || mutation.Namespace == nil {
 		return nil, errors.New("INTERNAL_ERROR")
 	}
-	broadcastEmbedStorageEvent(ctx, channelID, data.FormID, mutation.Namespace.Seq, mutation.Item, "set", mutation.Item.Value)
+	broadcastEmbedStorageEvent(ctx, channelID, data.Scope, mutation.Namespace.Seq, mutation.Item, "set", mutation.Item.Value)
 	return mutation.Item, nil
 }
 
-func apiIFormStorageDelete(ctx *ChatContext, data *embedStorageDeleteRequest) (any, error) {
+func apiChannelExtensionStorageDelete(ctx *ChatContext, data *embedStorageDeleteRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
 	if ctx == nil || ctx.User == nil || !allowEmbedRate(ctx.User.ID, "storage.write", 30) {
 		return nil, errors.New("RATE_LIMITED")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, embedStorageCapabilityWrite)
+	_, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, embedStorageCapabilityWrite)
 	if err != nil {
 		return nil, err
 	}
-	mutation, err := model.ChannelIFormStorageDelete(channelID, data.FormID, data.Key, data.IfRevision, ctx.User.ID)
+	mutation, err := model.ChannelExtensionStorageDelete(channelID, data.Scope.StorageNamespaceKey(), data.Key, data.IfRevision, ctx.User.ID)
 	if err != nil {
 		return nil, embedPublicError(err)
 	}
@@ -313,7 +249,7 @@ func apiIFormStorageDelete(ctx *ChatContext, data *embedStorageDeleteRequest) (a
 		return nil, errors.New("INTERNAL_ERROR")
 	}
 	if mutation.Deleted && mutation.Item != nil {
-		broadcastEmbedStorageEvent(ctx, channelID, data.FormID, mutation.Namespace.Seq, mutation.Item, "delete", nil)
+		broadcastEmbedStorageEvent(ctx, channelID, data.Scope, mutation.Namespace.Seq, mutation.Item, "delete", nil)
 	}
 	result := map[string]any{"key": strings.TrimSpace(data.Key), "seq": mutation.Namespace.Seq, "deleted": mutation.Deleted}
 	if mutation.Item != nil {
@@ -322,14 +258,14 @@ func apiIFormStorageDelete(ctx *ChatContext, data *embedStorageDeleteRequest) (a
 	return result, nil
 }
 
-func apiIFormEventPublish(ctx *ChatContext, data *embedEventPublishRequest) (any, error) {
+func apiChannelExtensionEventPublish(ctx *ChatContext, data *embedEventPublishRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
 	if ctx == nil || ctx.User == nil || !allowEmbedRate(ctx.User.ID, "events.publish", 60) {
 		return nil, errors.New("RATE_LIMITED")
 	}
-	form, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, embedEventsPublish)
+	resolved, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, embedEventsPublish)
 	if err != nil {
 		return nil, err
 	}
@@ -349,19 +285,21 @@ func apiIFormEventPublish(ctx *ChatContext, data *embedEventPublishRequest) (any
 	// only a locator: the service revalidates permissions and saved object state.
 	var recordReceipt func()
 	if data.TheaterContext != nil {
-		channel, err := model.ChannelGet(channelID)
-		if err != nil || channel == nil || channel.WorldID == "" {
+		if data.Scope.Type != "iform" {
+			return nil, errors.New("PERMISSION_DENIED: invalid Theater context")
+		}
+		if resolved.WorldID == "" {
 			return nil, errors.New("NOT_FOUND: channel")
 		}
-		scope, err := service.ValidateTheaterEmbedEventPublish(mcpConfigSnapshot(), ctx.User.ID, channel.WorldID, channelID, data.FormID, topic, *data.TheaterContext)
+		scope, err := service.ValidateTheaterEmbedEventPublish(mcpConfigSnapshot(), ctx.User.ID, resolved.WorldID, channelID, data.Scope.ID, topic, *data.TheaterContext)
 		if err != nil {
 			return nil, errors.New("PERMISSION_DENIED: invalid Theater context")
 		}
 		recordReceipt = func() { service.RecordTheaterEmbedEventReceipt(eventID, scope) }
 	}
-	embedEvent := &protocol.ChannelIFormEmbedEventPayload{EventID: eventID, ChannelID: channelID, FormID: data.FormID, Topic: topic, Op: "event", Payload: payload, At: time.Now().UnixMilli()}
-	if form != nil && containsEmbedCapability(form.BridgePolicy.Capabilities, "events.subscribe") {
-		markEmbedSubscription(ctx, channelID, data.FormID, topic)
+	embedEvent := &protocol.ChannelIFormEmbedEventPayload{EventID: eventID, ChannelID: channelID, FormID: extensionFormID(data.Scope), ScopeType: data.Scope.Type, ScopeID: data.Scope.ID, Topic: topic, Op: "event", Payload: payload, At: time.Now().UnixMilli()}
+	if service.HasChannelExtensionCapability(resolved.Capabilities, "events.subscribe") {
+		markExtensionSubscription(ctx, channelID, data.Scope, topic)
 	}
 	if !dispatchEmbedEvent(channelID, embedEvent, true) {
 		return nil, errors.New("INTERNAL_ERROR")
@@ -377,11 +315,11 @@ type embedEventSubscribeRequest struct {
 	Topic string `json:"topic"`
 }
 
-func apiIFormEventSubscribe(ctx *ChatContext, data *embedEventSubscribeRequest) (any, error) {
+func apiChannelExtensionEventSubscribe(ctx *ChatContext, data *embedEventSubscribeRequest) (any, error) {
 	if data == nil {
 		return nil, errors.New("INVALID_PARAMS")
 	}
-	_, channelID, err := resolveEmbedForm(ctx, data.embedScopeRequest, "events.subscribe")
+	_, channelID, err := resolveChannelExtensionScope(ctx, data.embedScopeRequest, "events.subscribe")
 	if err != nil {
 		return nil, err
 	}
@@ -389,39 +327,43 @@ func apiIFormEventSubscribe(ctx *ChatContext, data *embedEventSubscribeRequest) 
 	if !embedTopicPattern.MatchString(topic) {
 		return nil, errors.New("INVALID_PARAMS: invalid topic")
 	}
-	markEmbedSubscription(ctx, channelID, data.FormID, topic)
+	markExtensionSubscription(ctx, channelID, data.Scope, topic)
 	return map[string]any{"subscribed": true}, nil
 }
 
-func broadcastEmbedStorageEvent(ctx *ChatContext, channelID, formID string, seq uint64, item *model.ChannelIFormStorageItem, op string, value json.RawMessage) {
+func broadcastEmbedStorageEvent(ctx *ChatContext, channelID string, scope service.ChannelExtensionScope, seq uint64, item *model.ChannelIFormStorageItem, op string, value json.RawMessage) {
 	if ctx == nil || item == nil {
 		return
 	}
 	// Storage changes stay metadata-only on gateway; authorized Embed Host fetches
 	// value through storage.get, preventing value disclosure to unrelated clients.
 	_ = value
-	dispatchEmbedEvent(channelID, &protocol.ChannelIFormEmbedEventPayload{EventID: utils.NewID(), ChannelID: channelID, FormID: formID, Seq: seq, Key: item.Key, Op: op, Revision: item.Revision, At: time.Now().UnixMilli()}, false)
+	dispatchEmbedEvent(channelID, &protocol.ChannelIFormEmbedEventPayload{EventID: utils.NewID(), ChannelID: channelID, FormID: extensionFormID(scope), ScopeType: scope.Type, ScopeID: scope.ID, Seq: seq, Key: item.Key, Op: op, Revision: item.Revision, At: time.Now().UnixMilli()}, false)
 }
 
 func broadcastEmbedStorageGCEvent(channelID, formID string, mutation model.ChannelIFormStorageExpiredMutation) {
 	item := mutation.Item
+	scope, ok := service.ChannelExtensionScopeForNamespace(formID)
+	if !ok {
+		return
+	}
 	dispatchEmbedEvent(channelID, &protocol.ChannelIFormEmbedEventPayload{
-		EventID: utils.NewID(), ChannelID: channelID, FormID: formID,
+		EventID: utils.NewID(), ChannelID: channelID, FormID: extensionFormID(scope), ScopeType: scope.Type, ScopeID: scope.ID,
 		Seq: item.Seq, Key: item.Key, Op: "delete", Revision: item.Revision,
 		At: time.Now().UnixMilli(),
 	}, false)
 }
 
-func embedScopeKey(channelID, formID, topic string) string {
-	return strings.TrimSpace(channelID) + "\x00" + strings.TrimSpace(formID) + "\x00" + strings.TrimSpace(topic)
+func extensionScopeKey(channelID string, scope service.ChannelExtensionScope, topic string) string {
+	return strings.TrimSpace(channelID) + "\x00" + scope.Type + "\x00" + scope.ID + "\x00" + strings.TrimSpace(topic)
 }
 
-func markEmbedSubscription(ctx *ChatContext, channelID, formID, topic string) {
+func markExtensionSubscription(ctx *ChatContext, channelID string, scope service.ChannelExtensionScope, topic string) {
 	if ctx == nil || ctx.ConnInfo == nil {
 		return
 	}
-	key := embedScopeKey(channelID, formID, topic)
-	if key == "\x00\x00" {
+	key := extensionScopeKey(channelID, scope, topic)
+	if channelID == "" || !scope.Valid() || !embedTopicPattern.MatchString(topic) {
 		return
 	}
 	ctx.ConnInfo.embedMu.Lock()
@@ -432,11 +374,11 @@ func markEmbedSubscription(ctx *ChatContext, channelID, formID, topic string) {
 	ctx.ConnInfo.embedMu.Unlock()
 }
 
-func hasEmbedSubscription(info *ConnInfo, channelID, formID, topic string) bool {
+func hasExtensionSubscription(info *ConnInfo, channelID string, scope service.ChannelExtensionScope, topic string) bool {
 	if info == nil {
 		return false
 	}
-	key := embedScopeKey(channelID, formID, topic)
+	key := extensionScopeKey(channelID, scope, topic)
 	info.embedMu.RLock()
 	_, ok := info.embedSubscriptions[key]
 	info.embedMu.RUnlock()
@@ -456,7 +398,13 @@ func dispatchEmbedEvent(channelID string, payload *protocol.ChannelIFormEmbedEve
 	dispatched := true
 	ctx.rangeChannelConnMaps(channelID, func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool {
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-			if info == nil || !((indexed && info.ChannelId == "") || info.ChannelId == channelID) || !hasEmbedSubscription(info, channelID, payload.FormID, payload.Topic) {
+			if info == nil || !((indexed && info.ChannelId == "") || info.ChannelId == channelID) || !hasExtensionSubscription(info, channelID, extensionEventScope(payload), payload.Topic) {
+				return true
+			}
+			if info.User == nil {
+				return true
+			}
+			if _, err := service.ResolveChannelExtensionScope(info.User.ID, channelID, extensionEventScope(payload), "events.subscribe", info.IsGuest || info.IsObserver, uiCustomizationPolicy()); err != nil {
 				return true
 			}
 			if !writeConnJSONAndPrune(connMap, conn, struct {
@@ -470,4 +418,101 @@ func dispatchEmbedEvent(channelID string, payload *protocol.ChannelIFormEmbedEve
 		return true
 	})
 	return dispatched
+}
+
+func extensionFormID(scope service.ChannelExtensionScope) string {
+	if scope.Type == "iform" {
+		return scope.ID
+	}
+	return ""
+}
+func extensionEventScope(payload *protocol.ChannelIFormEmbedEventPayload) service.ChannelExtensionScope {
+	if payload.ScopeType != "" {
+		return service.ChannelExtensionScope{Type: payload.ScopeType, ID: payload.ScopeID}
+	}
+	return service.ChannelExtensionScope{Type: "iform", ID: payload.FormID}
+}
+func legacyIFormScope(request embedScopeRequest) embedScopeRequest {
+	request.Scope = service.ChannelExtensionScope{Type: "iform", ID: strings.TrimSpace(request.FormID)}
+	return request
+}
+
+func authorizeChannelExtensionMessage(ctx *ChatContext, channelID, clientID string) error {
+	var scope service.ChannelExtensionScope
+	if strings.HasPrefix(clientID, "iform_embed:") {
+		parts := strings.SplitN(strings.TrimPrefix(clientID, "iform_embed:"), ":", 2)
+		if len(parts) != 2 {
+			return errors.New("INVALID_PARAMS")
+		}
+		scope = service.ChannelExtensionScope{Type: "iform", ID: strings.TrimSpace(parts[0])}
+	} else if strings.HasPrefix(clientID, "channel_extension:") {
+		parts := strings.SplitN(strings.TrimPrefix(clientID, "channel_extension:"), ":", 3)
+		if len(parts) != 3 {
+			return errors.New("INVALID_PARAMS")
+		}
+		scope = service.ChannelExtensionScope{Type: parts[0], ID: parts[1]}
+	} else {
+		return nil
+	}
+	if !scope.Valid() {
+		return errors.New("INVALID_PARAMS")
+	}
+	_, _, err := resolveChannelExtensionScope(ctx, embedScopeRequest{ChannelID: channelID, Scope: scope}, "messages.send")
+	return err
+}
+func apiIFormStorageGet(ctx *ChatContext, data *embedStorageGetRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionStorageGet(ctx, &copy)
+}
+func apiIFormStorageSet(ctx *ChatContext, data *embedStorageSetRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionStorageSet(ctx, &copy)
+}
+func apiIFormStorageDelete(ctx *ChatContext, data *embedStorageDeleteRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionStorageDelete(ctx, &copy)
+}
+func apiIFormStorageList(ctx *ChatContext, data *embedStorageListRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionStorageList(ctx, &copy)
+}
+func apiIFormStorageSnapshot(ctx *ChatContext, data *embedScopeRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy = legacyIFormScope(*data)
+	return apiChannelExtensionStorageSnapshot(ctx, &copy)
+}
+func apiIFormEventPublish(ctx *ChatContext, data *embedEventPublishRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionEventPublish(ctx, &copy)
+}
+func apiIFormEventSubscribe(ctx *ChatContext, data *embedEventSubscribeRequest) (any, error) {
+	if data == nil {
+		return nil, errors.New("INVALID_PARAMS")
+	}
+	copy := *data
+	copy.embedScopeRequest = legacyIFormScope(data.embedScopeRequest)
+	return apiChannelExtensionEventSubscribe(ctx, &copy)
 }
