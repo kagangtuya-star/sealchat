@@ -63,6 +63,9 @@ type statusPoint struct {
 	ChannelCount          int64 `json:"channelCount"`
 	PrivateChannelCount   int64 `json:"privateChannelCount"`
 	MessageCount          int64 `json:"messageCount"`
+	MessageCharCount      int64 `json:"messageCharCount"`
+	MessageCharCountIC    int64 `json:"messageCharCountIc"`
+	MessageCharCountOOC   int64 `json:"messageCharCountOoc"`
 	AttachmentCount       int64 `json:"attachmentCount"`
 	AttachmentBytes       int64 `json:"attachmentBytes"`
 	AttachmentImageCount  int64 `json:"attachmentImageCount"`
@@ -253,6 +256,9 @@ func sampleToPoint(sample *model.ServiceMetricSample) statusPoint {
 		ChannelCount:          sample.ChannelCount,
 		PrivateChannelCount:   sample.PrivateChannelCount,
 		MessageCount:          sample.MessageCount,
+		MessageCharCount:      sample.MessageCharCount,
+		MessageCharCountIC:    sample.MessageCharCountIC,
+		MessageCharCountOOC:   sample.MessageCharCountOOC,
 		AttachmentCount:       sample.AttachmentCount,
 		AttachmentBytes:       sample.AttachmentBytes,
 		AttachmentImageCount:  sample.AttachmentImageCount,
