@@ -287,6 +287,9 @@ func DBInit(cfg *utils.AppConfig) {
 		// 未完成来源迁移时不能接受权限写入，否则可能把继承权限误当成手动授权。
 		panic(fmt.Errorf("迁移角色授权来源失败: %w", err))
 	}
+	if err := migratePublicChannelMemberExplicitCompatibility(db); err != nil {
+		panic(fmt.Errorf("迁移公开频道历史成员语义失败: %w", err))
+	}
 	if err := RunSchemaMigration(db, "bot_kind_backfill_v1", BackfillBotKinds); err != nil {
 		log.Printf("回填 bot_kind 失败: %v", err)
 	}

@@ -93,7 +93,7 @@ func UserRoleUnlink(c *fiber.Ctx) error {
 		}
 	}
 
-	_, err := service.UserRoleUnlink([]string{body.RoleId}, body.UserIds)
+	removedCount, err := service.UserRoleUnlink([]string{body.RoleId}, body.UserIds)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "删除用户角色失败",
@@ -102,7 +102,8 @@ func UserRoleUnlink(c *fiber.Ctx) error {
 	broadcastChannelTreeInvalidatedByRoleID(getCurUser(c), body.RoleId, "member-unlink")
 
 	return c.JSON(fiber.Map{
-		"message": "用户角色已成功删除",
+		"message":      "用户角色已成功删除",
+		"removedCount": removedCount,
 	})
 }
 

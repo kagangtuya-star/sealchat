@@ -5582,7 +5582,7 @@ export const useChatStore = defineStore({
 
     // 移除用户角色
     async userRoleUnlink(roleId: string, userIds: string[]) {
-      const resp = await api.post<{ data: boolean }>('api/v1/user-role-unlink', { roleId, userIds });
+      const resp = await api.post<{ message: string; removedCount: number }>('api/v1/user-role-unlink', { roleId, userIds });
       return resp?.data;
     },
 

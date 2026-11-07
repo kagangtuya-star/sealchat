@@ -156,7 +156,7 @@ func buildChannelMemberCandidateBaseQuery(db *gorm.DB, channel *model.ChannelMod
 	query := db.Table("world_members AS wm").
 		Select("wm.user_id, wm.role AS world_role, wm.joined_at, u.username, u.nickname, u.avatar, CASE WHEN existing.id IS NULL THEN 0 ELSE 1 END AS already_in_channel").
 		Joins("LEFT JOIN users u ON u.id = wm.user_id").
-		Joins("LEFT JOIN perm_user_role_mappings existing ON existing.user_id = wm.user_id AND existing.role_id = ?", targetRoleID).
+		Joins("LEFT JOIN perm_user_role_mappings existing ON existing.user_id = wm.user_id AND existing.role_id = ? AND existing.grant_source IN ?", targetRoleID, []string{model.RoleGrantManual, model.RoleGrantBoth}).
 		Where("wm.world_id = ? AND wm.role IN ?", channel.WorldID, allowedRoles)
 
 	normalizedKeyword := strings.ToLower(strings.TrimSpace(keyword))

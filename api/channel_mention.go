@@ -412,6 +412,15 @@ func ChannelWhisperCandidates(c *fiber.Ctx) error {
 		}
 	}
 
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取频道信息失败",
+		})
+	}
+	channelIsPublic := channel != nil && strings.EqualFold(strings.TrimSpace(channel.PermType), "public")
+
 	mappings, err := model.UserRoleMappingListByChannelIDAll(channelID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -423,6 +432,10 @@ func ChannelWhisperCandidates(c *fiber.Ctx) error {
 	allowedUserIDs := make(map[string]bool)
 	for _, mapping := range mappings {
 		if mapping == nil || mapping.UserID == "" || mapping.UserID == user.ID {
+			continue
+		}
+		// 公开频道的世界 member 授权提供访问权限，不代表显式参团。
+		if channelIsPublic && mapping.RoleID == "ch-"+channelID+"-member" && mapping.GrantSource == model.RoleGrantWorld {
 			continue
 		}
 		if isExcludedMentionRoleID(mapping.RoleID) {

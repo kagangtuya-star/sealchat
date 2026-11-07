@@ -1133,6 +1133,7 @@ export interface UserRoleModel extends ModelDataBase {
   roleType: string; // 可以是 "channel" 或 "system"
   userId: string;
   roleId: string;
+  grantSource?: 'manual' | 'world' | 'manual+world';
 
   user?: UserInfo;
 }

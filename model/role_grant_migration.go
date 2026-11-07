@@ -25,3 +25,18 @@ func migrateRoleGrantSources(conn *gorm.DB) error {
 		})
 	})
 }
+
+// migratePublicChannelMemberExplicitCompatibility 保留旧公开频道既有成员列表语义。
+// 迁移完成后新产生的世界继承 member 保持 world-only，可与显式参团成员区分。
+func migratePublicChannelMemberExplicitCompatibility(conn *gorm.DB) error {
+	return RunSchemaMigration(conn, "public_channel_member_explicit_compat_v1", func() error {
+		publicMemberRoleIDs := conn.Table("perm_channel_roles AS cr").
+			Select("cr.id").
+			Joins("JOIN channels AS c ON c.id = cr.channel_id").
+			Where("c.perm_type = ? AND cr.id LIKE ?", "public", "%-member")
+		return conn.Model(&UserRoleMappingModel{}).
+			Where("role_type = ? AND grant_source = ?", "channel", RoleGrantWorld).
+			Where("role_id IN (?)", publicMemberRoleIDs).
+			UpdateColumn("grant_source", RoleGrantBoth).Error
+	})
+}

@@ -103,7 +103,7 @@ type UserRoleMappingModel struct {
 	UserID   string `json:"userId" gorm:"index:idx_user_id;index:idx_user_role,unique"`
 	RoleID   string `json:"roleId" gorm:"index:idx_user_role,unique"`
 	// 一条有效角色关联可同时拥有手动和世界继承两种授权。
-	GrantSource string `json:"-" gorm:"size:16;not null;default:manual"`
+	GrantSource string `json:"grantSource" gorm:"size:16;not null;default:manual"`
 
 	User *UserModel `json:"user" gorm:"-"`
 }

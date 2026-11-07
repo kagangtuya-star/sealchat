@@ -5,12 +5,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mikespook/gorbac"
+
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/utils"
 )
 
 func TestChannelMemberCandidatesAndBatchAdd(t *testing.T) {
+	for _, permType := range []string{"public", "non-public"} {
+		t.Run(permType, func(t *testing.T) {
+			testChannelMemberCandidatesAndBatchAdd(t, permType)
+		})
+	}
+}
+
+func testChannelMemberCandidatesAndBatchAdd(t *testing.T, permType string) {
 	initTestDB(t)
 	pm.Init()
 	db := model.GetDB()
@@ -46,7 +56,7 @@ func TestChannelMemberCandidatesAndBatchAdd(t *testing.T) {
 	}
 
 	channelID := "channel-candidate-" + utils.NewID()
-	channel := ChannelNew(channelID, "non-public", "Candidate Channel", worldID, ownerID, "")
+	channel := ChannelNew(channelID, permType, "Candidate Channel", worldID, ownerID, "")
 	if channel == nil {
 		t.Fatal("channel create returned nil")
 	}
@@ -75,6 +85,9 @@ func TestChannelMemberCandidatesAndBatchAdd(t *testing.T) {
 			JoinedAt:          baseTime.Add(time.Duration(i) * time.Minute),
 		}).Error; err != nil {
 			t.Fatalf("create world member %d failed: %v", i, err)
+		}
+		if err := syncWorldChannelRoles(worldID, userID, model.WorldRoleMember); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if err := db.Create(&model.UserModel{
@@ -115,10 +128,43 @@ func TestChannelMemberCandidatesAndBatchAdd(t *testing.T) {
 	if listResp.Items[0].UserID != latestUserID {
 		t.Fatalf("first candidate=%s expect latest %s", listResp.Items[0].UserID, latestUserID)
 	}
+	for _, item := range listResp.Items {
+		if item.AlreadyInChannel {
+			t.Fatalf("world inheritance counted as explicit membership: %+v", item)
+		}
+	}
 
 	memberRoleID := buildChannelRoleID(channelID, "member")
 	if _, err := model.UserRoleLink([]string{memberRoleID}, []string{latestUserID}); err != nil {
 		t.Fatalf("seed existing member role failed: %v", err)
+	}
+	if count, err := UserRoleUnlink([]string{memberRoleID}, []string{latestUserID}); err != nil || count != 1 {
+		t.Fatalf("remove manual grant: count=%d err=%v", count, err)
+	}
+	var retained model.UserRoleMappingModel
+	if err := db.Where("user_id = ? AND role_id = ?", latestUserID, memberRoleID).Limit(1).Find(&retained).Error; err != nil {
+		t.Fatal(err)
+	}
+	if permType == "public" {
+		if retained.GrantSource != model.RoleGrantWorld {
+			t.Fatalf("manual removal lost world grant: %+v", retained)
+		}
+		for _, permission := range []gorbac.Permission{
+			pm.PermFuncChannelRead, pm.PermFuncChannelTextSend, pm.PermFuncChannelFileSend,
+			pm.PermFuncChannelAudioSend, pm.PermFuncChannelTheaterView,
+		} {
+			if !pm.CanWithChannelRole(latestUserID, channelID, permission) {
+				t.Fatalf("inherited member lost permission %s", permission.ID())
+			}
+		}
+	} else if retained.ID != "" {
+		t.Fatalf("non-public manual member remains: %+v", retained)
+	}
+	if count, err := UserRoleUnlink([]string{memberRoleID}, []string{latestUserID}); err != nil || count != 0 {
+		t.Fatalf("second removal must report zero: count=%d err=%v", count, err)
+	}
+	if _, err := model.UserRoleLink([]string{memberRoleID}, []string{latestUserID}); err != nil {
+		t.Fatal(err)
 	}
 
 	excludeResp, err := ListChannelMemberCandidates(ChannelMemberCandidateQuery{
@@ -166,5 +212,11 @@ func TestChannelMemberCandidatesAndBatchAdd(t *testing.T) {
 	}
 	if linkedCount != 26 {
 		t.Fatalf("member role link count=%d expect 26", linkedCount)
+	}
+	remaining, err := ListChannelMemberCandidates(ChannelMemberCandidateQuery{
+		ChannelID: channelID, ActorID: ownerID, RoleKey: "member", ExcludeExisting: true,
+	})
+	if err != nil || remaining.Total != 0 {
+		t.Fatalf("batch add must grant manual membership to every candidate: result=%+v err=%v", remaining, err)
 	}
 }
