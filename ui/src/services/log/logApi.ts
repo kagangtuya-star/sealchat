@@ -207,6 +207,9 @@ export const forkLogStyle = (id: string, version: string, name: string) =>
 export const createLogStyle = (pkg: LogStylePackage) =>
   unwrap<LogStylePackage>(api.post('api/v1/log/styles', { package: pkg }));
 
+export const deleteLogStyle = (id: string) =>
+  unwrap<{ deleted: boolean }>(api.delete(`api/v1/log/styles/${seg(id)}`));
+
 export const saveLogStyleVersion = (id: string, baseVersion: string, pkg: LogStylePackage) =>
   unwrap<LogStylePackage>(api.post(`api/v1/log/styles/${seg(id)}/versions`, { baseVersion, package: pkg }));
 

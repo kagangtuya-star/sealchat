@@ -25,6 +25,7 @@ import {
 } from '@vicons/tabler';
 import {
   createLogStyle,
+  deleteLogStyle,
   describeLogError,
   exportLogStyleZip,
   fetchAttachmentBytes,
@@ -691,6 +692,27 @@ const onLibraryApply = async (s: LogStyleSummary) => {
   const pkg = await run('读取样式', () => fetchLogStylePackage(s.id, s.version));
   if (pkg && (await props.bind(pkg))) clearPreview();
 };
+const onLibraryDelete = (s: LogStyleSummary) => {
+  dialog.warning({
+    title: '删除自定义样式？',
+    content: `将永久删除「${s.name}」及其全部版本和资源。仍被任何 LOG 工程使用时，服务器会拒绝删除。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      busy.value = true;
+      try {
+        await deleteLogStyle(s.id);
+        if (libraryPreviewKey.value.startsWith(`${s.id}@`)) clearPreview();
+        await props.library.reload();
+        toast.success(`已删除「${s.name}」`);
+      } catch (error) {
+        toast.error(describeLogError(error, '删除样式失败'));
+      } finally {
+        busy.value = false;
+      }
+    },
+  });
+};
 const onLibraryNew = (kind: 'blank' | 'copy-bound') => {
   if (kind === 'blank') void newBlank();
   else if (props.boundPackage) askFork(props.boundPackage);
@@ -847,6 +869,7 @@ const stats = computed(() => {
         @preview="onLibraryPreview"
         @apply="onLibraryApply"
         @export="exportSaved"
+        @delete="onLibraryDelete"
         @new="onLibraryNew"
         @import="pickZip"
       />

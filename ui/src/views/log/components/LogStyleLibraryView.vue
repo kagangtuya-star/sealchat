@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (e: 'preview', s: LogStyleSummary | null): void;
   (e: 'apply', s: LogStyleSummary): void;
   (e: 'export', s: LogStyleSummary): void;
+  (e: 'delete', s: LogStyleSummary): void;
   (e: 'new', kind: 'blank' | 'copy-bound'): void;
   (e: 'import'): void;
 }>();
@@ -63,12 +64,14 @@ const moreOptions = (s: LogStyleSummary): DropdownOption[] => [
   { key: 'apply', label: isBound(s) ? '当前 LOG 已在使用' : '应用到当前 LOG', disabled: !props.canBind || isBound(s) },
   { key: 'export', label: '导出 ZIP' },
   ...(editable(s) ? [{ key: 'fork', label: '复制为新样式' }] : []),
+  ...(editable(s) ? [{ key: 'delete', label: '删除样式…' }] : []),
 ];
 const onMore = (s: LogStyleSummary, key: string) => {
   if (key === 'preview') emit('preview', props.previewingKey === keyOf(s) ? null : s);
   else if (key === 'apply') emit('apply', s);
   else if (key === 'export') emit('export', s);
   else if (key === 'fork') emit('fork', s);
+  else if (key === 'delete') emit('delete', s);
 };
 </script>
 

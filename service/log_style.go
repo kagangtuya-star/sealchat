@@ -259,6 +259,38 @@ func CreateLogStyle(userID string, p LogStylePackage) (*LogStylePackage, error) 
 	return &p, nil
 }
 
+func DeleteLogStyle(id, userID string) error {
+	if userID == "" {
+		return logError("UNAUTHENTICATED", "请先登录")
+	}
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var p model.LogStylePackageModel
+		if err := tx.Where("id = ?", id).Take(&p).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return logError("NOT_FOUND", "样式不存在")
+			}
+			return err
+		}
+		if p.Builtin || p.OwnerID != userID {
+			return logError("PERMISSION_DENIED", "只能删除自己的自定义样式")
+		}
+		var refs int64
+		if err := tx.Model(&model.LogProjectStyleBindingModel{}).Where("package_id = ?", id).Count(&refs).Error; err != nil {
+			return err
+		}
+		if refs > 0 {
+			return logError("STYLE_IN_USE", "该样式仍被 LOG 工程使用，请先切换这些工程的样式")
+		}
+		if err := tx.Where("package_id = ?", id).Delete(&model.LogStyleAssetModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("package_id = ?", id).Delete(&model.LogStyleVersionModel{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id = ? AND owner_id = ? AND builtin = ?", id, userID, false).Delete(&model.LogStylePackageModel{}).Error
+	})
+}
+
 func ForkLogStyle(id, version, userID, name string) (*LogStylePackage, error) {
 	owner, err := logStyleAccess(id, version, userID)
 	if err != nil {

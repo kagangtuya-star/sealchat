@@ -18,6 +18,7 @@ func bindLogStyleRoutes(r fiber.Router) {
 	r.Get("/log/styles/:id/versions/:version/export", logAuthentication, logStyleExport)
 	r.Post("/log/styles/:id/fork", logAuthentication, logStyleFork)
 	r.Post("/log/styles/:id/versions", logAuthentication, logStyleSave)
+	r.Delete("/log/styles/:id", logAuthentication, logStyleDelete)
 }
 
 func logStyleAssetGet(c *fiber.Ctx) error {
@@ -83,6 +84,14 @@ func logStyleCreate(c *fiber.Ctx) error {
 	}
 	data, err := service.CreateLogStyle(u.ID, input.Package)
 	return logResponse(c, data, err)
+}
+func logStyleDelete(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	err := service.DeleteLogStyle(c.Params("id"), u.ID)
+	return logResponse(c, map[string]bool{"deleted": err == nil}, err)
 }
 func logStyleFork(c *fiber.Ctx) error {
 	u := getCurUser(c)
