@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"regexp"
@@ -369,12 +370,20 @@ func UserInfoUpdate(c *fiber.Ctx) error {
 	type RequestBody struct {
 		Nickname string `json:"nick" form:"nick"`
 		Brief    string `json:"brief" form:"brief"`
+		// Detect unsupported avatar updates, including JSON null and empty forms.
+		Avatar     json.RawMessage `json:"avatar" form:"-"`
+		AvatarForm *string         `json:"-" form:"avatar"`
 	}
 
 	var data RequestBody
 	err := c.BodyParser(&data)
 	if err != nil {
-		return err
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "个人信息请求格式无效"})
+	}
+	if len(data.Avatar) > 0 || data.AvatarForm != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "此接口不支持 avatar 字段，请通过 /api/v1/upload 上传账号头像，并设置 ChannelId: user-avatar",
+		})
 	}
 	data.Nickname = strings.TrimSpace(data.Nickname)
 	if len(data.Nickname) > 20 {

@@ -157,11 +157,11 @@
     "generic": "[Whisper] private message"
   },
   "avatarPrompt": {
-    "title": "Set Your Avatar",
-    "description": "Upload a unique avatar so others can recognize you!",
+    "title": "Set Your Account Avatar",
+    "description": "Account and channel character avatars are set separately. This reminder appears until you respond; you can always set your account avatar in your profile.",
     "action": "Set Up Now",
-    "skip": "Maybe Later",
-    "badge": "Click to set avatar"
+    "skip": "Don't Remind Me Again",
+    "badge": "Click to set account avatar"
   },
   "emailBindPrompt": {
     "title": "Bind Email",

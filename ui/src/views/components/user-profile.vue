@@ -179,6 +179,7 @@ const onFileChange = async (e: any) => {
 }
 
 const handleEditorSave = async (file: File) => {
+  const userId = user.info.id
   try {
     const formData = new FormData();
     formData.append('file', file, file.name);
@@ -190,6 +191,7 @@ const handleEditorSave = async (file: File) => {
       },
     });
 
+    if (profileDisposed || user.info.id !== userId) return
     if (resp.status === 200) {
       const attachmentId = resp.data?.ids?.[0];
       if (!attachmentId) {
@@ -203,7 +205,9 @@ const handleEditorSave = async (file: File) => {
       console.error('上传失败！', resp);
     }
   } catch (error) {
-    message.error('出错了，请刷新重试或联系管理员: ' + (error as any).toString())
+    if (profileDisposed || user.info.id !== userId) return
+    const detail = isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : ''
+    message.error(detail || '头像保存失败，请重试')
     console.error('上传出错！', error);
   } finally {
     showEditor.value = false

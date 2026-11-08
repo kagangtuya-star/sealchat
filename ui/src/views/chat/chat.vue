@@ -172,6 +172,7 @@ import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
+import { dismissPrompt, isPromptDismissed } from '@/utils/promptDismissal';
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
 import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
@@ -1853,7 +1854,11 @@ const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
 const importJobId = ref('');
 const avatarPromptVisible = ref(false);
-const avatarPromptDismissedThisSession = ref(false);
+let avatarPromptUserId = '';
+let avatarPromptTimer: ReturnType<typeof setTimeout> | null = null;
+let promptContextRevision = 0;
+let promptsDisposed = false;
+let cancelIdentitySyncPrompt: (() => void) | null = null;
 const ribbonRoleOptions = ref<Array<{ id: string; label: string }>>([]);
 let ribbonRoleOptionsSeq = 0;
 
@@ -2048,28 +2053,37 @@ const handleDisplaySettingsSave = (settings: Partial<DisplaySettings>) => {
 
 // Avatar prompt handlers
 const handleOpenAvatarPrompt = () => {
+  if (isInObserverMode() || !user.info.id) return;
+  avatarPromptUserId = user.info.id;
   avatarPromptVisible.value = true;
 };
 
 const handleAvatarPromptSetup = () => {
-  avatarPromptVisible.value = false;
+  handleAvatarPromptSkip();
   // Emit event to open user profile panel
   chatEvent.emit('open-user-profile');
 };
 
 const handleAvatarPromptSkip = () => {
   avatarPromptVisible.value = false;
-  avatarPromptDismissedThisSession.value = true;
+  if (avatarPromptUserId === user.info.id) {
+    dismissPrompt('avatar', avatarPromptUserId);
+  }
 };
 
-// Check if avatar prompt should be shown on mount (session-based)
+// Automatic onboarding is shown until the user handles it once.
 const checkAvatarPromptOnMount = () => {
-  if (chat.isObserver) return;
-  if (avatarPromptDismissedThisSession.value) return;
-  if (!user.hasDefaultAvatar) return;
-  // Show prompt after a brief delay for better UX
-  setTimeout(() => {
-    if (!avatarPromptDismissedThisSession.value && user.hasDefaultAvatar) {
+  if (avatarPromptTimer !== null) clearTimeout(avatarPromptTimer);
+  avatarPromptTimer = null;
+  const userId = user.info.id;
+  const revision = promptContextRevision;
+  if (promptsDisposed || isInObserverMode() || !userId || !user.hasDefaultAvatar) return;
+  if (isPromptDismissed('avatar', userId)) return;
+  avatarPromptTimer = setTimeout(() => {
+    avatarPromptTimer = null;
+    if (!promptsDisposed && revision === promptContextRevision && userId === user.info.id
+      && !isInObserverMode() && user.hasDefaultAvatar && !isPromptDismissed('avatar', userId)) {
+      avatarPromptUserId = userId;
       avatarPromptVisible.value = true;
     }
   }, 2000);
@@ -4123,7 +4137,6 @@ const ensureIdentitySyncOptions = async () => {
 };
 
 const identitySyncPromptPending = ref(false);
-const identitySyncDismissedForSession = ref(false);
 
 const isInObserverMode = () => {
   return chat.isObserver || chat.observerMode || !!chat.observerWorldId;
@@ -4293,65 +4306,101 @@ const maybePromptIdentitySync = async () => {
   if (identitySyncDialogVisible.value || identitySyncPromptPending.value) {
     return;
   }
-  if (identitySyncDismissedForSession.value) {
-    return;
-  }
   if (isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
     return;
   }
-  try {
-    const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
-    const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
-    await chat.loadChannelIdentities(channelId, shouldForce);
-  } catch (error) {
-    console.warn('加载频道角色失败', error);
-    return;
-  }
-  // 异步操作后再次检查权限
-  if (!canManageIdentities()) {
-    return;
-  }
-  const identities = chat.channelIdentities[channelId] || [];
-  if (identities.length > 1) {
-    return;
-  }
-
+  const userId = user.info.id;
+  const worldId = chat.currentWorldId;
+  const revision = promptContextRevision;
+  if (!userId || promptsDisposed || isPromptDismissed('identitySync', userId, worldId)) return;
+  const isCurrentContext = () => !promptsDisposed && revision === promptContextRevision
+    && userId === user.info.id && worldId === chat.currentWorldId
+    && channelId === chat.curChannel?.id && canManageIdentities();
   identitySyncPromptPending.value = true;
-  const confirmed = await new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    dialog.warning({
-      title: '从其他频道同步角色？',
-      content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
-      positiveText: '同步',
-      negativeText: '暂不',
-      maskClosable: false,
-      closeOnEsc: false,
-      closable: false,
-      onPositiveClick: () => settle(true),
-      onNegativeClick: () => settle(false),
-      onClose: () => settle(false),
-    });
-  });
-  identitySyncPromptPending.value = false;
-  if (!confirmed) {
-    identitySyncDismissedForSession.value = true;
-    return;
-  }
   try {
-    await openIdentityManager();
-  } catch (error) {
-    console.warn('打开角色管理失败', error);
-    message.error('打开角色管理失败，请稍后重试');
-    return;
+    try {
+      const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
+      const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
+      await chat.loadChannelIdentities(channelId, shouldForce);
+    } catch (error) {
+      console.warn('加载频道角色失败', error);
+      return;
+    }
+    // 异步操作后再次检查上下文和权限
+    if (!isCurrentContext() || isPromptDismissed('identitySync', userId, worldId)) {
+      return;
+    }
+    const identities = chat.channelIdentities[channelId] || [];
+    if (identities.length > 1) {
+      return;
+    }
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const prompt = dialog.warning({
+        title: '从其他频道同步角色？',
+        content: '当前频道角色较少，是否从本世界其他频道同步？处理后本世界不再自动提醒，也可随时从角色管理中同步。',
+        positiveText: '同步',
+        negativeText: '不再提醒',
+        maskClosable: false,
+        closeOnEsc: false,
+        closable: false,
+        onPositiveClick: () => settle(true),
+        onNegativeClick: () => settle(false),
+        onClose: () => settle(false),
+      });
+      cancelIdentitySyncPrompt = () => {
+        prompt.destroy();
+        settle(false);
+      };
+    });
+    cancelIdentitySyncPrompt = null;
+    if (!isCurrentContext()) return;
+    dismissPrompt('identitySync', userId, worldId);
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await openIdentityManager();
+    } catch (error) {
+      console.warn('打开角色管理失败', error);
+      message.error('打开角色管理失败，请稍后重试');
+      return;
+    }
+    await nextTick();
+    if (!isCurrentContext()) return;
+    await openIdentitySyncDialog();
+  } finally {
+    identitySyncPromptPending.value = false;
   }
-  await nextTick();
-  await openIdentitySyncDialog();
 };
+
+watch(
+  [() => user.info.id, () => chat.currentWorldId, () => chat.curChannel?.id,
+    () => chat.isObserver, () => chat.observerMode, () => chat.observerWorldId],
+  () => {
+    promptContextRevision++;
+    cancelIdentitySyncPrompt?.();
+    avatarPromptVisible.value = false;
+    checkAvatarPromptOnMount();
+  },
+  { flush: 'sync' },
+);
+
+watch(() => user.hasDefaultAvatar, (hasDefaultAvatar) => {
+  if (!hasDefaultAvatar) avatarPromptVisible.value = false;
+});
+
+onBeforeUnmount(() => {
+  promptsDisposed = true;
+  if (avatarPromptTimer !== null) clearTimeout(avatarPromptTimer);
+  cancelIdentitySyncPrompt?.();
+});
 
 const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v6';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [

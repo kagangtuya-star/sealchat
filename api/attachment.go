@@ -62,7 +62,9 @@ func UploadQuick(c *fiber.Ctx) error {
 	if body.ChannelID == "user-avatar" {
 		user := getCurUser(c)
 		user.Avatar = "id:" + newItem.ID
-		user.SaveAvatar()
+		if err := user.SaveAvatar(); err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "头像保存失败，请重试"})
+		}
 	}
 
 	return c.JSON(fiber.Map{
@@ -139,7 +141,9 @@ func Upload(c *fiber.Ctx) error {
 		if channelId == "user-avatar" {
 			user := getCurUser(c)
 			user.Avatar = "id:" + newItem.ID
-			user.SaveAvatar()
+			if err := user.SaveAvatar(); err != nil {
+				return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "头像保存失败，请重试"})
+			}
 		}
 	}
 

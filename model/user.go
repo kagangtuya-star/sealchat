@@ -62,8 +62,8 @@ func (u *UserModel) ToProtocolType() *protocol.User {
 	}
 }
 
-func (u *UserModel) SaveAvatar() {
-	db.Model(u).Update("avatar", u.Avatar)
+func (u *UserModel) SaveAvatar() error {
+	return db.Model(u).Update("avatar", u.Avatar).Error
 }
 
 func (u *UserModel) SaveInfo() {

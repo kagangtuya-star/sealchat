@@ -167,11 +167,11 @@
     "generic": "[悄悄话] 私密消息"
   },
   "avatarPrompt": {
-    "title": "设置你的头像",
-    "description": "上传一张独特的头像，让大家更容易认出你！",
+    "title": "设置账号头像",
+    "description": "账号头像与频道角色头像分别设置。此引导只提醒一次，你也可以随时在个人信息中设置。",
     "action": "现在设置",
-    "skip": "稍后再说",
-    "badge": "点击设置头像"
+    "skip": "不再提醒",
+    "badge": "点击设置账号头像"
   },
   "emailBindPrompt": {
     "title": "绑定邮箱",
