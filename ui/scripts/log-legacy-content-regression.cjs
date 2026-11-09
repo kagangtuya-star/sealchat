@@ -44,6 +44,8 @@ globalThis.document = {
   }),
 }
 const stubs = {
+  // contentEscape is real; the unrelated memoization helper is never invoked here.
+  'lodash-es': { memoize: () => { throw new Error('unexpected memoize use') } },
   dompurify: { sanitize: (html, options) => {
     sanitizations.push({ html, options })
     return fragment(html)
@@ -180,12 +182,12 @@ assert.equal(Element.parse('<span data-dice-source="2d6"/>')[0].attrs.dataDiceSo
   Element.parse = () => { throw new Error('TipTap 不应进入 legacy 解析') }
   try {
     const body = render(content)
-    const expected = tiptapJsonToHtml(content, { attachmentResolver: () => 'log-asset:att:image-123' })
-    assert.equal(sanitizations.at(-1).html, expected, 'TipTap 清洗前 HTML 与原渲染器逐字相同')
+    const expected = tiptapJsonToHtml(content, { attachmentResolver: () => 'log-asset:att:image-123', staticDocument: true })
+    assert.equal(sanitizations.at(-1).html, expected, 'TipTap 清洗前 HTML 使用原渲染器的静态模式')
     assert.equal(body.plainText, tiptapJsonToPlainText(content))
     assert.deepEqual(body.assets, ['att:image-123'])
     assert.match(body.html, /<ruby/)
-    assert.match(body.html, /tiptap-spoiler/)
+    assert.doesNotMatch(body.html, /tiptap-spoiler/)
     assert.match(body.html, /href="https:\/\/example.com"/)
     assert.match(body.html, /&lt;br\/&gt; &amp;nbsp;/)
   } finally { Element.parse = originalParse }

@@ -197,7 +197,7 @@ export const renderMessageBody = (content: string): RenderedBody => {
   let html = '';
   let plainText = '';
   if (isTipTapJson(raw)) {
-    html = tiptapJsonToHtml(raw, { attachmentResolver: resolveToMarker });
+    html = tiptapJsonToHtml(raw, { attachmentResolver: resolveToMarker, staticDocument: true });
     try {
       plainText = tiptapJsonToPlainText(raw);
     } catch {

@@ -191,8 +191,8 @@ func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, proj
 		content["assetKey"] = key
 	}
 	if body, ok := content["body"].(string); ok {
-		doc := buildRichDocumentForExport(body, false)
-		content["body"] = RenderAgentRichDocumentHTML(doc, false)
+		doc := buildLogRichDocument(body, false)
+		content["body"] = renderLogRichDocumentHTML(doc, false)
 	}
 	b, err := json.Marshal(map[string]any{"id": id, "kind": "element", "sectionId": e.Anchor.SectionID, "type": e.Type, "templateId": e.TemplateID, "content": content, "style": e.Style})
 	if err != nil {

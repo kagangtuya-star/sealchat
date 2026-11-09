@@ -68,6 +68,82 @@ body {
 .log-fallback-message .log-speaker { font-weight: 700; }
 /* 页面字体明确作用于消息正文，避免旧样式在消息外壳上指定字体后让正文只继承样式字体；更具体的骰子/富文本字体仍可覆盖。 */
 .log-body { font-family: var(--log-font-family); }
+/* Static TipTap subset only. No chat palette, spoiler, performance or interaction CSS. */
+.log-body .tiptap-ruby {
+  ruby-align: center;
+  ruby-position: over;
+  font-family: var(--ruby-base-font-family, var(--ruby-font-family, inherit));
+  font-size: var(--ruby-base-font-size, var(--ruby-font-size, inherit));
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+  text-decoration: var(--ruby-text-decoration, inherit);
+  background-color: var(--ruby-background-color, transparent);
+}
+.log-body .tiptap-ruby rt {
+  font-family: var(--ruby-rt-font-family, var(--ruby-font-family, inherit));
+  font-size: var(--ruby-rt-font-size, var(--ruby-base-font-size, var(--ruby-font-size, var(--ruby-rt-scale, 0.92em))));
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+  text-decoration: var(--ruby-text-decoration, inherit);
+  background-color: var(--ruby-background-color, transparent);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+.log-body .tiptap-text-decoration {
+  --tiptap-decoration-thickness: 0.12em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.55));
+  --tiptap-decoration-dot-step: 0.36em;
+  --tiptap-decoration-wave-height: 0.22em;
+  --tiptap-decoration-layer: linear-gradient(currentColor, currentColor);
+  --tiptap-decoration-layer-2: linear-gradient(transparent, transparent);
+  --tiptap-decoration-layer-3: linear-gradient(transparent, transparent);
+  --tiptap-decoration-size: 100% var(--tiptap-decoration-thickness);
+  --tiptap-decoration-pos-1: 0 calc(100% + 0.18em);
+  --tiptap-decoration-pos-2: 0 calc(100% + 0.42em);
+  --tiptap-decoration-pos-3: 0 calc(100% + 0.66em);
+  text-decoration: none;
+  padding-bottom: calc(0.18em + var(--tiptap-decoration-wave-height));
+  background-repeat: repeat-x;
+  background-origin: content-box;
+  background-clip: padding-box;
+  background-image: var(--tiptap-decoration-layer), var(--tiptap-decoration-layer-2), var(--tiptap-decoration-layer-3);
+  background-size: var(--tiptap-decoration-size), var(--tiptap-decoration-size), var(--tiptap-decoration-size);
+  background-position: var(--tiptap-decoration-pos-1), var(--tiptap-decoration-pos-2), var(--tiptap-decoration-pos-3);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.log-body .tiptap-text-decoration--strike {
+  --tiptap-decoration-pos-1: 0 50%;
+  --tiptap-decoration-pos-2: 0 calc(50% - 0.22em);
+  --tiptap-decoration-pos-3: 0 calc(50% + 0.22em);
+  padding-bottom: 0;
+}
+.log-body .tiptap-text-decoration--dotted {
+  --tiptap-decoration-layer: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.5px));
+  --tiptap-decoration-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+.log-body .tiptap-text-decoration--dense-dotted {
+  --tiptap-decoration-dot-step: 0.24em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.7));
+  --tiptap-decoration-layer: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.45px));
+  --tiptap-decoration-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+.log-body .tiptap-text-decoration--wave-soft {
+  --tiptap-decoration-layer: radial-gradient(ellipse at 50% 100%, transparent 42%, currentColor 45% 54%, transparent 58%);
+  --tiptap-decoration-size: 0.48em var(--tiptap-decoration-wave-height);
+}
+.log-body .tiptap-text-decoration--wave-heavy {
+  --tiptap-decoration-wave-height: 0.3em;
+  --tiptap-decoration-layer: radial-gradient(ellipse at 50% 100%, transparent 36%, currentColor 40% 58%, transparent 62%);
+  --tiptap-decoration-size: 0.46em var(--tiptap-decoration-wave-height);
+}
+.log-body .tiptap-text-decoration--double { --tiptap-decoration-layer-2: var(--tiptap-decoration-layer); }
+.log-body .tiptap-text-decoration--triple {
+  --tiptap-decoration-layer-2: var(--tiptap-decoration-layer);
+  --tiptap-decoration-layer-3: var(--tiptap-decoration-layer);
+}
 /* 消息语义的默认呈现：样式包未声明时兜底，样式包 CSS 在其后注入可覆盖。 */
 .log-embed { margin: 0.2em 0; padding: 0.45em 0.75em; border-left: 3px solid rgba(0, 0, 0, 0.18); background: rgba(0, 0, 0, 0.03); }
 .log-embed > p:first-child strong { font-weight: 700; }

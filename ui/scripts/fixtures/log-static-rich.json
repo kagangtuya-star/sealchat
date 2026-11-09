@@ -1,0 +1,34 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "attrs": { "textAlign": "center" },
+      "content": [
+        { "type": "text", "text": "默认文字" },
+        { "type": "text", "text": "混合格式", "marks": [
+          { "type": "bold" }, { "type": "italic" }, { "type": "underline" }, { "type": "strike" },
+          { "type": "textStyle", "attrs": { "fontAssetId": "body-font", "fontFamily": "\"Source Han Serif SC\"", "fontSize": "28px", "color": "#ffffff", "textDecorationLine": "underline", "textDecorationThickness": "bold", "textDecorationPattern": "dense-dotted", "textDecorationWave": "heavy", "textDecorationCount": "triple" } },
+          { "type": "highlight", "attrs": { "color": "#123456" } },
+          { "type": "spoiler" }, { "type": "performance", "attrs": { "effect": "shake", "enterMode": "typewriter", "scale": "shout" } }
+        ] },
+        { "type": "text", "text": "另一字体", "marks": [
+          { "type": "textStyle", "attrs": { "fontFamily": "serif", "fontSize": "18px", "color": "rgba(30, 40, 50, 0.5)" } },
+          { "type": "highlight", "attrs": { "color": "#fef08a" } }
+        ] },
+        { "type": "text", "text": "汉字", "marks": [
+          { "type": "textStyle", "attrs": { "fontSize": "22px", "color": "#ff0000" } },
+          { "type": "ruby", "attrs": { "rubyText": "hàn zì", "rubyBaseFontAssetId": "base-font", "rubyRtFontAssetId": "rt-font", "rubyBaseFontFamily": "serif", "rubyRtFontFamily": "sans-serif", "rubyBaseFontSize": "30px", "rubyRtFontSize": "12px", "rubyColor": "#abcdef", "rubyFontWeight": "700", "rubyFontStyle": "italic", "rubyTextDecoration": "underline", "rubyBackgroundColor": "#334455", "rubySpoiler": "true" } },
+          { "type": "bold" }, { "type": "spoiler" }
+        ] },
+        { "type": "performanceCommand", "attrs": { "command": "pause", "value": "2000" } },
+        { "type": "satoriMention", "attrs": { "id": "private-user-id", "name": "提及者" } },
+        { "type": "image", "attrs": { "src": "id:image-123", "alt": "图片" } }
+      ]
+    },
+    { "type": "heading", "attrs": { "level": 2, "textAlign": "right" }, "content": [{ "type": "text", "text": "标题" }] },
+    { "type": "blockquote", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "引用" }] }] },
+    { "type": "orderedList", "content": [{ "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "列表" }] }] }] },
+    { "type": "codeBlock", "content": [{ "type": "text", "text": "<安全代码>", "marks": [{ "type": "textStyle", "attrs": { "color": "#112233", "fontSize": "14px" } }] }] }
+  ]
+}

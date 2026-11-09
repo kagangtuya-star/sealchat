@@ -29,6 +29,8 @@ interface TipTapNode {
 }
 
 interface RenderOptions {
+  /** LOG documents retain explicit colors and static formatting without chat effects. */
+  staticDocument?: boolean;
   baseUrl?: string;
   imageClass?: string;
   linkClass?: string;
@@ -289,7 +291,7 @@ function resolveRenderableSmartLinkValue(
   return buildFallbackAttachmentUrl(value, baseUrl);
 }
 
-function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs?: Record<string, any> }>): string {
+function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs?: Record<string, any> }>, options: RenderOptions = {}): string {
   const textStyleMark = marks.find((mark) => mark?.type === 'textStyle');
   const highlightMark = marks.find((mark) => mark?.type === 'highlight');
   if (!textStyleMark && !highlightMark) {
@@ -315,7 +317,7 @@ function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs
   }
   if (textStyleMark?.attrs?.color) {
     const normalizedColor = normalizeCssColor(String(textStyleMark.attrs.color));
-    if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
+    if (normalizedColor && (options.staticDocument || !shouldFilterTextColor(normalizedColor))) {
       styles.push(`color: ${escapeHtml(normalizedColor)} !important`);
     }
   }
@@ -336,7 +338,7 @@ function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs
   const tag = highlightMark ? 'mark' : 'span';
   const attrString = [
     ...attrs,
-    styles.length ? `style="${styles.join('; ')}"` : '',
+    styles.length ? `style="${options.staticDocument ? styles.join('; ').replace(/ !important/g, '') : styles.join('; ')}"` : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -344,7 +346,7 @@ function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs
   return `<${tag}${attrString ? ` ${attrString}` : ''}>${text}</${tag}>`;
 }
 
-function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string, any> }): string {
+function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string, any> }, options: RenderOptions = {}): string {
   const rubyText = escapeHtml(String(mark.attrs?.rubyText || '').trim());
   if (!rubyText) {
     return text;
@@ -382,7 +384,7 @@ function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string
   pushRubyAttr('rubyRtFontAssetId', undefined, 'data-ruby-rt-font-asset-id');
   pushRubyAttr('rubyBasePlatformFontFamily', undefined, 'data-ruby-base-platform-font-family');
   pushRubyAttr('rubyRtPlatformFontFamily', undefined, 'data-ruby-rt-platform-font-family');
-  pushRubyAttr('rubySpoiler');
+  if (!options.staticDocument) pushRubyAttr('rubySpoiler');
   const styleAttr = variables.length ? ` style="${variables.join('; ')}"` : '';
   return `<ruby class="tiptap-ruby" ${dataAttrs.join(' ')}${styleAttr}>${text}<rt>${rubyText}</rt></ruby>`;
 }
@@ -438,14 +440,20 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
     // 应用文本标记
     if (node.marks && node.marks.length > 0) {
-      text = applyCombinedTextStyle(text, node.marks);
+      // Keep Ruby inside inherited text styles so explicit base/rt overrides work.
+      // The normal chat path retains its existing wrapping and theme semantics.
+      if (options.staticDocument) {
+        const ruby = node.marks.find(mark => mark.type === 'ruby');
+        if (ruby) text = applyRubyMark(text, ruby, options);
+      }
+      text = applyCombinedTextStyle(text, node.marks, options);
       node.marks.forEach((mark) => {
         switch (mark.type) {
           case 'performance':
-            text = applyPerformanceMark(text, mark);
+            if (!options.staticDocument) text = applyPerformanceMark(text, mark);
             break;
           case 'ruby':
-            text = applyRubyMark(text, mark);
+            if (!options.staticDocument) text = applyRubyMark(text, mark);
             break;
           case 'bold':
             text = `<strong>${text}</strong>`;
@@ -465,7 +473,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
           case 'highlight':
             break;
           case 'spoiler':
-            text = `<span class="tiptap-spoiler" data-spoiler="true">${text}</span>`;
+            if (!options.staticDocument) text = `<span class="tiptap-spoiler" data-spoiler="true">${text}</span>`;
             break;
           case 'link':
             const href = mark.attrs?.href || '#';
@@ -494,12 +502,15 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
   const childrenHtml = node.content
     ? mergeAdjacentSpoilerFragments(node.content.map((child) => renderNode(child, options)))
     : '';
+  // Removing command-only content must also remove its now-empty block wrappers.
+  if (options.staticDocument && node.content?.length && !childrenHtml) return '';
 
   // 渲染块级节点
   switch (node.type) {
     case MESSAGE_ACTION_NODE_TYPE: {
       const attrs = normalizeMessageActionAttrs(node.attrs);
       if (!attrs) return '';
+      if (options.staticDocument) return renderNode({ type: 'text', text: attrs.label, marks: node.marks }, options);
       const className = attrs.button
         ? 'tiptap-message-action tiptap-message-action--button'
         : 'tiptap-message-action tiptap-message-action--text';
@@ -546,6 +557,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       const textHtml = attrs.textType === 'image'
         ? `<img src="${escapeHtml(resolveRenderableSmartLinkValue(attrs.textValue, options, baseUrl))}" alt="链接图片" class="${imageClass} message-smart-link__image" ${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}" />`
         : escapeHtml(attrs.textValue);
+      if (options.staticDocument) {
+        return renderNode({ type: 'text', text: '', marks: node.marks }, { ...options, textRenderer: () => textHtml });
+      }
       const dataset = `${SMART_LINK_DATA_ATTR}="true" data-text-type="${escapeHtml(attrs.textType)}" data-text-value="${escapeHtml(attrs.textValue)}" data-url-type="${escapeHtml(attrs.urlType)}" data-url-value="${escapeHtml(attrs.urlValue)}" data-target="${escapeHtml(attrs.target)}"`;
       if (attrs.urlType === 'url') {
         return `<a href="${escapeHtml(attrs.urlValue)}" class="${smartLinkClass}" target="${escapeHtml(attrs.target)}" rel="noopener noreferrer" ${dataset}>${textHtml}</a>`;
@@ -556,6 +570,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       return childrenHtml;
 
     case 'performanceCommand': {
+      if (options.staticDocument) return '';
       const command = String(node.attrs?.command) === 'pause' ? 'pause' : 'delay';
       const value = node.attrs?.value == null ? '' : escapeHtml(String(node.attrs.value));
       return `<span data-performance-command="${command}" data-performance-value="${value}" class="tiptap-performance-command tiptap-performance-command--${command}"></span>`;
@@ -620,6 +635,11 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       const mentionName = String(node.attrs?.name || '').trim();
       const mentionDisplay = mentionName || mentionId || '用户';
       const mentionClassName = mentionId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule';
+      if (options.staticDocument && node.marks?.length) {
+        return renderNode({ type: 'text', text: '', marks: node.marks }, {
+          ...options, textRenderer: () => `<span class="${mentionClassName}">@${escapeHtml(mentionDisplay)}</span>`,
+        });
+      }
       return `<span class="${mentionClassName}">@${escapeHtml(mentionDisplay)}</span>`;
 
     default:

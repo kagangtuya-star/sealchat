@@ -11,7 +11,22 @@ import (
 // intermediate representation; legacy HTML is handled by the existing
 // controlled parser only when the content itself is HTML.
 func buildRichDocumentForExport(content string, includeImages bool) AgentRichDocument {
+	return buildRichDocument(content, includeImages, false)
+}
+
+// LOG keeps additional static marks without changing other export formats.
+func buildLogRichDocument(content string, includeImages bool) AgentRichDocument {
+	return buildRichDocument(content, includeImages, true)
+}
+
+func buildRichDocument(content string, includeImages, logStatic bool) AgentRichDocument {
 	content = strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
+	if logStatic {
+		var root tiptapNode
+		if json.Unmarshal([]byte(content), &root) == nil && root.Type == "doc" {
+			return AgentRichDocument{Type: "document", Blocks: richBlocksFromTipTap(&root, includeImages, true)}
+		}
+	}
 	if strings.TrimSpace(content) == "" {
 		return AgentRichDocument{Type: "document", Blocks: []AgentRichNode{}}
 	}
@@ -42,7 +57,7 @@ func buildRichDocumentForExport(content string, includeImages bool) AgentRichDoc
 			remaining = part[end:]
 			continue
 		}
-		blocks = append(blocks, richBlocksFromTipTap(&node, includeImages)...)
+		blocks = append(blocks, richBlocksFromTipTap(&node, includeImages, logStatic)...)
 		remaining = part[end:]
 	}
 	return AgentRichDocument{Type: "document", Blocks: normalizeAgentRichBlocks(blocks)}
@@ -186,27 +201,48 @@ func parseRichTextAndImages(raw string, marks []AgentRichMark, includeImages boo
 	return out
 }
 
-func richBlocksFromTipTap(root *tiptapNode, includeImages bool) []AgentRichNode {
+func richBlocksFromTipTap(root *tiptapNode, includeImages, logStatic bool) []AgentRichNode {
 	if root == nil {
 		return nil
 	}
 	var out []AgentRichNode
 	for _, child := range root.Content {
-		if node := richNodeFromTipTap(child, includeImages); node != nil {
+		if node := richNodeFromTipTap(child, includeImages, logStatic); node != nil {
 			out = append(out, *node)
 		}
 	}
 	return normalizeAgentRichBlocks(out)
 }
 
-func richNodeFromTipTap(node *tiptapNode, includeImages bool) *AgentRichNode {
+func richNodeFromTipTap(node *tiptapNode, includeImages, logStatic bool) *AgentRichNode {
 	if node == nil {
 		return nil
 	}
 	typ := strings.ToLower(strings.TrimSpace(node.Type))
+	if logStatic {
+		switch typ {
+		case "performancecommand":
+			return nil
+		case "messageaction", "smartlink":
+			copy := *node
+			copy.Type = "text"
+			copy.Text = node.attrString("label")
+			if typ == "smartlink" {
+				copy.Text = node.attrString("textValue")
+				if node.attrString("textType") == "image" {
+					copy.Type = "image"
+					copy.Attrs = map[string]interface{}{"src": node.attrString("textValue")}
+				}
+			}
+			return richNodeFromTipTap(&copy, includeImages, true)
+		}
+	}
 	if typ == "text" {
 		text := node.Text
 		marks := richMarksFromTipTap(node.Marks)
+		if logStatic {
+			return &AgentRichNode{Type: "text", Text: text, Marks: logRichMarksFromTipTap(node.Marks)}
+		}
 		for _, mark := range node.Marks {
 			if mark != nil && strings.EqualFold(mark.Type, "ruby") {
 				if ruby := strings.TrimSpace(mark.attrString("rubyText")); ruby != "" {
@@ -238,7 +274,7 @@ func richNodeFromTipTap(node *tiptapNode, includeImages bool) *AgentRichNode {
 	if typ == "horizontalrule" {
 		return &AgentRichNode{Type: "horizontal_rule"}
 	}
-	if typ == "mention" {
+	if typ == "mention" || (logStatic && typ == "satorimention") {
 		label := firstNonEmpty(node.attrString("label"), node.Text, node.attrString("name"), node.attrString("text"))
 		if label == "" {
 			label = firstNonEmpty(node.attrString("id"), node.attrString("userId"))
@@ -246,9 +282,16 @@ func richNodeFromTipTap(node *tiptapNode, includeImages bool) *AgentRichNode {
 		if label != "" && !strings.HasPrefix(label, "@") {
 			label = "@" + label
 		}
-		return &AgentRichNode{Type: "mention", Text: label, Attrs: map[string]string{"id": firstNonEmpty(node.attrString("id"), node.attrString("userId"))}}
+		mention := &AgentRichNode{Type: "mention", Text: label, Attrs: map[string]string{"id": firstNonEmpty(node.attrString("id"), node.attrString("userId"))}}
+		if logStatic {
+			mention.Marks = logRichMarksFromTipTap(node.Marks)
+		}
+		return mention
 	}
 	result := &AgentRichNode{Type: mapTipTapRichNodeType(typ), Attrs: map[string]string{}}
+	if logStatic {
+		result.Attrs["textAlign"] = node.attrString("textAlign")
+	}
 	if level := node.attrString("level"); level != "" {
 		result.Attrs["level"] = level
 	}
@@ -256,14 +299,16 @@ func richNodeFromTipTap(node *tiptapNode, includeImages bool) *AgentRichNode {
 		result.Attrs["language"] = lang
 	}
 	for _, child := range node.Content {
-		if converted := richNodeFromTipTap(child, includeImages); converted != nil {
+		if converted := richNodeFromTipTap(child, includeImages, logStatic); converted != nil {
 			result.Children = append(result.Children, *converted)
 		}
 	}
 	if typ == "codeblock" {
 		result.Type = "code_block"
 		result.Text = richNodePlainText(result.Children)
-		result.Children = nil
+		if !logStatic {
+			result.Children = nil
+		}
 	}
 	if result.Type == "text" && result.Text == "" && len(result.Children) == 0 {
 		result.Text = node.Text

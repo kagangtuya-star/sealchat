@@ -183,18 +183,77 @@ export const messageTemplateIds = (lib: TemplateLibrary): string[] =>
 const BODY_PURIFY = {
   ALLOWED_TAGS: ['p', 'br', 'span', 'strong', 'em', 'b', 'i', 'u', 's', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'img', 'ruby', 'rt', 'rp', 'sub', 'sup', 'mark', 'div', 'table', 'thead', 'tbody', 'tr', 'td', 'th'],
-  ALLOWED_ATTR: ['class', 'title', 'alt', 'href', 'data-log-asset', 'data-log-missing', 'colspan', 'rowspan', 'width', 'height'],
+  ALLOWED_ATTR: ['class', 'title', 'alt', 'href', 'data-log-asset', 'data-log-missing', 'colspan', 'rowspan', 'width', 'height',
+    'style', 'data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id'],
   ALLOW_DATA_ATTR: false,
   // data-log-asset carries an opaque body:/att:/style:/pub: token. Without this,
   // DOMPurify applies ALLOWED_URI_REGEXP to the explicitly allowed attribute and
   // strips every non-http token before the iframe can bind its Blob URL.
-  ADD_URI_SAFE_ATTR: ['data-log-asset'],
+  ADD_URI_SAFE_ATTR: ['data-log-asset', 'data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id'],
   ALLOWED_URI_REGEXP: /^(?:https?:)/i,
 };
 
-/** 正文清洗：只留结构与白名单属性；图片仅能通过 data-log-asset 令牌引用。 */
+const FONT_ID = /^[A-Za-z0-9_-]{1,100}$/;
+const BODY_CLASS = /^(?:log-(?:mention|audio|img-missing|link|embed(?:--[a-z-]+)?|clue(?:__[a-z-]+|--[a-z-]+)*)|mention(?:-capsule)?(?:--all)?|tiptap-ruby|tiptap-text-decoration(?:--(?:underline|strike|solid|dotted|dense-dotted|wave-none|wave-soft|wave-heavy|single|double|triple))?|language-[a-zA-Z0-9_-]+)$/;
+
+/** Values are checked before CSSOM parsing: no escapes, comments, URLs or arbitrary functions. */
+const bodyCssValue = (property: string, value: string): boolean => {
+  if (!value || value.length > 512 || /[\\;{}<>!\u0000-\u001f]|\/\*|\*\//.test(value)) return false;
+  const name = property.replace(/^--ruby-(?:base-|rt-)?/, '');
+  if (name === 'font-family') return /^[\p{L}\p{N}\s_,"'-]+$/u.test(value) && !/^(?:inherit|initial|unset|revert(?:-layer)?)$/i.test(value);
+  if (name === 'font-size' || property === '--ruby-rt-scale') {
+    const size = /^(\d+(?:\.\d+)?)(px|pt|em|rem|%)$/.exec(value);
+    return !!size && Number(size[1]) > 0 && Number(size[1]) <= (size[2] === '%' ? 1000 : /^(em|rem)$/.test(size[2]) ? 20 : 200);
+  }
+  if (name === 'color' || name === 'background-color' || property === 'text-decoration-color') {
+    return /^(?:#[0-9a-f]{3,8}|[a-z]+|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+/-]+\))$/i.test(value)
+      && !/^(?:inherit|initial|unset|revert(?:-layer)?)$/i.test(value)
+      && CSS.supports('color', value);
+  }
+  if (name === 'font-weight') return /^(?:normal|bold|[1-9]00)$/.test(value);
+  if (name === 'font-style') return /^(?:normal|italic|oblique)$/.test(value);
+  if (name === 'text-decoration' || property === 'text-decoration-line') return /^(?:none|underline|line-through|underline line-through)$/.test(value);
+  if (property === 'text-align') return /^(?:left|center|right|justify|start|end)$/.test(value);
+  if (property === 'text-decoration-style') return /^(?:solid|double|dotted|dashed|wavy)$/.test(value);
+  if (property === 'text-decoration-thickness' || property === '--tiptap-decoration-thickness') return /^(?:1px|0\.12em|0\.18em)$/.test(value);
+  return false;
+};
+
+const BODY_CSS = new Set(['font-family', 'font-size', 'color', 'background-color', 'font-weight', 'font-style',
+  'text-align', 'text-decoration', 'text-decoration-line', 'text-decoration-style', 'text-decoration-color', 'text-decoration-thickness',
+  '--tiptap-decoration-thickness', '--ruby-base-font-family', '--ruby-rt-font-family', '--ruby-font-family',
+  '--ruby-base-font-size', '--ruby-rt-font-size', '--ruby-font-size', '--ruby-color', '--ruby-font-weight',
+  '--ruby-font-style', '--ruby-rt-scale', '--ruby-text-decoration', '--ruby-background-color']);
+
+/** 消息正文专用；模板依然禁止 style。旧消息的属性已由 legacy 解析器丢弃。 */
+const sanitizeBodyStyle = (el: Element) => {
+  const styles = new Map<string, string>();
+  for (const declaration of (el.getAttribute('style') || '').split(';')) {
+    const match = /^\s*([a-z-]+)\s*:\s*(.*?)\s*$/.exec(declaration);
+    if (match && BODY_CSS.has(match[1]) && bodyCssValue(match[1], match[2])) styles.set(match[1], match[2]);
+  }
+  for (const [attr, property] of [
+    ['data-platform-font-id', el.localName === 'ruby' ? '--ruby-font-family' : 'font-family'],
+    ['data-ruby-base-font-asset-id', '--ruby-base-font-family'],
+    ['data-ruby-rt-font-asset-id', '--ruby-rt-font-family'],
+  ]) {
+    const id = el.getAttribute(attr);
+    if (!id) continue;
+    if (FONT_ID.test(id)) styles.set(property, `"sc-log-platform-${id}", var(--log-font-family)`);
+    else el.removeAttribute(attr);
+  }
+  el.removeAttribute('style');
+  // Only these internally constructed fallbacks contain var(). Source CSS cannot supply it.
+  if (styles.size) el.setAttribute('style', Array.from(styles, ([key, value]) => `${key}: ${value}`).join('; '));
+  const classes = (el.getAttribute('class') || '').split(/\s+/).filter(value => BODY_CLASS.test(value));
+  el.removeAttribute('class');
+  if (classes.length) el.setAttribute('class', classes.join(' '));
+};
+
+/** 正文清洗：有限静态文字样式；图片仅能通过 data-log-asset 令牌引用。 */
 export const sanitizeBodyHtml = (html: string): string => {
   const clean = DOMPurify.sanitize(html, { ...BODY_PURIFY, RETURN_DOM_FRAGMENT: true }) as DocumentFragment;
+  clean.querySelectorAll('*').forEach(sanitizeBodyStyle);
   clean.querySelectorAll('img').forEach((img) => {
     if (!img.getAttribute('data-log-asset')) {
       const holder = document.createElement('span');

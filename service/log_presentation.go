@@ -99,7 +99,7 @@ func logMessageBodyOf(display *messageDisplayResolver, m *model.MessageModel) lo
 		}
 		return body
 	}
-	body.appendDocument(m, buildRichDocumentForExport(m.Content, true), LogBodyAssetRef{Kind: logBodyMessage})
+	body.appendDocument(m, buildLogRichDocument(m.Content, true), LogBodyAssetRef{Kind: logBodyMessage})
 	return body
 }
 
@@ -107,7 +107,7 @@ func logMessageBodyOf(display *messageDisplayResolver, m *model.MessageModel) lo
 func (b logMessageBody) html() string {
 	switch b.EmbedKind {
 	case messageEmbedStickyNote:
-		return `<div class="log-embed log-embed--sticky-note">` + RenderAgentRichDocumentHTML(b.Doc, true) + `</div>`
+		return `<div class="log-embed log-embed--sticky-note">` + renderLogRichDocumentHTML(b.Doc, true) + `</div>`
 	case messageEmbedWorldClue:
 		var out strings.Builder
 		out.WriteString(`<div class="log-embed log-embed--world-clue">`)
@@ -117,7 +117,7 @@ func (b logMessageBody) html() string {
 		out.WriteString(`</div>`)
 		return out.String()
 	}
-	return RenderAgentRichDocumentHTML(b.Doc, true)
+	return renderLogRichDocumentHTML(b.Doc, true)
 }
 
 // document is the flattened body; clues keep the export's text form.
