@@ -1192,7 +1192,7 @@ const setupImageViewer = async () => {
     return;
   }
 
-  const inlineImages = host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`);
+  const inlineImages = host.querySelectorAll<HTMLImageElement>(`img:not(.message-quote__image):not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`);
   if (!inlineImages.length) {
     destroyImageViewer();
     return;
@@ -1204,7 +1204,7 @@ const setupImageViewer = async () => {
   const hasMultiple = inlineImages.length > 1;
   inlineImageViewer = new Viewer(host, {
     className: 'chat-inline-image-viewer',
-    filter: (image: HTMLImageElement) => !image.closest(`[${SMART_LINK_DATA_ATTR}="true"]`),
+    filter: (image: HTMLImageElement) => !image.closest(`.message-quote, [${SMART_LINK_DATA_ATTR}="true"]`),
     navbar: hasMultiple,  // 多图时显示缩略图导航
     title: false,
     toolbar: {
@@ -1250,6 +1250,7 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!host) return;
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  if (target.closest('.message-quote')) return;
   if (target.closest(`[${SMART_LINK_DATA_ATTR}="true"]`)) {
     event.preventDefault();
     event.stopPropagation();
@@ -1265,7 +1266,7 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!inlineImageViewer) {
     return;
   }
-  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`));
+  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>(`img:not(.message-quote__image):not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`));
   const imageIndex = imageList.indexOf(image);
   inlineImageViewer.view(imageIndex >= 0 ? imageIndex : 0);
 };
@@ -1508,7 +1509,7 @@ const resolveWhisperTargets = (item: any) => {
 
 const quoteInlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
 
-const buildQuoteSummary = (quote?: any) => {
+const buildQuoteSummary = (quote?: any, imageSummary?: (src: string) => string) => {
   if (!quote) return '';
   const meta = quote as any;
   if (meta?.is_deleted || meta?.isDeleted) {
@@ -1523,7 +1524,11 @@ const buildQuoteSummary = (quote?: any) => {
   }
   if (isTipTapJson(content)) {
     try {
-      const json = JSON.parse(content);
+      const json = JSON.parse(content, (_key, node) => (
+        imageSummary && node?.type === 'image'
+          ? { type: 'text', text: imageSummary(String(node.attrs?.src || '')) }
+          : node
+      ));
       const text = tiptapJsonToPlainText(json).trim();
       return text || '[图片]';
     } catch (error) {
@@ -1531,7 +1536,21 @@ const buildQuoteSummary = (quote?: any) => {
       return '[图片]';
     }
   }
-  const restored = restoreQuickFormatTextFromHtml(contentUnescape(content)).replace(quoteInlineImageTokenPattern, '[图片]').trim();
+  let decodedContent = contentUnescape(content);
+  if (imageSummary) {
+    decodedContent = decodedContent.replace(quoteInlineImageTokenPattern, (token) => (
+      /^\[\[img:/i.test(token) ? `<img src="${contentEscape(token.slice(6, -2))}" />` : '[图片]'
+    ));
+  }
+  if (imageSummary && /<img\b/i.test(decodedContent)) {
+    const template = document.createElement('template');
+    template.innerHTML = decodedContent;
+    template.content.querySelectorAll('img').forEach((image) => {
+      image.replaceWith(imageSummary(image.getAttribute('src') || ''));
+    });
+    decodedContent = template.innerHTML;
+  }
+  const restored = restoreQuickFormatTextFromHtml(decodedContent).replace(quoteInlineImageTokenPattern, '[图片]').trim();
   if (restored) {
     return restored;
   }
@@ -1610,12 +1629,33 @@ const quoteNameColor = computed(() => quoteItem.value?.identity?.color
   || '');
 const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_deleted || (quoteItem.value as any)?.isDeleted));
 const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
-const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
-const quoteSummaryHtml = computed(() => DOMPurify.sanitize(
-  shouldDisableInlineCodeForBotCommand(String(quoteItem.value?.content || ''))
-    ? renderBotCommandTextAsHtml(String(quoteItem.value?.content || ''))
-    : renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
-));
+const quoteSummaryHtml = computed(() => {
+  const content = String(quoteItem.value?.content || '');
+  if (!quoteIsDeleted.value && !quoteIsRevoked.value && shouldDisableInlineCodeForBotCommand(content)) {
+    return DOMPurify.sanitize(renderBotCommandTextAsHtml(content));
+  }
+  const images: string[] = [];
+  let marker = '\uE000';
+  while (content.includes(marker)) marker += '\uE000';
+  const summary = buildQuoteSummary(quoteItem.value, (src) => {
+    if (!src) return '[图片]';
+    const index = images.push(src) - 1;
+    return index < 4 ? `${marker}${index}\uE001` : '';
+  });
+  let html = renderQuickFormatHtmlFromEscaped(contentEscape(summary));
+  images.slice(0, 4).forEach((src, index) => {
+    const imageHtml = index < 3
+      ? `<img class="message-quote__image" src="${contentEscape(resolveAttachmentUrl(src))}" alt="图片" loading="lazy" decoding="async" />`
+      : `<span class="message-quote__image-count">+${images.length - 3}</span>`;
+    html = html.replaceAll(`${marker}${index}\uE001`, imageHtml);
+  });
+  return DOMPurify.sanitize(html);
+});
+const handleQuoteImageError = (event: Event) => {
+  if (event.target instanceof HTMLImageElement) {
+    event.target.replaceWith('[图片]');
+  }
+};
 const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
 const selfEditingPreview = computed(() => (
@@ -1945,7 +1985,7 @@ const applyImageLayoutToDom = async () => {
   if (!host) {
     return;
   }
-  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img'));
+  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img:not(.message-quote__image)'));
   const fallbackIds = messageImageAttachmentIds.value;
   images.forEach((image, index) => {
     const attachmentId = resolveImageAttachmentIdFromElement(image, fallbackIds, index);
@@ -4132,13 +4172,15 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
                 'message-quote--muted': quoteIsDeleted || quoteIsRevoked,
               }"
               @click.stop="handleQuoteClick"
+              @pointerdown.stop
+              @mousedown.stop
             >
               <n-icon class="message-quote__icon" :component="ArrowBackUp" size="14" />
               <div class="message-quote__body">
                 <span class="message-quote__name" :style="quoteNameColor ? { color: quoteNameColor } : undefined">
                   {{ quoteDisplayName }}
                 </span>
-                <span class="message-quote__summary" v-html="quoteSummaryHtml"></span>
+                <span class="message-quote__summary" v-html="quoteSummaryHtml" @error.capture="handleQuoteImageError"></span>
               </div>
             </div>
             <component :is="parseContent(props, displayContent)" />
@@ -4874,6 +4916,21 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.content .message-quote__summary img.message-quote__image {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  max-width: 32px;
+  margin: 0 4px;
+  border-radius: 3px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.message-quote__image-count {
+  margin: 0 4px;
 }
 
 .message-quote--muted .message-quote__summary {
