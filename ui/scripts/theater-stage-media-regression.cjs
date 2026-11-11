@@ -158,4 +158,105 @@ assert.match(stageAppSource, /surfaceMediaFxFilterCss\(slot, raster\.pixelRatio,
 assert.match(stageAppSource, /mediaFxFilterToCss\(stageObjectMediaFx\(current\)\.filter, \{ blurScale: raster\.pixelRatio \}\)/, 'video objects must stage their Basic filter without entering Konva cache')
 assert.match(stageAppSource, /basic,\s*\n\s*advanced: mediaFxGpuAvailable\.value \? spec\.advanced : null/, 'Stage live objects must keep Basic independently of GPU availability')
 
+// Exercise the actual object/surface reuse paths: rendering must preserve playback.
+const stageScript = stageAppSource.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)[1]
+const stageAst = ts.createSourceFile('StageApp.ts', stageScript, ts.ScriptTarget.Latest, true)
+const playbackDeclarations = ['configureVideoLoop', 'activateStageMedia', 'settleSceneMedia', 'syncObjectImage', 'updateSurfaceSlot'].map(name => {
+  const statement = stageAst.statements.find(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(declaration => declaration.name.getText(stageAst) === name))
+  assert.ok(statement, name)
+  return statement.getText(stageAst)
+}).join('\n')
+class PlaybackVideo {
+  constructor() { this.time = 0; this.ended = false; this.plays = 0 }
+  get currentTime() { return this.time }
+  set currentTime(value) { this.time = value; this.ended = false }
+  play() { this.plays++; return Promise.resolve() }
+}
+const playback = new Function('Video', ts.transpileModule(`
+  const videoLoopStates = new WeakMap(), activeAnimatedMedia = new Set()
+  const props = { store: { state: { activeSceneId: 'scene' } } }
+  let sceneMediaBatch = null
+  const syncMediaAnimation = () => {}
+  const isVideoSource = source => source instanceof Video
+  const isAnimatedStageImageRef = () => true
+  const theaterMediaDebug = () => {}
+  const stageMediaErrorMessage = String
+  const resolveTheaterStageMedia = image => ({ url: image.url })
+  const setImageFit = () => {}, objectImageFit = () => 'contain'
+  const hasPendingSceneEntrance = () => false
+  const updateDirectSurfaceImage = () => {}, syncSurfaceMediaFx = () => {}
+  const releaseSceneMediaBatch = batch => { batch.released = true }
+  ${playbackDeclarations}
+  return { activateStageMedia, settleSceneMedia, syncObjectImage, updateSurfaceSlot,
+    state: source => videoLoopStates.get(source), active: activeAnimatedMedia,
+    setBatch: batch => { sceneMediaBatch = batch } }
+`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText)(PlaybackVideo)
+
+for (const kind of ['object', 'surface']) {
+  for (const loopCount of [1, 2, undefined]) {
+    playback.setBatch(null)
+    const video = new PlaybackVideo()
+    const imageRef = { url: 'https://media.test/display.webm', animated: true, loopCount }
+    const visual = {
+      size() {}, setAttrs() {}, position() {}, clip() {},
+      width() { return this }, height() { return this }, opacity() { return this },
+      visible(value) { return value === undefined ? false : this },
+      getLayer() { return { batchDraw() {} } },
+    }
+    const wrapper = {
+      getAttr: () => imageRef.url,
+      findOne: selector => selector === '.theater-object-image' ? { image: () => video } : visual,
+    }
+    const slot = {
+      source: video, url: imageRef.url, ready: true, version: 1,
+      group: visual, placeholder: visual, label: visual, media: visual, directImage: visual, overlay: visual,
+    }
+    const key = kind === 'object' ? 'object:image' : 'surface:background'
+    const sync = () => kind === 'object'
+      ? playback.syncObjectImage(wrapper, { id: 'image', image: imageRef }, 100, 100)
+      : playback.updateSurfaceSlot(slot, imageRef, { x: 0, y: 0, width: 100, height: 100 },
+        { opacity: 1, overlay: { color: '#000', opacity: 0 } }, 'background', key)
+    let revealed = false
+    playback.settleSceneMedia(key, imageRef.url, () => { revealed = true }, () => playback.activateStageMedia(video, imageRef))
+    assert.equal(revealed, true, 'new media still reveals and starts outside scene entry')
+    assert.equal(video.plays, 1)
+    video.currentTime = 0.75
+    for (let i = 0; i < 3; i++) sync()
+    assert.equal(video.currentTime, 0.75, `${kind}: updates preserve playback progress`)
+    assert.equal(video.plays, 1)
+    if (loopCount !== undefined) {
+      for (let i = 1; i <= loopCount; i++) {
+        video.ended = true
+        video.onended()
+        sync()
+        assert.equal(playback.state(video).completed, i, `${kind}: updates preserve completed loops`)
+      }
+      assert.equal(video.plays, loopCount, `${kind}: finite playback stays finished`)
+      assert.equal(playback.active.has(video), false)
+    } else {
+      assert.equal(video.loop, true)
+    }
+
+    // A reused source starts once for each scene entry, including before queued activation runs.
+    for (let entry = 0; entry < 2; entry++) {
+      const batch = { sceneId: 'scene', expected: new Map([[key, imageRef.url], ['other', 'pending']]),
+        settled: new Set(), reveals: [], activations: [], released: false }
+      playback.setBatch(batch)
+      const previousPlays = video.plays
+      sync()
+      sync()
+      assert.equal(batch.activations.length, 1, `${kind}: scene entry queues one activation`)
+      assert.equal(video.plays, previousPlays)
+      batch.released = true
+      sync()
+      assert.equal(video.plays, previousPlays, 'released batch does not bypass pending activation')
+      batch.activations.splice(0).forEach(activate => activate())
+      sync()
+      assert.equal(video.plays, previousPlays + 1, `${kind}: scene entry restarts exactly once`)
+      assert.equal(video.currentTime, 0)
+    }
+  }
+}
+
 console.log('theater stage media regression checks passed')

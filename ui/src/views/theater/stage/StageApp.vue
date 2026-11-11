@@ -6287,8 +6287,11 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
   })
 }
 
-const settleSceneMedia = (key: string, url: string, reveal?: () => void, activate?: () => void) => {
+const settleSceneMedia = (key: string, url: string, reveal?: () => void, activate?: () => void, sceneEntryOnly = false) => {
   const batch = sceneMediaBatch
+  // Reused media restarts once on scene entry, never on ordinary render updates.
+  if (sceneEntryOnly && (!batch || batch.sceneId !== props.store.state.activeSceneId
+    || batch.expected.get(key) !== url || batch.released || batch.settled.has(key))) return
   if (!batch || batch.sceneId !== props.store.state.activeSceneId || batch.expected.get(key) !== url || batch.released) {
     reveal?.()
     activate?.()
@@ -6936,7 +6939,7 @@ const updateSurfaceSlot = (
     const version = slot.version
     settleSceneMedia(mediaKey, resolved, undefined, () => {
       if (slot.version === version && slot.url === resolved && slot.source) activateStageMedia(slot.source, imageRef)
-    })
+    }, true)
     return
   }
   if (slot.url === resolved && !slot.ready) {
@@ -8010,7 +8013,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
     setImageFit(image, currentSource, width, height, objectImageFit(object))
     settleSceneMedia(`object:${object.id}`, resolved, undefined, () => {
       if (!hasPendingSceneEntrance(object.id)) activateStageMedia(currentSource, object.image!)
-    })
+    }, true)
     return
   }
   if (wrapper.getAttr('stageImageUrl') === resolved) return
