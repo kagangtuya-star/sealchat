@@ -9,6 +9,7 @@ import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
 import { useCapWidget } from '@/composables/useCapWidget';
+import { getInviteRedirect } from '@/utils/authRedirect';
 
 declare global {
   interface Window {
@@ -57,6 +58,12 @@ const {
 } = useCapWidget(CAPTCHA_SCENE);
 
 const message = useMessage();
+const inviteRedirect = computed(() => getInviteRedirect(router.currentRoute.value.query.redirect));
+
+const returnAfterSignUp = () => {
+  message.success(inviteRedirect.value ? '注册成功，即将前往邀请页面' : '注册成功，即将前往世界大厅');
+  return router.replace(inviteRedirect.value || { name: 'world-lobby' });
+};
 
 const usernamePattern = /^[A-Za-z0-9_.-]+$/;
 const usernameError = computed(() => {
@@ -500,8 +507,7 @@ const signUp = async () => {
         code: form.emailCode.trim(),
         invitationCode: currentInvitationCode.value,
       });
-      message.success('注册成功，即将前往世界大厅');
-      router.replace({ name: 'world-lobby' });
+      await returnAfterSignUp();
     } catch (e: any) {
       message.error(e?.response?.data?.error || '注册失败');
     }
@@ -552,8 +558,7 @@ const signUp = async () => {
   if (ret) {
     message.error(ret);
   } else {
-    message.success('注册成功，即将前往世界大厅');
-    router.replace({ name: 'world-lobby' });
+    await returnAfterSignUp();
   }
 };
 
@@ -730,7 +735,7 @@ onBeforeUnmount(() => {
 
       <div class="flex items-center justify-center py-4 text-center sign-up-footer">
         <span class="text-sm sign-up-footer__text">已有账号 ？</span>
-        <router-link :to="{ name: 'user-signin' }"
+        <router-link :to="{ name: 'user-signin', query: { redirect: inviteRedirect } }"
           class="mx-2 text-sm font-bold sign-up-footer__link hover:underline">登录</router-link>
       </div>
     </div>
@@ -763,7 +768,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="flex items-center justify-center py-4 text-center sign-up-footer">
         <span class="text-sm sign-up-footer__text">已有账号 ？</span>
-        <router-link :to="{ name: 'user-signin' }"
+        <router-link :to="{ name: 'user-signin', query: { redirect: inviteRedirect } }"
           class="mx-2 text-sm font-bold sign-up-footer__link hover:underline">登录</router-link>
       </div>
     </div>

@@ -155,19 +155,25 @@ onMounted(() => {
 let deepLinkTaskEpoch = 0;
 let urlSyncTaskEpoch = 0;
 let pendingInternalRouteSyncKey = '';
+const deepLinkPending = ref(false);
+const deepLinkError = ref('');
 
 const buildRouteSyncKey = (worldId: string, channelId: string) => `${worldId}::${channelId}`;
 
 const handleDeepLink = async () => {
+  const taskEpoch = ++deepLinkTaskEpoch;
+  const retrying = !!deepLinkError.value;
   const worldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
   const channelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
+  deepLinkPending.value = false;
+  deepLinkError.value = '';
   if (!worldId) return;
   const routeKey = buildRouteSyncKey(worldId, channelId);
   if (pendingInternalRouteSyncKey && pendingInternalRouteSyncKey === routeKey) {
     pendingInternalRouteSyncKey = '';
     return;
   }
-  const taskEpoch = ++deepLinkTaskEpoch;
+  deepLinkPending.value = true;
   try {
     if (chat.isObserver) {
       chat.enableObserverMode(worldId, channelId);
@@ -185,7 +191,9 @@ const handleDeepLink = async () => {
     }
     const currentWorldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
     const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';
-    if (worldId === currentWorldId) {
+    if (!retrying && worldId === currentWorldId && currentChannelId
+      && chat.channelTreeReady[worldId] && chat.channelTree === chat.channelTreeByWorld[worldId]
+      && chat.connectState === 'connected') {
       if (channelId && channelId !== currentChannelId) {
         await chat.channelSwitchTo(channelId);
         if (taskEpoch !== deepLinkTaskEpoch) {
@@ -194,9 +202,12 @@ const handleDeepLink = async () => {
       }
       return;
     }
-    await chat.switchWorld(worldId, { force: true });
+    await chat.switchWorld(worldId, { force: true, connectionTimeoutMs: 10000 });
     if (taskEpoch !== deepLinkTaskEpoch) {
       return;
+    }
+    if (chat.currentWorldId !== worldId) {
+      throw new Error('world selection changed during initialization');
     }
     if (channelId) {
       await chat.channelSwitchTo(channelId);
@@ -205,7 +216,13 @@ const handleDeepLink = async () => {
       }
     }
   } catch (error) {
+    if (taskEpoch !== deepLinkTaskEpoch) return;
+    deepLinkError.value = '世界连接或初始化失败，请重试进入世界';
     console.warn('[deep-link] switch failed', error);
+  } finally {
+    if (taskEpoch === deepLinkTaskEpoch) {
+      deepLinkPending.value = false;
+    }
   }
 };
 
@@ -237,6 +254,7 @@ const isChannelInCurrentWorld = (channelId: string) => {
 const syncUrlWithSelection = async () => {
   const taskEpoch = ++urlSyncTaskEpoch;
   if (!isHomeRoute.value) return;
+  if (deepLinkPending.value || deepLinkError.value) return;
   const worldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
   if (!worldId) return;
   const rawChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';
@@ -264,7 +282,7 @@ const syncUrlWithSelection = async () => {
 };
 
 watch(
-  () => [chat.currentWorldId, chat.curChannel?.id, chat.channelTree.length, route.name],
+  () => [chat.currentWorldId, chat.curChannel?.id, chat.channelTree.length, route.name, deepLinkPending.value, deepLinkError.value],
   () => {
     void syncUrlWithSelection();
   },
@@ -339,6 +357,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  deepLinkTaskEpoch++;
+  urlSyncTaskEpoch++;
   clearResizeCursorState()
 })
 
@@ -388,7 +408,11 @@ onBeforeUnmount(() => {
       />
 
       <n-layout class="sc-layout-content">
-        <Chat @drawer-show="active = true" />
+        <n-alert v-if="deepLinkError" type="warning" :title="deepLinkError">
+          <n-button @click="handleDeepLink">重试进入世界</n-button>
+        </n-alert>
+        <n-spin v-if="deepLinkPending" show description="正在连接目标世界..." />
+        <Chat v-show="!deepLinkPending && !deepLinkError" @drawer-show="active = true" />
 
         <n-drawer v-model:show="active" :width="'65%'" placement="left">
           <n-drawer-content closable body-content-style="padding: 0">

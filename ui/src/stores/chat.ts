@@ -1870,10 +1870,32 @@ export const useChatStore = defineStore({
       });
     },
 
-    async ensureConnectionReady() {
+    async ensureConnectionReady(options?: { timeoutMs?: number }) {
       const isConnected = () => this.connectState === 'connected';
       if (isConnected()) {
         return;
+      }
+      if (options?.timeoutMs) {
+        // Route entry must remain recoverable when the gateway is unavailable.
+        return new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            clearTimeout(timer);
+            chatEvent.off('connected', onConnected);
+          };
+          const onConnected = () => {
+            cleanup();
+            resolve();
+          };
+          const fail = (error: unknown) => {
+            cleanup();
+            reject(error);
+          };
+          const timer = setTimeout(() => fail(new Error('ws connection timeout')), options.timeoutMs);
+          chatEvent.on('connected', onConnected);
+          if (!this.subject && !wsConnectInFlight) {
+            void this.connect().catch(fail);
+          }
+        });
       }
       if (!this.subject) {
         await this.tryInit();
@@ -2043,6 +2065,7 @@ export const useChatStore = defineStore({
     },
 
     async refreshJoinedWorldState() {
+      const joinedAtStart = new Set(this.joinedWorldIds);
       const pageSize = 50;
       let page = 1;
       let total = 0;
@@ -2080,14 +2103,24 @@ export const useChatStore = defineStore({
         page += 1;
       }
 
-      this.joinedWorldIds = aggregatedItems.map((item: any) => item.world.id);
-      const owned = aggregatedItems.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
-      const joined = aggregatedItems.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
+      // Preserve joins and leaves completed while the world list was in flight.
+      const joinedNow = new Set(this.joinedWorldIds);
+      const currentItems = aggregatedItems.filter(
+        item => !joinedAtStart.has(item.world.id) || joinedNow.has(item.world.id),
+      );
+      for (const worldId of joinedNow) {
+        if (!joinedAtStart.has(worldId) && !seenWorldIds.has(worldId) && this.worldMap[worldId]) {
+          currentItems.push({ world: this.worldMap[worldId] });
+        }
+      }
+      this.joinedWorldIds = currentItems.map((item: any) => item.world.id);
+      const owned = currentItems.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
+      const joined = currentItems.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
       this.myWorldCache = { owned, joined };
 
       return {
-        items: aggregatedItems,
-        total,
+        items: currentItems,
+        total: currentItems.length,
         page: 1,
         pageSize,
       };
@@ -2222,13 +2255,13 @@ export const useChatStore = defineStore({
       return this.favoriteWorldIds.includes(worldId);
     },
 
-    async joinWorld(worldId: string, options?: { autoSwitch?: boolean }) {
+    async joinWorld(worldId: string, options?: { autoSwitch?: boolean; connectionTimeoutMs?: number }) {
       await api.post(`/api/v1/worlds/${worldId}/join`, {});
       if (!this.joinedWorldIds.includes(worldId)) {
         this.joinedWorldIds.push(worldId);
       }
       this.setCurrentWorld(worldId);
-      await this.channelList(worldId, true, { autoSwitch: options?.autoSwitch });
+      await this.channelList(worldId, true, { autoSwitch: options?.autoSwitch, connectionTimeoutMs: options?.connectionTimeoutMs });
     },
 
     async leaveWorld(worldId: string) {
@@ -2465,7 +2498,7 @@ export const useChatStore = defineStore({
       return tree;
     },
 
-    async switchWorld(worldId: string, options?: { force?: boolean; autoSwitch?: boolean }) {
+    async switchWorld(worldId: string, options?: { force?: boolean; autoSwitch?: boolean; connectionTimeoutMs?: number }) {
       if (!worldId) {
         return;
       }
@@ -2475,11 +2508,12 @@ export const useChatStore = defineStore({
         return;
       }
       if (!this.joinedWorldIds.includes(worldId)) {
-        await this.joinWorld(worldId, { autoSwitch: false });
+        await this.joinWorld(worldId, { autoSwitch: false, connectionTimeoutMs: options?.connectionTimeoutMs });
       } else {
         this.setCurrentWorld(worldId);
-        await this.channelList(worldId, options?.force ?? true, { autoSwitch: false });
+        await this.channelList(worldId, options?.force ?? true, { autoSwitch: false, connectionTimeoutMs: options?.connectionTimeoutMs });
       }
+      if (this.currentWorldId !== worldId) return;
       const currentChannelId = this.curChannel?.id ? String(this.curChannel.id).trim() : '';
       if (currentChannelId && !findChannelByIdFromTree(this.channelTree, currentChannelId)) {
         this.clearCurrentChannelContext('switchWorld:currentChannelNotInTargetTree');
@@ -4084,7 +4118,7 @@ export const useChatStore = defineStore({
       this.channelCollapseState = next;
     },
 
-    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean; preserveCurrentChannel?: boolean; refreshUnread?: boolean }) {
+    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean; preserveCurrentChannel?: boolean; refreshUnread?: boolean; connectionTimeoutMs?: number }) {
       let targetWorld = worldId || this.currentWorldId;
       if (!targetWorld && this.observerMode && this.observerWorldId) {
         targetWorld = this.observerWorldId;
@@ -4096,7 +4130,7 @@ export const useChatStore = defineStore({
       if (!finalWorld) {
         return [];
       }
-      await this.ensureConnectionReady();
+      await this.ensureConnectionReady({ timeoutMs: options?.connectionTimeoutMs });
       if (!force && this.channelTreeByWorld[finalWorld]) {
         if (this.currentWorldId === finalWorld) {
           this.channelTree = this.channelTreeByWorld[finalWorld];

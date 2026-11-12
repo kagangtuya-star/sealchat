@@ -25,12 +25,11 @@ const processInvite = async () => {
     return;
   }
   if (!user.token) {
-    router.replace({ name: 'user-signin', query: { redirect: route.fullPath } });
+    await router.replace({ name: 'user-signin', query: { redirect: route.fullPath } });
     return;
   }
   status.value = 'processing';
   try {
-    await chat.ensureConnectionReady();
     const resp = await chat.consumeWorldInvite(slug.value);
     const respWorldId = resp.world?.id;
     const respWorldName = resp.world?.name || '目标世界';
@@ -45,17 +44,9 @@ const processInvite = async () => {
       return;
     }
     if (respWorldId) {
-      await chat.switchWorld(respWorldId, { force: true });
       status.value = 'success';
       message.success('已加入世界');
-      try {
-        await router.replace({ name: 'world-channel', params: { worldId: respWorldId } });
-      } catch (err) {
-        console.warn('router replace failed', err);
-      }
-      if (router.currentRoute.value.name !== 'world-channel') {
-        window.location.hash = `#/${respWorldId}`;
-      }
+      await gotoWorld();
     } else {
       status.value = 'error';
       errorMessage.value = '加入失败，世界信息缺失';
@@ -78,10 +69,10 @@ const gotoWorld = async () => {
     return;
   }
   try {
-    await chat.switchWorld(worldId.value, { force: true });
     await router.replace({ name: 'world-channel', params: { worldId: worldId.value } });
   } catch (err) {
-    message.error('跳转失败，请稍后重试');
+    errorMessage.value = '已加入世界，但跳转失败，请重试进入世界';
+    message.warning(errorMessage.value);
   }
 };
 
@@ -107,7 +98,8 @@ onMounted(processInvite);
           <p>正在验证邀请链接...</p>
         </template>
         <template v-else-if="status === 'success'">
-          <p>邀请成功，正在跳转...</p>
+          <p>{{ errorMessage || '已加入世界，正在进入...' }}</p>
+          <n-button type="primary" @click="gotoWorld" :disabled="!worldId">进入世界</n-button>
         </template>
         <template v-else-if="status === 'alreadyJoined'">
           <n-alert type="info" title="您已在此世界">
