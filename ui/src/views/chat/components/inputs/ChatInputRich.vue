@@ -39,6 +39,7 @@ import {
 } from '@/utils/tiptap-performance-mark';
 import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
 import PerformanceEffectPreview from './PerformanceEffectPreview.vue';
+import TableMenu from '@/components/rich-text/TableMenu.vue';
 import { MessageCircle } from '@vicons/tabler';
 import {
   MESSAGE_ACTION_NODE_TYPE,
@@ -123,6 +124,7 @@ const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
 const editorStateVersion = ref(0);
+const tablePopoverShow = ref(false);
 const isComposing = ref(false);
 const isMobile = ref(false);
 const fontSelectorExpanded = ref(false);
@@ -514,6 +516,7 @@ const markToolbarPickerTriggerInteraction = (event: PointerEvent | MouseEvent) =
 };
 
 const closeToolbarPopovers = () => {
+  tablePopoverShow.value = false;
   blockTypePopoverShow.value = false;
   fontSizePopoverShow.value = false;
   performancePopoverShow.value = false;
@@ -1663,6 +1666,7 @@ const initEditor = async () => {
       Image,
       Highlight,
       TextAlign,
+      TableKit,
       Spoiler,
       Ruby,
       Performance,
@@ -1927,6 +1931,7 @@ const initEditor = async () => {
           },
         }),
         TextStyle,
+        TableKit.configure({ table: { resizable: true, cellMinWidth: 80 } }),
         PlatformFontTextStyle,
         Color,
         Highlight.configure({
@@ -3158,6 +3163,7 @@ const markOverlayInteraction = () => {
 
 const hasOpenOverlay = () => {
   return mentionVisible.value
+    || tablePopoverShow.value
     || highlightColorPopoverShow.value
     || textColorPopoverShow.value
     || blockTypePopoverShow.value
@@ -3884,6 +3890,16 @@ defineExpose({
           >
             🔗
           </n-button>
+          <TableMenu
+            v-if="editor"
+            :editor="editor"
+            :state-version="editorStateVersion"
+            :disabled="props.disabled"
+            :show="tablePopoverShow"
+            :content-class="toolbarPopoverContentClass"
+            @update:show="(show) => { if (show) closeToolbarPopovers(); tablePopoverShow = show; }"
+            @interaction="markOverlayInteraction"
+          />
           <n-button
             size="small"
             text

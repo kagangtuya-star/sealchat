@@ -37,8 +37,11 @@ const entry = bundle(path.join(src, 'services/log/logRenderer.ts'));
 const compiler = bundle(path.join(src, 'services/log/logTemplateCompiler.ts'));
 const content = bundle(path.join(src, 'services/log/logContent.ts'));
 const tiptap = bundle(path.join(src, 'utils/tiptap-render.ts'));
+const editorCore = bundle('@tiptap/core');
+const starterKit = bundle('@tiptap/starter-kit');
+const tableKit = bundle('@tiptap/extension-table');
 
-async function check(r, c, content, tiptap, fixture) {
+async function check(r, c, content, tiptap, fixture, core, starter, tables) {
   let checks = 0;
   const ok = (value, message) => { checks++; if (!value) throw Error(message); };
   const mount = html => { const el = document.createElement('div'); el.className = 'log-body'; el.innerHTML = html; document.body.appendChild(el); return el; };
@@ -108,6 +111,57 @@ async function check(r, c, content, tiptap, fixture) {
     return root.content;
   };
   ok(normalized(c.sanitizeBodyHtml(first)).isEqualNode(normalized(first)), 'sanitizer idempotence');
+  const table = { type: 'doc', content: [{ type: 'table', content: [
+    { type: 'tableRow', content: [{ type: 'tableHeader', attrs: { colspan: 2, rowspan: 1, colwidth: [160, 240] }, content: [{ type: 'paragraph', content: [{ type: 'text', text: '表头', marks: [{ type: 'bold' }] }] }] }] },
+    { type: 'tableRow', content: [1, 2].map(i => ({ type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [i === 1 ? 160 : 240] }, content: [{ type: 'paragraph', content: [{ type: 'text', text: '长文字'.repeat(30) }] }] })) },
+  ] }] };
+  const tableBody = content.renderMessageBody(JSON.stringify(table));
+  const tableNode = r.designMessageToNode({ ...item, message: { ...item.message, content: JSON.stringify(table) } });
+  const tableDom = mount(build(tableNode).blocks[0].html);
+  const tableEl = tableDom.querySelector('.tiptap-table');
+  ok(tableEl?.style.width === '400px' && tableEl.querySelectorAll('colgroup col').length === 2, 'LOG table structure/widths survive all sanitizers');
+  ok(tableEl.querySelector('col').style.width === '160px' && tableEl.querySelector('th').colSpan === 2, `column width and span: ${tableEl.outerHTML}`);
+  ok(tableBody.plainText.includes('\t'), 'table plain text keeps cell separator');
+  const tablePublic = r.publicNodeToRender({ kind: 'message', id: 'table-public', messageType: 'ic', speaker: { key: 'key', name: '' }, bodyHtml: tableBody.html, plainText: tableBody.plainText });
+  ok(mount(build(tablePublic).blocks[0].html).querySelector('table').outerHTML === tableEl.outerHTML, 'published table matches preview');
+  tableDom.style.width = '220px';
+  const wrapper = tableDom.querySelector('.tiptap-table-wrapper');
+  ok(wrapper.clientWidth <= 220 && wrapper.scrollWidth > wrapper.clientWidth, 'narrow LOG wrapper scrolls without shrinking columns');
+  const tableStyle = document.createElement('style');
+  tableStyle.textContent = '.tiptap-table td { padding: 13px; }'; document.head.appendChild(tableStyle);
+  ok(getComputedStyle(tableEl.querySelector('td')).paddingTop === '13px', 'style package can override table defaults');
+  tableStyle.remove();
+  const hostileTable = mount(c.sanitizeBodyHtml('<table class="tiptap-table" style="width:expression(bad);min-width:999999999px;position:fixed"><colgroup><col style="width:120px;min-width:url(https://evil.test)"></colgroup><tbody><tr><td style="width:99px;position:fixed" onclick="bad()">safe</td></tr></tbody></table>'));
+  ok(!hostileTable.querySelector('table').hasAttribute('style') && !hostileTable.querySelector('td').hasAttribute('style'), 'table sizing whitelist stays restricted to numeric table/col styles');
+  ok(hostileTable.querySelector('col').style.width === '120px' && !hostileTable.querySelector('[onclick]'), 'safe col width only');
+  ok(mount(c.sanitizeBodyHtml('<table style="width:300.75px"><colgroup><col style="width:120.5px"></colgroup></table>')).querySelector('col').style.width === '120.5px', 'fractional native column widths survive sanitizer');
+  const editorRoot = document.createElement('div'); document.body.appendChild(editorRoot);
+  const editor = new core.Editor({ element: editorRoot, extensions: [starter.StarterKit, tables.TableKit.configure({ table: { resizable: true, cellMinWidth: 80 } })] });
+  ok(!editor.can().deleteTable() && !editor.can().mergeCells(), 'table commands disabled outside table');
+  editor.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run();
+  const nativeTable = editor.getJSON().content.find(node => node.type === 'table');
+  ok(nativeTable.content[0].content[0].type === 'tableHeader', 'native insert includes header row');
+  editor.chain().focus().toggleBold().insertContent('单元格粗体').run();
+  editor.commands.insertContent('单元格正文');
+  ok(!editor.can().mergeCells() && !editor.can().splitCell(), 'merge/split disabled at single cell');
+  let positions = [];
+  editor.state.doc.descendants((node, pos) => { if (node.type.name === 'tableHeader') positions.push(pos); });
+  editor.commands.setCellSelection({ anchorCell: positions[0], headCell: positions[1] });
+  ok(editor.can().mergeCells(), 'native cell selection enables merge');
+  editor.chain().focus().mergeCells().run();
+  ok(editor.can().splitCell(), 'merged cell enables split');
+  editor.chain().focus().splitCell().run();
+  for (const command of ['addRowBefore', 'addRowAfter', 'addColumnBefore', 'addColumnAfter', 'toggleHeaderRow']) editor.chain().focus()[command]().run();
+  ok(editor.getJSON().content.find(node => node.type === 'table').content.length === 4, 'native add rows/columns');
+  editor.chain().focus().deleteRow().run();
+  editor.chain().focus().deleteColumn().run();
+  ok(editor.can().deleteTable(), 'native delete row/column leaves table');
+  editor.commands.setContent(table);
+  ok(editorRoot.querySelector('col').style.width === '160px', 'native editor uses same colwidth semantics');
+  ok(tiptap.tiptapJsonToHtml(editor.getJSON(), { staticDocument: true }).includes('width: 400px'), 'editor JSON roundtrip keeps width');
+  editor.commands.setTextSelection(3); editor.commands.deleteTable();
+  ok(!editor.getJSON().content.some(node => node.type === 'table'), 'native delete whole table');
+  editor.destroy(); editorRoot.remove();
   // Exercise actual iframe measurement/splitting with mixed local sizes and Ruby.
   const hooks = window.logRichRuntime;
   const layout = async (revision, size) => {
@@ -126,20 +180,37 @@ async function check(r, c, content, tiptap, fixture) {
   const small = await layout(1, 12);
   const large = await layout(2, 28);
   ok(large > small, 'larger local size increases page count');
+  const longTable = JSON.parse(JSON.stringify(table));
+  longTable.content[0].content = [longTable.content[0].content[0], ...Array.from({ length: 20 }, () => table.content[0].content[1])];
+  const longNode = r.designMessageToNode({ ...item, message: { ...item.message, content: JSON.stringify(longTable) } });
+  await hooks.render({ revision: 3, mode: 'paged', doc: build(longNode), selection: [] });
+  const continuedTables = Array.from(document.querySelectorAll('#log-root .tiptap-table'));
+  ok(continuedTables.length > 1 && continuedTables.every(el => el.querySelectorAll('colgroup col').length === 2), 'paginated table continuations retain colgroup');
+  let oversizeLayout;
+  hooks.setPort({ postMessage: message => { if (message.type === 'layout') oversizeLayout = message; } });
+  const oversizeTable = { type: 'doc', content: [{ type: 'table', content: [{ type: 'tableRow', content: [{
+    type: 'tableCell', attrs: { colspan: 1, rowspan: 1, colwidth: [160] },
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: '超高表格行。'.repeat(1200) }] }],
+  }] }] }] };
+  const oversizeNode = r.designMessageToNode({ ...item, message: { ...item.message, content: JSON.stringify(oversizeTable) } });
+  await hooks.render({ revision: 4, mode: 'paged', doc: build(oversizeNode), selection: [] });
+  ok(!!oversizeLayout && oversizeLayout.pageCount < 10, 'oversize table row does not generate runaway continuation pages');
+  ok(oversizeLayout.warnings.some(warning => warning.code === 'OVERSIZE'), 'oversize table row reports OVERSIZE');
+  ok(!oversizeLayout.warnings.some(warning => warning.code === 'SPLIT_LIMIT'), 'oversize table row never reaches split limit');
   return { passed: true, checks, pages: { small, large } };
 }
 
 const runtime = fs.readFileSync(path.join(src, 'services/log/pagination/logFrameRuntime.js'), 'utf8')
   .replace(/\}\)\(\);\s*$/, 'window.logRichRuntime = { render, setPort: value => { port = value; } };})();');
 const css = fs.readFileSync(path.join(src, 'services/log/pagination/logFrame.css'), 'utf8');
-const script = `const modules=[${modules.join(',\n')}], cache={}; const load=id=>{if(!cache[id]){const module=cache[id]={exports:{}};modules[id](module,module.exports,load);}return cache[id].exports;}; (${check.toString()})(load(${entry}),load(${compiler}),load(${content}),load(${tiptap}),${JSON.stringify(fixture)}).then(result=>document.getElementById('result').textContent=JSON.stringify(result)).catch(error=>document.getElementById('result').textContent=JSON.stringify({passed:false,error:error.stack}));`;
+const script = `const modules=[${modules.join(',\n')}], cache={}; const load=id=>{if(!cache[id]){const module=cache[id]={exports:{}};modules[id](module,module.exports,load);}return cache[id].exports;}; (${check.toString()})(load(${entry}),load(${compiler}),load(${content}),load(${tiptap}),${JSON.stringify(fixture)},load(${editorCore}),load(${starterKit}),load(${tableKit})).then(result=>document.getElementById('result').textContent=JSON.stringify(result)).catch(error=>document.getElementById('result').textContent=JSON.stringify({passed:false,error:error.stack}));`;
 const html = `<!doctype html><meta charset="utf-8"><style>${css}</style><main id="log-root"></main><style id="log-package"></style><style id="log-page-rule"></style><script id="result" type="application/json"></script><script>${runtime.replace(/<\/script/gi, '<\\/script')}</script><script>${script.replace(/<\/script/gi, '<\\/script')}</script>`;
 const server = http.createServer((_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); });
 server.listen(0, '127.0.0.1', async () => {
   const url = `http://127.0.0.1:${server.address().port}/`;
   if (process.argv.includes('--serve')) return console.log(url);
   try {
-    const chrome = process.env.CHROME_BIN || ['/usr/bin/google-chrome', '/usr/bin/chromium'].find(fs.existsSync);
+    const chrome = process.env.CHROME_BIN || ['/usr/bin/google-chrome', '/usr/bin/chromium', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
     assert.ok(chrome, 'Set CHROME_BIN, or use --serve with an existing browser');
     const { stdout } = await promisify(execFile)(chrome, ['--headless=new', '--disable-gpu', '--disable-background-networking', '--virtual-time-budget=30000', '--dump-dom', url], { timeout: 60000, maxBuffer: 4 * 1024 * 1024 });
     const report = JSON.parse(stdout.match(/<script id="result" type="application\/json">([\s\S]*?)<\/script>/)?.[1] || '{}');

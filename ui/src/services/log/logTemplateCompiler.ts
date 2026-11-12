@@ -182,19 +182,19 @@ export const messageTemplateIds = (lib: TemplateLibrary): string[] =>
 
 const BODY_PURIFY = {
   ALLOWED_TAGS: ['p', 'br', 'span', 'strong', 'em', 'b', 'i', 'u', 's', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'img', 'ruby', 'rt', 'rp', 'sub', 'sup', 'mark', 'div', 'table', 'thead', 'tbody', 'tr', 'td', 'th'],
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'img', 'ruby', 'rt', 'rp', 'sub', 'sup', 'mark', 'div', 'table', 'colgroup', 'col', 'thead', 'tbody', 'tr', 'td', 'th'],
   ALLOWED_ATTR: ['class', 'title', 'alt', 'href', 'data-log-asset', 'data-log-missing', 'colspan', 'rowspan', 'width', 'height',
     'style', 'data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id'],
   ALLOW_DATA_ATTR: false,
   // data-log-asset carries an opaque body:/att:/style:/pub: token. Without this,
   // DOMPurify applies ALLOWED_URI_REGEXP to the explicitly allowed attribute and
   // strips every non-http token before the iframe can bind its Blob URL.
-  ADD_URI_SAFE_ATTR: ['data-log-asset', 'data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id'],
+  ADD_URI_SAFE_ATTR: ['data-log-asset', 'data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id', 'colspan', 'rowspan'],
   ALLOWED_URI_REGEXP: /^(?:https?:)/i,
 };
 
 const FONT_ID = /^[A-Za-z0-9_-]{1,100}$/;
-const BODY_CLASS = /^(?:log-(?:mention|audio|img-missing|link|embed(?:--[a-z-]+)?|clue(?:__[a-z-]+|--[a-z-]+)*)|mention(?:-capsule)?(?:--all)?|tiptap-ruby|tiptap-text-decoration(?:--(?:underline|strike|solid|dotted|dense-dotted|wave-none|wave-soft|wave-heavy|single|double|triple))?|language-[a-zA-Z0-9_-]+)$/;
+const BODY_CLASS = /^(?:log-(?:mention|audio|img-missing|link|embed(?:--[a-z-]+)?|clue(?:__[a-z-]+|--[a-z-]+)*)|mention(?:-capsule)?(?:--all)?|tiptap-table(?:-wrapper)?|tiptap-ruby|tiptap-text-decoration(?:--(?:underline|strike|solid|dotted|dense-dotted|wave-none|wave-soft|wave-heavy|single|double|triple))?|language-[a-zA-Z0-9_-]+)$/;
 
 /** Values are checked before CSSOM parsing: no escapes, comments, URLs or arbitrary functions. */
 const bodyCssValue = (property: string, value: string): boolean => {
@@ -227,9 +227,17 @@ const BODY_CSS = new Set(['font-family', 'font-size', 'color', 'background-color
 
 /** 消息正文专用；模板依然禁止 style。旧消息的属性已由 legacy 解析器丢弃。 */
 const sanitizeBodyStyle = (el: Element) => {
+  for (const [name, max] of [['colspan', 1000], ['rowspan', 65534]] as const) {
+    const value = el.getAttribute(name);
+    if (value !== null && (!['td', 'th'].includes(el.localName) || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > max)) el.removeAttribute(name);
+  }
   const styles = new Map<string, string>();
   for (const declaration of (el.getAttribute('style') || '').split(';')) {
     const match = /^\s*([a-z-]+)\s*:\s*(.*?)\s*$/.exec(declaration);
+    if (match && (el.localName === 'table' || el.localName === 'col') && /^(?:width|min-width)$/.test(match[1])) {
+      const width = /^(\d+(?:\.\d+)?)px$/.exec(match[2]);
+      if (width && Number(width[1]) > 0 && Number(width[1]) <= (el.localName === 'col' ? 10000 : 10000000)) styles.set(match[1], match[2]);
+    }
     if (match && BODY_CSS.has(match[1]) && bodyCssValue(match[1], match[2])) styles.set(match[1], match[2]);
   }
   for (const [attr, property] of [

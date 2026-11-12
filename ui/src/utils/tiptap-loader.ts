@@ -21,6 +21,7 @@ export interface TipTapBundle {
   Image: any;
   Highlight: any;
   TextAlign: any;
+  TableKit: typeof import('@tiptap/extension-table')['TableKit'];
   Spoiler: ReturnType<typeof createSpoilerExtension>;
   Ruby: ReturnType<typeof createRubyExtension>;
   Performance: ReturnType<typeof createPerformanceExtension>;
@@ -42,7 +43,8 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
       import('@tiptap/extension-image'),
       import('@tiptap/extension-highlight'),
       import('@tiptap/extension-text-align'),
-    ]).then(([tiptapCore, tiptapVue, tiptapMenus, starterKit, textStyle, color, image, highlight, textAlign]) => ({
+      import('@tiptap/extension-table'),
+    ]).then(([tiptapCore, tiptapVue, tiptapMenus, starterKit, textStyle, color, image, highlight, textAlign, table]) => ({
       Editor: tiptapVue.Editor,
       Node: tiptapCore.Node,
       Extension: tiptapCore.Extension,
@@ -55,6 +57,7 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
       Image: image.default,
       Highlight: highlight.default,
       TextAlign: textAlign.default,
+      TableKit: table.TableKit,
       Spoiler: createSpoilerExtension(tiptapCore),
       Ruby: createRubyExtension(tiptapCore),
       Performance: createPerformanceExtension(tiptapCore),

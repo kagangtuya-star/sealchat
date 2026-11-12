@@ -145,6 +145,10 @@ body {
   --tiptap-decoration-layer-3: var(--tiptap-decoration-layer);
 }
 /* 消息语义的默认呈现：样式包未声明时兜底，样式包 CSS 在其后注入可覆盖。 */
+:where(.tiptap-table-wrapper) { min-width: 0; max-width: 100%; overflow-x: auto; margin: 0.5em 0; white-space: normal; }
+:where(.tiptap-table) { border-collapse: collapse; table-layout: fixed; margin: 0; }
+:where(.tiptap-table th, .tiptap-table td) { min-width: 80px; padding: 0.4em 0.6em; border: 1px solid currentColor; vertical-align: top; overflow-wrap: anywhere; box-sizing: border-box; }
+:where(.tiptap-table th) { font-weight: 600; background: color-mix(in srgb, currentColor 8%, transparent); }
 .log-embed { margin: 0.2em 0; padding: 0.45em 0.75em; border-left: 3px solid rgba(0, 0, 0, 0.18); background: rgba(0, 0, 0, 0.03); }
 .log-embed > p:first-child strong { font-weight: 700; }
 /* 线索结构的兜底呈现（零优先级）：旧样式不认识 .log-clue__* 时，标题、类型、来源仍可辨识。 */

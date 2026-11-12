@@ -1299,6 +1299,25 @@ func renderTipTapHTML(buf *strings.Builder, node *tiptapNode) {
 	switch nodeType {
 	case "text":
 		buf.WriteString(applyTipTapMarks(htmlEscape(node.Text), node.Marks))
+	case "table":
+		renderTipTapTableHTML(buf, node)
+	case "tablerow":
+		buf.WriteString("<tr>")
+		for _, child := range node.Content {
+			renderTipTapHTML(buf, child)
+		}
+		buf.WriteString("</tr>")
+	case "tablecell", "tableheader":
+		tag := "td"
+		if nodeType == "tableheader" {
+			tag = "th"
+		}
+		fmt.Fprintf(buf, `<%s colspan="%d" rowspan="%d">`, tag,
+			tipTapTableNumber(node.Attrs["colspan"], 1000, 1), tipTapTableNumber(node.Attrs["rowspan"], 65534, 1))
+		for _, child := range node.Content {
+			renderTipTapHTML(buf, child)
+		}
+		fmt.Fprintf(buf, "</%s>", tag)
 	case "paragraph":
 		if align := node.attrString("textAlign"); align != "" {
 			buf.WriteString(`<p style="text-align:` + htmlEscape(align) + `">`)
@@ -2217,6 +2236,17 @@ func writeTipTapNode(w *plainTextWriter, node *tiptapNode) {
 			writeTipTapNode(w, child)
 		}
 		return
+	case "tablerow":
+		for index, cell := range node.Content {
+			if index > 0 {
+				w.write("\t")
+			}
+			cellText := newPlainTextWriter()
+			writeTipTapNode(cellText, cell)
+			w.write(strings.TrimSuffix(cellText.String(), "\n"))
+		}
+		w.newline()
+		return
 	case "text":
 		text := node.Text
 		for _, mark := range node.Marks {
@@ -2316,6 +2346,8 @@ var (
 	bbcodeItalicPattern          = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
 	bbcodeBrPattern              = regexp.MustCompile(`(?is)<br\s*/?>`)
 	bbcodePBoundaryPattern       = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
+	bbcodeTableRowPattern        = regexp.MustCompile(`(?is)<tr\b[^>]*>(.*?)</tr\s*>`)
+	bbcodeTableCellPattern       = regexp.MustCompile(`(?is)<t[dh]\b[^>]*>(.*?)</t[dh]\s*>`)
 	bbcodeAnyTagPattern          = regexp.MustCompile(`(?is)</?[^>]+>`)
 )
 
@@ -2579,6 +2611,19 @@ func convertRenderedHTMLToBBCode(input string) string {
 
 	text = bbcodePBoundaryPattern.ReplaceAllString(text, "\n")
 	text = bbcodeBrPattern.ReplaceAllString(text, "\n")
+	// Keep table boundaries before the remaining HTML tags are stripped. Joining
+	// cells avoids adding a tab after the last cell (including an empty one).
+	text = bbcodeTableRowPattern.ReplaceAllStringFunc(text, func(row string) string {
+		matches := bbcodeTableCellPattern.FindAllStringSubmatch(row, -1)
+		if len(matches) == 0 {
+			return row
+		}
+		cells := make([]string, 0, len(matches))
+		for _, match := range matches {
+			cells = append(cells, strings.TrimSpace(bbcodeAnyTagPattern.ReplaceAllString(match[1], "")))
+		}
+		return strings.Join(cells, "\t") + "\n"
+	})
 	text = bbcodeAnyTagPattern.ReplaceAllString(text, "")
 	text = htmlUnescapeDeep(text)
 

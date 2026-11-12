@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,6 +51,113 @@ func TestNormalizeDomainToURLIPv6(t *testing.T) {
 				t.Fatalf("normalizeDomainToURL(%q) = %s, want %s", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestExportTipTapTable(t *testing.T) {
+	input := `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","attrs":{"colspan":2,"rowspan":2,"colwidth":[120,180]},"content":[{"type":"paragraph","content":[{"type":"text","text":"<&表头>","marks":[{"type":"bold"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"甲"}]}]},{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"乙","marks":[{"type":"link","attrs":{"href":"https://example.com"}}]}]},{"type":"paragraph","content":[{"type":"text","text":"第二段"}]}]}]}]}]}`
+	got, ok := convertTipTapToHTML(input)
+	if !ok {
+		t.Fatal("table JSON was not recognized")
+	}
+	for _, expected := range []string{`class="tiptap-table-wrapper"`, `class="tiptap-table" style="width: 300px"`, `<col style="width: 120px" />`, `<col style="width: 180px" />`, `<th colspan="2" rowspan="2">`, `<strong>&lt;&amp;表头&gt;</strong>`, `href="https://example.com"`, `<p>第二段</p>`} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("missing %q in %s", expected, got)
+		}
+	}
+	if plain, ok := extractTipTapPlainText(input); !ok || plain != "<&表头>\n甲\t乙\n第二段" {
+		t.Fatalf("table fallback lost cell/row boundaries: %q", plain)
+	}
+	unsafe := strings.ReplaceAll(input, `"colspan":2,"rowspan":2,"colwidth":[120,180]`, `"colspan":"2 onclick=bad","rowspan":-1,"colwidth":["bad"],"style":"position:fixed","onclick":"bad"`)
+	got, _ = convertTipTapToHTML(unsafe)
+	if !strings.Contains(got, `<th colspan="1" rowspan="1">`) || !strings.Contains(got, `min-width: 80px`) || strings.Contains(got, "onclick") || strings.Contains(got, "position") {
+		t.Fatalf("unsafe table attrs rendered: %s", got)
+	}
+	fractional, _ := convertTipTapToHTML(strings.ReplaceAll(input, `[120,180]`, `[120.5,180.25]`))
+	if !strings.Contains(fractional, `width: 300.75px`) || !strings.Contains(fractional, `width: 120.5px`) {
+		t.Fatalf("fractional column widths lost: %s", fractional)
+	}
+}
+
+func TestLogStaticRichTable(t *testing.T) {
+	input := `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","attrs":{"colspan":2,"rowspan":1,"colwidth":[120.5,180.25]},"content":[{"type":"paragraph","content":[{"type":"text","text":"表头","marks":[{"type":"bold"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"甲"}]}]},{"type":"tableCell","content":[{"type":"paragraph"}]}]}]}]}`
+	body := logMessageBody{Doc: buildLogRichDocument(input, true)}
+	if err := logResolveBody(&body, func(LogBodyAssetRef) (string, error) { return "", nil }); err != nil {
+		t.Fatal(err)
+	}
+	got := body.html()
+	for _, want := range []string{`class="tiptap-table-wrapper"`, `width: 300.75px`, `width: 120.5px`, `<th colspan="2" rowspan="1"><p><strong>表头</strong></p></th>`, `<td colspan="1" rowspan="1"></td>`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("published table missing %q: %s", want, got)
+		}
+	}
+	// The existing public plain-text normalizer trims a trailing empty cell's tab.
+	if plain := body.plainText(); plain != "表头\n甲" {
+		t.Fatalf("published table fallback: %q", plain)
+	}
+}
+
+const exportTable2x2TipTap = `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"甲","marks":[{"type":"bold"}]}]}]},{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"乙","marks":[{"type":"italic"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"丙"}]}]},{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"丁"}]}]}]}]}]}`
+
+func TestExportTableTextFormats(t *testing.T) {
+	msg := ExportMessage{Content: exportTable2x2TipTap, SenderName: "角色", IcMode: "ic"}
+	const plain = "甲\t乙\n丙\t丁"
+	if got := buildContentBody(&msg, false); got != plain {
+		t.Fatalf("plain TXT table: %q", got)
+	}
+	if got := AgentRichDocumentPlainText(buildRichDocumentForExport(msg.Content, false)); got != plain {
+		t.Fatalf("rich plain table: %q", got)
+	}
+	got := buildBBCodeBody(&msg, false)
+	if got != "[b]甲[/b]\t[i]乙[/i]\n丙\t丁" {
+		t.Fatalf("BBCode table boundaries/marks: %q", got)
+	}
+	for _, unwanted := range []string{"<table", "<td", "甲乙丙丁", "\t\n"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("BBCode table contains %q: %q", unwanted, got)
+		}
+	}
+	payload := &ExportPayload{Messages: []ExportMessage{msg}, WithoutTimestamp: true}
+	for _, bbcode := range []bool{false, true} {
+		payload.ExtraMeta = map[string]interface{}{"text_colorize_bbcode": bbcode}
+		data, err := (textFormatter{}).Build(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := plain
+		if bbcode {
+			want = got
+		}
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("TXT (BBCode=%v) missing table: %s", bbcode, data)
+		}
+	}
+	data, err := (jsonFormatter{}).Build(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log diceLogPayload
+	if err := json.Unmarshal(data, &log); err != nil {
+		t.Fatal(err)
+	}
+	if log.Version != 105 || len(log.Items) != 1 || log.Items[0].Message != plain {
+		t.Fatalf("JSON compatibility text changed: %s", data)
+	}
+	if !strings.Contains(getViewerAssets().CSS, ".tiptap-table") {
+		t.Fatal("Viewer table CSS missing")
+	}
+}
+
+func TestBuildBBCodeTableCellBoundaries(t *testing.T) {
+	for _, tc := range []struct{ html, want string }{
+		{`<table><tr><td>甲</td><td>乙</td></tr><tr><td>丙</td><td>丁</td></tr></table>`, "甲\t乙\n丙\t丁"},
+		{`<TABLE><TR><TH><p><strong>甲</strong></p><p>第二段</p></TH><TD>乙<br>续行</TD></TR></TABLE>`, "[b]甲[/b]\n第二段\t乙\n续行"},
+		{`<tr><td>甲</td><td></td><td>乙</td></tr><tr><td>丙</td><td>丁</td></tr>`, "甲\t\t乙\n丙\t丁"},
+		{`<tr><td><code>x</code></td><td><a href="https://example.com">链接</a></td></tr>`, "[code]x[/code]\t[url=https://example.com]链接[/url]"},
+	} {
+		if got := convertRenderedHTMLToBBCode(tc.html); got != tc.want {
+			t.Fatalf("BBCode table = %q, want %q", got, tc.want)
+		}
 	}
 }
 

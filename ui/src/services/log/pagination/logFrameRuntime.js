@@ -371,6 +371,16 @@
     return k;
   }
 
+  function cloneSplitShell(node) {
+    var shell = node.cloneNode(false);
+    // Continuation tables need the same column sizing as the first page.
+    if (node.nodeType === 1 && node.tagName === 'TABLE') {
+      var columns = node.querySelector('colgroup');
+      if (columns) shell.appendChild(columns.cloneNode(true));
+    }
+    return shell;
+  }
+
   function splitNode(node, container, ignoreAvoid) {
     var kids = Array.prototype.slice.call(node.childNodes);
     var i;
@@ -392,17 +402,20 @@
       var shell;
       var j;
       if (rest) {
-        shell = node.cloneNode(false);
+        shell = cloneSplitShell(node);
         shell.appendChild(rest);
         for (j = i + 1; j < kids.length; j++) shell.appendChild(kids[j]);
         return shell;
       }
       node.removeChild(child);
-      if (i === 0) {
+      var onlyTableMetadataBefore = node.nodeType === 1 && node.tagName === 'TABLE' && kids.slice(0, i).every(function (item) {
+        return item.nodeType === 1 && item.tagName === 'COLGROUP';
+      });
+      if (i === 0 || onlyTableMetadataBefore) {
         for (j = 0; j < kids.length; j++) node.appendChild(kids[j]);
         return null;
       }
-      shell = node.cloneNode(false);
+      shell = cloneSplitShell(node);
       for (j = i; j < kids.length; j++) shell.appendChild(kids[j]);
       return shell;
     }

@@ -1,0 +1,52 @@
+.tiptap-table-wrapper,
+.tiptap-content .tableWrapper {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  white-space: normal;
+}
+
+.tiptap-table,
+.tiptap-content .tableWrapper table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 0;
+}
+
+.tiptap-table-wrapper .tiptap-table :is(th, td),
+.tiptap-content .tableWrapper :is(th, td) {
+  min-width: 80px;
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--sc-border-strong, currentColor);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  position: relative;
+  box-sizing: border-box;
+  color: inherit;
+}
+
+.tiptap-table-wrapper .tiptap-table th,
+.tiptap-content .tableWrapper th {
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.tiptap-content .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--sc-bg-active, #4098fc26);
+  pointer-events: none;
+}
+
+.tiptap-content .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: var(--sc-accent, #4098fc);
+  pointer-events: none;
+}
+.tiptap-content.resize-cursor { cursor: col-resize; }

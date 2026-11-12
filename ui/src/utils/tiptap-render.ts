@@ -424,6 +424,34 @@ function applyPerformanceMark(text: string, mark: { type: string; attrs?: Record
   return `<span class="${classNames.join(' ')}"${dataAttrs.length ? ` ${dataAttrs.join(' ')}` : ''}${styleVars.length ? ` style="${styleVars.join('; ')}"` : ''}>${text}</span>`;
 }
 
+// Match the editor's cellMinWidth. Only native numeric table attributes are accepted.
+const TABLE_CELL_MIN_WIDTH = 80;
+function tableSpan(value: unknown, max: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= max ? value : 1;
+}
+
+function renderTableColumns(node: TipTapNode): { html: string; style: string } {
+  const cells = node.content?.[0]?.content || [];
+  const columns: string[] = [];
+  let total = 0;
+  let fixed = true;
+  for (const cell of cells) {
+    const span = tableSpan(cell.attrs?.colspan, 1000);
+    const widths = cell.attrs?.colwidth;
+    for (let index = 0; index < span; index++) {
+      const raw = Array.isArray(widths) ? widths[index] : null;
+      const width = typeof raw === 'number' && Number.isFinite(raw) && raw >= 1 && raw <= 10000 ? raw : null;
+      total += width || TABLE_CELL_MIN_WIDTH;
+      if (!width) fixed = false;
+      columns.push(`<col style="${width ? 'width' : 'min-width'}: ${width || TABLE_CELL_MIN_WIDTH}px" />`);
+    }
+  }
+  return {
+    html: columns.length ? `<colgroup>${columns.join('')}</colgroup>` : '',
+    style: total ? ` style="${fixed ? 'width' : 'min-width'}: ${total}px"` : '',
+  };
+}
+
 /**
  * 渲染单个节点
  */
@@ -503,7 +531,8 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
     ? mergeAdjacentSpoilerFragments(node.content.map((child) => renderNode(child, options)))
     : '';
   // Removing command-only content must also remove its now-empty block wrappers.
-  if (options.staticDocument && node.content?.length && !childrenHtml) return '';
+  if (options.staticDocument && node.content?.length && !childrenHtml
+    && !['table', 'tableRow', 'tableHeader', 'tableCell'].includes(node.type)) return '';
 
   // 渲染块级节点
   switch (node.type) {
@@ -568,6 +597,20 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
     }
     case 'doc':
       return childrenHtml;
+
+    case 'table': {
+      const columns = renderTableColumns(node);
+      return `<div class="tiptap-table-wrapper"><table class="tiptap-table"${columns.style}>${columns.html}<tbody>${childrenHtml}</tbody></table></div>`;
+    }
+    case 'tableRow':
+      return `<tr>${childrenHtml}</tr>`;
+    case 'tableHeader':
+    case 'tableCell': {
+      const tag = node.type === 'tableHeader' ? 'th' : 'td';
+      const colspan = tableSpan(node.attrs?.colspan, 1000);
+      const rowspan = tableSpan(node.attrs?.rowspan, 65534);
+      return `<${tag} colspan="${colspan}" rowspan="${rowspan}">${childrenHtml}</${tag}>`;
+    }
 
     case 'performanceCommand': {
       if (options.staticDocument) return '';
@@ -762,6 +805,10 @@ function extractText(node: TipTapNode): string {
 
   if (node.type === MESSAGE_ACTION_NODE_TYPE) {
     return normalizeMessageActionAttrs(node.attrs)?.label || '';
+  }
+
+  if (node.type === 'tableRow') {
+    return (node.content || []).map((cell) => extractText(cell).replace(/\n$/, '')).join('\t') + '\n';
   }
 
   if (node.content && node.content.length > 0) {

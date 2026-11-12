@@ -563,7 +563,7 @@
     "@satorijs/element" "^2.5.1"
     cosmokit "^1.5.1"
 
-"@tiptap/core@^3.12.0":
+"@tiptap/core@^3.10.1", "@tiptap/core@^3.12.0":
   version "3.12.0"
 
 "@tiptap/extension-blockquote@^3.12.0":
@@ -645,6 +645,11 @@
 "@tiptap/extension-strike@^3.12.0":
   version "3.12.0"
 
+"@tiptap/extension-table@^3.10.1":
+  version "3.10.1"
+  resolved "https://registry.npmmirror.com/@tiptap/extension-table/-/extension-table-3.10.1.tgz"
+  integrity sha512-i18t1wfVHQjJIMlqIB0SCpP78bsoZDTFhhZBOLYDM0Q4KHY+zVkiZADkiY5zA8UFZiBuWC4eviqajCvq4XOvQw==
+
 "@tiptap/extension-text-align@^3.10.1":
   version "3.12.0"
 
@@ -660,7 +665,7 @@
 "@tiptap/extensions@^3.12.0":
   version "3.12.0"
 
-"@tiptap/pm@^3.12.0":
+"@tiptap/pm@^3.10.1", "@tiptap/pm@^3.12.0":
   version "3.12.0"
   dependencies:
     prosemirror-changeset "^2.3.0"

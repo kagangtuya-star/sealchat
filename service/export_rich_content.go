@@ -289,14 +289,23 @@ func richNodeFromTipTap(node *tiptapNode, includeImages, logStatic bool) *AgentR
 		return mention
 	}
 	result := &AgentRichNode{Type: mapTipTapRichNodeType(typ), Attrs: map[string]string{}}
-	if logStatic {
-		result.Attrs["textAlign"] = node.attrString("textAlign")
-	}
-	if level := node.attrString("level"); level != "" {
-		result.Attrs["level"] = level
-	}
-	if lang := firstNonEmpty(node.attrString("language"), node.attrString("lang")); lang != "" {
-		result.Attrs["language"] = lang
+	if typ == "tablecell" || typ == "tableheader" {
+		for _, key := range []string{"colspan", "rowspan", "colwidth"} {
+			if value, ok := node.Attrs[key]; ok {
+				data, _ := json.Marshal(value)
+				result.Attrs[key] = string(data)
+			}
+		}
+	} else {
+		if logStatic {
+			result.Attrs["textAlign"] = node.attrString("textAlign")
+		}
+		if level := node.attrString("level"); level != "" {
+			result.Attrs["level"] = level
+		}
+		if lang := firstNonEmpty(node.attrString("language"), node.attrString("lang")); lang != "" {
+			result.Attrs["language"] = lang
+		}
 	}
 	for _, child := range node.Content {
 		if converted := richNodeFromTipTap(child, includeImages, logStatic); converted != nil {
@@ -335,6 +344,8 @@ func mapTipTapRichNodeType(typ string) string {
 		return "heading"
 	case "paragraph":
 		return "paragraph"
+	case "table", "tablerow", "tablecell", "tableheader":
+		return typ
 	default:
 		return "paragraph"
 	}
