@@ -1647,7 +1647,7 @@ const quoteSummaryHtml = computed(() => {
     const imageHtml = index < 3
       ? `<img class="message-quote__image" src="${contentEscape(resolveAttachmentUrl(src))}" alt="图片" loading="lazy" decoding="async" />`
       : `<span class="message-quote__image-count">+${images.length - 3}</span>`;
-    html = html.replaceAll(`${marker}${index}\uE001`, imageHtml);
+    html = html.split(`${marker}${index}\uE001`).join(imageHtml);
   });
   return DOMPurify.sanitize(html);
 });

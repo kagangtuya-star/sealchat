@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { useMessage } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch, type ComponentPublicInstance } from 'vue'
+import { useMessage, type InputInst } from 'naive-ui'
 import { Settings } from '@vicons/ionicons5'
 import { useUtilsStore } from '@/stores/utils'
 import { useDisplayStore } from '@/stores/display'
@@ -150,7 +150,7 @@ interface SpeakerOption {
 
 const colorProfileRows = ref<ColorProfileRow[]>([])
 const editingColorProfileNameId = ref('')
-const colorProfileNameInputRefs = new Map<string, any>()
+const colorProfileNameInputRefs = new Map<string, InputInst>()
 const activeDaysByMonth = ref<Record<string, string[]>>({})
 const loadingMonths = ref<Set<string>>(new Set())
 let calendarMonthObserver: MutationObserver | null = null
@@ -390,7 +390,7 @@ const getRowDisplayName = (item: ColorProfileRow) => {
   return normalizeProfileText(item.customName || '') || item.label
 }
 
-const setColorProfileNameInputRef = (identityId: string, el: any) => {
+const setColorProfileNameInputRef = (identityId: string, el: InputInst | null) => {
   if (!identityId) {
     return
   }
@@ -1225,7 +1225,7 @@ onBeforeUnmount(() => {
             <div class="color-profile-item__name-row">
               <n-input
                 v-if="editingColorProfileNameId === item.identityId"
-                :ref="(el) => setColorProfileNameInputRef(item.identityId, el)"
+                :ref="(el: Element | ComponentPublicInstance | null) => setColorProfileNameInputRef(item.identityId, el as InputInst | null)"
                 v-model:value="item.customName"
                 size="small"
                 class="color-profile-item__name-input"

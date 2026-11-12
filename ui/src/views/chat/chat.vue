@@ -17611,7 +17611,7 @@ onBeforeUnmount(() => {
                 <n-checkbox
                   class="whisper-panel__checkbox"
                   :checked="isWhisperTarget(candidate)"
-                  @update:checked="(checked) => handleWhisperCandidateChecked(candidate, checked)"
+                  @update:checked="(checked: boolean) => handleWhisperCandidateChecked(candidate, checked)"
                   @click.stop
                 />
               </div>
@@ -18895,7 +18895,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="identity-folder-item__meta" v-if="item.folder">
                 <span class="identity-folder-item__count">{{ item.count }}</span>
-                <n-dropdown trigger="click" :options="folderActionOptions" @select="key => handleFolderAction(item.folder!, key)">
+                <n-dropdown trigger="click" :options="folderActionOptions" @select="(key: string | number) => handleFolderAction(item.folder!, key)">
                   <n-button quaternary text size="tiny">
                     <n-icon :component="DotsVertical" size="14" />
                   </n-button>
@@ -18938,7 +18938,7 @@ onBeforeUnmount(() => {
                 v-if="!isManagingBotIdentity"
                 class="identity-list__item-check"
                 :checked="identitySelection.includes(identity.id)"
-                @update:checked="val => handleIdentitySelection(identity.id, val)"
+                @update:checked="(val: boolean) => handleIdentitySelection(identity.id, val)"
               />
               <AvatarVue
                 :size="40"

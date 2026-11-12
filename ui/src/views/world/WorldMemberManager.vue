@@ -219,7 +219,7 @@ onMounted(() => {
     title="成员管理"
     class="sc-fluid-modal sc-manage-modal"
     :bordered="false"
-    @update:show="val => visible = val"
+    @update:show="(val: boolean) => visible = val"
   >
     <div class="sc-manage-modal__body">
       <div class="sc-manage-toolbar">
