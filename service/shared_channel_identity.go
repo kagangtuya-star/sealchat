@@ -1116,37 +1116,13 @@ func resolveSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceI
 	if err := tx.Where("id = ? AND deleted_at IS NULL", strings.TrimSpace(ref.AssetID)).Take(&source).Error; err != nil {
 		return nil, nil, err
 	}
-	allowed, err := sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, sourceVariantID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// A variant customizes a whole visual layer. When that layer still uses
-	// inherited base media, promote the validated base asset into variant scope
-	// instead of persisting a base-scoped reference in the variant patch.
-	if !allowed && sourceVariantID != "" && source.VariantID == "" {
-		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, "")
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if !allowed {
-		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
-	}
+	// Reused media may originate from any user, channel, identity, or variant.
+	// The caller validates its metadata and maps it into the target scope.
 	canonical, err := resolveSharedTheaterCanonicalAssetTx(tx, &source)
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, sourceVariantID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !allowed && sourceVariantID != "" && canonical.VariantID == "" {
-		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, "")
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if !allowed || canonical.Status != "ready" {
+	if canonical.Status != "ready" {
 		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
 	}
 	return &source, canonical, nil
