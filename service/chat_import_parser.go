@@ -267,36 +267,49 @@ func (p *ChatLogParser) parseMatchedLine(matches []string, rawLine string, lineN
 			entry.Content = strings.TrimSpace(matches[2])
 		}
 	default:
-		// 自定义正则：尝试智能解析
-		// 假设：如果有3+组且第一组像时间戳，则 组1=时间, 组2=角色, 组3=内容
-		// 否则：组1=角色, 组2=内容
-		if numGroups >= 3 && (p.looksLikeTimestamp(matches[1]) || (p.hasTimeGroup && strings.TrimSpace(matches[1]) == "")) {
-			entry.Timestamp = p.parseTimestamp(matches[1])
-			entry.RoleName = strings.TrimSpace(matches[2])
-			entry.Content = strings.TrimSpace(matches[3])
-		} else if numGroups >= 2 {
+		// 同时声明 role/content 时按命名组解析；time 可选。部分命名组继续沿用旧位置规则。
+		roleIndex := p.pattern.SubexpIndex("role")
+		timeIndex := p.pattern.SubexpIndex("time")
+		contentIndex := p.pattern.SubexpIndex("content")
+		if roleIndex > 0 && contentIndex > 0 {
+			entry.RoleName = strings.TrimSpace(matches[roleIndex])
+			entry.Content = strings.TrimSpace(matches[contentIndex])
+			if timeIndex > 0 && strings.TrimSpace(matches[timeIndex]) != "" {
+				entry.Timestamp = p.parseTimestamp(matches[timeIndex])
+			}
+			break
+		}
+
+		if numGroups >= 3 {
+			firstTime := p.parseTimestamp(matches[1])
+			secondTime := p.parseTimestamp(matches[2])
+			if firstTime != nil && secondTime == nil {
+				entry.Timestamp = firstTime
+				entry.RoleName = strings.TrimSpace(matches[2])
+				entry.Content = strings.TrimSpace(matches[3])
+				break
+			}
+			if firstTime == nil && secondTime != nil {
+				entry.Timestamp = secondTime
+				entry.RoleName = strings.TrimSpace(matches[1])
+				entry.Content = strings.TrimSpace(matches[3])
+				break
+			}
+			// 两者都像时间或都不是时间时沿用旧位置规则，并保留首个可选时间组为空的兼容行为。
+			if firstTime != nil || (p.hasTimeGroup && strings.TrimSpace(matches[1]) == "") {
+				entry.Timestamp = firstTime
+				entry.RoleName = strings.TrimSpace(matches[2])
+				entry.Content = strings.TrimSpace(matches[3])
+				break
+			}
+		}
+		if numGroups >= 2 {
 			entry.RoleName = strings.TrimSpace(matches[1])
 			entry.Content = strings.TrimSpace(matches[2])
 		}
 	}
 
 	return entry
-}
-
-// looksLikeTimestamp 检查字符串是否像时间戳
-func (p *ChatLogParser) looksLikeTimestamp(s string) bool {
-	// 检查是否包含时间相关格式
-	timePatterns := []string{
-		`\d{2}:\d{2}:\d{2}`,
-		`\d{4}-\d{2}-\d{2}`,
-		`\d{2}/\d{2}/\d{4}`,
-	}
-	for _, pattern := range timePatterns {
-		if matched, _ := regexp.MatchString(pattern, s); matched {
-			return true
-		}
-	}
-	return false
 }
 
 // parseTimestamp 解析时间戳
