@@ -91,7 +91,7 @@ const safeWorldAdminList = (admins: any[]) => admins.map((admin) => {
     role,
   }
 }).filter((admin): admin is { userId: string; displayName: string; avatar: string; role: 'owner' | 'admin' } => !!admin)
-const safeAttrs = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+const safeAttrs = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? JSON.parse(JSON.stringify(value)) as Record<string, any> : {}
 const safeCardAvatar = (value?: string) => safeString(resolveAttachmentUrl(value) || value)
 const safeCurrentCharacterCard = (card: CharacterCardData) => {
   const avatar = safeCardAvatar(card.avatarUrl)
