@@ -92,3 +92,4 @@ ui/src/features/tts/voice-catalog.test.mjs
 /doc/promo-video
 /bin/chrome-headless-shell
 /bin/qpdf
+api/channel_extension_test.go
