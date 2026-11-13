@@ -76,7 +76,9 @@ CSS 和 JavaScript 合计默认最多 1024 KiB；服务器管理员可以在 `co
 
 client 提供 `context`、`user/member/members`、`characters`、`characterCard`、`permissions`、`channel`、`connection`、`storage`、`events`、`attachments`、`messages`，方法参数与频道嵌入 API 相同。只有注入相应 Theater provider 的 Context 才提供 Theater 能力；普通世界脚本不隐式获得 provider。
 
-包声明、Context 实际提供的能力及当前用户真实权限共同决定 effective capabilities。`messages.send`、`characterCard.write`、`storage.write`、`events.publish` 和 `attachments.upload` 都属于写能力，observer/read-only 不可用。只有 `messages.send`、`storage.write` 和 `events.publish` 额外要求频道文本发送权限；`characterCard.write` 与 `attachments.upload` 不依赖频道发言权限，但仍要求有效频道成员身份和对应业务条件。管理编辑器和信任提示会标明写能力。`allowWorldJs` 继续作为世界脚本总闸门；服务端每次 storage、events 及扩展消息操作都读取实际包，校验启用、JS、世界归属、策略和能力声明。
+包声明、Context 实际提供的能力及当前用户真实权限共同决定 effective capabilities。`messages.send`、`characterCard.write`、`storage.write`、`events.publish` 和 `attachments.upload` 都属于写能力，observer/read-only 不可用。只有 `messages.send` 和 `events.publish` 额外要求频道文本发送权限；界面包的 `storage.write`、`characterCard.write` 与 `attachments.upload` 不依赖频道发言权限，但仍要求有效频道成员身份和对应业务条件。iForm 的存储写入继续要求发言权限。管理编辑器和信任提示会标明写能力。`allowWorldJs` 继续作为世界脚本总闸门；服务端每次 storage、events 及扩展消息操作都读取实际包，校验启用、JS、世界归属、策略和能力声明。
+
+平台包的有效启用状态为“平台全局启用，或当前世界引用启用且 `allowWorldCss` 允许”。脚本加载和频道 API 使用同一规则；平台全局停用不妨碍某个世界单独启用。撤销引用后，未全局启用的包立即失去该世界的 API 访问权，已有存储数据保留。拒绝原因会通过原有 `CAPABILITY_DENIED` 错误码的 message 返回，例如包未启用或未声明所需能力。
 
 浏览器信任绑定 package ID 与稳定的 `runtimeFingerprint`（规范化 JS hash + 排序后的能力列表）。新增、删除或更改能力都需要重新确认；仅调整能力顺序不改变指纹。空能力旧包沿用 `jsHash` 身份，兼容已有浏览器信任。信任并非权限授予，且同源脚本仍不是安全沙箱。
 
@@ -98,7 +100,7 @@ Storage 按 `channel + scopeType + scopeId` 隔离。界面包使用稳定的 `u
 
 Events 按 `channel + scopeType + scopeId + topic` 隔离，同一包可在不同用户之间通信；不能借 topic 访问另一包或 iForm。storage gateway 事件只包含元数据，值由共享 Context 授权读取，seq 缺口自动获取快照并产生 `resynced`。
 
-频道能力可以按权限要求分成几组。`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`permissions.read`、`storage.read` 和 `events.subscribe` 是读取或订阅能力。`characterCard.write` 与 `attachments.upload` 是写能力，但不要求频道文本发送权限。`storage.write`、`events.publish` 和 `messages.send` 同时要求频道文本发送权限。`theater.dialogue.subscribe` 与 `theater.character.read` 还要求宿主注入对应 Theater provider；普通世界脚本不会注入，所以即使包声明这两项，它们通常也不会出现在 effective capabilities 中。
+频道能力可以按权限要求分成几组。`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`permissions.read`、`storage.read` 和 `events.subscribe` 是读取或订阅能力。界面包的 `storage.write`、`characterCard.write` 与 `attachments.upload` 是写能力，但不要求频道文本发送权限。`events.publish` 和 `messages.send` 同时要求频道文本发送权限。`theater.dialogue.subscribe` 与 `theater.character.read` 还要求宿主注入对应 Theater provider；普通世界脚本不会注入，所以即使包声明这两项，它们通常也不会出现在 effective capabilities 中。
 
 ## 4. Surface
 
@@ -663,7 +665,7 @@ CSS 不依赖脚本，可以单独使用。导入为平台包时脚本直接运�
 
 Storage 写入、事件发布、消息发送、人物卡写入和图片上传都放在独立按钮后。消息测试会真实发送一条 OOC 消息；人物卡写入只在输入非空 JSON 对象后执行；图片上传要求手动选择文件。Storage 使用固定测试 key `channel-api-lab.win97`，可以在同一面板删除。
 
-权限测试时可以撤销当前用户的频道文本发送权限。此时 `messages.send`、`storage.write` 和 `events.publish` 应变为不可用；`characterCard.write` 与 `attachments.upload` 不应因为缺少文本发送权限而消失。切换 observer/read-only 后，所有写能力都应不可用。
+权限测试时可以撤销当前用户的频道文本发送权限。此时 `messages.send` 和 `events.publish` 应变为不可用；界面脚本的 `storage.write`、`characterCard.write` 与 `attachments.upload` 不应因为缺少文本发送权限而消失。iForm 的 `storage.write` 仍要求发言权限。切换 observer/read-only 后，所有写能力都应不可用。
 
 普通世界脚本没有 Theater provider。`theater.dialogue.subscribe` 与 `theater.character.read` 在测试窗中显示 `NO PROVIDER` 属于预期结果，不代表 capability 声明失效。
 

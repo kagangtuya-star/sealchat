@@ -204,7 +204,7 @@ export const createChannelExtensionContext = (deps: ChannelExtensionDeps) => {
     if (capability === 'theater.character.read' && !deps.theaterCharacterSource) return false
     if (capability === 'members.read' && (!deps.chat.curMember || deps.chat.observerMode)) return false
     if (isChannelExtensionWriteCapability(capability) && (!deps.chat.curMember || deps.chat.observerMode || deps.readOnly?.())) return false
-    if (requiresChannelTextSendPermission(capability) && !canWrite) return false
+    if (requiresChannelTextSendPermission(capability, deps.scope.type) && !canWrite) return false
     return true
   })
   const has = (capability: string) => effectiveCapabilities().includes(capability)

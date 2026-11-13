@@ -396,7 +396,7 @@ interface EmbedWorldAdmin {
 
 Capability 表示接口是否开放；Permission 摘要表示当前上下文中是否可执行。`isWorldAdmin` 只表示 World `owner/admin`，`isSystemAdmin` 表示系统 `mod_admin`，`canManageWorld` 为两者任一为真。不要用 `storage.write`、`messages.send` 反推管理员身份。权限可能运行时撤销，每次写操作仍由宿主和服务端校验；权限变化通过 `permissions.onChanged()` 或 `context.onChanged()` 更新。缺少 `world.admins.read` 时，管理员列表返回 `CAPABILITY_DENIED`。
 
-写能力并不都要求频道文本发送权限。`messages.send`、`storage.write` 和 `events.publish` 要求当前用户拥有频道文本发送权限；`characterCard.write` 与 `attachments.upload` 不依赖该权限，但仍要求有效成员身份、非 observer/read-only，并通过各自业务校验。这个区别同时适用于 iForm Host 与界面自定义包的无 UI Channel Extension Context。
+写能力并不都要求频道文本发送权限。`messages.send` 和 `events.publish` 要求当前用户拥有频道文本发送权限；iForm 的 `storage.write` 也要求该权限。界面自定义包的 `storage.write` 不依赖发言权限，允许有频道访问权的成员操作已授权脚本的存储。`characterCard.write` 与 `attachments.upload` 同样不依赖发言权限。所有写能力仍要求有效成员身份、非 observer/read-only，并通过各自业务校验。
 
 ### JSON Storage
 

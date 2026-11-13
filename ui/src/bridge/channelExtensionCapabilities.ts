@@ -1,3 +1,3 @@
 export const CHANNEL_EXTENSION_CAPABILITIES = ['context.read', 'user.read', 'members.read', 'world.admins.read', 'characters.read', 'characterCard.read', 'characterCard.write', 'permissions.read', 'storage.read', 'storage.write', 'events.subscribe', 'events.publish', 'messages.send', 'attachments.upload', 'theater.dialogue.subscribe', 'theater.character.read']
 export const isChannelExtensionWriteCapability = (capability: string) => ['messages.send', 'characterCard.write', 'storage.write', 'events.publish', 'attachments.upload'].includes(capability)
-export const requiresChannelTextSendPermission = (capability: string) => ['messages.send', 'storage.write', 'events.publish'].includes(capability)
+export const requiresChannelTextSendPermission = (capability: string, scopeType: 'iform' | 'ui-customization') => capability === 'messages.send' || capability === 'events.publish' || (capability === 'storage.write' && scopeType !== 'ui-customization')
