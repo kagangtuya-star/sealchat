@@ -37,6 +37,8 @@ jobs:
           node-version: 20
 
       - name: Build UI
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           cd ui
           npm config set registry https://registry.npmjs.org/
