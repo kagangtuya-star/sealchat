@@ -682,6 +682,7 @@ export interface AIConfig {
 }
 
 export interface AIFeatureCapability {
+  providerNames?: string[];
   key: string;
   enabled: boolean;
   userCustomOnly: boolean;

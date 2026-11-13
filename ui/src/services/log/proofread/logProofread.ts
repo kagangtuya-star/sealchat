@@ -7,7 +7,7 @@ import { buildAIPolishDiffTokens } from '@/services/ai/ai-polish-diff';
 
 export type ProofLint = (text: string) => string;
 export type ProofLevel = 'safe' | 'suggest';
-export type ProofRule = 'width' | 'space' | 'duplicate' | 'mixed' | 'period' | 'zhlint';
+export type ProofRule = 'width' | 'space' | 'duplicate' | 'mixed' | 'period' | 'zhlint' | 'ai_typo' | 'ai_punctuation' | 'ai_grammar';
 
 export const PROOF_RULE_LABELS: Record<ProofRule, string> = {
   width: '半角标点应为全角',
@@ -16,6 +16,9 @@ export const PROOF_RULE_LABELS: Record<ProofRule, string> = {
   mixed: '全半角标点混用',
   period: '中文后的半角句点',
   zhlint: '其他排版建议',
+  ai_typo: 'AI · 错别字',
+  ai_punctuation: 'AI · 标点',
+  ai_grammar: 'AI · 轻度语病',
 };
 
 export interface ProofIssue {
@@ -31,6 +34,10 @@ export interface ProofIssue {
   /** 原文上下文，仅用于展示。 */
   before: string;
   after: string;
+  source?: 'ai';
+  reason?: string;
+  /** 同位置同修改合并后，保留本地等级和 ID，同时标记 AI 来源。 */
+  aiConfirmed?: boolean;
 }
 
 export interface ProofEdit {
@@ -52,6 +59,7 @@ interface ParsedDocument {
   /** 把每个 run 的新文本写回并序列化；pieces[run][i] 对应 bounds[i] 开始的文本节点。 */
   write: (texts: string[][]) => string;
   pieces: string[][];
+  aiAllowed?: boolean[][];
 }
 
 type TipTapNode = { type?: unknown; text?: unknown; marks?: unknown; content?: unknown };
@@ -71,9 +79,13 @@ const hasCodeMark = (node: TipTapNode) => Array.isArray(node.marks)
 
 const parseTipTap = (doc: TipTapNode): ParsedDocument => {
   const groups: TipTapNode[][] = [];
-  const walk = (node: TipTapNode, inCode: boolean) => {
+  const allowed = new WeakSet<TipTapNode>();
+  const containers = new Set(['doc', 'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'listItem']);
+  const marks = new Set(['bold', 'italic', 'strike', 'underline', 'textStyle', 'highlight', 'subscript', 'superscript']);
+  const walk = (node: TipTapNode, inCode: boolean, aiSafe: boolean) => {
     if (!Array.isArray(node.content)) return;
     const code = inCode || node.type === 'codeBlock';
+    const safe = aiSafe && containers.has(String(node.type));
     let current: TipTapNode[] | null = null;
     for (const child of node.content as TipTapNode[]) {
       if (!child || typeof child !== 'object') {
@@ -87,16 +99,18 @@ const parseTipTap = (doc: TipTapNode): ParsedDocument => {
         }
         if (!current) groups.push((current = []));
         current.push(child);
+        if (safe && (!Array.isArray(child.marks) || child.marks.every((m: { type?: unknown }) => m && marks.has(String(m.type))))) allowed.add(child);
         continue;
       }
       current = null;
-      walk(child, code);
+      walk(child, code, safe);
     }
   };
-  walk(doc, false);
+  walk(doc, false, true);
   const pieces = groups.map((g) => g.map((n) => n.text as string));
   return {
     pieces,
+    aiAllowed: groups.map((g) => g.map((n) => allowed.has(n))),
     runs: pieces.map(runOf),
     write: (texts) => {
       groups.forEach((g, i) => g.forEach((n, j) => { n.text = texts[i][j]; }));
@@ -113,7 +127,8 @@ const parseLegacy = (raw: string): ParsedDocument => {
   const parts = raw.split(LEGACY_TAG);
   const textParts: number[] = [];
   // 代码、预格式与骰子结果里的文本保持原样；只按标签名配对，未闭合时保守地跳过其后全部文本。
-  const stack: Array<{ name: string; skip: boolean }> = [];
+  const stack: Array<{ name: string; skip: boolean; aiSkip: boolean }> = [];
+  const aiBlockedParts = new Set<number>();
   parts.forEach((part, index) => {
     if (index % 2 === 1) {
       if (part.startsWith('<!--') || /\/\s*>$/.test(part)) return;
@@ -127,14 +142,26 @@ const parseLegacy = (raw: string): ParsedDocument => {
       if (!open) return;
       const name = open[1].toLowerCase();
       if (name === 'br' || name === 'hr' || name === 'img') return;
-      stack.push({ name, skip: LEGACY_SKIP_OPEN.test(part) || /class\s*=\s*["'][^"']*dice/i.test(part) });
+      stack.push({ name, skip: LEGACY_SKIP_OPEN.test(part) || /class\s*=\s*["'][^"']*dice/i.test(part), aiSkip: /^(?:a|button|iframe|object|embed|svg|math|template|audio|video|select|textarea)$/.test(name) });
       return;
     }
-    if (part && !stack.some((s) => s.skip)) textParts.push(index);
+    if (part && !stack.some((s) => s.skip)) {
+      textParts.push(index);
+      if (stack.some((s) => s.aiSkip)) aiBlockedParts.add(index);
+    }
   });
   const pieces = textParts.map((i) => [parts[i]]);
+  // 旧格式可能把标签嵌进代码/特殊标记。按原始正文求保护区，避免分段后误暴露其内部文本。
+  const rawMask = aiProtectedMask(raw);
+  const offsets: number[] = [];
+  let offset = 0;
+  parts.forEach((part) => { offsets.push(offset); offset += part.length; });
   return {
     pieces,
+    aiAllowed: textParts.map((i) => {
+      const local = aiProtectedMask(parts[i]);
+      return [!aiBlockedParts.has(i) && !rawMask.slice(offsets[i], offsets[i] + parts[i].length).some((v, k) => v && !local[k])];
+    }),
     runs: pieces.map(runOf),
     write: (texts) => {
       const next = parts.slice();
@@ -189,6 +216,13 @@ const protectedMask = (text: string): Uint8Array => {
       mask.fill(1, m.index!, m.index! + m[0].length);
     }
   }
+  return mask;
+};
+
+const aiProtectedMask = (text: string): Uint8Array => {
+  const mask = protectedMask(text);
+  const extra = /~~~[\s\S]*?(?:~~~|(?![\s\S]))|```[\s\S]*?(?:```|(?![\s\S]))|!?\[[^\]\n]*\](?:\([^\n)]*\)|\[[^\]\n]*\])|[*_~`\\#[\]{}]|^[ \t]*(?:[-+>] |\d+\. )|^ {4}[^\n]*/gm;
+  for (const m of text.matchAll(extra)) mask.fill(1, m.index!, m.index! + m[0].length);
   return mask;
 };
 
@@ -302,6 +336,82 @@ const localCandidates = (text: string, from: number, to: number): Candidate[] =>
 
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 
+/** 插入点与相邻替换共享边界时也视为冲突，避免应用顺序影响结果。 */
+export const proofEditsConflict = (a: ProofEdit, b: ProofEdit): boolean => a.run === b.run && (
+  a.start === a.end || b.start === b.end
+    ? a.start <= b.end && b.start <= a.end
+    : overlaps(a, b)
+);
+
+export interface EditableProofFragment { run: number; start: number; end: number; text: string }
+
+/** 删除也可能把相邻文本拼成指令或链接，逐段比较未修改字符的保护状态。 */
+const preservesAIProtection = (before: string, after: string, edits: ProofEdit[]): boolean => {
+  const originalMask = aiProtectedMask(before);
+  const nextMask = aiProtectedMask(after);
+  let oldAt = 0;
+  let nextAt = 0;
+  const unchanged = (end: number) => {
+    while (oldAt < end) {
+      if (nextMask[nextAt] && !originalMask[oldAt]) return false;
+      oldAt++; nextAt++;
+    }
+    return true;
+  };
+  for (const edit of edits.slice().sort((a, b) => a.start - b.start)) {
+    if (!unchanged(edit.start) || nextMask.slice(nextAt, nextAt + edit.replacement.length).some(Boolean)) return false;
+    oldAt = edit.end;
+    nextAt += edit.replacement.length;
+  }
+  return unchanged(before.length);
+};
+
+/** AI 只接收单节点内的安全纯文本。Markdown 结构与链接整体跳过；不发送保护区作为上下文。 */
+export const editableProofFragments = (content: string): EditableProofFragment[] => {
+  if (/^\s*[\[{]/.test(content) && !isTipTapDoc(content)) {
+    try { JSON.parse(content); return []; } catch { /* 普通对白仍按保护区检查。 */ }
+  }
+  const doc = parseDocument(content);
+  const out: EditableProofFragment[] = [];
+  doc.runs.forEach((run, r) => {
+    const mask = aiProtectedMask(run.text);
+    for (const [from, to] of editableSlices(run.text, mask)) {
+      run.bounds.forEach((base, piece) => {
+        if (doc.aiAllowed?.[r]?.[piece] === false) return;
+        const start = Math.max(from, base);
+        const end = Math.min(to, run.bounds[piece + 1] ?? run.text.length);
+        if (end > start && run.text.slice(start, end).trim()) out.push({ run: r, start, end, text: run.text.slice(start, end) });
+      });
+    }
+  });
+  return out;
+};
+
+/** AI 写回时重新校验保护区与结构，不能只相信扫描阶段的定位。 */
+export const validAIProofEdit = (content: string, e: ProofEdit): boolean => {
+  if (!Number.isInteger(e.run) || !Number.isInteger(e.start) || !Number.isInteger(e.end) || e.start < 0 || e.end < e.start) return false;
+  if (e.original.length > 40 || e.replacement.length > 40 || e.original === e.replacement) return false;
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(e.replacement)) return false;
+  if (/[<>\[\]{}*_~`\\&\r\n\u0000-\u001f\u007f\ue000-\uf8ff]/.test(e.replacement)) return false;
+  // 轻度修改最多改变 12 个字符；长片段还必须保留过半原文。
+  const tokens = buildAIPolishDiffTokens(e.original, e.replacement);
+  const changed = tokens.filter((t) => t.type !== 'equal').reduce((n, t) => n + t.text.length, 0);
+  if (e.original.length > 4 && !tokens.some((t) => t.type === 'equal')) return false;
+  if (changed > 12 || (e.original.length > 16 && changed > e.original.length)) return false;
+  const doc = parseDocument(content);
+  const run = doc.runs[e.run];
+  if (!run || e.end > run.text.length) return false;
+  const splitsPair = (p: number) => p > 0 && /[\uD800-\uDBFF]/.test(run.text[p - 1]) && /[\uDC00-\uDFFF]/.test(run.text[p] || '');
+  if (splitsPair(e.start) || splitsPair(e.end)) return false;
+  if (e.start === e.end && run.bounds.slice(1).includes(e.start)) return false;
+  const piece = pieceAt(run.bounds, e.start);
+  if (!e.replacement && e.start === run.bounds[piece] && e.end === (run.bounds[piece + 1] ?? run.text.length)) return false;
+  const next = run.text.slice(0, e.start) + e.replacement + run.text.slice(e.end);
+  if (!preservesAIProtection(run.text, next, [e])) return false;
+  return editableProofFragments(content).some((f) => e.run === f.run && e.start >= f.start && e.end <= f.end
+    && f.text.slice(e.start - f.start, e.end - f.start) === e.original);
+};
+
 /**
  * 扫描一条正文。lint 为 null 时只运行本地规则。
  * 返回的 issue 互不重叠、按位置排序，且不跨越文本节点边界。
@@ -366,7 +476,8 @@ export const applyProofEdits = (content: string, edits: ProofEdit[]): string | n
     const run = doc.runs[e.run];
     if (!run || e.start < 0 || e.end > run.text.length || e.end < e.start) return null;
     if (run.text.slice(e.start, e.end) !== e.original) return null;
-    if (prev && prev.run === e.run && e.end > prev.start) return null;
+    if (prev && proofEditsConflict(prev, e)) return null;
+    if ('source' in e && e.source === 'ai' && !validAIProofEdit(content, e)) return null;
     const piece = pieceAt(run.bounds, e.start);
     const base = run.bounds[piece];
     const pieceEnd = run.bounds[piece + 1] ?? run.text.length;
@@ -374,6 +485,10 @@ export const applyProofEdits = (content: string, edits: ProofEdit[]): string | n
     const t = texts[e.run][piece];
     texts[e.run][piece] = t.slice(0, e.start - base) + e.replacement + t.slice(e.end - base);
     prev = e;
+  }
+  // 多处局部修改组合后也不能形成新的指令、链接或 Markdown 结构。
+  for (const run of new Set(sorted.filter((e) => 'source' in e && e.source === 'ai').map((e) => e.run))) {
+    if (!preservesAIProtection(doc.runs[run].text, texts[run].join(''), sorted.filter((e) => e.run === run))) return null;
   }
   return doc.write(texts);
 };

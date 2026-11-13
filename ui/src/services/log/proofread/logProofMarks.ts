@@ -7,7 +7,7 @@
 import { renderMessageBody } from '../logContent';
 import { sanitizeBodyHtml } from '../logTemplateCompiler';
 import type { FrameProofItem, FrameProofNode } from '../pagination/logFrameHost';
-import { applyProofEdits, PROOF_RULE_LABELS, type ProofIssue } from './logProofread';
+import { applyProofEdits, proofEditsConflict, PROOF_RULE_LABELS, type ProofIssue } from './logProofread';
 
 const OPEN = 0xe000;
 const CLOSE = 0xec00;
@@ -46,6 +46,20 @@ export const mapProofIssues = (content: string, issues: ProofIssue[]): ProofBody
   const ranges: Array<[number, number] | null> = issues.map(() => null);
   const usable = issues.slice(0, LIMIT);
   if (!usable.length) return { length: reference.length, ranges };
+  if (usable.some((issue, index) => usable.slice(0, index).some((other) => proofEditsConflict(issue, other)))) {
+    // 互斥方案不能在同一次哨兵写回中覆盖彼此；最多分四组映射，更多方案按消息显示。
+    const groups: Array<Array<{ issue: ProofIssue; index: number }>> = [];
+    usable.forEach((issue, index) => {
+      let group = groups.find((g) => !g.some((it) => proofEditsConflict(issue, it.issue)));
+      if (!group && groups.length < 4) groups.push((group = []));
+      group?.push({ issue, index });
+    });
+    for (const group of groups) {
+      const mapped = mapProofIssues(content, group.map((it) => it.issue));
+      group.forEach((it, k) => { ranges[it.index] = mapped.ranges[k]; });
+    }
+    return { length: reference.length, ranges };
+  }
   const marked = applyProofEdits(content, usable.map((issue, k) => ({
     run: issue.run,
     start: issue.start,
@@ -103,11 +117,12 @@ export const buildProofNode = (
         start: range ? range[0] : -1,
         end: range ? range[1] : -1,
         level: issue.level,
-        label: PROOF_RULE_LABELS[issue.rule],
+        label: `${issue.aiConfirmed && issue.source !== 'ai' ? '本地 + AI · ' : ''}${PROOF_RULE_LABELS[issue.rule]}`,
         original: issue.original,
         replacement: issue.replacement,
         before: issue.before,
         after: issue.after,
+        reason: [issue.reason, issues.some((other) => other !== issue && proofEditsConflict(issue, other)) ? '此处有互斥建议，请选择其中一项' : ''].filter(Boolean).join('；'),
       };
       if (!range) item.note = reason || UNMAPPED_NOTE;
       return item;

@@ -19,11 +19,16 @@ import {
 } from '@/services/log/proofread/logProofread';
 import { buildProofNode } from '@/services/log/proofread/logProofMarks';
 import { loadZhlintLint } from '@/services/log/proofread/zhlintRunner';
+import { mergeAIProofIssues, parseAIProofResponse, prepareAIProofBatchesAsync, runAIProofBatches, type AIProofBatch } from '@/services/log/proofread/logAIProofread';
+import { useAIStore } from '@/stores/ai';
+import { resolveLocalAIProfileForFeature } from '@/services/ai/local-ai';
+import type { AIRunSource } from '@/types';
 import { resolveDesignSpeakerName } from '@/services/log/logRenderer';
 import type { FrameEvent, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
 import type { LogDesignMessage, LogDraft, LogSection } from '@/types/log';
 import {
   commitProofApply,
+  decideProofIssues,
   planProofApply,
   proofDraftSizeError,
   proofDecisionKey,
@@ -31,6 +36,7 @@ import {
   undoProofApply,
   type ProofDecision,
   type ProofMessageResult,
+  type ProofMessageMeta,
   type ProofUndoRecord,
 } from '../logProofreadBatch';
 import { chapterTitle, chapterViews } from '../logChapterOps';
@@ -38,6 +44,7 @@ import LogProofReviewBar from './LogProofReviewBar.vue';
 
 const props = defineProps<{
   projectId: string;
+  worldId: string;
   draft: LogDraft;
   update: (mutate: (next: LogDraft) => void) => boolean;
   flush: () => Promise<boolean>;
@@ -67,6 +74,28 @@ const emit = defineEmits<{
 }>();
 
 const toast = useMessage();
+const ai = useAIStore();
+const mode = ref<'basic' | 'ai'>('basic');
+const aiBatches = shallowRef<AIProofBatch[]>([]);
+const aiEstimate = ref({ messageCount: 0, editableChars: 0 });
+const aiPrepared = ref(false);
+const aiStarted = ref(false);
+const aiInvalid = ref(false);
+const aiSource = ref<AIRunSource>('platform');
+const aiDestination = ref('');
+const aiWarning = ref('');
+let aiSnapshots = new Map<string, ProofMessageMeta>();
+let aiDraftSources = '';
+let aiSettingsSnapshot = '';
+const sourceOptions = computed(() => [{ value: 'platform', label: '平台 AI', disabled: ai.getFeatureCapability('log_proofread')?.userCustomOnly === true }, { value: 'user', label: '个人 API' }]);
+const aiStats = computed(() => ({
+  total: aiBatches.value.length,
+  success: aiBatches.value.filter((b) => b.status === 'succeeded').length,
+  failed: aiBatches.value.filter((b) => b.status === 'failed').length,
+  remaining: aiBatches.value.filter((b) => b.status !== 'succeeded').length,
+  discarded: aiBatches.value.reduce((n, b) => n + Object.values(b.discarded || {}).reduce((a, c) => a + c, 0), 0),
+}));
+const aiFeedback = computed(() => aiBatches.value.filter((b) => b.error || Object.keys(b.discarded || {}).length).map((b) => `第 ${b.id} 批：${b.error || Object.entries(b.discarded || {}).map(([reason, n]) => `${reason} ${n}`).join('、')}`).join('；'));
 const PAGE_LIMIT = 100;
 const CHECK_BATCH = 25;
 const UNDO_LIMIT = 10;
@@ -116,7 +145,7 @@ const scannedProject = ref('');
 const scannedScope = ref('');
 const scannedSourceVersions = shallowRef<Record<string, number>>({});
 const lintMode = ref<'zhlint' | 'local' | ''>('');
-const phase = ref<'' | 'load' | 'check' | 'apply'>('');
+const phase = ref<'' | 'load' | 'check' | 'ai' | 'apply'>('');
 const progress = ref({ done: 0, total: 0 });
 const scanError = ref('');
 const staleIds = ref<Set<string>>(new Set());
@@ -136,6 +165,7 @@ const cancel = () => {
   controller?.abort();
   controller = null;
   phase.value = '';
+  aiBatches.value = aiBatches.value.map((b) => b.status === 'running' ? { ...b, status: 'cancelled' } : b);
 };
 const reset = () => {
   cancel();
@@ -149,6 +179,114 @@ const reset = () => {
   staleIds.value = new Set();
   activeKey.value = null;
   resultOrder = new Map();
+  aiBatches.value = [];
+  aiPrepared.value = false;
+  aiStarted.value = false;
+  aiInvalid.value = false;
+  aiWarning.value = '';
+  aiSnapshots = new Map();
+};
+
+const draftSourceSnapshot = computed(() => JSON.stringify([props.sections.map((s) => [s.id, s.source]), props.draft.messageContentOverrides || {}]));
+const draftSourceKey = () => draftSourceSnapshot.value;
+const aiSettingsSnapshotValue = computed(() => JSON.stringify([ai.userProfiles, ai.userFeatureBindings, ai.currentSource, ai.resolveEffectiveSource('log_proofread', aiSource.value), ai.getFeatureCapability('log_proofread')]));
+const aiSettingsKey = () => aiSettingsSnapshotValue.value;
+
+const prepareAI = async (messages: ProofMessageMeta[], token: number, sourceKey: string, signal: AbortSignal) => {
+  await ai.loadCapabilities(props.worldId, props.projectId);
+  if (token !== seq) return;
+  await ai.loadUserAISettings();
+  if (token !== seq) return;
+  const sourceById = new Map(messages.map((m) => [m.messageId, m]));
+  const verifySnapshot = () => {
+    const version = scannedSourceVersions.value[props.windowSectionId];
+    if (sourceKey !== draftSourceKey()
+      || (version !== undefined && props.windowSourceVersion !== null && version !== props.windowSourceVersion)
+      || props.windowItems.some((it) => {
+        const snapshot = sourceById.get(it.message.id);
+        return snapshot && (it.message.isDeleted || it.message.content !== snapshot.original);
+      })) throw new Error('工程正文或来源在准备期间已变化，请重新扫描');
+  };
+  verifySnapshot();
+  const feature = ai.getFeatureCapability('log_proofread');
+  if (!feature?.enabled) throw new Error('LOG AI 校对未启用或无权使用，请联系管理员开启此功能');
+  aiSource.value = ai.resolveEffectiveSource('log_proofread', ai.currentSource);
+  if (aiSource.value === 'user') {
+    const { profile, model } = resolveLocalAIProfileForFeature({ featureKey: 'log_proofread', profiles: ai.userProfiles, featureBindings: ai.userFeatureBindings });
+    aiDestination.value = `${profile.name || profile.baseUrl} · ${model}`;
+  } else aiDestination.value = `${feature.providerNames?.join(' / ') || '平台配置的 AI 服务商'} · ${feature.defaultModel || '默认模型'}`;
+  const settingsKey = aiSettingsKey();
+  // 在可配置输入上限内，为系统提示词和额外上下文留余量；包装仍由分批器逐批精确计数。
+  const inputBudget = Math.min(8000, feature.params?.maxInputChars || 8000) - (feature.defaultPrompt?.length || 0) - 256;
+  const prepared = await prepareAIProofBatchesAsync(messages, inputBudget, signal);
+  if (token !== seq) return;
+  verifySnapshot();
+  if (settingsKey !== aiSettingsKey()) throw new Error('AI 来源或配置在准备期间已变化，请重新扫描');
+  aiBatches.value = prepared.batches;
+  aiEstimate.value = { messageCount: prepared.messageCount, editableChars: prepared.editableChars };
+  aiSnapshots = new Map(messages.map((m) => [m.messageId, m]));
+  aiDraftSources = sourceKey;
+  aiSettingsSnapshot = settingsKey;
+  aiPrepared.value = true;
+};
+
+const startAI = async (onlyBatch?: AIProofBatch) => {
+  if (busy.value || mode.value !== 'ai' || !aiPrepared.value || aiInvalid.value) return;
+  if (draftSourceKey() !== aiDraftSources || aiSettingsSnapshot !== aiSettingsKey()) {
+    aiInvalid.value = true;
+    scanError.value = '工程正文、来源或 AI 配置已变化，请重新扫描';
+    return;
+  }
+  const token = ++seq;
+  const projectId = props.projectId;
+  const ctrl = new AbortController();
+  controller = ctrl;
+  phase.value = 'ai';
+  aiStarted.value = true;
+  const sourceVersions = { ...scannedSourceVersions.value };
+  const current = () => token === seq && props.projectId === projectId && !aiInvalid.value && draftSourceKey() === aiDraftSources && aiSettingsSnapshot === aiSettingsKey();
+  const changed = () => {
+    if (!current()) return;
+    aiBatches.value = aiBatches.value.slice();
+    progress.value = { done: aiStats.value.success + aiStats.value.failed, total: aiStats.value.total };
+  };
+  try {
+    await runAIProofBatches({
+      batches: onlyBatch ? [onlyBatch] : aiBatches.value,
+      signal: ctrl.signal, isCurrent: current, changed,
+      request: async (batch, signal) => {
+        const versions = Object.fromEntries(batch.fragments.map((f) => [f.sectionId, sourceVersions[f.sectionId]]));
+        const response = await ai.runTask('log_proofread', { projectId, worldId: props.worldId, sourceVersions: versions, input: batch.input, source: aiSource.value }, { signal });
+        if (current() && 'warning' in response.data && response.data.warning) aiWarning.value = String(response.data.warning);
+        return response.data.result;
+      },
+      complete: async (batch, raw) => {
+        const parsed = parseAIProofResponse(raw, batch, aiSnapshots);
+        // 响应到达时再校验来源版本；跨章节不能只依赖当前窗口的缓存。
+        for (const sectionId of new Set(batch.fragments.map((f) => f.sectionId))) {
+          const page = await fetchLogSectionMessages(projectId, sectionId, null, 1, ctrl.signal);
+          if (!current()) return;
+          if (page.sourceVersion !== sourceVersions[sectionId]) {
+            aiInvalid.value = true;
+            scanError.value = '来源快照已失效，保留已完成结果；请重新扫描后继续 AI 校对';
+            throw new Error('来源快照已失效');
+          }
+        }
+        if (!current() || ctrl.signal.aborted) return;
+        batch.discarded = parsed.discarded;
+        const incoming = new Map(parsed.results.map((r) => [r.messageId, r]));
+        const next = results.value.map((r) => {
+          const add = incoming.get(r.messageId);
+          incoming.delete(r.messageId);
+          return add ? { ...r, issues: mergeAIProofIssues(r.issues, add.issues) } : r;
+        });
+        next.push(...incoming.values());
+        results.value = next.sort((a, b) => (resultOrder.get(a.messageId) ?? 0) - (resultOrder.get(b.messageId) ?? 0));
+      },
+    });
+  } finally {
+    if (token === seq) { phase.value = ''; controller = null; aiBatches.value = aiBatches.value.slice(); }
+  }
 };
 
 /** 读取范围内的消息：当前片段已完整加载时直接用窗口，其余片段按页读取（与工作台相同的接口）。 */
@@ -210,6 +348,7 @@ const scan = async () => {
     const needsRemote = scope.value !== 'selected' && (sectionIds.some((id) => id !== props.windowSectionId) || !props.windowComplete);
     if (needsRemote && !(await props.flush())) throw new Error(props.saveError || '草稿尚未保存成功，请稍后重试');
     if (token !== seq) return;
+    const sourceKey = draftSourceKey();
     let lint: ProofLint | null = null;
     try {
       lint = await loadZhlintLint();
@@ -223,16 +362,23 @@ const scan = async () => {
     const known = new Map(knownMessages.value);
     collected.items.forEach(({ item }) => known.set(item.message.id, item));
     knownMessages.value = known;
-    const targets = collected.items.filter(({ item }) => passesFilter(item));
+    const seen = new Set<string>();
+    const targets = collected.items.filter(({ item }) => {
+      if (!passesFilter(item) || seen.has(item.message.id)) return false;
+      seen.add(item.message.id);
+      return true;
+    });
     phase.value = 'check';
     progress.value = { done: 0, total: targets.length };
     const found: ProofMessageResult[] = [];
+    const snapshots: ProofMessageMeta[] = [];
     const overrides = props.draft.messageContentOverrides || {};
     for (let i = 0; i < targets.length; i += CHECK_BATCH) {
       for (const { sectionId, item } of targets.slice(i, i + CHECK_BATCH)) {
         const original = item.message.content || '';
         const source = overrides[item.message.id] ?? original;
         const issues = proofreadContent(source, lint);
+        snapshots.push({ messageId: item.message.id, sectionId, speaker: resolveDesignSpeakerName(item.message) || '未命名', createdAt: item.message.createdAt, source, original });
         if (issues.length) {
           found.push(toProofResult({
             messageId: item.message.id,
@@ -249,7 +395,7 @@ const scan = async () => {
       if (token !== seq) return;
     }
     if (props.projectId !== projectId) return;
-    resultOrder = new Map(found.map((r, index) => [r.messageId, index]));
+    resultOrder = new Map(snapshots.map((r, index) => [r.messageId, index]));
     results.value = found;
     scannedCount.value = targets.length;
     scannedProject.value = projectId;
@@ -260,6 +406,7 @@ const scan = async () => {
     // 直接进入审阅：选中当前排版窗口中的第一处批注（不为此切换章节）。
     const first = found.find((r) => r.sectionId === props.windowSectionId && props.windowItems.some((it) => it.message.id === r.messageId));
     if (first) activate(proofDecisionKey(first.messageId, first.issues[0].id));
+    if (mode.value === 'ai') await prepareAI(snapshots, token, sourceKey, ctrl.signal);
   } catch (error) {
     if (token !== seq || ctrl.signal.aborted) return;
     scanError.value = error instanceof Error && !('code' in error) ? error.message : describeLogError(error, '扫描失败');
@@ -303,6 +450,8 @@ const acceptedCount = computed(() => counts.value.accepted);
 const statusFilter = ref<StatusFilter>('all');
 const levelFilter = ref<ProofLevel | null>(null);
 const ruleFilter = ref<ProofRule | null>(null);
+const sourceFilter = ref<'local' | 'ai' | null>(null);
+const proofSourceOptions = [{ value: null, label: '全部来源' }, { value: 'local', label: '本地规则' }, { value: 'ai', label: 'AI 建议' }];
 const statusTabs = computed(() => [
   { value: 'all' as const, label: '全部', count: counts.value.all },
   { value: 'pending' as const, label: '待审', count: counts.value.pending },
@@ -314,28 +463,26 @@ const ruleOptions = computed(() => [
   ...counts.value.rules.map(([rule, n]) => ({ value: rule, label: `${PROOF_RULE_LABELS[rule]} · ${n}` })),
 ]);
 const matches = (e: ProofEntry) => {
+  if (sourceFilter.value === 'ai' && e.i.source !== 'ai' && !e.i.aiConfirmed) return false;
+  if (sourceFilter.value === 'local' && e.i.source === 'ai') return false;
   if (statusFilter.value !== 'all' && stateOf(e.key) !== statusFilter.value) return false;
   if (levelFilter.value && e.i.level !== levelFilter.value) return false;
   return !ruleFilter.value || e.i.rule === ruleFilter.value;
 };
 const filtered = computed(() => entries.value.filter(matches));
-const filterActive = computed(() => statusFilter.value !== 'all' || !!levelFilter.value || !!ruleFilter.value);
+const filterActive = computed(() => statusFilter.value !== 'all' || !!levelFilter.value || !!ruleFilter.value || !!sourceFilter.value);
 
 const setDecisionKey = (key: string, value: ProofDecision | null) => {
-  const next = { ...decisions.value };
-  if (value) next[key] = value;
-  else delete next[key];
-  decisions.value = next;
+  const outcome = decideProofIssues(results.value, decisions.value, [key], value);
+  decisions.value = outcome.decisions;
+  if (outcome.conflicts) toast.warning('该建议与已采纳的修改冲突，请先撤回另一项决定再选择');
 };
 /** 列表中的 ✓ / ✕ 为切换：再次点击撤回决定。 */
 const toggleDecision = (key: string, value: ProofDecision) => setDecisionKey(key, stateOf(key) === value ? null : value);
 const decideAll = (value: ProofDecision | null, list: ProofEntry[]) => {
-  const next = { ...decisions.value };
-  for (const e of list) {
-    if (value) next[e.key] = value;
-    else delete next[e.key];
-  }
-  decisions.value = next;
+  const outcome = decideProofIssues(results.value, decisions.value, list.map((e) => e.key), value);
+  decisions.value = outcome.decisions;
+  if (outcome.conflicts) toast.warning(`${outcome.conflicts} 处互斥建议未批量采纳，请逐项选择`);
 };
 const acceptSafe = () => decideAll('accepted', entries.value.filter((e) => e.i.level === 'safe' && stateOf(e.key) === 'pending'));
 const decideFiltered = (value: ProofDecision | null) => decideAll(value, filtered.value);
@@ -619,6 +766,17 @@ const apply = async () => {
       await yieldFrame();
       if (token !== seq || props.projectId !== projectId) return;
     }
+    // 上面的分页校验与让出主线程期间，覆盖正文或审核决定仍可能被修改。
+    // 在同步 mutation 前重算实际写入，避免旧计划覆盖用户刚编辑的草稿。
+    const finalPlan = planProofApply(
+      list.filter((r) => Object.prototype.hasOwnProperty.call(writes, r.messageId)),
+      decisions.value,
+      (id) => props.draft.messageContentOverrides?.[id],
+      (id) => currentOriginal(id) ?? verifiedOriginals.get(id),
+    );
+    for (const id of Object.keys(writes)) delete writes[id];
+    Object.assign(writes, finalPlan.writes);
+    stale.push(...finalPlan.stale);
     const originals = new Map(list.map((r) => [r.messageId, r.original]));
     const count = Object.keys(writes).length;
     const done = new Set(Object.keys(writes));
@@ -722,6 +880,20 @@ watch(() => props.projectId, () => {
   markCache.clear();
   missedKeys.value = new Set();
 });
+watch([draftSourceKey, aiSettingsKey, () => props.windowItems, () => props.windowSourceVersion], () => {
+  if (!aiPrepared.value || aiInvalid.value) return;
+  const changed = draftSourceKey() !== aiDraftSources || aiSettingsKey() !== aiSettingsSnapshot
+    || props.windowItems.some((it) => {
+      const snapshot = aiSnapshots.get(it.message.id);
+      return snapshot && (it.message.isDeleted || it.message.content !== snapshot.original);
+    });
+  const version = scannedSourceVersions.value[props.windowSectionId];
+  if (changed || (version !== undefined && props.windowSourceVersion !== null && version !== props.windowSourceVersion)) {
+    aiInvalid.value = true;
+    if (phase.value === 'ai') cancel();
+    scanError.value = '校对来源或配置已变化，保留已完成结果；继续 AI 校对前请重新扫描';
+  }
+});
 watch(results, (list) => {
   const live = new Set(list.map((r) => r.messageId));
   for (const id of markCache.keys()) if (!live.has(id)) markCache.delete(id);
@@ -740,6 +912,7 @@ const phaseText = computed(() => ({
   '': '',
   load: scope.value === 'selected' ? '准备中…' : `读取消息 · 片段 ${progress.value.done}/${progress.value.total}`,
   check: `检查中 · ${progress.value.done}/${progress.value.total} 条`,
+  ai: `AI 批次 · ${aiStats.value.success} 成功 / ${aiStats.value.failed} 失败 / 共 ${aiStats.value.total} 批`,
   apply: `应用中 · ${progress.value.done}/${progress.value.total} 条`,
 }[phase.value]));
 const reviewedPercent = computed(() => (counts.value.all ? Math.round((counts.value.decided / counts.value.all) * 100) : 0));
@@ -753,6 +926,8 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
   <div class="log-proof">
     <!-- 扫描设置：未扫描时展开；有结果后收起为一行摘要 -->
     <section v-if="showSetup" class="log-proof__setup" aria-label="校对范围">
+      <n-select v-model:value="mode" size="small" :disabled="busy" :options="[{ value: 'basic', label: '基础校对（本地）' }, { value: 'ai', label: 'AI 综合校对' }]" aria-label="校对模式" />
+      <n-select v-if="mode === 'ai'" :value="ai.resolveEffectiveSource('log_proofread', ai.currentSource)" :options="sourceOptions" size="small" :disabled="busy" aria-label="AI 来源" @update:value="ai.setSource" />
       <div class="log-proof__seg" role="radiogroup" aria-label="校对范围">
         <button
           v-for="o in scopeOptions"
@@ -782,16 +957,31 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
         <n-button v-if="phase === 'load' || phase === 'check'" @click="cancel">取消</n-button>
         <n-button v-else-if="scanned" quaternary @click="setupOpen = false">收起</n-button>
       </div>
-      <p v-if="!scanned" class="log-proof__muted">在本地检查中文标点。采纳的修改只写入当前 LOG 工程，不修改聊天原消息。</p>
+      <p v-if="!scanned" class="log-proof__muted">{{ mode === 'ai' ? '先完成基础校对并准备 AI 批次，确认发送后补充错别字、标点和轻度语病建议。' : '在本地检查中文标点。' }}采纳的修改只写入当前 LOG 工程，不修改聊天原消息。</p>
+    </section>
+
+    <section v-if="aiPrepared" class="log-proof__setup" aria-label="AI 校对批次">
+      <p class="log-proof__muted">将向 {{ aiSource === 'user' ? '个人 API' : '平台 AI' }}（{{ aiDestination }}）发送所选范围内筛选后的 {{ aiEstimate.messageCount }} 条消息、{{ aiEstimate.editableChars }} 个可编辑字符，预计 {{ aiStats.total }} 次请求。字符数不代表精确费用。</p>
+      <p v-if="aiStarted" class="log-proof__muted">已完成 {{ aiStats.success }}/{{ aiStats.total }} 批，失败 {{ aiStats.failed }} 批，丢弃 {{ aiStats.discarded }} 项无效建议。取消会停止后续批次，已发出的请求仍可能计费；重试失败批次也可能再次计费。</p>
+      <div class="log-proof__setup-actions">
+        <n-button v-if="aiStats.remaining" size="small" :disabled="busy || aiInvalid || mode !== 'ai'" @click="startAI()">{{ aiStarted ? '继续未完成批次' : '确认发送并运行 AI' }}</n-button>
+        <n-button v-if="phase === 'ai'" size="small" @click="cancel">取消 AI</n-button>
+        <template v-for="batch in aiBatches" :key="batch.id">
+          <n-button v-if="batch.status === 'failed'" size="tiny" quaternary :disabled="busy || aiInvalid || mode !== 'ai'" @click="startAI(batch)">重试第 {{ batch.id }} 批</n-button>
+        </template>
+      </div>
+      <p v-if="aiFeedback" class="log-proof__muted is-warn">{{ aiFeedback }}</p>
+      <p v-if="aiWarning" class="log-proof__muted is-warn">{{ aiWarning }}</p>
     </section>
 
     <div v-if="busy" class="log-proof__progress" role="status" aria-live="polite">
       <span>{{ phaseText }}</span>
+      <n-button v-if="!showSetup && (phase === 'load' || phase === 'check')" size="tiny" text @click="cancel">取消</n-button>
       <n-progress type="line" :percentage="progressPercent" :show-indicator="false" :height="4" :processing="phase === 'load'" />
     </div>
     <n-alert v-if="scanError" type="error" :show-icon="false" class="log-proof__alert">{{ scanError }}</n-alert>
 
-    <template v-if="scanned && !(busy && phase !== 'apply')">
+    <template v-if="scanned && !(busy && phase !== 'apply' && phase !== 'ai')">
       <!-- 概览：进度、摘要与审阅层开关 -->
       <section class="log-proof__summary">
         <div class="log-proof__summary-head">
@@ -846,6 +1036,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
           <button type="button" class="log-proof__chip is-safe" :class="{ 'is-on': levelFilter === 'safe' }" :aria-pressed="levelFilter === 'safe'" @click="levelFilter = levelFilter === 'safe' ? null : 'safe'">可自动</button>
           <button type="button" class="log-proof__chip is-suggest" :class="{ 'is-on': levelFilter === 'suggest' }" :aria-pressed="levelFilter === 'suggest'" @click="levelFilter = levelFilter === 'suggest' ? null : 'suggest'">待确认</button>
           <n-select v-model:value="ruleFilter" class="log-proof__rule" size="tiny" :options="ruleOptions" :consistent-menu-width="false" aria-label="按规则筛选" />
+          <n-select v-model:value="sourceFilter" class="log-proof__rule" size="tiny" :options="proofSourceOptions" :consistent-menu-width="false" aria-label="按来源筛选" />
         </div>
         <div class="log-proof__batch">
           <span>{{ filterActive ? `筛选结果 ${filtered.length} 处` : `全部 ${filtered.length} 处` }}</span>
@@ -894,12 +1085,12 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
               role="button"
               tabindex="0"
               :aria-current="row.e.key === activeKey ? 'true' : undefined"
-              :title="PROOF_RULE_LABELS[(row.e as ProofEntry).i.rule]"
+              :title="[PROOF_RULE_LABELS[(row.e as ProofEntry).i.rule], row.e.i.reason].filter(Boolean).join('：')"
               @click="activate(row.e.key)"
               @keydown.enter.self.prevent="activate(row.e.key)"
             >
               <span class="log-proof__change">
-                <del>{{ showText(row.e.i.original) }}</del><ins :class="{ 'is-empty': !row.e.i.replacement }">{{ row.e.i.replacement ? showText(row.e.i.replacement) : '删' }}</ins>
+                <small v-if="row.e.i.source === 'ai' || row.e.i.aiConfirmed">AI</small><del>{{ row.e.i.original ? showText(row.e.i.original) : '插入' }}</del><ins :class="{ 'is-empty': !row.e.i.replacement }">{{ row.e.i.replacement ? showText(row.e.i.replacement) : '删' }}</ins>
               </span>
               <span class="log-proof__ctx">{{ row.e.i.before }}<b>{{ row.e.i.original }}</b>{{ row.e.i.after }}</span>
               <i v-if="unmappedKeys.has(row.e.key)" class="log-proof__loose" title="无法在排版中精确定位，按原文显示" />
@@ -932,7 +1123,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
           type="primary"
           class="log-proof__apply"
           :loading="phase === 'apply'"
-          :disabled="!canEditDraft || !supportsContentOverrides || !acceptedCount"
+          :disabled="!canEditDraft || !supportsContentOverrides || !acceptedCount || busy"
           @click="apply"
         >应用 {{ acceptedCount }} 处修改</n-button>
         <n-button v-if="undoStack.length" secondary :disabled="!canEditDraft || !supportsContentOverrides || busy" :title="`撤销上次应用（${undoStack[0].count} 条消息）`" @click="undoLast">

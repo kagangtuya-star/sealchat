@@ -322,6 +322,7 @@ func TestAdminAIConfigUpdatePersistsIncomingProviderAPIKey(t *testing.T) {
 				"weight":  1,
 			}},
 			"features": map[string]any{
+				"log_proofread": map[string]any{"enabled": true, "defaultPrompt": "custom proofreading prompt", "defaultModel": "deepseek-v4-flash", "params": map[string]any{}, "access": map[string]any{"mode": "users", "userIds": []string{"proofreader"}}},
 				"polish": map[string]any{
 					"enabled":       true,
 					"defaultPrompt": "prompt",
@@ -365,6 +366,9 @@ func TestAdminAIConfigUpdatePersistsIncomingProviderAPIKey(t *testing.T) {
 	}
 	if got := appConfig.AI.Providers[0].APIKey; got != "new-secret" {
 		t.Fatalf("APIKey = %q, want %q", got, "new-secret")
+	}
+	if feature := appConfig.AI.Features["log_proofread"]; !feature.Enabled || feature.DefaultPrompt != "custom proofreading prompt" || feature.Access.Mode != utils.AIFeatureAccessUsers || len(feature.Access.UserIDs) != 1 {
+		t.Fatalf("proofreading config lost: %+v", feature)
 	}
 	rawConfig, err := os.ReadFile(filepath.Join(tmpDir, "config.yaml"))
 	if err != nil {

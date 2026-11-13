@@ -181,6 +181,7 @@ export function resolveLocalAIProfileForFeature(options: {
   const featureKey = String(options.featureKey || '').trim()
   const binding = normalizeFeatureBinding(options.featureBindings?.[featureKey])
   const enabledProfiles = options.profiles.filter((item) => item.enabled)
+  if (featureKey === 'log_proofread' && !binding) throw new Error('请先在个人信息的 AI 设置中为 LOG 综合校对绑定 API 和模型')
   if (binding) {
     const profile = enabledProfiles.find((item) => item.id === binding.providerId)
     if (!profile) {
@@ -208,6 +209,7 @@ export async function runLocalAIChat(options: {
   feature?: AIFeatureCapability | null
   profiles: UserAIProviderProfile[]
   featureBindings?: Record<string, UserAIFeatureBinding>
+  signal?: AbortSignal
 }): Promise<{ result: string; model: string; providerId: string }> {
   const feature = options.feature
   if (!feature?.enabled) {
@@ -242,6 +244,7 @@ export async function runLocalAIChat(options: {
       top_p: feature.params?.topP,
       max_tokens: feature.params?.maxTokens,
     }),
+    signal: options.signal,
   })
 
   let payload: any = null

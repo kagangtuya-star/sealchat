@@ -399,7 +399,7 @@ const panelItems: Array<{ key: PanelTab; label: string; hint: string; icon: Comp
   { key: 'bulk', label: '批量', hint: '批量修改历史消息外观', icon: Users },
   { key: 'assets', label: '素材', hint: '当前 LOG 的图片素材与样式资源', icon: Photo },
   { key: 'publish', label: '发布', hint: '发布前检查与发布管理', icon: Rocket },
-  { key: 'proofread', label: '校对', hint: '本地批量校对中文标点，只修改当前 LOG 工程', icon: Writing },
+  { key: 'proofread', label: '校对', hint: '批量标点与 AI 综合校对，仅修改当前 LOG 工程', icon: Writing },
 ];
 const panelTab = ref<PanelTab>('elements');
 // 校对审阅中心按需挂载，首次打开后保持挂载；它驱动画布上的审阅层（批注与审阅状态经 iframe 协议传入）。
@@ -1655,6 +1655,7 @@ onBeforeUnmount(() => {
               ref="proofreadPanelRef"
               v-show="panelTab === 'proofread'"
               :project-id="projectId"
+              :world-id="context.worldId"
               :draft="draft"
               :update="draftCtl.update"
               :flush="draftCtl.flush"

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,29 @@ import (
 
 	"github.com/knadh/koanf/v2"
 )
+
+func TestLogProofreadConfigRoundTrip(t *testing.T) {
+	defaults := NormalizeAIConfig(AIConfig{}).Features["log_proofread"]
+	if defaults.Enabled || defaults.Params.MaxInputChars != 8000 || defaults.Params.Temperature == nil || *defaults.Params.Temperature != float32(0.1) || !strings.Contains(defaults.DefaultPrompt, `"suggestions"`) {
+		t.Fatalf("unsafe proofreading defaults: %+v", defaults)
+	}
+	cfg := NormalizeAIConfig(AIConfig{Enabled: true, Features: map[string]AIFeatureConfig{"log_proofread": {
+		Enabled: true, UserCustomOnly: true, DefaultPrompt: "custom protocol prompt", DefaultModel: "custom-model",
+		Access: AIFeatureAccessConfig{Mode: AIFeatureAccessWorlds, WorldIDs: []string{"world"}},
+	}}})
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved AIConfig
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	feature := NormalizeAIConfig(saved).Features["log_proofread"]
+	if !feature.Enabled || !feature.UserCustomOnly || feature.DefaultPrompt != "custom protocol prompt" || feature.DefaultModel != "custom-model" || feature.Access.Mode != AIFeatureAccessWorlds || len(feature.Access.WorldIDs) != 1 || feature.Params.MaxInputChars != 8000 {
+		t.Fatalf("proofreading config lost on save: %+v", feature)
+	}
+}
 
 func TestDefaultImageBaseURLIPv6(t *testing.T) {
 	got := defaultImageBaseURL("[2001:db8::1]:4000")

@@ -85,6 +85,7 @@ const aiProfileRefreshing = ref<Record<string, boolean>>({});
 const AI_FEATURE_OPTIONS = [
   { key: 'polish', label: '润色' },
   { key: 'battle_summary', label: '战报总结' },
+  { key: 'log_proofread', label: 'LOG 综合校对' },
 ];
 
 // Captcha state

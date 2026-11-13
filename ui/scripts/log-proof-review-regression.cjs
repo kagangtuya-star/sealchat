@@ -95,6 +95,10 @@ async function check(r, p, m, c) {
   const md = p.proofreadContent(samples.markdown, null);
   const mdMap = m.mapProofIssues(samples.markdown, md);
   ok(mdMap.ranges[0][0] === 2, 'markdown: 去掉 ** 标记后位置前移');
+  const alternatives = [{ id: 'ai-a', run: 0, start: 1, end: 3, original: '以经', replacement: '已经', rule: 'ai_typo', level: 'suggest', source: 'ai', before: '我', after: '回来了' }];
+  alternatives.push({ ...alternatives[0], id: 'ai-b', replacement: '早已' });
+  const alternativesMap = m.mapProofIssues('我以经回来了', alternatives);
+  ok(alternativesMap.ranges.every((range) => range && range[0] === 1 && range[1] === 3), 'AI 互斥方案仍分别映射到同一原文位置');
 
   // 2. 分页运行时：多页、跨分片、模板嵌套槽位、合并与校验。
   const entries = [];
@@ -166,6 +170,19 @@ async function check(r, p, m, c) {
   posted.length = 0;
   hooks.setProofMarks([{ ...nodes[0], length: nodes[0].length + 1 }]);
   ok(posted.find((msg) => msg.type === 'proofMapped').missed.length === nodes[0].items.length, '长度不一致时整条消息降级');
+
+  // AI 纯插入的零长度区间保守降级，理由使用纯文本显示，不能污染正文。
+  const insertIssue = { id: 'ai-insert', run: 0, start: 1, end: 1, original: '', replacement: '，',
+    rule: 'ai_punctuation', level: 'suggest', source: 'ai', reason: '补充标点 <img src=x onerror=alert(1)>', before: '第', after: ' 1 条' };
+  const insertNode = m.buildProofNode('m1', list[1].message.content, [insertIssue], keyOf('m1'), null);
+  ok(insertNode.items[0].start === -1 && !!insertNode.items[0].note, 'AI 插入降级为消息级批注');
+  hooks.setProofMarks([insertNode]);
+  hooks.setProofView({ active: insertNode.items[0].key, states: {}, position: { index: 1, total: 1 } });
+  hooks.proofReveal(insertNode.items[0].key);
+  hooks.drawProof();
+  const insertCard = document.querySelector('.log-proof-note.is-active');
+  ok(!!insertCard && insertCard.textContent.includes('AI · 标点') && insertCard.textContent.includes(insertIssue.reason), '已有批注显示 AI 分类和理由');
+  ok(!insertCard.querySelector('img') && document.querySelector('#log-root').innerHTML === before, 'AI 理由不执行 HTML，不写正文 DOM');
 
   // 5. 打印与关闭：不留下任何审阅痕迹。
   hooks.setProofMarks(nodes);

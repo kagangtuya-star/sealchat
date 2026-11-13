@@ -1276,6 +1276,7 @@
     if (pos && pos.total) head.appendChild(el('span', 'log-proof-card__pos', pos.index + ' / ' + pos.total));
     node.appendChild(head);
     node.appendChild(proofDiff(item, 'log-proof-card__diff'));
+    if (item.reason) node.appendChild(el('div', 'log-proof-card__note', item.reason));
     if (!m.ranges) {
       var ctx = el('div', 'log-proof-card__ctx');
       ctx.appendChild(document.createTextNode('…' + (item.before || '')));

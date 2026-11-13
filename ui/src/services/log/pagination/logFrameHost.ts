@@ -68,6 +68,7 @@ export type FrameProofDecision = 'accepted' | 'rejected';
  * start 为 -1 表示无法可靠定位，审阅层只把批注锚定到整条消息，不猜测字符位置。
  */
 export interface FrameProofItem {
+  reason?: string;
   key: string;
   start: number;
   end: number;

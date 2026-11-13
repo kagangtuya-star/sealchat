@@ -262,7 +262,7 @@ test('版本能力保护：旧后端只能预览校对结果，不得提交正�
   const panel = read('views/log/components/LogProofreadPanel.vue');
   const workbench = read('views/log/components/LogWorkbench.vue');
   assert.match(panel, /!props\.supportsContentOverrides \|\| busy\.value/);
-  assert.match(panel, /:disabled="!canEditDraft \|\| !supportsContentOverrides \|\| !acceptedCount"/);
+  assert.match(panel, /:disabled="!canEditDraft \|\| !supportsContentOverrides \|\| !acceptedCount \|\| busy"/);
   assert.match(workbench, /:supports-content-overrides="caps\.supportsContentOverrides === true"/);
   assert.match(workbench, /delete next\.messageContentOverrides/);
 });
