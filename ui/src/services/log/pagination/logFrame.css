@@ -301,3 +301,150 @@ html:has(> body.log-design)::-webkit-scrollbar-button { display: none; }
   .log-design.log-relocating .log-node.log-relocate-source.log-selected { outline: none; }
   .log-design.log-multi .log-node::before { display: none !important; }
 }
+
+/* ---- 校对审阅层：编辑器辅助 UI，只在设计态预览出现；不参与测量与分页，打印时整体隐藏 ---- */
+.log-design.log-review-gutter #log-root { padding-right: calc(24px + var(--log-review-gutter, 0px)); }
+.log-proof-pointer .log-node { cursor: pointer; }
+::highlight(log-proof-suggest) { background-color: rgba(217, 119, 6, 0.13); text-decoration: underline wavy rgba(217, 119, 6, 0.95); text-decoration-thickness: 1px; }
+::highlight(log-proof-safe) { background-color: rgba(79, 70, 229, 0.1); text-decoration: underline wavy rgba(79, 70, 229, 0.85); text-decoration-thickness: 1px; }
+::highlight(log-proof-accepted) { background-color: rgba(22, 163, 74, 0.16); text-decoration: underline solid rgba(22, 163, 74, 0.9); text-decoration-thickness: 1.5px; }
+::highlight(log-proof-rejected) { background-color: transparent; text-decoration: underline dotted rgba(100, 116, 139, 0.7); text-decoration-thickness: 1px; }
+::highlight(log-proof-hover) { background-color: rgba(47, 111, 222, 0.16); }
+::highlight(log-proof-active) { background-color: rgba(47, 111, 222, 0.26); text-decoration: underline solid #2f6fde; text-decoration-thickness: 2px; }
+
+.log-proof-layer {
+  --log-proof-surface: #ffffff;
+  --log-proof-fg: #1f2329;
+  --log-proof-muted: #667085;
+  --log-proof-line: rgba(15, 23, 42, 0.12);
+  --log-proof-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 4px 14px rgba(15, 23, 42, 0.1);
+  --log-proof-del: #b42318;
+  --log-proof-del-bg: rgba(180, 35, 24, 0.08);
+  --log-proof-ins: #067647;
+  --log-proof-ins-bg: rgba(6, 118, 71, 0.1);
+  --log-proof-safe: #4f46e5;
+  --log-proof-suggest: #d97706;
+  --log-proof-accepted: #16a34a;
+  --log-proof-rejected: #94a3b8;
+  position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 30;
+  pointer-events: none;
+  font: 12px/1.45 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--log-proof-fg);
+  overflow-wrap: anywhere; line-break: auto;
+}
+.log-canvas-dark .log-proof-layer {
+  --log-proof-surface: #24272f;
+  --log-proof-fg: rgba(255, 255, 255, 0.92);
+  --log-proof-muted: rgba(255, 255, 255, 0.58);
+  --log-proof-line: rgba(255, 255, 255, 0.12);
+  --log-proof-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.35);
+  --log-proof-del: #ff8a80;
+  --log-proof-del-bg: rgba(255, 138, 128, 0.12);
+  --log-proof-ins: #6ee7a8;
+  --log-proof-ins-bg: rgba(110, 231, 168, 0.12);
+  --log-proof-safe: #a5b4fc;
+  --log-proof-suggest: #fbbf24;
+  --log-proof-accepted: #4ade80;
+  --log-proof-rejected: #64748b;
+}
+.log-proof-layer > * { position: absolute; left: 0; top: 0; }
+.log-proof-wire { width: 1px; height: 1px; overflow: visible; }
+.log-proof-wire path { fill: none; stroke: var(--log-selection); stroke-width: 1.25; stroke-linejoin: round; opacity: 0.75; }
+
+.log-proof-note {
+  --log-proof-tone: var(--log-proof-suggest);
+  box-sizing: border-box; pointer-events: auto; cursor: pointer;
+  padding: 4px 8px 4px 10px; border-radius: 7px;
+  background: var(--log-proof-surface);
+  border: 1px solid var(--log-proof-line);
+  box-shadow: var(--log-proof-shadow), inset 3px 0 0 var(--log-proof-tone);
+  transition: transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1), box-shadow 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  will-change: transform;
+}
+.log-proof-note.is-safe { --log-proof-tone: var(--log-proof-safe); }
+.log-proof-note.is-accepted { --log-proof-tone: var(--log-proof-accepted); }
+.log-proof-note.is-rejected { --log-proof-tone: var(--log-proof-rejected); opacity: 0.72; }
+.log-proof-note.is-hover, .log-proof-note:focus-visible { border-color: color-mix(in srgb, var(--log-selection) 55%, var(--log-proof-line)); outline: none; }
+.log-proof-note.is-loose { border-style: dashed; }
+.log-proof-note.is-active {
+  cursor: default; padding: 9px 10px 8px 12px; opacity: 1; z-index: 2;
+  border-color: color-mix(in srgb, var(--log-selection) 65%, var(--log-proof-line));
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08), 0 12px 32px rgba(15, 23, 42, 0.18), inset 3px 0 0 var(--log-proof-tone);
+}
+.log-proof-note__diff, .log-proof-card__diff { display: flex; align-items: baseline; gap: 5px; min-width: 0; flex-wrap: wrap; }
+.log-proof-note__diff { white-space: nowrap; overflow: hidden; flex-wrap: nowrap; }
+.log-proof-layer del, .log-proof-layer ins {
+  padding: 0 3px; border-radius: 3px; font-family: inherit; font-size: 13px; white-space: pre-wrap;
+}
+.log-proof-layer del { color: var(--log-proof-del); background: var(--log-proof-del-bg); text-decoration: line-through; text-decoration-thickness: 1px; }
+.log-proof-layer ins { color: var(--log-proof-ins); background: var(--log-proof-ins-bg); text-decoration: none; font-weight: 600; }
+.log-proof-layer ins.is-empty { font-weight: 500; font-size: 11px; }
+.log-proof-layer i { font-style: normal; color: var(--log-proof-muted); font-size: 11px; }
+.log-proof-note.is-accepted .log-proof-note__diff del { opacity: 0.6; }
+.log-proof-note.is-rejected .log-proof-note__diff ins { text-decoration: line-through; opacity: 0.7; }
+
+.log-proof-card__head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; min-width: 0; }
+.log-proof-card__label { flex: 1 1 auto; min-width: 0; color: var(--log-proof-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-proof-card__pos { flex: none; color: var(--log-proof-muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+.log-proof-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 18px; color: var(--log-proof-suggest); background: color-mix(in srgb, var(--log-proof-suggest) 14%, transparent); }
+.log-proof-badge.is-safe { color: var(--log-proof-safe); background: color-mix(in srgb, var(--log-proof-safe) 14%, transparent); }
+.log-proof-card__diff { margin-bottom: 8px; }
+.log-proof-card__diff del, .log-proof-card__diff ins { font-size: 15px; line-height: 1.5; padding: 0 5px; }
+.log-proof-card__ctx { margin: -2px 0 6px; padding: 5px 7px; border-radius: 5px; background: color-mix(in srgb, var(--log-proof-fg) 5%, transparent); color: var(--log-proof-muted); }
+.log-proof-card__ctx mark { color: var(--log-proof-fg); background: color-mix(in srgb, var(--log-proof-suggest) 24%, transparent); border-radius: 2px; }
+.log-proof-card__note { margin: 0 0 7px; color: var(--log-proof-muted); font-size: 11px; }
+.log-proof-card__acts { display: flex; align-items: center; gap: 4px; }
+.log-proof-card__spacer { flex: 1; }
+.log-proof-btn {
+  height: 26px; min-width: 26px; padding: 0 10px; border-radius: 6px;
+  border: 1px solid var(--log-proof-line); background: transparent; color: var(--log-proof-fg);
+  font-family: inherit; font-size: 12px; font-weight: 600; line-height: 24px; cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.08s ease;
+}
+.log-proof-btn:hover { background: color-mix(in srgb, var(--log-proof-fg) 7%, transparent); }
+.log-proof-btn:active { transform: translateY(1px); }
+.log-proof-btn:focus-visible { outline: 2px solid var(--log-selection); outline-offset: 1px; }
+.log-proof-btn.is-icon { padding: 0; width: 26px; font-size: 15px; font-weight: 500; }
+.log-proof-btn.is-accept { color: #fff; background: var(--log-proof-accepted); border-color: transparent; }
+.log-proof-btn.is-accept:hover { background: color-mix(in srgb, var(--log-proof-accepted) 86%, #000); }
+.log-proof-btn.is-accept.is-on { color: var(--log-proof-accepted); background: color-mix(in srgb, var(--log-proof-accepted) 12%, transparent); border-color: color-mix(in srgb, var(--log-proof-accepted) 40%, transparent); }
+.log-proof-btn.is-reject.is-on { color: var(--log-proof-muted); background: color-mix(in srgb, var(--log-proof-fg) 6%, transparent); }
+
+.log-proof-pop { cursor: default; }
+.log-proof-pop::before {
+  content: ''; position: absolute; top: -6px; left: var(--log-proof-caret, 18px); width: 10px; height: 10px;
+  background: var(--log-proof-surface); border-left: 1px solid var(--log-proof-line); border-top: 1px solid var(--log-proof-line);
+  transform: rotate(45deg);
+}
+.log-proof-pop.is-above::before { top: auto; bottom: -6px; transform: rotate(225deg); }
+
+.log-proof-pin {
+  --log-proof-tone: var(--log-proof-suggest);
+  box-sizing: border-box; width: 14px; height: 14px; padding: 0; border-radius: 50%;
+  pointer-events: auto; cursor: pointer;
+  background: var(--log-proof-tone); border: 2px solid var(--log-proof-surface);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+  color: #fff; font: 700 9px/10px system-ui, sans-serif; text-align: center;
+  transition: transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.log-proof-pin.is-safe { --log-proof-tone: var(--log-proof-safe); }
+.log-proof-pin.is-accepted { --log-proof-tone: var(--log-proof-accepted); }
+.log-proof-pin.is-rejected { --log-proof-tone: var(--log-proof-rejected); }
+.log-proof-pin.is-count { width: 16px; height: 16px; }
+.log-proof-pin.is-active { box-shadow: 0 0 0 3px color-mix(in srgb, var(--log-selection) 45%, transparent), 0 1px 3px rgba(15, 23, 42, 0.3); }
+.log-proof-pin:focus-visible { outline: 2px solid var(--log-selection); outline-offset: 2px; }
+.log-proof-frame { box-sizing: border-box; border: 1.5px dashed var(--log-selection); border-radius: 5px; pointer-events: none; }
+.log-proof-hl { box-sizing: border-box; pointer-events: none; border-bottom: 2px solid var(--log-proof-suggest); background: color-mix(in srgb, var(--log-proof-suggest) 14%, transparent); }
+.log-proof-hl.is-safe { border-bottom-color: var(--log-proof-safe); background: color-mix(in srgb, var(--log-proof-safe) 12%, transparent); }
+.log-proof-hl.is-accepted { border-bottom-color: var(--log-proof-accepted); background: color-mix(in srgb, var(--log-proof-accepted) 16%, transparent); }
+.log-proof-hl.is-rejected { border-bottom: 1px dotted var(--log-proof-rejected); background: none; }
+.log-proof-hl.is-active { background: color-mix(in srgb, var(--log-selection) 26%, transparent); border-bottom-color: var(--log-selection); }
+@media (prefers-reduced-motion: reduce) {
+  .log-proof-note, .log-proof-pin { transition: none; }
+}
+@media print {
+  .log-proof-layer { display: none !important; }
+  .log-design.log-review-gutter #log-root { padding: 0 !important; }
+  ::highlight(log-proof-suggest), ::highlight(log-proof-safe), ::highlight(log-proof-accepted),
+  ::highlight(log-proof-rejected), ::highlight(log-proof-hover), ::highlight(log-proof-active) { background-color: transparent; text-decoration: none; }
+}

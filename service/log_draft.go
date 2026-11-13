@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -98,6 +99,12 @@ type LogDraft struct {
 	ImageWidths              map[string]float64 `json:"imageWidths,omitempty"`
 	DisplayRules             []LogDisplayRule   `json:"displayRules,omitempty"`
 	MessageTemplateOverrides map[string]string  `json:"messageTemplateOverrides,omitempty"`
+	// MessageContentOverrides is the LOG's own copy of a message body (e.g. batch proofreading);
+	// it never writes back to the chat message and is applied only where it keeps the source's assets.
+	MessageContentOverrides map[string]string `json:"messageContentOverrides,omitempty"`
+	// Replay is legacy/extension draft data. Preserve it losslessly across edits;
+	// it is never interpreted by LOG services and remains under the draft size cap.
+	Replay json.RawMessage `json:"replay,omitempty"`
 }
 type LogDraftUpdate struct {
 	ExpectedVersion int64           `json:"expectedVersion"`
@@ -107,6 +114,9 @@ type LogDraftResult struct {
 	DraftVersion int64    `json:"draftVersion"`
 	Draft        LogDraft `json:"draft"`
 }
+
+// logMaxContentOverrideBytes bounds one project-local message body; the whole draft stays under 2MB.
+const logMaxContentOverrideBytes = 64 << 10
 
 var logUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 var logColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -145,6 +155,10 @@ func parseLogDraft(raw []byte) (LogDraft, error) {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&draft); err != nil {
+		// 严格字段检查仍保留；指出不兼容字段，避免客户端只能反复重试整份草稿。
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			return draft, logError("INVALID_INPUT", "草稿包含未识别字段："+strings.TrimPrefix(err.Error(), "json: unknown field "))
+		}
 		return draft, logError("INVALID_INPUT", "草稿格式无效")
 	}
 	var extra any
@@ -185,6 +199,14 @@ func parseLogDraft(raw []byte) (LogDraft, error) {
 	for id, template := range draft.MessageTemplateOverrides {
 		if id == "" || len(id) > 100 || strings.TrimSpace(id) != id || !logStyleKey.MatchString(template) {
 			return draft, logError("INVALID_INPUT", "消息模板覆盖无效")
+		}
+	}
+	if len(draft.MessageContentOverrides) > 100000 {
+		return draft, logError("INVALID_INPUT", "消息正文覆盖数量超出上限")
+	}
+	for id, content := range draft.MessageContentOverrides {
+		if id == "" || len(id) > 100 || strings.TrimSpace(id) != id || strings.TrimSpace(content) == "" || len(content) > logMaxContentOverrideBytes || !utf8.ValidString(content) {
+			return draft, logError("INVALID_INPUT", "消息正文覆盖无效")
 		}
 	}
 	seen := map[string]bool{}

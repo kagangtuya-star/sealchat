@@ -54,7 +54,47 @@ export type FrameEvent =
   /** 设计态在原消息上打开右键菜单；x/y 为 iframe 视口坐标。 */
   | { type: 'context'; nodeId: string; x: number; y: number }
   | { type: 'progress'; revision: number; done: number; total: number }
-  | { type: 'scrollMiss'; nodeId: string };
+  | { type: 'scrollMiss'; nodeId: string }
+  /** 校对审阅层：点选批注、在批注卡片上决定、在卡片上前后导航、无法精确定位的批注键。 */
+  | { type: 'proofPick'; key: string }
+  | { type: 'proofDecide'; key: string; decision: FrameProofDecision | null }
+  | { type: 'proofNav'; step: 1 | -1 }
+  | { type: 'proofMapped'; missed: string[] };
+
+export type FrameProofDecision = 'accepted' | 'rejected';
+
+/**
+ * 一处校对批注。start/end 是消息 .log-body 可见文本（跳过按钮与图片占位）内的 UTF-16 区间；
+ * start 为 -1 表示无法可靠定位，审阅层只把批注锚定到整条消息，不猜测字符位置。
+ */
+export interface FrameProofItem {
+  key: string;
+  start: number;
+  end: number;
+  level: 'safe' | 'suggest';
+  label: string;
+  original: string;
+  replacement: string;
+  /** 降级展示时的原文上下文。 */
+  before: string;
+  after: string;
+  /** 无法定位的原因（只用于降级卡片）。 */
+  note?: string;
+}
+
+export interface FrameProofNode {
+  nodeId: string;
+  /** 外层按同一规则得到的正文长度；与 iframe 内不一致时整条消息降级。 */
+  length: number;
+  items: FrameProofItem[];
+}
+
+export interface FrameProofView {
+  active: string | null;
+  states: Record<string, FrameProofDecision>;
+  /** 当前批注在导航序列中的位置（1 起）。 */
+  position: { index: number; total: number } | null;
+}
 
 export interface FrameAsset { token: string; data: ArrayBuffer | null; mime: string }
 export interface FrameRelocation { sourceMessageIds: string[] }

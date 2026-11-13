@@ -641,6 +641,8 @@ export interface SectionComposition {
 export interface DesignNodeCacheEntry {
   key: string;
   presentation: LogDesignMessage['presentation'];
+  /** 实际渲染的正文：工程覆盖增删时原消息版本不变，需按正文失效。 */
+  content: string;
   node: RenderMessageNode;
 }
 
@@ -687,6 +689,8 @@ export const composeDesignSection = (
   elements: LogElement[],
   complete: boolean,
   nodeCache: Map<string, DesignNodeCacheEntry>,
+  /** 草稿中的工程正文（messageContentOverrides）；只替换渲染用正文，不改原消息对象。 */
+  contentOverrides?: Record<string, string>,
 ): SectionComposition => {
   const nodes: RenderNode[] = [];
   const anchorStates = new Map<string, AnchorState>();
@@ -702,12 +706,14 @@ export const composeDesignSection = (
     },
     started: () => { sectionMarker = nodes.length; },
     message: (index) => {
-      const item = messages[index];
+      const source = messages[index];
+      const override = contentOverrides?.[source.message.id];
+      const item = override === undefined || override === source.message.content ? source : { ...source, message: { ...source.message, content: override } };
       const cacheKey = `${item.version}:${item.capabilities.reorder ? 1 : 0}`;
       let cached = nodeCache.get(item.message.id);
       // 展示投影（便签/线索内容、引用）可在原消息版本不变时变化；重载后按对象身份失效。
-      if (!cached || cached.key !== cacheKey || cached.presentation !== item.presentation) {
-        cached = { key: cacheKey, presentation: item.presentation, node: designMessageToNode(item) };
+      if (!cached || cached.key !== cacheKey || cached.presentation !== item.presentation || cached.content !== item.message.content) {
+        cached = { key: cacheKey, presentation: item.presentation, content: item.message.content, node: designMessageToNode(item) };
         nodeCache.set(item.message.id, cached);
       }
       nodes.push(cached.node);

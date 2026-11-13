@@ -183,7 +183,7 @@ test('预览转发 near-end，并在追加后的 layout 继续传递 lastAnchor�
       if (name === '@/services/log/pagination/logFrameHost') return {
         LogFrameEngine: class {
           ready = Promise.resolve();
-          zoom() {} hasAsset() { return true; } async provideAssets() {}
+          zoom() {} proofView() {} proofMarks() {} hasAsset() { return true; } async provideAssets() {}
           async layout(input, revision) { layouts.push(input); return { revision }; }
         },
       };
@@ -206,4 +206,62 @@ test('预览转发 near-end，并在追加后的 layout 继续传递 lastAnchor�
   assert.match(workbench, /@click="win\.load\(\)">重试/);
   assert.match(workbench, /@click="win\.loadMore\(\)">加载更多/);
   assert.match(workbench, /composeDesignSection\([^\n]*win\.complete\.value/);
+});
+
+test('校对跨章节定位按需加载超过首屏的消息，并在预览及批注就绪后准确定位', async t => {
+  const { requests, section, win } = setup(t);
+  requests[0].resolve(page(0, null));
+  await flush();
+  const sectionId = vue.ref('s1');
+  const pendingProofReveal = vue.shallowRef(null);
+  const proofMarks = vue.shallowRef(null);
+  const layoutInfo = vue.shallowRef(null);
+  const seen = [], scrolled = [], errors = [];
+  const previewRef = vue.shallowRef({ proofReveal: key => seen.push(key), scrollTo: id => scrolled.push(id) });
+  const scope = vue.effectScope();
+  t.after(() => scope.stop());
+  scope.run(() => vue.watch(sectionId, id => { section.value = { id, source: { channelId: `c-${id}` } }; }, { flush: 'sync' }));
+  const source = read('views/log/components/LogWorkbench.vue');
+  const snippet = source.slice(source.indexOf('/** 预览和批注都已准备好时才定位'), source.indexOf('// ---- 定位搜索'));
+  assert.ok(snippet.includes('const continueProofReveal'), '提取真实工作台的导航控制流程');
+  const ctx = {
+    win, sectionId, querySection: section, proofMarks, layoutInfo, previewRef,
+    pendingProofReveal, sections: vue.ref([{ id: 's1' }, { id: 's2' }]),
+    draftCtl: { status: vue.ref('saved') },
+    toast: { error: msg => errors.push(msg), warning: msg => errors.push(msg) },
+    watch: vue.watch, locate: id => scrolled.push(id),
+  };
+  scope.run(() => evaluate(`${snippet}\nglobalThis.navigation = { revealProof, locateProofMessage, finishProofReveal, continueProofReveal };`, ctx));
+  ctx.navigation.revealProof('issue250', 'm250', 's2');
+  await vue.nextTick();
+  assert.equal(requests.length, 2, '切换章节后读取目标章节第一页');
+  assert.equal(requests[1].args[1], 's2');
+  requests[1].resolve(page(0, 'cursor100'));
+  await vue.nextTick(); await flush();
+  assert.equal(requests.length, 3, '未找到目标时才按原游标追加第二页');
+  requests[2].resolve(page(100, 'cursor200'));
+  await vue.nextTick(); await flush();
+  assert.equal(requests.length, 4, '第二页仍不包含目标时继续追加');
+  requests[3].resolve(page(200, null));
+  await vue.nextTick(); await flush();
+  assert.ok(win.byId('m250'));
+  assert.deepEqual(seen, [], '消息出现但尚未排版、映射时不提前导航');
+  proofMarks.value = [{ nodeId: 'm250', items: [{ key: 'issue250' }] }];
+  await vue.nextTick();
+  assert.deepEqual(seen, [], '仅有批注数据仍需等待布局完成');
+  layoutInfo.value = { map: { m250: [3] } };
+  ctx.navigation.finishProofReveal();
+  assert.deepEqual(seen, ['issue250']);
+  assert.equal(pendingProofReveal.value, null);
+  // 点击消息标题定位也可以跨来源工作，不再依赖手动加载更多。
+  ctx.navigation.locateProofMessage('m50', 's1');
+  await vue.nextTick();
+  assert.equal(requests[4].args[1], 's1');
+  requests[4].resolve(page(0, null));
+  await vue.nextTick(); await flush();
+  layoutInfo.value = { map: { m50: [1] } };
+  ctx.navigation.finishProofReveal();
+  assert.deepEqual(scrolled, ['m50']);
+  assert.equal(pendingProofReveal.value, null);
+  assert.deepEqual(errors, []);
 });

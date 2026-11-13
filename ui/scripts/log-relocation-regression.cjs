@@ -45,6 +45,7 @@ function setup(t) {
     editorShow: vue.ref(false), insertShow: vue.ref(false), focusElementId: vue.ref(null),
     openEditor: () => drops.push('edit'), openPanel: () => drops.push('panel'), insertAtMessage: () => drops.push('insert'),
     draftCtl: { update: () => drops.push('resize') },
+    proofreadPanelRef: vue.ref(null),
   };
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')

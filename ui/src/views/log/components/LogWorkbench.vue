@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设计工作台：页面级编排。草稿控制器、章节消息窗口、样式包、预览与选择在此组合；
 // 具体面板各自负责一块交互。认证与写入只发生在外层，iframe 只接收安全渲染模型。
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch, type Component } from 'vue';
+import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch, type Component } from 'vue';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useMediaQuery } from '@vueuse/core';
 import { useRouter } from 'vue-router';
@@ -25,6 +25,7 @@ import {
   Search,
   Stack2,
   Users,
+  Writing,
   X,
 } from '@vicons/tabler';
 import {
@@ -48,7 +49,7 @@ import {
   designStyleFromPackage,
   type DesignNodeCacheEntry,
 } from '@/services/log/logRenderer';
-import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange } from '@/services/log/pagination/logFrameHost';
+import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
 import { updateDraftImageWidth } from '@/services/log/logImageLayout';
 import { buildTemplateLibrary, messageTemplateIds } from '@/services/log/logTemplateCompiler';
 import type { LogAnchor, LogDesignMessage, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
@@ -80,6 +81,8 @@ import LogInsertElementDialog from './LogInsertElementDialog.vue';
 import LogStandardExportDialog from './LogStandardExportDialog.vue';
 import LogPdfExportDialog from './LogPdfExportDialog.vue';
 import LogPrintDialog from './LogPrintDialog.vue';
+// 批量校对与 zhlint 都按需加载，不进入排版器的首屏同步依赖。
+const LogProofreadPanel = defineAsyncComponent(() => import('./LogProofreadPanel.vue'));
 
 const props = defineProps<{ context: LogProjectContext; slug: string }>();
 const emit = defineEmits<{ (e: 'reload'): void }>();
@@ -296,7 +299,7 @@ const nodeCache = new Map<string, DesignNodeCacheEntry>();
 const composition = computed(() => {
   const sec = querySection.value;
   if (!sec) return null;
-  return composeDesignSection(sec.id, visualTitle.value, win.items.value, draft.value.elements, win.complete.value, nodeCache);
+  return composeDesignSection(sec.id, visualTitle.value, win.items.value, draft.value.elements, win.complete.value, nodeCache, draft.value.messageContentOverrides);
 });
 const orderedIds = computed(() => composition.value?.nodes.map((n) => n.id) || []);
 
@@ -364,6 +367,7 @@ const onLayout = (r: FrameLayoutResult, revision: number) => {
     previewRef.value?.scrollTo(relocateScrollId, true);
     relocateScrollId = null;
   }
+  finishProofReveal();
 };
 
 // ---- 选择 ----
@@ -387,7 +391,7 @@ const applyMessageTemplate = (templateId: string) => {
 };
 
 // ---- 面板 ----
-type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'publish';
+type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'publish' | 'proofread';
 const panelItems: Array<{ key: PanelTab; label: string; hint: string; icon: Component }> = [
   { key: 'elements', label: '元素', hint: '插入与编辑 LOG 元素', icon: Components },
   { key: 'page', label: '页面', hint: '纸张、边距、字体与页眉页脚', icon: PageBreak },
@@ -395,8 +399,38 @@ const panelItems: Array<{ key: PanelTab; label: string; hint: string; icon: Comp
   { key: 'bulk', label: '批量', hint: '批量修改历史消息外观', icon: Users },
   { key: 'assets', label: '素材', hint: '当前 LOG 的图片素材与样式资源', icon: Photo },
   { key: 'publish', label: '发布', hint: '发布前检查与发布管理', icon: Rocket },
+  { key: 'proofread', label: '校对', hint: '本地批量校对中文标点，只修改当前 LOG 工程', icon: Writing },
 ];
 const panelTab = ref<PanelTab>('elements');
+// 校对审阅中心按需挂载，首次打开后保持挂载；它驱动画布上的审阅层（批注与审阅状态经 iframe 协议传入）。
+const proofreadMounted = ref(false);
+const proofreadPanelRef = ref<{
+  onFrameEvent: (event: FrameEvent) => void;
+  handleKey: (key: string) => boolean;
+  escape: () => boolean;
+} | null>(null);
+const proofMarks = shallowRef<FrameProofNode[] | null>(null);
+const proofView = shallowRef<FrameProofView | null>(null);
+const pendingProofReveal = shallowRef<{ key: string | null; messageId: string; sectionId: string } | null>(null);
+/** 专注审阅：收起设计面板，为页边批注留出空间；退出时恢复原来的面板状态。 */
+const proofFocus = ref(false);
+let proofFocusRestore: boolean | null = null;
+const setProofFocus = (on: boolean) => {
+  if (on === proofFocus.value) return;
+  proofFocus.value = on;
+  if (on) {
+    proofFocusRestore = panelCollapsed.value;
+    panelCollapsed.value = true;
+    panelOpen.value = false;
+  } else if (proofFocusRestore !== null) {
+    panelCollapsed.value = proofFocusRestore;
+    proofFocusRestore = null;
+  }
+};
+watch(projectId, () => { proofMarks.value = null; proofView.value = null; pendingProofReveal.value = null; setProofFocus(false); });
+watch(panelTab, (tab) => {
+  if (tab === 'proofread') proofreadMounted.value = true;
+});
 const panelMeta = computed(() => panelItems.find((p) => p.key === panelTab.value) || panelItems[0]);
 /** 窄屏：设计面板以覆盖层打开。 */
 const panelOpen = ref(false);
@@ -418,6 +452,13 @@ watch(panelCollapsed, (v) => {
   }
 });
 const panelVisible = computed(() => (narrow.value ? panelOpen.value : !panelCollapsed.value));
+// 在专注审阅中手动打开设计面板即视为退出专注。
+watch(() => panelVisible.value, (visible) => {
+  if (visible && proofFocus.value) {
+    proofFocus.value = false;
+    proofFocusRestore = null;
+  }
+});
 const focusElementId = ref<string | null>(null);
 const openPanel = async (tab: PanelTab) => {
   if (!(await leaveStudio())) return;
@@ -478,6 +519,17 @@ const openEditor = (messageId: string, tab: 'content' | 'identity' | 'appearance
 };
 const onEditorSaved = (message: LogProtocolMessage, version: number) => {
   win.applyServerMessage({ ...message, version });
+};
+const editorContentOverridden = computed(() => !!editorMessageId.value && draft.value.messageContentOverrides?.[editorMessageId.value] !== undefined);
+const clearEditorOverride = () => {
+  const id = editorMessageId.value;
+  if (!id || !caps.value.editDraft) return;
+  draftCtl.update((next) => {
+    const overrides = { ...next.messageContentOverrides };
+    delete overrides[id];
+    if (Object.keys(overrides).length) next.messageContentOverrides = overrides;
+    else delete next.messageContentOverrides;
+  });
 };
 watch(editorItem, (item) => {
   if (editorShow.value && !item && !win.loading.value) {
@@ -891,6 +943,15 @@ const onFrameEvent = (event: FrameEvent) => {
   if (ctxMenu.value.show && event.type !== 'progress' && event.type !== 'context') ctxMenu.value.show = false;
   if ((relocation.value.active || selection.multi.value) && ['imageResize', 'open', 'drop', 'action'].includes(event.type)) return;
   switch (event.type) {
+    case 'proofPick':
+    case 'proofDecide':
+    case 'proofNav':
+      proofreadPanelRef.value?.onFrameEvent(event);
+      break;
+    case 'proofMapped':
+      proofreadPanelRef.value?.onFrameEvent(event);
+      finishProofReveal();
+      break;
     case 'imageResize':
       if (caps.value.editDraft && orderedIds.value.includes(event.nodeId)) {
         draftCtl.update((d) => updateDraftImageWidth(d, event));
@@ -934,6 +995,7 @@ const onFrameEvent = (event: FrameEvent) => {
     }
     case 'key':
       if (event.key === 'Escape') onEscape();
+      else proofreadPanelRef.value?.handleKey(event.key);
       break;
     case 'scrollMiss':
       if (win.nextCursor.value) toast.info('目标位置尚未加载，请先加载更多消息');
@@ -942,11 +1004,12 @@ const onFrameEvent = (event: FrameEvent) => {
       break;
   }
 };
-/** Esc 分层：先关菜单；正在选择重定位目标时只取消重定位（保留多选）；多选时退出多选；否则清除选择。 */
+/** Esc 分层：先关菜单；正在选择重定位目标时只取消重定位（保留多选）；再收起校对批注卡片；多选时退出多选；否则清除选择。 */
 const onEscape = () => {
   if (ctxMenu.value.show) ctxMenu.value.show = false;
   else if (relocation.value.active) cancelRelocate();
   else if (batchDialog || editorShow.value || insertShow.value) return;
+  else if (proofreadPanelRef.value?.escape()) return;
   else if (selection.multi.value) exitMulti();
   else selection.clear();
 };
@@ -959,6 +1022,65 @@ const locate = (nodeId: string) => {
   // 多选模式下定位只滚动，不改变选中集合。
   if (!selection.multi.value) selection.select(nodeId);
   previewRef.value?.scrollTo(nodeId, true);
+};
+/** 预览和批注都已准备好时才定位，避免切片段后把请求发送给旧文档。 */
+const finishProofReveal = () => {
+  const target = pendingProofReveal.value;
+  if (!target || querySection.value?.id !== target.sectionId || !win.byId(target.messageId)) return;
+  if (!layoutInfo.value?.map[target.messageId]?.length) return;
+  if (target.key) {
+    if (!proofMarks.value?.some((n) => n.nodeId === target.messageId && n.items.some((i) => i.key === target.key))) return;
+    previewRef.value?.proofReveal(target.key);
+  } else previewRef.value?.scrollTo(target.messageId, true);
+  pendingProofReveal.value = null;
+};
+/** 导航目标未加载时，沿用现有分页接口，且每次只追加一页。 */
+const continueProofReveal = () => {
+  const target = pendingProofReveal.value;
+  if (!target) return;
+  if (sectionId.value !== target.sectionId) { pendingProofReveal.value = null; return; }
+  if (querySection.value?.id !== target.sectionId) {
+    if (draftCtl.status.value === 'error' || draftCtl.status.value === 'conflict') {
+      toast.error('切换校对来源失败，请先解决草稿保存错误');
+      pendingProofReveal.value = null;
+    }
+    return;
+  }
+  if (win.error.value) {
+    toast.error(`加载校对目标失败：${win.error.value}`);
+    pendingProofReveal.value = null;
+    return;
+  }
+  if (win.loadedSectionId.value !== target.sectionId || win.loading.value) return;
+  if (win.byId(target.messageId)) { finishProofReveal(); return; }
+  if (win.nextCursor.value) { void win.loadMore(); return; }
+  toast.warning('来源片段中没有找到该校对消息（可能已删除或排除）');
+  pendingProofReveal.value = null;
+};
+watch([sectionId, () => querySection.value?.id, win.items, win.loading, win.nextCursor, win.error, win.loadedSectionId, () => draftCtl.status.value, proofMarks], continueProofReveal, { flush: 'post' });
+/** 审阅导航：切换来源后自动逐页加载至目标消息。 */
+const revealProof = (key: string, messageId: string, targetSectionId: string) => {
+  if (!sections.value.some((s) => s.id === targetSectionId)) {
+    toast.warning('校对来源片段已不可用，请重新扫描');
+    return;
+  }
+  pendingProofReveal.value = { key, messageId, sectionId: targetSectionId };
+  if (sectionId.value !== targetSectionId) sectionId.value = targetSectionId;
+  continueProofReveal();
+};
+/** 列表标题定位同样按需加载，不要求用户手动加载到目标页。 */
+const locateProofMessage = (messageId: string, targetSectionId: string) => {
+  if (querySection.value?.id === targetSectionId && win.byId(messageId)) {
+    locate(messageId);
+    return;
+  }
+  if (!sections.value.some((s) => s.id === targetSectionId)) {
+    toast.warning('校对来源片段已不可用，请重新扫描');
+    return;
+  }
+  pendingProofReveal.value = { key: null, messageId, sectionId: targetSectionId };
+  if (sectionId.value !== targetSectionId) sectionId.value = targetSectionId;
+  continueProofReveal();
 };
 
 // ---- 定位搜索（只在已加载窗口内） ----
@@ -1286,8 +1408,14 @@ onBeforeUnmount(() => {
         </n-space>
       </n-alert>
       <n-alert v-else-if="draftCtl.status.value === 'error'" type="warning" :show-icon="false">
+        <span v-if="!caps.supportsContentOverrides && Object.keys(draft.messageContentOverrides || {}).length">当前服务器未声明支持校对正文覆盖，需同步部署后端。可以备份本地草稿，再删除未保存的校对正文。</span>
         {{ draftCtl.lastError.value }}
         <n-button size="tiny" style="margin-left: 8px" @click="draftCtl.save()">重试保存</n-button>
+        <n-button v-if="!caps.supportsContentOverrides && Object.keys(draft.messageContentOverrides || {}).length" size="tiny" @click="downloadLocalDraft">备份本地草稿</n-button>
+        <n-popconfirm v-if="!caps.supportsContentOverrides && Object.keys(draft.messageContentOverrides || {}).length" @positive-click="draftCtl.update((next) => { delete next.messageContentOverrides; })">
+          <template #trigger><n-button size="tiny">清除本地校对正文</n-button></template>
+          将删除尚未被服务器支持的工程正文覆盖；请先备份需要保留的校对结果。
+        </n-popconfirm>
       </n-alert>
       <n-alert v-if="win.error.value" type="error" :show-icon="false">
         {{ win.error.value }}
@@ -1318,6 +1446,8 @@ onBeforeUnmount(() => {
           :relocation="frameRelocation"
           :multi="multiMode"
           :selection="selection.selected.value"
+          :proof-marks="previewPublish ? null : proofMarks"
+          :proof-view="previewPublish ? null : proofView"
           :zoom="zoom"
           :canvas="canvasTone"
           :title="`${draft.title} 排版预览`"
@@ -1519,6 +1649,35 @@ onBeforeUnmount(() => {
               @locate-element="openElementFromPublish"
               @reload="emit('reload')"
             />
+            <!-- 首次打开后保持挂载：切换到其他面板不丢失扫描结果与撤销记录。 -->
+            <LogProofreadPanel
+              v-if="proofreadMounted"
+              ref="proofreadPanelRef"
+              v-show="panelTab === 'proofread'"
+              :project-id="projectId"
+              :draft="draft"
+              :update="draftCtl.update"
+              :flush="draftCtl.flush"
+              :save-error="draftCtl.lastError.value"
+              :can-edit-draft="caps.editDraft"
+              :supports-content-overrides="caps.supportsContentOverrides === true"
+              :sections="sections"
+              :chapter-section-ids="currentChapter?.sections.map((s) => s.id) || (querySection ? [querySection.id] : [])"
+              :window-section-id="querySection?.id || ''"
+              :window-items="win.items.value"
+              :window-complete="win.complete.value"
+              :window-source-version="win.sourceVersion.value"
+              :selected-ids="selection.messageIds.value"
+              :canvas-el="canvasRef"
+              :narrow="narrow"
+              :design="!previewPublish"
+              :focused="proofFocus"
+              @locate="locateProofMessage"
+              @marks="(nodes: FrameProofNode[] | null) => (proofMarks = nodes)"
+              @view="(v: FrameProofView | null) => (proofView = v)"
+              @reveal="revealProof"
+              @focus="setProofFocus"
+            />
           </div>
         </div>
 
@@ -1571,7 +1730,9 @@ onBeforeUnmount(() => {
       :project-id="projectId"
       :section-id="querySection?.id || ''"
       :channel-id="sourceChannelId"
+      :content-overridden="editorContentOverridden"
       @saved="onEditorSaved"
+      @clear-override="clearEditorOverride"
     />
 
     <LogStandardExportDialog

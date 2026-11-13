@@ -41,7 +41,10 @@
       case 'relocate': current.relocation = msg.state || null; applyRelocation(); break;
       case 'multi': current.multi = msg.active === true; applyMulti(); break;
       case 'scrollTo': scrollToNode(msg.nodeId, msg.flash !== false); break;
-      case 'zoom': endImageResize(false); current.zoom = clampZoom(msg.zoom); root.style.zoom = String(current.zoom); break;
+      case 'proofMarks': setProofMarks(msg.nodes); break;
+      case 'proofView': setProofView(msg.view); break;
+      case 'proofReveal': proofReveal(msg.key); break;
+      case 'zoom': endImageResize(false); current.zoom = clampZoom(msg.zoom); root.style.zoom = String(current.zoom); updateProofGutter(); scheduleProof(); break;
       case 'canvas': setCanvas(msg.color, msg.dark, msg.accent); break;
       case 'print': printDocument(msg); break;
       case 'dispose': dispose(); break;
@@ -86,6 +89,7 @@
     var scrollY = window.scrollY;
     printBusy = true;
     document.body.classList.add('log-printing');
+    suspendProof(true);
     try {
       // 分段打印时直接把范围外页面从渲染树临时摘下，避免浏览器为 100+ 页建立完整打印布局树。
       // 节点本身仍由 pages 引用持有，打印结束后原样恢复，不重新分页、不复制图片内存。
@@ -99,6 +103,7 @@
     } finally {
       if (limited) host.replaceChildren.apply(host, pages);
       document.body.classList.remove('log-printing');
+      suspendProof(false);
       window.scrollTo(scrollX, scrollY);
       printBusy = false;
     }
@@ -118,6 +123,7 @@
   }
 
   function dispose() {
+    teardownProof();
     endImageResize(false);
     endDrag(false);
     clearTimeout(scrollTimer);
@@ -631,6 +637,7 @@
         domNodes: document.getElementsByTagName('*').length,
       });
       reportViewport();
+      applyProof();
     } finally {
       if (host.parentNode === document.body) host.remove();
     }
@@ -715,6 +722,7 @@
   }
 
   window.addEventListener('scroll', function () {
+    scheduleProof();
     if (scrollTimer) return;
     scrollTimer = setTimeout(function () {
       scrollTimer = 0;
@@ -722,8 +730,20 @@
     }, 200);
   }, { passive: true });
 
+  window.addEventListener('resize', function () {
+    updateProofGutter();
+    scheduleProof();
+  });
+
   root.addEventListener('click', function (e) {
     if (!current.design) return;
+    // 审阅中点中批注文字只选中批注，不改变消息选择；正在选取文字时保持浏览器行为。
+    var pickSel = window.getSelection();
+    var picked = !current.relocation && !current.multi && !(pickSel && String(pickSel).length > 0) ? proofHit(e.clientX, e.clientY, e.target) : null;
+    if (picked) {
+      post({ type: 'proofPick', key: picked });
+      return;
+    }
     if (current.relocation) {
       e.preventDefault();
       var picked = e.target.closest ? e.target.closest('.log-node[data-log-kind="message"]') : null;
@@ -772,6 +792,14 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && imageResize) endImageResize(false);
     if (e.key === 'Escape') { post({ type: 'key', key: 'Escape' }); return; }
+    // 审阅快捷键交给外层统一处理（与外层窗口获得焦点时相同）。
+    var proofKey = String(e.key || '').toLowerCase();
+    var keyTarget = e.target && e.target.closest ? e.target.closest('input, textarea, select, button, a[href], [contenteditable], [role="textbox"], [role="dialog"], [role="combobox"], [role="menu"], [role="listbox"]') : null;
+    if (proof.nodes && !proof.suspended && PROOF_KEYS[proofKey] && !e.ctrlKey && !e.metaKey && !e.altKey && !e.defaultPrevented && !keyTarget) {
+      e.preventDefault();
+      post({ type: 'key', key: proofKey });
+      return;
+    }
     if (!current.design) return;
     if (e.target.closest && e.target.closest('[data-log-image-action]')) return;
     var node = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-log-node]') : null;
@@ -888,7 +916,10 @@
   }
 
   root.addEventListener('pointermove', function (e) {
-    if (!drag) return;
+    if (!drag) {
+      hoverProof(e);
+      return;
+    }
     drag.y = e.clientY;
     drag.handle.style.visibility = 'hidden';
     var under = document.elementFromPoint(e.clientX, e.clientY);
@@ -915,4 +946,593 @@
   }
   root.addEventListener('pointerup', function () { endDrag(true); });
   root.addEventListener('pointercancel', function () { endDrag(false); });
+
+  // ---------- 校对审阅层 ----------
+  // 只在编辑器预览中出现：文字标记用 CSS Custom Highlight（不改动消息 DOM，不影响测量与分页），
+  // 批注卡片与页边锚点画在 body 下独立的绝对定位层；打印、PDF 与发布页面都不会收到这些消息。
+  // 批注位置由外层给出的正文文本区间在当前排版的 .log-body 文本节点上重新映射，并逐处核对原文；
+  // 核对失败的批注只锚定到整条消息，不猜测字符位置。
+
+  var PROOF_KEYS = { a: 1, r: 1, u: 1, j: 1, k: 1 };
+  var PROOF_SKIP = 'button, .log-img-missing, .log-message-actions, .log-image-control';
+  var PROOF_GUTTER = 284;
+  var PROOF_NOTE_WIDTH = 244;
+  var HIGHLIGHTS = window.CSS && window.CSS.highlights && typeof Highlight === 'function' ? window.CSS.highlights : null;
+  var proof = {
+    nodes: null,
+    view: { active: null, states: {}, position: null },
+    marks: new Map(),
+    byNode: new Map(),
+    order: [],
+    layer: null,
+    svg: null,
+    path: null,
+    els: new Map(),
+    hl: null,
+    hover: null,
+    gutter: false,
+    /** 审阅层曾在当前文档中出现过；未出现时关闭审阅层不触碰 DOM。 */
+    shown: false,
+    suspended: false,
+    raf: 0,
+    backup: 0,
+    hoverRaf: 0,
+    reveal: null,
+  };
+
+  function setProofMarks(nodes) {
+    proof.nodes = Array.isArray(nodes) && nodes.length ? nodes : null;
+    applyProof();
+  }
+
+  function setProofView(view) {
+    var v = view && typeof view === 'object' ? view : {};
+    proof.view = {
+      active: typeof v.active === 'string' ? v.active : null,
+      states: v.states && typeof v.states === 'object' ? v.states : {},
+      position: v.position && typeof v.position === 'object' ? v.position : null,
+    };
+    refreshProofHighlights();
+    scheduleProof();
+  }
+
+  /** 消息所有分片中 .log-body 的可见文本节点，按文档顺序；规则与外层 bodyText 一致。 */
+  function proofSegments(nodeId) {
+    var frags = root.querySelectorAll('[data-log-node="' + cssEscape(nodeId) + '"]');
+    var segs = [];
+    var total = 0;
+    for (var i = 0; i < frags.length; i++) {
+      var bodies = frags[i].querySelectorAll('.log-body');
+      for (var j = 0; j < bodies.length; j++) {
+        var body = bodies[j];
+        var outer = body.parentElement && body.parentElement.closest('.log-body');
+        if (outer && frags[i].contains(outer)) continue;
+        var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function (t) {
+            var skip = t.parentElement && t.parentElement.closest(PROOF_SKIP);
+            return skip && body.contains(skip) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          },
+        });
+        for (var t = walker.nextNode(); t; t = walker.nextNode()) {
+          segs.push({ node: t, from: total });
+          total += t.data.length;
+        }
+      }
+    }
+    return { segs: segs, total: total, first: frags[0] || null };
+  }
+
+  /** 区间可能跨分页：每个文本节点各建一个 Range，避免把页眉页脚一起标记。 */
+  function proofRanges(segs, start, end) {
+    var out = [];
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      var len = s.node.data.length;
+      if (s.from + len <= start) continue;
+      if (s.from >= end) break;
+      if (!len) continue;
+      var r = document.createRange();
+      r.setStart(s.node, Math.max(0, start - s.from));
+      r.setEnd(s.node, Math.min(len, end - s.from));
+      out.push(r);
+    }
+    return out;
+  }
+
+  function proofPageOf(node) {
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    return el ? el.closest('.log-page') || el.closest('.log-pages') : null;
+  }
+
+  function applyProof() {
+    proof.marks = new Map();
+    proof.byNode = new Map();
+    proof.order = [];
+    proof.hover = null;
+    if (!proof.nodes) {
+      teardownProof();
+      return;
+    }
+    var missed = [];
+    proof.nodes.forEach(function (n) {
+      if (!n || typeof n.nodeId !== 'string' || !Array.isArray(n.items)) return;
+      var seg = proofSegments(n.nodeId);
+      var exact = !!seg.first && seg.total === Number(n.length);
+      var keys = [];
+      n.items.forEach(function (item) {
+        if (!item || typeof item.key !== 'string') return;
+        if (!seg.first) { missed.push(item.key); return; }
+        var ranges = null;
+        if (exact && item.start >= 0 && item.end > item.start) {
+          var list = proofRanges(seg.segs, item.start, item.end);
+          if (list.length && list.map(String).join('') === item.original) ranges = list;
+        }
+        if (!ranges && item.start >= 0) missed.push(item.key);
+        proof.marks.set(item.key, {
+          key: item.key,
+          item: item,
+          ranges: ranges,
+          anchor: seg.first,
+          page: proofPageOf(ranges ? ranges[0].startContainer : seg.first),
+        });
+        proof.order.push(item.key);
+        keys.push(item.key);
+      });
+      if (keys.length) proof.byNode.set(n.nodeId, keys);
+    });
+    proof.shown = true;
+    document.body.classList.add('log-reviewing');
+    updateProofGutter();
+    refreshProofHighlights();
+    post({ type: 'proofMapped', missed: missed });
+    tryProofReveal();
+    scheduleProof();
+  }
+
+  function teardownProof() {
+    proof.reveal = null;
+    if (!proof.shown) return;
+    proof.shown = false;
+    if (HIGHLIGHTS && proof.hl) Object.keys(proof.hl).forEach(function (k) { HIGHLIGHTS.delete('log-proof-' + k); });
+    if (proof.layer) proof.layer.remove();
+    proof.layer = null;
+    proof.svg = null;
+    proof.path = null;
+    proof.els.clear();
+    proof.hover = null;
+    document.body.classList.remove('log-reviewing', 'log-review-gutter', 'log-proof-pointer');
+    document.documentElement.style.removeProperty('--log-review-gutter');
+  }
+
+  function suspendProof(on) {
+    proof.suspended = on;
+    if (proof.layer) proof.layer.style.display = on ? 'none' : '';
+    refreshProofHighlights();
+    if (!on) scheduleProof();
+  }
+
+  function proofState(key) {
+    var s = proof.view.states[key];
+    return s === 'accepted' || s === 'rejected' ? s : 'pending';
+  }
+
+  function refreshProofHighlights() {
+    if (!HIGHLIGHTS) return;
+    if (!proof.hl) {
+      proof.hl = {};
+      ['suggest', 'safe', 'rejected', 'accepted', 'hover', 'active'].forEach(function (name, i) {
+        var h = new Highlight();
+        h.priority = i;
+        proof.hl[name] = h;
+      });
+    }
+    var hl = proof.hl;
+    Object.keys(hl).forEach(function (k) { hl[k].clear(); });
+    if (!proof.nodes || proof.suspended) {
+      Object.keys(hl).forEach(function (k) { HIGHLIGHTS.delete('log-proof-' + k); });
+      return;
+    }
+    proof.marks.forEach(function (m, key) {
+      if (!m.ranges) return;
+      var st = proofState(key);
+      var bucket = st === 'accepted' ? hl.accepted : st === 'rejected' ? hl.rejected : m.item.level === 'safe' ? hl.safe : hl.suggest;
+      for (var i = 0; i < m.ranges.length; i++) {
+        bucket.add(m.ranges[i]);
+        if (key === proof.view.active) hl.active.add(m.ranges[i]);
+        if (key === proof.hover) hl.hover.add(m.ranges[i]);
+      }
+    });
+    Object.keys(hl).forEach(function (k) { HIGHLIGHTS.set('log-proof-' + k, hl[k]); });
+  }
+
+  /** 页面足够宽时为批注留出页边栏（只改变纸张的水平位置，不改变分页）。 */
+  function updateProofGutter() {
+    var on = false;
+    if (proof.nodes && proof.order.length && current.design) {
+      var page = root.querySelector('.log-page') || root.querySelector('.log-pages.log-flow');
+      if (page) {
+        var width = page.getBoundingClientRect().width * (current.spread && current.mode !== 'flow' ? 2 : 1);
+        on = document.documentElement.clientWidth >= width + 56 + PROOF_GUTTER;
+      }
+    }
+    proof.gutter = on;
+    document.body.classList.toggle('log-review-gutter', on);
+    if (on) document.documentElement.style.setProperty('--log-review-gutter', (PROOF_GUTTER / (current.zoom || 1)) + 'px');
+    else document.documentElement.style.removeProperty('--log-review-gutter');
+  }
+
+  function scheduleProof() {
+    if (!proof.nodes || proof.raf) return;
+    var run = function () {
+      cancelAnimationFrame(proof.raf);
+      clearTimeout(proof.backup);
+      proof.raf = 0;
+      proof.backup = 0;
+      drawProof();
+    };
+    proof.raf = requestAnimationFrame(run);
+    // 页面不可见时 rAF 暂停；保底定时器保证恢复显示时位置已更新。
+    proof.backup = setTimeout(run, 160);
+  }
+
+  /** 批注首行在视口中的位置；无法定位时取消息顶部一行。 */
+  function proofBox(m) {
+    if (m.ranges) {
+      var rects = m.ranges[0].getClientRects();
+      var r = rects[0] || m.ranges[0].getBoundingClientRect();
+      var last = m.ranges[m.ranges.length - 1].getClientRects();
+      var tail = last[last.length - 1] || r;
+      if (!r || (!r.width && !r.height && !r.top && !r.left)) return null;
+      return { top: r.top, bottom: r.bottom, left: r.left, right: tail.top === r.top ? tail.right : r.right, exact: true };
+    }
+    if (!m.anchor || !m.anchor.isConnected) return null;
+    var a = m.anchor.getBoundingClientRect();
+    return { top: a.top, bottom: Math.min(a.bottom, a.top + 24), left: a.left, right: a.right, exact: false, node: a };
+  }
+
+  function ensureProofLayer() {
+    if (proof.layer) return proof.layer;
+    var layer = document.createElement('div');
+    layer.className = 'log-proof-layer';
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'log-proof-wire');
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    svg.appendChild(path);
+    layer.appendChild(svg);
+    layer.addEventListener('click', onProofLayerClick);
+    layer.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest && e.target.closest('[data-proof-act]')) return;
+      var host = e.target.closest ? e.target.closest('[data-proof-key]') : null;
+      if (!host) return;
+      e.preventDefault();
+      post({ type: 'proofPick', key: host.getAttribute('data-proof-key') });
+    });
+    layer.addEventListener('pointerover', function (e) {
+      var host = e.target.closest ? e.target.closest('[data-proof-key]') : null;
+      setProofHover(host ? host.getAttribute('data-proof-key') : null);
+    });
+    layer.addEventListener('pointerleave', function () { setProofHover(null); });
+    document.body.appendChild(layer);
+    proof.layer = layer;
+    proof.svg = svg;
+    proof.path = path;
+    return layer;
+  }
+
+  function onProofLayerClick(e) {
+    var act = e.target.closest ? e.target.closest('[data-proof-act]') : null;
+    var host = e.target.closest ? e.target.closest('[data-proof-key]') : null;
+    if (!host) return;
+    var key = host.getAttribute('data-proof-key');
+    e.preventDefault();
+    e.stopPropagation();
+    if (!act) {
+      post({ type: 'proofPick', key: key });
+      return;
+    }
+    var a = act.getAttribute('data-proof-act');
+    if (a === 'prev' || a === 'next') post({ type: 'proofNav', step: a === 'next' ? 1 : -1 });
+    else post({ type: 'proofDecide', key: key, decision: a === 'accept' ? 'accepted' : a === 'reject' ? 'rejected' : null });
+  }
+
+  function proofText(s) {
+    return String(s).replace(/ /g, '␣').replace(/\u00a0/g, '⍽').replace(/\t/g, '⇥');
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function proofDiff(item, cls) {
+    var box = el('span', cls);
+    box.appendChild(el('del', '', proofText(item.original)));
+    box.appendChild(el('i', '', '→'));
+    box.appendChild(item.replacement ? el('ins', '', proofText(item.replacement)) : el('ins', 'is-empty', '删除'));
+    return box;
+  }
+
+  function proofButton(act, text, hint, cls) {
+    var b = el('button', 'log-proof-btn' + (cls ? ' ' + cls : ''));
+    b.type = 'button';
+    b.setAttribute('data-proof-act', act);
+    b.setAttribute('title', hint);
+    b.setAttribute('aria-label', hint);
+    b.textContent = text;
+    return b;
+  }
+
+  /** 展开的审阅卡片：差异、规则、操作与导航。内容一律以 textContent 写入。 */
+  function fillProofCard(node, m) {
+    var item = m.item;
+    var st = proofState(m.key);
+    var head = el('div', 'log-proof-card__head');
+    head.appendChild(el('span', 'log-proof-badge is-' + item.level, item.level === 'safe' ? '可自动' : '待确认'));
+    head.appendChild(el('span', 'log-proof-card__label', item.label || '排版建议'));
+    var pos = proof.view.position;
+    if (pos && pos.total) head.appendChild(el('span', 'log-proof-card__pos', pos.index + ' / ' + pos.total));
+    node.appendChild(head);
+    node.appendChild(proofDiff(item, 'log-proof-card__diff'));
+    if (!m.ranges) {
+      var ctx = el('div', 'log-proof-card__ctx');
+      ctx.appendChild(document.createTextNode('…' + (item.before || '')));
+      ctx.appendChild(el('mark', '', proofText(item.original)));
+      ctx.appendChild(document.createTextNode((item.after || '') + '…'));
+      node.appendChild(ctx);
+      node.appendChild(el('div', 'log-proof-card__note', item.note || '无法在排版中精确定位，按原文显示'));
+    }
+    var acts = el('div', 'log-proof-card__acts');
+    acts.appendChild(proofButton('accept', st === 'accepted' ? '已采纳' : '采纳', '采纳 (A)', 'is-accept' + (st === 'accepted' ? ' is-on' : '')));
+    acts.appendChild(proofButton('reject', st === 'rejected' ? '已放弃' : '放弃', '放弃 (R)', 'is-reject' + (st === 'rejected' ? ' is-on' : '')));
+    if (st !== 'pending') acts.appendChild(proofButton('clear', '↶', '撤回决定 (U)', 'is-icon'));
+    acts.appendChild(el('span', 'log-proof-card__spacer'));
+    acts.appendChild(proofButton('prev', '‹', '上一处 (K)', 'is-icon'));
+    acts.appendChild(proofButton('next', '›', '下一处 (J)', 'is-icon'));
+    node.appendChild(acts);
+  }
+
+  function proofElement(id, build, signature) {
+    var node = proof.els.get(id);
+    if (!node) {
+      node = document.createElement('div');
+      node.setAttribute('data-proof-id', id);
+      proof.layer.appendChild(node);
+      proof.els.set(id, node);
+    }
+    if (node.__sig !== signature) {
+      node.__sig = signature;
+      node.replaceChildren();
+      build(node);
+    }
+    node.__seen = true;
+    return node;
+  }
+
+  function proofSignature(m, active) {
+    var pos = proof.view.position;
+    return [proofState(m.key), active ? 1 : 0, m.ranges ? 1 : 0, active && pos ? pos.index + '/' + pos.total : ''].join('|');
+  }
+
+  function drawProof() {
+    if (!proof.nodes || proof.suspended) return;
+    ensureProofLayer();
+    proof.els.forEach(function (n) { n.__seen = false; });
+    var vh = window.innerHeight;
+    var vw = document.documentElement.clientWidth;
+    var sx = window.scrollX;
+    var sy = window.scrollY;
+    var low = -vh * 0.6;
+    var high = vh * 1.6;
+    var pageRects = new Map();
+    var pageRect = function (p) {
+      if (!p) return null;
+      var r = pageRects.get(p);
+      if (!r) { r = p.getBoundingClientRect(); pageRects.set(p, r); }
+      return r;
+    };
+    var active = proof.view.active;
+    var visible = [];
+    var refRight = 0;
+    for (var i = 0; i < proof.order.length; i++) {
+      var m = proof.marks.get(proof.order[i]);
+      var pr = pageRect(m.page);
+      if (!pr || pr.bottom < low || pr.top > high) continue;
+      var box = proofBox(m);
+      if (!box || box.bottom < low || box.top > high) continue;
+      refRight = Math.max(refRight, pr.right);
+      visible.push({ m: m, box: box, page: pr, active: m.key === active });
+    }
+    var wire = '';
+    if (proof.gutter) wire = layoutProofNotes(visible, refRight, sx, sy);
+    else wire = layoutProofPins(visible, vw, vh, sx, sy);
+    proof.path.setAttribute('d', wire);
+    drawProofFallback(visible, sx, sy);
+    proof.els.forEach(function (n, id) {
+      if (!n.__seen) { n.remove(); proof.els.delete(id); }
+    });
+  }
+
+  function layoutProofNotes(visible, refRight, sx, sy) {
+    var x = refRight + 20;
+    var items = visible.map(function (v) {
+      var node = proofElement('note:' + v.m.key, function (n) {
+        if (v.active) fillProofCard(n, v.m);
+        else n.appendChild(proofDiff(v.m.item, 'log-proof-note__diff'));
+      }, proofSignature(v.m, v.active));
+      node.className = 'log-proof-note is-' + v.m.item.level + ' is-' + proofState(v.m.key) + (v.active ? ' is-active' : '') + (v.m.key === proof.hover ? ' is-hover' : '') + (v.m.ranges ? '' : ' is-loose');
+      node.setAttribute('data-proof-key', v.m.key);
+      node.setAttribute('role', v.active ? 'group' : 'button');
+      node.setAttribute('aria-label', (v.m.item.label || '校对建议') + '：' + v.m.item.original + ' 改为 ' + (v.m.item.replacement || '删除'));
+      if (!v.active) node.setAttribute('tabindex', '0'); else node.removeAttribute('tabindex');
+      node.style.width = PROOF_NOTE_WIDTH + 'px';
+      return { v: v, node: node, want: v.box.top - 3 };
+    });
+    items.forEach(function (it) { it.h = it.node.offsetHeight; });
+    var gap = 5;
+    var ai = -1;
+    for (var i = 0; i < items.length; i++) if (items[i].v.active) ai = i;
+    if (ai < 0) {
+      var y = -Infinity;
+      items.forEach(function (it) { it.y = Math.max(it.want, y); y = it.y + it.h + gap; });
+    } else {
+      items[ai].y = items[ai].want;
+      for (var d = ai + 1; d < items.length; d++) items[d].y = Math.max(items[d].want, items[d - 1].y + items[d - 1].h + gap);
+      for (var u = ai - 1; u >= 0; u--) items[u].y = Math.min(items[u].want, items[u + 1].y - items[u].h - gap);
+    }
+    var wire = '';
+    items.forEach(function (it) {
+      it.node.style.transform = 'translate(' + Math.round(x + sx) + 'px,' + Math.round(it.y + sy) + 'px)';
+      if (!it.v.active) return;
+      var b = it.v.box;
+      var ly = (b.exact ? b.bottom : b.top + 12) + sy;
+      var edge = it.v.page.right + 6 + sx;
+      wire = 'M' + Math.round((b.exact ? b.right : it.v.page.right - 2) + sx) + ' ' + Math.round(ly) + 'H' + Math.round(edge) + 'L' + Math.round(x + sx) + ' ' + Math.round(it.y + 16 + sy);
+    });
+    return wire;
+  }
+
+  function layoutProofPins(visible, vw, vh, sx, sy) {
+    var groups = [];
+    visible.forEach(function (v) {
+      var g = groups[groups.length - 1];
+      if (g && Math.abs(v.box.top - g.top) < 14 && g.page === v.page) g.list.push(v);
+      else groups.push({ top: v.box.top, page: v.page, list: [v] });
+    });
+    groups.forEach(function (g) {
+      var first = g.list[0];
+      var hasActive = g.list.some(function (v) { return v.active; });
+      var lead = hasActive ? g.list.filter(function (v) { return v.active; })[0] : first;
+      var pending = g.list.filter(function (v) { return proofState(v.m.key) === 'pending'; }).length;
+      var pin = proofElement('pin:' + first.m.key, function (n) {
+        if (g.list.length > 1) n.textContent = String(g.list.length);
+      }, g.list.length + '');
+      var state = pending ? 'pending' : proofState(lead.m.key);
+      pin.className = 'log-proof-pin is-' + lead.m.item.level + ' is-' + state + (hasActive ? ' is-active' : '') + (g.list.length > 1 ? ' is-count' : '');
+      pin.setAttribute('data-proof-key', (hasActive && g.list.length > 1 ? g.list[(g.list.indexOf(lead) + 1) % g.list.length] : lead).m.key);
+      pin.setAttribute('role', 'button');
+      pin.setAttribute('tabindex', '0');
+      pin.setAttribute('aria-label', g.list.length > 1 ? '本行 ' + g.list.length + ' 处校对建议' : '校对建议：' + lead.m.item.original);
+      var outside = vw - g.page.right >= 26;
+      var px = outside ? g.page.right + 7 : g.page.right - 20;
+      pin.style.transform = 'translate(' + Math.round(px + sx) + 'px,' + Math.round(g.top + (lead.box.bottom - lead.box.top) / 2 - 7 + sy) + 'px)';
+    });
+    var act = visible.filter(function (v) { return v.active; })[0];
+    if (!act) return '';
+    var card = proofElement('pop:' + act.m.key, function (n) { fillProofCard(n, act.m); }, proofSignature(act.m, true));
+    card.className = 'log-proof-note log-proof-pop is-active is-' + act.m.item.level + ' is-' + proofState(act.m.key) + (act.m.ranges ? '' : ' is-loose');
+    card.setAttribute('data-proof-key', act.m.key);
+    card.setAttribute('role', 'group');
+    var w = Math.min(300, vw - 16);
+    card.style.width = w + 'px';
+    var h = card.offsetHeight;
+    var b = act.box;
+    var below = b.bottom + 10;
+    var above = b.top - h - 10;
+    var top = below + h > vh - 8 && above > 8 ? above : below;
+    card.classList.toggle('is-above', top === above);
+    var left = Math.min(Math.max(8, b.left - 20), vw - w - 8);
+    card.style.setProperty('--log-proof-caret', Math.round(Math.min(Math.max(14, b.left - left + 6), w - 18)) + 'px');
+    card.style.transform = 'translate(' + Math.round(left + sx) + 'px,' + Math.round(top + sy) + 'px)';
+    return '';
+  }
+
+  /** 不支持 Highlight API 的浏览器：只为视口附近的批注绘制下划线块。无法定位的当前批注画出整条消息的虚线框。 */
+  function drawProofFallback(visible, sx, sy) {
+    visible.forEach(function (v) {
+      if (!v.m.ranges) {
+        if (!v.active || !v.box.node) return;
+        var r = v.box.node;
+        var frame = proofElement('frame:' + v.m.key, function () {}, '');
+        frame.className = 'log-proof-frame';
+        frame.style.transform = 'translate(' + Math.round(r.left + sx - 3) + 'px,' + Math.round(r.top + sy - 3) + 'px)';
+        frame.style.width = Math.round(r.width + 6) + 'px';
+        frame.style.height = Math.round(r.height + 6) + 'px';
+        return;
+      }
+      if (HIGHLIGHTS) return;
+      var rects = [];
+      v.m.ranges.forEach(function (range) { Array.prototype.push.apply(rects, range.getClientRects()); });
+      rects.forEach(function (r, i) {
+        var mark = proofElement('hl:' + v.m.key + ':' + i, function () {}, '');
+        mark.className = 'log-proof-hl is-' + v.m.item.level + ' is-' + proofState(v.m.key) + (v.active ? ' is-active' : '');
+        mark.style.transform = 'translate(' + Math.round(r.left + sx) + 'px,' + Math.round(r.top + sy) + 'px)';
+        mark.style.width = Math.max(4, Math.round(r.width)) + 'px';
+        mark.style.height = Math.round(r.height) + 'px';
+      });
+    });
+  }
+
+  /** 点中的批注：只检查该消息自己的批注区间。 */
+  function proofHit(x, y, target) {
+    if (!proof.nodes || proof.suspended) return null;
+    var node = target && target.closest ? target.closest('[data-log-node]') : null;
+    var keys = node ? proof.byNode.get(node.getAttribute('data-log-node')) : null;
+    if (!keys) return null;
+    for (var i = 0; i < keys.length; i++) {
+      var m = proof.marks.get(keys[i]);
+      if (!m || !m.ranges) continue;
+      for (var j = 0; j < m.ranges.length; j++) {
+        var rects = m.ranges[j].getClientRects();
+        for (var k = 0; k < rects.length; k++) {
+          var r = rects[k];
+          if (x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 1 && y <= r.bottom + 1) return m.key;
+        }
+      }
+    }
+    return null;
+  }
+
+  function hoverProof(e) {
+    if (!proof.nodes || proof.hoverRaf) return;
+    var x = e.clientX;
+    var y = e.clientY;
+    var target = e.target;
+    proof.hoverRaf = requestAnimationFrame(function () {
+      proof.hoverRaf = 0;
+      setProofHover(proofHit(x, y, target));
+    });
+  }
+
+  function setProofHover(key) {
+    if (proof.hover === key) return;
+    proof.hover = key;
+    document.body.classList.toggle('log-proof-pointer', !!key);
+    if (HIGHLIGHTS && proof.hl) {
+      proof.hl.hover.clear();
+      var m = key ? proof.marks.get(key) : null;
+      if (m && m.ranges) m.ranges.forEach(function (r) { proof.hl.hover.add(r); });
+    }
+    proof.els.forEach(function (n) {
+      if (n.classList.contains('log-proof-note')) n.classList.toggle('is-hover', n.getAttribute('data-proof-key') === key);
+    });
+  }
+
+  function proofReveal(key) {
+    proof.reveal = typeof key === 'string' && key ? { key: key, until: Date.now() + 10000 } : null;
+    tryProofReveal();
+  }
+
+  /** 只在批注不在舒适阅读区时滚动，让卡片与原文同时可见。 */
+  function tryProofReveal() {
+    var want = proof.reveal;
+    if (!want) return;
+    if (Date.now() > want.until) { proof.reveal = null; return; }
+    var m = proof.marks.get(want.key);
+    if (!m) return;
+    proof.reveal = null;
+    var b = proofBox(m);
+    if (!b) return;
+    var vh = window.innerHeight;
+    var vw = document.documentElement.clientWidth;
+    var dy = b.top < 80 || b.bottom > vh - 180 ? b.top - vh * 0.34 : 0;
+    var dx = b.left < 16 ? b.left - 32 : b.right > vw - 16 ? b.right - vw + 64 : 0;
+    if (dx || dy) {
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollBy({ left: dx, top: dy, behavior: reduce ? 'auto' : 'smooth' });
+    }
+    scheduleProof();
+  }
 })();

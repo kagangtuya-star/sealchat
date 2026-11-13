@@ -43,6 +43,7 @@ displayRules?: Array<{
   templateId: string
 }>
 messageTemplateOverrides?: Record<string, string> // 原消息 ID → 模板 ID
+messageContentOverrides?: Record<string, string> // 原消息 ID → 工程内正文（批量校对结果）
 ```
 
 - `displayRules` 是当前工程覆盖规则，按数组顺序取第一条有效匹配；一个规则里所有已填条件必须同时满足，禁止保存空 match。`messageType` 精确匹配解析后的 LOG 消息类型，其他三项分别精确匹配 `message.identity.id`、`message.user.id`、`message.identity.variantId`，不按显示名匹配。
@@ -50,6 +51,7 @@ messageTemplateOverrides?: Record<string, string> // 原消息 ID → 模板 ID
 - `messageTemplateOverrides` 是 messageId 精确覆盖。“自动”会删除对应 key；多选最多 200 条，通过一次 `draftCtl.update()` 整批修改。
 - 优先级固定为 **消息精确覆盖 → 工程覆盖规则 → 样式默认 rules → 通用消息 fallback**。每层遇到失效模板都会继续尝试后续规则/层。可用于消息的模板必须通过现有模板校验，片段展开后恰好包含一个 body slot。
 - 工作台“批量 → LOG 显示规则”提供新建、编辑、删除、上移/下移；角色与用户从当前来源片段已加载消息中选择，差分可从现有身份接口补全。单选/多选工具栏“对话框格式”可强制指定或恢复自动，混合状态显示“多种格式”。元素不参与消息覆盖。
+- `messageContentOverrides` 是 LOG 工程自己的正文副本，与原消息格式相同（TipTap JSON 或旧格式文本），只由“校对”面板写入，不调用 `message.update`、不改聊天原消息。设计预览、后台 PDF 与发布都优先使用它；发布时若覆盖正文变成嵌入链接、或引用了原消息没有的附件，则忽略覆盖、按原消息发布。单条不超过 64KB，空白正文无效；值与原文相同时删除对应 key。
 - 切换样式包或模板删除后，保留规则和精确覆盖；UI 标记失效引用并允许重新选择/清除，渲染继续降级。相邻消息只有最终选中的模板相同且满足原有合并条件时才合并，引用消息等限制保持不变。
 - 预览、PDF surface、公开 LOG 都调用 `logRenderer.resolveMessageTemplate`，不维护第二套选择/渲染逻辑。发布沿用已有 release 域哈希投影：节点的 `identityKey`、`userKey` 与工程规则中的 `identityId`、`userId` 分别用独立 identity/user 域哈希，差分沿用 variant 域；规则 ID 也被投影。精确覆盖仅作为公开消息节点的 `templateOverride` 保存，原 messageId 覆盖表不会公开。**公开 payload 不包含真实 userId、identityId、variantId 或源消息 ID**；不同 release 的匹配键也不同。旧 release 缺失这些字段时继续使用样式默认规则。
 

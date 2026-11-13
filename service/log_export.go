@@ -95,6 +95,11 @@ func loadLogMessagesForExport(job *model.MessageExportJobModel, extra *exportExt
 	outputJob.IncludeArchived = true
 	remaining := messageExportLimit
 	result := make([]*model.MessageModel, 0)
+	// 与 LOG 预览和发布使用相同的正文覆盖保护：不引入嵌入或新附件。
+	var display *messageDisplayResolver
+	if len(draft.MessageContentOverrides) > 0 {
+		display = newMessageDisplayResolver("", job.UserID, messageDisplayLogArchive)
+	}
 	for _, section := range draft.Sections {
 		if remaining == 0 {
 			break
@@ -109,6 +114,13 @@ func loadLogMessagesForExport(job *model.MessageExportJobModel, extra *exportExt
 		remaining -= len(messages)
 		if err := hydrateWhisperTargetsForExport(messages); err != nil {
 			return nil, err
+		}
+		if display != nil {
+			for i, m := range messages {
+				if override := draft.MessageContentOverrides[m.ID]; override != "" {
+					messages[i] = logApplyContentOverride(display.forChannel(m.ChannelID), m, override)
+				}
+			}
 		}
 		// Each call resets the merge accumulator at the narrative boundary.
 		result = append(result, prepareMessagesForExport(messages, &outputJob, extra)...)

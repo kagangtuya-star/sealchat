@@ -11,6 +11,7 @@ type ChatMessageEvent = { message?: LogProtocolMessage & { channel?: { id?: stri
 
 export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSection | null>) => {
   const items = shallowRef<LogDesignMessage[]>([]);
+  const loadedSectionId = ref('');
   const nextCursor = ref<string | null>(null);
   const sourceVersion = ref<number | null>(null);
   const loading = ref(false);
@@ -59,6 +60,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
       items.value = append ? items.value.concat(window.items) : window.items;
       sourceVersion.value = window.sourceVersion;
       nextCursor.value = window.nextCursor;
+      loadedSectionId.value = sec.id;
       staleHint.value = false;
     } catch (err) {
       if (gen !== generation || ctrl.signal.aborted) return;
@@ -192,6 +194,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
 
   watch(() => [projectId.value, section.value?.id, JSON.stringify(section.value?.source || null)], () => {
     items.value = [];
+    loadedSectionId.value = '';
     nextCursor.value = null;
     sourceVersion.value = null;
     error.value = '';
@@ -218,6 +221,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
 
   return {
     items,
+    loadedSectionId,
     nextCursor,
     sourceVersion,
     loading,

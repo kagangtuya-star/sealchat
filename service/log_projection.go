@@ -94,6 +94,31 @@ func logSnapshotAttachment(ctx context.Context, r *model.LogReleaseModel, a *mod
 	return key, nil
 }
 
+// logApplyContentOverride returns the message carrying the LOG draft's project-local body.
+// The override only rewrites text: it is ignored when either body is an embed or when it references
+// an attachment the source message does not, so a draft can never publish assets the source lacks.
+func logApplyContentOverride(display *messageDisplayResolver, m *model.MessageModel, override string) *model.MessageModel {
+	if override == "" || override == m.Content || m.IsDeleted || m.IsRevoked {
+		return m
+	}
+	next := *m
+	next.Content = override
+	source, target := logMessageBodyOf(display, m), logMessageBodyOf(display, &next)
+	if source.EmbedKind != "" || target.EmbedKind != "" {
+		return m
+	}
+	allowed := map[string]bool{}
+	for _, ref := range source.Assets {
+		allowed[ref.Kind+"\x00"+ref.AttachmentID] = true
+	}
+	for _, ref := range target.Assets {
+		if !allowed[ref.Kind+"\x00"+ref.AttachmentID] {
+			return m
+		}
+	}
+	return &next
+}
+
 func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64, showQuoteContent bool, templateOverride string) error {
 	id := utils.NewID()
 	body := logMessageBodyOf(display, m)

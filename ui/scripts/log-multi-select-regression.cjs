@@ -159,7 +159,7 @@ function setup(t, caps = {}) {
     runCommand: async (_label, command, after) => { context.busy.value = true; try { await command(); after(); } finally { context.busy.value = false; } },
     describeLogError: () => 'error', isLogError: () => false,
     openEditor: (...args) => calls.opened.push(args), openPanel() {}, insertAtMessage() {},
-    previewRef: vue.ref({ scrollTo: id => calls.scrolls.push(id) }),
+    proofreadPanelRef: vue.ref(null), previewRef: vue.ref({ scrollTo: id => calls.scrolls.push(id) }),
   };
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')
