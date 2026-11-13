@@ -9847,7 +9847,7 @@ onBeforeUnmount(() => {
       <div v-else class="theater-stage-title" :title="store.activeScene.value.name">{{ store.activeScene.value.name }}</div>
       <Teleport
         :to="stageAppRef || '.theater-stage-app'"
-        :disabled="!props.pipMinimal && (theaterToolbarLayout === 'horizontal' || !stageAppRef)"
+        :disabled="!stageAppRef || (!props.pipMinimal && theaterToolbarLayout === 'horizontal')"
       >
         <div
           class="theater-panel-switches-wrap"
