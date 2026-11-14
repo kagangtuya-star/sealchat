@@ -10,6 +10,45 @@ import (
 	"github.com/knadh/koanf/v2"
 )
 
+func TestNormalizeAIConfigProviderStructuredOutputs(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  AIConfig
+		want bool
+	}{
+		{name: "default"},
+		{name: "legacy", cfg: AIConfig{Providers: []AIProviderConfig{{ID: "legacy", Enabled: true}}}},
+		{name: "explicit", cfg: AIConfig{Providers: []AIProviderConfig{{
+			ID: "structured", Enabled: true, Capabilities: AIProviderCapabilities{StructuredOutputs: true},
+		}}}, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NormalizeAIConfig(tt.cfg)
+			if got := cfg.Providers[0].Capabilities.StructuredOutputs; got != tt.want {
+				t.Fatalf("normalized StructuredOutputs = %v, want %v", got, tt.want)
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved AIConfig
+			if err := json.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if got := NormalizeAIConfig(saved).Providers[0].Capabilities.StructuredOutputs; got != tt.want {
+				t.Fatalf("round-trip StructuredOutputs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	var legacy AIProviderConfig
+	if err := json.Unmarshal([]byte(`{"id":"legacy","enabled":true}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Capabilities.StructuredOutputs {
+		t.Fatal("legacy provider unexpectedly supports structured outputs")
+	}
+}
+
 func TestLogProofreadConfigRoundTrip(t *testing.T) {
 	defaults := NormalizeAIConfig(AIConfig{}).Features["log_proofread"]
 	if defaults.Enabled || defaults.Params.MaxInputChars != 8000 || defaults.Params.Temperature == nil || *defaults.Params.Temperature != float32(0.1) || !strings.Contains(defaults.DefaultPrompt, "<sealchat-proofread>") || !strings.Contains(defaults.DefaultPrompt, "JSONL") {

@@ -623,6 +623,10 @@ export interface AIRoutingConfig {
   mode: AIRoutingMode;
 }
 
+export interface AIProviderCapabilities {
+  structuredOutputs?: boolean;
+}
+
 export interface AIProviderConfig {
   id: string;
   name: string;
@@ -632,6 +636,7 @@ export interface AIProviderConfig {
   models: string[];
   selectedModel?: string;
   weight: number;
+  capabilities?: AIProviderCapabilities;
 }
 
 export interface AIModelPricingConfig {

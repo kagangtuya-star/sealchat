@@ -62,6 +62,7 @@ const createDefaultProvider = (): AIProviderConfig => ({
   models: ['deepseek-v4-flash'],
   selectedModel: 'deepseek-v4-flash',
   weight: 1,
+  capabilities: { structuredOutputs: false },
 })
 
 const defaultConfig = (): AIConfig => ({
@@ -82,6 +83,7 @@ const defaultConfig = (): AIConfig => ({
       apiKey: '',
       models: ['deepseek-v4-flash'],
       weight: 1,
+      capabilities: { structuredOutputs: false },
     },
   ],
   features: {
@@ -154,6 +156,7 @@ const normalizeProvider = (provider: AIProviderConfig, index: number): AIProvide
   models: Array.isArray(provider.models) && provider.models.length ? provider.models : ['deepseek-v4-flash'],
   selectedModel: provider.selectedModel?.trim() || (Array.isArray(provider.models) && provider.models.length ? provider.models[0] : 'deepseek-v4-flash'),
   weight: Number.isFinite(provider.weight) && provider.weight > 0 ? provider.weight : 1,
+  capabilities: { structuredOutputs: provider.capabilities?.structuredOutputs === true },
 })
 
 const normalizePricing = (pricing?: AIModelPricingConfig[]): AIModelPricingConfig[] => (
@@ -447,6 +450,14 @@ defineExpose({
                 <n-gi span="2">
                   <n-form-item label="Base URL">
                     <n-input v-model:value="provider.baseUrl" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi span="2">
+                  <n-form-item label="支持 Structured Outputs（JSON Schema）">
+                    <n-switch
+                      :value="provider.capabilities?.structuredOutputs === true"
+                      @update:value="(value: boolean) => provider.capabilities = { ...provider.capabilities, structuredOutputs: value }"
+                    />
                   </n-form-item>
                 </n-gi>
                 <n-gi span="2">

@@ -31,6 +31,16 @@ const suggestion = (batch, changes = {}) => ({ fragmentId: batch.fragments[0].id
 const parse = (p, items) => aiProof.parseAIProofResponse(JSON.stringify({ suggestions: items }), p.batch, p.snapshots);
 const jsonl = (items) => `<sealchat-proofread>\n${items.map((item) => JSON.stringify(item)).join('\n')}\n</sealchat-proofread>`;
 
+test('Structured Outputs 对象协议兼容：ai_ 类别与必填的空 before/after', () => {
+  const p = prepared('我以经回来。');
+  for (const category of ['ai_typo', 'ai_punctuation', 'ai_grammar']) {
+    const parsed = parse(p, [suggestion(p.batch, { category, before: '', after: '' })]);
+    assert.deepEqual(parsed.discarded, {});
+    assert.equal(parsed.results[0].issues[0].rule, category);
+    assert.equal(proof.applyProofEdits(p.message.source, parsed.results[0].issues), '我已经回来。');
+  }
+});
+
 test('JSONL 多条建议、前后说明、Markdown fence；逐行损坏和截断不丢失完整建议', () => {
   const p = prepared('我以经回来，，走吧');
   const items = [suggestion(p.batch, { category: 'ai_typo' }), suggestion(p.batch, { original: '，，', replacement: '，', category: 'ai_punctuation' })];

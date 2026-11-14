@@ -404,15 +404,20 @@ type AIRoutingConfig struct {
 	Mode AIRoutingMode `json:"mode" yaml:"mode"`
 }
 
+type AIProviderCapabilities struct {
+	StructuredOutputs bool `json:"structuredOutputs,omitempty" yaml:"structuredOutputs,omitempty"`
+}
+
 type AIProviderConfig struct {
-	ID            string   `json:"id" yaml:"id"`
-	Name          string   `json:"name" yaml:"name"`
-	Enabled       bool     `json:"enabled" yaml:"enabled"`
-	BaseURL       string   `json:"baseUrl" yaml:"baseUrl"`
-	APIKey        string   `json:"apiKey,omitempty" yaml:"apiKey"`
-	Models        []string `json:"models" yaml:"models"`
-	SelectedModel string   `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
-	Weight        int      `json:"weight" yaml:"weight"`
+	ID            string                 `json:"id" yaml:"id"`
+	Name          string                 `json:"name" yaml:"name"`
+	Enabled       bool                   `json:"enabled" yaml:"enabled"`
+	BaseURL       string                 `json:"baseUrl" yaml:"baseUrl"`
+	APIKey        string                 `json:"apiKey,omitempty" yaml:"apiKey"`
+	Models        []string               `json:"models" yaml:"models"`
+	SelectedModel string                 `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
+	Weight        int                    `json:"weight" yaml:"weight"`
+	Capabilities  AIProviderCapabilities `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 }
 
 type AIModelPricingConfig struct {
@@ -1244,6 +1249,7 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 			Models:        models,
 			SelectedModel: strings.TrimSpace(provider.SelectedModel),
 			Weight:        max(1, provider.Weight),
+			Capabilities:  provider.Capabilities,
 		})
 	}
 
