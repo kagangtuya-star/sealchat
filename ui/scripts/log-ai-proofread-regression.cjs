@@ -29,6 +29,52 @@ const prepared = (source) => {
 };
 const suggestion = (batch, changes = {}) => ({ fragmentId: batch.fragments[0].id, original: '以经', replacement: '已经', category: 'typo', reason: '客观错别字', ...changes });
 const parse = (p, items) => aiProof.parseAIProofResponse(JSON.stringify({ suggestions: items }), p.batch, p.snapshots);
+const jsonl = (items) => `<sealchat-proofread>\n${items.map((item) => JSON.stringify(item)).join('\n')}\n</sealchat-proofread>`;
+
+test('JSONL 多条建议、前后说明、Markdown fence；逐行损坏和截断不丢失完整建议', () => {
+  const p = prepared('我以经回来，，走吧');
+  const items = [suggestion(p.batch, { category: 'ai_typo' }), suggestion(p.batch, { original: '，，', replacement: '，', category: 'ai_punctuation' })];
+  for (const raw of [jsonl(items), `检查结果如下：\n${jsonl(items)}\n请审阅。`, '```jsonl\n' + jsonl(items) + '\n```']) {
+    const parsed = aiProof.parseAIProofResponse(raw, p.batch, p.snapshots);
+    assert.equal(parsed.results[0].issues.length, 2);
+    assert.deepEqual(parsed.discarded, {});
+  }
+  const broken = `<sealchat-proofread>\n${JSON.stringify(items[0])}\n{bad JSON}\n${JSON.stringify(items[1])}\n</sealchat-proofread>`;
+  assert.equal(aiProof.parseAIProofResponse(broken, p.batch, p.snapshots).results[0].issues.length, 2);
+  const truncated = `<sealchat-proofread>\n${JSON.stringify(items[0])}\n{"fragmentId":"f`;
+  const recovered = aiProof.parseAIProofResponse(truncated, p.batch, p.snapshots);
+  assert.equal(recovered.results[0].issues.length, 1);
+  assert.equal(recovered.discarded['JSON 行无效或截断'], 1);
+});
+
+test('合法空协议和旧 JSON（含 fence）兼容；纯说明、损坏协议不能冒充空结果', () => {
+  const p = prepared('我以经回来');
+  for (const raw of [jsonl([]), `说明\n${jsonl([])}\n完成`, '```jsonl\n' + jsonl([]) + '\n```', '{"suggestions":[]}', '```json\n{"suggestions":[]}\n```']) {
+    assert.deepEqual(aiProof.parseAIProofResponse(raw, p.batch, p.snapshots), { results: [], discarded: {} });
+  }
+  assert.equal(aiProof.parseAIProofResponse('```json\n' + JSON.stringify({ suggestions: [suggestion(p.batch)] }) + '\n```', p.batch, p.snapshots).results.length, 1);
+  for (const raw of ['没有问题', '<sealchat-proofread>', '<sealchat-proofread>\n{bad}\n</sealchat-proofread>', '']) {
+    assert.throws(() => aiProof.parseAIProofResponse(raw, p.batch, p.snapshots), /格式无法识别/);
+  }
+});
+
+test('JSONL 仍严格拒绝未知片段、原文不匹配、重复、未知类别与越界输出', () => {
+  const p = prepared('我以经回来');
+  const parsed = aiProof.parseAIProofResponse(jsonl([
+    suggestion(p.batch), suggestion(p.batch), suggestion(p.batch, { fragmentId: 'injected' }),
+    suggestion(p.batch, { original: '不存在' }), suggestion(p.batch, { category: '__proto__' }),
+    suggestion(p.batch, { replacement: '<img>' }), suggestion(p.batch, { reason: '长'.repeat(161) }),
+  ]), p.batch, p.snapshots);
+  assert.equal(parsed.results[0].issues.length, 1);
+  assert.equal(parsed.discarded['重复建议'], 1);
+  assert.equal(parsed.discarded['片段不属于快照'], 1);
+  assert.equal(parsed.discarded['原文不匹配'], 1);
+  assert.equal(parsed.discarded['保护区或非局部修改'], 1);
+  assert.equal(parsed.discarded['格式或长度无效'], 2);
+  for (const raw of [jsonl(Array(101).fill(suggestion(p.batch))), jsonl([]) + 'x'.repeat(65536), '中'.repeat(22000)]) {
+    assert.throws(() => aiProof.parseAIProofResponse(raw, p.batch, p.snapshots), /超过/);
+  }
+});
 
 test('错别字、标点、轻度语病转换；ID 稳定且模型不能升级为 safe', () => {
   const p = prepared('我以经回来，走吧吧。');
@@ -98,21 +144,19 @@ test('TipTap marks/attrs 与未知节点、HTML、Markdown、链接、CQ、指�
   assert.equal(proof.validAIProofEdit(boundary, { run: 0, start: 0, end: 2, original: '以经', replacement: '已经' }), false);
 });
 
-test('合并重复、本地 safe 不变；互斥修改必须人工选择，写回再次拒绝冲突', () => {
+test('AI 建议复用审阅与应用：互斥修改必须人工选择，写回再次拒绝冲突', () => {
   const source = '我以经回来，，好';
   const p = prepared(source);
-  const local = proof.proofreadContent(source, null);
-  const additions = parse(p, [suggestion(p.batch), suggestion(p.batch, { original: '，，', replacement: '，', category: 'punctuation' }), suggestion(p.batch, { replacement: '早已' })]).results[0].issues;
-  const merged = aiProof.mergeAIProofIssues(local, additions);
-  assert.equal(merged.length, 3);
-  assert.equal(merged.find((i) => i.level === 'safe').id, local[0].id);
-  const r = { ...p.message, issues: merged };
-  const keys = merged.map((i) => batchOps.proofDecisionKey(r.messageId, i.id));
+  const issues = parse(p, [suggestion(p.batch), suggestion(p.batch, { original: '，，', replacement: '，', category: 'punctuation' }), suggestion(p.batch, { replacement: '早已' })]).results[0].issues;
+  assert.equal(issues.length, 3);
+  assert.ok(issues.every((i) => i.source === 'ai' && i.level === 'suggest'));
+  const r = { ...p.message, issues };
+  const keys = issues.map((i) => batchOps.proofDecisionKey(r.messageId, i.id));
   const all = batchOps.decideProofIssues([r], {}, keys, 'accepted');
   assert.equal(all.conflicts, 2);
   assert.equal(Object.keys(all.decisions).length, 1);
   const one = batchOps.decideProofIssues([r], all.decisions, [keys[0]], 'accepted');
-  const other = batchOps.decideProofIssues([r], one.decisions, [keys[1]], 'accepted');
+  const other = batchOps.decideProofIssues([r], one.decisions, [keys[2]], 'accepted');
   assert.equal(other.conflicts, 1);
   assert.deepEqual(other.decisions, one.decisions);
   const plan = batchOps.planProofApply([r], one.decisions, () => undefined, () => source);
@@ -151,7 +195,7 @@ test('失败与非法 JSON 独立重试，成功批次不重新调用；取消/�
     complete: async (b, raw) => { aiProof.parseAIProofResponse(raw, b, new Map()); complete.push(b.id); } };
   await aiProof.runAIProofBatches(options);
   assert.deepEqual(batches.map((b) => b.status), ['succeeded', 'failed', 'failed']);
-  await aiProof.runAIProofBatches(options);
+  await aiProof.runAIProofBatches({ ...options, mode: 'failed' });
   assert.deepEqual(calls, [1, 2, 3, 2, 3]);
   assert.deepEqual(complete, [1, 2, 3]);
   for (const stale of [false, true]) {
@@ -163,6 +207,24 @@ test('失败与非法 JSON 独立重试，成功批次不重新调用；取消/�
     assert.equal(pending[0].status, 'cancelled');
     assert.equal(pending[1].status, 'pending');
   }
+});
+
+test('聚合失败分类与批量重试：成功项和未完成项均不进入失败重试', async () => {
+  const batches = ['succeeded', 'failed', 'pending', 'failed', 'cancelled', 'failed', 'failed'].map((status, i) => ({
+    id: i + 1, status, fragments: [], input: '{}', error: i === 3 ? '请求 timeout' : i === 6 ? 'provider-' + 'x'.repeat(10000) : 'AI 输出格式无法识别',
+  }));
+  assert.deepEqual(aiProof.summarizeAIProofFailures(batches), [
+    { reason: 'AI 输出格式无法识别', ids: [2, 6] }, { reason: '请求超时', ids: [4] }, { reason: 'AI 请求失败', ids: [7] },
+  ]);
+  const calls = [];
+  const options = { batches, signal: new AbortController().signal, isCurrent: () => true, changed() {},
+    request: async (b) => { calls.push(b.id); return ''; }, complete: async () => {} };
+  await aiProof.runAIProofBatches({ ...options, mode: 'failed' });
+  assert.deepEqual(calls, [2, 4, 6, 7]);
+  await aiProof.runAIProofBatches({ ...options, mode: 'failed' });
+  assert.deepEqual(calls, [2, 4, 6, 7]);
+  await aiProof.runAIProofBatches(options);
+  assert.deepEqual(calls, [2, 4, 6, 7, 3, 5]);
 });
 
 test('超时中断底层请求，单批失败后仍可继续下一批', async () => {
@@ -200,7 +262,7 @@ test('个人 API 要求独立功能绑定，保留其他功能回退行为；能
 });
 
 function panelHarness({ remote = false, save = true, prepareBatches } = {}) {
-  const cleanups = []; const notices = []; const calls = []; const requests = [];
+  const cleanups = []; const notices = []; const calls = []; const requests = []; const localCalls = { lint: 0, proof: 0 };
   const props = vue.reactive({ projectId: 'p', worldId: 'world', draft: { sections: [], messageContentOverrides: undefined },
     canEditDraft: true, supportsContentOverrides: true, saveError: save ? '' : '模拟保存失败',
     sections: [{ id: 's1', source: { channelId: 'c1' } }, ...(remote ? [{ id: 's2', source: { channelId: 'c2' } }] : [])],
@@ -221,9 +283,9 @@ function panelHarness({ remote = false, save = true, prepareBatches } = {}) {
     describeLogError: (_e, message) => message, isLogError: () => false,
     fetchLogSectionMessages: async (_p, s, cursor, limit) => {
       requests.push({ s, cursor, limit });
-      return { sourceVersion: 1, nextCursor: limit === 1 || cursor ? null : 'next', items: limit === 1 ? [] : [
-        { message: { id: cursor ? 'm3' : 'm2', content: cursor ? '一切正常' : '他以经走了', createdAt: 1 } },
-      ] };
+      const item = s === 's1' ? (cursor ? { message: { id: 'm4', content: '后续正文', createdAt: 2 } } : props.windowItems[0])
+        : { message: { id: cursor ? 'm3' : 'm2', content: cursor ? '一切正常' : '他以经走了', createdAt: 1 } };
+      return { sourceVersion: 1, nextCursor: limit === 1 || cursor ? null : 'next', items: limit === 1 ? [] : [item] };
     },
     fetchLogMessageContext: async () => assert.fail('版本相同不需额外读取原消息'),
   };
@@ -231,16 +293,81 @@ function panelHarness({ remote = false, save = true, prepareBatches } = {}) {
     + '\nexport { scan, startAI, apply, undoLast, cancel, reset, results, decisions, mode, scope, phase, progress, aiBatches, aiPrepared, aiInvalid, scannedCount, setDecisionKey, acceptSafe };';
   const modules = { 'vue': { ...vue, onBeforeUnmount: (fn) => cleanups.push(fn) }, '@vueuse/core': { useElementSize: () => ({ width: vue.ref(900), height: vue.ref(500) }), useEventListener() {} },
     'naive-ui': { useMessage: () => Object.fromEntries(['info', 'success', 'error', 'warning'].map((kind) => [kind, (s) => notices.push({ kind, s })])) }, '@vicons/tabler': {},
-    '@/services/ai/ai-polish-diff': diff, '@/services/log/logApi': api, '@/services/log/proofread/logProofread': proof,
+    '@/services/ai/ai-polish-diff': diff, '@/services/log/logApi': api, '@/services/log/proofread/logProofread': { ...proof, proofreadContent: (...args) => { localCalls.proof++; return proof.proofreadContent(...args); } },
     '@/services/log/proofread/logAIProofread': { ...aiProof, ...(prepareBatches ? { prepareAIProofBatchesAsync: prepareBatches } : {}) }, '@/stores/ai': { useAIStore: () => aiStore }, '@/services/ai/local-ai': localAI,
-    '@/services/log/proofread/logProofMarks': { buildProofNode: () => ({}) }, '@/services/log/proofread/zhlintRunner': { loadZhlintLint: async () => (s) => s },
+    '@/services/log/proofread/logProofMarks': { buildProofNode: () => ({}) }, '@/services/log/proofread/zhlintRunner': { loadZhlintLint: async () => { localCalls.lint++; return (s) => s; } },
     '@/services/log/logRenderer': { resolveDesignSpeakerName: () => '甲' }, '../logProofreadBatch': batchOps,
     '../logChapterOps': { chapterTitle: () => '当前章节', chapterViews: () => [] }, './LogProofReviewBar.vue': {},
   };
   const instance = vue.effectScope(); let panel;
   instance.run(() => { panel = load('', modules, source, { defineProps: () => props, defineEmits: () => () => {}, defineExpose() {}, window: {} }); });
-  return { panel, props, aiStore, calls, notices, requests, close: () => { cleanups.forEach((fn) => fn()); instance.stop(); } };
+  return { panel, props, aiStore, api, calls, notices, requests, localCalls, close: () => { cleanups.forEach((fn) => fn()); instance.stop(); } };
 }
+
+test('AI 模式不加载 zhlint、不调用本地校对；章节读取不相信窗口完整标记', async () => {
+  for (const windowComplete of [false, true]) {
+    const h = panelHarness();
+    try {
+      h.props.windowComplete = windowComplete;
+      h.props.draft.messageContentOverrides = { m4: '后续以经覆盖' };
+      h.panel.mode.value = 'ai';
+      await h.panel.scan();
+      assert.deepEqual(h.localCalls, { lint: 0, proof: 0 });
+      assert.equal(h.panel.scannedCount.value, 2);
+      assert.deepEqual(h.panel.results.value, []);
+      assert.deepEqual(h.requests.map(({ cursor }) => cursor), [null, 'next']);
+      const fragments = h.panel.aiBatches.value.flatMap((b) => JSON.parse(b.input).fragments);
+      assert.equal(fragments.find((f) => f.messageId === 'm4').text, '后续以经覆盖');
+      assert.equal(h.props.windowItems.length, 1, '完整读取不渲染或填充画布');
+      await h.panel.startAI();
+      assert.ok(h.panel.results.value.flatMap((r) => r.issues).every((i) => i.source === 'ai'));
+      h.panel.mode.value = 'basic';
+      assert.equal(h.panel.results.value.length, 0);
+      await h.panel.scan();
+      assert.equal(h.localCalls.lint, 1);
+      assert.equal(h.localCalls.proof, windowComplete ? 1 : 2);
+      assert.ok(h.panel.results.value.flatMap((r) => r.issues).every((i) => i.source !== 'ai'));
+      h.panel.mode.value = 'ai';
+      assert.equal(h.panel.results.value.length, 0);
+    } finally { h.close(); }
+  }
+});
+
+test('完整章节读取保留 flush、分页版本、取消保护；选中范围不依赖远程草稿保存', async () => {
+  const blocked = panelHarness({ save: false });
+  try {
+    await blocked.panel.scan();
+    assert.equal(blocked.panel.scannedCount.value, 1, '完整单章节基础校对应直接复用本地窗口');
+    assert.equal(blocked.requests.length, 0);
+    assert.equal(blocked.localCalls.proof, 1);
+    blocked.panel.mode.value = 'ai';
+    await blocked.panel.scan();
+    assert.equal(blocked.panel.aiPrepared.value, false);
+    assert.equal(blocked.requests.length, 0);
+    blocked.panel.scope.value = 'selected'; blocked.props.selectedIds = ['m1'];
+    await blocked.panel.scan();
+    assert.equal(blocked.panel.aiPrepared.value, true);
+    assert.equal(blocked.panel.scannedCount.value, 1);
+    assert.equal(blocked.requests.length, 0);
+  } finally { blocked.close(); }
+  for (const change of ['version', 'cancel']) {
+    const h = panelHarness();
+    try {
+      const fetchPage = h.api.fetchLogSectionMessages;
+      h.api.fetchLogSectionMessages = async (...args) => {
+        const page = await fetchPage(...args);
+        if (args[2]) {
+          if (change === 'version') page.sourceVersion++;
+          else h.panel.cancel();
+        }
+        return page;
+      };
+      h.panel.mode.value = 'ai'; await h.panel.scan();
+      assert.equal(h.panel.aiPrepared.value, false);
+      assert.equal(h.panel.results.value.length, 0);
+    } finally { h.close(); }
+  }
+});
 
 test('真实面板链路：默认基础校对不调用 AI；跨章节分页的全部消息参与准备，AI 需主动发送', async () => {
   const h = panelHarness({ remote: true });
@@ -252,9 +379,9 @@ test('真实面板链路：默认基础校对不调用 AI；跨章节分页的�
     h.panel.mode.value = 'ai'; h.panel.scope.value = 'project';
     await h.panel.scan();
     assert.equal(h.calls.length, 0, '准备不发送正文');
-    assert.equal(h.panel.scannedCount.value, 3);
+    assert.equal(h.panel.scannedCount.value, 4);
     const wire = h.panel.aiBatches.value.flatMap((b) => JSON.parse(b.input).fragments);
-    assert.deepEqual(wire.map((f) => f.messageId), ['m1', 'm2', 'm3']);
+    assert.deepEqual(wire.map((f) => f.messageId), ['m1', 'm4', 'm2', 'm3']);
     assert.ok(h.requests.some((r) => r.s === 's2' && r.cursor === 'next'));
     await h.panel.startAI();
     assert.equal(h.calls.length, 1, '按批次调用而非逐消息');
@@ -263,17 +390,19 @@ test('真实面板链路：默认基础校对不调用 AI；跨章节分页的�
   } finally { h.close(); }
 });
 
-test('真实面板链路：混合采纳、草稿保存失败反馈、撤销、原消息不变', async () => {
-  const h = panelHarness({ save: false });
+test('真实面板链路：AI 采纳、草稿保存失败反馈、撤销、原消息不变', async () => {
+  const h = panelHarness();
   try {
     h.panel.mode.value = 'ai'; await h.panel.scan(); await h.panel.startAI();
+    h.props.flush = async () => false;
+    h.props.saveError = '模拟保存失败';
     h.panel.acceptSafe();
     const result = h.panel.results.value[0];
     const aiIssue = result.issues.find((i) => i.source === 'ai');
     assert.equal(h.panel.decisions.value[batchOps.proofDecisionKey('m1', aiIssue.id)], undefined);
     h.panel.setDecisionKey(batchOps.proofDecisionKey('m1', aiIssue.id), 'accepted');
     await h.panel.apply();
-    assert.equal(h.props.draft.messageContentOverrides.m1, '我已经回来，走吧');
+    assert.equal(h.props.draft.messageContentOverrides.m1, '我已经回来，，走吧');
     assert.equal(h.props.windowItems[0].message.content, '我以经回来，，走吧');
     assert.ok(h.notices.some((n) => n.kind === 'error' && n.s.includes('模拟保存失败')));
     await h.panel.undoLast();

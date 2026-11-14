@@ -12,8 +12,11 @@ import (
 
 func TestLogProofreadConfigRoundTrip(t *testing.T) {
 	defaults := NormalizeAIConfig(AIConfig{}).Features["log_proofread"]
-	if defaults.Enabled || defaults.Params.MaxInputChars != 8000 || defaults.Params.Temperature == nil || *defaults.Params.Temperature != float32(0.1) || !strings.Contains(defaults.DefaultPrompt, `"suggestions"`) {
+	if defaults.Enabled || defaults.Params.MaxInputChars != 8000 || defaults.Params.Temperature == nil || *defaults.Params.Temperature != float32(0.1) || !strings.Contains(defaults.DefaultPrompt, "<sealchat-proofread>") || !strings.Contains(defaults.DefaultPrompt, "JSONL") {
 		t.Fatalf("unsafe proofreading defaults: %+v", defaults)
+	}
+	if got := normalizeAIFeaturePrompt("log_proofread", legacyAILogProofreadPrompt); got != defaultAILogProofreadPrompt {
+		t.Fatal("legacy built-in prompt was not migrated")
 	}
 	cfg := NormalizeAIConfig(AIConfig{Enabled: true, Features: map[string]AIFeatureConfig{"log_proofread": {
 		Enabled: true, UserCustomOnly: true, DefaultPrompt: "custom protocol prompt", DefaultModel: "custom-model",

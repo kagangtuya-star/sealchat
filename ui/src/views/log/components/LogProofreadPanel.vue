@@ -19,7 +19,7 @@ import {
 } from '@/services/log/proofread/logProofread';
 import { buildProofNode } from '@/services/log/proofread/logProofMarks';
 import { loadZhlintLint } from '@/services/log/proofread/zhlintRunner';
-import { mergeAIProofIssues, parseAIProofResponse, prepareAIProofBatchesAsync, runAIProofBatches, type AIProofBatch } from '@/services/log/proofread/logAIProofread';
+import { parseAIProofResponse, prepareAIProofBatchesAsync, runAIProofBatches, summarizeAIProofFailures, type AIProofBatch } from '@/services/log/proofread/logAIProofread';
 import { useAIStore } from '@/stores/ai';
 import { resolveLocalAIProfileForFeature } from '@/services/ai/local-ai';
 import type { AIRunSource } from '@/types';
@@ -92,10 +92,10 @@ const aiStats = computed(() => ({
   total: aiBatches.value.length,
   success: aiBatches.value.filter((b) => b.status === 'succeeded').length,
   failed: aiBatches.value.filter((b) => b.status === 'failed').length,
-  remaining: aiBatches.value.filter((b) => b.status !== 'succeeded').length,
+  remaining: aiBatches.value.filter((b) => b.status === 'pending' || b.status === 'cancelled').length,
   discarded: aiBatches.value.reduce((n, b) => n + Object.values(b.discarded || {}).reduce((a, c) => a + c, 0), 0),
 }));
-const aiFeedback = computed(() => aiBatches.value.filter((b) => b.error || Object.keys(b.discarded || {}).length).map((b) => `第 ${b.id} 批：${b.error || Object.entries(b.discarded || {}).map(([reason, n]) => `${reason} ${n}`).join('、')}`).join('；'));
+const aiFailures = computed(() => summarizeAIProofFailures(aiBatches.value));
 const PAGE_LIMIT = 100;
 const CHECK_BATCH = 25;
 const UNDO_LIMIT = 10;
@@ -186,6 +186,12 @@ const reset = () => {
   aiWarning.value = '';
   aiSnapshots = new Map();
 };
+watch(mode, () => {
+  reset();
+  sourceFilter.value = null;
+  levelFilter.value = null;
+  ruleFilter.value = null;
+}, { flush: 'sync' });
 
 const draftSourceSnapshot = computed(() => JSON.stringify([props.sections.map((s) => [s.id, s.source]), props.draft.messageContentOverrides || {}]));
 const draftSourceKey = () => draftSourceSnapshot.value;
@@ -230,7 +236,7 @@ const prepareAI = async (messages: ProofMessageMeta[], token: number, sourceKey:
   aiPrepared.value = true;
 };
 
-const startAI = async (onlyBatch?: AIProofBatch) => {
+const startAI = async (runMode: 'unfinished' | 'failed' = 'unfinished') => {
   if (busy.value || mode.value !== 'ai' || !aiPrepared.value || aiInvalid.value) return;
   if (draftSourceKey() !== aiDraftSources || aiSettingsSnapshot !== aiSettingsKey()) {
     aiInvalid.value = true;
@@ -252,7 +258,7 @@ const startAI = async (onlyBatch?: AIProofBatch) => {
   };
   try {
     await runAIProofBatches({
-      batches: onlyBatch ? [onlyBatch] : aiBatches.value,
+      batches: aiBatches.value, mode: runMode,
       signal: ctrl.signal, isCurrent: current, changed,
       request: async (batch, signal) => {
         const versions = Object.fromEntries(batch.fragments.map((f) => [f.sectionId, sourceVersions[f.sectionId]]));
@@ -274,13 +280,17 @@ const startAI = async (onlyBatch?: AIProofBatch) => {
         }
         if (!current() || ctrl.signal.aborted) return;
         batch.discarded = parsed.discarded;
-        const incoming = new Map(parsed.results.map((r) => [r.messageId, r]));
-        const next = results.value.map((r) => {
-          const add = incoming.get(r.messageId);
-          incoming.delete(r.messageId);
-          return add ? { ...r, issues: mergeAIProofIssues(r.issues, add.issues) } : r;
-        });
-        next.push(...incoming.values());
+        const next = results.value.slice();
+        for (const incoming of parsed.results) {
+          const index = next.findIndex((r) => r.messageId === incoming.messageId);
+          if (index < 0) next.push(incoming);
+          else {
+            const existing = next[index];
+            const ids = new Set(existing.issues.map((issue) => issue.id));
+            next[index] = { ...existing, issues: [...existing.issues, ...incoming.issues.filter((issue) => !ids.has(issue.id))]
+              .sort((a, b) => a.run - b.run || a.start - b.start || a.id.localeCompare(b.id)) };
+          }
+        }
         results.value = next.sort((a, b) => (resultOrder.get(a.messageId) ?? 0) - (resultOrder.get(b.messageId) ?? 0));
       },
     });
@@ -289,7 +299,14 @@ const startAI = async (onlyBatch?: AIProofBatch) => {
   }
 };
 
-/** 读取范围内的消息：当前片段已完整加载时直接用窗口，其余片段按页读取（与工作台相同的接口）。 */
+const canUseBasicWindow = () => mode.value === 'basic'
+  && scope.value === 'chapter'
+  && props.chapterSectionIds.length === 1
+  && props.chapterSectionIds[0] === props.windowSectionId
+  && props.windowComplete
+  && props.windowSourceVersion !== null;
+
+/** 章节/工程始终从片段开头读取完整快照；画布窗口只用于明确选中的消息。 */
 const collectMessages = async (token: number, signal: AbortSignal): Promise<{
   items: Array<{ sectionId: string; item: LogDesignMessage }>;
   sourceVersions: Record<string, number>;
@@ -302,27 +319,30 @@ const collectMessages = async (token: number, signal: AbortSignal): Promise<{
       sourceVersions: { [props.windowSectionId]: props.windowSourceVersion },
     };
   }
+  if (canUseBasicWindow()) {
+    return {
+      items: props.windowItems.map((item) => ({ sectionId: props.windowSectionId, item })),
+      sourceVersions: { [props.windowSectionId]: props.windowSourceVersion! },
+    };
+  }
   const ids = scope.value === 'project' ? props.sections.map((s) => s.id) : props.chapterSectionIds.slice();
+  const projectId = props.projectId;
   const out: Array<{ sectionId: string; item: LogDesignMessage }> = [];
   const sourceVersions: Record<string, number> = {};
   progress.value = { done: 0, total: ids.length };
   for (const sectionId of ids) {
-    if (sectionId === props.windowSectionId && props.windowComplete && props.windowSourceVersion !== null) {
-      out.push(...props.windowItems.map((item) => ({ sectionId, item })));
-      sourceVersions[sectionId] = props.windowSourceVersion;
-    } else {
-      let cursor: string | null = null;
-      let version: number | null = null;
-      do {
-        const page = await fetchLogSectionMessages(props.projectId, sectionId, cursor, PAGE_LIMIT, signal);
-        if (token !== seq) return null;
-        if (version !== null && page.sourceVersion !== version) throw new Error('来源消息在读取过程中发生变化，请重新扫描');
-        version = page.sourceVersion;
-        out.push(...page.items.map((item) => ({ sectionId, item })));
-        cursor = page.nextCursor;
-      } while (cursor);
-      if (version !== null) sourceVersions[sectionId] = version;
-    }
+    let cursor: string | null = null;
+    let version: number | null = null;
+    do {
+      if (token !== seq || signal.aborted) return null;
+      const page = await fetchLogSectionMessages(projectId, sectionId, cursor, PAGE_LIMIT, signal);
+      if (token !== seq || signal.aborted || props.projectId !== projectId) return null;
+      if (version !== null && page.sourceVersion !== version) throw new Error('来源消息在读取过程中发生变化，请重新扫描');
+      version = page.sourceVersion;
+      out.push(...page.items.map((item) => ({ sectionId, item })));
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    if (version !== null) sourceVersions[sectionId] = version;
     progress.value = { done: progress.value.done + 1, total: ids.length };
   }
   return { items: out, sourceVersions };
@@ -343,18 +363,18 @@ const scan = async () => {
   controller = ctrl;
   phase.value = 'load';
   try {
-    // 当前窗口已有完整数据时本地校对不依赖服务端草稿，避免无关保存错误阻断扫描。
-    const sectionIds = scope.value === 'project' ? props.sections.map((s) => s.id) : props.chapterSectionIds;
-    const needsRemote = scope.value !== 'selected' && (sectionIds.some((id) => id !== props.windowSectionId) || !props.windowComplete);
-    if (needsRemote && !(await props.flush())) throw new Error(props.saveError || '草稿尚未保存成功，请稍后重试');
+    // AI 与非完整/跨片段基础校对按已保存草稿读取完整快照；完整单章节基础校对直接复用本地窗口。
+    if (scope.value !== 'selected' && !canUseBasicWindow() && !(await props.flush())) throw new Error(props.saveError || '草稿尚未保存成功，请稍后重试');
     if (token !== seq) return;
     const sourceKey = draftSourceKey();
     let lint: ProofLint | null = null;
-    try {
-      lint = await loadZhlintLint();
-      lintMode.value = 'zhlint';
-    } catch {
-      lintMode.value = 'local';
+    if (mode.value === 'basic') {
+      try {
+        lint = await loadZhlintLint();
+        lintMode.value = 'zhlint';
+      } catch {
+        lintMode.value = 'local';
+      }
     }
     if (token !== seq) return;
     const collected = await collectMessages(token, ctrl.signal);
@@ -377,17 +397,11 @@ const scan = async () => {
       for (const { sectionId, item } of targets.slice(i, i + CHECK_BATCH)) {
         const original = item.message.content || '';
         const source = overrides[item.message.id] ?? original;
-        const issues = proofreadContent(source, lint);
-        snapshots.push({ messageId: item.message.id, sectionId, speaker: resolveDesignSpeakerName(item.message) || '未命名', createdAt: item.message.createdAt, source, original });
-        if (issues.length) {
-          found.push(toProofResult({
-            messageId: item.message.id,
-            sectionId,
-            speaker: resolveDesignSpeakerName(item.message) || '未命名',
-            createdAt: item.message.createdAt,
-            source,
-            original,
-          }, issues));
+        const meta = { messageId: item.message.id, sectionId, speaker: resolveDesignSpeakerName(item.message) || '未命名', createdAt: item.message.createdAt, source, original };
+        snapshots.push(meta);
+        if (mode.value === 'basic') {
+          const issues = proofreadContent(source, lint);
+          if (issues.length) found.push(toProofResult(meta, issues));
         }
       }
       progress.value = { done: Math.min(targets.length, i + CHECK_BATCH), total: targets.length };
@@ -395,6 +409,7 @@ const scan = async () => {
       if (token !== seq) return;
     }
     if (props.projectId !== projectId) return;
+    if (sourceKey !== draftSourceKey()) throw new Error('工程正文或来源在读取期间已变化，请重新扫描');
     resultOrder = new Map(snapshots.map((r, index) => [r.messageId, index]));
     results.value = found;
     scannedCount.value = targets.length;
@@ -463,7 +478,7 @@ const ruleOptions = computed(() => [
   ...counts.value.rules.map(([rule, n]) => ({ value: rule, label: `${PROOF_RULE_LABELS[rule]} · ${n}` })),
 ]);
 const matches = (e: ProofEntry) => {
-  if (sourceFilter.value === 'ai' && e.i.source !== 'ai' && !e.i.aiConfirmed) return false;
+  if (sourceFilter.value === 'ai' && e.i.source !== 'ai') return false;
   if (sourceFilter.value === 'local' && e.i.source === 'ai') return false;
   if (statusFilter.value !== 'all' && stateOf(e.key) !== statusFilter.value) return false;
   if (levelFilter.value && e.i.level !== levelFilter.value) return false;
@@ -707,7 +722,7 @@ const previewTokens = (r: ProofMessageResult) => {
 };
 
 // ---- 应用与撤销 ----
-interface UndoEntry { projectId: string; record: ProofUndoRecord; count: number; results: ProofMessageResult[] }
+interface UndoEntry { projectId: string; mode: 'basic' | 'ai'; record: ProofUndoRecord; count: number; results: ProofMessageResult[] }
 const undoStack = ref<UndoEntry[]>([]);
 
 const currentOriginal = (id: string) => props.windowItems.find((it) => it.message.id === id)?.message.content;
@@ -795,7 +810,7 @@ const apply = async () => {
         toast.error('草稿当前不可写入（可能存在冲突），未应用任何修改');
         return;
       }
-      undoStack.value = [{ projectId, record, count, results: list.filter((r) => done.has(r.messageId)) }, ...undoStack.value].slice(0, UNDO_LIMIT);
+      undoStack.value = [{ projectId, mode: mode.value, record, count, results: list.filter((r) => done.has(r.messageId)) }, ...undoStack.value].slice(0, UNDO_LIMIT);
     }
     // 已写入的消息离开审阅列表；当前批注随之移到之后（或之前）仍在列表中的批注。
     const current = activeEntry.value;
@@ -841,7 +856,7 @@ const undoLast = async () => {
   }
   undoStack.value = undoStack.value.slice(1);
   // 正文已回到扫描时的样子的消息重新进入审阅列表，保留原来的采纳决定。
-  if (scannedProject.value === props.projectId) {
+  if (scannedProject.value === props.projectId && entry.mode === mode.value) {
     const back = entry.results.filter((r) => (after[r.messageId] ?? r.original) === r.source);
     if (back.length) {
       const present = new Set(results.value.map((r) => r.messageId));
@@ -868,7 +883,7 @@ const clearAllOverrides = () => {
     return;
   }
   // 还原也是一次可撤销的批量操作：撤销把“无覆盖”恢复为原覆盖值。
-  undoStack.value = [{ projectId: props.projectId, record, count, results: [] }, ...undoStack.value].slice(0, UNDO_LIMIT);
+  undoStack.value = [{ projectId: props.projectId, mode: mode.value, record, count, results: [] }, ...undoStack.value].slice(0, UNDO_LIMIT);
   toast.success(`已将 ${count} 条消息改回显示原消息`);
 };
 
@@ -957,7 +972,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
         <n-button v-if="phase === 'load' || phase === 'check'" @click="cancel">取消</n-button>
         <n-button v-else-if="scanned" quaternary @click="setupOpen = false">收起</n-button>
       </div>
-      <p v-if="!scanned" class="log-proof__muted">{{ mode === 'ai' ? '先完成基础校对并准备 AI 批次，确认发送后补充错别字、标点和轻度语病建议。' : '在本地检查中文标点。' }}采纳的修改只写入当前 LOG 工程，不修改聊天原消息。</p>
+      <p v-if="!scanned" class="log-proof__muted">{{ mode === 'ai' ? '准备所选范围的完整消息，确认发送后由 AI 独立检查错别字、标点和轻度语病。' : '在本地检查中文标点。' }}采纳的修改只写入当前 LOG 工程，不修改聊天原消息。</p>
     </section>
 
     <section v-if="aiPrepared" class="log-proof__setup" aria-label="AI 校对批次">
@@ -966,11 +981,13 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
       <div class="log-proof__setup-actions">
         <n-button v-if="aiStats.remaining" size="small" :disabled="busy || aiInvalid || mode !== 'ai'" @click="startAI()">{{ aiStarted ? '继续未完成批次' : '确认发送并运行 AI' }}</n-button>
         <n-button v-if="phase === 'ai'" size="small" @click="cancel">取消 AI</n-button>
-        <template v-for="batch in aiBatches" :key="batch.id">
-          <n-button v-if="batch.status === 'failed'" size="tiny" quaternary :disabled="busy || aiInvalid || mode !== 'ai'" @click="startAI(batch)">重试第 {{ batch.id }} 批</n-button>
-        </template>
+        <n-button v-if="aiStats.failed" size="small" :disabled="busy || aiInvalid || mode !== 'ai'" @click="startAI('failed')">重试失败批次（{{ aiStats.failed }}）</n-button>
       </div>
-      <p v-if="aiFeedback" class="log-proof__muted is-warn">{{ aiFeedback }}</p>
+      <p v-for="group in aiFailures" :key="group.reason" class="log-proof__muted is-warn">{{ group.ids.length }} 个批次失败：{{ group.reason }}</p>
+      <details v-if="aiFailures.length" class="log-proof__failure-details">
+        <summary>查看详情</summary>
+        <p v-for="group in aiFailures" :key="group.reason" class="log-proof__muted">第 {{ group.ids.join('、') }} 批：{{ group.reason }}</p>
+      </details>
       <p v-if="aiWarning" class="log-proof__muted is-warn">{{ aiWarning }}</p>
     </section>
 
@@ -1090,7 +1107,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
               @keydown.enter.self.prevent="activate(row.e.key)"
             >
               <span class="log-proof__change">
-                <small v-if="row.e.i.source === 'ai' || row.e.i.aiConfirmed">AI</small><del>{{ row.e.i.original ? showText(row.e.i.original) : '插入' }}</del><ins :class="{ 'is-empty': !row.e.i.replacement }">{{ row.e.i.replacement ? showText(row.e.i.replacement) : '删' }}</ins>
+                <small v-if="row.e.i.source === 'ai'">AI</small><del>{{ row.e.i.original ? showText(row.e.i.original) : '插入' }}</del><ins :class="{ 'is-empty': !row.e.i.replacement }">{{ row.e.i.replacement ? showText(row.e.i.replacement) : '删' }}</ins>
               </span>
               <span class="log-proof__ctx">{{ row.e.i.before }}<b>{{ row.e.i.original }}</b>{{ row.e.i.after }}</span>
               <i v-if="unmappedKeys.has(row.e.key)" class="log-proof__loose" title="无法在排版中精确定位，按原文显示" />
@@ -1109,7 +1126,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
       </div>
       <div v-else class="log-proof__done">
         <n-icon :component="Check" size="26" />
-        <p>没有发现可确定的标点问题</p>
+        <p>{{ mode === 'ai' ? (aiStats.remaining || aiStats.failed ? 'AI 校对尚未完成' : aiStarted ? '没有发现可确定的问题' : '确认发送后开始 AI 校对') : '没有发现可确定的标点问题' }}</p>
       </div>
     </template>
 
@@ -1183,11 +1200,14 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
   gap: 12px;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   padding: 8px 0 12px;
   font-size: 13px;
 }
 
 .log-proof__muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
@@ -1200,11 +1220,25 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
 
 .log-proof__alert {
   flex: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-proof__failure-details {
+  min-width: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.log-proof__failure-details summary {
+  cursor: pointer;
 }
 
 /* ---- 扫描设置 ---- */
 .log-proof__setup {
   flex: none;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1286,7 +1320,23 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
 
 .log-proof__setup-actions {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
+}
+
+.log-proof__setup-actions > .n-button {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 28px;
+  white-space: normal;
+}
+
+.log-proof__setup-actions :deep(.n-button__content) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .log-proof__setup-actions > :first-child {

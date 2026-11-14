@@ -76,18 +76,43 @@ export const prepareAIProofBatchesAsync = async (messages: ProofMessageMeta[], m
 };
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const RULES = { typo: 'ai_typo', punctuation: 'ai_punctuation', grammar: 'ai_grammar' } as const;
+// 旧 prompt 的 category 继续兼容；新协议直接使用审阅规则名。
+const RULES = { typo: 'ai_typo', punctuation: 'ai_punctuation', grammar: 'ai_grammar', ai_typo: 'ai_typo', ai_punctuation: 'ai_punctuation', ai_grammar: 'ai_grammar' } as const;
+const OPEN = '<sealchat-proofread>';
+const CLOSE = '</sealchat-proofread>';
+const stripFence = (text: string) => text.trim().replace(/^```[^\r\n]*\r?\n/, '').replace(/\r?\n```\s*$/, '').trim();
+
+/** 只恢复传输包装和完整 JSON 行，不猜测自然语言中的修改内容。 */
+const readSuggestions = (raw: string, drop: (reason: string) => void): unknown[] => {
+  const start = raw.indexOf(OPEN);
+  if (start >= 0) {
+    const end = raw.indexOf(CLOSE, start + OPEN.length);
+    const body = stripFence(raw.slice(start + OPEN.length, end < 0 ? undefined : end));
+    if (!body && end >= 0) return [];
+    const lines = body.split(/\r?\n/).filter((line) => line.trim());
+    if (lines.length > 100) throw new Error('AI 校对建议超过 100 项');
+    const items: unknown[] = [];
+    for (const line of lines) {
+      try { items.push(JSON.parse(line)); } catch { drop('JSON 行无效或截断'); }
+    }
+    if (items.some((item) => record(item) && Object.prototype.hasOwnProperty.call(item, 'fragmentId'))) return items;
+    throw new Error('AI 输出格式无法识别');
+  }
+  // 过渡兼容管理员自定义的旧提示词，包括单层 Markdown fence。
+  let payload: unknown;
+  try { payload = JSON.parse(stripFence(raw)); } catch { throw new Error('AI 输出格式无法识别'); }
+  if (!record(payload) || !Array.isArray(payload.suggestions) || Object.keys(payload).some((k) => k !== 'suggestions')) throw new Error('AI 输出格式无法识别');
+  if (payload.suggestions.length > 100) throw new Error('AI 校对建议超过 100 项');
+  return payload.suggestions;
+};
 
 export const parseAIProofResponse = (raw: string, batch: AIProofBatch, snapshots: Map<string, ProofMessageMeta>) => {
-  if (raw.length > 64 * 1024) throw new Error('AI 校对响应超过 64 KiB');
-  let payload: unknown;
-  try { payload = JSON.parse(raw); } catch { throw new Error('AI 未返回有效的校对 JSON'); }
-  if (!record(payload) || !Array.isArray(payload.suggestions) || payload.suggestions.length > 100 || Object.keys(payload).some((k) => k !== 'suggestions')) throw new Error('AI 校对 JSON 格式或建议数量无效');
+  if (raw.length > 64 * 1024 || new TextEncoder().encode(raw).length > 64 * 1024) throw new Error('AI 校对响应超过 64 KiB');
   const fragments = new Map(batch.fragments.map((f) => [f.id, f]));
   const results = new Map<string, ProofMessageResult>();
   const discarded: Record<string, number> = {};
   const drop = (reason: string) => { discarded[reason] = (discarded[reason] || 0) + 1; };
-  for (const item of payload.suggestions) {
+  for (const item of readSuggestions(raw, drop)) {
     if (!record(item) || typeof item.fragmentId !== 'string' || typeof item.original !== 'string' || typeof item.replacement !== 'string'
       || typeof item.reason !== 'string' || !item.reason.trim() || item.reason.length > 160 || typeof item.category !== 'string' || !Object.prototype.hasOwnProperty.call(RULES, item.category)
       || Object.keys(item).some((k) => !['fragmentId', 'original', 'replacement', 'reason', 'category', 'before', 'after'].includes(k))
@@ -127,15 +152,22 @@ export const parseAIProofResponse = (raw: string, batch: AIProofBatch, snapshots
   return { results: [...results.values()], discarded };
 };
 
-/** 保留本地规则的稳定 ID 和 safe 等级；不同修改共存，交给同一审阅/冲突处理流程。 */
-export const mergeAIProofIssues = (local: ProofIssue[], incoming: ProofIssue[]): ProofIssue[] => {
-  const out = local.slice();
-  for (const issue of incoming) {
-    const index = out.findIndex((i) => i.run === issue.run && i.start === issue.start && i.end === issue.end && i.replacement === issue.replacement);
-    if (index < 0) out.push(issue);
-    else out[index] = { ...out[index], aiConfirmed: true, reason: out[index].reason || issue.reason };
+/** 固定错误分类，避免服务商的长响应或逐批错误撑满面板。 */
+export const summarizeAIProofFailures = (batches: AIProofBatch[]) => {
+  const groups = new Map<string, number[]>();
+  for (const batch of batches) {
+    if (batch.status !== 'failed') continue;
+    const error = batch.error || '';
+    const reason = /超时|timeout/i.test(error) ? '请求超时'
+      : /格式无法识别/.test(error) ? 'AI 输出格式无法识别'
+      : /超过 64 KiB|超过 100 项/.test(error) ? 'AI 输出超过安全上限'
+      : /来源|快照/.test(error) ? '来源快照校验失败'
+      : 'AI 请求失败';
+    const ids = groups.get(reason) || [];
+    ids.push(batch.id);
+    groups.set(reason, ids);
   }
-  return out.sort((a, b) => a.run - b.run || a.start - b.start || a.id.localeCompare(b.id));
+  return Array.from(groups, ([reason, ids]) => ({ reason, ids }));
 };
 
 /** 顺序派发；取消/过期后不派发且不发布响应。失败与取消可单独重试，成功批次永不重跑。 */
@@ -147,10 +179,14 @@ export const runAIProofBatches = async (options: {
   complete: (batch: AIProofBatch, raw: string) => Promise<void>;
   changed: () => void;
   timeoutMs?: number;
+  mode?: 'unfinished' | 'failed';
 }) => {
+  // 启动时固定本轮范围；失败重试不会顺带执行 pending/cancelled，成功项永不派发。
+  const eligible = new Set(options.batches.filter((batch) => options.mode === 'failed'
+    ? batch.status === 'failed' : batch.status === 'pending' || batch.status === 'cancelled'));
   for (const batch of options.batches) {
     if (options.signal.aborted || !options.isCurrent()) break;
-    if (batch.status === 'succeeded') continue;
+    if (!eligible.has(batch) || batch.status === 'succeeded') continue;
     batch.status = 'running'; batch.error = undefined; options.changed();
     const requestController = new AbortController();
     let timedOut = false;

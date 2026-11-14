@@ -117,7 +117,7 @@ export const buildProofNode = (
         start: range ? range[0] : -1,
         end: range ? range[1] : -1,
         level: issue.level,
-        label: `${issue.aiConfirmed && issue.source !== 'ai' ? '本地 + AI · ' : ''}${PROOF_RULE_LABELS[issue.rule]}`,
+        label: PROOF_RULE_LABELS[issue.rule],
         original: issue.original,
         replacement: issue.replacement,
         before: issue.before,

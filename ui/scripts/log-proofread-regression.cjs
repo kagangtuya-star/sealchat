@@ -300,13 +300,13 @@ test('审阅中心的批注映射只在按需加载的模块中进行', () => {
   assert.equal(outer, inner);
 });
 
-test('保存失败时显示真实错误，完整本地窗口扫描不依赖保存', () => {
+test('保存失败时显示真实错误，章节和工程扫描先保存完整来源范围', () => {
   const draft = read('views/log/composables/useLogDraft.ts');
   const panel = read('views/log/components/LogProofreadPanel.vue');
   const workbench = read('views/log/components/LogWorkbench.vue');
   assert.match(draft, /throw new Error\(lastError\.value \|\|/);
-  assert.match(panel, /const needsRemote =/);
-  assert.match(panel, /if \(needsRemote && !\(await props\.flush\(\)\)\)/);
+  assert.match(panel, /if \(scope\.value !== 'selected' && !\(await props\.flush\(\)\)\)/);
+  assert.doesNotMatch(panel, /props\.windowComplete/);
   assert.match(panel, /props\.saveError \|\|/);
   assert.match(workbench, /:save-error="draftCtl\.lastError\.value"/);
 });

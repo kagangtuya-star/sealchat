@@ -36,8 +36,6 @@ export interface ProofIssue {
   after: string;
   source?: 'ai';
   reason?: string;
-  /** 同位置同修改合并后，保留本地等级和 ID，同时标记 AI 来源。 */
-  aiConfirmed?: boolean;
 }
 
 export interface ProofEdit {
