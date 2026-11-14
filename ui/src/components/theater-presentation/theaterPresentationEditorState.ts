@@ -333,16 +333,15 @@ export const dispatchTheaterEditorCommand = (
   command: TheaterEditorCommand,
   options: { recordHistory?: boolean; historySnapshot?: TheaterEditorSnapshot } = {},
 ): TheaterEditorState => {
-  const next = clone(state)
-  const previous = options.historySnapshot ? clone(options.historySnapshot) : captureTheaterEditorSnapshot(state)
+  const next = { ...state, draft: clone(state.draft), sectionModes: { ...state.sectionModes } }
   if (!applyCommand(next, command)) return state
   const parsed = theaterPresentationSchema.safeParse(next.draft)
   if (!parsed.success) return state
   next.draft = parsed.data
   next.revision += 1
   if (options.recordHistory !== false) {
-    next.history.past.push(previous)
-    next.history.future = []
+    const previous = options.historySnapshot ? clone(options.historySnapshot) : captureTheaterEditorSnapshot(state)
+    next.history = { past: [...state.history.past, previous], future: [] }
   }
   return next
 }

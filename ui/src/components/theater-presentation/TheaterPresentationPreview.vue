@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue'
-import { resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformLayoutStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer, type TheaterVisualStyle } from '@/types/theaterPresentation'
+import { computed, onBeforeUnmount, ref, shallowRef, watch, type CSSProperties } from 'vue'
+import { normalizeTheaterTextTransform, normalizeTheaterTransform, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformLayoutStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer, type TheaterVisualStyle } from '@/types/theaterPresentation'
 import { resolvePlatformFontFamily } from '@/services/font/platformFontRegistry'
 import { vMediaFx } from '@/features/media-fx/media-fx-dom'
 import { resolveTheaterReducedMotion } from '@/views/theater/shared/theater-reduced-motion'
@@ -89,6 +89,48 @@ watch(() => props.draft.dialogue.content.fontAssetId, refreshContentFontFamily, 
 const sameSelection = (left: TheaterSelection, right: TheaterSelection) => (
   left.kind === right.kind && (left.kind !== 'decoration' || right.kind !== 'decoration' || left.id === right.id)
 )
+// Keep each target at its latest local position while iframe updates are in flight.
+const previewTransforms = shallowRef<{ target: TheaterSelection; transform: Partial<TheaterTransform>; source: TheaterTransform | undefined }[]>([])
+const previewTransform = (target: TheaterSelection, transform: TheaterTransform): TheaterTransform => {
+  const pending = previewTransforms.value.find(item => sameSelection(item.target, target))
+  return pending ? { ...transform, ...pending.transform } : transform
+}
+const targetTransform = (target: TheaterSelection): TheaterTransform | undefined => {
+  if (target.kind === 'portrait') return props.multiplayerPortraitTransform || props.controllerArea || props.draft.portrait?.transform
+  if (target.kind === 'decoration') return props.draft.portraitDecorations.find(item => item.id === target.id)?.transform
+  if (target.kind === 'dialogue-frame') return props.draft.dialogue.frame?.transform
+  if (target.kind === 'dialogue') return props.draft.dialogue.transform
+  return props.draft.dialogue[target.kind].transform
+}
+const reconcilePreviewTransforms = () => {
+  previewTransforms.value = previewTransforms.value.filter(({ target, transform, source }) => {
+    if (gesture && sameSelection(gesture.target, target)) return true
+    const current = targetTransform(target)
+    // Returning to the starting point still needs a new authoritative update.
+    return current && (current === source || (Object.keys(transform) as (keyof TheaterTransform)[]).some(key => current[key] !== transform[key]))
+  })
+}
+watch(() => [props.draft, props.controllerArea, props.multiplayerPortraitTransform], reconcilePreviewTransforms)
+
+const updateGestureTransform = (transform: Partial<TheaterTransform>) => {
+  if (!gesture) return
+  const target = gesture.target
+  const normalized = target.kind === 'speaker' || target.kind === 'content'
+    ? normalizeTheaterTextTransform(transform, gesture.transform)
+    : normalizeTheaterTransform(transform, gesture.transform)
+  if (target.kind === 'portrait' && (props.controllerArea || props.multiplayerPortraitTransform)) {
+    normalized.height = Math.max(0.01, Math.min(1, normalized.height))
+    normalized.y = Math.max(0, Math.min(1 - normalized.height, normalized.y))
+  }
+  const patch: Partial<TheaterTransform> = {}
+  for (const key of Object.keys(transform) as (keyof TheaterTransform)[]) patch[key] = normalized[key]
+  const previous = previewTransforms.value.find(item => sameSelection(item.target, target))
+  previewTransforms.value = [
+    ...previewTransforms.value.filter(item => !sameSelection(item.target, target)),
+    { target, transform: { ...previous?.transform, ...patch }, source: targetTransform(target) },
+  ]
+  emit('dispatch', { type: 'set-transform', target, transform }, { transient: true })
+}
 const sectionForTarget = (target: TheaterSelection): TheaterSection => {
   if (target.kind === 'portrait') return 'portrait'
   if (target.kind === 'speaker') return 'speaker'
@@ -110,6 +152,7 @@ const beginGesture = (event: PointerEvent, kind: GestureKind, target: TheaterSel
   event.stopPropagation()
   const container = targetContainer(target)
   if (!container) return
+  transform = previewTransform(target, transform)
   emit('dispatch', { type: 'select', target })
   emit('gestureStart')
   const rect = container.getBoundingClientRect()
@@ -151,7 +194,7 @@ const applyPointerMove = (event: PointerEvent) => {
         height,
         y: north ? gesture.transform.y + gesture.transform.height - height : gesture.transform.y,
       }
-      emit('dispatch', { type: 'set-transform', target: gesture.target, transform }, { transient: true })
+      updateGestureTransform(transform)
       return
     }
     let width = Math.max(0.01, gesture.transform.width + (west ? -dx : dx))
@@ -169,7 +212,7 @@ const applyPointerMove = (event: PointerEvent) => {
     const angle = Math.atan2(event.clientY - gesture.centerY, event.clientX - gesture.centerX)
     transform = { rotation: gesture.transform.rotation + (angle - gesture.startAngle) * 180 / Math.PI }
   }
-  emit('dispatch', { type: 'set-transform', target: gesture.target, transform }, { transient: true })
+  updateGestureTransform(transform)
 }
 
 const handlePointerMove = (event: PointerEvent) => {
@@ -190,6 +233,7 @@ const endGesture = () => {
   gesture = null
   window.removeEventListener('pointermove', handlePointerMove)
   emit('gestureEnd')
+  reconcilePreviewTransforms()
 }
 
 onBeforeUnmount(() => {
@@ -210,18 +254,18 @@ const selectedMediaAspect = (target: TheaterSelection) => {
 // Same reduced-motion source as the theater dialogue runtime, so preview and play match.
 const reducedMotion = resolveTheaterReducedMotion().effectiveReducedMotion
 
-const layerStyle = (layer: TheaterVisualLayer) => ({
-  ...resolveTheaterTransformStyle(layer.transform),
+const layerStyle = (layer: TheaterVisualLayer, target: TheaterSelection = { kind: 'decoration', id: layer.id }) => ({
+  ...resolveTheaterTransformStyle(previewTransform(target, layer.transform)),
   mixBlendMode: layer.blendMode,
   display: layer.enabled ? 'block' : 'none',
 }) as CSSProperties
 
-const dialogueStyle = computed(() => resolveTheaterTransformLayoutStyle(props.draft.dialogue.transform) as CSSProperties)
+const dialogueStyle = computed(() => resolveTheaterTransformLayoutStyle(previewTransform({ kind: 'dialogue' }, props.draft.dialogue.transform)) as CSSProperties)
 const dialogueSurfaceStyle = computed<CSSProperties>(() => ({
   opacity: String(props.draft.dialogue.transform.opacity),
 }))
 const dialogueFrameStyle = (frame: TheaterVisualLayer): CSSProperties => ({
-  ...layerStyle(frame),
+  ...layerStyle(frame, { kind: 'dialogue-frame' }),
   opacity: String(frame.transform.opacity * props.draft.dialogue.transform.opacity),
 })
 const autoWidthPreviewTransform = (transform: TheaterTransform, aspectRatio: number): TheaterTransform => {
@@ -243,24 +287,24 @@ const autoWidthPreviewTransform = (transform: TheaterTransform, aspectRatio: num
 const portraitRootStyle = computed<CSSProperties>(() => {
   if (props.draft.portrait) {
     return {
-      ...layerStyle(props.draft.portrait),
-      ...(props.multiplayerPortraitTransform ? resolveTheaterTransformStyle(autoWidthPreviewTransform(props.multiplayerPortraitTransform, props.draft.portrait.media.width / props.draft.portrait.media.height)) : {}),
+      ...layerStyle(props.draft.portrait, { kind: 'portrait' }),
+      ...(props.multiplayerPortraitTransform ? resolveTheaterTransformStyle(autoWidthPreviewTransform(previewTransform({ kind: 'portrait' }, props.multiplayerPortraitTransform), props.draft.portrait.media.width / props.draft.portrait.media.height)) : {}),
     }
   }
   if (props.multiplayerPortraitTransform) {
-    return resolveTheaterTransformStyle(autoWidthPreviewTransform(props.multiplayerPortraitTransform, 2 / 3)) as CSSProperties
+    return resolveTheaterTransformStyle(autoWidthPreviewTransform(previewTransform({ kind: 'portrait' }, props.multiplayerPortraitTransform), 2 / 3)) as CSSProperties
   }
   return { position: 'absolute', inset: '0' } as CSSProperties
 })
-const controllerAreaStyle = computed<CSSProperties>(() => props.controllerArea ? { ...resolveTheaterTransformStyle(autoWidthPreviewTransform(props.controllerArea, 2 / 3)) } : {})
+const controllerAreaStyle = computed<CSSProperties>(() => props.controllerArea ? { ...resolveTheaterTransformStyle(autoWidthPreviewTransform(previewTransform({ kind: 'portrait' }, props.controllerArea), 2 / 3)) } : {})
 const controllerAreaLabel = computed(() => {
-  const area = props.controllerArea
+  const area = props.controllerArea && previewTransform({ kind: 'portrait' }, props.controllerArea)
   if (!area) return ''
   const percent = (value: number) => `${Math.round(value * 100)}%`
   return `多人立绘默认状态 · Y ${percent(area.y)} · H ${percent(area.height)} · 宽度自动`
 })
 const textLayerStyle = (kind: 'speaker' | 'content') => ({
-  ...resolveTheaterTextTransformStyle(props.draft.dialogue[kind].transform),
+  ...resolveTheaterTextTransformStyle(previewTransform({ kind }, props.draft.dialogue[kind].transform)),
   display: props.draft.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   '--theater-font-scale': String(props.draft.dialogue[kind].fontScale),
 }) as CSSProperties
