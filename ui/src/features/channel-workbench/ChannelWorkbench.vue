@@ -583,10 +583,9 @@ const panelMounted = (panel: WorkbenchPanel) => layoutVariant.value !== 'tabs' |
 const gridStyle = computed(() => {
   const layout = displayLayout.value
   if (!layout || layoutVariant.value !== 'grid') return {}
-  const rowMin = focusedPanelId.value ? '0' : 'var(--sc-workbench-row-min, 40px)'
   return {
     gridTemplateColumns: `repeat(${layout.grid.columns}, minmax(0, 1fr))`,
-    gridTemplateRows: `repeat(${layout.grid.rows}, minmax(${rowMin}, 1fr))`,
+    gridTemplateRows: `repeat(${layout.grid.rows}, minmax(0, 1fr))`,
     gap: `${layout.grid.gap}px`,
   }
 })
@@ -873,7 +872,7 @@ onBeforeUnmount(() => {
               {{ workbenchPanelTitle(panel) }}
             </button>
           </nav>
-          <div class="wb-scroll" :class="{ 'is-focused': !!focusedPanelId }">
+          <div class="wb-scroll" :class="{ 'is-focused': !!focusedPanelId, 'is-grid': layoutVariant === 'grid' }">
             <div class="wb-grid" :class="`wb-grid--${layoutVariant}`" :style="gridStyle">
               <WorkbenchPanelView
                 v-for="panel in panels"
@@ -943,9 +942,9 @@ onBeforeUnmount(() => {
 .wb-scroll { position: relative; flex: 1; min-height: 0; padding: var(--sc-workbench-padding, 10px); overflow: auto; scrollbar-width: none; -ms-overflow-style: none; }
 .wb-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .sc-workbench-root[data-sc-minimal-actions-placement='outside'] .wb-scroll { padding: max(var(--sc-workbench-padding, 10px), 8px); }
-.wb-scroll.is-focused { overflow: hidden; }
-.wb-grid--grid { display: grid; min-height: 100%; }
-.wb-scroll.is-focused .wb-grid--grid { height: 100%; min-height: 0; }
+.wb-scroll.is-focused,
+.wb-scroll.is-grid { overflow: hidden; }
+.wb-grid--grid { display: grid; height: 100%; min-height: 0; }
 .wb-grid--tabs { height: 100%; }
 .wb-grid--tabs > .sc-workbench-panel { height: 100%; }
 .wb-grid--stack { display: flex; flex-direction: column; gap: 10px; }
