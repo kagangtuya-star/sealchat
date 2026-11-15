@@ -15,6 +15,7 @@ import { loadUICustomizations } from './api'
 import { createUICustomizationRuntime } from './cssRuntime'
 import { createBlobModuleImporter, createScriptRuntime, type NotifyType, type UICustomizationEvent } from './jsRuntime'
 import { hasSafeUIParameter, resolveCustomizationContext } from './resolver'
+import { detectChatEmbedHost, resolveEffectiveCustomizationSurface } from './embedSurface'
 import { createScriptController, type PendingWorldScript } from './scripts'
 import { createTrustStore, UI_CUSTOMIZATION_TRUST_KEY, type TrustStore } from './trust'
 import { workbenchRuntimeState } from '../../features/channel-workbench/runtimeState'
@@ -188,12 +189,17 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
   let ready = false
   let queued = false
   let disposed = false
-  const resolve = () => resolveCustomizationContext(router.currentRoute.value, {
-    currentWorldId: chat.currentWorldId || '', channelId: String(chat.curChannel?.id || ''),
-    observerMode: chat.observerMode, observerWorldId: chat.observerWorldId,
-    observerChannelId: chat.observerChannelId, observerSlug: chat.observerSlug, invite: chat.lastConsumedWorldInvite || undefined,
-    embedReady: embedRoute.value === router.currentRoute.value.fullPath,
-  })
+  const resolve = () => {
+    const route = router.currentRoute.value
+    const base = resolveCustomizationContext(route, {
+      currentWorldId: chat.currentWorldId || '', channelId: String(chat.curChannel?.id || ''),
+      observerMode: chat.observerMode, observerWorldId: chat.observerWorldId,
+      observerChannelId: chat.observerChannelId, observerSlug: chat.observerSlug, invite: chat.lastConsumedWorldInvite || undefined,
+      embedReady: embedRoute.value === route.fullPath,
+    })
+    const surface = resolveEffectiveCustomizationSurface(base.surface, base.surface === 'embed' && detectChatEmbedHost(route.name))
+    return surface !== base.surface ? { ...base, surface, publicSurface: false } : base
+  }
   const refresh = () => {
     if (!ready || disposed) return Promise.resolve()
     const context = resolve()

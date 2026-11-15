@@ -113,7 +113,7 @@ Surface 是 UI 包选择页面的稳定接口。不要根据 URL 文本自己猜
 | `auth` | 登录、注册、找回密码和重置密码。 |
 | `lobby` | 世界大厅、关于页等无世界上下文页面。 |
 | `world-detail` | 世界详情和世界控制台。 |
-| `chat` | 根 `/` 与世界频道聊天主界面。 |
+| `chat` | 根 `/`、世界频道聊天主界面，以及同源内置聊天分屏、聊天栏和聊天浮窗。 |
 | `split` | 分屏界面。 |
 | `embed` | 频道嵌入页。公共 Surface。 |
 | `theater` | World Theater。 |
@@ -128,6 +128,8 @@ Surface 是 UI 包选择页面的稳定接口。不要根据 URL 文本自己猜
 `global` 当前覆盖 `auth`、`lobby`、`world-detail`、`chat`、`split`、`theater`、`invite`、`log-layout` 和 `status`。
 
 公共 Surface 不会被 `global` 命中。要覆盖 OB、Embed 或公开 LOG，必须把 `observer`、`embed` 和 `log-public` 明确写入 `targets`。
+
+`EmbedChatView` 默认属于 `embed`；实际运行在同源内置聊天宿主中时，UI Customization Runtime 会自动按 `chat` 加载 CSS 和 JavaScript。覆盖范围包括页内分屏、独立分屏的聊天窗格、小剧场聊天栏、Workbench Chat Panel，以及 stage、viewport、Workbench 宿主内的 Chat 浮窗。识别只依据真实 Window / DOM 关系，不读取 query 或 postMessage 来提升 Surface，也不需要修改 URL 或向创建浮窗的调用方传参。直接访问、跨源嵌入及其他普通 Embed 仍为 `embed`。
 
 完整参考包建议使用：
 
@@ -512,7 +514,9 @@ html[data-sc-surface='chat'][data-sc-workbench]
 }
 ~~~
 
-面板内容有独立的 Surface 边界。聊天 Panel 使用 `embed` Surface，小剧场 Panel 使用 `theater` Surface。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface。UI Package 的任意 CSS 和脚本不会进入这些内部页面，但同源嵌入的 Internal Surface 会从宿主读取一组白名单语义主题值，包括背景、文字、边框、主色和字体变量，并跟随宿主主题变化。这样可以延续当前主题配色，同时保持 iframe 的样式隔离。独立窗口和跨源父页面继续使用自身主题。外部网页也不受 SealChat UI Package 影响。如果一个主题同时需要修改工作台外壳和聊天 Panel，应把 `chat` 与 `embed` 都纳入目标范围。
+面板内容有独立的 Surface 边界。当 `EmbedChatView` 实际嵌在同源父页面的 `[data-sc-ui='workbench-panel'][data-sc-panel-type='chat']` 中，且父页面存在活动 Workbench 时，SealChat 会将其 UI Customization Surface 视为 `chat`；弹出到内置 Chat 浮窗后也使用 `chat`。已有 `chat` 目标的 CSS 和 JavaScript 会通过现有 Runtime 直接生效，主题作者无需额外勾选 `embed`，也不需要 Workbench URL 参数。此时 `sc.context().surface === 'chat'`，`worldId`、`channelId` 和 `sc.channel()` 使用 iframe 自己正在显示的频道，而非父布局频道。Safe UI、世界脚本策略、浏览器信任和频道能力检查保持不变。
+
+普通 Embed（包括直接访问和外部网站嵌入）继续使用 `embed` Surface，已有 `data-sc-surface='embed'` 和 `sc.context().surface === 'embed'` 逻辑保持兼容。Split 宿主页仍为 `split`，小剧场 Panel 及宿主页仍为 `theater`，其中内置的聊天 iframe 则按 `chat` 运行。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface；它们继续只从同源宿主继承白名单语义主题值，包括背景、文字、边框、主色和字体变量，并跟随宿主主题变化，不加载任意 UI Package CSS 或 JavaScript。独立窗口和跨源父页面继续使用自身主题。外部网页完全隔离，不受 SealChat UI Package 影响。
 
 JavaScript 包可以通过 `sc.context().workbench` 读取当前工作台状态。非布局频道时该字段为 `null`；布局频道中返回 `channelId`、`mode`、`immersive`、`focusedPanelId` 和 `spotlightPanelId`。`sc.on('workbench-change', handler)` 会在进入或退出布局频道、切换设计模式、沉浸模式、个人 Focus 或 GM 聚焦时触发，payload 为 `{ workbench, previous }`。
 
