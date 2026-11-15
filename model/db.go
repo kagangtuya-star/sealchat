@@ -204,6 +204,7 @@ func DBInit(cfg *utils.AppConfig) {
 		log.Printf("cleanup unsupported theater presentations failed: %v", err)
 	}
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
+	db.AutoMigrate(&ChannelWorkbenchModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
 	db.AutoMigrate(&PlatformCharacterCardTemplateModel{})

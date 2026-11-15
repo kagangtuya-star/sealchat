@@ -2,12 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import { NIcon } from 'naive-ui'
-import { ExternalLink } from '@vicons/tabler'
+import { ExternalLink, Pin, Pinned } from '@vicons/tabler'
 import { AppsOutline } from '@vicons/ionicons5'
 import { chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { resolveSafeStageIframeUrl } from '../shared/stage-types'
-import type { TheaterFloatingCustomWindowInput, TheaterFloatingCustomWindowUpdate, TheaterFloatingWindowSummary } from './theater-floating-window'
+import { buildEmbedChatWindowUrl, type TheaterFloatingCustomWindowInput, type TheaterFloatingCustomWindowUpdate, type TheaterFloatingWindowSummary } from './theater-floating-window'
 import {
   buildInternalSurfaceResourceKey,
   parseInternalSurfaceLink,
@@ -55,7 +55,8 @@ const props = withDefaults(defineProps<{
   chatFrame?: HTMLIFrameElement | null
   worldId: string
   channelId: string
-  hostMode?: 'stage' | 'viewport'
+  /** workbench：布局频道的个人浮窗层，内部窗口按世界校验，支持临时（不持久化）窗口。 */
+  hostMode?: 'stage' | 'viewport' | 'workbench'
   dockMinimizedCharacters?: boolean
 }>(), {
   chatFrame: null,
@@ -99,6 +100,9 @@ const MINIMIZED_TITLE_WIDTH = 200
 const MINIMIZED_CHARACTER_SIZE = 52
 const STAGE_STORAGE_PREFIX = 'sealchat:theater-floating-windows:v1:'
 const VIEWPORT_STORAGE_PREFIX = 'sealchat:internal-floating-windows:v1:'
+const WORKBENCH_STORAGE_PREFIX = 'sealchat:workbench-floating-windows:v2:'
+// 与 IForm 外链 iframe 相同；只在布局频道浮窗中启用，不改变小剧场既有网页窗口。
+const WORKBENCH_WEB_SANDBOX = 'allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-popups'
 const MAX_PERSISTED_WINDOWS = 32
 const PERSIST_DELAY = 150
 
@@ -125,11 +129,20 @@ const isDockedCharacter = (item: TheaterFloatingWindowState) => (
 )
 const dockedCharacters = computed(() => windows.value.filter(item => !item.hidden && isDockedCharacter(item)))
 
-const storageKey = (worldId: string, channelId: string) => (
-  `${hostMode.value === 'viewport' ? VIEWPORT_STORAGE_PREFIX : STAGE_STORAGE_PREFIX}${encodeURIComponent(worldId)}:${encodeURIComponent(channelId)}`
+const storagePrefix = () => {
+  if (hostMode.value === 'viewport') return VIEWPORT_STORAGE_PREFIX
+  if (hostMode.value === 'workbench') return WORKBENCH_STORAGE_PREFIX
+  return STAGE_STORAGE_PREFIX
+}
+const storageKey = (worldId: string, channelId: string, userId: string) => (
+  `${storagePrefix()}${hostMode.value === 'workbench' ? `${encodeURIComponent(userId)}:` : ''}${encodeURIComponent(worldId)}:${encodeURIComponent(channelId)}`
+)
+// 布局频道可以引用同世界其他频道的内部资源；其他宿主仍要求与当前频道一致。
+const internalChannelAccepted = (resourceChannelId: string, channelId: string) => (
+  hostMode.value === 'workbench' || resourceChannelId === channelId
 )
 
-const normalizeStoredWindow = (value: unknown, worldId: string, channelId: string): TheaterFloatingWindowState | null => {
+const normalizeStoredWindow = (value: unknown, worldId: string, channelId: string, userId: string): TheaterFloatingWindowState | null => {
   if (!value || typeof value !== 'object') return null
   const stored = value as Record<string, unknown>
   const key = typeof stored.key === 'string' ? stored.key : ''
@@ -140,10 +153,10 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
   const ownerUserId = typeof stored.ownerUserId === 'string' ? stored.ownerUserId.trim() : ''
   if (source === 'internal') {
     const parsed = parseInternalSurfaceLink(url)
-    if (!parsed || parsed.worldId !== worldId || parsed.channelId !== channelId
+    if (!parsed || parsed.worldId !== worldId || !internalChannelAccepted(parsed.channelId, channelId)
       || !key || buildInternalSurfaceResourceKey(parsed) !== key) return null
     resourceType = parsed.type
-    if (parsed.type === 'clue' && (!currentUserId.value || !ownerUserId || ownerUserId !== currentUserId.value)) return null
+    if (parsed.type === 'clue' && (!userId || !ownerUserId || ownerUserId !== userId)) return null
   } else if (source === 'web') {
     if (!key.startsWith('custom:') || !resolveSafeStageIframeUrl(url)) return null
   } else if (source === 'chat') {
@@ -160,7 +173,7 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
       return null
     }
     // Restore only the ordinary embed endpoint, with no bridge or audio ownership.
-    url = buildChatWindowUrl(worldId, targetChannelId)
+    url = buildEmbedChatWindowUrl(worldId, targetChannelId)
   } else return null
   const finite = (input: unknown, fallback: number) => (
     typeof input === 'number' && Number.isFinite(input) ? input : fallback
@@ -193,14 +206,14 @@ const normalizeStoredWindow = (value: unknown, worldId: string, channelId: strin
   }
 }
 
-const readStoredWindows = (worldId: string, channelId: string) => {
-  if (!worldId || !channelId) return []
+const readStoredWindows = (worldId: string, channelId: string, userId: string) => {
+  if (!worldId || !channelId || (hostMode.value === 'workbench' && !userId)) return []
   try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey(worldId, channelId)) || '[]')
+    const value = JSON.parse(window.localStorage.getItem(storageKey(worldId, channelId, userId)) || '[]')
     if (!Array.isArray(value)) return []
     const keys = new Set<string>()
     return value.slice(0, MAX_PERSISTED_WINDOWS).flatMap((entry) => {
-      const item = normalizeStoredWindow(entry, worldId, channelId)
+      const item = normalizeStoredWindow(entry, worldId, channelId, userId)
       if (!item || keys.has(item.key)) return []
       keys.add(item.key)
       return [item]
@@ -211,9 +224,10 @@ const readStoredWindows = (worldId: string, channelId: string) => {
 }
 
 const persistWindows = () => {
-  if (restoring || !loadedWorldId || !loadedChannelId) return
+  if (restoring || !loadedWorldId || !loadedChannelId || (hostMode.value === 'workbench' && !loadedUserId)) return
   try {
-    const key = storageKey(loadedWorldId, loadedChannelId)
+    // 切换账号的 watch 会先 flush；必须使用旧窗口实际所属的 loadedUserId。
+    const key = storageKey(loadedWorldId, loadedChannelId, loadedUserId)
     let storedEntries: unknown[] = []
     try {
       const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
@@ -242,7 +256,8 @@ const persistWindows = () => {
       merged.push(entry)
     }
 
-    windows.value.forEach(addWindow)
+    // 临时窗口只存在于本次页面会话。
+    windows.value.filter(item => !item.transient).forEach(addWindow)
     const preservedClueKeys = new Set<string>()
     storedEntries.forEach((entry) => {
       if (!entry || typeof entry !== 'object') return
@@ -343,14 +358,14 @@ const fitWindowsToHost = () => {
   })
 }
 
-const restoreWindows = async (worldId: string, channelId: string) => {
+const restoreWindows = async (worldId: string, channelId: string, userId: string) => {
   const epoch = ++restoreEpoch
   restoring = true
   loadedWorldId = worldId.trim()
   loadedChannelId = channelId.trim()
-  loadedUserId = currentUserId.value
+  loadedUserId = userId.trim()
   windowSummarySignature = ''
-  windows.value = readStoredWindows(loadedWorldId, loadedChannelId)
+  windows.value = readStoredWindows(loadedWorldId, loadedChannelId, loadedUserId)
   zCounter.value = Math.max(40, ...windows.value.map(item => item.zIndex))
   await nextTick()
   if (epoch !== restoreEpoch) return
@@ -374,9 +389,10 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
   if (
     !parsed
     || parsed.worldId !== props.worldId
-    || parsed.channelId !== props.channelId
+    || !internalChannelAccepted(parsed.channelId, props.channelId)
     || buildInternalSurfaceResourceKey(parsed) !== request.resource.key
   ) return false
+  const requestedTransient = hostMode.value === 'workbench' ? request.resource.presentation?.transient : undefined
 
   const existing = windows.value.find(item => item.key === request.resource.key)
   if (existing) {
@@ -386,6 +402,7 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
     existing.chrome = request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default'
     if (parsed.type === 'clue') existing.ownerUserId = currentUserId.value || undefined
     existing.avatarUrl = request.resource.presentation?.avatarUrl || existing.avatarUrl
+    if (requestedTransient !== undefined) existing.transient = requestedTransient || undefined
     setMinimized(existing, false)
     clampWindowPosition(existing)
     return true
@@ -413,6 +430,7 @@ const acceptTakeover = (request: TheaterFloatingTakeoverRequest) => {
     chrome: request.resource.presentation?.chrome === 'minimal' ? 'minimal' : 'default',
     ownerUserId: parsed.type === 'clue' ? (currentUserId.value || undefined) : undefined,
     avatarUrl: request.resource.presentation?.avatarUrl || undefined,
+    transient: requestedTransient || undefined,
   }
   clampWindowPosition(item)
   windows.value.push(item)
@@ -445,18 +463,14 @@ const openResource = (
 }
 
 const openExternal = (item: TheaterFloatingWindowState) => {
+  if (hostMode.value === 'workbench' && item.source === 'web') {
+    window.open(item.url, '_blank', 'noopener,noreferrer')
+    return
+  }
   const url = item.source === 'chat' && item.targetChannelId
-    ? buildChatWindowUrl(props.worldId, item.targetChannelId, false)
+    ? buildEmbedChatWindowUrl(props.worldId, item.targetChannelId, false)
     : item.url
   openInternalSurfaceLink(url, { width: item.width, height: item.height })
-}
-
-const buildChatWindowUrl = (worldId: string, channelId: string, floatingChat = true) => {
-  const url = new URL(window.location.href)
-  const params = new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0', toolbar: '1' })
-  if (floatingChat) params.set('floatingChat', '1')
-  url.hash = `/embed?${params}`
-  return url.toString()
 }
 
 const focusWindow = (id: string) => {
@@ -472,16 +486,20 @@ const openCustomWindow = (input: TheaterFloatingCustomWindowInput) => {
   const targetChannelId = input.source === 'chat' ? input.targetChannelId.trim() : undefined
   if (input.source === 'chat' && !targetChannelId) return false
   const url = input.source === 'chat'
-    ? buildChatWindowUrl(props.worldId, targetChannelId!)
+    ? buildEmbedChatWindowUrl(props.worldId, targetChannelId!)
     : resolveSafeStageIframeUrl(input.url)
   if (!url) return false
-  const key = input.source === 'chat'
-    ? `chat-window:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
-    : `custom:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
-  if (input.source !== 'chat') {
+  const keyPrefix = input.source === 'chat' ? 'chat-window:' : 'custom:'
+  const requestedKey = input.key?.startsWith(keyPrefix) ? input.key : ''
+  const key = requestedKey
+    || `${keyPrefix}${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+  const transient = hostMode.value === 'workbench' && input.transient === true ? true : undefined
+  if (input.source !== 'chat' || requestedKey) {
     const existing = windows.value.find(item => item.key === key)
     if (existing) {
+      if (requestedKey) existing.transient = transient
       focusWindow(existing.id)
+      setMinimized(existing, false)
       return true
     }
   }
@@ -494,7 +512,7 @@ const openCustomWindow = (input: TheaterFloatingCustomWindowInput) => {
     id: key, key, url, source: input.source, targetChannelId,
     title: input.title.trim() || (input.source === 'chat' ? '聊天' : '网页'),
     x: (rect.width - width) / 2, y: (rect.height - height) / 2,
-    width, height, zIndex: ++zCounter.value, hidden: false, minimized: false, chrome: 'default',
+    width, height, zIndex: ++zCounter.value, hidden: false, minimized: false, chrome: 'default', transient,
   }
   clampWindowPosition(item)
   windows.value.push(item)
@@ -522,7 +540,7 @@ const updateCustomWindow = (input: TheaterFloatingCustomWindowUpdate) => {
 
   const targetChannelId = input.targetChannelId.trim()
   if (!targetChannelId) return false
-  item.url = buildChatWindowUrl(props.worldId, targetChannelId)
+  item.url = buildEmbedChatWindowUrl(props.worldId, targetChannelId)
   item.targetChannelId = targetChannelId
   item.title = input.title.trim() || '聊天'
   clampWindowPosition(item)
@@ -697,6 +715,11 @@ const toggleChatActionRibbon = (item: TheaterFloatingWindowState) => {
   targetWindow.postMessage({ type: 'sealchat.embed.toggleActionRibbon' }, window.location.origin)
 }
 
+const toggleWindowPinned = (item: TheaterFloatingWindowState) => {
+  if (hostMode.value !== 'workbench') return
+  item.transient = item.transient ? undefined : true
+}
+
 const setWindowHidden = (id: string, hidden: boolean) => {
   const item = findWindow(id)
   if (!item) return
@@ -726,6 +749,7 @@ const buildWindowSummaries = (): TheaterFloatingWindowSummary[] => windows.value
   hidden: item.hidden,
   minimized: item.minimized,
   zIndex: item.zIndex,
+  ...(item.transient ? { transient: true } : {}),
 }))
 
 let windowSummarySignature = ''
@@ -741,10 +765,10 @@ watch(windows, () => {
   schedulePersist()
   publishWindowSummaries()
 }, { deep: true })
-watch(() => [props.worldId, props.channelId, hostMode.value, currentUserId.value] as const, ([worldId, channelId]) => {
+watch(() => [props.worldId, props.channelId, hostMode.value, currentUserId.value] as const, ([worldId, channelId, , userId]) => {
   if (!mounted) return
   flushPersist()
-  void restoreWindows(worldId, channelId)
+  void restoreWindows(worldId, channelId, userId)
 })
 
 useResizeObserver(hostRef, fitWindowsToHost)
@@ -753,7 +777,7 @@ onMounted(() => {
   mounted = true
   if (hostMode.value === 'stage') window.addEventListener('message', handleTakeoverMessage)
   if (hostMode.value === 'viewport') chatEvent.on('internal-surface-floating-open' as any, handleInternalSurfaceFloatingOpen as any)
-  void restoreWindows(props.worldId, props.channelId)
+  void restoreWindows(props.worldId, props.channelId, currentUserId.value)
 })
 onBeforeUnmount(() => {
   flushPersist()
@@ -767,7 +791,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
 </script>
 
 <template>
-  <Teleport to="body" :disabled="hostMode !== 'viewport'">
+  <Teleport to="body" :disabled="hostMode === 'stage'">
     <div ref="hostRef" class="theater-floating-host" :class="`theater-floating-host--${hostMode}`" aria-label="小剧场浮窗层">
     <section
       v-for="item in windows"
@@ -780,6 +804,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
         'is-minimal': item.chrome === 'minimal',
         'is-chat': item.source === 'chat',
         'is-docked': isDockedCharacter(item),
+        'is-transient': item.transient,
       }"
       :style="windowStyle(item)"
       @pointerdown="bringToFront(item.id)"
@@ -825,6 +850,16 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
           <button v-if="item.source === 'chat'" type="button" title="更多跑团功能" aria-label="更多跑团功能" @click="toggleChatActionRibbon(item)">
             <NIcon><AppsOutline /></NIcon>
           </button>
+          <button
+            v-if="hostMode === 'workbench'"
+            type="button"
+            :title="item.transient ? '固定弹出（刷新后保留）' : '改为临时弹出（刷新后关闭）'"
+            :aria-label="item.transient ? '固定弹出' : '改为临时弹出'"
+            :aria-pressed="!item.transient"
+            @click="toggleWindowPinned(item)"
+          >
+            <NIcon><Pin v-if="item.transient" /><Pinned v-else /></NIcon>
+          </button>
           <button type="button" :title="item.minimized ? '恢复' : '最小化'" @click="toggleMinimized(item)">
             {{ item.minimized ? '□' : '—' }}
           </button>
@@ -840,6 +875,8 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
           :ref="element => setChatIframeRef(item.id, element)"
           :src="item.url"
           :title="item.title"
+          :sandbox.attr="hostMode === 'workbench' && item.source === 'web' ? WORKBENCH_WEB_SANDBOX : undefined"
+          :referrerpolicy="hostMode === 'workbench' && item.source === 'web' ? 'no-referrer' : undefined"
           frameborder="0"
           allow="autoplay; clipboard-read; clipboard-write"
         />
@@ -874,7 +911,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
 <style scoped>
 .theater-floating-host { position: absolute; z-index: 30; inset: 0; overflow: hidden; pointer-events: none; }
 .theater-floating-host--stage { z-index: 10001; }
-.theater-floating-host--viewport { position: fixed; z-index: 23990; }
+.theater-floating-host--viewport, .theater-floating-host--workbench { position: fixed; z-index: 23990; }
 .theater-floating-window { position: absolute; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 10px; background: var(--sc-bg-surface, #1b1b20); box-shadow: 0 14px 36px rgba(0, 0, 0, .32); }
 .theater-floating-window.is-minimal { border-color: transparent; border-radius: 5px; background: transparent; box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }
 .theater-floating-window__header { box-sizing: border-box; display: flex; flex: 0 0 38px; align-items: center; justify-content: space-between; min-width: 0; padding: 0 6px 0 12px; color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 94%, transparent); cursor: move; touch-action: none; user-select: none; }

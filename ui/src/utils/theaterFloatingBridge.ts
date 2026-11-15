@@ -15,6 +15,8 @@ export interface TheaterFloatingResource {
     avatarUrl?: string;
     width?: number;
     height?: number;
+    /** 只被布局频道浮窗层读取：临时弹出，不持久化。 */
+    transient?: boolean;
   };
 }
 
@@ -272,6 +274,7 @@ export const isTheaterFloatingTakeoverRequest = (
     && (presentation.avatarUrl === undefined || typeof presentation.avatarUrl === 'string')
     && (presentation.width === undefined || (typeof presentation.width === 'number' && Number.isFinite(presentation.width)))
     && (presentation.height === undefined || (typeof presentation.height === 'number' && Number.isFinite(presentation.height)))
+    && (presentation.transient === undefined || typeof presentation.transient === 'boolean')
   );
   return request.type === THEATER_FLOATING_TAKEOVER_REQUEST
     && typeof request.requestId === 'string'

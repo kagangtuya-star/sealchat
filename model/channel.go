@@ -41,6 +41,9 @@ type ChannelModel struct {
 	BackgroundAttachmentId string `json:"backgroundAttachmentId" gorm:"size:100"` // 背景图附件ID
 	BackgroundSettings     string `json:"backgroundSettings" gorm:"type:text"`    // JSON: 背景常规设置
 
+	// DisplayMode 频道展示形态：空值为普通聊天频道，"workbench" 为布局工作台；不影响成员、权限与公开语义。
+	DisplayMode string `json:"displayMode,omitempty" gorm:"size:24"`
+
 	FriendInfo   *FriendModel `json:"friendInfo,omitempty" gorm:"-"`
 	MembersCount int          `json:"membersCount" gorm:"-"`
 }

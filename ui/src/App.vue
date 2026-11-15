@@ -2526,12 +2526,12 @@ nav a:first-of-type {
   #app { isolation: isolate; background: transparent; }
 
   /* Layout wrappers must not stack several opaque page backgrounds. */
-  :is(.sc-app-shell, .sc-layout-root, .sc-layout-content, .sc-layout-sider, .sc-layout-header, .sc-sidebar-fill, .chat-root-container, .sc-embed-root, .internal-surface, .theater-host) {
+  :is(.sc-app-shell, .sc-layout-root, .sc-layout-content, .sc-layout-sider, .sc-layout-header, .sc-sidebar-fill, .chat-root-container, .sc-embed-root, .internal-surface, .theater-host, .sc-workbench-root) {
     background: transparent !important;
   }
   .sc-app-shell { background: var(--sc-glass-page) !important; }
 
-  @include ordinary-glass-surface('.sc-header, .sc-sidebar, .chat-root-container > .chat:not(.chat--has-background), .chat-root-container > .edit-area, .action-ribbon, .world-lobby-root, .world-console-panel, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-glass-settings-panel, .sc-overlay, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu') {
+  @include ordinary-glass-surface('.sc-header, .sc-sidebar, .chat-root-container > .chat:not(.chat--has-background), .chat-root-container > .edit-area, .action-ribbon, .world-lobby-root, .world-console-panel, .clue-box, .chat-search-panel, .dice-tray-floating-window, .sc-workbench-panel:not(.is-minimal), .sc-glass-settings-panel, .sc-overlay, .n-modal, .n-dialog, .n-drawer, .n-popover, .n-dropdown-menu, .n-base-select-menu') {
     background: var(--sc-glass-surface) !important;
     border-color: var(--sc-glass-border) !important;
     box-shadow: var(--sc-glass-shadow);

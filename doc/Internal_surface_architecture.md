@@ -321,6 +321,7 @@ interface TheaterFloatingResource {
     avatarUrl?: string
     width?: number
     height?: number
+    transient?: boolean // 仅 workbench 宿主读取：临时弹出，不持久化
   }
 }
 ```
@@ -331,7 +332,7 @@ interface TheaterFloatingResource {
 ui/src/views/theater/host/TheaterFloatingHost.vue
 ```
 
-当前支持两种运行模式。
+当前支持三种运行模式。
 
 ### 普通页面
 
@@ -363,6 +364,23 @@ intent: 'transfer'
 ```
 
 即直接打开资源和拖拽转移资源。
+
+### 布局频道
+
+```ts
+hostMode="workbench"
+```
+
+布局频道（`ui/src/features/channel-workbench/`）的个人浮窗层，同样 Teleport 到 body。与 viewport 的差异：
+
+- 存储键为 `sealchat:workbench-floating-windows:v2:<userId>:<worldId>:<channelId>`，固定浮窗按用户隔离，与普通页面浮窗互不影响；不迁移缺少 owner 信息的旧 v1 记录。
+- 内部窗口只校验世界，不要求资源上下文频道等于布局频道（布局面板可以引用同世界其他频道的资源）。
+- `presentation.transient` / `openCustomWindow({ key, transient })` 支持临时弹出：临时窗口不写入持久化，刷新或切换频道后消失；窗口标题栏提供固定 / 改为临时切换。
+- 网页窗口加 IForm 外链同款 sandbox 与 `referrerpolicy="no-referrer"`。
+- 面板与浮窗一一对应：Internal Surface 用资源 key，聊天用 `chat-window:workbench:<panelId>`，网页用 `custom:workbench:<panelId>`；弹出期间布局中的 iframe 卸载，收回即关闭浮窗。
+- GM 隐藏或删除面板后，布局宿主会关闭对应的个人浮窗。
+
+布局频道面板直接用 `generateInternalSurfaceLink` 生成 iframe 地址，不手工拼接；布局本身只保存资源描述（surface + resourceId + channelId），不保存生成的 URL。Internal Surface 页面仍然无条件禁止界面自定义包，布局宿主本身运行在 chat Surface 中。
 
 ---
 
@@ -879,3 +897,5 @@ Internal Surface 的职责可以归纳为：
 SealChat 使用 Hash 路由。当运行在 iframe 中的页面再次打开另一个 Internal Surface iframe 时，不要只依赖 Hash 来区分子文档：Chromium 在执行自引用检查时，可能会比较不包含 URL Fragment（`#...`）的祖先页面 URL，从而导致嵌套 iframe 最终停留在 `about:blank`而无法显示。
 
 对于嵌套的 Internal Surface 链接，应保留 `internalSurfaceLink.ts` 中现有的、用于保障 iframe 安全的 Hash 前文档标记。仅当当前页面本身已经运行在 iframe 内时应用该标记；普通顶层页面生成的 Internal Surface URL 不应添加此标记。
+
+同样的问题出现在“布局频道 → 小剧场面板 → 小剧场内置聊天 iframe”的两级嵌套：`TheaterView` 在自身运行于 iframe 时为内置聊天地址加 `__sc_surface=theater-chat` 标记；顶层打开小剧场时地址不变。

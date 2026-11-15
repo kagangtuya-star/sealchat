@@ -9,6 +9,8 @@ import { SIDEBAR_WIDTH_LIMITS, useDisplayStore } from '@/stores/display';
 import { useRoute, useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { useEmailBindReminder, EmailBindPrompt } from '@/composables/useEmailBindReminder';
+import ChannelWorkbench from '@/features/channel-workbench/ChannelWorkbench.vue';
+import { WORKBENCH_DISPLAY_MODE } from '@/features/channel-workbench/types';
 
 const { width } = useWindowSize()
 const chat = useChatStore();
@@ -31,7 +33,25 @@ const isSidebarCollapsed = ref(false)
 const sidebarResizeMode = ref(false)
 
 const isMobileViewport = computed(() => width.value < 700)
-const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value)
+
+// 布局频道：displayMode=workbench 时用工作台替代消息流；Chat 保持挂载（v-show），
+// 其 Store、WS 订阅不受影响；自身 UI（含 Teleport）关闭。观察者模式仍显示普通消息流。
+const isWorkbenchChannel = computed(() => (
+  chat.curChannel?.displayMode === WORKBENCH_DISPLAY_MODE
+  && !chat.isObserver
+  && !(chat.curChannel as any)?.isPrivate
+  && !!chat.currentWorldId
+))
+const workbenchImmersive = ref(false)
+const immersiveActive = computed(() => isWorkbenchChannel.value && workbenchImmersive.value)
+watch(() => [chat.curChannel?.id, chat.currentWorldId], () => {
+  workbenchImmersive.value = false
+})
+watch(isWorkbenchChannel, (value) => {
+  if (!value) workbenchImmersive.value = false
+})
+
+const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value || immersiveActive.value)
 const collapsedWidth = computed(() => 0)
 const sidebarResizeDragging = ref(false)
 const sidebarResizePointerId = ref<number | null>(null)
@@ -365,8 +385,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="h-screen sc-app-shell">
-    <n-layout-header class="sc-layout-header">
+  <main class="h-screen sc-app-shell" :class="{ 'sc-app-shell--immersive': immersiveActive }">
+    <n-layout-header v-show="!immersiveActive" class="sc-layout-header">
       <chat-header :sidebar-collapsed="computedCollapsed" @toggle-sidebar="toggleSidebar" />
     </n-layout-header>
 
@@ -375,7 +395,7 @@ onBeforeUnmount(() => {
       :class="{ 'sc-layout-root--observer': chat.isObserver }"
       has-sider
       position="absolute"
-      style="margin-top: 3.5rem;"
+      :style="{ marginTop: immersiveActive ? '0' : '3.5rem' }"
     >
       <n-layout-sider
         class="sc-layout-sider"
@@ -386,7 +406,7 @@ onBeforeUnmount(() => {
         :native-scrollbar="false"
       >
         <ChatSidebar
-          v-if="!isMobileViewport && !isSidebarCollapsed"
+          v-if="!isMobileViewport && !isSidebarCollapsed && !immersiveActive"
           :sidebar-width-resize-available="!isMobileViewport && !isSidebarCollapsed"
           :sidebar-width-resize-mode="sidebarResizeMode"
           @toggle-sidebar-width-resize="toggleSidebarResizeMode"
@@ -412,7 +432,17 @@ onBeforeUnmount(() => {
           <n-button @click="handleDeepLink">重试进入世界</n-button>
         </n-alert>
         <n-spin v-if="deepLinkPending" show description="正在连接目标世界..." />
-        <Chat v-show="!deepLinkPending && !deepLinkError" @drawer-show="active = true" />
+        <div v-show="!deepLinkPending && !deepLinkError && !isWorkbenchChannel" class="h-full">
+          <Chat :ui-visible="!isWorkbenchChannel" @drawer-show="active = true" />
+        </div>
+        <ChannelWorkbench
+          v-if="isWorkbenchChannel && chat.curChannel"
+          v-show="!deepLinkPending && !deepLinkError"
+          v-model:immersive="workbenchImmersive"
+          :channel="chat.curChannel"
+          :world-id="chat.currentWorldId"
+          :is-mobile="isMobileViewport"
+        />
 
         <n-drawer v-model:show="active" :width="'65%'" placement="left">
           <n-drawer-content closable body-content-style="padding: 0">

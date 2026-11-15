@@ -233,6 +233,12 @@ SealChat 仍保留 `data-display-palette`、`data-display-layout` 和 `data-cust
 | `color-popup` | 富文本颜色候选内容。 |
 | `floating-panel` | 聊天搜索等独立工具面板。 |
 | `message-favorite-inspector` | 消息收藏窗口内的收藏详情栏；`data-sc-layout` 为 `split`（并排）或 `overlay`（覆盖列表）。 |
+| `workbench` | 布局频道工作台根元素。 |
+| `workbench-toolbar` | 布局频道顶部工具栏。 |
+| `workbench-spotlight` | GM 共享聚焦提示条。 |
+| `workbench-design-canvas` | 布局设计画布。 |
+| `workbench-inspector` | 布局设计属性面板。 |
+| `workbench-panel` | 单个工作台面板。 |
 
 消息收藏备注帖沿用细分 hook：备注区 `[data-sc-favorite-note='panel']`（也带 `data-sc-favorite-part='notes'`）、帖子列表 `list`、单帖 `item`、底部新增输入区 `composer`、帖内编辑器 `editor`、编辑锁提示 `lock`、收藏卡片中的备注数量与最新帖子摘要 `summary`、发布入口 `add`。单帖 `item` 带 `data-sc-state`（`idle`、`acquiring`、`editing`、`saving`、`locked`、`lost`），编辑态与锁只作用于该帖，新增输入区独立。它们位于收藏窗口的 `.sc-overlay` surface 内，默认颜色沿用 `--sc-bg-*`、`--sc-text-*`、`--sc-border-*` 和 `--mf-accent`；错误提示允许通过 `--sc-color-error` 覆盖。
 
@@ -444,6 +450,71 @@ UI Package 可以覆盖更多语义变量。完整示例包已经演示这些变
 需要继续修改消息内部控件时，可以使用现有 class，但要把它视为“兼容性敏感选择器”。例如 `.message-action-bar__btn`、`.typing-preview-bubble`、`.chat-input-actions` 都可能随组件重构变化。
 
 完整参考包把稳定 hook 和兼容性敏感选择器分区书写，便于以后维护。
+
+### 11.1 布局频道（Workbench）
+
+布局频道仍运行在 `chat` Surface。目标包含 `chat` 或 `global` 的 UI Package 会作用于工作台外层。工作台中的 iframe 按各自 Surface 单独加载样式，父页面 CSS 不能穿透 iframe。
+
+进入布局频道后，根 `html` 会增加 `data-sc-workbench="view|design|preview"`。沉浸模式会再增加 `data-sc-immersive="true"`。离开布局频道时，这两个属性会清理。
+
+`data-sc-ui="workbench"` 是工作台根元素。它同时提供以下稳定属性：
+
+| 属性 | 取值与用途 |
+| --- | --- |
+| `data-sc-workbench-mode` | `view`、`design` 或 `preview`。 |
+| `data-sc-workbench-layout` | `grid`、`tabs` 或 `stack`。 |
+| `data-sc-panel-style` | `default`、`flat`、`outlined` 或 `glass`。 |
+| `data-sc-minimal-actions-placement` | `inside` 或 `outside`。控制极简面板操作区放在内容内侧还是右上外展。 |
+| `data-sc-immersive` | 沉浸模式时为 `true`。 |
+
+每个 `[data-sc-ui='workbench-panel']` 还提供面板级属性：
+
+| 属性 | 取值与用途 |
+| --- | --- |
+| `data-sc-panel-id` | 当前布局中的稳定 Panel ID。 |
+| `data-sc-panel-type` | `character`、`iform`、`note`、`clue`、`clue-board`、`chat`、`theater` 或 `web`。 |
+| `data-sc-panel-state` | `ready`、`collapsed`、`focused`、`popped`、`unbound` 或 `error`。 |
+| `data-sc-actions-placement` | `inside` 或 `outside`。表示当前面板操作区位置。 |
+
+工作台提供以下 CSS 变量：
+
+~~~css
+--sc-workbench-accent
+--sc-workbench-canvas-bg
+--sc-workbench-toolbar-bg
+--sc-workbench-panel-bg
+--sc-workbench-panel-border
+--sc-workbench-panel-radius
+--sc-workbench-panel-shadow
+--sc-workbench-header-bg
+--sc-workbench-row-min
+--sc-workbench-padding
+~~~
+
+布局设置中的强调色会直接写入工作台根元素的 `--sc-workbench-accent`。显式设置了布局强调色时，它优先于祖先节点上的同名变量。
+
+极简 Panel 默认没有边框、背景、阴影和常驻标题栏。操作区只在 hover、键盘焦点或菜单打开时显示；触摸设备会保持可操作。`inside` 与 `outside` 只改变操作区位置，不改变 Grid rect。`panelStyle` 只给非极简 Panel 增加 flat、outlined 或 glass 材质。
+
+极简状态当前由组件内部 class 表达，没有单独的稳定 `data-sc-*` 属性。第三方包如需覆盖极简标题胶囊等内部结构，可以使用 `.is-minimal`、`.wb-panel__header` 等现有 class，但这些选择器属于兼容性敏感接口。能用 `data-sc-ui`、`data-sc-panel-*` 和 `--sc-workbench-*` 完成的样式，不要依赖内部 class。
+
+例如，只调整布局频道画布和人物卡 Panel，可以写：
+
+~~~css
+html[data-sc-surface='chat'][data-sc-workbench] [data-sc-ui='workbench'] {
+  --sc-workbench-canvas-bg: transparent;
+  --sc-workbench-panel-radius: 12px;
+  --sc-workbench-padding: 12px;
+}
+
+html[data-sc-surface='chat'][data-sc-workbench]
+[data-sc-ui='workbench-panel'][data-sc-panel-type='character'] {
+  --sc-workbench-panel-border: color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+~~~
+
+面板内容有独立的 Surface 边界。聊天 Panel 使用 `embed` Surface，小剧场 Panel 使用 `theater` Surface。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface，UI Package 不进入这些页面。外部网页也不受 SealChat UI Package 影响。如果一个主题同时需要修改工作台外壳和聊天 Panel，应把 `chat` 与 `embed` 都纳入目标范围。
+
+JavaScript 包可以通过 `sc.context().workbench` 读取当前工作台状态。非布局频道时该字段为 `null`；布局频道中返回 `channelId`、`mode`、`immersive`、`focusedPanelId` 和 `spotlightPanelId`。`sc.on('workbench-change', handler)` 会在进入或退出布局频道、切换设计模式、沉浸模式、个人 Focus 或 GM 聚焦时触发，payload 为 `{ workbench, previous }`。
 
 ## 12. Naive UI 组件
 

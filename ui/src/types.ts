@@ -973,6 +973,8 @@ export interface BackgroundPreset {
 export interface SChannel extends Channel {
   isPrivate?: boolean;
   worldId?: string;
+  /** 频道展示形态：空为普通聊天频道，'workbench' 为布局频道；不影响成员与权限。 */
+  displayMode?: string;
   createdAt?: string; // 频道创建时间
   updatedAt?: string; // 频道最后更新时间
   rootId?: string; // 根频道ID

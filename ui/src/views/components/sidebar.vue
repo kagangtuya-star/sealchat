@@ -4,7 +4,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
-import { Plus } from '@vicons/tabler';
+import { LayoutGrid, Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, EarthOutline, BookOutline, MegaphoneOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
@@ -802,8 +802,8 @@ const handleAckWorldAnnouncement = async () => {
                   </template>
 
                   <template v-else>
-                    <!-- 公开频道 -->
-                    <n-icon :component="IconNumber"></n-icon>
+                    <!-- 公开频道；布局频道显示网格图标 -->
+                    <n-icon :component="(i as any).displayMode === 'workbench' ? LayoutGrid : IconNumber" :title="(i as any).displayMode === 'workbench' ? '布局频道' : undefined"></n-icon>
                     <span :class="channelTitleClass">{{ `${i.name}${suffix(i)} (${(i as any).membersCount})` }}</span>
                   </template>
                 </div>
@@ -868,7 +868,7 @@ const handleAckWorldAnnouncement = async () => {
                         <span :class="channelTitleClass">{{ `${child.name}` }}</span>
                       </template>
                       <template v-else>
-                        <n-icon :component="IconNumber"></n-icon>
+                        <n-icon :component="(child as any).displayMode === 'workbench' ? LayoutGrid : IconNumber" :title="(child as any).displayMode === 'workbench' ? '布局频道' : undefined"></n-icon>
                         <span :class="channelTitleClass">{{ `${child.name}${suffix(child)} (${(child as any).membersCount})` }}</span>
                       </template>
                     </div>

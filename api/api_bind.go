@@ -716,6 +716,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Delete("/channels/:channelId/digest-push", DigestPushSettingsDelete)
 	v1Auth.Post("/channels/:channelId/digest-push/test", DigestPushTest)
 	BindWorldGlassRoutes(v1Auth)
+	bindChannelWorkbenchRoutes(v1Auth)
 	v1Auth.Get("/worlds/:worldId/digest-push", WorldDigestPushSettingsGet)
 	v1Auth.Post("/worlds/:worldId/digest-push", WorldDigestPushSettingsUpsert)
 	v1Auth.Delete("/worlds/:worldId/digest-push", WorldDigestPushSettingsDelete)

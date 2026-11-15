@@ -142,6 +142,7 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 			"bot_whisper_forward_config": source.BotWhisperForwardConfig,
 			"background_attachment_id":   source.BackgroundAttachmentId,
 			"background_settings":        source.BackgroundSettings,
+			"display_mode":               source.DisplayMode,
 		}).Error; err != nil {
 		cleanupClonedChannel(newChannel.ID)
 		return nil, err
@@ -264,6 +265,13 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 		summary.addSkipped("audioState")
 	}
 
+	// 布局频道的布局定义属于频道配置，随频道一同复制；引用的资源若在副本中不存在，由前端提示重新绑定。
+	if err := CloneChannelWorkbenchTx(tx, source.ID, newChannel.ID, targetWorldID, actor.ID); err != nil {
+		tx.Rollback()
+		cleanupClonedChannel(newChannel.ID)
+		return nil, err
+	}
+
 	if params.Options.CopyWebhooks {
 		botTokens, botUserIDs, err = copyChannelWebhooks(tx, source.ID, newChannel.ID, actor.ID, &summary)
 		if err != nil {
@@ -336,6 +344,7 @@ func cleanupClonedChannel(channelID string) {
 	db.Where("role_id LIKE ?", rolePattern).Delete(&model.UserRoleMappingModel{})
 	db.Where("role_id LIKE ?", rolePattern).Delete(&model.RolePermissionModel{})
 	db.Where("id LIKE ?", rolePattern).Delete(&model.ChannelRoleModel{})
+	db.Where("channel_id = ?", channelID).Delete(&model.ChannelWorkbenchModel{})
 	db.Where("id = ?", channelID).Delete(&model.ChannelModel{})
 }
 

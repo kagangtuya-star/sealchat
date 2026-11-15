@@ -15,9 +15,12 @@ export interface TheaterFloatingWindowSummary {
   hidden: boolean
   minimized: boolean
   zIndex: number
+  /** 布局频道的临时弹出窗口：不持久化，刷新或切换频道后消失。 */
+  transient?: boolean
 }
 
-export type TheaterFloatingCustomWindowInput = {
+/** key/transient 只由布局频道使用：固定 key 让同一面板只对应一个浮窗。 */
+export type TheaterFloatingCustomWindowInput = ({
   source: 'web'
   title: string
   url: string
@@ -27,7 +30,7 @@ export type TheaterFloatingCustomWindowInput = {
   source: 'chat'
   title: string
   targetChannelId: string
-}
+}) & { key?: string; transient?: boolean }
 
 export type TheaterFloatingCustomWindowUpdate = {
   source: 'web'
@@ -50,3 +53,12 @@ export type TheaterFloatingWindowAction =
   | { type: 'add-chat'; channelId: string }
   | { type: 'update-web'; id: string; title: string; url: string; width?: number; height?: number }
   | { type: 'update-chat'; id: string; channelId: string }
+
+/** 浮窗 / 布局频道共用的 Embed Chat 地址：普通 embed 端点，不接管音频，不携带桥接能力。 */
+export const buildEmbedChatWindowUrl = (worldId: string, channelId: string, floatingChat = true) => {
+  const url = new URL(window.location.href)
+  const params = new URLSearchParams({ worldId, channelId, scopeWorldId: worldId, viewport: 'mobile', audioOwner: '0', toolbar: '1' })
+  if (floatingChat) params.set('floatingChat', '1')
+  url.hash = `/embed?${params}`
+  return url.toString()
+}

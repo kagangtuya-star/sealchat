@@ -12,6 +12,8 @@ import TabAppearance from './TabAppearance.vue'
 import TabBotWhisperForward from './TabBotWhisperForward.vue'
 import TabDiceMode from './TabDiceMode.vue'
 import { resolveActionErrorMessage } from '@/utils/errorMessage';
+import { setChannelDisplayMode } from '@/features/channel-workbench/api';
+import { WORKBENCH_DISPLAY_MODE } from '@/features/channel-workbench/types';
 
 const message = useMessage();
 const dialog = useDialog();
@@ -49,11 +51,16 @@ const model = ref<SChannel>({
   typingIndicatorSetting: false,
 })
 
+// 展示形态由独立接口保存（channel.info.edit 不包含该字段），这里记录加载时的值以判断是否变化。
+const loadedDisplayMode = ref('');
+
 const { data, run: doReload } = useRequest(async () => {
   if (props.channel) {
     model.value = clone(props.channel);
+    loadedDisplayMode.value = props.channel.displayMode || '';
     const resp = await chat.channelInfoGet(props.channel.id);
     model.value = clone(resp.item);
+    loadedDisplayMode.value = resp.item?.displayMode || '';
   }
 }, {});
 
@@ -79,6 +86,11 @@ const channelEdit = async (): Promise<void> => {
   }
   try {
     await chat.channelInfoEdit(model.value.id, model.value);
+    const nextDisplayMode = model.value.displayMode === WORKBENCH_DISPLAY_MODE ? WORKBENCH_DISPLAY_MODE : '';
+    if (nextDisplayMode !== loadedDisplayMode.value) {
+      await setChannelDisplayMode(model.value.id, nextDisplayMode);
+      loadedDisplayMode.value = nextDisplayMode;
+    }
     message.success('更新成功');
     await chat.channelList(chat.currentWorldId, true); // 强制刷新
     modelShow.value = false;
@@ -126,6 +138,14 @@ const tabRef = ref('members');
               <n-radio :value="ChannelType.Public">公开</n-radio>
               <n-radio :value="ChannelType.NonPublic">非公开</n-radio>
             </n-radio-group>
+          </n-form-item>
+
+          <n-form-item label="展示形态">
+            <n-radio-group :value="model.displayMode === WORKBENCH_DISPLAY_MODE ? WORKBENCH_DISPLAY_MODE : ''" @update:value="(value: string) => (model.displayMode = value)">
+              <n-radio value="">聊天频道</n-radio>
+              <n-radio :value="WORKBENCH_DISPLAY_MODE">布局频道</n-radio>
+            </n-radio-group>
+            <template #feedback>布局频道以多面板工作台展示；成员、权限与公开设置保持不变，消息流仍可随时查看。</template>
           </n-form-item>
 
           <n-form-item label="置顶优先级" class="mb-8">

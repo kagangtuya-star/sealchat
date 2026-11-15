@@ -281,10 +281,13 @@ const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPi
 
 interface ChatProps {
   hideComposer?: boolean;
+  /** 关闭宿主 UI（包括 Teleport 浮层），保留 Chat 的 Store / WS 生命周期。 */
+  uiVisible?: boolean;
 }
 
 const props = withDefaults(defineProps<ChatProps>(), {
   hideComposer: false,
+  uiVisible: true,
 });
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -16470,6 +16473,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <template v-if="uiVisible">
   <div
     ref="chatRootContainerRef"
     class="flex flex-col h-full justify-between chat-root-container"
@@ -19340,6 +19344,7 @@ onBeforeUnmount(() => {
     :world-id="chat.currentWorldId"
     :channel-id="chat.curChannel.id"
   />
+  </template>
 </template>
 
 <style lang="scss" scoped src="./styles/chat.scoped.scss"></style>

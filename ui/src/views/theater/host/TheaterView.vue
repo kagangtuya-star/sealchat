@@ -77,6 +77,11 @@ const routePipPreference = computed<boolean | null>(() => {
   if (route.query.pip === '0') return false
   return null
 })
+const routeChatPreference = computed<boolean | null>(() => {
+  if (route.query.chat === '1') return true
+  if (route.query.chat === '0') return false
+  return null
+})
 const worldId = ref(routeWorldId.value)
 const channelId = ref(routeChannelId.value)
 const stageStore = createTheaterStageStore()
@@ -162,7 +167,7 @@ const handleFloatingWindowAction = (action: TheaterFloatingWindowAction) => {
 const stageSurfaceRef = ref<HTMLElement | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
-const chatHidden = ref(false)
+const chatHidden = ref(routeChatPreference.value === false)
 const mobileTab = ref<'stage' | 'chat'>('stage')
 const mobilePipWidth = ref<number | null>(null)
 const mobilePipMinimumWidth = 140
@@ -379,6 +384,8 @@ audioStudio.setPlaybackAuthority(false)
 const iframeSrc = computed(() => {
   if (typeof window === 'undefined') return ''
   const url = new URL(window.location.href)
+  // 小剧场被嵌入布局频道时，内层聊天与外层文档同址；加标记避免 Chromium 拦截同 URL 的多级嵌套。
+  if (window.self !== window.top) url.searchParams.set('__sc_surface', 'theater-chat')
   const params = new URLSearchParams({
     mode: 'theater',
     viewport: 'mobile',
@@ -386,7 +393,8 @@ const iframeSrc = computed(() => {
     worldId: worldId.value,
     channelId: channelId.value,
     sessionId,
-    audioOwner: '1',
+    // 嵌入方（布局频道）已负责频道音频时传 audioOwner=0，避免重复播放。
+    audioOwner: route.query.audioOwner === '0' ? '0' : '1',
   })
   url.hash = `/embed?${params.toString()}`
   return url.toString()
@@ -568,7 +576,7 @@ watch(mobileStageResizeEnabled, (enabled) => {
 
 const resetLayout = () => {
   splitRatio.value = 0.7
-  chatHidden.value = false
+  chatHidden.value = routeChatPreference.value === false
   mobileTab.value = 'stage'
   mobilePipWidth.value = null
   mobilePipOffset.value = { x: 0, y: 0 }
