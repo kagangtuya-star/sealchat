@@ -512,7 +512,7 @@ html[data-sc-surface='chat'][data-sc-workbench]
 }
 ~~~
 
-面板内容有独立的 Surface 边界。聊天 Panel 使用 `embed` Surface，小剧场 Panel 使用 `theater` Surface。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface，UI Package 不进入这些页面。外部网页也不受 SealChat UI Package 影响。如果一个主题同时需要修改工作台外壳和聊天 Panel，应把 `chat` 与 `embed` 都纳入目标范围。
+面板内容有独立的 Surface 边界。聊天 Panel 使用 `embed` Surface，小剧场 Panel 使用 `theater` Surface。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface。UI Package 的任意 CSS 和脚本不会进入这些内部页面，但同源嵌入的 Internal Surface 会从宿主读取一组白名单语义主题值，包括背景、文字、边框、主色和字体变量，并跟随宿主主题变化。这样可以延续当前主题配色，同时保持 iframe 的样式隔离。独立窗口和跨源父页面继续使用自身主题。外部网页也不受 SealChat UI Package 影响。如果一个主题同时需要修改工作台外壳和聊天 Panel，应把 `chat` 与 `embed` 都纳入目标范围。
 
 JavaScript 包可以通过 `sc.context().workbench` 读取当前工作台状态。非布局频道时该字段为 `null`；布局频道中返回 `channelId`、`mode`、`immersive`、`focusedPanelId` 和 `spotlightPanelId`。`sc.on('workbench-change', handler)` 会在进入或退出布局频道、切换设计模式、沉浸模式、个人 Focus 或 GM 聚焦时触发，payload 为 `{ workbench, previous }`。
 

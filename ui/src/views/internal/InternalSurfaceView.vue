@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NResult, NSpin } from 'naive-ui';
 import { useChatStore } from '@/stores/chat';
@@ -18,6 +18,86 @@ const errorDescription = ref('');
 const clueResource = ref<WorldClueDetail | null>(null);
 let taskEpoch = 0;
 let contextQueue: Promise<void> = Promise.resolve();
+
+const inheritedThemeVariables = [
+  '--sc-bg-page',
+  '--sc-bg-surface',
+  '--sc-bg-elevated',
+  '--sc-bg-input',
+  '--sc-bg-header',
+  '--sc-bg-hover',
+  '--sc-bg-active',
+  '--sc-text-primary',
+  '--sc-text-secondary',
+  '--sc-border-mute',
+  '--sc-border-strong',
+  '--sc-color-error',
+  '--sc-accent',
+  '--primary-color',
+  '--primary-color-hover',
+  '--sc-font-family',
+  '--n-font-family',
+] as const;
+let parentThemeObserver: MutationObserver | null = null;
+let parentThemeFrame: number | null = null;
+
+const syncInheritedTheme = () => {
+  if (typeof window === 'undefined' || window.parent === window) return;
+  try {
+    const parentWindow = window.parent;
+    const parentRoot = parentWindow.document.documentElement;
+    const sourceElement = window.frameElement?.closest('[data-sc-ui="workbench"]') || parentRoot;
+    const sourceStyle = parentWindow.getComputedStyle(sourceElement);
+    const targetRoot = document.documentElement;
+    for (const variable of inheritedThemeVariables) {
+      const value = sourceStyle.getPropertyValue(variable).trim();
+      if (value) targetRoot.style.setProperty(variable, value);
+      else targetRoot.style.removeProperty(variable);
+    }
+    const colorScheme = sourceStyle.colorScheme.trim();
+    if (colorScheme) targetRoot.style.setProperty('color-scheme', colorScheme);
+    else targetRoot.style.removeProperty('color-scheme');
+    const customTheme = parentRoot.dataset.customTheme;
+    if (customTheme) targetRoot.dataset.customTheme = customTheme;
+    else delete targetRoot.dataset.customTheme;
+    const palette = parentRoot.dataset.displayPalette;
+    if (palette) targetRoot.dataset.displayPalette = palette;
+    else delete targetRoot.dataset.displayPalette;
+  } catch {
+    // 独立窗口或跨源父页面保持自身主题，不放宽同源边界。
+  }
+};
+
+const scheduleInheritedThemeSync = () => {
+  if (parentThemeFrame !== null) return;
+  parentThemeFrame = window.requestAnimationFrame(() => {
+    parentThemeFrame = null;
+    syncInheritedTheme();
+  });
+};
+
+const startInheritedThemeSync = () => {
+  if (typeof window === 'undefined' || window.parent === window) return;
+  try {
+    const parentWindow = window.parent;
+    const parentDocument = parentWindow.document;
+    const parentRoot = parentDocument.documentElement;
+    const sourceElement = window.frameElement?.closest('[data-sc-ui="workbench"]') || parentRoot;
+    syncInheritedTheme();
+    const observer = new MutationObserver(scheduleInheritedThemeSync);
+    parentThemeObserver = observer;
+    observer.observe(parentRoot, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-custom-theme', 'data-display-palette'],
+    });
+    if (sourceElement !== parentRoot) {
+      observer.observe(sourceElement, { attributes: true, attributeFilter: ['style', 'class'] });
+    }
+    observer.observe(parentDocument.head, { childList: true, subtree: true, characterData: true });
+  } catch {
+    // 跨源嵌入不读取父页面主题。
+  }
+};
 
 const normalizeRouteValue = (value: unknown) => (
   typeof value === 'string' ? value.trim() : ''
@@ -113,6 +193,15 @@ const queueContextInitialization = () => {
 };
 
 watch(() => route.fullPath, queueContextInitialization, { immediate: true });
+
+onMounted(startInheritedThemeSync);
+
+onBeforeUnmount(() => {
+  parentThemeObserver?.disconnect();
+  parentThemeObserver = null;
+  if (parentThemeFrame !== null) window.cancelAnimationFrame(parentThemeFrame);
+  parentThemeFrame = null;
+});
 
 onErrorCaptured((error) => {
   setError('内部窗口加载失败', error instanceof Error ? error.message : String(error));
