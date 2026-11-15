@@ -93,3 +93,4 @@ ui/src/features/tts/voice-catalog.test.mjs
 /bin/chrome-headless-shell
 /bin/qpdf
 api/channel_extension_test.go
+/doc/ui-customization-package/theme demo
