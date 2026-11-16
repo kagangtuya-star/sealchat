@@ -15,30 +15,38 @@ export interface WorkbenchResourceOption {
 export interface WorkbenchResourceContext {
   worldId: string
   channelId: string
+  characterSource?: WorkbenchCharacterSource
 }
+
+export type WorkbenchCharacterSource = 'snapshot' | 'personal'
 
 const items = (data: any): any[] => (Array.isArray(data?.items) ? data.items : [])
 const label = (value: unknown, fallback: string) => (typeof value === 'string' && value.trim() ? value.trim() : fallback)
 
 const loadCharacters = async (context: WorkbenchResourceContext): Promise<WorkbenchResourceOption[]> => {
-  const snapshots = useChannelCharacterSnapshotStore()
-  const cards = useCharacterCardStore()
-  const [snapshotResult] = await Promise.allSettled([
-    snapshots.refreshChannel(context.channelId),
-    cards.cardList.length ? Promise.resolve() : cards.loadCardList(context.channelId),
-  ])
-  const options: WorkbenchResourceOption[] = []
-  if (snapshotResult.status === 'fulfilled') {
-    for (const item of snapshots.getChannelItems(context.channelId)) {
-      const name = label(item.data?.card?.name, '') || label(item.data?.identity?.displayName, item.identityId)
-      // 频道快照对频道成员可读（只读），适合角色卡墙展示其他玩家的人物卡。
-      options.push({ value: `snapshot:${context.channelId}:${item.identityId}`, label: name, hint: '频道在线快照（成员可见，只读）' })
+  if (context.characterSource === 'personal') {
+    const cards = useCharacterCardStore()
+    // 人物卡列表来自所选频道的角色卡 API，不能复用其他频道留下的全局列表。
+    await cards.loadCardList(context.channelId, { throwOnError: true })
+    if (cards.isBotCharacterDisabled(context.channelId)) {
+      throw new Error(cards.getCharacterApiDisabledReason(context.channelId) || '当前频道的人物卡 API 不可用')
     }
+    return cards.cardList.map(card => ({ value: card.id, label: label(card.name, card.id), hint: '仅自己可见' }))
   }
-  for (const card of cards.cardList) {
-    options.push({ value: card.id, label: label(card.name, card.id), hint: '我的人物卡（仅自己可见）' })
-  }
-  return options
+
+  const snapshots = useChannelCharacterSnapshotStore()
+  await snapshots.refreshChannel(context.channelId)
+  return snapshots.getChannelItems(context.channelId)
+    .filter(item => !!item.data.card)
+    .sort((a, b) => (b.lastSeenAt || b.sourceUpdatedAt || 0) - (a.lastSeenAt || a.sourceUpdatedAt || 0))
+    .map(item => {
+      const name = label(item.data?.card?.name, '') || label(item.data?.identity?.displayName, item.identityId)
+      const identity = label(item.data.identity.displayName, item.identityId)
+      const timestamp = item.lastSeenAt || item.sourceUpdatedAt || 0
+      const updatedAt = new Date(timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp)
+      const updatedLabel = timestamp && !Number.isNaN(updatedAt.getTime()) ? updatedAt.toLocaleString() : '未知'
+      return { value: `snapshot:${context.channelId}:${item.identityId}`, label: name, hint: `${identity} · 最近同步 ${updatedLabel}` }
+    })
 }
 
 /** 返回可绑定资源；接口失败时抛错，由调用方提示并允许手动输入资源 ID。 */

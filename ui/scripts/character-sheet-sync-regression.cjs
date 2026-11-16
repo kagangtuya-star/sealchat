@@ -80,6 +80,23 @@ function setup(update = async () => true, get = async () => ({ name: 'Hero', att
   return { store, win: store.windows.sheet, clock, calls };
 }
 
+test('snapshot updates clear removed templates and keep read-only attribute writes blocked', () => {
+  const { store, win, calls } = setup();
+  win.readOnly = true;
+  win.template = '<html>__snapshot_removed_template__</html>';
+  win.sheetType = 'coc7';
+  store.updateReadOnlyWindowData('sheet', {
+    cardName: '更新后的角色', sheetType: 'daggerheart', attrs: { hope: 4 }, avatarUrl: '', templateText: '',
+  });
+  assert.equal(win.cardName, '更新后的角色');
+  assert.equal(win.attrs.hope, 4);
+  assert.ok(win.template.includes('Daggerheart'));
+  assert.ok(!win.template.includes('__snapshot_removed_template__'));
+  store.updateAttrs('sheet', { hope: 0 });
+  assert.equal(win.attrs.hope, 4);
+  assert.equal(calls.length, 0);
+});
+
 test('rapid button patches debounce to the latest attrs; concurrent flushes share one save', async () => {
   const saving = deferred();
   const { store, win, clock, calls } = setup(() => saving.promise);

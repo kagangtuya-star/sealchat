@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -27,7 +27,7 @@ import {
   cloneWorkbenchLayout,
   reorderWorkbenchPanel,
 } from './layout'
-import { loadWorkbenchResources, type WorkbenchResourceOption } from './resources'
+import { loadWorkbenchResources, type WorkbenchCharacterSource, type WorkbenchResourceOption } from './resources'
 import { resolveWorkbenchWebUrl, WORKBENCH_SURFACE_LABELS, workbenchSourceChannelId } from './sources'
 import type { WorkbenchLayout, WorkbenchRect, WorkbenchSource, WorkbenchSurfaceType } from './types'
 
@@ -86,6 +86,23 @@ const changeKind = (value: string) => {
 // ---------------------------------------------------------------------------
 // 资源目录（只读）：按 surface + 上下文频道加载，过期响应丢弃。
 
+const isCharacter = computed(() => panel.value?.source.type === 'surface' && panel.value.source.surface === 'character')
+const characterSource = ref<WorkbenchCharacterSource>('snapshot')
+const characterSourceOptions: SelectOption[] = [
+  { label: '频道角色卡快照（只读）', value: 'snapshot' },
+  { label: '我的人物卡（仅自己可见）', value: 'personal' },
+]
+// 来源由已绑定资源推导，保持旧布局和导入导出格式兼容；未绑定面板默认使用快照。
+watch(() => [props.panelId, sourceKind.value, panel.value?.source.resourceId] as const, ([id, kind, resourceId], previous) => {
+  if (resourceId) characterSource.value = resourceId.startsWith('snapshot:') ? 'snapshot' : 'personal'
+  else if (!previous || previous[0] !== id || previous[1] !== kind) characterSource.value = 'snapshot'
+}, { immediate: true })
+const changeCharacterSource = (value: WorkbenchCharacterSource) => {
+  if (value === characterSource.value) return
+  characterSource.value = value
+  patchSource({ resourceId: '', label: '' })
+}
+
 const resourceOptions = ref<WorkbenchResourceOption[]>([])
 const resourceLoading = ref(false)
 const resourceError = ref('')
@@ -95,24 +112,26 @@ let resourceEpoch = 0
 const resourceContextKey = computed(() => {
   const source = panel.value?.source
   if (!source || source.type !== 'surface' || !source.surface) return ''
-  return `${source.surface}\u0000${workbenchSourceChannelId(source, { worldId: props.worldId, channelId: props.channelId })}`
+  return `${props.worldId}\u0000${source.surface}\u0000${workbenchSourceChannelId(source, { worldId: props.worldId, channelId: props.channelId })}\u0000${isCharacter.value ? characterSource.value : ''}`
 })
 
 const loadResources = async () => {
   const key = resourceContextKey.value
   const source = panel.value?.source
   const epoch = ++resourceEpoch
+  resourceOptions.value = []
+  resourceLoadedKey.value = ''
+  resourceError.value = ''
+  resourceLoading.value = false
   if (!key || !source?.surface) {
-    resourceOptions.value = []
-    resourceLoadedKey.value = ''
     return
   }
   resourceLoading.value = true
-  resourceError.value = ''
   try {
     const options = await loadWorkbenchResources(source.surface, {
       worldId: props.worldId,
       channelId: workbenchSourceChannelId(source, { worldId: props.worldId, channelId: props.channelId }),
+      characterSource: characterSource.value,
     })
     if (epoch !== resourceEpoch) return
     resourceOptions.value = options
@@ -121,13 +140,16 @@ const loadResources = async () => {
     if (epoch !== resourceEpoch) return
     resourceOptions.value = []
     resourceLoadedKey.value = ''
-    resourceError.value = '资源列表加载失败，可直接输入资源 ID'
+    resourceError.value = isCharacter.value
+      ? (characterSource.value === 'snapshot' ? '角色卡快照加载失败，请确认来源频道的访问权限后重试。' : '我的人物卡加载失败，请确认来源频道的人物卡 API 可用后重试。')
+      : '资源列表加载失败，可直接输入资源 ID'
   } finally {
     if (epoch === resourceEpoch) resourceLoading.value = false
   }
 }
 
 watch(resourceContextKey, () => { void loadResources() }, { immediate: true })
+onBeforeUnmount(() => { resourceEpoch += 1 })
 
 const resourceSelectOptions = computed<SelectOption[]>(() => resourceOptions.value.map(option => ({
   label: option.hint ? `${option.label}（${option.hint}）` : option.label,
@@ -145,7 +167,7 @@ const changeResource = (value: string | null) => {
 
 const channelMissing = computed(() => {
   const id = panel.value?.source.channelId
-  return !!id && !props.channelOptions.some(option => option.value === id)
+  return !!id && id !== props.channelId && !props.channelOptions.some(option => option.value === id)
 })
 const channelSelectOptions = computed<SelectOption[]>(() => [{ label: '当前布局频道', value: '' }, ...props.channelOptions])
 
@@ -225,7 +247,10 @@ const changeAccent = (value: string | null) => {
           <NSelect :value="sourceKind" :options="kindOptions" @update:value="changeKind" />
         </NFormItem>
 
-        <NFormItem v-if="panel.source.type !== 'web'" label="频道">
+        <NFormItem v-if="isCharacter" label="来源">
+          <NSelect :value="characterSource" :options="characterSourceOptions" @update:value="changeCharacterSource" />
+        </NFormItem>
+        <NFormItem v-if="panel.source.type !== 'web'" :label="isCharacter ? '来源频道' : '频道'">
           <NSelect
             :value="panel.source.channelId || ''"
             :options="channelSelectOptions"
@@ -238,7 +263,7 @@ const changeAccent = (value: string | null) => {
         </NAlert>
 
         <template v-if="panel.source.type === 'surface' && panel.source.surface !== 'clue-board'">
-          <NFormItem label="资源">
+          <NFormItem :label="isCharacter ? (characterSource === 'snapshot' ? '角色卡快照' : '我的人物卡') : '资源'">
             <div class="wb-inspector__row">
               <NSelect
                 :value="panel.source.resourceId || null"
@@ -247,7 +272,7 @@ const changeAccent = (value: string | null) => {
                 filterable
                 tag
                 clearable
-                placeholder="选择或输入资源 ID"
+                :placeholder="isCharacter && characterSource === 'snapshot' ? '选择来源频道的角色卡快照' : '选择或输入资源 ID'"
                 @update:value="changeResource"
               />
               <NButton quaternary circle size="small" aria-label="刷新资源列表" :loading="resourceLoading" @click="loadResources">
@@ -255,12 +280,17 @@ const changeAccent = (value: string | null) => {
               </NButton>
             </div>
           </NFormItem>
+          <p v-if="isCharacter && !resourceLoading && !resourceError && resourceLoadedKey === resourceContextKey && !resourceOptions.length" class="wb-inspector__hint">
+            {{ characterSource === 'snapshot' ? '此频道没有可用的角色卡快照，请选择其他来源频道，或由角色拥有者在该频道同步人物卡。' : '此频道没有可用的个人人物卡。' }}
+          </p>
           <NAlert v-if="resourceError" type="info" :bordered="false" class="wb-inspector__alert">{{ resourceError }}</NAlert>
           <NAlert v-else-if="!panel.source.resourceId" type="warning" :bordered="false" class="wb-inspector__alert">尚未绑定资源，玩家将看到“未绑定”提示。</NAlert>
           <NAlert v-else-if="resourceMissing" type="warning" :bordered="false" class="wb-inspector__alert">
             当前绑定“{{ panel.source.label || panel.source.resourceId }}”不在你可访问的资源列表中，可能已删除或来自其他世界，请重新绑定。
           </NAlert>
-          <p v-if="panel.source.surface === 'character'" class="wb-inspector__hint">展示给全体成员时请选择“频道在线快照”；个人人物卡只有拥有者可见。</p>
+          <p v-if="isCharacter" class="wb-inspector__hint">
+            {{ characterSource === 'snapshot' ? '展示所选身份最近同步的角色卡，只读并随快照更新。玩家也需要来源频道的读取权限；身份切换或撤回共享后，快照可能失效。' : '个人人物卡只有拥有者可见。共享展示请改选“频道角色卡快照”。' }}
+          </p>
         </template>
 
         <template v-if="panel.source.type === 'web'">

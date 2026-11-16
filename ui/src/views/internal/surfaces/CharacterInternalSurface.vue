@@ -4,6 +4,7 @@ let characterSurfaceLoadQueue: Promise<void> = Promise.resolve();
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
+import { NButton, NResult } from 'naive-ui';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useChannelCharacterSnapshotStore } from '@/stores/channelCharacterSnapshot';
@@ -26,6 +27,9 @@ const cardStore = useCharacterCardStore();
 const sheetStore = useCharacterSheetStore();
 const snapshotStore = useChannelCharacterSnapshotStore();
 const windowId = ref('');
+const snapshotBinding = ref<{ channelId: string; identityId: string; worldId: string } | null>(null);
+const snapshotUnavailable = ref('');
+const snapshotRefreshing = ref(false);
 let taskEpoch = 0;
 let restoreContext: { channelId: string; cardId: string; cardName: string } | null = null;
 
@@ -54,7 +58,7 @@ const openSnapshotCard = (snapshot: NonNullable<ReturnType<typeof findSnapshotBy
     name: card.name,
     type: card.sheetType,
     attrs: card.attrs,
-    avatarUrl: snapshot.data.identity.avatarAttachmentId || undefined,
+    avatarUrl: card.avatarAttachmentId || snapshot.data.identity.avatarAttachmentId || undefined,
     templateText: card.templateText,
   }, {
     templateText: card.templateText,
@@ -68,13 +72,57 @@ const openSnapshotCard = (snapshot: NonNullable<ReturnType<typeof findSnapshotBy
 };
 
 const loadSnapshotByResourceId = async (channelId: string, resourceId: string) => {
-  await snapshotStore.initializeChannel(channelId);
-  let snapshot = findSnapshotByResourceId(channelId, resourceId);
-  if (!snapshot) {
-    await snapshotStore.refreshChannel(channelId);
-    snapshot = findSnapshotByResourceId(channelId, resourceId);
+  // 每次打开都重新检查来源频道权限，不用旧缓存掩盖撤回或失活。
+  await snapshotStore.refreshChannel(channelId);
+  return findSnapshotByResourceId(channelId, resourceId);
+};
+
+const closeWindow = () => {
+  if (windowId.value) sheetStore.closeSheet(windowId.value);
+  windowId.value = '';
+};
+
+watch([snapshotBinding, () => {
+  const binding = snapshotBinding.value;
+  return binding ? snapshotStore.getSnapshot(binding.channelId, binding.identityId) : null;
+}] as const, ([binding, snapshot]) => {
+  if (!binding) return;
+  const card = snapshot?.data.card;
+  if (!snapshot || !card) {
+    closeWindow();
+    snapshotUnavailable.value = '该身份的角色卡快照不存在、已撤回或已失活，请刷新重试或重新绑定。';
+  } else {
+    snapshotUnavailable.value = '';
+    if (windowId.value) {
+      sheetStore.updateReadOnlyWindowData(windowId.value, {
+        cardName: card.name,
+        sheetType: card.sheetType,
+        attrs: card.attrs,
+        avatarUrl: card.avatarAttachmentId || snapshot.data.identity.avatarAttachmentId || '',
+        templateText: card.templateText || '',
+      });
+    } else {
+      windowId.value = openSnapshotCard(snapshot, binding.channelId, binding.worldId);
+    }
   }
-  return snapshot;
+  // 快照失效由本组件呈现，保持挂载以便同一身份重新同步后恢复。
+  emit('ready');
+});
+
+const refreshSnapshot = async () => {
+  const binding = snapshotBinding.value;
+  const epoch = taskEpoch;
+  if (!binding || snapshotRefreshing.value) return;
+  snapshotRefreshing.value = true;
+  try {
+    await snapshotStore.refreshChannel(binding.channelId);
+  } catch {
+    if (epoch !== taskEpoch) return;
+    closeWindow();
+    snapshotUnavailable.value = '角色卡快照加载失败，请确认来源频道的访问权限后重试。';
+  } finally {
+    if (epoch === taskEpoch) snapshotRefreshing.value = false;
+  }
 };
 
 const restoreActiveCard = async () => {
@@ -97,13 +145,25 @@ watch(
   () => [props.resourceId, props.worldId, props.channelId] as const,
   async ([resourceId, worldId, channelId]) => {
     const epoch = ++taskEpoch;
-    if (windowId.value) {
-      sheetStore.closeSheet(windowId.value);
-      windowId.value = '';
-    }
+    snapshotBinding.value = null;
+    snapshotUnavailable.value = '';
+    snapshotRefreshing.value = false;
+    closeWindow();
     await restoreActiveCard();
     if (epoch !== taskEpoch) return;
     try {
+      if (resourceId.startsWith('snapshot:')) {
+        const prefix = `snapshot:${channelId}:`;
+        if (!resourceId.startsWith(prefix) || resourceId.length === prefix.length) {
+          emit('unavailable', '角色卡快照与来源频道不匹配，请重新绑定。');
+          return;
+        }
+        // 明确的快照资源直接读取数据库，不依赖个人人物卡 API，也不切换当前人物卡。
+        await snapshotStore.refreshChannel(channelId);
+        if (epoch !== taskEpoch) return;
+        snapshotBinding.value = { channelId, identityId: resourceId.slice(prefix.length), worldId };
+        return;
+      }
       characterSurfaceLoadQueue = characterSurfaceLoadQueue
         .catch(() => undefined)
         .then(() => cardStore.loadCards(channelId));
@@ -114,16 +174,8 @@ watch(
         const snapshot = await loadSnapshotByResourceId(channelId, resourceId);
         if (epoch !== taskEpoch) return;
         if (snapshot) {
-          windowId.value = openSnapshotCard(snapshot, channelId, worldId);
-          if (epoch !== taskEpoch) {
-            if (windowId.value) sheetStore.closeSheet(windowId.value);
-            windowId.value = '';
-            return;
-          }
-          if (windowId.value) {
-            emit('ready');
-            return;
-          }
+          snapshotBinding.value = { channelId, identityId: snapshot.identityId, worldId };
+          return;
         }
         emit('unavailable', '人物卡不存在或当前人物卡 API 不可用');
         return;
@@ -144,22 +196,24 @@ watch(
         });
       }
       if (epoch !== taskEpoch) return;
-      windowId.value = await openCharacterSheetRuntime({
+      const openedWindowId = await openCharacterSheetRuntime({
         card,
         channelId,
         worldId,
         ephemeral: true,
         reuse: false,
+        isContextCurrent: () => epoch === taskEpoch,
       });
       if (epoch !== taskEpoch) {
-        sheetStore.closeSheet(windowId.value);
-        windowId.value = '';
+        if (openedWindowId) sheetStore.closeSheet(openedWindowId);
         return;
       }
+      windowId.value = openedWindowId;
       emit('ready');
     } catch (error: any) {
       if (epoch !== taskEpoch) return;
       await restoreActiveCard();
+      if (epoch !== taskEpoch) return;
       emit('error', error?.response?.data?.error || error?.message || '人物卡加载失败');
     }
   },
@@ -168,14 +222,20 @@ watch(
 
 onBeforeUnmount(() => {
   taskEpoch += 1;
-  if (windowId.value) sheetStore.closeSheet(windowId.value);
+  snapshotBinding.value = null;
+  closeWindow();
   void restoreActiveCard();
 });
 </script>
 
 <template>
+  <NResult v-if="snapshotUnavailable" status="warning" title="角色卡快照不可用" :description="snapshotUnavailable">
+    <template #footer>
+      <NButton :loading="snapshotRefreshing" @click="refreshSnapshot">刷新快照</NButton>
+    </template>
+  </NResult>
   <CharacterSheetManager
-    v-if="windowId"
+    v-else-if="windowId"
     :window-id="windowId"
     standalone
   />
