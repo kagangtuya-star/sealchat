@@ -36,6 +36,8 @@ export interface TypingPreviewItem {
   displayName: string;
   avatar?: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  /** 已按差分解析的聊天装扮；undefined 表示未知（沿用消息自身快照）。 */
+  chatSkin?: Record<string, any> | null;
   color?: string;
   content: string;
   indicatorOnly: boolean;
@@ -53,6 +55,7 @@ export interface EditingPreviewInfo {
   color?: string;
   avatar?: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  chatSkin?: Record<string, any> | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -523,6 +526,7 @@ const activeIdentityAppearancePreviewSignature = computed(() => {
     appearance?.avatarAttachmentId || '',
     appearance?.avatarTextStyle || '',
     JSON.stringify(appearance?.avatarDecorations || []),
+    JSON.stringify(appearance?.chatSkin || null),
     appearance?.isTemporary ? '1' : '0',
   ].join('__');
 });
@@ -801,6 +805,7 @@ const syncSelfTypingPreview = () => {
     displayName,
     avatar,
     avatarDecorations: cloneAvatarDecorations(activeIdentityAppearanceForPreview.value?.avatarDecorations),
+    chatSkin: activeIdentityAppearanceForPreview.value?.chatSkin ?? null,
     color: normalizedColor,
     content: previewContent,
     indicatorOnly: false,
@@ -1159,6 +1164,7 @@ const typingToggleClass = computed(() => ({
       displayName,
       avatar,
       avatarDecorations: cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration),
+      chatSkin: identity ? (identity.chatSkin ?? null) : undefined,
       color: identityColor,
       content: typingState === 'content' ? (e.typing?.content || '') : '',
       indicatorOnly: typingState !== 'content' || !e.typing?.content,

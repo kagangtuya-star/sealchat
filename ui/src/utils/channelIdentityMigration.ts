@@ -52,6 +52,8 @@ export interface IdentityExportVariantItem {
   color?: string;
   appearance?: Record<string, any>;
   theaterPresentation?: Record<string, any> | null;
+  /** 聊天装扮差分覆写 { mode, skin }；附件引用以 `asset:<键>` 表示。 */
+  chatSkin?: Record<string, any> | null;
   sortOrder: number;
   enabled: boolean;
 }
@@ -69,6 +71,8 @@ export interface IdentityExportItem {
   avatarAssetKey?: string;
   avatarDecorations?: IdentityExportDecorationItem[];
   theaterPresentation?: Record<string, any> | null;
+  /** 聊天装扮；附件引用以 `asset:<键>` 表示，缺省表示文件不含装扮信息（旧版文件）。 */
+  chatSkin?: Record<string, any> | null;
 }
 
 export interface IdentityExportFolder {

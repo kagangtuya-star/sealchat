@@ -19,6 +19,7 @@ import (
 	htmlnode "golang.org/x/net/html"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/service/storage"
 	"sealchat/utils"
 )
@@ -63,6 +64,15 @@ func (e *inlineImageEmbedder) inlinePayload(payload *ExportPayload) {
 		if avatar := strings.TrimSpace(payload.Messages[i].SenderAvatar); avatar != "" {
 			if inlined, ok := e.resolveDataURL(avatar); ok {
 				payload.Messages[i].SenderAvatar = inlined
+			}
+		}
+		for _, attachmentID := range protocol.ChatSkinAttachmentIDs(payload.Messages[i].SenderChatSkin) {
+			ref := "id:" + attachmentID
+			if inlined, ok := e.resolveDataURL(ref); ok {
+				if payload.Messages[i].SenderChatSkinAssets == nil {
+					payload.Messages[i].SenderChatSkinAssets = map[string]string{}
+				}
+				payload.Messages[i].SenderChatSkinAssets[ref] = inlined
 			}
 		}
 	}
@@ -277,6 +287,11 @@ func dedupeInlineAssets(payload *ExportPayload) {
 	for i := range payload.Messages {
 		if src := strings.TrimSpace(payload.Messages[i].SenderAvatar); strings.HasPrefix(strings.ToLower(src), "data:") {
 			payload.Messages[i].SenderAvatar = registry.register(src)
+		}
+		for ref, src := range payload.Messages[i].SenderChatSkinAssets {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "data:") {
+				payload.Messages[i].SenderChatSkinAssets[ref] = registry.register(src)
+			}
 		}
 		if html := strings.TrimSpace(payload.Messages[i].ContentHTML); strings.Contains(strings.ToLower(html), "<img") {
 			if rewritten, changed := replaceInlineAssetRefsInHTML(html, registry); changed {

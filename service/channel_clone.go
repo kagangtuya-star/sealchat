@@ -651,6 +651,9 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if err != nil {
 			return nil, err
 		}
+		chatSkin := mapChannelIdentityChatSkinAttachments(identity.ChatSkin, func(attachmentID string) (string, error) {
+			return cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, identity.UserID, identity.ID, attachmentID, attachmentMap)
+		})
 		clone := model.ChannelIdentityModel{
 			StringPKBaseModel:        model.StringPKBaseModel{ID: newID},
 			ChannelID:                targetID,
@@ -667,6 +670,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			VariantResetMatchContent: identity.VariantResetMatchContent,
 			SortOrder:                identity.SortOrder,
 			TheaterPresentation:      presentation,
+			ChatSkin:                 chatSkin,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
@@ -811,6 +815,12 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if err != nil {
 			return nil, err
 		}
+		appearanceJSON, err = remapVariantChatSkinJSON(appearanceJSON, func(attachmentID string) (string, error) {
+			return cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, variant.UserID, variant.IdentityID, attachmentID, attachmentMap)
+		})
+		if err != nil {
+			return nil, err
+		}
 		clone := model.ChannelIdentityVariantModel{
 			StringPKBaseModel:  model.StringPKBaseModel{ID: utils.NewID()},
 			IdentityID:         newIdentityID,
@@ -927,12 +937,49 @@ func channelCloneAttachmentReferenceTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		Find(&variants).Error; err != nil {
 		return false, err
 	}
+	for _, attachmentRef := range protocol.ChatSkinAttachmentIDs(identity.ChatSkin) {
+		if attachmentRef == attachmentID {
+			return true, nil
+		}
+	}
 	for _, variant := range variants {
 		if normalizeChannelCloneAttachmentID(variant.AvatarAttachmentID) == attachmentID {
 			return true, nil
 		}
+		if patch := protocol.ChatSkinPatchFromAppearance(variant.Appearance()); patch != nil {
+			for _, attachmentRef := range protocol.ChatSkinAttachmentIDs(patch.Skin) {
+				if attachmentRef == attachmentID {
+					return true, nil
+				}
+			}
+		}
 	}
 	return false, nil
+}
+
+// remapVariantChatSkinJSON 将差分 appearance.chatSkin 中的附件引用映射到复制后的频道。
+func remapVariantChatSkinJSON(raw string, clone func(attachmentID string) (string, error)) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return raw, nil
+	}
+	patch, ok := document["chatSkin"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	skin, ok := patch["skin"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	patch["skin"] = mapChannelIdentityChatSkinAttachments(skin, clone)
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func normalizeChannelCloneAttachmentID(attachmentID string) string {

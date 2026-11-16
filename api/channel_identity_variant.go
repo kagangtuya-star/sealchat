@@ -60,6 +60,9 @@ func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fi
 	if theaterPresentation, exists := appearance["theaterPresentation"]; exists {
 		result["theaterPresentation"] = theaterPresentation
 	}
+	if chatSkin, exists := appearance["chatSkin"]; exists && chatSkin != nil {
+		result["chatSkin"] = chatSkin
+	}
 	return result
 }
 

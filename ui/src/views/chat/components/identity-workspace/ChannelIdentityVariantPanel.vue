@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import AvatarVue from '@/components/avatar.vue';
 import type { ChannelIdentityVariant } from '@/types';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { resolveVariantChatSkinPatch } from '@/features/chat-skin/chatSkinSchema';
 import {
   describeIdentityMatchRule,
   identityVariantKeywordMatchOptions,
@@ -60,6 +61,7 @@ const emit = defineEmits<{
   (e: 'avatar-remove'): void;
   (e: 'pick-emoji'): void;
   (e: 'open-theater'): void;
+  (e: 'open-chat-skin'): void;
   (e: 'update:colorDraft', value: string): void;
   (e: 'color-picker-update', value: string | null): void;
   (e: 'color-commit'): void;
@@ -98,6 +100,12 @@ const draftEffectiveColor = computed(() => props.form.color || props.baseColor);
 const draftEmojiSrc = computed(() => resolveVariantSelectorEmojiSrc(props.form.selectorEmoji));
 const draftMatch = computed(() => props.form.matchDrafts[props.form.matchMode]);
 const draftTheaterCustomized = computed(() => Object.keys(props.form.theaterPresentation || {}).length > 0);
+const chatSkinPatchLabel = computed(() => {
+  const patch = resolveVariantChatSkinPatch(editingVariant.value);
+  if (!patch) return { text: '跟随基础', type: 'default' as const };
+  if (patch.mode === 'none') return { text: '不显示', type: 'warning' as const };
+  return { text: patch.mode === 'replace' ? '独立装扮' : '局部覆写', type: 'success' as const };
+});
 const resetMatch = computed(() => props.resetForm.matchDrafts[props.resetForm.matchMode]);
 const resetDirty = computed(() => {
   const draft = resetMatch.value;
@@ -470,6 +478,19 @@ const panelHint = computed(() => {
                   </n-tag>
                   <span class="idvp-hint idvp-override__grow">各部分可独立选择继承、自定义或清除。</span>
                   <n-button size="small" secondary @click="emit('open-theater')">编辑差分演出</n-button>
+                </div>
+              </div>
+
+              <div class="idvp-override">
+                <div class="idvp-override__label">聊天装扮</div>
+                <div class="idvp-override__body">
+                  <n-tag size="small" :bordered="false" :type="chatSkinPatchLabel.type">
+                    {{ chatSkinPatchLabel.text }}
+                  </n-tag>
+                  <span class="idvp-hint idvp-override__grow">
+                    {{ editingVariant ? '可在基础装扮上局部修改，或为此差分单独设计。' : '保存差分后可设置。' }}
+                  </span>
+                  <n-button size="small" secondary :disabled="!editingVariant" @click="emit('open-chat-skin')">编辑差分装扮</n-button>
                 </div>
               </div>
             </section>

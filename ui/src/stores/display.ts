@@ -96,6 +96,7 @@ export interface DisplaySettings {
   showAvatar: boolean
   avatarVisibilityScope: AvatarVisibilityScope
   preferStaticAvatarDecoration: boolean
+  chatSkinEnabled: boolean // 本地显示频道角色聊天装扮；关闭只影响本机渲染
   backgroundMessageToneEnabled: boolean
   actionRibbonExpandMoreEnabled: boolean // 顶部“更多”开启时展开为多行工具区；关闭时使用传统下拉
   avatarSize: number            // 头像大小 (px)
@@ -593,6 +594,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showAvatar: true,
   avatarVisibilityScope: 'all',
   preferStaticAvatarDecoration: false,
+  chatSkinEnabled: true,
   backgroundMessageToneEnabled: true,
   actionRibbonExpandMoreEnabled: false,
   avatarSize: AVATAR_SIZE_DEFAULT,
@@ -868,6 +870,7 @@ const parseStoredSettingsInternal = (
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarVisibilityScope: normalizeAvatarVisibilityScope((parsed as any)?.avatarVisibilityScope),
       preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
+      chatSkinEnabled: coerceBoolean((parsed as any)?.chatSkinEnabled ?? true),
       backgroundMessageToneEnabled: coerceBoolean((parsed as any)?.backgroundMessageToneEnabled ?? true),
       actionRibbonExpandMoreEnabled: coerceBoolean((parsed as any)?.actionRibbonExpandMoreEnabled ?? false),
       avatarSize: coerceNumberInRange(
@@ -1185,6 +1188,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
       ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
       : base.preferStaticAvatarDecoration,
+  chatSkinEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'chatSkinEnabled')
+      ? coerceBoolean((patch as any).chatSkinEnabled)
+      : base.chatSkinEnabled,
   backgroundMessageToneEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'backgroundMessageToneEnabled')
       ? coerceBoolean((patch as any).backgroundMessageToneEnabled)

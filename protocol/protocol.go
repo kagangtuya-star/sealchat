@@ -118,6 +118,7 @@ type ChannelIdentity struct {
 	AvatarDecoration         *AvatarDecoration    `json:"avatarDecoration,omitempty"`
 	AvatarDecorations        AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	TheaterPresentation      *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	ChatSkin                 ChatSkin             `json:"chatSkin,omitempty"`
 	IsDefault                bool                 `json:"isDefault"`
 	IsTemporary              bool                 `json:"isTemporary"`
 	VariantResetMatchMode    string               `json:"variantResetMatchMode,omitempty"`
@@ -225,6 +226,7 @@ type MessageIdentity struct {
 	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
 	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	ChatSkin            ChatSkin             `json:"chatSkin,omitempty"`
 	IsTemporary         bool                 `json:"isTemporary"`
 }
 

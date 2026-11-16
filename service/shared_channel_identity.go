@@ -164,6 +164,14 @@ func sharedChannelIdentityCopyValues(template *model.SharedChannelIdentityModel,
 	if err != nil {
 		return nil, err
 	}
+	values["chat_skin"] = nil
+	if chatSkin := sharedChannelIdentityDataChatSkin(template.SharedDataJSON); len(chatSkin) > 0 {
+		encodedChatSkin, err := json.Marshal(chatSkin)
+		if err != nil {
+			return nil, err
+		}
+		values["chat_skin"] = string(encodedChatSkin)
+	}
 	if botSettings != nil {
 		values["bot_appearance_mode"] = botSettings.BotAppearanceMode
 		values["variant_reset_match_mode"] = botSettings.VariantResetMatchMode
@@ -533,6 +541,10 @@ func sharedChannelIdentityCreateFromCopyTxWithOrphans(tx *gorm.DB, ownerUserID, 
 		botSettings = sharedChannelIdentityBotSettingsFromCopy(&identity)
 	}
 	template.SharedDataJSON, dataErr = serializeSharedChannelIdentityData("", template, botSettings)
+	if dataErr != nil {
+		return dataErr
+	}
+	template.SharedDataJSON, dataErr = sharedChannelIdentityDataWithChatSkin(template.SharedDataJSON, identity.ChatSkin)
 	if dataErr != nil {
 		return dataErr
 	}

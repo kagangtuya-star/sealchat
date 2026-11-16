@@ -72,9 +72,12 @@ type MessageModel struct {
 	SenderIdentityAvatarTextStyle string                        `json:"sender_identity_avatar_text_style" gorm:"size:8;not null;default:''"`
 	SenderIdentityDecorations     protocol.AvatarDecorationList `json:"sender_identity_decoration,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
 	SenderTheaterPresentation     *protocol.TheaterPresentation `json:"sender_theater_presentation,omitempty" gorm:"serializer:json;column:sender_theater_presentation"`
+	SenderChatSkin                protocol.ChatSkin             `json:"sender_chat_skin,omitempty" gorm:"serializer:json;column:sender_chat_skin"`
 	SenderIdentityIsTemporary     bool                          `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID                  string                        `json:"sender_role_id" gorm:"size:100"`
 	MergedMessages                int                           `json:"-" gorm:"-"`
+	// SenderChatSkinResolved 表示调用方已按发送时身份解析过装扮（可能为空），BeforeCreate 不再回退查询。
+	SenderChatSkinResolved bool `json:"-" gorm:"-"`
 
 	User   *UserModel    `json:"user"`           // 嵌套 User 结构体
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
@@ -101,8 +104,14 @@ func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
 			tx.Statement.SetColumn("VisibleCharCount", m.VisibleCharCount)
 		}
 	}
-	if m.SenderTheaterPresentation == nil {
-		m.SenderTheaterPresentation = resolveMessageTheaterPresentation(tx, m)
+	if m.SenderTheaterPresentation == nil || (m.SenderChatSkin == nil && !m.SenderChatSkinResolved) {
+		presentation, chatSkin := resolveMessageIdentityAppearanceSnapshot(tx, m)
+		if m.SenderTheaterPresentation == nil {
+			m.SenderTheaterPresentation = presentation
+		}
+		if m.SenderChatSkin == nil && !m.SenderChatSkinResolved {
+			m.SenderChatSkin = chatSkin
+		}
 	}
 	return nil
 }
@@ -178,6 +187,9 @@ func MessageUpdateTx(tx *gorm.DB, id string, expected *int64, values map[string]
 			}
 			values["sender_theater_presentation"] = string(encoded)
 		}
+	}
+	if err := encodeChatSkinColumnValue(values, "sender_chat_skin"); err != nil {
+		return err
 	}
 	q := tx.Model(&MessageModel{}).Where("id = ?", id)
 	if expected != nil {
@@ -295,6 +307,7 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			AvatarDecoration:    legacyDecoration,
 			AvatarDecorations:   m.SenderIdentityDecorations,
 			TheaterPresentation: m.SenderTheaterPresentation,
+			ChatSkin:            m.SenderChatSkin,
 			IsTemporary:         m.SenderIdentityIsTemporary,
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/utils"
 
 	htmlnode "golang.org/x/net/html"
@@ -57,6 +58,11 @@ type ExportMessage struct {
 	WhisperTargets        []string           `json:"whisper_targets"`
 
 	WorldClues []WorldClueExportBlock `json:"-"`
+
+	// SenderChatSkin 是消息发送时的聊天装扮快照，仅 HTML 导出携带；
+	// SenderChatSkinAssets 把装扮中的 id: 附件引用映射到内联资源。
+	SenderChatSkin       protocol.ChatSkin `json:"sender_chat_skin,omitempty"`
+	SenderChatSkinAssets map[string]string `json:"sender_chat_skin_assets,omitempty"`
 }
 
 type ExportPayload struct {
@@ -186,6 +192,10 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		if !includeImages {
 			htmlContent = stripImageTagsFromHTML(htmlContent)
 		}
+		var senderChatSkin protocol.ChatSkin
+		if strings.EqualFold(job.Format, "html") {
+			senderChatSkin = protocol.CloneChatSkin(msg.SenderChatSkin)
+		}
 		exportMessages = append(exportMessages, ExportMessage{
 			ID:                    msg.ID,
 			ChannelID:             msg.ChannelID,
@@ -194,6 +204,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			SenderName:            resolveSenderName(msg),
 			SenderColor:           msg.SenderIdentityColor,
 			SenderAvatar:          resolveSenderAvatar(msg),
+			SenderChatSkin:        senderChatSkin,
 			IsMerged:              msg.MergedMessages > 1,
 			IcMode:                fallbackIcMode(msg.ICMode),
 			IsWhisper:             msg.IsWhisper,

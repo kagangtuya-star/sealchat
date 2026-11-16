@@ -327,6 +327,7 @@ interface EditingIdentitySnapshot {
   avatarAttachmentId?: string;
   avatarTextStyle?: ChannelIdentity['avatarTextStyle'];
   avatarDecorations?: AvatarDecoration[] | null;
+  chatSkin?: Record<string, any> | null;
   isTemporary?: boolean;
 }
 
@@ -3567,6 +3568,40 @@ export const useChatStore = defineStore({
       };
       this.upsertChannelIdentity(identity);
       return identity;
+    },
+
+    /** 保存角色基础聊天装扮；chatSkin 为 null 时清除。共享角色会同步到全部频道副本。 */
+    async channelIdentityChatSkinSet(identityId: string, payload: {
+      channelId: string;
+      targetUserId?: string;
+      chatSkin: Record<string, any> | null;
+    }) {
+      const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}/chat-skin`, {
+        channelId: payload.channelId,
+        targetUserId: normalizeIdentityScopeUserId(payload.targetUserId) || undefined,
+        chatSkin: payload.chatSkin,
+      });
+      const identity = resp.data.item;
+      this.upsertChannelIdentity(identity, payload.targetUserId);
+      return identity;
+    },
+
+    /** 保存差分的聊天装扮覆写；chatSkin 为 null 时回到基础装扮。 */
+    async channelIdentityVariantChatSkinSet(variantId: string, payload: {
+      channelId: string;
+      targetUserId?: string;
+      chatSkin: { mode: 'merge' | 'replace' | 'none'; skin: Record<string, any> | null } | null;
+      skipReload?: boolean;
+    }) {
+      const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}/chat-skin`, {
+        channelId: payload.channelId,
+        targetUserId: normalizeIdentityScopeUserId(payload.targetUserId) || undefined,
+        chatSkin: payload.chatSkin,
+      });
+      if (!payload.skipReload) {
+        await this.loadChannelIdentityVariants(payload.channelId, true, payload.targetUserId);
+      }
+      return resp.data.item;
     },
 
     async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {

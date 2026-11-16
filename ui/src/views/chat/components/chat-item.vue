@@ -50,6 +50,9 @@ import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { navigateToMessageTarget } from '@/utils/messageJump'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
+import ChatSkinLayers from '@/features/chat-skin/ChatSkinLayers.vue'
+import { buildChatSkinRenderWithAssets } from '@/features/chat-skin/chatSkinRuntime'
+import { resolvePreviewChatSkin } from '@/features/chat-skin/chatSkinSchema'
 import {
   SMART_LINK_DATA_ATTR,
   SMART_LINK_IMAGE_ROLE_ATTR,
@@ -80,6 +83,8 @@ type EditingPreviewInfo = {
   color?: string;
   avatar?: string;
   avatarDecorations?: import('@/types').AvatarDecoration[] | null;
+  /** 预览应展示的聊天装扮；undefined 表示沿用消息自身快照。 */
+  chatSkin?: Record<string, any> | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -3813,8 +3818,37 @@ const nameColor = computed(() => {
   if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.color) {
     return selfEditingPreview.value.color;
   }
+  if (otherEditingPreview.value?.color) return otherEditingPreview.value.color;
   return props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '';
 });
+
+// 聊天装扮只读取消息快照（或编辑 / 输入预览携带的装扮），不回退到角色的实时配置，
+// 保证历史消息始终按发送时的样子显示；本地关闭装扮只影响渲染。
+const chatSkinSnapshot = computed(() => {
+  const preview = shouldUseSelfPreviewIdentity.value ? selfEditingPreview.value : otherEditingPreview.value;
+  return resolvePreviewChatSkin(props.item, preview?.chatSkin, displayStore.settings.chatSkinEnabled);
+});
+
+const chatSkinRender = computed(() => buildChatSkinRenderWithAssets(chatSkinSnapshot.value, {
+  layout: props.layout,
+  tone: props.tone,
+  isSelf: props.isSelf,
+  palette: displayStore.palette,
+  whisper: Boolean(props.item?.isWhisper),
+}));
+
+const chatItemSkinClass = computed(() => chatSkinRender.value?.rootClass || []);
+const chatItemSkinStyle = computed(() => chatSkinRender.value?.rootStyle);
+const chatItemSkinAttrs = computed(() => chatSkinRender.value?.rootAttrs || {});
+const contentSkinStyle = computed(() => chatSkinRender.value?.contentStyle);
+const nameInlineStyle = computed(() => {
+  const skinName = chatSkinRender.value?.nameStyle;
+  if (skinName && Object.keys(skinName).length) {
+    return nameColor.value && !skinName.color ? { color: nameColor.value, ...skinName } : skinName;
+  }
+  return nameColor.value ? { color: nameColor.value } : undefined;
+});
+const chatSkinLayers = computed(() => chatSkinRender.value?.layers || []);
 
 const botBadgeStyleValue = computed<BotBadgeStyle>(() => displayStore.settings.botBadgeStyle || 'solidBlue');
 
@@ -3974,12 +4008,16 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
       { 'chat-item--body-only': props.bodyOnly },
       { 'chat-item--multiselect': effectiveMultiSelectMode },
       { 'chat-item--selected': effectiveIsSelected },
-      { 'chat-item--relocate-target': effectiveIsRelocateTarget }
+      { 'chat-item--relocate-target': effectiveIsRelocateTarget },
+      chatItemSkinClass,
     ]"
+    :style="chatItemSkinStyle"
+    v-bind="chatItemSkinAttrs"
     @mouseenter="handleTimestampHoverStart"
     @mouseleave="handleTimestampHoverEnd"
     @click="handleMobileTimestampTap"
   >
+    <ChatSkinLayers v-if="chatSkinRender?.layout === 'compact' && chatSkinLayers.length" :layers="chatSkinLayers" />
     <!-- Multi-select checkbox -->
     <div
       v-if="effectiveMultiSelectMode"
@@ -4025,7 +4063,7 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
             :class="botBadgeClass"
             :style="botBadgeInlineStyle"
           >{{ botBadgeText }}</span>
-          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span class="name" :style="nameInlineStyle">{{ nick }}</span>
           <span
             v-if="shouldShowBotBadgeAfterName"
             ref="botBadgeRef"
@@ -4066,7 +4104,7 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
             :class="botBadgeClass"
             :style="botBadgeInlineStyle"
           >{{ botBadgeText }}</span>
-          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span class="name" :style="nameInlineStyle">{{ nick }}</span>
           <span
             v-if="shouldShowBotBadgeAfterName"
             ref="botBadgeRef"
@@ -4119,7 +4157,9 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
         </n-popover>
       </span>
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
-        :class="contentClassList">
+        :class="contentClassList"
+        :style="contentSkinStyle">
+        <ChatSkinLayers v-if="chatSkinRender?.layout === 'bubble' && chatSkinLayers.length" :layers="chatSkinLayers" />
         <span
           class="message-swipe-reply-indicator"
           :class="{ 'message-swipe-reply-indicator--ready': swipeReplyReady }"
@@ -6236,6 +6276,48 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
 
 :root[data-display-palette='night'] .state-text-widget--active:hover {
   background-color: rgba(64, 152, 252, 0.25);
+}
+
+/*
+ * 聊天装扮（Chat Skin）。DOM 契约与扩展点见 doc/chat-skin.md：
+ * 装扮以内联样式作用在单条消息的 .chat-item / .content / .name 上，这里只放结构性规则。
+ */
+.chat-item--chat-skin-compact {
+  position: relative;
+  isolation: isolate;
+}
+
+.chat-item--chat-skin {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-item--chat-skin .content {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-item--chat-skin-compact.chat-item--chat-skin-surface {
+  padding: var(--sc-chat-skin-compact-padding, 0.2rem 0.5rem);
+  border-radius: var(--sc-chat-skin-compact-radius, 0.4rem);
+}
+
+.chat-item--chat-skin-layered .message-action-bar,
+.chat-item--chat-skin-layered .editing-self-actions,
+.chat-item--chat-skin-layered .message-swipe-reply-indicator,
+.chat-item--chat-skin-layered .chat-item__select-checkbox {
+  z-index: 2;
+}
+
+.chat-item--chat-skin.chat-item--selected,
+.chat-item--chat-skin.chat-item--relocate-target {
+  outline: 2px solid rgba(59, 130, 246, 0.55);
+  outline-offset: -2px;
+}
+
+.chat-item--chat-skin.chat-item--relocate-target {
+  outline-color: rgba(16, 185, 129, 0.6);
 }
 
 .viewer-edit-message-image::before {

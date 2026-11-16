@@ -1176,6 +1176,8 @@ export interface ChannelIdentity {
   sortOrder: number;
   folderIds?: string[];
   theaterPresentation?: TheaterPresentation | null;
+  /** 聊天装扮（规范见 features/chat-skin/chatSkinSchema.ts）。 */
+  chatSkin?: Record<string, any> | null;
 }
 
 export interface ChannelIdentityVariant {
@@ -1195,6 +1197,8 @@ export interface ChannelIdentityVariant {
   color?: string;
   appearance?: Record<string, any>;
   theaterPresentation?: TheaterPresentationPatch | null;
+  /** 差分对基础聊天装扮的覆写（服务端存于 appearance.chatSkin）。 */
+  chatSkin?: Record<string, any> | null;
   sortOrder: number;
   enabled: boolean;
   createdAt?: string;
@@ -1256,5 +1260,7 @@ export interface MessageIdentity {
   avatarDecoration?: AvatarDecoration | null;
   avatarDecorations?: AvatarDecoration[] | null;
   theaterPresentation?: TheaterPresentation | null;
+  /** 发送时解析（含差分覆写）的聊天装扮快照。 */
+  chatSkin?: Record<string, any> | null;
   isTemporary?: boolean;
 }

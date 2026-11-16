@@ -22,6 +22,7 @@
 - [Channel Embed API 开发指南](channel-embed-api-developer-guide.md)：为频道 iForm 或第三方 iframe 开发受控嵌入应用。
 - [UI 自定义包开发指南](ui-customization-package/ui-customization-package-development-guide.md)：开发主题、世界皮肤和高级 CSS/JavaScript UI 包；同目录附带可导入的赛博朋克 Demo 和 CSS 源码。
 - [LOG 排版样式开发指南](log-layout-style-authoring.md)：开发 LOG 自定义样式包、模板绑定、CSS、资源与兼容规则。
+- [聊天装扮（Chat Skin）](chat-skin.md)：频道角色消息外观的数据结构、继承与快照规则、资源引用、DOM 约定和各输出端接入状态。
 - [SealChat Bridge API](sealchat-bridge-api.md)：从外部宿主页面嵌入完整频道页并读取当前角色与消息流。
 - [Webhook 外部数据操作 API](sealchat-webhook-api.md)：通过 Change Feed 与写入接口和外部系统进行消息同步。
 - [隐式 BOT Interaction](bot-interaction.md)：从前端向频道 Primary BOT 发起不落库的临时调用并等待结果。
