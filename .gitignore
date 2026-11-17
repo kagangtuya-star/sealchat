@@ -21,7 +21,7 @@
 *.test.mjs
 *.test.cjs
 *.test.cts
-ui/scripts/chat-import-log-range-regression.cjs
+ui/scripts/*.cjs
 info.db
 record.log
 go.sum

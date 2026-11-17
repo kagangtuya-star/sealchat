@@ -336,6 +336,10 @@ Do not change `package.json` or the lockfile unless the task explicitly requires
 
 Reuse the existing frontend stack.
 
+## Test Files
+
+Name new tests `*.test.*` or `*.spec.*` with extensions covered by `.gitignore`; use `ui/scripts/*-regression.cjs` for standalone Node regressions. Check `git check-ignore -v` before staging. Never force-add ignored tests (including `git add -f` or `git add -N -f`) without explicit user permission. Leave already tracked tests unchanged.
+
 ## Validation
 
 `npm run type-check` checks both the DOM application and the font Web Worker through separate configurations. Keep the Vite-generated global declarations referenced from `env.d.ts`. TypeScript 5.6 is required for the current Vue declarations; do not replace these checks with `build-only` or omit the worker.
