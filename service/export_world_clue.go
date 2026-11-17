@@ -419,6 +419,10 @@ func isWorldClueMediaBlock(block AgentRichNode) bool {
 }
 
 func renderWorldCluePlain(block WorldClueExportBlock, includeImages bool) string {
+	return renderWorldCluePlainWithRenderer(block, includeImages, AgentRichDocumentPlainText)
+}
+
+func renderWorldCluePlainWithRenderer(block WorldClueExportBlock, includeImages bool, renderText func(AgentRichDocument) string) string {
 	title := strings.TrimSpace(block.Title)
 	if title == "" {
 		title = "未命名线索"
@@ -428,7 +432,7 @@ func renderWorldCluePlain(block WorldClueExportBlock, includeImages bool) string
 		kind = model.WorldClueKindText
 	}
 	lines := []string{fmt.Sprintf("[线索: %s]", title), "类型: " + kind}
-	body := strings.TrimSpace(AgentRichDocumentPlainText(block.Public))
+	body := strings.TrimSpace(renderText(block.Public))
 	if body == "" {
 		body = "（空线索）"
 	}
@@ -446,7 +450,7 @@ func renderWorldCluePlain(block WorldClueExportBlock, includeImages bool) string
 		if name == "" {
 			name = "成员"
 		}
-		privateBody := strings.TrimSpace(AgentRichDocumentPlainText(section.Content))
+		privateBody := strings.TrimSpace(renderText(section.Content))
 		if privateBody == "" {
 			continue
 		}
@@ -591,6 +595,32 @@ func worldClueRichDocument(block WorldClueExportBlock, includeImages bool) Agent
 		doc.Blocks = append(doc.Blocks, section.Content.Blocks...)
 	}
 	return doc
+}
+
+// renderWorldClueDiceText keeps the original rich node order and reuses the
+// standard export CQ markup for both inline and main clue images.
+func renderWorldClueDiceText(block WorldClueExportBlock, includeImages bool) string {
+	return renderWorldCluePlainWithRenderer(block, includeImages, func(doc AgentRichDocument) string {
+		doc.Blocks = append([]AgentRichNode(nil), doc.Blocks...)
+		for i := range doc.Blocks {
+			replaceWorldClueDiceImages(&doc.Blocks[i])
+		}
+		return AgentRichDocumentPlainText(doc)
+	})
+}
+
+func replaceWorldClueDiceImages(node *AgentRichNode) {
+	if node.Type == "image" {
+		src := firstNonEmpty(node.Attrs["src"], node.Attrs["dataSrc"], node.Attrs["data-src"], node.Attrs["attachment_id"], node.Attrs["attachmentId"])
+		*node = AgentRichNode{Type: "text", Text: buildCQImageMarkup(src)}
+		return
+	}
+	if len(node.Children) > 0 {
+		node.Children = append([]AgentRichNode(nil), node.Children...)
+		for i := range node.Children {
+			replaceWorldClueDiceImages(&node.Children[i])
+		}
+	}
 }
 
 func worldClueExportKindLabel(kind string) string {

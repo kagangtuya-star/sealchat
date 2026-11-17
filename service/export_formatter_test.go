@@ -1040,3 +1040,123 @@ func TestWorldClueExportDocxAttachmentEmbedsMedia(t *testing.T) {
 		t.Fatal("expected document.xml to reference clue media")
 	}
 }
+
+func TestCQImageMarkupUsesAttachmentPublicURL(t *testing.T) {
+	users := setupWorldClueTest(t)
+	const attachmentID = "cq-public-url-attachment"
+	createWorldClueExportImageAttachment(t, attachmentID, users.owner, users.worldID)
+	if err := model.GetDB().Model(&model.AttachmentModel{}).Where("id = ?", attachmentID).Update("external_url", "https://cdn.example.org/images/actual.png").Error; err != nil {
+		t.Fatal(err)
+	}
+	oldBase := attachmentBaseURLOverride
+	attachmentBaseURLOverride = "https://trpgchat.example"
+	t.Cleanup(func() { attachmentBaseURLOverride = oldBase })
+	want := "[CQ:image,file=image,url=https://cdn.example.org/images/actual.png]"
+	for _, src := range []string{"id:" + attachmentID, "/api/v1/attachment/" + attachmentID, "https://trpgchat.example/api/v1/attachment/" + attachmentID} {
+		if got := buildCQImageMarkup(src); got != want {
+			t.Fatalf("buildCQImageMarkup(%q) = %q, want %q", src, got, want)
+		}
+	}
+	if got := buildCQImageMarkup("https://images.example.org/other.png"); got != "[CQ:image,file=image,url=https://images.example.org/other.png]" {
+		t.Fatalf("external image changed: %q", got)
+	}
+}
+
+func TestWorldClueDiceJSONReusesOrdinaryImageCQMarkup(t *testing.T) {
+	users := setupWorldClueTest(t)
+	const channelID = "clue-dice-json-channel"
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID},
+		WorldID:           users.worldID, Name: "海豹线索频道", PermType: "public", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldBase := attachmentBaseURLOverride
+	attachmentBaseURLOverride = "https://files.example"
+	t.Cleanup(func() { attachmentBaseURLOverride = oldBase })
+	const mainID = "clue-dice-main"
+	createWorldClueExportImageAttachment(t, mainID, users.owner, users.worldID)
+	content := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"图文前段 "},{"type":"image","attrs":{"src":"id:clue-dice-inline"}},{"type":"text","text":" 图文后段"}]},{"type":"paragraph","content":[{"type":"image","attrs":{"src":"https://images.example/extra.png"}}]}]}`
+	clue, err := WorldClueCreate(users.worldID, users.owner, WorldClueCreateInput{
+		Title: "染色器图片线索", Kind: model.WorldClueKindImage, ContentFormat: model.WorldClueContentTipTap,
+		Content: content, ImageAttachmentID: mainID, DefaultAccess: model.WorldClueAccessView,
+		ManagerNoteFormat: model.WorldClueContentPlain, ManagerNote: "manager only",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePublish(users.worldID, clue.ID, users.owner, clue.PublishSeq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberA, model.WorldClueContentPlain, "member A note", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberB, model.WorldClueContentPlain, "member B note", 0); err != nil {
+		t.Fatal(err)
+	}
+	link := "https://sealchat.example/#/" + users.worldID + "/" + channelID + "?clue=" + clue.ID
+	now := time.Now()
+	job := &model.MessageExportJobModel{UserID: users.memberA, ChannelID: channelID, Format: "json", IncludeOOC: true, IncludeArchived: true}
+	messages := []*model.MessageModel{
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ordinary-image", CreatedAt: now}, UserID: users.memberA, Content: `普通图片 <img src="id:normal-dice-image" />`, ICMode: "ic"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "clue-image", CreatedAt: now.Add(time.Second)}, UserID: users.memberA, Content: link, ICMode: "ic"},
+	}
+	withImages := buildExportPayload(job, "海豹线索频道", messages, nil, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true})
+	items := buildDiceLogPayload(withImages).Items
+	if len(items) != 2 {
+		t.Fatalf("expected ordinary and clue messages, got %d", len(items))
+	}
+	const normalCQ = "[CQ:image,file=image,url=https://files.example/api/v1/attachment/normal-dice-image]"
+	if !strings.Contains(items[0].Message, normalCQ) {
+		t.Fatalf("ordinary image changed: %q", items[0].Message)
+	}
+	clueBody := items[1].Message
+	for _, token := range []string{
+		"[线索: 染色器图片线索]",
+		"[CQ:image,file=image,url=https://files.example/api/v1/attachment/clue-dice-main]",
+		"[CQ:image,file=image,url=https://files.example/api/v1/attachment/clue-dice-inline]",
+		"[CQ:image,file=image,url=https://images.example/extra.png]",
+		"member A note",
+	} {
+		if !strings.Contains(clueBody, token) {
+			t.Fatalf("missing %q from clue dice JSON body: %q", token, clueBody)
+		}
+	}
+	if strings.Contains(clueBody, "member B note") || strings.Contains(clueBody, "manager only") {
+		t.Fatalf("clue dice JSON leaked unauthorized content: %q", clueBody)
+	}
+	if strings.Count(clueBody, "[CQ:image") != 3 {
+		t.Fatalf("expected main image and two inline images exactly once: %q", clueBody)
+	}
+	mainIndex := strings.Index(clueBody, "clue-dice-main")
+	beforeIndex := strings.Index(clueBody, "图文前段")
+	inlineIndex := strings.Index(clueBody, "clue-dice-inline")
+	afterIndex := strings.Index(clueBody, "图文后段")
+	if !(mainIndex < beforeIndex && beforeIndex < inlineIndex && inlineIndex < afterIndex) {
+		t.Fatalf("clue text/image order changed: %q", clueBody)
+	}
+	withoutImages := buildExportPayload(job, "海豹线索频道", messages, nil, &exportExtraOptions{IncludeImages: false, IncludeDiceCommand: true})
+	noImageItems := buildDiceLogPayload(withoutImages).Items
+	if len(noImageItems) != 2 || strings.Contains(noImageItems[0].Message, "[CQ:image") || strings.Contains(noImageItems[1].Message, "[CQ:image") {
+		t.Fatalf("image-disabled dice JSON still has media: %+v", noImageItems)
+	}
+	if !strings.Contains(noImageItems[1].Message, "图文前段") || !strings.Contains(noImageItems[1].Message, "member A note") {
+		t.Fatalf("image-disabled clue lost text: %q", noImageItems[1].Message)
+	}
+}
+
+func TestWorldClueDiceContentKeepsExportWrappers(t *testing.T) {
+	msg := &ExportMessage{
+		Content: "old body", IcMode: "ooc", IsArchived: true, IsWhisper: true,
+		WhisperTargets: []string{"角色甲"}, WorldClues: []WorldClueExportBlock{{
+			Title: "线索", Kind: model.WorldClueKindText, Public: buildRichDocumentForExport("正文", false),
+		}},
+	}
+	body := buildDiceLogContentBody(msg, false)
+	if !strings.Contains(body, "[已归档]") || !strings.Contains(body, "[对角色甲]") || !strings.Contains(body, "（[线索: 线索]") || !strings.Contains(body, "正文）") {
+		t.Fatalf("dice clue export lost message wrappers: %q", body)
+	}
+	if msg.Content != "old body" {
+		t.Fatalf("dice clue export mutated the source message: %q", msg.Content)
+	}
+}

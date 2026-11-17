@@ -2723,11 +2723,28 @@ var (
 )
 
 func buildCQImageMarkup(raw string) string {
-	url := resolveImageURL(raw)
+	url := resolveCQImageURL(raw)
 	if url == "" {
 		return ""
 	}
 	return fmt.Sprintf("[CQ:image,file=image,url=%s]", url)
+}
+
+// CQ exports prefer the actual publicly readable attachment URL instead of
+// constructing a URL from a configured domain that may not serve the file.
+func resolveCQImageURL(raw string) string {
+	if token := extractAttachmentToken(raw); token != "" {
+		if att, err := ResolveAttachment(token); err == nil && att != nil {
+			if att.IsTTSManaged() {
+				return ""
+			}
+			if publicURL := AttachmentPublicURL(att); publicURL != "" {
+				return publicURL
+			}
+			return buildAttachmentDownloadURL(att.ID)
+		}
+	}
+	return resolveImageURL(raw)
 }
 
 func resolveImageURL(raw string) string {
@@ -2997,7 +3014,7 @@ func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
 	items := make([]diceLogItem, 0, len(payload.Messages))
 	for i := range payload.Messages {
 		msg := &payload.Messages[i]
-		body := buildContentBody(msg, payload.IncludeImages)
+		body := buildDiceLogContentBody(msg, payload.IncludeImages)
 		isDice, info := detectDiceCommand(msg)
 		items = append(items, diceLogItem{
 			Nickname:    msg.SenderName,
@@ -3012,6 +3029,21 @@ func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
 		})
 	}
 	return &diceLogPayload{Version: diceLogVersion, Items: items}
+}
+
+// buildDiceLogContentBody preserves ordinary message handling and applies the
+// same CQ image markup to resolved world clue rich content.
+func buildDiceLogContentBody(msg *ExportMessage, includeImages bool) string {
+	if msg == nil || len(msg.WorldClues) == 0 {
+		return buildContentBody(msg, includeImages)
+	}
+	parts := make([]string, 0, len(msg.WorldClues))
+	for _, clue := range msg.WorldClues {
+		parts = append(parts, renderWorldClueDiceText(clue, includeImages))
+	}
+	projected := *msg
+	projected.Content = strings.Join(parts, "\n\n")
+	return buildContentBody(&projected, includeImages)
 }
 
 type textFormatter struct{}
