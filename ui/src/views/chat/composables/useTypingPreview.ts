@@ -504,6 +504,10 @@ const activeIdentityVariantShortcutContext = computed(() => {
     matched: false,
   };
 });
+// 广播和本地预览共享转换结果，截断仍由各自按原有长度执行。
+const plainTypingPreviewContent = computed(() =>
+  replaceEmojiRemarksForPreview(activeIdentityVariantShortcutContext.value.draftContent),
+);
 const activeIdentityVariantForPreview = computed(() => {
   if (editingIdentityPreviewContext.value) {
     return editingIdentityPreviewContext.value.variant;
@@ -797,7 +801,7 @@ const syncSelfTypingPreview = () => {
   }
   let previewContent = draft;
   if (inputMode.value !== 'rich') {
-    const normalized = replaceEmojiRemarksForPreview(draft);
+    const normalized = plainTypingPreviewContent.value;
     previewContent = normalized.length > 500 ? normalized.slice(0, 500) : normalized;
   }
   const payload: TypingPreviewItem = {
@@ -1033,7 +1037,7 @@ const emitTypingPreview = () => {
       }
       raw = '';
     }
-    raw = replaceEmojiRemarksForPreview(raw);
+    if (raw) raw = plainTypingPreviewContent.value;
   }
 
   typingPreviewActive.value = true;

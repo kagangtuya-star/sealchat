@@ -11,6 +11,25 @@ let pinyinModule: PinyinProModule | null = null
 let loadPromise: Promise<boolean> | null = null
 const pinyinReadyVersion = ref(0)
 
+// 按原文缓存，编辑名称/别名后自然使用新条目；限制数量和单条长度以约束内存。
+const PINYIN_CACHE_LIMIT = 2048
+const PINYIN_CACHE_TEXT_LIMIT = 512
+const pinyinCache = new Map<string, { initials?: string; full?: string }>()
+
+const cachePinyinValue = (text: string, field: 'initials' | 'full', value: string) => {
+  if (text.length > PINYIN_CACHE_TEXT_LIMIT) return
+  let entry = pinyinCache.get(text)
+  if (!entry) {
+    if (pinyinCache.size >= PINYIN_CACHE_LIMIT) {
+      const oldest = pinyinCache.keys().next().value
+      if (oldest !== undefined) pinyinCache.delete(oldest)
+    }
+    entry = {}
+    pinyinCache.set(text, entry)
+  }
+  entry[field] = value
+}
+
 const markPinyinReady = () => {
   pinyinReadyVersion.value += 1
 }
@@ -131,11 +150,15 @@ export function getPinyinInitials(text: string): string {
   if (!pinyinModule || !text) {
     return ''
   }
+  const cached = pinyinCache.get(text)?.initials
+  if (cached !== undefined) return cached
 
   try {
     const result = pinyinModule.pinyin(text, { toneType: 'none', type: 'array' })
     if (Array.isArray(result)) {
-      return result.map((p) => p.charAt(0).toUpperCase()).join('')
+      const initials = result.map((p) => p.charAt(0).toUpperCase()).join('')
+      cachePinyinValue(text, 'initials', initials)
+      return initials
     }
     return ''
   } catch {
@@ -148,11 +171,15 @@ export function getPinyinFull(text: string): string {
   if (!pinyinModule || !text) {
     return ''
   }
+  const cached = pinyinCache.get(text)?.full
+  if (cached !== undefined) return cached
 
   try {
     const result = pinyinModule.pinyin(text, { toneType: 'none', type: 'string' })
     if (typeof result === 'string') {
-      return result.toLowerCase().replace(/\s+/g, '')
+      const full = result.toLowerCase().replace(/\s+/g, '')
+      cachePinyinValue(text, 'full', full)
+      return full
     }
     return ''
   } catch {
