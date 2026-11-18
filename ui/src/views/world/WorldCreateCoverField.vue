@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, ref } from 'vue';
+import { defineAsyncComponent, onBeforeUnmount, ref } from 'vue';
 import { useMessage } from 'naive-ui';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { MessageImageEditorResult } from '@/composables/useMessageImageEditor';
+import WorldCoverMedia from './WorldCoverMedia.vue';
 
 const props = defineProps<{ disabled?: boolean; worldId?: string }>();
 const coverAttachmentId = defineModel<string>({ default: '' });
@@ -13,8 +13,9 @@ const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/
 const editorFile = ref<File | null>(null);
 const message = useMessage();
 const inputRef = ref<HTMLInputElement | null>(null);
-const previewUrl = computed(() => resolveAttachmentUrl(coverAttachmentId.value));
-const allowedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
+const editableMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/avif']);
+const originalMimeTypes = new Set(['image/gif', 'video/webm']);
+const accept = [...editableMimeTypes, ...originalMimeTypes].join(',');
 let active = true;
 
 const closeEditor = () => {
@@ -32,18 +33,21 @@ const handleSelected = (event: Event) => {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
-  if (!file || props.disabled || uploading.value || editing.value) return;
-  if (!allowedMimeTypes.has(file.type.toLowerCase())) {
-    message.error('请选择 PNG / JPEG / WebP / GIF / AVIF 图片');
+  if (!file || !active || props.disabled || uploading.value || editing.value) return;
+  const mimeType = file.type.toLowerCase();
+  if (originalMimeTypes.has(mimeType)) {
+    void uploadCover(file);
+    return;
+  }
+  if (!editableMimeTypes.has(mimeType)) {
+    message.error('请选择 PNG / JPEG / WebP / AVIF / GIF 图片或 WebM 视频');
     return;
   }
   editorFile.value = file;
   editing.value = true;
 };
 
-const handleEditorConfirm = async ({ file }: MessageImageEditorResult) => {
-  if (!active || !editorFile.value || props.disabled || uploading.value) return;
-  closeEditor();
+const uploadCover = async (file: File) => {
   uploading.value = true;
   try {
     const result = await uploadImageAttachment(file, {
@@ -53,19 +57,23 @@ const handleEditorConfirm = async ({ file }: MessageImageEditorResult) => {
       skipCompression: true,
     });
     if (active) coverAttachmentId.value = result.attachmentId;
-  } catch (error: any) {
-    if (active) message.error(error?.message || '封面上传失败');
+  } catch (error) {
+    if (active) message.error((error instanceof Error && error.message) || '封面上传失败');
   } finally {
     if (active) uploading.value = false;
   }
+};
+
+const handleEditorConfirm = ({ file }: MessageImageEditorResult) => {
+  if (!active || !editorFile.value || props.disabled || uploading.value) return;
+  closeEditor();
+  void uploadCover(file);
 };
 </script>
 
 <template>
   <div class="world-create-cover">
-    <div v-if="previewUrl" class="world-create-cover__preview">
-      <img :src="previewUrl" alt="世界封面预览" />
-    </div>
+    <WorldCoverMedia class="world-create-cover__preview" :attachment="coverAttachmentId" alt="世界封面预览" />
     <div class="world-create-cover__actions">
       <n-button size="small" secondary :loading="uploading" :disabled="disabled || uploading || editing" @click="inputRef?.click()">
         {{ coverAttachmentId ? '更换封面' : '上传封面' }}
@@ -75,7 +83,7 @@ const handleEditorConfirm = async ({ file }: MessageImageEditorResult) => {
       </n-button>
     </div>
     <div class="world-create-cover__hint"><slot name="hint">选填，建议使用横向图片（约 4:1）。</slot></div>
-    <input ref="inputRef" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden :disabled="disabled || uploading || editing" @change="handleSelected" />
+    <input ref="inputRef" type="file" :accept="accept" hidden :disabled="disabled || uploading || editing" @change="handleSelected" />
     <MessageImageEditor
       v-if="editing"
       :show="editing"
@@ -98,13 +106,6 @@ const handleEditorConfirm = async ({ file }: MessageImageEditorResult) => {
   border: 1px solid var(--sc-border-mute);
   border-radius: 8px;
   margin-bottom: 8px;
-}
-
-.world-create-cover__preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .world-create-cover__actions {

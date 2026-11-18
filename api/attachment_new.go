@@ -20,6 +20,7 @@ import (
 func uploadFiles(
 	files []*multipart.FileHeader,
 	uid string,
+	preserveGIF bool,
 	modelSolve func(item *model.AttachmentModel),
 	mimeMatcher []string,
 	mimeCheckResult func(file *multipart.FileHeader, contentType string, allowed bool) int, // 返回0继续上传 返回-1跳过，返回-2中止
@@ -59,7 +60,7 @@ func uploadFiles(
 		if limit == 0 {
 			limit = limits.INT_MAX
 		}
-		saveResult, err := SaveMultipartFile(file, tempFile, limit)
+		saveResult, err := saveMultipartFile(file, tempFile, limit, preserveGIF)
 		if err != nil {
 			return err, nil, nil
 		}
@@ -130,7 +131,7 @@ func uploadRawForOwner(c *fiber.Ctx, ownerUserID string, uploadCallback func(ite
 	extra := getFromForm("extra")
 
 	// 遍历每个文件
-	err, ids, filenames := uploadFiles(files, ownerUserID, func(item *model.AttachmentModel) {
+	err, ids, filenames := uploadFiles(files, ownerUserID, rootIdType == "world_cover", func(item *model.AttachmentModel) {
 		item.ParentID = parentId
 		item.ParentIDType = parentIdType
 		item.RootID = rootId
