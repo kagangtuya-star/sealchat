@@ -50,6 +50,40 @@ func initWorldTheaterServiceTest(t *testing.T) (string, string, string) {
 	return actorID, worldID, channelID
 }
 
+func TestTheaterObjectCreatePreservesZeroValues(t *testing.T) {
+	actorID, worldID, _ := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	falseValue, zero := false, 0.0
+	for _, tc := range []struct {
+		name         string
+		input        theaterObjectInput
+		wantBool     bool
+		wantViewport float64
+	}{
+		{"explicit zero values", theaterObjectInput{Visible: &falseValue, AspectRatioLocked: &falseValue, ViewportX: &zero, ViewportY: &zero}, false, 0},
+		{"defaults", theaterObjectInput{}, true, 0.5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			input.ID, input.Kind, input.OrderKey = utils.NewID(), "image", "a"
+			input.Width, input.Height = 320, 90
+			if err := createTheaterObject(model.GetDB(), room, actorID, nil, &input); err != nil {
+				t.Fatal(err)
+			}
+			var object model.TheaterObjectModel
+			if err := model.GetDB().Where("room_id = ? AND id = ?", room.ID, input.ID).First(&object).Error; err != nil {
+				t.Fatal(err)
+			}
+			if object.Visible != tc.wantBool || object.AspectRatioLocked != tc.wantBool || object.ViewportX != tc.wantViewport || object.ViewportY != tc.wantViewport {
+				t.Fatalf("created object lost zero values or defaults: %#v", object)
+			}
+		})
+	}
+}
+
 func TestWorldTheaterObjectToggleResolvesVisibilityInMutation(t *testing.T) {
 	ownerID, worldID, _ := initWorldTheaterServiceTest(t)
 	if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
