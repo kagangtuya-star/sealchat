@@ -802,6 +802,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
         'is-minimized': item.minimized,
         'is-character': item.resourceType === 'character',
         'is-minimal': item.chrome === 'minimal',
+        'is-transparent': parseInternalSurfaceLink(item.url)?.transparent === true,
         'is-chat': item.source === 'chat',
         'is-docked': isDockedCharacter(item),
         'is-transient': item.transient,
@@ -932,6 +933,7 @@ defineExpose({ openResource, openCustomWindow, updateCustomWindow, setWindowHidd
 .theater-floating-window__body.is-hidden { visibility: hidden; pointer-events: none; }
 .theater-floating-window__frame { display: block; width: 100%; height: 100%; margin: 0; border: 0; outline: 0; background: var(--sc-bg-surface, #fff); }
 .theater-floating-window.is-minimal .theater-floating-window__frame { background: transparent; }
+.theater-floating-window.is-transparent, .theater-floating-window.is-transparent .theater-floating-window__frame { background: transparent; }
 .theater-floating-window__resize { position: absolute; z-index: 2; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; }
 .theater-floating-window__resize.is-hidden { display: none; }
 .theater-floating-window.is-minimized { min-width: 0; }

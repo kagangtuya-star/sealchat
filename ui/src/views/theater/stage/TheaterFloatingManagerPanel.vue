@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, useMessage } from 'naive-ui'
-import { AppWindow, ArrowUp, ArrowsMaximize, Eye, EyeOff, FileText, Id, LayoutBoard, Message, Minus, Note, Pencil, Plus, Search, Trash, World, X } from '@vicons/tabler'
+import { AppWindow, ArrowUp, ArrowsMaximize, Eye, EyeOff, FileText, Id, LayoutBoard, Message, Minus, Movie, Note, Pencil, Plus, Search, Trash, World, X } from '@vicons/tabler'
 import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '../host/theater-floating-window'
 import { resolveSafeStageIframeUrl } from '../shared/stage-types'
 
@@ -31,6 +31,7 @@ const types = {
   clue: { label: '线索', icon: Search },
   'clue-board': { label: '线索板', icon: LayoutBoard },
   iform: { label: 'IForm', icon: FileText },
+  theater: { label: '小剧场', icon: Movie },
   web: { label: '网页', icon: World },
   chat: { label: '聊天', icon: Message },
 }

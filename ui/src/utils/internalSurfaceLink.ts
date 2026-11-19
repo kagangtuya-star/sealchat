@@ -1,7 +1,7 @@
 import { isMobileBrowserRuntime } from './windowFocusState';
 import { resolvePublicLinkBase, type PublicLinkConfig } from './publicLinkBase';
 
-export const INTERNAL_SURFACE_TYPES = ['iform', 'note', 'character', 'clue', 'clue-board'] as const;
+export const INTERNAL_SURFACE_TYPES = ['iform', 'note', 'character', 'clue', 'clue-board', 'theater'] as const;
 
 export type InternalSurfaceType = typeof INTERNAL_SURFACE_TYPES[number];
 
@@ -10,6 +10,9 @@ export interface InternalSurfaceLinkParams {
   id: string;
   worldId: string;
   channelId: string;
+  /** 小剧场的局部展示选项，不参与资源身份。 */
+  transparent?: boolean;
+  full?: boolean;
 }
 
 export const buildInternalSurfaceResourceKey = (params: InternalSurfaceLinkParams): string => (
@@ -42,6 +45,10 @@ export function generateInternalSurfaceLink(
     world: params.worldId,
     channel: params.channelId,
   });
+  if (params.type === 'theater') {
+    search.set('transparent', params.transparent === true ? '1' : '0');
+    search.set('full', params.full === true ? '1' : '0');
+  }
   return `${prefix}/internal/${encodeURIComponent(params.type)}/${encodeURIComponent(params.id)}?${search.toString()}`;
 }
 
@@ -108,7 +115,10 @@ export function parseInternalSurfaceLink(value: string): InternalSurfaceLinkPara
     const worldId = (search.get('world') || '').trim();
     const channelId = (search.get('channel') || '').trim();
     if (!id || !worldId || !channelId) return null;
-    return { type: type as InternalSurfaceType, id, worldId, channelId };
+    return {
+      type: type as InternalSurfaceType, id, worldId, channelId,
+      ...(type === 'theater' ? { transparent: search.get('transparent') === '1', full: search.get('full') === '1' } : {}),
+    };
   } catch {
     return null;
   }

@@ -110,7 +110,12 @@ const channelId = computed(() => normalizeRouteValue(route.query.channel));
 const surfaceComponent = computed(() => getInternalSurfaceComponent(type.value));
 const isClueSurface = computed(() => type.value === 'clue');
 const isClueBoardSurface = computed(() => type.value === 'clue-board');
+const isTransparentSurface = computed(() => type.value === 'theater' && route.query.transparent === '1');
 const surfaceKey = computed(() => `${type.value}:${id.value}:${worldId.value}:${channelId.value}`);
+
+watch(isTransparentSurface, transparent => {
+  document.documentElement.classList.toggle('sc-transparent-internal-surface', transparent);
+}, { immediate: true });
 
 const setError = (title: string, description: string) => {
   errorTitle.value = title;
@@ -197,6 +202,8 @@ watch(() => route.fullPath, queueContextInitialization, { immediate: true });
 onMounted(startInheritedThemeSync);
 
 onBeforeUnmount(() => {
+  taskEpoch += 1;
+  document.documentElement.classList.remove('sc-transparent-internal-surface');
   parentThemeObserver?.disconnect();
   parentThemeObserver = null;
   if (parentThemeFrame !== null) window.cancelAnimationFrame(parentThemeFrame);
@@ -212,7 +219,7 @@ onErrorCaptured((error) => {
 <template>
   <main
     class="internal-surface"
-    :class="{ 'internal-surface--clue': isClueSurface }"
+    :class="{ 'internal-surface--clue': isClueSurface, 'internal-surface--transparent': isTransparentSurface }"
     :data-rich-message-world-id="worldId"
     :data-rich-message-channel-id="channelId"
   >
@@ -255,7 +262,7 @@ onErrorCaptured((error) => {
   background: var(--sc-bg-surface, #fff);
 }
 
-.internal-surface--clue {
+.internal-surface--clue, .internal-surface--transparent {
   background: transparent;
 }
 
@@ -274,4 +281,15 @@ onErrorCaptured((error) => {
   place-items: center;
   background: var(--sc-bg-surface, #fff);
 }
+.internal-surface--transparent .internal-surface__loading { background: transparent; }
+</style>
+
+<style>
+html:root.sc-transparent-internal-surface,
+html:root.sc-transparent-internal-surface body,
+html:root.sc-transparent-internal-surface #app,
+html:root.sc-transparent-internal-surface .n-config-provider {
+  background: transparent !important;
+}
+:root.sc-transparent-internal-surface .sc-global-glass-background { display: none; }
 </style>

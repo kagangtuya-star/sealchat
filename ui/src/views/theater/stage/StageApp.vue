@@ -291,6 +291,9 @@ const sceneOverlayImageFolderName = '场景叠加'
 const props = defineProps<{
   store: TheaterStageStore
   transparentBackdrop?: boolean
+  hideBackground?: boolean
+  presentationOnly?: boolean
+  fitToViewport?: boolean
   pipCompact?: boolean
   pipMinimal?: boolean
   floatingWindows?: TheaterFloatingWindowSummary[]
@@ -341,6 +344,7 @@ const emit = defineEmits<{
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
   openCharacterCard: [payload: { resource: TheaterFloatingResource; clientX: number; clientY: number }]
   toggleChat: []
+  openSurfaceLink: []
   disconnectChatBridge: []
   reconnectChatBridge: []
   toggleRenderer: []
@@ -1247,8 +1251,11 @@ const performanceVisibilityOptions = computed<DropdownOption[]>(() => [
     label: '仅隐藏立绘演出',
     icon: () => h(NIcon, { style: { opacity: portraitPerformanceHidden.value ? 1 : 0 } }, { default: () => h(Check) }),
   },
+  { type: 'divider', key: 'surface-divider' },
+  { key: 'theater-surface-link', label: '小剧场浮层' },
 ])
 const togglePerformanceVisibility = (key: string | number) => {
+  if (key === 'theater-surface-link') emit('openSurfaceLink')
   if (key === 'hide-dialogue-performance') dialoguePerformanceHidden.value = !dialoguePerformanceHidden.value
   if (key === 'hide-portrait-performance') portraitPerformanceHidden.value = !portraitPerformanceHidden.value
 }
@@ -1403,11 +1410,13 @@ let layerExpandTargetId: string | null = null
 let layerHierarchyMovePending = false
 let layerHierarchyUpdatedObjectIds = new Set<string>()
 const workspaceRef = ref<HTMLDivElement | null>(null)
-const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
+const hasPermission = (permission: string) => props.syncReady
+  && props.permissions.includes(permission)
+  && (!props.presentationOnly || permission === 'stage.view')
 const canBrowseScenes = computed(() => hasPermission('stage.view'))
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
 // The global "禁用交互" switch also overrides surface webpage testing.
-const surfaceIframeInteractive = (target: StageSurfaceTarget) => !iframeInteractionDisabled.value && (
+const surfaceIframeInteractive = (target: StageSurfaceTarget) => !props.presentationOnly && !iframeInteractionDisabled.value && (
   canEditAllObjects.value
     ? surfaceInteractionTest.value === target
     : props.store.state.liveState.surfaceEmbeds[target]?.interactive === true
@@ -2390,6 +2399,7 @@ const isEditableShortcutTarget = (target: EventTarget | null) => {
 const copySelectedObjects = () => props.store.copySelectedObjects(copyMode.value)
 
 const handleStageShortcut = (event: KeyboardEvent) => {
+  if (props.presentationOnly) return
   if (surfaceInteractionTest.value) {
     if (event.key === 'Escape') {
       surfaceInteractionTest.value = null
@@ -6326,6 +6336,25 @@ const rendererObjectBounds = (id: string) => {
   if (!node || !node.isVisible()) throw new Error('renderer_object_not_visible')
   return node.getClientRect()
 }
+const surfaceViewControlsExpanded = ref(false)
+let surfaceAutoFit = true
+const fitSceneView = () => {
+  const camera = props.store.state.camera
+  const live = props.store.state.liveState
+  camera.x = camera.y = 0
+  camera.zoom = Math.max(0.01, Math.min(100, viewportSize.value.width / (live.fieldWidth * WORLD_UNIT_PX), viewportSize.value.height / (live.fieldHeight * WORLD_UNIT_PX)) * 0.9)
+  surfaceAutoFit = true
+}
+const zoomView = (factor: number, pointer = { x: viewportSize.value.width / 2, y: viewportSize.value.height / 2 }) => {
+  const camera = props.store.state.camera
+  const center = { x: viewportSize.value.width / 2, y: viewportSize.value.height / 2 }
+  const worldPoint = { x: (pointer.x - center.x - camera.x) / camera.zoom, y: (pointer.y - center.y - camera.y) / camera.zoom }
+  const zoom = Math.min(props.fitToViewport ? 100 : 3, Math.max(props.fitToViewport ? 0.01 : 0.2, camera.zoom * factor))
+  camera.zoom = zoom
+  camera.x = pointer.x - center.x - worldPoint.x * zoom
+  camera.y = pointer.y - center.y - worldPoint.y * zoom
+  surfaceAutoFit = false
+}
 const applyRendererView = async (command: TheaterRendererCommand) => {
   const payload = command.payload as { camera?: { x: number, y: number, zoom: number }, objectIds?: string[] }
   const camera = props.store.state.camera
@@ -6334,8 +6363,7 @@ const applyRendererView = async (command: TheaterRendererCommand) => {
     if (!next || ![next.x, next.y, next.zoom].every(Number.isFinite) || Math.abs(next.x) > 1e6 || Math.abs(next.y) > 1e6 || next.zoom < 0.01 || next.zoom > 100) throw new Error('renderer_invalid_camera')
     Object.assign(camera, next)
   } else if (command.operation === 'fit_scene') {
-    camera.x = camera.y = 0
-    camera.zoom = Math.max(0.01, Math.min(100, viewportSize.value.width / (props.store.state.liveState.fieldWidth * WORLD_UNIT_PX), viewportSize.value.height / (props.store.state.liveState.fieldHeight * WORLD_UNIT_PX)) * 0.9)
+    fitSceneView()
   } else if (command.operation === 'focus_object') {
     const objectId = payload.objectIds?.[0] || ''
     const bounds = rendererObjectBounds(objectId)
@@ -7245,7 +7273,7 @@ const syncSurface = (target: StageSurfaceTarget, image: StageImageRef | null, bo
   let current = target === 'background' ? backgroundSlot : foregroundSlot
   if (!current) return
   const controller = surfaceTransitions[target]
-  const signature = JSON.stringify([props.worldId, props.channelId, props.store.state.activeSceneId, image, box, style, props.store.state.liveState.backgroundColor, Boolean(props.store.state.liveState.surfaceEmbeds[target])])
+  const signature = JSON.stringify([props.worldId, props.channelId, props.store.state.activeSceneId, image, box, style, props.store.state.liveState.backgroundColor, Boolean(props.store.state.liveState.surfaceEmbeds[target]), props.transparentBackdrop])
   const changed = surfaceChangeVersions[target] !== props.store.surfaceChanges[target]
   surfaceChangeVersions[target] = props.store.surfaceChanges[target]
   const awaitingScene = sceneMediaBatch && !sceneMediaBatch.released && sceneMediaBatch.expected.has(`surface:${target}`) && !sceneMediaBatch.settled.has(`surface:${target}`)
@@ -7295,6 +7323,7 @@ const syncSurface = (target: StageSurfaceTarget, image: StageImageRef | null, bo
 
 const syncSurfaceSlots = () => {
   if (!backgroundSlot || !foregroundSlot) return
+  backgroundLayer?.visible(!props.hideBackground)
   const liveState = props.store.state.liveState
   // Reuse the existing interaction Canvas above the webpage for the top grid;
   // it remains non-listening and below selection controls. No extra Layer needed.
@@ -8293,6 +8322,7 @@ const resizeStage = () => {
   viewportSize.value = nextViewportSize
   stage.size(viewportSize.value)
   sceneMorphStage?.size(viewportSize.value)
+  if (props.fitToViewport && surfaceAutoFit) fitSceneView()
   syncField()
   clampOpenPanels()
   syncViewportObjectNodes()
@@ -8321,16 +8351,7 @@ const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
   event.evt.preventDefault()
   const pointer = stage.getPointerPosition()
   if (!pointer) return
-  const oldZoom = props.store.state.camera.zoom
-  const worldPoint = {
-    x: (pointer.x - worldCameraGroup.x()) / oldZoom,
-    y: (pointer.y - worldCameraGroup.y()) / oldZoom,
-  }
-  const direction = event.evt.deltaY > 0 ? -1 : 1
-  const zoom = Math.min(3, Math.max(0.2, direction > 0 ? oldZoom * 1.08 : oldZoom / 1.08))
-  props.store.state.camera.zoom = zoom
-  props.store.state.camera.x = pointer.x - stage.width() / 2 - worldPoint.x * zoom
-  props.store.state.camera.y = pointer.y - stage.height() / 2 - worldPoint.y * zoom
+  zoomView(event.evt.deltaY > 0 ? 1 / 1.08 : 1.08, pointer)
 }
 
 const PAN_DRAG_THRESHOLD = 5
@@ -8364,6 +8385,10 @@ const beginPanCandidate = (event: Konva.KonvaEventObject<PointerEvent>, objectId
 const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
   const objectId = stageObjectIdFromTarget(event.target)
+  if (props.presentationOnly) {
+    if (event.evt.button === 0) beginPanCandidate(event, objectId)
+    return
+  }
   if (viewToolActive.value) {
     if (event.evt.button === 2) {
       const pointer = worldCameraGroup?.getRelativePointerPosition()
@@ -8456,6 +8481,7 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
     panning = true
   }
   event.evt.preventDefault()
+  surfaceAutoFit = false
   props.store.state.camera.x = panOrigin.x + deltaX
   props.store.state.camera.y = panOrigin.y + deltaY
 }
@@ -9574,6 +9600,7 @@ watch(() => ({
   foregroundEmbed: Boolean(props.store.state.liveState.surfaceEmbeds.foreground),
   backgroundColor: props.store.state.liveState.backgroundColor,
   transparentBackdrop: props.transparentBackdrop,
+  hideBackground: props.hideBackground,
   fieldWidth: props.store.state.liveState.fieldWidth,
   fieldHeight: props.store.state.liveState.fieldHeight,
   fieldObjectFit: props.store.state.liveState.fieldObjectFit,
@@ -9624,6 +9651,9 @@ watch(viewToolActive, () => {
 watch(() => props.syncReady, (ready, wasReady) => {
   if (ready && !wasReady) beginSceneMediaBatch(props.store.state.activeSceneId, false)
 })
+watch(() => [props.fitToViewport, props.syncReady, props.store.state.activeSceneId, props.store.state.liveState.fieldWidth, props.store.state.liveState.fieldHeight], () => {
+  if (props.fitToViewport && props.syncReady) fitSceneView()
+}, { immediate: true })
 watch(() => [props.syncReady, ...props.permissions], () => {
   domVisualPreview.clear()
   const selectedId = props.store.state.selectedObjectId
@@ -9810,12 +9840,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section ref="stageAppRef" class="theater-stage-app" :class="{ 'is-pip-compact': props.pipCompact, 'is-pip-minimal': props.pipMinimal }">
+  <section ref="stageAppRef" class="theater-stage-app" :class="{ 'is-pip-compact': props.pipCompact, 'is-pip-minimal': props.pipMinimal, 'is-presentation-only': props.presentationOnly }">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/apng,image/jpeg,image/webp,image/gif,video/webm,.apng,.webm" @change="handleImageInput">
     <input ref="sceneAudioInputRef" class="theater-image-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleSceneAudioInput">
     <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
     <input ref="ccfoliaInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handleCCFOLIAInput">
     <header
+      v-if="!props.presentationOnly"
       class="theater-stage-toolbar"
       :class="{ 'is-controls-visible': toolbarColorsVisible }"
       @pointerenter="revealToolbarColors"
@@ -10151,6 +10182,11 @@ onBeforeUnmount(() => {
         复位视角
       </n-tooltip>
       <span class="theater-stage-zoom">{{ Math.round(store.state.camera.zoom * 100) }}%</span>
+      <template v-if="props.fitToViewport">
+        <n-button size="small" quaternary aria-label="缩小舞台" @click="zoomView(1 / 1.2)">−</n-button>
+        <n-button size="small" quaternary aria-label="放大舞台" @click="zoomView(1.2)">+</n-button>
+        <n-button size="small" quaternary aria-label="适应舞台大小" @click="fitSceneView">适应</n-button>
+      </template>
     </header>
 
     <div
@@ -10211,9 +10247,33 @@ onBeforeUnmount(() => {
 
     <div ref="workspaceRef" class="theater-stage-workspace">
       <div
+        v-if="props.presentationOnly"
+        class="theater-surface-view-controls"
+        :class="{ 'is-expanded': surfaceViewControlsExpanded }"
+        @keydown.esc.stop="surfaceViewControlsExpanded = false"
+      >
+        <n-button
+          class="theater-surface-view-toggle"
+          size="small"
+          quaternary
+          circle
+          :aria-expanded="surfaceViewControlsExpanded"
+          :aria-label="surfaceViewControlsExpanded ? '收起舞台缩放' : '展开舞台缩放'"
+          @click="surfaceViewControlsExpanded = !surfaceViewControlsExpanded"
+        >
+          <template #icon><n-icon><component :is="surfaceViewControlsExpanded ? X : Focus" /></n-icon></template>
+        </n-button>
+        <div v-if="surfaceViewControlsExpanded" class="theater-surface-view-actions" role="group" aria-label="舞台视角">
+          <n-button size="small" quaternary aria-label="缩小舞台" @click="zoomView(1 / 1.2)">−</n-button>
+          <span class="theater-stage-zoom">{{ Math.round(store.state.camera.zoom * 100) }}%</span>
+          <n-button size="small" quaternary aria-label="放大舞台" @click="zoomView(1.2)">+</n-button>
+          <n-button size="small" quaternary aria-label="适应舞台大小" @click="fitSceneView">适应</n-button>
+        </div>
+      </div>
+      <div
         ref="viewportRef"
         class="theater-stage-viewport"
-        :class="{ 'is-viewing': viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive, 'is-iframe-interaction-disabled': iframeInteractionDisabled }"
+        :class="{ 'is-viewing': props.presentationOnly || viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive, 'is-iframe-interaction-disabled': props.presentationOnly || iframeInteractionDisabled }"
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
       >
@@ -10221,7 +10281,7 @@ onBeforeUnmount(() => {
           <div ref="containerRef" class="theater-stage-canvas" />
           <template v-for="target in (['background', 'foreground'] as const)" :key="target">
             <StageSurfaceIframe
-              v-if="store.state.liveState.surfaceEmbeds[target]"
+              v-if="store.state.liveState.surfaceEmbeds[target] && !(target === 'background' && props.hideBackground)"
               :key="`${worldId}:${channelId}:${store.state.activeSceneId}:${target}`"
               :target="target"
               :embed="store.state.liveState.surfaceEmbeds[target]!"
@@ -12049,6 +12109,11 @@ onBeforeUnmount(() => {
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; isolation: isolate; background: #343435; touch-action: none; }
+.theater-surface-view-controls { position: absolute; top: 8px; left: 8px; z-index: 100; display: flex; align-items: center; border-radius: 6px; opacity: .18; transition: opacity .15s; }
+.theater-surface-view-controls:hover, .theater-surface-view-controls:focus-within, .theater-surface-view-controls.is-expanded { opacity: .92; }
+.theater-surface-view-controls.is-expanded { padding: 2px 4px; background: color-mix(in srgb, var(--theater-panel) 75%, transparent); }
+.theater-surface-view-toggle { flex: 0 0 auto; }
+.theater-surface-view-actions { display: flex; align-items: center; gap: 2px; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object),
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object__frame) { pointer-events: none !important; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object *) { pointer-events: none !important; }

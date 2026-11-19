@@ -59,6 +59,18 @@ import {
 import { resolveTheaterReducedMotion } from '../shared/theater-reduced-motion'
 import { defaultDialogueController, dialogueControllerStates, type DialogueController, type DialogueControllerTemplate, type DialogueControllerPatch } from '../dialogue/theater-dialogue-controller'
 import type { DialoguePosition } from '../dialogue/theater-dialogue-layout'
+import type { InternalSurfaceLinkParams } from '@/utils/internalSurfaceLink'
+import TheaterSurfaceLinkModal from './TheaterSurfaceLinkModal.vue'
+
+const props = defineProps<{
+  surfaceContext?: Pick<InternalSurfaceLinkParams, 'worldId' | 'channelId'>
+  transparentBackground?: boolean
+  fullMode?: boolean
+}>()
+const emit = defineEmits<{ ready: []; error: [message: string] }>()
+const isSurface = computed(() => Boolean(props.surfaceContext))
+const presentationOnly = computed(() => isSurface.value && !props.fullMode)
+const surfaceLinkVisible = ref(false)
 
 const route = useRoute()
 const router = useRouter()
@@ -82,19 +94,21 @@ const routeChatPreference = computed<boolean | null>(() => {
   if (route.query.chat === '0') return false
   return null
 })
-const worldId = ref(routeWorldId.value)
-const channelId = ref(routeChannelId.value)
+const worldId = ref(props.surfaceContext?.worldId || routeWorldId.value)
+const channelId = ref(props.surfaceContext?.channelId || routeChannelId.value)
 const stageStore = createTheaterStageStore()
 const sessionId = createTheaterBridgeId('session')
 const dialogueRuntime = new TheaterDialogueRuntime()
 const dialogueController = ref<DialogueController>(defaultDialogueController())
 const dialogueControllerTemplate = ref<DialogueControllerTemplate | null>(null)
-const canDragPortraits = computed(() => isWorldAdmin.value || chat.worldDetailMap[worldId.value]?.memberRole === 'member')
+const canDragPortraits = computed(() => !presentationOnly.value && (isWorldAdmin.value || chat.worldDetailMap[worldId.value]?.memberRole === 'member'))
 const saveDialogueController = async (patch: DialogueControllerPatch) => {
+  if (presentationOnly.value) throw new Error('展示浮层不支持修改公共演出设定')
   if (!theaterSync) throw new Error('小剧场尚未连接')
   await theaterSync.patchDialogueController(patch)
 }
 const savePortraitPosition = async (key: string, position: DialoguePosition) => {
+  if (presentationOnly.value) return
   if (!theaterSync) throw new Error('小剧场尚未连接')
   await theaterSync.setDialoguePosition(key, position)
 }
@@ -167,7 +181,7 @@ const handleFloatingWindowAction = (action: TheaterFloatingWindowAction) => {
 const stageSurfaceRef = ref<HTMLElement | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
-const chatHidden = ref(routeChatPreference.value === false)
+const chatHidden = ref(isSurface.value || routeChatPreference.value === false)
 const mobileTab = ref<'stage' | 'chat'>('stage')
 const mobilePipWidth = ref<number | null>(null)
 const mobilePipMinimumWidth = 140
@@ -201,7 +215,8 @@ const manualPipActive = computed(() => (
   routePipPreference.value === true
 ))
 const mobileAutoPipActive = computed(() => (
-  routePipPreference.value !== false
+  !isSurface.value
+  && routePipPreference.value !== false
   && isMobilePortrait.value
   && display.settings.mobileTheaterPipEnabled
 ))
@@ -223,11 +238,11 @@ const mobileStageHiddenByInput = computed(() => (
   && chatComposerFocused.value
 ))
 const chatVisible = computed(() => (
-  isMobilePortrait.value
+  !presentationOnly.value && (isMobilePortrait.value
     ? !chatHidden.value
     : isNarrow.value
       ? mobileTab.value === 'chat'
-      : !chatHidden.value
+      : !chatHidden.value)
 ))
 const theaterDividerWidth = 7
 const mobileStageDividerHeight = 12
@@ -373,6 +388,7 @@ interface DialogueSurfacePortraitGateState {
 }
 const dialogueSurfacePortraitGateStates = new Map<string, DialogueSurfacePortraitGateState>()
 let dialogueSurfaceModeActive = false
+let disposed = false
 const theaterActivationVisible = ref(false)
 const theaterActivationCode = ref('')
 const theaterActivationError = ref('')
@@ -394,7 +410,7 @@ const iframeSrc = computed(() => {
     channelId: channelId.value,
     sessionId,
     // 嵌入方（布局频道）已负责频道音频时传 audioOwner=0，避免重复播放。
-    audioOwner: route.query.audioOwner === '0' ? '0' : '1',
+    audioOwner: presentationOnly.value || route.query.audioOwner === '0' ? '0' : '1',
   })
   url.hash = `/embed?${params.toString()}`
   return url.toString()
@@ -576,7 +592,7 @@ watch(mobileStageResizeEnabled, (enabled) => {
 
 const resetLayout = () => {
   splitRatio.value = 0.7
-  chatHidden.value = routeChatPreference.value === false
+  chatHidden.value = isSurface.value || routeChatPreference.value === false
   mobileTab.value = 'stage'
   mobilePipWidth.value = null
   mobilePipOffset.value = { x: 0, y: 0 }
@@ -584,8 +600,10 @@ const resetLayout = () => {
 }
 
 const toggleChat = () => {
+  if (presentationOnly.value) return
   if (isNarrow.value && !isMobilePortrait.value) {
     mobileTab.value = mobileTab.value === 'chat' ? 'stage' : 'chat'
+    if (mobileTab.value === 'chat') chatHidden.value = false
     return
   }
   chatHidden.value = !chatHidden.value
@@ -637,7 +655,7 @@ const ensureTheaterActivation = async () => {
     await activateWorldTheater(worldId.value)
     return true
   } catch (error) {
-    if (!isTheaterActivationRequired(error)) throw error
+    if (isSurface.value || !isTheaterActivationRequired(error)) throw error
   }
   return requestTheaterActivation()
 }
@@ -726,6 +744,7 @@ const applySceneMusic = async (sceneId: string) => {
 }
 
 const runSceneSwitchSideEffects = async (sceneId: string) => {
+  if (presentationOnly.value) return
   await Promise.all([
     sendSceneDialogue(sceneId),
     broadcastSceneAudio(sceneId),
@@ -1096,7 +1115,7 @@ const handleDialogueSurfaceMessage = (event: MessageEvent) => {
     const requestId = event.data.requestId
     void saveDialogueController(event.data.patch).then(() => {
       if (worldId.value !== requestedWorld) return
-      target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: true, state: { ...dialogueControllerStates.value[requestedWorld], canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
+      target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: true, state: { ...dialogueControllerStates.value[requestedWorld], canManage: !presentationOnly.value && isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
     }).catch(() => target?.postMessage({ type: 'sealchat.theater.dialogue-controller.result', requestId, ok: false, error: '公共演出设定保存失败' }, window.location.origin))
     return
   }
@@ -1177,6 +1196,7 @@ watch(
 )
 
 const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
+  if (presentationOnly.value) return stagePermissions.filter(permission => permission === 'stage.view')
   const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
   const canControlMusic = (memberRole === 'owner' || memberRole === 'admin')
     || (stagePermissions.includes('stage.scene.switch') && stagePermissions.includes('stage.object.edit'))
@@ -1324,16 +1344,19 @@ const startTheaterSync = async () => {
   await previousClient?.stop()
   const isCurrent = () => generation === theaterSyncGeneration
   if (!isCurrent() || !targetWorldId || !targetChannelId) return
-  if (chat.currentWorldId !== targetWorldId) chat.setCurrentWorld(targetWorldId)
-  await chat.tryInit()
-  if (!isCurrent()) return
-  await chat.worldDetail(targetWorldId)
-  if (!isCurrent()) return
-  const currentChannelId = channelId.value
-  if (chat.curChannel?.id !== currentChannelId) {
-    const switched = await chat.channelSwitchTo(currentChannelId)
+  // InternalSurfaceView 已建立上下文，独立浮层只启动业务运行时。
+  if (!isSurface.value) {
+    if (chat.currentWorldId !== targetWorldId) chat.setCurrentWorld(targetWorldId)
+    await chat.tryInit()
     if (!isCurrent()) return
-    if (!switched) throw new Error('无法进入小剧场频道')
+    await chat.worldDetail(targetWorldId)
+    if (!isCurrent()) return
+    const currentChannelId = channelId.value
+    if (chat.curChannel?.id !== currentChannelId) {
+      const switched = await chat.channelSwitchTo(currentChannelId)
+      if (!isCurrent()) return
+      if (!switched) throw new Error('无法进入小剧场频道')
+    }
   }
   const client = new TheaterSyncClient({
     worldId: targetWorldId,
@@ -1341,6 +1364,7 @@ const startTheaterSync = async () => {
     inputChannelId: channelId.value,
     scopeType: 'world',
     store: stageStore,
+    readOnly: presentationOnly.value,
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
     onPermissionsChange: (permissions) => {
       if (!isCurrent() || theaterSync !== client) return
@@ -1351,7 +1375,7 @@ const startTheaterSync = async () => {
       if (!isCurrent() || theaterSync !== client) return
       dialogueController.value = state.dialogueController
       dialogueControllerTemplate.value = state.dialogueControllerTemplate
-      iframeRef.value?.contentWindow?.postMessage({ type: 'sealchat.theater.dialogue-controller.state', worldId: worldId.value, state: { controller: state.dialogueController, template: state.dialogueControllerTemplate, revision: state.revision, canManage: isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
+      iframeRef.value?.contentWindow?.postMessage({ type: 'sealchat.theater.dialogue-controller.state', worldId: worldId.value, state: { controller: state.dialogueController, template: state.dialogueControllerTemplate, revision: state.revision, canManage: !presentationOnly.value && isWorldAdmin.value, canDrag: canDragPortraits.value } }, window.location.origin)
       constructionSceneId.value = state.constructionSceneId
     },
     onSyncingChange: (syncing) => {
@@ -1368,7 +1392,7 @@ const startTheaterSync = async () => {
       return false
     },
     onSceneAudioTriggered: (assetId, volume, triggerId) => {
-      if (isCurrent() && theaterSync === client) stageAppRef.value?.playSceneAudio(assetId, volume, triggerId)
+      if (!presentationOnly.value && isCurrent() && theaterSync === client) stageAppRef.value?.playSceneAudio(assetId, volume, triggerId)
     },
     onVisibilityTriggered: (changes, triggerId) => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.playVisibilityTransitions(changes, triggerId)
@@ -1387,6 +1411,7 @@ const startTheaterSync = async () => {
       return
     }
     theaterSyncReady.value = true
+    emit('ready')
   } catch (error) {
     await client.stop()
     if (theaterSync === client) theaterSync = null
@@ -1499,6 +1524,7 @@ const handleTheaterContext = (event: MessageEvent) => {
   const nextWorldId = data.worldId.trim()
   const nextChannelId = data.channelId.trim()
   if (!nextWorldId || !nextChannelId || (nextWorldId === worldId.value && nextChannelId === channelId.value)) return
+  if (isSurface.value) return
   const worldChanged = nextWorldId !== worldId.value
   worldId.value = nextWorldId
   channelId.value = nextChannelId
@@ -1550,7 +1576,9 @@ onMounted(async () => {
     return
   }
   try {
-    if (!await ensureTheaterActivation()) {
+    const activated = await ensureTheaterActivation()
+    if (disposed) return
+    if (!activated) {
       await exitTheater()
       return
     }
@@ -1560,11 +1588,15 @@ onMounted(async () => {
 	window.addEventListener('message', handleDice3DMessage)
     await startTheaterSync()
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
+    if (disposed) return
+    const description = error instanceof Error ? error.message : '小剧场同步启动失败'
+    if (isSurface.value) emit('error', description)
+    else message.error(description)
   }
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   revokeRenderer()
   cancelMobilePortraitUnlock()
   theaterBridgeGeneration += 1
@@ -1594,9 +1626,11 @@ function handleDice3DMessage(event: MessageEvent) {
 <template>
   <main
     class="theater-host"
+    :class="{ 'is-surface': isSurface, 'is-transparent': props.transparentBackground }"
     :data-rich-message-world-id="worldId || undefined"
     :data-rich-message-channel-id="channelId || undefined"
   >
+    <TheaterSurfaceLinkModal v-if="!presentationOnly" v-model:show="surfaceLinkVisible" :world-id="worldId" :channel-id="channelId" />
     <n-modal
       v-model:show="theaterActivationVisible"
       preset="dialog"
@@ -1645,7 +1679,10 @@ function handleDice3DMessage(event: MessageEvent) {
         <StageApp
           ref="stageAppRef"
           :store="stageStore"
-          :transparent-backdrop="theaterPipActive"
+          :transparent-backdrop="theaterPipActive || props.transparentBackground"
+          :hide-background="props.transparentBackground"
+          :presentation-only="presentationOnly"
+          :fit-to-viewport="isSurface"
           :pip-compact="theaterPipCompact"
           :pip-minimal="theaterPipMinimal"
           :floating-windows="floatingWindows"
@@ -1667,7 +1704,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :dialogue-runtime="dialogueRuntime"
           :dialogue-controller="dialogueController"
           :dialogue-controller-template="dialogueControllerTemplate"
-          :can-manage-dialogue="isWorldAdmin"
+          :can-manage-dialogue="!presentationOnly && isWorldAdmin"
           :can-drag-portraits="canDragPortraits"
           :save-dialogue-controller="saveDialogueController"
           :save-portrait-position="savePortraitPosition"
@@ -1691,6 +1728,7 @@ function handleDice3DMessage(event: MessageEvent) {
           @select-character-variant="selectChatCharacterVariant"
           @open-character-card="openCharacterCard"
           @toggle-chat="toggleChat"
+          @open-surface-link="surfaceLinkVisible = true"
           @disconnect-chat-bridge="disconnectTheaterChatBridge"
           @reconnect-chat-bridge="reconnectTheaterChatBridge"
           @toggle-renderer="toggleRenderer"
@@ -1705,7 +1743,7 @@ function handleDice3DMessage(event: MessageEvent) {
           :surface-element="stageSurfaceRef"
           :chat-surface-element="iframeRef"
         />
-			<TheaterFloatingHost ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" :dock-minimized-characters="isNarrow" @windows-change="floatingWindows = $event" />
+			<TheaterFloatingHost v-if="!isSurface" ref="theaterFloatingHostRef" :chat-frame="iframeRef" :world-id="worldId" :channel-id="channelId" :dock-minimized-characters="isNarrow" @windows-change="floatingWindows = $event" />
         <div
           v-if="theaterPipActive"
           class="theater-mobile-pip-move"
@@ -1783,6 +1821,9 @@ function handleDice3DMessage(event: MessageEvent) {
 
 <style scoped>
 .theater-host { position: relative; height: 100vh; width: 100vw; overflow: hidden; color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-page, #141418); }
+.theater-host.is-transparent { background: transparent; }
+.theater-host.is-transparent :deep(.theater-stage-app), .theater-host.is-transparent :deep(.theater-stage-viewport) { background: transparent; }
+.theater-host.is-surface .theater-host-stage { border: 0; }
 .theater-host-layout { width: 100%; height: 100%; display: flex; overflow: hidden; }
 .theater-host-stage, .theater-host-chat { min-width: 0; height: 100%; overflow: hidden; }
 .theater-host-stage { position: relative; }

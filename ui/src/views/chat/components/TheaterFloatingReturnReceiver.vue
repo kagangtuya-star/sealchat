@@ -123,7 +123,7 @@ const openReturnedWindow = async (request: ChatFloatingTakeoverRequest) => {
     return true;
   }
 
-  if (parsed.type === 'clue') return false;
+  if (parsed.type !== 'character') return false;
 
   const windowId = await openReturnedCharacter(parsed.id, parsed.channelId, parsed.worldId);
   if (!isCurrentChatContext(parsed.worldId, parsed.channelId)) return false;

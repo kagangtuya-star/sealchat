@@ -63,7 +63,7 @@ ui/src/utils/internalSurfaceLink.ts
 当前通用类型：
 
 ```ts
-['iform', 'note', 'character', 'clue']
+['iform', 'note', 'character', 'clue', 'clue-board', 'theater']
 ```
 
 一个资源由以下四项确定：
@@ -899,3 +899,25 @@ SealChat 使用 Hash 路由。当运行在 iframe 中的页面再次打开另一
 对于嵌套的 Internal Surface 链接，应保留 `internalSurfaceLink.ts` 中现有的、用于保障 iframe 安全的 Hash 前文档标记。仅当当前页面本身已经运行在 iframe 内时应用该标记；普通顶层页面生成的 Internal Surface URL 不应添加此标记。
 
 同样的问题出现在“布局频道 → 小剧场面板 → 小剧场内置聊天 iframe”的两级嵌套：`TheaterView` 在自身运行于 iframe 时为内置聊天地址加 `__sc_surface=theater-chat` 标记；顶层打开小剧场时地址不变。
+
+## 20. 小剧场展示浮层
+
+`theater` 通过 Registry + `TheaterInternalSurface.vue` 复用 `TheaterView`，不额外嵌套完整小剧场页面：
+
+```text
+/#/internal/theater/WORLD_ID?world=WORLD_ID&channel=CHANNEL_ID&transparent=0&full=0
+```
+
+舞台按世界同步，因此资源 ID 必须等于 world ID；channel 表示对白输入上下文。使用原有登录态、世界/频道权限及小剧场激活校验，链接本身不授予访问权限。
+
+从小剧场聊天按钮的展开菜单进入“小剧场浮层”弹窗，选择背景、完整模式并复制链接；功能始终可用，没有单独的启用或停用设置。
+
+- `transparent=0`（默认）：保留正常舞台背景。
+- `transparent=1`：页面和舞台底色、场景背景画布及背景网页透明，保留前景、立绘、对白、组件和特效。此参数只影响当前 Surface，不写入舞台；资源 Key 不包含透明参数。
+- `full=0`（默认，旧链接省略时同样生效）：展示模式，隐藏聊天区及编辑工具栏，但保留聊天 iframe/Bridge 接收角色和对白。允许滚轮缩放、拖拽平移、缩放按钮和适应舞台大小，以及对白跳过、关闭和点击补全文字；限制编辑与网页交互。
+- `full=1`：完整模式，显示标准工具栏，按账号已有权限操作舞台和展开聊天区，聊天仍默认隐藏。沿用标准同步和音频行为。完整模式与透明背景独立，均不参与资源 Key；切换完整模式会重建业务运行时，重新应用权限与同步策略。
+- 展示模式的视角控制默认折叠为左上角高透明度图标，悬停或聚焦时显现，点击展开缩放与“适应”操作，再次点击或按 Esc 收起。浮层首次加载、切换场景时适应场地尺寸。未手动调整视角时随窗口尺寸变化适配；手动缩放或平移后保留视角，点击“适应”可恢复自动适配。背景层仍沿用场景设置的铺放方式。
+- 两种模式均不挂载内部浮窗宿主，避免同世界浮窗恢复时递归加载自身。
+- 展示模式使用 `TheaterSyncClient.readOnly` 接收原有快照和实时事件，不注册本地持久化监听或公共对白设置 writer，不提交舞台修改；不触发场景切换台词/音乐等副作用，不接管频道音频，也不播放重复的场景和特效音频。
+
+原 `/theater`、对白/立绘输出链接及布局频道中已有的小剧场来源保持原协议。
