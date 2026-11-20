@@ -123,7 +123,70 @@
     "back": "Back",
     "viewChannels": "View Channels",
     "sessionCount": "Sessions",
-    "includeImported": "Include imported messages"
+    "includeImported": "Include imported messages",
+    "heroes": {
+      "entry": "Typing Heroes",
+      "title": "Typing Heroes",
+      "periodWeek": "Weekly",
+      "periodMonth": "Monthly",
+      "currentWeek": "This week",
+      "currentMonth": "This month",
+      "prevPeriod": "Previous period",
+      "nextPeriod": "Next period",
+      "backToCurrent": "Back to current",
+      "subjectUser": "Account",
+      "subjectIdentity": "Channel role",
+      "identityPlaceholder": "Choose a channel role",
+      "identityEmpty": "You have no channel roles in accessible world channels yet",
+      "identityUnavailable": "This role is no longer available or you lost access to its channel. Please choose again.",
+      "metrics": {
+        "chars": "Chars",
+        "messages": "Messages",
+        "speed": "Speed",
+        "dailyAvg": "Daily avg"
+      },
+      "metricHints": {
+        "chars": "Counted characters in this period, same rule as Input Stats total characters",
+        "messages": "Counted messages in this period",
+        "speed": "Same estimate as Input Stats: characters ÷ active minutes (gaps up to 30 min count as active). Ranked after {min} active minutes",
+        "dailyAvg": "Characters in the period ÷ calendar days with messages (in your local time zone)"
+      },
+      "units": {
+        "chars": "chars",
+        "messages": "msgs",
+        "speed": "chars/min",
+        "dailyAvg": "chars/day"
+      },
+      "myResult": "My result",
+      "participants": "{n} ranked",
+      "beat": "Ahead of {p}% of participants",
+      "onlyOne": "You are the only one ranked so far",
+      "gapToPrev": "{gap} behind #{rank}",
+      "topRank": "Holding first place",
+      "tiers": {
+        "champion": "Typing hero of the period",
+        "blazing": "Keyboard whirlwind",
+        "steady": "Steady writer",
+        "rising": "Catching up",
+        "warmup": "Warming up"
+      },
+      "noData": "No counted messages in this period yet",
+      "noChars": "No counted characters in this period yet",
+      "speedNotEligible": "{active} active minutes; speed ranking starts at {min} minutes",
+      "nearby": "Around you",
+      "leaders": "Leaders",
+      "emptyBoard": "Nobody is ranked in this period yet",
+      "you": "You",
+      "anonymousHint": "Other accounts are anonymous by default; aliases change every period",
+      "identityHint": "Compared only with roles in the same channel, counting public channel messages (no whispers), shown by role name",
+      "publicSwitch": "Show my nickname and username on Typing Heroes",
+      "publicOn": "Others will see your nickname and username",
+      "publicOff": "Others only see an alias that changes every period",
+      "publicSaveFailed": "Failed to save visibility",
+      "ruleNote": "Same rules as Input Stats: IC and OOC combined, excluding imported, deleted and revoked messages. Refreshed about every minute.",
+      "loadFailed": "Failed to load Typing Heroes",
+      "retry": "Retry"
+    }
   },
   "userProfile": {
     "title": "Profile",

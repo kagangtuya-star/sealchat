@@ -235,6 +235,7 @@ SealChat 仍保留 `data-display-palette`、`data-display-layout` 和 `data-cust
 | `color-popup` | 富文本颜色候选内容。 |
 | `floating-panel` | 聊天搜索等独立工具面板。 |
 | `message-favorite-inspector` | 消息收藏窗口内的收藏详情栏；`data-sc-layout` 为 `split`（并排）或 `overlay`（覆盖列表）。 |
+| `typing-heroes` | 输入统计中的打字英雄榜子视图；`data-sc-typing-heroes-subject` 为 `user` 或 `identity`。“我的成绩”卡片带 `data-sc-typing-heroes-status`（`ranked`、`no_data`、`not_eligible`），排名行带 `data-sc-typing-heroes-kind`（`self`、`anonymous`、`public`、`identity`），前三名带 `data-sc-typing-heroes-podium`（`1`–`3`）。颜色默认取 `--primary-color` 与 Naive 警示色，可用 `--sc-typing-heroes-accent`、`--sc-typing-heroes-podium`、`--sc-typing-heroes-card`、`--sc-typing-heroes-row`、`--sc-typing-heroes-self` 覆盖。 |
 | `workbench` | 布局频道工作台根元素。 |
 | `workbench-toolbar` | 布局频道顶部工具栏。 |
 | `workbench-spotlight` | GM 共享聚焦提示条。 |

@@ -591,6 +591,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/user/input-stats/by-channel", UserInputStatsByChannel)
 	v1Auth.Get("/user/input-stats/timeline", UserInputStatsTimeline)
 	v1Auth.Get("/user/input-stats/sessions", UserInputStatsSessions)
+	v1Auth.Get("/user/input-stats/heroes", UserInputStatsHeroes)
+	v1Auth.Get("/user/input-stats/heroes/identities", UserInputStatsHeroesIdentities)
 
 	v1Auth.Get("/gallery/collections", GalleryCollectionsList)
 	v1Auth.Post("/gallery/collections", GalleryCollectionCreate)

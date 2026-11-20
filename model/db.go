@@ -259,6 +259,9 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := ensureChatHistoryIndexes(); err != nil {
 		log.Printf("初始化聊天历史索引失败: %v", err)
 	}
+	if err := ensureInputStatsPeriodIndex(); err != nil {
+		log.Printf("初始化输入统计周期索引失败: %v", err)
+	}
 	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
 		log.Printf("初始化未读提醒索引失败: %v", err)
 	}
