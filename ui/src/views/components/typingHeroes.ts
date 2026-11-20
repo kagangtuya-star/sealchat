@@ -1,10 +1,10 @@
 import { api } from '@/stores/_config'
 
-export type TypingHeroesPeriodKind = 'week' | 'month'
+export type TypingHeroesPeriodKind = 'day' | 'week' | 'month'
 export type TypingHeroesMetric = 'chars' | 'messages' | 'speed' | 'dailyAvg'
-export type TypingHeroesSubject = 'user' | 'identity'
+export type TypingHeroesScope = 'all' | 'ic'
 export type TypingHeroesSelfStatus = 'ranked' | 'no_data' | 'not_eligible'
-export type TypingHeroesEntryKind = 'self' | 'anonymous' | 'public' | 'identity'
+export type TypingHeroesEntryKind = 'self' | 'anonymous' | 'public'
 
 export const TYPING_HEROES_METRICS: TypingHeroesMetric[] = ['chars', 'messages', 'speed', 'dailyAvg']
 export const TYPING_HEROES_PUBLIC_PREF_KEY = 'typing_heroes_public'
@@ -26,23 +26,12 @@ export interface TypingHeroesEntry {
   kind: TypingHeroesEntryKind
   name: string
   username?: string
-  color?: string
-}
-
-export interface TypingHeroesIdentityInfo {
-  id: string
-  displayName: string
-  color?: string
-  channelId: string
-  channelName: string
-  worldId: string
-  worldName: string
 }
 
 export interface TypingHeroesBoard {
-  period: { kind: TypingHeroesPeriodKind; offset: number; start: number; end: number; tzOffset: number; current: boolean }
+  period: { kind: TypingHeroesPeriodKind; start: number; end: number; tzOffset: number; current: boolean }
   metric: TypingHeroesMetric
-  subject: TypingHeroesSubject
+  scope: TypingHeroesScope
   participants: number
   me: {
     status: TypingHeroesSelfStatus
@@ -53,7 +42,6 @@ export interface TypingHeroesBoard {
     stats: TypingHeroesStats
   }
   entries: TypingHeroesEntry[]
-  identity?: TypingHeroesIdentityInfo
   isPublic: boolean
   speedMinActiveMinutes: number
   generatedAt: number
@@ -61,38 +49,39 @@ export interface TypingHeroesBoard {
 
 export interface TypingHeroesQuery {
   period: TypingHeroesPeriodKind
-  offset: number
+  anchor: string
   metric: TypingHeroesMetric
-  subject: TypingHeroesSubject
-  identityId?: string
+  scope: TypingHeroesScope
 }
 
-export interface TypingHeroesPrefs {
-  period: TypingHeroesPeriodKind
-  metric: TypingHeroesMetric
-  subject: TypingHeroesSubject
-  identityId: string
+export interface TypingHeroesTimezone {
+  timezone: string
+  tzOffset: number
 }
+
+export function typingHeroesTimezone(date = new Date()): TypingHeroesTimezone {
+  return { timezone: currentTimezone(), tzOffset: currentTZOffsetMinutes(date) }
+}
+
+export type TypingHeroesPrefs = Omit<TypingHeroesQuery, 'anchor'>
 
 export const DEFAULT_TYPING_HEROES_PREFS: TypingHeroesPrefs = {
   period: 'week',
   metric: 'chars',
-  subject: 'user',
-  identityId: '',
+  scope: 'all',
 }
 
 export function normalizeTypingHeroesPrefs(raw: unknown): TypingHeroesPrefs {
   const prefs = { ...DEFAULT_TYPING_HEROES_PREFS }
   if (!raw || typeof raw !== 'object') return prefs
   const value = raw as Record<string, unknown>
-  if (value.period === 'week' || value.period === 'month') prefs.period = value.period
+  if (value.period === 'day' || value.period === 'week' || value.period === 'month') prefs.period = value.period
   if (TYPING_HEROES_METRICS.includes(value.metric as TypingHeroesMetric)) prefs.metric = value.metric as TypingHeroesMetric
-  if (value.subject === 'user' || value.subject === 'identity') prefs.subject = value.subject
-  if (typeof value.identityId === 'string') prefs.identityId = value.identityId.slice(0, 100)
+  if (value.scope === 'all' || value.scope === 'ic') prefs.scope = value.scope
   return prefs
 }
 
-/** 当前浏览器时区相对 UTC 的分钟数，用于服务端划分周/月与自然日。 */
+/** IANA 时区不可用时使用的 UTC 偏移。 */
 export function currentTZOffsetMinutes(date = new Date()): number {
   return -date.getTimezoneOffset()
 }
@@ -105,44 +94,80 @@ export function currentTimezone(): string {
   }
 }
 
-export async function fetchTypingHeroesBoard(query: TypingHeroesQuery): Promise<TypingHeroesBoard> {
+export async function fetchTypingHeroesBoard(query: TypingHeroesQuery, zone = typingHeroesTimezone()): Promise<TypingHeroesBoard> {
   const params: Record<string, string | number> = {
     period: query.period,
-    offset: query.offset,
+    anchor: typingHeroesPeriodStart(query.period, query.anchor),
     metric: query.metric,
-    subject: query.subject,
-    tzOffset: currentTZOffsetMinutes(),
+    scope: query.scope,
+    tzOffset: zone.tzOffset,
   }
-  const timezone = currentTimezone()
+  const timezone = zone.timezone
   if (timezone) params.timezone = timezone
-  if (query.subject === 'identity' && query.identityId) params.identityId = query.identityId
   const res = await api.get<TypingHeroesBoard>('api/v1/user/input-stats/heroes', { params })
   return res.data
 }
 
-export async function fetchTypingHeroesIdentities(): Promise<TypingHeroesIdentityInfo[]> {
-  const res = await api.get<{ items?: TypingHeroesIdentityInfo[] }>('api/v1/user/input-stats/heroes/identities')
-  return Array.isArray(res.data?.items) ? res.data.items : []
+export async function fetchTypingHeroesActiveDays(month: string, scope: TypingHeroesScope, zone = typingHeroesTimezone()): Promise<string[]> {
+  const params: Record<string, string | number> = { month, scope, tzOffset: zone.tzOffset }
+  if (zone.timezone) params.timezone = zone.timezone
+  const res = await api.get<{ month: string; days: string[] }>('api/v1/user/input-stats/heroes/active-days', { params })
+  return res.data.days
+}
+
+export function isTypingHeroesPeriodDisabled(kind: TypingHeroesPeriodKind, anchor: string, today: string): boolean {
+  const start = typingHeroesPeriodStart(kind, anchor)
+  return start < '0001-01-01' || start > typingHeroesPeriodStart(kind, today)
 }
 
 export async function saveTypingHeroesPublic(value: boolean): Promise<void> {
   await api.post('api/v1/user/preferences', { key: TYPING_HEROES_PUBLIC_PREF_KEY, value: value ? 'true' : 'false' })
 }
 
-export function isTypingHeroesIdentityUnavailable(err: unknown): boolean {
-  const resp = (err as { response?: { status?: number; data?: { code?: string } } })?.response
-  return resp?.status === 403 && resp?.data?.code === 'identity_unavailable'
+export function typingHeroesLocalDate(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
-/** 周期起止（end 不包含）在浏览器本地时间下的显示文本。 */
-export function formatTypingHeroesPeriod(kind: TypingHeroesPeriodKind, start: number, end: number, locale: string): string {
-  const startDate = new Date(start)
+/** UTC is only used for civil date arithmetic; the API resolves the actual instants. */
+function typingHeroesCivilDate(anchor: string): Date {
+  return new Date(`${anchor}T00:00:00Z`)
+}
+
+export function typingHeroesPeriodStart(kind: TypingHeroesPeriodKind, anchor: string): string {
+  const date = typingHeroesCivilDate(anchor)
+  if (kind === 'month') date.setUTCDate(1)
+  if (kind === 'week') date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7)
+  return date.toISOString().slice(0, 10)
+}
+
+export function shiftTypingHeroesAnchor(kind: TypingHeroesPeriodKind, anchor: string, step: number): string {
+  const date = typingHeroesCivilDate(anchor)
   if (kind === 'month') {
-    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long' }).format(startDate)
+    const day = date.getUTCDate()
+    date.setUTCMonth(date.getUTCMonth() + step, 1)
+    const last = new Date(date)
+    last.setUTCMonth(last.getUTCMonth() + 1, 0)
+    date.setUTCDate(Math.min(day, last.getUTCDate()))
+  } else {
+    date.setUTCDate(date.getUTCDate() + (kind === 'week' ? 7 : 1) * step)
   }
-  const last = new Date(end - 1)
-  const sameYear = startDate.getFullYear() === new Date().getFullYear() && last.getFullYear() === startDate.getFullYear()
-  const fmt = new Intl.DateTimeFormat(locale, sameYear ? { month: 'numeric', day: 'numeric' } : { year: 'numeric', month: 'numeric', day: 'numeric' })
+  return date.toISOString().slice(0, 10)
+}
+
+export function formatTypingHeroesPeriod(kind: TypingHeroesPeriodKind, anchor: string, locale: string, today: string): string {
+  const start = typingHeroesPeriodStart(kind, anchor)
+  const startDate = typingHeroesCivilDate(start)
+  if (kind === 'month') {
+    return new Intl.DateTimeFormat(locale, { timeZone: 'UTC', year: 'numeric', month: 'long' }).format(startDate)
+  }
+  const fullDate = { timeZone: 'UTC', year: 'numeric', month: 'numeric', day: 'numeric' } as const
+  if (kind === 'day') return new Intl.DateTimeFormat(locale, fullDate).format(startDate)
+  const last = typingHeroesCivilDate(shiftTypingHeroesAnchor('day', start, 6))
+  const sameYear = startDate.getUTCFullYear() === last.getUTCFullYear() && start.slice(0, 4) === today.slice(0, 4)
+  const fmt = new Intl.DateTimeFormat(locale, sameYear ? { ...fullDate, year: undefined } : fullDate)
   return `${fmt.format(startDate)} – ${fmt.format(last)}`
 }
 
@@ -180,34 +205,4 @@ export function typingHeroesBarPercent(value: number, entries: Pick<TypingHeroes
   const max = entries.reduce((acc, e) => Math.max(acc, Number(e.value) || 0), 0)
   if (max <= 0) return 0
   return Math.max(4, Math.round(((Number(value) || 0) / max) * 100))
-}
-
-export interface TypingHeroesIdentityOptionGroup {
-  type: 'group'
-  key: string
-  label: string
-  children: { label: string; value: string; channelName: string; color?: string }[]
-}
-
-export function buildTypingHeroesIdentityOptions(items: TypingHeroesIdentityInfo[], unknownWorld: string): TypingHeroesIdentityOptionGroup[] {
-  const groups = new Map<string, TypingHeroesIdentityOptionGroup>()
-  for (const item of items) {
-    let group = groups.get(item.worldId)
-    if (!group) {
-      group = { type: 'group', key: `world:${item.worldId}`, label: item.worldName || unknownWorld, children: [] }
-      groups.set(item.worldId, group)
-    }
-    group.children.push({ label: item.displayName, value: item.id, channelName: item.channelName, color: item.color })
-  }
-  return [...groups.values()]
-}
-
-/** 优先恢复记住的角色，其次选当前世界的第一个角色，最后选列表第一个。 */
-export function pickTypingHeroesIdentity(items: TypingHeroesIdentityInfo[], rememberedId: string, currentWorldId?: string): string {
-  if (rememberedId && items.some(item => item.id === rememberedId)) return rememberedId
-  if (currentWorldId) {
-    const inWorld = items.find(item => item.worldId === currentWorldId)
-    if (inWorld) return inWorld.id
-  }
-  return items[0]?.id || ''
 }

@@ -803,7 +803,7 @@ const currentWorldName = computed(() => {
       </n-button>
     </div>
 
-    <TypingHeroesBoard v-if="heroesOpen" :current-world-id="props.currentWorldId" />
+    <TypingHeroesBoard v-if="heroesOpen" />
 
     <div v-show="!heroesOpen" class="stats-main">
     <!-- Controls -->

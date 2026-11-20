@@ -1,31 +1,58 @@
 package model
 
 import (
-	"strings"
+	"sort"
 	"time"
 )
 
-// InputStatsPeriodSubject 决定周期聚合按什么主体分组。
-type InputStatsPeriodSubject string
-
-const (
-	InputStatsPeriodSubjectUser     InputStatsPeriodSubject = "user"
-	InputStatsPeriodSubjectIdentity InputStatsPeriodSubject = "identity"
-)
+// InputStatsUserActiveDays 只读取当前账号在 [Start, End) 内的消息时间。
+// 与排行榜共用消息计入规则；自然日由查看者时区划分，不使用数据库日期函数。
+func InputStatsUserActiveDays(userID string, pq InputStatsPeriodQuery) ([]string, error) {
+	start, end := pq.Start.In(time.Local), pq.End.In(time.Local)
+	f := InputStatsFilter{StartTime: &start, ICMode: pq.ICMode}
+	excluded := db.Model(&UserModel{}).Select("id").
+		Where("id = ? AND (is_bot = ? OR disabled = ?)", userID, true, true)
+	rows, err := buildInputStatsMessageQuery(userID, f, "m.created_at").
+		Where("m.created_at < ?", end).
+		Where("m.user_id NOT IN (?)", excluded).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	loc := pq.DayLocation
+	if loc == nil {
+		loc = time.UTC
+	}
+	daySet := map[string]struct{}{}
+	for rows.Next() {
+		var createdAt time.Time
+		if err := rows.Scan(&createdAt); err != nil {
+			return nil, err
+		}
+		daySet[createdAt.In(loc).Format("2006-01-02")] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	days := make([]string, 0, len(daySet))
+	for day := range daySet {
+		days = append(days, day)
+	}
+	sort.Strings(days)
+	return days, nil
+}
 
 // InputStatsPeriodQuery 描述一个排行榜周期的聚合范围。
 // Start 包含、End 不包含；DayLocation 决定“自然日”的划分。
 type InputStatsPeriodQuery struct {
-	Subject     InputStatsPeriodSubject
-	ChannelID   string // Subject 为 identity 时必填
 	Start       time.Time
 	End         time.Time
 	DayLocation *time.Location
+	ICMode      string
 }
 
-// InputStatsSubjectTotals 是单个主体在周期内的输入统计，口径与个人输入统计一致。
-type InputStatsSubjectTotals struct {
-	SubjectID     string
+// InputStatsPeriodTotals 是单个账号在周期内的输入统计，口径与个人输入统计一致。
+type InputStatsPeriodTotals struct {
 	TotalChars    int64
 	TotalMessages int64
 	TypingSpeed   float64
@@ -37,7 +64,7 @@ type inputStatsPeriodRow struct {
 	ID        string    `gorm:"column:id"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	CharCount int64     `gorm:"column:char_count"`
-	SubjectID string    `gorm:"column:subject_id"`
+	UserID    string    `gorm:"column:user_id"`
 }
 
 type inputStatsPeriodAcc struct {
@@ -46,43 +73,29 @@ type inputStatsPeriodAcc struct {
 	lastDay int
 }
 
-// InputStatsPeriodAggregate 按 created_at、id 顺序分批扫描周期内的消息，并为每个主体
+// InputStatsPeriodAggregate 按 created_at、id 顺序分批扫描周期内的消息，并为每个账号
 // 复用输入统计的计入规则与打字速度估算。扫描只读取聚合所需的四个列。
-func InputStatsPeriodAggregate(pq InputStatsPeriodQuery) (map[string]*InputStatsSubjectTotals, error) {
+func InputStatsPeriodAggregate(pq InputStatsPeriodQuery) (map[string]*InputStatsPeriodTotals, error) {
 	loc := pq.DayLocation
 	if loc == nil {
 		loc = time.Local
 	}
-	subjectCol := "m.user_id"
-	if pq.Subject == InputStatsPeriodSubjectIdentity {
-		subjectCol = "m.sender_identity_id"
-	}
-	selectClause := strings.Join([]string{
-		"m.id",
-		"m.created_at",
-		visibleCharCountExpr("m.visible_char_count") + " AS char_count",
-		subjectCol + " AS subject_id",
-	}, ", ")
+	selectClause := "m.id, m.created_at, " + visibleCharCountExpr("m.visible_char_count") + " AS char_count, m.user_id"
 
-	// 与个人输入统计默认口径一致：全部 IC/OOC、不含导入消息、排除删除与撤回。
+	// 沿用个人输入统计的消息过滤；排行榜周期使用严格的排他上界。
 	start := pq.Start.In(time.Local)
-	end := pq.End.Add(-time.Nanosecond).In(time.Local)
-	f := InputStatsFilter{StartTime: &start, EndTime: &end}
+	end := pq.End.In(time.Local)
+	f := InputStatsFilter{StartTime: &start, ICMode: pq.ICMode}
 
 	accs := map[string]*inputStatsPeriodAcc{}
 	var lastCreatedAt *time.Time
 	lastID := ""
 	for {
 		q := applyInputStatsMessageRules(db.Table("messages AS m").Select(selectClause), f, "m.").
-			Where(subjectCol + " <> ''").
+			Where("m.created_at < ? AND m.user_id <> ''", end).
 			Order("m.created_at ASC").
 			Order("m.id ASC").
 			Limit(inputStatsBatchSize)
-		if pq.Subject == InputStatsPeriodSubjectIdentity {
-			// 角色榜是频道内可见空间：悄悄话的数量不向其他成员暴露。
-			q = q.Where("m.channel_id = ?", pq.ChannelID).
-				Where("(m.is_whisper = ? OR m.is_whisper IS NULL)", false)
-		}
 		if lastCreatedAt != nil {
 			// 先给出可走索引的范围下界，再排除同一时间戳内已处理的行。
 			q = q.Where("m.created_at >= ?", *lastCreatedAt).
@@ -94,10 +107,10 @@ func InputStatsPeriodAggregate(pq InputStatsPeriodQuery) (map[string]*InputStats
 			return nil, err
 		}
 		for _, row := range batch {
-			acc := accs[row.SubjectID]
+			acc := accs[row.UserID]
 			if acc == nil {
 				acc = &inputStatsPeriodAcc{}
-				accs[row.SubjectID] = acc
+				accs[row.UserID] = acc
 			}
 			acc.speed.add(row.CreatedAt, row.CharCount)
 			y, m, d := row.CreatedAt.In(loc).Date()
@@ -115,10 +128,9 @@ func InputStatsPeriodAggregate(pq InputStatsPeriodQuery) (map[string]*InputStats
 		lastID = last.ID
 	}
 
-	out := make(map[string]*InputStatsSubjectTotals, len(accs))
+	out := make(map[string]*InputStatsPeriodTotals, len(accs))
 	for id, acc := range accs {
-		out[id] = &InputStatsSubjectTotals{
-			SubjectID:     id,
+		out[id] = &InputStatsPeriodTotals{
 			TotalChars:    acc.speed.totalChars,
 			TotalMessages: int64(acc.speed.msgCount),
 			TypingSpeed:   acc.speed.speed(),

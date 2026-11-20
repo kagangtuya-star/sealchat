@@ -236,6 +236,31 @@ func UserInputStatsSessions(c *fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(msgs)
 }
 
+// UserInputStatsHeroesActiveDays 只返回当前用户有有效输入的自然日。
+func UserInputStatsHeroesActiveDays(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return fiber.NewError(http.StatusUnauthorized, "未登录")
+	}
+	tzOffset, err := strconv.Atoi(strings.TrimSpace(c.Query("tzOffset", "0")))
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "tzOffset 无效")
+	}
+	result, err := service.TypingHeroesActiveDaysGet(service.TypingHeroesActiveDaysQuery{
+		ViewerID: u.ID, Month: c.Query("month"),
+		Scope:    service.TypingHeroesScope(strings.TrimSpace(c.Query("scope", "all"))),
+		Timezone: strings.TrimSpace(c.Query("timezone")), TZOffsetMinutes: tzOffset,
+	})
+	if errors.Is(err, service.ErrTypingHeroesInvalidInput) {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "活跃日期参数无效")
+	}
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "获取活跃日期失败")
+	}
+	c.Set("Cache-Control", "private, no-store")
+	return c.JSON(result)
+}
+
 // UserInputStatsHeroes 打字英雄榜：返回自己的成绩与附近排名（服务端完成排名与匿名化）
 func UserInputStatsHeroes(c *fiber.Ctx) error {
 	u := getCurUser(c)
@@ -244,12 +269,12 @@ func UserInputStatsHeroes(c *fiber.Ctx) error {
 	}
 
 	q := service.TypingHeroesQuery{
-		ViewerID:   u.ID,
-		Period:     service.TypingHeroesPeriodKind(strings.TrimSpace(c.Query("period", "week"))),
-		Metric:     service.TypingHeroesMetric(strings.TrimSpace(c.Query("metric", "chars"))),
-		Subject:    model.InputStatsPeriodSubject(strings.TrimSpace(c.Query("subject", "user"))),
-		IdentityID: strings.TrimSpace(c.Query("identityId")),
-		Timezone:   strings.TrimSpace(c.Query("timezone")),
+		ViewerID: u.ID,
+		Period:   service.TypingHeroesPeriodKind(strings.TrimSpace(c.Query("period", "week"))),
+		Metric:   service.TypingHeroesMetric(strings.TrimSpace(c.Query("metric", "chars"))),
+		Scope:    service.TypingHeroesScope(strings.TrimSpace(c.Query("scope", "all"))),
+		Anchor:   strings.TrimSpace(c.Query("anchor")),
+		Timezone: strings.TrimSpace(c.Query("timezone")),
 	}
 	var err error
 	if q.Offset, err = strconv.Atoi(strings.TrimSpace(c.Query("offset", "0"))); err != nil {
@@ -264,25 +289,10 @@ func UserInputStatsHeroes(c *fiber.Ctx) error {
 		switch {
 		case errors.Is(err, service.ErrTypingHeroesInvalidInput):
 			return wrapErrorStatus(c, http.StatusBadRequest, nil, "排行榜参数无效")
-		case errors.Is(err, service.ErrTypingHeroesIdentityUnavailable):
-			return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "该角色当前不可用于排行榜", "code": "identity_unavailable"})
 		case errors.Is(err, service.ErrTypingHeroesBusy):
 			return c.Status(http.StatusTooManyRequests).JSON(fiber.Map{"message": "排行榜请求过于频繁，请稍后重试", "code": "rate_limited"})
 		}
 		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "获取打字英雄榜失败")
 	}
 	return c.Status(http.StatusOK).JSON(board)
-}
-
-// UserInputStatsHeroesIdentities 打字英雄榜可选的频道角色
-func UserInputStatsHeroesIdentities(c *fiber.Ctx) error {
-	u := getCurUser(c)
-	if u == nil {
-		return fiber.NewError(http.StatusUnauthorized, "未登录")
-	}
-	items, err := service.TypingHeroesIdentityOptions(u.ID)
-	if err != nil {
-		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "获取可用角色失败")
-	}
-	return c.Status(http.StatusOK).JSON(fiber.Map{"items": items})
 }

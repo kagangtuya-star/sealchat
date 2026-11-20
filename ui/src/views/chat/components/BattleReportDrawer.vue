@@ -541,6 +541,7 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 <template>
   <n-drawer
     :show="visible"
+    :trap-focus="!createVisible"
     :width="drawerWidth"
     placement="right"
     @update:show="emit('update:visible', $event)"
@@ -637,6 +638,7 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 
   <n-modal
     v-model:show="createVisible"
+    :trap-focus="false"
     preset="card"
     title="新建战报"
     class="battle-report-create-modal"

@@ -1,34 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useNow } from '@vueuse/core'
 import { useMessage, useThemeVars } from 'naive-ui'
-import { ChevronBack, ChevronForward, InformationCircleOutline } from '@vicons/ionicons5'
+import { CalendarOutline, ChevronBack, ChevronForward, InformationCircleOutline } from '@vicons/ionicons5'
+import { useCalendarActiveDays } from '@/composables/useCalendarActiveDays'
 import {
   TYPING_HEROES_METRICS,
   TYPING_HEROES_PREFS_KEY,
-  buildTypingHeroesIdentityOptions,
   fetchTypingHeroesBoard,
-  fetchTypingHeroesIdentities,
+  fetchTypingHeroesActiveDays,
   formatTypingHeroesPeriod,
   formatTypingHeroesValue,
-  isTypingHeroesIdentityUnavailable,
   normalizeTypingHeroesPrefs,
-  pickTypingHeroesIdentity,
+  isTypingHeroesPeriodDisabled,
   saveTypingHeroesPublic,
+  shiftTypingHeroesAnchor,
   typingHeroesBarPercent,
+  typingHeroesLocalDate,
+  typingHeroesPeriodStart,
   typingHeroesStatValue,
   typingHeroesTier,
+  typingHeroesTimezone,
   type TypingHeroesBoard,
   type TypingHeroesEntry,
-  type TypingHeroesIdentityInfo,
   type TypingHeroesMetric,
   type TypingHeroesPeriodKind,
-  type TypingHeroesSubject,
+  type TypingHeroesScope,
+  type TypingHeroesTimezone,
 } from './typingHeroes'
-
-const MAX_OFFSET = 24
-
-const props = defineProps<{ currentWorldId?: string }>()
 
 const { t, locale } = useI18n()
 const message = useMessage()
@@ -46,113 +46,105 @@ function loadPrefs() {
 const initialPrefs = loadPrefs()
 const period = ref<TypingHeroesPeriodKind>(initialPrefs.period)
 const metric = ref<TypingHeroesMetric>(initialPrefs.metric)
-const subject = ref<TypingHeroesSubject>(initialPrefs.subject)
-const identityId = ref(initialPrefs.identityId)
-const offset = ref(0)
+const scope = ref<TypingHeroesScope>(initialPrefs.scope)
+const anchors = reactive<Record<TypingHeroesPeriodKind, string | null>>({ day: null, week: null, month: null })
+const now = useNow({ interval: 10000 })
+const today = computed(() => typingHeroesLocalDate(now.value))
+const selectedDate = computed(() => typingHeroesPeriodStart(period.value, anchors[period.value] ?? today.value))
+const periodStart = computed(() => typingHeroesPeriodStart(period.value, selectedDate.value))
+const currentPeriod = computed(() => periodStart.value === typingHeroesPeriodStart(period.value, today.value))
+const previousDate = computed(() => shiftTypingHeroesAnchor(period.value, selectedDate.value, -1))
+const calendarOpen = ref(false)
+const calendarRoot = ref<HTMLElement | null>(null)
+const timezone = computed(() => typingHeroesTimezone(now.value))
+const timezoneKey = computed(() => JSON.stringify(timezone.value))
+const { failed: activeDaysFailed, refresh: refreshActiveDays } = useCalendarActiveDays({
+  root: calendarRoot,
+  enabled: () => calendarOpen.value && period.value === 'day',
+  context: () => JSON.stringify({ scope: scope.value, ...timezone.value }),
+  locale: () => locale.value,
+  canLoad: month => month >= '0001-01' && month <= today.value.slice(0, 7),
+  load: (month, context) => {
+    const query: TypingHeroesTimezone & { scope: TypingHeroesScope } = JSON.parse(context)
+    return fetchTypingHeroesActiveDays(month, query.scope, query)
+  },
+})
+const calendarId = useId()
+const calendarTrigger = ref<HTMLButtonElement | null>(null)
+const calendarValue = computed(() => new Date(`${selectedDate.value}T12:00:00`).getTime())
 
 const board = ref<TypingHeroesBoard | null>(null)
-const loading = ref(false)
+const loading = ref(true)
 const loadError = ref('')
-const identityNotice = ref('')
-const identities = ref<TypingHeroesIdentityInfo[]>([])
-const identitiesLoaded = ref(false)
-const identitiesLoading = ref(false)
 const publicSaving = ref(false)
 
 let boardSeq = 0
-let identitySeq = 0
 
 function savePrefs() {
   try {
     localStorage.setItem(TYPING_HEROES_PREFS_KEY, JSON.stringify({
       period: period.value,
       metric: metric.value,
-      subject: subject.value,
-      identityId: identityId.value,
+      scope: scope.value,
     }))
   } catch { /* ignore */ }
 }
 
-const canQuery = computed(() => subject.value === 'user' || !!identityId.value)
-
 async function loadBoard() {
   const seq = ++boardSeq
-  if (!canQuery.value) {
-    board.value = null
-    loading.value = false
-    return
-  }
-  const requestedIdentity = identityId.value
   loading.value = true
   loadError.value = ''
   try {
     const data = await fetchTypingHeroesBoard({
       period: period.value,
-      offset: offset.value,
+      anchor: selectedDate.value,
       metric: metric.value,
-      subject: subject.value,
-      identityId: requestedIdentity,
-    })
+      scope: scope.value,
+    }, timezone.value)
     if (seq !== boardSeq) return
     board.value = data
-  } catch (err) {
+  } catch {
     if (seq !== boardSeq) return
     board.value = null
-    if (subject.value === 'identity' && isTypingHeroesIdentityUnavailable(err)) {
-      identityNotice.value = t('inputStats.heroes.identityUnavailable')
-      if (identityId.value === requestedIdentity) identityId.value = ''
-      void loadIdentities(false)
-      return
-    }
     loadError.value = t('inputStats.heroes.loadFailed')
   } finally {
     if (seq === boardSeq) loading.value = false
   }
 }
 
-async function loadIdentities(autoPick: boolean) {
-  const seq = ++identitySeq
-  identitiesLoading.value = true
-  try {
-    const items = await fetchTypingHeroesIdentities()
-    if (seq !== identitySeq) return
-    identities.value = items
-    identitiesLoaded.value = true
-    if (identityId.value && !items.some(item => item.id === identityId.value)) {
-      identityId.value = ''
-    }
-    if (autoPick && !identityId.value) {
-      identityId.value = pickTypingHeroesIdentity(items, initialPrefs.identityId, props.currentWorldId)
-    }
-  } catch {
-    if (seq === identitySeq) loadError.value = t('inputStats.heroes.loadFailed')
-  } finally {
-    if (seq === identitySeq) identitiesLoading.value = false
-  }
-}
-
 function setPeriod(value: string | number | boolean) {
-  if (value !== 'week' && value !== 'month') return
-  period.value = value
-  offset.value = 0
+  if (value === 'day' || value === 'week' || value === 'month') {
+    calendarOpen.value = false
+    period.value = value
+  }
 }
 
 function shiftPeriod(step: number) {
-  offset.value = Math.min(MAX_OFFSET, Math.max(0, offset.value + step))
+  if (step > 0 && currentPeriod.value) return
+  const next = shiftTypingHeroesAnchor(period.value, selectedDate.value, step)
+  if (!isTypingHeroesPeriodDisabled(period.value, next, today.value)) anchors[period.value] = next
 }
 
-function setSubject(value: string | number | boolean) {
-  if (value !== 'user' && value !== 'identity') return
-  subject.value = value
-  identityNotice.value = ''
-  if (value === 'identity' && !identitiesLoaded.value) {
-    void loadIdentities(true)
-  }
+function setScope(value: string | number | boolean) {
+  if (value === 'all' || value === 'ic') scope.value = value
 }
 
-function selectIdentity(value: string | null) {
-  identityNotice.value = ''
-  identityId.value = value || ''
+function isDateDisabled(value: number) {
+  const date = typingHeroesLocalDate(new Date(value))
+  return isTypingHeroesPeriodDisabled(period.value, date, today.value)
+}
+
+function closeCalendar(event?: KeyboardEvent) {
+  if (!calendarOpen.value) return
+  event?.stopPropagation()
+  calendarOpen.value = false
+  calendarTrigger.value?.focus()
+}
+
+function selectDate(value: number | null) {
+  if (value == null || isDateDisabled(value)) return
+  anchors[period.value] = typingHeroesPeriodStart(period.value, typingHeroesLocalDate(new Date(value)))
+  closeCalendar()
 }
 
 async function togglePublic(value: boolean) {
@@ -170,32 +162,20 @@ async function togglePublic(value: boolean) {
   }
 }
 
-watch([period, offset, metric, subject, identityId], () => {
-  savePrefs()
+watch([period, metric, scope], savePrefs)
+watch([period, periodStart, metric, scope, timezoneKey], () => {
   void loadBoard()
 })
 
-onMounted(() => {
-  if (subject.value === 'identity') {
-    void loadIdentities(true)
-  }
-  void loadBoard()
-})
+onMounted(loadBoard)
+onBeforeUnmount(() => { boardSeq++ })
 
 // === 展示 ===
 const metricLabel = (m: TypingHeroesMetric) => t(`inputStats.heroes.metrics.${m}`)
 const metricUnit = (m: TypingHeroesMetric) => t(`inputStats.heroes.units.${m}`)
 const metricHint = (m: TypingHeroesMetric) => t(`inputStats.heroes.metricHints.${m}`, { min: board.value?.speedMinActiveMinutes ?? 10 })
 
-const periodLabel = computed(() => {
-  const p = board.value?.period
-  if (!p || p.kind !== period.value || p.offset !== offset.value) return ''
-  return formatTypingHeroesPeriod(p.kind, p.start, p.end, locale.value)
-})
-
-const currentPeriodBadge = computed(() => (offset.value === 0
-  ? t(period.value === 'week' ? 'inputStats.heroes.currentWeek' : 'inputStats.heroes.currentMonth')
-  : ''))
+const periodLabel = computed(() => formatTypingHeroesPeriod(period.value, selectedDate.value, locale.value, today.value))
 
 const me = computed(() => board.value?.me)
 const ranked = computed(() => me.value?.status === 'ranked')
@@ -249,77 +229,125 @@ const entries = computed(() => board.value?.entries ?? [])
 const listTitle = computed(() => t(ranked.value ? 'inputStats.heroes.nearby' : 'inputStats.heroes.leaders'))
 
 function entryName(entry: TypingHeroesEntry) {
-  if (entry.kind === 'self') {
-    return board.value?.subject === 'identity' ? entry.name : t('inputStats.heroes.you')
-  }
-  return entry.name
+  return entry.kind === 'self' ? t('inputStats.heroes.you') : entry.name
 }
 
 function entryInitial(entry: TypingHeroesEntry) {
-  const name = entry.kind === 'self' && board.value?.subject !== 'identity' ? t('inputStats.heroes.you') : entry.name
-  return Array.from(name.trim())[0] || '?'
+  return Array.from(entryName(entry).trim())[0] || '?'
 }
-
-const identityOptions = computed(() => buildTypingHeroesIdentityOptions(identities.value, '—'))
 
 const themeStyle = computed(() => ({
   '--th-naive-primary': themeVars.value.primaryColor,
   '--th-naive-warning': themeVars.value.warningColor,
 }))
+
+const calendarTheme = computed(() => {
+  const accent = `var(--sc-typing-heroes-accent, var(--primary-color, ${themeVars.value.primaryColor}))`
+  return { itemTextColorCurrent: accent, itemColorActive: accent }
+})
+const calendarStyle = computed(() => ({
+  ...themeStyle.value,
+  '--th-accent': `var(--sc-typing-heroes-accent, var(--primary-color, ${themeVars.value.primaryColor}))`,
+  '--sc-calendar-active-day-accent': 'var(--sc-typing-heroes-active-day-accent, var(--th-accent))',
+}))
 </script>
 
 <template>
-  <div class="typing-heroes" data-sc-ui="typing-heroes" :data-sc-typing-heroes-subject="subject" :style="themeStyle">
-    <!-- 周期 / 主体 -->
+  <div
+    class="typing-heroes"
+    data-sc-ui="typing-heroes"
+    :data-sc-typing-heroes-period="period"
+    :data-sc-typing-heroes-scope="scope"
+    :style="themeStyle"
+  >
     <div class="th-toolbar">
-      <div class="th-toolbar__group">
-        <n-radio-group :value="period" size="small" @update:value="setPeriod">
-          <n-radio-button value="week">{{ t('inputStats.heroes.periodWeek') }}</n-radio-button>
-          <n-radio-button value="month">{{ t('inputStats.heroes.periodMonth') }}</n-radio-button>
-        </n-radio-group>
-        <div class="th-period-nav">
-          <n-button
-            quaternary circle size="small"
-            :disabled="offset >= MAX_OFFSET"
-            :aria-label="t('inputStats.heroes.prevPeriod')"
-            @click="shiftPeriod(1)"
-          >
+      <n-radio-group class="th-period" :value="period" size="small" :aria-label="t('inputStats.heroes.periodLabel')" @update:value="setPeriod">
+        <n-radio-button value="day">{{ t('inputStats.heroes.periodDay') }}</n-radio-button>
+        <n-radio-button value="week">{{ t('inputStats.heroes.periodWeek') }}</n-radio-button>
+        <n-radio-button value="month">{{ t('inputStats.heroes.periodMonth') }}</n-radio-button>
+      </n-radio-group>
+      <div class="th-period-nav">
+        <div class="th-period-nav__steps">
+          <n-button quaternary circle size="small" :disabled="previousDate < '0001-01-01'" :aria-label="t('inputStats.heroes.prevPeriod')" @click="shiftPeriod(-1)">
             <template #icon><n-icon :component="ChevronBack" /></template>
           </n-button>
-          <span class="th-period-label">
-            <span v-if="currentPeriodBadge" class="th-period-badge">{{ currentPeriodBadge }}</span>
-            <span class="th-period-range">{{ periodLabel || '…' }}</span>
-          </span>
-          <n-button
-            quaternary circle size="small"
-            :disabled="offset === 0"
-            :aria-label="t('inputStats.heroes.nextPeriod')"
-            @click="shiftPeriod(-1)"
-          >
+          <!-- Use Naive's overlay container so the Input Stats scroll panel does not clip the calendar. -->
+          <n-popover v-model:show="calendarOpen" trigger="click" placement="bottom" :show-arrow="false" :content-style="{ padding: 0 }">
+            <template #trigger>
+              <button
+                ref="calendarTrigger"
+                type="button"
+                class="th-period-trigger"
+                aria-haspopup="dialog"
+                :aria-expanded="calendarOpen"
+                :aria-controls="calendarOpen ? calendarId : undefined"
+                :aria-label="t('inputStats.heroes.dateTrigger', { range: periodLabel })"
+                @keydown.esc="closeCalendar"
+              >
+                <n-icon :component="CalendarOutline" aria-hidden="true" />
+                <span>{{ periodLabel }}</span>
+              </button>
+            </template>
+            <div
+              :id="calendarId"
+              class="th-calendar"
+              :style="calendarStyle"
+              data-sc-ui="typing-heroes-calendar"
+              role="dialog"
+              :aria-label="t('inputStats.heroes.datePanel')"
+              @keydown.esc="closeCalendar"
+            >
+              <div ref="calendarRoot">
+                <n-date-picker
+                  v-if="period === 'day'"
+                  panel type="date"
+                  :value="calendarValue"
+                  :actions="[]"
+                  :theme-overrides="calendarTheme"
+                  :is-date-disabled="isDateDisabled"
+                  @update:value="selectDate"
+                />
+                <n-date-picker
+                  v-else-if="period === 'week'"
+                  panel type="week"
+                  :first-day-of-week="0"
+                  :value="calendarValue"
+                  :actions="[]"
+                  :theme-overrides="calendarTheme"
+                  :is-date-disabled="isDateDisabled"
+                  @update:value="selectDate"
+                />
+                <n-date-picker
+                  v-else
+                  panel type="month"
+                  :value="calendarValue"
+                  :actions="[]"
+                  :theme-overrides="calendarTheme"
+                  :is-date-disabled="isDateDisabled"
+                  @update:value="selectDate"
+                />
+              </div>
+              <div v-if="period === 'day'" class="th-calendar__hint">
+                <span>{{ t('inputStats.heroes.activeDaysHint') }}</span>
+                <n-button v-if="activeDaysFailed" text size="tiny" @click="refreshActiveDays">
+                  {{ t('inputStats.heroes.activeDaysRetry') }}
+                </n-button>
+              </div>
+              <div v-else-if="period === 'week'" class="th-calendar__hint">{{ t('inputStats.heroes.weekSelectionHint') }}</div>
+            </div>
+          </n-popover>
+          <n-button quaternary circle size="small" :disabled="currentPeriod" :aria-label="t('inputStats.heroes.nextPeriod')" @click="shiftPeriod(1)">
             <template #icon><n-icon :component="ChevronForward" /></template>
           </n-button>
-          <n-button v-if="offset > 0" text size="tiny" type="primary" @click="offset = 0">
-            {{ t('inputStats.heroes.backToCurrent') }}
-          </n-button>
         </div>
+        <n-button text size="tiny" type="primary" :disabled="currentPeriod" @click="anchors[period] = null">
+          {{ t('inputStats.heroes.backToCurrent') }}
+        </n-button>
       </div>
-      <div class="th-toolbar__group th-toolbar__group--subject">
-        <n-radio-group :value="subject" size="small" @update:value="setSubject">
-          <n-radio-button value="user">{{ t('inputStats.heroes.subjectUser') }}</n-radio-button>
-          <n-radio-button value="identity">{{ t('inputStats.heroes.subjectIdentity') }}</n-radio-button>
-        </n-radio-group>
-        <n-select
-          v-if="subject === 'identity'"
-          class="th-identity-select"
-          size="small"
-          filterable
-          :value="identityId || null"
-          :options="identityOptions"
-          :loading="identitiesLoading"
-          :placeholder="t('inputStats.heroes.identityPlaceholder')"
-          @update:value="selectIdentity"
-        />
-      </div>
+      <n-radio-group class="th-scope" :value="scope" size="small" :aria-label="t('inputStats.heroes.scopeLabel')" @update:value="setScope">
+        <n-radio-button value="all">{{ t('inputStats.heroes.scopeAll') }}</n-radio-button>
+        <n-radio-button value="ic">{{ t('inputStats.heroes.scopeIC') }}</n-radio-button>
+      </n-radio-group>
     </div>
 
     <!-- 指标 -->
@@ -347,14 +375,9 @@ const themeStyle = computed(() => ({
       </button>
     </div>
 
-    <n-spin :show="loading || identitiesLoading">
+    <n-spin :show="loading">
       <div class="th-body">
-        <div v-if="identityNotice" class="th-notice">{{ identityNotice }}</div>
-
-        <div v-if="subject === 'identity' && identitiesLoaded && identities.length === 0" class="th-empty">
-          {{ t('inputStats.heroes.identityEmpty') }}
-        </div>
-        <div v-else-if="loadError && !board" class="th-empty">
+        <div v-if="loadError && !board" class="th-empty">
           <span>{{ loadError }}</span>
           <n-button size="small" secondary @click="loadBoard">{{ t('inputStats.heroes.retry') }}</n-button>
         </div>
@@ -368,14 +391,7 @@ const themeStyle = computed(() => ({
               <span class="th-hero__rank-total">{{ t('inputStats.heroes.participants', { n: board.participants }) }}</span>
             </div>
             <div class="th-hero__detail">
-              <div class="th-hero__head">
-                <span v-if="ranked" class="th-hero__tier">{{ t(`inputStats.heroes.tiers.${tier}`) }}</span>
-                <span v-if="board.identity" class="th-hero__identity">
-                  <span class="th-dot" :style="board.identity.color ? { '--th-dot-color': board.identity.color } : undefined" />
-                  {{ board.identity.displayName }}
-                  <span class="th-hero__channel"># {{ board.identity.channelName }}</span>
-                </span>
-              </div>
+              <span v-if="ranked" class="th-hero__tier">{{ t(`inputStats.heroes.tiers.${tier}`) }}</span>
               <div class="th-hero__value">
                 <strong>{{ formatTypingHeroesValue(activeMetric, board.me.value) }}</strong>
                 <span>{{ metricUnit(activeMetric) }}</span>
@@ -397,7 +413,7 @@ const themeStyle = computed(() => ({
           <section class="th-nearby">
             <div class="th-nearby__head">
               <h3>{{ listTitle }}</h3>
-              <span>{{ board.subject === 'identity' ? t('inputStats.heroes.identityHint') : t('inputStats.heroes.anonymousHint') }}</span>
+              <span>{{ t('inputStats.heroes.anonymousHint') }}</span>
             </div>
             <div v-if="entries.length === 0" class="th-empty th-empty--compact">{{ t('inputStats.heroes.emptyBoard') }}</div>
             <ol v-else class="th-list">
@@ -412,14 +428,12 @@ const themeStyle = computed(() => ({
                 <span class="th-rank">{{ entry.rank }}</span>
                 <span
                   class="th-avatar"
-                  :style="entry.color ? { '--th-dot-color': entry.color } : undefined"
                   aria-hidden="true"
                 >{{ entryInitial(entry) }}</span>
                 <span class="th-row__main">
                   <span class="th-row__name">
                     <span class="th-row__name-text">{{ entryName(entry) }}</span>
                     <span v-if="entry.kind === 'public' && entry.username" class="th-row__username">@{{ entry.username }}</span>
-                    <span v-if="entry.kind === 'self' && board.subject === 'identity'" class="th-row__you">{{ t('inputStats.heroes.you') }}</span>
                   </span>
                   <span class="th-row__bar"><span :style="{ width: `${typingHeroesBarPercent(entry.value, entries)}%` }" /></span>
                 </span>
@@ -432,13 +446,9 @@ const themeStyle = computed(() => ({
           </section>
         </template>
 
-        <div v-else-if="subject === 'identity' && !identityId && identitiesLoaded" class="th-empty">
-          {{ t('inputStats.heroes.identityPlaceholder') }}
-        </div>
-
         <!-- 公开设置与口径 -->
         <footer class="th-footer">
-          <label v-if="subject === 'user' && board" class="th-public">
+          <label v-if="board" class="th-public">
             <n-switch :value="board.isPublic" size="small" :loading="publicSaving" @update:value="togglePublic" />
             <span>
               <span class="th-public__title">{{ t('inputStats.heroes.publicSwitch') }}</span>
@@ -471,55 +481,80 @@ const themeStyle = computed(() => ({
 
 /* ===== Toolbar ===== */
 .th-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 12px;
   align-items: center;
-  justify-content: space-between;
 }
-.th-toolbar__group {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-.th-toolbar__group--subject {
-  flex: 1 1 260px;
-  justify-content: flex-end;
-}
-.th-identity-select {
-  flex: 1 1 180px;
-  min-width: 0;
-  max-width: 300px;
+.th-scope {
+  justify-self: end;
 }
 .th-period-nav {
   display: flex;
   align-items: center;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  justify-content: center;
   min-width: 0;
 }
-.th-period-label {
+.th-period-nav__steps {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.th-period-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--th-accent);
+  font: inherit;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  min-width: 0;
+  text-align: start;
+  cursor: pointer;
 }
-.th-period-badge {
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--th-accent);
-  background: color-mix(in srgb, var(--th-accent) 14%, transparent);
+.th-period-trigger:hover,
+.th-period-trigger[aria-expanded='true'] {
+  background: var(--th-self);
+  border-color: var(--th-accent);
 }
-.th-period-range {
+.th-period-trigger:focus-visible {
+  outline: 2px solid var(--th-accent);
+  outline-offset: 2px;
+}
+.th-period-trigger .n-icon {
+  flex: none;
+}
+.th-calendar {
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+}
+.th-calendar__hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 280px;
+  padding: 8px 12px;
   color: var(--sc-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .th-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .th-period-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 /* ===== Metric tabs ===== */
@@ -585,14 +620,6 @@ const themeStyle = computed(() => ({
   flex-direction: column;
   gap: 14px;
   min-height: 120px;
-}
-.th-notice {
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--sc-text-primary);
-  background: color-mix(in srgb, var(--th-podium) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--th-podium) 35%, transparent);
 }
 .th-empty {
   display: flex;
@@ -660,14 +687,8 @@ const themeStyle = computed(() => ({
   gap: 6px;
   min-width: 0;
 }
-.th-hero__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-  min-width: 0;
-}
 .th-hero__tier {
+  align-self: flex-start;
   padding: 2px 10px;
   border-radius: 999px;
   font-size: 12px;
@@ -678,21 +699,6 @@ const themeStyle = computed(() => ({
 .th-hero[data-sc-typing-heroes-podium] .th-hero__tier {
   color: var(--sc-text-primary);
   background: color-mix(in srgb, var(--th-podium) 24%, transparent);
-}
-.th-hero__identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-.th-hero__channel {
-  font-weight: 400;
-  color: var(--sc-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .th-hero__value {
   display: flex;
@@ -739,14 +745,6 @@ const themeStyle = computed(() => ({
 .th-hero__progress {
   font-size: 12px;
   color: var(--sc-text-secondary);
-}
-
-.th-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--th-dot-color, var(--th-accent));
 }
 
 /* ===== Nearby list ===== */
@@ -826,12 +824,12 @@ const themeStyle = computed(() => ({
   font-size: 12px;
   font-weight: 700;
   color: var(--sc-text-primary);
-  background: color-mix(in srgb, var(--th-dot-color, var(--sc-text-secondary)) 22%, transparent);
-  border: 1px solid color-mix(in srgb, var(--th-dot-color, var(--sc-text-secondary)) 40%, transparent);
+  background: color-mix(in srgb, var(--sc-text-secondary) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc-text-secondary) 40%, transparent);
 }
 .th-row.is-self .th-avatar {
-  background: color-mix(in srgb, var(--th-dot-color, var(--th-accent)) 30%, transparent);
-  border-color: var(--th-dot-color, var(--th-accent));
+  background: color-mix(in srgb, var(--th-accent) 30%, transparent);
+  border-color: var(--th-accent);
 }
 .th-row__main {
   display: flex;
@@ -862,14 +860,6 @@ const themeStyle = computed(() => ({
   white-space: nowrap;
   font-size: 11px;
   color: var(--sc-text-secondary);
-}
-.th-row__you {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  color: var(--th-accent);
-  background: color-mix(in srgb, var(--th-accent) 14%, transparent);
 }
 .th-row__bar {
   display: block;
@@ -937,12 +927,6 @@ const themeStyle = computed(() => ({
 @media (max-width: 640px) {
   .typing-heroes {
     padding: 10px 12px 16px;
-  }
-  .th-toolbar__group--subject {
-    justify-content: flex-start;
-  }
-  .th-identity-select {
-    max-width: none;
   }
   .th-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));

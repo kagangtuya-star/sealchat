@@ -1,12 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useChatStore } from '@/stores/chat'
-import {
-  applyCalendarActiveDayHighlights,
-  buildPanelMonthActiveDayMap,
-  collectPanelRelatedMonthKeys,
-  parsePanelMonthKey,
-} from './calendarActiveDayHighlight'
+import { useCalendarActiveDays } from '@/composables/useCalendarActiveDays'
 
 type DateRangeValue = [number, number] | null
 type PresetValue = '1d' | '7d' | '30d'
@@ -29,13 +25,19 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const chat = useChatStore()
-const activeDaysByMonth = ref<Record<string, string[]>>({})
-const loadingMonths = ref<Set<string>>(new Set())
+const { locale } = useI18n()
+const calendarHost = ref<HTMLElement | null>(null)
+const calendarOpen = ref(false)
+useCalendarActiveDays({
+  root: calendarHost,
+  enabled: () => calendarOpen.value && !!props.channelId,
+  context: () => props.channelId || '',
+  locale: () => locale.value,
+  load: async (month, channelId) => (await chat.getChannelMessageActiveDays(channelId, month)).days || [],
+})
 const timePreset = ref<'none' | PresetValue | 'custom'>('none')
 const isApplyingPreset = ref(false)
-let calendarMonthObserver: MutationObserver | null = null
 
-const activeDaySetByMonth = computed(() => buildPanelMonthActiveDayMap(activeDaysByMonth.value))
 const innerValue = computed<DateRangeValue>({
   get: () => props.modelValue,
   set: (value) => emit('update:modelValue', value),
@@ -71,113 +73,6 @@ const timePresets = [
   { label: '一月内', value: '30d' },
 ]
 
-const clearCalendarHighlights = () => {
-  const panel = document.querySelector<HTMLElement>('.n-date-panel')
-  if (!panel) return
-  applyCalendarActiveDayHighlights({ panel, activeDaySetByMonth: {} })
-}
-
-const stopCalendarMonthObserver = () => {
-  if (!calendarMonthObserver) return
-  calendarMonthObserver.disconnect()
-  calendarMonthObserver = null
-}
-
-const syncCalendarHighlights = () => {
-  const panel = document.querySelector<HTMLElement>('.n-date-panel')
-  if (!panel) {
-    clearCalendarHighlights()
-    return
-  }
-  applyCalendarActiveDayHighlights({
-    panel,
-    activeDaySetByMonth: activeDaySetByMonth.value,
-  })
-}
-
-const collectVisibleCalendarMonths = () => {
-  const panel = document.querySelector<HTMLElement>('.n-date-panel')
-  if (!panel) return [] as string[]
-  return Array.from(panel.querySelectorAll<HTMLElement>('.n-date-panel-calendar .n-date-panel-month__month-year'))
-    .map((node) => parsePanelMonthKey(node.textContent || ''))
-    .filter((value, index, list) => !!value && list.indexOf(value) === index)
-}
-
-const ensureCalendarMonthLoaded = async (month: string) => {
-  const normalizedMonth = String(month || '').trim()
-  if (!props.channelId || !normalizedMonth) return
-  if (activeDaysByMonth.value[normalizedMonth] || loadingMonths.value.has(normalizedMonth)) return
-  const loading = new Set(loadingMonths.value)
-  loading.add(normalizedMonth)
-  loadingMonths.value = loading
-  try {
-    const resp = await chat.getChannelMessageActiveDays(props.channelId, normalizedMonth)
-    activeDaysByMonth.value = {
-      ...activeDaysByMonth.value,
-      [normalizedMonth]: (resp.days || []).slice().sort(),
-    }
-  } catch (error) {
-    console.warn('加载日历活跃日期失败', error)
-  } finally {
-    const nextLoading = new Set(loadingMonths.value)
-    nextLoading.delete(normalizedMonth)
-    loadingMonths.value = nextLoading
-  }
-}
-
-const ensureVisibleCalendarMonthsLoaded = async () => {
-  if (!props.channelId) return
-  const panel = document.querySelector<HTMLElement>('.n-date-panel')
-  if (!panel) return
-  const monthKeys = new Set<string>()
-  Array.from(panel.querySelectorAll<HTMLElement>('.n-date-panel-calendar')).forEach((calendar) => {
-    const monthKey = parsePanelMonthKey(
-      calendar.querySelector<HTMLElement>('.n-date-panel-month__month-year')?.textContent || ''
-    )
-    if (!monthKey) return
-    const cellCount = calendar.querySelectorAll('[data-n-date].n-date-panel-date').length
-    collectPanelRelatedMonthKeys(monthKey, cellCount).forEach((relatedMonth) => monthKeys.add(relatedMonth))
-  })
-  if (!monthKeys.size) {
-    collectVisibleCalendarMonths().forEach((month) => monthKeys.add(month))
-  }
-  if (!monthKeys.size) return
-  await Promise.all(Array.from(monthKeys).map((month) => ensureCalendarMonthLoaded(month)))
-}
-
-const startCalendarMonthObserver = () => {
-  stopCalendarMonthObserver()
-  const panel = document.querySelector<HTMLElement>('.n-date-panel')
-  if (!panel) return
-  calendarMonthObserver = new MutationObserver(() => {
-    syncCalendarHighlightsAfterViewportChange()
-  })
-  panel.querySelectorAll('.n-date-panel-month__month-year').forEach((node) => {
-    calendarMonthObserver?.observe(node, {
-      childList: true,
-      characterData: true,
-      subtree: true,
-    })
-  })
-}
-
-const syncCalendarHighlightsAfterViewportChange = () => {
-  void nextTick(async () => {
-    await ensureVisibleCalendarMonthsLoaded()
-    syncCalendarHighlights()
-    startCalendarMonthObserver()
-  })
-}
-
-const handleCalendarShowUpdate = (show: boolean) => {
-  if (!show) {
-    stopCalendarMonthObserver()
-    clearCalendarHighlights()
-    return
-  }
-  syncCalendarHighlightsAfterViewportChange()
-}
-
 const applyPresetRange = (preset: PresetValue) => {
   isApplyingPreset.value = true
   const end = Date.now()
@@ -195,13 +90,6 @@ const handleClearPreset = () => {
   timePreset.value = 'none'
 }
 
-const resetCalendarHighlightState = () => {
-  activeDaysByMonth.value = {}
-  loadingMonths.value = new Set()
-  stopCalendarMonthObserver()
-  clearCalendarHighlights()
-}
-
 watch(
   () => props.modelValue,
   (newVal, oldVal) => {
@@ -215,37 +103,21 @@ watch(
     }
   },
 )
-
-watch(
-  () => props.channelId,
-  () => resetCalendarHighlightState(),
-)
-
-watch(
-  () => activeDaysByMonth.value,
-  () => {
-    if (document.querySelector('.n-date-panel')) {
-      void nextTick(syncCalendarHighlights)
-    }
-  },
-  { deep: true },
-)
-
-onBeforeUnmount(() => resetCalendarHighlightState())
 </script>
 
 <template>
   <div class="active-day-date-range-picker">
+    <Teleport to="body"><div ref="calendarHost" class="sc-export-calendar" /></Teleport>
     <n-date-picker
       v-model:value="innerValue"
+      v-model:show="calendarOpen"
       type="datetimerange"
       clearable
-      to="body"
+      :to="calendarHost || undefined"
       :shortcuts="shortcuts"
       format="yyyy-MM-dd HH:mm:ss"
       :placeholder="placeholder"
       style="flex: 1"
-      @update:show="handleCalendarShowUpdate"
     />
     <div v-if="showPresets" class="preset-group">
       <n-button-group size="small">
@@ -266,6 +138,14 @@ onBeforeUnmount(() => resetCalendarHighlightState())
 </template>
 
 <style scoped>
+/* 导出保留原有橙色视觉；叠层结构与 CSS 由公共能力提供。 */
+.sc-export-calendar {
+  --sc-calendar-active-day-background: var(--sc-export-active-day-background, linear-gradient(180deg, rgba(245, 158, 11, 0.26), rgba(249, 115, 22, 0.14)));
+  --sc-calendar-active-day-border: var(--sc-export-active-day-border, inset 0 0 0 1px rgba(251, 191, 36, 0.28));
+  --sc-calendar-active-day-dot: var(--sc-export-active-day-dot, linear-gradient(180deg, rgba(251, 191, 36, 0.8), rgba(249, 115, 22, 0.72)));
+  --sc-calendar-active-day-dot-shadow: var(--sc-export-active-day-dot-shadow, 0 0 0 1px rgba(255, 237, 213, 0.34), 0 1px 2px rgba(194, 65, 12, 0.16));
+}
+
 .active-day-date-range-picker {
   display: flex;
   flex: 1;
