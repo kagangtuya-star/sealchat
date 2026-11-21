@@ -21,7 +21,7 @@ function loadSetup(relativePath, exports, api) {
   const loaded = { exports: {} };
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(source, {
-    module: loaded, exports: loaded.exports, console, defineExpose() {},
+    module: loaded, exports: loaded.exports, console, defineExpose() {}, defineEmits() { return () => {}; },
     window: {
       setInterval(callback, delay) { intervals.set(1, { callback, delay }); return 1; },
       clearInterval(id) { intervals.delete(id); },
@@ -53,28 +53,48 @@ function loadSetup(relativePath, exports, api) {
 
 async function checkTable() {
   const requests = [];
-  const table = loadSetup('../src/views/status/components/StatusWorldTable.vue', ['refresh', 'items'], {
-    get(url) {
-      assert.equal(url, 'api/v1/admin/worlds/status');
-      return new Promise((resolve) => requests.push(resolve));
+  const table = loadSetup('../src/views/status/components/StatusWorldTable.vue', ['refresh', 'items', 'handlePageChange', 'handleSorterChange', 'keyword'], {
+    get(url, { params }) {
+      assert.equal(url, 'api/v1/admin/status/worlds');
+      return new Promise((resolve) => requests.push({ params, resolve: (items) => resolve({
+        data: { items, total: items.length, summary: { worldCount: 12, memberCount: 0, channelCount: 0, messageCount: 0, messageCountIc: 0, messageCountOoc: 0, messageChars: 0, messageCharsIc: 0, messageCharsOoc: 0 }, dataQuality: { messageChars: 'ready' } },
+      }) }));
     },
   });
   await table.mount();
   assert.equal(requests.length, 1, 'a table mounted after permissions load must fetch its own data');
+  assert.equal(requests[0].params.sortBy, 'createdAt');
+  assert.equal(requests[0].params.order, 'asc');
   const refresh = table.refresh();
-  requests[1]({ data: { items: [{ id: 'new', onlineCount: 2 }], total: 1 } });
+  requests[1].resolve([{ id: 'new', onlineCount: 2 }]);
   await refresh;
-  requests[0]({ data: { items: [{ id: 'stale', onlineCount: 0 }], total: 1 } });
+  requests[0].resolve([{ id: 'stale', onlineCount: 0 }]);
   await flush();
   assert.equal(table.items.value[0].id, 'new', 'an older response must not overwrite new online counts');
 
+  table.handlePageChange(3);
+  assert.equal(requests[2].params.page, 3);
+  table.handleSorterChange({ columnKey: 'messageChars', order: 'descend', sorter: true });
+  assert.equal(requests[3].params.page, 1);
+  assert.equal(requests[3].params.sortBy, 'messageChars');
+  assert.equal(requests[3].params.order, 'desc');
+  table.keyword.value = '  Alpha  ';
+  await flush();
+  assert.equal(requests[4].params.keyword, 'Alpha');
+  assert.equal(requests[4].params.page, 1);
+  requests[4].resolve([{ id: 'first', messageChars: 50 }, { id: 'second', messageChars: 80 }]);
+  requests[3].resolve([]);
+  requests[2].resolve([]);
+  await flush();
+  assert.equal(table.items.value[0].id, 'first', 'the view must preserve the order returned by the server');
+
   const pending = table.refresh();
   table.dispose();
-  requests[2]({ data: { items: [{ id: 'unmounted' }], total: 1 } });
+  requests[5].resolve([{ id: 'unmounted' }]);
   await pending;
-  assert.equal(table.items.value[0].id, 'new', 'a response after unmount must be ignored');
+  assert.equal(table.items.value[0].id, 'first', 'a response after unmount must be ignored');
   await table.refresh();
-  assert.equal(requests.length, 3, 'a delayed refresh after unmount must not send a request');
+  assert.equal(requests.length, 6, 'a delayed refresh after unmount must not send a request');
 }
 
 async function checkDashboard() {

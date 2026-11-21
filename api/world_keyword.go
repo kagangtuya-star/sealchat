@@ -618,7 +618,7 @@ func broadcastEventToWorld(worldID string, event *protocol.Event) {
 	event.Timestamp = time.Now().Unix()
 	userId2ConnInfoGlobal.Range(func(_ string, conns *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-			if info != nil && info.WorldId == worldID {
+			if info != nil && info.currentWorldID() == worldID {
 				writeConnJSONAndPrune(conns, conn, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`

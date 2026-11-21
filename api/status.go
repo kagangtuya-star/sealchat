@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -291,33 +292,19 @@ func StatusAccessMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-type adminWorldStatusItem struct {
-	service.AdminWorldSummary
-	OnlineCount int `json:"onlineCount"`
-}
-
-// AdminWorldStatusList 分页返回正常状态世界（含私有世界）的概要信息，仅平台管理员可用。
-func AdminWorldStatusList(c *fiber.Ctx) error {
-	page, err := service.AdminListWorldSummaries(service.AdminWorldSummaryQuery{
+// AdminWorldStatistics 返回管理员世界统计及实时在线人数。
+func AdminWorldStatistics(c *fiber.Ctx) error {
+	result, err := service.ListAdminWorldStatistics(service.AdminWorldStatisticsQuery{
 		Page:     c.QueryInt("page", 1),
 		PageSize: c.QueryInt("pageSize", 20),
 		Keyword:  c.Query("keyword"),
-	})
+		SortBy:   c.Query("sortBy"),
+		Order:    c.Query("order"),
+	}, countOnlineUsersByWorld)
 	if err != nil {
-		return fiber.NewError(http.StatusInternalServerError, err.Error())
+		log.Printf("获取世界统计失败: %v", err)
+		return fiber.NewError(http.StatusInternalServerError, "获取世界统计失败")
 	}
-	online := countOnlineUsersByWorld()
-	items := make([]adminWorldStatusItem, 0, len(page.Items))
-	for _, summary := range page.Items {
-		items = append(items, adminWorldStatusItem{
-			AdminWorldSummary: summary,
-			OnlineCount:       online[summary.ID],
-		})
-	}
-	return c.Status(http.StatusOK).JSON(fiber.Map{
-		"items":    items,
-		"total":    page.Total,
-		"page":     page.Page,
-		"pageSize": page.PageSize,
-	})
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	return c.JSON(result)
 }

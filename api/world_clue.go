@@ -647,7 +647,7 @@ func broadcastWorldClueChanged(worldID, clueID, action string, revision int64) {
 				continue
 			}
 			conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-				if info != nil && !info.IsGuest && !info.IsObserver && info.WorldId == worldID {
+				if info != nil && !info.IsGuest && !info.IsObserver && info.currentWorldID() == worldID {
 					writeConnJSONAndPrune(conns, conn, payload)
 				}
 				return true
@@ -669,7 +669,7 @@ func broadcastWorldCluePublished(worldID, clueID string, publishSeq int64, recip
 		var selected *WsSyncConn
 		var selectedInfo *ConnInfo
 		conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-			if info == nil || info.IsGuest || info.IsObserver || info.WorldId != worldID {
+			if info == nil || info.IsGuest || info.IsObserver || info.currentWorldID() != worldID {
 				return true
 			}
 			if selectedInfo == nil || (info.Focused && !selectedInfo.Focused) || (info.Focused == selectedInfo.Focused && info.LastAliveTime > selectedInfo.LastAliveTime) {

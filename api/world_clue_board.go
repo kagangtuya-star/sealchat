@@ -153,7 +153,7 @@ func broadcastWorldClueBoardChanged(board protocol.WorldClueBoardEventPayload, r
 				continue
 			}
 			conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-				if info != nil && !info.IsGuest && !info.IsObserver && info.WorldId == board.WorldID {
+				if info != nil && !info.IsGuest && !info.IsObserver && info.currentWorldID() == board.WorldID {
 					writeConnJSONAndPrune(conns, conn, payload)
 				}
 				return true

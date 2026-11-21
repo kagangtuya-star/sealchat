@@ -81,7 +81,7 @@ func prepareTheaterSubscription(ctx *ChatContext, request theaterSubscribeReques
 			return nil, errors.New("theater observer link is no longer valid")
 		}
 	}
-	if !ctx.IsObserver() && ctx.ConnInfo.WorldId != "" && ctx.ConnInfo.WorldId != request.WorldID {
+	if activeWorldID := ctx.ConnInfo.currentWorldID(); !ctx.IsObserver() && activeWorldID != "" && activeWorldID != request.WorldID {
 		return nil, errors.New("theater subscription world does not match active world")
 	}
 	var snapshot *service.TheaterSnapshotResult

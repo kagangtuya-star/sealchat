@@ -17,7 +17,7 @@ func theaterRendererContext(ctx *ChatContext, s service.TheaterScope) error {
 		return errors.New("renderer requires authenticated user")
 	}
 	subscription, _ := ctx.ConnInfo.theaterState()
-	if subscription == nil || subscription.WorldID != s.WorldID || subscription.ChannelID != s.ChannelID || ctx.ConnInfo.WorldId != s.WorldID {
+	if subscription == nil || subscription.WorldID != s.WorldID || subscription.ChannelID != s.ChannelID || ctx.ConnInfo.currentWorldID() != s.WorldID {
 		return errors.New("renderer scope does not match active theater subscription")
 	}
 	if s.InputChannelID != "" && s.InputChannelID != ctx.ConnInfo.ChannelId {
