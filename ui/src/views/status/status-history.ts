@@ -139,6 +139,7 @@ export const statusMetricDefinitions: Record<StatusMetricKey, StatusMetricDefini
     color: '#4f46e5',
     format: formatStatusNumber,
     scale: true,
+    relativeToStart: true,
   },
   messageCharCount: {
     key: 'messageCharCount',
@@ -157,6 +158,7 @@ export const statusMetricDefinitions: Record<StatusMetricKey, StatusMetricDefini
     label: '附件数量',
     color: '#0ea5e9',
     format: formatStatusNumber,
+    relativeToStart: true,
     series: [
       { key: 'attachmentImageCount', label: '图片附件', color: '#0ea5e9' },
       { key: 'attachmentFontCount', label: '字体附件', color: '#8b5cf6' },
@@ -167,6 +169,7 @@ export const statusMetricDefinitions: Record<StatusMetricKey, StatusMetricDefini
     label: '附件总大小',
     color: '#ca8a04',
     format: formatStatusBytes,
+    relativeToStart: true,
     series: [
       { key: 'attachmentImageBytes', label: '图片附件', color: '#ca8a04' },
       { key: 'attachmentFontBytes', label: '字体附件', color: '#14b8a6' },

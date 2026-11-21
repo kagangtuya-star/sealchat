@@ -9,6 +9,8 @@ export interface LogCapabilities {
   editOwnMessages: boolean;
   editOthersMessages: boolean;
   bulkAppearance: boolean;
+  /** 服务端明确支持工程正文覆盖；旧版服务端缺少该字段。 */
+  supportsContentOverrides?: boolean;
 }
 
 export interface LogMessageCapabilities {
@@ -131,6 +133,10 @@ export interface LogDraft {
   imageWidths?: Record<string, number>;
   displayRules?: LogDisplayRule[];
   messageTemplateOverrides?: Record<string, string>;
+  /** 工程内的消息正文（如批量校对结果），key 为原消息 id；只影响 LOG，不写回聊天原消息。 */
+  messageContentOverrides?: Record<string, string>;
+  /** 旧工程或扩展留下的回放元数据：仅透传保存，LOG 不解析其内容。 */
+  replay?: unknown;
 }
 
 export interface LogProjectContext {

@@ -123,7 +123,72 @@
     "back": "Back",
     "viewChannels": "View Channels",
     "sessionCount": "Sessions",
-    "includeImported": "Include imported messages"
+    "includeImported": "Include imported messages",
+    "heroes": {
+      "entry": "Typing Heroes",
+      "title": "Typing Heroes",
+      "periodLabel": "Ranking period",
+      "periodDay": "Daily",
+      "periodWeek": "Weekly",
+      "periodMonth": "Monthly",
+      "prevPeriod": "Previous period",
+      "nextPeriod": "Next period",
+      "backToCurrent": "Back to current",
+      "scopeLabel": "Message scope",
+      "scopeAll": "All",
+      "scopeIC": "IC only",
+      "dateTrigger": "Choose a period: {range}",
+      "datePanel": "Choose a leaderboard period",
+      "weekSelectionHint": "Select a whole week, Monday through Sunday.",
+      "activeDaysHint": "Highlighted days have at least one of your inputs counted by the leaderboard, regardless of ranking.",
+      "activeDaysRetry": "Could not load active days. Retry",
+      "metrics": {
+        "chars": "Chars",
+        "messages": "Messages",
+        "speed": "Speed",
+        "dailyAvg": "Daily avg"
+      },
+      "metricHints": {
+        "chars": "Counted characters in this period, same rule as Input Stats total characters",
+        "messages": "Counted messages in this period",
+        "speed": "Same estimate as Input Stats: characters ÷ active minutes (gaps up to 30 min count as active). Ranked after {min} active minutes",
+        "dailyAvg": "Characters in the period ÷ calendar days with messages (in your local time zone)"
+      },
+      "units": {
+        "chars": "chars",
+        "messages": "msgs",
+        "speed": "chars/min",
+        "dailyAvg": "chars/day"
+      },
+      "myResult": "My result",
+      "participants": "{n} ranked",
+      "beat": "Ahead of {p}% of participants",
+      "onlyOne": "You are the only one ranked so far",
+      "gapToPrev": "{gap} behind #{rank}",
+      "topRank": "Holding first place",
+      "tiers": {
+        "champion": "Typing hero of the period",
+        "blazing": "Keyboard whirlwind",
+        "steady": "Steady writer",
+        "rising": "Catching up",
+        "warmup": "Warming up"
+      },
+      "noData": "No counted messages in this period yet",
+      "noChars": "No counted characters in this period yet",
+      "speedNotEligible": "{active} active minutes; speed ranking starts at {min} minutes",
+      "nearby": "Around you",
+      "leaders": "Leaders",
+      "emptyBoard": "Nobody is ranked in this period yet",
+      "you": "You",
+      "anonymousHint": "Other accounts are anonymous by default; aliases change every period",
+      "publicSwitch": "Show my nickname and username on Typing Heroes",
+      "publicOn": "Others will see your nickname and username",
+      "publicOff": "Others only see an alias that changes every period",
+      "publicSaveFailed": "Failed to save visibility",
+      "ruleNote": "The leaderboard counts messages sent in SealChat. Imported messages are excluded.",
+      "loadFailed": "Failed to load Typing Heroes",
+      "retry": "Retry"
+    }
   },
   "userProfile": {
     "title": "Profile",
@@ -157,11 +222,11 @@
     "generic": "[Whisper] private message"
   },
   "avatarPrompt": {
-    "title": "Set Your Avatar",
-    "description": "Upload a unique avatar so others can recognize you!",
+    "title": "Set Your Account Avatar",
+    "description": "Account and channel character avatars are set separately. This reminder appears until you respond; you can always set your account avatar in your profile.",
     "action": "Set Up Now",
-    "skip": "Maybe Later",
-    "badge": "Click to set avatar"
+    "skip": "Don't Remind Me Again",
+    "badge": "Click to set account avatar"
   },
   "emailBindPrompt": {
     "title": "Bind Email",

@@ -222,7 +222,7 @@ func (ctx *ChatContext) BroadcastEventInWorld(worldID string, data *protocol.Eve
 			return true
 		}
 		conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-			if info != nil && info.WorldId == worldID {
+			if info != nil && info.currentWorldID() == worldID {
 				writeConnJSONAndPrune(conns, conn, payload)
 			}
 			return true

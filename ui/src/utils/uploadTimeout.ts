@@ -1,6 +1,6 @@
 import { useUtilsStore } from '@/stores/utils';
 
-const DEFAULT_UPLOAD_TIMEOUT_MS = 20_000;
+const DEFAULT_UPLOAD_TIMEOUT_MS = 60_000;
 
 export const getUploadTimeoutMs = (): number => {
   const seconds = useUtilsStore().config?.storage?.uploadTimeoutSeconds;

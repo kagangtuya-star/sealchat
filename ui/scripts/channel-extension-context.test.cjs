@@ -113,6 +113,15 @@ async function run() {
   await assert.rejects(session.request('storage.set', { key: 'k', value: 1 }, 0), /CONTEXT_CHANGED/)
   f.state.permit = false
   await assert.rejects(local.messages.send({ text: 'denied' }), error => error.code === 'CAPABILITY_DENIED')
+  await assert.rejects(local.events.publish('turn', true), error => error.code === 'CAPABILITY_DENIED')
+  await local.storage.set('no-send-permission', { score: 1 })
+  assert.equal((await local.storage.get('no-send-permission')).value, 42)
+  await local.storage.delete('no-send-permission')
+  assert.equal((await local.permissions.getCurrent()).canWriteStorage, true)
+  await assert.rejects(iframeClient.storage.set('denied', 1), error => error.code === 'CAPABILITY_DENIED')
+  await assert.rejects(iframeClient.storage.delete('denied'), error => error.code === 'CAPABILITY_DENIED')
+  assert.equal((await iframeClient.storage.get('board')).value, 42)
+  assert.equal((await iframeClient.permissions.getCurrent()).canWriteStorage, false)
   assert.equal((await local.characterCard.updateAttrs({ hp: 1 })).updated, true)
   assert.equal((await local.attachments.uploadImage(new Blob(['image'], { type: 'image/png' }))).attachmentId, 'image')
   f.state.permit = true
@@ -158,6 +167,7 @@ async function run() {
   const restricted = fixture(); const restrictedEvents = []; let providerDisposals = 0
   const restrictedContext = createContext({ ...restricted.deps, capabilities: ['storage.read'], theaterCharacterSource: { getSnapshot: () => ({}), subscribe: () => () => providerDisposals++ } })
   const restrictedSession = restrictedContext.openSession(event => restrictedEvents.push(event))
+  await assert.rejects(restrictedSession.request('storage.set', { key: 'k', value: 1 }), /CAPABILITY_DENIED/)
   restricted.deps.chat.curChannel.name = 'renamed'; bus.emit('channel-updated')
   await tick()
   assert.equal(restrictedEvents.some(event => event.topic === 'context.changed'), false)
@@ -171,7 +181,16 @@ async function run() {
   assert.equal(dialogueDisposals, 1)
   const readOnly = createChannelExtensionClient({ ...fixture().deps, readOnly: () => true })
   await assert.rejects(readOnly.events.publish('turn', true), error => error.code === 'CAPABILITY_DENIED')
+  await assert.rejects(readOnly.storage.set('k', 1), error => error.code === 'CAPABILITY_DENIED')
+  await assert.rejects(readOnly.storage.delete('k'), error => error.code === 'CAPABILITY_DENIED')
+  assert.equal((await readOnly.storage.get('k')).value, 42)
   readOnly.close(); assert.equal(bus.count(), 0)
+
+  const revoked = fixture()
+  revoked.deps.chat.sendAPI = async () => { throw new Error('CAPABILITY_DENIED: package is not enabled in this world') }
+  const revokedClient = createChannelExtensionClient(revoked.deps)
+  await assert.rejects(revokedClient.storage.get('k'), error => error.code === 'CAPABILITY_DENIED' && error.message === 'package is not enabled in this world')
+  revokedClient.close(); assert.equal(bus.count(), 0)
 
   // Script cleanup immediately owns clients, even while activate awaits forever.
   const f2 = fixture()

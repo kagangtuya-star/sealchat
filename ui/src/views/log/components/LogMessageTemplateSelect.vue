@@ -22,7 +22,7 @@ const currentDescription = computed(() => {
 </script>
 
 <template>
-  <n-dropdown trigger="click" placement="bottom-start" :options="options" :disabled="disabled" @select="(id) => emit('change', String(id))">
+  <n-dropdown trigger="click" placement="bottom-start" :options="options" :disabled="disabled" @select="(id: string | number) => emit('change', String(id))">
     <button
       type="button"
       class="log-template-select"

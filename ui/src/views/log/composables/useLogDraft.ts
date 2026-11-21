@@ -111,7 +111,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
   const runVersioned = <T>(op: (expectedVersion: number) => Promise<{ value: T; draftVersion: number | null }>): Promise<T> => {
     const task = chain.then(async () => {
       const ok = await flush();
-      if (!ok) throw new Error(status.value === 'conflict' ? '草稿存在冲突，请先处理' : '草稿尚未保存成功，请稍后重试');
+      if (!ok) throw new Error(lastError.value || (status.value === 'conflict' ? '草稿存在冲突，请先处理' : '草稿尚未保存成功，请稍后重试'));
       try {
         const { value, draftVersion: next } = await op(draftVersion.value);
         if (next !== null) draftVersion.value = next;

@@ -15,8 +15,10 @@ import { loadUICustomizations } from './api'
 import { createUICustomizationRuntime } from './cssRuntime'
 import { createBlobModuleImporter, createScriptRuntime, type NotifyType, type UICustomizationEvent } from './jsRuntime'
 import { hasSafeUIParameter, resolveCustomizationContext } from './resolver'
+import { detectChatEmbedHost, resolveEffectiveCustomizationSurface } from './embedSurface'
 import { createScriptController, type PendingWorldScript } from './scripts'
 import { createTrustStore, UI_CUSTOMIZATION_TRUST_KEY, type TrustStore } from './trust'
+import { workbenchRuntimeState } from '../../features/channel-workbench/runtimeState'
 
 export const UI_CUSTOMIZATION_REFRESH_EVENT = 'sealchat:ui-customization-refresh'
 export const UI_CUSTOMIZATION_SAFE_SESSION_KEY = 'sealchat.uiCustomization.safeSession.v1'
@@ -88,6 +90,16 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
       : ctx
   }
 
+  const workbenchContext = () => (workbenchRuntimeState.active
+    ? {
+        channelId: workbenchRuntimeState.channelId,
+        mode: workbenchRuntimeState.mode,
+        immersive: workbenchRuntimeState.immersive,
+        focusedPanelId: workbenchRuntimeState.focusedPanelId,
+        spotlightPanelId: workbenchRuntimeState.spotlightPanelId,
+      }
+    : null)
+
   const listeners = new Map<UICustomizationEvent, Set<(payload: unknown) => void>>()
   const emit = (event: UICustomizationEvent, payload: () => unknown) => {
     const handlers = listeners.get(event)
@@ -119,7 +131,7 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
     },
     context: () => {
       const ctx = effectiveContext()
-      return { surface: ctx.surface, worldId: ctx.worldId, channelId: ctx.channelId, observer: ctx.observer, palette: display.palette }
+      return { surface: ctx.surface, worldId: ctx.worldId, channelId: ctx.channelId, observer: ctx.observer, palette: display.palette, workbench: workbenchContext() }
     },
     subscribe(event, handler) {
       let set = listeners.get(event)
@@ -177,12 +189,17 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
   let ready = false
   let queued = false
   let disposed = false
-  const resolve = () => resolveCustomizationContext(router.currentRoute.value, {
-    currentWorldId: chat.currentWorldId || '', channelId: String(chat.curChannel?.id || ''),
-    observerMode: chat.observerMode, observerWorldId: chat.observerWorldId,
-    observerChannelId: chat.observerChannelId, observerSlug: chat.observerSlug, invite: chat.lastConsumedWorldInvite || undefined,
-    embedReady: embedRoute.value === router.currentRoute.value.fullPath,
-  })
+  const resolve = () => {
+    const route = router.currentRoute.value
+    const base = resolveCustomizationContext(route, {
+      currentWorldId: chat.currentWorldId || '', channelId: String(chat.curChannel?.id || ''),
+      observerMode: chat.observerMode, observerWorldId: chat.observerWorldId,
+      observerChannelId: chat.observerChannelId, observerSlug: chat.observerSlug, invite: chat.lastConsumedWorldInvite || undefined,
+      embedReady: embedRoute.value === route.fullPath,
+    })
+    const surface = resolveEffectiveCustomizationSurface(base.surface, base.surface === 'embed' && detectChatEmbedHost(route.name))
+    return surface !== base.surface ? { ...base, surface, publicSurface: false } : base
+  }
   const refresh = () => {
     if (!ready || disposed) return Promise.resolve()
     const context = resolve()
@@ -224,6 +241,10 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
     if (channelId !== previous[2]) emit('channel-change', () => ({ channelId, previous: previous[2] }))
     if (palette !== previous[3]) emit('theme-change', () => ({ palette, previous: previous[3] }))
   }, { immediate: true })
+  // 布局频道的进入/退出、设计模式、沉浸、展开与 GM 聚焦变化。
+  const stopWorkbench = watch(() => JSON.stringify(workbenchContext()), (current, previous) => {
+    emit('workbench-change', () => ({ workbench: JSON.parse(current), previous: JSON.parse(previous ?? 'null') }))
+  })
   // Message events reuse the gateway chatEvent stream and the stable Bridge
   // serializer; scripts never see raw store objects.
   const messageHandlers = (['message-created', 'message-updated', 'message-deleted'] as const).map(name => {
@@ -255,7 +276,7 @@ export function installUICustomizationRuntime({ pinia, router }: { pinia: Pinia;
     dispose() {
       ready = false
       disposed = true
-      stopContext(); stopTheme(); stopEmbed(); stopEvents(); stopNavigation()
+      stopContext(); stopTheme(); stopEmbed(); stopEvents(); stopWorkbench(); stopNavigation()
       for (const [name, handler] of messageHandlers) chatEvent.off(name, handler)
       listeners.clear()
       window.removeEventListener(UI_CUSTOMIZATION_REFRESH_EVENT, handleRefresh)

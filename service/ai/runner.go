@@ -14,10 +14,11 @@ import (
 )
 
 type CompletionRequest struct {
-	Model        string
-	SystemPrompt string
-	UserInput    string
-	Params       utils.AIModelParams
+	Model            string
+	SystemPrompt     string
+	UserInput        string
+	Params           utils.AIModelParams
+	StructuredOutput *StructuredOutputSpec
 }
 
 type CompletionResult struct {
@@ -170,12 +171,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if model == "" && len(provider.Models) > 0 {
 			model = provider.Models[0]
 		}
-		result, err := r.completeWithRetry(ctx, client, CompletionRequest{
+		completionReq := CompletionRequest{
 			Model:        model,
 			SystemPrompt: featureCfg.DefaultPrompt,
 			UserInput:    input,
 			Params:       featureCfg.Params,
-		}, aiCfg.Retry, aiCfg.RequestTimeoutSeconds)
+		}
+		completionReq.StructuredOutput = structuredOutputForProvider(req.FeatureKey, source, provider)
+		if completionReq.StructuredOutput != nil {
+			completionReq.SystemPrompt = structuredOutputSystemPrompt(completionReq.SystemPrompt)
+		}
+		result, err := r.completeWithRetry(ctx, client, completionReq, aiCfg.Retry, aiCfg.RequestTimeoutSeconds)
 		if err == nil {
 			if result.Model == "" {
 				result.Model = model
@@ -293,6 +299,17 @@ func (c *openAIChatClient) Complete(ctx context.Context, req CompletionRequest) 
 	}
 	if req.Params.TopP != nil {
 		request.TopP = *req.Params.TopP
+	}
+	if spec := req.StructuredOutput; spec != nil {
+		request.ResponseFormat = &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:        spec.Name,
+				Description: spec.Description,
+				Schema:      spec.Schema,
+				Strict:      spec.Strict,
+			},
+		}
 	}
 	resp, err := c.client.CreateChatCompletion(ctx, request)
 	if err != nil {

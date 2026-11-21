@@ -352,6 +352,49 @@ func logExportFixture(t *testing.T, sections []LogSection) *model.LogProjectMode
 	return p
 }
 
+func TestLogDraftContentOverrideAndUnknownField(t *testing.T) {
+	d, err := parseLogDraft([]byte(defaultLogDraft("校对")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.MessageContentOverrides = map[string]string{"msg1": "你好，世界"}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseLogDraft(raw)
+	if err != nil || parsed.MessageContentOverrides["msg1"] != "你好，世界" {
+		t.Fatalf("content override round trip: %v", err)
+	}
+	// 旧工程的 replay 字段需要往返保留，不可因为一次校对保存而丢失。
+	d.Replay = json.RawMessage(`{"enabled":true,"events":[{"at":1200,"action":"scene"}],"extra":{"future":1}}`)
+	raw, err = json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = parseLogDraft(raw)
+	if err != nil || string(parsed.Replay) != string(d.Replay) {
+		t.Fatalf("replay metadata lost: %v, got %s", err, parsed.Replay)
+	}
+	roundtrip, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after LogDraft
+	if err := json.Unmarshal(roundtrip, &after); err != nil || string(after.Replay) != string(d.Replay) {
+		t.Fatalf("replay metadata round trip failed: %v", err)
+	}
+	var unknown map[string]any
+	if err := json.Unmarshal(raw, &unknown); err != nil {
+		t.Fatal(err)
+	}
+	unknown["unexpectedField"] = true
+	invalid, _ := json.Marshal(unknown)
+	if _, err := parseLogDraft(invalid); err == nil || !strings.Contains(err.Error(), "unexpectedField") {
+		t.Fatalf("unknown draft field must produce actionable error, got %v", err)
+	}
+}
+
 func TestLogDisplayRulesDraftValidation(t *testing.T) {
 	d, err := parseLogDraft([]byte(defaultLogDraft("legacy")))
 	if err != nil || d.DisplayRules != nil || d.MessageTemplateOverrides != nil {

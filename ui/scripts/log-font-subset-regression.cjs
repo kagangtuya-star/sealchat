@@ -52,7 +52,10 @@ global.document = { createElement: () => {
   let html = '';
   return { set innerHTML(value) { html = value; }, content: {
     get textContent() { return html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'); },
-    querySelectorAll: () => [],
+    querySelectorAll: selector => selector.startsWith('[data-platform-font-id]')
+      ? Array.from(html.matchAll(/<[^>]+\bdata-(?:platform-font-id|ruby-base-font-asset-id|ruby-rt-font-asset-id)="[^"]+"[^>]*>/g), match => ({
+        getAttribute: name => match[0].match(new RegExp(`${name}="([^"]+)"`))?.[1] || null,
+      })) : [],
     querySelector: selector => selector.includes('pageNumber') && html.includes('data-log-fill') ? {} : null,
   } };
 } };
@@ -105,6 +108,24 @@ test('公开 LOG 平台字体 meta、manifest 与字体字节均不携带登录�
   await assets.prepare(doc('A中'), [], () => false);
   assert.deepEqual(apiCalls, ['public-meta', 'public-manifest']);
   assert.deepEqual(fetchCredentials, ['omit', 'omit']);
+});
+
+test('正文和 Ruby 平台字体与页面字体合并规划、去重缓存；单字体失败独立回退', async () => {
+  const assets = setup({ fail: url => url.includes('/rt/subset/') });
+  const input = doc('<span data-platform-font-id="body">A</span><ruby data-ruby-base-font-asset-id="body" data-ruby-rt-font-asset-id="rt">中<rt>A</rt></ruby>');
+  const result = await assets.prepare(input, [], () => false);
+  for (const id of ['font', 'body', 'rt']) assert.ok(result.doc.css.includes(`sc-log-platform-${id}`));
+  assert.match(result.doc.css, /__LOGASSET_platform-font:rt:full__/);
+  assert.match(result.doc.css, /__LOGASSET_platform-font:body:chunk:/);
+  assert.equal(requests.filter(url => url.includes('/body/')).length, 2);
+  const count = requests.length;
+  await assets.prepare(input, [], () => false);
+  assert.equal(requests.length, count);
+  const bodyOnly = setup({ fail: () => true });
+  const missing = await bodyOnly.prepare(doc('<span data-platform-font-id="missing">A</span>', { page: { fontFamily: 'serif' } }), [], () => false);
+  assert.equal(missing.assets.length, 1);
+  assert.equal(missing.assets[0].data, null);
+  assert.match(missing.doc.css, /sc-log-platform-missing/);
 });
 
 test('最终正文/角色名/引用/线索/自定义元素/标题/页眉页脚均计入需求，字符去重', async () => {

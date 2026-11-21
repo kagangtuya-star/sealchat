@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/utils"
 
 	htmlnode "golang.org/x/net/html"
@@ -57,6 +58,11 @@ type ExportMessage struct {
 	WhisperTargets        []string           `json:"whisper_targets"`
 
 	WorldClues []WorldClueExportBlock `json:"-"`
+
+	// SenderChatSkin 是消息发送时的聊天装扮快照，仅 HTML 导出携带；
+	// SenderChatSkinAssets 把装扮中的 id: 附件引用映射到内联资源。
+	SenderChatSkin       protocol.ChatSkin `json:"sender_chat_skin,omitempty"`
+	SenderChatSkinAssets map[string]string `json:"sender_chat_skin_assets,omitempty"`
 }
 
 type ExportPayload struct {
@@ -186,6 +192,10 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		if !includeImages {
 			htmlContent = stripImageTagsFromHTML(htmlContent)
 		}
+		var senderChatSkin protocol.ChatSkin
+		if strings.EqualFold(job.Format, "html") {
+			senderChatSkin = protocol.CloneChatSkin(msg.SenderChatSkin)
+		}
 		exportMessages = append(exportMessages, ExportMessage{
 			ID:                    msg.ID,
 			ChannelID:             msg.ChannelID,
@@ -194,6 +204,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			SenderName:            resolveSenderName(msg),
 			SenderColor:           msg.SenderIdentityColor,
 			SenderAvatar:          resolveSenderAvatar(msg),
+			SenderChatSkin:        senderChatSkin,
 			IsMerged:              msg.MergedMessages > 1,
 			IcMode:                fallbackIcMode(msg.ICMode),
 			IsWhisper:             msg.IsWhisper,
@@ -1299,6 +1310,25 @@ func renderTipTapHTML(buf *strings.Builder, node *tiptapNode) {
 	switch nodeType {
 	case "text":
 		buf.WriteString(applyTipTapMarks(htmlEscape(node.Text), node.Marks))
+	case "table":
+		renderTipTapTableHTML(buf, node)
+	case "tablerow":
+		buf.WriteString("<tr>")
+		for _, child := range node.Content {
+			renderTipTapHTML(buf, child)
+		}
+		buf.WriteString("</tr>")
+	case "tablecell", "tableheader":
+		tag := "td"
+		if nodeType == "tableheader" {
+			tag = "th"
+		}
+		fmt.Fprintf(buf, `<%s colspan="%d" rowspan="%d">`, tag,
+			tipTapTableNumber(node.Attrs["colspan"], 1000, 1), tipTapTableNumber(node.Attrs["rowspan"], 65534, 1))
+		for _, child := range node.Content {
+			renderTipTapHTML(buf, child)
+		}
+		fmt.Fprintf(buf, "</%s>", tag)
 	case "paragraph":
 		if align := node.attrString("textAlign"); align != "" {
 			buf.WriteString(`<p style="text-align:` + htmlEscape(align) + `">`)
@@ -2217,6 +2247,17 @@ func writeTipTapNode(w *plainTextWriter, node *tiptapNode) {
 			writeTipTapNode(w, child)
 		}
 		return
+	case "tablerow":
+		for index, cell := range node.Content {
+			if index > 0 {
+				w.write("\t")
+			}
+			cellText := newPlainTextWriter()
+			writeTipTapNode(cellText, cell)
+			w.write(strings.TrimSuffix(cellText.String(), "\n"))
+		}
+		w.newline()
+		return
 	case "text":
 		text := node.Text
 		for _, mark := range node.Marks {
@@ -2316,6 +2357,8 @@ var (
 	bbcodeItalicPattern          = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
 	bbcodeBrPattern              = regexp.MustCompile(`(?is)<br\s*/?>`)
 	bbcodePBoundaryPattern       = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
+	bbcodeTableRowPattern        = regexp.MustCompile(`(?is)<tr\b[^>]*>(.*?)</tr\s*>`)
+	bbcodeTableCellPattern       = regexp.MustCompile(`(?is)<t[dh]\b[^>]*>(.*?)</t[dh]\s*>`)
 	bbcodeAnyTagPattern          = regexp.MustCompile(`(?is)</?[^>]+>`)
 )
 
@@ -2579,6 +2622,19 @@ func convertRenderedHTMLToBBCode(input string) string {
 
 	text = bbcodePBoundaryPattern.ReplaceAllString(text, "\n")
 	text = bbcodeBrPattern.ReplaceAllString(text, "\n")
+	// Keep table boundaries before the remaining HTML tags are stripped. Joining
+	// cells avoids adding a tab after the last cell (including an empty one).
+	text = bbcodeTableRowPattern.ReplaceAllStringFunc(text, func(row string) string {
+		matches := bbcodeTableCellPattern.FindAllStringSubmatch(row, -1)
+		if len(matches) == 0 {
+			return row
+		}
+		cells := make([]string, 0, len(matches))
+		for _, match := range matches {
+			cells = append(cells, strings.TrimSpace(bbcodeAnyTagPattern.ReplaceAllString(match[1], "")))
+		}
+		return strings.Join(cells, "\t") + "\n"
+	})
 	text = bbcodeAnyTagPattern.ReplaceAllString(text, "")
 	text = htmlUnescapeDeep(text)
 
@@ -2667,11 +2723,28 @@ var (
 )
 
 func buildCQImageMarkup(raw string) string {
-	url := resolveImageURL(raw)
+	url := resolveCQImageURL(raw)
 	if url == "" {
 		return ""
 	}
 	return fmt.Sprintf("[CQ:image,file=image,url=%s]", url)
+}
+
+// CQ exports prefer the actual publicly readable attachment URL instead of
+// constructing a URL from a configured domain that may not serve the file.
+func resolveCQImageURL(raw string) string {
+	if token := extractAttachmentToken(raw); token != "" {
+		if att, err := ResolveAttachment(token); err == nil && att != nil {
+			if att.IsTTSManaged() {
+				return ""
+			}
+			if publicURL := AttachmentPublicURL(att); publicURL != "" {
+				return publicURL
+			}
+			return buildAttachmentDownloadURL(att.ID)
+		}
+	}
+	return resolveImageURL(raw)
 }
 
 func resolveImageURL(raw string) string {
@@ -2941,7 +3014,7 @@ func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
 	items := make([]diceLogItem, 0, len(payload.Messages))
 	for i := range payload.Messages {
 		msg := &payload.Messages[i]
-		body := buildContentBody(msg, payload.IncludeImages)
+		body := buildDiceLogContentBody(msg, payload.IncludeImages)
 		isDice, info := detectDiceCommand(msg)
 		items = append(items, diceLogItem{
 			Nickname:    msg.SenderName,
@@ -2956,6 +3029,21 @@ func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
 		})
 	}
 	return &diceLogPayload{Version: diceLogVersion, Items: items}
+}
+
+// buildDiceLogContentBody preserves ordinary message handling and applies the
+// same CQ image markup to resolved world clue rich content.
+func buildDiceLogContentBody(msg *ExportMessage, includeImages bool) string {
+	if msg == nil || len(msg.WorldClues) == 0 {
+		return buildContentBody(msg, includeImages)
+	}
+	parts := make([]string, 0, len(msg.WorldClues))
+	for _, clue := range msg.WorldClues {
+		parts = append(parts, renderWorldClueDiceText(clue, includeImages))
+	}
+	projected := *msg
+	projected.Content = strings.Join(parts, "\n\n")
+	return buildContentBody(&projected, includeImages)
 }
 
 type textFormatter struct{}

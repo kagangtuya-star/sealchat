@@ -11,6 +11,7 @@ import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
 import { useCapWidget } from '@/composables/useCapWidget';
 import { normalizePageDescription } from '@/utils/pageDescription';
+import { getInviteRedirect, getSignInRedirect } from '@/utils/authRedirect';
 import { detectQuickLoginRequesterEnvironment, useQuickLoginStore } from '@/stores/quickLogin';
 
 declare global {
@@ -174,14 +175,15 @@ const ensureQuickLoginPrerequisites = async () => {
   return true;
 };
 
+const inviteRedirect = computed(() => getInviteRedirect(router.currentRoute.value.query.redirect));
+
 const returnAfterSignIn = () => {
   const request = router.currentRoute.value.query.mcpOAuthRequest;
   if (typeof request === 'string' && /^[A-Za-z0-9_-]{43}$/.test(request)) {
     return router.replace({ name: 'mcp-oauth-consent', query: { request } });
   }
-  // 仅允许回跳到 LOG 设计入口这一种站内相对路由，避免开放重定向。
-  const redirect = router.currentRoute.value.query.redirect;
-  if (typeof redirect === 'string' && /^\/log\/layout\/[a-z0-9]{4,64}$/.test(redirect)) {
+  const redirect = getSignInRedirect(router.currentRoute.value.query.redirect);
+  if (redirect) {
     return router.replace(redirect);
   }
   return router.replace({ name: 'home' });
@@ -530,7 +532,7 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       }
       message.success('验证成功');
       if (ret.token) {
-        returnAfterSignIn();
+        await returnAfterSignIn();
       }
     } catch (err) {
       message.error('登录失败: ' + ((err as any)?.response?.data?.message || '账号或密码错误/连接服务器失败'));
@@ -626,7 +628,7 @@ onBeforeUnmount(() => {
           <n-col :span="24">
             <div class=" flex justify-between">
               <div class="flex items-center gap-2">
-                <router-link :to="{ name: 'user-signup' }">
+                <router-link :to="{ name: 'user-signup', query: { redirect: inviteRedirect } }">
                   <n-button text v-if="config?.registerOpen">注册</n-button>
                 </router-link>
                 <n-button v-if="emailAuthEnabled" text @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>

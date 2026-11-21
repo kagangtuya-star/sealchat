@@ -29,6 +29,7 @@ const props = withDefaults(defineProps<{
   canPromoteShared?: boolean;
   submitting?: boolean;
   submitText: string;
+  chatSkinConfigured?: boolean;
 }>(), {
   avatarPending: false,
   generatedStyleOptions: () => [],
@@ -42,6 +43,7 @@ const props = withDefaults(defineProps<{
   sharedIdentity: false,
   canPromoteShared: false,
   submitting: false,
+  chatSkinConfigured: false,
 });
 
 const emit = defineEmits<{
@@ -56,6 +58,7 @@ const emit = defineEmits<{
   (e: 'promote-shared', checked: boolean): void;
   (e: 'open-decoration'): void;
   (e: 'open-theater'): void;
+  (e: 'open-chat-skin'): void;
   (e: 'submit'): void;
 }>();
 
@@ -209,6 +212,21 @@ const updateBotInherit = (inherit: boolean) => {
             <div class="idpp-hint">仅用于小剧场消息演出，不影响频道消息头像。</div>
           </div>
           <n-button size="small" secondary :disabled="delegatedShared" @click="emit('open-theater')">编辑演出</n-button>
+        </div>
+        <div class="idpp-row">
+          <div class="idpp-row__text">
+            <div class="idpp-row__title">
+              聊天装扮
+              <n-tag v-if="chatSkinConfigured" size="small" :bordered="false" type="success">已配置</n-tag>
+              <span v-else class="idpp-row__state">未配置</span>
+            </div>
+            <div class="idpp-hint">
+              {{ mode === 'create'
+                ? '保存角色后可设置消息气泡与紧凑行的外观。'
+                : '定制此角色消息的气泡 / 紧凑外观；只影响之后发送的消息，历史消息保持原样。' }}
+            </div>
+          </div>
+          <n-button size="small" secondary :disabled="mode === 'create'" @click="emit('open-chat-skin')">编辑装扮</n-button>
         </div>
       </section>
 

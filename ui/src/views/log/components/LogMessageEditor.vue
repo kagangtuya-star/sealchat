@@ -35,12 +35,15 @@ const props = defineProps<{
   projectId: string;
   sectionId: string;
   channelId: string;
+  /** 当前 LOG 工程对该消息有正文覆盖（如批量校对结果）时为 true。 */
+  contentOverridden?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void;
   (e: 'update:tab', v: 'content' | 'identity' | 'appearance'): void;
   (e: 'saved', message: LogProtocolMessage, version: number): void;
+  (e: 'clear-override'): void;
 }>();
 
 const toast = useMessage();
@@ -596,6 +599,10 @@ const tabModel = computed({
       </n-alert>
       <n-tabs v-model:value="tabModel" type="line" animated>
         <n-tab-pane name="content" tab="正文" :disabled="!caps?.edit">
+          <n-alert v-if="contentOverridden" type="warning" :show-icon="false" class="log-editor__note">
+            本条在当前 LOG 工程中使用校对后的正文，排版与发布显示该正文；这里编辑的是聊天原消息，不会改变工程正文。
+            <n-button size="tiny" quaternary type="primary" @click="emit('clear-override')">改回显示原消息</n-button>
+          </n-alert>
           <div class="log-editor__format-switch">
             <span class="log-editor__format-label">编辑模式</span>
             <n-button-group size="tiny">

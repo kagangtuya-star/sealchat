@@ -118,6 +118,7 @@ type ChannelIdentity struct {
 	AvatarDecoration         *AvatarDecoration    `json:"avatarDecoration,omitempty"`
 	AvatarDecorations        AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	TheaterPresentation      *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	ChatSkin                 ChatSkin             `json:"chatSkin,omitempty"`
 	IsDefault                bool                 `json:"isDefault"`
 	IsTemporary              bool                 `json:"isTemporary"`
 	VariantResetMatchMode    string               `json:"variantResetMatchMode,omitempty"`
@@ -225,6 +226,7 @@ type MessageIdentity struct {
 	AvatarDecoration    *AvatarDecoration    `json:"avatarDecoration,omitempty"`
 	AvatarDecorations   AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	TheaterPresentation *TheaterPresentation `json:"theaterPresentation,omitempty"`
+	ChatSkin            ChatSkin             `json:"chatSkin,omitempty"`
 	IsTemporary         bool                 `json:"isTemporary"`
 }
 
@@ -369,6 +371,16 @@ type ChannelImageLayoutEventPayload struct {
 	OperatorID string                   `json:"operatorId,omitempty"`
 }
 
+// ChannelWorkbenchEventPayload 只通知布局频道的修订号变化；客户端按自身权限重新拉取，
+// 因此隐藏面板的定义不会随广播泄露给观看者。
+type ChannelWorkbenchEventPayload struct {
+	ChannelID            string `json:"channelId"`
+	LayoutRevision       uint64 `json:"layoutRevision"`
+	PresentationRevision uint64 `json:"presentationRevision"`
+	Reason               string `json:"reason,omitempty"`
+	OperatorID           string `json:"operatorId,omitempty"`
+}
+
 type WhisperMeta struct {
 	SenderMemberID     string   `json:"senderMemberId,omitempty"`
 	SenderMemberName   string   `json:"senderMemberName,omitempty"`
@@ -475,6 +487,7 @@ const (
 	EventChannelIFormPushed             EventName = "channel-iform-pushed"
 	EventChannelIFormEmbed              EventName = "channel-iform-embed"
 	EventChannelImageLayoutUpdated      EventName = "channel-image-layout-updated"
+	EventChannelWorkbenchUpdated        EventName = "channel-workbench-updated"
 	EventChannelIdentitiesUpdated       EventName = "channel-identities-updated"
 	EventWorldKeywordsUpdated           EventName = "world-keywords-updated"
 	EventExternalGlossariesUpdated      EventName = "external-glossaries-updated"
@@ -594,6 +607,7 @@ type Event struct {
 	AudioState                  *AudioPlaybackStatePayload          `json:"audioState,omitempty"`
 	IForm                       *ChannelIFormEventPayload           `json:"iform,omitempty"`
 	ChannelImageLayout          *ChannelImageLayoutEventPayload     `json:"channelImageLayout,omitempty"`
+	ChannelWorkbench            *ChannelWorkbenchEventPayload       `json:"channelWorkbench,omitempty"`
 	StickyNote                  *StickyNoteEventPayload             `json:"stickyNote,omitempty"`
 	WorldClue                   *WorldClueEventPayload              `json:"worldClue,omitempty"`
 	WorldClueBoard              *WorldClueBoardEventPayload         `json:"worldClueBoard,omitempty"`

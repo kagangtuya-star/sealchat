@@ -50,6 +50,9 @@ import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { navigateToMessageTarget } from '@/utils/messageJump'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
+import ChatSkinLayers from '@/features/chat-skin/ChatSkinLayers.vue'
+import { buildChatSkinRenderWithAssets } from '@/features/chat-skin/chatSkinRuntime'
+import { resolvePreviewChatSkin } from '@/features/chat-skin/chatSkinSchema'
 import {
   SMART_LINK_DATA_ATTR,
   SMART_LINK_IMAGE_ROLE_ATTR,
@@ -80,6 +83,8 @@ type EditingPreviewInfo = {
   color?: string;
   avatar?: string;
   avatarDecorations?: import('@/types').AvatarDecoration[] | null;
+  /** 预览应展示的聊天装扮；undefined 表示沿用消息自身快照。 */
+  chatSkin?: Record<string, any> | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -1192,7 +1197,7 @@ const setupImageViewer = async () => {
     return;
   }
 
-  const inlineImages = host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`);
+  const inlineImages = host.querySelectorAll<HTMLImageElement>(`img:not(.message-quote__image):not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`);
   if (!inlineImages.length) {
     destroyImageViewer();
     return;
@@ -1204,7 +1209,7 @@ const setupImageViewer = async () => {
   const hasMultiple = inlineImages.length > 1;
   inlineImageViewer = new Viewer(host, {
     className: 'chat-inline-image-viewer',
-    filter: (image: HTMLImageElement) => !image.closest(`[${SMART_LINK_DATA_ATTR}="true"]`),
+    filter: (image: HTMLImageElement) => !image.closest(`.message-quote, [${SMART_LINK_DATA_ATTR}="true"]`),
     navbar: hasMultiple,  // 多图时显示缩略图导航
     title: false,
     toolbar: {
@@ -1250,6 +1255,7 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!host) return;
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  if (target.closest('.message-quote')) return;
   if (target.closest(`[${SMART_LINK_DATA_ATTR}="true"]`)) {
     event.preventDefault();
     event.stopPropagation();
@@ -1265,7 +1271,7 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!inlineImageViewer) {
     return;
   }
-  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`));
+  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>(`img:not(.message-quote__image):not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`));
   const imageIndex = imageList.indexOf(image);
   inlineImageViewer.view(imageIndex >= 0 ? imageIndex : 0);
 };
@@ -1508,7 +1514,7 @@ const resolveWhisperTargets = (item: any) => {
 
 const quoteInlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
 
-const buildQuoteSummary = (quote?: any) => {
+const buildQuoteSummary = (quote?: any, imageSummary?: (src: string) => string) => {
   if (!quote) return '';
   const meta = quote as any;
   if (meta?.is_deleted || meta?.isDeleted) {
@@ -1523,7 +1529,11 @@ const buildQuoteSummary = (quote?: any) => {
   }
   if (isTipTapJson(content)) {
     try {
-      const json = JSON.parse(content);
+      const json = JSON.parse(content, (_key, node) => (
+        imageSummary && node?.type === 'image'
+          ? { type: 'text', text: imageSummary(String(node.attrs?.src || '')) }
+          : node
+      ));
       const text = tiptapJsonToPlainText(json).trim();
       return text || '[图片]';
     } catch (error) {
@@ -1531,7 +1541,21 @@ const buildQuoteSummary = (quote?: any) => {
       return '[图片]';
     }
   }
-  const restored = restoreQuickFormatTextFromHtml(contentUnescape(content)).replace(quoteInlineImageTokenPattern, '[图片]').trim();
+  let decodedContent = contentUnescape(content);
+  if (imageSummary) {
+    decodedContent = decodedContent.replace(quoteInlineImageTokenPattern, (token) => (
+      /^\[\[img:/i.test(token) ? `<img src="${contentEscape(token.slice(6, -2))}" />` : '[图片]'
+    ));
+  }
+  if (imageSummary && /<img\b/i.test(decodedContent)) {
+    const template = document.createElement('template');
+    template.innerHTML = decodedContent;
+    template.content.querySelectorAll('img').forEach((image) => {
+      image.replaceWith(imageSummary(image.getAttribute('src') || ''));
+    });
+    decodedContent = template.innerHTML;
+  }
+  const restored = restoreQuickFormatTextFromHtml(decodedContent).replace(quoteInlineImageTokenPattern, '[图片]').trim();
   if (restored) {
     return restored;
   }
@@ -1610,12 +1634,33 @@ const quoteNameColor = computed(() => quoteItem.value?.identity?.color
   || '');
 const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_deleted || (quoteItem.value as any)?.isDeleted));
 const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
-const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
-const quoteSummaryHtml = computed(() => DOMPurify.sanitize(
-  shouldDisableInlineCodeForBotCommand(String(quoteItem.value?.content || ''))
-    ? renderBotCommandTextAsHtml(String(quoteItem.value?.content || ''))
-    : renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
-));
+const quoteSummaryHtml = computed(() => {
+  const content = String(quoteItem.value?.content || '');
+  if (!quoteIsDeleted.value && !quoteIsRevoked.value && shouldDisableInlineCodeForBotCommand(content)) {
+    return DOMPurify.sanitize(renderBotCommandTextAsHtml(content));
+  }
+  const images: string[] = [];
+  let marker = '\uE000';
+  while (content.includes(marker)) marker += '\uE000';
+  const summary = buildQuoteSummary(quoteItem.value, (src) => {
+    if (!src) return '[图片]';
+    const index = images.push(src) - 1;
+    return index < 4 ? `${marker}${index}\uE001` : '';
+  });
+  let html = renderQuickFormatHtmlFromEscaped(contentEscape(summary));
+  images.slice(0, 4).forEach((src, index) => {
+    const imageHtml = index < 3
+      ? `<img class="message-quote__image" src="${contentEscape(resolveAttachmentUrl(src))}" alt="图片" loading="lazy" decoding="async" />`
+      : `<span class="message-quote__image-count">+${images.length - 3}</span>`;
+    html = html.split(`${marker}${index}\uE001`).join(imageHtml);
+  });
+  return DOMPurify.sanitize(html);
+});
+const handleQuoteImageError = (event: Event) => {
+  if (event.target instanceof HTMLImageElement) {
+    event.target.replaceWith('[图片]');
+  }
+};
 const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
 const selfEditingPreview = computed(() => (
@@ -1945,7 +1990,7 @@ const applyImageLayoutToDom = async () => {
   if (!host) {
     return;
   }
-  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img'));
+  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img:not(.message-quote__image)'));
   const fallbackIds = messageImageAttachmentIds.value;
   images.forEach((image, index) => {
     const attachmentId = resolveImageAttachmentIdFromElement(image, fallbackIds, index);
@@ -3773,8 +3818,37 @@ const nameColor = computed(() => {
   if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.color) {
     return selfEditingPreview.value.color;
   }
+  if (otherEditingPreview.value?.color) return otherEditingPreview.value.color;
   return props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '';
 });
+
+// 聊天装扮只读取消息快照（或编辑 / 输入预览携带的装扮），不回退到角色的实时配置，
+// 保证历史消息始终按发送时的样子显示；本地关闭装扮只影响渲染。
+const chatSkinSnapshot = computed(() => {
+  const preview = shouldUseSelfPreviewIdentity.value ? selfEditingPreview.value : otherEditingPreview.value;
+  return resolvePreviewChatSkin(props.item, preview?.chatSkin, displayStore.settings.chatSkinEnabled);
+});
+
+const chatSkinRender = computed(() => buildChatSkinRenderWithAssets(chatSkinSnapshot.value, {
+  layout: props.layout,
+  tone: props.tone,
+  isSelf: props.isSelf,
+  palette: displayStore.palette,
+  whisper: Boolean(props.item?.isWhisper),
+}));
+
+const chatItemSkinClass = computed(() => chatSkinRender.value?.rootClass || []);
+const chatItemSkinStyle = computed(() => chatSkinRender.value?.rootStyle);
+const chatItemSkinAttrs = computed(() => chatSkinRender.value?.rootAttrs || {});
+const contentSkinStyle = computed(() => chatSkinRender.value?.contentStyle);
+const nameInlineStyle = computed(() => {
+  const skinName = chatSkinRender.value?.nameStyle;
+  if (skinName && Object.keys(skinName).length) {
+    return nameColor.value && !skinName.color ? { color: nameColor.value, ...skinName } : skinName;
+  }
+  return nameColor.value ? { color: nameColor.value } : undefined;
+});
+const chatSkinLayers = computed(() => chatSkinRender.value?.layers || []);
 
 const botBadgeStyleValue = computed<BotBadgeStyle>(() => displayStore.settings.botBadgeStyle || 'solidBlue');
 
@@ -3934,12 +4008,16 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
       { 'chat-item--body-only': props.bodyOnly },
       { 'chat-item--multiselect': effectiveMultiSelectMode },
       { 'chat-item--selected': effectiveIsSelected },
-      { 'chat-item--relocate-target': effectiveIsRelocateTarget }
+      { 'chat-item--relocate-target': effectiveIsRelocateTarget },
+      chatItemSkinClass,
     ]"
+    :style="chatItemSkinStyle"
+    v-bind="chatItemSkinAttrs"
     @mouseenter="handleTimestampHoverStart"
     @mouseleave="handleTimestampHoverEnd"
     @click="handleMobileTimestampTap"
   >
+    <ChatSkinLayers v-if="chatSkinRender?.layout === 'compact' && chatSkinLayers.length" :layers="chatSkinLayers" />
     <!-- Multi-select checkbox -->
     <div
       v-if="effectiveMultiSelectMode"
@@ -3985,7 +4063,7 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
             :class="botBadgeClass"
             :style="botBadgeInlineStyle"
           >{{ botBadgeText }}</span>
-          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span class="name" :style="nameInlineStyle">{{ nick }}</span>
           <span
             v-if="shouldShowBotBadgeAfterName"
             ref="botBadgeRef"
@@ -4026,7 +4104,7 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
             :class="botBadgeClass"
             :style="botBadgeInlineStyle"
           >{{ botBadgeText }}</span>
-          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span class="name" :style="nameInlineStyle">{{ nick }}</span>
           <span
             v-if="shouldShowBotBadgeAfterName"
             ref="botBadgeRef"
@@ -4079,7 +4157,9 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
         </n-popover>
       </span>
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
-        :class="contentClassList">
+        :class="contentClassList"
+        :style="contentSkinStyle">
+        <ChatSkinLayers v-if="chatSkinRender?.layout === 'bubble' && chatSkinLayers.length" :layers="chatSkinLayers" />
         <span
           class="message-swipe-reply-indicator"
           :class="{ 'message-swipe-reply-indicator--ready': swipeReplyReady }"
@@ -4132,13 +4212,15 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
                 'message-quote--muted': quoteIsDeleted || quoteIsRevoked,
               }"
               @click.stop="handleQuoteClick"
+              @pointerdown.stop
+              @mousedown.stop
             >
               <n-icon class="message-quote__icon" :component="ArrowBackUp" size="14" />
               <div class="message-quote__body">
                 <span class="message-quote__name" :style="quoteNameColor ? { color: quoteNameColor } : undefined">
                   {{ quoteDisplayName }}
                 </span>
-                <span class="message-quote__summary" v-html="quoteSummaryHtml"></span>
+                <span class="message-quote__summary" v-html="quoteSummaryHtml" @error.capture="handleQuoteImageError"></span>
               </div>
             </div>
             <component :is="parseContent(props, displayContent)" />
@@ -4874,6 +4956,21 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.content .message-quote__summary img.message-quote__image {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  max-width: 32px;
+  margin: 0 4px;
+  border-radius: 3px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.message-quote__image-count {
+  margin: 0 4px;
 }
 
 .message-quote--muted .message-quote__summary {
@@ -6179,6 +6276,48 @@ const { progress: swipeReplyProgress, ready: swipeReplyReady } = swipeReply;
 
 :root[data-display-palette='night'] .state-text-widget--active:hover {
   background-color: rgba(64, 152, 252, 0.25);
+}
+
+/*
+ * 聊天装扮（Chat Skin）。DOM 契约与扩展点见 doc/chat-skin.md：
+ * 装扮以内联样式作用在单条消息的 .chat-item / .content / .name 上，这里只放结构性规则。
+ */
+.chat-item--chat-skin-compact {
+  position: relative;
+  isolation: isolate;
+}
+
+.chat-item--chat-skin {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-item--chat-skin .content {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-item--chat-skin-compact.chat-item--chat-skin-surface {
+  padding: var(--sc-chat-skin-compact-padding, 0.2rem 0.5rem);
+  border-radius: var(--sc-chat-skin-compact-radius, 0.4rem);
+}
+
+.chat-item--chat-skin-layered .message-action-bar,
+.chat-item--chat-skin-layered .editing-self-actions,
+.chat-item--chat-skin-layered .message-swipe-reply-indicator,
+.chat-item--chat-skin-layered .chat-item__select-checkbox {
+  z-index: 2;
+}
+
+.chat-item--chat-skin.chat-item--selected,
+.chat-item--chat-skin.chat-item--relocate-target {
+  outline: 2px solid rgba(59, 130, 246, 0.55);
+  outline-offset: -2px;
+}
+
+.chat-item--chat-skin.chat-item--relocate-target {
+  outline-color: rgba(16, 185, 129, 0.6);
 }
 
 .viewer-edit-message-image::before {

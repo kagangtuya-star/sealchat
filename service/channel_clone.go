@@ -142,6 +142,7 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 			"bot_whisper_forward_config": source.BotWhisperForwardConfig,
 			"background_attachment_id":   source.BackgroundAttachmentId,
 			"background_settings":        source.BackgroundSettings,
+			"display_mode":               source.DisplayMode,
 		}).Error; err != nil {
 		cleanupClonedChannel(newChannel.ID)
 		return nil, err
@@ -264,6 +265,13 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 		summary.addSkipped("audioState")
 	}
 
+	// 布局频道的布局定义属于频道配置，随频道一同复制；引用的资源若在副本中不存在，由前端提示重新绑定。
+	if err := CloneChannelWorkbenchTx(tx, source.ID, newChannel.ID, targetWorldID, actor.ID); err != nil {
+		tx.Rollback()
+		cleanupClonedChannel(newChannel.ID)
+		return nil, err
+	}
+
 	if params.Options.CopyWebhooks {
 		botTokens, botUserIDs, err = copyChannelWebhooks(tx, source.ID, newChannel.ID, actor.ID, &summary)
 		if err != nil {
@@ -336,6 +344,7 @@ func cleanupClonedChannel(channelID string) {
 	db.Where("role_id LIKE ?", rolePattern).Delete(&model.UserRoleMappingModel{})
 	db.Where("role_id LIKE ?", rolePattern).Delete(&model.RolePermissionModel{})
 	db.Where("id LIKE ?", rolePattern).Delete(&model.ChannelRoleModel{})
+	db.Where("channel_id = ?", channelID).Delete(&model.ChannelWorkbenchModel{})
 	db.Where("id = ?", channelID).Delete(&model.ChannelModel{})
 }
 
@@ -642,6 +651,9 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if err != nil {
 			return nil, err
 		}
+		chatSkin := mapChannelIdentityChatSkinAttachments(identity.ChatSkin, func(attachmentID string) (string, error) {
+			return cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, identity.UserID, identity.ID, attachmentID, attachmentMap)
+		})
 		clone := model.ChannelIdentityModel{
 			StringPKBaseModel:        model.StringPKBaseModel{ID: newID},
 			ChannelID:                targetID,
@@ -658,6 +670,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			VariantResetMatchContent: identity.VariantResetMatchContent,
 			SortOrder:                identity.SortOrder,
 			TheaterPresentation:      presentation,
+			ChatSkin:                 chatSkin,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
@@ -802,6 +815,12 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if err != nil {
 			return nil, err
 		}
+		appearanceJSON, err = remapVariantChatSkinJSON(appearanceJSON, func(attachmentID string) (string, error) {
+			return cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, variant.UserID, variant.IdentityID, attachmentID, attachmentMap)
+		})
+		if err != nil {
+			return nil, err
+		}
 		clone := model.ChannelIdentityVariantModel{
 			StringPKBaseModel:  model.StringPKBaseModel{ID: utils.NewID()},
 			IdentityID:         newIdentityID,
@@ -918,12 +937,49 @@ func channelCloneAttachmentReferenceTx(tx *gorm.DB, sourceChannelID, sourceIdent
 		Find(&variants).Error; err != nil {
 		return false, err
 	}
+	for _, attachmentRef := range protocol.ChatSkinAttachmentIDs(identity.ChatSkin) {
+		if attachmentRef == attachmentID {
+			return true, nil
+		}
+	}
 	for _, variant := range variants {
 		if normalizeChannelCloneAttachmentID(variant.AvatarAttachmentID) == attachmentID {
 			return true, nil
 		}
+		if patch := protocol.ChatSkinPatchFromAppearance(variant.Appearance()); patch != nil {
+			for _, attachmentRef := range protocol.ChatSkinAttachmentIDs(patch.Skin) {
+				if attachmentRef == attachmentID {
+					return true, nil
+				}
+			}
+		}
 	}
 	return false, nil
+}
+
+// remapVariantChatSkinJSON 将差分 appearance.chatSkin 中的附件引用映射到复制后的频道。
+func remapVariantChatSkinJSON(raw string, clone func(attachmentID string) (string, error)) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return raw, nil
+	}
+	patch, ok := document["chatSkin"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	skin, ok := patch["skin"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	patch["skin"] = mapChannelIdentityChatSkinAttachments(skin, clone)
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func normalizeChannelCloneAttachmentID(attachmentID string) string {

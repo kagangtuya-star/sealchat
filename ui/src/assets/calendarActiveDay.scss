@@ -1,0 +1,38 @@
+.n-date-panel-date[data-sc-calendar-active-day='true'] .n-date-panel-date__trigger {
+  position: relative;
+  z-index: 1;
+  border-radius: 10px;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 2px 3px;
+    border-radius: 10px;
+    background: var(--sc-calendar-active-day-background, linear-gradient(180deg,
+      color-mix(in srgb, var(--sc-calendar-active-day-accent, var(--primary-color)) 26%, transparent),
+      color-mix(in srgb, var(--sc-calendar-active-day-accent, var(--primary-color)) 14%, transparent)));
+    box-shadow: var(--sc-calendar-active-day-border, inset 0 0 0 1px color-mix(in srgb, var(--sc-calendar-active-day-accent, var(--primary-color)) 28%, transparent));
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 5px;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 999px;
+    background: var(--sc-calendar-active-day-dot, color-mix(in srgb, var(--sc-calendar-active-day-accent, var(--primary-color)) 80%, transparent));
+    box-shadow: var(--sc-calendar-active-day-dot-shadow, 0 0 0 1px color-mix(in srgb, var(--sc-calendar-active-day-accent, var(--primary-color)) 34%, transparent));
+    pointer-events: none;
+  }
+}
+
+@each $state in selected, covered, start, end {
+  .n-date-panel-date[data-sc-calendar-active-day='true'].n-date-panel-date--#{$state} .n-date-panel-date__trigger::before {
+    opacity: 0.55;
+  }
+}

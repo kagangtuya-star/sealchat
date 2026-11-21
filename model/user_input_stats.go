@@ -78,7 +78,13 @@ func applyBaseFilter(q *gorm.DB, userID string, f InputStatsFilter, tableAlias s
 		prefix = tableAlias + "."
 	}
 
-	q = q.Where(prefix+"user_id = ? AND "+prefix+"is_deleted = ? AND "+prefix+"is_revoked = ?", userID, false, false)
+	q = q.Where(prefix+"user_id = ?", userID)
+	return applyInputStatsMessageRules(q, f, prefix)
+}
+
+// applyInputStatsMessageRules 是输入统计与打字英雄榜共用的消息计入规则（不含统计主体条件）。
+func applyInputStatsMessageRules(q *gorm.DB, f InputStatsFilter, prefix string) *gorm.DB {
+	q = q.Where(prefix+"is_deleted = ? AND "+prefix+"is_revoked = ?", false, false)
 	if !f.IncludeImported {
 		q = q.Where("("+prefix+"is_imported = ? OR "+prefix+"is_imported IS NULL)", false)
 	}
@@ -239,43 +245,53 @@ func UserInputStatsOverall(userID string, f InputStatsFilter) (*InputStatsOvervi
 	return overview, nil
 }
 
+// typingSpeedActiveGap 相邻两条消息间隔不超过该阈值时，间隔计入活跃输入时间。
+const typingSpeedActiveGap = 30 * time.Minute
+
+// typingSpeedAccumulator 是输入统计打字速度（字数/活跃分钟数）的唯一估算口径。
+// 调用方必须按 created_at、id 升序逐条喂入同一统计主体的消息。
+type typingSpeedAccumulator struct {
+	totalChars    int64
+	activeMinutes float64
+	msgCount      int
+	prevCreatedAt time.Time
+}
+
+func (a *typingSpeedAccumulator) add(createdAt time.Time, chars int64) {
+	if a.msgCount > 0 {
+		gap := createdAt.Sub(a.prevCreatedAt)
+		if gap <= typingSpeedActiveGap && gap > 0 {
+			a.activeMinutes += gap.Minutes()
+		}
+	}
+	a.msgCount++
+	a.totalChars += chars
+	a.prevCreatedAt = createdAt
+}
+
+func (a *typingSpeedAccumulator) speed() float64 {
+	if a.msgCount < 2 {
+		return 0
+	}
+	if a.activeMinutes < 1 {
+		return float64(a.totalChars)
+	}
+	return float64(a.totalChars) / a.activeMinutes
+}
+
 // calcTypingSpeed 计算打字速度（字数/活跃分钟数）
 func calcTypingSpeed(userID string, f InputStatsFilter) (float64, error) {
-	const activeGapThreshold = 30 * time.Minute
-
-	var totalChars int64
-	var activeMinutes float64
-	msgCount := 0
-	var prevMsg *inputStatsMessageRow
-
+	var acc typingSpeedAccumulator
 	err := scanInputStatsMessages(userID, f, func(batch []inputStatsMessageRow) error {
 		for _, msg := range batch {
-			msgCount++
-			totalChars += msg.CharCount
-			if prevMsg != nil {
-				gap := msg.CreatedAt.Sub(prevMsg.CreatedAt)
-				if gap <= activeGapThreshold && gap > 0 {
-					activeMinutes += gap.Minutes()
-				}
-			}
-			msgCopy := msg
-			prevMsg = &msgCopy
+			acc.add(msg.CreatedAt, msg.CharCount)
 		}
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-
-	if msgCount < 2 {
-		return 0, nil
-	}
-
-	if activeMinutes < 1 {
-		return float64(totalChars), nil
-	}
-
-	return float64(totalChars) / activeMinutes, nil
+	return acc.speed(), nil
 }
 
 func calcRunningMinutes(userID string, f InputStatsFilter, gapThreshold time.Duration) (int64, error) {

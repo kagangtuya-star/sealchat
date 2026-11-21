@@ -62,7 +62,9 @@ func UploadQuick(c *fiber.Ctx) error {
 	if body.ChannelID == "user-avatar" {
 		user := getCurUser(c)
 		user.Avatar = "id:" + newItem.ID
-		user.SaveAvatar()
+		if err := user.SaveAvatar(); err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "头像保存失败，请重试"})
+		}
 	}
 
 	return c.JSON(fiber.Map{
@@ -139,7 +141,9 @@ func Upload(c *fiber.Ctx) error {
 		if channelId == "user-avatar" {
 			user := getCurUser(c)
 			user.Avatar = "id:" + newItem.ID
-			user.SaveAvatar()
+			if err := user.SaveAvatar(); err != nil {
+				return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "头像保存失败，请重试"})
+			}
 		}
 	}
 
@@ -193,7 +197,7 @@ func AttachmentGet(c *fiber.Ctx) (responseErr error) {
 			"message": "附件不存在",
 		})
 	}
-	if att.RootIDType == "world_clue" || att.IsTTSManaged() {
+	if att.IsTTSManaged() {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
 	}
 	if proxy && att.StorageType == model.StorageS3 {
@@ -298,13 +302,6 @@ func AttachmentMeta(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "附件不存在",
 		})
-	}
-	if att.RootIDType == "world_clue" {
-		user := getCurUser(c)
-		allowed, err := service.WorldClueCanAccessAttachment(att.RootID, att.ID, user.ID)
-		if err != nil || !allowed {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "附件不存在"})
-		}
 	}
 
 	publicURL := service.AttachmentReadURL(c.Context(), &att)

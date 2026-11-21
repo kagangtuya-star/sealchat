@@ -1267,6 +1267,7 @@ watch(
                   :id="`sc-split-iframe-A`"
                   :key="paneA.iframeKey"
                   class="sc-split-iframe"
+                  :class="{ 'is-chat': paneA.mode === 'chat' }"
                   :src="paneA.src"
                   frameborder="0"
                 />
@@ -1294,6 +1295,7 @@ watch(
                   :id="`sc-split-iframe-B`"
                   :key="paneB.iframeKey"
                   class="sc-split-iframe"
+                  :class="{ 'is-chat': paneB.mode === 'chat' }"
                   :src="paneB.src"
                   frameborder="0"
                 />

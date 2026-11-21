@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,6 +51,113 @@ func TestNormalizeDomainToURLIPv6(t *testing.T) {
 				t.Fatalf("normalizeDomainToURL(%q) = %s, want %s", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestExportTipTapTable(t *testing.T) {
+	input := `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","attrs":{"colspan":2,"rowspan":2,"colwidth":[120,180]},"content":[{"type":"paragraph","content":[{"type":"text","text":"<&表头>","marks":[{"type":"bold"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"甲"}]}]},{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"乙","marks":[{"type":"link","attrs":{"href":"https://example.com"}}]}]},{"type":"paragraph","content":[{"type":"text","text":"第二段"}]}]}]}]}]}`
+	got, ok := convertTipTapToHTML(input)
+	if !ok {
+		t.Fatal("table JSON was not recognized")
+	}
+	for _, expected := range []string{`class="tiptap-table-wrapper"`, `class="tiptap-table" style="width: 300px"`, `<col style="width: 120px" />`, `<col style="width: 180px" />`, `<th colspan="2" rowspan="2">`, `<strong>&lt;&amp;表头&gt;</strong>`, `href="https://example.com"`, `<p>第二段</p>`} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("missing %q in %s", expected, got)
+		}
+	}
+	if plain, ok := extractTipTapPlainText(input); !ok || plain != "<&表头>\n甲\t乙\n第二段" {
+		t.Fatalf("table fallback lost cell/row boundaries: %q", plain)
+	}
+	unsafe := strings.ReplaceAll(input, `"colspan":2,"rowspan":2,"colwidth":[120,180]`, `"colspan":"2 onclick=bad","rowspan":-1,"colwidth":["bad"],"style":"position:fixed","onclick":"bad"`)
+	got, _ = convertTipTapToHTML(unsafe)
+	if !strings.Contains(got, `<th colspan="1" rowspan="1">`) || !strings.Contains(got, `min-width: 80px`) || strings.Contains(got, "onclick") || strings.Contains(got, "position") {
+		t.Fatalf("unsafe table attrs rendered: %s", got)
+	}
+	fractional, _ := convertTipTapToHTML(strings.ReplaceAll(input, `[120,180]`, `[120.5,180.25]`))
+	if !strings.Contains(fractional, `width: 300.75px`) || !strings.Contains(fractional, `width: 120.5px`) {
+		t.Fatalf("fractional column widths lost: %s", fractional)
+	}
+}
+
+func TestLogStaticRichTable(t *testing.T) {
+	input := `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","attrs":{"colspan":2,"rowspan":1,"colwidth":[120.5,180.25]},"content":[{"type":"paragraph","content":[{"type":"text","text":"表头","marks":[{"type":"bold"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"甲"}]}]},{"type":"tableCell","content":[{"type":"paragraph"}]}]}]}]}`
+	body := logMessageBody{Doc: buildLogRichDocument(input, true)}
+	if err := logResolveBody(&body, func(LogBodyAssetRef) (string, error) { return "", nil }); err != nil {
+		t.Fatal(err)
+	}
+	got := body.html()
+	for _, want := range []string{`class="tiptap-table-wrapper"`, `width: 300.75px`, `width: 120.5px`, `<th colspan="2" rowspan="1"><p><strong>表头</strong></p></th>`, `<td colspan="1" rowspan="1"></td>`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("published table missing %q: %s", want, got)
+		}
+	}
+	// The existing public plain-text normalizer trims a trailing empty cell's tab.
+	if plain := body.plainText(); plain != "表头\n甲" {
+		t.Fatalf("published table fallback: %q", plain)
+	}
+}
+
+const exportTable2x2TipTap = `{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"甲","marks":[{"type":"bold"}]}]}]},{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"乙","marks":[{"type":"italic"}]}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"丙"}]}]},{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"丁"}]}]}]}]}]}`
+
+func TestExportTableTextFormats(t *testing.T) {
+	msg := ExportMessage{Content: exportTable2x2TipTap, SenderName: "角色", IcMode: "ic"}
+	const plain = "甲\t乙\n丙\t丁"
+	if got := buildContentBody(&msg, false); got != plain {
+		t.Fatalf("plain TXT table: %q", got)
+	}
+	if got := AgentRichDocumentPlainText(buildRichDocumentForExport(msg.Content, false)); got != plain {
+		t.Fatalf("rich plain table: %q", got)
+	}
+	got := buildBBCodeBody(&msg, false)
+	if got != "[b]甲[/b]\t[i]乙[/i]\n丙\t丁" {
+		t.Fatalf("BBCode table boundaries/marks: %q", got)
+	}
+	for _, unwanted := range []string{"<table", "<td", "甲乙丙丁", "\t\n"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("BBCode table contains %q: %q", unwanted, got)
+		}
+	}
+	payload := &ExportPayload{Messages: []ExportMessage{msg}, WithoutTimestamp: true}
+	for _, bbcode := range []bool{false, true} {
+		payload.ExtraMeta = map[string]interface{}{"text_colorize_bbcode": bbcode}
+		data, err := (textFormatter{}).Build(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := plain
+		if bbcode {
+			want = got
+		}
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("TXT (BBCode=%v) missing table: %s", bbcode, data)
+		}
+	}
+	data, err := (jsonFormatter{}).Build(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log diceLogPayload
+	if err := json.Unmarshal(data, &log); err != nil {
+		t.Fatal(err)
+	}
+	if log.Version != 105 || len(log.Items) != 1 || log.Items[0].Message != plain {
+		t.Fatalf("JSON compatibility text changed: %s", data)
+	}
+	if !strings.Contains(getViewerAssets().CSS, ".tiptap-table") {
+		t.Fatal("Viewer table CSS missing")
+	}
+}
+
+func TestBuildBBCodeTableCellBoundaries(t *testing.T) {
+	for _, tc := range []struct{ html, want string }{
+		{`<table><tr><td>甲</td><td>乙</td></tr><tr><td>丙</td><td>丁</td></tr></table>`, "甲\t乙\n丙\t丁"},
+		{`<TABLE><TR><TH><p><strong>甲</strong></p><p>第二段</p></TH><TD>乙<br>续行</TD></TR></TABLE>`, "[b]甲[/b]\n第二段\t乙\n续行"},
+		{`<tr><td>甲</td><td></td><td>乙</td></tr><tr><td>丙</td><td>丁</td></tr>`, "甲\t\t乙\n丙\t丁"},
+		{`<tr><td><code>x</code></td><td><a href="https://example.com">链接</a></td></tr>`, "[code]x[/code]\t[url=https://example.com]链接[/url]"},
+	} {
+		if got := convertRenderedHTMLToBBCode(tc.html); got != tc.want {
+			t.Fatalf("BBCode table = %q, want %q", got, tc.want)
+		}
 	}
 }
 
@@ -930,5 +1038,125 @@ func TestWorldClueExportDocxAttachmentEmbedsMedia(t *testing.T) {
 	}
 	if !foundDocumentImageRef {
 		t.Fatal("expected document.xml to reference clue media")
+	}
+}
+
+func TestCQImageMarkupUsesAttachmentPublicURL(t *testing.T) {
+	users := setupWorldClueTest(t)
+	const attachmentID = "cq-public-url-attachment"
+	createWorldClueExportImageAttachment(t, attachmentID, users.owner, users.worldID)
+	if err := model.GetDB().Model(&model.AttachmentModel{}).Where("id = ?", attachmentID).Update("external_url", "https://cdn.example.org/images/actual.png").Error; err != nil {
+		t.Fatal(err)
+	}
+	oldBase := attachmentBaseURLOverride
+	attachmentBaseURLOverride = "https://trpgchat.example"
+	t.Cleanup(func() { attachmentBaseURLOverride = oldBase })
+	want := "[CQ:image,file=image,url=https://cdn.example.org/images/actual.png]"
+	for _, src := range []string{"id:" + attachmentID, "/api/v1/attachment/" + attachmentID, "https://trpgchat.example/api/v1/attachment/" + attachmentID} {
+		if got := buildCQImageMarkup(src); got != want {
+			t.Fatalf("buildCQImageMarkup(%q) = %q, want %q", src, got, want)
+		}
+	}
+	if got := buildCQImageMarkup("https://images.example.org/other.png"); got != "[CQ:image,file=image,url=https://images.example.org/other.png]" {
+		t.Fatalf("external image changed: %q", got)
+	}
+}
+
+func TestWorldClueDiceJSONReusesOrdinaryImageCQMarkup(t *testing.T) {
+	users := setupWorldClueTest(t)
+	const channelID = "clue-dice-json-channel"
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID},
+		WorldID:           users.worldID, Name: "海豹线索频道", PermType: "public", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldBase := attachmentBaseURLOverride
+	attachmentBaseURLOverride = "https://files.example"
+	t.Cleanup(func() { attachmentBaseURLOverride = oldBase })
+	const mainID = "clue-dice-main"
+	createWorldClueExportImageAttachment(t, mainID, users.owner, users.worldID)
+	content := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"图文前段 "},{"type":"image","attrs":{"src":"id:clue-dice-inline"}},{"type":"text","text":" 图文后段"}]},{"type":"paragraph","content":[{"type":"image","attrs":{"src":"https://images.example/extra.png"}}]}]}`
+	clue, err := WorldClueCreate(users.worldID, users.owner, WorldClueCreateInput{
+		Title: "染色器图片线索", Kind: model.WorldClueKindImage, ContentFormat: model.WorldClueContentTipTap,
+		Content: content, ImageAttachmentID: mainID, DefaultAccess: model.WorldClueAccessView,
+		ManagerNoteFormat: model.WorldClueContentPlain, ManagerNote: "manager only",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePublish(users.worldID, clue.ID, users.owner, clue.PublishSeq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberA, model.WorldClueContentPlain, "member A note", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorldCluePutPrivate(users.worldID, clue.ID, users.owner, users.memberB, model.WorldClueContentPlain, "member B note", 0); err != nil {
+		t.Fatal(err)
+	}
+	link := "https://sealchat.example/#/" + users.worldID + "/" + channelID + "?clue=" + clue.ID
+	now := time.Now()
+	job := &model.MessageExportJobModel{UserID: users.memberA, ChannelID: channelID, Format: "json", IncludeOOC: true, IncludeArchived: true}
+	messages := []*model.MessageModel{
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "ordinary-image", CreatedAt: now}, UserID: users.memberA, Content: `普通图片 <img src="id:normal-dice-image" />`, ICMode: "ic"},
+		{StringPKBaseModel: model.StringPKBaseModel{ID: "clue-image", CreatedAt: now.Add(time.Second)}, UserID: users.memberA, Content: link, ICMode: "ic"},
+	}
+	withImages := buildExportPayload(job, "海豹线索频道", messages, nil, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true})
+	items := buildDiceLogPayload(withImages).Items
+	if len(items) != 2 {
+		t.Fatalf("expected ordinary and clue messages, got %d", len(items))
+	}
+	const normalCQ = "[CQ:image,file=image,url=https://files.example/api/v1/attachment/normal-dice-image]"
+	if !strings.Contains(items[0].Message, normalCQ) {
+		t.Fatalf("ordinary image changed: %q", items[0].Message)
+	}
+	clueBody := items[1].Message
+	for _, token := range []string{
+		"[线索: 染色器图片线索]",
+		"[CQ:image,file=image,url=https://files.example/api/v1/attachment/clue-dice-main]",
+		"[CQ:image,file=image,url=https://files.example/api/v1/attachment/clue-dice-inline]",
+		"[CQ:image,file=image,url=https://images.example/extra.png]",
+		"member A note",
+	} {
+		if !strings.Contains(clueBody, token) {
+			t.Fatalf("missing %q from clue dice JSON body: %q", token, clueBody)
+		}
+	}
+	if strings.Contains(clueBody, "member B note") || strings.Contains(clueBody, "manager only") {
+		t.Fatalf("clue dice JSON leaked unauthorized content: %q", clueBody)
+	}
+	if strings.Count(clueBody, "[CQ:image") != 3 {
+		t.Fatalf("expected main image and two inline images exactly once: %q", clueBody)
+	}
+	mainIndex := strings.Index(clueBody, "clue-dice-main")
+	beforeIndex := strings.Index(clueBody, "图文前段")
+	inlineIndex := strings.Index(clueBody, "clue-dice-inline")
+	afterIndex := strings.Index(clueBody, "图文后段")
+	if !(mainIndex < beforeIndex && beforeIndex < inlineIndex && inlineIndex < afterIndex) {
+		t.Fatalf("clue text/image order changed: %q", clueBody)
+	}
+	withoutImages := buildExportPayload(job, "海豹线索频道", messages, nil, &exportExtraOptions{IncludeImages: false, IncludeDiceCommand: true})
+	noImageItems := buildDiceLogPayload(withoutImages).Items
+	if len(noImageItems) != 2 || strings.Contains(noImageItems[0].Message, "[CQ:image") || strings.Contains(noImageItems[1].Message, "[CQ:image") {
+		t.Fatalf("image-disabled dice JSON still has media: %+v", noImageItems)
+	}
+	if !strings.Contains(noImageItems[1].Message, "图文前段") || !strings.Contains(noImageItems[1].Message, "member A note") {
+		t.Fatalf("image-disabled clue lost text: %q", noImageItems[1].Message)
+	}
+}
+
+func TestWorldClueDiceContentKeepsExportWrappers(t *testing.T) {
+	msg := &ExportMessage{
+		Content: "old body", IcMode: "ooc", IsArchived: true, IsWhisper: true,
+		WhisperTargets: []string{"角色甲"}, WorldClues: []WorldClueExportBlock{{
+			Title: "线索", Kind: model.WorldClueKindText, Public: buildRichDocumentForExport("正文", false),
+		}},
+	}
+	body := buildDiceLogContentBody(msg, false)
+	if !strings.Contains(body, "[已归档]") || !strings.Contains(body, "[对角色甲]") || !strings.Contains(body, "（[线索: 线索]") || !strings.Contains(body, "正文）") {
+		t.Fatalf("dice clue export lost message wrappers: %q", body)
+	}
+	if msg.Content != "old body" {
+		t.Fatalf("dice clue export mutated the source message: %q", msg.Content)
 	}
 }

@@ -844,6 +844,7 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 			IsTemporary:         true,
 			SortOrder:           identity.SortOrder,
 			TheaterPresentation: cloneTheaterPresentation(presentation),
+			ChatSkin:            protocol.CloneChatSkin(identity.ChatSkin),
 		}
 		if err := tx.Create(item).Error; err != nil {
 			return err
@@ -1101,6 +1102,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"avatarTextStyle":          item.AvatarTextStyle,
 		"avatarDecorations":        item.AvatarDecorations,
 		"theaterPresentation":      item.TheaterPresentation,
+		"chatSkin":                 item.ChatSkin,
 		"isDefault":                item.IsDefault,
 		"isTemporary":              item.IsTemporary,
 		"botAppearanceMode":        item.BotAppearanceMode,

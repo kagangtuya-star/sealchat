@@ -10,6 +10,111 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const root = path.join(__dirname, '../src/services/ui-customization')
 const { resolveCustomizationContext, hasSafeUIParameter } = require(path.join(root, 'resolver.ts'))
 const { createUICustomizationRuntime } = require(path.join(root, 'cssRuntime.ts'))
+const { detectChatEmbedHost, resolveEffectiveCustomizationSurface } = require(path.join(root, 'embedSurface.ts'))
+
+// The shared URL protocol needs no new option or query parameter.
+const { buildEmbedChatWindowUrl } = require(path.join(root, '../../views/theater/host/theater-floating-window.ts'))
+global.window = { location: { href: 'https://chat.example.com/app/?x=1#/w/world-1/ch-1' } }
+const embedURL = 'https://chat.example.com/app/?x=1#/embed?worldId=world-1&channelId=ch-2&scopeWorldId=world-1&viewport=mobile&audioOwner=0&toolbar=1'
+assert.equal(buildEmbedChatWindowUrl('world-1', 'ch-2'), `${embedURL}&floatingChat=1`)
+assert.equal(buildEmbedChatWindowUrl('world-1', 'ch-2', false), embedURL)
+assert.equal(new URLSearchParams(new URL(buildEmbedChatWindowUrl('world-1', 'ch-2')).hash.split('?')[1]).has('workbenchChat'), false)
+delete global.window
+
+function workbenchFrame({ panelType = 'chat', marker = 'root', framed = true } = {}) {
+  const parent = {
+    location: { search: '', hash: '' },
+    document: {
+      documentElement: { dataset: {} },
+      querySelector(selector) {
+        assert.equal(selector, '[data-sc-ui="workbench"], html[data-sc-workbench]')
+        return marker === 'root' || marker === 'html' ? {} : null
+      },
+    },
+  }
+  // A parent-realm element must work without the child's HTMLIFrameElement class.
+  const frameElement = require('node:vm').runInNewContext('({})')
+  frameElement.closest = selector => {
+    assert.equal(selector, '[data-sc-ui="workbench-panel"][data-sc-panel-type="chat"]')
+    return panelType === 'chat' ? {} : null
+  }
+  frameElement.matches = () => false
+  return { parent, frameElement: framed ? frameElement : null }
+}
+
+const chatHosts = [
+  ['inline-split', 'views/chat/components/InlineChatSplitWindow.vue', ['inline-chat-split', 'inline-chat-split__iframe']],
+  ['split-A', 'views/split/SplitView.vue', ['sc-split-panes', 'sc-split-iframe is-chat']],
+  ['split-B', 'views/split/SplitView.vue', ['sc-split-panes', 'sc-split-iframe is-chat']],
+  ['theater-chat', 'views/theater/host/TheaterView.vue', ['theater-host', 'theater-host-chat', 'theater-host-chat-frame']],
+  ...['stage', 'viewport', 'workbench'].map(mode => [`floating-${mode}`, 'views/theater/host/TheaterFloatingHost.vue',
+    [`theater-floating-host theater-floating-host--${mode}`, 'theater-floating-window is-chat', 'theater-floating-window__frame']]),
+]
+
+function builtInFrame(classes) {
+  const fixture = workbenchFrame({ panelType: '', marker: '' })
+  const elements = classes.map(value => new Set(value.split(' ')))
+  // Minimal class/descendant selector fixture, with the frame in the parent realm.
+  fixture.frameElement.matches = selectors => selectors.split(',').some(selector => {
+    const terms = selector.trim().split(/\s+/).map(term => term.slice(1).split('.')).reverse()
+    let index = elements.length - 1
+    const match = term => term.every(name => elements[index].has(name))
+    if (!match(terms.shift())) return false
+    for (const term of terms) {
+      do { index-- } while (index >= 0 && !match(term))
+      if (index < 0) return false
+    }
+    return true
+  })
+  return fixture
+}
+
+// Keep the runtime's DOM allowlist tied to the real host templates.
+for (const [name, file, classes] of chatHosts) {
+  const source = fs.readFileSync(path.join(root, '../..', file), 'utf8')
+  for (const classNames of classes) {
+    for (const className of classNames.split(' ')) {
+      if (className === 'is-chat' || className.startsWith('theater-floating-host--')) continue
+      assert.ok(source.includes(`class="${className}"`), `${name}: host class ${className} changed`)
+    }
+  }
+  assert.equal(detectChatEmbedHost('embed', builtInFrame(classes)), true, name)
+  assert.equal(detectChatEmbedHost('theater', builtInFrame(classes)), false, `${name}: non-embed was promoted`)
+  assert.equal(detectChatEmbedHost('embed', builtInFrame(classes.slice(-1))), false, `${name}: missing host was accepted`)
+  const crossOrigin = builtInFrame(classes)
+  Object.defineProperty(crossOrigin.parent, 'document', { get() { throw new DOMException('Cross-origin', 'SecurityError') } })
+  assert.equal(detectChatEmbedHost('embed', crossOrigin), false, `${name}: cross-origin was accepted`)
+}
+const floatingTemplate = fs.readFileSync(path.join(root, '../../views/theater/host/TheaterFloatingHost.vue'), 'utf8')
+assert.match(floatingTemplate, /'is-chat': item\.source === 'chat'/)
+const splitTemplate = fs.readFileSync(path.join(root, '../../views/split/SplitView.vue'), 'utf8')
+for (const pane of ['A', 'B']) assert.ok(splitTemplate.includes(`:class="{ 'is-chat': pane${pane}.mode === 'chat' }"`))
+for (const classes of [
+  ['theater-floating-host', 'theater-floating-window', 'theater-floating-window__frame'],
+  ['theater-floating-host', 'theater-floating-window is-character', 'theater-floating-window__frame'],
+  ['theater-iframe-frame', 'theater-iframe-visual-object__frame'],
+  ['sc-split-panes', 'sc-split-iframe'],
+  ['sc-split-panes', 'arbitrary-web-frame'],
+]) assert.equal(detectChatEmbedHost('embed', builtInFrame(classes)), false, classes.join(' > '))
+
+for (const [surface, workbench, expected] of [
+  ['chat', false, 'chat'], ['embed', false, 'embed'], ['embed', true, 'chat'],
+  ['theater', true, 'theater'], ['split', true, 'split'], ['internal', true, 'internal'],
+]) assert.equal(resolveEffectiveCustomizationSurface(surface, workbench), expected)
+assert.equal(detectChatEmbedHost('embed', undefined), false, 'SSR is not a Workbench')
+const topWindow = {}; topWindow.parent = topWindow
+assert.equal(detectChatEmbedHost('embed', topWindow), false, 'direct embed was promoted')
+assert.equal(detectChatEmbedHost('embed', workbenchFrame()), true)
+assert.equal(detectChatEmbedHost('embed', workbenchFrame({ marker: 'html' })), true)
+assert.equal(detectChatEmbedHost('split', workbenchFrame()), false)
+assert.equal(detectChatEmbedHost('embed', workbenchFrame({ framed: false })), false)
+assert.equal(detectChatEmbedHost('embed', workbenchFrame({ marker: '' })), false, 'inactive Workbench was promoted')
+for (const panelType of ['', 'web', 'theater', 'split', 'viewport', 'stage']) {
+  assert.equal(detectChatEmbedHost('embed', workbenchFrame({ panelType })), false)
+}
+const crossOrigin = workbenchFrame()
+Object.defineProperty(crossOrigin.parent, 'document', { get() { throw new DOMException('Cross-origin', 'SecurityError') } })
+assert.equal(detectChatEmbedHost('embed', crossOrigin), false)
 
 const chat = { currentWorldId: 'A', channelId: 'a-channel', channelWorldId: 'A', observerMode: false, observerWorldId: '', observerChannelId: '', observerSlug: '' }
 const route = (name, params = {}, query = {}, meta = {}) => ({ name, params, query, meta })
@@ -35,6 +140,8 @@ assert.equal(context('user-signin').surface, 'auth')
 assert.equal(context('split', {}, { scopeWorldId: 'B', worldId: 'A' }).worldId, 'B')
 assert.equal(context('split', {}, { scopeWorldId: 'B::preset:ic-ooc', worldId: 'B' }).worldId, 'B')
 assert.equal(context('embed', {}, { worldId: 'B', channelId: 'b-channel' }).worldId, 'B')
+assert.equal(context('embed').surface, 'embed')
+assert.equal(context('embed').publicSurface, true)
 assert.equal(context('embed', {}, { worldId: 'B' }, { ...chat, embedReady: true }).worldId, 'A')
 assert.equal(context('theater', {}, { worldId: 'B' }).worldId, 'B')
 assert.equal(context('observer-entry', { slug: 'ob' }).worldId, '')
@@ -178,6 +285,11 @@ async function testInstaller() {
   const display = reactive({ palette: 'night', layout: 'compact' })
   const utils = reactive({ config: null })
   const requests = []
+  const scripts = []
+  const clients = []
+  let cleanups = 0
+  let chatPackages = false
+  const realJSRuntime = require(path.join(root, 'jsRuntime.ts'))
   const chatEvent = { all: new Map(), on(n, h) { this.all.set(n, h) }, off(n) { this.all.delete(n) } }
   const stubs = {
     '@/stores/chat': { useChatStore: () => state, chatEvent },
@@ -189,9 +301,22 @@ async function testInstaller() {
     '@/stores/utils': { useUtilsStore: () => utils },
     '@/stores/characterCard': { useCharacterCardStore: () => ({}) },
     '@/stores/channelCharacterSnapshot': { useChannelCharacterSnapshotStore: () => ({}) },
-    '@/bridge/channelExtensionClient': { createChannelExtensionClient: () => { throw new Error('CSS-only fixture must not open a channel client') } },
+    '@/bridge/channelExtensionClient': { createChannelExtensionClient: options => {
+      assert.equal(chatPackages, true, 'CSS-only fixture must not open a channel client')
+      const client = { options, closed: false, close() { this.closed = true }, onClosed() {} }
+      clients.push(client)
+      return client
+    } },
+    './jsRuntime': { ...realJSRuntime, createBlobModuleImporter: () => async source => {
+      assert.match(source, /workbench-script/)
+      return { default(sc) { scripts.push(sc); sc.cleanup(() => { cleanups++ }) } }
+    } },
     './api': { loadUICustomizations: async ctx => {
       requests.push(ctx)
+      if (chatPackages) return { ...ctx, packages: ctx.surface === 'chat' ? [
+        { ...pkg('chat-platform', 'platform'), js: '// workbench-script', jsHash: 'platform-js', channelCapabilities: ['context.read'] },
+        { ...pkg('chat-world', 'world'), js: '// workbench-script', jsHash: 'world-js', requiresTrust: true, channelCapabilities: ['context.read'] },
+      ] : [] }
       const worldId = ctx.surface === 'log-layout' ? 'LOG-WORLD' : ctx.worldId
       const world = worldId ? pkg(worldId, 'world') : null
       if (ctx.surface === 'log-layout' && world) Object.assign(world, { js: 'void 0', jsHash: 'log-js', requiresTrust: true })
@@ -205,17 +330,20 @@ async function testInstaller() {
   }
   for (const [key, exports] of Object.entries(stubs)) Module._cache[`customization-stub:${key}`] = { exports, loaded: true }
   const { installUICustomizationRuntime, isUICustomizationSafeSession, setUICustomizationSafeSession, UI_CUSTOMIZATION_SAFE_SESSION_KEY, useUICustomizationTrustPrompt } = require(path.join(root, 'runtime.ts'))
-  const boot = async (location, parentSafe = false) => {
+  const local = new Map()
+  const boot = async (location, parentSafe = false, frame = null) => {
     const doc = domFixture(); doc.documentElement = { dataset: {} }
     const listeners = new Map()
     const session = new Map()
     const win = {
       location, document: doc,
+      localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value) },
       sessionStorage: { getItem: key => session.has(key) ? session.get(key) : null, setItem: (key, value) => session.set(key, String(value)) },
       addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name),
       dispatchEvent: event => { listeners.get(event.type)?.(event); return true },
     }
     win.parent = parentSafe ? { location: { search: '', hash: '' }, document: { documentElement: { dataset: { scSafeUi: 'true' } } } } : win
+    if (frame) { win.parent = frame.parent; win.frameElement = frame.frameElement }
     global.window = win; global.document = doc
     const initial = deferred()
     let onNavigation
@@ -288,6 +416,81 @@ async function testInstaller() {
   assert.equal(requests.length, beforeStorageSafe + 2, 'internal surface performed a package request')
   test.runtime.dispose()
   assert.equal(chatEvent.all.size, 0, 'message listeners leaked after dispose')
+
+  // Exercise the actual installer -> CSS runtime -> trust controller -> JS runtime.
+  chatPackages = true
+  const frames = [
+    ['workbench-panel', () => workbenchFrame()],
+    ...chatHosts.map(([name, , classes]) => [name, () => builtInFrame(classes)]),
+  ]
+  for (const [name, makeFrame] of frames) {
+    scripts.length = 0; clients.length = 0; cleanups = 0; local.clear()
+    const worldId = `world-${name}`, channelId = `channel-${name}`
+    state.currentWorldId = worldId; state.curChannel = { id: channelId }
+    const frame = makeFrame()
+    frame.parent.channelId = 'host-channel' // Must never supply the child's context.
+    test = await boot({ search: '', hash: '#/embed' }, false, frame)
+    test.router.currentRoute.value = { ...route('embed', {}, { worldId, channelId: 'initial-channel' }), fullPath: '/embed' }
+    test.initial.resolve(); await tick()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(requests.at(-1).surface, 'chat', name)
+    assert.equal(requests.at(-1).publicSurface, false)
+    assert.equal(requests.at(-1).worldId, worldId)
+    assert.equal(requests.at(-1).channelId, channelId, `${name}: inherited the host/initial channel`)
+    assert.equal(test.doc.documentElement.dataset.scSurface, 'chat')
+    assert.deepEqual(test.doc.head.children.map(n => n.dataset.scCustomizationId), ['chat-platform', 'chat-world'])
+    assert.equal(scripts.length, 1, `${name}: untrusted world script ran`)
+    assert.equal(useUICustomizationTrustPrompt().pending.value[0].worldId, worldId)
+    await useUICustomizationTrustPrompt().trust(['chat-world'])
+    assert.equal(scripts.length, 2, `${name}: trusted chat script did not run`)
+    for (const sc of scripts) {
+      assert.equal(sc.context().surface, 'chat')
+      assert.equal(sc.context().worldId, worldId)
+      assert.equal(sc.context().channelId, channelId)
+      const { options } = sc.channel()
+      assert.equal(options.worldId, worldId)
+      assert.equal(options.channelId, channelId)
+      assert.deepEqual(options.capabilities, ['context.read'])
+      assert.equal(options.isCurrent(), true)
+    }
+    const beforeSafe = requests.length
+    setUICustomizationSafeSession(true); await tick()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(requests.length, beforeSafe)
+    assert.equal(test.doc.head.children.length, 0)
+    assert.equal(cleanups, 2, `${name}: Safe UI did not clean up chat scripts`)
+    assert.ok(clients.every(c => c.closed && !c.options.isCurrent()))
+    assert.ok(scripts.every(sc => sc.channel() === null))
+    await test.runtime.refresh(); await tick()
+    assert.equal(test.doc.head.children.length, 0, `${name}: detection restored CSS in Safe UI`)
+    assert.equal(scripts.length, 2, `${name}: detection restored JS in Safe UI`)
+    test.runtime.dispose()
+
+    for (const safe of ['iframe-url', 'parent-url', 'parent-root']) {
+      const safeFrame = makeFrame()
+      if (safe === 'parent-url') safeFrame.parent.location.hash = '#/w/layout?safe-ui=1'
+      if (safe === 'parent-root') safeFrame.parent.document.documentElement.dataset.scSafeUi = 'true'
+      test = await boot({ search: safe === 'iframe-url' ? '?safe-ui=1' : '', hash: '#/embed' }, false, safeFrame)
+      test.router.currentRoute.value = { ...route('embed'), fullPath: '/embed' }
+      const count = requests.length
+      test.initial.resolve(); await tick()
+      assert.equal(test.doc.documentElement.dataset.scSurface, 'chat')
+      assert.equal(requests.length, count, `${name}: ${safe} requested packages`)
+      assert.equal(test.doc.head.children.length, 0)
+      assert.equal(scripts.length, 2)
+      test.runtime.dispose()
+    }
+  }
+  for (const frame of [null, workbenchFrame({ panelType: '' }), workbenchFrame({ panelType: 'theater' })]) {
+    test = await boot({ search: '', hash: '#/embed' }, false, frame)
+    test.router.currentRoute.value = { ...route('embed'), fullPath: '/embed' }
+    test.initial.resolve(); await tick()
+    assert.equal(requests.at(-1).surface, 'embed')
+    assert.equal(requests.at(-1).publicSurface, true)
+    assert.equal(test.doc.documentElement.dataset.scSurface, 'embed')
+    assert.equal(scripts.length, 2)
+    test.runtime.dispose()
+  }
   delete global.window; delete global.document
   Module._resolveFilename = original
 }

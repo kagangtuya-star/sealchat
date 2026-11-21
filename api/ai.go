@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/service"
 	aiService "sealchat/service/ai"
 	"sealchat/utils"
 )
@@ -21,10 +22,12 @@ type aiTaskRunner interface {
 }
 
 type aiTaskRequest struct {
-	WorldID   string `json:"worldId"`
-	ChannelID string `json:"channelId"`
-	Input     string `json:"input"`
-	Source    string `json:"source"`
+	WorldID        string           `json:"worldId"`
+	ChannelID      string           `json:"channelId"`
+	Input          string           `json:"input"`
+	Source         string           `json:"source"`
+	ProjectID      string           `json:"projectId"`
+	SourceVersions map[string]int64 `json:"sourceVersions"`
 }
 
 var aiRunnerFactory = func(cfgProvider func() *utils.AppConfig) aiTaskRunner {
@@ -40,6 +43,15 @@ func AICapabilitiesGet(ctx *fiber.Ctx) error {
 		return ctx.JSON(fiber.Map{"features": []aiService.FeatureCapability{}})
 	}
 	worldID := strings.TrimSpace(ctx.Query("worldId"))
+	if projectID := strings.TrimSpace(ctx.Query("projectId")); projectID != "" {
+		var err error
+		worldID, err = service.LogProofreadWorld(projectID, user.ID)
+		if err != nil {
+			return writeAIContextError(ctx, err)
+		}
+	} else if worldID != "" && !service.IsWorldMember(worldID, user.ID) {
+		worldID = ""
+	}
 	features := aiService.AvailableFeatures(appConfig.AI, user.ID, worldID)
 	return ctx.JSON(fiber.Map{
 		"features": features,
@@ -59,6 +71,38 @@ func AITaskRun(ctx *fiber.Ctx) error {
 	if featureKey == aiService.FeatureTTSTranslate {
 		return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "语音翻译仅由后端朗读流程调用"})
 	}
+	if featureKey == aiService.FeatureLogProofread {
+		validateOnly := ctx.Query("validate") == "1"
+		var worldID string
+		var err error
+		if validateOnly {
+			worldID, err = service.ValidateLogProofreadReferences(body.ProjectID, user.ID, body.Input, body.SourceVersions)
+		} else {
+			worldID, err = service.ValidateLogProofreadInput(body.ProjectID, user.ID, body.Input, body.SourceVersions)
+		}
+		if err != nil {
+			return writeAIContextError(ctx, err)
+		}
+		body.WorldID = worldID
+		if appConfig == nil || !aiService.IsFeatureAvailable(appConfig.AI, featureKey, user.ID, worldID) {
+			return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "LOG AI 校对未启用或无权使用"})
+		}
+		if body.Source != "platform" && body.Source != "user" {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "请选择平台 AI 或个人 API"})
+		}
+		if appConfig.AI.Features[featureKey].UserCustomOnly && body.Source != "user" {
+			return writeAITaskHTTPError(ctx, aiService.FormatUserCustomProviderRequiredError(featureKey), featureKey, body.Input, appConfig.AI)
+		}
+		limit := utils.NormalizeAIConfig(appConfig.AI).Features[featureKey].Params.MaxInputChars
+		if len([]rune(body.Input)) > limit {
+			return writeAITaskHTTPError(ctx, aiService.ErrInputTooLong, featureKey, body.Input, appConfig.AI)
+		}
+		if validateOnly {
+			return ctx.JSON(fiber.Map{"valid": true})
+		}
+	} else if body.WorldID != "" && !service.IsWorldMember(body.WorldID, user.ID) {
+		body.WorldID = ""
+	}
 	runner := aiRunnerFactory(func() *utils.AppConfig { return appConfig })
 	cfg := utils.AIConfig{}
 	if appConfig != nil {
@@ -72,6 +116,24 @@ func AITaskRun(ctx *fiber.Ctx) error {
 		return writeAITaskHTTPError(ctx, err, featureKey, body.Input, cfg)
 	}
 	return ctx.JSON(aiTaskResponse(output))
+}
+
+func writeAIContextError(ctx *fiber.Ctx, err error) error {
+	var domain *service.LogError
+	if errors.As(err, &domain) {
+		status := fiber.StatusForbidden
+		if domain.Code == "INVALID_INPUT" {
+			status = fiber.StatusBadRequest
+		}
+		if domain.Code == "SOURCE_CHANGED" {
+			status = fiber.StatusConflict
+		}
+		if domain.Code == "NOT_FOUND" {
+			status = fiber.StatusNotFound
+		}
+		return ctx.Status(status).JSON(fiber.Map{"message": domain.Message, "code": domain.Code})
+	}
+	return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "校验 AI 工程权限失败"})
 }
 
 func executeAITask(ctx context.Context, user *model.UserModel, featureKey string, body aiTaskRequest, cfg utils.AIConfig, runner aiTaskRunner) (aiService.BilledRunOutput, error) {
@@ -151,7 +213,13 @@ func streamAITask(ctx *fiber.Ctx, user *model.UserModel, featureKey string, body
 			err    error
 		}, 1)
 		go func() {
-			output, err := executeAITask(streamCtx, user, featureKey, body, cfg, runner)
+			runCtx := streamCtx
+			if featureKey == aiService.FeatureLogProofread {
+				// Disconnect stops delivery, not accounting for a provider run already in flight.
+				// Runner deadlines still bound the request; successful usage is settled normally.
+				runCtx = context.WithoutCancel(streamCtx)
+			}
+			output, err := executeAITask(runCtx, user, featureKey, body, cfg, runner)
 			resultCh <- struct {
 				output aiService.BilledRunOutput
 				err    error

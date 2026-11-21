@@ -164,6 +164,14 @@ func sharedChannelIdentityCopyValues(template *model.SharedChannelIdentityModel,
 	if err != nil {
 		return nil, err
 	}
+	values["chat_skin"] = nil
+	if chatSkin := sharedChannelIdentityDataChatSkin(template.SharedDataJSON); len(chatSkin) > 0 {
+		encodedChatSkin, err := json.Marshal(chatSkin)
+		if err != nil {
+			return nil, err
+		}
+		values["chat_skin"] = string(encodedChatSkin)
+	}
 	if botSettings != nil {
 		values["bot_appearance_mode"] = botSettings.BotAppearanceMode
 		values["variant_reset_match_mode"] = botSettings.VariantResetMatchMode
@@ -533,6 +541,10 @@ func sharedChannelIdentityCreateFromCopyTxWithOrphans(tx *gorm.DB, ownerUserID, 
 		botSettings = sharedChannelIdentityBotSettingsFromCopy(&identity)
 	}
 	template.SharedDataJSON, dataErr = serializeSharedChannelIdentityData("", template, botSettings)
+	if dataErr != nil {
+		return dataErr
+	}
+	template.SharedDataJSON, dataErr = sharedChannelIdentityDataWithChatSkin(template.SharedDataJSON, identity.ChatSkin)
 	if dataErr != nil {
 		return dataErr
 	}
@@ -1116,37 +1128,13 @@ func resolveSharedTheaterAppearanceAssetTx(tx *gorm.DB, sourceChannelID, sourceI
 	if err := tx.Where("id = ? AND deleted_at IS NULL", strings.TrimSpace(ref.AssetID)).Take(&source).Error; err != nil {
 		return nil, nil, err
 	}
-	allowed, err := sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, sourceVariantID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// A variant customizes a whole visual layer. When that layer still uses
-	// inherited base media, promote the validated base asset into variant scope
-	// instead of persisting a base-scoped reference in the variant patch.
-	if !allowed && sourceVariantID != "" && source.VariantID == "" {
-		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, &source, sourceChannelID, sourceIdentityID, "")
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if !allowed {
-		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
-	}
+	// Reused media may originate from any user, channel, identity, or variant.
+	// The caller validates its metadata and maps it into the target scope.
 	canonical, err := resolveSharedTheaterCanonicalAssetTx(tx, &source)
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, sourceVariantID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !allowed && sourceVariantID != "" && canonical.VariantID == "" {
-		allowed, err = sharedTheaterAssetBelongsToScopeTx(tx, canonical, sourceChannelID, sourceIdentityID, "")
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if !allowed || canonical.Status != "ready" {
+	if canonical.Status != "ready" {
 		return nil, nil, fmt.Errorf("共享角色演出资源无效或作用域不匹配: %s", ref.AssetID)
 	}
 	return &source, canonical, nil

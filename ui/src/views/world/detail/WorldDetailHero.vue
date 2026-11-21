@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed } from 'vue';
 import { ArrowLeft, DoorEnter, History, Settings, UserPlus, Users } from '@vicons/tabler';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import WorldCoverMedia from '../WorldCoverMedia.vue';
 
 const props = defineProps<{
   world: any;
@@ -38,20 +38,11 @@ const roleTagType = computed(() => {
   if (props.memberRole === 'admin') return 'info';
   return 'default';
 });
-
-const coverUrl = computed(() => resolveAttachmentUrl(props.world?.coverAttachmentId || ''));
-const coverFailed = ref(false);
-watch(coverUrl, () => {
-  coverFailed.value = false;
-});
-const showCover = computed(() => !!coverUrl.value && !coverFailed.value);
 </script>
 
 <template>
   <section class="world-console-panel world-hero">
-    <div v-if="showCover" class="world-hero__cover">
-      <img :src="coverUrl" alt="" decoding="async" @error="coverFailed = true" />
-    </div>
+    <WorldCoverMedia class="world-hero__cover" :attachment="world?.coverAttachmentId" />
     <div class="world-hero__body">
       <div class="world-hero__topbar">
         <n-button quaternary size="small" @click="emit('back')">
@@ -137,13 +128,6 @@ const showCover = computed(() => !!coverUrl.value && !coverFailed.value);
   overflow: hidden;
   background: color-mix(in srgb, var(--sc-text-primary) 6%, transparent);
   border-bottom: 1px solid var(--sc-border-mute);
-}
-
-.world-hero__cover img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .world-hero__body {

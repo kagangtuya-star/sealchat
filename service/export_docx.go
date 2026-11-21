@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -114,7 +115,7 @@ func renderDocxMessage(doc domain.Document, payload *ExportPayload, msg *ExportM
 	applyDocxOOCWrapper(msg, blocks)
 	for _, block := range blocks {
 		var bodyPara domain.Paragraph
-		if block.Type != "bullet_list" && block.Type != "ordered_list" {
+		if block.Type != "bullet_list" && block.Type != "ordered_list" && block.Type != "table" {
 			bodyPara, err = doc.AddParagraph()
 			if err != nil {
 				return err
@@ -223,7 +224,7 @@ func renderDocxRichDocument(doc domain.Document, content AgentRichDocument, reso
 	for _, block := range content.Blocks {
 		var para domain.Paragraph
 		var err error
-		if block.Type != "bullet_list" && block.Type != "ordered_list" {
+		if block.Type != "bullet_list" && block.Type != "ordered_list" && block.Type != "table" {
 			para, err = doc.AddParagraph()
 			if err != nil {
 				return err
@@ -282,6 +283,8 @@ func addDocxRun(para domain.Paragraph, text string, marks []AgentRichMark, fallb
 
 func renderDocxBlock(doc domain.Document, para domain.Paragraph, node AgentRichNode, resolver *docxImageResolver, fallback domain.Color, depth int) error {
 	switch node.Type {
+	case "table":
+		return renderDocxTable(doc, node, resolver, fallback, depth)
 	case "paragraph", "heading", "blockquote":
 		if node.Type == "heading" {
 			level := clampInt(parseInt(node.Attrs["level"]), 1, 6)
@@ -329,6 +332,231 @@ func renderDocxBlock(doc domain.Document, para domain.Paragraph, node AgentRichN
 	return nil
 }
 
+type docxTableCellPlacement struct {
+	node                       AgentRichNode
+	row, col, colspan, rowspan int
+}
+
+func renderDocxTable(doc domain.Document, node AgentRichNode, resolver *docxImageResolver, fallback domain.Color, depth int) error {
+	var rows []AgentRichNode
+	for _, row := range node.Children {
+		if row.Type == "tablerow" {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	// TipTap omits cells covered by a span; docxgo.Merge needs a full grid.
+	// Track occupied columns so following cells never overwrite merged content.
+	var placements []docxTableCellPlacement
+	occupied := map[int]int{}
+	columns := 0
+	for rowIndex, row := range rows {
+		col := 0
+		for _, cell := range row.Children {
+			if cell.Type != "tablecell" && cell.Type != "tableheader" {
+				continue
+			}
+			attrs := logTableNodeAttrs(cell)
+			colspan := tipTapTableNumber(attrs["colspan"], 1000, 1)
+			rowspan := tipTapTableNumber(attrs["rowspan"], 65534, 1)
+			if rowspan > len(rows)-rowIndex {
+				rowspan = len(rows) - rowIndex
+			}
+			for offset := 0; offset < colspan; {
+				if occupied[col+offset] > rowIndex {
+					col += offset + 1
+					offset = 0
+				} else {
+					offset++
+				}
+			}
+			// docxgo's document API supports at most 63 Word grid columns.
+			if col+colspan > 63 {
+				return fmt.Errorf("DOCX table exceeds 63 grid columns")
+			}
+			placements = append(placements, docxTableCellPlacement{cell, rowIndex, col, colspan, rowspan})
+			for offset := 0; offset < colspan; offset++ {
+				occupied[col+offset] = rowIndex + rowspan
+			}
+			col += colspan
+			if col > columns {
+				columns = col
+			}
+		}
+	}
+	if columns == 0 {
+		return nil
+	}
+	table, err := doc.AddTable(len(rows), columns)
+	if err != nil {
+		return err
+	}
+	if err := table.SetStyle(domain.TableStyleGrid); err != nil {
+		return err
+	}
+	widths := docxTableColumnWidths(placements, columns)
+	if len(widths) > 0 {
+		total := 0
+		for _, width := range widths {
+			total += width
+		}
+		if err := table.SetWidth(domain.TableWidth{Type: domain.WidthDXA, Value: total}); err != nil {
+			return err
+		}
+		for _, row := range table.Rows() {
+			for col, cell := range row.Cells() {
+				if err := cell.SetWidth(widths[col]); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for _, placement := range placements {
+		row, err := table.Row(placement.row)
+		if err != nil {
+			return err
+		}
+		cell, err := row.Cell(placement.col)
+		if err != nil {
+			return err
+		}
+		if placement.colspan > 1 || placement.rowspan > 1 {
+			if err := cell.Merge(placement.colspan, placement.rowspan); err != nil {
+				return err
+			}
+		}
+		if len(widths) > 0 {
+			width := 0
+			for _, value := range widths[placement.col : placement.col+placement.colspan] {
+				width += value
+			}
+			for index := placement.row; index < placement.row+placement.rowspan; index++ {
+				mergedRow, _ := table.Row(index)
+				mergedCell, _ := mergedRow.Cell(placement.col)
+				if err := mergedCell.SetWidth(width); err != nil {
+					return err
+				}
+			}
+		}
+		if err := renderDocxCellContent(cell, placement.node, resolver, fallback, depth); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Widths are best effort: use validated pixel widths, fill unspecified columns
+// with the existing 80px table default, and shrink to the document content area.
+func docxTableColumnWidths(cells []docxTableCellPlacement, columns int) []int {
+	pixels := make([]float64, columns)
+	hasWidth := false
+	for _, cell := range cells {
+		attrs := logTableNodeAttrs(cell.node)
+		values, _ := attrs["colwidth"].([]any)
+		for index, value := range values {
+			if index >= cell.colspan {
+				break
+			}
+			width, ok := value.(float64)
+			if ok && !math.IsNaN(width) && !math.IsInf(width, 0) && width >= 1 && width <= 10000 && pixels[cell.col+index] == 0 {
+				pixels[cell.col+index], hasWidth = width, true
+			}
+		}
+	}
+	if !hasWidth {
+		return nil
+	}
+	total := 0.0
+	for index := range pixels {
+		if pixels[index] == 0 {
+			pixels[index] = 80
+		}
+		total += pixels[index]
+	}
+	scale := 15.0 // 96 DPI pixels to twentieths of a point (twips).
+	if total > docxContentMaxWidthPx {
+		scale *= float64(docxContentMaxWidthPx) / total
+	}
+	widths := make([]int, columns)
+	for index, width := range pixels {
+		widths[index] = int(math.Max(1, math.Round(width*scale)))
+	}
+	return widths
+}
+
+func renderDocxCellContent(cell domain.TableCell, node AgentRichNode, resolver *docxImageResolver, fallback domain.Color, depth int) error {
+	for _, block := range node.Children {
+		switch block.Type {
+		case "bullet_list":
+			for _, child := range block.Children {
+				if err := renderDocxCellListItem(cell, child, resolver, fallback, depth, "• "); err != nil {
+					return err
+				}
+			}
+		case "ordered_list":
+			for index, child := range block.Children {
+				if err := renderDocxCellListItem(cell, child, resolver, fallback, depth, fmt.Sprintf("%d. ", index+1)); err != nil {
+					return err
+				}
+			}
+		default:
+			para, err := cell.AddParagraph()
+			if err != nil {
+				return err
+			}
+			if block.Type == "code_block" {
+				err = addDocxRun(para, block.Text, []AgentRichMark{{Type: "code"}}, fallback)
+			} else {
+				err = renderDocxInline(para, block, resolver, fallback, depth)
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func renderDocxCellListItem(cell domain.TableCell, node AgentRichNode, resolver *docxImageResolver, fallback domain.Color, depth int, prefix string) error {
+	para, err := cell.AddParagraph()
+	if err != nil {
+		return err
+	}
+	if node.Type != "list_item" {
+		return renderDocxInline(para, node, resolver, fallback, depth+1)
+	}
+	if depth > 0 {
+		prefix = strings.Repeat("  ", depth) + prefix
+		_ = para.SetIndentLeft(360 + depth*180)
+	}
+	if err := addDocxRun(para, prefix, nil, fallback); err != nil {
+		return err
+	}
+	for _, child := range node.Children {
+		switch child.Type {
+		case "bullet_list":
+			for _, nested := range child.Children {
+				if err := renderDocxCellListItem(cell, nested, resolver, fallback, depth+1, "• "); err != nil {
+					return err
+				}
+			}
+		case "ordered_list":
+			for index, nested := range child.Children {
+				if err := renderDocxCellListItem(cell, nested, resolver, fallback, depth+1, fmt.Sprintf("%d. ", index+1)); err != nil {
+					return err
+				}
+			}
+		default:
+			if err := renderDocxInline(para, child, resolver, fallback, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func renderDocxListItem(doc domain.Document, para domain.Paragraph, node AgentRichNode, resolver *docxImageResolver, fallback domain.Color, depth int, prefix string) error {
 	if node.Type != "list_item" {
 		return renderDocxBlock(doc, para, node, resolver, fallback, depth+1)
@@ -342,7 +570,7 @@ func renderDocxListItem(doc domain.Document, para domain.Paragraph, node AgentRi
 	}
 	for _, child := range node.Children {
 		switch child.Type {
-		case "bullet_list", "ordered_list":
+		case "bullet_list", "ordered_list", "table":
 			if err := renderDocxBlock(doc, nil, child, resolver, fallback, depth+1); err != nil {
 				return err
 			}
@@ -362,8 +590,12 @@ func renderDocxInline(para domain.Paragraph, node AgentRichNode, resolver *docxI
 			return nil
 		}
 		if href := richLinkMark(node.Marks); href != "" {
-			run, err := para.AddHyperlink(href, node.Text)
+			run, err := para.AddRun()
 			if err != nil {
+				return err
+			}
+			// docxgo v2.12 AddHyperlink only styles text; a field emits the link.
+			if err := run.AddField(docx.NewHyperlinkField(href, node.Text)); err != nil {
 				return err
 			}
 			return applyDocxRunMarks(run, appendAgentMarks(node.Marks, AgentRichMark{Type: "underline"}), fallback)
@@ -588,7 +820,15 @@ func applyDocxOOCWrapper(msg *ExportMessage, blocks []AgentRichNode) {
 }
 
 func richBlockHasContent(node AgentRichNode) bool {
-	return strings.TrimSpace(node.Text) != "" || len(node.Children) > 0
+	if strings.TrimSpace(node.Text) != "" {
+		return true
+	}
+	for _, child := range node.Children {
+		if richBlockHasContent(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func prependRichBlockText(node *AgentRichNode, text string) {
@@ -608,7 +848,7 @@ func prependRichBlockText(node *AgentRichNode, text string) {
 			}
 		}
 		return
-	case "list_item":
+	case "list_item", "table", "tablerow", "tablecell", "tableheader":
 		for i := range node.Children {
 			child := &node.Children[i]
 			if richBlockHasContent(*child) {
@@ -638,7 +878,7 @@ func appendRichBlockText(node *AgentRichNode, text string) {
 			}
 		}
 		return
-	case "list_item":
+	case "list_item", "table", "tablerow", "tablecell", "tableheader":
 		for i := len(node.Children) - 1; i >= 0; i-- {
 			child := &node.Children[i]
 			if richBlockHasContent(*child) {

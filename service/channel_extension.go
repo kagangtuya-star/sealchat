@@ -29,8 +29,10 @@ func ChannelExtensionWriteCapability(capability string) bool {
 	return capability == "storage.write" || capability == "events.publish" || capability == "messages.send" || capability == "characterCard.write" || capability == "attachments.upload"
 }
 
-func ChannelExtensionRequiresTextSendPermission(capability string) bool {
-	return capability == "storage.write" || capability == "events.publish" || capability == "messages.send"
+func ChannelExtensionRequiresTextSendPermission(capability, scopeType string) bool {
+	// UI script storage is independent of posting messages; iForms retain their
+	// existing text-send requirement. Observer/read-only checks apply separately.
+	return (capability == "storage.write" && scopeType != "ui-customization") || capability == "events.publish" || capability == "messages.send"
 }
 
 func uiCustomizationChannelCapabilities(m *model.UICustomizationPackageModel) []string {
@@ -87,7 +89,7 @@ func ResolveChannelExtensionScope(actorID, channelID string, scope ChannelExtens
 	if ChannelExtensionWriteCapability(capability) && readOnly {
 		return nil, errors.New("PERMISSION_DENIED")
 	}
-	if ChannelExtensionRequiresTextSendPermission(capability) && !pm.CanWithChannelRole(actorID, channelID, pm.PermFuncChannelTextSend, pm.PermFuncChannelTextSendAll) {
+	if ChannelExtensionRequiresTextSendPermission(capability, scope.Type) && !pm.CanWithChannelRole(actorID, channelID, pm.PermFuncChannelTextSend, pm.PermFuncChannelTextSendAll) {
 		return nil, errors.New("PERMISSION_DENIED")
 	}
 	result := &ResolvedChannelExtensionScope{Scope: scope, ChannelID: channelID, WorldID: channel.WorldID}
@@ -140,18 +142,37 @@ func ResolveChannelExtensionScope(actorID, channelID string, scope ChannelExtens
 			}
 			return nil, err
 		}
-		if !pkg.Enabled || pkg.JS == "" || pkg.BuiltinKey != "" {
-			return nil, errors.New("CAPABILITY_DENIED")
+		if pkg.JS == "" {
+			return nil, errors.New("CAPABILITY_DENIED: package has no script")
+		}
+		if pkg.BuiltinKey != "" {
+			return nil, errors.New("CAPABILITY_DENIED: builtin package does not expose channel APIs")
 		}
 		if channel.WorldID == "" {
 			return nil, errors.New("NOT_FOUND: channel")
 		}
+		var references int64
+		if !pkg.Enabled && pkg.ScopeType == "platform" && pkg.ScopeID == "" && utils.NormalizeUICustomizationPolicy(policy).AllowWorldCSS {
+			if err := model.GetDB().Model(&model.WorldUICustomizationPlatformRefModel{}).
+				Where("world_id = ? AND platform_package_id = ?", channel.WorldID, pkg.ID).Count(&references).Error; err != nil {
+				return nil, err
+			}
+		}
+		if !uiCustomizationPackageEnabled(&pkg, channel.WorldID, references > 0, policy) {
+			return nil, errors.New("CAPABILITY_DENIED: package is not enabled in this world")
+		}
 		if pkg.ScopeType == "world" {
-			if pkg.ScopeID != channel.WorldID || !utils.NormalizeUICustomizationPolicy(policy).AllowWorldJS || !utils.NormalizeUICustomizationPolicy(policy).AllowWorldCSS || !IsWorldMember(channel.WorldID, actorID) {
-				return nil, errors.New("CAPABILITY_DENIED")
+			if pkg.ScopeID != channel.WorldID {
+				return nil, errors.New("CAPABILITY_DENIED: package belongs to another world")
+			}
+			if !utils.NormalizeUICustomizationPolicy(policy).AllowWorldJS || !utils.NormalizeUICustomizationPolicy(policy).AllowWorldCSS {
+				return nil, errors.New("CAPABILITY_DENIED: world scripts are disabled")
+			}
+			if !IsWorldMember(channel.WorldID, actorID) {
+				return nil, errors.New("CAPABILITY_DENIED: world membership required")
 			}
 		} else if pkg.ScopeType != "platform" || pkg.ScopeID != "" {
-			return nil, errors.New("CAPABILITY_DENIED")
+			return nil, errors.New("CAPABILITY_DENIED: invalid package scope")
 		}
 		world, err := GetWorldByID(channel.WorldID)
 		if err != nil || world.Status != "active" {
@@ -160,6 +181,9 @@ func ResolveChannelExtensionScope(actorID, channelID string, scope ChannelExtens
 		result.Capabilities = uiCustomizationChannelCapabilities(&pkg)
 	}
 	if !HasChannelExtensionCapability(result.Capabilities, capability) {
+		if scope.Type == "ui-customization" {
+			return nil, errors.New("CAPABILITY_DENIED: package does not declare " + capability)
+		}
 		return nil, errors.New("CAPABILITY_DENIED")
 	}
 	return result, nil

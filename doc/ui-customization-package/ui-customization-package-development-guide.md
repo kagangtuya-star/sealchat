@@ -76,7 +76,9 @@ CSS 和 JavaScript 合计默认最多 1024 KiB；服务器管理员可以在 `co
 
 client 提供 `context`、`user/member/members`、`characters`、`characterCard`、`permissions`、`channel`、`connection`、`storage`、`events`、`attachments`、`messages`，方法参数与频道嵌入 API 相同。只有注入相应 Theater provider 的 Context 才提供 Theater 能力；普通世界脚本不隐式获得 provider。
 
-包声明、Context 实际提供的能力及当前用户真实权限共同决定 effective capabilities。`messages.send`、`characterCard.write`、`storage.write`、`events.publish` 和 `attachments.upload` 都属于写能力，observer/read-only 不可用。只有 `messages.send`、`storage.write` 和 `events.publish` 额外要求频道文本发送权限；`characterCard.write` 与 `attachments.upload` 不依赖频道发言权限，但仍要求有效频道成员身份和对应业务条件。管理编辑器和信任提示会标明写能力。`allowWorldJs` 继续作为世界脚本总闸门；服务端每次 storage、events 及扩展消息操作都读取实际包，校验启用、JS、世界归属、策略和能力声明。
+包声明、Context 实际提供的能力及当前用户真实权限共同决定 effective capabilities。`messages.send`、`characterCard.write`、`storage.write`、`events.publish` 和 `attachments.upload` 都属于写能力，observer/read-only 不可用。只有 `messages.send` 和 `events.publish` 额外要求频道文本发送权限；界面包的 `storage.write`、`characterCard.write` 与 `attachments.upload` 不依赖频道发言权限，但仍要求有效频道成员身份和对应业务条件。iForm 的存储写入继续要求发言权限。管理编辑器和信任提示会标明写能力。`allowWorldJs` 继续作为世界脚本总闸门；服务端每次 storage、events 及扩展消息操作都读取实际包，校验启用、JS、世界归属、策略和能力声明。
+
+平台包的有效启用状态为“平台全局启用，或当前世界引用启用且 `allowWorldCss` 允许”。脚本加载和频道 API 使用同一规则；平台全局停用不妨碍某个世界单独启用。撤销引用后，未全局启用的包立即失去该世界的 API 访问权，已有存储数据保留。拒绝原因会通过原有 `CAPABILITY_DENIED` 错误码的 message 返回，例如包未启用或未声明所需能力。
 
 浏览器信任绑定 package ID 与稳定的 `runtimeFingerprint`（规范化 JS hash + 排序后的能力列表）。新增、删除或更改能力都需要重新确认；仅调整能力顺序不改变指纹。空能力旧包沿用 `jsHash` 身份，兼容已有浏览器信任。信任并非权限授予，且同源脚本仍不是安全沙箱。
 
@@ -98,7 +100,7 @@ Storage 按 `channel + scopeType + scopeId` 隔离。界面包使用稳定的 `u
 
 Events 按 `channel + scopeType + scopeId + topic` 隔离，同一包可在不同用户之间通信；不能借 topic 访问另一包或 iForm。storage gateway 事件只包含元数据，值由共享 Context 授权读取，seq 缺口自动获取快照并产生 `resynced`。
 
-频道能力可以按权限要求分成几组。`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`permissions.read`、`storage.read` 和 `events.subscribe` 是读取或订阅能力。`characterCard.write` 与 `attachments.upload` 是写能力，但不要求频道文本发送权限。`storage.write`、`events.publish` 和 `messages.send` 同时要求频道文本发送权限。`theater.dialogue.subscribe` 与 `theater.character.read` 还要求宿主注入对应 Theater provider；普通世界脚本不会注入，所以即使包声明这两项，它们通常也不会出现在 effective capabilities 中。
+频道能力可以按权限要求分成几组。`context.read`、`user.read`、`members.read`、`world.admins.read`、`characters.read`、`characterCard.read`、`permissions.read`、`storage.read` 和 `events.subscribe` 是读取或订阅能力。界面包的 `storage.write`、`characterCard.write` 与 `attachments.upload` 是写能力，但不要求频道文本发送权限。`events.publish` 和 `messages.send` 同时要求频道文本发送权限。`theater.dialogue.subscribe` 与 `theater.character.read` 还要求宿主注入对应 Theater provider；普通世界脚本不会注入，所以即使包声明这两项，它们通常也不会出现在 effective capabilities 中。
 
 ## 4. Surface
 
@@ -111,7 +113,7 @@ Surface 是 UI 包选择页面的稳定接口。不要根据 URL 文本自己猜
 | `auth` | 登录、注册、找回密码和重置密码。 |
 | `lobby` | 世界大厅、关于页等无世界上下文页面。 |
 | `world-detail` | 世界详情和世界控制台。 |
-| `chat` | 根 `/` 与世界频道聊天主界面。 |
+| `chat` | 根 `/`、世界频道聊天主界面，以及同源内置聊天分屏、聊天栏和聊天浮窗。 |
 | `split` | 分屏界面。 |
 | `embed` | 频道嵌入页。公共 Surface。 |
 | `theater` | World Theater。 |
@@ -126,6 +128,8 @@ Surface 是 UI 包选择页面的稳定接口。不要根据 URL 文本自己猜
 `global` 当前覆盖 `auth`、`lobby`、`world-detail`、`chat`、`split`、`theater`、`invite`、`log-layout` 和 `status`。
 
 公共 Surface 不会被 `global` 命中。要覆盖 OB、Embed 或公开 LOG，必须把 `observer`、`embed` 和 `log-public` 明确写入 `targets`。
+
+`EmbedChatView` 默认属于 `embed`；实际运行在同源内置聊天宿主中时，UI Customization Runtime 会自动按 `chat` 加载 CSS 和 JavaScript。覆盖范围包括页内分屏、独立分屏的聊天窗格、小剧场聊天栏、Workbench Chat Panel，以及 stage、viewport、Workbench 宿主内的 Chat 浮窗。识别只依据真实 Window / DOM 关系，不读取 query 或 postMessage 来提升 Surface，也不需要修改 URL 或向创建浮窗的调用方传参。直接访问、跨源嵌入及其他普通 Embed 仍为 `embed`。
 
 完整参考包建议使用：
 
@@ -231,6 +235,14 @@ SealChat 仍保留 `data-display-palette`、`data-display-layout` 和 `data-cust
 | `color-popup` | 富文本颜色候选内容。 |
 | `floating-panel` | 聊天搜索等独立工具面板。 |
 | `message-favorite-inspector` | 消息收藏窗口内的收藏详情栏；`data-sc-layout` 为 `split`（并排）或 `overlay`（覆盖列表）。 |
+| `typing-heroes` | 输入统计中的打字英雄榜子视图；`data-sc-typing-heroes-period` 为 `day`、`week` 或 `month`，`data-sc-typing-heroes-scope` 为 `all` 或 `ic`。“我的成绩”卡片带 `data-sc-typing-heroes-status`（`ranked`、`no_data`、`not_eligible`），排名行带 `data-sc-typing-heroes-kind`（`self`、`anonymous`、`public`），前三名带 `data-sc-typing-heroes-podium`（`1`–`3`）。颜色默认取 `--primary-color` 与 Naive 警示色，可用 `--sc-typing-heroes-accent`、`--sc-typing-heroes-podium`、`--sc-typing-heroes-card`、`--sc-typing-heroes-row`、`--sc-typing-heroes-self` 覆盖。 |
+| `typing-heroes-calendar` | 打字英雄榜的日/周/月选择面板，随 Naive UI 主题，可用 `[data-sc-ui="typing-heroes-calendar"]` 单独定制。浮层不在榜单 DOM 内，统一强调色需在共同祖先（如 `:root`）设置 `--sc-typing-heroes-accent`。日榜有效输入日期使用公共 `.sc-calendar-active-day` / `data-sc-calendar-active-day="true"` hook。默认叠层跟随强调色，也可覆盖 `--sc-typing-heroes-active-day-accent`，或在面板上设置公共 `--sc-calendar-active-day-background`、`--sc-calendar-active-day-border`、`--sc-calendar-active-day-dot`、`--sc-calendar-active-day-dot-shadow`。 |
+| `workbench` | 布局频道工作台根元素。 |
+| `workbench-toolbar` | 布局频道顶部工具栏。 |
+| `workbench-spotlight` | GM 共享聚焦提示条。 |
+| `workbench-design-canvas` | 布局设计画布。 |
+| `workbench-inspector` | 布局设计属性面板。 |
+| `workbench-panel` | 单个工作台面板。 |
 
 消息收藏备注帖沿用细分 hook：备注区 `[data-sc-favorite-note='panel']`（也带 `data-sc-favorite-part='notes'`）、帖子列表 `list`、单帖 `item`、底部新增输入区 `composer`、帖内编辑器 `editor`、编辑锁提示 `lock`、收藏卡片中的备注数量与最新帖子摘要 `summary`、发布入口 `add`。单帖 `item` 带 `data-sc-state`（`idle`、`acquiring`、`editing`、`saving`、`locked`、`lost`），编辑态与锁只作用于该帖，新增输入区独立。它们位于收藏窗口的 `.sc-overlay` surface 内，默认颜色沿用 `--sc-bg-*`、`--sc-text-*`、`--sc-border-*` 和 `--mf-accent`；错误提示允许通过 `--sc-color-error` 覆盖。
 
@@ -442,6 +454,73 @@ UI Package 可以覆盖更多语义变量。完整示例包已经演示这些变
 需要继续修改消息内部控件时，可以使用现有 class，但要把它视为“兼容性敏感选择器”。例如 `.message-action-bar__btn`、`.typing-preview-bubble`、`.chat-input-actions` 都可能随组件重构变化。
 
 完整参考包把稳定 hook 和兼容性敏感选择器分区书写，便于以后维护。
+
+### 11.1 布局频道（Workbench）
+
+布局频道仍运行在 `chat` Surface。目标包含 `chat` 或 `global` 的 UI Package 会作用于工作台外层。工作台中的 iframe 按各自 Surface 单独加载样式，父页面 CSS 不能穿透 iframe。
+
+进入布局频道后，根 `html` 会增加 `data-sc-workbench="view|design|preview"`。沉浸模式会再增加 `data-sc-immersive="true"`。离开布局频道时，这两个属性会清理。
+
+`data-sc-ui="workbench"` 是工作台根元素。它同时提供以下稳定属性：
+
+| 属性 | 取值与用途 |
+| --- | --- |
+| `data-sc-workbench-mode` | `view`、`design` 或 `preview`。 |
+| `data-sc-workbench-layout` | `grid`、`tabs` 或 `stack`。 |
+| `data-sc-panel-style` | `default`、`flat`、`outlined` 或 `glass`。 |
+| `data-sc-minimal-actions-placement` | `inside` 或 `outside`。控制极简面板操作区放在内容内侧还是右上外展。 |
+| `data-sc-immersive` | 沉浸模式时为 `true`。 |
+
+每个 `[data-sc-ui='workbench-panel']` 还提供面板级属性：
+
+| 属性 | 取值与用途 |
+| --- | --- |
+| `data-sc-panel-id` | 当前布局中的稳定 Panel ID。 |
+| `data-sc-panel-type` | `character`、`iform`、`note`、`clue`、`clue-board`、`chat`、`theater` 或 `web`。 |
+| `data-sc-panel-state` | `ready`、`collapsed`、`focused`、`popped`、`unbound` 或 `error`。 |
+| `data-sc-actions-placement` | `inside` 或 `outside`。表示当前面板操作区位置。 |
+
+工作台提供以下 CSS 变量：
+
+~~~css
+--sc-workbench-accent
+--sc-workbench-canvas-bg
+--sc-workbench-toolbar-bg
+--sc-workbench-panel-bg
+--sc-workbench-panel-border
+--sc-workbench-panel-radius
+--sc-workbench-panel-shadow
+--sc-workbench-header-bg
+--sc-workbench-row-min
+--sc-workbench-padding
+~~~
+
+布局设置中的强调色会直接写入工作台根元素的 `--sc-workbench-accent`。显式设置了布局强调色时，它优先于祖先节点上的同名变量。
+
+极简 Panel 默认没有边框、背景、阴影和常驻标题栏。操作区只在 hover、键盘焦点或菜单打开时显示；触摸设备会保持可操作。`inside` 与 `outside` 只改变操作区位置，不改变 Grid rect。`panelStyle` 只给非极简 Panel 增加 flat、outlined 或 glass 材质。
+
+极简状态当前由组件内部 class 表达，没有单独的稳定 `data-sc-*` 属性。第三方包如需覆盖极简标题胶囊等内部结构，可以使用 `.is-minimal`、`.wb-panel__header` 等现有 class，但这些选择器属于兼容性敏感接口。能用 `data-sc-ui`、`data-sc-panel-*` 和 `--sc-workbench-*` 完成的样式，不要依赖内部 class。
+
+例如，只调整布局频道画布和人物卡 Panel，可以写：
+
+~~~css
+html[data-sc-surface='chat'][data-sc-workbench] [data-sc-ui='workbench'] {
+  --sc-workbench-canvas-bg: transparent;
+  --sc-workbench-panel-radius: 12px;
+  --sc-workbench-padding: 12px;
+}
+
+html[data-sc-surface='chat'][data-sc-workbench]
+[data-sc-ui='workbench-panel'][data-sc-panel-type='character'] {
+  --sc-workbench-panel-border: color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+~~~
+
+面板内容有独立的 Surface 边界。当 `EmbedChatView` 实际嵌在同源父页面的 `[data-sc-ui='workbench-panel'][data-sc-panel-type='chat']` 中，且父页面存在活动 Workbench 时，SealChat 会将其 UI Customization Surface 视为 `chat`；弹出到内置 Chat 浮窗后也使用 `chat`。已有 `chat` 目标的 CSS 和 JavaScript 会通过现有 Runtime 直接生效，主题作者无需额外勾选 `embed`，也不需要 Workbench URL 参数。此时 `sc.context().surface === 'chat'`，`worldId`、`channelId` 和 `sc.channel()` 使用 iframe 自己正在显示的频道，而非父布局频道。Safe UI、世界脚本策略、浏览器信任和频道能力检查保持不变。
+
+普通 Embed（包括直接访问和外部网站嵌入）继续使用 `embed` Surface，已有 `data-sc-surface='embed'` 和 `sc.context().surface === 'embed'` 逻辑保持兼容。Split 宿主页仍为 `split`，小剧场 Panel 及宿主页仍为 `theater`，其中内置的聊天 iframe 则按 `chat` 运行。人物卡、IForm、便签、线索和线索画板属于 `internal` Surface；它们继续只从同源宿主继承白名单语义主题值，包括背景、文字、边框、主色和字体变量，并跟随宿主主题变化，不加载任意 UI Package CSS 或 JavaScript。独立窗口和跨源父页面继续使用自身主题。外部网页完全隔离，不受 SealChat UI Package 影响。
+
+JavaScript 包可以通过 `sc.context().workbench` 读取当前工作台状态。非布局频道时该字段为 `null`；布局频道中返回 `channelId`、`mode`、`immersive`、`focusedPanelId` 和 `spotlightPanelId`。`sc.on('workbench-change', handler)` 会在进入或退出布局频道、切换设计模式、沉浸模式、个人 Focus 或 GM 聚焦时触发，payload 为 `{ workbench, previous }`。
 
 ## 12. Naive UI 组件
 
@@ -663,7 +742,7 @@ CSS 不依赖脚本，可以单独使用。导入为平台包时脚本直接运�
 
 Storage 写入、事件发布、消息发送、人物卡写入和图片上传都放在独立按钮后。消息测试会真实发送一条 OOC 消息；人物卡写入只在输入非空 JSON 对象后执行；图片上传要求手动选择文件。Storage 使用固定测试 key `channel-api-lab.win97`，可以在同一面板删除。
 
-权限测试时可以撤销当前用户的频道文本发送权限。此时 `messages.send`、`storage.write` 和 `events.publish` 应变为不可用；`characterCard.write` 与 `attachments.upload` 不应因为缺少文本发送权限而消失。切换 observer/read-only 后，所有写能力都应不可用。
+权限测试时可以撤销当前用户的频道文本发送权限。此时 `messages.send` 和 `events.publish` 应变为不可用；界面脚本的 `storage.write`、`characterCard.write` 与 `attachments.upload` 不应因为缺少文本发送权限而消失。iForm 的 `storage.write` 仍要求发言权限。切换 observer/read-only 后，所有写能力都应不可用。
 
 普通世界脚本没有 Theater provider。`theater.dialogue.subscribe` 与 `theater.character.read` 在测试窗中显示 `NO PROVIDER` 属于预期结果，不代表 capability 声明失效。
 

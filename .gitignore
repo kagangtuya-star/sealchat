@@ -21,7 +21,7 @@
 *.test.mjs
 *.test.cjs
 *.test.cts
-ui/scripts/chat-import-log-range-regression.cjs
+ui/scripts/*.cjs
 info.db
 record.log
 go.sum
@@ -92,3 +92,6 @@ ui/src/features/tts/voice-catalog.test.mjs
 /doc/promo-video
 /bin/chrome-headless-shell
 /bin/qpdf
+api/channel_extension_test.go
+/doc/ui-customization-package/theme demo
+/.playwright-cli

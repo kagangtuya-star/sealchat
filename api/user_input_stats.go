@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -233,4 +234,65 @@ func UserInputStatsSessions(c *fiber.Ctx) error {
 	}
 
 	return c.Status(http.StatusOK).JSON(msgs)
+}
+
+// UserInputStatsHeroesActiveDays 只返回当前用户有有效输入的自然日。
+func UserInputStatsHeroesActiveDays(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return fiber.NewError(http.StatusUnauthorized, "未登录")
+	}
+	tzOffset, err := strconv.Atoi(strings.TrimSpace(c.Query("tzOffset", "0")))
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "tzOffset 无效")
+	}
+	result, err := service.TypingHeroesActiveDaysGet(service.TypingHeroesActiveDaysQuery{
+		ViewerID: u.ID, Month: c.Query("month"),
+		Scope:    service.TypingHeroesScope(strings.TrimSpace(c.Query("scope", "all"))),
+		Timezone: strings.TrimSpace(c.Query("timezone")), TZOffsetMinutes: tzOffset,
+	})
+	if errors.Is(err, service.ErrTypingHeroesInvalidInput) {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "活跃日期参数无效")
+	}
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "获取活跃日期失败")
+	}
+	c.Set("Cache-Control", "private, no-store")
+	return c.JSON(result)
+}
+
+// UserInputStatsHeroes 打字英雄榜：返回自己的成绩与附近排名（服务端完成排名与匿名化）
+func UserInputStatsHeroes(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return fiber.NewError(http.StatusUnauthorized, "未登录")
+	}
+
+	q := service.TypingHeroesQuery{
+		ViewerID: u.ID,
+		Period:   service.TypingHeroesPeriodKind(strings.TrimSpace(c.Query("period", "week"))),
+		Metric:   service.TypingHeroesMetric(strings.TrimSpace(c.Query("metric", "chars"))),
+		Scope:    service.TypingHeroesScope(strings.TrimSpace(c.Query("scope", "all"))),
+		Anchor:   strings.TrimSpace(c.Query("anchor")),
+		Timezone: strings.TrimSpace(c.Query("timezone")),
+	}
+	var err error
+	if q.Offset, err = strconv.Atoi(strings.TrimSpace(c.Query("offset", "0"))); err != nil {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "offset 无效")
+	}
+	if q.TZOffsetMinutes, err = strconv.Atoi(strings.TrimSpace(c.Query("tzOffset", "0"))); err != nil {
+		return wrapErrorStatus(c, http.StatusBadRequest, nil, "tzOffset 无效")
+	}
+
+	board, err := service.TypingHeroesBoardGet(q)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrTypingHeroesInvalidInput):
+			return wrapErrorStatus(c, http.StatusBadRequest, nil, "排行榜参数无效")
+		case errors.Is(err, service.ErrTypingHeroesBusy):
+			return c.Status(http.StatusTooManyRequests).JSON(fiber.Map{"message": "排行榜请求过于频繁，请稍后重试", "code": "rate_limited"})
+		}
+		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "获取打字英雄榜失败")
+	}
+	return c.Status(http.StatusOK).JSON(board)
 }

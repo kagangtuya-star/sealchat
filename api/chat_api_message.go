@@ -2502,6 +2502,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.SenderIdentityAvatarTextStyle = appearance.AvatarTextStyle
 			m.SenderIdentityDecorations = appearance.AvatarDecorations
 			m.SenderTheaterPresentation = appearance.TheaterPresentation
+			m.SenderChatSkin = appearance.ChatSkin
+			m.SenderChatSkinResolved = true
 			if appearance.DisplayName != "" {
 				m.SenderMemberName = appearance.DisplayName
 			}
@@ -3340,6 +3342,7 @@ func apiMessageUpdateVersioned(ctx *ChatContext, data *messageUpdatePayload) (an
 					msg.SenderIdentityAvatarTextStyle = appearance.AvatarTextStyle
 					msg.SenderIdentityDecorations = appearance.AvatarDecorations
 					msg.SenderTheaterPresentation = appearance.TheaterPresentation
+					msg.SenderChatSkin = appearance.ChatSkin
 				}
 				resolvedIdentityProto = identity.ToProtocolType()
 				if resolvedIdentityProto != nil && appearance != nil {
@@ -3349,6 +3352,7 @@ func apiMessageUpdateVersioned(ctx *ChatContext, data *messageUpdatePayload) (an
 					resolvedIdentityProto.AvatarTextStyle = appearance.AvatarTextStyle
 					resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
 					resolvedIdentityProto.TheaterPresentation = appearance.TheaterPresentation
+					resolvedIdentityProto.ChatSkin = appearance.ChatSkin
 					if len(appearance.AvatarDecorations) > 0 {
 						first := appearance.AvatarDecorations[0]
 						resolvedIdentityProto.AvatarDecoration = &first
@@ -3372,6 +3376,7 @@ func apiMessageUpdateVersioned(ctx *ChatContext, data *messageUpdatePayload) (an
 				msg.SenderIdentityAvatarTextStyle = ""
 				msg.SenderIdentityDecorations = nil
 				msg.SenderTheaterPresentation = nil
+				msg.SenderChatSkin = nil
 				msg.SenderIdentityIsTemporary = false
 				msg.SenderRoleID = ""
 				resolvedIdentityProto = nil
@@ -3601,6 +3606,7 @@ func apiMessageUpdateVersioned(ctx *ChatContext, data *messageUpdatePayload) (an
 		updates["sender_identity_avatar_text_style"] = msg.SenderIdentityAvatarTextStyle
 		updates["sender_identity_decoration"] = msg.SenderIdentityDecorations
 		updates["sender_theater_presentation"] = msg.SenderTheaterPresentation
+		updates["sender_chat_skin"] = msg.SenderChatSkin
 		updates["sender_identity_is_temporary"] = msg.SenderIdentityIsTemporary
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
@@ -4618,6 +4624,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 				resolvedIdentityProto.Color = appearance.Color
 				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
 				resolvedIdentityProto.AvatarTextStyle = appearance.AvatarTextStyle
+				resolvedIdentityProto.ChatSkin = typingPreviewChatSkin(channelId, ctx.User.ID, data.Mode, data.MessageID, identity.ID, appearance)
 			}
 			event.Member.Identity = resolvedIdentityProto
 		}

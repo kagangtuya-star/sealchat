@@ -14,6 +14,9 @@ export interface ExportMessage {
   content: string
   content_html?: string
   whisper_targets?: string[]
+  /** 发送时的聊天装扮快照（HTML 导出），附件引用经 sender_chat_skin_assets 映射到内联资源。 */
+  sender_chat_skin?: Record<string, unknown>
+  sender_chat_skin_assets?: Record<string, string>
 }
 
 export interface DisplayOptions {

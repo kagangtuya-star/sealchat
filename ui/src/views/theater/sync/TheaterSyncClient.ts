@@ -127,6 +127,7 @@ interface TheaterSyncOptions {
   inputChannelId?: string
   scopeType?: 'channel' | 'world'
   store: TheaterStageStore
+  readOnly?: boolean
   sendGatewayAPI: (apiName: string, data: Record<string, unknown>) => Promise<any>
   onPermissionsChange?: (permissions: string[]) => void
   onRuntimeStateChange?: (state: TheaterRuntimeState) => void
@@ -1021,7 +1022,7 @@ export class TheaterSyncClient {
   async start() {
     if (this.started) return
     this.started = true
-    this.unregisterDialogueWriter = registerDialogueControllerWriter(this.options.worldId, patch => this.patchDialogueController(patch))
+    if (!this.options.readOnly) this.unregisterDialogueWriter = registerDialogueControllerWriter(this.options.worldId, patch => this.patchDialogueController(patch))
     chatEvent.on('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.applied' as any, this.onGatewayMutation)
     chatEvent.on('theater.mutation.rejected' as any, this.onGatewayEvent)
@@ -1033,7 +1034,7 @@ export class TheaterSyncClient {
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
     if (!this.started) return
-    this.stopWatch = watch(() => [
+    if (!this.options.readOnly) this.stopWatch = watch(() => [
       this.options.store.state.activeSceneId,
       this.options.store.state.liveState,
       this.options.store.state.scenes,
@@ -1079,6 +1080,7 @@ export class TheaterSyncClient {
   }
 
   async triggerAction(payload: StageActionTriggeredPayload) {
+    if (this.options.readOnly) return false
     if (payload.action.type === 'clue.execute') return this.triggerClueExecute(payload as ClueStageActionTriggeredPayload)
     if (payload.action.type !== 'scene.apply' && payload.action.type !== 'object.toggle' && payload.action.type !== 'effect.play') {
       return this.triggerActionNow(payload)
@@ -1095,6 +1097,7 @@ export class TheaterSyncClient {
   }
 
   async triggerActionBatch(payloads: readonly StageActionTriggeredPayload[]) {
+    if (this.options.readOnly) return false
     if (!payloads.length || !payloads.every((payload) => payload.action.type === 'object.toggle')) return false
     const first = payloads[0]
     const previous = this.mutationActionQueue
@@ -1135,6 +1138,7 @@ export class TheaterSyncClient {
   }
 
   async requestPreload(sceneIds: string[]) {
+    if (this.options.readOnly) return
     const normalized = [...new Set(sceneIds.map((sceneId) => sceneId.trim()).filter(Boolean))]
     if (!normalized.length) return
     await this.options.sendGatewayAPI('theater.preload', {
@@ -1146,6 +1150,7 @@ export class TheaterSyncClient {
   }
 
   async requestSceneAudio(sceneId: string) {
+    if (this.options.readOnly) return
     const normalizedSceneId = sceneId.trim()
     if (!normalizedSceneId) return
     await this.options.sendGatewayAPI('theater.scene.audio', {
@@ -1169,6 +1174,7 @@ export class TheaterSyncClient {
   }
 
   private async submitRoomMutation(type: string, payload: JsonObject) {
+    if (this.options.readOnly) throw new Error('展示浮层不支持修改舞台')
     const previous = this.mutationActionQueue
     let release!: () => void
     this.mutationActionQueue = new Promise<void>(resolve => { release = resolve })
@@ -1210,6 +1216,7 @@ export class TheaterSyncClient {
   }
 
   async publishPointerTrace(trace: StagePointerTraceInput) {
+    if (this.options.readOnly) return
     await this.options.sendGatewayAPI('theater.pointer', {
       worldId: this.options.worldId,
       channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
@@ -1342,6 +1349,7 @@ export class TheaterSyncClient {
       if (this.hasLoaded && nextRevision < this.revision) return
       this.schemaVersion = finite(data.schemaVersion, 1)
       this.permissions = Array.isArray(data.permissions) ? data.permissions.filter((item): item is string => typeof item === 'string') : []
+      if (this.options.readOnly) this.permissions = this.permissions.filter(permission => permission === 'stage.view')
       this.options.onPermissionsChange?.([...this.permissions])
       this.options.onRuntimeStateChange?.({
         revision: nextRevision,
@@ -1365,7 +1373,7 @@ export class TheaterSyncClient {
       const currentWorkspace = this.hasLoaded ? this.options.store.getSnapshot() : null
       const currentDocument = currentWorkspace ? documentFromWorkspace(currentWorkspace) : null
       const hasPendingLocalChanges = Boolean(
-        currentDocument && diffDocuments(this.baseDocument, currentDocument).length,
+        !this.options.readOnly && currentDocument && diffDocuments(this.baseDocument, currentDocument).length,
       )
       const nextDocument = localChange
         ? rebaseDocument(localChange.base, localChange.desired, remoteDocument)
@@ -1426,7 +1434,7 @@ export class TheaterSyncClient {
   }
 
   private scheduleFlush(delay = 350) {
-    if (!this.started || this.applyingRemote) return
+    if (!this.started || this.applyingRemote || this.options.readOnly) return
     if (this.flushTimer) clearTimeout(this.flushTimer)
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
@@ -1435,7 +1443,7 @@ export class TheaterSyncClient {
   }
 
   private async flushNow() {
-    if (!this.started || this.applyingRemote) return
+    if (!this.started || this.applyingRemote || this.options.readOnly) return
     if (this.flushTimer) {
       clearTimeout(this.flushTimer)
       this.flushTimer = null

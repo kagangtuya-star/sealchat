@@ -61,11 +61,11 @@ const createRuntime = (options = {}) => {
   const document = {
     body, documentElement: new Element('html'), addEventListener() {}, getElementById: id => nodes[id],
     createElement: tag => new Element(tag), getElementsByTagName: () => [],
-    fonts: { ready: fontReady, forEach: fn => fn({ family: 'sc-log-platform-font', load: () => {
+    fonts: { ready: fontReady, forEach: fn => (options.fonts || ['sc-log-platform-font']).forEach(family => fn({ family, load: () => {
       assert.ok(pkg.textContent.includes('blob:chunk'), '@font-face 必须先将占位符替换为 Blob URL');
       assert.ok(body.childNodes[0].childNodes[0].childNodes.length > 0, '字体等待时正文已挂入隐藏 staging');
       loadCalls++; return options.neverReady ? new Promise(() => {}) : fontReady;
-    } }) },
+    } })) },
   };
   const context = {
     document, window,
@@ -115,6 +115,17 @@ test('字体永久 pending 时总超时后继续分页，不无限等待 face.lo
   assert.equal(layout.pageCount, 2);
 });
 
+test('页面、正文和 Ruby 的多个平台字体全部完成后才分页', async () => {
+  const runtime = createRuntime({ fonts: ['sc-log-platform-font', 'sc-log-platform-body', 'sc-log-platform-rt'] });
+  const work = runtime.render(input(4));
+  await new Promise(setImmediate);
+  assert.equal(runtime.loadCalls(), 3);
+  assert.equal(runtime.messages.length, 0);
+  runtime.releaseFont();
+  await work;
+  assert.equal(runtime.messages.find(message => message.type === 'layout').pageCount, 2);
+});
+
 test('字体等待期间新修订覆盖旧修订；flow 与 paged 共用等待链路', async () => {
   const runtime = createRuntime();
   const old = runtime.render(input(1));
@@ -131,7 +142,7 @@ test('字体等待期间新修订覆盖旧修订；flow 与 paged 共用等待�
 test('真实 LogFrameEngine 对已投递字体只补充新 chunk，不重复传输字节', async () => {
   const messages = [];
   const globals = {
-    crypto, performance,
+    crypto: require('node:crypto').webcrypto, performance,
     MessageChannel: class { constructor() {
       this.port1 = { postMessage: message => messages.push(message), close() {} }; this.port2 = {};
     } },

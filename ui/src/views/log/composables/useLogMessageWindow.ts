@@ -11,6 +11,7 @@ type ChatMessageEvent = { message?: LogProtocolMessage & { channel?: { id?: stri
 
 export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSection | null>) => {
   const items = shallowRef<LogDesignMessage[]>([]);
+  const loadedSectionId = ref('');
   const nextCursor = ref<string | null>(null);
   const sourceVersion = ref<number | null>(null);
   const loading = ref(false);
@@ -19,7 +20,9 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
   const staleHint = ref(false);
   let generation = 0;
   let controller: AbortController | null = null;
+  let appending = false;
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let preserveScheduledWindow = false;
   /** 本页面发出的写入：messageId → 预期的新版本下界，用于识别自己的 WS 回声。 */
   const ownWrites = new Map<string, number>();
 
@@ -31,10 +34,11 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     generation += 1;
     controller?.abort();
     controller = null;
+    appending = false;
   };
 
-  /** 每次只请求一页；只有来源变化时才丢弃窗口并从第一页重建。 */
-  const loadPage = async (append = false, retries = 0): Promise<void> => {
+  /** 每次请求一页；保窗刷新暂存各页，完整取得原窗口大小后再整体替换。 */
+  const loadPage = async (append = false, retries = 0, preserveCount?: number): Promise<void> => {
     cancel();
     const sec = section.value;
     const pid = projectId.value;
@@ -45,52 +49,84 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     const gen = generation;
     const ctrl = new AbortController();
     controller = ctrl;
+    appending = append;
     loading.value = true;
     error.value = '';
     errorCode.value = '';
-    const cursor = append ? nextCursor.value : null;
-    const version = append ? sourceVersion.value : null;
+    let cursor = append ? nextCursor.value : null;
+    let version = append ? sourceVersion.value : null;
     try {
-      const window = await fetchLogSectionMessages(pid, sec.id, cursor, PAGE_LIMIT, ctrl.signal);
-      if (gen !== generation) return;
-      if (append && window.sourceVersion !== version) {
-        throw new LogDomainError('SOURCE_CHANGED', '来源消息已变化，需要重新加载');
-      }
-      items.value = append ? items.value.concat(window.items) : window.items;
-      sourceVersion.value = window.sourceVersion;
-      nextCursor.value = window.nextCursor;
+      const incoming: LogDesignMessage[] = [];
+      do {
+        const window = await fetchLogSectionMessages(pid, sec.id, cursor, PAGE_LIMIT, ctrl.signal);
+        if (gen !== generation) return;
+        if (version !== null && window.sourceVersion !== version) {
+          throw new LogDomainError('SOURCE_CHANGED', '来源消息已变化，需要重新加载');
+        }
+        incoming.push(...window.items);
+        version = window.sourceVersion;
+        cursor = window.nextCursor;
+      } while (preserveCount !== undefined && incoming.length < preserveCount && cursor !== null);
+      items.value = append ? items.value.concat(incoming) : incoming;
+      sourceVersion.value = version;
+      nextCursor.value = cursor;
+      loadedSectionId.value = sec.id;
       staleHint.value = false;
     } catch (err) {
       if (gen !== generation || ctrl.signal.aborted) return;
       if (isLogError(err, 'SOURCE_CHANGED')) {
-        items.value = [];
-        nextCursor.value = null;
-        sourceVersion.value = null;
+        // 旧游标可能比排序回声更早失效。多页窗口要从新游标重建，期间保留原预览。
+        const count = preserveCount ?? (append && (items.value.length > PAGE_LIMIT || preserveScheduledWindow)
+          ? items.value.length
+          : undefined);
+        if (count === undefined) {
+          items.value = [];
+          nextCursor.value = null;
+          sourceVersion.value = null;
+        }
         if (retries < 3) {
-          await loadPage(false, retries + 1);
+          await loadPage(false, retries + 1, count);
           return;
         }
       }
       error.value = describeLogError(err, '加载消息失败');
       errorCode.value = (err as any)?.code || '';
     } finally {
-      if (gen === generation) loading.value = false;
+      if (gen === generation) {
+        appending = false;
+        loading.value = false;
+      }
     }
   };
 
-  /** 从章节开头加载一页，整体替换窗口，不预取后续页。 */
-  const load = () => loadPage();
+  /** 默认只加载第一页；排序后从新游标重建原窗口，避免旧游标失效或视图缩回首屏。 */
+  const load = (options?: { preserveWindow?: boolean }) => {
+    if (!options?.preserveWindow) return loadPage();
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = null;
+    preserveScheduledWindow = false;
+    return loadPage(false, 0, items.value.length);
+  };
 
   const loadMore = async () => {
     if (loading.value || nextCursor.value === null) return;
     await loadPage(true);
   };
 
-  const scheduleReload = (delay = 800) => {
+  const cancelLoadMore = () => {
+    if (!appending) return;
+    cancel();
+    loading.value = false;
+  };
+
+  const scheduleReload = (delay = 800, preserveWindow = false) => {
     if (reloadTimer) clearTimeout(reloadTimer);
+    preserveScheduledWindow ||= preserveWindow;
     reloadTimer = setTimeout(() => {
       reloadTimer = null;
-      void load();
+      const preserveWindow = preserveScheduledWindow;
+      preserveScheduledWindow = false;
+      void load({ preserveWindow });
     }, delay);
   };
 
@@ -146,14 +182,15 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     if (!relevant(e) || !e.message?.id) return;
     if (byId(e.message.id)) scheduleReload(300);
   };
-  const onStructural = (e: ChatMessageEvent) => {
+  const onStructural = (e: ChatMessageEvent, preserveWindow = false) => {
     if (!relevant(e)) return;
     const created = e.message?.createdAt;
     const toTime = section.value ? Date.parse(section.value.source.toTime) : NaN;
     if (typeof created === 'number' && Number.isFinite(toTime) && created > toTime) return;
     staleHint.value = true;
-    scheduleReload(1200);
+    scheduleReload(1200, preserveWindow);
   };
+  const onReordered = (e: ChatMessageEvent) => onStructural(e, true);
   const onConnected = () => {
     // 重连不假设补发全部历史事件：用 sourceVersion 校验后重载。
     void probe();
@@ -162,7 +199,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
   chatEvent.on('message-updated' as any, onUpdated as any);
   chatEvent.on('message-deleted' as any, onRemoved as any);
   chatEvent.on('message-removed' as any, onRemoved as any);
-  chatEvent.on('message-reordered' as any, onStructural as any);
+  chatEvent.on('message-reordered' as any, onReordered as any);
   chatEvent.on('message-created' as any, onStructural as any);
   chatEvent.on('message-archived' as any, onStructural as any);
   chatEvent.on('message-unarchived' as any, onStructural as any);
@@ -192,12 +229,14 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
 
   watch(() => [projectId.value, section.value?.id, JSON.stringify(section.value?.source || null)], () => {
     items.value = [];
+    loadedSectionId.value = '';
     nextCursor.value = null;
     sourceVersion.value = null;
     error.value = '';
     errorCode.value = '';
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = null;
+    preserveScheduledWindow = false;
     ownWrites.clear();
     void load();
   }, { immediate: true });
@@ -208,7 +247,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     chatEvent.off('message-updated' as any, onUpdated as any);
     chatEvent.off('message-deleted' as any, onRemoved as any);
     chatEvent.off('message-removed' as any, onRemoved as any);
-    chatEvent.off('message-reordered' as any, onStructural as any);
+    chatEvent.off('message-reordered' as any, onReordered as any);
     chatEvent.off('message-created' as any, onStructural as any);
     chatEvent.off('message-archived' as any, onStructural as any);
     chatEvent.off('message-unarchived' as any, onStructural as any);
@@ -218,6 +257,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
 
   return {
     items,
+    loadedSectionId,
     nextCursor,
     sourceVersion,
     loading,
@@ -229,6 +269,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     indexOf,
     load,
     loadMore,
+    cancelLoadMore,
     probe,
     applyServerMessage,
     removeLocal,

@@ -51,6 +51,7 @@ type ResolvedIdentityAppearance struct {
 	AvatarAttachmentID  string
 	AvatarDecorations   protocol.AvatarDecorationList
 	TheaterPresentation *protocol.TheaterPresentation
+	ChatSkin            protocol.ChatSkin
 }
 
 func normalizeChannelIdentityVariantKeyword(keyword string) string {
@@ -144,7 +145,8 @@ func normalizeChannelIdentityVariantAppearance(input *ChannelIdentityVariantInpu
 	result := map[string]any{}
 	for key, value := range input.Appearance {
 		trimmedKey := strings.TrimSpace(key)
-		if trimmedKey == "" || trimmedKey == "theaterPresentation" {
+		// chatSkin 由独立接口维护，通用差分保存不得覆盖。
+		if trimmedKey == "" || trimmedKey == "theaterPresentation" || trimmedKey == "chatSkin" {
 			continue
 		}
 		result[trimmedKey] = value
@@ -475,6 +477,9 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 			appearance["theaterPresentation"] = patch
 		}
 	}
+	if chatSkin, exists := item.Appearance()["chatSkin"]; exists && chatSkin != nil {
+		appearance["chatSkin"] = chatSkin
+	}
 	appearanceJSON, err := serializeChannelIdentityVariantAppearanceJSON(appearance)
 	if err != nil {
 		return nil, err
@@ -654,10 +659,12 @@ func ResolveChannelIdentityAppearance(identity *model.ChannelIdentityModel, vari
 		AvatarTextStyle:     identity.AvatarTextStyle,
 		AvatarDecorations:   identity.AvatarDecorations,
 		TheaterPresentation: cloneTheaterPresentation(identity.TheaterPresentation),
+		ChatSkin:            protocol.CloneChatSkin(identity.ChatSkin),
 	}
 	if variant == nil {
 		return result
 	}
+	result.ChatSkin = protocol.ResolveChatSkin(identity.ChatSkin, protocol.ChatSkinPatchFromAppearance(variant.Appearance()))
 	if patch, exists := variantTheaterPresentationPatch(variant); exists {
 		base := protocol.DefaultTheaterPresentation()
 		if identity.TheaterPresentation != nil {

@@ -1509,3 +1509,29 @@ body[data-colorize='body'] .viewer-message__body {
     color: inherit;
   }
 }
+
+/* 只约束装扮布局与装饰绘制区域，正文、图片和引用保持原有溢出行为。 */
+.viewer-message[data-chat-skin] {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.viewer-message[data-chat-skin] .viewer-message__bubble,
+.viewer-message[data-chat-skin] .viewer-message__body {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-skin-layers {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  overflow-clip-margin: 96px;
+  clip-path: inset(calc(-1 * var(--sc-skin-reserve-top, 0px)) -96px calc(-1 * var(--sc-skin-reserve-bottom, 0px)) -96px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.chat-skin-layers--front { z-index: 1; }
+.chat-skin-layers--back { z-index: -1; }

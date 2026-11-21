@@ -1,0 +1,4 @@
+.tiptap-table-wrapper { min-width: 0; max-width: 100%; overflow-x: auto; margin: 0.5em 0; white-space: normal; }
+.tiptap-table { border-collapse: collapse; table-layout: fixed; margin: 0; }
+.tiptap-table th, .tiptap-table td { min-width: 80px; padding: 0.4em 0.6em; border: 1px solid var(--border-strong, currentColor); vertical-align: top; overflow-wrap: anywhere; box-sizing: border-box; }
+.tiptap-table th { font-weight: 600; background: color-mix(in srgb, currentColor 8%, transparent); }

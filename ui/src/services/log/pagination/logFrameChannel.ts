@@ -6,6 +6,8 @@ import type {
   FrameEvent,
   FrameLayoutResult,
   FramePrintRange,
+  FrameProofNode,
+  FrameProofView,
   FrameRelocation,
   LayoutRequest,
 } from './logFrameHost';
@@ -73,6 +75,7 @@ export class LogFrameChannel {
       case 'select':
       case 'imageResize':
       case 'open':
+      case 'dragStart':
       case 'drop':
       case 'action':
       case 'anchor':
@@ -80,6 +83,10 @@ export class LogFrameChannel {
       case 'context':
       case 'progress':
       case 'scrollMiss':
+      case 'proofPick':
+      case 'proofDecide':
+      case 'proofNav':
+      case 'proofMapped':
         this.onEvent(msg as FrameEvent);
         break;
       default:
@@ -136,6 +143,20 @@ export class LogFrameChannel {
 
   scrollTo(nodeId: string, flash = true) {
     this.channel?.port1.postMessage({ type: 'scrollTo', nodeId, flash });
+  }
+
+  /** 校对审阅层：批注位置随每次排版在 iframe 内重新映射；null 关闭审阅层。 */
+  proofMarks(nodes: FrameProofNode[] | null) {
+    this.channel?.port1.postMessage({ type: 'proofMarks', nodes });
+  }
+
+  proofView(view: FrameProofView | null) {
+    this.channel?.port1.postMessage({ type: 'proofView', view });
+  }
+
+  /** 滚动到批注；批注所在消息尚未排版时，等待之后的排版完成再滚动。 */
+  proofReveal(key: string | null) {
+    this.channel?.port1.postMessage({ type: 'proofReveal', key });
   }
 
   zoom(value: number) {

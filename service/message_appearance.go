@@ -166,6 +166,7 @@ func PrepareMessageAppearance(m *model.MessageModel, actor string, p MessageAppe
 		updates["sender_identity_avatar_id"] = a.AvatarAttachmentID
 		updates["sender_identity_decoration"] = a.AvatarDecorations
 		updates["sender_theater_presentation"] = a.TheaterPresentation
+		updates["sender_chat_skin"] = a.ChatSkin
 	}
 	return updates, nil
 }

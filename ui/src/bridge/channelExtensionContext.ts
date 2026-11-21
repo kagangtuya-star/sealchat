@@ -91,7 +91,7 @@ const safeWorldAdminList = (admins: any[]) => admins.map((admin) => {
     role,
   }
 }).filter((admin): admin is { userId: string; displayName: string; avatar: string; role: 'owner' | 'admin' } => !!admin)
-const safeAttrs = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+const safeAttrs = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? JSON.parse(JSON.stringify(value)) as Record<string, any> : {}
 const safeCardAvatar = (value?: string) => safeString(resolveAttachmentUrl(value) || value)
 const safeCurrentCharacterCard = (card: CharacterCardData) => {
   const avatar = safeCardAvatar(card.avatarUrl)
@@ -204,7 +204,7 @@ export const createChannelExtensionContext = (deps: ChannelExtensionDeps) => {
     if (capability === 'theater.character.read' && !deps.theaterCharacterSource) return false
     if (capability === 'members.read' && (!deps.chat.curMember || deps.chat.observerMode)) return false
     if (isChannelExtensionWriteCapability(capability) && (!deps.chat.curMember || deps.chat.observerMode || deps.readOnly?.())) return false
-    if (requiresChannelTextSendPermission(capability) && !canWrite) return false
+    if (requiresChannelTextSendPermission(capability, deps.scope.type) && !canWrite) return false
     return true
   })
   const has = (capability: string) => effectiveCapabilities().includes(capability)

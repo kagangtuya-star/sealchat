@@ -27,13 +27,14 @@ func logConflict(version int64) error {
 }
 
 type LogCapabilities struct {
-	EditDraft          bool `json:"editDraft"`
-	ManageSources      bool `json:"manageSources"`
-	ManageLinks        bool `json:"manageLinks"`
-	Publish            bool `json:"publish"`
-	EditOwnMessages    bool `json:"editOwnMessages"`
-	EditOthersMessages bool `json:"editOthersMessages"`
-	BulkAppearance     bool `json:"bulkAppearance"`
+	EditDraft                bool `json:"editDraft"`
+	ManageSources            bool `json:"manageSources"`
+	ManageLinks              bool `json:"manageLinks"`
+	Publish                  bool `json:"publish"`
+	EditOwnMessages          bool `json:"editOwnMessages"`
+	EditOthersMessages       bool `json:"editOthersMessages"`
+	BulkAppearance           bool `json:"bulkAppearance"`
+	SupportsContentOverrides bool `json:"supportsContentOverrides"`
 }
 type LogManagement struct {
 	LayoutSlug string `json:"layoutSlug"`
@@ -140,7 +141,7 @@ func logCheckSources(project *model.LogProjectModel, userID string) error {
 
 func logProjectContext(p *model.LogProjectModel, w *model.WorldModel, admin bool) (*LogProjectContext, error) {
 	result := &LogProjectContext{ProjectID: p.ID, WorldID: p.WorldID, Enabled: p.Enabled, DraftVersion: p.DraftVersion, Draft: json.RawMessage(p.DraftJSON), Capabilities: LogCapabilities{
-		EditDraft: true, ManageSources: admin, ManageLinks: admin, Publish: admin, EditOwnMessages: true, EditOthersMessages: admin && w.AllowAdminEditMessages, BulkAppearance: true,
+		EditDraft: true, ManageSources: admin, ManageLinks: admin, Publish: admin, EditOwnMessages: true, EditOthersMessages: admin && w.AllowAdminEditMessages, BulkAppearance: true, SupportsContentOverrides: true,
 	}}
 	if p.ActiveReleaseID != "" {
 		id := p.ActiveReleaseID

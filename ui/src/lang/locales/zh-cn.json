@@ -133,7 +133,72 @@
     "back": "返回",
     "viewChannels": "查看频道",
     "sessionCount": "累计团次",
-    "includeImported": "统计导入消息"
+    "includeImported": "统计导入消息",
+    "heroes": {
+      "entry": "打字英雄榜",
+      "title": "打字英雄榜",
+      "periodLabel": "排行周期",
+      "periodDay": "日榜",
+      "periodWeek": "周榜",
+      "periodMonth": "月榜",
+      "prevPeriod": "上一周期",
+      "nextPeriod": "下一周期",
+      "backToCurrent": "回到当前",
+      "scopeLabel": "统计范围",
+      "scopeAll": "全部",
+      "scopeIC": "仅场内",
+      "dateTrigger": "选择周期：{range}",
+      "datePanel": "选择排行榜周期",
+      "weekSelectionHint": "整周选择，周一至周日为一个周期。",
+      "activeDaysHint": "高亮表示这一天你有至少一条计入英雄榜的输入，不代表进入排行榜。",
+      "activeDaysRetry": "活跃日期加载失败，重试",
+      "metrics": {
+        "chars": "字数",
+        "messages": "消息",
+        "speed": "速度",
+        "dailyAvg": "日均"
+      },
+      "metricHints": {
+        "chars": "周期内计入统计的总字数，与输入统计“总输入字数”口径一致",
+        "messages": "周期内计入统计的消息条数",
+        "speed": "沿用输入统计的打字速度估算：总字数 ÷ 活跃分钟数（相邻发言间隔不超过 30 分钟计为活跃）。活跃满 {min} 分钟才参与排名",
+        "dailyAvg": "周期总字数 ÷ 有发言的自然日数（按你的本地时区划分）"
+      },
+      "units": {
+        "chars": "字",
+        "messages": "条",
+        "speed": "字/分",
+        "dailyAvg": "字/天"
+      },
+      "myResult": "我的成绩",
+      "participants": "共 {n} 人上榜",
+      "beat": "超过 {p}% 的参与者",
+      "onlyOne": "目前只有你上榜",
+      "gapToPrev": "距第 {rank} 名还差 {gap}",
+      "topRank": "暂列第一，继续保持",
+      "tiers": {
+        "champion": "本期打字英雄",
+        "blazing": "键盘旋风",
+        "steady": "笔耕不辍",
+        "rising": "稳步追赶",
+        "warmup": "热身中"
+      },
+      "noData": "这个周期还没有计入统计的发言",
+      "noChars": "这个周期还没有计入字数的消息",
+      "speedNotEligible": "活跃输入 {active} 分钟，满 {min} 分钟后参与速度排名",
+      "nearby": "附近排名",
+      "leaders": "榜单前列",
+      "emptyBoard": "这个周期还没有人上榜",
+      "you": "你",
+      "anonymousHint": "其他账号默认匿名显示，匿名代号每个周期都会更换",
+      "publicSwitch": "在打字英雄榜公开我的昵称与用户名",
+      "publicOn": "其他人会在榜单中看到你的昵称和用户名",
+      "publicOff": "其他人只会看到每周期更换的匿名代号",
+      "publicSaveFailed": "保存公开设置失败",
+      "ruleNote": "统计实际发送的消息，导入消息不计入排行。",
+      "loadFailed": "加载打字英雄榜失败",
+      "retry": "重试"
+    }
   },
   "userProfile": {
     "title": "个人信息",
@@ -167,11 +232,11 @@
     "generic": "[悄悄话] 私密消息"
   },
   "avatarPrompt": {
-    "title": "设置你的头像",
-    "description": "上传一张独特的头像，让大家更容易认出你！",
+    "title": "设置账号头像",
+    "description": "账号头像与频道角色头像分别设置。此引导只提醒一次，你也可以随时在个人信息中设置。",
     "action": "现在设置",
-    "skip": "稍后再说",
-    "badge": "点击设置头像"
+    "skip": "不再提醒",
+    "badge": "点击设置账号头像"
   },
   "emailBindPrompt": {
     "title": "绑定邮箱",

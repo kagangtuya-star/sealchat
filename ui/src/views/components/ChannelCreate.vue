@@ -8,6 +8,8 @@ import { computed, onMounted, ref, watch, type PropType } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { chatEvent } from '@/stores/chat';
 import { canCreateChannelSession } from '@/utils/channelCreateGuard';
+import { setChannelDisplayMode } from '@/features/channel-workbench/api';
+import { WORKBENCH_DISPLAY_MODE } from '@/features/channel-workbench/types';
 
 const message = useMessage()
 const dialog = useDialog()
@@ -31,7 +33,11 @@ const props = defineProps({
 });
 
 
+// 展示形态不进入 channel.create 载荷，创建成功后单独设置，保持创建协议不变。
+const displayMode = ref<'' | typeof WORKBENCH_DISPLAY_MODE>('');
+
 const load = async () => {
+  displayMode.value = '';
   model.value = {
     name: '',
     parent_id: props.parentId,
@@ -95,6 +101,13 @@ const newChannel = async () => {
       (resp as any)?.data?.channel?.id ||
       (resp as any)?.channel?.id ||
       (resp as any)?.id;
+    if (displayMode.value === WORKBENCH_DISPLAY_MODE && createdChannelId) {
+      try {
+        await setChannelDisplayMode(createdChannelId, WORKBENCH_DISPLAY_MODE);
+      } catch {
+        message.warning('频道已创建，但未能设为布局频道，可稍后在频道设置中修改');
+      }
+    }
     await chat.channelList(chat.currentWorldId, true);
     show.value = false;
     message.success('频道创建成功');
@@ -147,6 +160,16 @@ const newChannel = async () => {
       </n-form-item>
       <n-text depth="3" class=" -mt-4 block">
         {{ model.permType === ChannelType.Public ? '公开频道可以被所有人看到和进入' : '非公开频道需要邀请才能加入' }}
+      </n-text>
+
+      <n-form-item label="展示形态" class="mt-4">
+        <n-radio-group v-model:value="displayMode" class=" space-x-2">
+          <n-radio value="">聊天频道</n-radio>
+          <n-radio :value="WORKBENCH_DISPLAY_MODE">布局频道</n-radio>
+        </n-radio-group>
+      </n-form-item>
+      <n-text depth="3" class=" -mt-4 block">
+        {{ displayMode === WORKBENCH_DISPLAY_MODE ? '以多面板工作台展示人物卡、聊天、IForm、线索等；成员与权限与普通频道相同' : '普通消息流频道' }}
       </n-text>
     </n-form>
 

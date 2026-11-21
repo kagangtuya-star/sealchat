@@ -193,7 +193,7 @@ assert.deepEqual(resolveTheaterTransformLayoutStyle({
 })
 
 const previewSource = readFileSync('src/components/theater-presentation/TheaterPresentationPreview.vue', 'utf8')
-assert.match(previewSource, /resolveTheaterTransformLayoutStyle\(props\.draft\.dialogue\.transform\)/)
+assert.match(previewSource, /resolveTheaterTransformLayoutStyle\(previewTransform\(\{ kind: 'dialogue' \}, props\.draft\.dialogue\.transform\)\)/)
 assert.match(previewSource, /theater-preview__default-frame" :style="dialogueSurfaceStyle"/)
 
 console.log('theater presentation runtime tests passed')

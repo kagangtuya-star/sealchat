@@ -54,15 +54,12 @@ func ensureMessageVisibleCharCountBackfillState(conn *gorm.DB) error {
 }
 
 func MessageVisibleCharCountBackfillStateGet() (*MessageVisibleCharCountBackfillState, error) {
-	if db == nil {
+	return ReadMessageVisibleCharCountBackfillState(db)
+}
+
+func ReadMessageVisibleCharCountBackfillState(conn *gorm.DB) (*MessageVisibleCharCountBackfillState, error) {
+	if conn == nil {
 		return nil, nil
 	}
-	var item MessageVisibleCharCountBackfillState
-	if err := db.Where("id = ?", messageVisibleCharCountBackfillStateID).Limit(1).Find(&item).Error; err != nil {
-		return nil, err
-	}
-	if item.ID == "" {
-		return nil, nil
-	}
-	return &item, nil
+	return getMessageVisibleCharCountBackfillState(conn)
 }

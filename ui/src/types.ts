@@ -623,6 +623,10 @@ export interface AIRoutingConfig {
   mode: AIRoutingMode;
 }
 
+export interface AIProviderCapabilities {
+  structuredOutputs?: boolean;
+}
+
 export interface AIProviderConfig {
   id: string;
   name: string;
@@ -632,6 +636,7 @@ export interface AIProviderConfig {
   models: string[];
   selectedModel?: string;
   weight: number;
+  capabilities?: AIProviderCapabilities;
 }
 
 export interface AIModelPricingConfig {
@@ -682,6 +687,7 @@ export interface AIConfig {
 }
 
 export interface AIFeatureCapability {
+  providerNames?: string[];
   key: string;
   enabled: boolean;
   userCustomOnly: boolean;
@@ -967,6 +973,8 @@ export interface BackgroundPreset {
 export interface SChannel extends Channel {
   isPrivate?: boolean;
   worldId?: string;
+  /** 频道展示形态：空为普通聊天频道，'workbench' 为布局频道；不影响成员与权限。 */
+  displayMode?: string;
   createdAt?: string; // 频道创建时间
   updatedAt?: string; // 频道最后更新时间
   rootId?: string; // 根频道ID
@@ -1168,6 +1176,8 @@ export interface ChannelIdentity {
   sortOrder: number;
   folderIds?: string[];
   theaterPresentation?: TheaterPresentation | null;
+  /** 聊天装扮（规范见 features/chat-skin/chatSkinSchema.ts）。 */
+  chatSkin?: Record<string, any> | null;
 }
 
 export interface ChannelIdentityVariant {
@@ -1187,6 +1197,8 @@ export interface ChannelIdentityVariant {
   color?: string;
   appearance?: Record<string, any>;
   theaterPresentation?: TheaterPresentationPatch | null;
+  /** 差分对基础聊天装扮的覆写（服务端存于 appearance.chatSkin）。 */
+  chatSkin?: Record<string, any> | null;
   sortOrder: number;
   enabled: boolean;
   createdAt?: string;
@@ -1248,5 +1260,7 @@ export interface MessageIdentity {
   avatarDecoration?: AvatarDecoration | null;
   avatarDecorations?: AvatarDecoration[] | null;
   theaterPresentation?: TheaterPresentation | null;
+  /** 发送时解析（含差分覆写）的聊天装扮快照。 */
+  chatSkin?: Record<string, any> | null;
   isTemporary?: boolean;
 }

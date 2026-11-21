@@ -478,6 +478,8 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 			msg.SenderIdentityAvatarTextStyle = appearance.AvatarTextStyle
 			msg.SenderIdentityDecorations = appearance.AvatarDecorations
 			msg.SenderTheaterPresentation = appearance.TheaterPresentation
+			msg.SenderChatSkin = appearance.ChatSkin
+			msg.SenderChatSkinResolved = true
 			if appearance.DisplayName != "" {
 				msg.SenderMemberName = appearance.DisplayName
 			}

@@ -11,11 +11,21 @@ export const UI_CUSTOMIZATION_API_VERSION = 2 as const
 export const UI_CUSTOMIZATION_EVENTS = [
   'surface-change', 'world-change', 'channel-change', 'theme-change',
   'message-created', 'message-updated', 'message-deleted',
+  'workbench-change',
 ] as const
 export type UICustomizationEvent = typeof UI_CUSTOMIZATION_EVENTS[number]
 
 export type NotifyType = 'info' | 'success' | 'warning' | 'error'
 type Cleanup = () => void | Promise<void>
+
+/** 当前频道以布局工作台展示时的只读快照；普通聊天频道为 null。 */
+export interface UICustomizationWorkbenchContext {
+  channelId: string
+  mode: 'view' | 'design' | 'preview'
+  immersive: boolean
+  focusedPanelId: string
+  spotlightPanelId: string
+}
 
 export interface UICustomizationScriptContext {
   surface: UIRuntimeSurface
@@ -23,6 +33,7 @@ export interface UICustomizationScriptContext {
   channelId: string
   observer: boolean
   palette: 'day' | 'night'
+  workbench?: UICustomizationWorkbenchContext | null
 }
 
 /** The stable, versioned API handed to package scripts as `sc`. */

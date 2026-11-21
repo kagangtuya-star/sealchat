@@ -23,17 +23,20 @@ const user = useUserStore();
 
 const showModal = computed({
   get: () => props.show,
-  set: (val: boolean) => emit('update:show', val),
+  set: (val: boolean) => {
+    if (!val) emit('skip');
+    emit('update:show', val);
+  },
 });
 
 const handleSetup = () => {
   emit('setup');
-  showModal.value = false;
+  emit('update:show', false);
 };
 
 const handleSkip = () => {
   emit('skip');
-  showModal.value = false;
+  emit('update:show', false);
 };
 </script>
 
@@ -46,7 +49,6 @@ const handleSkip = () => {
     :mask-closable="true"
     class="avatar-setup-modal"
     style="width: 360px; max-width: 90vw;"
-    @close="handleSkip"
   >
     <div class="avatar-prompt">
       <div class="avatar-prompt__icon-wrap">

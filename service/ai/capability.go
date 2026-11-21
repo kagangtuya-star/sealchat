@@ -9,6 +9,7 @@ type FeatureCapability struct {
 	DefaultPrompt  string              `json:"defaultPrompt,omitempty"`
 	DefaultModel   string              `json:"defaultModel,omitempty"`
 	Params         utils.AIModelParams `json:"params,omitempty"`
+	ProviderNames  []string            `json:"providerNames,omitempty"`
 }
 
 func IsFeatureAvailable(cfg utils.AIConfig, featureKey string, userID string, worldID string) bool {
@@ -51,9 +52,20 @@ func AvailableFeatures(cfg utils.AIConfig, userID string, worldID string) []Feat
 			DefaultPrompt:  featureCfg.DefaultPrompt,
 			DefaultModel:   featureCfg.DefaultModel,
 			Params:         featureCfg.Params,
+			ProviderNames:  platformProviderNames(cfg),
 		})
 	}
 	return out
+}
+
+func platformProviderNames(cfg utils.AIConfig) []string {
+	names := []string{}
+	for _, provider := range cfg.Providers {
+		if provider.Enabled {
+			names = append(names, provider.Name)
+		}
+	}
+	return names
 }
 
 func containsID(values []string, target string) bool {

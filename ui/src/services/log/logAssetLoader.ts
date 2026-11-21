@@ -3,7 +3,7 @@
 // 与后台 PDF Render Surface 共用，保证两边的字体与资源语义一致。
 import type { PlatformFontAsset, PlatformFontSubsetManifest } from '@/services/font/platformFontTypes';
 import { inferPlatformFontFormat, type PlatformFontChunk } from '@/services/font/platformFontSubsetRuntime';
-import { buildLogFontPlan, collectLogFontText, logFontChunkToken, logPlatformFontId } from './logFontPlan';
+import { buildLogFontPlan, collectLogFontText, collectLogPlatformFontIds, logFontChunkToken } from './logFontPlan';
 import type { FrameAsset, FrameDocument } from './pagination/logFrameHost';
 
 const MAX_PARALLEL = 6;
@@ -96,18 +96,24 @@ export const createLogAssetLoader = (source: LogAssetSource) => {
 
   /** 在任何字节送入运行时前完成分片规划和必要的 full 降级。 */
   const prepare = async (doc: FrameDocument, tokens: string[], hasAsset: (token: string) => boolean): Promise<PreparedLogFrame> => {
-    const id = logPlatformFontId(doc.page.fontFamily);
-    if (!id) return { doc, assets: await ensure(tokens.filter(token => !hasAsset(token))) };
+    const ids = collectLogPlatformFontIds(doc);
+    if (!ids.length) return { doc, assets: await ensure(tokens.filter(token => !hasAsset(token))) };
     const text = collectLogFontText(doc);
-    const info = text.text || !text.reliable ? await getFontInfo(id) : {};
-    let plan = buildLogFontPlan(id, text, info.meta, info.manifest);
     const missing = (items: string[]) => items.filter(token => !hasAsset(token));
-    let assets = await ensure(missing([...tokens, ...plan.tokens]));
-    if (plan.subset && assets.some(asset => plan.tokens.includes(asset.token) && !asset.data)) {
-      plan = buildLogFontPlan(id, text, info.meta, undefined, true);
-      assets = [...assets.filter(asset => !asset.token.startsWith('platform-font:')), ...await ensure(missing(plan.tokens))];
-    }
-    return { doc: { ...doc, css: `${plan.css}\n${doc.css}` }, assets };
+    const fonts = await Promise.all(ids.map(async id => {
+      const info = text.text || !text.reliable ? await getFontInfo(id) : {};
+      let plan = buildLogFontPlan(id, text, info.meta, info.manifest);
+      let assets = await ensure(missing(plan.tokens));
+      if (plan.subset && assets.some(asset => !asset.data)) {
+        plan = buildLogFontPlan(id, text, info.meta, undefined, true);
+        assets = await ensure(missing(plan.tokens));
+      }
+      return { plan, assets };
+    }));
+    return {
+      doc: { ...doc, css: `${fonts.map(font => font.plan.css).join('\n')}\n${doc.css}` },
+      assets: [...await ensure(missing(tokens)), ...fonts.flatMap(font => font.assets)],
+    };
   };
 
   const seed = (token: string, data: ArrayBuffer, mime: string) => {

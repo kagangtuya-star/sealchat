@@ -52,6 +52,18 @@ interface StatusSummary {
   retentionDays: number;
 }
 
+interface WorldStatisticsSummary {
+  worldCount: number;
+  memberCount: number;
+  channelCount: number;
+  messageCount: number;
+  messageCountIc: number;
+  messageCountOoc: number;
+  messageChars: number;
+  messageCharsIc: number;
+  messageCharsOoc: number;
+}
+
 type StatusCard = {
   label: string;
   value: string;
@@ -71,6 +83,7 @@ const user = useUserStore();
 const message = useMessage();
 
 const summary = ref<StatusSummary | null>(null);
+const worldStatisticsSummary = ref<WorldStatisticsSummary | null>(null);
 const historyPoints = ref<StatusHistoryPoint[]>([]);
 const loading = ref(false);
 const forbidden = ref(false);
@@ -123,6 +136,7 @@ const summaryGroups = computed<StatusCardGroup[]>(() => {
     return [];
   }
   const data = summary.value;
+  const worldData = worldStatisticsSummary.value;
   const realtimeCards: StatusCard[] = [
     {
       label: 'WebSocket 连接',
@@ -143,30 +157,30 @@ const summaryGroups = computed<StatusCardGroup[]>(() => {
   ];
   const scaleCards: StatusCard[] = [
     { label: '注册用户', value: formatStatusNumber(data.registeredUsers), hint: '未被禁用的账户数量' },
-    { label: '世界总数', value: formatStatusNumber(data.worldCount), hint: '状态正常的世界' },
-    { label: '公共频道', value: formatStatusNumber(data.channelCount), hint: '状态正常的公共频道' },
+    { label: '世界总数', value: formatStatusNumber(worldData?.worldCount ?? data.worldCount), hint: '状态正常的世界' },
+    { label: '公共频道', value: formatStatusNumber(worldData?.channelCount ?? data.channelCount), hint: '正常世界中的非归档公共频道' },
     { label: '私聊频道', value: formatStatusNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
   ];
   const contentCards: StatusCard[] = [
     {
       label: '消息总数',
-      value: formatStatusNumber(data.messageCount),
-      hint: '未被删除的历史消息',
+      value: formatStatusNumber(worldData?.messageCount ?? data.messageCount),
+      hint: '正常世界公共频道中的未删除历史消息（含归档频道）',
       variant: 'metric',
       breakdowns: [
-        { label: '内', value: formatStatusNumber(data.messageCountIc) },
-        { label: '外', value: formatStatusNumber(data.messageCountOoc) },
+        { label: '内', value: formatStatusNumber(worldData?.messageCountIc ?? data.messageCountIc) },
+        { label: '外', value: formatStatusNumber(worldData?.messageCountOoc ?? data.messageCountOoc) },
       ],
     },
     {
       label: '消息总字数',
-      value: formatStatusNumber(data.messageCharCount),
-      hint: '未被删除历史消息的字符总数',
+      value: formatStatusNumber(worldData?.messageChars ?? data.messageCharCount),
+      hint: '正常世界公共频道中的未删除消息字符数（含归档频道）',
       variant: 'metric',
       compactValue: true,
       breakdowns: [
-        { label: '内', value: formatStatusNumber(data.messageCharCountIc) },
-        { label: '外', value: formatStatusNumber(data.messageCharCountOoc) },
+        { label: '内', value: formatStatusNumber(worldData?.messageCharsIc ?? data.messageCharCountIc) },
+        { label: '外', value: formatStatusNumber(worldData?.messageCharsOoc ?? data.messageCharCountOoc) },
       ],
     },
     {
@@ -294,6 +308,10 @@ const loadHistory = async (forceRefresh = false) => {
 const refreshAll = async () => {
   historyStore.clearAll();
   await Promise.allSettled([fetchSummary(), loadHistory(true), worldTable.value?.refresh()]);
+};
+
+const handleWorldStatisticsSummary = (value: WorldStatisticsSummary) => {
+  worldStatisticsSummary.value = value;
 };
 
 const closeExpandedPanel = () => {
@@ -455,7 +473,11 @@ onBeforeUnmount(() => {
       </transition-group>
     </section>
 
-    <StatusWorldTable v-if="!forbidden && isPlatformAdmin" ref="worldTable" />
+    <StatusWorldTable
+      v-if="!forbidden && isPlatformAdmin"
+      ref="worldTable"
+      @summary="handleWorldStatisticsSummary"
+    />
 
     <teleport to="body">
       <transition name="status-overlay">

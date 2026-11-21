@@ -36,6 +36,8 @@ export interface TypingPreviewItem {
   displayName: string;
   avatar?: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  /** 已按差分解析的聊天装扮；undefined 表示未知（沿用消息自身快照）。 */
+  chatSkin?: Record<string, any> | null;
   color?: string;
   content: string;
   indicatorOnly: boolean;
@@ -53,6 +55,7 @@ export interface EditingPreviewInfo {
   color?: string;
   avatar?: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  chatSkin?: Record<string, any> | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -501,6 +504,10 @@ const activeIdentityVariantShortcutContext = computed(() => {
     matched: false,
   };
 });
+// 广播和本地预览共享转换结果，截断仍由各自按原有长度执行。
+const plainTypingPreviewContent = computed(() =>
+  replaceEmojiRemarksForPreview(activeIdentityVariantShortcutContext.value.draftContent),
+);
 const activeIdentityVariantForPreview = computed(() => {
   if (editingIdentityPreviewContext.value) {
     return editingIdentityPreviewContext.value.variant;
@@ -523,6 +530,7 @@ const activeIdentityAppearancePreviewSignature = computed(() => {
     appearance?.avatarAttachmentId || '',
     appearance?.avatarTextStyle || '',
     JSON.stringify(appearance?.avatarDecorations || []),
+    JSON.stringify(appearance?.chatSkin || null),
     appearance?.isTemporary ? '1' : '0',
   ].join('__');
 });
@@ -793,7 +801,7 @@ const syncSelfTypingPreview = () => {
   }
   let previewContent = draft;
   if (inputMode.value !== 'rich') {
-    const normalized = replaceEmojiRemarksForPreview(draft);
+    const normalized = plainTypingPreviewContent.value;
     previewContent = normalized.length > 500 ? normalized.slice(0, 500) : normalized;
   }
   const payload: TypingPreviewItem = {
@@ -801,6 +809,7 @@ const syncSelfTypingPreview = () => {
     displayName,
     avatar,
     avatarDecorations: cloneAvatarDecorations(activeIdentityAppearanceForPreview.value?.avatarDecorations),
+    chatSkin: activeIdentityAppearanceForPreview.value?.chatSkin ?? null,
     color: normalizedColor,
     content: previewContent,
     indicatorOnly: false,
@@ -1028,7 +1037,7 @@ const emitTypingPreview = () => {
       }
       raw = '';
     }
-    raw = replaceEmojiRemarksForPreview(raw);
+    if (raw) raw = plainTypingPreviewContent.value;
   }
 
   typingPreviewActive.value = true;
@@ -1159,6 +1168,7 @@ const typingToggleClass = computed(() => ({
       displayName,
       avatar,
       avatarDecorations: cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration),
+      chatSkin: identity ? (identity.chatSkin ?? null) : undefined,
       color: identityColor,
       content: typingState === 'content' ? (e.typing?.content || '') : '',
       indicatorOnly: typingState !== 'content' || !e.typing?.content,

@@ -8,6 +8,7 @@ const scripts = [
   'theater-dialogue-playback-runtime.spec.ts',
   'theater-presentation-runtime.spec.ts',
   'theater-presentation-editor-runtime.spec.ts',
+  'theater-presentation-preview-regression.cjs',
 ]
 const selected = process.argv[2]
 if (!selected) {

@@ -113,7 +113,72 @@
     "back": "戻る",
     "viewChannels": "チャンネルを見る",
     "sessionCount": "セッション数",
-    "includeImported": "インポート済みメッセージを含める"
+    "includeImported": "インポート済みメッセージを含める",
+    "heroes": {
+      "entry": "タイピング英雄榜",
+      "title": "タイピング英雄榜",
+      "periodLabel": "ランキング期間",
+      "periodDay": "日別",
+      "periodWeek": "週間",
+      "periodMonth": "月間",
+      "prevPeriod": "前の期間",
+      "nextPeriod": "次の期間",
+      "backToCurrent": "現在に戻る",
+      "scopeLabel": "集計対象",
+      "scopeAll": "すべて",
+      "scopeIC": "IC のみ",
+      "dateTrigger": "期間を選択：{range}",
+      "datePanel": "ランキングの期間を選択",
+      "weekSelectionHint": "月曜日から日曜日までの週全体を選択します。",
+      "activeDaysHint": "強調された日には、ランキングの集計対象となる自分の入力が1件以上あります。ランクインを示すものではありません。",
+      "activeDaysRetry": "入力日の読み込みに失敗しました。再試行",
+      "metrics": {
+        "chars": "文字数",
+        "messages": "メッセージ",
+        "speed": "速度",
+        "dailyAvg": "日平均"
+      },
+      "metricHints": {
+        "chars": "期間内に集計された文字数（入力統計の総入力文字数と同じ基準）",
+        "messages": "期間内に集計されたメッセージ数",
+        "speed": "入力統計と同じ推定：文字数 ÷ アクティブ分数（30 分以内の間隔をアクティブとみなす）。{min} 分以上でランキング対象",
+        "dailyAvg": "期間の文字数 ÷ 発言した暦日数（ローカルタイムゾーン基準）"
+      },
+      "units": {
+        "chars": "字",
+        "messages": "件",
+        "speed": "字/分",
+        "dailyAvg": "字/日"
+      },
+      "myResult": "自分の成績",
+      "participants": "{n} 人がランクイン",
+      "beat": "参加者の {p}% を上回っています",
+      "onlyOne": "現在ランクインしているのはあなただけです",
+      "gapToPrev": "{rank} 位まであと {gap}",
+      "topRank": "現在 1 位です",
+      "tiers": {
+        "champion": "今期のタイピング英雄",
+        "blazing": "キーボード旋風",
+        "steady": "筆まめ",
+        "rising": "追い上げ中",
+        "warmup": "ウォームアップ中"
+      },
+      "noData": "この期間に集計された発言はまだありません",
+      "noChars": "この期間に集計された文字はまだありません",
+      "speedNotEligible": "アクティブ {active} 分。{min} 分で速度ランキング対象になります",
+      "nearby": "近くの順位",
+      "leaders": "上位",
+      "emptyBoard": "この期間はまだ誰もランクインしていません",
+      "you": "あなた",
+      "anonymousHint": "他のアカウントは匿名表示で、匿名名は期間ごとに変わります",
+      "publicSwitch": "タイピング英雄榜でニックネームとユーザー名を公開する",
+      "publicOn": "他の人にニックネームとユーザー名が表示されます",
+      "publicOff": "他の人には期間ごとに変わる匿名名だけが表示されます",
+      "publicSaveFailed": "公開設定の保存に失敗しました",
+      "ruleNote": "SealChat で送信したメッセージを集計します。インポートしたメッセージは対象外です。",
+      "loadFailed": "タイピング英雄榜の読み込みに失敗しました",
+      "retry": "再試行"
+    }
   },
   "userProfile": {
     "title": "プロフィール",
@@ -147,11 +212,11 @@
     "generic": "[ささやき] プライベートメッセージ"
   },
   "avatarPrompt": {
-    "title": "アバターを設定",
-    "description": "ユニークなアバターをアップロードして、みんなにあなたを覚えてもらいましょう！",
+    "title": "アカウントのアバターを設定",
+    "description": "アカウントとチャンネルのキャラクターのアバターは別々に設定します。この案内に応答した後は自動表示されません。プロフィールからいつでも設定できます。",
     "action": "今すぐ設定",
-    "skip": "後で",
-    "badge": "クリックしてアバターを設定"
+    "skip": "今後表示しない",
+    "badge": "クリックしてアカウントのアバターを設定"
   },
   "emailBindPrompt": {
     "title": "メールアドレスを登録",

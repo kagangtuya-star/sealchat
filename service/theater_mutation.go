@@ -898,18 +898,25 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 		return err
 	}
 	object := theaterObjectModelFromInput(room, actorID, sceneValue, input)
-	visible := object.Visible                                  // GORM's default may mutate false to true on Create.
-	viewportX, viewportY := object.ViewportX, object.ViewportY // Likewise 0 (a viewport edge) to 0.5.
+	// Preserve valid zero values before GORM replaces them with column defaults on Create.
+	zeroValues := map[string]any{}
+	if !object.Visible {
+		zeroValues["visible"] = false
+	}
+	if !object.AspectRatioLocked {
+		zeroValues["aspect_ratio_locked"] = false
+	}
+	if object.ViewportX == 0 {
+		zeroValues["viewport_x"] = 0
+	}
+	if object.ViewportY == 0 {
+		zeroValues["viewport_y"] = 0
+	}
 	if err := tx.Select("*").Create(&object).Error; err != nil {
 		return err
 	}
-	if !visible {
-		if err := tx.Exec("UPDATE theater_objects SET visible = ? WHERE room_id = ? AND id = ?", false, room.ID, object.ID).Error; err != nil {
-			return err
-		}
-	}
-	if viewportX == 0 || viewportY == 0 {
-		return tx.Exec("UPDATE theater_objects SET viewport_x = ?, viewport_y = ? WHERE room_id = ? AND id = ?", viewportX, viewportY, room.ID, object.ID).Error
+	if len(zeroValues) > 0 {
+		return tx.Model(&model.TheaterObjectModel{}).Where("room_id = ? AND id = ?", room.ID, object.ID).UpdateColumns(zeroValues).Error
 	}
 	return nil
 }

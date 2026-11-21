@@ -22,6 +22,7 @@ type ChannelIdentityModel struct {
 	AvatarTextStyle          string                        `json:"avatarTextStyle" gorm:"size:8;not null;default:''"`
 	AvatarDecorations        protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
 	TheaterPresentation      *protocol.TheaterPresentation `json:"theaterPresentation,omitempty" gorm:"serializer:json;column:theater_presentation"`
+	ChatSkin                 protocol.ChatSkin             `json:"chatSkin,omitempty" gorm:"serializer:json;column:chat_skin"`
 	CharacterCardID          string                        `json:"characterCardId,omitempty" gorm:"size:100;index"`
 	IsDefault                bool                          `json:"isDefault" gorm:"default:false"`
 	IsTemporary              bool                          `json:"isTemporary" gorm:"default:false"`
@@ -56,6 +57,7 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 		AvatarDecoration:         legacyDecoration,
 		AvatarDecorations:        m.AvatarDecorations,
 		TheaterPresentation:      m.TheaterPresentation,
+		ChatSkin:                 m.ChatSkin,
 		IsDefault:                m.IsDefault,
 		IsTemporary:              m.IsTemporary,
 		VariantResetMatchMode:    m.VariantResetMatchMode,
@@ -254,7 +256,7 @@ func ChannelIdentityEncodeStoredValues(values map[string]any) error {
 			values["theater_presentation"] = string(encoded)
 		}
 	}
-	return nil
+	return encodeChatSkinColumnValue(values, "chat_skin")
 }
 
 func ChannelIdentityDelete(id string) error {

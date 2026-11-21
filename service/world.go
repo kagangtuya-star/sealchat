@@ -875,7 +875,7 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 const worldCoverAttachmentRootType = "world_cover"
 
 // normalizeWorldCoverAttachment 校验封面附件并返回持久化引用（id:xxx）与附件 ID。
-// 保持当前值不变时跳过校验；新封面必须是当前操作者为该世界上传的位图图片。
+// 保持当前值不变时跳过校验；新封面必须是当前操作者为该世界上传的受支持的封面媒体。
 func normalizeWorldCoverAttachment(worldID, actorID, current, raw string) (string, string, error) {
 	attachmentID := strings.TrimPrefix(strings.TrimSpace(raw), "id:")
 	if attachmentID == "" {
@@ -894,9 +894,9 @@ func normalizeWorldCoverAttachment(worldID, actorID, current, raw string) (strin
 	}
 	mimeType := strings.ToLower(strings.TrimSpace(attachment.MimeType))
 	switch mimeType {
-	case "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif":
+	case "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif", "video/webm":
 	default:
-		return "", "", fmt.Errorf("%w: 封面图片格式不受支持", ErrWorldCoverInvalid)
+		return "", "", fmt.Errorf("%w: 封面媒体格式不受支持", ErrWorldCoverInvalid)
 	}
 	if attachment.UserID != actorID || attachment.RootIDType != worldCoverAttachmentRootType || attachment.RootID != worldID {
 		return "", "", fmt.Errorf("%w: 封面附件不属于当前世界", ErrWorldCoverInvalid)

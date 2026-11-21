@@ -172,12 +172,16 @@ import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
+import { dismissPrompt, isPromptDismissed } from '@/utils/promptDismissal';
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
 import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
 import ChannelIdentityWorkspace from './components/identity-workspace/ChannelIdentityWorkspace.vue'
 import ChannelIdentityProfilePanel from './components/identity-workspace/ChannelIdentityProfilePanel.vue'
 import ChannelIdentityVariantPanel from './components/identity-workspace/ChannelIdentityVariantPanel.vue'
+import ChatSkinStudio, { type ChatSkinStudioApply } from '@/features/chat-skin/ChatSkinStudio.vue'
+import type { ChatSkinPreset } from '@/features/chat-skin/chatSkinPresets'
+import type { ChatSkinAssetPayload } from '@/features/chat-skin/chatSkinTransfer'
 import {
   resolveVariantNote,
   resolveVariantSelectorEmojiSrc,
@@ -200,6 +204,23 @@ import {
   type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
 import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
+import {
+  normalizeChatSkin,
+  resolveChatSkinWithPatch,
+  resolveMessageChatSkinSnapshot,
+  resolvePreviewChatSkin,
+  resolveVariantChatSkinPatch,
+  type ChatSkin,
+  type ChatSkinPatch,
+} from '@/features/chat-skin/chatSkinSchema'
+import {
+  collectChatSkinDocumentAttachmentIds,
+  exportChatSkinDocument,
+  exportChatSkinPatch,
+  importChatSkin,
+  importChatSkinPatch,
+} from '@/features/chat-skin/chatSkinTransfer'
+import { buildChatSkinRenderWithAssets } from '@/features/chat-skin/chatSkinRuntime'
 import {
   cloneChannelIdentityTheaterPresentation,
   cloneChannelIdentityTheaterPresentationPatch,
@@ -280,10 +301,13 @@ const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPi
 
 interface ChatProps {
   hideComposer?: boolean;
+  /** 关闭宿主 UI（包括 Teleport 浮层），保留 Chat 的 Store / WS 生命周期。 */
+  uiVisible?: boolean;
 }
 
 const props = withDefaults(defineProps<ChatProps>(), {
   hideComposer: false,
+  uiVisible: true,
 });
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -1853,7 +1877,11 @@ const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
 const importJobId = ref('');
 const avatarPromptVisible = ref(false);
-const avatarPromptDismissedThisSession = ref(false);
+let avatarPromptUserId = '';
+let avatarPromptTimer: ReturnType<typeof setTimeout> | null = null;
+let promptContextRevision = 0;
+let promptsDisposed = false;
+let cancelIdentitySyncPrompt: (() => void) | null = null;
 const ribbonRoleOptions = ref<Array<{ id: string; label: string }>>([]);
 let ribbonRoleOptionsSeq = 0;
 
@@ -2048,28 +2076,37 @@ const handleDisplaySettingsSave = (settings: Partial<DisplaySettings>) => {
 
 // Avatar prompt handlers
 const handleOpenAvatarPrompt = () => {
+  if (isInObserverMode() || !user.info.id) return;
+  avatarPromptUserId = user.info.id;
   avatarPromptVisible.value = true;
 };
 
 const handleAvatarPromptSetup = () => {
-  avatarPromptVisible.value = false;
+  handleAvatarPromptSkip();
   // Emit event to open user profile panel
   chatEvent.emit('open-user-profile');
 };
 
 const handleAvatarPromptSkip = () => {
   avatarPromptVisible.value = false;
-  avatarPromptDismissedThisSession.value = true;
+  if (avatarPromptUserId === user.info.id) {
+    dismissPrompt('avatar', avatarPromptUserId);
+  }
 };
 
-// Check if avatar prompt should be shown on mount (session-based)
+// Automatic onboarding is shown until the user handles it once.
 const checkAvatarPromptOnMount = () => {
-  if (chat.isObserver) return;
-  if (avatarPromptDismissedThisSession.value) return;
-  if (!user.hasDefaultAvatar) return;
-  // Show prompt after a brief delay for better UX
-  setTimeout(() => {
-    if (!avatarPromptDismissedThisSession.value && user.hasDefaultAvatar) {
+  if (avatarPromptTimer !== null) clearTimeout(avatarPromptTimer);
+  avatarPromptTimer = null;
+  const userId = user.info.id;
+  const revision = promptContextRevision;
+  if (promptsDisposed || isInObserverMode() || !userId || !user.hasDefaultAvatar) return;
+  if (isPromptDismissed('avatar', userId)) return;
+  avatarPromptTimer = setTimeout(() => {
+    avatarPromptTimer = null;
+    if (!promptsDisposed && revision === promptContextRevision && userId === user.info.id
+      && !isInObserverMode() && user.hasDefaultAvatar && !isPromptDismissed('avatar', userId)) {
+      avatarPromptUserId = userId;
       avatarPromptVisible.value = true;
     }
   }, 2000);
@@ -2111,6 +2148,7 @@ const editingIdentityPreviewContext = computed(() => {
       avatarAttachmentId: snapshot.avatarAttachmentId || '',
       avatarTextStyle: normalizeAvatarTextStyle(snapshot.avatarTextStyle),
       avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations),
+      chatSkin: normalizeChatSkin(snapshot.chatSkin),
       isTemporary: Boolean(snapshot.isTemporary),
     };
   }
@@ -3290,6 +3328,7 @@ type IdentityAppearancePreview = {
   avatarAttachmentId: string;
   avatarDecorations?: AvatarDecoration[] | null;
   theaterPresentation?: TheaterPresentation | null;
+  chatSkin?: ChatSkin | null;
   isTemporary: boolean;
 };
 
@@ -3511,6 +3550,7 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
             : null,
         )
       : null,
+    chatSkin: resolveChatSkinWithPatch(identity.chatSkin, resolveVariantChatSkinPatch(variant)),
     isTemporary: Boolean(identity.isTemporary),
   };
 };
@@ -4123,7 +4163,6 @@ const ensureIdentitySyncOptions = async () => {
 };
 
 const identitySyncPromptPending = ref(false);
-const identitySyncDismissedForSession = ref(false);
 
 const isInObserverMode = () => {
   return chat.isObserver || chat.observerMode || !!chat.observerWorldId;
@@ -4293,65 +4332,101 @@ const maybePromptIdentitySync = async () => {
   if (identitySyncDialogVisible.value || identitySyncPromptPending.value) {
     return;
   }
-  if (identitySyncDismissedForSession.value) {
-    return;
-  }
   if (isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
     return;
   }
-  try {
-    const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
-    const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
-    await chat.loadChannelIdentities(channelId, shouldForce);
-  } catch (error) {
-    console.warn('加载频道角色失败', error);
-    return;
-  }
-  // 异步操作后再次检查权限
-  if (!canManageIdentities()) {
-    return;
-  }
-  const identities = chat.channelIdentities[channelId] || [];
-  if (identities.length > 1) {
-    return;
-  }
-
+  const userId = user.info.id;
+  const worldId = chat.currentWorldId;
+  const revision = promptContextRevision;
+  if (!userId || promptsDisposed || isPromptDismissed('identitySync', userId, worldId)) return;
+  const isCurrentContext = () => !promptsDisposed && revision === promptContextRevision
+    && userId === user.info.id && worldId === chat.currentWorldId
+    && channelId === chat.curChannel?.id && canManageIdentities();
   identitySyncPromptPending.value = true;
-  const confirmed = await new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    dialog.warning({
-      title: '从其他频道同步角色？',
-      content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
-      positiveText: '同步',
-      negativeText: '暂不',
-      maskClosable: false,
-      closeOnEsc: false,
-      closable: false,
-      onPositiveClick: () => settle(true),
-      onNegativeClick: () => settle(false),
-      onClose: () => settle(false),
-    });
-  });
-  identitySyncPromptPending.value = false;
-  if (!confirmed) {
-    identitySyncDismissedForSession.value = true;
-    return;
-  }
   try {
-    await openIdentityManager();
-  } catch (error) {
-    console.warn('打开角色管理失败', error);
-    message.error('打开角色管理失败，请稍后重试');
-    return;
+    try {
+      const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
+      const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
+      await chat.loadChannelIdentities(channelId, shouldForce);
+    } catch (error) {
+      console.warn('加载频道角色失败', error);
+      return;
+    }
+    // 异步操作后再次检查上下文和权限
+    if (!isCurrentContext() || isPromptDismissed('identitySync', userId, worldId)) {
+      return;
+    }
+    const identities = chat.channelIdentities[channelId] || [];
+    if (identities.length > 1) {
+      return;
+    }
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const prompt = dialog.warning({
+        title: '从其他频道同步角色？',
+        content: '当前频道角色较少，是否从本世界其他频道同步？处理后本世界不再自动提醒，也可随时从角色管理中同步。',
+        positiveText: '同步',
+        negativeText: '不再提醒',
+        maskClosable: false,
+        closeOnEsc: false,
+        closable: false,
+        onPositiveClick: () => settle(true),
+        onNegativeClick: () => settle(false),
+        onClose: () => settle(false),
+      });
+      cancelIdentitySyncPrompt = () => {
+        prompt.destroy();
+        settle(false);
+      };
+    });
+    cancelIdentitySyncPrompt = null;
+    if (!isCurrentContext()) return;
+    dismissPrompt('identitySync', userId, worldId);
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await openIdentityManager();
+    } catch (error) {
+      console.warn('打开角色管理失败', error);
+      message.error('打开角色管理失败，请稍后重试');
+      return;
+    }
+    await nextTick();
+    if (!isCurrentContext()) return;
+    await openIdentitySyncDialog();
+  } finally {
+    identitySyncPromptPending.value = false;
   }
-  await nextTick();
-  await openIdentitySyncDialog();
 };
+
+watch(
+  [() => user.info.id, () => chat.currentWorldId, () => chat.curChannel?.id,
+    () => chat.isObserver, () => chat.observerMode, () => chat.observerWorldId],
+  () => {
+    promptContextRevision++;
+    cancelIdentitySyncPrompt?.();
+    avatarPromptVisible.value = false;
+    checkAvatarPromptOnMount();
+  },
+  { flush: 'sync' },
+);
+
+watch(() => user.hasDefaultAvatar, (hasDefaultAvatar) => {
+  if (!hasDefaultAvatar) avatarPromptVisible.value = false;
+});
+
+onBeforeUnmount(() => {
+  promptsDisposed = true;
+  if (avatarPromptTimer !== null) clearTimeout(avatarPromptTimer);
+  cancelIdentitySyncPrompt?.();
+});
 
 const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v6';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
@@ -4480,6 +4555,62 @@ const remapTheaterPresentationForImport = async (
 ) => {
   void options;
   return input == null ? input ?? null : cloneIdentityMigrationValue(input);
+};
+
+// 聊天装扮导出：引用到的附件登记为素材，图层 / 背景引用改写为 `asset:<键>`；
+// 无法导出的素材对应图层会被丢弃（装扮是视觉层，不阻断整个角色导出）。
+const registerChatSkinAssets = async (
+  documents: unknown[],
+  assetMap: Map<string, IdentityAssetPayload>,
+  fallbackPrefix: string,
+  issueState?: IdentityAssetExportIssueState,
+) => {
+  const keyByAttachmentId = new Map<string, string>();
+  for (const attachmentId of collectChatSkinDocumentAttachmentIds(...documents)) {
+    const assetKey = await registerIdentityAsset(assetMap, attachmentId, `${fallbackPrefix}-skin`, issueState);
+    if (assetKey) keyByAttachmentId.set(attachmentId, assetKey);
+  }
+  return keyByAttachmentId;
+};
+
+const mapChatSkinForExport = async (
+  skin: Record<string, any> | null | undefined,
+  assetMap: Map<string, IdentityAssetPayload>,
+  fallbackPrefix: string,
+  issueState?: IdentityAssetExportIssueState,
+) => {
+  const normalized = normalizeChatSkin(skin);
+  if (!normalized) return null;
+  const keyByAttachmentId = await registerChatSkinAssets([normalized], assetMap, fallbackPrefix, issueState);
+  return exportChatSkinDocument(normalized, keyByAttachmentId);
+};
+
+const mapChatSkinPatchForExport = async (
+  patch: ChatSkinPatch | null,
+  assetMap: Map<string, IdentityAssetPayload>,
+  fallbackPrefix: string,
+  issueState?: IdentityAssetExportIssueState,
+) => {
+  if (!patch) return null;
+  const keyByAttachmentId = await registerChatSkinAssets([patch.skin], assetMap, fallbackPrefix, issueState);
+  return exportChatSkinPatch(patch, keyByAttachmentId);
+};
+
+/** 差分 appearance 中的 chatSkin 走专用字段导出 / 导入，通用 appearance 不携带它。 */
+const omitVariantAppearanceChatSkin = (appearance?: Record<string, any> | null) => {
+  const next = { ...(appearance || {}) };
+  delete next.chatSkin;
+  return next;
+};
+
+const resolveImportVariantChatSkinPatch = (variant: IdentityExportVariantItem, assetIdMap: Map<string, string>) => {
+  if (variant.chatSkin !== undefined) {
+    return { present: true, patch: importChatSkinPatch(variant.chatSkin, assetIdMap) };
+  }
+  if (variant.appearance && Object.prototype.hasOwnProperty.call(variant.appearance, 'chatSkin')) {
+    return { present: true, patch: importChatSkinPatch(variant.appearance.chatSkin, assetIdMap) };
+  }
+  return { present: false, patch: null as ChatSkinPatch | null };
 };
 
 const mapDecorationsForExport = async (
@@ -4688,6 +4819,12 @@ const buildIdentityExportSnapshot = async (options: {
       safeFilename(displayName || identity.id || 'identity-theater'),
       issueState,
     );
+    const chatSkin = await mapChatSkinForExport(
+      identity.chatSkin,
+      assetMap,
+      safeFilename(displayName || identity.id || 'identity-skin'),
+      issueState,
+    );
     items.push({
       sourceId: identity.id,
       displayName,
@@ -4699,6 +4836,7 @@ const buildIdentityExportSnapshot = async (options: {
       avatarTextStyle: avatarTextStyle || undefined,
       avatarDecorations,
       theaterPresentation,
+      chatSkin,
     });
 
     const identityVariants = (options.variantsByIdentity[identity.id] || [])
@@ -4720,6 +4858,12 @@ const buildIdentityExportSnapshot = async (options: {
         safeFilename(variant.keyword || variant.id || 'variant-theater'),
         issueState,
       );
+      const variantChatSkin = await mapChatSkinPatchForExport(
+        resolveVariantChatSkinPatch(variant),
+        assetMap,
+        safeFilename(variant.keyword || variant.id || 'variant-skin'),
+        issueState,
+      );
       variants.push({
         sourceId: variant.id,
         identitySourceId: identity.id,
@@ -4731,8 +4875,9 @@ const buildIdentityExportSnapshot = async (options: {
         avatarAssetKey: avatarVariantAssetKey || undefined,
         displayName: variant.displayName,
         color: variant.color,
-        appearance: variant.appearance || {},
+        appearance: omitVariantAppearanceChatSkin(variant.appearance),
         theaterPresentation,
+        chatSkin: variantChatSkin,
         sortOrder: variant.sortOrder,
         enabled: variant.enabled !== false,
       });
@@ -4912,6 +5057,27 @@ const importIdentityMigrationSnapshot = async (
     }
   }
 
+  const applyImportedIdentityChatSkin = async (item: IdentityExportItem, identityId: string) => {
+    // 旧版文件没有 chatSkin 字段：保持目标角色原装扮不变。
+    if (item.chatSkin === undefined) return;
+    const chatSkin = importChatSkin(item.chatSkin, assetIdMap);
+    await chat.channelIdentityChatSkinSet(identityId, {
+      channelId: targetChannelId,
+      targetUserId: targetUserId || undefined,
+      chatSkin,
+    });
+  };
+  const applyImportedVariantChatSkin = async (variant: IdentityExportVariantItem, variantId: string) => {
+    const { present, patch } = resolveImportVariantChatSkinPatch(variant, assetIdMap);
+    if (!present) return;
+    await chat.channelIdentityVariantChatSkinSet(variantId, {
+      channelId: targetChannelId,
+      targetUserId: targetUserId || undefined,
+      chatSkin: patch,
+      skipReload: true,
+    });
+  };
+
   const targetList = Array.isArray(targetIdentities) ? [...targetIdentities] : [];
   const duplicateTargetNames = new Set<string>();
   const seenTargetNames = new Set<string>();
@@ -4980,6 +5146,7 @@ const importIdentityMigrationSnapshot = async (
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
+        await applyImportedIdentityChatSkin(item, updated.id);
         identityIdMap.set(item.sourceId, updated.id);
         overwriteIdentityIds.add(updated.id);
         const targetIndex = targetList.findIndex(existing => existing.id === updated.id);
@@ -5024,6 +5191,7 @@ const importIdentityMigrationSnapshot = async (
         });
         created.theaterPresentation = theaterPresentation as any;
       }
+      await applyImportedIdentityChatSkin(item, created.id);
       identityIdMap.set(item.sourceId, created.id);
       targetList.push(created);
       createdCount += 1;
@@ -5073,10 +5241,11 @@ const importIdentityMigrationSnapshot = async (
           avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
           displayName: variant.displayName || '',
           color: variant.color || '',
-          appearance: variant.appearance || {},
+          appearance: omitVariantAppearanceChatSkin(variant.appearance),
           enabled: variant.enabled !== false,
         });
         stagedVariants.push({ item: variant, id: created.id, temporaryKeyword });
+        await applyImportedVariantChatSkin(variant, created.id);
         if (variant.theaterPresentation !== undefined) {
           const theaterPresentation = await remapTheaterPresentationForImport(variant.theaterPresentation, {
             channelId: targetChannelId,
@@ -5098,7 +5267,7 @@ const importIdentityMigrationSnapshot = async (
             avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
             displayName: variant.displayName || '',
             color: variant.color || '',
-            appearance: variant.appearance || {},
+            appearance: omitVariantAppearanceChatSkin(variant.appearance),
             theaterPresentation: theaterPresentation as any,
             skipTheaterAssetValidation: true,
             enabled: variant.enabled !== false,
@@ -5124,10 +5293,13 @@ const importIdentityMigrationSnapshot = async (
             avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
             displayName: variant.displayName || '',
             color: variant.color || '',
-            appearance: variant.appearance || {},
+            appearance: omitVariantAppearanceChatSkin(variant.appearance),
             enabled: variant.enabled !== false,
           });
         }
+      }
+      if (sortedVariants.length > 0) {
+        await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
       }
     } catch (error) {
       failedCount += Math.max(1, sortedVariants.length);
@@ -5158,6 +5330,14 @@ const importIdentityMigrationSnapshot = async (
               icOocOnActivate: snapshot.icOocOnActivate || '',
               folderIds: snapshot.folderIds || [],
             });
+            const sourceItem = items.find(item => item.sourceId === sourceIdentityId);
+            if (sourceItem?.chatSkin !== undefined) {
+              await chat.channelIdentityChatSkinSet(snapshot.id, {
+                channelId: targetChannelId,
+                targetUserId: targetUserId || undefined,
+                chatSkin: normalizeChatSkin(snapshot.chatSkin),
+              });
+            }
             updatedCount = Math.max(0, updatedCount - 1);
             identityIdMap.delete(sourceIdentityId);
           } catch (restoreError) {
@@ -5717,6 +5897,123 @@ const openIdentityVariantTheaterPresentationEditor = async () => {
   theaterPresentationControllerTemplate.value = null;
   theaterPresentationEditorMode.value = 'variant';
   theaterPresentationEditorVisible.value = true;
+};
+
+// ---------------------------------------------------------------------------
+// 聊天装扮工作室：保存走专用接口，只对已保存的角色 / 差分开放。
+// ---------------------------------------------------------------------------
+const chatSkinStudioVisible = ref(false);
+const chatSkinStudioMode = ref<'base' | 'variant'>('base');
+const chatSkinStudioApplying = ref(false);
+const chatSkinStudioRef = ref<InstanceType<typeof ChatSkinStudio> | null>(null);
+
+const chatSkinStudioReadonlyReason = computed(() => {
+  if (chatSkinStudioMode.value === 'base' && isDelegatedSharedIdentity.value) {
+    return '此角色由本人跨频道共享，基础聊天装扮只能由角色所有者修改。';
+  }
+  return '';
+});
+
+const chatSkinStudioPeerPresets = computed<ChatSkinPreset[]>(() => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) return [];
+  const currentId = editingIdentity.value?.id || '';
+  const result: ChatSkinPreset[] = [];
+  for (const identity of chat.getScopedChannelIdentities(channelId, currentIdentityTargetUserId.value)) {
+    if (identity.id === currentId) continue;
+    const skin = normalizeChatSkin(identity.chatSkin);
+    if (!skin) continue;
+    result.push({
+      id: `identity:${identity.id}`,
+      name: identity.displayName || '未命名角色',
+      description: `复制角色「${identity.displayName || '未命名'}」的装扮`,
+      source: 'identity',
+      skin,
+    });
+  }
+  return result;
+});
+
+const openIdentityChatSkinStudio = () => {
+  if (identityDialogMode.value !== 'edit' || !editingIdentity.value?.id) {
+    message.warning('请先保存频道角色后再编辑聊天装扮');
+    return;
+  }
+  chatSkinStudioMode.value = 'base';
+  chatSkinStudioVisible.value = true;
+};
+
+const openIdentityVariantChatSkinStudio = () => {
+  if (!editingIdentity.value?.id || !editingIdentityVariant.value?.id || identityVariantDialogMode.value !== 'edit') {
+    message.warning('请先保存差分后再编辑差分聊天装扮');
+    return;
+  }
+  chatSkinStudioMode.value = 'variant';
+  chatSkinStudioVisible.value = true;
+};
+
+const uploadChatSkinImage = async (file: File) => {
+  const result = await uploadImageAttachment(file, {
+    channelId: chat.curChannel?.id,
+    targetUserId: currentIdentityTargetUserId.value || undefined,
+    // 透明图层需要保留 alpha 通道，只有 JPEG 走压缩。
+    skipCompression: file.type !== 'image/jpeg',
+  });
+  return normalizeAttachmentId(result.attachmentId);
+};
+
+const exportChatSkinAssets = async (attachmentIds: string[]) => {
+  const assetMap = new Map<string, IdentityAssetPayload>();
+  const keyByAttachmentId = new Map<string, string>();
+  for (const attachmentId of attachmentIds) {
+    const assetKey = await registerIdentityAsset(assetMap, attachmentId, 'chat-skin-asset');
+    if (assetKey) keyByAttachmentId.set(attachmentId, assetKey);
+  }
+  return { assets: Array.from(assetMap.values()) as ChatSkinAssetPayload[], keyByAttachmentId };
+};
+
+const importChatSkinAssets = (assets: ChatSkinAssetPayload[]) => ensureImportAssets(assets as IdentityAssetPayload[], {
+  channelId: chat.curChannel?.id,
+  targetUserId: currentIdentityTargetUserId.value || undefined,
+});
+
+const handleChatSkinStudioApply = async (value: ChatSkinStudioApply) => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = editingIdentity.value?.id || '';
+  if (!channelId || !identityId || chatSkinStudioApplying.value) return;
+  chatSkinStudioApplying.value = true;
+  try {
+    if (chatSkinStudioMode.value === 'variant') {
+      const variantId = editingIdentityVariant.value?.id || '';
+      if (!variantId) return;
+      await chat.channelIdentityVariantChatSkinSet(variantId, {
+        channelId,
+        targetUserId: currentIdentityTargetUserId.value || undefined,
+        chatSkin: value.patch ?? null,
+      });
+      const refreshed = chat.getIdentityVariants(channelId, identityId, currentIdentityTargetUserId.value)
+        .find(item => item.id === variantId);
+      if (refreshed && editingIdentityVariant.value?.id === variantId) {
+        editingIdentityVariant.value = refreshed;
+      }
+    } else {
+      const updated = await chat.channelIdentityChatSkinSet(identityId, {
+        channelId,
+        targetUserId: currentIdentityTargetUserId.value || undefined,
+        chatSkin: value.skin ?? null,
+      });
+      if (editingIdentity.value?.id === identityId) {
+        editingIdentity.value = { ...editingIdentity.value, chatSkin: updated.chatSkin ?? null };
+      }
+    }
+    chatSkinStudioRef.value?.markSaved();
+    message.success('聊天装扮已保存，之后发送的消息生效');
+    chatSkinStudioVisible.value = false;
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.response?.data?.error || '保存聊天装扮失败');
+  } finally {
+    chatSkinStudioApplying.value = false;
+  }
 };
 
 const toggleTheaterPresentationEditorMode = () => {
@@ -6775,6 +7072,27 @@ const getMessageAvatarMergeKey = (message: any) => {
 
 const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
+};
+
+// 紧凑网格布局的名字列在 chat-item 之外渲染，这里按同一份快照套用装扮的名字样式。
+const getMessageInlineNameStyle = (message: any) => {
+  const candidate = editingPreviewMap.value[message?.id];
+  const preview = candidate && (!candidate.isSelf || isSelfMessage(message)) ? candidate : undefined;
+  const color = preview?.color || getMessageIdentityColor(message);
+  const skin = resolvePreviewChatSkin(message, preview?.chatSkin, display.settings.chatSkinEnabled);
+  const nameStyle = skin
+    ? buildChatSkinRenderWithAssets(skin, {
+      layout: 'compact',
+      tone: getMessageTone(message),
+      isSelf: isSelfMessage(message),
+      palette: display.palette,
+      whisper: Boolean(message?.isWhisper),
+    })?.nameStyle
+    : null;
+  if (nameStyle && Object.keys(nameStyle).length) {
+    return color && !nameStyle.color ? { color, ...nameStyle } : nameStyle;
+  }
+  return color ? { color } : undefined;
 };
 
 const getMessageIcMode = (message: any): 'ic' | 'ooc' => {
@@ -10147,6 +10465,36 @@ const {
   scrollToBottom: () => scrollToBottom(),
 });
 
+// 输入预览只套用名字样式与气泡底面（不渲染图层），让对方提前看到同一份装扮的大致观感。
+const typingPreviewSkinRenders = computed(() => {
+  const result: Record<string, ReturnType<typeof buildChatSkinRenderWithAssets>> = {};
+  if (!display.settings.chatSkinEnabled) return result;
+  const layout = display.layout === 'bubble' ? 'bubble' : 'compact';
+  for (const preview of typingPreviewItems.value) {
+    const skin = normalizeChatSkin(preview.chatSkin);
+    if (!skin) continue;
+    result[preview.userId] = buildChatSkinRenderWithAssets(skin, {
+      layout,
+      tone: preview.tone,
+      isSelf: preview.userId === selfPreviewUserId.value,
+      palette: display.palette,
+    });
+  }
+  return result;
+});
+const getTypingPreviewNameStyle = (preview: { userId: string; color?: string }) => {
+  const nameStyle = typingPreviewSkinRenders.value[preview.userId]?.nameStyle;
+  if (nameStyle && Object.keys(nameStyle).length) {
+    return preview.color && !nameStyle.color ? { color: preview.color, ...nameStyle } : nameStyle;
+  }
+  return preview.color ? { color: preview.color } : undefined;
+};
+const getTypingPreviewBubbleSkinStyle = (preview: { userId: string; indicatorOnly: boolean }) => {
+  const render = typingPreviewSkinRenders.value[preview.userId];
+  if (!render || render.layout !== 'bubble' || preview.indicatorOnly) return undefined;
+  return render.contentStyle;
+};
+
 const stripDiceChipMarkup = (html: string) => {
   if (!html || !html.includes('dice-chip')) {
     return html;
@@ -11178,6 +11526,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
         displayName: item.displayName,
         avatar: item.avatar,
         avatarDecorations: cloneAvatarDecorations(item.avatarDecorations),
+        ...(item.chatSkin !== undefined ? { chatSkin: item.chatSkin } : {}),
         content: contentValue,
         indicatorOnly,
         isSelf: item.userId === user.info.id,
@@ -11200,6 +11549,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     let previewIsTemporary = false;
     let previewAvatarTextStyle: '' | GeneratedAvatarStyle = '';
     let previewAvatarDecorations: AvatarDecoration[] = [];
+    let previewChatSkin: ChatSkin | null = null;
     const identityPreview = resolveIdentityPreviewInfo(
       chat.editing.channelId,
       chat.editing.identityId,
@@ -11212,6 +11562,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
       }
       previewColor = identityPreview.color || '';
       previewAvatarDecorations = cloneAvatarDecorations(identityPreview.avatarDecorations);
+      previewChatSkin = identityPreview.chatSkin;
       previewIsTemporary = Boolean(identityPreview.isTemporary);
       previewAvatarTextStyle = identityPreview.avatarTextStyle;
       if (identityPreview.avatar || previewIsTemporary || previewAvatarTextStyle) {
@@ -11224,6 +11575,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
       color: previewColor,
       avatar: previewAvatar,
       avatarDecorations: previewAvatarDecorations,
+      chatSkin: previewChatSkin,
       content: draft,
       indicatorOnly,
       isSelf: true,
@@ -11878,10 +12230,13 @@ const handleAvatarCharacterCardOpen = async (payload: AvatarCharacterCardOpenPay
 type MessageIdentitySnapshot = {
   avatarTextStyle: '' | GeneratedAvatarStyle;
   identityId: string | null;
+  /** 快照对应的差分；与编辑目标一致时沿用快照里的聊天装扮。 */
+  variantId?: string | null;
   displayName: string;
   color: string;
   avatarAttachmentId: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  chatSkin?: ChatSkin | null;
   isTemporary: boolean;
 };
 
@@ -11922,16 +12277,19 @@ const resolveMessageIdentitySnapshot = (msg?: any): MessageIdentitySnapshot | nu
     ?? msg?.sender_identity_is_temporary
     ?? msg?.senderIdentityIsTemporary,
   );
-  if (!identityId && !displayName && !color && !avatarAttachmentId && !avatarTextStyle && avatarDecorations.length === 0 && !isTemporary) {
+  const chatSkin = resolveMessageChatSkinSnapshot(msg);
+  if (!identityId && !displayName && !color && !avatarAttachmentId && !avatarTextStyle && avatarDecorations.length === 0 && !isTemporary && !chatSkin) {
     return null;
   }
   return {
     identityId,
+    variantId: String(directIdentity?.variantId || msg?.sender_identity_variant_id || '').trim() || null,
     displayName,
     color,
     avatarAttachmentId,
     avatarTextStyle,
     avatarDecorations,
+    chatSkin,
     isTemporary,
   };
 };
@@ -11947,16 +12305,19 @@ const createInterjectIdentitySnapshot = (
   const avatarTextStyle = normalizeAvatarTextStyle(appearance?.avatarTextStyle ?? identity?.avatarTextStyle);
   const avatarDecorations = cloneAvatarDecorations(appearance?.avatarDecorations);
   const isTemporary = Boolean(appearance?.isTemporary ?? identity?.isTemporary);
-  if (!identityId && !displayName && !color && !avatarAttachmentId && !avatarTextStyle && avatarDecorations.length === 0 && !isTemporary) {
+  const chatSkin = normalizeChatSkin(appearance?.chatSkin);
+  if (!identityId && !displayName && !color && !avatarAttachmentId && !avatarTextStyle && avatarDecorations.length === 0 && !isTemporary && !chatSkin) {
     return null;
   }
   return {
     identityId,
+    variantId: appearance?.variantId || null,
     displayName,
     color,
     avatarAttachmentId,
     avatarTextStyle,
     avatarDecorations,
+    chatSkin,
     isTemporary,
   };
 };
@@ -12001,6 +12362,7 @@ const createInterjectEditSnapshot = (source: {
     identitySnapshot: source.identitySnapshot ? {
       ...source.identitySnapshot,
       avatarDecorations: cloneAvatarDecorations(source.identitySnapshot.avatarDecorations),
+      chatSkin: normalizeChatSkin(source.identitySnapshot.chatSkin),
     } : null,
   };
 };
@@ -12054,6 +12416,7 @@ const restoreInterjectEditingSnapshot = (snapshot: InterjectEditSnapshot) => {
     ? {
       ...snapshot.identitySnapshot,
       avatarDecorations: cloneAvatarDecorations(snapshot.identitySnapshot.avatarDecorations),
+      chatSkin: normalizeChatSkin(snapshot.identitySnapshot.chatSkin),
     }
     : null;
   chat.startEditingMessage({
@@ -12092,6 +12455,12 @@ const resolveIdentityPreviewInfo = (
     return null;
   }
   const identity = findIdentityMeta(channelId, identityId);
+  // 服务端只在身份或差分变化时重算装扮快照；未变化时编辑预览沿用原消息快照，避免保存前后跳变。
+  const snapshotMatches = Boolean(
+    snapshot
+    && snapshot.identityId === identityId
+    && (snapshot.variantId || '') === (identityVariantId || ''),
+  );
   if (identity) {
     const variant = identityVariantId ? chat.getIdentityVariants(channelId, identityId).find(item => item.id === identityVariantId) || null : null;
     const appearance = resolveIdentityAppearancePreview(identity, variant);
@@ -12100,6 +12469,7 @@ const resolveIdentityPreviewInfo = (
       avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
       color: appearance?.color || '',
       avatarDecorations: cloneAvatarDecorations(appearance?.avatarDecorations),
+      chatSkin: snapshotMatches ? normalizeChatSkin(snapshot?.chatSkin) : normalizeChatSkin(appearance?.chatSkin),
       isTemporary: Boolean(appearance?.isTemporary),
       avatarTextStyle: normalizeAvatarTextStyle(appearance?.avatarTextStyle),
     };
@@ -12112,6 +12482,7 @@ const resolveIdentityPreviewInfo = (
     avatar: snapshot.avatarAttachmentId ? resolveAttachmentUrl(snapshot.avatarAttachmentId) : '',
     color: snapshot.color || '',
     avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations),
+    chatSkin: normalizeChatSkin(snapshot.chatSkin),
     isTemporary: Boolean(snapshot.isTemporary),
     avatarTextStyle: normalizeAvatarTextStyle(snapshot.avatarTextStyle),
   };
@@ -13571,8 +13942,13 @@ const performSend = async (options?: {
         avatarTextStyle: activeAppearance?.avatarTextStyle || '',
         avatarDecorations: cloneAvatarDecorations(activeAppearance?.avatarDecorations),
         avatarDecoration: firstAvatarDecoration(activeAppearance?.avatarDecorations),
+        ...(activeAppearance?.chatSkin ? { chatSkin: activeAppearance.chatSkin } : {}),
         isTemporary: Boolean(activeAppearance?.isTemporary),
       } as any;
+    }
+    if (activeAppearance?.chatSkin) {
+      // 乐观消息与服务端快照同源：发送瞬间按当前差分解析，回执到达后由服务端快照替换。
+      (tmpMsg as any).sender_chat_skin = activeAppearance.chatSkin;
     }
     (tmpMsg as any).sender_identity_decoration = cloneAvatarDecorations(activeAppearance?.avatarDecorations);
     if (activeAppearance?.displayName) {
@@ -16421,6 +16797,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <template v-if="uiVisible">
   <div
     ref="chatRootContainerRef"
     class="flex flex-col h-full justify-between chat-root-container"
@@ -17179,7 +17556,7 @@ onBeforeUnmount(() => {
                   >
                     <span
                       class="message-row__name"
-                      :style="getMessageIdentityColor(entry.message) ? { color: getMessageIdentityColor(entry.message) } : undefined"
+                      :style="getMessageInlineNameStyle(entry.message)"
                     >{{ getMessageDisplayName(entry.message) }}</span>
                     <span
                       v-if="shouldRenderSendingIndicator(entry.message) && isSelfMessage(entry.message)"
@@ -17343,7 +17720,7 @@ onBeforeUnmount(() => {
                   <div class="message-row__grid-name">
                     <span
                       class="message-row__name"
-                      :style="preview.color ? { color: preview.color } : undefined"
+                      :style="getTypingPreviewNameStyle(preview)"
                     >{{ preview.displayName }}</span>
                   </div>
                   <div class="message-row__grid-colon">
@@ -17400,7 +17777,7 @@ onBeforeUnmount(() => {
                   <div class="typing-preview-bubble-header">
                     <span
                       class="typing-preview-bubble-name"
-                      :style="preview.color ? { color: preview.color } : undefined"
+                      :style="getTypingPreviewNameStyle(preview)"
                     >{{ preview.displayName }}</span>
                     <span class="typing-dots typing-dots--header">
                       <span></span>
@@ -17413,6 +17790,7 @@ onBeforeUnmount(() => {
                       'typing-preview-bubble',
                       preview.indicatorOnly ? '' : 'typing-preview-bubble--content',
                     ]"
+                    :style="getTypingPreviewBubbleSkinStyle(preview)"
                     :data-tone="preview.tone || 'ic'"
                   >
                     <div
@@ -17562,7 +17940,7 @@ onBeforeUnmount(() => {
                 <n-checkbox
                   class="whisper-panel__checkbox"
                   :checked="isWhisperTarget(candidate)"
-                  @update:checked="(checked) => handleWhisperCandidateChecked(candidate, checked)"
+                  @update:checked="(checked: boolean) => handleWhisperCandidateChecked(candidate, checked)"
                   @click.stop
                 />
               </div>
@@ -18563,8 +18941,10 @@ onBeforeUnmount(() => {
         @avatar-remove="removeIdentityAvatar"
         @avatar-style="selectIdentityAvatarStyle"
         @promote-shared="handlePromoteIdentityToSharedUpdate"
+        :chat-skin-configured="Boolean(normalizeChatSkin(editingIdentity?.chatSkin))"
         @open-decoration="openIdentityDecorationEditor"
         @open-theater="openIdentityTheaterPresentationEditor"
+        @open-chat-skin="openIdentityChatSkinStudio"
         @submit="submitIdentityForm({ closeDialog: false })"
       />
     </template>
@@ -18602,6 +18982,7 @@ onBeforeUnmount(() => {
         @avatar-remove="removeIdentityVariantAvatar"
         @pick-emoji="identityVariantEmojiPickerVisible = true"
         @open-theater="openIdentityVariantTheaterPresentationEditor"
+        @open-chat-skin="openIdentityVariantChatSkinStudio"
         @color-picker-update="handleIdentityVariantColorPickerUpdate"
         @color-commit="handleIdentityVariantColorBlur"
         @color-clear="clearIdentityVariantColor"
@@ -18652,6 +19033,26 @@ onBeforeUnmount(() => {
     @apply-multiplayer="handleMultiplayerPortraitApply"
     @set-world-template="handleSetWorldTheaterTemplate"
     @toggle-editor-mode="toggleTheaterPresentationEditorMode"
+  />
+  <ChatSkinStudio
+    ref="chatSkinStudioRef"
+    v-model:show="chatSkinStudioVisible"
+    :mode="chatSkinStudioMode"
+    :name="identityForm.displayName"
+    :color="identityForm.color"
+    :avatar-src="identityWorkspaceBaseAvatar.src"
+    :avatar-attachment-id="identityForm.avatarAttachmentId"
+    :base-skin="editingIdentity?.chatSkin || null"
+    :variant-patch="chatSkinStudioMode === 'variant' ? (resolveVariantChatSkinPatch(editingIdentityVariant) as Record<string, any> | null) : null"
+    :variant-label="editingIdentityVariant?.keyword || ''"
+    :readonly="Boolean(chatSkinStudioReadonlyReason)"
+    :readonly-reason="chatSkinStudioReadonlyReason"
+    :applying="chatSkinStudioApplying"
+    :peer-presets="chatSkinStudioPeerPresets"
+    :upload-image="uploadChatSkinImage"
+    :export-assets="exportChatSkinAssets"
+    :import-assets="importChatSkinAssets"
+    @apply="handleChatSkinStudioApply"
   />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"
@@ -18846,7 +19247,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="identity-folder-item__meta" v-if="item.folder">
                 <span class="identity-folder-item__count">{{ item.count }}</span>
-                <n-dropdown trigger="click" :options="folderActionOptions" @select="key => handleFolderAction(item.folder!, key)">
+                <n-dropdown trigger="click" :options="folderActionOptions" @select="(key: string | number) => handleFolderAction(item.folder!, key)">
                   <n-button quaternary text size="tiny">
                     <n-icon :component="DotsVertical" size="14" />
                   </n-button>
@@ -18889,7 +19290,7 @@ onBeforeUnmount(() => {
                 v-if="!isManagingBotIdentity"
                 class="identity-list__item-check"
                 :checked="identitySelection.includes(identity.id)"
-                @update:checked="val => handleIdentitySelection(identity.id, val)"
+                @update:checked="(val: boolean) => handleIdentitySelection(identity.id, val)"
               />
               <AvatarVue
                 :size="40"
@@ -19291,6 +19692,7 @@ onBeforeUnmount(() => {
     :world-id="chat.currentWorldId"
     :channel-id="chat.curChannel.id"
   />
+  </template>
 </template>
 
 <style lang="scss" scoped src="./styles/chat.scoped.scss"></style>

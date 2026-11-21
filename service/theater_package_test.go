@@ -729,13 +729,20 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	sourceObjectID := "source-object-" + utils.NewIDWithLength(6)
 	if err := model.GetDB().Create(&model.TheaterObjectModel{
-		StringPKBaseModel: model.StringPKBaseModel{ID: "source-object-" + utils.NewIDWithLength(6)},
-		RoomID:            sourceRoom.ID, SceneID: sourceSceneID, Kind: "group", Name: "Imported Object",
-		Width: 100, Height: 100, Scale: 1, ScaleX: 1, ScaleY: 1, Visible: true,
-		AspectRatioLocked: true, OrderKey: "a", ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`,
+		StringPKBaseModel: model.StringPKBaseModel{ID: sourceObjectID},
+		RoomID:            sourceRoom.ID, SceneID: sourceSceneID, Kind: "image", Name: "Imported Object",
+		Width: 320, Height: 90, Scale: 1.25, ScaleX: 1.25, ScaleY: 0.75, Visible: true,
+		AspectRatioLocked: false, OrderKey: "a", ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`,
 		SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID,
 	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Seed an explicit false without GORM's default:true replacing the fixture value.
+	if err := model.GetDB().Model(&model.TheaterObjectModel{}).
+		Where("room_id = ? AND id = ?", sourceRoom.ID, sourceObjectID).
+		Updates(map[string]any{"aspect_ratio_locked": false}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := model.GetDB().Model(&model.TheaterRoomModel{}).Where("id = ?", sourceRoom.ID).Updates(map[string]any{"active_scene_id": sourceSceneID, "state_json": `{}`}).Error; err != nil {
@@ -787,6 +794,21 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	}
 	if exportJob.OutputFilePath == "" {
 		t.Fatal("export path missing")
+	}
+	extracted := t.TempDir()
+	if err := extractTheaterPackageZIP(exportJob.OutputFilePath, extracted); err != nil {
+		t.Fatal(err)
+	}
+	var document TheaterSharedSnapshot
+	if err := decodeStrictJSONFile(filepath.Join(extracted, "stage", "document.json"), &document); err != nil {
+		t.Fatal(err)
+	}
+	exportedObject, ok := document.Scenes[sourceSceneID].Objects[sourceObjectID]
+	if !ok || exportedObject.AspectRatioLocked == nil || *exportedObject.AspectRatioLocked {
+		t.Fatalf("exported object lost explicit aspectRatioLocked=false: %#v", exportedObject)
+	}
+	if exportedObject.Width != 320 || exportedObject.Height != 90 || exportedObject.ScaleX != 1.25 || exportedObject.ScaleY != 0.75 {
+		t.Fatalf("export changed object dimensions or scales: %#v", exportedObject)
 	}
 
 	targetWorldID := "target-world-" + utils.NewIDWithLength(6)
@@ -841,6 +863,13 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 		t.Fatalf("unexpected import summary: %#v", summary)
 	}
 	assertTheaterPackageTarget(t, targetRoom.ID, existingSceneID, 2, 1, 1)
+	var importedObject model.TheaterObjectModel
+	if err := model.GetDB().Where("room_id = ? AND scene_id = ? AND name = ?", targetRoom.ID, summary.ImportedSceneIDs[0], "Imported Object").First(&importedObject).Error; err != nil {
+		t.Fatal(err)
+	}
+	if importedObject.AspectRatioLocked || !importedObject.Visible || importedObject.Width != 320 || importedObject.Height != 90 || importedObject.ScaleX != 1.25 || importedObject.ScaleY != 0.75 {
+		t.Fatalf("package round-trip changed object aspect ratio lock, visibility, dimensions or scales: %#v", importedObject)
+	}
 	var importedScene model.TheaterSceneModel
 	if err := model.GetDB().Where("room_id = ? AND name = ?", targetRoom.ID, "Imported Scene").First(&importedScene).Error; err != nil {
 		t.Fatal(err)

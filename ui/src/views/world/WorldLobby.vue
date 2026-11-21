@@ -14,8 +14,8 @@ import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupM
 import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
 import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
 import WorldCreateCoverField from '@/views/world/WorldCreateCoverField.vue';
+import WorldCoverMedia from '@/views/world/WorldCoverMedia.vue';
 import type { AnnouncementItem } from '@/models/announcement';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -217,8 +217,6 @@ const formatWorldGridDescription = (description?: string) => {
   const value = (description || '暂无简介').trim() || '暂无简介';
   return value;
 };
-
-const getWorldCoverUrl = (world?: { coverAttachmentId?: string }) => resolveAttachmentUrl(world?.coverAttachmentId || '');
 
 const updateCreateDescription = (value: string) => {
   createForm.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
@@ -1312,9 +1310,12 @@ const handleArchivePageSizeChange = (pageSize: number) => {
               </n-button>
 
               <div class="world-list-content">
-                <div v-if="getWorldCoverUrl(item.world)" class="world-list-cover" aria-hidden="true">
-                  <img :src="getWorldCoverUrl(item.world)" alt="" decoding="async" />
-                </div>
+                <WorldCoverMedia
+                  v-if="item.world.coverAttachmentId"
+                  class="world-list-cover"
+                  :attachment="item.world.coverAttachmentId"
+                  aria-hidden="true"
+                />
                 <div class="world-list-title-row">
                   <div class="world-list-name" :title="item.world.name">{{ item.world.name }}</div>
                   <n-tag
@@ -1387,9 +1388,12 @@ const handleArchivePageSizeChange = (pageSize: number) => {
             @mouseleave="handleGridCardMouseLeave(item)"
             @click="handleGridCardClick(item)"
           >
-            <div v-if="getWorldCoverUrl(item.world)" class="world-grid-card__cover" aria-hidden="true">
-              <img :src="getWorldCoverUrl(item.world)" alt="" decoding="async" />
-            </div>
+            <WorldCoverMedia
+              v-if="item.world.coverAttachmentId"
+              class="world-grid-card__cover"
+              :attachment="item.world.coverAttachmentId"
+              aria-hidden="true"
+            />
             <div v-if="isGridTetherVisible(item.world.id)" class="world-grid-card__tether-layer">
               <span class="world-grid-card__tether-beam" :style="getGridTetherBeamStyle(item.world.id)" />
               <span
@@ -1999,13 +2003,6 @@ const handleArchivePageSizeChange = (pageSize: number) => {
   background: color-mix(in srgb, var(--sc-text-primary) 4%, transparent);
 }
 
-.world-list-cover img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 .world-list-title-row {
   display: flex;
   align-items: center;
@@ -2221,11 +2218,7 @@ const handleArchivePageSizeChange = (pageSize: number) => {
   );
 }
 
-.world-grid-card__cover img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.world-grid-card__cover :deep(.world-cover-media__asset) {
   opacity: 0.62;
 }
 

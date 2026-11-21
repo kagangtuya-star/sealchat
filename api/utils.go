@@ -51,7 +51,11 @@ type SaveMultipartFileResult struct {
 	IsAnimated bool   // Whether the image is animated (e.g., animated WebP from GIF)
 }
 
-func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (result SaveMultipartFileResult, err error) {
+func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (SaveMultipartFileResult, error) {
+	return saveMultipartFile(fh, fOut, limit, false)
+}
+
+func saveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64, preserveGIF bool) (result SaveMultipartFileResult, err error) {
 	file, err := fh.Open()
 	if err != nil {
 		return SaveMultipartFileResult{}, err
@@ -80,7 +84,7 @@ func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (
 		}
 	}
 
-	if shouldCompressUpload(mimeType) {
+	if !(preserveGIF && mimeType == "image/gif") && shouldCompressUpload(mimeType) {
 		// Read with limit + 1 to detect oversized files
 		limitedReader := io.LimitReader(file, limit+1)
 		data, readErr := io.ReadAll(limitedReader)
@@ -110,7 +114,7 @@ func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (
 		return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType, IsAnimated: isAnimated}, err
 	}
 
-	// For non-image files, also check size limit
+	// Files saved without compression must still respect the size limit.
 	reader := bufio.NewReader(io.LimitReader(file, limit+1))
 	data, readErr := io.ReadAll(reader)
 	if readErr != nil {
@@ -119,8 +123,14 @@ func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (
 	if int64(len(data)) > limit {
 		return SaveMultipartFileResult{}, ErrFileTooLarge
 	}
+	isAnimated := false
+	if preserveGIF && mimeType == "image/gif" {
+		if gifImg, gifErr := gif.DecodeAll(bytes.NewReader(data)); gifErr == nil {
+			isAnimated = len(gifImg.Image) > 1
+		}
+	}
 	hash, size, err := copyWithHash(fOut, bytes.NewReader(data))
-	return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType}, err
+	return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType, IsAnimated: isAnimated}, err
 }
 
 func copyWithHash(dst io.Writer, src io.Reader) ([]byte, int64, error) {

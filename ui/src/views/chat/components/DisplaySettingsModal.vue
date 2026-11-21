@@ -793,6 +793,19 @@ const themeManagerMetaLabel = computed(() => `平台主题 ${display.platformThe
       <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">显示聊天装扮</p>
+            <p class="section-desc">展示频道角色设置的气泡 / 行装扮与装饰图层；关闭后所有消息按当前主题原样显示，只影响本机，不会修改任何角色或消息</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.chatSkinEnabled">
+          <template #checked>显示</template>
+          <template #unchecked>隐藏</template>
+        </n-switch>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">背景消息场内外区分</p>
             <p class="section-desc">频道背景或玻璃背景开启时，使用半透明色调区分场内与场外消息；关闭后恢复全透明显示</p>
           </div>

@@ -204,6 +204,7 @@ func DBInit(cfg *utils.AppConfig) {
 		log.Printf("cleanup unsupported theater presentations failed: %v", err)
 	}
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
+	db.AutoMigrate(&ChannelWorkbenchModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
 	db.AutoMigrate(&PlatformCharacterCardTemplateModel{})
@@ -257,6 +258,9 @@ func DBInit(cfg *utils.AppConfig) {
 	logPhase("业务模型迁移")
 	if err := ensureChatHistoryIndexes(); err != nil {
 		log.Printf("初始化聊天历史索引失败: %v", err)
+	}
+	if err := ensureInputStatsPeriodIndex(); err != nil {
+		log.Printf("初始化输入统计周期索引失败: %v", err)
 	}
 	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
 		log.Printf("初始化未读提醒索引失败: %v", err)

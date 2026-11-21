@@ -269,10 +269,10 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		}
 		if ctx.ConnInfo.ChannelId != "" {
 			ctx.ConnInfo.ChannelId = ""
-			ctx.ConnInfo.WorldId = ""
+			ctx.ConnInfo.setWorldID("")
 		}
 		ctx.ConnInfo.ChannelId = channelId
-		ctx.ConnInfo.WorldId = channelWorldID
+		ctx.ConnInfo.setWorldID(channelWorldID)
 		ctx.ConnInfo.Focused = true
 		member := &model.MemberModel{
 			UserID:    ctx.User.ID,
@@ -323,7 +323,7 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 			}
 		}
 		ctx.BroadcastChannelPresence(oldChannelId)
-		ctx.ConnInfo.WorldId = ""
+		ctx.ConnInfo.setWorldID("")
 	}
 
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, channelId, ctx.User.Nickname)
@@ -343,7 +343,7 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	chUserSet.Add(ctx.User.ID)
 
 	ctx.ConnInfo.ChannelId = channelId
-	ctx.ConnInfo.WorldId = channelWorldID
+	ctx.ConnInfo.setWorldID(channelWorldID)
 	ctx.ConnInfo.Focused = true
 
 	ctx.BroadcastEventInChannel(channelId, &protocol.Event{

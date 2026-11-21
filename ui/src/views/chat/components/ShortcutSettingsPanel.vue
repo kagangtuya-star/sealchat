@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
               <n-switch
                 size="small"
                 :value="draft[item.key]?.enabled"
-                @update:value="(val) => toggleEnabled(item.key, val)"
+                @update:value="(val: boolean) => toggleEnabled(item.key, val)"
               >
                 <template #checked>启用</template>
                 <template #unchecked>禁用</template>

@@ -985,7 +985,7 @@ const importConfig = async (e: Event) => {
     <n-scrollbar style="max-height: 60vh;">
       <div class="regex-help-content">
         <h4>正则表达式基础</h4>
-        <p>正则表达式需要包含<strong>捕获组</strong>来提取角色名和内容。使用圆括号 <code>()</code> 来定义捕获组。</p>
+        <p>后端使用 Go regexp（RE2），请使用兼容的表达式。推荐通过命名捕获组 <code>(?P&lt;role&gt;...)</code>、<code>(?P&lt;time&gt;...)</code>、<code>(?P&lt;content&gt;...)</code> 提取角色名、时间和正文，顺序不限；无时间时可省略 time 组。</p>
 
         <n-divider />
 
@@ -1025,6 +1025,12 @@ const importConfig = async (e: Event) => {
           </tbody>
         </n-table>
 
+        <h4>角色(QQ号) 时间戳 + 下一行正文</h4>
+        <pre>古德(1438123508) 2025/12/17 20:04:45
+麻雀虽小，五脏俱全</pre>
+        <p><code>^(?P&lt;role&gt;.+?)\((?:\d+)\)\s+(?P&lt;time&gt;\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})\s*(?P&lt;content&gt;.*)$</code></p>
+        <p>开启“多行合并”：消息头的 content 可以为空，下一行正文会追加到该消息。</p>
+
         <n-divider />
 
         <h4>AI 提示词示例</h4>
@@ -1036,18 +1042,20 @@ const importConfig = async (e: Event) => {
 [粘贴你的日志示例]
 
 要求：
-1. 提取角色名到第一个捕获组
-2. 提取消息内容到第二个捕获组
-3. 如果有时间戳，提取到独立的捕获组
-4. 返回可直接在 JavaScript 中使用的正则表达式</pre>
+1. 使用兼容 Go regexp（RE2）的表达式
+2. 使用命名捕获组 (?P&lt;role&gt;...) 提取角色名，(?P&lt;content&gt;...) 提取消息正文
+3. 如果有时间戳，使用 (?P&lt;time&gt;...) 提取；命名捕获组顺序不限
+4. 正文捕获组允许为空，以便通过“多行合并”追加后续正文</pre>
         </n-card>
 
         <n-divider />
 
         <h4>捕获组顺序</h4>
         <ul>
-          <li><strong>有时间戳</strong>：组1=时间，组2=角色名，组3=内容</li>
-          <li><strong>无时间戳</strong>：组1=角色名，组2=内容</li>
+          <li><strong>命名捕获组优先</strong>：同时提供 role 和 content 时按命名组解析，time 可选且顺序不限；空值不会改用其他位置的组。</li>
+          <li><strong>旧位置格式继续兼容</strong>：无时间时，组1=角色名、组2=内容。</li>
+          <li><strong>旧位置格式有时间戳</strong>：三个组中只有一个能解析为时间时，支持“时间 / 角色名 / 内容”和“角色名 / 时间 / 内容”。</li>
+          <li>没有明确时间组或存在多个时间候选时沿用旧位置规则；复杂格式请使用命名捕获组。</li>
         </ul>
       </div>
     </n-scrollbar>

@@ -499,6 +499,7 @@ type ConnInfo struct {
 	LatencyMs                    int64
 	ChannelId                    string
 	WorldId                      string
+	worldIDMu                    sync.RWMutex
 	IsGuest                      bool
 	IsObserver                   bool
 	ObserverSlug                 string
@@ -567,7 +568,7 @@ func (info *ConnInfo) canReceiveWorldMessageNotice(worldID, channelID string) bo
 	}
 	worldID = strings.TrimSpace(worldID)
 	channelID = strings.TrimSpace(channelID)
-	if worldID == "" || channelID == "" || info.WorldId != worldID || info.ChannelId == channelID {
+	if worldID == "" || channelID == "" || info.currentWorldID() != worldID || info.ChannelId == channelID {
 		return false
 	}
 
@@ -765,6 +766,22 @@ func getWsConnectionSnapshot() wsConnectionSnapshot {
 	return snapshot
 }
 
+func (info *ConnInfo) setWorldID(worldID string) {
+	info.worldIDMu.Lock()
+	info.WorldId = worldID
+	info.worldIDMu.Unlock()
+}
+
+func (info *ConnInfo) currentWorldID() string {
+	if info == nil {
+		return ""
+	}
+	info.worldIDMu.RLock()
+	worldID := info.WorldId
+	info.worldIDMu.RUnlock()
+	return worldID
+}
+
 // countOnlineUsersByWorld 统计各世界当前有 WebSocket 连接停留的唯一用户数（不含访客与观察者）。
 func countOnlineUsersByWorld() map[string]int {
 	result := map[string]int{}
@@ -775,10 +792,13 @@ func countOnlineUsersByWorld() map[string]int {
 	connMap.Range(func(_ string, userConnMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		worlds := map[string]struct{}{}
 		userConnMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
-			if info == nil || info.IsGuest || info.IsObserver || info.WorldId == "" {
+			if info == nil || info.IsGuest || info.IsObserver {
 				return true
 			}
-			worlds[info.WorldId] = struct{}{}
+			worldID := info.currentWorldID()
+			if worldID != "" {
+				worlds[worldID] = struct{}{}
+			}
 			return true
 		})
 		for worldID := range worlds {

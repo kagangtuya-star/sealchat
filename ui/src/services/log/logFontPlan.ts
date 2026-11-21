@@ -21,6 +21,24 @@ export const logFontChunkToken = (id: string, chunk: PlatformFontChunk): string 
 
 export interface LogFontText { text: string; reliable: boolean }
 
+/** Final sanitized body attributes identify fonts independently of their chat family names. */
+export const collectLogPlatformFontIds = (doc: FrameDocument): string[] => {
+  const ids = new Set<string>();
+  const pageId = logPlatformFontId(doc.page.fontFamily);
+  if (pageId) ids.add(pageId);
+  const holder = document.createElement('template');
+  for (const block of doc.blocks) {
+    holder.innerHTML = block.html;
+    holder.content.querySelectorAll('[data-platform-font-id],[data-ruby-base-font-asset-id],[data-ruby-rt-font-asset-id]').forEach(el => {
+      for (const attr of ['data-platform-font-id', 'data-ruby-base-font-asset-id', 'data-ruby-rt-font-asset-id']) {
+        const id = el.getAttribute(attr) || '';
+        if (/^[A-Za-z0-9_-]{1,100}$/.test(id)) ids.add(id);
+      }
+    });
+  }
+  return Array.from(ids);
+};
+
 export const collectLogFontText = (doc: FrameDocument): LogFontText => {
   const points = new Set<string>();
   const add = (text: string) => { for (const char of text) points.add(char); };

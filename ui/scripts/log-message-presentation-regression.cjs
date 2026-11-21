@@ -245,6 +245,32 @@ const whisper = (...targets) => ({ whisper: { targets: targets.map(([key, name])
   const rebound = draftOps.rebindStyle({ ...pdfDraft, messageTemplateOverrides: { [n.id]: 'special' } }, { ...style, id: 'new', version: '1', templates: {} }).next
   assert.deepEqual(rebound.displayRules, pdfDraft.displayRules)
   assert.equal(rebound.messageTemplateOverrides[n.id], 'special', '切换样式不丢用户设置')
+
+  // 工程正文覆盖（批量校对）：只替换渲染用正文，原消息对象不变；同版本下增删覆盖都会让节点缓存失效。
+  {
+    const source = { message: { id: 'ov', content: '原文,未改', createdAt: '2026-10-18T12:00:00Z', icMode: 'ic', identity: { id: 'alice', displayName: '艾丽丝' }, user: { id: 'u-alice' } }, version: 3, capabilities: { reorder: true } }
+    const cache = new Map()
+    const textOf = (overrides) => r.composeDesignSection('s', 'S', [source], [], true, cache, overrides).nodes.find((n) => n.kind === 'message').plainText
+    assert.equal(textOf(undefined), '原文,未改')
+    assert.equal(textOf({ ov: '原文，已改' }), '原文，已改')
+    assert.equal(source.message.content, '原文,未改', '不改写原消息对象')
+    assert.equal(textOf({}), '原文,未改', '移除覆盖后恢复原文')
+    const overrideDraft = { title: 'T', themeTokens: {}, page, sections: [{ id: 's', title: 'S', order: 0 }], elements: [], messageContentOverrides: { ov: 'PDF 用工程正文' } }
+    // PDF 表面与预览共用 composeDesignSection；记录它产出的消息正文，确认 PDF 同样使用工程正文。
+    const compose = r.composeDesignSection
+    const seen = []
+    r.composeDesignSection = (...args) => {
+      const comp = compose(...args)
+      seen.push(...comp.nodes.filter((n) => n.kind === 'message').map((n) => n.plainText))
+      return comp
+    }
+    try {
+      surface.buildPartDocuments({ draft: overrideDraft, style, parts: [{ sectionId: 's', slice: 0, sliceCount: 1, messages: [source] }] })
+    } finally {
+      r.composeDesignSection = compose
+    }
+    assert.deepEqual(seen, ['PDF 用工程正文'])
+  }
 }
 
 console.log('log message presentation regression: ok')

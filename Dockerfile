@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
 FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS ui-builder
+ENV NODE_OPTIONS=--max-old-space-size=6144
 WORKDIR /src/ui
 COPY ui/ ./
 COPY doc/template/ /src/doc/template/

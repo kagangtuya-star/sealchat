@@ -101,10 +101,15 @@ state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', pr
 assert.deepEqual(state.draft.narration, { enabled: true, backdropColor: '#121212', backdropOpacity: 0.7 })
 
 const transactionStart = captureTheaterEditorSnapshot(state)
+const beforeDrag = state
 state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'portrait' }, transform: { x: 0.3 } }, { recordHistory: false })
+assert.equal(state.history, beforeDrag.history, 'transient updates reuse history without copying its snapshots')
+assert.equal(beforeDrag.draft.portrait?.transform.x, 0.25, 'transient updates must not mutate the previous draft')
 state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'portrait' }, transform: { x: 0.4 } }, { recordHistory: false })
 state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'portrait' }, transform: { x: 0.5 } }, { recordHistory: false })
 state = commitTheaterEditorTransaction(state, transactionStart)
+assert.equal(state.history.past.length, beforeDrag.history.past.length + 1, 'one drag commits one undo step')
+assert.equal(state.history.past[0], beforeDrag.history.past[0], 'committing history reuses unchanged snapshots')
 const historyLength = state.history.past.length
 state = undoTheaterEditor(state)
 assert.equal(state.draft.portrait?.transform.x, 0.25)

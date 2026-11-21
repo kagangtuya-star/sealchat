@@ -252,18 +252,19 @@ export const useChatEmoji = ({
     triggerDeps: () => [emojiPanelTab.value, activeEmojiTab.value, filteredEmojiItems.value.length, emojiPanelLoading.value, emojiPanelLoadingMore.value],
     rootMargin: '0px 0px 80px 0px', bottomOffset: 40, scrollFallback: true, observeResize: true, requestAnimationFrameCheck: true,
   });
-  const buildEmojiRemarkMap = () => {
+  // 只在图库或备注变化时重建，保留表情列表优先、同名首项优先的规则。
+  const emojiRemarkMap = computed(() => {
     const map = new Map<string, string>();
     for (const item of [...emojiItems.value, ...allGalleryItems.value]) {
       const remark = item.remark?.trim();
       if (remark && item.attachmentId && !map.has(remark)) map.set(remark, item.attachmentId);
     }
     return map;
-  };
+  });
+  const buildEmojiRemarkMap = (): ReadonlyMap<string, string> => emojiRemarkMap.value;
   const replaceEmojiRemarksForPreview = (text: string) => {
-    const map = buildEmojiRemarkMap();
     return text.replace(/[\[【\/]([^\]】\/]+)[\]】\/]/g, (match, remark) => {
-      const attachmentId = map.get(remark.trim());
+      const attachmentId = emojiRemarkMap.value.get(remark.trim());
       if (!attachmentId) return match;
       const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
       return `[[img:id:${normalized}]]`;

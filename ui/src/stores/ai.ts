@@ -86,7 +86,7 @@ const readAIResponseError = async (response: Response, raw: string) => {
   return response.statusText || `AI 请求失败（${response.status}）`
 }
 
-const runPlatformAITask = async (featureKey: string, payload: { worldId?: string; channelId?: string; input: string; source: AIRunSource }, token: string) => {
+const runPlatformAITask = async (featureKey: string, payload: { worldId?: string; channelId?: string; projectId?: string; sourceVersions?: Record<string, number>; input: string; source: AIRunSource }, token: string, signal?: AbortSignal) => {
   const response = await fetch(`${urlBase}/api/v1/ai/tasks/${encodeURIComponent(featureKey)}?stream=1`, {
     method: 'POST',
     credentials: 'include',
@@ -95,6 +95,7 @@ const runPlatformAITask = async (featureKey: string, payload: { worldId?: string
       'Content-Type': 'application/json',
     }),
     body: JSON.stringify(payload),
+    signal,
   })
   const refreshedToken = response.headers.get('x-access-token-refresh')
   if (refreshedToken?.trim()) {
@@ -133,13 +134,13 @@ export const useAIStore = defineStore('ai', () => {
   const userProfiles = ref<UserAIProviderProfile[]>(initialUserAISettings.profiles)
   const userFeatureBindings = ref<Record<string, UserAIFeatureBinding>>(initialUserAISettings.featureBindings)
 
-  async function loadCapabilities(worldId?: string) {
+  async function loadCapabilities(worldId?: string, projectId?: string) {
     const user = useUserStore()
     loading.value = true
     try {
       const resp = await api.get('api/v1/ai/capabilities', {
         headers: { Authorization: user.token },
-        params: worldId ? { worldId } : undefined,
+        params: { worldId, projectId },
       })
       const items = (resp.data?.features || []) as AIFeatureCapability[]
       features.value = items.reduce<Record<string, AIFeatureCapability>>((acc, item) => {
@@ -226,9 +227,15 @@ export const useAIStore = defineStore('ai', () => {
     return discoverLocalAIModels(baseUrl, apiKey)
   }
 
-  async function runTask(featureKey: string, payload: { worldId?: string; channelId?: string; input: string; source?: 'platform' | 'user' }) {
+  async function runTask(featureKey: string, payload: { worldId?: string; channelId?: string; projectId?: string; sourceVersions?: Record<string, number>; input: string; source?: 'platform' | 'user' }, options?: { signal?: AbortSignal }) {
     const source = resolveEffectiveSource(featureKey, payload.source)
     if (source === 'user') {
+      if (featureKey === 'log_proofread') {
+        const user = useUserStore()
+        const batch = JSON.parse(payload.input) as { version: number; fragments: Array<{ id: string; messageId: string; sectionId: string }> }
+        const references = JSON.stringify({ version: batch.version, fragments: batch.fragments.map(({ id, messageId, sectionId }) => ({ id, messageId, sectionId })) })
+        await api.post(`api/v1/ai/tasks/${featureKey}?validate=1`, { projectId: payload.projectId, sourceVersions: payload.sourceVersions, input: references, source }, { headers: { Authorization: user.token }, signal: options?.signal })
+      }
       if (!userProfiles.value.some((item) => item.enabled && item.baseUrl.trim() && item.apiKey?.trim() && Array.isArray(item.models) && item.models.some((model) => String(model || '').trim()))) {
         throw new Error(USER_AI_SETTINGS_REQUIRED_MESSAGE)
       }
@@ -239,6 +246,7 @@ export const useAIStore = defineStore('ai', () => {
           feature: getFeatureCapability(featureKey),
           profiles: userProfiles.value,
           featureBindings: userFeatureBindings.value,
+          signal: options?.signal,
         }),
       }
     }
@@ -246,7 +254,7 @@ export const useAIStore = defineStore('ai', () => {
     return runPlatformAITask(featureKey, {
       ...payload,
       source,
-    }, user.token)
+    }, user.token, options?.signal)
   }
 
   const enabledFeatureKeys = computed(() => Object.keys(features.value).filter((key) => features.value[key]?.enabled))

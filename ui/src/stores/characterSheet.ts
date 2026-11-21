@@ -1270,11 +1270,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   ) => {
     const win = windows.value[windowId];
     if (!win || !win.readOnly) return;
-    if (payload.cardName) {
+    if (payload.cardName !== undefined) {
       win.cardName = payload.cardName;
     }
-    if (payload.sheetType) {
-      win.sheetType = payload.sheetType;
+    if (payload.sheetType !== undefined) {
+      win.sheetType = payload.sheetType || undefined;
     }
     if (payload.attrs && typeof payload.attrs === 'object') {
       win.attrs = payload.attrs;
@@ -1282,8 +1282,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     if (payload.avatarUrl !== undefined) {
       win.avatarUrl = payload.avatarUrl;
     }
-    if (payload.templateText) {
-      win.template = normalizeTemplate(win.cardId, payload.templateText, payload.sheetType || win.sheetType);
+    if (payload.templateText !== undefined) {
+      win.template = resolveInitialSheetTemplate(win.cardId, win.sheetType || '', {
+        readOnly: true,
+        templateText: payload.templateText,
+      }, undefined, getTemplate);
     }
     schedulePersistWindows();
   };

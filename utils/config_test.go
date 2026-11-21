@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,71 @@ import (
 
 	"github.com/knadh/koanf/v2"
 )
+
+func TestNormalizeAIConfigProviderStructuredOutputs(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  AIConfig
+		want bool
+	}{
+		{name: "default"},
+		{name: "legacy", cfg: AIConfig{Providers: []AIProviderConfig{{ID: "legacy", Enabled: true}}}},
+		{name: "explicit", cfg: AIConfig{Providers: []AIProviderConfig{{
+			ID: "structured", Enabled: true, Capabilities: AIProviderCapabilities{StructuredOutputs: true},
+		}}}, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NormalizeAIConfig(tt.cfg)
+			if got := cfg.Providers[0].Capabilities.StructuredOutputs; got != tt.want {
+				t.Fatalf("normalized StructuredOutputs = %v, want %v", got, tt.want)
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved AIConfig
+			if err := json.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if got := NormalizeAIConfig(saved).Providers[0].Capabilities.StructuredOutputs; got != tt.want {
+				t.Fatalf("round-trip StructuredOutputs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	var legacy AIProviderConfig
+	if err := json.Unmarshal([]byte(`{"id":"legacy","enabled":true}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Capabilities.StructuredOutputs {
+		t.Fatal("legacy provider unexpectedly supports structured outputs")
+	}
+}
+
+func TestLogProofreadConfigRoundTrip(t *testing.T) {
+	defaults := NormalizeAIConfig(AIConfig{}).Features["log_proofread"]
+	if defaults.Enabled || defaults.Params.MaxInputChars != 8000 || defaults.Params.Temperature == nil || *defaults.Params.Temperature != float32(0.1) || !strings.Contains(defaults.DefaultPrompt, "<sealchat-proofread>") || !strings.Contains(defaults.DefaultPrompt, "JSONL") {
+		t.Fatalf("unsafe proofreading defaults: %+v", defaults)
+	}
+	if got := normalizeAIFeaturePrompt("log_proofread", legacyAILogProofreadPrompt); got != defaultAILogProofreadPrompt {
+		t.Fatal("legacy built-in prompt was not migrated")
+	}
+	cfg := NormalizeAIConfig(AIConfig{Enabled: true, Features: map[string]AIFeatureConfig{"log_proofread": {
+		Enabled: true, UserCustomOnly: true, DefaultPrompt: "custom protocol prompt", DefaultModel: "custom-model",
+		Access: AIFeatureAccessConfig{Mode: AIFeatureAccessWorlds, WorldIDs: []string{"world"}},
+	}}})
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved AIConfig
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	feature := NormalizeAIConfig(saved).Features["log_proofread"]
+	if !feature.Enabled || !feature.UserCustomOnly || feature.DefaultPrompt != "custom protocol prompt" || feature.DefaultModel != "custom-model" || feature.Access.Mode != AIFeatureAccessWorlds || len(feature.Access.WorldIDs) != 1 || feature.Params.MaxInputChars != 8000 {
+		t.Fatalf("proofreading config lost on save: %+v", feature)
+	}
+}
 
 func TestDefaultImageBaseURLIPv6(t *testing.T) {
 	got := defaultImageBaseURL("[2001:db8::1]:4000")

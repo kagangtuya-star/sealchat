@@ -9,6 +9,8 @@ import { SIDEBAR_WIDTH_LIMITS, useDisplayStore } from '@/stores/display';
 import { useRoute, useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { useEmailBindReminder, EmailBindPrompt } from '@/composables/useEmailBindReminder';
+import ChannelWorkbench from '@/features/channel-workbench/ChannelWorkbench.vue';
+import { WORKBENCH_DISPLAY_MODE } from '@/features/channel-workbench/types';
 
 const { width } = useWindowSize()
 const chat = useChatStore();
@@ -31,7 +33,25 @@ const isSidebarCollapsed = ref(false)
 const sidebarResizeMode = ref(false)
 
 const isMobileViewport = computed(() => width.value < 700)
-const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value)
+
+// 布局频道：displayMode=workbench 时用工作台替代消息流；Chat 保持挂载（v-show），
+// 其 Store、WS 订阅不受影响；自身 UI（含 Teleport）关闭。观察者模式仍显示普通消息流。
+const isWorkbenchChannel = computed(() => (
+  chat.curChannel?.displayMode === WORKBENCH_DISPLAY_MODE
+  && !chat.isObserver
+  && !(chat.curChannel as any)?.isPrivate
+  && !!chat.currentWorldId
+))
+const workbenchImmersive = ref(false)
+const immersiveActive = computed(() => isWorkbenchChannel.value && workbenchImmersive.value)
+watch(() => [chat.curChannel?.id, chat.currentWorldId], () => {
+  workbenchImmersive.value = false
+})
+watch(isWorkbenchChannel, (value) => {
+  if (!value) workbenchImmersive.value = false
+})
+
+const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value || immersiveActive.value)
 const collapsedWidth = computed(() => 0)
 const sidebarResizeDragging = ref(false)
 const sidebarResizePointerId = ref<number | null>(null)
@@ -155,19 +175,25 @@ onMounted(() => {
 let deepLinkTaskEpoch = 0;
 let urlSyncTaskEpoch = 0;
 let pendingInternalRouteSyncKey = '';
+const deepLinkPending = ref(false);
+const deepLinkError = ref('');
 
 const buildRouteSyncKey = (worldId: string, channelId: string) => `${worldId}::${channelId}`;
 
 const handleDeepLink = async () => {
+  const taskEpoch = ++deepLinkTaskEpoch;
+  const retrying = !!deepLinkError.value;
   const worldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
   const channelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
+  deepLinkPending.value = false;
+  deepLinkError.value = '';
   if (!worldId) return;
   const routeKey = buildRouteSyncKey(worldId, channelId);
   if (pendingInternalRouteSyncKey && pendingInternalRouteSyncKey === routeKey) {
     pendingInternalRouteSyncKey = '';
     return;
   }
-  const taskEpoch = ++deepLinkTaskEpoch;
+  deepLinkPending.value = true;
   try {
     if (chat.isObserver) {
       chat.enableObserverMode(worldId, channelId);
@@ -185,7 +211,9 @@ const handleDeepLink = async () => {
     }
     const currentWorldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
     const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';
-    if (worldId === currentWorldId) {
+    if (!retrying && worldId === currentWorldId && currentChannelId
+      && chat.channelTreeReady[worldId] && chat.channelTree === chat.channelTreeByWorld[worldId]
+      && chat.connectState === 'connected') {
       if (channelId && channelId !== currentChannelId) {
         await chat.channelSwitchTo(channelId);
         if (taskEpoch !== deepLinkTaskEpoch) {
@@ -194,9 +222,12 @@ const handleDeepLink = async () => {
       }
       return;
     }
-    await chat.switchWorld(worldId, { force: true });
+    await chat.switchWorld(worldId, { force: true, connectionTimeoutMs: 10000 });
     if (taskEpoch !== deepLinkTaskEpoch) {
       return;
+    }
+    if (chat.currentWorldId !== worldId) {
+      throw new Error('world selection changed during initialization');
     }
     if (channelId) {
       await chat.channelSwitchTo(channelId);
@@ -205,7 +236,13 @@ const handleDeepLink = async () => {
       }
     }
   } catch (error) {
+    if (taskEpoch !== deepLinkTaskEpoch) return;
+    deepLinkError.value = '世界连接或初始化失败，请重试进入世界';
     console.warn('[deep-link] switch failed', error);
+  } finally {
+    if (taskEpoch === deepLinkTaskEpoch) {
+      deepLinkPending.value = false;
+    }
   }
 };
 
@@ -237,6 +274,7 @@ const isChannelInCurrentWorld = (channelId: string) => {
 const syncUrlWithSelection = async () => {
   const taskEpoch = ++urlSyncTaskEpoch;
   if (!isHomeRoute.value) return;
+  if (deepLinkPending.value || deepLinkError.value) return;
   const worldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
   if (!worldId) return;
   const rawChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';
@@ -264,7 +302,7 @@ const syncUrlWithSelection = async () => {
 };
 
 watch(
-  () => [chat.currentWorldId, chat.curChannel?.id, chat.channelTree.length, route.name],
+  () => [chat.currentWorldId, chat.curChannel?.id, chat.channelTree.length, route.name, deepLinkPending.value, deepLinkError.value],
   () => {
     void syncUrlWithSelection();
   },
@@ -339,14 +377,16 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  deepLinkTaskEpoch++;
+  urlSyncTaskEpoch++;
   clearResizeCursorState()
 })
 
 </script>
 
 <template>
-  <main class="h-screen sc-app-shell">
-    <n-layout-header class="sc-layout-header">
+  <main class="h-screen sc-app-shell" :class="{ 'sc-app-shell--immersive': immersiveActive }">
+    <n-layout-header v-show="!immersiveActive" class="sc-layout-header">
       <chat-header :sidebar-collapsed="computedCollapsed" @toggle-sidebar="toggleSidebar" />
     </n-layout-header>
 
@@ -355,7 +395,7 @@ onBeforeUnmount(() => {
       :class="{ 'sc-layout-root--observer': chat.isObserver }"
       has-sider
       position="absolute"
-      style="margin-top: 3.5rem;"
+      :style="{ marginTop: immersiveActive ? '0' : '3.5rem' }"
     >
       <n-layout-sider
         class="sc-layout-sider"
@@ -366,7 +406,7 @@ onBeforeUnmount(() => {
         :native-scrollbar="false"
       >
         <ChatSidebar
-          v-if="!isMobileViewport && !isSidebarCollapsed"
+          v-if="!isMobileViewport && !isSidebarCollapsed && !immersiveActive"
           :sidebar-width-resize-available="!isMobileViewport && !isSidebarCollapsed"
           :sidebar-width-resize-mode="sidebarResizeMode"
           @toggle-sidebar-width-resize="toggleSidebarResizeMode"
@@ -388,7 +428,21 @@ onBeforeUnmount(() => {
       />
 
       <n-layout class="sc-layout-content">
-        <Chat @drawer-show="active = true" />
+        <n-alert v-if="deepLinkError" type="warning" :title="deepLinkError">
+          <n-button @click="handleDeepLink">重试进入世界</n-button>
+        </n-alert>
+        <n-spin v-if="deepLinkPending" show description="正在连接目标世界..." />
+        <div v-show="!deepLinkPending && !deepLinkError && !isWorkbenchChannel" class="h-full">
+          <Chat :ui-visible="!isWorkbenchChannel" @drawer-show="active = true" />
+        </div>
+        <ChannelWorkbench
+          v-if="isWorkbenchChannel && chat.curChannel"
+          v-show="!deepLinkPending && !deepLinkError"
+          v-model:immersive="workbenchImmersive"
+          :channel="chat.curChannel"
+          :world-id="chat.currentWorldId"
+          :is-mobile="isMobileViewport"
+        />
 
         <n-drawer v-model:show="active" :width="'65%'" placement="left">
           <n-drawer-content closable body-content-style="padding: 0">

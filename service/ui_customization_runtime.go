@@ -60,6 +60,12 @@ type UICustomizationRuntime struct {
 	Packages []UICustomizationRuntimePackage `json:"packages"`
 }
 
+// Loading scripts and authorizing their APIs must agree on world-only platform
+// activation. Public-surface and script/access checks remain at the call sites.
+func uiCustomizationPackageEnabled(pkg *model.UICustomizationPackageModel, worldID string, worldReferenced bool, policy *utils.UICustomizationPolicyConfig) bool {
+	return pkg.Enabled || (pkg.ScopeType == "platform" && pkg.ScopeID == "" && worldID != "" && worldReferenced && utils.NormalizeUICustomizationPolicy(policy).AllowWorldCSS)
+}
+
 // resolveUICustomizationWorld validates context on the server. Public slugs
 // resolve through the same access checks as their original public endpoints;
 // a caller-provided worldId never authorizes a private world.
@@ -186,6 +192,9 @@ func ResolveUICustomizations(ctx UICustomizationContext, actorID string, policy 
 			return nil, err
 		}
 		for _, m := range rows {
+			if !uiCustomizationPackageEnabled(&m, worldID, false, policy) {
+				continue
+			}
 			var surfaces []UISurface
 			css, js := m.CSS, m.JS
 			version := m.BuiltinVersion
@@ -251,6 +260,9 @@ func ResolveUICustomizations(ctx UICustomizationContext, actorID string, policy 
 					return nil, err
 				}
 				for _, m := range referenced {
+					if !uiCustomizationPackageEnabled(&m, worldID, true, policy) {
+						continue
+					}
 					var surfaces []UISurface
 					if err := json.Unmarshal([]byte(m.SurfacesJSON), &surfaces); err != nil {
 						return nil, err

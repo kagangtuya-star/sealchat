@@ -16,7 +16,7 @@ export interface AttachmentMeta {
 
 const attachmentMetaStore = reactive<Record<string, AttachmentMeta>>({});
 const attachmentUrlStore = reactive<Record<string, string>>({});
-const pendingMetaFetch = new Set<string>();
+const pendingMetaFetch = new Map<string, Promise<void>>();
 
 const ATTACHMENT_PATH_PATTERN = /(.*?api\/v1\/attachment\/)([^/?#]+)(.*)/i;
 
@@ -47,25 +47,27 @@ export const normalizeAttachmentId = (value: string) => {
 };
 
 const ensureAttachmentMeta = async (normalized: string) => {
-  if (!normalized || pendingMetaFetch.has(normalized) || attachmentMetaStore[normalized]) {
+  if (!normalized || attachmentMetaStore[normalized]) {
     return;
   }
-  pendingMetaFetch.add(normalized);
-  try {
-    const resp = await api.get<{ item: AttachmentMeta }>(`api/v1/attachment/${normalized}/meta`);
-    const meta = resp.data?.item;
-    if (meta) {
-      attachmentMetaStore[normalized] = meta;
-      const external = meta.externalUrl || meta.publicUrl;
-      if (external && /^(https?:|blob:|data:|\/\/|\/)/i.test(external)) {
-        attachmentUrlStore[normalized] = external;
+  const pending = pendingMetaFetch.get(normalized);
+  if (pending) return pending;
+
+  const request = api.get<{ item: AttachmentMeta }>(`api/v1/attachment/${normalized}/meta`)
+    .then(resp => {
+      const meta = resp.data?.item;
+      if (meta) {
+        attachmentMetaStore[normalized] = meta;
+        const external = meta.externalUrl || meta.publicUrl;
+        if (external && /^(https?:|blob:|data:|\/\/|\/)/i.test(external)) {
+          attachmentUrlStore[normalized] = external;
+        }
       }
-    }
-  } catch (error) {
-    console.warn('获取附件信息失败', error);
-  } finally {
-    pendingMetaFetch.delete(normalized);
-  }
+    })
+    .catch(error => { console.warn('获取附件信息失败', error); })
+    .finally(() => { pendingMetaFetch.delete(normalized); });
+  pendingMetaFetch.set(normalized, request);
+  return request;
 };
 
 export const fetchAttachmentMetaById = async (attachmentId: string): Promise<AttachmentMeta | null> => {
@@ -113,7 +115,7 @@ export const fetchAttachmentFileById = async (attachmentId: string, fallbackName
   });
 };
 
-export const resolveAttachmentUrl = (value?: string) => {
+export const resolveAttachmentUrl = (value?: string, { fetchMeta = true }: { fetchMeta?: boolean } = {}) => {
   const raw = stripAttachmentPathIdPrefix((value || '').trim());
   if (!raw) {
     return '';
@@ -135,6 +137,6 @@ export const resolveAttachmentUrl = (value?: string) => {
   if (cached && /^(https?:|blob:|data:|\/\/|\/)/i.test(cached)) {
     return cached;
   }
-  void ensureAttachmentMeta(normalized);
+  if (fetchMeta) void ensureAttachmentMeta(normalized);
   return `${urlBase}/api/v1/attachment/${normalized}`;
 };

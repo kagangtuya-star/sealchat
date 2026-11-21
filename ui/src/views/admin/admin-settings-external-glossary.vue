@@ -43,6 +43,7 @@ const termEditingId = ref('')
 const termImportReplace = ref(false)
 const libraryImportReplace = ref(false)
 const libraryImportFileInputRef = ref<HTMLInputElement | null>(null)
+const libraryImportAutoName = ref('')
 
 const libraryForm = reactive({
   name: '',
@@ -436,6 +437,7 @@ async function handleExportLibrary(item: ExternalGlossaryLibraryItem) {
 
 function openImportLibrary() {
   libraryImportTargetId.value = ''
+  libraryImportAutoName.value = ''
   libraryImportForm.name = ''
   libraryImportForm.description = ''
   libraryImportForm.isEnabled = true
@@ -447,6 +449,7 @@ function openImportLibrary() {
 
 function openOverwriteLibrary(item: ExternalGlossaryLibraryItem) {
   libraryImportTargetId.value = item.id
+  libraryImportAutoName.value = ''
   libraryImportForm.name = item.name
   libraryImportForm.description = item.description
   libraryImportForm.isEnabled = item.isEnabled
@@ -520,9 +523,15 @@ async function handleImportLibraryFile(event: Event) {
   try {
     const text = await file.text()
     const parsed = parseLibraryImportContent(text)
+    const fileName = file.name.replace(/\.json$/i, '').trim()
+    const shouldAutoFillName = !libraryImportTargetId.value
+      && (!libraryImportForm.name.trim() || libraryImportForm.name === libraryImportAutoName.value)
     libraryImportForm.content = parsed.library ? JSON.stringify(parsed.items, null, 2) : text
+    if (shouldAutoFillName) {
+      libraryImportForm.name = fileName || parsed.library?.name || ''
+      libraryImportAutoName.value = libraryImportForm.name
+    }
     if (parsed.library) {
-      libraryImportForm.name = parsed.library.name
       libraryImportForm.description = parsed.library.description
       libraryImportForm.isEnabled = parsed.library.isEnabled
       libraryImportForm.sortOrder = parsed.library.sortOrder
@@ -1329,6 +1338,7 @@ onMounted(async () => {
 .external-glossary-admin__content {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .external-glossary-admin__panel {

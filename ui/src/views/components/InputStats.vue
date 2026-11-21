@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
+import { TrophyOutline } from '@vicons/ionicons5'
 import { api } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
 import { useDisplayStore } from '@/stores/display'
@@ -11,6 +13,7 @@ import {
   calcOccupiedWindowSummary,
   calcSessionSummary,
 } from './inputStatsSessionMetrics'
+import TypingHeroesBoard from './TypingHeroesBoard.vue'
 import * as echarts from 'echarts/core'
 import { LineChart, BarChart, ScatterChart } from 'echarts/charts'
 import {
@@ -32,6 +35,42 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const props = defineProps<{
   currentWorldId?: string
 }>()
+
+// === 打字英雄榜子视图：用路由 query 记录，支持浏览器返回 ===
+const route = useRoute()
+const router = useRouter()
+const HEROES_VIEW_QUERY_KEY = 'inputStatsView'
+const heroesOpen = computed(() => route.query[HEROES_VIEW_QUERY_KEY] === 'heroes')
+let heroesEntryPushed = false
+
+function queryWithoutHeroes() {
+  const query = { ...route.query }
+  delete query[HEROES_VIEW_QUERY_KEY]
+  return query
+}
+
+function openHeroes() {
+  if (heroesOpen.value) return
+  heroesEntryPushed = true
+  void router.push({ query: { ...route.query, [HEROES_VIEW_QUERY_KEY]: 'heroes' } })
+}
+
+function closeHeroes() {
+  if (heroesEntryPushed) {
+    heroesEntryPushed = false
+    router.back()
+    return
+  }
+  void router.replace({ query: queryWithoutHeroes() })
+}
+
+function handleHeaderBack() {
+  if (heroesOpen.value) {
+    closeHeroes()
+    return
+  }
+  emit('close')
+}
 
 // === Theme ===
 const isDark = computed(() => {
@@ -671,6 +710,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (heroesOpen.value) {
+    void router.replace({ query: queryWithoutHeroes() })
+  }
   window.removeEventListener('resize', handleResize)
   if (runningTimeResizeObserver) {
     runningTimeResizeObserver.disconnect()
@@ -695,6 +737,13 @@ watch(includeImported, () => {
 
 watch(overviewRunningMinutes, () => {
   nextTick(() => fitRunningTimeText())
+})
+
+watch(heroesOpen, (open) => {
+  if (open) return
+  heroesEntryPushed = false
+  // 统计视图在子视图期间被隐藏，返回后图表需要按可见尺寸重排。
+  nextTick(() => handleResize())
 })
 
 // Re-render chart when hideZeroAxis changes
@@ -739,10 +788,24 @@ const currentWorldName = computed(() => {
   <div class="input-stats-root pointer-events-auto" :class="{ 'is-light': !isDark }">
     <!-- Header -->
     <div class="stats-header">
-      <button class="stats-back-btn" @click="emit('close')">← {{ t('inputStats.back') }}</button>
-      <h2 class="stats-title">📊 {{ t('inputStats.title') }}</h2>
+      <button class="stats-back-btn" @click="handleHeaderBack">← {{ t('inputStats.back') }}</button>
+      <h2 class="stats-title">{{ heroesOpen ? `🏆 ${t('inputStats.heroes.title')}` : `📊 ${t('inputStats.title')}` }}</h2>
+      <n-button
+        v-if="!heroesOpen"
+        class="stats-heroes-entry"
+        size="small"
+        secondary
+        round
+        @click="openHeroes"
+      >
+        <template #icon><n-icon :component="TrophyOutline" /></template>
+        {{ t('inputStats.heroes.entry') }}
+      </n-button>
     </div>
 
+    <TypingHeroesBoard v-if="heroesOpen" />
+
+    <div v-show="!heroesOpen" class="stats-main">
     <!-- Controls -->
     <div class="stats-controls">
       <!-- Time range -->
@@ -979,6 +1042,7 @@ const currentWorldName = computed(() => {
         <div ref="sessionChartRef" v-else class="session-chart-container"></div>
       </div>
     </n-spin>
+    </div>
   </div>
 </template>
 
@@ -1042,6 +1106,14 @@ const currentWorldName = computed(() => {
   font-weight: 700;
   margin: 0;
   letter-spacing: 0.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stats-heroes-entry {
+  margin-left: auto;
+  flex: none;
 }
 
 /* ===== Controls ===== */

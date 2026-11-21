@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/url"
@@ -466,8 +467,12 @@ func trimEmptyAgentRichNodes(nodes []AgentRichNode) []AgentRichNode {
 		if len(node.Children) > 0 {
 			node.Children = trimEmptyAgentRichNodes(node.Children)
 		}
-		if node.Text == "" && len(node.Children) == 0 && node.Type != "hard_break" && node.Type != "horizontal_rule" && node.Type != "image" {
-			continue
+		if node.Text == "" && len(node.Children) == 0 {
+			switch node.Type {
+			case "hard_break", "horizontal_rule", "image", "table", "tablerow", "tablecell", "tableheader":
+			default:
+				continue
+			}
 		}
 		out = append(out, node)
 	}
@@ -476,7 +481,7 @@ func trimEmptyAgentRichNodes(nodes []AgentRichNode) []AgentRichNode {
 
 func isAgentBlockNode(nodeType string) bool {
 	switch nodeType {
-	case "paragraph", "heading", "blockquote", "bullet_list", "ordered_list", "list_item", "code_block", "horizontal_rule":
+	case "paragraph", "heading", "blockquote", "bullet_list", "ordered_list", "list_item", "code_block", "horizontal_rule", "table":
 		return true
 	default:
 		return false
@@ -582,8 +587,31 @@ func AgentRichDocumentPlainText(doc AgentRichDocument) string {
 
 func writeAgentRichPlain(builder *strings.Builder, node AgentRichNode, depth int) {
 	switch node.Type {
+	case "tablerow":
+		for index, cell := range node.Children {
+			if index > 0 {
+				builder.WriteByte('\t')
+			}
+			writeAgentRichPlain(builder, cell, depth)
+		}
+		builder.WriteByte('\n')
+	case "tablecell", "tableheader":
+		for index, block := range node.Children {
+			if index > 0 {
+				builder.WriteByte('\n')
+			}
+			writeAgentRichPlain(builder, block, depth)
+		}
 	case "text", "mention":
 		builder.WriteString(node.Text)
+		for _, mark := range node.Marks {
+			if mark.Type == "logRuby" {
+				values := map[string]string{}
+				if json.Unmarshal([]byte(mark.Value), &values) == nil {
+					builder.WriteString("（" + values["rubyText"] + "）")
+				}
+			}
+		}
 	case "hard_break":
 		builder.WriteByte('\n')
 	case "image":
@@ -614,25 +642,66 @@ func writeAgentRichPlain(builder *strings.Builder, node AgentRichNode, depth int
 }
 
 func RenderAgentRichDocumentHTML(doc AgentRichDocument, includeImages bool) string {
+	return renderAgentRichDocumentHTML(doc, includeImages, false)
+}
+
+func renderLogRichDocumentHTML(doc AgentRichDocument, includeImages bool) string {
+	return renderAgentRichDocumentHTML(doc, includeImages, true)
+}
+
+func renderAgentRichDocumentHTML(doc AgentRichDocument, includeImages, logStatic bool) string {
 	var builder strings.Builder
 	for _, block := range doc.Blocks {
-		writeAgentRichHTML(&builder, block, includeImages)
+		writeAgentRichHTML(&builder, block, includeImages, logStatic)
 	}
 	return strings.TrimSpace(builder.String())
 }
 
-func writeAgentRichHTML(builder *strings.Builder, node AgentRichNode, includeImages bool) {
+func writeAgentRichHTML(builder *strings.Builder, node AgentRichNode, includeImages, logStatic bool) {
 	switch node.Type {
+	case "table":
+		renderLogTableStart(builder, node)
+		for _, row := range node.Children {
+			writeAgentRichHTML(builder, row, includeImages, logStatic)
+		}
+		builder.WriteString("</tbody></table></div>")
+	case "tablerow":
+		builder.WriteString("<tr>")
+		for _, cell := range node.Children {
+			writeAgentRichHTML(builder, cell, includeImages, logStatic)
+		}
+		builder.WriteString("</tr>")
+	case "tablecell", "tableheader":
+		tag := "td"
+		if node.Type == "tableheader" {
+			tag = "th"
+		}
+		attrs := logTableNodeAttrs(node)
+		fmt.Fprintf(builder, `<%s colspan="%d" rowspan="%d">`, tag,
+			tipTapTableNumber(attrs["colspan"], 1000, 1), tipTapTableNumber(attrs["rowspan"], 65534, 1))
+		for _, child := range node.Children {
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
+		}
+		fmt.Fprintf(builder, "</%s>", tag)
 	case "text":
 		value := html.EscapeString(node.Text)
-		value = wrapAgentHTMLMarks(value, node.Marks)
+		if logStatic {
+			value = wrapLogHTMLMarks(value, node.Marks)
+		} else {
+			value = wrapAgentHTMLMarks(value, node.Marks)
+		}
 		builder.WriteString(value)
 	case "mention":
 		value := html.EscapeString(node.Text)
 		if value == "" {
 			value = "@未知用户"
 		}
-		builder.WriteString(`<span class="mention">` + wrapAgentHTMLMarks(value, node.Marks) + `</span>`)
+		if logStatic {
+			value = wrapLogHTMLMarks(value, node.Marks)
+		} else {
+			value = wrapAgentHTMLMarks(value, node.Marks)
+		}
+		builder.WriteString(`<span class="mention">` + value + `</span>`)
 	case "hard_break":
 		builder.WriteString("<br />")
 	case "horizontal_rule":
@@ -654,9 +723,9 @@ func writeAgentRichHTML(builder *strings.Builder, node AgentRichNode, includeIma
 		}
 		builder.WriteString(" />")
 	case "paragraph":
-		builder.WriteString("<p>")
+		builder.WriteString("<p" + logRichBlockAttributes(node, logStatic) + ">")
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 		builder.WriteString("</p>")
 	case "heading":
@@ -664,15 +733,15 @@ func writeAgentRichHTML(builder *strings.Builder, node AgentRichNode, includeIma
 		if level < 1 || level > 6 {
 			level = 2
 		}
-		builder.WriteString(fmt.Sprintf("<h%d>", level))
+		builder.WriteString(fmt.Sprintf("<h%d%s>", level, logRichBlockAttributes(node, logStatic)))
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 		builder.WriteString(fmt.Sprintf("</h%d>", level))
 	case "blockquote":
 		builder.WriteString("<blockquote>")
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 		builder.WriteString("</blockquote>")
 	case "bullet_list", "ordered_list":
@@ -682,22 +751,28 @@ func writeAgentRichHTML(builder *strings.Builder, node AgentRichNode, includeIma
 		}
 		builder.WriteString("<" + tag + ">")
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 		builder.WriteString("</" + tag + ">")
 	case "list_item":
 		builder.WriteString("<li>")
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 		builder.WriteString("</li>")
 	case "code_block":
 		builder.WriteString("<pre><code>")
-		builder.WriteString(html.EscapeString(node.Text))
+		if logStatic && len(node.Children) > 0 {
+			for _, child := range node.Children {
+				writeAgentRichHTML(builder, child, includeImages, logStatic)
+			}
+		} else {
+			builder.WriteString(html.EscapeString(node.Text))
+		}
 		builder.WriteString("</code></pre>")
 	default:
 		for _, child := range node.Children {
-			writeAgentRichHTML(builder, child, includeImages)
+			writeAgentRichHTML(builder, child, includeImages, logStatic)
 		}
 	}
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 隔离预览宿主：拥有 iframe 与分页引擎的完整生命周期；每次输入变化产生新修订，旧结果丢弃。
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue';
 import {
   LogFrameEngine,
   type FrameAnchor,
@@ -8,6 +8,8 @@ import {
   type FrameEvent,
   type FrameLayoutResult,
   type FramePrintRange,
+  type FrameProofNode,
+  type FrameProofView,
   type FrameRelocation,
 } from '@/services/log/pagination/logFrameHost';
 import type { PreparedLogFrame } from '../composables/useLogAssets';
@@ -22,6 +24,9 @@ const props = withDefaults(defineProps<{
   design?: boolean;
   canResizeImages?: boolean;
   selection?: string[];
+  /** 校对审阅层：批注与审阅状态（编辑器辅助 UI，不进入排版结果）。 */
+  proofMarks?: FrameProofNode[] | null;
+  proofView?: FrameProofView | null;
   relocation?: FrameRelocation | null;
   /** 多选模式（仅设计态生效）。 */
   multi?: boolean;
@@ -36,6 +41,8 @@ const props = withDefaults(defineProps<{
   design: false,
   canResizeImages: false,
   selection: () => [],
+  proofMarks: null,
+  proofView: null,
   relocation: null,
   multi: false,
   zoom: 1,
@@ -122,6 +129,8 @@ onMounted(() => {
   engine.value = new LogFrameEngine(iframeRef.value, onEvent);
   void engine.value.ready.then(() => {
     engine.value?.zoom(props.zoom);
+    engine.value?.proofView(toRaw(props.proofView) ?? null);
+    engine.value?.proofMarks(toRaw(props.proofMarks) ?? null);
     if (props.canvas) engine.value?.canvas(props.canvas.color, props.canvas.dark, props.canvas.accent);
     void run();
   });
@@ -131,6 +140,8 @@ watch(() => [props.doc, props.frameRevision, props.mode, props.spread, props.des
   void run();
 });
 watch(() => props.selection, (ids) => engine.value?.select(ids.slice()), { deep: false });
+watch(() => props.proofMarks, (nodes) => engine.value?.proofMarks(toRaw(nodes) ?? null));
+watch(() => props.proofView, (view) => engine.value?.proofView(toRaw(view) ?? null));
 watch(() => props.relocation, (state) => engine.value?.relocate(props.design ? state : null));
 watch(() => props.multi, (active) => engine.value?.multi(props.design && active));
 watch(() => props.zoom, (z) => engine.value?.zoom(z));
@@ -144,6 +155,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
   scrollTo: (nodeId: string, flash = true) => engine.value?.scrollTo(nodeId, flash),
+  proofReveal: (key: string | null) => engine.value?.proofReveal(key),
   print: (range?: FramePrintRange) => engine.value?.print(range),
   rerun: () => run(),
 });

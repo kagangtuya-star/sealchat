@@ -34,7 +34,7 @@ console.log('mode', import.meta.env.MODE)
 export const api = axiosFactory.create({
   baseURL: urlBase + '/',
   withCredentials: true,
-  timeout: 10000,
+  timeout: 30000,
   maxRedirects: 3,
   transitional: {
     silentJSONParsing: false

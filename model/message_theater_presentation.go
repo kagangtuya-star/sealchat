@@ -9,9 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func resolveMessageTheaterPresentation(tx *gorm.DB, message *MessageModel) *protocol.TheaterPresentation {
+// resolveMessageIdentityAppearanceSnapshot 在调用方未提供快照时，按发送身份与差分
+// 解析小剧场演出和聊天装扮，二者共享一次身份 / 差分查询。
+func resolveMessageIdentityAppearanceSnapshot(tx *gorm.DB, message *MessageModel) (*protocol.TheaterPresentation, protocol.ChatSkin) {
 	if message == nil || strings.TrimSpace(message.SenderIdentityID) == "" {
-		return nil
+		return nil, nil
 	}
 	if tx == nil {
 		tx = db
@@ -19,9 +21,10 @@ func resolveMessageTheaterPresentation(tx *gorm.DB, message *MessageModel) *prot
 	var identity ChannelIdentityModel
 	if err := tx.Where("id = ? AND channel_id = ? AND user_id = ?", message.SenderIdentityID, message.ChannelID, message.UserID).
 		Limit(1).Find(&identity).Error; err != nil || identity.ID == "" {
-		return nil
+		return nil, nil
 	}
 	var patch *protocol.TheaterPresentationPatch
+	var chatSkinPatch *protocol.ChatSkinPatch
 	patchConfigured := false
 	if strings.TrimSpace(message.SenderIdentityVariantID) != "" {
 		var variant ChannelIdentityVariantModel
@@ -41,15 +44,17 @@ func resolveMessageTheaterPresentation(tx *gorm.DB, message *MessageModel) *prot
 					}
 				}
 			}
+			chatSkinPatch = protocol.ChatSkinPatchFromAppearance(variant.Appearance())
 		}
 	}
+	chatSkin := protocol.ResolveChatSkin(identity.ChatSkin, chatSkinPatch)
 	if identity.TheaterPresentation == nil && !patchConfigured {
-		return nil
+		return nil, chatSkin
 	}
 	base := protocol.DefaultTheaterPresentation()
 	if identity.TheaterPresentation != nil {
 		base = *identity.TheaterPresentation
 	}
 	resolved := protocol.ResolveTheaterPresentation(base, patch)
-	return &resolved
+	return &resolved, chatSkin
 }

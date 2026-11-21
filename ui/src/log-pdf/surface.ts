@@ -113,7 +113,7 @@ export const buildPartDocuments = (payload: LogPdfPayload): LogPdfPartBuild[] =>
     const title = titles.get(parts[0].sectionId) || '';
     const compositions = parts.map((part) => {
       const elements = partElements(part, draft.elements);
-      const comp = composeDesignSection(part.sectionId, title, part.messages, elements, part.slice === part.sliceCount - 1, new Map());
+      const comp = composeDesignSection(part.sectionId, title, part.messages, elements, part.slice === part.sliceCount - 1, new Map(), draft.messageContentOverrides);
       const toc = part.sliceCount > 1 && part.sectionMessageIds
         ? designSectionToc(part.sectionId, title, part.sectionMessageIds, draft.elements)
         : comp.toc;
