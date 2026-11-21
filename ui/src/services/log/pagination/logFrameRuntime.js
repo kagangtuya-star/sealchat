@@ -717,7 +717,7 @@
   function reportViewport() {
     var viewportHeight = window.innerHeight;
     var height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
-    var nearEnd = height - (window.scrollY + viewportHeight) <= Math.max(viewportHeight, 600);
+    var nearEnd = !drag && height - (window.scrollY + viewportHeight) <= Math.max(viewportHeight, 600);
     post({ type: 'anchor', anchor: captureAnchor(), nearEnd: nearEnd });
   }
 
@@ -893,7 +893,7 @@
 
   root.addEventListener('pointerdown', function (e) {
     var handle = e.target.closest ? e.target.closest('.log-handle') : null;
-    if (!handle || handle.disabled || !current.design || current.relocation || current.multi) return;
+    if (drag || e.button !== 0 || !handle || handle.disabled || !current.design || current.relocation || current.multi) return;
     var node = handle.closest('[data-log-node]');
     if (!node) return;
     e.preventDefault();
@@ -902,10 +902,11 @@
     indicator.className = 'log-drop-indicator';
     indicator.style.display = 'none';
     document.body.appendChild(indicator);
-    drag = { id: node.getAttribute('data-log-node'), handle: handle, indicator: indicator, target: null, side: 'after', timer: 0, y: e.clientY };
+    drag = { id: node.getAttribute('data-log-node'), handle: handle, indicator: indicator, target: null, side: 'after', timer: 0, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
     var all = root.querySelectorAll('[data-log-node="' + cssEscape(drag.id) + '"]');
     for (var i = 0; i < all.length; i++) all[i].classList.add('log-dragging');
     drag.timer = setInterval(autoScroll, 30);
+    post({ type: 'dragStart' });
   });
 
   function autoScroll() {
@@ -913,6 +914,8 @@
     var edge = 48;
     if (drag.y < edge) window.scrollBy(0, -Math.ceil((edge - drag.y) / 3));
     else if (drag.y > window.innerHeight - edge) window.scrollBy(0, Math.ceil((drag.y - window.innerHeight + edge) / 3));
+    else return;
+    updateDropTarget();
   }
 
   root.addEventListener('pointermove', function (e) {
@@ -920,32 +923,54 @@
       hoverProof(e);
       return;
     }
+    if (e.pointerId !== drag.pointerId) return;
+    drag.x = e.clientX;
     drag.y = e.clientY;
+    updateDropTarget();
+  });
+
+  function updateDropTarget() {
     drag.handle.style.visibility = 'hidden';
-    var under = document.elementFromPoint(e.clientX, e.clientY);
+    var under = document.elementFromPoint(drag.x, drag.y);
     drag.handle.style.visibility = '';
     var node = under && under.closest ? under.closest('.log-node[data-log-kind="message"]') : null;
     if (!node || node.getAttribute('data-log-node') === drag.id) { drag.target = null; drag.indicator.style.display = 'none'; return; }
     var r = node.getBoundingClientRect();
-    drag.side = e.clientY < r.top + r.height / 2 ? 'before' : 'after';
+    drag.side = drag.y < r.top + r.height / 2 ? 'before' : 'after';
     drag.target = node.getAttribute('data-log-node');
     drag.indicator.style.display = 'block';
     drag.indicator.style.left = (r.left + window.scrollX) + 'px';
     drag.indicator.style.width = r.width + 'px';
     drag.indicator.style.top = ((drag.side === 'before' ? r.top : r.bottom) + window.scrollY - 1) + 'px';
-  });
+  }
 
   function endDrag(commit) {
     if (!drag) return;
-    clearInterval(drag.timer);
-    drag.indicator.remove();
+    var state = drag;
+    drag = null;
+    clearInterval(state.timer);
+    state.indicator.remove();
+    if (state.handle.hasPointerCapture(state.pointerId)) state.handle.releasePointerCapture(state.pointerId);
     var all = root.querySelectorAll('.log-dragging');
     for (var i = 0; i < all.length; i++) all[i].classList.remove('log-dragging');
-    if (commit && drag.target) post({ type: 'drop', nodeId: drag.id, targetId: drag.target, side: drag.side });
-    drag = null;
+    if (commit && state.target) post({ type: 'drop', nodeId: state.id, targetId: state.target, side: state.side });
   }
-  root.addEventListener('pointerup', function () { endDrag(true); });
-  root.addEventListener('pointercancel', function () { endDrag(false); });
+  root.addEventListener('pointerup', function (e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    updateDropTarget();
+    var dropping = !!drag.target;
+    endDrag(true);
+    if (!dropping) reportViewport();
+  });
+  function cancelDrag(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    endDrag(false);
+    reportViewport();
+  }
+  root.addEventListener('pointercancel', cancelDrag);
+  root.addEventListener('lostpointercapture', cancelDrag);
 
   // ---------- 校对审阅层 ----------
   // 只在编辑器预览中出现：文字标记用 CSS Custom Highlight（不改动消息 DOM，不影响测量与分页），

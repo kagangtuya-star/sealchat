@@ -75,6 +75,7 @@ export class LogFrameChannel {
       case 'select':
       case 'imageResize':
       case 'open':
+      case 'dragStart':
       case 'drop':
       case 'action':
       case 'anchor':

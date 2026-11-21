@@ -47,6 +47,7 @@ export type FrameEvent =
   | ({ type: 'imageResize' } & LogImageResize)
   | { type: 'select'; nodeId: string | null; kind?: string; shift?: boolean; additive?: boolean }
   | { type: 'open'; nodeId: string; kind?: string }
+  | { type: 'dragStart' }
   | { type: 'drop'; nodeId: string; targetId: string; side: 'before' | 'after' }
   | { type: 'action'; nodeId: string; action: 'edit' | 'insert-before' | 'insert-after' }
   | { type: 'anchor'; anchor: FrameAnchor | null; nearEnd?: boolean }

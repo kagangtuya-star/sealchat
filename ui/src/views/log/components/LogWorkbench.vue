@@ -568,7 +568,7 @@ const placeAt = (item: LogDesignMessage, toIndex: number, onMoved?: () => void) 
   if (!afterId && !beforeId) return;
   return runCommand('移动', () => reorderMessage(target(item), { afterId, beforeId }), () => {
     win.markOwnWrite(item.message.id, item.version + 1);
-    void win.load();
+    void win.load({ preserveWindow: true });
     onMoved?.();
   });
 };
@@ -976,6 +976,9 @@ const onFrameEvent = (event: FrameEvent) => {
         const item = win.byId(event.nodeId);
         if (item?.capabilities.edit) openEditor(event.nodeId, 'content');
       }
+      break;
+    case 'dragStart':
+      win.cancelLoadMore();
       break;
     case 'drop':
       onDrop(event.nodeId, event.targetId, event.side);
