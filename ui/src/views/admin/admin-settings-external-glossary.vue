@@ -1329,6 +1329,7 @@ onMounted(async () => {
 .external-glossary-admin__content {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .external-glossary-admin__panel {
