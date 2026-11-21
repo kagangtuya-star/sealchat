@@ -336,7 +336,7 @@ export const fetchChannelIdentitiesForLog = async (channelId: string, targetUser
 const publicClient = axiosFactory.create({
   baseURL: urlBase + '/',
   withCredentials: false,
-  timeout: 15000,
+  timeout: 30000,
   responseType: 'json',
 });
 
