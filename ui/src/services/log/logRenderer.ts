@@ -805,6 +805,7 @@ export interface SchemaField {
   minimum: number | null;
   maximum: number | null;
   maxLength: number | null;
+  multiline: boolean;
 }
 
 /** 从模板 settingsSchema 中取出 style / props 的平面字段（v1 只做一级标量表单）。 */
@@ -824,6 +825,7 @@ export const schemaFieldsFor = (settingsSchema: Record<string, unknown>, templat
       minimum: typeof raw.minimum === 'number' ? raw.minimum : null,
       maximum: typeof raw.maximum === 'number' ? raw.maximum : null,
       maxLength: typeof raw.maxLength === 'number' ? raw.maxLength : null,
+      multiline: t === 'string' && raw.multiline === true,
     });
   }
   return out;

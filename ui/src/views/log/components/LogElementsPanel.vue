@@ -260,7 +260,7 @@ const anchorAt = (kind: 'sectionStart' | 'sectionEnd'): LogAnchor => ({ kind, se
               <n-switch v-if="f.type === 'boolean'" :value="propValue(e, f.key) === true" @update:value="(v: boolean) => setProp(e.id, f.key, v)" />
               <n-select v-else-if="f.enum" :value="(propValue(e, f.key) as any) ?? null" clearable :options="f.enum.map((x) => ({ label: String(x), value: x }))" @update:value="(v: unknown) => setProp(e.id, f.key, v)" />
               <n-input-number v-else-if="f.type !== 'string'" :value="(propValue(e, f.key) as number) ?? null" :min="f.minimum ?? undefined" :max="f.maximum ?? undefined" :precision="f.type === 'integer' ? 0 : undefined" clearable @update:value="(v: number | null) => setProp(e.id, f.key, v)" />
-              <n-input v-else :value="String(propValue(e, f.key) ?? '')" :maxlength="f.maxLength ?? 2000" @update:value="(v: string) => setProp(e.id, f.key, v)" />
+              <n-input v-else :value="String(propValue(e, f.key) ?? '')" :type="f.multiline ? 'textarea' : 'text'" :autosize="f.multiline ? { minRows: 3, maxRows: 12 } : undefined" :maxlength="f.maxLength ?? 2000" @update:value="(v: string) => setProp(e.id, f.key, v)" />
             </n-form-item>
           </template>
 
