@@ -16,6 +16,7 @@ interface Props {
 
 interface Emits {
   (e: 'update:modelValue', value: DateRangeValue): void
+  (e: 'update:open', value: boolean): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -28,6 +29,7 @@ const chat = useChatStore()
 const { locale } = useI18n()
 const calendarHost = ref<HTMLElement | null>(null)
 const calendarOpen = ref(false)
+watch(calendarOpen, (open) => emit('update:open', open))
 useCalendarActiveDays({
   root: calendarHost,
   enabled: () => calendarOpen.value && !!props.channelId,

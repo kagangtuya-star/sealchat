@@ -148,6 +148,7 @@ const editingColorProfileNameId = ref('')
 const colorProfileNameInputRefs = new Map<string, InputInst>()
 const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
 const isApplyingPreset = ref(false)
+const calendarOverlayOpen = ref(false)
 const form = reactive<ExportParams>({
   format: 'txt',
   displayName: '',
@@ -585,6 +586,7 @@ watch(
     } else {
       colorProfileVisible.value = false
       editingColorProfileNameId.value = ''
+      calendarOverlayOpen.value = false
     }
   },
 )
@@ -796,7 +798,7 @@ const shortcuts = {
     :title="props.batchMode ? '批量导出聊天记录' : '导出聊天记录'"
     class="export-dialog"
     :auto-focus="false"
-    :trap-focus="false"
+    :trap-focus="!calendarOverlayOpen"
   >
     <div class="export-notice">
       <n-alert type="info" :show-icon="false">
@@ -899,6 +901,7 @@ const shortcuts = {
             v-model="form.timeRange"
             :channel-id="props.channelId"
             placeholder="选择时间范围，留空表示全部"
+            @update:open="calendarOverlayOpen = $event"
           />
         </div>
       </n-form-item>
