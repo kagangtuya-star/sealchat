@@ -2,7 +2,7 @@
 // 保存成功但本地已有新编辑时只推进基版本并继续保存，不用旧响应覆盖新输入。
 import { computed, onBeforeUnmount, ref, shallowRef, type Ref } from 'vue';
 import { isLogError, saveLogDraft, describeLogError } from '@/services/log/logApi';
-import type { LogDraft } from '@/types/log';
+import type { LogDraft, LogElementPlacement } from '@/types/log';
 import { cloneJson } from '../logDraftOps';
 
 export type DraftSaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
@@ -19,6 +19,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
   let savedSnapshot = JSON.stringify(initial.draft);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: Promise<void> | null = null;
+  let elementWrite: Promise<void> | null = null;
   let disposed = false;
   const paused = ref(false);
   /** 同一工程版本链上的其他 CAS 操作（排除集、发布、下架）与草稿保存串行执行。 */
@@ -30,7 +31,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      if (!paused.value) void save();
+      if (!paused.value && !elementWrite) void save();
     }, DEBOUNCE_MS);
   };
 
@@ -51,6 +52,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
 
   const save = (): Promise<void> => {
     if (disposed || status.value === 'conflict') return Promise.resolve();
+    if (elementWrite) return elementWrite.then(() => save());
     if (inFlight) return inFlight.then(() => (JSON.stringify(draft.value) !== savedSnapshot ? save() : undefined));
     const snapshot = JSON.stringify(draft.value);
     if (snapshot === savedSnapshot) {
@@ -114,7 +116,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
       if (!ok) throw new Error(lastError.value || (status.value === 'conflict' ? '草稿存在冲突，请先处理' : '草稿尚未保存成功，请稍后重试'));
       try {
         const { value, draftVersion: next } = await op(draftVersion.value);
-        if (next !== null) draftVersion.value = next;
+        if (next !== null && next > draftVersion.value) draftVersion.value = next;
         return value;
       } catch (error) {
         if (isLogError(error, 'VERSION_CONFLICT')) {
@@ -127,6 +129,40 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     chain = task.catch(() => undefined);
     return task;
   };
+
+  /** 采纳排序事务已保存的锚点；期间的新正文/样式编辑及新的锚点编辑仍保留为待保存。 */
+  const placeElements = (placements: LogElementPlacement[], op: (expectedVersion: number) => Promise<number>, afterCommit?: () => void) => runVersioned(async (expected) => {
+    let finishWrite!: () => void;
+    elementWrite = new Promise<void>((resolve) => { finishWrite = resolve; });
+    try {
+      const baseline = JSON.parse(savedSnapshot) as LogDraft;
+      const nextVersion = await op(expected);
+      const next = cloneJson(draft.value);
+      const savedElements = new Map(baseline.elements.map((e) => [e.id, e]));
+      const currentElements = new Map(next.elements.map((e) => [e.id, e]));
+      for (const placement of placements) {
+        const old = savedElements.get(placement.elementId);
+        const current = currentElements.get(placement.elementId);
+        if (!old) continue;
+        if (current && current.order === old.order && JSON.stringify(current.anchor) === JSON.stringify(old.anchor)) {
+          current.anchor = cloneJson(placement.anchor);
+          current.order = placement.order;
+        }
+        old.anchor = cloneJson(placement.anchor);
+        old.order = placement.order;
+      }
+      savedSnapshot = JSON.stringify(baseline);
+      draftVersion.value = nextVersion;
+      draft.value = next;
+      afterCommit?.();
+      status.value = JSON.stringify(next) === savedSnapshot ? 'saved' : 'dirty';
+      return { value: undefined, draftVersion: nextVersion };
+    } finally {
+      elementWrite = null;
+      finishWrite();
+      if (!paused.value && status.value === 'dirty') schedule();
+    }
+  });
 
   /** 冲突后由用户选择重新加载：丢弃本地未保存修改，采用服务端版本。 */
   const reset = (next: { draftVersion: number; draft: LogDraft }) => {
@@ -192,6 +228,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     save,
     flush,
     runVersioned,
+    placeElements,
     reset,
     pause,
     resume,

@@ -99,13 +99,12 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     }
   };
 
-  /** 默认只加载第一页；排序后从新游标重建原窗口，避免旧游标失效或视图缩回首屏。 */
+  /** 来源切换加载第一页；同来源刷新从新游标重建原窗口。 */
   const load = (options?: { preserveWindow?: boolean }) => {
-    if (!options?.preserveWindow) return loadPage();
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = null;
     preserveScheduledWindow = false;
-    return loadPage(false, 0, items.value.length);
+    return loadPage(false, 0, options?.preserveWindow ? items.value.length : undefined);
   };
 
   const loadMore = async () => {
@@ -119,7 +118,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     loading.value = false;
   };
 
-  const scheduleReload = (delay = 800, preserveWindow = false) => {
+  const scheduleReload = (delay = 800, preserveWindow = true) => {
     if (reloadTimer) clearTimeout(reloadTimer);
     preserveScheduledWindow ||= preserveWindow;
     reloadTimer = setTimeout(() => {
@@ -158,6 +157,18 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
 
   const markOwnWrite = (id: string, expectedAtLeast: number) => ownWrites.set(id, expectedAtLeast);
 
+  /** 排序已在服务端提交后，与新元素锚点同步更新预览；随后仍从新游标校准窗口。 */
+  const placeLocal = (id: string, placement: { beforeId?: string; afterId?: string }) => {
+    const item = byId(id);
+    if (!item) return;
+    const rest = items.value.filter((it) => it.message.id !== id);
+    const index = placement.beforeId ? rest.findIndex((it) => it.message.id === placement.beforeId)
+      : placement.afterId ? rest.findIndex((it) => it.message.id === placement.afterId) + 1 : 0;
+    if (index < 0 || (placement.afterId && !rest.some((it) => it.message.id === placement.afterId))) return;
+    rest.splice(index, 0, item);
+    items.value = rest;
+  };
+
   // ---- 既有消息事件同步：只处理本章节来源频道；按引用注册与注销 ----
 
   const eventChannel = (e: ChatMessageEvent) => e?.channel?.id || e?.message?.channel?.id || '';
@@ -182,7 +193,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     if (!relevant(e) || !e.message?.id) return;
     if (byId(e.message.id)) scheduleReload(300);
   };
-  const onStructural = (e: ChatMessageEvent, preserveWindow = false) => {
+  const onStructural = (e: ChatMessageEvent, preserveWindow = true) => {
     if (!relevant(e)) return;
     const created = e.message?.createdAt;
     const toTime = section.value ? Date.parse(section.value.source.toTime) : NaN;
@@ -216,7 +227,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
       if (gen !== generation || projectId.value !== pid || section.value?.id !== sec.id) return;
       if (w.sourceVersion !== sourceVersion.value) {
         staleHint.value = true;
-        void load();
+        void load({ preserveWindow: true });
       }
     } catch {
       // 探测失败不打断编辑；下一次操作会给出明确错误。
@@ -227,7 +238,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
   };
   document.addEventListener('visibilitychange', onVisible);
 
-  watch(() => [projectId.value, section.value?.id, JSON.stringify(section.value?.source || null)], () => {
+  watch([() => projectId.value, () => section.value?.id, () => JSON.stringify(section.value?.source || null)], () => {
     items.value = [];
     loadedSectionId.value = '';
     nextCursor.value = null;
@@ -274,6 +285,7 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     applyServerMessage,
     removeLocal,
     markOwnWrite,
+    placeLocal,
     scheduleReload,
   };
 };

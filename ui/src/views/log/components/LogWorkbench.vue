@@ -41,6 +41,7 @@ import {
   removeMessage,
   removeMessagesBatch,
   reorderMessage,
+  reorderLogMessage,
 } from '@/services/log/logMessageCommands';
 import {
   buildFrameDocument,
@@ -63,6 +64,7 @@ import { createElement, downloadJson, elementAvailability, rebindStyle, setMessa
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
 import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
 import { planBatchRelocate, planBatchStep, type LogBatchMovePlan } from '../logBatchOps';
+import { planMessageDrop } from '../logDropOps';
 import type { LogImageRef } from '../logAssetRefs';
 import { chapterTitle, chapterViews, sectionLabel } from '../logChapterOps';
 import LogPreviewFrame from './LogPreviewFrame.vue';
@@ -551,7 +553,7 @@ const runCommand = async (label: string, fn: () => Promise<unknown>, after: () =
   } catch (error) {
     if (isLogError(error, 'VERSION_CONFLICT')) {
       toast.warning('消息已在别处被修改，已重新加载最新内容');
-      win.scheduleReload(0);
+      win.scheduleReload(0, true);
     } else {
       toast.error(`${label}失败：${describeLogError(error)}`);
     }
@@ -580,19 +582,41 @@ const moveSelected = (dir: -1 | 1) => {
   placeAt(item, idx + dir);
 };
 
+const dropInComposition = (item: LogDesignMessage, targetId: string, side: 'before' | 'after') => {
+  const sec = querySection.value;
+  const nodes = composition.value?.nodes;
+  if (!sec || !nodes || busy.value || draftCtl.paused.value) return;
+  const plan = planMessageDrop(nodes, draft.value.elements, sec.id, item.message.id, targetId, side);
+  if (!plan) return;
+  if (!plan.placements.length) {
+    const rest = win.items.value.filter((it) => it.message.id !== item.message.id);
+    const index = plan.beforeId ? rest.findIndex((it) => it.message.id === plan.beforeId) : rest.length;
+    return placeAt(item, index);
+  }
+  if (!caps.value.editDraft) return;
+  const pid = projectId.value;
+  const commandTarget = target(item);
+  return runCommand('移动', () => draftCtl.placeElements(plan.placements, async (expectedVersion) => {
+    const result = await reorderLogMessage(commandTarget, plan, {
+      projectId: pid, sectionId: sec.id, expectedVersion, placements: plan.placements,
+    });
+    return result.draft_version;
+  }, () => {
+    if (projectId.value === pid && querySection.value?.id === sec.id) win.placeLocal(item.message.id, plan);
+  }), () => {
+    if (projectId.value !== pid || querySection.value?.id !== sec.id) return;
+    win.markOwnWrite(item.message.id, item.version + 1);
+    void win.load({ preserveWindow: true });
+  });
+};
+
 const onDrop = (nodeId: string, targetId: string, side: 'before' | 'after') => {
   const item = win.byId(nodeId);
   if (!item || !item.capabilities.reorder) return;
-  let targetMessageId = targetId;
-  if (targetId.startsWith('el-')) {
-    // 拖到元素上：取元素所锚定的消息
-    const el = draft.value.elements.find((e) => `el-${e.id}` === targetId);
-    if (!el || el.anchor.kind !== 'message') return;
-    targetMessageId = el.anchor.messageId;
-  }
-  if (targetMessageId === nodeId) return;
+  if (draft.value.elements.length) return dropInComposition(item, targetId, side);
+  if (targetId === nodeId || targetId.startsWith('el-')) return;
   const rest = win.items.value.filter((it) => it.message.id !== nodeId);
-  const t = rest.findIndex((it) => it.message.id === targetMessageId);
+  const t = rest.findIndex((it) => it.message.id === targetId);
   if (t < 0) return;
   placeAt(item, side === 'before' ? t : t + 1);
 };
@@ -752,7 +776,7 @@ const batchTarget = (items: LogDesignMessage[]) => ({
 });
 const afterBatchMove = (items: LogDesignMessage[]) => {
   items.forEach((it) => win.markOwnWrite(it.message.id, it.version + 1));
-  void win.load();
+  void win.load({ preserveWindow: true });
 };
 const canBatch = (items: LogDesignMessage[], key: 'reorder' | 'remove') => items.length > 0 && items.length <= 200 && items.every((it) => it.capabilities[key]);
 
@@ -788,7 +812,7 @@ const removeMulti = () => {
     onPositiveClick: () => runCommand('删除', () => removeMessagesBatch(batchTarget(items)), () => {
       items.forEach((it) => win.removeLocal(it.message.id));
       selection.clear();
-      win.scheduleReload(300);
+      win.scheduleReload(300, true);
       toast.success(`已删除 ${items.length} 条原消息`);
     }),
   });
@@ -846,7 +870,7 @@ const removeSelected = () => {
     onPositiveClick: () => runCommand('删除', () => removeMessage(target(item)), () => {
       win.removeLocal(item.message.id);
       selection.clear();
-      win.scheduleReload(300);
+      win.scheduleReload(300, true);
     }),
   });
 };
@@ -876,7 +900,7 @@ const excludeSelected = async (items: LogDesignMessage[] = selectedMessages.valu
     const first = nodeCache.get(ids[0])?.node;
     sessionExclusions.value = [...sessionExclusions.value, { sectionId: sec.id, ids, label: `${ids.length} 条（${first?.speakerName || ''}：${(first?.plainText || '').slice(0, 16)}…）` }];
     selection.clear();
-    void win.load();
+    void win.load({ preserveWindow: true });
     toast.success('已从本 LOG 排除，聊天原消息不受影响');
   }
 };
@@ -885,7 +909,7 @@ const undoExclusion = async (index: number) => {
   if (!entry) return;
   if (await setExcluded(entry.sectionId, entry.ids, false)) {
     sessionExclusions.value = sessionExclusions.value.filter((_, i) => i !== index);
-    void win.load();
+    void win.load({ preserveWindow: true });
   }
 };
 
@@ -1599,7 +1623,7 @@ onBeforeUnmount(() => {
               :update="draftCtl.update"
               :can-edit-draft="caps.editDraft"
               :template-ids="messageTemplates"
-              @applied="win.load()"
+              @applied="win.load({ preserveWindow: true })"
             />
             <LogElementsPanel
               v-else-if="panelTab === 'elements'"

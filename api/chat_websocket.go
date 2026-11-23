@@ -1767,6 +1767,9 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "message.reorder":
 						apiWrap(ctx, msg, apiMessageReorder)
 						solved = true
+					case "message.reorder.log":
+						apiWrap(ctx, msg, apiLogMessageReorder)
+						solved = true
 					case "message.reorder.batch":
 						apiWrap(ctx, msg, apiMessageReorderBatch)
 						solved = true

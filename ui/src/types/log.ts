@@ -75,6 +75,13 @@ export interface LogElement {
   style: Record<string, unknown>;
 }
 
+/** 消息落入元素组时，与消息排序一起提交的锚点调整。 */
+export interface LogElementPlacement {
+  elementId: string;
+  anchor: Extract<LogAnchor, { kind: 'message' }>;
+  order: number;
+}
+
 export interface LogPageSettings {
   preset: 'a4' | 'a5' | 'custom';
   widthMm: number;

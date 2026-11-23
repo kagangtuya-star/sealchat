@@ -3714,15 +3714,37 @@ func apiMessageUpdateVersioned(ctx *ChatContext, data *messageUpdatePayload) (an
 	}{Message: messageData}, nil
 }
 
-func apiMessageReorder(ctx *ChatContext, data *struct {
+type messageReorderRequest = struct {
 	ChannelID       string `json:"channel_id"`
 	MessageID       string `json:"message_id"`
 	BeforeID        string `json:"before_id"`
 	AfterID         string `json:"after_id"`
 	ClientOpID      string `json:"client_op_id"`
 	ExpectedVersion *int64 `json:"expected_version"`
+}
+
+func apiMessageReorder(ctx *ChatContext, data *messageReorderRequest) (any, error) {
+	return messageReorder(ctx, data, nil)
+}
+
+func apiLogMessageReorder(ctx *ChatContext, data *struct {
+	messageReorderRequest
+	LogDraft service.LogMessageReorderDraft `json:"log_draft"`
 }) (any, error) {
-	opHash, replay, replayErr := service.MessageOperationReplay(ctx.User.ID, data.ClientOpID, "message.reorder", data)
+	return messageReorder(ctx, &data.messageReorderRequest, &data.LogDraft)
+}
+
+func messageReorder(ctx *ChatContext, data *messageReorderRequest, logDraft *service.LogMessageReorderDraft) (any, error) {
+	operation := "message.reorder"
+	var payload any = data
+	if logDraft != nil {
+		operation = "message.reorder.log"
+		payload = struct {
+			*messageReorderRequest
+			LogDraft *service.LogMessageReorderDraft `json:"log_draft"`
+		}{data, logDraft}
+	}
+	opHash, replay, replayErr := service.MessageOperationReplay(ctx.User.ID, data.ClientOpID, operation, payload)
 	if replayErr != nil {
 		return nil, replayErr
 	}
@@ -3763,26 +3785,49 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 		return nil, fmt.Errorf("您没有权限调整该消息的位置")
 	}
 
-	if strings.TrimSpace(data.BeforeID) == "" && strings.TrimSpace(data.AfterID) == "" {
+	if strings.TrimSpace(data.BeforeID) == "" && strings.TrimSpace(data.AfterID) == "" && logDraft == nil {
 		return nil, fmt.Errorf("缺少目标位置参数")
+	}
+	var draftCommit *service.LogMessageReorderCommit
+	var draftVersion int64
+	if logDraft != nil {
+		if data.ExpectedVersion == nil {
+			return nil, fmt.Errorf("INVALID_INPUT: 缺少消息版本")
+		}
+		draftCommit, err = service.PrepareLogMessageReorder(ctx.User.ID, data.ChannelID, data.MessageID, *logDraft)
+		if err != nil {
+			return nil, err
+		}
+		draftVersion = draftCommit.DraftVersion()
 	}
 
 	reset := false
 	err = db.Transaction(func(tx *gorm.DB) error {
+		if draftCommit != nil {
+			if err := draftCommit.Apply(tx); err != nil {
+				return err
+			}
+		}
 		if err := model.MessageUpdateTx(tx, msg.ID, data.ExpectedVersion, map[string]any{"updated_at": time.Now()}); err != nil {
 			return err
 		}
-		newOrder, err := resolveMessageDisplayOrderForPlacement(tx, data.ChannelID, messageOrderPlacement{BeforeID: data.BeforeID, AfterID: data.AfterID}, data.MessageID, msg.DisplayOrder, &reset)
-		if err != nil {
-			return err
-		}
-		if err := model.MessageUpdateTx(tx, msg.ID, nil, map[string]any{"display_order": newOrder}); err != nil {
-			return err
+		if data.BeforeID != "" || data.AfterID != "" {
+			newOrder, err := resolveMessageDisplayOrderForPlacement(tx, data.ChannelID, messageOrderPlacement{BeforeID: data.BeforeID, AfterID: data.AfterID}, data.MessageID, msg.DisplayOrder, &reset)
+			if err != nil {
+				return err
+			}
+			if err := model.MessageUpdateTx(tx, msg.ID, nil, map[string]any{"display_order": newOrder}); err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("id = ?", msg.ID).Take(&msg).Error; err != nil {
 			return err
 		}
-		return service.RecordMessageOperation(tx, ctx.User.ID, data.ClientOpID, opHash, map[string]any{"message_id": msg.ID, "channel_id": data.ChannelID, "display_order": msg.DisplayOrder, "version": msg.Version, "reset": reset})
+		result := map[string]any{"message_id": msg.ID, "channel_id": data.ChannelID, "display_order": msg.DisplayOrder, "version": msg.Version, "reset": reset}
+		if draftCommit != nil {
+			result["draft_version"] = draftVersion
+		}
+		return service.RecordMessageOperation(tx, ctx.User.ID, data.ClientOpID, opHash, result)
 	})
 	if err != nil {
 		return nil, err
@@ -3851,11 +3896,13 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 		ChannelID    string  `json:"channel_id"`
 		DisplayOrder float64 `json:"display_order"`
 		Reset        bool    `json:"reset,omitempty"`
+		DraftVersion int64   `json:"draft_version,omitempty"`
 	}{
 		MessageID:    msg.ID,
 		ChannelID:    data.ChannelID,
 		DisplayOrder: msg.DisplayOrder,
 		Reset:        reset,
+		DraftVersion: draftVersion,
 	}, nil
 }
 

@@ -933,7 +933,7 @@
     drag.handle.style.visibility = 'hidden';
     var under = document.elementFromPoint(drag.x, drag.y);
     drag.handle.style.visibility = '';
-    var node = under && under.closest ? under.closest('.log-node[data-log-kind="message"]') : null;
+    var node = under && under.closest ? under.closest('.log-node[data-log-node]') : null;
     if (!node || node.getAttribute('data-log-node') === drag.id) { drag.target = null; drag.indicator.style.display = 'none'; return; }
     var r = node.getBoundingClientRect();
     drag.side = drag.y < r.top + r.height / 2 ? 'before' : 'after';

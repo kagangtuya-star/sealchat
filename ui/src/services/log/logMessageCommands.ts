@@ -7,6 +7,7 @@ import type {
   LogAppearancePatch,
   LogAppearancePreview,
   LogAppearanceSelection,
+  LogElementPlacement,
   LogProtocolMessage,
 } from '@/types/log';
 
@@ -148,6 +149,18 @@ export const reorderMessage = (t: MessageTarget, placement: { afterId?: string; 
     after_id: placement.afterId || '',
     before_id: placement.beforeId || '',
   });
+
+/** LOG 落点：原消息排序与元素锚点在同一事务中提交，普通聊天排序不受影响。 */
+export const reorderLogMessage = (
+  t: MessageTarget,
+  placement: { afterId?: string; beforeId?: string },
+  logDraft: { projectId: string; sectionId: string; expectedVersion: number; placements: LogElementPlacement[] },
+) => send<{ draft_version: number }>('message.reorder.log', {
+  ...base(t, 'reorder-log'),
+  after_id: placement.afterId || '',
+  before_id: placement.beforeId || '',
+  log_draft: logDraft,
+});
 
 export const previewAppearanceBatch = (input: { channelId: string; selection: LogAppearanceSelection; patch: LogAppearancePatch }) => {
   const selection: Record<string, unknown> = {
