@@ -998,6 +998,11 @@ func remapTheaterPackageObject(object TheaterObjectSnapshot, remap theaterPackag
 		return object, identityChanged, err
 	}
 	identityChanged = identityChanged || changed
+	object.Actions, changed, err = sanitizeImportedTheaterActions(object.Actions, remap)
+	if err != nil {
+		return object, identityChanged, err
+	}
+	identityChanged = identityChanged || changed
 	object.Metadata, changed, err = remapTheaterPackageJSON(object.Metadata, remap)
 	return object, identityChanged || changed, err
 }
@@ -1100,6 +1105,139 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 	value = walk(value, false, "")
 	result, err := json.Marshal(value)
 	return result, changed, err
+}
+
+func sanitizeImportedTheaterActions(raw json.RawMessage, remap theaterPackageRemap) (json.RawMessage, bool, error) {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return raw, false, nil
+	}
+	var actions []any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&actions); err != nil {
+		return nil, false, err
+	}
+	changed := false
+	filtered := make([]any, 0, len(actions))
+	for _, rawAction := range actions {
+		action, ok := rawAction.(map[string]any)
+		if !ok {
+			filtered = append(filtered, rawAction)
+			continue
+		}
+		keep, actionChanged := sanitizeImportedTheaterAction(action, remap)
+		changed = changed || actionChanged
+		if keep {
+			filtered = append(filtered, rawAction)
+		} else {
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false, nil
+	}
+	result, err := json.Marshal(filtered)
+	return result, true, err
+}
+
+func sanitizeImportedTheaterAction(action map[string]any, remap theaterPackageRemap) (bool, bool) {
+	typeName, _ := action["type"].(string)
+	payload, _ := action["payload"].(map[string]any)
+	switch typeName {
+	case TheaterMutationSceneApply:
+		return importedTheaterActionReferencePresent(payload, "sceneId"), false
+	case TheaterMutationObjectToggle:
+		return importedTheaterActionReferencePresent(payload, "objectId"), false
+	case "effect.play":
+		return importedTheaterActionReferencePresent(payload, "effectId"), false
+	case "clue.execute":
+		entries, ok := payload["entries"].([]any)
+		if !ok {
+			return true, false
+		}
+		crossWorld := remap.worldID != "" && remap.sourceWorldID != remap.worldID
+		filteredEntries := make([]any, 0, len(entries))
+		changed := false
+		for _, rawEntry := range entries {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				filteredEntries = append(filteredEntries, rawEntry)
+				continue
+			}
+			if crossWorld {
+				changed = true
+				continue
+			}
+			if targets, ok := entry["targets"].([]any); ok {
+				filteredTargets := make([]any, 0, len(targets))
+				for _, rawTarget := range targets {
+					target, ok := rawTarget.(map[string]any)
+					if !ok {
+						filteredTargets = append(filteredTargets, rawTarget)
+						continue
+					}
+					userID, _ := target["userId"].(string)
+					if strings.TrimSpace(userID) == "" {
+						changed = true
+						continue
+					}
+					filteredTargets = append(filteredTargets, rawTarget)
+				}
+				if len(filteredTargets) != len(targets) {
+					entry["targets"] = filteredTargets
+				}
+			}
+			filteredEntries = append(filteredEntries, rawEntry)
+		}
+		if len(filteredEntries) != len(entries) {
+			payload["entries"] = filteredEntries
+		}
+		return len(filteredEntries) > 0, changed
+	case "action.sequence":
+		steps, ok := payload["steps"].([]any)
+		if !ok {
+			return true, false
+		}
+		filteredSteps := make([]any, 0, len(steps))
+		changed := false
+		for _, rawStep := range steps {
+			step, ok := rawStep.(map[string]any)
+			if !ok {
+				filteredSteps = append(filteredSteps, rawStep)
+				continue
+			}
+			child, ok := step["action"].(map[string]any)
+			if !ok {
+				filteredSteps = append(filteredSteps, rawStep)
+				continue
+			}
+			keep, childChanged := sanitizeImportedTheaterAction(child, remap)
+			changed = changed || childChanged
+			if keep {
+				filteredSteps = append(filteredSteps, rawStep)
+			} else {
+				changed = true
+			}
+		}
+		if len(filteredSteps) != len(steps) {
+			payload["steps"] = filteredSteps
+		}
+		return len(filteredSteps) > 0, changed
+	default:
+		return true, false
+	}
+}
+
+func importedTheaterActionReferencePresent(payload map[string]any, field string) bool {
+	if payload == nil {
+		return true
+	}
+	value, exists := payload[field]
+	if !exists {
+		return true
+	}
+	text, ok := value.(string)
+	return ok && strings.TrimSpace(text) != ""
 }
 
 func canonicalizeImportedTheaterResourceURL(value map[string]any, remap theaterPackageRemap) {

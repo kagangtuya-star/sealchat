@@ -657,6 +657,57 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 	}
 }
 
+func TestSanitizeImportedTheaterActions(t *testing.T) {
+	t.Run("cross world removes non-portable and stale actions", func(t *testing.T) {
+		raw := json.RawMessage(`[
+			{"id":"clue-top","type":"clue.execute","payload":{"version":1,"entries":[{"id":"entry-top","clueId":"clue-top-id","targets":[],"present":false,"confirm":false}]}},
+			{"id":"scene-stale","type":"scene.apply","payload":{"sceneId":null}},
+			{"id":"object-stale","type":"object.toggle","payload":{"objectId":null}},
+			{"id":"effect-stale","type":"effect.play","payload":{"effectId":null}},
+			{"id":"sequence","type":"action.sequence","payload":{"version":1,"name":"Sequence","steps":[
+				{"id":"bad-step","sceneId":null,"timing":{"mode":"after"},"action":{"type":"effect.play","payload":{"effectId":null}}},
+				{"id":"good-step","sceneId":null,"timing":{"mode":"after"},"action":{"type":"chat.insert","payload":{"text":"ok"}}}
+			]}},
+			{"id":"empty-sequence","type":"action.sequence","payload":{"version":1,"name":"Empty","steps":[{"id":"only-bad","sceneId":null,"timing":{"mode":"after"},"action":{"type":"object.toggle","payload":{"objectId":null}}}]}}
+		]`)
+		sanitized, changed, err := sanitizeImportedTheaterActions(raw, theaterPackageRemap{sourceWorldID: "world-old", worldID: "world-new"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			t.Fatal("expected stale imported actions to be removed")
+		}
+		text := string(sanitized)
+		for _, removed := range []string{"clue-top", "scene-stale", "object-stale", "effect-stale", "bad-step", "empty-sequence"} {
+			if strings.Contains(text, removed) {
+				t.Fatalf("stale action %q survived: %s", removed, text)
+			}
+		}
+		for _, kept := range []string{"sequence", "good-step"} {
+			if !strings.Contains(text, kept) {
+				t.Fatalf("valid action %q was removed: %s", kept, text)
+			}
+		}
+		if err := validateTheaterActions(sanitized); err != nil {
+			t.Fatalf("sanitized actions should remain schema-valid: %v\n%s", err, sanitized)
+		}
+	})
+
+	t.Run("same world keeps clue entry but drops cleared targets", func(t *testing.T) {
+		raw := json.RawMessage(`[{"id":"clue-top","type":"clue.execute","payload":{"version":1,"entries":[{"id":"entry-top","clueId":"clue-top-id","targets":[{"userId":null,"access":"view"}],"present":false,"confirm":false}]}}]`)
+		sanitized, changed, err := sanitizeImportedTheaterActions(raw, theaterPackageRemap{sourceWorldID: "world-same", worldID: "world-same"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed || !strings.Contains(string(sanitized), `"clueId":"clue-top-id"`) || strings.Contains(string(sanitized), `"userId":null`) {
+			t.Fatalf("same-world clue cleanup mismatch: %s", sanitized)
+		}
+		if err := validateTheaterActions(sanitized); err != nil {
+			t.Fatalf("same-world clue action should remain schema-valid: %v\n%s", err, sanitized)
+		}
+	})
+}
+
 func TestTheaterStoragePreviewFindsAllReferencedMediaAndImageMigrationExcludesIt(t *testing.T) {
 	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
 	room, err := model.TheaterRoomCreateIfMissing(worldID, "", actorID)
