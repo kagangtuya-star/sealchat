@@ -240,7 +240,7 @@ const serializeHtmlNode = (node: Node, parts: string[], inCodeBlock = false) => 
   }
 }
 
-export const serializeBotCommandContent = (content: string): string => {
+export const serializeBotCommandContent = (content: string, preserveDiceResults = false): string => {
   const raw = String(content || '')
   const trimmed = raw.trim()
   if (!trimmed) {
@@ -259,6 +259,13 @@ export const serializeBotCommandContent = (content: string): string => {
   if (/[<>]/.test(trimmed)) {
     const container = document.createElement('div')
     container.innerHTML = trimmed
+    if (preserveDiceResults) {
+      // 仅展示时读取已保存的出目，命令发送和识别继续使用原表达式。
+      container.querySelectorAll('.dice-chip, .dice-roll-group').forEach((element) => {
+        const result = element.textContent || ''
+        if (result.trim()) element.replaceWith(document.createTextNode(result))
+      })
+    }
     const parts: string[] = []
     Array.from(container.childNodes).forEach((child) => serializeHtmlNode(child, parts, false))
     const normalized = parts.join('').replace(/\n{3,}/g, '\n\n').trim()
@@ -270,7 +277,7 @@ export const serializeBotCommandContent = (content: string): string => {
 }
 
 export const renderBotCommandTextAsHtml = (content: string): string => {
-  const serialized = serializeBotCommandContent(content)
+  const serialized = serializeBotCommandContent(content, true)
   const withMentions = replaceMentionTokensWithDisplayText(serialized, { html: true })
   const html = withMentions
     .split(/\r\n|\r|\n/g)

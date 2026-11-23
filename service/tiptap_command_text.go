@@ -23,7 +23,8 @@ func SerializeMessageContentToBotCommandText(input string) (string, bool) {
 }
 
 type commandTextOptions struct {
-	preserveMentions bool
+	preserveMentions    bool
+	preserveDiceResults bool
 }
 
 func serializeMessageContentToCommandText(input string, options commandTextOptions) (string, bool) {
@@ -100,6 +101,12 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 		buf.WriteString(html.UnescapeString(node.Data))
 	case htmlparser.ElementNode:
 		if source, ok := resolveDiceHTMLSource(node); ok {
+			// 导出展示已有结果；发送和解析 BOT 命令仍恢复原表达式。
+			if options.preserveDiceResults {
+				if result := agentHTMLTextContent(node); strings.TrimSpace(result) != "" {
+					source = result
+				}
+			}
 			buf.WriteString(source)
 			return
 		}

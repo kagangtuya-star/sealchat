@@ -49,19 +49,20 @@ const prepareLegacySource = (content: string): string => {
 };
 
 /** 未知节点只取正文，不复制标签或属性；code/pre 和骰子回退也复用纯文本语义。 */
-const legacyNodeText = (item: Element): string => {
+const legacyNodeText = (item: Element, includeDiceSourceFallback = true): string => {
   const type = item.type.toLowerCase();
   if (type === 'text') return String(item.attrs?.content || '');
   if (type === 'br') return '\n';
   if (type === 'img') return resolveToMarker(String(item.attrs?.src || '')) ? '' : '图片不可用';
   if (type === 'audio') return '[语音]';
   if (type === 'at') return `@${String(item.attrs?.name || item.attrs?.id || '用户')}`;
-  const text = item.children.map(legacyNodeText).join('');
-  if (type === 'span') {
-    const classes = String(item.attrs?.class || '').split(/\s+/);
-    if (classes.includes('dice-chip') || classes.includes('dice-roll-group')) {
-      return typeof item.attrs?.dataDiceSource === 'string' && item.attrs.dataDiceSource ? item.attrs.dataDiceSource : text;
-    }
+  const classes = type === 'span' ? String(item.attrs?.class || '').split(/\s+/) : [];
+  const isDice = classes.includes('dice-chip') || classes.includes('dice-roll-group');
+  // 整组优先保留已有结果；空组只回退一次原表达式，不能重复每个子骰的指令。
+  const text = item.children.map((child) => legacyNodeText(child, includeDiceSourceFallback && !isDice)).join('');
+  if (isDice && includeDiceSourceFallback) {
+    const source = typeof item.attrs?.dataDiceSource === 'string' ? item.attrs.dataDiceSource : '';
+    return text.trim() ? text : source;
   }
   return ['p', 'div', 'blockquote', 'pre', 'li', 'hr'].includes(type) ? `${text}\n` : text;
 };
@@ -98,7 +99,7 @@ const renderLegacyNode = (item: Element): string => {
       return `<s>${children()}</s>`;
     case 'code':
     case 'pre':
-      return `<${type}>${contentEscape(item.children.map(legacyNodeText).join(''))}</${type}>`;
+      return `<${type}>${contentEscape(item.children.map((child) => legacyNodeText(child)).join(''))}</${type}>`;
     case 'p':
     case 'div':
     case 'blockquote':
@@ -121,9 +122,7 @@ const renderLegacyNode = (item: Element): string => {
     case 'span': {
       const classes = String(item.attrs?.class || '').split(/\s+/);
       if (classes.includes('dice-chip') || classes.includes('dice-roll-group')) {
-        // Element 将 data-dice-source 规范化为 dataDiceSource；整组优先恢复原表达式。
-        const source = typeof item.attrs?.dataDiceSource === 'string' ? item.attrs.dataDiceSource : '';
-        return contentEscape(source || legacyNodeText(item));
+        return contentEscape(legacyNodeText(item));
       }
       break;
     }
@@ -143,7 +142,7 @@ const renderLegacy = (content: string) => {
     const items = Element.parse(prepareLegacySource(content));
     return {
       html: items.map(renderLegacyNode).join(''),
-      plainText: normalizeLegacyPlainText(items.map(legacyNodeText).join('')),
+      plainText: normalizeLegacyPlainText(items.map((item) => legacyNodeText(item)).join('')),
     };
   } catch {
     return {

@@ -1160,3 +1160,69 @@ func TestWorldClueDiceContentKeepsExportWrappers(t *testing.T) {
 		t.Fatalf("dice clue export mutated the source message: %q", msg.Content)
 	}
 }
+
+func TestExportPreservesSavedDiceResults(t *testing.T) {
+	first := &model.MessageDiceRollModel{RollIndex: 0, SourceText: ".r2d6", Formula: "2d6", ResultDetail: "2d6[2+5]", ResultValueText: "7", ResultText: "2d6 = 7"}
+	second := &model.MessageDiceRollModel{RollIndex: 1, SourceText: ".r2#2d6", Formula: "2d6", ResultDetail: "2d6[3+6]", ResultValueText: "9", ResultText: "2d6 = 9"}
+	failed := &model.MessageDiceRollModel{SourceText: ".r2d0", Formula: "2d0", IsError: true, ResultText: "错误：骰面数无效"}
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"single", buildDiceChipHTML(first), []string{"2d6[2+5]=7"}},
+		{"multiple", buildDiceRenderedHTML(".r2#2d6", []*model.MessageDiceRollModel{first, second}), []string{"2d6[2+5]=7", "2d6[3+6]=9"}},
+		{"error", buildDiceChipHTML(failed), []string{failed.ResultText}},
+		{"missing", ".r2d6", []string{".r2d6"}},
+		{"empty group", `<span class="dice-roll-group" data-dice-source=".r2#2d6"><span class="dice-chip" data-dice-source=".r2#2d6"></span><span class="dice-chip" data-dice-source=".r2#2d6"></span></span>`, []string{".r2#2d6"}},
+		{"literal command", ".r2d6 **理由** `代码`", []string{".r2d6 **理由** `代码`"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "empty group" {
+				if got := resolveBotCommandRawText(tc.content); got != ".r2#2d6" {
+					t.Fatalf("empty group repeated the command: %q", got)
+				}
+				return
+			}
+			job := &model.MessageExportJobModel{Format: "html"}
+			message := &model.MessageModel{Content: tc.content, UserID: "player", ICMode: "ic"}
+			payload := buildExportPayload(job, "骰子导出", []*model.MessageModel{message}, nil, &exportExtraOptions{IncludeImages: true, IncludeDiceCommand: true})
+			if len(payload.Messages) != 1 {
+				t.Fatalf("expected one message, got %d", len(payload.Messages))
+			}
+			msg := &payload.Messages[0]
+			outputs := map[string]string{
+				"html":   msg.ContentHTML,
+				"bbcode": buildBBCodeBody(msg, true),
+			}
+			data, err := (jsonFormatter{}).Build(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outputs["json"] = string(data)
+			outputs["text"] = buildContentBody(msg, true)
+			for format, output := range outputs {
+				for _, want := range tc.want {
+					if !strings.Contains(output, want) {
+						t.Errorf("%s lost %q: %s", format, want, output)
+					}
+				}
+			}
+			if message.Content != tc.content {
+				t.Fatal("export changed saved content")
+			}
+		})
+	}
+}
+
+func TestExportDiceResultTextIsEscaped(t *testing.T) {
+	input := buildDiceChipHTML(&model.MessageDiceRollModel{SourceText: ".r2d0", IsError: true, ResultText: `<img src=x onerror=bad()>`})
+	got := renderBotCommandRawHTML(input)
+	if strings.Contains(got, "<img") || !strings.Contains(got, "&lt;img") {
+		t.Fatalf("result was rendered as markup: %q", got)
+	}
+	if command, ok := SerializeMessageContentToBotCommandText(input); !ok || command != ".r2d0" {
+		t.Fatalf("export changed bot command serialization: %q", command)
+	}
+}

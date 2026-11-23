@@ -3365,7 +3365,7 @@ func stripInlineCodeTagsFromHTML(input string) string {
 }
 
 func resolveBotCommandRawText(content string) string {
-	if serialized, ok := SerializeMessageContentToCommandText(content); ok {
+	if serialized, ok := serializeMessageContentToCommandText(content, commandTextOptions{preserveDiceResults: true}); ok {
 		return serialized
 	}
 	return normalizePlainText(content)
