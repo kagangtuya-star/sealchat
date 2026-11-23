@@ -58,6 +58,18 @@ body {
 .log-node .log-image-box { display: contents; }
 .log-node .log-image-box.log-image-box--sized { display: inline-block; position: relative; max-width: 100%; vertical-align: bottom; line-height: 0; break-inside: avoid; }
 .log-node .log-image-box.log-image-box--sized > img { display: block; width: 100% !important; min-width: 0 !important; max-width: 100% !important; height: auto !important; min-height: 0 !important; }
+/* 工程级布局仅作用于普通消息正文；none 保留原 inline 流，其余模式独立成行并控制水平对齐。 */
+[data-log-message-image-layout="left"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message,
+[data-log-message-image-layout="center"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message,
+[data-log-message-image-layout="right"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message {
+  display: block; position: relative; max-width: 100%; line-height: 0; break-inside: avoid;
+}
+[data-log-message-image-layout="left"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message { margin-left: 0; margin-right: auto; }
+[data-log-message-image-layout="center"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message { margin-inline: auto; }
+[data-log-message-image-layout="right"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message { margin-left: auto; margin-right: 0; }
+[data-log-message-image-layout="left"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message > img,
+[data-log-message-image-layout="center"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message > img,
+[data-log-message-image-layout="right"] .log-node[data-log-kind="message"]:not([data-log-embed]) .log-image-box.log-image-box--message > img { display: block; }
 .log-img-missing {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 8em; min-height: 4.5em; padding: 0.5em; border: 1px dashed #b8b8b8; color: #888; font-size: 0.85em; background: #f6f6f6;

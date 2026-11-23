@@ -83,6 +83,7 @@ const slices = [[0, 3], [3, 6], [6, 9]].map(([a, b], slice) => ({ sectionId: 's'
   const run = async (parts, chunk, tocPages, sourceDraft = draft, chapterSections) => {
     const payload = { version: 1, chunk, draft: sourceDraft, style: null, parts, tocPages, chapterSections }
     const builds = surface.buildPartDocuments(payload)
+    for (const { doc } of builds) assert.equal(doc.rootAttrs['data-log-message-image-layout'], sourceDraft.messageImageLayout || 'left')
     const layouts = []
     const cells = []
     let pending = 0
@@ -122,6 +123,10 @@ const slices = [[0, 3], [3, 6], [6, 9]].map(([a, b], slice) => ({ sectionId: 's'
     }
     const parts = ['a', 'b'].map((sectionId) => ({ sectionId, slice: 0, sliceCount: 1, messages: [msg(sectionId)] }))
     const docs = surface.buildPartDocuments({ draft: continuousDraft, style: null, parts })
+    for (const messageImageLayout of [undefined, 'none', 'left', 'center', 'right']) {
+      const projected = surface.buildPartDocuments({ draft: { ...continuousDraft, messageImageLayout }, style: null, parts })
+      assert.equal(projected[0].doc.rootAttrs['data-log-message-image-layout'], messageImageLayout || 'left')
+    }
     assert.equal(docs.length, 1, '同一视觉 Chapter 只构造一个连续 FrameDocument')
     assert.deepEqual(docs[0].doc.blocks.map((b) => b.id), ['el-toc', 'el-ha', 'a', 'b', 'el-hb'])
     assert.equal(docs[0].doc.blocks.find((b) => b.id === 'b').attrs['data-log-merged'], '1', '跨 Section 合并相邻消息')

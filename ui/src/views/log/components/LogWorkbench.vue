@@ -336,6 +336,7 @@ const rebuild = (force = false) => {
     toc: comp.toc,
     backgroundToken: designBackgroundToken(d.page),
     imageWidths: d.imageWidths,
+    messageImageLayout: d.messageImageLayout,
     templateSelection: d,
   });
   const json = JSON.stringify(result.doc);
@@ -343,7 +344,7 @@ const rebuild = (force = false) => {
   lastDocJson = json;
   frame.value = { doc: result.doc, assetTokens: result.assetTokens, issues: result.issues, revision: ++frameRevision };
 };
-watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths, () => draft.value.displayRules, () => draft.value.messageTemplateOverrides], () => {
+watch([composition, activePkg, () => draft.value.page, () => draft.value.themeTokens, () => draft.value.title, () => draft.value.imageWidths, () => draft.value.messageImageLayout, () => draft.value.displayRules, () => draft.value.messageTemplateOverrides], () => {
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = setTimeout(() => {
     buildTimer = null;

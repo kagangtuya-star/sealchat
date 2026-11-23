@@ -202,6 +202,7 @@
       if (img.hasAttribute('data-log-resizable-image')) {
         var box = document.createElement('span');
         box.className = 'log-image-box';
+        if (img.getAttribute('data-log-resizable-image') === 'message') box.classList.add('log-image-box--message');
         img.replaceWith(box);
         box.appendChild(img);
       }

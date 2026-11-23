@@ -300,6 +300,9 @@ func logBuildPublicMetadata(r *model.LogReleaseModel, d *LogDraft, projectKeys m
 		style = map[string]any{"schemaVersion": 1, "version": p.Version, "name": p.Name, "license": p.License, "minRendererVersion": p.MinRendererVersion, "tokens": tokens, "templates": p.Templates, "css": cssText, "rules": rules, "settingsSchema": p.SettingsSchema, "assets": assets}
 	}
 	out := map[string]any{"schemaVersion": 1, "title": d.Title, "releaseId": r.ID, "sections": sections, "page": page, "style": style}
+	if d.MessageImageLayout != "" {
+		out["messageImageLayout"] = d.MessageImageLayout
+	}
 	if len(d.DisplayRules) > 0 {
 		out["displayRules"] = logPublicDisplayRules(r.ID, d.DisplayRules)
 	}

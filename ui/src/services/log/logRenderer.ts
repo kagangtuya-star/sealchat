@@ -382,6 +382,7 @@ export interface BuildOptions {
   pageNumberStart?: number;
   imageWidths?: Record<string, number>;
   templateSelection?: Pick<LogDraft, 'displayRules' | 'messageTemplateOverrides'>;
+  messageImageLayout?: LogDraft['messageImageLayout'];
 }
 
 export interface BuildResult {
@@ -593,6 +594,8 @@ export const buildFrameDocument = (opts: BuildOptions): BuildResult => {
     if (typeof v === 'boolean') rootAttrs[`data-log-${k.toLowerCase()}`] = v ? 'true' : 'false';
     else rootVars[`--log-${k}`] = String(v);
   }
+  // 工程设置优先于样式包；旧工程和旧发布文档缺省时按左对齐处理。
+  rootAttrs['data-log-message-image-layout'] = opts.messageImageLayout || 'left';
 
   const pageTemplate = (id: string | null): string | null => {
     if (!id || !library || !library.templates.has(id)) return null;

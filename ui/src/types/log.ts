@@ -138,6 +138,8 @@ export interface LogDraft {
   assets?: LogProjectAsset[];
   /** 正文图片宽度 / 当前内容栏宽度，key 为 message:<id>:image:<index>。 */
   imageWidths?: Record<string, number>;
+  /** 工程级正文图片布局；缺省时按 left。 */
+  messageImageLayout?: 'none' | 'left' | 'center' | 'right';
   displayRules?: LogDisplayRule[];
   messageTemplateOverrides?: Record<string, string>;
   /** 工程内的消息正文（如批量校对结果），key 为原消息 id；只影响 LOG，不写回聊天原消息。 */
@@ -347,6 +349,8 @@ export interface LogPublicDocument {
   chapters?: Array<{ id: string; title: string; sectionIds: string[] }>;
   page: LogPageSettings;
   style: LogPublicStylePackage | null;
+  /** 与草稿相同的工程级布局语义，旧发布版缺省时按 left。 */
+  messageImageLayout?: 'none' | 'left' | 'center' | 'right';
   /** match 中的身份/用户/差分值均已按 release 哈希，规则 ID 也是公开投影。 */
   displayRules?: LogDisplayRule[];
 }

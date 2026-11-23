@@ -65,6 +65,28 @@ const style = { templates: { imagePlate: '', cover: '', message: '' }, assets: [
 const draft = () => ({ schemaVersion: 1, elements: [{ id: 'e1', type: 'imagePlate', templateId: 'imagePlate', content: { assetId: 'bg' }, style: {} }], page: { fontFamily: 'sans-serif' }, themeTokens: {} });
 const build = (nodes, extra = {}) => renderer.buildFrameDocument({ style, page: { fontFamily: 'sans-serif', backgroundColor: '#ffffff' }, title: '', sectionTitle: '', nodes, toc: [], ...extra }).doc;
 
+test('正文图片布局缺省左对齐，并支持不调整/左/中/右；布局不改正文、宽度或多图 key', () => {
+  const node = { kind: 'message', id: 'm1', assets: [], clues: [], speakerName: '',
+    bodyHtml: '文字A<img data-log-asset="att:first">文字B<img data-log-asset="att:second">文字C', plainText: '文字A文字B文字C' };
+  const before = JSON.stringify(node);
+  for (const styleOverride of [null, style]) {
+    const options = { style: styleOverride, imageWidths: { 'message:m1:image:0': 0.4, 'message:m1:image:1': 0.6 } };
+    const defaulted = build([node], options);
+    assert.equal(defaulted.rootAttrs['data-log-message-image-layout'], 'left');
+    for (const messageImageLayout of ['none', 'left', 'center', 'right']) {
+      const projected = build([node], { ...options, messageImageLayout });
+      assert.equal(projected.rootAttrs['data-log-message-image-layout'], messageImageLayout);
+      assert.deepEqual(defaulted.blocks, projected.blocks, '只改变文档布局状态，不重写消息 HTML');
+    }
+    const html = defaulted.blocks[0].html;
+    assert.match(html, /文字A<img[^>]*>文字B<img[^>]*>文字C/);
+    assert.deepEqual(Array.from(html.matchAll(/data-log-image-key="([^"]+)"/g), m => m[1]), ['message:m1:image:0', 'message:m1:image:1']);
+    assert.deepEqual(Array.from(html.matchAll(/data-log-image-width="([^"]+)"/g), m => m[1]), ['0.4', '0.6']);
+    assert.equal(JSON.stringify(node), before);
+  }
+  assert.equal(build([], { style: { ...style, tokens: { 'message-image-layout': 'right' } } }).rootAttrs['data-log-message-image-layout'], 'left', '样式包不能覆盖工程设置');
+});
+
 test('不完整窗口保留末尾与未加载消息锚点，只有完整后才插入章节末尾元素', () => {
   const elements = [
     { id: 'start', type: 'pageBreak', anchor: { kind: 'sectionStart', sectionId: 's1' }, order: 0, content: {}, style: {} },
@@ -149,10 +171,42 @@ function runtime() {
     getComputedStyle: el => ({ paddingLeft: '0', paddingRight: '0', maxHeight: el.maxHeight || 'none' }),
   };
   const source = fs.readFileSync(path.join(src, 'services/log/pagination/logFrameRuntime.js'), 'utf8');
-  vm.runInNewContext(source.replace(/\}\)\(\);\s*$/, 'globalThis.hooks = { sizeImages, endImageResize, dispose, handle, setPort: (p, canResizeImages = true) => { port = p; current.design = true; current.canResizeImages = canResizeImages; } };})();'), context);
+  vm.runInNewContext(source.replace(/\}\)\(\);\s*$/, 'globalThis.hooks = { createBlock, sizeImages, endImageResize, dispose, handle, setPort: (p, canResizeImages = true) => { port = p; current.design = true; current.canResizeImages = canResizeImages; } };})();'), context);
   context.hooks.setPort({ postMessage: event => messages.push(event), close() {} });
-  return { ...context.hooks, window, root, messages };
+  return { ...context.hooks, window, document: context.document, root, messages };
 }
+
+test('只有消息正文图片包装盒参与块布局；头像、装饰图、元素及嵌入结构保持原布局', () => {
+  const r = runtime();
+  const boxes = [];
+  const images = [null, null, 'message', 'element'].map(kind => ({
+    hasAttribute: key => key === 'data-log-resizable-image' && kind !== null,
+    getAttribute: key => key === 'data-log-resizable-image' ? kind : null,
+    replaceWith() {},
+  }));
+  r.document.createElement = tag => {
+    const el = { setAttribute() {}, querySelectorAll: () => images, style: { setProperty() {} }, appendChild() {} };
+    el.classList = { add: value => { el.className += ` ${value}`; } };
+    if (tag === 'span') boxes.push(el);
+    return el;
+  };
+  r.createBlock({ id: 'm1', kind: 'message', html: '', attrs: {} });
+  const wrappers = boxes.filter(box => box.className.startsWith('log-image-box'));
+  assert.deepEqual(wrappers.map(box => box.className), ['log-image-box log-image-box--message', 'log-image-box']);
+  const css = fs.readFileSync(path.join(src, 'services/log/pagination/logFrame.css'), 'utf8');
+  assert.match(css, /data-log-message-image-layout="left"/);
+  assert.match(css, /data-log-message-image-layout="center"/);
+  assert.match(css, /data-log-message-image-layout="right"/);
+  assert.doesNotMatch(css, /data-log-message-image-layout="none"[^\n]*log-image-box--message\s*\{/);
+  assert.match(css, /data-log-message-image-layout="left"[^{}]*\{ margin-left: 0; margin-right: auto; \}/);
+  assert.match(css, /data-log-message-image-layout="center"[^{}]*\{ margin-inline: auto; \}/);
+  assert.match(css, /data-log-message-image-layout="right"[^{}]*\{ margin-left: auto; margin-right: 0; \}/);
+  const blockRule = css.match(/([^{}]*data-log-message-image-layout="left"[^{}]*)\{([^{}]*display: block[^{}]*)\}/);
+  assert.ok(blockRule, '独立成行规则存在');
+  assert.match(blockRule[2], /max-width: 100%/);
+  assert.match(blockRule[2], /break-inside: avoid/);
+  assert.doesNotMatch(blockRule[2], /width:[^;]*!important/, '保留 sizeImages 和拖拽写入的 inline width');
+});
 function imageFixture(column = 400, naturalWidth = 1200, naturalHeight = 600, zoom = 1) {
   const classes = new Set();
   const node = { clientWidth: column, closest: () => node, getAttribute: key => key === 'data-log-node' ? 'm1' : 'message' };

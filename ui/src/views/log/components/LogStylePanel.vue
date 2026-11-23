@@ -76,6 +76,13 @@ const useStyle = async (s: LogStyleSummary) => {
   }
 };
 
+// ---- LOG 工程设置（独立于样式包设计变量） ----
+const messageImageLayout = computed(() => props.draft.messageImageLayout || 'left');
+const setMessageImageLayout = (value: NonNullable<LogDraft['messageImageLayout']>) => {
+  if (!props.canEdit) return;
+  props.update((d) => { d.messageImageLayout = value; });
+};
+
 // ---- 设计变量（本 LOG 的覆盖值，不修改样式包） ----
 const tokenEntries = computed(() => Object.entries(props.stylePackage?.tokens || {}));
 const tokenValue = (k: string, base: LogTokenValue) => (k in props.draft.themeTokens ? props.draft.themeTokens[k] : base);
@@ -163,6 +170,16 @@ const exportCurrent = async () => {
         <span>管理样式库：新建、复制、导入 ZIP，编辑模板、CSS、变量、规则与资源，保存为新版本</span>
       </span>
     </button>
+
+    <section>
+      <div class="log-style__title">正文图片</div>
+      <n-button-group size="tiny">
+        <n-button :type="messageImageLayout === 'none' ? 'primary' : 'default'" :disabled="!canEdit" @click="setMessageImageLayout('none')">不调整</n-button>
+        <n-button :type="messageImageLayout === 'left' ? 'primary' : 'default'" :disabled="!canEdit" @click="setMessageImageLayout('left')">左对齐</n-button>
+        <n-button :type="messageImageLayout === 'center' ? 'primary' : 'default'" :disabled="!canEdit" @click="setMessageImageLayout('center')">居中</n-button>
+        <n-button :type="messageImageLayout === 'right' ? 'primary' : 'default'" :disabled="!canEdit" @click="setMessageImageLayout('right')">右对齐</n-button>
+      </n-button-group>
+    </section>
 
     <section v-if="tokenEntries.length">
       <div class="log-style__title">设计变量</div>

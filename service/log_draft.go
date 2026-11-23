@@ -94,6 +94,8 @@ type LogDraft struct {
 	StylePackageID      string            `json:"stylePackageId"`
 	StylePackageVersion string            `json:"stylePackageVersion"`
 	ThemeTokens         map[string]any    `json:"themeTokens"`
+	// Empty preserves legacy drafts; the renderer treats absence as left.
+	MessageImageLayout string `json:"messageImageLayout,omitempty"`
 	// Assets registers ordinary LOG images (attachments) independently of the style package.
 	Assets                   []LogProjectAsset  `json:"assets,omitempty"`
 	ImageWidths              map[string]float64 `json:"imageWidths,omitempty"`
@@ -172,6 +174,9 @@ func parseLogDraft(raw []byte) (LogDraft, error) {
 		if !logMessageImagePattern.MatchString(key) || !validLogImageWidth(width) {
 			return draft, logError("INVALID_INPUT", "图片尺寸无效")
 		}
+	}
+	if draft.MessageImageLayout != "" && draft.MessageImageLayout != "none" && draft.MessageImageLayout != "left" && draft.MessageImageLayout != "center" && draft.MessageImageLayout != "right" {
+		return draft, logError("INVALID_INPUT", "正文图片布局无效")
 	}
 	// Template references deliberately need not exist in the current package: switching
 	// styles preserves them and the shared renderer skips unavailable message templates.
