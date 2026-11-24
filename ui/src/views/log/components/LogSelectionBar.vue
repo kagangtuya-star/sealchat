@@ -79,7 +79,7 @@ const onMore = (key: string) => {
     <template v-if="relocatingCount">
       <span class="log-ctx__label" role="status">
         <n-icon :component="Focus2" size="16" />
-        <span>正在重定位 {{ relocatingCount }} 条消息 · 点击目标消息，将所选消息移动到其后</span>
+        <span>正在重定位 {{ relocatingCount }} 条消息 · 点击消息移到其后，或点击元素上半部 / 下半部</span>
       </span>
     </template>
     <template v-else-if="element">

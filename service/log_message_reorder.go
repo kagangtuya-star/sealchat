@@ -30,6 +30,10 @@ type LogMessageReorderCommit struct {
 // PrepareLogMessageReorder checks design access before entering the message write transaction.
 // Apply must run in that transaction so neither the message nor its element anchors can commit alone.
 func PrepareLogMessageReorder(userID, channelID, messageID string, input LogMessageReorderDraft) (*LogMessageReorderCommit, error) {
+	return PrepareLogMessagesReorder(userID, channelID, []string{messageID}, input)
+}
+
+func PrepareLogMessagesReorder(userID, channelID string, messageIDs []string, input LogMessageReorderDraft) (*LogMessageReorderCommit, error) {
 	p, _, err := loadLogProjectForDesign(input.ProjectID, userID)
 	if err != nil {
 		return nil, err
@@ -48,10 +52,14 @@ func PrepareLogMessageReorder(userID, channelID, messageID string, input LogMess
 		return nil, logError("PERMISSION_DENIED", "消息不属于当前来源片段")
 	}
 	var count int64
-	if err := logSourceQuery(p, section, userID).Where("id = ?", messageID).Count(&count).Error; err != nil {
+	owners := map[string]bool{}
+	for _, id := range messageIDs {
+		owners[id] = true
+	}
+	if err := logSourceQuery(p, section, userID).Where("id IN ?", messageIDs).Count(&count).Error; err != nil {
 		return nil, err
 	}
-	if count != 1 {
+	if count == 0 || count != int64(len(messageIDs)) {
 		return nil, logError("NOT_FOUND", "消息不在当前来源范围内")
 	}
 	// Keep every other field byte-for-byte at the JSON value level, including extension data.
@@ -83,7 +91,7 @@ func PrepareLogMessageReorder(userID, channelID, messageID string, input LogMess
 			return nil, err
 		}
 		a := placement.Anchor
-		if oldAnchor.SectionID != input.SectionID || a.SectionID != input.SectionID || a.Kind != "message" || a.MessageID != messageID || (a.Side != "before" && a.Side != "after") {
+		if oldAnchor.SectionID != input.SectionID || a.SectionID != input.SectionID || a.Kind != "message" || !owners[a.MessageID] || (a.Side != "before" && a.Side != "after") {
 			return nil, logError("INVALID_INPUT", "元素落点不能跨来源片段")
 		}
 		element["anchor"], err = json.Marshal(a)
@@ -122,3 +130,21 @@ func (c *LogMessageReorderCommit) Apply(tx *gorm.DB) error {
 }
 
 func (c *LogMessageReorderCommit) DraftVersion() int64 { return c.version + 1 }
+
+func LogDraftChangeRecipients(projectID string, online func(string) bool) []string {
+	db := model.GetDB()
+	world := db.Model(&model.LogProjectModel{}).Select("world_id").Where("id = ? AND enabled = ?", projectID, true)
+	var members []string
+	if err := db.Model(&model.WorldMemberModel{}).Where("world_id IN (?)", world).Pluck("user_id", &members).Error; err != nil {
+		return nil
+	}
+	var recipients []string
+	for _, id := range members {
+		if online(id) {
+			if _, _, err := loadLogProjectForDesign(projectID, id); err == nil {
+				recipients = append(recipients, id)
+			}
+		}
+	}
+	return recipients
+}

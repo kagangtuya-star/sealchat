@@ -244,6 +244,7 @@ html:has(> body.log-design)::-webkit-scrollbar-button { display: none; }
 }
 .log-design.log-relocating .log-node.log-relocate-target:hover::after,
 .log-design.log-relocating .log-node.log-relocate-target:focus-visible::after { opacity: 1; }
+.log-design.log-relocating .log-relocate-target[data-relocate-side="before"]::after { top: 0; bottom: auto; }
 .log-design.log-relocating .log-message-actions,
 .log-design.log-relocating .log-image-control { display: none; }
 .log-design.log-relocating .log-node.log-relocate-source.log-selected { box-shadow: none; outline: 1.5px dashed var(--log-selection); outline-offset: -2px; }

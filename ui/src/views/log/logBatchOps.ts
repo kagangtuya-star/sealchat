@@ -57,13 +57,3 @@ export const applyBatchMovePlan = (order: readonly string[], plan: LogBatchMoveP
   }
   return out;
 };
-
-/** 重定位：全部选中消息按原顺序移到目标之后；目标属于选中集合或结果与当前顺序相同时返回 null。 */
-export const planBatchRelocate = (order: readonly string[], selected: ReadonlySet<string>, targetId: string): LogBatchMovePlan | null => {
-  if (selected.has(targetId) || !order.includes(targetId)) return null;
-  const ids = order.filter((id) => selected.has(id));
-  if (!ids.length) return null;
-  const plan: LogBatchMovePlan = { placement: 'after', groups: [{ messageIds: ids, targetMessageId: targetId }] };
-  const next = applyBatchMovePlan(order, plan);
-  return next.every((id, i) => id === order[i]) ? null : plan;
-};

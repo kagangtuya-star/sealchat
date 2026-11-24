@@ -203,7 +203,7 @@ test('预览转发 near-end，并在追加后的 layout 继续传递 lastAnchor�
   assert.deepEqual(JSON.parse(JSON.stringify(layouts.at(-1).anchor)), anchor);
   const workbench = read('views/log/components/LogWorkbench.vue');
   assert.match(workbench, /@near-end="onNearEnd"/);
-  assert.match(workbench, /@click="win\.load\(\)">重试/);
+  assert.match(workbench, /@click="win\.load\(\{ preserveWindow: true \}\)">重试/);
   assert.match(workbench, /@click="win\.loadMore\(\)">加载更多/);
   assert.match(workbench, /composeDesignSection\([^\n]*win\.complete\.value/);
 });

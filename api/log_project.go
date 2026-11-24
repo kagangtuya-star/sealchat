@@ -9,8 +9,28 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/service"
 )
+
+// Other sessions of the same user also need the invalidation. Only the
+// originating connection adopts the commit directly from its command reply.
+func notifyLogDraftChange(ctx *ChatContext, projectID string, version int64) {
+	if ctx.UserId2ConnInfo == nil {
+		return
+	}
+	event := fiber.Map{"op": protocol.OpEvent, "type": "log-project-draft-changed", "projectId": projectID, "draftVersion": version}
+	for _, userID := range service.LogDraftChangeRecipients(projectID, ctx.UserId2ConnInfo.Exists) {
+		if conns, _ := ctx.UserId2ConnInfo.Load(userID); conns != nil {
+			conns.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+				if conn != ctx.Conn && info != nil && !info.IsObserver && !info.IsGuest && info.User != nil && !info.User.IsBot {
+					writeConnJSONAndPrune(conns, conn, event)
+				}
+				return true
+			})
+		}
+	}
+}
 
 func bindLogProjectRoutes(auth fiber.Router) {
 	bindLogStyleRoutes(auth)

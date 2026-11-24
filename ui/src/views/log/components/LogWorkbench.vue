@@ -5,6 +5,7 @@ import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useMediaQuery } from '@vueuse/core';
 import { useRouter } from 'vue-router';
+import { chatEvent, useChatStore } from '@/stores/chat';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -32,6 +33,7 @@ import {
   checkLogSourceRange,
   describeLogError,
   fetchLogStylePackage,
+  resolveLogLayout,
   isLogError,
   updateLogExclusions,
 } from '@/services/log/logApi';
@@ -63,8 +65,8 @@ import { useLogSelection } from '../composables/useLogSelection';
 import { createElement, downloadJson, elementAvailability, rebindStyle, setMessageTemplateOverrides } from '../logDraftOps';
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
 import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
-import { planBatchRelocate, planBatchStep, type LogBatchMovePlan } from '../logBatchOps';
-import { planMessageDrop } from '../logDropOps';
+import { planBatchStep } from '../logBatchOps';
+import { planMessageDrop, type LogDropPlan } from '../logDropOps';
 import type { LogImageRef } from '../logAssetRefs';
 import { chapterTitle, chapterViews, sectionLabel } from '../logChapterOps';
 import LogPreviewFrame from './LogPreviewFrame.vue';
@@ -164,6 +166,32 @@ watch(sections, (list) => {
 });
 
 const win = useLogMessageWindow(projectId, querySection);
+const onDraftChanged = async (event: { projectId: string; draftVersion: number }, known?: LogProjectContext) => {
+  if (event.projectId !== projectId.value) return;
+  if (await draftCtl.invalidate(event.draftVersion, () => known ? Promise.resolve(known) : resolveLogLayout(props.slug))) {
+    commitQuerySection();
+    win.scheduleReload(0, true);
+  }
+};
+const probeDraft = async () => {
+  try {
+    const latest = await resolveLogLayout(props.slug);
+    await onDraftChanged(latest, latest);
+  } catch {
+    // Reconnect is best effort; a missed notice cannot bypass the next write's CAS.
+  }
+};
+chatEvent.on('log-project-draft-changed', onDraftChanged);
+chatEvent.on('connected', probeDraft);
+onMounted(() => {
+  const chat = useChatStore();
+  if (chat.connectState === 'connected') void probeDraft();
+  else void chat.ensureConnectionReady({ timeoutMs: 10000 }).catch(() => toast.warning('实时连接不可用，重新连接后将核对工程版本'));
+});
+onBeforeUnmount(() => {
+  chatEvent.off('connected', probeDraft);
+  chatEvent.off('log-project-draft-changed', onDraftChanged);
+});
 const onNearEnd = () => {
   if (!querySection.value || querySection.value.id !== currentSection.value?.id
     || !win.nextCursor.value || win.loading.value || win.error.value) return;
@@ -569,7 +597,8 @@ const placeAt = (item: LogDesignMessage, toIndex: number, onMoved?: () => void) 
   const afterId = rest[toIndex - 1]?.message.id;
   const beforeId = rest[toIndex]?.message.id;
   if (!afterId && !beforeId) return;
-  return runCommand('移动', () => reorderMessage(target(item), { afterId, beforeId }), () => {
+  const placement = toIndex < win.indexOf(item.message.id) ? { beforeId } : { afterId };
+  return runCommand('移动', () => reorderMessage(target(item), placement), () => {
     win.markOwnWrite(item.message.id, item.version + 1);
     void win.load({ preserveWindow: true });
     onMoved?.();
@@ -583,57 +612,70 @@ const moveSelected = (dir: -1 | 1) => {
   placeAt(item, idx + dir);
 };
 
-const dropInComposition = (item: LogDesignMessage, targetId: string, side: 'before' | 'after') => {
+type VisualTarget = { id: string; kind: 'message' | 'element'; side: 'before' | 'after' };
+const visualDestination = (ids: string[], target: VisualTarget) => {
   const sec = querySection.value;
   const nodes = composition.value?.nodes;
-  if (!sec || !nodes || busy.value || draftCtl.paused.value) return;
-  const plan = planMessageDrop(nodes, draft.value.elements, sec.id, item.message.id, targetId, side);
-  if (!plan) return;
-  if (!plan.placements.length) {
-    const rest = win.items.value.filter((it) => it.message.id !== item.message.id);
-    const index = plan.beforeId ? rest.findIndex((it) => it.message.id === plan.beforeId) : rest.length;
-    return placeAt(item, index);
-  }
-  if (!caps.value.editDraft) return;
+  if (!sec || !nodes || draftCtl.paused.value) return;
+  if (!nodes.some(n => n.id === target.id && n.kind === target.kind)) return;
+  const plan = planMessageDrop(nodes, draft.value.elements, sec.id, ids, target.id, target.side);
+  if (!plan || (plan.placements.length && (!caps.value.editDraft || draftCtl.status.value === 'conflict'))) return;
+  // Visible neighbors may straddle filtered-out messages. Name the target side;
+  // the database resolves its real opposite neighbor.
+  const anchor = target.kind === 'element' ? draft.value.elements.find(e => `el-${e.id}` === target.id)?.anchor : null;
+  const after = anchor ? anchor.kind === 'sectionEnd' || (anchor.kind === 'message' && anchor.side === 'after') : target.side === 'after';
+  if (after && plan.afterId) delete plan.beforeId;
+  else if (plan.beforeId) delete plan.afterId;
+  return plan;
+};
+const executeVisualMove = (items: LogDesignMessage[], plan: LogDropPlan, destination: VisualTarget, done?: () => void) => {
+  const sec = querySection.value!;
   const pid = projectId.value;
-  const commandTarget = target(item);
-  return runCommand('移动', () => draftCtl.placeElements(plan.placements, async (expectedVersion) => {
-    const result = await reorderLogMessage(commandTarget, plan, {
-      projectId: pid, sectionId: sec.id, expectedVersion, placements: plan.placements,
-    });
-    return result.draft_version;
+  const single = items.length === 1;
+  const batch = { placement: plan.afterId ? 'after' as const : 'before' as const,
+    groups: [{ messageIds: items.map(it => it.message.id), targetMessageId: plan.afterId || plan.beforeId || '' }] };
+  const commandTarget = target(items[0]);
+  const batchInput = batchTarget(items);
+  const ids = items.map(it => it.message.id);
+  const source = JSON.stringify(sec.source);
+  const current = () => projectId.value === pid && querySection.value?.id === sec.id && JSON.stringify(currentSection.value?.source) === source;
+  const send = () => plan.placements.length ? draftCtl.placeElements(plan.placements, async expectedVersion => {
+    if (!current() || previewPublish.value || items.some(it => !win.byId(it.message.id)?.capabilities.reorder)
+      || JSON.stringify(visualDestination(ids, destination)) !== JSON.stringify(plan)) throw new Error('来源、权限或落点已变化，请重新选择');
+    const payload = { projectId: pid, sectionId: sec.id, expectedVersion, placements: plan.placements };
+    return single ? (await reorderLogMessage(commandTarget, plan, payload)).draft_version
+      : (await relocateMessagesBatch(batchInput, batch, payload)).draft_version!;
   }, () => {
-    if (projectId.value === pid && querySection.value?.id === sec.id) win.placeLocal(item.message.id, plan);
-  }), () => {
+    if (current() && (plan.beforeId || plan.afterId)) win.placeLocal(ids, plan);
+  }) : single ? reorderMessage(commandTarget, plan) : relocateMessagesBatch(batchInput, batch);
+  return runCommand('移动', send, () => {
     if (projectId.value !== pid || querySection.value?.id !== sec.id) return;
-    win.markOwnWrite(item.message.id, item.version + 1);
-    void win.load({ preserveWindow: true });
+    afterBatchMove(items, !!(plan.beforeId || plan.afterId));
+    done?.();
   });
 };
 
 const onDrop = (nodeId: string, targetId: string, side: 'before' | 'after') => {
   const item = win.byId(nodeId);
-  if (!item || !item.capabilities.reorder) return;
-  if (draft.value.elements.length) return dropInComposition(item, targetId, side);
-  if (targetId === nodeId || targetId.startsWith('el-')) return;
-  const rest = win.items.value.filter((it) => it.message.id !== nodeId);
-  const t = rest.findIndex((it) => it.message.id === targetId);
-  if (t < 0) return;
-  placeAt(item, side === 'before' ? t : t + 1);
+  if (!item || !item.capabilities.reorder || busy.value) return;
+  const node = composition.value?.nodes.find(n => n.id === targetId);
+  if (!node) return;
+  const destination = { id: targetId, kind: node.kind, side };
+  const plan = visualDestination([nodeId], destination);
+  if (plan) return executeVisualMove([item], plan, destination);
 };
 
 interface LogRelocateState {
   active: boolean;
   sourceMessageIds: string[];
-  targetMessageId: string | null;
-  placement: 'after';
+  target: VisualTarget | null;
 }
-const relocation = ref<LogRelocateState>({ active: false, sourceMessageIds: [], targetMessageId: null, placement: 'after' });
+const relocation = ref<LogRelocateState>({ active: false, sourceMessageIds: [], target: null });
 const frameRelocation = computed(() => relocation.value.active ? { sourceMessageIds: relocation.value.sourceMessageIds.slice() } : null);
 let relocateDialog: ReturnType<typeof dialog.warning> | null = null;
 let relocateScrollId: string | null = null;
 const cancelRelocate = () => {
-  relocation.value = { active: false, sourceMessageIds: [], targetMessageId: null, placement: 'after' };
+  relocation.value = { active: false, sourceMessageIds: [], target: null };
   relocateDialog?.destroy();
   relocateDialog = null;
 };
@@ -645,39 +687,21 @@ const startRelocate = (ids: string[]) => {
   cancelRelocate();
   if (!multi) selection.select(ids[0]);
   const picked = new Set(ids);
-  relocation.value = { active: true, sourceMessageIds: windowOrder.value.filter((id) => picked.has(id)), targetMessageId: null, placement: 'after' };
+  relocation.value = { active: true, sourceMessageIds: windowOrder.value.filter((id) => picked.has(id)), target: null };
 };
-type RelocateDestination =
-  | { items: [LogDesignMessage]; toIndex: number; plan?: undefined }
-  | { items: LogDesignMessage[]; plan: LogBatchMovePlan; toIndex?: undefined };
-const relocateDestination = (targetId: string): RelocateDestination | null => {
+const relocateDestination = (target: VisualTarget) => {
   const state = relocation.value;
-  if (!state.active || !state.sourceMessageIds.length || state.sourceMessageIds.includes(targetId)) return null;
-  const items = state.sourceMessageIds.map((id) => win.byId(id));
-  if (items.some((it) => !it?.capabilities.reorder) || !win.byId(targetId)) return null;
-  const sources = items as LogDesignMessage[];
-  if (sources.length > 1) {
-    // 批量：由 message.relocate.batch 按原有顺序放到目标之后；位置不变时不提交。
-    const plan = planBatchRelocate(windowOrder.value, new Set(state.sourceMessageIds), targetId);
-    if (!plan) {
-      toast.info('所选消息已按原顺序位于此消息之后，请选择其他消息');
-      return null;
-    }
-    return { items: sources, plan };
-  }
-  const item = sources[0];
-  const rest = win.items.value.filter((it) => it.message.id !== item.message.id);
-  const toIndex = rest.findIndex((it) => it.message.id === targetId) + 1;
-  if (toIndex === win.indexOf(item.message.id)) {
-    toast.info('消息已在此位置之后，请选择其他消息');
-    return null;
-  }
-  return { items: [item], toIndex };
+  if (!state.active || previewPublish.value) return null;
+  const picked = new Set(state.sourceMessageIds);
+  const items = win.items.value.filter(it => picked.has(it.message.id));
+  if (items.length !== picked.size || items.some(it => !it.capabilities.reorder)) return null;
+  const plan = visualDestination(state.sourceMessageIds, target);
+  return plan && { items, plan };
 };
 const confirmRelocate = () => {
-  if (busy.value || !relocation.value.targetMessageId) return false;
-  const destination = relocateDestination(relocation.value.targetMessageId);
-  if (!destination) return;
+  if (busy.value || !relocation.value.target) return false;
+  const destination = relocateDestination(relocation.value.target);
+  if (!destination) return cancelRelocate();
   const state = relocation.value;
   const finish = () => {
     if (relocation.value !== state) return;
@@ -687,14 +711,7 @@ const confirmRelocate = () => {
     relocateScrollId = id;
     cancelRelocate();
   };
-  if (destination.plan) {
-    const { items, plan } = destination;
-    return runCommand('重定位', () => relocateMessagesBatch(batchTarget(items), plan), () => {
-      afterBatchMove(items);
-      finish();
-    });
-  }
-  return placeAt(destination.items[0], destination.toIndex, finish);
+  return executeVisualMove(destination.items, destination.plan, relocation.value.target, finish);
 };
 const relocateSummary = (id: string) => {
   const node = nodeCache.get(id)?.node;
@@ -702,15 +719,21 @@ const relocateSummary = (id: string) => {
   const text = node.plainText.replace(/\s+/g, ' ').trim();
   return `${node.speakerName.slice(0, 24) || '未命名角色'}：${text.slice(0, 40) || '（无文字内容）'}${text.length > 40 ? '…' : ''}`;
 };
-const pickRelocateTarget = (targetId: string | null) => {
-  if (!targetId || busy.value || relocateDialog || !relocateDestination(targetId)) return;
-  relocation.value.targetMessageId = targetId;
+const pickRelocateTarget = (targetId: string | null, side: 'before' | 'after' = 'after') => {
+  if (!targetId || busy.value || relocateDialog || relocation.value.sourceMessageIds.includes(targetId)) return;
+  const node = composition.value?.nodes.find(n => n.id === targetId);
+  if (!node) return;
+  const target: VisualTarget = { id: targetId, kind: node.kind, side: node.kind === 'message' ? 'after' : side };
+  if (!relocateDestination(target)) { toast.info('无法移到此位置，请选择其他落点'); return; }
+  relocation.value.target = target;
   const sources = relocation.value.sourceMessageIds;
+  const label = node.kind === 'element' ? `元素「${node.fields.text?.slice(0, 40) || node.type}」${side === 'before' ? '上方' : '下方'}`
+    : `消息「${relocateSummary(targetId)}」之后`;
   const confirmation = dialog.warning({
     title: sources.length > 1 ? '确认批量重定位' : '确认重定位',
     content: sources.length > 1
-      ? `将选中的 ${sources.length} 条消息按原有顺序移动到「${relocateSummary(targetId)}」之后？`
-      : `将「${relocateSummary(sources[0])}」移动到「${relocateSummary(targetId)}」之后？`,
+      ? `将选中的 ${sources.length} 条消息按原有顺序移动到${label}？`
+      : `将「${relocateSummary(sources[0])}」移动到${label}？`,
     positiveText: '确认重定位',
     negativeText: '取消',
     onPositiveClick: confirmRelocate,
@@ -718,7 +741,7 @@ const pickRelocateTarget = (targetId: string | null) => {
     onAfterLeave: () => {
       if (relocateDialog !== confirmation) return;
       relocateDialog = null;
-      relocation.value.targetMessageId = null;
+      relocation.value.target = null;
     },
   });
   relocateDialog = confirmation;
@@ -730,14 +753,10 @@ watch([sectionId, projectId, () => JSON.stringify(currentSection.value?.source),
   closeBatchDialog();
   selection.exitMulti();
 }, { flush: 'sync' });
-watch(win.items, () => {
+watch([win.items, orderedIds, () => caps.value.editDraft], () => {
   if (!relocation.value.active) return;
   if (relocation.value.sourceMessageIds.some((id) => !win.byId(id)?.capabilities.reorder)) cancelRelocate();
-  else if (relocation.value.targetMessageId && !win.byId(relocation.value.targetMessageId)) {
-    relocateDialog?.destroy();
-    relocateDialog = null;
-    relocation.value.targetMessageId = null;
-  }
+  else if (relocation.value.target && !relocateDestination(relocation.value.target) && !busy.value) cancelRelocate();
 });
 
 // ---- 多选模式：工作台局部瞬时状态；批量命令按整个选中集合一次提交，不做部分执行 ----
@@ -775,8 +794,9 @@ const batchTarget = (items: LogDesignMessage[]) => ({
   channelId: sourceChannelId.value,
   items: items.map((it) => ({ messageId: it.message.id, expectedVersion: it.version })),
 });
-const afterBatchMove = (items: LogDesignMessage[]) => {
-  items.forEach((it) => win.markOwnWrite(it.message.id, it.version + 1));
+const afterBatchMove = (items: LogDesignMessage[], messageOrderChanged = true) => {
+  // 只有 display_order 变化才会推进消息 version；纯元素锚点事务不能猜测 version + 1。
+  if (messageOrderChanged) items.forEach((it) => win.markOwnWrite(it.message.id, it.version + 1));
   void win.load({ preserveWindow: true });
 };
 const canBatch = (items: LogDesignMessage[], key: 'reorder' | 'remove') => items.length > 0 && items.length <= 200 && items.every((it) => it.capabilities[key]);
@@ -984,7 +1004,7 @@ const onFrameEvent = (event: FrameEvent) => {
       break;
     case 'select':
       if (relocation.value.active) {
-        pickRelocateTarget(event.nodeId);
+        pickRelocateTarget(event.nodeId, event.side);
         break;
       }
       selection.select(event.nodeId, { shift: event.shift, additive: event.additive });
@@ -1447,7 +1467,7 @@ onBeforeUnmount(() => {
       </n-alert>
       <n-alert v-if="win.error.value" type="error" :show-icon="false">
         {{ win.error.value }}
-        <n-button size="tiny" style="margin-left: 8px" @click="win.load()">重试</n-button>
+        <n-button size="tiny" style="margin-left: 8px" @click="win.load({ preserveWindow: true })">重试</n-button>
       </n-alert>
       <n-alert v-if="styleError" type="error" :show-icon="false">{{ styleError }}</n-alert>
       <n-alert v-if="win.staleHint.value && !win.loading.value" type="info" :show-icon="false">来源消息已在别处变化，已重新加载。</n-alert>
@@ -1494,6 +1514,7 @@ onBeforeUnmount(() => {
               key="multi"
               :messages="selectedMessages"
               :total="win.items.value.length"
+              :has-element-target="composition?.nodes.some(n => n.kind === 'element')"
               :complete="win.complete.value"
               :at-top="multiAtTop"
               :at-bottom="multiAtBottom"

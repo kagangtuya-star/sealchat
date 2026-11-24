@@ -45,7 +45,7 @@ export interface FrameLayoutResult {
 
 export type FrameEvent =
   | ({ type: 'imageResize' } & LogImageResize)
-  | { type: 'select'; nodeId: string | null; kind?: string; shift?: boolean; additive?: boolean }
+  | { type: 'select'; nodeId: string | null; kind?: string; side?: 'before' | 'after'; shift?: boolean; additive?: boolean }
   | { type: 'open'; nodeId: string; kind?: string }
   | { type: 'dragStart' }
   | { type: 'drop'; nodeId: string; targetId: string; side: 'before' | 'after' }

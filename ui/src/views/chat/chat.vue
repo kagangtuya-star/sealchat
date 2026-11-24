@@ -8371,7 +8371,6 @@ const deriveLocalDisplayOrder = (list: Message[], index: number, fallback: numbe
 interface MessageInsertPlacement {
   anchorMessageId: string;
   beforeId: string;
-  afterId?: string;
   localDisplayOrder: number;
   summary: string;
 }
@@ -8412,7 +8411,6 @@ const resolveMessageInsertPlacement = (): MessageInsertPlacement | null => {
     return null;
   }
   const beforeId = anchor.id;
-  const afterId = rows.value[anchorIndex - 1]?.id || '';
   const beforeOrder = getMessageDisplayOrderValue(anchor);
   const afterOrder = getMessageDisplayOrderValue(rows.value[anchorIndex - 1]);
   let localDisplayOrder = beforeOrder ?? Date.now();
@@ -8426,7 +8424,6 @@ const resolveMessageInsertPlacement = (): MessageInsertPlacement | null => {
   return {
     anchorMessageId: target.messageId,
     beforeId,
-    afterId: afterId || undefined,
     localDisplayOrder,
     summary: target.summary || '该消息',
   };
@@ -9950,8 +9947,6 @@ const finalizeDrag = async () => {
   (moving as any).displayOrder = estimateOrder;
   rows.value = working;
 
-  const beforeId = working[targetIndex + 1]?.id || '';
-  const afterId = working[targetIndex - 1]?.id || '';
   const orderRevision = displayOrderRevision;
   const clientOpId = dragState.clientOpId || nanoid();
   resetDragState();
@@ -9960,8 +9955,7 @@ const finalizeDrag = async () => {
   try {
     const resp = await chat.messageReorder(channelId, {
       messageId: activeId,
-      beforeId,
-      afterId,
+      ...(position === 'after' ? { afterId: overId } : { beforeId: overId }),
       clientOpId,
     });
     if (chat.curChannel?.id !== channelId || !localReorderOps.has(clientOpId)) return;
@@ -14037,7 +14031,7 @@ const performSend = async (options?: {
       explicitDisplayOrder,
       whisperTargetIds,
       typingDurationMs,
-      insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
+      insertPlacement ? { beforeId: insertPlacement.beforeId } : undefined,
       activeAppearance?.variantId || identityVariantIdOverride,
       sendIcMode,
       activeChannelId,

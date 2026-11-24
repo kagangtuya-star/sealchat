@@ -76,21 +76,19 @@ const remove = (id: string) => props.update((d) => {
   d.elements = d.elements.filter((x) => x.id !== id);
 });
 
-/** 同一锚点内调整先后（order 交换）。 */
+/** 只重编号当前锚点，兼容旧草稿内相同的 order。 */
 const shift = (e: LogElement, dir: -1 | 1) => {
   const peers = props.draft.elements.filter((x) => sameAnchor(x.anchor, e.anchor)).sort((a, b) => a.order - b.order);
   const i = peers.findIndex((x) => x.id === e.id);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= peers.length) return;
-  const a = peers[i].id;
-  const b = peers[j].id;
+  [peers[i], peers[j]] = [peers[j], peers[i]];
+  const orders = new Map(peers.map((peer, index) => [peer.id, index]));
   props.update((d) => {
-    const ea = d.elements.find((x) => x.id === a);
-    const eb = d.elements.find((x) => x.id === b);
-    if (!ea || !eb) return;
-    const t = ea.order;
-    ea.order = eb.order;
-    eb.order = t === eb.order ? t + dir : t;
+    for (const peer of d.elements) {
+      const order = orders.get(peer.id);
+      if (order !== undefined) peer.order = order;
+    }
   });
 };
 const peerCount = (e: LogElement) => props.draft.elements.filter((x) => sameAnchor(x.anchor, e.anchor)).length;

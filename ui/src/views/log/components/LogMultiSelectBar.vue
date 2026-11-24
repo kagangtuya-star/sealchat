@@ -13,6 +13,7 @@ const props = defineProps<{
   messages: LogDesignMessage[];
   /** 当前来源片段已加载的消息数。 */
   total: number;
+  hasElementTarget?: boolean;
   complete: boolean;
   atTop: boolean;
   atBottom: boolean;
@@ -55,7 +56,7 @@ const reorderWhy = () => {
 const reasons = computed(() => ({
   up: common() || reorderWhy() || (props.atTop ? '已到达本片段已加载范围的顶部' : ''),
   down: common() || reorderWhy() || (props.atBottom ? (props.complete ? '已到达本片段底部' : '已到达已加载范围的底部，请先加载更多') : ''),
-  relocate: common() || reorderWhy() || (count.value >= props.total ? '没有可作为目标的其他消息' : ''),
+  relocate: common() || reorderWhy() || (count.value >= props.total && !props.hasElementTarget ? '没有可用的视觉落点' : ''),
   exclude: common() || (props.canManageSources ? '' : '仅世界管理者可以调整公开范围'),
   remove: common() || (denied('remove') ? `所选消息中有 ${denied('remove')} 条无权删除` : ''),
 }));
@@ -67,7 +68,7 @@ const run = (key: ActionKey, fn: () => void) => {
 
 const allSelected = computed(() => props.total > 0 && count.value >= props.total);
 const hint = computed(() => {
-  if (props.relocating) return '点击目标消息，所选消息将按原顺序移到它之后';
+  if (props.relocating) return '点击消息移到其后，或点击元素上半部 / 下半部；保留所选消息原顺序';
   if (props.rangeMode) return props.rangeAnchored ? '点击终点，选中两者之间的全部消息' : '点击起点消息开始范围选择';
   if (!count.value) return '点击消息选择，Shift+点击连选';
   if (allSelected.value && !props.complete) return '仅包含已加载的消息';
@@ -121,7 +122,7 @@ const hint = computed(() => {
         <button type="button" class="log-multi__btn is-icon" :aria-disabled="!!reasons.down" :title="tip('down', '整体下移一位')" aria-label="整体下移" @click="run('down', () => emit('move', 1))">
           <n-icon :component="ArrowDown" size="16" />
         </button>
-        <button type="button" class="log-multi__btn" :aria-disabled="!!reasons.relocate" :title="tip('relocate', '重定位：选择目标消息，按原顺序移到其后')" @click="run('relocate', () => emit('relocate'))">
+        <button type="button" class="log-multi__btn" :aria-disabled="!!reasons.relocate" :title="tip('relocate', '重定位：选择消息之后或元素上下方')" @click="run('relocate', () => emit('relocate'))">
           <n-icon :component="Focus2" size="16" /><span>重定位</span>
         </button>
         <span class="log-multi__sep" />

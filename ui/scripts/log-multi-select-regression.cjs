@@ -54,13 +54,13 @@ test('边界：首段在顶部不可上移、末段在底部不可下移，不�
 
 test('批量重定位：保持原顺序，拒绝定位到选中集合内部与位置不变的目标', () => {
   const order = ids('abcdef');
-  const plan = ops.planBatchRelocate(order, new Set(ids('eb')), 'c');
-  assert.deepEqual(plan, { placement: 'after', groups: [{ messageIds: ['b', 'e'], targetMessageId: 'c' }] });
-  assert.equal(ops.applyBatchMovePlan(order, plan).join(''), 'acbedf');
-  assert.equal(ops.planBatchRelocate(order, new Set(ids('bd')), 'd'), null);
-  assert.equal(ops.planBatchRelocate(order, new Set(ids('bc')), 'a'), null);
-  assert.equal(ops.planBatchRelocate(order, new Set(ids('bc')), 'missing'), null);
-  assert.ok(ops.planBatchRelocate(order, new Set(ids('bd')), 'a'));
+  const { planMessageDrop } = loadModule('views/log/logDropOps.ts');
+  const plan = (sources, target) => planMessageDrop(order.map(id => ({ id,kind:'message' })), [], 's', ids(sources), target, 'after');
+  assert.deepEqual(plan('eb','c'), { afterId:'c', beforeId:'d', placements:[] });
+  assert.equal(plan('bd','d'), null);
+  assert.equal(plan('bc','a'), null);
+  assert.equal(plan('bc','missing'), null);
+  assert.ok(plan('bd','a'));
 });
 
 test('选择模型：单选语义不变；多选点击切换、Shift 与范围模式并入、元素与空白不参与', () => {
@@ -108,7 +108,7 @@ test('选择模型：单选语义不变；多选点击切换、Shift 与范围�
 // ---- 工作台批量命令：从 LogWorkbench.vue 抽取真实声明 ----
 const source = read('views/log/components/LogWorkbench.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const ast = ts.createSourceFile('workbench.ts', source, ts.ScriptTarget.Latest, true);
-const names = new Set(['selection', 'windowOrder', 'selectedMessages', 'placeAt', 'relocation', 'frameRelocation', 'relocateDialog',
+const names = new Set(['visualDestination', 'executeVisualMove', 'selection', 'windowOrder', 'selectedMessages', 'placeAt', 'relocation', 'frameRelocation', 'relocateDialog',
   'relocateScrollId', 'cancelRelocate', 'startRelocate', 'relocateDestination', 'confirmRelocate', 'relocateSummary', 'pickRelocateTarget',
   'multiMode', 'selectedSet', 'multiAtTop', 'multiAtBottom', 'batchDialog', 'closeBatchDialog', 'openBatchDialog', 'enterMulti', 'exitMulti',
   'batchTarget', 'afterBatchMove', 'canBatch', 'moveMulti', 'excludeMulti', 'removeMulti', 'selectAllMulti', 'ctxMenu', 'ctxOptions',
@@ -140,10 +140,12 @@ function setup(t, caps = {}) {
     ref: vue.ref, computed: vue.computed, watch: vue.watch, shallowRef: vue.shallowRef,
     onBeforeUnmount: fn => calls.cleanup.push(fn), buildTimer: null, themeObserver: null, onResizeEnd() {},
     window: { removeEventListener() {} },
-    useLogSelection, planBatchStep: ops.planBatchStep, planBatchRelocate: ops.planBatchRelocate,
+    useLogSelection, planBatchStep: ops.planBatchStep, planMessageDrop: loadModule('views/log/logDropOps.ts').planMessageDrop,
+    composition: vue.computed(() => ({ nodes: items.value.flatMap(it => [{ id: it.message.id, kind: 'message' },
+      ...context.draft.value.elements.filter(e => e.anchor.messageId === it.message.id).map(e => ({ id:`el-${e.id}`,kind:'element',fields:{text:e.id} }))]) })),
     orderedIds: vue.computed(() => ['el-x', ...items.value.map(item => item.message.id)]),
     sectionId: vue.ref('s1'), projectId: vue.ref('p1'), currentSection: vue.ref({ source: { channelId: 'ch1' } }),
-    querySection: vue.ref({ id: 's1' }), sourceChannelId: vue.ref('ch1'),
+    querySection: vue.ref({ id: 's1', source:{channelId:'ch1'} }), sourceChannelId: vue.ref('ch1'),
     previewPublish: vue.ref(false), busy: vue.ref(false), win, caps: vue.ref({ editDraft: true, manageSources: true }),
     nodeCache: new Map(), draft: vue.ref({ elements: [] }), editorShow: vue.ref(false), insertShow: vue.ref(false), focusElementId: vue.ref(null),
     selectedElement: vue.ref(null), messageTemplates: vue.ref(['normal', 'gm']), setMessageTemplateOverrides: draftOps.setMessageTemplateOverrides,
@@ -151,11 +153,11 @@ function setup(t, caps = {}) {
     dialog: { warning: dialogFactory('warning'), error: dialogFactory('error') },
     target: item => ({ messageId: item.message.id }),
     reorderMessage: async (...args) => calls.reorder.push(args),
-    relocateMessagesBatch: async (...args) => calls.relocate.push(plain(args)),
+    relocateMessagesBatch: async (...args) => { calls.relocate.push(plain(args)); return {draft_version:2}; },
     removeMessagesBatch: async (...args) => calls.remove.push(plain(args)),
     removeMessage: async () => { throw new Error('single remove must not be used'); },
     updateLogExclusions: async (...args) => { calls.exclusions.push(plain(args)); return { draftVersion: 2 }; },
-    draftCtl: { runVersioned: fn => fn(1), update(fn) { calls.mutations++; fn(context.draft.value); } },
+    draftCtl: { paused: vue.ref(false), status: vue.ref('saved'), runVersioned: fn => fn(1), update(fn) { calls.mutations++; fn(context.draft.value); } },
     runCommand: async (_label, command, after) => { context.busy.value = true; try { await command(); after(); } finally { context.busy.value = false; } },
     describeLogError: () => 'error', isLogError: () => false,
     openEditor: (...args) => calls.opened.push(args), openPanel() {}, insertAtMessage() {},
@@ -164,7 +166,7 @@ function setup(t, caps = {}) {
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')
     + '\nglobalThis.hooks = { selection, relocation, multiMode, multiAtTop, multiAtBottom, ctxMenu, ctxOptions, enterMulti, exitMulti, moveMulti,'
-    + ' excludeMulti, removeMulti, startRelocate, pickRelocateTarget, onFrameEvent, onGlobalKey, onContextSelect, selectAllMulti, locate, applyMessageTemplate };', {
+    + ' excludeMulti, removeMulti, startRelocate, pickRelocateTarget, executeVisualMove, onFrameEvent, onGlobalKey, onContextSelect, selectAllMulti, locate, applyMessageTemplate };', {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context));
   t.after(() => scope.stop());
@@ -172,6 +174,36 @@ function setup(t, caps = {}) {
 }
 
 const pick = (h, id, extra = {}) => h.onFrameEvent({ type: 'select', nodeId: id, kind: 'message', ...extra });
+
+test('多选跨元素边界：确认后只发送一次带草稿 CAS 的批量请求', async t => {
+  const h = setup(t);
+  h.draft.value.elements = [{ id:'split', anchor:{kind:'message',sectionId:'s1',messageId:'a',side:'after'},order:0 }];
+  h.draftCtl.placeElements = (_placements, op) => op(1);
+  h.enterMulti('e'); pick(h,'c');
+  h.startRelocate(h.selection.messageIds.value);
+  pick(h,'el-split',{kind:'element',side:'before'});
+  await h.calls.dialogs[0].onPositiveClick();
+  assert.equal(h.calls.relocate.length,1);
+  const [, plan, draft] = h.calls.relocate[0];
+  assert.deepEqual(plan.groups,[{messageIds:['c','e'],targetMessageId:'a'}]);
+  assert.equal(draft.expectedVersion,1);
+  assert.deepEqual(draft.placements,[{elementId:'split',anchor:{kind:'message',sectionId:'s1',messageId:'e',side:'after'},order:0}]);
+});
+
+test('纯锚点移动不猜测消息 version；真实消息排序仍登记 own-write', async t => {
+  const h = setup(t);
+  const item = h.win.byId('a');
+  h.draftCtl.placeElements = async (_placements, _op, afterCommit) => { afterCommit?.(); };
+  await h.executeVisualMove([item], {
+    placements: [{ elementId:'split', anchor:{kind:'message',sectionId:'s1',messageId:'a',side:'after'}, order:0 }],
+  }, { id:'el-split', kind:'element', side:'before' });
+  assert.deepEqual(h.win.own, []);
+  assert.equal(h.win.loads, 1);
+
+  await h.executeVisualMove([item], { afterId:'b', placements:[] }, { id:'b', kind:'message', side:'after' });
+  assert.deepEqual(h.win.own, [['a', 4]]);
+  assert.equal(h.win.loads, 2);
+});
 
 test('精确模板：整个 selected set 一次 mutation，自动删除，权限/元素/200条限制不可绕过', t => {
   const h = setup(t);
@@ -418,7 +450,7 @@ test('多选工具条：混合权限时禁用对应操作并说明原因', async
   }).component('n-icon', { props: ['component', 'size'], render: () => null }));
   const mixed = await render({ messages: [message('a'), message('b', { reorder: false, remove: false })] });
   assert.match(mixed, /整体上移一位：所选消息中有 1 条无权调整顺序/);
-  assert.match(mixed, /重定位：选择目标消息，按原顺序移到其后：所选消息中有 1 条无权调整顺序/);
+  assert.match(mixed, /重定位：选择消息之后或元素上下方：所选消息中有 1 条无权调整顺序/);
   assert.match(mixed, /删除聊天中的原消息：所选消息中有 1 条无权删除/);
   assert.match(mixed, /title="仅从本 LOG 排除（聊天原消息不受影响）"/);
   const ok = await render({ messages: [message('a'), message('b')], atTop: true });

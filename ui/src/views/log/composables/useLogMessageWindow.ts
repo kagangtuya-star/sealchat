@@ -158,14 +158,15 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
   const markOwnWrite = (id: string, expectedAtLeast: number) => ownWrites.set(id, expectedAtLeast);
 
   /** 排序已在服务端提交后，与新元素锚点同步更新预览；随后仍从新游标校准窗口。 */
-  const placeLocal = (id: string, placement: { beforeId?: string; afterId?: string }) => {
-    const item = byId(id);
-    if (!item) return;
-    const rest = items.value.filter((it) => it.message.id !== id);
+  const placeLocal = (ids: string | string[], placement: { beforeId?: string; afterId?: string }) => {
+    const selected = new Set(typeof ids === 'string' ? [ids] : ids);
+    const moving = items.value.filter(it => selected.has(it.message.id));
+    if (moving.length !== selected.size) return;
+    const rest = items.value.filter((it) => !selected.has(it.message.id));
     const index = placement.beforeId ? rest.findIndex((it) => it.message.id === placement.beforeId)
       : placement.afterId ? rest.findIndex((it) => it.message.id === placement.afterId) + 1 : 0;
     if (index < 0 || (placement.afterId && !rest.some((it) => it.message.id === placement.afterId))) return;
-    rest.splice(index, 0, item);
+    rest.splice(index, 0, ...moving);
     items.value = rest;
   };
 
@@ -238,7 +239,10 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
   };
   document.addEventListener('visibilitychange', onVisible);
 
-  watch([() => projectId.value, () => section.value?.id, () => JSON.stringify(section.value?.source || null)], () => {
+  watch([() => projectId.value, () => section.value?.id, () => {
+    const s = section.value?.source;
+    return s && JSON.stringify([s.channelId, s.fromTime, !!s.fromExclusive, s.toTime, s.includeOoc, s.includeArchived, [...(s.identityIds || [])].sort()]);
+  }], () => {
     items.value = [];
     loadedSectionId.value = '';
     nextCursor.value = null;
@@ -251,6 +255,9 @@ export const useLogMessageWindow = (projectId: Ref<string>, section: Ref<LogSect
     ownWrites.clear();
     void load();
   }, { immediate: true });
+  watch(() => !!section.value?.source.showQuoteContent, () => {
+    if (items.value.length) void load({ preserveWindow: true });
+  });
 
   onBeforeUnmount(() => {
     cancel();

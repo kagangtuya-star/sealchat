@@ -1,6 +1,7 @@
 import type { LogElement, LogElementPlacement } from '@/types/log';
 
 interface DropNode { id: string; kind: 'message' | 'element' }
+type Side = 'before' | 'after';
 
 export interface LogDropPlan {
   afterId?: string;
@@ -8,44 +9,77 @@ export interface LogDropPlan {
   placements: LogElementPlacement[];
 }
 
-/** 按实际混合节点顺序插入；原消息附带的元素随消息移动，落点元素组在插入处分开。 */
+/** nodes 已按 walkDesignSection 排列。只拆开落点间隙中无法留在原侧的元素。 */
 export const planMessageDrop = (
   nodes: readonly DropNode[], elements: readonly LogElement[], sectionId: string,
-  messageId: string, targetId: string, side: 'before' | 'after',
+  source: string | readonly string[], targetId: string, side: Side,
 ): LogDropPlan | null => {
-  if (messageId === targetId || !nodes.some((n) => n.id === messageId && n.kind === 'message')) return null;
-  const own = elements.filter((e) => e.anchor.sectionId === sectionId && e.anchor.kind === 'message' && e.anchor.messageId === messageId);
-  const ownIds = new Set(own.map((e) => `el-${e.id}`));
-  // 拖向自己的元素时，只在原元素组内移动消息，不把目标随消息一起取走。
-  const movingOwn = !ownIds.has(targetId);
-  const rest = nodes.filter((n) => n.id !== messageId && !(movingOwn && ownIds.has(n.id)));
-  const targetIndex = rest.findIndex((n) => n.id === targetId);
-  if (targetIndex < 0) return null;
-  const at = targetIndex + (side === 'after' ? 1 : 0);
+  const selected = new Set(typeof source === 'string' ? [source] : source);
+  const messages = nodes.filter(n => n.kind === 'message').map(n => n.id);
+  const moving = messages.filter(id => selected.has(id));
+  if (!moving.length || moving.length !== selected.size || selected.has(targetId)) return null;
+  const byId = new Map(elements.filter(e => e.anchor.sectionId === sectionId).map(e => [`el-${e.id}`, e]));
+  const target = byId.get(targetId)?.anchor;
+  const held = (a: LogElement['anchor']) => a.kind === 'message' && target?.kind === 'message'
+    && a.messageId === target.messageId && (moving.length === 1 || a.side === target.side);
+  const rest = nodes.filter(n => {
+    if (n.kind === 'message') return !selected.has(n.id);
+    const a = byId.get(n.id)?.anchor;
+    // 拖向自己的元素时，留下目标桶供消息穿过；其他附属元素随各自消息移动。
+    return a?.kind !== 'message' || !selected.has(a.messageId)
+      || held(a);
+  });
+  const index = rest.findIndex(n => n.id === targetId);
+  if (index < 0) return null;
+  const at = index + Number(side === 'after');
   let start = at, end = at;
-  while (start > 0 && rest[start - 1].kind === 'element') start--;
+  while (start && rest[start - 1].kind === 'element') start--;
   while (end < rest.length && rest[end].kind === 'element') end++;
-  const byId = new Map(elements.map((e) => [`el-${e.id}`, e]));
-  const group = (list: readonly DropNode[]) => list.map((n) => byId.get(n.id)).filter((e): e is LogElement => !!e);
-  const beforeOwn = movingOwn ? own.filter((e) => e.anchor.kind === 'message' && e.anchor.side === 'before').sort((a, b) => a.order - b.order) : [];
-  const afterOwn = movingOwn ? own.filter((e) => e.anchor.kind === 'message' && e.anchor.side === 'after').sort((a, b) => a.order - b.order) : [];
-  const before = [...group(rest.slice(start, at)), ...beforeOwn];
-  const after = [...afterOwn, ...group(rest.slice(at, end))];
-  const nextIds = [...rest.slice(0, start).map((n) => n.id), ...before.map((e) => `el-${e.id}`), messageId,
-    ...after.map((e) => `el-${e.id}`), ...rest.slice(end).map((n) => n.id)];
-  if (nextIds.length === nodes.length && nextIds.every((id, i) => id === nodes[i].id)) return null;
+  const afterId = rest[start - 1]?.id, beforeId = rest[end]?.id;
   const placements: LogElementPlacement[] = [];
-  for (const [list, placementSide] of [[before, 'before'], [after, 'after']] as const) {
-    list.forEach((e, order) => {
-      if (e.anchor.kind === 'message' && e.anchor.messageId === messageId && e.anchor.side === placementSide && e.order === order) return;
-      placements.push({ elementId: e.id, anchor: { kind: 'message', sectionId, messageId, side: placementSide }, order });
+  const positions = new Map(elements.map((e, i) => [e.id, i]));
+  for (const edge of ['before', 'after'] as const) {
+    const left = edge === 'before';
+    const owner = left ? moving[0] : moving[moving.length - 1];
+    const bucket = (left ? rest.slice(start, at) : rest.slice(at, end)).flatMap(n => {
+      const e = byId.get(n.id);
+      if (!e) return [];
+      const a = e.anchor;
+      const stays = a.kind === 'message'
+        ? a.messageId === (left ? afterId : beforeId) && a.side === (left ? 'after' : 'before')
+        : a.kind === (left ? 'sectionStart' : 'sectionEnd');
+      return stays ? [] : [e];
+    });
+    const own = elements.filter(e => e.anchor.sectionId === sectionId && e.anchor.kind === 'message'
+      && e.anchor.messageId === owner && e.anchor.side === edge
+      && !held(e.anchor))
+      .sort((a, b) => a.order - b.order);
+    const desired = left ? [...bucket, ...own] : [...own, ...bucket];
+    // 保留原桶中已有的排名；插入前缀时尽量利用空位。相同 order 按草稿数组顺序稳定排序。
+    const stays = (e: LogElement) => e.anchor.kind === 'message' && e.anchor.messageId === owner && e.anchor.side === edge;
+    let order = 0;
+    const orders = desired.map((e, i) => {
+      if (i && positions.get(desired[i - 1].id)! > positions.get(e.id)!) order++;
+      return order = stays(e) ? Math.max(order, e.order) : order;
+    });
+    // Saturated legal ranks need room for an incoming suffix.
+    if (order > Number.MAX_SAFE_INTEGER) {
+      let ceiling = Number.MAX_SAFE_INTEGER;
+      for (let i = orders.length - 1; i >= 0; i--) {
+        ceiling = orders[i] = Math.min(ceiling, orders[i]);
+        if (i && positions.get(desired[i - 1].id)! > positions.get(desired[i].id)!) ceiling--;
+      }
+    }
+    desired.forEach((e, i) => {
+      const order = orders[i];
+      if (!stays(e) || order !== e.order) {
+        placements.push({ elementId: e.id, anchor: { kind: 'message', sectionId, messageId: owner, side: edge }, order });
+      }
     });
   }
-  const afterId = rest[start - 1]?.id;
-  const beforeId = rest[end]?.id;
-  const originalMessages = nodes.filter((n) => n.kind === 'message').map((n) => n.id);
-  const originalIndex = originalMessages.indexOf(messageId);
-  const unchanged = originalMessages[originalIndex - 1] === afterId && originalMessages[originalIndex + 1] === beforeId;
-  if (unchanged && !placements.length) return null;
+  const remaining = messages.filter(id => !selected.has(id));
+  const insertion = beforeId ? remaining.indexOf(beforeId) : remaining.length;
+  remaining.splice(insertion, 0, ...moving);
+  if (remaining.every((id, i) => messages[i] === id)) return placements.length ? { placements } : null;
   return { afterId, beforeId, placements };
 };

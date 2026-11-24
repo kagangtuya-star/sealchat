@@ -12,7 +12,7 @@ const source = read('views/log/components/LogWorkbench.vue').match(/<script setu
 const ast = ts.createSourceFile('workbench.ts', source, ts.ScriptTarget.Latest, true);
 
 function setup(t) {
-  const names = new Set(['placeAt', 'onDrop', 'relocation', 'frameRelocation', 'relocateDialog', 'relocateScrollId',
+  const names = new Set(['visualDestination', 'executeVisualMove', 'placeAt', 'onDrop', 'relocation', 'frameRelocation', 'relocateDialog', 'relocateScrollId',
     'cancelRelocate', 'startRelocate', 'relocateDestination', 'confirmRelocate', 'relocateSummary',
     'pickRelocateTarget', 'onFrameEvent', 'onGlobalKey', 'onEscape', 'windowOrder', 'ctxMenu', 'openContextMenu',
     'batchDialog', 'closeBatchDialog', 'exitMulti', 'batchTarget', 'afterBatchMove']);
@@ -34,7 +34,7 @@ function setup(t) {
     sectionId: vue.ref('s1'), projectId: vue.ref('p1'), currentSection: vue.ref({ source: { channelId: 'ch1' } }),
     previewPublish: vue.ref(false), busy: vue.ref(false), win,
     selection: { select: (...args) => selected.push(args), clear: () => selected.push(['clear']), multi: vue.ref(false), exitMulti() {} },
-    planBatchRelocate: () => null, relocateMessagesBatch: async () => {}, sourceChannelId: vue.ref('ch1'),
+    planMessageDrop: loadPlanner(), relocateMessagesBatch: async () => {}, sourceChannelId: vue.ref('ch1'), querySection: vue.ref({ id: 's1' }),
     nodeCache: new Map(['a', 'b', 'c'].map(id => [id, { node: { kind: 'message', speakerName: id, plainText: '<正文> '.repeat(80) } }])),
     toast: { info: text => notices.push(text) },
     dialog: { warning: options => { const entry = { ...options, destroy() { entry.destroyed = true; } }; dialogs.push(entry); return entry; } },
@@ -44,9 +44,13 @@ function setup(t) {
     draft: vue.ref({ elements: [] }), caps: vue.ref({ editDraft: true }), orderedIds: vue.ref(['a', 'b', 'c']),
     editorShow: vue.ref(false), insertShow: vue.ref(false), focusElementId: vue.ref(null),
     openEditor: () => drops.push('edit'), openPanel: () => drops.push('panel'), insertAtMessage: () => drops.push('insert'),
-    draftCtl: { update: () => drops.push('resize') },
+    draftCtl: { paused: vue.ref(false), status: vue.ref('saved'), update: () => drops.push('resize') },
     proofreadPanelRef: vue.ref(null),
   };
+  context.composition = vue.computed(() => ({ nodes: items.value.flatMap(it => [
+    { id: it.message.id, kind: 'message' }, ...context.draft.value.elements.filter(e => e.anchor.messageId === it.message.id)
+      .map(e => ({ id: `el-${e.id}`, kind: 'element', fields: { text: e.id } })),
+  ]) }));
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')
     + '\nglobalThis.hooks = { relocation, frameRelocation, startRelocate, cancelRelocate, pickRelocateTarget, onFrameEvent, onGlobalKey, onDrop };', {
@@ -56,7 +60,35 @@ function setup(t) {
   return { ...context, ...context.hooks, requests, dialogs, notices, selected, drops, cleanup };
 }
 
-test('只允许单条有权限原消息启动；排除自身、元素、未加载消息和等价位置', t => {
+function loadPlanner() {
+  const exports = {};
+  vm.runInNewContext(ts.transpileModule(read('views/log/logDropOps.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, { exports });
+  return exports.planMessageDrop;
+}
+
+test('点击 after A 元素下方：普通 reorder 即可，原锚点不变；点上方则提交原子命令', async t => {
+  for (const side of ['after','before']) {
+    const h = setup(t);
+    const e = { id: 'E', anchor: { kind:'message', messageId:'a', sectionId:'s1', side:'after' }, order:9 };
+    h.draft.value.elements = [e];
+    h.startRelocate(['c']);
+    h.onFrameEvent({type:'select',nodeId:'el-E',side});
+    assert.match(h.dialogs[0].content, side === 'before' ? /元素「E」上方/ : /元素「E」下方/);
+    if (side === 'after') {
+      await h.dialogs[0].onPositiveClick();
+      assert.deepEqual(structuredClone(h.requests[0][1].placements),[]);
+      assert.equal(h.requests[0][1].afterId,'a');
+    } else {
+      let placements;
+      h.draftCtl.placeElements = async p => { placements = p; };
+      await h.dialogs[0].onPositiveClick();
+      assert.equal(placements[0].anchor.messageId,'c');
+      assert.equal(placements[0].anchor.side,'after');
+    }
+  }
+});
+
+test('只允许单条有权限原消息启动；排除自身、未加载节点和等价位置', t => {
   const h = setup(t);
   for (const ids of [[], ['a', 'b'], ['el-x'], ['missing']]) h.startRelocate(ids);
   h.win.items.value[0].capabilities.reorder = false;
@@ -83,7 +115,7 @@ test('select 选目标不改变选择；确认取消后仍可选其他目标，�
   assert.equal(typeof first.content, 'string');
   first.onAfterLeave();
   assert.equal(h.relocation.value.active, true);
-  assert.equal(h.relocation.value.targetMessageId, null);
+  assert.equal(h.relocation.value.target, null);
   h.pickRelocateTarget('b');
   assert.equal(h.dialogs.length, 2);
   assert.equal(h.requests.length, 0);
@@ -94,7 +126,7 @@ test('固定 after 仅执行一次 reorder，刷新并保持源消息选中；�
   h.startRelocate(['a']); h.pickRelocateTarget('b');
   await h.dialogs[0].onPositiveClick();
   assert.equal(h.requests.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0])), [{ messageId: 'a' }, { afterId: 'b', beforeId: 'c' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0])), [{ messageId: 'a' }, { afterId: 'b', placements: [] }]);
   assert.equal(h.win.loads, 1);
   assert.equal(h.relocation.value.active, false);
   assert.equal(h.selected.at(-1)[0], 'a');
@@ -114,7 +146,7 @@ test('分页追加自然提供新目标；确认前顺序变化时重新检查�
   h.win.items.value = [h.win.byId('b'), h.win.byId('c'), h.win.byId('d'), h.win.byId('a')];
   await h.dialogs[0].onPositiveClick();
   assert.equal(h.requests.length, 0);
-  assert.equal(h.relocation.value.active, true);
+  assert.equal(h.relocation.value.active, false);
 });
 
 for (const exit of ['section', 'source', 'publish', 'missing', 'permission', 'escape', 'frameEscape', 'cancel', 'unmount']) {
@@ -155,18 +187,26 @@ test('iframe 设计状态同时标记源与其他原消息，发布模式与退�
   };
   const nodes = [makeNode('a', 'message'), makeNode('b', 'message'), makeNode('el-x', 'element')];
   const bodyClasses = new Set();
-  const root = { addEventListener() {}, querySelectorAll: () => nodes };
+  const listeners = {}, posted = [];
+  const root = { addEventListener(key, fn) { listeners[key] = fn; }, querySelectorAll: () => nodes };
   const context = { Set, Map, document: { getElementById: () => root, addEventListener() {}, body: {
     classList: { toggle: (name, enabled) => enabled ? bodyClasses.add(name) : bodyClasses.delete(name) },
-  } }, window: { addEventListener() {} } };
-  vm.runInNewContext(runtime.replace(/\}\)\(\);\s*$/, 'globalThis.hooks = { current, applyRelocation }; })();'), context);
+  } }, window: { addEventListener() {}, getSelection() { return null; } } };
+  context.portMock = { postMessage: event => posted.push(event) };
+  vm.runInNewContext(runtime.replace(/\}\)\(\);\s*$/, 'port = portMock; globalThis.hooks = { current, applyRelocation }; })();'), context);
   const { current, applyRelocation } = context.hooks;
   current.design = true;
   current.relocation = { sourceMessageIds: ['a'] };
   applyRelocation();
   assert.ok(nodes[0].classes.has('log-relocate-source'));
   assert.ok(nodes[1].classes.has('log-relocate-target'));
-  assert.equal(nodes[2].classes.size, 0);
+  assert.ok(nodes[2].classes.has('log-relocate-target'));
+  for (const [index, y, expected] of [[1, 2, 'after'], [2, 2, 'before'], [2, 70, 'after']]) {
+    nodes[index].getBoundingClientRect = () => ({ top: 0, height: 100 });
+    listeners.click({ target: { closest: () => nodes[index] }, clientY: y, preventDefault() {} });
+    assert.equal(posted.at(-1).side, expected);
+    assert.equal(posted.at(-1).nodeId, index === 1 ? 'b' : 'el-x');
+  }
   nodes.push(makeNode('c', 'message'));
   applyRelocation();
   assert.ok(nodes[3].classes.has('log-relocate-target'));

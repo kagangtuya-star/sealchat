@@ -11,15 +11,7 @@ import (
 	"sealchat/utils"
 )
 
-type relocateBatchInput = struct {
-	ChannelID        string                 `json:"channel_id"`
-	MessageIDs       []string               `json:"message_ids"`
-	TargetMessageID  string                 `json:"target_message_id"`
-	Placement        string                 `json:"placement"`
-	Groups           []messageRelocateGroup `json:"groups"`
-	ClientOpID       string                 `json:"client_op_id"`
-	ExpectedVersions map[string]int64       `json:"expected_versions"`
-}
+type relocateBatchInput = messageRelocateBatchRequest
 
 func setupRelocateBatchTest(t *testing.T) (owner, member *model.UserModel, channelID string) {
 	t.Helper()

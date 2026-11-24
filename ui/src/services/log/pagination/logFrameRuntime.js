@@ -664,7 +664,7 @@
       var message = nodes[i].getAttribute('data-log-kind') === 'message';
       var source = message && sources.has(nodes[i].getAttribute('data-log-node'));
       nodes[i].classList.toggle('log-relocate-source', source);
-      nodes[i].classList.toggle('log-relocate-target', active && message && !source);
+      nodes[i].classList.toggle('log-relocate-target', active && !source);
     }
   }
 
@@ -736,6 +736,16 @@
     scheduleProof();
   });
 
+  function relocationSide(node, y) {
+    if (node.getAttribute('data-log-kind') !== 'element') return 'after';
+    var rect = node.getBoundingClientRect();
+    return y < rect.top + rect.height / 2 ? 'before' : 'after';
+  }
+  root.addEventListener('pointermove', function (e) {
+    if (!current.relocation) return;
+    var node = e.target.closest && e.target.closest('.log-relocate-target[data-log-kind="element"]');
+    if (node) node.dataset.relocateSide = relocationSide(node, e.clientY);
+  });
   root.addEventListener('click', function (e) {
     if (!current.design) return;
     // 审阅中点中批注文字只选中批注，不改变消息选择；正在选取文字时保持浏览器行为。
@@ -747,8 +757,12 @@
     }
     if (current.relocation) {
       e.preventDefault();
-      var picked = e.target.closest ? e.target.closest('.log-node[data-log-kind="message"]') : null;
-      if (picked) post({ type: 'select', nodeId: picked.getAttribute('data-log-node'), kind: 'message' });
+      var picked = e.target.closest ? e.target.closest('.log-node[data-log-node]') : null;
+      if (picked) {
+        var kind = picked.getAttribute('data-log-kind');
+        post({ type: 'select', nodeId: picked.getAttribute('data-log-node'), kind: kind,
+          side: relocationSide(picked, e.clientY) });
+      }
       return;
     }
     if (current.multi) {

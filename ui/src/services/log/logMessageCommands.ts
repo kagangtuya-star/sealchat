@@ -120,6 +120,7 @@ export const removeMessagesBatch = async (t: BatchMessageTarget) => {
 export const relocateMessagesBatch = async (
   t: BatchMessageTarget,
   plan: { placement: 'before' | 'after'; groups: Array<{ messageIds: string[]; targetMessageId: string }> },
+  logDraft?: { projectId: string; sectionId: string; expectedVersion: number; placements: LogElementPlacement[] },
 ) => {
   const base = batchBase(t, 'relocate-batch');
   const single = plan.groups.length === 1 ? plan.groups[0] : null;
@@ -128,12 +129,13 @@ export const relocateMessagesBatch = async (
     expected_versions: base.expected_versions,
     client_op_id: base.client_op_id,
     placement: plan.placement,
+    ...(logDraft ? { log_draft: logDraft } : {}),
     ...(single
       ? { message_ids: single.messageIds, target_message_id: single.targetMessageId }
       : { groups: plan.groups.map((g) => ({ message_ids: g.messageIds, target_message_id: g.targetMessageId })) }),
   };
-  const result = await send<{ message_ids?: string[] } | null>('message.relocate.batch', payload);
-  if ((result?.message_ids?.length || 0) !== t.items.length) {
+  const result = await send<{ message_ids?: string[]; draft_version?: number } | null>('message.relocate.batch', payload);
+  if (result?.message_ids?.length !== t.items.length || (logDraft && result.draft_version !== logDraft.expectedVersion + 1)) {
     throw new LogDomainError('COMMAND_FAILED', '移动结果与所选消息不一致，请重新加载后确认');
   }
   return result;

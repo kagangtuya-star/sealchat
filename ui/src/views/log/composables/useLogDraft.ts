@@ -70,13 +70,13 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     const run = async () => {
       try {
         const result = await saveLogDraft(projectId.value, expected, payload);
-        if (disposed) return;
+        if (disposed || status.value === 'conflict') return;
         draftVersion.value = result.draftVersion;
         savedSnapshot = snapshot;
         lastError.value = '';
         status.value = JSON.stringify(draft.value) === savedSnapshot ? 'saved' : 'dirty';
       } catch (error) {
-        if (disposed) return;
+        if (disposed || status.value === 'conflict') return;
         if (isLogError(error, 'VERSION_CONFLICT')) {
           status.value = 'conflict';
           const v = Number((error as any).details?.draftVersion);
@@ -137,6 +137,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     try {
       const baseline = JSON.parse(savedSnapshot) as LogDraft;
       const nextVersion = await op(expected);
+      if (status.value === 'conflict') throw new Error(lastError.value);
       const next = cloneJson(draft.value);
       const savedElements = new Map(baseline.elements.map((e) => [e.id, e]));
       const currentElements = new Map(next.elements.map((e) => [e.id, e]));
@@ -174,6 +175,31 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     conflictVersion.value = null;
     lastError.value = '';
     status.value = 'saved';
+  };
+
+  let newestNotice = 0;
+  const invalidate = async (version: number, fetch: () => Promise<{ projectId: string; draftVersion: number; draft: LogDraft }>) => {
+    if (disposed || !Number.isSafeInteger(version) || version <= draftVersion.value) return false;
+    newestNotice = Math.max(version, newestNotice);
+    const pid = projectId.value;
+    const conflict = (message: string) => {
+      status.value = 'conflict';
+      conflictVersion.value = newestNotice;
+      lastError.value = message;
+      return false;
+    };
+    if (status.value !== 'saved' || elementWrite) return conflict('工程草稿已在别处变化，本地修改已保留，请重新加载后核对');
+    try {
+      const next = await fetch();
+      if (disposed || projectId.value !== pid || version < newestNotice || draftVersion.value >= newestNotice) return false;
+      if (next.projectId !== pid || next.draftVersion < newestNotice) return conflict('工程草稿已变化，未能取得对应版本，请重新加载');
+      if (status.value !== 'saved' || elementWrite) return conflict('工程草稿已在别处变化，本地修改已保留，请重新加载后核对');
+      reset(next);
+      return true;
+    } catch {
+      if (disposed || projectId.value !== pid || draftVersion.value >= version || version < newestNotice) return false;
+      return conflict('工程草稿已在别处变化，读取最新版本失败，请重新加载');
+    }
   };
 
   /** 发布任务运行期间暂停自动保存，避免草稿 CAS 打断发布的版本检查。 */
@@ -230,6 +256,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
     runVersioned,
     placeElements,
     reset,
+    invalidate,
     pause,
     resume,
     paused,
