@@ -60,14 +60,15 @@ type chatExportResponse struct {
 }
 
 type chatExportStatusResponse struct {
-	TaskID      string `json:"task_id"`
-	Status      string `json:"status"`
-	FileName    string `json:"file_name"`
-	DisplayName string `json:"display_name,omitempty"`
-	Message     string `json:"message"`
-	FinishedAt  int64  `json:"finished_at,omitempty"`
-	UploadURL   string `json:"upload_url,omitempty"`
-	UploadedAt  int64  `json:"uploaded_at,omitempty"`
+	TaskID         string         `json:"task_id"`
+	Status         string         `json:"status"`
+	FileName       string         `json:"file_name"`
+	DisplayName    string         `json:"display_name,omitempty"`
+	Message        string         `json:"message"`
+	FinishedAt     int64          `json:"finished_at,omitempty"`
+	UploadURL      string         `json:"upload_url,omitempty"`
+	UploadedAt     int64          `json:"uploaded_at,omitempty"`
+	LogPDFWarnings map[string]int `json:"log_pdf_warnings,omitempty"`
 }
 
 type chatExportUploadRequest struct {
@@ -454,11 +455,12 @@ func ChatExportGet(c *fiber.Ctx) error {
 	}
 
 	resp := chatExportStatusResponse{
-		TaskID:      job.ID,
-		Status:      job.Status,
-		FileName:    resolveDownloadFileName(job),
-		DisplayName: job.DisplayName,
-		Message:     job.ErrorMsg,
+		TaskID:         job.ID,
+		Status:         job.Status,
+		FileName:       resolveDownloadFileName(job),
+		DisplayName:    job.DisplayName,
+		Message:        job.ErrorMsg,
+		LogPDFWarnings: service.LogPDFExportWarnings(job),
 	}
 	if job.FinishedAt != nil {
 		resp.FinishedAt = job.FinishedAt.UnixMilli()

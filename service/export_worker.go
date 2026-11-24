@@ -414,6 +414,10 @@ func markJobFailed(job *model.MessageExportJobModel, cause error) error {
 }
 
 func markJobDone(job *model.MessageExportJobModel, filePath, fileName string) error {
+	return markJobDoneWithExtraOptions(job, filePath, fileName, nil)
+}
+
+func markJobDoneWithExtraOptions(job *model.MessageExportJobModel, filePath, fileName string, extraOptions *string) error {
 	fileSize := int64(0)
 	if info, err := os.Stat(filePath); err == nil {
 		fileSize = info.Size()
@@ -425,6 +429,9 @@ func markJobDone(job *model.MessageExportJobModel, filePath, fileName string) er
 		"file_size":   fileSize,
 		"error_msg":   "",
 		"finished_at": time.Now(),
+	}
+	if extraOptions != nil {
+		updates["extra_options"] = *extraOptions
 	}
 	return model.GetDB().Model(&model.MessageExportJobModel{}).
 		Where("id = ?", job.ID).

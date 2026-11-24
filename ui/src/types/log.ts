@@ -327,6 +327,8 @@ export interface LogPublicMessageNode {
 }
 
 export interface LogPublicElementNode {
+  /** 仅引用同次发布内的公开消息节点；旧快照及章节端点无此字段。 */
+  anchorNodeId?: string;
   id: string;
   kind: 'element';
   sectionId: string;

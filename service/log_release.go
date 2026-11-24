@@ -307,20 +307,20 @@ func buildLogRelease(ctx context.Context, j *model.LogJobModel) (resultErr error
 	display := newMessageDisplayResolver("", j.ActorID, messageDisplayLogArchive)
 	imageWidths := logMessageImageWidths(&d)
 	for _, section := range d.Sections {
-		addElements := func(kind, messageID, side string) error {
+		addElements := func(kind, messageID, side, publicNodeID string) error {
 			for _, e := range elements {
 				if e.Anchor.SectionID != section.ID || e.Anchor.Kind != kind || e.Anchor.MessageID != messageID || e.Anchor.Side != side {
 					continue
 				}
 				ordinal++
-				if err := logBuildElement(&release, e, ordinal, projectKeys); err != nil {
+				if err := logBuildElement(&release, e, ordinal, projectKeys, publicNodeID); err != nil {
 					return err
 				}
 				used[e.ID] = true
 			}
 			return nil
 		}
-		if err := addElements("sectionStart", "", ""); err != nil {
+		if err := addElements("sectionStart", "", "", ""); err != nil {
 			return err
 		}
 		var last *model.MessageModel
@@ -338,7 +338,8 @@ func buildLogRelease(ctx context.Context, j *model.LogJobModel) (resultErr error
 			}
 			for i := range rows {
 				m := &rows[i]
-				if err := addElements("message", m.ID, "before"); err != nil {
+				publicNodeID := utils.NewID()
+				if err := addElements("message", m.ID, "before", publicNodeID); err != nil {
 					return err
 				}
 				ordinal++
@@ -347,10 +348,10 @@ func buildLogRelease(ctx context.Context, j *model.LogJobModel) (resultErr error
 				}
 				display = display.forChannel(m.ChannelID)
 				m = logApplyContentOverride(display, m, d.MessageContentOverrides[m.ID])
-				if err := logBuildMessage(ctx, &release, display, section.ID, m, ordinal, imageWidths[m.ID], section.Source.ShowQuoteContent, d.MessageTemplateOverrides[m.ID]); err != nil {
+				if err := logBuildMessage(ctx, &release, display, section.ID, publicNodeID, m, ordinal, imageWidths[m.ID], section.Source.ShowQuoteContent, d.MessageTemplateOverrides[m.ID]); err != nil {
 					return err
 				}
-				if err := addElements("message", m.ID, "after"); err != nil {
+				if err := addElements("message", m.ID, "after", publicNodeID); err != nil {
 					return err
 				}
 			}
@@ -359,7 +360,7 @@ func buildLogRelease(ctx context.Context, j *model.LogJobModel) (resultErr error
 			}
 			last = &rows[len(rows)-1]
 		}
-		if err := addElements("sectionEnd", "", ""); err != nil {
+		if err := addElements("sectionEnd", "", "", ""); err != nil {
 			return err
 		}
 	}

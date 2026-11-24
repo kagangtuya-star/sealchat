@@ -91,11 +91,16 @@ type logPDFPayloadChunk struct {
 
 // logPDFReport is the surface's ready state.
 type logPDFReport struct {
-	Status        string         `json:"status"`
-	PageCount     int            `json:"pageCount"`
-	NodePages     map[string]int `json:"nodePages"`
-	UnresolvedToc []string       `json:"unresolvedToc"`
-	MissingAssets int            `json:"missingAssets"`
+	Status        string          `json:"status"`
+	PageCount     int             `json:"pageCount"`
+	NodePages     map[string]int  `json:"nodePages"`
+	UnresolvedToc []string        `json:"unresolvedToc"`
+	MissingAssets int             `json:"missingAssets"`
+	Warnings      []logPDFWarning `json:"warnings"`
+}
+
+type logPDFWarning struct {
+	Code string `json:"code"`
 }
 
 type logPDFChunkState struct {
@@ -105,6 +110,19 @@ type logPDFChunkState struct {
 	pageStart   int
 	pages       int
 	unresolved  []string
+	warnings    []logPDFWarning
+}
+
+// LogPDFExportWarnings returns the anchor pagination warnings for a completed PDF job.
+func LogPDFExportWarnings(job *model.MessageExportJobModel) map[string]int {
+	if job == nil || job.Format != exportFormatPDF || job.Status != model.MessageExportStatusDone {
+		return nil
+	}
+	extra := parseExportExtraOptions(job.ExtraOptions)
+	if extra.SourceKind != "log" {
+		return nil
+	}
+	return extra.LogPDFWarnings
 }
 
 // logPDFSectionStream reads one section in design-window order through
@@ -563,6 +581,7 @@ func runLogPDFExportJob(parent context.Context, job *model.MessageExportJobModel
 		}
 		state.pages = report.PageCount
 		state.unresolved = report.UnresolvedToc
+		state.warnings = report.Warnings
 		for id, page := range report.NodePages {
 			if _, ok := globalPages[id]; !ok {
 				globalPages[id] = page
@@ -605,6 +624,7 @@ func runLogPDFExportJob(parent context.Context, job *model.MessageExportJobModel
 		if report.PageCount != state.pages {
 			return logPDFFail("目录页码回填后第 %d 段页数发生变化，无法保证页码正确", i+1)
 		}
+		state.warnings = report.Warnings
 	}
 
 	// Edits saved while rendering must not be published as this version.
@@ -650,6 +670,20 @@ func runLogPDFExportJob(parent context.Context, job *model.MessageExportJobModel
 			return logPDFFail("最终 PDF 校验失败：%v", err)
 		}
 	}
+	extra.LogPDFWarnings = make(map[string]int)
+	for _, state := range states {
+		for _, warning := range state.warnings {
+			switch warning.Code {
+			case "ANCHOR_GROUP_BREAK", "ANCHOR_GROUP_OVERSIZE":
+				extra.LogPDFWarnings[warning.Code]++
+			}
+		}
+	}
+	encodedExtra, err := json.Marshal(extra)
+	if err != nil {
+		return err
+	}
+	completedExtra := string(encodedExtra)
 	// Merging/archiving can also take time; recheck the whole snapshot immediately before publish.
 	if err := validateLogPDFSnapshot(ctx, p.ID, extra.LogDraftVersion, inputs); err != nil {
 		return err
@@ -659,7 +693,7 @@ func runLogPDFExportJob(parent context.Context, job *model.MessageExportJobModel
 		return err
 	}
 	fileName := BuildExportResultFileName(job.DisplayName, job.ID, ext, time.Now())
-	if err := markJobDone(job, finalPath, fileName); err != nil {
+	if err := markJobDoneWithExtraOptions(job, finalPath, fileName, &completedExtra); err != nil {
 		_ = os.Remove(finalPath)
 		return err
 	}

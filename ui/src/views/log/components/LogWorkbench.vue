@@ -35,6 +35,7 @@ import {
   fetchLogStylePackage,
   resolveLogLayout,
   isLogError,
+  saveLogDraft,
   updateLogExclusions,
 } from '@/services/log/logApi';
 import {
@@ -55,18 +56,18 @@ import {
 import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
 import { updateDraftImageWidth } from '@/services/log/logImageLayout';
 import { buildTemplateLibrary, messageTemplateIds } from '@/services/log/logTemplateCompiler';
-import type { LogAnchor, LogDesignMessage, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
+import type { LogAnchor, LogDesignMessage, LogElement, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
 import { LOG_ELEMENT_TYPES } from '@/types/log';
 import { useLogDraft } from '../composables/useLogDraft';
 import { useLogMessageWindow } from '../composables/useLogMessageWindow';
 import { useLogAssets } from '../composables/useLogAssets';
 import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
-import { createElement, downloadJson, elementAvailability, rebindStyle, setMessageTemplateOverrides } from '../logDraftOps';
+import { createElement, downloadJson, elementAvailability, nextOrderAt, rebindStyle, sameAnchor, setMessageTemplateOverrides } from '../logDraftOps';
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
 import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
 import { planBatchStep } from '../logBatchOps';
-import { planMessageDrop, type LogDropPlan } from '../logDropOps';
+import { planElementDrop, planMessageDrop, type DraftPlacement, type FailedElementMove, type LogDropPlan } from '../logDropOps';
 import type { LogImageRef } from '../logAssetRefs';
 import { chapterTitle, chapterViews, sectionLabel } from '../logChapterOps';
 import LogPreviewFrame from './LogPreviewFrame.vue';
@@ -90,6 +91,7 @@ const LogProofreadPanel = defineAsyncComponent(() => import('./LogProofreadPanel
 
 const props = defineProps<{ context: LogProjectContext; slug: string }>();
 const emit = defineEmits<{ (e: 'reload'): void }>();
+const failedMove = defineModel<FailedElementMove | null>('failedMove');
 
 const toast = useMessage();
 const dialog = useDialog();
@@ -343,11 +345,14 @@ const viewModes = [
 const zoom = ref(1);
 const frame = shallowRef<{ doc: FrameDocument; assetTokens: string[]; issues: string[]; revision: number } | null>(null);
 let frameRevision = 0;
+let frameComposition: typeof composition.value = null;
+let laidOutRevision = 0;
 let lastDocJson = '';
 let buildTimer: ReturnType<typeof setTimeout> | null = null;
 
 const rebuild = (force = false) => {
   const comp = composition.value;
+  frameComposition = comp;
   if (!comp) {
     frame.value = null;
     lastDocJson = '';
@@ -367,6 +372,7 @@ const rebuild = (force = false) => {
     messageImageLayout: d.messageImageLayout,
     templateSelection: d,
   });
+  result.doc.sectionComplete = win.complete.value;
   const json = JSON.stringify(result.doc);
   if (!force && json === lastDocJson && frame.value) return;
   lastDocJson = json;
@@ -387,6 +393,7 @@ const previewRef = ref<InstanceType<typeof LogPreviewFrame> | null>(null);
 let printLayoutWaiter: { targetRevision: number; resolve: (r: FrameLayoutResult) => void; reject: (e: Error) => void } | null = null;
 const onLayout = (r: FrameLayoutResult, revision: number) => {
   if (revision < frameRevision) return;
+  laidOutRevision = revision;
   layoutInfo.value = r;
   layoutError.value = '';
   if (printLayoutWaiter && revision >= printLayoutWaiter.targetRevision) {
@@ -543,6 +550,11 @@ const editorShow = ref(false);
 const editorTab = ref<'content' | 'identity' | 'appearance'>('content');
 const editorMessageId = ref('');
 const editorItem = computed(() => (editorMessageId.value ? win.byId(editorMessageId.value) : null));
+const editorPosition = computed(() => {
+  const ids = windowOrder.value;
+  const index = ids.indexOf(editorMessageId.value);
+  return index < 0 ? '' : `${fragmentHint.value ? '当前片段 · ' : ''}第 ${index + 1} 条 / ${win.complete.value ? '共' : '当前已加载'} ${ids.length} 条`;
+});
 const openEditor = (messageId: string, tab: 'content' | 'identity' | 'appearance') => {
   editorMessageId.value = messageId;
   editorTab.value = tab;
@@ -580,7 +592,9 @@ const runCommand = async (label: string, fn: () => Promise<unknown>, after: () =
     await fn();
     after();
   } catch (error) {
-    if (isLogError(error, 'VERSION_CONFLICT')) {
+    if (isLogError(error, 'VERSION_CONFLICT') && draftCtl.status.value === 'conflict') {
+      toast.warning(draftCtl.lastError.value);
+    } else if (isLogError(error, 'VERSION_CONFLICT')) {
       toast.warning('消息已在别处被修改，已重新加载最新内容');
       win.scheduleReload(0, true);
     } else {
@@ -655,7 +669,39 @@ const executeVisualMove = (items: LogDesignMessage[], plan: LogDropPlan, destina
   });
 };
 
+const saveElementMove = async (plan: () => DraftPlacement[]) => {
+  const sec = querySection.value;
+  const pid = projectId.value;
+  const validate = () => {
+    if (!sec || querySection.value !== sec || currentSection.value?.id !== sec.id || projectId.value !== pid
+      || !caps.value.editDraft || draftCtl.paused.value || previewPublish.value) throw new Error('来源或权限已变化，请重新选择');
+    if (draftCtl.status.value === 'conflict') throw new Error(draftCtl.lastError.value || '草稿版本冲突，请重新加载');
+  };
+  validate();
+  const placements = plan();
+  if (!placements.length) return;
+  await draftCtl.placeElements(placements, async expected => {
+    validate();
+    if (JSON.stringify(plan()) !== JSON.stringify(placements)) throw new Error('落点已变化，请重新选择');
+    const byId = new Map(placements.map(p => [p.elementId, p]));
+    const elements = draft.value.elements.map(e => {
+      const p = byId.get(e.id);
+      return p ? { ...e, anchor: p.anchor, order: p.order } : e;
+    });
+    return (await saveLogDraft(pid, expected, { ...draft.value, elements })).draftVersion;
+  });
+};
+const relocateElement = (original: LogElement, anchor: LogAnchor) => saveElementMove(() => {
+  const e = draft.value.elements.find(el => el.id === original.id);
+  if (!e || !sameAnchor(original.anchor, e.anchor) || original.order !== e.order || anchor.sectionId !== querySection.value?.id
+    || (anchor.kind === 'message' && !win.byId(anchor.messageId))) throw new Error('锚点已变化，请重新选择');
+  return sameAnchor(e.anchor, anchor) ? [] : [{ elementId: e.id, anchor, order: nextOrderAt(draft.value, anchor) }];
+});
 const onDrop = (nodeId: string, targetId: string, side: 'before' | 'after') => {
+  if (nodeId.startsWith('el-') && !busy.value) {
+    return runCommand('移动元素', () => saveElementMove(() => planElementDrop(composition.value?.nodes || [],
+      draft.value.elements, querySection.value!.id, nodeId, targetId, side, win.complete.value)), () => {});
+  }
   const item = win.byId(nodeId);
   if (!item || !item.capabilities.reorder || busy.value) return;
   const node = composition.value?.nodes.find(n => n.id === targetId);
@@ -698,10 +744,13 @@ const relocateDestination = (target: VisualTarget) => {
   const plan = visualDestination(state.sourceMessageIds, target);
   return plan && { items, plan };
 };
-const confirmRelocate = () => {
+const confirmRelocate = (expectedPlan: string) => {
   if (busy.value || !relocation.value.target) return false;
   const destination = relocateDestination(relocation.value.target);
-  if (!destination) return cancelRelocate();
+  if (!destination || JSON.stringify(destination.plan) !== expectedPlan) {
+    toast.info('落点已变化，请重新选择');
+    return cancelRelocate();
+  }
   const state = relocation.value;
   const finish = () => {
     if (relocation.value !== state) return;
@@ -724,7 +773,9 @@ const pickRelocateTarget = (targetId: string | null, side: 'before' | 'after' = 
   const node = composition.value?.nodes.find(n => n.id === targetId);
   if (!node) return;
   const target: VisualTarget = { id: targetId, kind: node.kind, side: node.kind === 'message' ? 'after' : side };
-  if (!relocateDestination(target)) { toast.info('无法移到此位置，请选择其他落点'); return; }
+  const destination = relocateDestination(target);
+  if (!destination) { toast.info('无法移到此位置，请选择其他落点'); return; }
+  const expectedPlan = JSON.stringify(destination.plan);
   relocation.value.target = target;
   const sources = relocation.value.sourceMessageIds;
   const label = node.kind === 'element' ? `元素「${node.fields.text?.slice(0, 40) || node.type}」${side === 'before' ? '上方' : '下方'}`
@@ -736,7 +787,7 @@ const pickRelocateTarget = (targetId: string | null, side: 'before' | 'after' = 
       : `将「${relocateSummary(sources[0])}」移动到${label}？`,
     positiveText: '确认重定位',
     negativeText: '取消',
-    onPositiveClick: confirmRelocate,
+    onPositiveClick: () => confirmRelocate(expectedPlan),
     onEsc: cancelRelocate,
     onAfterLeave: () => {
       if (relocateDialog !== confirmation) return;
@@ -1026,6 +1077,10 @@ const onFrameEvent = (event: FrameEvent) => {
       win.cancelLoadMore();
       break;
     case 'drop':
+      if (frameComposition !== composition.value || laidOutRevision !== frameRevision || previewPublish.value) {
+        toast.info('预览落点已变化，请重新拖动');
+        break;
+      }
       onDrop(event.nodeId, event.targetId, event.side);
       break;
     case 'action': {
@@ -1491,6 +1546,7 @@ onBeforeUnmount(() => {
           :spread="viewMode === 'spread'"
           :design="!previewPublish"
           :can-resize-images="caps.editDraft && !previewPublish"
+          :can-move-elements="caps.editDraft && !previewPublish && !draftCtl.paused.value && draftCtl.status.value !== 'conflict'"
           :relocation="frameRelocation"
           :multi="multiMode"
           :selection="selection.selected.value"
@@ -1651,6 +1707,8 @@ onBeforeUnmount(() => {
               v-else-if="panelTab === 'elements'"
               :draft="draft"
               :update="draftCtl.update"
+              :move="relocateElement"
+              v-model:failed-move="failedMove"
               :style-package="activePkg"
               :anchor-states="composition?.anchorStates || null"
               :section-id="querySection?.id || ''"
@@ -1777,6 +1835,7 @@ onBeforeUnmount(() => {
       v-model:show="editorShow"
       v-model:tab="editorTab"
       :item="editorItem"
+      :position="editorPosition"
       :project-id="projectId"
       :section-id="querySection?.id || ''"
       :channel-id="sourceChannelId"

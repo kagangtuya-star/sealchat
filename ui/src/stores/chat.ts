@@ -6621,6 +6621,7 @@ export const useChatStore = defineStore({
         file_name?: string;
         message?: string;
         finished_at?: number;
+        log_pdf_warnings?: Partial<Record<'ANCHOR_GROUP_BREAK' | 'ANCHOR_GROUP_OVERSIZE', number>>;
       };
     },
 

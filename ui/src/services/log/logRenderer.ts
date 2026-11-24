@@ -62,6 +62,7 @@ export interface RenderMessageNode {
 }
 
 export interface RenderElementNode {
+  anchorMessageId?: string;
   kind: 'element';
   id: string;
   sourceId: string;
@@ -281,6 +282,7 @@ export const designElementToNode = (e: LogElement): RenderElementNode => {
   return {
     kind: 'element',
     id: `el-${e.id}`,
+    anchorMessageId: e.anchor.kind === 'message' ? e.anchor.messageId : undefined,
     sourceId: e.id,
     type: e.type,
     templateId: e.templateId,
@@ -352,6 +354,7 @@ export const publicNodeToRender = (node: LogPublicNode): RenderNode => {
   return {
     kind: 'element',
     id: node.id,
+    anchorMessageId: node.anchorNodeId,
     sourceId: node.id,
     type: node.type,
     templateId: node.templateId,
@@ -562,6 +565,7 @@ export const buildFrameDocument = (opts: BuildOptions): BuildResult => {
       html = `<div class="log-element-placeholder">${escapeHtml(String(node.type))}：模板 ${escapeHtml(node.templateId)} 不可用</div>`;
     }
     const attrs: Record<string, string> = { 'data-log-element-type': String(node.type) };
+    if (node.anchorMessageId) attrs['data-log-anchor-message'] = node.anchorMessageId;
     if (node.type === 'cover' || node.type === 'imagePlate') {
       html = markLogImages(html, { kind: 'element', id: node.id, assetToken: node.assetToken, width: node.imageWidth });
     }

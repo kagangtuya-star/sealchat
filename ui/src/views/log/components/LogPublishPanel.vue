@@ -252,6 +252,9 @@ onBeforeUnmount(() => {
         <li :class="{ 'is-warn': templateIssues.length }">模板问题：{{ templateIssues.length || '无' }}</li>
         <li :class="{ 'is-warn': layout?.missingAssets }">资源：{{ layout?.missingAssets ? `${layout.missingAssets} 个缺失` : '正常' }}</li>
         <li v-if="layout">排版警告：{{ layout.warnings.length || '无' }}</li>
+        <li v-for="w in layout?.warnings.filter(w => w.code.startsWith('ANCHOR_GROUP_'))" :key="w.nodeId || w.code" class="is-warn">
+          消息 {{ w.nodeId }} 与锚定元素{{ w.code === 'ANCHOR_GROUP_BREAK' ? '遇到模板分页规则' : '合计超过一页' }}，已按原顺序分别排版。
+        </li>
       </ul>
       <p v-if="currentIsFragment" class="log-pub__hint">这里的元素、模板、资源与排版检查来自当前片段预览；正式发布时服务端仍会校验全部章节和来源片段。</p>
       <div v-if="sessionExclusions.length" class="log-pub__excl">

@@ -19,6 +19,7 @@ export interface FrameBlock {
 }
 
 export interface FrameDocument {
+  sectionComplete?: boolean;
   page: LogPageSettings;
   css: string;
   rootVars: Record<string, string>;
@@ -108,6 +109,7 @@ export interface LayoutRequest {
   spread: boolean;
   design: boolean;
   canResizeImages: boolean;
+  canMoveElements?: boolean;
   selection: string[];
   relocation?: FrameRelocation | null;
   /** 多选模式：隐藏单条快捷操作与图片手柄，点击只切换选择。 */

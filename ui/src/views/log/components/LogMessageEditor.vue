@@ -29,6 +29,7 @@ import type { LogDesignMessage, LogProtocolMessage } from '@/types/log';
 import type { ChannelIdentityManageCandidate } from '@/types';
 
 const props = defineProps<{
+  position?: string;
   show: boolean;
   item: LogDesignMessage | null;
   tab: 'content' | 'identity' | 'appearance';
@@ -592,6 +593,7 @@ const tabModel = computed({
         <div class="log-editor__header">
           <span>编辑原消息</span>
           <span class="log-editor__speaker">{{ speaker }}</span>
+          <small v-if="position">{{ position }}</small>
         </div>
       </template>
       <n-alert type="info" :show-icon="false" class="log-editor__note">
@@ -788,6 +790,7 @@ const tabModel = computed({
 <style scoped>
 .log-editor__header {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: baseline;
 }

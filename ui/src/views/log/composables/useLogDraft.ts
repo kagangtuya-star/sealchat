@@ -2,7 +2,8 @@
 // 保存成功但本地已有新编辑时只推进基版本并继续保存，不用旧响应覆盖新输入。
 import { computed, onBeforeUnmount, ref, shallowRef, type Ref } from 'vue';
 import { isLogError, saveLogDraft, describeLogError } from '@/services/log/logApi';
-import type { LogDraft, LogElementPlacement } from '@/types/log';
+import type { LogDraft } from '@/types/log';
+import type { DraftPlacement } from '../logDropOps';
 import { cloneJson } from '../logDraftOps';
 
 export type DraftSaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
@@ -131,7 +132,7 @@ export const useLogDraft = (projectId: Ref<string>, initial: { draftVersion: num
   };
 
   /** 采纳排序事务已保存的锚点；期间的新正文/样式编辑及新的锚点编辑仍保留为待保存。 */
-  const placeElements = (placements: LogElementPlacement[], op: (expectedVersion: number) => Promise<number>, afterCommit?: () => void) => runVersioned(async (expected) => {
+  const placeElements = (placements: DraftPlacement[], op: (expectedVersion: number) => Promise<number>, afterCommit?: () => void) => runVersioned(async (expected) => {
     let finishWrite!: () => void;
     elementWrite = new Promise<void>((resolve) => { finishWrite = resolve; });
     try {

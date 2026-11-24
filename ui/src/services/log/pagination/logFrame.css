@@ -230,6 +230,8 @@ html:has(> body.log-design)::-webkit-scrollbar-button { display: none; }
 .log-message-action:disabled:hover { background: transparent; }
 .log-handle { cursor: grab; touch-action: none; }
 .log-handle:active { cursor: grabbing; }
+.log-drop-edge { position: absolute; left: 0; top: 0; z-index: 14; background: var(--log-selection); color: white; padding: 0 6px; font: 12px/18px sans-serif; }
+.log-drop-edge[data-log-edge=":sectionEnd"] { left: auto; right: 0; top: auto; bottom: 0; }
 .log-drop-indicator { position: absolute; height: 3px; background: var(--log-selection); border-radius: 2px; pointer-events: none; z-index: 20; }
 .log-drop-indicator::before, .log-drop-indicator::after { content: ''; position: absolute; top: -2px; width: 7px; height: 7px; border-radius: 50%; background: var(--log-selection); }
 .log-drop-indicator::before { left: -3px; }

@@ -25,6 +25,8 @@ const displayName = ref('');
 const taskId = ref('');
 const taskState = ref<TaskState>('idle');
 const taskMessage = ref('');
+const anchorBreaks = ref(0);
+const anchorOversizes = ref(0);
 const fileName = ref('');
 const downloading = ref(false);
 const errorText = ref('');
@@ -96,6 +98,8 @@ const poll = (id: string) => {
       taskMessage.value = state.message || '';
       fileName.value = state.file_name || '';
       if (state.status === 'done') {
+        anchorBreaks.value = state.log_pdf_warnings?.ANCHOR_GROUP_BREAK ?? 0;
+        anchorOversizes.value = state.log_pdf_warnings?.ANCHOR_GROUP_OVERSIZE ?? 0;
         taskState.value = 'done';
         return;
       }
@@ -276,6 +280,10 @@ const browserPrint = () => {
         </div>
         <n-alert v-if="taskState === 'failed'" type="error" :show-icon="false" class="log-pdf__alert">
           {{ taskMessage || 'PDF 生成失败' }}
+        </n-alert>
+        <n-alert v-if="taskState === 'done' && (anchorBreaks || anchorOversizes)" type="warning" class="log-pdf__alert" title="PDF 分页提示">
+          <div v-if="anchorBreaks">{{ anchorBreaks }} 组消息及其锚定元素因显式分页被拆开。</div>
+          <div v-if="anchorOversizes">{{ anchorOversizes }} 组消息及其锚定元素超出一页，已分开排版。</div>
         </n-alert>
         <n-alert v-if="taskState === 'done' && isZip" type="info" :show-icon="false" class="log-pdf__alert">
           服务器缺少 PDF 合并工具，结果为按顺序编号的分段 PDF（页码连续）。安装 pdfunite 或 qpdf 后重新导出可得到单个 PDF。

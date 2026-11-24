@@ -452,6 +452,7 @@ onBeforeUnmount(() => {
           <n-button v-if="partial" size="tiny" @click="loadItems()">从章节开头阅读</n-button>
           <n-button v-else-if="nextCursor && !loadingItems" size="tiny" @click="loadItems(true)">加载更多</n-button>
           <span v-if="mode === 'paged' && layout">{{ complete ? `共 ${layout.pageCount} 页` : '页数待完整加载后确定' }}</span>
+          <span v-if="mode === 'paged' && layout?.warnings.some(w => w.code.startsWith('ANCHOR_GROUP_'))">部分锚定组超出一页或遇到模板分页，已按原顺序分页。</span>
         </footer>
         <LogPrintDialog
           v-model:show="printShow"

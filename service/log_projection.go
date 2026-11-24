@@ -119,8 +119,7 @@ func logApplyContentOverride(display *messageDisplayResolver, m *model.MessageMo
 	return &next
 }
 
-func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64, showQuoteContent bool, templateOverride string) error {
-	id := utils.NewID()
+func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *messageDisplayResolver, section, id string, m *model.MessageModel, ordinal int64, imageWidths map[string]float64, showQuoteContent bool, templateOverride string) error {
 	body := logMessageBodyOf(display, m)
 	sourceImageIndex, publicImageIndex := 0, 0
 	resolvedWidths := map[string]float64{}
@@ -199,7 +198,7 @@ func logBuildMessage(ctx context.Context, r *model.LogReleaseModel, display *mes
 	row := model.LogReleaseNodeModel{ID: id, ReleaseID: r.ID, SectionID: section, Ordinal: ordinal, MessageID: m.ID, ChannelID: m.ChannelID, SourceVersion: m.Version, NodeJSON: string(b), SearchText: plain, QuoteMessageID: quoteMessageID}
 	return model.GetDB().Create(&row).Error
 }
-func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, projectKeys map[string]string) error {
+func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, projectKeys map[string]string, anchorNodeID string) error {
 	id := utils.NewID()
 	content := e.Content
 	if asset, ok := content["assetId"].(string); ok {
@@ -219,7 +218,11 @@ func logBuildElement(r *model.LogReleaseModel, e LogElement, ordinal int64, proj
 		doc := buildLogRichDocument(body, false)
 		content["body"] = renderLogRichDocumentHTML(doc, false)
 	}
-	b, err := json.Marshal(map[string]any{"id": id, "kind": "element", "sectionId": e.Anchor.SectionID, "type": e.Type, "templateId": e.TemplateID, "content": content, "style": e.Style})
+	node := map[string]any{"id": id, "kind": "element", "sectionId": e.Anchor.SectionID, "type": e.Type, "templateId": e.TemplateID, "content": content, "style": e.Style}
+	if anchorNodeID != "" {
+		node["anchorNodeId"] = anchorNodeID
+	}
+	b, err := json.Marshal(node)
 	if err != nil {
 		return err
 	}

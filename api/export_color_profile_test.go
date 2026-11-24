@@ -414,4 +414,51 @@ func TestLogExportCreateAPI(t *testing.T) {
 			}
 		})
 	}
+	t.Run("completed PDF pagination warnings", func(t *testing.T) {
+		// The renderer's final summary is stored in the existing task metadata.
+		job := &model.MessageExportJobModel{
+			UserID: "log-export-owner", Status: model.MessageExportStatusDone, Format: "pdf", FileName: "log.zip",
+			ExtraOptions: fmt.Sprintf(`{"source_kind":"log","log_project_id":%q,"log_pdf_warnings":{"ANCHOR_GROUP_BREAK":1,"ANCHOR_GROUP_OVERSIZE":2}}`, p.ProjectID),
+		}
+		if err := db.Create(job).Error; err != nil {
+			t.Fatal(err)
+		}
+		get := func(user string, want int) map[string]json.RawMessage {
+			t.Helper()
+			req := httptest.NewRequest("GET", "/api/v1/chat/export/"+job.ID, nil)
+			req.Header.Set("Authorization", tokens[user])
+			resp, err := app.Test(req, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var result map[string]json.RawMessage
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != want {
+				t.Fatalf("status=%d, want %d", resp.StatusCode, want)
+			}
+			return result
+		}
+		const key = "log_pdf_warnings"
+		result := get("log-export-owner", 200)
+		var warnings map[string]int
+		if err := json.Unmarshal(result[key], &warnings); err != nil {
+			t.Fatal(err)
+		}
+		if warnings["ANCHOR_GROUP_BREAK"] != 1 || warnings["ANCHOR_GROUP_OVERSIZE"] != 2 ||
+			string(result["status"]) != `"done"` || string(result["message"]) != `""` {
+			t.Fatalf("unexpected completed result: %s", result[key])
+		}
+		if denied := get("log-export-outsider", 403); denied[key] != nil {
+			t.Fatal("warnings leaked to another user")
+		}
+		if err := db.Model(job).Update("status", model.MessageExportStatusPending).Error; err != nil {
+			t.Fatal(err)
+		}
+		if pending := get("log-export-owner", 200); pending[key] != nil {
+			t.Fatal("a pending task should omit pagination warnings")
+		}
+	})
 }

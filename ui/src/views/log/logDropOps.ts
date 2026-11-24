@@ -1,7 +1,39 @@
-import type { LogElement, LogElementPlacement } from '@/types/log';
+import type { LogAnchor, LogElement, LogElementPlacement } from '@/types/log';
 
 interface DropNode { id: string; kind: 'message' | 'element' }
 type Side = 'before' | 'after';
+// 草稿内移动还允许章节端点；消息排序命令的 placement 协议仍只接受消息锚点。
+export type DraftPlacement = Omit<LogElementPlacement, 'anchor'> & { anchor: LogAnchor };
+export interface FailedElementMove { elementId: string; anchor: LogAnchor; label: string }
+
+/** 只重排目标锚点桶；直接落在消息边缘时，插在最靠近消息的一侧。 */
+export const planElementDrop = (
+  nodes: readonly DropNode[], elements: readonly LogElement[], sectionId: string,
+  sourceId: string, targetId: string, side: Side, complete: boolean,
+): DraftPlacement[] => {
+  const source = nodes.findIndex(n => n.kind === 'element' && n.id === sourceId);
+  if (source < 0 || sourceId === targetId) return [];
+  const rest = nodes.filter(n => n.id !== sourceId);
+  const index = rest.findIndex(n => n.id === targetId);
+  const start = targetId === ':sectionStart', end = targetId === ':sectionEnd';
+  if ((!start && !end && index < 0) || (end && !complete)) return [];
+  const at = start ? 0 : end ? rest.length : index + Number(side === 'after');
+  if (source === at && !start && !end) return [];
+  const byId = new Map(elements.filter(e => e.anchor.sectionId === sectionId).map(e => [`el-${e.id}`, e]));
+  const moving = byId.get(sourceId);
+  if (!moving) return [];
+  const anchor = start || end ? { kind: start ? 'sectionStart' as const : 'sectionEnd' as const, sectionId }
+    : rest[index].kind === 'message' ? { kind: 'message' as const, sectionId, messageId: targetId, side }
+    : byId.get(targetId)?.anchor;
+  if (!anchor) return [];
+  const matches = (e: LogElement) => e.anchor.kind === anchor.kind && (e.anchor.kind !== 'message'
+    || (anchor.kind === 'message' && e.anchor.messageId === anchor.messageId && e.anchor.side === anchor.side));
+  // 显式落到章节端点时，即使视觉位置不变，也要解除对首尾消息的绑定。
+  if (source === at && matches(moving)) return [];
+  const order = [...rest.slice(0, at), nodes[source], ...rest.slice(at)]
+    .map(n => byId.get(n.id)).filter((e): e is LogElement => !!e && (e === moving || matches(e)));
+  return order.flatMap((e, i) => matches(e) && e.order === i ? [] : [{ elementId: e.id, anchor, order: i }]);
+};
 
 export interface LogDropPlan {
   afterId?: string;

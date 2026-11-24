@@ -83,6 +83,7 @@ type exportExtraOptions struct {
 	BatchChannelIDs           []string          `json:"batch_channel_ids,omitempty"`
 	BatchFormat               string            `json:"batch_format,omitempty"`
 	VisibilityByChannel       map[string]bool   `json:"visibility_by_channel,omitempty"`
+	LogPDFWarnings            map[string]int    `json:"log_pdf_warnings,omitempty"`
 }
 
 // exportFormatPDF is only valid for LOG sources (background Chromium render);

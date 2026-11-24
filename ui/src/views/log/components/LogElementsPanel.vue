@@ -2,11 +2,13 @@
 // 特殊元素：元素库、本章元素列表、锚点状态与重新定位、内容/模板/局部样式编辑。
 // 元素只存在于 LOG 草稿，不写入聊天。
 import { computed, nextTick, ref, watch } from 'vue';
+import type { SelectProps } from 'naive-ui';
 import type { AnchorState } from '@/services/log/logRenderer';
 import { renderMessageBody } from '@/services/log/logContent';
 import { LOG_ELEMENT_LABELS, resolveDesignSpeakerName, schemaFieldsFor, templatesForElementType, type SchemaField } from '@/services/log/logRenderer';
 import type { LogAnchor, LogDesignMessage, LogDraft, LogElement, LogStylePackage } from '@/types/log';
-import { nextOrderAt, sameAnchor } from '../logDraftOps';
+import { sameAnchor } from '../logDraftOps';
+import type { FailedElementMove } from '../logDropOps';
 import { elementImageRef, setElementImageRef, type LogImageRef } from '../logAssetRefs';
 import type { LogAssetLibrary } from '../composables/useLogAssetLibrary';
 import LogImagePicker from './LogImagePicker.vue';
@@ -14,6 +16,7 @@ import LogImagePicker from './LogImagePicker.vue';
 const props = defineProps<{
   draft: LogDraft;
   update: (mutate: (d: LogDraft) => void) => boolean;
+  move: (element: LogElement, anchor: LogAnchor) => Promise<void>;
   stylePackage: LogStylePackage | null;
   anchorStates: Map<string, AnchorState> | null;
   sectionId: string;
@@ -26,6 +29,7 @@ const props = defineProps<{
   library: LogAssetLibrary;
 }>();
 const scope = computed(() => props.scopeLabel || '章节');
+const failedMove = defineModel<FailedElementMove | null>('failedMove');
 const emit = defineEmits<{
   (e: 'locate', nodeId: string): void;
   (e: 'request-insert', anchor: LogAnchor): void;
@@ -51,7 +55,7 @@ const stateOf = (e: LogElement): AnchorState => props.anchorStates?.get(e.id) ||
 const stateLabel = (s: AnchorState) => ({ attached: '', orphaned: '锚点不存在/当前范围不可见', unloaded: '锚点消息尚未加载' }[s]);
 
 const excerpt = (messageId: string) => {
-  const m = props.messages.find((x) => x.message.id === messageId);
+  const m = props.messages[messageIndex.value.get(messageId) ?? -1];
   if (!m) return '（未加载的消息）';
   return `${resolveDesignSpeakerName(m.message)}：${renderMessageBody(m.message.content).plainText.slice(0, 24)}`;
 };
@@ -97,23 +101,81 @@ const peerCount = (e: LogElement) => props.draft.elements.filter((x) => sameAnch
 const relocating = ref<string | null>(null);
 const relocateTarget = ref<string>('sectionStart');
 const relocateSide = ref<'before' | 'after'>('after');
-const relocateOptions = computed(() => [
-  { label: `${scope.value}开头`, value: 'sectionStart' },
-  { label: `${scope.value}末尾`, value: 'sectionEnd' },
-  ...props.messages.map((m, i) => ({ label: `#${i + 1} ${excerpt(m.message.id)}`, value: `m:${m.message.id}` })),
-]);
-const applyRelocate = (e: LogElement) => {
+const saving = ref(false);
+const result = ref('');
+const relocateResultId = ref('');
+const failed = ref(false);
+let openedElement: LogElement | null = null;
+const keyOf = (a: LogAnchor) => a.kind === 'message' ? `m:${a.messageId}` : a.kind;
+const chooseAnchor = (a: LogAnchor) => {
+  relocateTarget.value = keyOf(a);
+  relocateSide.value = a.kind === 'message' ? a.side : 'after';
+};
+const messageOptions = computed(() => props.messages.map((m, i) => ({
+  label: `#${i + 1} ${excerpt(m.message.id)}`, value: `m:${m.message.id}`,
+})));
+const currentKey = computed(() => {
+  const e = props.draft.elements.find(x => x.id === relocating.value);
+  return e && keyOf(e.anchor);
+});
+// 默认虚拟列表会定位到选中值；有未提交选择时仍需显示已保存锚点。
+const targetNodeProps: NonNullable<SelectProps['nodeProps']> = option =>
+  option.value === currentKey.value ? { id: `log-current-anchor-${relocating.value}` } : {};
+const showTargets = (show: boolean) => {
+  const id = relocating.value;
+  if (!show || !id || currentKey.value === relocateTarget.value) return;
+  requestAnimationFrame(() => {
+    if (relocating.value === id) document.getElementById(`log-current-anchor-${id}`)?.scrollIntoView({ block: 'nearest' });
+  });
+};
+const toggleRelocate = (e: LogElement) => {
+  if (saving.value) return;
+  result.value = '';
+  relocating.value = relocating.value === e.id ? null : e.id;
+  openedElement = relocating.value ? e : null;
+  chooseAnchor(e.anchor);
+};
+watch(() => props.sectionId, () => { relocating.value = null; result.value = ''; });
+const relocateOptions = computed(() => {
+  const current = currentKey.value;
+  const options = [
+    { label: `${scope.value}开头`, value: 'sectionStart' },
+    { label: `${scope.value}末尾`, value: 'sectionEnd' },
+    ...messageOptions.value,
+  ];
+  if (current && !options.some(o => o.value === current)) {
+    options.unshift({ label: `${props.complete ? '锚点不存在或不可见' : '锚点消息尚未加载'}`, value: current });
+  }
+  return options.map(o => o.value === current ? { ...o, label: `${o.label}（当前）` } : o);
+});
+const chosenAnchor = computed<LogAnchor>(() => {
   const t = relocateTarget.value;
-  const anchor: LogAnchor = t === 'sectionStart' || t === 'sectionEnd'
+  return t === 'sectionStart' || t === 'sectionEnd'
     ? { kind: t, sectionId: props.sectionId }
     : { kind: 'message', sectionId: props.sectionId, messageId: t.slice(2), side: relocateSide.value };
-  props.update((d) => {
-    const el = d.elements.find((x) => x.id === e.id);
-    if (!el) return;
-    el.anchor = anchor;
-    el.order = nextOrderAt({ ...d, elements: d.elements.filter((x) => x.id !== e.id) }, anchor);
-  });
-  relocating.value = null;
+});
+const validTarget = (e: LogElement) => !sameAnchor(e.anchor, chosenAnchor.value)
+  && (chosenAnchor.value.kind !== 'message' || messageIndex.value.has(chosenAnchor.value.messageId));
+const applyRelocate = async (e: LogElement) => {
+  if (!openedElement || !validTarget(e) || saving.value || !props.canEdit) return;
+  const anchor = chosenAnchor.value;
+  const label = anchor.kind === 'message'
+    ? `#${messageIndex.value.get(anchor.messageId)! + 1} ${excerpt(anchor.messageId)} ${anchor.side === 'before' ? '之前' : '之后'}`
+    : anchorText(anchor);
+  saving.value = true;
+  relocateResultId.value = e.id;
+  result.value = '';
+  try {
+    await props.move(openedElement, anchor);
+    failedMove.value = null;
+    failed.value = false;
+    result.value = `已移动到 ${label}`;
+    relocating.value = null;
+  } catch (error) {
+    failedMove.value = { elementId: e.id, anchor, label };
+    failed.value = true;
+    result.value = error instanceof Error ? error.message : '保存失败，请重试';
+  } finally { saving.value = false; }
 };
 
 // ---- 内容编辑 ----
@@ -197,20 +259,29 @@ const anchorAt = (kind: 'sectionStart' | 'sectionEnd'): LogAnchor => ({ kind, se
           <n-button size="tiny" :disabled="stateOf(e) !== 'attached'" @click="emit('locate', `el-${e.id}`)">定位</n-button>
           <n-button size="tiny" :disabled="!canEdit || peerCount(e) < 2" @click="shift(e, -1)">前移</n-button>
           <n-button size="tiny" :disabled="!canEdit || peerCount(e) < 2" @click="shift(e, 1)">后移</n-button>
-          <n-button size="tiny" :disabled="!canEdit" @click="relocating = relocating === e.id ? null : e.id">重新定位</n-button>
+          <n-button size="tiny" :disabled="!canEdit || saving" @click="toggleRelocate(e)">重新定位</n-button>
           <n-popconfirm @positive-click="remove(e.id)">
             <template #trigger><n-button size="tiny" type="error" quaternary :disabled="!canEdit">删除</n-button></template>
             删除此 LOG 元素？
           </n-popconfirm>
         </div>
         <div v-if="relocating === e.id" class="log-el__relocate">
-          <n-select v-model:value="relocateTarget" size="small" :options="relocateOptions" filterable />
-          <n-radio-group v-if="relocateTarget.startsWith('m:')" v-model:value="relocateSide" size="small">
+          <n-button v-if="failedMove?.elementId === e.id && failedMove.anchor.sectionId === sectionId && !sameAnchor(failedMove.anchor, chosenAnchor)"
+            size="tiny" :disabled="saving || (failedMove.anchor.kind === 'message' && !messageIndex.has(failedMove.anchor.messageId))"
+            @click="chooseAnchor(failedMove.anchor)">恢复上次选择：{{ failedMove.label }}</n-button>
+          <n-select :value="relocateTarget" size="small" :disabled="saving" :options="relocateOptions" filterable
+            :virtual-scroll="relocateTarget === currentKey"
+            :node-props="targetNodeProps"
+            @update:show="showTargets"
+            @update:value="(v: string) => { if (!relocateTarget.startsWith('m:')) relocateSide = 'after'; relocateTarget = v; }" />
+          <n-radio-group v-if="relocateTarget.startsWith('m:')" v-model:value="relocateSide" :disabled="saving" size="small">
             <n-radio value="before">消息之前</n-radio>
             <n-radio value="after">消息之后</n-radio>
           </n-radio-group>
-          <n-button size="small" type="primary" @click="applyRelocate(e)">确定</n-button>
+          <n-button size="small" type="primary" :disabled="!canEdit || !validTarget(e)" :loading="saving" @click="applyRelocate(e)">确定</n-button>
+          <n-button size="small" :disabled="saving" @click="toggleRelocate(e)">取消</n-button>
         </div>
+        <n-alert v-if="result && (relocating === e.id || (!relocating && relocateResultId === e.id))" :type="failed ? 'error' : 'success'" role="status">{{ result }}</n-alert>
 
         <n-form v-if="expanded === e.id" class="log-el__form" size="small" label-placement="left" label-width="64" :disabled="!canEdit">
           <n-form-item label="模板">

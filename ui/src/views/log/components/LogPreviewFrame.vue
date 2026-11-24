@@ -23,6 +23,7 @@ const props = withDefaults(defineProps<{
   spread?: boolean;
   design?: boolean;
   canResizeImages?: boolean;
+  canMoveElements?: boolean;
   selection?: string[];
   /** 校对审阅层：批注与审阅状态（编辑器辅助 UI，不进入排版结果）。 */
   proofMarks?: FrameProofNode[] | null;
@@ -106,6 +107,7 @@ const run = async () => {
       spread: props.spread,
       design: props.design,
       canResizeImages: props.canResizeImages,
+      canMoveElements: props.canMoveElements,
       selection: props.selection.slice(),
       relocation: props.design ? props.relocation : null,
       multi: props.design && props.multi,
@@ -136,7 +138,7 @@ onMounted(() => {
   });
 });
 
-watch(() => [props.doc, props.frameRevision, props.mode, props.spread, props.design, props.canResizeImages] as const, () => {
+watch(() => [props.doc, props.frameRevision, props.mode, props.spread, props.design, props.canResizeImages, props.canMoveElements] as const, () => {
   void run();
 });
 watch(() => props.selection, (ids) => engine.value?.select(ids.slice()), { deep: false });

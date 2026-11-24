@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { describeLogError, isLogError, resolveLogLayout } from '@/services/log/logApi';
 import type { LogProjectContext } from '@/types/log';
 import LogWorkbench from './components/LogWorkbench.vue';
+import type { FailedElementMove } from './logDropOps';
 
 const route = useRoute();
 const router = useRouter();
@@ -13,6 +14,7 @@ const context = shallowRef<LogProjectContext | null>(null);
 const state = ref<'loading' | 'ready' | 'forbidden' | 'unavailable' | 'unauthenticated' | 'error'>('loading');
 const errorText = ref('');
 const reloadKey = ref(0);
+const failedMove = shallowRef<FailedElementMove | null>(null);
 let seq = 0;
 
 const load = async () => {
@@ -40,7 +42,7 @@ const load = async () => {
   }
 };
 
-watch(slug, () => void load(), { immediate: true });
+watch(slug, () => { failedMove.value = null; void load(); }, { immediate: true });
 
 const goSignIn = () => router.replace({ name: 'user-signin', query: { redirect: `/log/layout/${slug.value}` } });
 const goHome = () => router.push({ name: 'world-lobby' });
@@ -58,6 +60,7 @@ const reloadContext = async () => {
       :key="`${context.projectId}:${reloadKey}`"
       :context="context"
       :slug="slug"
+      v-model:failed-move="failedMove"
       @reload="reloadContext"
     />
     <div v-else class="log-layout-view__state">

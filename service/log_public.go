@@ -183,6 +183,7 @@ func logVisiblePublicNodes(s *logPublicScope, rows []model.LogReleaseNodeModel) 
 		}
 	}
 	out := []map[string]any{}
+	anchored := map[string][]map[string]any{}
 	for _, n := range rows {
 		if n.MessageID != "" && visible[n.MessageID] != n.ChannelID {
 			continue
@@ -201,7 +202,32 @@ func logVisiblePublicNodes(s *logPublicScope, rows []model.LogReleaseNodeModel) 
 				}
 			}
 		}
+		if id, ok := data["anchorNodeId"].(string); ok {
+			anchored[id] = append(anchored[id], data)
+		}
 		out = append(out, data)
+	}
+	// The target may be on another cursor page or have become private since publication.
+	if len(anchored) > 0 {
+		var targets, public []string
+		for id := range anchored {
+			targets = append(targets, id)
+		}
+		err := model.GetDB().Table("log_release_nodes n").
+			Joins("JOIN messages m ON m.id = n.message_id AND m.channel_id = n.channel_id").
+			Where("n.release_id = ? AND n.id IN ? AND m.is_deleted = ? AND m.is_revoked = ? AND m.is_whisper = ?", s.Release.ID, targets, false, false, false).
+			Pluck("n.id", &public).Error
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range public {
+			delete(anchored, id)
+		}
+		for _, nodes := range anchored {
+			for _, node := range nodes {
+				delete(node, "anchorNodeId")
+			}
+		}
 	}
 	return out, nil
 }

@@ -429,7 +429,36 @@
     return null;
   }
 
-  function place(host, g, doc, state, el, warnings) {
+  // 不可分割的锚定块独占一页，保留原排版宽度并实测缩放后的占用。
+  function fitRemainder(piece, content) {
+    piece.style.width = getComputedStyle(piece).width;
+    piece.style.breakInside = 'avoid';
+    var bounds = content.getBoundingClientRect();
+    var columns = getComputedStyle(content);
+    var count = Number(columns.columnCount) || 1;
+    var columnWidth = (bounds.width - (count - 1) * (parseFloat(columns.columnGap) || 0)) / count;
+    var rtl = columns.direction === 'rtl';
+    var left = rtl ? bounds.right - columnWidth : bounds.left;
+    var fits = function (scale) {
+      if (overflows(content) || piece.getClientRects().length !== 1) return false;
+      var box = piece.getBoundingClientRect();
+      var extraWidth = Math.max(0, (piece.scrollWidth - piece.clientWidth) * scale);
+      return box.top >= bounds.top - 0.5 && box.top + Math.max(box.height, piece.scrollHeight * scale) <= bounds.bottom + 0.5
+        && box.left - (rtl ? extraWidth : 0) >= left - 0.5
+        && box.right + (rtl ? 0 : extraWidth) <= left + columnWidth + 0.5;
+    };
+    if (fits(1)) return;
+    // 页面实际溢出包含外间距，也能检测双栏溢出的额外列。
+    var lo = 0, hi = 1;
+    for (var i = 0; i < 12; i++) {
+      var scale = (lo + hi) / 2;
+      piece.style.zoom = String(scale);
+      if (fits(scale)) lo = scale; else hi = scale;
+    }
+    piece.style.zoom = String(lo || hi);
+  }
+
+  function place(host, g, doc, state, el, warnings, grouped) {
     state.page.content.appendChild(el);
     if (!overflows(state.page.content)) return;
     if (state.page.content.childNodes.length > 1) {
@@ -445,6 +474,7 @@
       if (!rest) {
         piece.classList.add('log-oversize');
         warnings.push({ code: 'OVERSIZE', nodeId: piece.getAttribute('data-log-node') });
+        if (grouped) fitRemainder(piece, state.page.content);
         return;
       }
       fragment += 1;
@@ -456,7 +486,22 @@
       if (!overflows(state.page.content)) return;
       piece = rest;
     }
+    if (grouped) fitRemainder(piece, state.page.content);
     warnings.push({ code: 'SPLIT_LIMIT', nodeId: el.getAttribute('data-log-node') });
+  }
+
+  function pageBreaks(b) {
+    var first = b.firstElementChild;
+    var cs = getComputedStyle(b), inner = first && getComputedStyle(first);
+    return {
+      before: b.getAttribute('data-break-before') === '1' || isPageBreak(cs.breakBefore) || (inner && isPageBreak(inner.breakBefore)),
+      after: b.getAttribute('data-break-after') === '1' || isPageBreak(cs.breakAfter) || (inner && isPageBreak(inner.breakAfter))
+    };
+  }
+
+  function groupKey(b) {
+    return b.getAttribute('data-log-anchor-message') ||
+      (b.getAttribute('data-log-kind') === 'message' ? b.getAttribute('data-log-node') : null);
   }
 
   async function paginate(host, blocks, doc, rev, warnings) {
@@ -465,6 +510,7 @@
     var state = { count: 0, page: null };
     state.page = newPage(host, g, doc, state.count++);
     var pendingBreak = false;
+    var measuredThrough = -1;
     var started = performance.now();
     for (var i = 0; i < blocks.length; i++) {
       if (performance.now() - started > 24) {
@@ -474,20 +520,45 @@
         if (rev !== revision) return false;
       }
       var b = blocks[i];
+      var key = groupKey(b), end = i + 1;
+      if (key && i > measuredThrough) {
+        while (end < blocks.length && groupKey(blocks[end]) === key) end++;
+      }
+      if (end > i + 1) {
+        measuredThrough = end - 1;
+        var group = blocks.slice(i, end);
+        var hadContent = state.page.content.childNodes.length > 0;
+        var appendGroup = function (page) {
+          group.forEach(function (block) { page.content.appendChild(block); sizeImages(block); });
+        };
+        appendGroup(state.page);
+        var breaks = group.map(pageBreaks);
+        var conflict = breaks.some(function (v, j) { return (j > 0 && v.before) || (j < group.length - 1 && v.after); });
+        var candidate = state.page;
+        if (!conflict && hadContent && (pendingBreak || breaks[0].before || overflows(candidate.content))) {
+          candidate = newPage(host, g, doc, state.count);
+          appendGroup(candidate);
+        }
+        if (!conflict && !overflows(candidate.content)) {
+          if (candidate !== state.page) { state.page = candidate; state.count++; }
+          pendingBreak = !!breaks[breaks.length - 1].after;
+          i = end - 1;
+          continue;
+        }
+        group.forEach(function (block) { block.remove(); });
+        if (candidate !== state.page) candidate.el.remove();
+        warnings.push({ code: conflict ? 'ANCHOR_GROUP_BREAK' : 'ANCHOR_GROUP_OVERSIZE', nodeId: key });
+      }
       // 计算样式需要元素在文档内：临时挂入当前页读取 break-before/after（包括模板根元素）。
       state.page.content.appendChild(b);
       sizeImages(b);
-      var first = b.firstElementChild;
-      var cs = getComputedStyle(b);
-      var fcs = first ? getComputedStyle(first) : null;
-      var wantsBefore = b.getAttribute('data-break-before') === '1' || isPageBreak(cs.breakBefore) || (fcs && isPageBreak(fcs.breakBefore));
-      var wantsAfter = b.getAttribute('data-break-after') === '1' || isPageBreak(cs.breakAfter) || (fcs && isPageBreak(fcs.breakAfter));
+      var rule = pageBreaks(b);
       state.page.content.removeChild(b);
-      if ((pendingBreak || wantsBefore) && state.page.content.childNodes.length) {
+      if ((pendingBreak || rule.before) && state.page.content.childNodes.length) {
         state.page = newPage(host, g, doc, state.count++);
       }
-      pendingBreak = !!wantsAfter;
-      place(host, g, doc, state, b, warnings);
+      pendingBreak = !!rule.after;
+      place(host, g, doc, state, b, warnings, i <= measuredThrough);
     }
     return true;
   }
@@ -540,13 +611,15 @@
         });
       });
     }
-    var nodes = host.querySelectorAll('.log-node[data-log-kind="message"][data-log-fragment="0"]');
+    var nodes = host.querySelectorAll('.log-node[data-log-fragment="0"]');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
+      var element = node.getAttribute('data-log-kind') === 'element';
+      if (element && !current.canMoveElements) continue;
       var bar = document.createElement('div');
       bar.className = 'log-message-actions';
       bar.setAttribute('role', 'toolbar');
-      bar.setAttribute('aria-label', '消息快捷操作');
+      bar.setAttribute('aria-label', element ? '元素快捷操作' : '消息快捷操作');
 
       function actionButton(label, symbol, action, extraClass) {
         var button = document.createElement('button');
@@ -560,15 +633,17 @@
         return button;
       }
 
-      bar.appendChild(actionButton('编辑正文', '✎', 'edit'));
+      if (!element) bar.appendChild(actionButton('编辑正文', '✎', 'edit'));
       var handle = actionButton('拖动以调整顺序', '⠿', '', 'log-handle');
-      if (node.getAttribute('data-log-movable') !== '1') {
+      if (!element && node.getAttribute('data-log-movable') !== '1') {
         handle.disabled = true;
         handle.setAttribute('aria-disabled', 'true');
       }
       bar.appendChild(handle);
-      bar.appendChild(actionButton('在上方插入元素', '↑+', 'insert-before'));
-      bar.appendChild(actionButton('在下方插入元素', '↓+', 'insert-after'));
+      if (!element) {
+        bar.appendChild(actionButton('在上方插入元素', '↑+', 'insert-before'));
+        bar.appendChild(actionButton('在下方插入元素', '↓+', 'insert-after'));
+      }
       node.insertBefore(bar, node.firstChild);
     }
     var focusables = host.querySelectorAll('.log-node[data-log-fragment="0"]');
@@ -584,6 +659,7 @@
     current.doc = msg.doc;
     current.design = !!msg.design;
     current.canResizeImages = !!msg.canResizeImages;
+    current.canMoveElements = !!msg.canMoveElements;
     current.mode = msg.mode === 'flow' ? 'flow' : 'paged';
     current.spread = !!msg.spread;
     current.selection = new Set(msg.selection || []);
@@ -806,6 +882,7 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && imageResize) endImageResize(false);
+    if (e.key === 'Escape' && drag) { endDrag(false); reportViewport(); return; }
     if (e.key === 'Escape') { post({ type: 'key', key: 'Escape' }); return; }
     // 审阅快捷键交给外层统一处理（与外层窗口获得焦点时相同）。
     var proofKey = String(e.key || '').toLowerCase();
@@ -918,6 +995,17 @@
     indicator.style.display = 'none';
     document.body.appendChild(indicator);
     drag = { id: node.getAttribute('data-log-node'), handle: handle, indicator: indicator, target: null, side: 'after', timer: 0, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+    if (node.getAttribute('data-log-kind') === 'element') {
+      var ordered = root.querySelectorAll('.log-node[data-log-node]');
+      ['sectionStart', 'sectionEnd'].forEach(function (edge, index) {
+        if (index && !current.doc.sectionComplete) return;
+        var zone = document.createElement('span');
+        zone.className = 'log-drop-edge';
+        zone.setAttribute('data-log-edge', ':' + edge);
+        zone.textContent = index ? '末尾' : '开头';
+        ordered[index ? ordered.length - 1 : 0].appendChild(zone);
+      });
+    }
     var all = root.querySelectorAll('[data-log-node="' + cssEscape(drag.id) + '"]');
     for (var i = 0; i < all.length; i++) all[i].classList.add('log-dragging');
     drag.timer = setInterval(autoScroll, 30);
@@ -949,10 +1037,23 @@
     var under = document.elementFromPoint(drag.x, drag.y);
     drag.handle.style.visibility = '';
     var node = under && under.closest ? under.closest('.log-node[data-log-node]') : null;
-    if (!node || node.getAttribute('data-log-node') === drag.id) { drag.target = null; drag.indicator.style.display = 'none'; return; }
+    var zone = under && under.closest ? under.closest('.log-drop-edge') : null;
+    if (!node || (!zone && node.getAttribute('data-log-node') === drag.id)) { drag.target = null; drag.indicator.style.display = 'none'; return; }
+    var rects = node.getClientRects?.();
     var r = node.getBoundingClientRect();
-    drag.side = drag.y < r.top + r.height / 2 ? 'before' : 'after';
-    drag.target = node.getAttribute('data-log-node');
+    if (rects && rects.length > 1) {
+      r = zone ? rects[zone.dataset.logEdge === ':sectionStart' ? 0 : rects.length - 1]
+        : Array.from(rects).find(function (rect) {
+          return drag.x >= rect.left && drag.x <= rect.right && drag.y >= rect.top && drag.y <= rect.bottom;
+        });
+      if (!r) { drag.target = null; drag.indicator.style.display = 'none'; return; }
+    }
+    drag.side = zone ? (zone.dataset.logEdge === ':sectionStart' ? 'before' : 'after') : drag.y < r.top + r.height / 2 ? 'before' : 'after';
+    drag.target = zone ? zone.dataset.logEdge : node.getAttribute('data-log-node');
+    if (!zone && ((drag.side === 'after' && (node.classList?.contains('log-continues') || (rects?.length > 1 && r !== rects[rects.length - 1]))) ||
+      (drag.side === 'before' && (node.classList?.contains('log-continued') || (rects?.length > 1 && r !== rects[0]))))) {
+      drag.target = null; drag.indicator.style.display = 'none'; return;
+    }
     drag.indicator.style.display = 'block';
     drag.indicator.style.left = (r.left + window.scrollX) + 'px';
     drag.indicator.style.width = r.width + 'px';
@@ -965,6 +1066,7 @@
     drag = null;
     clearInterval(state.timer);
     state.indicator.remove();
+    root.querySelectorAll('.log-drop-edge').forEach(function (zone) { zone.remove(); });
     if (state.handle.hasPointerCapture(state.pointerId)) state.handle.releasePointerCapture(state.pointerId);
     var all = root.querySelectorAll('.log-dragging');
     for (var i = 0; i < all.length; i++) all[i].classList.remove('log-dragging');
