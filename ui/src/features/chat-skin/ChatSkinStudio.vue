@@ -623,7 +623,7 @@ const subtitle = computed(() => (
             <n-radio-button value="bubble">气泡</n-radio-button>
             <n-radio-button value="compact">紧凑</n-radio-button>
           </n-radio-group>
-          <n-dropdown trigger="click" :options="moreOptions" @select="handleMore">
+          <n-dropdown trigger="click" placement="bottom-end" :options="moreOptions" @select="handleMore">
             <n-button size="small" :loading="exporting || importing">更多</n-button>
           </n-dropdown>
         </div>
@@ -726,7 +726,7 @@ const subtitle = computed(() => (
               <ChatSkinStyleEditor
                 v-if="styleForEditor"
                 :key="`${layout}-${styleTarget}`"
-                :style="styleForEditor"
+                :skin-style="styleForEditor"
                 :layout="layout"
                 :night="styleTarget === 'night'"
                 :day-style="surface.style"

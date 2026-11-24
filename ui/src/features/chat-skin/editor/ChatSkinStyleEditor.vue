@@ -16,7 +16,7 @@ import ChatSkinColorInput from './ChatSkinColorInput.vue'
 // 样式分组编辑器：直接修改传入的 style（日间样式或夜间覆写）。
 // 分组「未开启」= 字段不存在 = 继承当前主题；夜间模式下「未开启」= 沿用日间设置。
 const props = defineProps<{
-  style: ChatSkinStyle
+  skinStyle: ChatSkinStyle
   layout: ChatSkinLayout
   night?: boolean
   dayStyle?: ChatSkinStyle
@@ -43,7 +43,7 @@ const groupDefaults: Record<Exclude<ChatSkinStyleKey, 'blur' | 'text' | 'name'>,
   accent: () => ({ color: '#6366f1', width: 3, side: 'left' }),
 }
 
-const s = computed(() => props.style as Record<string, any>)
+const s = computed(() => props.skinStyle as Record<string, any>)
 const has = (key: ChatSkinStyleKey) => s.value[key] !== undefined
 
 const toggleGroup = (key: keyof typeof groupDefaults, enabled: boolean) => {
