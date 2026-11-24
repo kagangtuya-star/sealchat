@@ -11,6 +11,7 @@ import { getInviteStatusInfo, pickLatestInviteByRole } from '../worldInviteStatu
 import WorldDetailHero from './WorldDetailHero.vue';
 import WorldDetailAccessPanel from './WorldDetailAccessPanel.vue';
 import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue';
+import WorldPresentationSettings from '@/features/presentation/WorldPresentationSettings.vue';
 import WorldActionRibbonLayoutPanel from '@/features/action-ribbon-layout/components/WorldActionRibbonLayoutPanel.vue';
 import { getUICustomizationTrustStore, useUICustomizationTrustPrompt } from '@/services/ui-customization/runtime';
 
@@ -480,6 +481,7 @@ const handleLeaveWorld = () => {
             </p>
           </header>
           <div class="world-console-embed">
+            <WorldPresentationSettings :key="`presentation:${worldId}`" :world-id="worldId" />
             <UICustomizationManager :key="worldId" :scope="{ type: 'world', worldId }" :export-name="world.name || worldId" />
           </div>
         </section>

@@ -17,6 +17,7 @@ import {
   Palette,
   Photo as PhotoIcon,
   Star as StarIcon,
+  Stars as PresentationIcon,
   Upload as UploadIcon,
   Users as UsersIcon,
   Volume as SpeechIcon,
@@ -75,6 +76,8 @@ interface Props {
   splitActive?: boolean
   theaterEnabled?: boolean
   theaterActive?: boolean
+  worldPresentationEnabled?: boolean
+  worldPresentationActive?: boolean
   icOocSplitEnabled?: boolean
   icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
@@ -117,6 +120,7 @@ interface Emits {
   (e: 'open-battle-summary'): void
   (e: 'open-split'): void
   (e: 'open-theater', mode: 'standard' | 'pip'): void
+  (e: 'open-world-presentation'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'open-inline-chat-split'): void
   (e: 'toggle-sticky-note'): void
@@ -276,6 +280,9 @@ const defaultActionButtons = computed<ActionButton[]>(() => {
   buttons.push({ key: 'observer-link-management', label: '旁观链接', icon: ObserverLinkIcon, emitEvent: 'open-observer-link-management', activeKey: 'worldManagementActive' })
   buttons.push({ key: 'custom-ui-management', label: '定制界面', icon: CustomUiIcon, emitEvent: 'open-custom-ui-management', activeKey: 'worldManagementActive' })
   buttons.push({ key: 'input-stats', label: '输入统计', icon: DocumentTextOutline, emitEvent: 'open-input-stats', activeKey: 'accountUtilityActive' })
+  if (props.worldPresentationEnabled) {
+    buttons.push({ key: 'world-presentation', label: '演出与特效', icon: PresentationIcon, emitEvent: 'open-world-presentation', activeKey: 'worldPresentationActive' })
+  }
   buttons.push({ key: 'app-notification-settings', label: 'APP 推送', icon: NotificationsOutline, emitEvent: 'open-app-notification-settings', activeKey: 'accountUtilityActive' })
 
   // 诊断与提醒入口固定收在最后。

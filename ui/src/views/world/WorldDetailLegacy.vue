@@ -6,6 +6,7 @@ import WorldObserverLinkCard from "./WorldObserverLinkCard.vue"
 import WorldAgentAccessLinkCard from "./WorldAgentAccessLinkCard.vue"
 import EmailNotificationManager from "@/views/split/components/EmailNotificationManager.vue"
 import UICustomizationManager from '@/components/ui-customization/UICustomizationManager.vue'
+import WorldPresentationSettings from '@/features/presentation/WorldPresentationSettings.vue'
 
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -166,6 +167,7 @@ const handleLeaveWorld = () => {
           <EmailNotificationManager scope-type="world" :scope-id="worldId" />
         </n-collapse-item>
         <n-collapse-item name="ui-customization" title="界面与扩展">
+          <WorldPresentationSettings :key="worldId" :world-id="worldId" />
           <UICustomizationManager :scope="{ type: 'world', worldId }" :export-name="detail.world.name || worldId" />
         </n-collapse-item>
       </n-collapse>

@@ -1,4 +1,5 @@
 <script setup lang="tsx">
+import WorldPresentationHost from '@/features/presentation/WorldPresentationHost.vue';
 import { useSpeechStore } from '@/features/tts/store'
 import RoleVoiceDialog from '@/features/tts/RoleVoiceDialog.vue'
 import TTSQuickControl from '@/features/tts/TTSQuickControl.vue'
@@ -636,6 +637,13 @@ const canManageWorldClues = computed(() => {
   const worldId = String(chat.currentWorldId || '').trim();
   const role = worldId ? chat.worldDetailMap[worldId]?.memberRole : '';
   return !chat.observerMode && (role === 'owner' || role === 'admin');
+});
+
+const worldPresentationHost = ref<InstanceType<typeof WorldPresentationHost> | null>(null);
+const worldPresentationChannel = computed(() => {
+  const channel = chat.curChannel;
+  return !isEmbedMode.value && !chat.observerMode && user.info.id &&
+    channel?.worldId && channel.worldId === chat.currentWorldId ? { worldId: channel.worldId, channelId: channel.id } : null;
 });
 
 const refreshDice3DSettings = async () => {
@@ -16806,6 +16814,14 @@ onBeforeUnmount(() => {
     :data-rich-message-channel-id="chat.curChannel?.id || undefined"
   >
     <TTSQuickControl :channel-id="chat.curChannel?.id || ''" :compact="isTheaterEmbedMode || isMobileInteractionMode" />
+    <WorldPresentationHost
+      v-if="worldPresentationChannel"
+      :key="`${user.info.id}:${worldPresentationChannel.worldId}:${worldPresentationChannel.channelId}`"
+      :world-id="worldPresentationChannel.worldId"
+      :channel-id="worldPresentationChannel.channelId"
+      :can-manage="canManageWorldClues"
+      ref="worldPresentationHost"
+    />
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
@@ -16840,6 +16856,9 @@ onBeforeUnmount(() => {
           :split-active="false"
           :theater-enabled="theaterEntryEnabled"
           :theater-active="false"
+          :world-presentation-enabled="!!worldPresentationChannel && canManageWorldClues"
+          :world-presentation-active="!!worldPresentationHost?.isOpen"
+          @open-world-presentation="worldPresentationHost?.open()"
           :ic-ooc-split-enabled="splitEntryEnabled"
           :ic-ooc-split-active="false"
           :sticky-note-enabled="true"

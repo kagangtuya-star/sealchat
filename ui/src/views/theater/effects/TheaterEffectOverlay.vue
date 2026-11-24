@@ -18,8 +18,8 @@ import {
 const props = defineProps<{
   playbacks: TheaterEffectPlayback[]
   selectedObject?: TheaterEffectPlayback['object'] | null
-  editing: boolean
-  editingTarget: 'frame' | 'media'
+  editing?: boolean
+  editingTarget?: 'frame' | 'media'
   resolveMedia: (image: StageImageRef) => { url: string, sourceKind: 'image' | 'video' } | null
 }>()
 
