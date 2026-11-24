@@ -638,7 +638,7 @@ func ReadConfig() *AppConfig {
 			DefaultBitrateKbps:          96,
 			AlternateBitrates:           []int{64, 128},
 			FFmpegPath:                  "",
-			AllowWorldAudioWorkbench:    false,
+			AllowWorldAudioWorkbench:    true,
 			AllowWorldAudioS3DirectRead: false,
 			AllowNonAdminCreateWorld:    true,
 		},
