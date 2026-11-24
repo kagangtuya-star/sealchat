@@ -1248,6 +1248,13 @@ const themeManagerMetaLabel = computed(() => `平台主题 ${display.platformThe
           </n-button>
         </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+        <div class="input-sub-setting">
+          <div class="input-sub-setting__copy">
+            <p class="input-sub-setting__title">移动端遵循发送快捷键设置</p>
+            <p class="control-desc control-desc--hint">仅在本机浏览器保存。关闭时移动端回车保持换行；开启后支持发送快捷键（含自定义），软键盘回车也可能触发发送。</p>
+          </div>
+          <n-switch v-model:value="draft.mobileSendShortcutEnabled" />
+        </div>
       </section>
 
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">

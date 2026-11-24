@@ -128,6 +128,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  mobileSendShortcutEnabled: boolean
   autoCorrectPunctuation: boolean
   autoOocOnParenStart: boolean
   autoOocRoleOnParenStart: boolean
@@ -626,6 +627,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
+  mobileSendShortcutEnabled: false,
   autoCorrectPunctuation: true,
   autoOocOnParenStart: true,
   autoOocRoleOnParenStart: false,
@@ -967,6 +969,7 @@ const parseStoredSettingsInternal = (
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      mobileSendShortcutEnabled: parsed.mobileSendShortcutEnabled === true,
       autoCorrectPunctuation: coerceBoolean((parsed as any)?.autoCorrectPunctuation ?? true),
       autoOocOnParenStart: coerceBoolean((parsed as any)?.autoOocOnParenStart ?? true),
       autoOocRoleOnParenStart: coerceBoolean((parsed as any)?.autoOocRoleOnParenStart ?? false),
@@ -1361,6 +1364,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  mobileSendShortcutEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileSendShortcutEnabled')
+      ? patch.mobileSendShortcutEnabled === true
+      : base.mobileSendShortcutEnabled,
   autoCorrectPunctuation:
     patch && Object.prototype.hasOwnProperty.call(patch, 'autoCorrectPunctuation')
       ? coerceBoolean((patch as any).autoCorrectPunctuation)

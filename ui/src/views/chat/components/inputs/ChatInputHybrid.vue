@@ -1282,6 +1282,7 @@ const handleMentionSearchKeydown = (event: KeyboardEvent) => {
 
 // Mention 面板键盘导航
 const handleMentionKeydown = (event: KeyboardEvent): boolean => {
+  if (event.isComposing || isComposing.value || event.keyCode === 229) return false;
   if (!mentionVisible.value) {
     return false;
   }
@@ -1536,7 +1537,7 @@ const handleKeydown = (event: KeyboardEvent) => {
     return;
   }
 
-  const composing = event.isComposing || isComposing.value;
+  const composing = event.isComposing || isComposing.value || event.keyCode === 229;
   const bareEnter = !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
   if (!composing && event.key === 'Enter' && bareEnter && props.sendShortcut === 'ctrlEnter') {
     emit('keydown', event);

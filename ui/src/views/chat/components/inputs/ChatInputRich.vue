@@ -573,6 +573,7 @@ const handleMentionSelect = (option: MentionOption) => {
 };
 
 const handleMentionKeydown = (event: KeyboardEvent): boolean => {
+  if (event.isComposing || isComposing.value || event.keyCode === 229) return false;
   if (!mentionVisible.value) {
     return false;
   }

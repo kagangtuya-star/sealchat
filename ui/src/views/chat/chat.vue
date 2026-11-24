@@ -16234,7 +16234,14 @@ const handleComposerSuggestBlur = () => {
   composerSuggest.close();
 };
 
+const composerComposing = ref(false);
+
+const isComposerComposingEvent = (event: KeyboardEvent) => (
+  composerComposing.value || event.isComposing || event.keyCode === 229
+);
+
 const handleChatInputBlur = () => {
+  composerComposing.value = false;
   handleComposerSuggestBlur();
   syncSessionDraftSnapshot();
 };
@@ -16257,7 +16264,7 @@ const toolbarHotkeyOrder: KeyboardToolbarHotkeyKey[] = [
 
 const toolbarHotkeyHandlers: Record<KeyboardToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
   send: (event) => {
-    if (event.isComposing) {
+    if (isComposerComposingEvent(event)) {
       return false;
     }
     if (isEditing.value) {
@@ -16323,9 +16330,12 @@ const toolbarHotkeyHandlers: Record<KeyboardToolbarHotkeyKey, (event: KeyboardEv
   },
 };
 
-const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
+const handleToolbarHotkeyEvent = (
+  event: KeyboardEvent,
+  keys: KeyboardToolbarHotkeyKey[] = toolbarHotkeyOrder,
+) => {
   const configs = display.settings.toolbarHotkeys;
-  for (const key of toolbarHotkeyOrder) {
+  for (const key of keys) {
     const config = configs[key];
     if (!config?.enabled || !config.hotkey) {
       continue;
@@ -16352,8 +16362,27 @@ const customSendShortcutEnabled = computed(() => {
   return Boolean(config?.enabled && config.hotkey);
 });
 
+const handleSendShortcutEvent = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter' || customSendShortcutEnabled.value || isComposerComposingEvent(event)) {
+    return;
+  }
+  const shortcut = display.settings.sendShortcut || 'enter';
+  const ctrlLike = event.ctrlKey || event.metaKey;
+  const shouldSend = shortcut === 'enter'
+    ? !ctrlLike && !event.shiftKey && !event.altKey
+    : ctrlLike && !event.shiftKey && !event.altKey;
+  if (!shouldSend) return;
+
+  event.preventDefault();
+  if (isEditing.value) {
+    void saveEdit();
+  } else {
+    send();
+  }
+};
+
 const keyDown = function (e: KeyboardEvent) {
-  if (pauseKeydown.value) return;
+  if (pauseKeydown.value || e.defaultPrevented || isComposerComposingEvent(e)) return;
 
   // 优先处理输入候选（世界术语 / 快速备选）
   if (composerSuggest.handleKeydown(e)) {
@@ -16364,8 +16393,13 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  // 移动端不触发桌面快捷键
+  // 移动端默认保留换行；启用后仅放行发送快捷键。
   if (isActualMobileUa) {
+    if (display.settings.mobileSendShortcutEnabled) {
+      if (!handleToolbarHotkeyEvent(e, ['send'])) {
+        handleSendShortcutEvent(e);
+      }
+    }
     return;
   }
 
@@ -16398,28 +16432,7 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === 'Enter' && !customSendShortcutEnabled.value) {
-    if (e.isComposing) {
-      return;
-    }
-    const shortcut = display.settings.sendShortcut || 'enter';
-    const ctrlLike = e.ctrlKey || e.metaKey;
-    const isBareEnter = !ctrlLike && !e.shiftKey && !e.altKey;
-    let shouldSend = false;
-    if (shortcut === 'enter') {
-      shouldSend = isBareEnter;
-    } else {
-      shouldSend = ctrlLike && !e.shiftKey && !e.altKey;
-    }
-    if (shouldSend) {
-      if (isEditing.value) {
-        void saveEdit();
-      } else {
-        send();
-      }
-      e.preventDefault();
-    }
-  }
+  handleSendShortcutEvent(e);
 }
 
 const {
@@ -18632,6 +18645,8 @@ onBeforeUnmount(() => {
                     @mention-search="atHandleSearch"
                     @mention-select="handleMentionSelect"
                     @keydown="keyDown"
+                    @composition-start="composerComposing = true"
+                    @composition-end="composerComposing = false"
                     @selection-change="handleComposerSelectionChange"
                     @blur="handleChatInputBlur"
                     @input="handleSlashInput"
@@ -18803,6 +18818,8 @@ onBeforeUnmount(() => {
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
+                  @composition-start="composerComposing = true"
+                  @composition-end="composerComposing = false"
                   @selection-change="handleComposerSelectionChange"
                   @blur="handleChatInputBlur"
                   @input="handleSlashInput"
