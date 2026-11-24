@@ -62,6 +62,7 @@ type WorldModel struct {
 	CharacterCardBadgeTemplate            string     `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
 	CursorThemeJSON                       string     `json:"-" gorm:"type:text"`
 	TheaterPresentationTemplateJSON       string     `json:"-" gorm:"type:text"`
+	WorldPresentationJSON                 string     `json:"-" gorm:"size:2097152"`
 	TheaterActivated                      bool       `json:"-" gorm:"default:false"`
 	StickyNoteDefaultAppearanceJSON       string     `json:"-" gorm:"type:text"`
 	Dice3DConfigJSON                      string     `json:"-" gorm:"column:dice_3d_config_json;type:text"`

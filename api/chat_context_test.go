@@ -15,6 +15,52 @@ import (
 	"sealchat/utils"
 )
 
+func TestWorldPresentationControllerGrantAndHandoff(t *testing.T) {
+	controllers := presentationControllers{rooms: make(map[string]*presentationControllerRoom)}
+	first, second := &WsSyncConn{}, &WsSyncConn{}
+	controllers.set("channel", first, true)
+	controllers.set("channel", second, true)
+	event := &protocol.Event{
+		Type:    protocol.EventMessageCreated,
+		Channel: &protocol.Channel{ID: "channel", WorldID: "world"},
+		Message: &protocol.Message{ID: "one"},
+	}
+	conn, generation := controllers.grant("channel", event)
+	if conn != first || generation == "" {
+		t.Fatal("expected exactly one elected connection")
+	}
+	if controllers.accept("channel", second, "one", generation, "exec") ||
+		controllers.accept("channel", first, "history", generation, "exec") {
+		t.Fatal("accepted a non-controller or an ungranted message")
+	}
+	if !controllers.accept("channel", first, "one", generation, "exec") ||
+		controllers.accept("channel", first, "one", generation, "exec") {
+		t.Fatal("automatic outcome must be accepted exactly once")
+	}
+	if duplicate, _ := controllers.grant("channel", event); duplicate != nil {
+		t.Fatal("duplicate new-message broadcast received a second grant")
+	}
+	controllers.set("channel", first, false)
+	if controllers.accept("channel", first, "one", generation, "other") {
+		t.Fatal("disconnected controller retained control")
+	}
+	event.Message = &protocol.Message{ID: "whisper", IsWhisper: true}
+	if private, _ := controllers.grant("channel", event); private != nil {
+		t.Fatal("private message can trigger a public broadcast")
+	}
+	event.Message = &protocol.Message{ID: "two"}
+	conn, nextGeneration := controllers.grant("channel", event)
+	if conn != second || nextGeneration == "" || nextGeneration == generation ||
+		controllers.accept("channel", second, "one", nextGeneration, "old") ||
+		!controllers.accept("channel", second, "two", nextGeneration, "next") {
+		t.Fatal("handoff must grant only new messages in the new scope")
+	}
+	controllers.set("channel", second, false)
+	if len(controllers.rooms) != 0 {
+		t.Fatal("empty channel retained runtime state")
+	}
+}
+
 func TestNormalizeBotCommandContentWithPrefixes_ConvertsTipTapCommand(t *testing.T) {
 	input := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":".ra "},{"type":"text","marks":[{"type":"italic"}],"text":"侦查"},{"type":"text","text":" "},{"type":"text","marks":[{"type":"code"}],"text":"1d100"}]}]}`
 	got := normalizeBotCommandContentWithPrefixes(input, []string{".", "。"})

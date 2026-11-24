@@ -234,15 +234,20 @@ func (ctx *ChatContext) BroadcastEventInWorld(worldID string, data *protocol.Eve
 func (ctx *ChatContext) BroadcastEventInChannel(channelId string, data *protocol.Event) {
 	data.Timestamp = time.Now().Unix()
 	class := reliableClassForChannelEvent(data)
+	controller, generation := worldPresentationControllers.grant(channelId, data)
 	ctx.rangeChannelConnMaps(channelId, func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo], indexed bool) bool {
 		connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 			if info != nil && ((indexed && info.ChannelId == "") || info.ChannelId == channelId) {
+				event := *data
+				if conn == controller {
+					event.WorldPresentationController = generation
+				}
 				writeConnReliableJSONAndPrune(connMap, conn, class, struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{
 					// 协议规定: 事件中必须含有 channel，message，user
-					Event: *data,
+					Event: event,
 					Op:    protocol.OpEvent,
 				})
 			}

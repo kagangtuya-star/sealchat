@@ -316,6 +316,9 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	// 如果有旧的，移除旧的
 	if ctx.ConnInfo.ChannelId != "" {
 		oldChannelId := ctx.ConnInfo.ChannelId
+		if oldChannelId != channelId {
+			worldPresentationControllers.set(oldChannelId, ctx.Conn, false)
+		}
 		if s, ok := ctx.ChannelUsersMap.Load(oldChannelId); ok {
 			excludeConn := ctx.ConnInfo.Conn
 			if !userHasChannelConnection(ctx.User.ID, oldChannelId, ctx.UserId2ConnInfo, excludeConn) {

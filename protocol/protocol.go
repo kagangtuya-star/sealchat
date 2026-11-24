@@ -585,6 +585,8 @@ type MessageReactionEvent struct {
 }
 
 type Event struct {
+	WorldPresentationController string                             `json:"worldPresentationController,omitempty"`
+	WorldPresentationPlayback   *WorldPresentationPlayback         `json:"worldPresentationPlayback,omitempty"`
 	WorldGlass                  *WorldGlassEventPayload             `json:"worldGlass,omitempty"`
 	ID                          int64                               `json:"id"`
 	Type                        EventName                           `json:"type"`

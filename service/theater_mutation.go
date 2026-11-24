@@ -1319,6 +1319,13 @@ func recalculateTheaterResourceReferences(tx *gorm.DB, roomID string) error {
 	}
 	counts := map[string]int64{}
 	countResourceIDsInJSON(room.StateJSON, counts)
+	if room.ChannelID == "" {
+		var world model.WorldModel
+		if err := tx.Select("world_presentation_json").Where("id = ?", room.WorldID).First(&world).Error; err != nil {
+			return err
+		}
+		countResourceIDsInJSON(world.WorldPresentationJSON, counts)
+	}
 	var scenes []model.TheaterSceneModel
 	if err := tx.Where("room_id = ?", roomID).Find(&scenes).Error; err != nil {
 		return err

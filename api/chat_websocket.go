@@ -1601,6 +1601,12 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
+					case "world.presentation.control":
+						apiWrap(ctx, msg, apiWorldPresentationControl)
+						solved = true
+					case "world.presentation.play":
+						apiWrap(ctx, msg, apiWorldPresentationPlay)
+						solved = true
 					case "theater.subscribe":
 						apiTheaterSubscribeWs(ctx, msg)
 						solved = true
@@ -2010,6 +2016,7 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 
 		// 连接断开时删除该 conn 在所有用户映射中的残留，避免历史脏数据泄漏。
 		if curConnInfo != nil {
+			worldPresentationControllers.set(curConnInfo.ChannelId, c, false)
 			curConnInfo.closeTheaterQueue()
 		}
 		affectedUserIDs := map[string]struct{}{}

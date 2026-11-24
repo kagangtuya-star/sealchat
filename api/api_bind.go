@@ -830,6 +830,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
 	worldGroup.Get("/:worldId/dice3d", WorldDice3DConfigGet)
 	worldGroup.Put("/:worldId/dice3d", WorldDice3DConfigPut)
+	worldGroup.Get("/:worldId/presentation", worldPresentationGet)
+	worldGroup.Put("/:worldId/presentation", worldPresentationPut)
 	worldGroup.Get("/:worldId/dice3d/profile", WorldDice3DProfileGet)
 	worldGroup.Put("/:worldId/dice3d/profile", WorldDice3DProfilePut)
 	worldGroup.Put("/:worldId/theater-presentation-template", WorldTheaterPresentationTemplateSet)
