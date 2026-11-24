@@ -75,7 +75,6 @@ import { generateInternalSurfaceLink, parseInternalSurfaceLink, resolveInternalS
 import { getUploadTimeoutMs } from '@/utils/uploadTimeout'
 import { uuid } from '@/utils/uuid'
 import { useAudioStudioStore } from '@/stores/audioStudio'
-import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import {
   WORLD_UNIT_PX,
@@ -170,6 +169,7 @@ import {
   theaterResourcePath as buildTheaterResourcePath,
   type TheaterStageMediaLocation,
 } from './stage-media'
+import { prepareTheaterMediaUpload } from './theater-media-upload'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
 import StageCopyToolbar from './StageCopyToolbar.vue'
 import StageGridToolbar from './StageGridToolbar.vue'
@@ -258,6 +258,7 @@ import TheaterCharacterStatsOverlay from './TheaterCharacterStatsOverlay.vue'
 import type { TheaterFloatingResource } from '@/utils/theaterFloatingBridge'
 import type { TheaterFloatingWindowAction, TheaterFloatingWindowSummary } from '../host/theater-floating-window'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import { theaterDialogueMessageSource } from '../dialogue/theater-presentation-message-source'
 import type { TheaterChatBridgeStatus } from '../bridge/TheaterHostBridge'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import type { TheaterPresentation, TheaterTransform, TheaterVisualStyle } from '@/types/theaterPresentation'
@@ -265,9 +266,10 @@ import TheaterPresentationPreview from '@/components/theater-presentation/Theate
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import SceneOverlayStageHost from '../overlays/SceneOverlayStageHost.vue'
 import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
+import type { TheaterEffectPanelAdapter } from '../effects/theater-effect-panel-adapter'
 import { TheaterSequenceRuntime } from '../sequences/theater-sequence-runtime'
-import { theaterSequencesFromServerState } from '../sequences/theater-sequence-types'
-import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
+import { theaterSequencesFromServerState, THEATER_SEQUENCES_STATE_KEY, type TheaterSequence } from '../sequences/theater-sequence-types'
+import { createDefaultTheaterEffectConfig, isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
 import {
   emptyTheaterPanelOrganizer,
   type TheaterPanelDomain,
@@ -1203,8 +1205,10 @@ const deleteTheaterAudioBatch = async (assets: AudioAsset[]) => {
   if (failed) stageMessage.warning(`${failed} 条音频删除失败；被引用素材不会删除`)
 }
 
+const effectMessageSource = theaterDialogueMessageSource(props.dialogueRuntime, { includeCurrent: true })
+const sequenceMessageSource = theaterDialogueMessageSource(props.dialogueRuntime)
 const effectRuntime = new TheaterEffectRuntime({
-  dialogueRuntime: props.dialogueRuntime,
+  messageSource: effectMessageSource,
   getObjects: () => Object.values(props.store.activeObjects.value),
   onStart: (playback) => {
     if (playback.config.audio?.assetId) {
@@ -1213,7 +1217,35 @@ const effectRuntime = new TheaterEffectRuntime({
   },
 })
 const unsubscribeEffectRuntime = effectRuntime.subscribe((playbacks) => { effectPlaybacks.value = playbacks })
+const sceneEffectAdapter: TheaterEffectPanelAdapter = {
+  add(kind) {
+    const object = props.store.addObject('effect')
+    object.name = kind === 'media' ? '新建媒体特效' : kind === 'web' ? '新建网页特效' : '新建内置特效'
+    setTheaterEffectConfig(object, createDefaultTheaterEffectConfig(kind))
+  },
+  edit(label, ids, update) {
+    const objects = ids.map((id) => props.store.activeObjects.value[id]).filter(isTheaterEffectObject)
+    if (!objects.length) return
+    props.store.beginObjectEdit(label)
+    objects.forEach(update)
+    props.store.commitObjectEdit()
+  },
+  select: (id) => props.store.selectObject(id),
+  remove: (ids) => props.store.removeObjects(ids),
+  preview: effectRuntime.preview,
+  move: (id, direction) => props.store.moveOrder(id, direction),
+  scene: {
+    isFixed: (id) => props.store.isSceneFixedObject(id),
+    setFixed: (id, value) => props.store.setEffectScope(id, value ? 'scene-fixed' : 'scene'),
+    setVisible: (id, value) => props.store.setObjectFlag(id, 'visible', value),
+    beginEdit: (label) => props.store.beginObjectEdit(label),
+    commitEdit: () => props.store.commitObjectEdit(),
+  },
+}
 const activeTheaterSequences = computed(() => theaterSequencesFromServerState(props.store.state.liveState.serverState))
+const commitSceneTheaterSequences = (sequences: TheaterSequence[]) => {
+  props.store.updateSceneServerStateExtension(props.store.state.activeSceneId, THEATER_SEQUENCES_STATE_KEY, sequences)
+}
 const sequenceClickObjectIds = computed(() => new Set(activeTheaterSequences.value
   .filter((sequence) => sequence.enabled)
   .flatMap((sequence) => sequence.triggers.flatMap((trigger) => (
@@ -1223,7 +1255,7 @@ const emitSequenceTriggered = (sequenceId: string, triggerId: string) => {
   emit('sequenceTriggered', { sequenceId, triggerId, executionId: actionId() })
 }
 const sequenceRuntime = new TheaterSequenceRuntime({
-  dialogueRuntime: props.dialogueRuntime,
+  messageSource: sequenceMessageSource,
   getSequences: () => activeTheaterSequences.value,
   onTrigger: emitSequenceTriggered,
 })
@@ -8608,28 +8640,6 @@ const waitForResource = async (resourceId: string, scope = captureTheaterRequest
   throw new Error('图片处理超时')
 }
 
-const isAnimatedPNG = async (file: File) => {
-  let offset = 8
-  while (offset + 12 <= file.size) {
-    const header = new Uint8Array(await file.slice(offset, offset + 8).arrayBuffer())
-    if (header.length < 8) return false
-    const length = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(0)
-    const type = String.fromCharCode(...header.slice(4, 8))
-    if (type === 'acTL') return true
-    if (type === 'IDAT' || type === 'IEND') return false
-    offset += 12 + length
-  }
-  return false
-}
-
-const prepareTheaterMedia = async (file: File) => {
-  const mimeType = normalizedFileType(file)
-  if (!supportedTheaterMedia.has(mimeType)) throw new Error('仅支持 PNG、APNG、JPEG、WebP、GIF、WebM')
-  if ((mimeType === 'image/png' || mimeType === 'image/apng') && await isAnimatedPNG(file)) return file
-  if (mimeType !== 'image/jpeg' && mimeType !== 'image/png') return file
-  return compressImage(file, { mimeType: 'image/webp' })
-}
-
 const theaterMediaDimensions = (file: File): Promise<{ width: number, height: number } | undefined> => new Promise((resolve) => {
   const url = URL.createObjectURL(file)
   const finish = (width?: number, height?: number) => {
@@ -8652,7 +8662,7 @@ const theaterMediaDimensions = (file: File): Promise<{ width: number, height: nu
 
 const uploadTheaterImageResource = async (file: File, targetObjectId = '', scope = captureTheaterRequestScope()) => {
   if (!scope.worldId || !scope.channelId) throw new Error('缺少小剧场频道信息')
-  const prepared = await prepareTheaterMedia(file)
+  const prepared = await prepareTheaterMediaUpload(file)
   const formData = new FormData()
   formData.append('file', prepared)
   formData.append('mediaKind', 'image')
@@ -11589,8 +11599,9 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <TheaterEffectPanel
-          :store="store"
-          :runtime="effectRuntime"
+          :objects="Object.values(store.activeObjects.value)"
+          :selected-id="store.state.selectedObjectId"
+          :adapter="sceneEffectAdapter"
           :can-edit="canEditAllObjects"
           :can-upload="canUploadResources"
           :editing-target="effectEditingTarget"
@@ -11621,7 +11632,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <TheaterSequencePanel
-          :store="store"
+          :scope-id="store.state.activeSceneId"
+          :sequences="activeTheaterSequences"
+          :scene="{ scenes: store.scenes.value, objects: store.activeObjects.value, persistentObjects: store.state.persistentObjects }"
+          :commit-sequences="commitSceneTheaterSequences"
           :can-edit="canEditAllObjects"
           :can-test="canTriggerActions"
           @test="emitSequenceTriggered($event, 'manual')"

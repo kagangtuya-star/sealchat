@@ -1,12 +1,12 @@
-import type { TheaterDialogueRuntime, TheaterDialogueRuntimeSnapshot } from '../dialogue/theater-dialogue-runtime'
+import { rememberPresentationId, type PresentationMessageSource } from '../shared/presentation-message-source'
 import { theaterEffectMatchesMessage } from '../effects/theater-effect-runtime'
 import type { TheaterDialogueMessage } from '../bridge/theater-dialogue-queue'
 import type { TheaterSequence, TheaterSequenceTrigger } from './theater-sequence-types'
 
 interface TheaterSequenceRuntimeOptions {
-  dialogueRuntime: Pick<TheaterDialogueRuntime, 'subscribe'>
+  messageSource: PresentationMessageSource
   getSequences: () => readonly TheaterSequence[]
-  onTrigger: (sequenceId: string, triggerId: string) => void
+  onTrigger: (sequenceId: string, triggerId: string, messageId?: string) => void
   now?: () => number
 }
 
@@ -26,14 +26,12 @@ const triggerFingerprint = (trigger: TheaterSequenceTrigger): string => JSON.str
 export class TheaterSequenceRuntime {
   private readonly triggerStates = new Map<string, TheaterSequenceTriggerState>()
   private scopeId: string | null = null
-  private currentMessageId = ''
-  private initialSnapshot = true
-  private unsubscribeDialogue: (() => void) | null = null
+  private readonly seenMessages = new Set<string>()
+  private unsubscribeMessages: (() => void) | null = null
   private disposed = false
 
   constructor(private readonly options: TheaterSequenceRuntimeOptions) {
-    this.unsubscribeDialogue = options.dialogueRuntime.subscribe(this.handleDialogueSnapshot)
-    this.initialSnapshot = false
+    this.unsubscribeMessages = options.messageSource.subscribe(this.handleMessage)
   }
 
   notifyComponentClick = (objectId: string) => {
@@ -64,30 +62,18 @@ export class TheaterSequenceRuntime {
   dispose = () => {
     if (this.disposed) return
     this.disposed = true
-    this.unsubscribeDialogue?.()
-    this.unsubscribeDialogue = null
+    this.unsubscribeMessages?.()
+    this.unsubscribeMessages = null
     this.triggerStates.clear()
+    this.seenMessages.clear()
   }
 
-  private readonly handleDialogueSnapshot = (snapshot: TheaterDialogueRuntimeSnapshot) => {
-    if (this.disposed) return
-    const message = snapshot.queue.current?.message
-    if (!message) {
-      this.currentMessageId = ''
-      return
-    }
-    if (message.messageId === this.currentMessageId) return
-    this.currentMessageId = message.messageId
-    // Do not count a message that was already on screen before this runtime existed.
-    if (this.initialSnapshot) return
-    this.handleMessage(message)
+  private readonly handleMessage = (message: TheaterDialogueMessage | null) => {
+    if (this.disposed || !message || !rememberPresentationId(this.seenMessages, message.messageId)) return
+    this.evaluate((trigger) => trigger.type === 'message' && theaterEffectMatchesMessage(trigger, message), message.messageId)
   }
 
-  private handleMessage(message: TheaterDialogueMessage) {
-    this.evaluate((trigger) => trigger.type === 'message' && theaterEffectMatchesMessage(trigger, message))
-  }
-
-  private evaluate(matches: (trigger: TheaterSequenceTrigger) => boolean) {
+  private evaluate(matches: (trigger: TheaterSequenceTrigger) => boolean, messageId?: string) {
     const now = this.options.now?.() ?? Date.now()
     const fired: Array<{ sequenceId: string, triggerId: string }> = []
     this.options.getSequences().forEach((sequence) => {
@@ -114,7 +100,7 @@ export class TheaterSequenceRuntime {
       })
     })
     fired.forEach(({ sequenceId, triggerId }) => {
-      if (!this.disposed) this.options.onTrigger(sequenceId, triggerId)
+      if (!this.disposed) this.options.onTrigger(sequenceId, triggerId, messageId)
     })
   }
 }

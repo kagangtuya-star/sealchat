@@ -26,6 +26,7 @@ const props = defineProps<{
   scenes: StageScene[]
   persistentObjects: Record<string, StageObject>
   activeSceneId: string
+  worldEffects?: StageObject[]
   clickTargetOptions: Array<{ label: string, value: string }>
 }>()
 
@@ -55,14 +56,15 @@ const theaterSequenceActionTypeOptions: Array<{ label: string, value: TheaterSeq
   { label: '切换场景', value: 'scene.apply' },
   { label: '触发组件点击动作', value: 'object.trigger' },
 ]
-const addStepOptions = theaterSequenceActionTypeOptions
-  .map(({ label, value }) => ({ label, key: value }))
+const addStepOptions = computed(() => theaterSequenceActionTypeOptions
+  .filter(({ value }) => !props.worldEffects || value === 'effect.play')
+  .map(({ label, value }) => ({ label, key: value, disabled: value === 'effect.play' && props.worldEffects?.length === 0 })))
 const sequenceMenuProps = { class: 'theater-sequence-select-menu' }
 const sequenceDropdownMenuProps = () => sequenceMenuProps
 
 const handleAddStepSelect = (key: string | number) => {
   const type = String(key)
-  if (isTheaterSequenceStepActionType(type)) void stepsEditorRef.value?.addStep(type)
+  if (isTheaterSequenceStepActionType(type) && (!props.worldEffects || type === 'effect.play')) void stepsEditorRef.value?.addStep(type)
 }
 
 const canAddTrigger = computed(() => Boolean(draft.value && draft.value.triggers.length < THEATER_SEQUENCE_MAX_TRIGGERS))
@@ -70,7 +72,7 @@ const canAddTrigger = computed(() => Boolean(draft.value && draft.value.triggers
 const addTrigger = (type: TheaterSequenceTriggerType) => {
   if (!draft.value || !canAddTrigger.value) return
   const objectId = props.clickTargetOptions[0]?.value || ''
-  if (type === 'component.click' && !objectId) return
+  if (type === 'component.click' && (props.worldEffects || !objectId)) return
   const trigger = createTheaterSequenceTrigger(type, objectId)
   if (trigger.type === 'message') keywordDrafts.value = { ...keywordDrafts.value, [trigger.id]: '' }
   draft.value.triggers.push(trigger)
@@ -111,7 +113,7 @@ const save = () => {
       <header class="theater-sequencer-editor__header">
         <div>
           <strong>{{ draft?.name || '序列' }} · 序列</strong>
-          <small>当前场景序列器 · 保存后生效</small>
+          <small>{{ worldEffects ? '世界级序列' : '当前场景序列器 · 保存后生效' }}</small>
         </div>
         <n-button text aria-label="关闭序列编辑器" @click="close"><n-icon><X /></n-icon></n-button>
       </header>
@@ -139,7 +141,7 @@ const save = () => {
               <n-button size="small" secondary :disabled="!canAddTrigger" @click="addTrigger('message')">
                 <template #icon><n-icon><Message /></n-icon></template>消息触发
               </n-button>
-              <n-button size="small" secondary :disabled="!canAddTrigger || !clickTargetOptions.length" @click="addTrigger('component.click')">
+              <n-button v-if="!worldEffects" size="small" secondary :disabled="!canAddTrigger || !clickTargetOptions.length" @click="addTrigger('component.click')">
                 <template #icon><n-icon><Click /></n-icon></template>组件点击
               </n-button>
             </div>
@@ -149,7 +151,7 @@ const save = () => {
           </div>
           <div class="theater-sequencer-editor__triggers">
             <div v-for="trigger in draft.triggers" :key="trigger.id" class="theater-sequencer-trigger-grid theater-sequencer-trigger">
-              <span class="theater-sequencer-trigger__type">{{ trigger.type === 'message' ? '消息' : '组件点击' }}</span>
+              <span class="theater-sequencer-trigger__type">{{ trigger.type === 'message' ? '消息' : worldEffects ? '需要小剧场' : '组件点击' }}</span>
               <div v-if="trigger.type === 'message'" class="theater-sequencer-trigger__condition">
                 <n-input
                   :value="keywordDrafts[trigger.id] ?? trigger.keywords.join('\n')"
@@ -169,21 +171,22 @@ const save = () => {
                 v-else
                 v-model:value="trigger.objectId"
                 :options="clickTargetSelectOptions(trigger.objectId)"
+                :disabled="!!worldEffects"
                 filterable
                 :menu-props="sequenceMenuProps"
                 placeholder="选择可交互组件"
               />
               <label class="theater-sequencer-trigger__field">
                 <span>第 N 次开始</span>
-                <n-input-number v-model:value="trigger.threshold" :min="1" :max="THEATER_SEQUENCE_MAX_HIT_INTERVAL" :precision="0" @blur="trigger.threshold = trigger.threshold || 1" />
+                <n-input-number v-model:value="trigger.threshold" :disabled="!!worldEffects && trigger.type !== 'message'" :min="1" :max="THEATER_SEQUENCE_MAX_HIT_INTERVAL" :precision="0" @blur="trigger.threshold = trigger.threshold || 1" />
               </label>
               <label class="theater-sequencer-trigger__field">
                 <span>每 N 次</span>
-                <n-input-number v-model:value="trigger.every" :min="1" :max="THEATER_SEQUENCE_MAX_HIT_INTERVAL" :precision="0" @blur="trigger.every = trigger.every || 1" />
+                <n-input-number v-model:value="trigger.every" :disabled="!!worldEffects && trigger.type !== 'message'" :min="1" :max="THEATER_SEQUENCE_MAX_HIT_INTERVAL" :precision="0" @blur="trigger.every = trigger.every || 1" />
               </label>
               <label class="theater-sequencer-trigger__field">
                 <span>冷却（毫秒）</span>
-                <n-input-number v-model:value="trigger.cooldownMs" :min="0" :max="THEATER_SEQUENCE_MAX_COOLDOWN_MS" :step="500" :precision="0" @blur="trigger.cooldownMs = trigger.cooldownMs || 0" />
+                <n-input-number v-model:value="trigger.cooldownMs" :disabled="!!worldEffects && trigger.type !== 'message'" :min="0" :max="THEATER_SEQUENCE_MAX_COOLDOWN_MS" :step="500" :precision="0" @blur="trigger.cooldownMs = trigger.cooldownMs || 0" />
               </label>
               <n-button text type="error" aria-label="删除触发条件" @click="removeTrigger(trigger.id)"><n-icon><Trash /></n-icon></n-button>
             </div>
@@ -206,7 +209,8 @@ const save = () => {
             :scenes="scenes"
             :persistent-objects="persistentObjects"
             :active-scene-id="activeSceneId"
-            empty-text="暂无步骤。可添加播放特效或切换场景。"
+            :world-effects="worldEffects"
+            :empty-text="worldEffects ? '暂无步骤。可添加播放特效。' : '暂无步骤。可添加播放特效或切换场景。'"
           />
         </section>
       </div>
@@ -220,7 +224,8 @@ const save = () => {
 </template>
 
 <style scoped>
-.theater-sequencer-editor { width: min(1120px, calc(100vw - 32px)); max-height: min(820px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; color: var(--sc-text-primary, #f8fafc); background: rgba(15, 23, 42, .82); box-shadow: 0 24px 80px rgba(0, 0, 0, .42); backdrop-filter: blur(16px) saturate(120%); }
+/* The glass surface is always dark, so text tokens must not follow a light palette. */
+.theater-sequencer-editor { --sc-text-primary: #f8fafc; --sc-text-secondary: #a1a1aa; width: min(1120px, calc(100vw - 32px)); max-height: min(820px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; color: var(--sc-text-primary, #f8fafc); background: rgba(15, 23, 42, .82); box-shadow: 0 24px 80px rgba(0, 0, 0, .42); backdrop-filter: blur(16px) saturate(120%); }
 .theater-sequencer-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, .18); }
 .theater-sequencer-editor__header div { min-width: 0; display: grid; gap: 3px; }
 .theater-sequencer-editor__header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }

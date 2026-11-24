@@ -6,6 +6,8 @@ const scripts = [
   'theater-presentation-multiplayer-regression.ts',
   'theater-dialogue-queue-runtime.spec.ts',
   'theater-dialogue-playback-runtime.spec.ts',
+  'theater-effect-runtime.spec.ts',
+  'world-presentation.spec.ts',
   'theater-presentation-runtime.spec.ts',
   'theater-presentation-editor-runtime.spec.ts',
   'theater-presentation-preview-regression.cjs',

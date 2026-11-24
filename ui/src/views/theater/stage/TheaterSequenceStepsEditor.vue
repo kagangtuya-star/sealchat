@@ -38,6 +38,7 @@ const props = withDefaults(defineProps<{
   scenes: StageScene[]
   persistentObjects: Record<string, StageObject>
   activeSceneId: string
+  worldEffects?: StageObject[]
   readClueOptions?: () => Promise<ChatClueOptionsReadResult>
   emptyText?: string
 }>(), {
@@ -120,6 +121,7 @@ const objectTargetOptions = (type: StageAtomicAction['type'], sceneId: string | 
 )
 
 const effectOptions = (sceneId: string | null) => {
+  if (props.worldEffects) return props.worldEffects.map((object) => ({ label: object.name, value: object.id }))
   if (!sceneId) {
     return Object.values(props.persistentObjects)
       .filter(isTheaterEffectObject)
@@ -141,11 +143,13 @@ const targetSceneOptions = (type: StageAtomicAction['type']) => {
 }
 
 const objectSceneId = (objectId: string) => {
+  if (props.worldEffects) return null
   if (props.persistentObjects[objectId]) return null
   return props.scenes.find((scene) => Boolean(scene.state.sceneObjects[objectId]))?.id || null
 }
 
 const addStep = async (type: StageAtomicAction['type']) => {
+  if (props.worldEffects && type !== 'effect.play') return
   const steps = props.steps
   if (steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
   const sceneId = props.activeSceneId || props.scenes[0]?.id || ''
@@ -313,7 +317,7 @@ defineExpose({ addStep })
 
 <template>
   <div class="theater-sequence-grid theater-sequence-grid--heading">
-    <span></span><span>操作内容 / 组件</span><span>动作类型</span><span>目标场景</span><span>时延</span><span></span>
+    <span></span><span>操作内容 / 组件</span><span>动作类型</span><span>{{ worldEffects ? '范围' : '目标场景' }}</span><span>时延</span><span></span>
   </div>
   <div class="theater-sequence-editor__rows">
     <div
@@ -336,8 +340,9 @@ defineExpose({ addStep })
         @keydown.alt.down.prevent="moveStep(step.id, 1)"
       ><n-icon><GripVertical /></n-icon></button>
 
+      <span v-if="worldEffects && (step.action.type !== 'effect.play' || step.sceneId)" class="theater-sequence-row__operation">需要小剧场</span>
       <n-input
-        v-if="step.action.type === 'chat.send' || step.action.type === 'chat.insert'"
+        v-else-if="step.action.type === 'chat.send' || step.action.type === 'chat.insert'"
         v-model:value="step.action.payload.content"
         maxlength="10000"
         placeholder="输入文本"
@@ -374,8 +379,9 @@ defineExpose({ addStep })
 
       <span class="theater-sequence-row__type">{{ actionTypeLabel(step.action.type) }}</span>
 
+      <span v-if="worldEffects" class="theater-sequence-row__operation">{{ step.action.type === 'effect.play' && !step.sceneId ? '当前世界' : '场景' }}</span>
       <n-select
-        v-if="step.action.type === 'scene.apply'"
+        v-else-if="step.action.type === 'scene.apply'"
         :value="step.action.payload.sceneId"
         :show="isSequenceSelectOpen('scene', step.id)"
         :options="sceneOptions"
@@ -403,6 +409,7 @@ defineExpose({ addStep })
           :value="step.timing.mode"
           :show="isSequenceSelectOpen('timing', step.id)"
           :options="timingOptions"
+          :disabled="!!worldEffects && (step.action.type !== 'effect.play' || !!step.sceneId)"
           filterable
           :menu-props="sequenceSelectMenuProps"
           @update:show="updateSelectShow('timing', step, $event)"
@@ -411,6 +418,7 @@ defineExpose({ addStep })
         <n-input-number
           v-if="step.timing.mode === 'delay'"
           v-model:value="step.timing.delayMs"
+          :disabled="!!worldEffects && (step.action.type !== 'effect.play' || !!step.sceneId)"
           :min="0"
           :max="60000"
           :step="100"

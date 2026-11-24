@@ -2,20 +2,25 @@
 import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NSwitch, useDialog } from 'naive-ui'
 import { Edit, PlayerPlay, Plus, Search, Trash } from '@vicons/tabler'
-import type { TheaterStageStore } from '../stage/StageStore'
-import { isStageActionTarget } from '../shared/stage-types'
+import { isStageActionTarget, type StageObject, type StageScene } from '../shared/stage-types'
 import TheaterSequenceEditor from './TheaterSequenceEditor.vue'
 import {
   createDefaultTheaterSequence,
   normalizeTheaterSequences,
-  theaterSequencesFromServerState,
   THEATER_SEQUENCE_MAX_COUNT,
-  THEATER_SEQUENCES_STATE_KEY,
   type TheaterSequence,
 } from './theater-sequence-types'
 
 const props = defineProps<{
-  store: TheaterStageStore
+  scopeId: string
+  sequences: TheaterSequence[]
+  commitSequences: (next: TheaterSequence[]) => void
+  scene?: {
+    scenes: StageScene[]
+    objects: Record<string, StageObject>
+    persistentObjects: Record<string, StageObject>
+  }
+  worldEffects?: StageObject[]
   canEdit: boolean
   canTest: boolean
 }>()
@@ -28,31 +33,32 @@ const dialog = useDialog()
 const search = ref('')
 const editorOpen = ref(false)
 const editingSequence = ref<TheaterSequence | null>(null)
-const activeSceneId = computed(() => props.store.state.activeSceneId)
-const sequences = computed(() => theaterSequencesFromServerState(props.store.state.liveState.serverState))
 const filteredSequences = computed(() => {
   const keyword = search.value.trim().toLocaleLowerCase()
   return keyword
-    ? sequences.value.filter((sequence) => sequence.name.toLocaleLowerCase().includes(keyword))
-    : sequences.value
+    ? props.sequences.filter((sequence) => sequence.name.toLocaleLowerCase().includes(keyword))
+    : props.sequences
 })
-const clickTargetOptions = computed(() => Object.values(props.store.activeObjects.value)
+const clickTargetOptions = computed(() => Object.values(props.scene?.objects ?? {})
   .filter((object) => object.visible && object.interactive && isStageActionTarget(object.type))
   .map((object) => ({
-    label: `${object.name}${props.store.state.persistentObjects[object.id] ? ' · 跨场景' : ''}`,
+    label: `${object.name}${props.scene?.persistentObjects[object.id] ? ' · 跨场景' : ''}`,
     value: object.id,
   })))
 
 // Editing is scoped to the scene that was active when the editor opened.
-watch(activeSceneId, () => {
+watch(() => props.scopeId, () => {
   editorOpen.value = false
   editingSequence.value = null
 })
 
 const commit = (next: TheaterSequence[]) => {
-  if (!props.canEdit) return false
-  return props.store.updateSceneServerStateExtension(activeSceneId.value, THEATER_SEQUENCES_STATE_KEY, normalizeTheaterSequences(next))
+  if (props.canEdit) props.commitSequences(normalizeTheaterSequences(next))
 }
+
+const hasPlayableSteps = (sequence: TheaterSequence) => sequence.steps.some((step) => (
+  props.scene || (step.action.type === 'effect.play' && !step.sceneId)
+))
 
 const triggerSummary = (sequence: TheaterSequence) => {
   if (!sequence.triggers.length) return '仅手动测试'
@@ -61,7 +67,7 @@ const triggerSummary = (sequence: TheaterSequence) => {
       const keywords = trigger.keywords.length ? trigger.keywords.slice(0, 3).join('/') : '未设关键词'
       return `消息「${keywords}${trigger.keywords.length > 3 ? '…' : ''}」`
     }
-    return `点击「${props.store.activeObjects.value[trigger.objectId]?.name || '已失效组件'}」`
+    return props.scene ? `点击「${props.scene.objects[trigger.objectId]?.name || '已失效组件'}」` : '组件点击（需要小剧场）'
   }).join(' 或 ')
 }
 
@@ -71,13 +77,20 @@ const openEditor = (sequence: TheaterSequence) => {
   editorOpen.value = true
 }
 
+const openSequence = (id: string) => {
+  const sequence = props.sequences.find((item) => item.id === id)
+  if (!sequence) return
+  search.value = ''
+  openEditor(sequence)
+}
+
 const createSequence = () => {
-  if (sequences.value.length >= THEATER_SEQUENCE_MAX_COUNT) return
+  if (props.sequences.length >= THEATER_SEQUENCE_MAX_COUNT) return
   openEditor(createDefaultTheaterSequence())
 }
 
 const saveSequence = (sequence: TheaterSequence) => {
-  const current = sequences.value
+  const current = props.sequences
   const index = current.findIndex((item) => item.id === sequence.id)
   commit(index >= 0
     ? current.map((item) => (item.id === sequence.id ? sequence : item))
@@ -85,23 +98,25 @@ const saveSequence = (sequence: TheaterSequence) => {
 }
 
 const setEnabled = (sequence: TheaterSequence, enabled: boolean) => {
-  commit(sequences.value.map((item) => (item.id === sequence.id ? { ...item, enabled } : item)))
+  commit(props.sequences.map((item) => (item.id === sequence.id ? { ...item, enabled } : item)))
 }
 
 const removeSequence = (sequence: TheaterSequence) => {
   if (!props.canEdit) return
-  const sceneId = activeSceneId.value
+  const scopeId = props.scopeId
   dialog.warning({
     title: '删除序列',
     content: `确定删除序列“${sequence.name}”？`,
     positiveText: '确认删除',
     negativeText: '取消',
     onPositiveClick: () => {
-      if (activeSceneId.value !== sceneId) return
-      commit(sequences.value.filter((item) => item.id !== sequence.id))
+      if (props.scopeId !== scopeId) return
+      commit(props.sequences.filter((item) => item.id !== sequence.id))
     },
   })
 }
+
+defineExpose({ openSequence })
 </script>
 
 <template>
@@ -116,7 +131,7 @@ const removeSequence = (sequence: TheaterSequence) => {
     </div>
 
     <div class="theater-sequence-panel__list">
-      <div v-if="!sequences.length" class="theater-sequence-panel__empty">当前场景没有序列。新建序列后可用消息关键词或组件点击触发特效与场景切换。</div>
+      <div v-if="!sequences.length" class="theater-sequence-panel__empty">{{ scene ? '当前场景没有序列。新建序列后可用消息关键词或组件点击触发特效与场景切换。' : '当前世界没有序列。' }}</div>
       <div v-else-if="!filteredSequences.length" class="theater-sequence-panel__empty">没有匹配的序列</div>
       <article
         v-for="sequence in filteredSequences"
@@ -131,9 +146,10 @@ const removeSequence = (sequence: TheaterSequence) => {
           <small>{{ sequence.steps.length }} 步{{ sequence.loopCount > 1 ? ` · 循环 ${sequence.loopCount} 轮` : '' }}</small>
         </button>
         <div class="theater-sequence-panel__actions">
-          <n-button text size="tiny" aria-label="测试序列" title="测试序列" :disabled="!canTest || !sequence.enabled || !sequence.steps.length" @click="emit('test', sequence.id)"><n-icon><PlayerPlay /></n-icon></n-button>
+          <n-button text size="tiny" aria-label="测试序列" title="测试序列" :disabled="!canTest || !sequence.enabled || !hasPlayableSteps(sequence)" @click="emit('test', sequence.id)"><n-icon><PlayerPlay /></n-icon></n-button>
           <n-button text size="tiny" aria-label="编辑序列" title="编辑序列" :disabled="!canEdit" @click="openEditor(sequence)"><n-icon><Edit /></n-icon></n-button>
           <n-button text size="tiny" type="error" aria-label="删除序列" title="删除序列" :disabled="!canEdit" @click="removeSequence(sequence)"><n-icon><Trash /></n-icon></n-button>
+          <slot name="row-actions" :sequence="sequence" />
         </div>
       </article>
     </div>
@@ -141,9 +157,10 @@ const removeSequence = (sequence: TheaterSequence) => {
     <TheaterSequenceEditor
       v-model:show="editorOpen"
       :sequence="editingSequence"
-      :scenes="store.scenes.value"
-      :persistent-objects="store.state.persistentObjects"
-      :active-scene-id="activeSceneId"
+      :scenes="scene?.scenes ?? []"
+      :persistent-objects="scene?.persistentObjects ?? {}"
+      :active-scene-id="scene ? scopeId : ''"
+      :world-effects="worldEffects"
       :click-target-options="clickTargetOptions"
       @save="saveSequence"
     />

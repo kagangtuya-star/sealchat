@@ -1,6 +1,6 @@
 import type { StageObject } from '../shared/stage-types'
 import type { TheaterDialogueMessage } from '../bridge/theater-dialogue-queue'
-import type { TheaterDialogueRuntime, TheaterDialogueRuntimeSnapshot } from '../dialogue/theater-dialogue-runtime'
+import { rememberPresentationId, type PresentationMessageSource } from '../shared/presentation-message-source'
 import { cloneStageData } from '../stage/stage-editing'
 import { compareStageLayersBottomToTop } from '../stage/stage-layer-order'
 import {
@@ -25,11 +25,13 @@ interface TheaterEffectScheduler {
 }
 
 interface TheaterEffectRuntimeOptions {
-  dialogueRuntime: TheaterDialogueRuntime
+  messageSource?: PresentationMessageSource
   getObjects: () => StageObject[]
   scheduler?: TheaterEffectScheduler
   maximumActive?: number
   onStart?: (playback: TheaterEffectPlayback) => void
+  // An authority may publish the result instead of starting playback locally.
+  onMessageTrigger?: (effectId: string, messageId: string) => void
 }
 
 const defaultScheduler: TheaterEffectScheduler = {
@@ -62,18 +64,17 @@ export class TheaterEffectRuntime {
   private readonly lastTriggeredAt = new Map<string, number>()
   private readonly lastTriggeredMessageId = new Map<string, string>()
   private readonly playedTriggerIds = new Set<string>()
-  private readonly playedTriggerOrder: string[] = []
+  private readonly seenMessages = new Set<string>()
   private active: TheaterEffectPlayback[] = []
   private currentMessage: TheaterDialogueMessage | null = null
-  private currentMessageId = ''
   private instanceSequence = 0
-  private unsubscribeDialogue: (() => void) | null = null
+  private unsubscribeMessages?: () => void
   private disposed = false
 
   constructor(private readonly options: TheaterEffectRuntimeOptions) {
     this.scheduler = options.scheduler || defaultScheduler
     this.maximumActive = Math.max(1, Math.min(8, options.maximumActive || 4))
-    this.unsubscribeDialogue = options.dialogueRuntime.subscribe(this.handleDialogueSnapshot)
+    this.unsubscribeMessages = options.messageSource?.subscribe(this.handleMessage)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.handleVisibilityChange)
   }
 
@@ -94,13 +95,7 @@ export class TheaterEffectRuntime {
     if (triggerId && this.playedTriggerIds.has(triggerId)) return true
     const object = this.options.getObjects().find((item) => item.id === effectId)
     if (!isTheaterEffectObject(object) || !object.visible) return false
-    if (triggerId) {
-      this.playedTriggerIds.add(triggerId)
-      this.playedTriggerOrder.push(triggerId)
-      if (this.playedTriggerOrder.length > 256) {
-        this.playedTriggerIds.delete(this.playedTriggerOrder.shift()!)
-      }
-    }
+    if (triggerId) rememberPresentationId(this.playedTriggerIds, triggerId)
     this.start(object, false)
     return true
   }
@@ -132,26 +127,23 @@ export class TheaterEffectRuntime {
     if (this.disposed) return
     this.disposed = true
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.handleVisibilityChange)
-    this.unsubscribeDialogue?.()
-    this.unsubscribeDialogue = null
+    this.unsubscribeMessages?.()
+    this.unsubscribeMessages = undefined
     this.timers.forEach((timer) => this.scheduler.clearTimeout(timer))
     this.timers.clear()
     this.active = []
     this.playedTriggerIds.clear()
-    this.playedTriggerOrder.length = 0
+    this.seenMessages.clear()
     this.listeners.clear()
   }
 
-  private readonly handleDialogueSnapshot = (snapshot: TheaterDialogueRuntimeSnapshot) => {
+  private readonly handleMessage = (message: TheaterDialogueMessage | null) => {
     if (this.disposed) return
-    const message = snapshot.queue.current?.message
     if (!message) {
       this.currentMessage = null
-      this.currentMessageId = ''
       return
     }
-    if (message.messageId === this.currentMessageId) return
-    this.currentMessageId = message.messageId
+    if (!rememberPresentationId(this.seenMessages, message.messageId)) return
     this.currentMessage = message
     this.triggerEffects(message)
   }
@@ -172,7 +164,8 @@ export class TheaterEffectRuntime {
         ) return
         this.lastTriggeredAt.set(object.id, now)
         this.lastTriggeredMessageId.set(object.id, message.messageId)
-        this.start(object, false)
+        if (this.options.onMessageTrigger) this.options.onMessageTrigger(object.id, message.messageId)
+        else this.start(object, false)
       })
   }
 

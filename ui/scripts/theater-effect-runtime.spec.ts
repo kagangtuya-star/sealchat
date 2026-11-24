@@ -4,6 +4,7 @@ import { reactive } from 'vue'
 import type { StageObject } from '../src/views/theater/shared/stage-types'
 import type { TheaterDialogueMessage } from '../src/views/theater/bridge/theater-dialogue-queue'
 import { TheaterDialogueRuntime } from '../src/views/theater/dialogue/theater-dialogue-runtime'
+import { theaterDialogueMessageSource } from '../src/views/theater/dialogue/theater-presentation-message-source'
 import { TheaterEffectRuntime, theaterEffectMatchesMessage } from '../src/views/theater/effects/theater-effect-runtime'
 import { createDefaultTheaterEffectConfig } from '../src/views/theater/effects/theater-effect-types'
 
@@ -90,9 +91,10 @@ assert.equal(theaterEffectMatchesMessage(config, message('all-actors', 'critical
 const scheduler = new FakeScheduler()
 const dialogueRuntime = new TheaterDialogueRuntime({ reducedMotion: true })
 const objects = [effectObject('global', ['爆击']), effectObject('actor-only', ['爆击'], '法师')]
+objects[1].transform.order = 1
 const startedEffectIds: string[] = []
 const runtime = new TheaterEffectRuntime({
-  dialogueRuntime,
+  messageSource: theaterDialogueMessageSource(dialogueRuntime),
   getObjects: () => objects,
   scheduler,
   onStart: (playback) => startedEffectIds.push(playback.effectId),
@@ -133,7 +135,7 @@ const lateScheduler = new FakeScheduler()
 const lateDialogueRuntime = new TheaterDialogueRuntime({ reducedMotion: true })
 const lateObjects: StageObject[] = []
 const lateRuntime = new TheaterEffectRuntime({
-  dialogueRuntime: lateDialogueRuntime,
+  messageSource: theaterDialogueMessageSource(lateDialogueRuntime),
   getObjects: () => lateObjects,
   scheduler: lateScheduler,
 })

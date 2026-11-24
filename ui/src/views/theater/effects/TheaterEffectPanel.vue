@@ -15,21 +15,19 @@ import {
   NDropdown,
   useDialog,
 } from 'naive-ui'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Code, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Code, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload, X } from '@vicons/tabler'
 
 import { setStageObjectMediaFx, stageObjectMediaFx, type StageObject } from '../shared/stage-types'
 import { mediaFxHasContent, resolveMediaFxCapabilities, type MediaFxSpec } from '@/features/media-fx/media-fx'
 import { mediaFxGpuSupported, subscribeMediaFxGpuAvailability } from '@/features/media-fx/media-fx-gpu'
 import MediaFxPanel from '@/features/media-fx/MediaFxPanel.vue'
 import type { AudioAsset } from '@/types/audio'
-import type { TheaterStageStore } from '../stage/StageStore'
 import { compareStageLayersTopToBottom } from '../stage/stage-layer-order'
-import type { TheaterEffectRuntime } from './theater-effect-runtime'
+import type { TheaterEffectPanelAdapter } from './theater-effect-panel-adapter'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { useTheaterPointerSort, type TheaterPointerDrag, type TheaterPointerTarget } from './useTheaterPointerSort'
 import TheaterEffectWebCodeEditor from './TheaterEffectWebCodeEditor.vue'
 import {
-  createDefaultTheaterEffectConfig,
   isTheaterEffectObject,
   setTheaterEffectConfig,
   theaterBuiltinEffectThemes,
@@ -38,23 +36,28 @@ import {
   type TheaterEffectKind,
 } from './theater-effect-types'
 
-const props = defineProps<{
-  store: TheaterStageStore
-  runtime: TheaterEffectRuntime
+const props = withDefaults(defineProps<{
+  objects: StageObject[]
+  selectedId: string | null
+  adapter: TheaterEffectPanelAdapter
   canEdit: boolean
+  canAdd?: boolean
   canUpload: boolean
-  editingTarget: 'frame' | 'media'
+  editingTarget?: 'frame' | 'media'
   audioAssets: AudioAsset[]
   audioLoading: boolean
   audioUploading: boolean
   audioError: string
   organizerFolders: TheaterPanelFolder[]
   organizerItems: TheaterPanelItem[]
-}>()
+  // 'split' puts the list beside the editor for wide hosts outside the stage.
+  layout?: 'stack' | 'split'
+}>(), { canAdd: true, layout: 'stack' })
 
 const emit = defineEmits<{
   upload: [objectId: string]
   uploadAudio: [objectId: string, file: File]
+  mediaUrl: [objectId: string, value: string, video: boolean]
   createFolder: [done: (folder: TheaterPanelFolder | null) => void]
   renameFolder: [folderId: string, name: string]
   deleteFolder: [folderId: string]
@@ -64,7 +67,7 @@ const emit = defineEmits<{
   'update:editingTarget': [value: 'frame' | 'media']
 }>()
 
-const effects = computed(() => Object.values(props.store.activeObjects.value)
+const effects = computed(() => props.objects
   .filter(isTheaterEffectObject)
   .sort(compareStageLayersTopToBottom))
 const filteredEffects = computed(() => effects.value.filter(matchesEffectFilter))
@@ -91,8 +94,7 @@ const moveOptions = computed(() => [
   ...effectFolders.value.map((folder) => ({ label: folder.name, key: folder.id })),
 ])
 const selectedEffect = computed(() => {
-  const id = props.store.state.selectedObjectId
-  const object = id ? props.store.activeObjects.value[id] : null
+  const object = effects.value.find((item) => item.id === props.selectedId)
   return isTheaterEffectObject(object) ? object : null
 })
 const config = computed(() => selectedEffect.value ? theaterEffectConfigFromObject(selectedEffect.value) : null)
@@ -231,31 +233,29 @@ const finishEffectListResize = (event: PointerEvent) => {
 const editConfig = (label: string, mutate: (value: TheaterEffectConfig) => void) => {
   const object = selectedEffect.value
   if (!object || !props.canEdit) return
-  props.store.beginObjectEdit(label)
-  const next = theaterEffectConfigFromObject(object)
-  mutate(next)
-  setTheaterEffectConfig(object, next)
-  props.store.commitObjectEdit()
+  props.adapter.edit(label, [object.id], (target) => {
+    const next = theaterEffectConfigFromObject(target)
+    mutate(next)
+    setTheaterEffectConfig(target, next)
+  })
 }
 
 let mediaFxEditing = false
 const beginMediaFxEdit = () => {
-  if (mediaFxEditing || !selectedEffect.value || !props.canEdit) return
-  props.store.beginObjectEdit('修改特效图像效果')
+  if (mediaFxEditing || !selectedEffect.value || !props.canEdit || !props.adapter.scene) return
+  props.adapter.scene.beginEdit('修改特效图像效果')
   mediaFxEditing = true
 }
 const endMediaFxEdit = () => {
   if (!mediaFxEditing) return
   mediaFxEditing = false
-  props.store.commitObjectEdit()
+  props.adapter.scene?.commitEdit()
 }
 const updateMediaFx = (spec: MediaFxSpec) => {
   const object = selectedEffect.value
   if (!object || !props.canEdit) return
-  const discreteEdit = !mediaFxEditing
-  if (discreteEdit) beginMediaFxEdit()
-  setStageObjectMediaFx(object, spec)
-  if (discreteEdit) endMediaFxEdit()
+  if (mediaFxEditing) setStageObjectMediaFx(object, spec)
+  else props.adapter.edit('修改特效图像效果', [object.id], (target) => setStageObjectMediaFx(target, spec))
 }
 
 const webCodeEditorVisible = ref(false)
@@ -281,10 +281,7 @@ onBeforeUnmount(() => {
 })
 
 const addEffect = (kind: TheaterEffectKind) => {
-  if (!props.canEdit) return
-  const object = props.store.addObject('effect')
-  object.name = kind === 'media' ? '新建媒体特效' : kind === 'web' ? '新建网页特效' : '新建内置特效'
-  setTheaterEffectConfig(object, createDefaultTheaterEffectConfig(kind))
+  if (props.canEdit && props.canAdd !== false) props.adapter.add(kind)
 }
 
 const createFolder = () => {
@@ -314,16 +311,18 @@ const deleteFolder = (folder: TheaterPanelFolder) => {
 }
 
 const setEffectsVisible = (ids: string[], visible: boolean) => {
-  const targets = ids.map((id) => props.store.activeObjects.value[id]).filter(isTheaterEffectObject)
-  if (!props.canEdit || !targets.length) return
-  props.store.beginObjectEdit(visible ? '批量启用特效' : '批量停用特效')
-  targets.forEach((object) => { object.visible = visible })
-  props.store.commitObjectEdit()
+  if (!props.canEdit || !ids.length) return
+  props.adapter.edit(visible ? '批量启用特效' : '批量停用特效', ids, (object) => { object.visible = visible })
+}
+
+const toggleEffectVisibility = (object: StageObject) => {
+  if (props.adapter.scene) props.adapter.scene.setVisible(object.id, !object.visible)
+  else setEffectsVisible([object.id], !object.visible)
 }
 
 const setEffectCrossScene = (object: StageObject, crossScene: boolean) => {
   if (!props.canEdit || !isTheaterEffectObject(object)) return
-  props.store.setEffectScope(object.id, crossScene ? 'scene-fixed' : 'scene')
+  props.adapter.scene?.setFixed(object.id, crossScene)
 }
 
 const folderVisibility = (folderId: string) => {
@@ -336,7 +335,7 @@ const folderVisibility = (folderId: string) => {
 
 const deleteCheckedEffects = () => {
   if (!checkedEffectIds.value.length || !window.confirm(`删除选中的 ${checkedEffectIds.value.length} 个特效？`)) return
-  props.store.removeObjects(checkedEffectIds.value)
+  props.adapter.remove(checkedEffectIds.value)
   checkedEffectIds.value = []
 }
 
@@ -379,7 +378,7 @@ const beginEffectSort = (event: PointerEvent, effectId: string) => pointerSort.b
 })
 const beginFolderSort = (event: PointerEvent, folderId: string) => pointerSort.begin(event, { kind: 'folder', ids: [folderId] })
 
-const selectEffect = (object: StageObject) => props.store.selectObject(object.id)
+const selectEffect = (object: StageObject) => props.adapter.select(object.id)
 
 const removeSelectedEffect = () => {
   const object = selectedEffect.value
@@ -389,7 +388,7 @@ const removeSelectedEffect = () => {
     content: `确定删除特效“${object.name}”？`,
     positiveText: '确认删除',
     negativeText: '取消',
-    onPositiveClick: () => props.store.removeObjects([object.id]),
+    onPositiveClick: () => props.adapter.remove([object.id]),
   })
 }
 
@@ -423,7 +422,7 @@ const handleAudioInput = (event: Event) => {
 </script>
 
 <template>
-  <div class="theater-effect-panel-content">
+  <div class="theater-effect-panel-content" :class="{ 'is-split': layout === 'split' }">
     <input ref="audioInputRef" class="theater-effect-audio-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleAudioInput">
     <div class="theater-effect-filter">
       <n-input v-model:value="effectSearch" size="small" clearable placeholder="搜索特效名称或关键词">
@@ -454,21 +453,21 @@ const handleAudioInput = (event: Event) => {
       </n-button>
     </div>
     <div v-if="canEdit" class="theater-effect-add-row">
-      <n-button size="tiny" secondary @click="addEffect('builtin')"><template #icon><n-icon><Stars /></n-icon></template>内置</n-button>
-      <n-button size="tiny" secondary @click="addEffect('media')"><template #icon><n-icon><Photo /></n-icon></template>媒体</n-button>
-      <n-button size="tiny" secondary @click="addEffect('web')"><template #icon><n-icon><Code /></n-icon></template>网页代码</n-button>
-      <n-button size="tiny" secondary @click="createFolder"><template #icon><n-icon><Folder /></n-icon></template>文件夹</n-button>
+      <n-button size="tiny" secondary :disabled="canAdd === false" @click="addEffect('builtin')"><template #icon><n-icon><Stars /></n-icon></template>内置</n-button>
+      <n-button size="tiny" secondary :disabled="canAdd === false" @click="addEffect('media')"><template #icon><n-icon><Photo /></n-icon></template>媒体</n-button>
+      <n-button size="tiny" secondary :disabled="canAdd === false" @click="addEffect('web')"><template #icon><n-icon><Code /></n-icon></template>网页代码</n-button>
+      <n-button v-if="adapter.scene" size="tiny" secondary @click="createFolder"><template #icon><n-icon><Folder /></n-icon></template>文件夹</n-button>
     </div>
 
     <div v-if="checkedEffectIds.length" class="theater-effect-batch">
       <span>已选 {{ checkedEffectIds.length }}</span>
       <n-button size="tiny" secondary @click="setEffectsVisible(checkedEffectIds, true)"><template #icon><n-icon><Eye /></n-icon></template>启用</n-button>
       <n-button size="tiny" secondary @click="setEffectsVisible(checkedEffectIds, false)"><template #icon><n-icon><EyeOff /></n-icon></template>停用</n-button>
-      <n-dropdown trigger="click" :options="moveOptions" @select="moveChecked"><n-button size="tiny" secondary>移动</n-button></n-dropdown>
+      <n-dropdown v-if="adapter.scene" trigger="click" :options="moveOptions" @select="moveChecked"><n-button size="tiny" secondary>移动</n-button></n-dropdown>
       <n-button size="tiny" type="error" secondary @click="deleteCheckedEffects"><template #icon><n-icon><Trash /></n-icon></template></n-button>
     </div>
 
-    <div class="theater-effect-list" :style="{ height: `${effectListHeight}px` }" data-theater-sort-scroll>
+    <div class="theater-effect-list" :style="layout === 'split' ? undefined : { height: `${effectListHeight}px` }" data-theater-sort-scroll>
       <section
         v-for="folder in filteredEffectFolders"
         :key="folder.id"
@@ -512,8 +511,8 @@ const handleAudioInput = (event: Event) => {
             <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
             <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
             <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="effectKindIcon(object)" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
-            <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
-            <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
+            <button v-if="canEdit && adapter.scene" type="button" class="theater-effect-row__icon" :aria-label="adapter.scene.isFixed(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="adapter.scene.isFixed(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !adapter.scene.isFixed(object.id))"><n-icon :component="adapter.scene.isFixed(object.id) ? Pinned : Pin" /></button>
+            <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="toggleEffectVisibility(object)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
           </div>
         </div>
       </section>
@@ -532,17 +531,18 @@ const handleAudioInput = (event: Event) => {
           :data-target-id="object.id"
           data-folder-id=""
         >
-          <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
+          <button v-if="adapter.scene" class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
           <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
           <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="effectKindIcon(object)" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
-          <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
-          <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
+          <button v-if="canEdit && adapter.scene" type="button" class="theater-effect-row__icon" :aria-label="adapter.scene.isFixed(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="adapter.scene.isFixed(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !adapter.scene.isFixed(object.id))"><n-icon :component="adapter.scene.isFixed(object.id) ? Pinned : Pin" /></button>
+          <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="toggleEffectVisibility(object)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
         </div>
       </section>
       <div v-if="!effects.length" class="theater-effect-empty">暂无特效</div>
       <div v-else-if="!filteredEffects.length" class="theater-effect-empty">没有匹配的特效</div>
     </div>
     <div
+      v-if="layout !== 'split'"
       class="theater-effect-editor-resize"
       role="separator"
       aria-label="拖拽调整特效列表高度"
@@ -555,7 +555,7 @@ const handleAudioInput = (event: Event) => {
 
     <div v-if="selectedEffect && config" class="theater-effect-editor">
       <label>名称</label>
-      <n-input :value="selectedEffect.name" size="small" maxlength="512" @update:value="value => { store.beginObjectEdit('修改特效名称'); selectedEffect!.name = value; store.commitObjectEdit() }" />
+      <n-input :value="selectedEffect.name" size="small" maxlength="512" :disabled="!canEdit" @update:value="value => adapter.edit('修改特效名称', [selectedEffect!.id], object => { object.name = value })" />
 
       <label>类型</label>
       <n-select :value="config.kind" :options="kindOptions" size="small" @update:value="value => editConfig('修改特效类型', next => { next.kind = value as TheaterEffectKind })" />
@@ -599,11 +599,18 @@ const handleAudioInput = (event: Event) => {
 
       <label v-if="config.kind !== 'web'">媒体</label>
       <div v-if="config.kind !== 'web'" class="theater-effect-media-row">
-        <n-button size="small" :type="hasMedia ? 'primary' : 'default'" secondary :disabled="!canUpload" @click="emit('upload', selectedEffect.id)">
+        <n-input v-if="!adapter.scene" :key="`${selectedEffect.id}:${config.media?.url || selectedEffect.image?.url || ''}`" :default-value="config.media?.url || selectedEffect.image?.url || ''" size="small" clearable maxlength="8192" placeholder="图片或视频地址" :disabled="!canEdit" @change="value => emit('mediaUrl', selectedEffect!.id, value, config?.media?.mimeType?.startsWith('video/') === true)" />
+        <n-button v-if="adapter.scene || canUpload" size="small" :type="hasMedia ? 'primary' : 'default'" secondary :disabled="!canUpload" @click="emit('upload', selectedEffect.id)">
           <template #icon><n-icon><Photo /></n-icon></template>
           {{ hasMedia ? '图片' : '上传' }}
         </n-button>
       </div>
+      <n-checkbox v-if="!adapter.scene && config.kind !== 'web' && config.media" class="theater-effect-editor__option" :checked="config.media.mimeType?.startsWith('video/')" :disabled="!canEdit" @update:checked="value => emit('mediaUrl', selectedEffect!.id, config!.media!.url, value)">按视频播放</n-checkbox>
+
+      <template v-if="$slots.position">
+        <label>位置与预览</label>
+        <slot name="position" :object="selectedEffect" />
+      </template>
 
       <template v-if="hasAnimatedMedia && config.kind !== 'web'">
         <label>触发时循环次数</label>
@@ -628,10 +635,10 @@ const handleAudioInput = (event: Event) => {
           size="small"
           clearable
           filterable
-          placeholder="从频道素材选择"
+          :placeholder="adapter.scene ? '从频道素材选择' : '从世界素材选择'"
           @update:value="updateAudioAsset"
         />
-        <n-button size="small" secondary :disabled="!canUpload" :loading="audioUploading" @click="requestAudioUpload(selectedEffect.id)">
+        <n-button v-if="adapter.scene || canUpload" size="small" secondary :disabled="!canUpload" :loading="audioUploading" @click="requestAudioUpload(selectedEffect.id)">
           <template #icon><n-icon><Upload /></n-icon></template>
           上传
         </n-button>
@@ -700,10 +707,12 @@ const handleAudioInput = (event: Event) => {
         </details>
       </template>
 
-      <label>生效范围</label>
-      <n-checkbox :checked="store.isSceneFixedObject(selectedEffect.id)" :disabled="!canEdit" @update:checked="value => setEffectCrossScene(selectedEffect!, value)">跨场景</n-checkbox>
+      <template v-if="adapter.scene">
+        <label>生效范围</label>
+        <n-checkbox :checked="adapter.scene.isFixed(selectedEffect.id)" :disabled="!canEdit" @update:checked="value => setEffectCrossScene(selectedEffect!, value)">跨场景</n-checkbox>
+      </template>
 
-      <template v-if="config.kind !== 'web'">
+      <template v-if="adapter.scene && config.kind !== 'web'">
         <label>画布控制</label>
         <n-button-group size="small">
           <n-button :type="editingTarget === 'frame' ? 'primary' : 'default'" @click="emit('update:editingTarget', 'frame')">特效框</n-button>
@@ -712,11 +721,15 @@ const handleAudioInput = (event: Event) => {
       </template>
 
       <div class="theater-effect-actions">
-        <n-button size="small" secondary @click="runtime.preview(selectedEffect)"><template #icon><n-icon><PlayerPlay /></n-icon></template>测试</n-button>
-        <n-button size="small" quaternary @click="store.moveOrder(selectedEffect.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template></n-button>
-        <n-button size="small" quaternary @click="store.moveOrder(selectedEffect.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template></n-button>
+        <n-button size="small" secondary @click="adapter.preview(selectedEffect)"><template #icon><n-icon><PlayerPlay /></n-icon></template>测试</n-button>
+        <n-button size="small" quaternary :disabled="!canEdit" @click="adapter.move(selectedEffect.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template></n-button>
+        <n-button size="small" quaternary :disabled="!canEdit" @click="adapter.move(selectedEffect.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template></n-button>
         <n-button v-if="canEdit" size="small" type="error" secondary @click="removeSelectedEffect"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
+        <slot name="actions" :object="selectedEffect" />
       </div>
+    </div>
+    <div v-else-if="layout === 'split'" class="theater-effect-editor-empty">
+      {{ effects.length ? '从左侧选择一个特效进行编辑' : canEdit ? '还没有特效，从左侧新建一个开始' : '暂无特效' }}
     </div>
     <TheaterEffectWebCodeEditor
       v-if="selectedEffect && config?.kind === 'web'"
@@ -777,4 +790,15 @@ const handleAudioInput = (event: Event) => {
 .theater-effect-colors { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .theater-effect-colors label { display: grid; gap: 4px; color: var(--sc-text-secondary); font-size: 11px; }
 .theater-effect-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 4px; }
+.theater-effect-panel-content.is-split { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); }
+.is-split > .theater-effect-filter { grid-area: 1 / 1; }
+.is-split > .theater-effect-add-row { grid-area: 2 / 1; }
+.is-split > .theater-effect-batch { grid-area: 3 / 1; }
+.is-split > .theater-effect-list { grid-area: 4 / 1; min-height: 0; border-bottom: 0; }
+.is-split > .theater-effect-filter, .is-split > .theater-effect-add-row, .is-split > .theater-effect-batch, .is-split > .theater-effect-list { border-right: 1px solid var(--theater-border); }
+.is-split > .theater-effect-filter { padding-bottom: 0; }
+.is-split > .theater-effect-editor, .is-split > .theater-effect-editor-empty { grid-area: 1 / 2 / -1 / 3; }
+.is-split > .theater-effect-editor { align-content: start; padding: 16px 20px 0; }
+.is-split .theater-effect-actions { position: sticky; bottom: 0; z-index: 1; flex-wrap: wrap; margin: 4px -20px 0; padding: 10px 20px; border-top: 1px solid var(--theater-border); background: var(--theater-panel-bg, var(--sc-bg-surface)); }
+.theater-effect-editor-empty { display: grid; place-items: center; padding: 32px; color: var(--sc-text-secondary); text-align: center; }
 </style>
