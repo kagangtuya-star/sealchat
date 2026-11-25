@@ -1,0 +1,364 @@
+/*
+ * CHANNEL API LAB · Windows 97
+ * SealChat 界面自定义包频道能力 API 测试主题。
+ * 仅用于 chat Surface。重点是测试面板，主题本身只做轻量 Win97 风格覆盖。
+ */
+
+:root[data-sc-surface='chat'] {
+  color-scheme: light;
+  --w97-face: #c0c0c0;
+  --w97-light: #ffffff;
+  --w97-mid: #dfdfdf;
+  --w97-shadow: #808080;
+  --w97-dark: #000000;
+  --w97-blue: #000080;
+  --w97-teal: #008080;
+  --w97-green: #008000;
+  --w97-red: #800000;
+  --w97-yellow: #ffff00;
+
+  --sc-bg-page: var(--w97-teal);
+  --sc-bg-surface: var(--w97-face);
+  --sc-bg-header: var(--w97-face);
+  --sc-bg-sidebar: var(--w97-face);
+  --sc-bg-input: #ffffff;
+  --sc-bg-elevated: var(--w97-face);
+  --sc-bg-layer: var(--w97-face);
+  --sc-bg-layer-strong: var(--w97-face);
+  --sc-bg-hover: #dcdcdc;
+  --sc-bg-active: #000080;
+  --sc-text-primary: #000000;
+  --sc-text-secondary: #404040;
+  --sc-fg-primary: #000000;
+  --sc-fg-muted: #404040;
+  --sc-border-mute: #808080;
+  --sc-border-strong: #000000;
+  --primary-color: #000080;
+  --primary-color-hover: #0000aa;
+  --sc-action-ribbon-hover-text: #ffffff;
+  --sc-font-family: "MS Sans Serif", Tahoma, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --sc-code-font: "Courier New", Consolas, monospace;
+
+  --chat-stage-bg: transparent;
+  --chat-ic-bg: #ffffff;
+  --chat-ooc-bg: #e8e8e8;
+  --chat-preview-bg: #ffffff;
+  --chat-text-primary: #000000;
+  --chat-text-secondary: #404040;
+  --chat-border-mute: #808080;
+  --chat-bubble-border: #808080;
+  --chat-ooc-border: #808080;
+  --chat-message-shadow: none;
+}
+
+:root[data-sc-surface='chat'] body {
+  background: var(--w97-teal);
+  font-family: var(--sc-font-family);
+}
+
+[data-sc-ui='header'] {
+  color: #ffffff !important;
+  background: linear-gradient(90deg, #000080, #1084d0) !important;
+  border: 2px solid;
+  border-color: var(--w97-light) var(--w97-shadow) var(--w97-shadow) var(--w97-light);
+  box-shadow: none !important;
+}
+
+[data-sc-ui='sidebar'],
+[data-sc-ui='composer'] {
+  background: var(--w97-face) !important;
+  border: 2px solid;
+  border-color: var(--w97-light) var(--w97-shadow) var(--w97-shadow) var(--w97-light);
+  box-shadow: none !important;
+}
+
+[data-sc-ui='message'] {
+  border-radius: 0 !important;
+  border: 1px solid var(--w97-shadow);
+  box-shadow: inset 1px 1px 0 var(--w97-light);
+}
+
+:root[data-sc-surface='chat'] .n-button,
+:root[data-sc-surface='chat'] .n-input,
+:root[data-sc-surface='chat'] .n-select {
+  border-radius: 0 !important;
+}
+
+.sc-channel-api-lab {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2147482500;
+  width: min(720px, calc(100vw - 28px));
+  max-height: min(760px, calc(100vh - 28px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #000000;
+  background: var(--w97-face, #c0c0c0);
+  border: 2px solid;
+  border-color: #ffffff #000000 #000000 #ffffff;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080,
+    4px 4px 0 rgba(0, 0, 0, 0.35);
+  font: 12px/1.35 "MS Sans Serif", Tahoma, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.sc-channel-api-lab.is-minimized .sc-api-lab__body,
+.sc-channel-api-lab.is-minimized .sc-api-lab__statusbar {
+  display: none;
+}
+
+.sc-api-lab__titlebar {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px 3px 6px;
+  color: #ffffff;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.sc-api-lab__titlebar-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-api-lab__titlebar button,
+.sc-api-lab__button {
+  appearance: none;
+  min-height: 22px;
+  padding: 2px 8px;
+  color: #000000;
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #404040 #404040 #ffffff;
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sc-api-lab__titlebar button {
+  width: 22px;
+  min-height: 18px;
+  padding: 0;
+  font-weight: 700;
+  line-height: 14px;
+}
+
+.sc-api-lab__titlebar button:active,
+.sc-api-lab__button:active {
+  border-color: #404040 #ffffff #ffffff #404040;
+  box-shadow: inset 1px 1px 0 #808080;
+  padding-top: 3px;
+  padding-left: 9px;
+}
+
+.sc-api-lab__titlebar button:active {
+  padding: 1px 0 0 1px;
+}
+
+.sc-api-lab__button:disabled {
+  color: #808080;
+  text-shadow: 1px 1px #ffffff;
+  cursor: default;
+}
+
+.sc-api-lab__body {
+  min-height: 0;
+  overflow: auto;
+  padding: 7px;
+  scrollbar-color: #808080 #c0c0c0;
+}
+
+.sc-api-lab__toolbar,
+.sc-api-lab__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sc-api-lab__toolbar {
+  margin-bottom: 7px;
+}
+
+.sc-api-lab__group {
+  margin: 0 0 8px;
+  padding: 7px;
+  border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080;
+}
+
+.sc-api-lab__group > legend {
+  padding: 0 4px;
+  font-weight: 700;
+}
+
+.sc-api-lab__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 7px;
+}
+
+.sc-api-lab__summary-box {
+  min-width: 0;
+  padding: 5px 7px;
+  background: #ffffff;
+  border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080;
+}
+
+.sc-api-lab__summary-label {
+  display: block;
+  color: #404040;
+  font-size: 10px;
+}
+
+.sc-api-lab__summary-value {
+  display: block;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-api-lab__caps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 10px;
+}
+
+.sc-api-lab__cap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 3px;
+  border-bottom: 1px dotted #808080;
+}
+
+.sc-api-lab__cap code {
+  overflow: hidden;
+  font-family: "Courier New", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-api-lab__badge {
+  min-width: 58px;
+  padding: 1px 4px;
+  text-align: center;
+  color: #ffffff;
+  background: #808080;
+  border: 1px solid #000000;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.sc-api-lab__badge.is-ok { background: #008000; }
+.sc-api-lab__badge.is-denied { background: #800000; }
+.sc-api-lab__badge.is-optional { color: #000000; background: #ffff00; }
+.sc-api-lab__badge.is-pending { color: #000000; background: #c0c0c0; }
+
+.sc-api-lab__input,
+.sc-api-lab__textarea,
+.sc-api-lab__file {
+  box-sizing: border-box;
+  min-height: 24px;
+  color: #000000;
+  background: #ffffff;
+  border: 2px solid;
+  border-color: #404040 #ffffff #ffffff #404040;
+  border-radius: 0;
+  font: inherit;
+}
+
+.sc-api-lab__input {
+  flex: 1 1 180px;
+  min-width: 120px;
+  padding: 2px 5px;
+}
+
+.sc-api-lab__textarea {
+  width: 100%;
+  min-height: 54px;
+  margin: 5px 0;
+  padding: 4px 5px;
+  resize: vertical;
+  font-family: "Courier New", Consolas, monospace;
+}
+
+.sc-api-lab__file {
+  flex: 1 1 240px;
+  min-width: 180px;
+  padding: 2px;
+}
+
+.sc-api-lab__output {
+  min-height: 150px;
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  padding: 6px;
+  color: #ffffff;
+  background: #000000;
+  border: 2px solid;
+  border-color: #404040 #ffffff #ffffff #404040;
+  font: 11px/1.4 "Courier New", Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sc-api-lab__hint {
+  margin: 4px 0;
+  color: #404040;
+}
+
+.sc-api-lab__danger {
+  color: #800000;
+  font-weight: 700;
+}
+
+.sc-api-lab__statusbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 3px;
+  padding: 3px;
+  border-top: 1px solid #808080;
+}
+
+.sc-api-lab__status {
+  min-width: 0;
+  padding: 2px 5px;
+  overflow: hidden;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #808080 #ffffff #ffffff #808080;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .sc-channel-api-lab {
+    right: 6px;
+    bottom: 6px;
+    width: calc(100vw - 12px);
+    max-height: calc(100vh - 12px);
+  }
+
+  .sc-api-lab__summary,
+  .sc-api-lab__caps {
+    grid-template-columns: 1fr;
+  }
+}
