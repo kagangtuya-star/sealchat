@@ -22,8 +22,10 @@ const props = withDefaults(defineProps<{
   worldId: string;
   channelId: string;
   compact?: boolean;
+  topInset?: number;
 }>(), {
   compact: false,
+  topInset: 0,
 });
 
 const emit = defineEmits<{
@@ -107,28 +109,30 @@ const viewportSize = () => {
 };
 
 const syncViewportSize = () => Object.assign(viewport, viewportSize());
+const topBoundary = computed(() => Math.min(props.topInset, Math.max(0, viewport.height - 1)));
 const compactScaleFor = (candidate: Pick<OverlayLayout, 'width' | 'height'>) => {
   if (!props.compact) return 1;
   return Math.min(
     1,
     Math.max(1, viewport.width - 8) / Math.max(1, candidate.width),
-    Math.max(1, viewport.height - 8) / Math.max(1, candidate.height),
+    Math.max(1, viewport.height - topBoundary.value - 8) / Math.max(1, candidate.height),
   );
 };
 
 const clampLayout = (candidate: OverlayLayout): OverlayLayout => {
   const viewportWidth = viewport.width;
   const viewportHeight = viewport.height;
+  const availableHeight = viewportHeight - topBoundary.value;
   const width = props.compact
     ? Math.max(240, Number(candidate.width) || 300)
     : clamp(Number(candidate.width) || 300, Math.min(240, viewportWidth), viewportWidth);
   const height = props.compact
     ? Math.max(180, Number(candidate.height) || 280)
-    : clamp(Number(candidate.height) || 280, Math.min(180, viewportHeight), viewportHeight);
+    : clamp(Number(candidate.height) || 280, Math.min(180, availableHeight), availableHeight);
   const scale = compactScaleFor({ width, height });
   return {
     x: clamp(Number(candidate.x) || 0, 0, Math.max(0, viewportWidth - width * scale)),
-    y: clamp(Number(candidate.y) || 0, 0, Math.max(0, viewportHeight - height * scale)),
+    y: clamp(Number(candidate.y) || 0, topBoundary.value, Math.max(topBoundary.value, viewportHeight - height * scale)),
     width,
     height,
   };
@@ -183,7 +187,7 @@ const restoreLayout = () => {
       if (['left', 'right', 'bottom'].includes(value.minimizedEdge)) {
         minimizedEdge.value = value.minimizedEdge;
       } else if (value.minimized === true && value.minimizedEdge === 'top') {
-        setLayout({ ...layout, y: 0 });
+        setLayout({ ...layout, y: topBoundary.value });
         persistLayout();
       }
       return;
@@ -245,14 +249,14 @@ const minimize = () => {
   const scale = compactScaleFor(layout);
   const visualWidth = layout.width * scale;
   const visualHeight = layout.height * scale;
-  const topDistance = layout.y;
+  const topDistance = layout.y - topBoundary.value;
   const distances: Array<[MinimizedEdge, number]> = [
     ['left', layout.x],
     ['right', viewportWidth - (layout.x + visualWidth)],
     ['bottom', viewportHeight - (layout.y + visualHeight)],
   ];
   if (topDistance <= Math.min(...distances.map(([, distance]) => distance))) {
-    setLayout({ ...layout, y: 0 });
+    setLayout({ ...layout, y: topBoundary.value });
     minimized.value = false;
     persistLayout();
     return;
@@ -392,9 +396,10 @@ const minimizedLayout = (): OverlayLayout => {
   const viewportHeight = Math.max(1, parent?.clientHeight || window.innerHeight || 1);
   const tabWidth = 16;
   const tabLength = 54;
-  if (minimizedEdge.value === 'right') return { x: viewportWidth - tabWidth, y: clamp(layout.y, 0, Math.max(0, viewportHeight - tabLength)), width: tabWidth, height: tabLength };
+  const y = clamp(layout.y, topBoundary.value, Math.max(topBoundary.value, viewportHeight - tabLength));
+  if (minimizedEdge.value === 'right') return { x: viewportWidth - tabWidth, y, width: tabWidth, height: tabLength };
   if (minimizedEdge.value === 'bottom') return { x: clamp(layout.x, 0, Math.max(0, viewportWidth - tabLength)), y: viewportHeight - tabWidth, width: tabLength, height: tabWidth };
-  return { x: 0, y: clamp(layout.y, 0, Math.max(0, viewportHeight - tabLength)), width: tabWidth, height: tabLength };
+  return { x: 0, y, width: tabWidth, height: tabLength };
 };
 
 const panelScale = computed(() => minimized.value ? 1 : compactScaleFor(layout));
@@ -414,6 +419,8 @@ const onViewportResize = () => {
   syncViewportSize();
   setLayout({ ...layout });
 };
+
+watch(() => props.topInset, onViewportResize);
 
 watch(() => [props.worldId, props.channelId], async () => {
   overlayReady.value = false;

@@ -10401,6 +10401,7 @@ onBeforeUnmount(() => {
           :world-id="worldId"
           :channel-id="channelId"
           :compact="props.pipCompact === true"
+          :top-inset="props.presentationOnly ? 0 : (props.pipCompact ? 32 : 46) + (canEditAllObjects && componentActionsExpanded && !props.pipMinimal ? (props.pipCompact ? 32 : 40) : 0)"
           @open-character-card="emit('openCharacterCard', $event)"
         />
         <TheaterDialogueOverlay
