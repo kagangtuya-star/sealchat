@@ -208,6 +208,10 @@ html:has(> body.log-design)::-webkit-scrollbar-button { display: none; }
 .log-canvas-dark body.log-design { background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px); }
 .log-canvas-dark .log-page { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 8px 28px rgba(0, 0, 0, 0.45); }
 .log-design .log-node[data-log-kind="message"], .log-design .log-node[data-log-kind="element"] { cursor: default; position: relative; border-radius: 3px; }
+/* 紧凑消息的快捷条可能越过节点边缘：悬停节点优先于相邻选中/聚焦节点，避免误点。 */
+.log-design .log-node { isolation: isolate; }
+.log-design .log-node:focus-within { z-index: 1; }
+.log-design .log-node:hover { z-index: 2; }
 .log-design .log-node:hover { box-shadow: inset 0 0 0 1px rgba(47, 111, 222, 0.35); }
 .log-design .log-node.log-selected { box-shadow: inset 0 0 0 1.5px var(--log-selection), inset 3px 0 0 var(--log-selection); background: rgba(47, 111, 222, 0.06); }
 .log-design .log-node.log-flash { animation: log-flash 1.2s ease-out 1; }

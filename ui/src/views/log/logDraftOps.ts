@@ -37,6 +37,17 @@ export const nextOrderAt = (draft: LogDraft, anchor: LogAnchor) => {
   return max + 1;
 };
 
+/** 消息边缘插入紧贴消息；章节端点保持普通追加，只重编号目标消息锚点。 */
+export const insertElement = (draft: LogDraft, element: LogElement) => {
+  if (element.anchor.kind === 'message') {
+    const peers = draft.elements.filter((e) => sameAnchor(e.anchor, element.anchor)).sort((a, b) => a.order - b.order);
+    if (element.anchor.side === 'after') peers.unshift(element);
+    else peers.push(element);
+    peers.forEach((e, order) => { e.order = order; });
+  }
+  draft.elements.push(element);
+};
+
 export const elementAvailability = (type: LogElementType, pkg: LogStylePackage | null): { templateId: string | null; reason: string } => {
   if (!pkg) return { templateId: null, reason: '样式包尚未加载' };
   const ids = templatesForElementType(type, pkg.templates, pkg.settingsSchema);
