@@ -2968,6 +2968,7 @@ const sceneMorphTextCameras = new Map<string, HTMLDivElement>()
 let drawingDraftRoot: Konva.Group | null = null
 let pointerTraceRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
+const stageTransformActive = ref(false)
 let selectionRect: Konva.Rect | null = null
 let selectionGroupHitArea: Konva.Rect | null = null
 let quickDeleteOutline: Konva.Rect | null = null
@@ -5139,7 +5140,19 @@ const selectObject = (objectId: string | null, additive = false) => {
   nextTick(updateTransformer)
 }
 
+const stopStageTransform = () => transformer?.stopTransform()
+const finishReleasedMouseTransform = (event: MouseEvent) => {
+  // A mouseup outside this window can be missed. Finish before Konva handles this move.
+  if (!(event.buttons & 1)) stopStageTransform()
+}
+const handleStageVisibilityChange = () => {
+  if (document.hidden) stopStageTransform()
+}
 const handleTheaterWindowBlur = () => {
+  if (transformer?.isTransforming()) {
+    stopStageTransform()
+    return
+  }
   if (iframeInteractionDisabled.value) return
   const activeElement = document.activeElement
   if (!(activeElement instanceof HTMLIFrameElement)) return
@@ -9364,7 +9377,9 @@ onMounted(() => {
       ? snapStageResizeBox(newBox, gridResizeSession)
       : newBox,
   })
-  transformer.on('transformstart', () => {
+  transformer.on('transformstart', ({ evt }) => {
+    stageTransformActive.value = true
+    if (evt.type === 'mousedown') window.addEventListener('mousemove', finishReleasedMouseTransform, true)
     beginGridResize()
     if (!isBatchSelection.value || batchMoveBlocked.value) return
     const rootIds = [...selectedMovementRootIds()]
@@ -9380,6 +9395,8 @@ onMounted(() => {
     selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
   })
   transformer.on('transformend', () => {
+    stageTransformActive.value = false
+    window.removeEventListener('mousemove', finishReleasedMouseTransform, true)
     finishGridResize()
     const rootIds = batchTransformRootIds
     batchTransformRootIds = null
@@ -9546,6 +9563,8 @@ onMounted(() => {
   window.addEventListener('pointerup', stopPanelDrag)
   window.addEventListener('pointercancel', stopPanelDrag)
   window.addEventListener('blur', handleTheaterWindowBlur)
+  window.addEventListener('pointercancel', stopStageTransform, true)
+  document.addEventListener('visibilitychange', handleStageVisibilityChange)
   window.addEventListener('keydown', handleStageShortcut)
   if (canManageResources.value) void fetchTheaterAudioAssets()
 })
@@ -9782,6 +9801,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', stopPanelDrag)
   window.removeEventListener('pointercancel', stopPanelDrag)
   window.removeEventListener('blur', handleTheaterWindowBlur)
+  window.removeEventListener('pointercancel', stopStageTransform, true)
+  window.removeEventListener('mousemove', finishReleasedMouseTransform, true)
+  document.removeEventListener('visibilitychange', handleStageVisibilityChange)
   window.removeEventListener('keydown', handleStageShortcut)
   document.removeEventListener('pointerdown', unlockTheaterAudio, true)
   document.removeEventListener('touchstart', unlockTheaterAudio, true)
@@ -10283,6 +10305,7 @@ onBeforeUnmount(() => {
       <div
         ref="viewportRef"
         class="theater-stage-viewport"
+        :data-transforming="stageTransformActive || undefined"
         :class="{ 'is-viewing': props.presentationOnly || viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive, 'is-iframe-interaction-disabled': props.presentationOnly || iframeInteractionDisabled }"
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
@@ -12128,6 +12151,7 @@ onBeforeUnmount(() => {
 .theater-surface-view-controls.is-expanded { padding: 2px 4px; background: color-mix(in srgb, var(--theater-panel) 75%, transparent); }
 .theater-surface-view-toggle { flex: 0 0 auto; }
 .theater-surface-view-actions { display: flex; align-items: center; gap: 2px; }
+.theater-stage-viewport[data-transforming] :deep(iframe) { pointer-events: none !important; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object),
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object__frame) { pointer-events: none !important; }
 .theater-stage-viewport.is-iframe-interaction-disabled :deep(.theater-iframe-visual-object *) { pointer-events: none !important; }
