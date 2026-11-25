@@ -95,3 +95,4 @@ ui/src/features/tts/voice-catalog.test.mjs
 api/channel_extension_test.go
 /doc/ui-customization-package/theme demo
 /.playwright-cli
+/doc/examples
