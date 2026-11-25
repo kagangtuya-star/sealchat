@@ -19,6 +19,7 @@ type characterSnapshotUpsertRequest struct {
 	SourceType      string                         `json:"sourceType"`
 	SourceCardID    string                         `json:"sourceCardId"`
 	SourceUpdatedAt int64                          `json:"sourceUpdatedAt"`
+	CardAction      string                         `json:"cardAction"`
 	Data            protocol.CharacterSnapshotData `json:"data"`
 }
 
@@ -81,7 +82,10 @@ func apiCharacterSnapshotUpsert(ctx *ChatContext, data *characterSnapshotUpsertR
 	if ctx.IsReadOnly() {
 		return nil, errors.New("无权操作")
 	}
-	result, err := service.CharacterSnapshotUpsert(data.ChannelID, data.IdentityID, ctx.User.ID, data.SourceType, data.SourceCardID, data.SourceUpdatedAt, data.Data)
+	if data == nil {
+		return nil, errors.New("缺少人物卡快照")
+	}
+	result, err := service.CharacterSnapshotUpsert(data.ChannelID, data.IdentityID, ctx.User.ID, data.SourceType, data.SourceCardID, data.SourceUpdatedAt, data.Data, service.CharacterSnapshotWriteOptions{CardAction: data.CardAction})
 	if err != nil {
 		return nil, err
 	}

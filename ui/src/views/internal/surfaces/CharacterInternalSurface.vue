@@ -169,7 +169,7 @@ watch(
         .then(() => cardStore.loadCards(channelId));
       await characterSurfaceLoadQueue;
       if (epoch !== taskEpoch) return;
-      const card = cardStore.cards.find(item => item.id === resourceId);
+      const card = cardStore.getCardsByChannel(channelId).find(item => item.id === resourceId);
       if (!card) {
         const snapshot = await loadSnapshotByResourceId(channelId, resourceId);
         if (epoch !== taskEpoch) return;
@@ -186,7 +186,7 @@ watch(
           restoreContext = {
             channelId,
             cardId: previousCardId,
-            cardName: cardStore.getCardById(previousCardId)?.name || '',
+            cardName: cardStore.getCardById(previousCardId, channelId)?.name || '',
           };
         }
         const switched = await cardStore.tagCard(channelId, undefined, card.id);

@@ -3597,7 +3597,7 @@ const quickToolOptionsFor = (tab: QuickToolTab): QuickToolOption[] => {
     url: quickToolUrl('character', `snapshot:${props.channelId}:${item.identityId}`),
   }))
   const snapshotCardIds = new Set(snapshotItems.map((item) => item.sourceCardId).filter(Boolean))
-  const cards = characterCardStore.cards
+  const cards = characterCardStore.getCardsByChannel(props.channelId)
     .filter((card) => !snapshotCardIds.has(card.id))
     .map((card) => ({
       id: card.id,

@@ -28,11 +28,11 @@ const isCurrentChatContext = (worldId: string, channelId: string) => (
 );
 
 const openReturnedCharacter = async (resourceId: string, channelId: string, worldId: string) => {
-  let card = characterCardStore.cards.find(item => item.id === resourceId);
+  let card = characterCardStore.getCardsByChannel(channelId).find(item => item.id === resourceId);
   if (!card) {
     await characterCardStore.loadCards(channelId);
     if (!isCurrentChatContext(worldId, channelId)) return '';
-    card = characterCardStore.cards.find(item => item.id === resourceId);
+    card = characterCardStore.getCardsByChannel(channelId).find(item => item.id === resourceId);
   }
   if (card) {
     return openCharacterSheetRuntime({

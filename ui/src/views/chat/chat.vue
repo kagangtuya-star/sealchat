@@ -12210,7 +12210,7 @@ const handleAvatarCharacterCardOpen = async (payload: AvatarCharacterCardOpenPay
         base: resolveInternalSurfaceLinkBase(utils.config),
       }),
       title: snapshot?.data.card?.name
-        || characterCardStore.getCardById(resourceId)?.name
+        || characterCardStore.getCardById(resourceId, channelId)?.name
         || '人物卡',
       presentation: avatarUrl ? { avatarUrl } : undefined,
     };

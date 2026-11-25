@@ -2136,7 +2136,7 @@ const restoreBoundCardAfterSheetClose = async (channelId: string) => {
   try {
     if (boundCardId && cardStore.getActiveCardId(channelId) !== boundCardId) {
       await cardStore.tagCard(channelId, undefined, boundCardId);
-      const boundCardName = String(cardStore.getCardById(boundCardId)?.name || '').trim();
+      const boundCardName = String(cardStore.getCardById(boundCardId, channelId)?.name || '').trim();
       if (boundCardName) {
         await cardStore.syncBotNicknameForCard(channelId, boundCardName, {
           reason: 'character-sheet-restore-bound-card',

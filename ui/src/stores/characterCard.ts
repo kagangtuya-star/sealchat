@@ -188,7 +188,13 @@ export const validateCharacterCardName = (value: string) => {
 
 export const useCharacterCardStore = defineStore('characterCard', () => {
   // List of user's character cards
-  const cardList = ref<CharacterCard[]>([]);
+  const cardListsByChannel = ref<Record<string, CharacterCard[]>>({});
+  const cardListRequests = new Map<string, number>();
+  const cardListLoading = ref<Record<string, boolean>>({});
+  const activeCardRequests = new Map<string, number>();
+  const activeCardIdentities = new Map<string, string | undefined>();
+  const activeCardLoadState = ref<Record<string, 'idle' | 'loading' | 'ready' | 'error'>>({});
+  let cardSession = 0;
   // Active card data per channel (from character.get)
   const activeCards = ref<Record<string, CharacterCardData>>({});
   // Badge data broadcasted by identities in channel
@@ -209,7 +215,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const characterApiHealthySessionByChannel = ref<Record<string, boolean>>({});
 
   const panelVisible = ref(false);
-  const loading = ref(false);
 
   const chatStore = useChatStore();
   const userStore = useUserStore();
@@ -218,6 +223,12 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const sheetStore = useCharacterSheetStore();
   const avatarStore = useCharacterCardAvatarStore();
   const snapshotStore = useChannelCharacterSnapshotStore();
+  const cardList = computed({
+    get: () => cardListsByChannel.value[chatStore.curChannel?.id || ''] || [],
+    set: (cards: CharacterCard[]) => { cardListsByChannel.value[chatStore.curChannel?.id || ''] = cards; },
+  });
+  const loading = computed(() => !!cardListLoading.value[chatStore.curChannel?.id || '']);
+  const getCardsByChannel = (channelId: string) => cardListsByChannel.value[channelId] || [];
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
   let loadedNarratorSettingsKey = '';
@@ -884,6 +895,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     chatEvent.on('character-online-card-requested' as any, handleOnlineCardRequest);
     chatEvent.on('character-online-card-updated' as any, applyOnlineCardEvent);
     chatEvent.on('character-online-card-snapshot' as any, applyOnlineCardSnapshot);
+    chatEvent.on('connected', () => {
+      activeCardIdentities.clear();
+      activeCardLoadState.value = {};
+    });
     chatEvent.on('channel-identity-updated' as any, (payload?: { channelId?: string; removedId?: string; replacedId?: string }) => {
       const channelId = String(payload?.channelId || '').trim();
       const removedId = String(payload?.removedId || payload?.replacedId || '').trim();
@@ -920,11 +935,15 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       return;
     }
 
-    // Ensure WebSocket is connected before sending API request
-    await chatStore.ensureConnectionReady();
-
-    loading.value = true;
+    const session = cardSession;
+    const request = (cardListRequests.get(resolvedChannelId) || 0) + 1;
+    cardListRequests.set(resolvedChannelId, request);
+    const isCurrent = () => session === cardSession && userId === getUserId()
+      && cardListRequests.get(resolvedChannelId) === request;
+    cardListLoading.value[resolvedChannelId] = true;
     try {
+      await chatStore.ensureConnectionReady();
+      if (!isCurrent()) return;
       if (isDebugEnabled()) {
         console.log('[CharacterCard] Sending character.list request for user:', userId);
       }
@@ -933,22 +952,24 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         payload.group_id = resolvedChannelId;
       }
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[]; error?: string } }>('character.list', payload);
+      if (!isCurrent()) return;
       maybeDisableFromResponse(resolvedChannelId, resp);
       if (isDebugEnabled()) {
         console.log('[CharacterCard] character.list response:', resp);
       }
       if (resp?.data?.ok && Array.isArray(resp.data.list)) {
-        cardList.value = resp.data.list.map(toUICard);
+        cardListsByChannel.value[resolvedChannelId] = resp.data.list.map(toUICard);
       } else if (resp?.data?.ok === false && throwOnError && !isBotCharacterDisabled(resolvedChannelId)) {
         throw new Error(resp?.data?.error || 'INTERNAL_ERROR');
       }
     } catch (e) {
+      if (!isCurrent()) return;
       if (throwOnError) {
         throw e;
       }
       console.warn('Failed to load character card list', e);
     } finally {
-      loading.value = false;
+      if (isCurrent()) cardListLoading.value[resolvedChannelId] = false;
     }
   };
 
@@ -970,31 +991,47 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       return null;
     }
 
-    await chatStore.ensureConnectionReady();
-
+    const session = cardSession;
+    const request = (activeCardRequests.get(channelId) || 0) + 1;
+    activeCardRequests.set(channelId, request);
+    const identityId = chatStore.getActiveIdentity?.(channelId)?.id;
+    const worldId = chatStore.findChannelById(channelId)?.worldId || chatStore.currentWorldId || undefined;
+    const isCurrent = () => session === cardSession && userId === getUserId()
+      && activeCardRequests.get(channelId) === request;
+    activeCardLoadState.value[channelId] = 'loading';
     try {
+      await chatStore.ensureConnectionReady();
+      if (!isCurrent()) return null;
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
         group_id: channelId,
         user_id: userId,
       });
+      if (!isCurrent()) return null;
       maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
-        await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
+        await templateStore.ensureTemplatesLoaded({ worldId });
         await templateStore.ensureBindingsLoaded(channelId);
+        if (!isCurrent()) return null;
+        if (identityId !== chatStore.getActiveIdentity?.(channelId)?.id) {
+          activeCardLoadState.value[channelId] = 'idle';
+          snapshotStore.scheduleLocalSync(channelId, 0);
+          return null;
+        }
+        const channelCards = getCardsByChannel(channelId);
         const matchedActiveCardId = resolveCardIdByNameAndType(
-          cardList.value,
+          channelCards,
           resp.data.name,
           resp.data.type,
         );
         const previousActive = activeCards.value[channelId];
         const previousActiveCardId = previousActive?.id
           && previousActive.name === (resp.data.name || '')
-          && cardList.value.some(card => card.id === previousActive.id)
+          && channelCards.some(card => card.id === previousActive.id)
           ? previousActive.id
           : '';
         const activeCardId = String(resp.data.id || '').trim() || matchedActiveCardId || previousActiveCardId;
         if (activeCardId && resp.data.name) {
-          const listCard = cardList.value.find(card => card.id === activeCardId);
+          const listCard = channelCards.find(card => card.id === activeCardId);
           if (listCard && listCard.name !== resp.data.name) listCard.name = resp.data.name;
         }
         const resolvedTemplate = activeCardId
@@ -1015,17 +1052,23 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           avatarUrl: typeof rawAvatar === 'string' ? rawAvatar.trim() : undefined,
           templateText: resolvedTemplate || undefined,
         };
-        activeCards.value[channelId] = cardData;
-        void broadcastActiveBadge(channelId);
+        const hasCard = !!(cardData.id || cardData.name || cardData.type || Object.keys(cardData.attrs).length);
+        if (hasCard) activeCards.value[channelId] = cardData;
+        else delete activeCards.value[channelId];
+        activeCardLoadState.value[channelId] = 'ready';
+        activeCardIdentities.set(channelId, identityId);
         void broadcastOnlineActiveCard(channelId).catch((error) => {
           console.warn('[CharacterCard] Failed to update online active card', error);
         });
-        return cardData;
+        return hasCard ? cardData : null;
       }
+      activeCardLoadState.value[channelId] = 'error';
       if (resp?.data?.ok === false && !isBotCharacterDisabled(channelId) && throwOnError) {
         throw new Error(resp?.data?.error || 'INTERNAL_ERROR');
       }
     } catch (e) {
+      if (!isCurrent()) return null;
+      activeCardLoadState.value[channelId] = 'error';
       if (throwOnError) {
         throw e;
       }
@@ -1238,7 +1281,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     maybeDisableFromResponse(channelId, resp);
     if (resp?.data?.ok) {
       if (attrs === undefined && renameCardId) {
-        const card = cardList.value.find(item => item.id === renameCardId);
+        const card = getCardsByChannel(channelId).find(item => item.id === renameCardId);
         if (card) card.name = name;
         const active = activeCards.value[channelId];
         if (active?.id === renameCardId) {
@@ -1434,7 +1477,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         activeCards.value = cleanup.activeCards;
         persistIdentityBindings();
         persistBadgeCache();
-        await loadCardList(resolvedChannelId);
+        await loadCards(resolvedChannelId);
         return resp.data;
       } else if (resp?.data?.error) {
         throw new Error(resp.data.error);
@@ -1450,8 +1493,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const cards = computed(() => cardList.value);
 
   // Get card by ID from list
-  const getCardById = (cardId: string) => {
-    return cardList.value.find(c => c.id === cardId);
+  const getCardById = (cardId: string, channelId = chatStore.curChannel?.id || '') => {
+    return getCardsByChannel(channelId).find(c => c.id === cardId);
   };
 
   // Get card by name from list
@@ -1464,7 +1507,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const active = activeCards.value[channelId];
     if (!active) return '';
     if (active.id) return active.id;
-    return resolveCardIdByNameAndType(cardList.value, active.name, active.type);
+    return resolveCardIdByNameAndType(getCardsByChannel(channelId), active.name, active.type);
   };
 
   const canRenameActiveCard = (channelId: string, cardId: string) => (
@@ -1498,7 +1541,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       await loadCardList(channelId, { throwOnError: true });
       card = await getActiveCard(channelId, { throwOnError: true });
     }
-    const id = card && resolveCardIdByNameAndTypeStrict(cardList.value, card.name, card.type, card.id);
+    const id = card && resolveCardIdByNameAndTypeStrict(getCardsByChannel(channelId), card.name, card.type, card.id);
     if (!id || (expectedCardId && id !== expectedCardId)) throw new Error('CARD_CHANGED');
     return { card, id } as { card: CharacterCardData; id: string };
   };
@@ -1526,9 +1569,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     return fresh.card;
   };
-
-  // Backwards compatibility: getCardsByChannel returns all cards (SealDice doesn't filter by channel)
-  const getCardsByChannel = (_channelId: string) => cardList.value;
 
   // Backwards compatibility: getBoundCardId
   const getBoundCardId = (identityId: string, sharedIdentityId?: string) => {
@@ -1642,10 +1682,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     let boundCardName = '';
     const boundCardId = identityBindings.value[getIdentityBindingKey(channelId, identityId)];
     if (boundCardId) {
-      boundCardName = String(getCardById(boundCardId)?.name || '').trim();
+      boundCardName = String(getCardById(boundCardId, channelId)?.name || '').trim();
       if (!boundCardName) {
         await loadCardList(channelId);
-        boundCardName = String(getCardById(boundCardId)?.name || '').trim();
+        boundCardName = String(getCardById(boundCardId, channelId)?.name || '').trim();
       }
     }
     const targetName = resolveBotNicknameSyncName({
@@ -1848,16 +1888,33 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   watch(
     () => userStore.info?.id,
     () => {
+      cardSession += 1;
+      cardListsByChannel.value = {};
+      cardListLoading.value = {};
+      activeCards.value = {};
+      activeCardLoadState.value = {};
+      cardListRequests.clear();
+      activeCardRequests.clear();
+      activeCardIdentities.clear();
       loadedBindingsKey = '';
       loadedNarratorSettingsKey = '';
       loadIdentityBindings();
       ensureNarratorSettingsLoaded();
     },
-    { immediate: true },
+    { immediate: true, flush: 'sync' },
   );
 
   snapshotStore.setLocalSnapshotProvider(async (channelId) => {
+    if (chatStore.isObserver || chatStore.observerMode || chatStore.observerWorldId) return undefined;
     if (!displayStore.settings.characterCardSnapshotUploadEnabled) return null;
+    const session = cardSession;
+    const needsCard = () => displayStore.settings.onlineCharacterCardsEnabled || displayStore.settings.characterCardBadgeEnabled;
+    const isReady = () => activeCardLoadState.value[channelId] === 'ready'
+      && activeCardIdentities.get(channelId) === chatStore.getActiveIdentity(channelId)?.id;
+    if (needsCard() && !isReady()) {
+      if (activeCardLoadState.value[channelId] !== 'loading') void getActiveCard(channelId);
+      return undefined;
+    }
     try {
       await avatarStore.ensureBindingsLoaded(channelId);
     } catch (error) {
@@ -1869,8 +1926,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     } catch (error) {
       console.warn('[CharacterCard] Failed to load character templates for snapshot', error);
     }
+    if (session !== cardSession) return undefined;
+    if (!displayStore.settings.characterCardSnapshotUploadEnabled) return null;
+    if (needsCard() && !isReady()) return undefined;
     const identity = chatStore.getActiveIdentity(channelId);
-    if (!identity?.id) return null;
+    if (!identity?.id) return undefined;
     const isOocIdentity = chatStore.getIdentityIcOocMode(channelId, identity.id) === 'ooc';
     const ownUserId = String(identity.userId || getUserId());
     const retainedIdentity = isOocIdentity
@@ -1891,7 +1951,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const platformTemplateRef = templateBinding?.mode === 'managed' && isPlatformCharacterCardTemplateRef(templateBinding.templateId)
       ? templateBinding.templateId
       : '';
-    const cardMeta = cardId ? cardList.value.find(card => card.id === cardId) : undefined;
+    const cardMeta = cardId ? getCardsByChannel(channelId).find(card => card.id === cardId) : undefined;
     const cardAvatarAttachmentId = cardId
       ? avatarStore.resolveCardAvatar(cardId, channelId, active?.avatarUrl)
       : '';
@@ -1946,6 +2006,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     cardList,
     cards,
     activeCards,
+    activeCardLoadState,
     badgeByIdentity,
     onlineCardsByChannel,
     onlineCardsLoadingByChannel,

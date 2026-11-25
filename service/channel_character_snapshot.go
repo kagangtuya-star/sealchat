@@ -36,6 +36,11 @@ type CharacterSnapshotWriteResult struct {
 	Changed bool                            `json:"changed"`
 }
 
+type CharacterSnapshotWriteOptions struct {
+	// Empty retains the legacy full-replacement contract. New clients use an explicit action.
+	CardAction string
+}
+
 type CharacterSnapshotSettingsUpdateInput struct {
 	BadgeTemplate              string
 	TheaterOverlayTemplateMode string
@@ -147,7 +152,7 @@ func CharacterSnapshotProbeList(channelID string) ([]*protocol.CharacterSnapshot
 	return items, nil
 }
 
-func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceCardID string, sourceUpdatedAt int64, data protocol.CharacterSnapshotData) (*CharacterSnapshotWriteResult, error) {
+func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceCardID string, sourceUpdatedAt int64, data protocol.CharacterSnapshotData, options ...CharacterSnapshotWriteOptions) (*CharacterSnapshotWriteResult, error) {
 	channelID = strings.TrimSpace(channelID)
 	identityID = strings.TrimSpace(identityID)
 	actorID = strings.TrimSpace(actorID)
@@ -163,6 +168,23 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 	}
 	if identity.ChannelID != channelID || identity.UserID != actorID {
 		return nil, errors.New("不能同步他人的频道身份")
+	}
+	cardAction := ""
+	if len(options) > 0 {
+		cardAction = strings.TrimSpace(options[0].CardAction)
+	}
+	switch cardAction {
+	case "", "preserve":
+	case "replace":
+		if data.Card == nil {
+			return nil, errors.New("发布人物卡快照时缺少card；加载未完成时应保留快照")
+		}
+	case "clear":
+		if data.Card != nil {
+			return nil, errors.New("清除人物卡快照时不能包含card")
+		}
+	default:
+		return nil, errors.New("人物卡快照操作无效")
 	}
 	data.Identity.ID = identityID
 	data.Identity.UserID = actorID
@@ -253,6 +275,13 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return findErr
 		}
+		// An unresolved client must not overwrite payloads, reactivate identities or deactivate siblings.
+		if cardAction == "preserve" {
+			if findErr == nil && row.IsActive {
+				saved = &row
+			}
+			return nil
+		}
 		if findErr == nil && row.IsActive && row.ContentHash == contentHash {
 			deactivated := tx.Model(&model.ChannelCharacterSnapshotModel{}).
 				Where("channel_id = ? AND user_id = ? AND identity_id <> ? AND is_active = ?", channelID, actorID, identityID, true).
@@ -325,6 +354,9 @@ func CharacterSnapshotUpsert(channelID, identityID, actorID, sourceType, sourceC
 	})
 	if err != nil {
 		return nil, err
+	}
+	if saved == nil {
+		return &CharacterSnapshotWriteResult{Changed: false}, nil
 	}
 	item, err := characterSnapshotModelToProtocol(saved)
 	if err != nil {

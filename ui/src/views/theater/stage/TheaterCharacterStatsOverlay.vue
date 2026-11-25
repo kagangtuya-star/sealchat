@@ -350,7 +350,7 @@ const resolvedCharacters = computed(() => snapshotItems.value
 
 const reconcileCharacters = () => {
   if (!overlayReady.value) return;
-  const activeUserIds = new Set(snapshotItems.value.map(item => String(item.userId || '').trim()).filter(Boolean));
+  const activeUserIds = new Set(snapshotItems.value.filter(item => !!item.data.card).map(item => String(item.userId || '').trim()).filter(Boolean));
   const next = { ...stableCharactersByUser.value };
   const latestByUser = new Map<string, ResolvedCharacter>();
   resolvedCharacters.value.forEach((character) => {

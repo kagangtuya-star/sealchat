@@ -31,7 +31,7 @@ const loadCharacters = async (context: WorkbenchResourceContext): Promise<Workbe
     if (cards.isBotCharacterDisabled(context.channelId)) {
       throw new Error(cards.getCharacterApiDisabledReason(context.channelId) || '当前频道的人物卡 API 不可用')
     }
-    return cards.cardList.map(card => ({ value: card.id, label: label(card.name, card.id), hint: '仅自己可见' }))
+    return cards.getCardsByChannel(context.channelId).map(card => ({ value: card.id, label: label(card.name, card.id), hint: '仅自己可见' }))
   }
 
   const snapshots = useChannelCharacterSnapshotStore()
