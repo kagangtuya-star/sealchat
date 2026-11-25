@@ -29,6 +29,7 @@
 
 ## Agent、MCP 与自动化
 
+- [Agent Skills 目录](skills/README.md)：面向 AI Coding Agent 的官方技能包，覆盖 LOG 排版样式主题、小剧场幕布房间与对话框、原创 UI 自定义包的设计与校验工作流。
 - [平台 MCP 接入](mcp.md)：平台级 MCP、Personal API Key、OAuth、scopes、鉴权和工具访问约束。
 - [Theater MCP](theater-mcp.md)：通过 MCP 读取、设计和控制 World Theater，以及频道嵌入和相关自动化能力。
 - [SealChat Agent 爬取协议](SEALCHAT_AGENT_CRAWL_GUIDE_COMPACT.md)：只读 Agent 访问链接的 manifest、消息、计数、游标和安全约束。

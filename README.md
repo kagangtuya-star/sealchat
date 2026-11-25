@@ -75,6 +75,7 @@ SealChat 以“世界 → 频道 → 消息”组织长期跑团、文字演绎�
 - Internal Surface：让人物卡、便签、线索和频道组件以浮窗、分屏或独立窗口运行，并可与小剧场流转
 - SealChat Bridge 与 Webhook API：嵌入完整频道页，或与外部系统同步消息
 - MCP：通过个人 API Key 和细粒度 scopes 向外部 Agent 提供受控数据读取、写入与综合搜索能力
+- Agent Skills：提供面向 AI Coding Agent 的官方技能包，辅助设计原创 UI 主题包、小剧场房间与 LOG 排版样式
 - Bot、自动化以及频道摘要主动推送或拉取
 
 ### 自托管
@@ -110,6 +111,7 @@ docker compose up -d
 | 从源码构建或参与开发 | [开发指南](doc/development.md) |
 | 开发频道嵌入应用 | [Channel Embed API](doc/channel-embed-api-developer-guide.md) |
 | 开发角色卡或 UI/LOG 扩展 | [开发与扩展文档索引](doc/README.md#扩展与二次开发) |
+| 用 AI Agent 设计 UI 主题、小剧场或 LOG 样式 | [Agent Skills 目录](doc/skills/README.md) |
 | 通过 MCP / Agent 接入 SealChat | [Agent、MCP 与自动化文档](doc/README.md#agentmcp-与自动化) |
 | 查阅架构设计、TTS 与其他专题资料 | [完整文档索引](doc/README.md) |
 
