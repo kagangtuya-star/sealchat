@@ -23,7 +23,6 @@ import {
   Plus,
   Printer,
   Rocket,
-  Search,
   Stack2,
   Users,
   Writing,
@@ -63,7 +62,7 @@ import { useLogMessageWindow } from '../composables/useLogMessageWindow';
 import { useLogAssets } from '../composables/useLogAssets';
 import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
-import { createElement, downloadJson, elementAvailability, nextOrderAt, rebindStyle, sameAnchor, setMessageTemplateOverrides } from '../logDraftOps';
+import { createElement, downloadJson, elementAvailability, insertElement, nextOrderAt, rebindStyle, sameAnchor, setMessageTemplateOverrides } from '../logDraftOps';
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
 import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
 import { planBatchStep } from '../logBatchOps';
@@ -86,6 +85,7 @@ import LogInsertElementDialog from './LogInsertElementDialog.vue';
 import LogStandardExportDialog from './LogStandardExportDialog.vue';
 import LogPdfExportDialog from './LogPdfExportDialog.vue';
 import LogPrintDialog from './LogPrintDialog.vue';
+import LogFindReplace from './LogFindReplace.vue';
 // 批量校对与 zhlint 都按需加载，不进入排版器的首屏同步依赖。
 const LogProofreadPanel = defineAsyncComponent(() => import('./LogProofreadPanel.vue'));
 
@@ -119,6 +119,12 @@ const currentSection = computed(() => sections.value.find((s) => s.id === sectio
 const chapters = computed(() => chapterViews(draft.value));
 const currentChapterIndex = computed(() => chapters.value.findIndex((c) => c.sections.some((s) => s.id === sectionId.value)));
 const currentChapter = computed(() => chapters.value[currentChapterIndex.value] || null);
+const findChapterEpoch = ref(0);
+let findingInAnotherSection = false;
+watch(() => currentChapter.value?.key, () => {
+  // 工程级查找可以跨章跳转；手动换章才清除其结果。
+  if (!findingInAnotherSection) findChapterEpoch.value++;
+}, { flush: 'sync' });
 const currentIsFragment = computed(() => (currentChapter.value?.sections.length || 0) > 1);
 const visualTitle = computed(() => currentChapter.value?.title || '');
 // 只有出现多来源章节时才需要频道名来区分片段；读取失败时退回频道 id。
@@ -374,7 +380,10 @@ const rebuild = (force = false) => {
   });
   result.doc.sectionComplete = win.complete.value;
   const json = JSON.stringify(result.doc);
-  if (!force && json === lastDocJson && frame.value) return;
+  if (!force && json === lastDocJson && frame.value) {
+    finishProofReveal();
+    return;
+  }
   lastDocJson = json;
   frame.value = { doc: result.doc, assetTokens: result.assetTokens, issues: result.issues, revision: ++frameRevision };
 };
@@ -449,7 +458,7 @@ const proofreadPanelRef = ref<{
 } | null>(null);
 const proofMarks = shallowRef<FrameProofNode[] | null>(null);
 const proofView = shallowRef<FrameProofView | null>(null);
-const pendingProofReveal = shallowRef<{ key: string | null; messageId: string; sectionId: string } | null>(null);
+const pendingProofReveal = shallowRef<{ key: string | null; messageId: string; sectionId: string; signal?: AbortSignal } | null>(null);
 /** 专注审阅：收起设计面板，为页边批注留出空间；退出时恢复原来的面板状态。 */
 const proofFocus = ref(false);
 let proofFocusRestore: boolean | null = null;
@@ -1015,7 +1024,7 @@ const doInsert = (type: LogElementType, image: LogImageRef | null) => {
   draftCtl.update((d) => {
     const el = createElement(d, type, anchor, activePkg.value, image);
     if (el) {
-      d.elements.push(el);
+      insertElement(d, el);
       createdId = el.id;
     }
   });
@@ -1129,35 +1138,37 @@ const locate = (nodeId: string) => {
 /** 预览和批注都已准备好时才定位，避免切片段后把请求发送给旧文档。 */
 const finishProofReveal = () => {
   const target = pendingProofReveal.value;
-  if (!target || querySection.value?.id !== target.sectionId || !win.byId(target.messageId)) return;
+  if (!target || target.signal?.aborted || querySection.value?.id !== target.sectionId || !win.byId(target.messageId)) return;
+  if (target.signal && (frameComposition !== composition.value || laidOutRevision !== frameRevision)) return;
   if (!layoutInfo.value?.map[target.messageId]?.length) return;
   if (target.key) {
     if (!proofMarks.value?.some((n) => n.nodeId === target.messageId && n.items.some((i) => i.key === target.key))) return;
     previewRef.value?.proofReveal(target.key);
-  } else previewRef.value?.scrollTo(target.messageId, true);
+  } else if (target.signal) locate(target.messageId);
+  else previewRef.value?.scrollTo(target.messageId, true);
   pendingProofReveal.value = null;
 };
 /** 导航目标未加载时，沿用现有分页接口，且每次只追加一页。 */
 const continueProofReveal = () => {
   const target = pendingProofReveal.value;
   if (!target) return;
-  if (sectionId.value !== target.sectionId) { pendingProofReveal.value = null; return; }
+  if (target.signal?.aborted || sectionId.value !== target.sectionId) { pendingProofReveal.value = null; return; }
   if (querySection.value?.id !== target.sectionId) {
     if (draftCtl.status.value === 'error' || draftCtl.status.value === 'conflict') {
-      toast.error('切换校对来源失败，请先解决草稿保存错误');
+      toast.error('切换来源片段失败，请先解决草稿保存错误');
       pendingProofReveal.value = null;
     }
     return;
   }
   if (win.error.value) {
-    toast.error(`加载校对目标失败：${win.error.value}`);
+    toast.error(`加载定位目标失败：${win.error.value}`);
     pendingProofReveal.value = null;
     return;
   }
   if (win.loadedSectionId.value !== target.sectionId || win.loading.value) return;
   if (win.byId(target.messageId)) { finishProofReveal(); return; }
   if (win.nextCursor.value) { void win.loadMore(); return; }
-  toast.warning('来源片段中没有找到该校对消息（可能已删除或排除）');
+  toast.warning('来源片段中没有找到该消息（可能已删除或排除）');
   pendingProofReveal.value = null;
 };
 watch([sectionId, () => querySection.value?.id, win.items, win.loading, win.nextCursor, win.error, win.loadedSectionId, () => draftCtl.status.value, proofMarks], continueProofReveal, { flush: 'post' });
@@ -1172,42 +1183,28 @@ const revealProof = (key: string, messageId: string, targetSectionId: string) =>
   continueProofReveal();
 };
 /** 列表标题定位同样按需加载，不要求用户手动加载到目标页。 */
-const locateProofMessage = (messageId: string, targetSectionId: string) => {
-  if (querySection.value?.id === targetSectionId && win.byId(messageId)) {
+const locateProofMessage = (messageId: string, targetSectionId: string, signal?: AbortSignal) => {
+  if (!signal && querySection.value?.id === targetSectionId && win.byId(messageId)) {
     locate(messageId);
     return;
   }
   if (!sections.value.some((s) => s.id === targetSectionId)) {
-    toast.warning('校对来源片段已不可用，请重新扫描');
+    toast.warning('来源片段已不可用，请重新查找');
     return;
   }
-  pendingProofReveal.value = { key: null, messageId, sectionId: targetSectionId };
+  pendingProofReveal.value = { key: null, messageId, sectionId: targetSectionId, signal };
   if (sectionId.value !== targetSectionId) sectionId.value = targetSectionId;
   continueProofReveal();
 };
 
-// ---- 定位搜索（只在已加载窗口内） ----
-const searchText = ref('');
-let searchCursor = -1;
-const runSearch = () => {
-  const q = searchText.value.trim().toLowerCase();
-  if (!q) return;
-  const nodes = composition.value?.nodes || [];
-  for (let step = 1; step <= nodes.length; step += 1) {
-    const i = (searchCursor + step) % nodes.length;
-    const n = nodes[i];
-    const text = n.kind === 'message' ? `${n.speakerName} ${n.plainText}` : Object.values(n.fields).join(' ');
-    if (text.toLowerCase().includes(q)) {
-      searchCursor = i;
-      locate(n.id);
-      return;
-    }
+const locateFindMessage = (messageId: string, targetSectionId: string, signal: AbortSignal) => {
+  findingInAnotherSection = true;
+  try {
+    locateProofMessage(messageId, targetSectionId, signal);
+  } finally {
+    findingInAnotherSection = false;
   }
-  toast.info(win.nextCursor.value ? '已加载部分未找到，可加载更多后再搜索' : '未找到');
 };
-watch(searchText, () => {
-  searchCursor = -1;
-});
 
 // ---- 草稿字段 ----
 const titleModel = computed({
@@ -1445,17 +1442,20 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="log-wb__group log-wb__group--actions">
-        <n-input
-          v-model:value="searchText"
-          class="log-wb__search"
-          size="small"
-          clearable
-          placeholder="定位（已加载范围）"
-          aria-label="定位搜索"
-          @keydown.enter="runSearch"
-        >
-          <template #prefix><n-icon :component="Search" size="15" /></template>
-        </n-input>
+        <LogFindReplace
+          class="log-wb__find"
+          :project-id="projectId"
+          :draft="draft"
+          :chapter-sections="currentChapter?.sections || []"
+          :chapter-epoch="findChapterEpoch"
+          :sections="sections"
+          :window-items="win.items.value"
+          :can-replace="caps.editDraft && caps.supportsContentOverrides === true"
+          :update="draftCtl.update"
+          :flush="draftCtl.flush"
+          :save-error="draftCtl.lastError.value"
+          @locate="locateFindMessage"
+        />
         <span class="log-wb__save" :class="`is-${draftCtl.status.value}`" :title="draftCtl.lastError.value || `草稿 v${draftCtl.draftVersion.value}`">
           <i class="log-wb__save-dot" aria-hidden="true" />{{ saveStatusText }}
         </span>
@@ -1936,8 +1936,26 @@ onBeforeUnmount(() => {
 }
 
 .log-wb__group--actions {
-  flex: 1 1 0;
+  flex: 1 0 auto;
   justify-content: flex-end;
+}
+
+.log-wb__group--actions > .log-wb__find {
+  max-width: 288px;
+}
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  .log-wb__bar {
+    flex-wrap: wrap;
+  }
+
+  .log-wb__group--actions {
+    flex-basis: 100%;
+  }
+
+  .log-wb__find {
+    margin-right: auto;
+  }
 }
 
 .log-wb__badge {
@@ -2004,11 +2022,6 @@ onBeforeUnmount(() => {
 .log-wb__section:hover :deep(.n-base-selection),
 .log-wb__section:focus-within :deep(.n-base-selection) {
   box-shadow: inset 0 0 0 1px var(--log-wb-line);
-}
-
-.log-wb__search {
-  flex: 0 1 200px;
-  min-width: 110px;
 }
 
 /* 无边框按钮：工具栏、面板与浮动控件共用 */
@@ -2580,8 +2593,15 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.is-narrow .log-wb__search {
-  flex: 1 1 120px;
+@media (max-width: 520px) {
+  .is-narrow .log-wb__group--actions {
+    flex-wrap: wrap;
+  }
+
+  .log-wb__group--actions > .log-wb__find {
+    flex-basis: 100%;
+    max-width: none;
+  }
 }
 
 .is-narrow .log-wb__inspector {

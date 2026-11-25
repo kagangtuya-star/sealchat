@@ -55,9 +55,11 @@ interface ProofRun {
 interface ParsedDocument {
   runs: ProofRun[];
   /** 把每个 run 的新文本写回并序列化；pieces[run][i] 对应 bounds[i] 开始的文本节点。 */
-  write: (texts: string[][]) => string;
+  write: (texts: string[][], dropEmptyText?: boolean) => string;
   pieces: string[][];
   aiAllowed?: boolean[][];
+  findAllowed: boolean[];
+  legacy?: boolean;
 }
 
 type TipTapNode = { type?: unknown; text?: unknown; marks?: unknown; content?: unknown };
@@ -77,13 +79,18 @@ const hasCodeMark = (node: TipTapNode) => Array.isArray(node.marks)
 
 const parseTipTap = (doc: TipTapNode): ParsedDocument => {
   const groups: TipTapNode[][] = [];
+  const parents: TipTapNode[] = [];
+  const findAllowed: boolean[] = [];
   const allowed = new WeakSet<TipTapNode>();
   const containers = new Set(['doc', 'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'listItem']);
+  const tableContainers = new Set(['table', 'tableRow', 'tableHeader', 'tableCell']);
   const marks = new Set(['bold', 'italic', 'strike', 'underline', 'textStyle', 'highlight', 'subscript', 'superscript']);
-  const walk = (node: TipTapNode, inCode: boolean, aiSafe: boolean) => {
+  const walk = (node: TipTapNode, inCode: boolean, aiSafe: boolean, findSafe: boolean) => {
     if (!Array.isArray(node.content)) return;
     const code = inCode || node.type === 'codeBlock';
-    const safe = aiSafe && containers.has(String(node.type));
+    const type = String(node.type);
+    const safe = aiSafe && containers.has(type);
+    const searchable = findSafe && (containers.has(type) || tableContainers.has(type));
     let current: TipTapNode[] | null = null;
     for (const child of node.content as TipTapNode[]) {
       if (!child || typeof child !== 'object') {
@@ -95,23 +102,37 @@ const parseTipTap = (doc: TipTapNode): ParsedDocument => {
           current = null;
           continue;
         }
-        if (!current) groups.push((current = []));
+        if (!current) {
+          groups.push((current = []));
+          parents.push(node);
+          findAllowed.push(searchable);
+        }
         current.push(child);
         if (safe && (!Array.isArray(child.marks) || child.marks.every((m: { type?: unknown }) => m && marks.has(String(m.type))))) allowed.add(child);
         continue;
       }
       current = null;
-      walk(child, code, safe);
+      walk(child, code, safe, searchable);
     }
   };
-  walk(doc, false, true);
+  walk(doc, false, true, true);
   const pieces = groups.map((g) => g.map((n) => n.text as string));
   return {
     pieces,
     aiAllowed: groups.map((g) => g.map((n) => allowed.has(n))),
+    findAllowed,
     runs: pieces.map(runOf),
-    write: (texts) => {
-      groups.forEach((g, i) => g.forEach((n, j) => { n.text = texts[i][j]; }));
+    write: (texts, dropEmptyText) => {
+      const emptied = new Set<TipTapNode>();
+      const changedParents = new Set<TipTapNode>();
+      groups.forEach((g, i) => g.forEach((n, j) => {
+        if (dropEmptyText && n.text !== '' && texts[i][j] === '') {
+          // TipTap/ProseMirror 不接受空 text node；保留其父节点和其他节点。
+          emptied.add(n);
+          changedParents.add(parents[i]);
+        } else n.text = texts[i][j];
+      }));
+      for (const parent of changedParents) parent.content = (parent.content as TipTapNode[]).filter((n) => !emptied.has(n));
       return JSON.stringify(doc);
     },
   };
@@ -125,8 +146,9 @@ const parseLegacy = (raw: string): ParsedDocument => {
   const parts = raw.split(LEGACY_TAG);
   const textParts: number[] = [];
   // 代码、预格式与骰子结果里的文本保持原样；只按标签名配对，未闭合时保守地跳过其后全部文本。
-  const stack: Array<{ name: string; skip: boolean; aiSkip: boolean }> = [];
+  const stack: Array<{ name: string; skip: boolean; aiSkip: boolean; findSkip: boolean }> = [];
   const aiBlockedParts = new Set<number>();
+  const findBlockedParts = new Set<number>();
   parts.forEach((part, index) => {
     if (index % 2 === 1) {
       if (part.startsWith('<!--') || /\/\s*>$/.test(part)) return;
@@ -140,12 +162,14 @@ const parseLegacy = (raw: string): ParsedDocument => {
       if (!open) return;
       const name = open[1].toLowerCase();
       if (name === 'br' || name === 'hr' || name === 'img') return;
-      stack.push({ name, skip: LEGACY_SKIP_OPEN.test(part) || /class\s*=\s*["'][^"']*dice/i.test(part), aiSkip: /^(?:a|button|iframe|object|embed|svg|math|template|audio|video|select|textarea)$/.test(name) });
+      const findSkip = /^(?:at|attachment|file|button|iframe|object|embed|svg|math|template|audio|video|select|textarea)$/.test(name);
+      stack.push({ name, skip: LEGACY_SKIP_OPEN.test(part) || /class\s*=\s*["'][^"']*dice/i.test(part), aiSkip: /^(?:a|button|iframe|object|embed|svg|math|template|audio|video|select|textarea)$/.test(name), findSkip });
       return;
     }
     if (part && !stack.some((s) => s.skip)) {
       textParts.push(index);
       if (stack.some((s) => s.aiSkip)) aiBlockedParts.add(index);
+      if (stack.some((s) => s.findSkip)) findBlockedParts.add(index);
     }
   });
   const pieces = textParts.map((i) => [parts[i]]);
@@ -154,12 +178,15 @@ const parseLegacy = (raw: string): ParsedDocument => {
   const offsets: number[] = [];
   let offset = 0;
   parts.forEach((part) => { offsets.push(offset); offset += part.length; });
+  const crossesProtection = textParts.map((i) => {
+    const local = aiProtectedMask(parts[i]);
+    return rawMask.slice(offsets[i], offsets[i] + parts[i].length).some((v, k) => v && !local[k]);
+  });
   return {
     pieces,
-    aiAllowed: textParts.map((i) => {
-      const local = aiProtectedMask(parts[i]);
-      return [!aiBlockedParts.has(i) && !rawMask.slice(offsets[i], offsets[i] + parts[i].length).some((v, k) => v && !local[k])];
-    }),
+    legacy: true,
+    aiAllowed: textParts.map((i, run) => [!aiBlockedParts.has(i) && !crossesProtection[run]]),
+    findAllowed: textParts.map((i, run) => !findBlockedParts.has(i) && !crossesProtection[run]),
     runs: pieces.map(runOf),
     write: (texts) => {
       const next = parts.slice();
@@ -464,9 +491,7 @@ export const proofreadContent = (content: string, lint: ProofLint | null): Proof
  * 把修正写回正文。正文自扫描后变化（文本不再匹配）时返回 null，调用方应跳过该消息。
  * TipTap 正文只改写文本节点的 text，其余节点、属性与标记原样保留。
  */
-export const applyProofEdits = (content: string, edits: ProofEdit[]): string | null => {
-  if (!edits.length) return content;
-  const doc = parseDocument(content);
+const writeProofEdits = (content: string, doc: ParsedDocument, edits: ProofEdit[], dropEmptyText = false): string | null => {
   const texts = doc.pieces.map((p) => p.slice());
   const sorted = edits.slice().sort((a, b) => a.run - b.run || b.start - a.start);
   let prev: ProofEdit | null = null;
@@ -488,7 +513,103 @@ export const applyProofEdits = (content: string, edits: ProofEdit[]): string | n
   for (const run of new Set(sorted.filter((e) => 'source' in e && e.source === 'ai').map((e) => e.run))) {
     if (!preservesAIProtection(doc.runs[run].text, texts[run].join(''), sorted.filter((e) => e.run === run))) return null;
   }
-  return doc.write(texts);
+  return doc.write(texts, dropEmptyText);
+};
+
+export const applyProofEdits = (content: string, edits: ProofEdit[]): string | null =>
+  edits.length ? writeProofEdits(content, parseDocument(content), edits) : content;
+
+export interface LogTextMatch extends Omit<ProofEdit, 'replacement'> {
+  replaceable: boolean;
+}
+
+const parseFindDocument = (content: string): ParsedDocument | null => {
+  const doc = isTipTapDoc(content);
+  if (doc) return parseTipTap(doc);
+  if (/^\s*[\[{]/.test(content)) {
+    try { JSON.parse(content); return null; } catch { /* 非 JSON 的旧正文。 */ }
+  }
+  return parseLegacy(content);
+};
+
+/** Legacy 正文还会经过 Quick Format 渲染；只保护实际参与格式解析的分隔符，正文仍可查找和替换。 */
+const findProtectedMask = (text: string, legacy: boolean): Uint8Array => {
+  const mask = protectedMask(text);
+  if (!legacy) return mask;
+  const mark = (start: number, end: number) => mask.fill(1, start, end);
+  for (const match of text.matchAll(/\*\*([^\n*][^*\n]*?)\*\*/g)) {
+    const at = match.index!;
+    mark(at, at + 2);
+    mark(at + match[0].length - 2, at + match[0].length);
+  }
+  for (const match of text.matchAll(/(^|[^*])\*([^*\n]+)\*/g)) {
+    const at = match.index! + match[1].length;
+    mark(at, at + 1);
+    mark(match.index! + match[0].length - 1, match.index! + match[0].length);
+  }
+  for (const match of text.matchAll(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi)) {
+    const at = match.index!;
+    mark(at, at + 1);
+    const suffix = at + 1 + match[1].length;
+    mark(suffix, at + match[0].length);
+  }
+  return mask;
+};
+
+/** 普通字符串查找；大小写折叠变长时仍返回原正文的 UTF-16 偏移。 */
+export const findTextMatches = (content: string, query: string): LogTextMatch[] => {
+  if (!query) return [];
+  const doc = parseFindDocument(content);
+  if (!doc) return [];
+  const needle = query.toLowerCase();
+  const matches: LogTextMatch[] = [];
+  doc.runs.forEach(({ text, bounds }, run) => {
+    if (!doc.findAllowed[run]) return;
+    const folded = text.toLowerCase();
+    let at = folded.indexOf(needle);
+    if (at === -1) return;
+    const mask = findProtectedMask(text, doc.legacy === true);
+    let offsets: Map<number, number> | undefined;
+    if (folded.length !== text.length) {
+      offsets = new Map([[0, 0]]);
+      let foldedAt = 0;
+      let originalAt = 0;
+      for (const ch of text) {
+        foldedAt += ch.toLowerCase().length;
+        originalAt += ch.length;
+        offsets.set(foldedAt, originalAt);
+      }
+    }
+    for (; at !== -1; at = folded.indexOf(needle, at + needle.length)) {
+      const start = offsets ? offsets.get(at) : at;
+      const end = offsets ? offsets.get(at + needle.length) : at + needle.length;
+      if (start === undefined || end === undefined || mask.subarray(start, end).some(Boolean)) continue;
+      matches.push({ run, start, end, original: text.slice(start, end), replaceable: pieceAt(bounds, start) === pieceAt(bounds, end - 1) });
+    }
+  });
+  return matches;
+};
+
+/** 只允许写入完整落在单个可编辑文本节点中的命中。旧格式需转义新输入，不能把它变成标签。 */
+export const replaceTextMatches = (content: string, matches: LogTextMatch[], replacement: string): string | null => {
+  if (!matches.length) return content;
+  const doc = parseFindDocument(content);
+  if (!doc) return null;
+  const masks = new Map<number, Uint8Array>();
+  const escaped = doc.legacy ? replacement.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : replacement;
+  const edits: ProofEdit[] = [];
+  for (const match of matches) {
+    const { run, start, end, original } = match;
+    const entry = doc.runs[run];
+    if (!match.replaceable || !doc.findAllowed[run] || !entry || !Number.isInteger(start)
+      || !Number.isInteger(end) || start < 0 || end <= start || end > entry.text.length
+      || pieceAt(entry.bounds, start) !== pieceAt(entry.bounds, end - 1) || entry.text.slice(start, end) !== original) return null;
+    let mask = masks.get(run);
+    if (!mask) masks.set(run, (mask = findProtectedMask(entry.text, doc.legacy === true)));
+    if (mask.subarray(start, end).some(Boolean)) return null;
+    if (original !== replacement) edits.push({ run, start, end, original, replacement: escaped });
+  }
+  return edits.length ? writeProofEdits(content, doc, edits, true) : content;
 };
 
 /** 对比展示用：正文中参与校对的文本段（按 run 顺序以换行连接）在修正前后的样子。 */

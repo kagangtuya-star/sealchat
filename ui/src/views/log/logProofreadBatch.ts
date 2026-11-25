@@ -96,10 +96,10 @@ export const commitProofApply = (
 export const proofDraftSizeError = (draft: LogDraft): string | null => {
   const size = (text: string) => new TextEncoder().encode(text).byteLength;
   if (Object.values(draft.messageContentOverrides || {}).some((text) => size(text) > 64 * 1024)) {
-    return '单条消息的校对正文超过 64 KiB，无法保存';
+    return '单条消息的覆盖正文超过 64 KiB，无法保存';
   }
   if (size(JSON.stringify(draft)) > 2 * 1024 * 1024) {
-    return '校对后的 LOG 草稿超过 2 MiB，无法保存，请缩小应用范围';
+    return '修改后的 LOG 草稿超过 2 MiB，无法保存，请缩小应用范围';
   }
   return null;
 };
